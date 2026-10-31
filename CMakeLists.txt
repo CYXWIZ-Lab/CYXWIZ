@@ -16,6 +16,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Add custom cmake modules path (for FindONNXRuntime, etc.)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(CyxWizWindowsResources)
 
 # Build options
 option(CYXWIZ_BUILD_ENGINE "Build CyxWiz Engine (Desktop Client)" ON)
@@ -505,6 +506,7 @@ if(CYXWIZ_BUILD_ENGINE)
     add_subdirectory(plugins/examples/mlflow_logger)
     add_subdirectory(plugins/examples/image_nodes)
     add_subdirectory(plugins/examples/activation_nodes)
+    add_subdirectory(plugins/examples/data_formats)
     # The SDK's template plugin, built here so it always compiles.
     add_subdirectory(plugins/template)
     if(CYXWIZ_BUILD_MUJOCO_PLUGIN)

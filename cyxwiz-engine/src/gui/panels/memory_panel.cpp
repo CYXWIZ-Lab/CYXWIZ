@@ -1,6 +1,7 @@
 #include "memory_panel.h"
 #include "../icons.h"
 #include "../ui_tokens.h"
+#include "../../core/dataset_catalog.h"
 #include "../../core/training_manager.h"
 #include "../../core/execution_device_context.h"
 #include "../../core/training_trace_collector.h"
@@ -28,6 +29,13 @@ ImVec4 GpuCachedColour() { return ui::SeriesColour(ui::CurrentTokens(), 3); }
 MemoryPanel::MemoryPanel() : Panel("Memory Monitor", false) {
     last_refresh_ = std::chrono::steady_clock::now();
     last_gpu_update_ = std::chrono::steady_clock::now();
+    // The loaded-data account is rebuilt only when a dataset changes.
+    catalog_subscription_ = DatasetCatalog::Instance().Subscribe(
+        alive_, [this](const DatasetChange&) { loaded_stale_ = true; });
+}
+
+MemoryPanel::~MemoryPanel() {
+    DatasetCatalog::Instance().Unsubscribe(catalog_subscription_);
 }
 
 void MemoryPanel::Render() {
@@ -70,6 +78,10 @@ void MemoryPanel::Render() {
         }
         if (ImGui::BeginTabItem(ICON_FA_CIRCLE_INFO " Statistics")) {
             RenderMemoryStats();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(ICON_FA_DATABASE " Loaded data")) {
+            RenderLoadedData();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();

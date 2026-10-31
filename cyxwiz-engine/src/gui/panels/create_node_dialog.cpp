@@ -63,7 +63,8 @@ std::vector<CreateNodeFound> ParseFound(const std::string& text) {
         f.name = node.value("name", "");
         f.version = node.value("version", "");
         f.category = node.value("category", "");
-        f.tier = node.value("tier", "") == "activation" ? "f and df" : "module";
+        const std::string tier = node.value("tier", "");
+        f.tier = tier == "activation" ? "f and df" : tier == "loss" ? "loss" : "module";
         std::string in;
         std::string out;
         for (const auto& pin : node.value("inputs", nlohmann::json::array())) in += (in.empty() ? "" : ", ") + pin.value("name", "");

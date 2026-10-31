@@ -1,9 +1,11 @@
 #include "data_input_capabilities.h"
 #include "../core/data_input_formats.h"
+#include "../core/image_formats.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 
 namespace gui::data_input {
 
@@ -60,9 +62,7 @@ FolderScan ScanFolder(const std::string& path, int max_files) {
     if (path.empty() || !fs::is_directory(path, ec)) return scan;
     const auto kind_of = [](const fs::path& file) {
         const std::string ext = LowerExtension(file.string());
-        if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "bmp" || ext == "gif" || ext == "tga" ||
-            ext == "webp" || ext == "tif" || ext == "tiff")
-            return FolderKind::Images;
+        if (cyxwiz::image_formats::IsImageExtension(ext)) return FolderKind::Images;
         if (ext == "wav" || ext == "flac" || ext == "ogg" || ext == "aiff" || ext == "aif" || ext == "mp3")
             return FolderKind::Audio;
         if (ext == "txt" || ext == "text" || ext == "md") return FolderKind::Text;
@@ -116,25 +116,41 @@ bool IsPreviewSupported(cyxwiz::loaders::FileCategory file_category) {
            file_category == FileCategory::TimeSeries;
 }
 
-const char* PreviewUnavailableMessage(cyxwiz::loaders::FileCategory file_category) {
-    if (file_category == FileCategory::Image) {
-        return "Image preview is not wired yet. Apply can still scan supported image folders.";
-    }
+bool HasRowsAndColumns(cyxwiz::loaders::FileCategory file_category) {
+    return file_category != FileCategory::Image && file_category != FileCategory::Audio;
+}
+
+const char* PreviewUnavailableMessage(cyxwiz::loaders::FileCategory) {
     return "Audio preview is not wired yet. Apply can still scan supported audio folders.";
 }
 
+// Numbers from kFirstExternalFormatId up are plugin formats
+// (data_input_external_formats.h).
 const char* FileTypeParam(int detected_type) {
+    if (const char* external = cyxwiz::data_input::ExternalFormatNameOf(detected_type)) return external;
     const auto* format = cyxwiz::data_input::FindFormat(detected_type);
     return format ? format->name : "auto";
 }
 
 const char* FileTypeName(int detected_type) {
+    if (const char* external = cyxwiz::data_input::ExternalFormatNameOf(detected_type)) {
+        // The label lives here, per number: the plugin's list is rebuilt on each call.
+        static std::map<int, std::string> labels;
+        cyxwiz::data_input::ExternalFormat format;
+        labels[detected_type] = cyxwiz::data_input::FindExternalFormat(external, format)
+            ? format.label + " (plugin)"
+            : std::string(external) + " (not installed)";
+        return labels[detected_type].c_str();
+    }
     const auto* format = cyxwiz::data_input::FindFormat(detected_type);
     return format ? format->label : "Unknown";
 }
 
 int FileTypeFromParam(const std::string& value, int fallback) {
     if (Trim(value).empty()) return fallback;
+    const auto normalized = cyxwiz::NormalizeDataInputFormat(value);
+    if (cyxwiz::data_input::IsExternalFormatName(normalized))
+        return cyxwiz::data_input::ExternalFormatId(normalized);
     const auto* format = cyxwiz::data_input::FindFormat(value);
     return format ? format->id : fallback;
 }
@@ -155,7 +171,12 @@ int DetectFileTypeForPath(const std::string& path, std::size_t* file_size) {
         }
     }
 
+    // A built-in format the Engine reads wins; then a plugin format that
+    // accepts the file; then a built-in one, which explains why it cannot.
     const auto* format = cyxwiz::data_input::DetectFormat(path);
+    if (format && format->executable) return format->id;
+    if (auto external = cyxwiz::data_input::DetectExternalFormat(path); !external.empty())
+        return cyxwiz::data_input::ExternalFormatId(external);
     return format ? format->id : 0;
 }
 
@@ -230,6 +251,17 @@ std::string GenerateDatasetName(const std::string& file_path, const std::string&
         name = "dataset";
     }
     return name;
+}
+
+std::string UniqueDatasetName(const std::string& base, const std::vector<std::string>& taken) {
+    const auto used = [&taken](const std::string& name) {
+        return std::find(taken.begin(), taken.end(), name) != taken.end();
+    };
+    if (!used(base)) return base;
+    for (int n = 2;; ++n) {
+        const std::string candidate = base + "_" + std::to_string(n);
+        if (!used(candidate)) return candidate;
+    }
 }
 
 std::string FormatBytes(std::size_t bytes) {

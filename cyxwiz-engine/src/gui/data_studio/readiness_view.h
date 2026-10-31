@@ -17,6 +17,8 @@
 
 namespace cyxwiz {
 
+class LiveGraphCompile;
+
 class ReadinessView {
 public:
     ReadinessView() = default;
@@ -27,6 +29,9 @@ public:
     void SetSplitSets(const std::vector<studio::SplitSet>& sets, const std::string& balance);
     // The job tab became visible: measure again (roles may have changed in Profile).
     void Activate();
+    // The canvas graph's compile: an image dataset's split comes from it
+    // (TOFIX178 1.5), as training makes it.
+    void SetLiveCompile(const LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
     void Render();
 
     bool IsRunning() const { return task_id_ != 0; }
@@ -41,6 +46,8 @@ public:
 
 private:
     void Measure();
+    // An image dataset's parts and class shares (no table to query).
+    void RenderImages(const studio::SplitSet& set);
     std::string Signature() const;  // the shown set's datasets and their generations
 
     std::vector<studio::SplitSet> sets_;
@@ -50,6 +57,7 @@ private:
     std::shared_ptr<readiness::Facts> result_;
     readiness::View view_;
     std::string error_;
+    const LiveGraphCompile* live_compile_ = nullptr;
     uint64_t task_id_ = 0;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
 };

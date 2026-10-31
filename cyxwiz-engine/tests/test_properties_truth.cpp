@@ -144,6 +144,26 @@ int main() {
     }
 
     {
+        // Advanced Augment shows only the chosen method's fields (TOFIX178 1.6b).
+        auto augment = MakeNode(103, gui::NodeType::AdvancedAugment, "Advanced Augment");
+        const auto hidden = [&](const char* name) {
+            cyxwiz::ParameterDefinition param;
+            param.name = name;
+            return gui::properties_rules::ShouldHideGenericParameter(augment, param);
+        };
+        Check(!hidden("cutout_size") && !hidden("value") && hidden("severity") && hidden("policy") && !hidden("probability"),
+              "cutout (the default method) shows its size and value, not the policies' fields");
+        augment.parameters["method"] = "augmix";
+        Check(!hidden("severity") && !hidden("mixture_width") && !hidden("chain_depth") && !hidden("alpha") &&
+                  hidden("cutout_size") && hidden("magnitude_bins") && !hidden("probability") && !hidden("method"),
+              "augmix shows severity, chains, depth and alpha");
+        augment.parameters["method"] = "autoaugment";
+        Check(!hidden("policy") && hidden("alpha") && hidden("num_ops"), "autoaugment shows its policy only");
+        augment.parameters["method"] = "trivialaugment";
+        Check(!hidden("magnitude_bins") && hidden("policy"), "trivialaugment shows its magnitude bins");
+    }
+
+    {
         // A file parameter's patterns become the Browse dialog's filter.
         cyxwiz::ParameterDefinition model_path(
             "model_path", "file", "", "", {}, "*.cyxclassic.json; *.json");
@@ -161,8 +181,9 @@ int main() {
     {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
         // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring) +
-        // WordEmbeddings (TOFIX152).
-        Check(covered.size() == 78,
+        // WordEmbeddings (TOFIX152) + Max-Abs Scaler, Quantile Transform and
+        // Power Transform (TOFIX129 D2).
+        Check(covered.size() == 81,
               "tofix48 baseline should record each specialized truth-covered node");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::RNN),
               "RNN should be in specialized truth coverage");
@@ -531,6 +552,33 @@ int main() {
               "labeled dataset with zero classes should be a truth issue");
         Check(report.has_issue,
               "zero-class labeled dataset should mark report as issue");
+    }
+
+    {
+        // An image folder is labelled by its class folders or labels CSV: no
+        // "Label column" row, before or after loading.
+        auto input = MakeNode(1, gui::NodeType::DataInput, "Image input");
+        input.parameters["file_category"] = "image";
+        input.parameters["dataset_name"] = "cat_dog";
+        input.parameters["labels_csv"] = "cat_dog.csv";
+
+        const auto unloaded = gui::properties_truth::ResolveNodeTruth(input, gui::properties_truth::NodeTruthContext{});
+        Check(unloaded.properties.empty() && !unloaded.has_issue, "unloaded image input has no label column row");
+
+        gui::properties_truth::DatasetTruthFact fact;
+        fact.dataset_name = "cat_dog";
+        fact.backing_store = "ImageDataset";
+        fact.found = true;
+        fact.rows = 25000;
+        fact.has_labels = true;
+        fact.has_class_count = true;
+        fact.class_count = 2;
+        std::vector<gui::properties_truth::DatasetTruthFact> facts = {fact};
+        const auto report = gui::properties_truth::ResolveNodeTruth(
+            input, gui::properties_truth::NodeTruthContext{nullptr, nullptr, &facts});
+        Check(report.properties.size() == 1 && report.properties[0].canonical_key == "dataset_class_count",
+              "loaded image input shows its classes only");
+        Check(!report.has_issue, "loaded image input with classes has no issue");
     }
 
     {

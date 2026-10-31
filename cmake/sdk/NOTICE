@@ -10,3 +10,7 @@ any licence you choose for your own code.
 The CyxWiz Engine that loads your plugin, and the backend library behind
 the import library, are licensed separately (the LICENSE file of the
 CyxWiz installation).
+
+include/plugin/interfaces/arrow_c_stream.h holds the structs of the Apache
+Arrow C data interface and C stream interface specifications, copyright The
+Apache Software Foundation, also under the Apache License, Version 2.0.

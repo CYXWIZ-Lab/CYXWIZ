@@ -8,8 +8,11 @@
 // fixed random r, compared with Backward(r) for the input and GetGradients()
 // for every parameter. Lives in the backend so both routes run the same
 // code: the Engine (C++ plugin nodes, Properties) and pycyxwiz.gradcheck.
+// CheckLossGradients does the same for a loss (P7): central differences of
+// Forward(p, t) against Backward(p, t).
 
 #include "api_export.h"
+#include "losses/loss_base.h"
 #include "sequential.h"
 
 #include <cstddef>
@@ -50,6 +53,17 @@ struct GradientCheckResult {
 // The module runs in evaluation mode.
 CYXWIZ_API GradientCheckResult CheckModuleGradients(
     const std::function<std::unique_ptr<Module>(const std::vector<size_t>& input_shape)>& make,
+    const GradientCheckOptions& options = {});
+
+// The targets a loss is checked with: one-hot rows over the last dimension
+// (a categorical loss), or values in [-1, 1] (a continuous loss).
+enum class LossCheckTargets { OneHot, Values };
+
+// make: creates a fresh loss. Each shape in options.input_shapes is a
+// predictions shape including the batch; the targets have the same shape.
+CYXWIZ_API GradientCheckResult CheckLossGradients(
+    const std::function<std::unique_ptr<Loss>()>& make,
+    LossCheckTargets targets,
     const GradientCheckOptions& options = {});
 
 // "Passed: largest relative error 3.1e-07 (tolerance 2.0e-02)".

@@ -175,8 +175,9 @@ void CheckNoLocalAbsolutePaths(const nlohmann::json& value, const std::string& c
 // Every parameter a shipped pattern sets on a node is one that node defines:
 // an unknown key (the Embedding's "vocab_size" for num_embeddings) is silently
 // ignored, and the node falls back to its default.
-void CheckShippedPatternParameterNames() {
-    const auto dir = FindRepoRoot() / "cyxwiz-engine" / "resources" / "patterns";
+// The example templates too: their Adam nodes set "epochs", which only the
+// DataLoader reads, so the epoch count was ignored (TOFIX178).
+void CheckShippedPatternParameterNames(const std::filesystem::path& dir) {
     Check(std::filesystem::is_directory(dir), "shipped pattern folder not found: " + dir.string());
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
     std::string unknown;
@@ -194,6 +195,9 @@ void CheckShippedPatternParameterNames() {
             }
             const auto* metadata = registry.GetMetadata(*type);
             if (metadata == nullptr) continue;
+            // Data Input's settings depend on its source and file kind; its
+            // metadata does not list them.
+            if (*type == gui::NodeType::DataInput) continue;
             for (const auto& [key, value] : node["params"].items()) {
                 (void)value;
                 ++checked;
@@ -740,7 +744,8 @@ int main() {
           "Dense-encoded NER parameter marker should report the matching parameter");
 
     CheckSavedNERGraphUsesFirstClassSequenceNodes();
-    CheckShippedPatternParameterNames();
+    CheckShippedPatternParameterNames(FindRepoRoot() / "cyxwiz-engine" / "resources" / "patterns");
+    CheckShippedPatternParameterNames(FindRepoRoot() / "examples" / "cyxgraph");
     CheckExampleDataBoundaryPins();
     CheckModernPinConnectivityFixtures();
     CheckSerializedPinIndexGuard();

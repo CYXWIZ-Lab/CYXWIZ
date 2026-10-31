@@ -43,8 +43,9 @@ public:
 
     // ===== Loading =====
 
-    // Load a single plugin from a directory containing plugin.json
-    bool LoadPlugin(const std::filesystem::path& plugin_dir);
+    // Load a single plugin from a directory containing plugin.json. On
+    // failure the reason goes to the log and, when given, to *error.
+    bool LoadPlugin(const std::filesystem::path& plugin_dir, std::string* error = nullptr);
 
     // Load all plugins from search paths
     void LoadAllFromSearchPaths();
@@ -146,6 +147,12 @@ private:
 
     // Permission approval dialog
     security::PermissionDialog permission_dialog_;
+
+    // Why `plugin` cannot start now, from plugin.json "dependencies": one is
+    // not installed, has a version outside the constraint, or failed (`wait`
+    // false); one has not started yet (`wait` true). "" when all are running.
+    // Must be called with mutex_ held.
+    std::string DependencyProblem(const LoadedPlugin& plugin, bool& wait) const;
 
     // Topological sort for dependency resolution (Kahn's algorithm)
     // Must be called with mutex_ already held.

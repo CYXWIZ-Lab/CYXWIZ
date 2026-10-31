@@ -3,10 +3,14 @@
 #include "dataset_base.h"
 #include "arrow_dataset.h"
 #include "parquet_backed_dataset.h"
+#include "sparse_feature_dataset.h"
 #include "data_budget.h"
 #include "sha256_digest.h"
 #include "hashing_output_stream.h"
+#include "data_input_formats.h"
+#include "split_partitioning.h"
 #include <arrow/csv/writer.h>
+#include <arrow/record_batch.h>
 #include <arrow/io/buffered.h>
 #include <arrow/io/file.h>
 #include <parquet/arrow/writer.h>
@@ -15,10 +19,9 @@
 #include <limits>              // for std::numeric_limits (Arrow block_size cap)
 
 #include "annotation_manager.h"
+#include "image_formats.h"
 #include "image_utils.h"
 #include "../preprocessing/preprocessing_config.h"
-#include "../transforms/transform.h"
-#include "../plugin/registries/plugin_data_loader_registry.h"
 
 // Dataset implementations
 #include "datasets/kaggle_dataset.h"
@@ -91,20 +94,10 @@ DatasetHandle DataRegistry::LoadDataset(const std::string& path, const std::stri
             return LoadImageFolder(path, name);
         case DatasetType::HDF5:
             return LoadHDF5(path, name);
-        default: {
-            // Check if a plugin data loader can handle this format
-            try {
-                auto ext = std::filesystem::path(path).extension().string();
-                if (!ext.empty() && cyxwiz::plugin::PluginDataLoaderRegistry::Instance().HasLoaderForExtension(ext)) {
-                    spdlog::info("DataRegistry: Plugin data loader available for '{}' (bridge not yet implemented)", path);
-                    // TODO: Bridge PluginDataset to DatasetHandle with adapter class
-                }
-            } catch (const std::exception& e) {
-                spdlog::warn("DataRegistry: Plugin loader check failed: {}", e.what());
-            }
+        default:
+            // Plugin formats load through Data Input (PluginDataLoaderRegistry).
             spdlog::error("Unknown dataset type for path: {}", path);
             return DatasetHandle();
-        }
     }
 }
 
@@ -774,11 +767,7 @@ DatasetType DataRegistry::DetectType(const std::string& path) {
         for (const auto& entry : fs::directory_iterator(path)) {
             if (entry.is_directory()) {
                 for (const auto& sub : fs::directory_iterator(entry)) {
-                    auto ext = sub.path().extension().string();
-                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                    if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp") {
-                        return DatasetType::ImageFolder;
-                    }
+                    if (image_formats::IsImageExtension(sub.path().extension().string())) return DatasetType::ImageFolder;
                 }
             }
         }
@@ -832,21 +821,90 @@ void DataRegistry::SetMemoryLimit(size_t bytes) {
     memory_limit_ = bytes;
 }
 
+LoadedDataReport DataRegistry::LoadedData() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return LoadedDataUnlocked();
+}
+
+LoadedDataReport DataRegistry::LoadedDataUnlocked() const {
+    LoadedDataReportBuilder builder;
+    const auto source = [this](const std::string& name) {
+        const auto it = tabular_source_paths_by_name_.find(name);
+        return it == tabular_source_paths_by_name_.end() ? std::string() : it->second;
+    };
+    for (const auto& [name, dataset] : arrow_datasets_) {
+        if (!dataset) continue;
+        LoadedDataEntry e;
+        e.name = name;
+        e.kind = LoadedDataKind::TableInMemory;
+        e.path = source(name);
+        builder.AddTable(std::move(e), dataset->GetArrowTable());
+    }
+    for (const auto& [name, dataset] : parquet_backed_datasets_) {
+        if (!dataset) continue;
+        LoadedDataEntry e;
+        e.name = name;
+        e.kind = LoadedDataKind::TableOnDisk;
+        e.disk_bytes = dataset->GetFileSizeBytes();
+        e.path = dataset->GetFilePath();
+        e.rows = dataset->GetNumRows();
+        builder.Add(std::move(e));
+    }
+    for (const auto& [name, dataset] : sparse_feature_datasets_) {
+        if (!dataset) continue;
+        LoadedDataEntry e;
+        e.name = name;
+        e.kind = LoadedDataKind::SparseFeatures;
+        e.memory_bytes = dataset->GetEstimatedHostMemoryBytes();
+        builder.Add(std::move(e));
+    }
+    // Image, audio and text datasets read their files as training goes:
+    // they hold their file lists, not the data.
+    const auto files = [&builder](const std::string& name, LoadedDataKind kind, const std::string& path, size_t n) {
+        LoadedDataEntry e;
+        e.name = name;
+        e.kind = kind;
+        e.path = path;
+        e.rows = static_cast<int64_t>(n);
+        builder.Add(std::move(e));
+    };
+    for (const auto& [name, entry] : image_dataset_entries_) files(name, LoadedDataKind::Images, entry.folder_path, entry.num_images);
+    for (const auto& [name, entry] : audio_dataset_entries_) files(name, LoadedDataKind::Audio, entry.folder_path, entry.num_samples);
+    for (const auto& [name, entry] : text_dataset_entries_) files(name, LoadedDataKind::Text, entry.source_path, entry.num_samples);
+    for (const auto& [name, dataset] : datasets_) {
+        if (!dataset) continue;
+        LoadedDataEntry e;
+        e.name = name;
+        e.kind = LoadedDataKind::Other;
+        e.memory_bytes = dataset->GetInfo().memory_usage;
+        builder.Add(std::move(e));
+    }
+    return builder.Finish();
+}
+
+std::function<bool(const std::filesystem::path&)> DataRegistry::FileInUse() const {
+    std::set<std::string> held;
+    for (const auto& e : LoadedData().entries)
+        if (!e.path.empty()) held.insert(std::filesystem::path(e.path).lexically_normal().string());
+    return [held = std::move(held)](const std::filesystem::path& p) {
+        return held.count(p.lexically_normal().string()) > 0;
+    };
+}
+
 MemoryStats DataRegistry::GetMemoryStats() const {
     std::lock_guard<std::mutex> lock(mutex_);
 
     MemoryStats stats;
     stats.memory_limit = memory_limit_;
-    stats.datasets_count = datasets_.size();
     stats.cache_hits = total_cache_hits_;
     stats.cache_misses = total_cache_misses_;
     stats.cache_evictions = total_cache_evictions_;
 
-    // Sum up memory from all datasets
+    const LoadedDataReport loaded = LoadedDataUnlocked();
+    stats.datasets_count = loaded.entries.size();
+    stats.total_allocated = loaded.memory_bytes;
     for (const auto& [_, dataset] : datasets_) {
-        auto info = dataset->GetInfo();
-        stats.total_allocated += info.memory_usage;
-        stats.total_cached += info.cache_usage;
+        if (dataset) stats.total_cached += dataset->GetInfo().cache_usage;
     }
 
     // Update peak usage
@@ -1784,6 +1842,100 @@ DataRegistry::TabularLoadBackend DataRegistry::LoadTabularParquet(
     return TabularLoadBackend::DiskBacked;
 }
 
+void DataRegistry::SetExternalReaderOpener(ExternalReaderOpener opener) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    external_opener_ = std::move(opener);
+}
+
+DataRegistry::TabularLoadBackend DataRegistry::LoadTabularExternal(
+    const std::string& format, const std::string& path, const std::string& name, bool force_disk_backed,
+    const std::vector<std::string>& selected_columns, std::string* load_status,
+    const std::string& cache_directory, const std::function<bool()>& should_cancel) {
+    if (load_status) load_status->clear();
+    const auto fail = [&](const std::string& why) {
+        spdlog::error("LoadTabularExternal: '{}' ({}): {}", path, format, why);
+        if (load_status) *load_status = why;
+        return TabularLoadBackend::Failed;
+    };
+    data_input::ExternalFormat external;
+    if (!data_input::FindExternalFormat(format, external))
+        return fail(data_input::UnsupportedReason(format, false));
+    ExternalReaderOpener opener;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        opener = external_opener_;
+    }
+    if (!opener) return fail("No reader is installed for plugin formats");
+
+    // One Parquet copy per file and format version, rewritten when the file changes.
+    const std::string cache_path =
+        ParquetBackedDataset::GetCacheFilePath(path, "format=" + format + "@" + external.version, cache_directory);
+    if (!ParquetBackedDataset::IsCacheFresh(path, cache_path)) {
+        std::shared_ptr<arrow::RecordBatchReader> reader;
+        std::string error;
+        if (!opener(format, path, reader, error) || !reader)
+            return fail(error.empty() ? "The format's reader could not open the file" : error);
+
+        const std::string temp_path = ParquetBackedDataset::UniqueTempPath(cache_path);
+        auto opened = arrow::io::FileOutputStream::Open(temp_path);
+        if (!opened.ok()) return fail("Cannot write the cache file " + temp_path + ": " + opened.status().message());
+        std::shared_ptr<arrow::io::FileOutputStream> out = *opened;
+        parquet::WriterProperties::Builder properties;
+        properties.compression(parquet::Compression::SNAPPY);
+        auto made = parquet::arrow::FileWriter::Open(*reader->schema(), arrow::default_memory_pool(), out,
+                                                     properties.build(),
+                                                     parquet::ArrowWriterProperties::Builder().store_schema()->build());
+        if (!made.ok()) {
+            (void)out->Close();
+            std::error_code ignored;
+            fs::remove(temp_path, ignored);
+            return fail("Cannot write the cache file: " + made.status().message());
+        }
+        std::unique_ptr<parquet::arrow::FileWriter> writer = std::move(*made);
+        arrow::Status status;
+        int64_t rows = 0;
+        while (status.ok()) {
+            if (should_cancel && should_cancel()) {
+                status = arrow::Status::Cancelled("cancelled");
+                break;
+            }
+            std::shared_ptr<arrow::RecordBatch> batch;
+            status = reader->ReadNext(&batch);
+            if (!status.ok() || !batch) break;
+            status = writer->WriteRecordBatch(*batch);
+            rows += batch->num_rows();
+        }
+        reader.reset();  // the plugin's stream is released before the file is used
+        const arrow::Status closed = writer->Close();
+        const arrow::Status out_closed = out->Close();
+        if (status.ok() && !closed.ok()) status = closed;
+        if (status.ok() && !out_closed.ok()) status = out_closed;
+        std::error_code ec;
+        if (status.ok()) fs::rename(temp_path, cache_path, ec);
+        if (!status.ok() || ec) {
+            fs::remove(temp_path, ec);
+            if (status.IsCancelled()) return fail("Cancelled");
+            return fail(status.ok() ? "Cannot place the cache file: " + ec.message() : status.message());
+        }
+        spdlog::info("LoadTabularExternal: '{}' ({}) streamed {} rows into {}", path, external.label, rows, cache_path);
+    }
+    const auto backend = LoadTabularParquet(cache_path, name, force_disk_backed, selected_columns, load_status,
+                                            cache_directory);
+    if (backend == TabularLoadBackend::Failed && load_status && load_status->empty())
+        *load_status = "The converted file could not be read; check the selected columns";
+    if (backend != TabularLoadBackend::Failed) {
+        // The table came from `path`, not from its cache copy: Preview and
+        // the dialogs find it by the file the user chose.
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (const auto it = tabular_dataset_by_source_path_.find(NormalizeTabularSourcePath(cache_path));
+            it != tabular_dataset_by_source_path_.end()) {
+            const std::string loaded = it->second;
+            RememberTabularSourcePathUnlocked(loaded, path);
+        }
+    }
+    return backend;
+}
+
 std::optional<TableRef> DataRegistry::GetTableRef(const std::string& name) const {
     std::lock_guard<std::mutex> lock(mutex_);
     if (const auto it = arrow_datasets_.find(name); it != arrow_datasets_.end() && it->second) {
@@ -1896,87 +2048,6 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadExcelToArrow(
     }
 }
 
-std::shared_ptr<ArrowDataset> DataRegistry::LoadImageFolderToArrow(
-    const std::string& path, const std::string& name) {
-
-    std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
-
-    try {
-        // Build a table with file paths and labels from directory structure
-        // Format: image_path | label_name | label_id
-        std::vector<std::string> image_paths;
-        std::vector<std::string> label_names;
-        std::vector<int32_t> label_ids;
-        std::map<std::string, int32_t> label_map;
-        int32_t next_label = 0;
-
-        for (const auto& entry : fs::recursive_directory_iterator(path)) {
-            if (!entry.is_regular_file()) continue;
-
-            auto ext = entry.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
-            if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp" || ext == ".gif") {
-                image_paths.push_back(entry.path().string());
-
-                // Use parent directory name as label
-                std::string label = entry.path().parent_path().filename().string();
-                label_names.push_back(label);
-
-                if (label_map.find(label) == label_map.end()) {
-                    label_map[label] = next_label++;
-                }
-                label_ids.push_back(label_map[label]);
-            }
-        }
-
-        if (image_paths.empty()) {
-            spdlog::warn("LoadImageFolderToArrow: No images found in {}", path);
-            return nullptr;
-        }
-
-        // Build Arrow table
-        arrow::StringBuilder path_builder;
-        arrow::StringBuilder label_builder;
-        arrow::Int32Builder id_builder;
-
-        for (size_t i = 0; i < image_paths.size(); i++) {
-            (void)path_builder.Append(image_paths[i]);
-            (void)label_builder.Append(label_names[i]);
-            (void)id_builder.Append(label_ids[i]);
-        }
-
-        std::shared_ptr<arrow::Array> path_array, label_array, id_array;
-        (void)path_builder.Finish(&path_array);
-        (void)label_builder.Finish(&label_array);
-        (void)id_builder.Finish(&id_array);
-
-        auto schema = arrow::schema({
-            arrow::field("image_path", arrow::utf8()),
-            arrow::field("label_name", arrow::utf8()),
-            arrow::field("label_id", arrow::int32())
-        });
-
-        auto table = arrow::Table::Make(schema, {path_array, label_array, id_array});
-        auto dataset = std::make_shared<ArrowDataset>(table, unique_name);
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        InvalidateTabularPublicationUnlocked(unique_name);
-        arrow_datasets_[unique_name] = dataset;
-        parquet_backed_datasets_.erase(unique_name);
-        sparse_feature_datasets_.erase(unique_name);
-        ForgetTabularSourcePathUnlocked(unique_name);
-
-        spdlog::info("LoadImageFolderToArrow: Loaded {} images with {} classes from '{}'",
-                    image_paths.size(), label_map.size(), path);
-        return dataset;
-
-    } catch (const std::exception& e) {
-        spdlog::error("LoadImageFolderToArrow exception: {}", e.what());
-        return nullptr;
-    }
-}
-
 std::shared_ptr<ArrowDataset> DataRegistry::LoadMLDatasetToArrow(
     const std::string& ml_type, const std::string& name) {
 
@@ -2028,6 +2099,28 @@ bool DataRegistry::VisitTablePieces(const std::string& name,
     return true;
 }
 
+bool DataRegistry::VisitExportedPieces(const std::string& name,
+                                       const std::function<bool(const std::shared_ptr<arrow::Table>&, std::string&)>& visit,
+                                       std::shared_ptr<arrow::Schema>* schema, std::string& error) {
+    const bool ok = VisitTablePieces(name, [&visit](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+        const int index = piece->schema()->GetFieldIndex(kSplitPartitionColumn);
+        if (index < 0) return visit(piece, why);
+        auto without = piece->RemoveColumn(index);
+        if (!without.ok()) {
+            why = without.status().ToString();
+            return false;
+        }
+        return visit(*without, why);
+    }, schema, error);
+    if (schema && *schema) {
+        const int index = (*schema)->GetFieldIndex(kSplitPartitionColumn);
+        if (index >= 0) {
+            if (auto without = (*schema)->RemoveField(index); without.ok()) *schema = *without;
+        }
+    }
+    return ok;
+}
+
 namespace {
 
 // An export's file, buffered and hashed as it is written.
@@ -2056,7 +2149,7 @@ bool DataRegistry::ExportTableCSV(const std::string& name, const std::string& ou
     ExportFile file = *opened;
     std::shared_ptr<arrow::ipc::RecordBatchWriter> writer;
     TabularExport facts;
-    const bool ok = VisitTablePieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+    const bool ok = VisitExportedPieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
         if (!writer) {
             auto options = arrow::csv::WriteOptions::Defaults();
             options.delimiter = ',';
@@ -2116,7 +2209,7 @@ bool DataRegistry::ExportTableParquet(const std::string& name, const std::string
         writer = std::move(*made);
         return true;
     };
-    bool ok = VisitTablePieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+    bool ok = VisitExportedPieces(name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
         if (!writer && !open_writer(piece->schema(), why)) return false;
         if (auto status = writer->WriteTable(*piece, 1024 * 1024); !status.ok()) {
             why = status.ToString();

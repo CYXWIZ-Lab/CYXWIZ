@@ -17,7 +17,10 @@ namespace cyxwiz::plugin {
 // ============================================================================
 
 constexpr uint16_t PLUGIN_API_VERSION_MAJOR = 1;
-constexpr uint16_t PLUGIN_API_VERSION_MINOR = 2;  // 1.1: ITensorNodeProvider; 1.2: build fingerprint (TOFIX125)
+// 1.1: ITensorNodeProvider; 1.2: build fingerprint (TOFIX125); 1.3: typed
+// Tensor accessors check the type (Tensor::DataTypeName), data and analytics
+// providers on the Arrow C stream (TOFIX181).
+constexpr uint16_t PLUGIN_API_VERSION_MINOR = 3;
 constexpr uint16_t PLUGIN_API_VERSION_PATCH = 0;
 
 // ============================================================================
@@ -61,6 +64,10 @@ struct PluginVersion {
     bool operator>=(const PluginVersion& o) const { return !(*this < o); }
     bool operator!=(const PluginVersion& o) const { return !(*this == o); }
 };
+
+// IDataProvider and IAnalyticsProvider took their current shape in plugin API
+// 1.3: the Engine calls them only in a plugin built for 1.3 or newer.
+inline constexpr PluginVersion kDataInterfacesApi{1, 3, 0};
 
 // ============================================================================
 // Plugin Permissions (bitmask)
@@ -239,7 +246,7 @@ public:
     virtual void* QueryInterface(const char* /*interface_name*/) { return nullptr; }
 
     // Set the engine's ImGui context so DLL plugins share the same UI state.
-    // Called by engine before OnInitialize. Plugins must call ImGui::SetCurrentContext(ctx)
+    // Called by the engine before OnLoad. Plugins must call ImGui::SetCurrentContext(ctx)
     // in their implementation to ensure ImGui calls work across DLL boundaries.
     virtual void SetImGuiContext(void* /*ctx*/) {}
 };

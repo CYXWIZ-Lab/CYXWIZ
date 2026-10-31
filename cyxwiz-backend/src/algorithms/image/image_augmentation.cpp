@@ -42,9 +42,87 @@ const char* KindName(ImageOpKind kind) {
         case ImageOpKind::Morphology: return "Morphology Transform";
         case ImageOpKind::Erase: return "Advanced Augment";
         case ImageOpKind::RandAugment: return "Advanced Augment";
+        case ImageOpKind::RandomResizedCrop: return "Random Resized Crop";
+        case ImageOpKind::RandomAffine: return "Random Affine";
+        case ImageOpKind::RandomPerspective: return "Random Perspective";
+        case ImageOpKind::GaussianNoise: return "Gaussian Noise";
+        case ImageOpKind::RandomGrayscale: return "Random Grayscale";
+        case ImageOpKind::AutoAugment: return "Advanced Augment";
+        case ImageOpKind::TrivialAugment: return "Advanced Augment";
+        case ImageOpKind::AugMix: return "Advanced Augment";
     }
     return "image transform";
 }
+
+// torchvision AutoAugmentPolicy sub-policies: (op, probability, magnitude
+// bin of 10, -1 = none) twice, as torchvision.transforms.v2.AutoAugment lists them.
+struct SubPolicy {
+    AugmentOp op;
+    float probability;
+    int bin;
+};
+using Policy = std::array<SubPolicy, 2>;
+
+const std::array<Policy, 25>& AutoAugmentPolicies(AutoAugmentPolicy policy) {
+    using A = AugmentOp;
+    static const std::array<Policy, 25> imagenet = {{
+        {{{A::Posterize, 0.4f, 8}, {A::Rotate, 0.6f, 9}}},       {{{A::Solarize, 0.6f, 5}, {A::AutoContrast, 0.6f, -1}}},
+        {{{A::Equalize, 0.8f, -1}, {A::Equalize, 0.6f, -1}}},    {{{A::Posterize, 0.6f, 7}, {A::Posterize, 0.6f, 6}}},
+        {{{A::Equalize, 0.4f, -1}, {A::Solarize, 0.2f, 4}}},     {{{A::Equalize, 0.4f, -1}, {A::Rotate, 0.8f, 8}}},
+        {{{A::Solarize, 0.6f, 3}, {A::Equalize, 0.6f, -1}}},     {{{A::Posterize, 0.8f, 5}, {A::Equalize, 1.0f, -1}}},
+        {{{A::Rotate, 0.2f, 3}, {A::Solarize, 0.6f, 8}}},        {{{A::Equalize, 0.6f, -1}, {A::Posterize, 0.4f, 6}}},
+        {{{A::Rotate, 0.8f, 8}, {A::Color, 0.4f, 0}}},           {{{A::Rotate, 0.4f, 9}, {A::Equalize, 0.6f, -1}}},
+        {{{A::Equalize, 0.0f, -1}, {A::Equalize, 0.8f, -1}}},    {{{A::Invert, 0.6f, -1}, {A::Equalize, 1.0f, -1}}},
+        {{{A::Color, 0.6f, 4}, {A::Contrast, 1.0f, 8}}},         {{{A::Rotate, 0.8f, 8}, {A::Color, 1.0f, 2}}},
+        {{{A::Color, 0.8f, 8}, {A::Solarize, 0.8f, 7}}},         {{{A::Sharpness, 0.4f, 7}, {A::Invert, 0.6f, -1}}},
+        {{{A::ShearX, 0.6f, 5}, {A::Equalize, 1.0f, -1}}},       {{{A::Color, 0.4f, 0}, {A::Equalize, 0.6f, -1}}},
+        {{{A::Equalize, 0.4f, -1}, {A::Solarize, 0.2f, 4}}},     {{{A::Solarize, 0.6f, 5}, {A::AutoContrast, 0.6f, -1}}},
+        {{{A::Invert, 0.6f, -1}, {A::Equalize, 1.0f, -1}}},      {{{A::Color, 0.6f, 4}, {A::Contrast, 1.0f, 8}}},
+        {{{A::Equalize, 0.8f, -1}, {A::Equalize, 0.6f, -1}}},
+    }};
+    static const std::array<Policy, 25> cifar10 = {{
+        {{{A::Invert, 0.1f, -1}, {A::Contrast, 0.2f, 6}}},       {{{A::Rotate, 0.7f, 2}, {A::TranslateX, 0.3f, 9}}},
+        {{{A::Sharpness, 0.8f, 1}, {A::Sharpness, 0.9f, 3}}},    {{{A::ShearY, 0.5f, 8}, {A::TranslateY, 0.7f, 9}}},
+        {{{A::AutoContrast, 0.5f, -1}, {A::Equalize, 0.9f, -1}}}, {{{A::ShearY, 0.2f, 7}, {A::Posterize, 0.3f, 7}}},
+        {{{A::Color, 0.4f, 3}, {A::Brightness, 0.6f, 7}}},       {{{A::Sharpness, 0.3f, 9}, {A::Brightness, 0.7f, 9}}},
+        {{{A::Equalize, 0.6f, -1}, {A::Equalize, 0.5f, -1}}},    {{{A::Contrast, 0.6f, 7}, {A::Sharpness, 0.6f, 5}}},
+        {{{A::Color, 0.7f, 7}, {A::TranslateX, 0.5f, 8}}},       {{{A::Equalize, 0.3f, -1}, {A::AutoContrast, 0.4f, -1}}},
+        {{{A::TranslateY, 0.4f, 3}, {A::Sharpness, 0.2f, 6}}},   {{{A::Brightness, 0.9f, 6}, {A::Color, 0.2f, 8}}},
+        {{{A::Solarize, 0.5f, 2}, {A::Invert, 0.0f, -1}}},       {{{A::Equalize, 0.2f, -1}, {A::AutoContrast, 0.6f, -1}}},
+        {{{A::Equalize, 0.2f, -1}, {A::Equalize, 0.6f, -1}}},    {{{A::Color, 0.9f, 9}, {A::Equalize, 0.6f, -1}}},
+        {{{A::AutoContrast, 0.8f, -1}, {A::Solarize, 0.2f, 8}}}, {{{A::Brightness, 0.1f, 3}, {A::Color, 0.7f, 0}}},
+        {{{A::Solarize, 0.4f, 5}, {A::AutoContrast, 0.9f, -1}}}, {{{A::TranslateY, 0.9f, 9}, {A::TranslateY, 0.7f, 9}}},
+        {{{A::AutoContrast, 0.9f, -1}, {A::Solarize, 0.8f, 3}}}, {{{A::Equalize, 0.8f, -1}, {A::Invert, 0.1f, -1}}},
+        {{{A::TranslateY, 0.7f, 9}, {A::AutoContrast, 0.9f, -1}}},
+    }};
+    static const std::array<Policy, 25> svhn = {{
+        {{{A::ShearX, 0.9f, 4}, {A::Invert, 0.2f, -1}}},         {{{A::ShearY, 0.9f, 8}, {A::Invert, 0.7f, -1}}},
+        {{{A::Equalize, 0.6f, -1}, {A::Solarize, 0.6f, 6}}},     {{{A::Invert, 0.9f, -1}, {A::Equalize, 0.6f, -1}}},
+        {{{A::Equalize, 0.6f, -1}, {A::Rotate, 0.9f, 3}}},       {{{A::ShearX, 0.9f, 4}, {A::AutoContrast, 0.8f, -1}}},
+        {{{A::ShearY, 0.9f, 8}, {A::Invert, 0.4f, -1}}},         {{{A::ShearY, 0.9f, 5}, {A::Solarize, 0.2f, 6}}},
+        {{{A::Invert, 0.9f, -1}, {A::AutoContrast, 0.8f, -1}}},  {{{A::Equalize, 0.6f, -1}, {A::Rotate, 0.9f, 3}}},
+        {{{A::ShearX, 0.9f, 4}, {A::Solarize, 0.3f, 3}}},        {{{A::ShearY, 0.8f, 8}, {A::Invert, 0.7f, -1}}},
+        {{{A::Equalize, 0.9f, -1}, {A::TranslateY, 0.6f, 6}}},   {{{A::Invert, 0.9f, -1}, {A::Equalize, 0.6f, -1}}},
+        {{{A::Contrast, 0.3f, 3}, {A::Rotate, 0.8f, 4}}},        {{{A::Invert, 0.8f, -1}, {A::TranslateY, 0.0f, 2}}},
+        {{{A::ShearY, 0.7f, 6}, {A::Solarize, 0.4f, 8}}},        {{{A::Invert, 0.6f, -1}, {A::Rotate, 0.8f, 4}}},
+        {{{A::ShearY, 0.3f, 7}, {A::TranslateX, 0.9f, 3}}},      {{{A::ShearX, 0.1f, 6}, {A::Invert, 0.6f, -1}}},
+        {{{A::Solarize, 0.7f, 2}, {A::TranslateY, 0.6f, 7}}},    {{{A::ShearY, 0.8f, 4}, {A::Invert, 0.8f, -1}}},
+        {{{A::ShearX, 0.7f, 9}, {A::TranslateY, 0.8f, 3}}},      {{{A::ShearY, 0.8f, 5}, {A::AutoContrast, 0.7f, -1}}},
+        {{{A::ShearX, 0.7f, 2}, {A::Invert, 0.1f, -1}}},
+    }};
+    switch (policy) {
+        case AutoAugmentPolicy::Cifar10: return cifar10;
+        case AutoAugmentPolicy::Svhn: return svhn;
+        default: return imagenet;
+    }
+}
+
+// AugMix's ops (all_ops=True), in torchvision's order.
+constexpr std::array<AugmentOp, 13> kAugMixOps = {
+    AugmentOp::ShearX,    AugmentOp::ShearY,   AugmentOp::TranslateX,   AugmentOp::TranslateY, AugmentOp::Rotate,
+    AugmentOp::Posterize, AugmentOp::Solarize, AugmentOp::AutoContrast, AugmentOp::Equalize,   AugmentOp::Brightness,
+    AugmentOp::Color,     AugmentOp::Contrast, AugmentOp::Sharpness,
+};
 
 // torchvision _get_inverse_affine_matrix (inverted=True), in double.
 std::array<double, 6> InverseAffineMatrix(double center_x, double center_y, double angle_degrees,
@@ -139,13 +217,49 @@ af::array RoundHalfEven(const af::array& value) {
     return low + ((fraction > 0.5) || ((fraction == 0.5) && odd)).as(value.type());
 }
 
-// torchvision's affine grid sampling with each sample's inverse matrix: in
-// float32, step for step, the matrix is scaled by (0.5 W, 0.5 H) and applied
-// to pixel centres relative to the middle (_affine_grid), then grid_sample
-// (zero padding, align_corners=False) unnormalises ((g + 1) * size - 1) / 2.
-// Half-pixel ties (90 degrees on an even side) round as torchvision's do.
+// torchvision grid_sample (zero padding, align_corners=False) at grid
+// coordinates gx, gy in [-1, 1] ([H, W, 1, N]), unnormalised as
+// ((g + 1) * size - 1) / 2. With a fill (the transform classes: fill=0 by
+// default) torchvision samples a ones mask alongside, then nearest takes the
+// fill where the mask is below 0.5 and bilinear blends towards it,
+// mask * (image - fill) + fill.
+af::array GridSample(const af::array& images, const af::array& gx, const af::array& gy,
+                     Interpolation interpolation, const float* fill) {
+    const dim_t h = images.dims(0), w = images.dims(1);
+    const af::array source = fill ? af::join(2, images, af::constant(1.0f, af::dim4(h, w, 1, images.dims(3))))
+                                  : images;
+    const af::array sx = ((gx + 1.0f) * static_cast<float>(w) - 1.0f) / 2.0f;
+    const af::array sy = ((gy + 1.0f) * static_cast<float>(h) - 1.0f) / 2.0f;
+    af::array sampled;
+    if (interpolation == Interpolation::Nearest) {
+        sampled = GatherPixels(source, RoundHalfEven(sy), RoundHalfEven(sx));
+    } else {
+        const af::array x0 = af::floor(sx), y0 = af::floor(sy);
+        const af::array wx = sx - x0, wy = sy - y0;
+        const unsigned c = static_cast<unsigned>(source.dims(2));
+        const auto weight = [c](const af::array& v) { return af::tile(v, 1, 1, c, 1); };
+        sampled = GatherPixels(source, y0, x0) * weight((1 - wy) * (1 - wx)) +
+                  GatherPixels(source, y0, x0 + 1) * weight((1 - wy) * wx) +
+                  GatherPixels(source, y0 + 1, x0) * weight(wy * (1 - wx)) +
+                  GatherPixels(source, y0 + 1, x0 + 1) * weight(wy * wx);
+    }
+    if (!fill) return sampled;
+    const dim_t c = images.dims(2);
+    const af::array image = sampled(af::span, af::span, af::seq(0, static_cast<double>(c) - 1), af::span);
+    const af::array mask =
+        af::tile(sampled(af::span, af::span, static_cast<int>(c), af::span), 1, 1, static_cast<unsigned>(c), 1);
+    if (interpolation == Interpolation::Nearest) {
+        return af::select(mask < 0.5f, af::constant(*fill, image.dims(), image.type()), image);
+    }
+    return mask * (image - *fill) + *fill;
+}
+
+// torchvision's affine grid with each sample's inverse matrix: in float32,
+// step for step, the matrix is scaled by (0.5 W, 0.5 H) and applied to pixel
+// centres relative to the middle (_affine_grid), then GridSample. Half-pixel
+// ties (90 degrees on an even side) round as torchvision's do.
 af::array AffineSample(const af::array& images, const std::vector<std::array<double, 6>>& matrices,
-                       Interpolation interpolation) {
+                       Interpolation interpolation, const float* fill = nullptr) {
     const dim_t h = images.dims(0), w = images.dims(1), n = images.dims(3);
     const af::dim4 grid(h, w, 1, n);
     const float half_w = 0.5f * static_cast<float>(w), half_h = 0.5f * static_cast<float>(h);
@@ -164,28 +278,153 @@ af::array AffineSample(const af::array& images, const std::vector<std::array<dou
     const af::array y = af::iota(af::dim4(h, 1, 1, 1), af::dim4(1, w, 1, n), f32) - (half_h - 0.5f);
     const af::array gx = x * PerSample(ax, grid) + y * PerSample(bx, grid) + PerSample(cx, grid);
     const af::array gy = x * PerSample(ay, grid) + y * PerSample(by, grid) + PerSample(cy, grid);
-    const af::array sx = ((gx + 1.0f) * static_cast<float>(w) - 1.0f) / 2.0f;
-    const af::array sy = ((gy + 1.0f) * static_cast<float>(h) - 1.0f) / 2.0f;
-    if (interpolation == Interpolation::Nearest) {
-        return GatherPixels(images, RoundHalfEven(sy), RoundHalfEven(sx));
-    }
-    const af::array x0 = af::floor(sx), y0 = af::floor(sy);
-    const af::array wx = sx - x0, wy = sy - y0;
-    const unsigned c = static_cast<unsigned>(images.dims(2));
-    const auto weight = [c](const af::array& v) { return af::tile(v, 1, 1, c, 1); };
-    return GatherPixels(images, y0, x0) * weight((1 - wy) * (1 - wx)) +
-           GatherPixels(images, y0, x0 + 1) * weight((1 - wy) * wx) +
-           GatherPixels(images, y0 + 1, x0) * weight(wy * (1 - wx)) +
-           GatherPixels(images, y0 + 1, x0 + 1) * weight(wy * wx);
+    return GridSample(images, gx, gy, interpolation, fill);
 }
 
-// torchvision F.rotate: the inverse affine of -angle about the image centre.
+// torchvision RandomRotation (F.rotate with its fill 0): the inverse affine
+// of -angle about the image centre.
 af::array Rotate(const af::array& images, const std::vector<float>& degrees, Interpolation interpolation) {
     std::vector<std::array<double, 6>> matrices(degrees.size());
     for (size_t i = 0; i < degrees.size(); ++i) {
         matrices[i] = InverseAffineMatrix(0.0, 0.0, -static_cast<double>(degrees[i]), 0.0, 0.0, 1.0, 0.0, 0.0);
     }
-    return AffineSample(images, matrices, interpolation);
+    const float fill = 0.0f;
+    return AffineSample(images, matrices, interpolation, &fill);
+}
+
+// torchvision RandomAffine (F.affine about the image centre): each sample's
+// angle, translation (pixels), scale and shears from its factors.
+af::array Affine(const af::array& images, const ImageOpDraws& draws, Interpolation interpolation, float fill) {
+    std::vector<std::array<double, 6>> matrices(draws.factors.size());
+    for (size_t i = 0; i < matrices.size(); ++i) {
+        const auto& f = draws.factors[i];
+        matrices[i] = InverseAffineMatrix(0.0, 0.0, f[0], f[1], f[2], f[3], f[4], f[5]);
+    }
+    return AffineSample(images, matrices, interpolation, &fill);
+}
+
+// torch interpolate's weights from `in_size` pixels to `out` along one axis,
+// per sample reading only [start, start + size) (its crop box), built on the
+// device: [out, in_size, 1, N]. Bilinear is the antialiased filter
+// torchvision resize uses (antialias=True: a triangle widened by the scale
+// when shrinking, the plain bilinear when growing, normalised over its
+// window); nearest takes floor(i * scale).
+af::array ResampleWeights(dim_t in_size, const std::vector<int>& starts, const std::vector<int>& sizes, int out,
+                          Interpolation interpolation) {
+    const af::dim4 dims(out, in_size, 1, static_cast<dim_t>(starts.size()));
+    const af::array size = PerSample(ToFloat(sizes), dims);
+    const af::array i = af::iota(af::dim4(out, 1, 1, 1), af::dim4(1, in_size, 1, dims[3]), f32);
+    const af::array j = af::iota(af::dim4(1, in_size, 1, 1), af::dim4(out, 1, 1, dims[3]), f32) -
+                        PerSample(ToFloat(starts), dims);  // the pixel's place in the box
+    const af::array scale = size / static_cast<float>(out);
+    if (interpolation == Interpolation::Nearest) {
+        const af::array source =
+            af::select(size == static_cast<float>(out), i, (af::min)(af::floor(i * scale), size - 1.0f));
+        return (j == source).as(f32);
+    }
+    const af::array shrinking = scale >= 1.0f;
+    const af::array support = af::select(shrinking, scale, af::constant(1.0f, dims));
+    const af::array invscale = af::select(shrinking, 1.0f / scale, af::constant(1.0f, dims));
+    const af::array center = scale * (i + 0.5f);
+    const af::array first = (af::max)(af::trunc(center - support + 0.5f), 0.0f);
+    const af::array last = (af::min)(af::trunc(center + support + 0.5f), size);
+    const af::array weights =
+        (j >= first && j < last).as(f32) * (af::max)(1.0f - af::abs((j - center + 0.5f) * invscale), 0.0f);
+    const af::array total = af::tile(af::sum(weights, 1), 1, static_cast<unsigned>(in_size), 1, 1);
+    return af::select(total != 0.0f, weights / total, af::constant(0.0f, dims));
+}
+
+// torchvision F.resized_crop: each sample's box resized to height x width,
+// as two batched matrix products (rows, then columns).
+af::array ResizedCrop(const af::array& images, const ImageOpDraws& draws, int height, int width,
+                      Interpolation interpolation) {
+    const dim_t h = images.dims(0), w = images.dims(1), c = images.dims(2), n = images.dims(3);
+    const af::array rows_op = ResampleWeights(h, draws.top, draws.box_height, height, interpolation);
+    const af::array cols_op = ResampleWeights(w, draws.left, draws.box_width, width, interpolation);
+    const af::array along_h =
+        af::moddims(af::matmul(rows_op, af::moddims(images, h, w * c, 1, n)), height, w, c, n);
+    const af::array by_width = af::moddims(af::reorder(along_h, 1, 0, 2, 3), w, height * c, 1, n);
+    const af::array along_w = af::moddims(af::matmul(cols_op, by_width), width, height, c, n);
+    return af::reorder(along_w, 1, 0, 2, 3);
+}
+
+// torchvision _get_perspective_coeffs: the a..h mapping an output pixel
+// (x, y) to ((ax + by + c), (dx + ey + f)) / (gx + hy + 1) in the input, from
+// the drawn end corners back to the image's own; the exact 8 x 8 solve in
+// double, then float32. False when the corners give no mapping (three or
+// more on one line, possible on tiny images with a large distortion).
+bool SolvePerspective(const std::vector<int>& corners, int height, int width, std::array<float, 8>& out) {
+    if (corners.size() != 8) return false;
+    const double start[4][2] = {{0.0, 0.0}, {width - 1.0, 0.0}, {width - 1.0, height - 1.0}, {0.0, height - 1.0}};
+    std::array<std::array<double, 9>, 8> a{};
+    for (int i = 0; i < 4; ++i) {
+        const double ex = corners[static_cast<size_t>(2 * i)], ey = corners[static_cast<size_t>(2 * i + 1)];
+        const double sx = start[i][0], sy = start[i][1];
+        a[static_cast<size_t>(2 * i)] = {ex, ey, 1.0, 0.0, 0.0, 0.0, -sx * ex, -sx * ey, sx};
+        a[static_cast<size_t>(2 * i + 1)] = {0.0, 0.0, 0.0, ex, ey, 1.0, -sy * ex, -sy * ey, sy};
+    }
+    for (size_t col = 0; col < 8; ++col) {  // Gauss-Jordan with partial pivoting
+        size_t pivot = col;
+        for (size_t r = col + 1; r < 8; ++r)
+            if (std::fabs(a[r][col]) > std::fabs(a[pivot][col])) pivot = r;
+        if (std::fabs(a[pivot][col]) < 1e-9) return false;
+        std::swap(a[col], a[pivot]);
+        for (size_t r = 0; r < 8; ++r) {
+            if (r == col || a[r][col] == 0.0) continue;
+            const double f = a[r][col] / a[col][col];
+            for (size_t k = col; k < 9; ++k) a[r][k] -= f * a[col][k];
+        }
+    }
+    for (size_t i = 0; i < 8; ++i) out[i] = static_cast<float>(a[i][8] / a[i][i]);
+    return true;
+}
+
+// torchvision F.perspective (_perspective_grid in float32, then GridSample)
+// on the samples whose apply is set.
+af::array Perspective(const af::array& images, const ImageOpDraws& draws, Interpolation interpolation, float fill) {
+    const dim_t h = images.dims(0), w = images.dims(1), n = images.dims(3);
+    const af::dim4 grid(h, w, 1, n);
+    const float half_w = 0.5f * static_cast<float>(w), half_h = 0.5f * static_cast<float>(h);
+    std::array<std::vector<float>, 8> c;
+    for (auto& v : c) v.assign(static_cast<size_t>(n), 0.0f);
+    for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
+        std::array<float, 8> k{1, 0, 0, 0, 1, 0, 0, 0};
+        if (draws.apply[i] && !SolvePerspective(draws.corners[i], static_cast<int>(h), static_cast<int>(w), k)) {
+            throw std::invalid_argument("Random Perspective needs 8 corner values per sample that are not on one line");
+        }
+        for (size_t j = 0; j < 8; ++j) c[j][i] = k[j];
+    }
+    const auto scaled = [&](const std::vector<float>& v, float by) {
+        std::vector<float> out(v.size());
+        for (size_t i = 0; i < v.size(); ++i) out[i] = v[i] / by;
+        return PerSample(out, grid);
+    };
+    const af::array x = af::iota(af::dim4(1, w, 1, 1), af::dim4(h, 1, 1, n), f32) + 0.5f;
+    const af::array y = af::iota(af::dim4(h, 1, 1, 1), af::dim4(1, w, 1, n), f32) + 0.5f;
+    const af::array den = x * PerSample(c[6], grid) + y * PerSample(c[7], grid) + 1.0f;
+    const af::array gx = (x * scaled(c[0], half_w) + y * scaled(c[1], half_w) + scaled(c[2], half_w)) / den - 1.0f;
+    const af::array gy = (x * scaled(c[3], half_h) + y * scaled(c[4], half_h) + scaled(c[5], half_h)) / den - 1.0f;
+    return af::select(PerSampleMask(draws.apply, images.dims()), GridSample(images, gx, gy, interpolation, &fill),
+                      images);
+}
+
+// torchvision v2 gaussian_noise on floats: image + (mean + N(0, 1) * sigma),
+// clamped to [0, 1] when clip. The noise is the draws' own (as recorded) or
+// drawn on the device from their seed.
+af::array GaussianNoise(const af::array& images, const ImageOpDraws& draws, const ImageOp& op, const ImageShape& shape) {
+    af::array noise;
+    if (!draws.noise.empty()) {
+        const dim_t n = images.dims(3);
+        if (draws.noise.size() != shape.Size() * static_cast<size_t>(n)) {
+            throw std::invalid_argument("Gaussian Noise needs one noise value per pixel of every sample");
+        }
+        noise = RowsToImages(af::transpose(af::array(static_cast<dim_t>(shape.Size()), n, draws.noise.data())), shape);
+    } else {
+        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, draws.noise_seed);
+        noise = af::randn(images.dims(), f32, engine);
+    }
+    const af::array out = images + (op.noise_mean + noise * op.sigma);
+    return op.clip ? af::clamp(out, 0.0, 1.0) : out;
 }
 
 af::array Luminance(const af::array& images) {
@@ -446,11 +685,11 @@ af::array Equalize(const af::array& images) {
     return af::moddims(af::select(valid, equalized, flat), h, w, c, n) / 255.0f;
 }
 
-af::array RandAugmentStep(const af::array& images, const std::vector<int>& ops, const std::vector<float>& magnitudes,
-                          int op_index, Interpolation interpolation) {
+af::array PolicyStep(const af::array& images, const std::vector<int>& ops, const std::vector<float>& magnitudes,
+                     int op_index, Interpolation interpolation) {
     const af::dim4 dims = images.dims();
     const size_t n = ops.size();
-    const RandAugmentOp op = static_cast<RandAugmentOp>(op_index);
+    const AugmentOp op = static_cast<AugmentOp>(op_index);
     const auto per_sample = [&](float neutral, auto value_of) {
         std::vector<float> values(n, neutral);
         for (size_t i = 0; i < n; ++i) {
@@ -467,72 +706,105 @@ af::array RandAugmentStep(const af::array& images, const std::vector<int>& ops, 
     };
     const double w = static_cast<double>(dims[1]), h = static_cast<double>(dims[0]);
     switch (op) {
-        case RandAugmentOp::Identity:
+        case AugmentOp::Identity:
             return images;
-        case RandAugmentOp::ShearX:  // centre [0, 0] = the top-left corner
+        case AugmentOp::ShearX:  // centre [0, 0] = the top-left corner
             return affine([&](double m) {
                 return InverseAffineMatrix(-0.5 * w, -0.5 * h, 0.0, 0.0, 0.0, 1.0, std::atan(m) * 180.0 / kPi, 0.0);
             });
-        case RandAugmentOp::ShearY:
+        case AugmentOp::ShearY:
             return affine([&](double m) {
                 return InverseAffineMatrix(-0.5 * w, -0.5 * h, 0.0, 0.0, 0.0, 1.0, 0.0, std::atan(m) * 180.0 / kPi);
             });
-        case RandAugmentOp::TranslateX:
+        case AugmentOp::TranslateX:
             return affine([](double m) {
                 return InverseAffineMatrix(0.0, 0.0, 0.0, static_cast<double>(static_cast<int>(m)), 0.0, 1.0, 0.0, 0.0);
             });
-        case RandAugmentOp::TranslateY:
+        case AugmentOp::TranslateY:
             return affine([](double m) {
                 return InverseAffineMatrix(0.0, 0.0, 0.0, 0.0, static_cast<double>(static_cast<int>(m)), 1.0, 0.0, 0.0);
             });
-        case RandAugmentOp::Rotate:
+        case AugmentOp::Rotate:
             return affine([](double m) { return InverseAffineMatrix(0.0, 0.0, -m, 0.0, 0.0, 1.0, 0.0, 0.0); });
-        case RandAugmentOp::Brightness:
+        case AugmentOp::Brightness:
             return AdjustBrightness(images, per_sample(1.0f, [](float m) { return 1.0f + m; }));
-        case RandAugmentOp::Color:
+        case AugmentOp::Color:
             return AdjustSaturation(images, per_sample(1.0f, [](float m) { return 1.0f + m; }));
-        case RandAugmentOp::Contrast:
+        case AugmentOp::Contrast:
             return AdjustContrast(images, per_sample(1.0f, [](float m) { return 1.0f + m; }));
-        case RandAugmentOp::Sharpness:
+        case AugmentOp::Sharpness:
             return AdjustSharpness(images, per_sample(1.0f, [](float m) { return 1.0f + m; }));
-        case RandAugmentOp::Posterize:
+        case AugmentOp::Posterize:
             return Posterize(images, per_sample(256.0f, [](float m) {
                 return static_cast<float>(1 << static_cast<int>(m));
             }));
-        case RandAugmentOp::Solarize:
+        case AugmentOp::Solarize:
             return Solarize(images, per_sample(2.0f, [](float m) { return m; }));
-        case RandAugmentOp::AutoContrast:
+        case AugmentOp::AutoContrast:
             return AutoContrast(images);
-        case RandAugmentOp::Equalize:
+        case AugmentOp::Equalize:
             return Equalize(images);
+        case AugmentOp::Invert:
+            return 1.0f - images;
     }
     return images;
 }
 
-af::array RandAugment(af::array images, const ImageOpDraws& draws, Interpolation interpolation) {
+// One pick per sample: draws' order[i][step] with its magnitude.
+af::array PolicyPicks(af::array images, const ImageOpDraws& draws, size_t step, Interpolation interpolation) {
     const size_t n = draws.order.size();
-    const size_t steps = n == 0 ? 0 : draws.order.front().size();
     const af::dim4 dims = images.dims();
-    for (size_t step = 0; step < steps; ++step) {
-        std::vector<int> ops(n);
-        std::vector<float> magnitudes(n);
+    std::vector<int> ops(n);
+    std::vector<float> magnitudes(n);
+    for (size_t i = 0; i < n; ++i) {
+        ops[i] = draws.order[i][step];
+        magnitudes[i] = draws.factors[i][step];
+    }
+    for (int op = 1; op < kAugmentOps; ++op) {
+        std::vector<int> chosen(n);
+        bool any = false;
         for (size_t i = 0; i < n; ++i) {
-            ops[i] = draws.order[i][step];
-            magnitudes[i] = draws.factors[i][step];
+            chosen[i] = ops[i] == op ? 1 : 0;
+            any = any || chosen[i];
         }
-        for (int op = 1; op < kRandAugmentOps; ++op) {
-            std::vector<int> chosen(n);
-            bool any = false;
-            for (size_t i = 0; i < n; ++i) {
-                chosen[i] = ops[i] == op ? 1 : 0;
-                any = any || chosen[i];
-            }
-            if (!any) continue;
-            images = af::select(PerSampleMask(chosen, dims),
-                                RandAugmentStep(images, ops, magnitudes, op, interpolation), images);
-        }
+        if (!any) continue;
+        images = af::select(PerSampleMask(chosen, dims), PolicyStep(images, ops, magnitudes, op, interpolation), images);
     }
     return images;
+}
+
+// RandAugment, AutoAugment, TrivialAugment: each sample's picks in order.
+af::array PolicyAugment(af::array images, const ImageOpDraws& draws, Interpolation interpolation) {
+    const size_t steps = draws.order.empty() ? 0 : draws.order.front().size();
+    for (size_t step = 0; step < steps; ++step) images = PolicyPicks(images, draws, step, interpolation);
+    return images;
+}
+
+// torchvision v2 AugMix: the original weighted by weights[i][0] plus each
+// chain's result weighted by its weight; a chain's picks are its slots of
+// order, Identity past its depth. A chain no sample weighs (no sample drew
+// AugMix) is not run.
+af::array AugMix(const af::array& images, const ImageOpDraws& draws, int mixture_width, Interpolation interpolation) {
+    const size_t n = draws.order.size();
+    const size_t slots = n == 0 ? 0 : draws.order.front().size() / static_cast<size_t>(mixture_width);
+    const auto weighed = [&](size_t k) {
+        for (size_t i = 0; i < n; ++i)
+            if (draws.weights[i][k] != 0.0f) return true;
+        return false;
+    };
+    const auto weight = [&](size_t k) {
+        std::vector<float> values(n);
+        for (size_t i = 0; i < n; ++i) values[i] = draws.weights[i][k];
+        return PerSample(values, images.dims());
+    };
+    af::array mix = weight(0) * images;
+    for (size_t chain = 0; chain < static_cast<size_t>(mixture_width); ++chain) {
+        if (!weighed(chain + 1)) continue;
+        af::array augmented = images;
+        for (size_t s = 0; s < slots; ++s) augmented = PolicyPicks(augmented, draws, chain * slots + s, interpolation);
+        mix = mix + weight(chain + 1) * augmented;
+    }
+    return mix;
 }
 
 // Sets each sample's box [top, top + h) x [left, left + w) to value
@@ -607,8 +879,38 @@ af::array ApplyOnDevice(const ImageOp& op, const ImageOpDraws& draws, const Imag
             if (draws.box_height.empty()) return images;
             return Erase(images, draws, op.value);
         case ImageOpKind::RandAugment:
+        case ImageOpKind::AutoAugment:
+        case ImageOpKind::TrivialAugment:
             if (draws.order.empty()) return images;
-            return RandAugment(images, draws, op.interpolation);
+            return PolicyAugment(images, draws, op.interpolation);
+        case ImageOpKind::AugMix:
+            if (draws.order.empty()) return images;
+            return AugMix(images, draws, op.mixture_width, op.interpolation);
+        case ImageOpKind::RandomResizedCrop:
+            if (draws.top.size() != static_cast<size_t>(dims[3]) || draws.left.size() != draws.top.size() ||
+                draws.box_height.size() != draws.top.size() || draws.box_width.size() != draws.top.size()) {
+                throw std::invalid_argument("Random Resized Crop needs one box per sample");
+            }
+            for (size_t i = 0; i < draws.top.size(); ++i) {
+                if (draws.box_height[i] < 1 || draws.box_width[i] < 1 || draws.top[i] < 0 || draws.left[i] < 0 ||
+                    static_cast<dim_t>(draws.top[i] + draws.box_height[i]) > dims[0] ||
+                    static_cast<dim_t>(draws.left[i] + draws.box_width[i]) > dims[1]) {
+                    throw std::invalid_argument("Random Resized Crop boxes must lie inside the image");
+                }
+            }
+            return ResizedCrop(images, draws, op.height, op.width, op.interpolation);
+        case ImageOpKind::RandomAffine:
+            if (draws.factors.empty()) return images;
+            return Affine(images, draws, op.interpolation, op.fill);
+        case ImageOpKind::RandomPerspective:
+            if (draws.apply.empty()) return images;
+            return Perspective(images, draws, op.interpolation, op.fill);
+        case ImageOpKind::GaussianNoise:
+            if (draws.apply.empty()) return images;  // outside training
+            return GaussianNoise(images, draws, op, shape);
+        case ImageOpKind::RandomGrayscale:
+            if (draws.apply.empty() || shape.channels != 3) return images;
+            return af::select(PerSampleMask(draws.apply, dims), af::tile(Luminance(images), 1, 1, 3, 1), images);
     }
     return images;
 }
@@ -624,6 +926,14 @@ bool IsRandomImageOp(ImageOpKind kind) {
         case ImageOpKind::ColorJitter:
         case ImageOpKind::Erase:
         case ImageOpKind::RandAugment:
+        case ImageOpKind::RandomResizedCrop:
+        case ImageOpKind::RandomAffine:
+        case ImageOpKind::RandomPerspective:
+        case ImageOpKind::GaussianNoise:
+        case ImageOpKind::RandomGrayscale:
+        case ImageOpKind::AutoAugment:
+        case ImageOpKind::TrivialAugment:
+        case ImageOpKind::AugMix:
             return true;
         default:
             return false;
@@ -727,6 +1037,72 @@ std::string ValidateImageOp(const ImageOp& op, const ImageShape& input) {
                 return "Advanced Augment needs 0 < ratio_min <= ratio_max";
             }
             return {};
+        case ImageOpKind::RandomResizedCrop:
+            if (op.height <= 0 || op.width <= 0) return "Random Resized Crop needs a positive width and height";
+            if (!(op.scale_min > 0.0f && op.scale_min <= op.scale_max && op.scale_max <= 1.0f)) {
+                return "Random Resized Crop needs 0 < scale_min <= scale_max <= 1 (the box's share of the image area)";
+            }
+            if (!(op.ratio_min > 0.0f && op.ratio_min <= op.ratio_max)) {
+                return "Random Resized Crop needs 0 < ratio_min <= ratio_max (the box's width / height)";
+            }
+            return {};
+        case ImageOpKind::RandomAffine:
+            if (!(op.max_angle >= 0.0f && op.max_angle <= 180.0f)) {
+                return "Random Affine degrees must be between 0 and 180";
+            }
+            if (!(op.translate_x >= 0.0f && op.translate_x <= 1.0f && op.translate_y >= 0.0f && op.translate_y <= 1.0f)) {
+                return "Random Affine translate is a fraction of the image between 0 and 1";
+            }
+            if (!(op.zoom_min > 0.0f && op.zoom_min <= op.zoom_max)) return "Random Affine needs 0 < scale_min <= scale_max";
+            if (!(op.shear_x_min <= op.shear_x_max && op.shear_y_min <= op.shear_y_max && op.shear_x_min > -90.0f &&
+                  op.shear_x_max < 90.0f && op.shear_y_min > -90.0f && op.shear_y_max < 90.0f)) {
+                return "Random Affine shears need min <= max, inside (-90, 90) degrees";
+            }
+            if (!(op.fill >= 0.0f && op.fill <= 1.0f)) return "Random Affine fill is a pixel value between 0 and 1";
+            return {};
+        case ImageOpKind::RandomPerspective:
+            if (!(op.distortion >= 0.0f && op.distortion <= 1.0f)) {
+                return "Random Perspective distortion must be between 0 and 1";
+            }
+            if (!(op.probability >= 0.0f && op.probability <= 1.0f)) {
+                return "Random Perspective probability must be between 0 and 1";
+            }
+            if (!(op.fill >= 0.0f && op.fill <= 1.0f)) return "Random Perspective fill is a pixel value between 0 and 1";
+            if (input.height < 2 || input.width < 2) return "Random Perspective needs an image of 2 x 2 or more";
+            return {};
+        case ImageOpKind::GaussianNoise:
+            if (!(op.sigma >= 0.0f && std::isfinite(op.sigma))) return "Gaussian Noise sigma must be 0 or more";
+            if (!std::isfinite(op.noise_mean)) return "Gaussian Noise mean must be a number";
+            return {};
+        case ImageOpKind::RandomGrayscale:
+            if (!(op.probability >= 0.0f && op.probability <= 1.0f)) {
+                return "Random Grayscale probability must be between 0 and 1";
+            }
+            if (input.channels != 1 && input.channels != 3) return "Random Grayscale needs a 1- or 3-channel image";
+            return {};
+        case ImageOpKind::AutoAugment:
+        case ImageOpKind::TrivialAugment:
+        case ImageOpKind::AugMix:
+            if (!(op.probability >= 0.0f && op.probability <= 1.0f)) {
+                return "Advanced Augment probability must be between 0 and 1";
+            }
+            if (input.channels != 1 && input.channels != 3) {
+                return "Advanced Augment's policies need a 1- or 3-channel image";
+            }
+            if (op.kind == ImageOpKind::TrivialAugment && (op.magnitude_bins < 2 || op.magnitude_bins > 100)) {
+                return "Advanced Augment magnitude_bins must be between 2 and 100";
+            }
+            if (op.kind == ImageOpKind::AugMix) {
+                if (op.severity < 1 || op.severity > 10) return "Advanced Augment severity must be between 1 and 10";
+                if (op.mixture_width < 1 || op.mixture_width > 10) {
+                    return "Advanced Augment mixture_width must be between 1 and 10";
+                }
+                if (op.chain_depth == 0 || op.chain_depth < -1 || op.chain_depth > 10) {
+                    return "Advanced Augment chain_depth is 1 to 10, or -1 for 1 to 3 at random";
+                }
+                if (!(op.alpha > 0.0f)) return "Advanced Augment alpha must be greater than 0";
+            }
+            return {};
     }
     return {};
 }
@@ -735,7 +1111,8 @@ ImageShape ImageShapeAfter(const ImageOp& op, const ImageShape& input) {
     const std::string reason = ValidateImageOp(op, input);
     if (!reason.empty()) throw std::invalid_argument(reason);
     ImageShape out = input;
-    if (op.kind == ImageOpKind::CenterCrop || op.kind == ImageOpKind::RandomCrop) {
+    if (op.kind == ImageOpKind::CenterCrop || op.kind == ImageOpKind::RandomCrop ||
+        op.kind == ImageOpKind::RandomResizedCrop) {
         out.height = static_cast<size_t>(op.height);
         out.width = static_cast<size_t>(op.width);
     } else if (op.kind == ImageOpKind::Grayscale) {
@@ -815,9 +1192,10 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
                 if (!(unit(rng) < op.probability)) continue;  // Identity picks
                 for (int pick = 0; pick < op.num_ops; ++pick) {
                     const int id = std::uniform_int_distribution<int>(0, kRandAugmentOps - 1)(rng);
-                    const auto chosen = static_cast<RandAugmentOp>(id);
-                    float m = RandAugmentMagnitude(chosen, op.magnitude, input.height, input.width);
-                    if (RandAugmentSigned(chosen) && unit(rng) <= 0.5f) m = -m;
+                    const auto chosen = static_cast<AugmentOp>(id);
+                    float m = AugmentMagnitude(AugmentSpace::Standard, chosen, kRandAugmentBins, op.magnitude,
+                                               input.height, input.width);
+                    if (AugmentSigned(chosen) && unit(rng) <= 0.5f) m = -m;
                     draws.order[i][static_cast<size_t>(pick)] = id;
                     draws.factors[i][static_cast<size_t>(pick)] = m;
                 }
@@ -865,6 +1243,173 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             }
             break;
         }
+        case ImageOpKind::RandomResizedCrop: {
+            // torchvision RandomResizedCrop.make_params: ten tries at a box of
+            // random area and aspect (w / h); else, and outside training, the
+            // centred box of the nearest allowed aspect.
+            draws.top.assign(batch, 0);
+            draws.left.assign(batch, 0);
+            draws.box_height.assign(batch, 0);
+            draws.box_width.assign(batch, 0);
+            const int h = static_cast<int>(input.height), w = static_cast<int>(input.width);
+            const double area = static_cast<double>(h) * w;
+            const double log_min = std::log(op.ratio_min), log_max = std::log(op.ratio_max);
+            for (size_t i = 0; i < batch; ++i) {
+                bool found = false;
+                for (int attempt = 0; training && attempt < 10 && !found; ++attempt) {
+                    const double target = area * std::uniform_real_distribution<double>(op.scale_min, op.scale_max)(rng);
+                    const double aspect = std::exp(std::uniform_real_distribution<double>(log_min, log_max)(rng));
+                    const int bw = RoundHalfEven(std::sqrt(target * aspect));
+                    const int bh = RoundHalfEven(std::sqrt(target / aspect));
+                    if (!(bw > 0 && bw <= w && bh > 0 && bh <= h)) continue;
+                    draws.top[i] = std::uniform_int_distribution<int>(0, h - bh)(rng);
+                    draws.left[i] = std::uniform_int_distribution<int>(0, w - bw)(rng);
+                    draws.box_height[i] = bh;
+                    draws.box_width[i] = bw;
+                    found = true;
+                }
+                if (found) continue;
+                const double in_ratio = static_cast<double>(w) / h;
+                int bw = w, bh = h;
+                if (in_ratio < op.ratio_min) {
+                    bh = (std::max)(RoundHalfEven(w / static_cast<double>(op.ratio_min)), 1);
+                } else if (in_ratio > op.ratio_max) {
+                    bw = (std::max)(RoundHalfEven(h * static_cast<double>(op.ratio_max)), 1);
+                }
+                draws.top[i] = (h - bh) / 2;
+                draws.left[i] = (w - bw) / 2;
+                draws.box_height[i] = bh;
+                draws.box_width[i] = bw;
+            }
+            break;
+        }
+        case ImageOpKind::RandomAffine: {
+            // torchvision RandomAffine.make_params; the shift rounds to whole pixels.
+            if (!training) break;
+            draws.factors.resize(batch);
+            const double max_dx = op.translate_x * static_cast<double>(input.width);
+            const double max_dy = op.translate_y * static_cast<double>(input.height);
+            for (auto& f : draws.factors) {
+                const double angle = std::uniform_real_distribution<double>(-op.max_angle, op.max_angle)(rng);
+                const double tx = RoundHalfEven(std::uniform_real_distribution<double>(-max_dx, max_dx)(rng));
+                const double ty = RoundHalfEven(std::uniform_real_distribution<double>(-max_dy, max_dy)(rng));
+                const double scale = std::uniform_real_distribution<double>(op.zoom_min, op.zoom_max)(rng);
+                const double shear_x = std::uniform_real_distribution<double>(op.shear_x_min, op.shear_x_max)(rng);
+                const double shear_y = std::uniform_real_distribution<double>(op.shear_y_min, op.shear_y_max)(rng);
+                f = {static_cast<float>(angle), static_cast<float>(tx), static_cast<float>(ty),
+                     static_cast<float>(scale), static_cast<float>(shear_x), static_cast<float>(shear_y)};
+            }
+            break;
+        }
+        case ImageOpKind::RandomPerspective: {
+            // torchvision RandomPerspective.make_params: each corner moves
+            // inwards by up to distortion of half the side.
+            if (!training) break;
+            draws.apply.assign(batch, 0);
+            draws.corners.assign(batch, std::vector<int>(8, 0));
+            const int h = static_cast<int>(input.height), w = static_cast<int>(input.width);
+            const int bound_h = static_cast<int>(op.distortion * static_cast<float>(h / 2)) + 1;
+            const int bound_w = static_cast<int>(op.distortion * static_cast<float>(w / 2)) + 1;
+            const auto pick = [&rng](int low, int high) { return std::uniform_int_distribution<int>(low, high - 1)(rng); };
+            for (size_t i = 0; i < batch; ++i) {
+                if (!(unit(rng) < op.probability)) continue;
+                draws.corners[i] = {pick(0, bound_w),     pick(0, bound_h),     pick(w - bound_w, w), pick(0, bound_h),
+                                    pick(w - bound_w, w), pick(h - bound_h, h), pick(0, bound_w),     pick(h - bound_h, h)};
+                // Corners with no mapping (torchvision's lstsq would return
+                // a meaningless one) leave the image as it is.
+                std::array<float, 8> unused{};
+                draws.apply[i] = SolvePerspective(draws.corners[i], h, w, unused) ? 1 : 0;
+            }
+            break;
+        }
+        case ImageOpKind::GaussianNoise:
+            if (!training) break;
+            draws.apply.assign(batch, 1);
+            draws.noise_seed = static_cast<uint32_t>(rng());
+            break;
+        case ImageOpKind::RandomGrayscale:
+            if (!training) break;
+            draws.apply.resize(batch);
+            for (auto& apply : draws.apply) apply = unit(rng) < op.probability ? 1 : 0;
+            break;
+        case ImageOpKind::AutoAugment: {
+            // torchvision AutoAugment.forward: a random sub-policy, each of its
+            // two ops with its own probability (else Identity).
+            if (!training) break;
+            draws.order.assign(batch, std::vector<int>(2, 0));
+            draws.factors.assign(batch, std::vector<float>(2, 0.0f));
+            const auto& policies = AutoAugmentPolicies(op.policy);
+            for (size_t i = 0; i < batch; ++i) {
+                if (!(unit(rng) < op.probability)) continue;
+                const Policy& policy = policies[static_cast<size_t>(
+                    std::uniform_int_distribution<int>(0, static_cast<int>(policies.size()) - 1)(rng))];
+                for (size_t s = 0; s < 2; ++s) {
+                    if (!(unit(rng) <= policy[s].probability)) continue;
+                    float m = policy[s].bin < 0 ? 0.0f
+                                                : AugmentMagnitude(AugmentSpace::Standard, policy[s].op, 10, policy[s].bin,
+                                                                   input.height, input.width);
+                    if (policy[s].bin >= 0 && AugmentSigned(policy[s].op) && unit(rng) <= 0.5f) m = -m;
+                    draws.order[i][s] = static_cast<int>(policy[s].op);
+                    draws.factors[i][s] = m;
+                }
+            }
+            break;
+        }
+        case ImageOpKind::TrivialAugment:
+            // torchvision TrivialAugmentWide.forward: one op of 14, one bin.
+            if (!training) break;
+            draws.order.assign(batch, std::vector<int>(1, 0));
+            draws.factors.assign(batch, std::vector<float>(1, 0.0f));
+            for (size_t i = 0; i < batch; ++i) {
+                if (!(unit(rng) < op.probability)) continue;
+                const auto chosen = static_cast<AugmentOp>(std::uniform_int_distribution<int>(0, kRandAugmentOps - 1)(rng));
+                const int bin = std::uniform_int_distribution<int>(0, op.magnitude_bins - 1)(rng);
+                float m = AugmentMagnitude(AugmentSpace::Wide, chosen, op.magnitude_bins, bin, input.height, input.width);
+                if (AugmentSigned(chosen) && unit(rng) <= 0.5f) m = -m;
+                draws.order[i][0] = static_cast<int>(chosen);
+                draws.factors[i][0] = m;
+            }
+            break;
+        case ImageOpKind::AugMix: {
+            // torchvision AugMix.forward: Beta (Dirichlet of two) weights for the
+            // original and the mix, Dirichlet weights across the chains, each
+            // chain chain_depth (or 1 to 3) ops of 13 at a bin below severity.
+            if (!training) break;
+            const size_t chains = static_cast<size_t>(op.mixture_width);
+            const size_t slots = op.chain_depth > 0 ? static_cast<size_t>(op.chain_depth) : 3;
+            draws.order.assign(batch, std::vector<int>(chains * slots, 0));
+            draws.factors.assign(batch, std::vector<float>(chains * slots, 0.0f));
+            draws.weights.assign(batch, std::vector<float>(chains + 1, 0.0f));
+            std::gamma_distribution<double> gamma(op.alpha, 1.0);
+            const auto dirichlet = [&](size_t k) {
+                std::vector<double> g(k);
+                double total = 0.0;
+                for (double& v : g) total += (v = gamma(rng));
+                for (double& v : g) v = total > 0.0 ? v / total : 1.0 / static_cast<double>(k);
+                return g;
+            };
+            for (size_t i = 0; i < batch; ++i) {
+                draws.weights[i][0] = 1.0f;
+                if (!(unit(rng) < op.probability)) continue;
+                const std::vector<double> m = dirichlet(2), mixing = dirichlet(chains);
+                draws.weights[i][0] = static_cast<float>(m[0]);
+                for (size_t c = 0; c < chains; ++c) {
+                    draws.weights[i][c + 1] = static_cast<float>(mixing[c] * m[1]);
+                    const size_t depth = op.chain_depth > 0 ? slots
+                                                            : static_cast<size_t>(std::uniform_int_distribution<int>(1, 3)(rng));
+                    for (size_t s = 0; s < depth; ++s) {
+                        const AugmentOp chosen = kAugMixOps[static_cast<size_t>(
+                            std::uniform_int_distribution<int>(0, static_cast<int>(kAugMixOps.size()) - 1)(rng))];
+                        const int bin = std::uniform_int_distribution<int>(0, op.severity - 1)(rng);
+                        float mag = AugmentMagnitude(AugmentSpace::AugMix, chosen, 10, bin, input.height, input.width);
+                        if (AugmentSigned(chosen) && unit(rng) <= 0.5f) mag = -mag;
+                        draws.order[i][c * slots + s] = static_cast<int>(chosen);
+                        draws.factors[i][c * slots + s] = mag;
+                    }
+                }
+            }
+            break;
+        }
         default:
             break;
     }
@@ -877,44 +1422,51 @@ Tensor ApplyImageOp(const ImageOp& op, const ImageOpDraws& draws, const ImageSha
     return Tensor::FromArrayRowMajor2D(ImagesToRows(ApplyOnDevice(op, draws, input, images)));
 }
 
-float RandAugmentMagnitude(RandAugmentOp op, int magnitude, size_t height, size_t width) {
-    const int bins = kRandAugmentBins;
+float AugmentMagnitude(AugmentSpace space, AugmentOp op, int bins, int index, size_t height, size_t width) {
+    const bool wide = space == AugmentSpace::Wide;
     switch (op) {
-        case RandAugmentOp::ShearX:
-        case RandAugmentOp::ShearY:
-            return LinspaceAt(0.0f, 0.3f, bins, magnitude);
-        case RandAugmentOp::TranslateX:
-            return LinspaceAt(0.0f, 150.0f / 331.0f * static_cast<float>(width), bins, magnitude);
-        case RandAugmentOp::TranslateY:
-            return LinspaceAt(0.0f, 150.0f / 331.0f * static_cast<float>(height), bins, magnitude);
-        case RandAugmentOp::Rotate:
-            return LinspaceAt(0.0f, 30.0f, bins, magnitude);
-        case RandAugmentOp::Brightness:
-        case RandAugmentOp::Color:
-        case RandAugmentOp::Contrast:
-        case RandAugmentOp::Sharpness:
-            return LinspaceAt(0.0f, 0.9f, bins, magnitude);
-        case RandAugmentOp::Posterize:  // 8 - round(m / ((bins - 1) / 4)) bits
-            return static_cast<float>(8 - static_cast<int>(std::nearbyint(
-                static_cast<float>(magnitude) / (static_cast<float>(bins - 1) / 4.0f))));
-        case RandAugmentOp::Solarize:
-            return LinspaceAt(1.0f, 0.0f, bins, magnitude);
+        case AugmentOp::ShearX:
+        case AugmentOp::ShearY:
+            return LinspaceAt(0.0f, wide ? 0.99f : 0.3f, bins, index);
+        case AugmentOp::TranslateX:
+        case AugmentOp::TranslateY: {
+            const size_t side = op == AugmentOp::TranslateX ? width : height;
+            const float end = wide                            ? 32.0f
+                              : space == AugmentSpace::AugMix ? static_cast<float>(static_cast<double>(side) / 3.0)
+                                                              : static_cast<float>(150.0 / 331.0 * static_cast<double>(side));
+            return LinspaceAt(0.0f, end, bins, index);
+        }
+        case AugmentOp::Rotate:
+            return LinspaceAt(0.0f, wide ? 135.0f : 30.0f, bins, index);
+        case AugmentOp::Brightness:
+        case AugmentOp::Color:
+        case AugmentOp::Contrast:
+        case AugmentOp::Sharpness:
+            return LinspaceAt(0.0f, wide ? 0.99f : 0.9f, bins, index);
+        case AugmentOp::Posterize: {  // base - round(i / ((bins - 1) / steps)) bits
+            const int base = space == AugmentSpace::AugMix ? 4 : 8;
+            const float steps = wide ? 6.0f : 4.0f;
+            return static_cast<float>(base - static_cast<int>(std::nearbyint(
+                static_cast<float>(index) / (static_cast<float>(bins - 1) / steps))));
+        }
+        case AugmentOp::Solarize:
+            return LinspaceAt(1.0f, 0.0f, bins, index);
         default:
             return 0.0f;
     }
 }
 
-bool RandAugmentSigned(RandAugmentOp op) {
+bool AugmentSigned(AugmentOp op) {
     switch (op) {
-        case RandAugmentOp::ShearX:
-        case RandAugmentOp::ShearY:
-        case RandAugmentOp::TranslateX:
-        case RandAugmentOp::TranslateY:
-        case RandAugmentOp::Rotate:
-        case RandAugmentOp::Brightness:
-        case RandAugmentOp::Color:
-        case RandAugmentOp::Contrast:
-        case RandAugmentOp::Sharpness:
+        case AugmentOp::ShearX:
+        case AugmentOp::ShearY:
+        case AugmentOp::TranslateX:
+        case AugmentOp::TranslateY:
+        case AugmentOp::Rotate:
+        case AugmentOp::Brightness:
+        case AugmentOp::Color:
+        case AugmentOp::Contrast:
+        case AugmentOp::Sharpness:
             return true;
         default:
             return false;
@@ -983,7 +1535,17 @@ Tensor ImageAugmentation::Apply(const Tensor& rows, const ImageShape& input, boo
             *labels = Tensor::FromArrayRowMajor2D(MixLabels(draw, labels->GetArrayRowMajor2D()));
         }
     }
-    if (normalize) {
+    if (normalize && !channel_mean.empty()) {
+        // images are [H, W, C, N]: one mean and std per channel, tiled over the rest.
+        const unsigned channels = static_cast<unsigned>(images.dims(2));
+        if (channel_mean.size() != static_cast<size_t>(channels) || channel_std.size() != channel_mean.size())
+            throw std::invalid_argument("Normalize has " + std::to_string(channel_mean.size()) +
+                                        " channel means for images with " + std::to_string(channels) + " channels");
+        const af::dim4 tiles(images.dims(0), images.dims(1), 1, images.dims(3));
+        const af::array m = af::tile(af::array(1, 1, channels, 1, channel_mean.data()), tiles);
+        const af::array s = af::tile(af::array(1, 1, channels, 1, channel_std.data()), tiles);
+        images = (images - m) / s;
+    } else if (normalize) {
         images = (images - mean) / std_dev;
     }
     return Tensor::FromArrayRowMajor2D(ImagesToRows(images));

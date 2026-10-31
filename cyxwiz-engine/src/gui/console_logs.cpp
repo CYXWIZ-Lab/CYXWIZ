@@ -923,7 +923,12 @@ void Console::RenderInspectorTable(const cyxwiz::RuntimeLogInspectorResult *resu
   const float message_w =
       std::max(80.0f, ImGui::GetContentRegionAvail().x - fixed - style.ScrollbarSize - style.CellPadding.x * 2.0f);
 
-  if (!ImGui::BeginTable("RuntimeLogTable", static_cast<int>(columns.size()), flags))
+  // One table ID per column set: ImGui keeps column widths by index, so when
+  // Source / Run / Device appear (a training run starts) the old stretched
+  // Message width would land on Source and push Message off the right edge.
+  std::string table_id = "RuntimeLogTable";
+  for (Column column : columns) table_id += static_cast<char>('a' + column);
+  if (!ImGui::BeginTable(table_id.c_str(), static_cast<int>(columns.size()), flags))
     return;
   ImGui::TableSetupScrollFreeze(0, 1);
   for (Column column : columns) {

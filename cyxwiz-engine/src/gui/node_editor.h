@@ -21,6 +21,7 @@ struct ImNodesEditorContext;
 // Forward declarations
 // Forward declare ScriptingEngine in global scripting namespace
 #include "../core/graph_model.h"
+#include "../core/studio_toolbar_presentation.h"
 #include "../core/operator_figures.h"
 #include "../core/pipeline_node_run_facts.h"
 
@@ -273,9 +274,19 @@ public:
 
     // Set properties panel for node selection display
     void SetPropertiesPanel(Properties* properties) { properties_panel_ = properties; }
+    // Data Studio's image recipe edits a step's settings with Properties' editor.
+    Properties* GetPropertiesPanel() const { return properties_panel_; }
     // The background compile of this graph (TOFIX123): link tooltips show
     // the compiler's reason for a failed node. Owned by MainWindow.
     void SetLiveCompile(const cyxwiz::LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
+    const cyxwiz::LiveGraphCompile* GetLiveCompile() const { return live_compile_; }
+    // The last Local Debug run against this graph, for the canvas bar
+    // (TOFIX178 UI-1); MainWindow sets it every frame.
+    void SetLocalDebugStatus(const cyxwiz::studio_toolbar::DebugInputs& status, bool require_debug) {
+        local_debug_status_ = status;
+        require_debug_before_train_ = require_debug;
+    }
+    void SetOpenDebuggerCallback(std::function<void()> callback) { open_debugger_callback_ = std::move(callback); }
 
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
@@ -326,6 +337,9 @@ public:
     // node's dialog); nullptr when it no longer exists.
     MLNode* GetNodeForConfiguration(int node_id) { return FindNodeById(node_id); }
     const std::string& GetCurrentFilePath() const { return current_file_path_; }
+    // Counts graph replacements (clear, new, open): a view drops what it
+    // said about the graph before.
+    uint64_t GraphGeneration() const { return graph_generation_; }
     // File > Save: writes the graph to its file, asking for one the first time.
     // An empty graph is nothing to save and returns true.
     bool SaveCurrentGraph();
@@ -371,6 +385,23 @@ public:
     // Explain Node callback - opens a node-scoped explanation in Studio Debugger.
     using ExplainNodeCallback = std::function<void(int)>;
     void SetExplainNodeCallback(ExplainNodeCallback callback) { explain_node_callback_ = std::move(callback); }
+
+    // A node newly selected on the canvas (the Info panel shows it).
+    using NodeSelectedCallback = std::function<void(const MLNode&)>;
+    void SetNodeSelectedCallback(NodeSelectedCallback callback) { node_selected_callback_ = std::move(callback); }
+
+    // The table node `node_id` holds from the canvas runs when it and every step
+    // before it are unchanged since (TOFIX178 S0-d: training uses it instead of
+    // preparing the data again); nothing while a run executes.
+    std::optional<std::string> CurrentRunResult(int node_id);
+    // The table node `node_id` got in the last finished run, while it is
+    // loaded: Train reads it after running the steps itself (TOFIX178 S0-e;
+    // a step that writes a file always runs, so its result is never current).
+    std::optional<std::string> LastRunResult(int node_id) const;
+    // The columns of the table reaching `node_id`'s first input: the last
+    // run's result of the step feeding it, or the Data Input's loaded table
+    // when one is wired directly. Empty when neither is known yet.
+    std::vector<std::string> InputColumns(int node_id) const;
 
     // Check if graph is ready for training
     bool IsGraphValid() const;
@@ -663,6 +694,32 @@ public:
     void RequestStepAfter(int step_id, NodeType type, std::string name = {}, std::map<std::string, std::string> parameters = {}) {
         pending_steps_after_.push_back({step_id, type, false, std::move(name), {}, std::move(parameters)});
     }
+    // Replaces a step with a node of `type` in its place, with its links and
+    // `parameters` over the new node's defaults; its name goes with it unless
+    // it was the old type's default; one undo point (Data Studio Prepare's
+    // method switch, TOFIX129 D2). A recipe's step is not replaced (fitted
+    // steps sit outside recipes). Applied, like RequestStepAfter, at the start
+    // of the next canvas frame; ReplacedBy then names the new node.
+    void RequestReplaceStep(int step_id, NodeType type, std::map<std::string, std::string> parameters = {}) {
+        pending_replacements_.push_back({step_id, type, std::move(parameters)});
+    }
+    // Takes a step out of its chain (Data Studio Prepare's Remove, TOFIX178
+    // 1.6): what fed it now feeds what read it, the node goes, and the
+    // chain's later nodes close the gap; one undo point. Applied, like
+    // RequestStepAfter, at the start of the next canvas frame.
+    void RequestRemoveStep(int step_id) { pending_step_moves_.push_back({step_id, kRemoveStep}); }
+    // Moves a step to just after `after_id` (Prepare's drag): taken out as
+    // RequestRemoveStep does and put back as RequestStepAfter does; the
+    // chain's nodes keep their places on the canvas in the new order. One
+    // undo point; applied at the start of the next canvas frame.
+    void RequestMoveStep(int step_id, int after_id) { pending_step_moves_.push_back({step_id, after_id}); }
+    // The node the last RequestStepAfter / RequestBranchAfter added (-1: none
+    // yet); Data Studio's Prepare picks it once it is on the canvas.
+    int LastAddedStep() const { return last_added_step_; }
+    int ReplacedBy(int old_id) const {
+        const auto it = replaced_by_.find(old_id);
+        return it == replaced_by_.end() ? -1 : it->second;
+    }
     // A Text Tokenizer after the Data Input `input_id`, reading its text and
     // label columns (the node's, unless given), opened once it is on the
     // canvas (Compile's and Data Input's "Add a Text Tokenizer", TOFIX129 B-8).
@@ -714,6 +771,11 @@ public:
     bool SetStepParameters(int node_id, const std::map<std::string, std::string>& values,
                            const std::vector<std::string>& erase = {}, const std::string& name = {});
 
+    // What pipeline runs registered for these nodes (their copies of the
+    // data, their results): released now, or when the run in flight ends
+    // (TOFIX160 P2; a Data Input's Unload uses it too).
+    void ReleaseRunData(const std::set<int>& node_ids);
+
 private:
     void ShowToolbar();
     // Studio nav (node_editor_toolbar.cpp, approved board 7): the graph menu,
@@ -732,11 +794,17 @@ private:
     int fingerprint_baseline_frames_ = 2;  // take the baseline once a load settles
     double fingerprint_checked_at_ = -1.0;
     bool unsaved_ = false;
+    uint64_t graph_generation_ = 0;
     bool clear_confirm_requested_ = false;
     void RenderNodes();
     void RenderHoveredNodeTooltip(int hovered_node_id);
     void SyncPipelineExecutionVisualization();
     void RenderMinimap();
+    // The strip along the canvas bottom: the counts, the selection and what
+    // the canvas is doing (graph locked, the mode); TOFIX178 UI-1.
+    void RenderCanvasFooter();
+    static constexpr float kCanvasFooterHeight = 26.0f;
+    int toolbar_fold_level_ = -1;  // the bar's last form, logged when it changes
     void HandleInteractions();
     void ShowContextMenu();
     void ConfigureNode(int node_id);
@@ -964,6 +1032,9 @@ private:
     // Current file path for save/load
     std::string current_file_path_;
     const cyxwiz::LiveGraphCompile* live_compile_ = nullptr;
+    cyxwiz::studio_toolbar::DebugInputs local_debug_status_;
+    bool require_debug_before_train_ = false;
+    std::function<void()> open_debugger_callback_;
 
     // Deferred node addition (to avoid modifying nodes_ while ImNodes is rendering)
     struct PendingNode {
@@ -1008,6 +1079,8 @@ private:
 
     // Explain selected node in Studio Debugger.
     ExplainNodeCallback explain_node_callback_;
+    NodeSelectedCallback node_selected_callback_;
+    int info_node_id_ = -1;  // the node last sent to node_selected_callback_
 
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
@@ -1047,6 +1120,22 @@ private:
         bool open_dialog = false;  // open the new node's dialog once it is added
     };
     std::vector<PendingStepAfter> pending_steps_after_;
+    static constexpr int kRemoveStep = -2;
+    struct PendingStepMove {
+        int step = -1;
+        int after = kRemoveStep;  // the step it goes after; kRemoveStep: taken out
+    };
+    std::vector<PendingStepMove> pending_step_moves_;
+    void MoveOrRemoveStep(const PendingStepMove& move);
+    struct PendingReplacement {
+        int step = -1;
+        NodeType type = NodeType::SQLQuery;
+        std::map<std::string, std::string> parameters;
+    };
+    std::vector<PendingReplacement> pending_replacements_;
+    std::map<int, int> replaced_by_;  // old node -> the node that replaced it
+    int last_added_step_ = -1;
+    void ReplaceStep(const PendingReplacement& request);
     void ApplyStepAfterInsert();
     int pending_open_node_id_ = -1;
     void InsertStepAfter(const PendingStepAfter& request);
@@ -1068,6 +1157,7 @@ private:
     // Zoom state
     float zoom_ = 1.0f;
     ImVec2 canvas_size_ = ImVec2(800.0f, 600.0f);  // the node canvas, read each frame
+    ImVec2 canvas_origin_ = ImVec2(0.0f, 0.0f);    // its top-left corner on the screen
     static constexpr float ZOOM_MIN = 0.25f;  // low enough for Fit to show a large graph whole
     static constexpr float ZOOM_MAX = 2.0f;
 
@@ -1124,6 +1214,9 @@ private:
 
     // Flag to recreate ImNodes editor context (full reset)
     bool pending_context_reset_ = false;
+    // Undo and Redo keep the canvas where it was across that reset; a cleared
+    // or loaded graph starts from the origin.
+    bool pending_context_keep_view_ = false;
 
     // UI-owned rejection feedback, rendered even when the Studio tab is hidden.
     bool graph_busy_dialog_pending_ = false;
@@ -1277,6 +1370,20 @@ private:
     // The executor of the run in flight or last run; its facts are copied
     // into node_run_facts_ while it runs and once when it ends.
     std::shared_ptr<cyxwiz::PipelineExecutor> pipeline_executor_;
+    // What the runs registered for nodes that left the graph (TOFIX160 P2):
+    // released now, or when the run in flight ends (ReleaseRunData, public).
+    void ReleaseAllRunData();
+    void ApplyPendingRunRelease();
+    // After undo / redo swapped the graph (TOFIX160 P3): datasets no Data
+    // Input names any more are unregistered (with their run data), and a
+    // restored Data Input whose data is gone reads Not loaded.
+    void SyncDataAfterSwap(const std::vector<MLNode>& before);
+    std::set<int> pending_run_release_;
+    bool pending_run_release_all_ = false;
+    // Executors replaced while their run was in flight (a new run started):
+    // when each ends, what it registered goes, except the names the current
+    // executor also owns (the same node ids).
+    std::vector<std::shared_ptr<cyxwiz::PipelineExecutor>> retired_executors_;
     bool pipeline_facts_final_ = true;
     // The run's step figures read so far, and the step that sent them.
     WordVectorFeed word_vector_feed_;

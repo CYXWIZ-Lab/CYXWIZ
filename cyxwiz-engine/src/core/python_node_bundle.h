@@ -17,9 +17,9 @@ namespace cyxwiz {
 inline constexpr int kPythonBundleFormat = 1;
 
 struct PythonBundleNode {
-    ExtensionNodeDescriptor descriptor;  // source PythonBundle, kind TensorLayer
+    ExtensionNodeDescriptor descriptor;  // source PythonBundle, kind TensorLayer or Loss
     std::string entry_class;             // class in node.py ("Snake")
-    std::string tier;                    // "activation" (f, df) or "module"
+    std::string tier;                    // "activation" (f, df), "module" or "loss"
     bool same_shape = true;              // shape_rule same_as_input: no Python needed for shapes
 };
 
@@ -37,8 +37,9 @@ struct PythonBundle {
 // one Tensor out, or node.py changed since the bundle was written.
 bool ReadPythonBundle(const std::filesystem::path& folder, PythonBundle& out, std::string& error);
 
-// The *.cyxnode folders directly inside each root, sorted by path. Missing
-// roots are skipped.
+// The *.cyxnode folders directly inside each root: root by root in the
+// order given (a bundle of an earlier root wins an id clash), sorted by
+// path within a root. Missing roots are skipped.
 std::vector<std::filesystem::path> FindPythonBundles(const std::vector<std::filesystem::path>& roots);
 
 // %APPDATA%\cyxwiz\nodes on Windows, ~/.cyxwiz/nodes elsewhere.

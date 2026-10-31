@@ -194,6 +194,15 @@ int main() {
         Check(v.data && v.data->loaded && v.data->detail == "32,833 rows \xC3\x97 23 columns",
               "data row when loaded: " + v.data->detail);
         Check(v.settings_note == "Everything else about this node is set in its dialog.", "dialog-only note");
+
+        // An image folder not loaded yet names its folder (it said "No file chosen").
+        nodes[0].parameters.erase("file_path");
+        nodes[0].parameters["folder_path"] = "D:/demo/mrcj/datasets/Cats_Dogs/cat_dog/";
+        fact = {};
+        v = Build(in);
+        Check(v.data && v.data->label == "cat_dog" && !v.data->loaded &&
+                  v.data->note.rfind("Not loaded", 0) == 0,
+              "data row: the image folder, not loaded: " + (v.data ? v.data->label : std::string("none")));
     }
 
     // ---- MSE: custom editor route keeps truths available by key ------------

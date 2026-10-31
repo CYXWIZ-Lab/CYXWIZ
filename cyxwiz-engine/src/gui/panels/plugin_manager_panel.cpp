@@ -236,7 +236,8 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
 
     // What it adds and whether it loads at startup (TOFIX125 steps 2.9-2.10).
     {
-        const std::string adds = cyxwiz::PluginAddsLine(plugin::DescribeContribution(p->manifest.id));
+        const auto contribution = plugin::DescribeContribution(p->manifest.id);
+        const std::string adds = cyxwiz::PluginAddsLine(contribution);
         if (!adds.empty()) {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(t.accent_text, "  %s", adds.c_str());
@@ -250,7 +251,7 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
             ReloadStartupList();
         }
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_dim, "%s", cyxwiz::PluginStartupNote(at_startup).c_str());
+        ImGui::TextColored(t.text_dim, "%s", cyxwiz::PluginStartupNote(at_startup, contribution).c_str());
         ImGui::PopTextWrapPos();
         ImGui::Unindent(t.space_md);
     }
@@ -494,6 +495,26 @@ void PluginManagerPanel::RenderInstallPopup() {
                 return false;
             }
 
+            // A plugin id loads once. Installing it again would keep the code
+            // already in memory and look like a fresh install, so say what to
+            // do instead.
+            if (const auto* existing = plugin::PluginManager::Instance().GetLoadedPlugin(manifest.id)) {
+                if (existing->state == plugin::PluginState::Disabled) {
+                    install_error_ = "Plugin is already installed but disabled. "
+                        "Close this dialog and use Enable.";
+                } else if (existing->state == plugin::PluginState::Failed) {
+                    install_error_ = "Plugin is already installed but failed. "
+                        "Close this dialog and use Retry.";
+                } else {
+                    install_error_ = manifest.name + " " + existing->manifest.version.ToString() +
+                        " is already loaded from " + existing->plugin_dir.string() +
+                        ". To load a new build: Unload it, rebuild, then Install again. "
+                        "If a model still uses its nodes, restart the Engine instead of Unload.";
+                }
+                show_install_error_ = true;
+                return false;
+            }
+
             is_installing_plugin_ = true;
             install_status_ = "Installing...";
             const std::string task_name = "Installing plugin: " + dir.filename().string();
@@ -505,8 +526,10 @@ void PluginManagerPanel::RenderInstallPopup() {
                     if (task.ShouldStop()) return;
 
                     auto& mgr = plugin::PluginManager::Instance();
-                    if (!mgr.LoadPlugin(dir)) {
-                        task.MarkFailed("Failed to load plugin from " + path_str);
+                    std::string load_error;
+                    if (!mgr.LoadPlugin(dir, &load_error)) {
+                        task.MarkFailed("Failed to load plugin from " + path_str +
+                                        (load_error.empty() ? "" : ": " + load_error));
                         return;
                     }
 
@@ -530,25 +553,24 @@ void PluginManagerPanel::RenderInstallPopup() {
                     auto& mgr = plugin::PluginManager::Instance();
                     plugin::RecordLoadedPlugins(mgr);
                     ReloadStartupList();
-                    const auto state = mgr.GetPluginState(plugin_id);
-                    if (state == plugin::PluginState::Disabled) {
-                        install_error_ = "Plugin is already installed but disabled. "
-                            "Close this dialog and use Enable.";
-                        show_install_error_ = true;
-                        return;
-                    }
-                    if (state == plugin::PluginState::Failed) {
-                        install_error_ = "Plugin is already installed but failed. "
-                            "Close this dialog and use Retry.";
-                        show_install_error_ = true;
-                        return;
-                    }
-
                     const bool initialized = mgr.InitializePlugin(plugin_id);
                     const auto final_state = mgr.GetPluginState(plugin_id);
+                    const auto* loaded = mgr.GetLoadedPlugin(plugin_id);
                     if (!initialized && final_state != plugin::PluginState::Loaded) {
                         install_error_ =
                             "Plugin loaded but could not be initialized: " + path_str;
+                        if (loaded && !loaded->error_message.empty())
+                            install_error_ += "\n" + loaded->error_message;
+                        show_install_error_ = true;
+                        return;
+                    }
+                    // Nodes the plugin offered but the Engine refused stay
+                    // visible here, not only in the Console.
+                    if (loaded && !loaded->skipped_nodes.empty()) {
+                        install_error_ = "Plugin installed, but " +
+                            std::to_string(loaded->skipped_nodes.size()) +
+                            " of its nodes were not added:";
+                        for (const auto& reason : loaded->skipped_nodes) install_error_ += "\n- " + reason;
                         show_install_error_ = true;
                         return;
                     }

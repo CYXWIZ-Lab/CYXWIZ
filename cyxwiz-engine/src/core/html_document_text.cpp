@@ -164,11 +164,11 @@ Extracted Extract(const std::string &html, const std::string &begin_comment,
   return result;
 }
 
-#endif
 void Require(const arrow::Status &status) {
   if (!status.ok())
     throw std::runtime_error(status.ToString());
 }
+#endif
 } // namespace
 bool HtmlDocumentParserAvailable() {
 #ifdef CYXWIZ_HAS_HTML_PARSER

@@ -5,6 +5,7 @@
 #endif
 
 #include "node_config_dialog.h"
+#include "node_editor.h"
 #include "data_input_preview.h"
 #include "../core/async_task_manager.h"
 #include "../core/data_preview_service.h"
@@ -351,12 +352,21 @@ void DataInputDialog::UpdateRAMEstimate() {
 
 void DataInputDialog::BrowseFile() {
     // A file is a table, a text document set or a ZIP of documents.
-    cyxwiz::FileDialogs::FilterList filters = {{"Supported Table and Document Data",
-                                                 cyxwiz::data_input::ExtensionFilter()}};
+    // Plugin formats (IDataProvider) join the supported list and get their own filter.
+    std::string supported = cyxwiz::data_input::ExtensionFilter();
+    const auto external_formats = cyxwiz::data_input::ExternalFormats();
+    for (const auto& external : external_formats)
+        for (const auto& extension : external.extensions) supported += "," + extension;
+    cyxwiz::FileDialogs::FilterList filters = {{"Supported Table and Document Data", supported}};
     for (const auto& format : cyxwiz::data_input::kSourceFormats) {
         if (!format.executable) continue;
         const auto extensions = cyxwiz::data_input::ExtensionFilter(format);
         if (!extensions.empty()) filters.emplace_back(format.label, extensions);
+    }
+    for (const auto& external : external_formats) {
+        std::string extensions;
+        for (const auto& extension : external.extensions) extensions += (extensions.empty() ? "" : ",") + extension;
+        filters.emplace_back(external.label + " (plugin)", extensions);
     }
     filters.emplace_back("Text (JSON, TXT)", "json,jsonl,txt");
     if (cyxwiz::data_input::kHdf5BuildAvailable) {
@@ -478,7 +488,18 @@ std::string DataInputDialog::FormatBytes(size_t bytes) {
 }
 
 std::string DataInputDialog::GenerateDatasetName() const {
-    return data_input::GenerateDatasetName(file_path_, folder_path_);
+    // Unique among the graph's other Data Inputs: two files with the same
+    // name in different folders gave one name, so the second Apply replaced
+    // the first and deleting either node removed both.
+    std::vector<std::string> taken;
+    if (node_editor_) {
+        for (const auto& other : node_editor_->GetNodes()) {
+            if (other.type != NodeType::DataInput || (node_ && other.id == node_->id)) continue;
+            const auto it = other.parameters.find("dataset_name");
+            if (it != other.parameters.end() && !it->second.empty()) taken.push_back(it->second);
+        }
+    }
+    return data_input::UniqueDatasetName(data_input::GenerateDatasetName(file_path_, folder_path_), taken);
 }
 
 } // namespace gui

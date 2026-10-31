@@ -119,19 +119,45 @@ bool CopyExactExecutable(
     return succeeded;
 }
 
-bool CreateStagingDirectory(
-    std::string_view install_id,
-    std::filesystem::path& directory,
-    std::string& error) {
+// Where the finalizer runs while it removes the installation: the
+// installer's own folder (%LOCALAPPDATA%\CyxWiz\Installer\sessions), as the
+// installer's manager session does, not %TEMP% (programs that copy themselves
+// to %TEMP% and run from there look like malware droppers to scanners). The
+// system temporary folder when that folder cannot be used or lies inside the
+// installation being removed.
+std::filesystem::path FinalizerStagingRoot(
+    const std::filesystem::path& install_root) {
+    std::error_code filesystem_error;
+    if (const wchar_t* local = ::_wgetenv(L"LOCALAPPDATA"); local && *local) {
+        const auto sessions = std::filesystem::path(local) / "CyxWiz" /
+            "Installer" / "sessions";
+        const auto relative = sessions.lexically_normal().lexically_relative(
+            install_root.lexically_normal());
+        const bool inside_install = !relative.empty() &&
+            relative.native().rfind(L"..", 0) != 0;
+        std::filesystem::create_directories(sessions, filesystem_error);
+        if (!inside_install && !filesystem_error &&
+            std::filesystem::is_directory(sessions, filesystem_error)) {
+            return sessions;
+        }
+    }
     std::vector<wchar_t> buffer(32768);
     const DWORD length = ::GetTempPathW(
         static_cast<DWORD>(buffer.size()), buffer.data());
-    if (length == 0 || length >= buffer.size()) {
+    if (length == 0 || length >= buffer.size()) return {};
+    return std::filesystem::path(std::wstring(buffer.data(), length));
+}
+
+bool CreateStagingDirectory(
+    const std::filesystem::path& install_root,
+    std::string_view install_id,
+    std::filesystem::path& directory,
+    std::string& error) {
+    const std::filesystem::path temporary = FinalizerStagingRoot(install_root);
+    if (temporary.empty()) {
         error = "Cannot resolve the product-removal temporary directory";
         return false;
     }
-    const std::filesystem::path temporary(
-        std::wstring(buffer.data(), length));
     const auto nonce = std::chrono::steady_clock::now()
         .time_since_epoch().count();
     for (unsigned int attempt = 0; attempt < 32; ++attempt) {
@@ -157,7 +183,7 @@ bool LaunchDetachedProductRemovalFinalizer(
     ProductRemovalHandoff& handoff,
     std::string& error) {
     std::filesystem::path directory;
-    if (!CreateStagingDirectory(install_id, directory, error)) return false;
+    if (!CreateStagingDirectory(install_root, install_id, directory, error)) return false;
     const auto staged = directory /
         std::string(CurrentProductRemovalFinalizerExecutableName());
     const auto result = directory / "result.txt";

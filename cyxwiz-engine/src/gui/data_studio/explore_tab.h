@@ -23,6 +23,7 @@ struct ExploreContext {
     std::string shown;                                // as the graph calls it
     std::shared_ptr<const DatasetProfile> profile;    // null while profiling or failed
     std::map<std::string, std::vector<std::string>> missing_texts;  // column -> texts marked as missing
+    std::string time_column;                          // the Data Input's time column (Series and Forecast take it first)
     bool profiling = false;
     std::string error;                                // why there is no profile
 };
@@ -34,6 +35,13 @@ bool ExploreProfileReady(const ExploreContext& context, const char* empty_hint);
 // Label / value pairs, two to a line when the width allows, with no lines
 // around them (the old KeyValueTable draws an outline and cut the labels).
 void ExploreFigures(const char* id, const std::vector<std::pair<std::string, std::string>>& rows);
+
+// Choices side by side (a segmented control) when they fit on the line, else
+// a list; true when the choice changed.
+bool ExploreChoices(const char* id, const char* const* labels, int count, int* selected);
+
+// SameLine before a button of `label`, or a new line when it would not fit.
+void ExploreNextButton(const char* label);
 
 // One background answer of type T for a key (dataset + choices).
 template <typename T>
@@ -56,7 +64,9 @@ public:
             label,
             [work = std::move(work), result](LambdaTask& task) {
                 *result = work(task);
-                if (!result->ok()) task.MarkFailed(result->error);
+                if (result->ok()) return;
+                if (result->error == "Cancelled.") task.MarkCancelled();  // asked to stop: not a failure
+                else task.MarkFailed(result->error);
             },
             nullptr,
             [this, alive, result, ticket](bool, const std::string&) {

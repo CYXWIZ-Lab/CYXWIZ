@@ -14,6 +14,7 @@
 #   --server-node        Build only Server Node component
 #   --build-dir PATH     Use a compatible existing or custom build tree
 #   -j N                 Use N parallel jobs (default: auto-detect)
+#   -DNAME=VALUE         Pass a CMake cache entry through (e.g. -DArrayFire_DIR=...)
 # ============================================================================
 
 set -e  # Exit on error
@@ -26,6 +27,7 @@ PARALLEL_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 BUILD_ENGINE=ON
 BUILD_SERVER_NODE=ON
 BUILD_DIR_OVERRIDE=""
+EXTRA_CMAKE_ARGS=()
 
 # Detect OS
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -56,6 +58,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --server-node        Build only Server Node component"
             echo "  --build-dir PATH     Use a compatible existing or custom build tree"
             echo "  -j N                 Use N parallel jobs (default: auto-detect)"
+            echo "  -DNAME=VALUE         Pass a CMake cache entry through, e.g."
+            echo "                       -DArrayFire_DIR=/opt/ArrayFire-3.10.0-Linux/share/ArrayFire/cmake"
             echo ""
             echo "Examples:"
             echo "  ./build.sh                    Build all components in Release mode"
@@ -99,6 +103,10 @@ while [[ $# -gt 0 ]]; do
         -j)
             PARALLEL_JOBS="$2"
             shift 2
+            ;;
+        -D*)
+            EXTRA_CMAKE_ARGS+=("$1")
+            shift
             ;;
         *)
             echo "[ERROR] Unknown option: $1"
@@ -171,13 +179,18 @@ if ! command -v ninja &> /dev/null; then
     echo ""
 fi
 
+# Overlay folders as absolute paths: CMake keeps them as given, and a rebuild
+# that re-runs CMake by itself does so from the build folder.
 cmake -B "$BUILD_DIR" -S . \
     -G "$GENERATOR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+    -DVCPKG_OVERLAY_PORTS="$PWD/vcpkg-ports" \
+    -DVCPKG_OVERLAY_TRIPLETS="$PWD/vcpkg-triplets" \
     -DCYXWIZ_BUILD_ENGINE=$BUILD_ENGINE \
     -DCYXWIZ_BUILD_SERVER_NODE=$BUILD_SERVER_NODE \
-    -DCYXWIZ_BUILD_TESTS=ON
+    -DCYXWIZ_BUILD_TESTS=ON \
+    "${EXTRA_CMAKE_ARGS[@]}"
 
 if [ $? -ne 0 ]; then
     echo ""

@@ -16,6 +16,7 @@
 #include <chrono>
 #include <imgui.h>
 #include <functional>
+#include <utility>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -67,6 +68,18 @@ public:
     void SetRunCompletedCallback(RunCompletedCallback callback) { run_completed_callback_ = std::move(callback); }
     void SetFocusNodeCallback(FocusNodeCallback callback) { focus_node_callback_ = std::move(callback); }
     void SetGraphDomainCallback(GraphDomainCallback callback) { graph_domain_callback_ = std::move(callback); }
+    // The way back to the canvas and on to training (TOFIX178 UI-1): the
+    // canvas, its compile report, and Train once Local Debug passed on the
+    // graph as it is now.
+    struct CanvasLinks {
+        std::function<void()> show_canvas;
+        std::function<void()> show_compile_report;
+        std::function<void()> train;
+        // The last Local Debug against the graph now: its headline and
+        // whether it is a pass on this graph.
+        std::function<std::pair<std::string, bool>()> local_debug;
+    };
+    void SetCanvasLinks(CanvasLinks links) { canvas_links_ = std::move(links); }
 
     // One run path for Run, F6 and Explain Node. False if a run is active.
     bool StartRun(StudioDebuggerRunMode mode, int sample_index, int explain_node_id = -1);
@@ -163,6 +176,7 @@ private:
     RunDebugCallback run_debug_callback_;
     RunCompletedCallback run_completed_callback_;
     FocusNodeCallback focus_node_callback_;
+    CanvasLinks canvas_links_;
     GraphDomainCallback graph_domain_callback_;
     std::shared_ptr<AsyncRunState> pending_run_state_;
     uint64_t pending_task_id_ = 0;

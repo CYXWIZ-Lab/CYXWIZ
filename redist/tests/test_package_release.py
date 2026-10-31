@@ -20,6 +20,9 @@ sys.modules[SPEC.name] = package_release
 SPEC.loader.exec_module(package_release)
 # setUp stands in a fake for it; the tests of the real one call this.
 REAL_INSTALL_PLUGIN_SDK = package_release.install_plugin_sdk
+# The built data plugin example the SDK carries (TOFIX181).
+EXAMPLE_LIBRARY = "examples/plugins/data-formats/built/bin/" + {
+    "win32": "data_formats.dll", "darwin": "libdata_formats.dylib"}.get(sys.platform, "libdata_formats.so")
 
 SIGN_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "sign_pack_manifest.py"
 SIGN_SPEC = importlib.util.spec_from_file_location("sign_pack_manifest", SIGN_SCRIPT)
@@ -62,6 +65,7 @@ class PackageReleaseTests(unittest.TestCase):
             "cyxwiz-route-probe.exe",
             "cyxwiz-installer.exe",
             "cyxwiz-runtime-bootstrapper.exe",
+            "cyxwiz-cli.exe",
             "cyxwiz-product-removal-finalizer.exe",
             "cyxwiz-backend-pack-installer.exe",
             "cyxwiz-plugin-check.exe",
@@ -98,7 +102,9 @@ class PackageReleaseTests(unittest.TestCase):
         # of a real build; here a minimal SDK stands in for it.
         def fake_sdk(_paths, destination: Path) -> None:
             for relative in ("LICENSE", "NOTICE", "include/plugin/plugin_types.h",
-                             "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json"):
+                             "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json",
+                             "examples/plugins/data-formats/data_formats_plugin.cpp",
+                             "examples/plugins/data-formats/built/plugin.json", EXAMPLE_LIBRARY):
                 (destination / relative).parent.mkdir(parents=True, exist_ok=True)
                 (destination / relative).write_text(relative, encoding="ascii")
         patcher = mock.patch.object(package_release, "install_plugin_sdk", fake_sdk)
@@ -147,7 +153,7 @@ class PackageReleaseTests(unittest.TestCase):
     def artifact_args(self, *values: str):
         return package_release.parse_args([*values])
 
-    def create_arrayfire(self, oneapi: bool = False, opencl: bool = False) -> Path:
+    def create_arrayfire(self, oneapi: bool = False, opencl: bool = False, cuda: bool = False) -> Path:
         root = self.root / "arrayfire"
         library = root / "lib"
         licenses = root / "LICENSES"
@@ -161,6 +167,9 @@ class PackageReleaseTests(unittest.TestCase):
             (library / name).write_bytes(name.encode("ascii"))
         if opencl:
             (library / "afopencl.dll").write_bytes(b"opencl")
+        if cuda:
+            for name in ("afcuda.dll", "cublas64_12.dll", "cufft64_11.dll", "cusolver64_11.dll", "nvrtc64_120_0.dll"):
+                (library / name).write_bytes(name.encode("ascii"))
         if oneapi:
             for name in (
                 "afoneapi.dll",
@@ -584,15 +593,31 @@ class PackageReleaseTests(unittest.TestCase):
         destination = self.root / "sdk-stage" / "sdk"
         calls = []
 
-        def fake_run(command, **_kwargs):
-            calls.append(command)
-            for relative in ("LICENSE", "NOTICE", "include/plugin/plugin_types.h",
-                             "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json"):
-                (destination / relative).parent.mkdir(parents=True, exist_ok=True)
-                (destination / relative).write_text(relative, encoding="ascii")
-            return subprocess.CompletedProcess(command, 0, "")
+        backend_library = {"win32": "cyxwiz-backend.lib", "darwin": "libcyxwiz-backend.dylib"}.get(
+            sys.platform, "libcyxwiz-backend.so")
 
-        with mock.patch.object(package_release.subprocess, "run", fake_run):
+        def fake_install(with_library):
+            def fake_run(command, **_kwargs):
+                calls.append(command)
+                files = ["LICENSE", "NOTICE", "include/plugin/plugin_types.h",
+                         "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake", "template/plugin.json",
+                         "examples/plugins/data-formats/data_formats_plugin.cpp",
+                         "examples/plugins/data-formats/built/plugin.json", EXAMPLE_LIBRARY]
+                if with_library:
+                    files.append("lib/" + backend_library)
+                for relative in files:
+                    (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+                    (destination / relative).write_text(relative, encoding="ascii")
+                return subprocess.CompletedProcess(command, 0, "")
+            return fake_run
+
+        # The library plugins link is required (1.0.7's Linux and macOS SDKs
+        # lacked it: the install copied a symlink that packaging dropped).
+        with mock.patch.object(package_release.subprocess, "run", fake_install(False)):
+            with self.assertRaisesRegex(package_release.PackageError, "backend library"):
+                REAL_INSTALL_PLUGIN_SDK(paths, destination)
+        calls.clear()
+        with mock.patch.object(package_release.subprocess, "run", fake_install(True)):
             REAL_INSTALL_PLUGIN_SDK(paths, destination)
         self.assertEqual(
             ["cmake", "--install", str(build_root.resolve()), "--config", "Release",
@@ -638,6 +663,43 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertEqual("backend_pack", manifest["signed"]["pack_kind"])
         self.assertEqual("opencl", manifest["signed"]["backend"])
         package_release.validate_pack_manifest(manifest)
+
+    def cuda_pack_args(self):
+        notices = self.root / "nvidia-notices"
+        notices.mkdir()
+        (notices / "EULA.txt").write_text("nvidia eula", encoding="ascii")
+        return self.args(
+            "pack",
+            "--backend",
+            "cuda",
+            "--arrayfire-dir",
+            str(self.create_arrayfire(cuda=True)),
+            "--nvidia-runtime-license-dir",
+            str(notices),
+        )
+
+    def test_cuda_pack_carries_the_nvidia_provider_module(self) -> None:
+        # The NVIDIA provider is a module of its own (TOFIX178 1.0(c)): it
+        # needs the CUDA libraries, so it ships beside afcuda in the CUDA pack.
+        module = self.root / "build" / "bin" / "Release" / "cyxwiz-nvidia-provider.dll"
+        module.write_bytes(b"provider")
+
+        stage, _archive = package_release.build_package(self.cuda_pack_args(), self.script)
+
+        self.assertTrue((stage / "runtime" / "afcuda.dll").is_file())
+        self.assertEqual(b"provider", (stage / "runtime" / "cyxwiz-nvidia-provider.dll").read_bytes())
+
+    def test_cuda_pack_without_the_nvidia_provider_module_fails(self) -> None:
+        with self.assertRaisesRegex(package_release.PackageError, "CYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON"):
+            package_release.build_package(self.cuda_pack_args(), self.script)
+
+    def test_minimal_leaves_the_nvidia_provider_module_to_the_cuda_pack(self) -> None:
+        (self.root / "build" / "bin" / "Release" / "cyxwiz-nvidia-provider.dll").write_bytes(b"provider")
+
+        stage, _archive = package_release.build_package(self.args("minimal"), self.script)
+
+        self.assertTrue((stage / "cyxwiz-backend.dll").is_file())
+        self.assertFalse((stage / "cyxwiz-nvidia-provider.dll").exists())
 
     def test_pack_profile_requires_one_optional_backend(self) -> None:
         args = self.args("pack", "--arrayfire-dir", str(self.create_arrayfire()))

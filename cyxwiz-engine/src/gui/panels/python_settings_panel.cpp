@@ -13,9 +13,9 @@
 
 namespace gui {
 
-PythonSettingsPanel::PythonSettingsPanel() {
-    LoadSettings();
-}
+// Settings load when the panel is first drawn (Preferences), not when the
+// toolbar is built: checking the interpreter runs Python three times.
+PythonSettingsPanel::PythonSettingsPanel() = default;
 
 void PythonSettingsPanel::LoadSettings() {
     auto& config = cyxwiz::core::EngineConfig::Instance();
@@ -119,6 +119,10 @@ void PythonSettingsPanel::RevertSettings() {
 }
 
 void PythonSettingsPanel::Render() {
+    if (!loaded_) {
+        LoadSettings();
+        loaded_ = true;
+    }
     ImGui::TextWrapped("Configure Python interpreter and virtual environment settings.");
     ImGui::Spacing();
     ImGui::Separator();
@@ -281,7 +285,7 @@ void PythonSettingsPanel::RunAutoDetection() {
     }
 
     if (detected_pythons_.empty()) {
-        spdlog::warn("No supported Python 3.12-3.13 installations found");
+        spdlog::warn("No supported Python {} installations found", cyxwiz::core::PythonDetector::SupportedVersionsText());
     } else {
         spdlog::info("Found {} Python installation(s)", detected_pythons_.size());
         show_detection_results_ = true;

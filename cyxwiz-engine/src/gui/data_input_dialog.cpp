@@ -13,6 +13,8 @@
 #endif
 
 #include "node_config_dialog.h"
+#include "node_editor.h"
+#include "data_studio/image_gallery_view.h"
 #include "data_studio/profile_view.h"
 #include "node_editor.h"
 #include "ui_tokens.h"
@@ -140,6 +142,15 @@ DataInputDialog::DataInputDialog(MLNode* node)
             force_disk_backed_ = true;
         }
 
+        class_names_edit_.clear();
+        class_names_changed_ = false;
+        if (const auto names = node_->parameters.find("class_names"); names != node_->parameters.end()) {
+            try {
+                for (const auto& name : nlohmann::json::parse(names->second)) class_names_edit_.push_back(name.get<std::string>());
+            } catch (const std::exception&) {
+                class_names_edit_.clear();  // unreadable: the labels' own names
+            }
+        }
         if (node_->parameters.count("labels_csv")) {
             strncpy(labels_csv_, node_->parameters["labels_csv"].c_str(), sizeof(labels_csv_) - 1);
             labels_csv_[sizeof(labels_csv_) - 1] = '\0';
@@ -393,7 +404,7 @@ void DataInputDialog::RenderContent() {
             RenderDataProfilingTab();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Rows and columns")) {
+        if (data_input::HasRowsAndColumns(file_category_) && ImGui::BeginTabItem("Rows and columns")) {
             RenderRowsAndColumnsTab();
             ImGui::EndTabItem();
         }
@@ -418,8 +429,10 @@ void DataInputDialog::UnloadDataset() {
     ResetPreviewPaging();
     preview_loaded_ = false;
 
+    // Every map it could be in, and the copies pipeline runs made of it.
     auto& registry = cyxwiz::DataRegistry::Instance();
     registry.UnloadDataset(loaded_dataset_name_);
+    if (node_editor_ && node_) node_editor_->ReleaseRunData({node_->id});
 
     data_load_state_ = DataLoadState::NotLoaded;
     loaded_rows_ = 0;

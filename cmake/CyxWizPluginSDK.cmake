@@ -12,6 +12,8 @@
 # <folder>/lib/cmake/CyxWizSDK  find_package(CyxWizSDK) -> CyxWiz::PluginSDK
 # <folder>/template         the template plugin (plugins/template)
 # <folder>/examples/python-nodes  ten built-in layers as Python nodes (examples/python_nodes)
+# <folder>/examples/plugins/data-formats  a dataset format and analytic (plugins/examples/data_formats),
+#                                         source and built/ (ready to install)
 # <folder>/LICENSE, NOTICE  Apache-2.0 for every file in the SDK
 
 include(CMakePackageConfigHelpers)
@@ -54,8 +56,18 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/cyxwiz-backend/include/cyxwiz"
         PATTERN "distributed" EXCLUDE)
 install(FILES "${CMAKE_BINARY_DIR}/cyxwiz-backend/include/cyxwiz/cyxwiz_export.h"
         DESTINATION include/cyxwiz COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
-install(FILES "$<TARGET_LINKER_FILE:cyxwiz-backend>"
-        DESTINATION lib COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+# The library a plugin links. Windows: the import library. Elsewhere the
+# linker file is the lib<name>.so / .dylib symlink, which would point at a
+# file the SDK does not have (and packaging keeps real files only): install
+# the real shared library under that name instead.
+if(WIN32)
+    install(FILES "$<TARGET_LINKER_FILE:cyxwiz-backend>"
+            DESTINATION lib COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+else()
+    install(FILES "$<TARGET_FILE:cyxwiz-backend>"
+            DESTINATION lib COMPONENT plugin_sdk EXCLUDE_FROM_ALL
+            RENAME "${CMAKE_SHARED_LIBRARY_PREFIX}cyxwiz-backend${CMAKE_SHARED_LIBRARY_SUFFIX}")
+endif()
 install(FILES
             "${_cyxwiz_sdk_cmake}/CyxWizSDKConfig.cmake"
             "${_cyxwiz_sdk_cmake}/CyxWizSDKConfigVersion.cmake"
@@ -75,6 +87,22 @@ install(FILES
 install(DIRECTORY "${_cyxwiz_sdk_python_example}/nodes/builtin-layers.cyxnode"
         DESTINATION examples/python-nodes/builtin-layers/nodes COMPONENT plugin_sdk EXCLUDE_FROM_ALL
         PATTERN "__pycache__" EXCLUDE)
+# The data plugin example (TOFIX181): its source to build against the SDK,
+# and built/, the same plugin built here, ready for Plugin Manager > Install.
+# The library is installed as a file (as the backend above), so the target
+# plugins/examples/data_formats defines later needs no install rule there.
+set(_cyxwiz_sdk_data_example "${CMAKE_SOURCE_DIR}/plugins/examples/data_formats")
+install(FILES
+            "${_cyxwiz_sdk_data_example}/CMakeLists.txt"
+            "${_cyxwiz_sdk_data_example}/plugin.json"
+            "${_cyxwiz_sdk_data_example}/data_formats_plugin.cpp"
+            "${_cyxwiz_sdk_data_example}/README.md"
+            "${_cyxwiz_sdk_data_example}/weather.arff"
+        DESTINATION examples/plugins/data-formats COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+install(FILES "${_cyxwiz_sdk_data_example}/plugin.json"
+        DESTINATION examples/plugins/data-formats/built COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
+install(FILES "$<TARGET_FILE:data_formats>"
+        DESTINATION examples/plugins/data-formats/built/bin COMPONENT plugin_sdk EXCLUDE_FROM_ALL)
 # Apache-2.0 (owner 2026-10-17, the plugin-SDK part of TOFIX142).
 install(FILES "${CMAKE_SOURCE_DIR}/cmake/sdk/LICENSE" "${CMAKE_SOURCE_DIR}/cmake/sdk/NOTICE"
         DESTINATION . COMPONENT plugin_sdk EXCLUDE_FROM_ALL)

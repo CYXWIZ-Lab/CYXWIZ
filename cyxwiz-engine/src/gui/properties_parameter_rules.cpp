@@ -1,8 +1,10 @@
 #include "properties_parameter_rules.h"
+#include "../core/normalize_statistics.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <map>
 #include <set>
 
 namespace gui::properties_rules {
@@ -110,6 +112,38 @@ bool ShouldHideGenericParameter(
         return true;
     }
 
+    if (type == NodeType::Normalize) {
+        // One pair for every value, or a row per channel (TOFIX178 1.4).
+        const auto it = node.parameters.find("statistics");
+        const bool same = it == node.parameters.end() || it->second.empty() || it->second == "same";
+        if (param.name == "mean" || param.name == "std") return !same;
+        if (param.name == "channel_mean" || param.name == "channel_std") return same;
+        if (param.name == "statistics_source") return true;  // shown under the channel rows
+    }
+
+    if (type == NodeType::AdvancedAugment) {
+        // Only the chosen method's fields (TOFIX178 1.6b).
+        static const std::map<std::string, std::set<std::string>> fields = {
+            {"num_ops", {"randaugment"}},
+            {"magnitude", {"randaugment"}},
+            {"policy", {"autoaugment"}},
+            {"magnitude_bins", {"trivialaugment"}},
+            {"severity", {"augmix"}},
+            {"mixture_width", {"augmix"}},
+            {"chain_depth", {"augmix"}},
+            {"alpha", {"mixup", "cutmix", "augmix"}},
+            {"cutout_size", {"cutout"}},
+            {"scale_min", {"random_erasing"}},
+            {"scale_max", {"random_erasing"}},
+            {"ratio_min", {"random_erasing"}},
+            {"ratio_max", {"random_erasing"}},
+            {"value", {"cutout", "random_erasing"}},
+        };
+        const auto it = node.parameters.find("method");
+        const std::string method = it == node.parameters.end() || it->second.empty() ? "cutout" : it->second;
+        if (const auto field = fields.find(param.name); field != fields.end()) return field->second.count(method) == 0;
+    }
+
     if ((type == NodeType::LSTM ||
          type == NodeType::GRU ||
          type == NodeType::RNN) &&
@@ -189,6 +223,20 @@ bool ValidateParameter(
     if (value.empty()) {
         if (param.required) {
             error = "Required";
+            return false;
+        }
+        return true;
+    }
+
+    if (param.type == "channels") {
+        std::vector<float> values;
+        if (!cyxwiz::ParseChannelValues(value, values)) {
+            error = "One number per channel, separated by commas";
+            return false;
+        }
+        if (param.validation == ">0" &&
+            std::any_of(values.begin(), values.end(), [](float v) { return !(v > 0.0f); })) {
+            error = "Each value must be > 0";
             return false;
         }
         return true;

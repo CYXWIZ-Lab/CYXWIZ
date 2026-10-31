@@ -22,145 +22,269 @@ namespace cyxwiz {
  */
 
 /**
- * StandardScalerOperator — z-score standardization per column.
- *
- * Applies `(x - mean) / std` column-by-column. When with_mean=false
- * it skips centering; when with_std=false it skips scaling.
- *
- * Params:
- *   columns    (optional, csv) — empty = auto-detect numeric.
- *   label_col  (optional)      — excluded from auto-detect.
- *   with_mean  (default true)
- *   with_std   (default true)
+ * Fitted column transforms (TOFIX129 D2): the scalers and the quantile and
+ * power transforms. One base does what they share:
+ *   - columns: `columns` (csv), or every number column except `label_col`
+ *     and `exclude_columns`;
+ *   - Fit here (and optionally save the fitted values to `state_path`), or
+ *     reuse saved values (`operation_mode` fit_transform / transform_only,
+ *     `save_state`, `state_overwrite`); saved values must come from the same
+ *     settings;
+ *   - a missing value stays missing in its row; the fit uses the values
+ *     present (scikit-learn's behaviour);
+ *   - the streamed path (data bigger than memory) for transforms whose fit
+ *     merges across batches (Standard, Min-Max, Max-Abs).
+ * Each transform supplies its settings, its fit and its apply.
  */
-class StandardScalerOperator : public IPipelineOperator {
+class ColumnTransformOperator : public IPipelineOperator {
 public:
-    std::string GetName() const override { return "StandardScaler"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
-    // Fit writes external state; Transform Only reads a mutable artifact.
-    // Re-enable caching only after artifact content identity joins cache keys.
-    bool IsCacheable() const override { return false; }
-
+    // The fit learns from rows the cache key covers (the source, the steps
+    // before and the Split's Train rows), so the output is kept, unless the
+    // step saves its fitted values: a hit would not write them (TOFIX178 0.5).
+    bool IsCacheable() const override { return options_.IsTransformOnly() || !options_.save_state; }
+    // Use saved values: the values file is in the key.
+    bool CollectCacheDependencies(std::vector<PipelineOperatorCacheDependency>& dependencies,
+                                  std::string&) const override {
+        if (options_.IsTransformOnly()) dependencies.push_back({"fitted_state", options_.state_path});
+        return true;
+    }
     bool Configure(const std::map<std::string, std::string>& params,
                    std::string& error) override;
     arrow::Result<std::shared_ptr<arrow::Table>> Apply(
         const std::shared_ptr<arrow::Table>& input) override;
-
     void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
         progress_callback_ = std::move(callback);
     }
-
-    // Streams (TOFIX154): the fit pass merges each batch's moments, so the
-    // statistics are those of all the rows; Apply is one batch of the same.
-    bool SupportsStreaming() const override { return true; }
-    bool NeedsFitPass() const override { return operation_mode_ == "fit_transform"; }
+    bool SupportsStreaming() const override { return Streams(); }
+    bool NeedsFitPass() const override { return !options_.IsTransformOnly(); }
     arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>& schema) override;
     arrow::Status FitBatch(const std::shared_ptr<arrow::Table>& batch) override;
     arrow::Status EndFit() override;
     arrow::Result<std::shared_ptr<arrow::Table>> ApplyBatch(const std::shared_ptr<arrow::Table>& batch) override;
     arrow::Status EndStream() override;
 
+protected:
+    // The transform's own parameters.
+    virtual bool ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) = 0;
+    // Settings saved with the fitted values; reusing them needs the same.
+    virtual std::map<std::string, std::string> Settings() const = 0;
+    virtual bool Streams() const = 0;
+    // A fit over the present values of each column, batch by batch.
+    virtual void BeginFit(size_t columns) = 0;
+    virtual arrow::Status FitValues(size_t column, const std::vector<double>& present) = 0;
+    // The fitted values of a column into `feature.numeric_values`.
+    virtual arrow::Status EndColumnFit(size_t column, PreprocessingFeatureState& feature) = 0;
+    // Saved values of a column back (Use saved values).
+    virtual arrow::Status LoadColumn(size_t column, const PreprocessingFeatureState& feature) = 0;
+    virtual arrow::Result<std::vector<double>> TransformValues(size_t column, std::vector<double> present) = 0;
+    // "Standard scaling", for progress and the log.
+    virtual std::string Describe() const = 0;
+
+    const std::string& ColumnName(size_t column) const { return resolved_[column]; }
+
 private:
     std::vector<std::string> columns_;
     std::vector<std::string> exclude_columns_;
     std::string label_col_;
-    bool with_mean_ = true;
-    bool with_std_ = true;
-    std::string operation_mode_ = "fit_transform";
-    std::string state_path_;
-    bool save_state_ = false;
-    bool state_overwrite_ = false;
+    FittedPreprocessingOptions options_;
     PipelineOperatorProgressCallback progress_callback_;
-
-    // The stream: columns, merged moments (fit), center and scale per column.
     std::shared_ptr<arrow::Schema> schema_;
     std::vector<std::string> resolved_;
-    std::vector<DataTransform::ColumnMoments> moments_;
-    std::vector<double> centers_;
-    std::vector<double> scales_;
     FittedPreprocessingState state_;
     int64_t fit_rows_ = 0;
 };
 
 /**
- * MinMaxScalerOperator — scale each column to a user-specified range.
- *
- * `x' = (x - data_min) / (data_max - data_min) * (range_max - range_min) + range_min`
- *
- * Params:
- *   columns    (optional, csv)
- *   label_col  (optional)
- *   min        (default 0.0)   — target range minimum.
- *   max        (default 1.0)   — target range maximum.
+ * StandardScalerOperator: (x - mean) / std (population std, scikit-learn).
+ * Params: with_mean, with_std (default true). Streams.
  */
-class MinMaxScalerOperator : public IPipelineOperator {
+class StandardScalerOperator : public ColumnTransformOperator {
 public:
-    std::string GetName() const override { return "MinMaxScaler"; }
-    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    std::string GetName() const override { return "StandardScaler"; }
 
-    bool Configure(const std::map<std::string, std::string>& params,
-                   std::string& error) override;
-    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
-        const std::shared_ptr<arrow::Table>& input) override;
-
-    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
-        progress_callback_ = std::move(callback);
-    }
-
-    // Streams (TOFIX154): the fit pass merges each batch's min and max;
-    // Apply is one batch of the same.
-    bool SupportsStreaming() const override { return true; }
-    bool NeedsFitPass() const override { return true; }
-    arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>& schema) override;
-    arrow::Status FitBatch(const std::shared_ptr<arrow::Table>& batch) override;
-    arrow::Result<std::shared_ptr<arrow::Table>> ApplyBatch(const std::shared_ptr<arrow::Table>& batch) override;
+protected:
+    bool ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) override;
+    std::map<std::string, std::string> Settings() const override;
+    bool Streams() const override { return true; }
+    void BeginFit(size_t columns) override;
+    arrow::Status FitValues(size_t column, const std::vector<double>& present) override;
+    arrow::Status EndColumnFit(size_t column, PreprocessingFeatureState& feature) override;
+    arrow::Status LoadColumn(size_t column, const PreprocessingFeatureState& feature) override;
+    arrow::Result<std::vector<double>> TransformValues(size_t column, std::vector<double> present) override;
+    std::string Describe() const override { return "Standard scaling"; }
 
 private:
-    std::vector<std::string> columns_;
-    std::string label_col_;
-    double range_min_ = 0.0;
-    double range_max_ = 1.0;
-    PipelineOperatorProgressCallback progress_callback_;
-
-    std::vector<std::string> resolved_;
+    bool with_mean_ = true;
+    bool with_std_ = true;
     std::vector<DataTransform::ColumnMoments> moments_;
+    std::vector<double> centers_, scales_;
 };
 
 /**
- * RobustScalerOperator — median/IQR scaling, outlier-resistant.
- *
- * `x' = (x - median) / (Q_high - Q_low)`. Unlike StandardScaler, this
- * uses percentiles so heavy outliers don't dominate the scaling.
- *
- * Params:
- *   columns         (optional, csv)
- *   label_col       (optional)
- *   with_centering  (default true)
- *   with_scaling    (default true)
- *   quantile_min    (default 25.0) — lower percentile.
- *   quantile_max    (default 75.0) — upper percentile.
+ * MinMaxScalerOperator: (x - min) / (max - min) into min .. max (default 0 .. 1).
+ * Streams.
  */
-class RobustScalerOperator : public IPipelineOperator {
+class MinMaxScalerOperator : public ColumnTransformOperator {
 public:
-    std::string GetName() const override { return "RobustScaler"; }
-    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    std::string GetName() const override { return "MinMaxScaler"; }
 
-    bool Configure(const std::map<std::string, std::string>& params,
-                   std::string& error) override;
-    arrow::Result<std::shared_ptr<arrow::Table>> Apply(
-        const std::shared_ptr<arrow::Table>& input) override;
-
-    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
-        progress_callback_ = std::move(callback);
-    }
+protected:
+    bool ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) override;
+    std::map<std::string, std::string> Settings() const override;
+    bool Streams() const override { return true; }
+    void BeginFit(size_t columns) override;
+    arrow::Status FitValues(size_t column, const std::vector<double>& present) override;
+    arrow::Status EndColumnFit(size_t column, PreprocessingFeatureState& feature) override;
+    arrow::Status LoadColumn(size_t column, const PreprocessingFeatureState& feature) override;
+    arrow::Result<std::vector<double>> TransformValues(size_t column, std::vector<double> present) override;
+    std::string Describe() const override { return "Min-max scaling"; }
 
 private:
-    std::vector<std::string> columns_;
-    std::string label_col_;
+    double range_min_ = 0.0;
+    double range_max_ = 1.0;
+    std::vector<DataTransform::ColumnMoments> moments_;
+    std::vector<double> lows_, highs_;
+};
+
+/**
+ * RobustScalerOperator: (x - median) / (Q_high - Q_low), outlier-resistant.
+ * Params: with_centering, with_scaling (default true), quantile_min /
+ * quantile_max (default 25 / 75). Fits on the whole column.
+ */
+class RobustScalerOperator : public ColumnTransformOperator {
+public:
+    std::string GetName() const override { return "RobustScaler"; }
+
+protected:
+    bool ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) override;
+    std::map<std::string, std::string> Settings() const override;
+    bool Streams() const override { return false; }
+    void BeginFit(size_t columns) override;
+    arrow::Status FitValues(size_t column, const std::vector<double>& present) override;
+    arrow::Status EndColumnFit(size_t column, PreprocessingFeatureState& feature) override;
+    arrow::Status LoadColumn(size_t column, const PreprocessingFeatureState& feature) override;
+    arrow::Result<std::vector<double>> TransformValues(size_t column, std::vector<double> present) override;
+    std::string Describe() const override { return "Robust scaling"; }
+
+private:
     bool with_centering_ = true;
     bool with_scaling_ = true;
     double quantile_min_ = 25.0;
     double quantile_max_ = 75.0;
+    std::vector<std::vector<double>> values_;
+    std::vector<double> centers_, scales_;
+};
+
+/**
+ * MaxAbsScalerOperator: x / max |x|, into -1 .. 1 (keeps zeros: sparse data).
+ * A column of zeros is left as it is. Streams.
+ */
+class MaxAbsScalerOperator : public ColumnTransformOperator {
+public:
+    std::string GetName() const override { return "MaxAbsScaler"; }
+
+protected:
+    bool ConfigureOwn(const std::map<std::string, std::string>&, std::string&) override { return true; }
+    std::map<std::string, std::string> Settings() const override { return {}; }
+    bool Streams() const override { return true; }
+    void BeginFit(size_t columns) override;
+    arrow::Status FitValues(size_t column, const std::vector<double>& present) override;
+    arrow::Status EndColumnFit(size_t column, PreprocessingFeatureState& feature) override;
+    arrow::Status LoadColumn(size_t column, const PreprocessingFeatureState& feature) override;
+    arrow::Result<std::vector<double>> TransformValues(size_t column, std::vector<double> present) override;
+    std::string Describe() const override { return "Max-abs scaling"; }
+
+private:
+    std::vector<DataTransform::ColumnMoments> moments_;
+    std::vector<double> scales_;
+};
+
+/**
+ * QuantileTransformOperator: each column through its quantiles onto a
+ * uniform 0 .. 1 or a standard normal shape (scikit-learn
+ * QuantileTransformer). Params: output_distribution (uniform / normal,
+ * default uniform), n_quantiles (default 1000). Fits on the whole column.
+ */
+class QuantileTransformOperator : public ColumnTransformOperator {
+public:
+    std::string GetName() const override { return "QuantileTransform"; }
+
+protected:
+    bool ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) override;
+    std::map<std::string, std::string> Settings() const override;
+    bool Streams() const override { return false; }
+    void BeginFit(size_t columns) override;
+    arrow::Status FitValues(size_t column, const std::vector<double>& present) override;
+    arrow::Status EndColumnFit(size_t column, PreprocessingFeatureState& feature) override;
+    arrow::Status LoadColumn(size_t column, const PreprocessingFeatureState& feature) override;
+    arrow::Result<std::vector<double>> TransformValues(size_t column, std::vector<double> present) override;
+    std::string Describe() const override { return "Quantile transform"; }
+
+private:
+    std::string distribution_ = "uniform";
+    int n_quantiles_ = 1000;
+    std::vector<std::vector<double>> values_;
+    std::vector<std::vector<double>> quantiles_;
+};
+
+/**
+ * PowerTransformOperator: Box-Cox (values above 0) or Yeo-Johnson (any
+ * values), lambda found by maximum likelihood per column or typed
+ * (scipy.stats.boxcox / yeojohnson). Params: family (box-cox / yeo-johnson,
+ * default yeo-johnson), lambda_mode (auto / fixed, default auto), lambda.
+ * Fits on the whole column.
+ */
+class PowerTransformOperator : public ColumnTransformOperator {
+public:
+    std::string GetName() const override { return "PowerTransform"; }
+
+protected:
+    bool ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) override;
+    std::map<std::string, std::string> Settings() const override;
+    bool Streams() const override { return false; }
+    void BeginFit(size_t columns) override;
+    arrow::Status FitValues(size_t column, const std::vector<double>& present) override;
+    arrow::Status EndColumnFit(size_t column, PreprocessingFeatureState& feature) override;
+    arrow::Status LoadColumn(size_t column, const PreprocessingFeatureState& feature) override;
+    arrow::Result<std::vector<double>> TransformValues(size_t column, std::vector<double> present) override;
+    std::string Describe() const override { return box_cox_ ? "Box-Cox transform" : "Yeo-Johnson transform"; }
+
+private:
+    bool box_cox_ = false;
+    bool auto_lambda_ = true;
+    double lambda_ = 0.0;
+    std::vector<std::vector<double>> values_;
+    std::vector<double> lambdas_;
+};
+
+/**
+ * LogTransformOperator: log(x) or log(1 + x), in base e, 10 or 2 (TOFIX129 D2).
+ * Params: columns (csv; empty = every number column except label_col and
+ * exclude_columns), base (natural / log10 / log2, default natural),
+ * use_log1p (default true). Nothing is fitted; a missing value stays missing
+ * in its row. Streams (row by row).
+ */
+class LogTransformOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "LogTransform"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
+        progress_callback_ = std::move(callback);
+    }
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+    bool SupportsStreaming() const override { return true; }
+    arrow::Status BeginStream(const std::shared_ptr<arrow::Schema>& schema) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> ApplyBatch(const std::shared_ptr<arrow::Table>& batch) override;
+
+private:
+    std::vector<std::string> columns_;
+    std::vector<std::string> exclude_columns_;
+    std::string label_col_;
+    std::string base_ = "natural";
+    bool log1p_ = true;
+    std::vector<std::string> resolved_;
     PipelineOperatorProgressCallback progress_callback_;
 };
 
@@ -284,6 +408,7 @@ class OutlierDetectorOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "OutlierDetector"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool LearnsFromEveryRow() const override { return true; }
 
     bool Configure(const std::map<std::string, std::string>& params,
                    std::string& error) override;

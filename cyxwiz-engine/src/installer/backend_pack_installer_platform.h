@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <functional>
 #include <memory>
 #include <string>
@@ -84,6 +85,13 @@ CreateBackendPackInstallerPlatform(
 
 std::filesystem::path DefaultCyxWizInstallRoot(
     CyxWizInstallScope scope);
+
+// The system folder picker, for the installation location. False on
+// platforms without one here (the location is typed there).
+bool InstallFolderPickerAvailable();
+// Nothing when the user cancels.
+std::optional<std::filesystem::path> PickInstallFolder(
+    const std::filesystem::path &start);
 
 // Product removal deletes the whole install root, so an installation may only
 // claim a missing or empty folder, or one that is already a CyxWiz install.

@@ -1,4 +1,8 @@
 #include "graph_compiler.h"
+#include <tuple>
+#include "normalize_statistics.h"
+#include "sample_split.h"
+#include "count_text.h"
 #include "classification_decision.h"
 #include "sequence_fusion_presentation.h"
 #include "quiet_build_log.h"
@@ -44,6 +48,8 @@
 #include <unordered_set>
 
 namespace cyxwiz {
+
+void CompileImageSplit(TrainingConfiguration& config, const std::vector<gui::MLNode>& nodes);
 
 namespace {
 // "28, 28, 1"
@@ -136,7 +142,8 @@ void CollectDatasetSourceOrigins(
     int output_pin_id,
     std::unordered_set<int>& active_path,
     std::unordered_set<int>& origins,
-    bool& invalid_path) {
+    bool& invalid_path,
+    bool& needs_pipeline_run) {
     const auto* node = FindNodeById(nodes, node_id);
     const auto* output_pin = node
         ? FindPinById(node->outputs, output_pin_id)
@@ -160,10 +167,14 @@ void CollectDatasetSourceOrigins(
         runtime_support.implementation_owner ==
             PipelineRuntimeImplementationOwner::PipelineOperatorFactory &&
         runtime_support.materializer_arrow_table_supported;
-    if (!training_filter && !table_operator) {
+    // SQL, Text Clean, Filter Rows ... run in the pipeline run only: training
+    // trains on that run's result (TOFIX178 S0-e).
+    const bool run_step = IsPipelineRunTrainingStep(node->type);
+    if (!training_filter && !table_operator && !run_step) {
         invalid_path = true;
         return;
     }
+    if (run_step) needs_pipeline_run = true;
 
     if (!active_path.insert(node->id).second) {
         invalid_path = true;
@@ -177,7 +188,7 @@ void CollectDatasetSourceOrigins(
         if (!input_pin || input_pin->type != gui::PinType::Dataset) continue;
         found_dataset_input = true;
         CollectDatasetSourceOrigins(nodes, links, link.from_node, link.from_pin,
-                                    active_path, origins, invalid_path);
+                                    active_path, origins, invalid_path, needs_pipeline_run);
     }
     if (!found_dataset_input) invalid_path = true;
     active_path.erase(node->id);
@@ -189,9 +200,11 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     const gui::MLNode& split_node,
     const std::string& pin_name,
     bool* has_connection = nullptr,
-    bool* has_multiple_sources = nullptr) {
+    bool* has_multiple_sources = nullptr,
+    bool* needs_pipeline_run = nullptr) {
     if (has_connection) *has_connection = false;
     if (has_multiple_sources) *has_multiple_sources = false;
+    if (needs_pipeline_run) *needs_pipeline_run = false;
 
     const auto* input_pin = FindInputPinByName(split_node, pin_name);
     if (!input_pin) return nullptr;
@@ -199,6 +212,7 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     std::unordered_set<int> origins;
     std::unordered_set<int> active_path;
     bool invalid_path = false;
+    bool run_steps = false;
     for (const auto& link : links) {
         if (link.to_node != split_node.id || link.to_pin != input_pin->id) {
             continue;
@@ -206,8 +220,9 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
         if (has_connection) *has_connection = true;
 
         CollectDatasetSourceOrigins(nodes, links, link.from_node, link.from_pin,
-                                    active_path, origins, invalid_path);
+                                    active_path, origins, invalid_path, run_steps);
     }
+    if (needs_pipeline_run) *needs_pipeline_run = run_steps;
     if (origins.size() > 1) {
         if (has_multiple_sources) *has_multiple_sources = true;
         return nullptr;
@@ -216,7 +231,7 @@ const gui::MLNode* FindDatasetSourceConnectedToSplitInput(
     return FindNodeById(nodes, *origins.begin());
 }
 
-bool IsLossNodeType(gui::NodeType type);
+bool IsLossNode(const gui::MLNode& node);
 
 bool SplitReachesLoss(
     const gui::MLNode& split_node,
@@ -224,7 +239,7 @@ bool SplitReachesLoss(
     const std::vector<gui::NodeLink>& links) {
     const auto reachable = CollectReachableNodeIds(split_node.id, links);
     for (const auto& node : nodes) {
-        if (IsLossNodeType(node.type) && reachable.count(node.id) > 0) {
+        if (IsLossNode(node) && reachable.count(node.id) > 0) {
             return true;
         }
     }
@@ -734,6 +749,25 @@ void ValidateSparseFeatureTrainingContract(
     }
 }
 
+// TextVocabulary and TextPadding linked from a tokenizer are legacy: their
+// settings belong on the Text Tokenizer (ReportLegacyTextConfigNodes).
+void ReportLegacyTextConfigNodes(TrainingConfiguration& config,
+                                 const std::vector<gui::MLNode>& nodes,
+                                 const std::vector<gui::NodeLink>& links) {
+    for (const auto& link : links) {
+        const auto* from = FindNodeById(nodes, link.from_node);
+        const auto* to = FindNodeById(nodes, link.to_node);
+        if (!from || !to || from->type != gui::NodeType::TextTokenizer) continue;
+        if (to->type != gui::NodeType::TextVocabulary && to->type != gui::NodeType::TextPadding) continue;
+        AddIssue(config, IssueLevel::Warning,
+                 "'" + to->name + "' is a legacy node and its settings are not applied; set " +
+                     (to->type == gui::NodeType::TextVocabulary ? "Min Word Freq and Max Vocab Size"
+                                                                : "Max Length and Pad Value") +
+                     " on '" + from->name + "' instead",
+                 to->id, to->name);
+    }
+}
+
 // Suggests sparse output for a wide dense vectorizer when the selected path
 // meets every sparse training rule above (final preprocessing output,
 // non-sequence, Dense first, no external dev/test roles). Sparse output keeps
@@ -798,7 +832,7 @@ void SuggestSparseFeatureOutput(
              vectorizer->id, vectorizer->name);
 }
 
-bool IsLossNodeType(gui::NodeType type) {
+bool IsBuiltInLossNodeType(gui::NodeType type) {
     return type == gui::NodeType::MSELoss ||
            type == gui::NodeType::CrossEntropyLoss ||
            type == gui::NodeType::FocalLoss ||
@@ -814,6 +848,22 @@ bool IsLossNodeType(gui::NodeType type) {
            type == gui::NodeType::TripletLoss ||
            type == gui::NodeType::ContrastiveLoss ||
            type == gui::NodeType::CosineEmbeddingLoss;
+}
+
+// A loss node from a plugin or a Python bundle (TOFIX125 P7). One that is
+// not installed keeps the pins it was saved with: a Loss output says it was
+// a loss, so the graph is refused for the missing node, not for "no loss".
+bool IsExtensionLossNode(const gui::MLNode& node) {
+    if (node.type != gui::NodeType::PluginCustom) return false;
+    const auto descriptor = ExtensionNodeRegistry::Instance().Find(node.extension_type_id);
+    if (descriptor) return descriptor->kind == ExtensionNodeKind::Loss;
+    return std::any_of(node.outputs.begin(), node.outputs.end(),
+                       [](const gui::NodePin& pin) { return pin.type == gui::PinType::Loss; });
+}
+
+// The graph's training objective: a built-in loss or an extension loss.
+bool IsLossNode(const gui::MLNode& node) {
+    return IsBuiltInLossNodeType(node.type) || IsExtensionLossNode(node);
 }
 
 bool IsTrueParameter(const gui::MLNode& node, const char* key) {
@@ -837,7 +887,7 @@ TargetContract InferTargetContract(
     // stream. Future target-free estimator objectives should leave this false;
     // RL compilers should resolve Environment rather than a dataset label.
     contract.required_by_objective =
-        loss_node && IsLossNodeType(loss_node->type);
+        loss_node && IsLossNode(*loss_node);
 
     for (const auto& node : nodes) {
         if (training_path_ids.count(node.id) == 0) continue;
@@ -2066,7 +2116,8 @@ void ApplyImageInputShape(TrainingConfiguration& config) {
     if (config.preprocessing_domain != PreprocessingDomain::Image) {
         return;
     }
-    const auto shape = config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+    const auto shape =
+        cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
     config.input_shape = {shape.height, shape.width, shape.channels};
     config.input_size = shape.Size();
 }
@@ -2967,7 +3018,7 @@ const gui::MLNode* FindFirstLossNodeInSet(
     const std::unordered_set<int>& node_ids) {
 
     for (const auto& node : nodes) {
-        if (IsLossNodeType(node.type) &&
+        if (IsLossNode(node) &&
             node_ids.count(node.id) > 0) {
             return &node;
         }
@@ -2999,7 +3050,7 @@ void ValidateSingleDatasetReachableLossNode(
 
     std::vector<const gui::MLNode*> reachable_losses;
     for (const auto& node : nodes) {
-        if (IsLossNodeType(node.type) &&
+        if (IsLossNode(node) &&
             dataset_reachable.count(node.id) > 0) {
             reachable_losses.push_back(&node);
         }
@@ -4162,7 +4213,8 @@ void ValidateExtensionNodes(
         }
 
         // A trainable node on the training path becomes a layer in the
-        // layer loop (CompileExtensionLayer), which reports shape problems.
+        // layer loop (CompileExtensionLayer), which reports shape problems;
+        // a loss node becomes the training objective.
     }
 }
 
@@ -4523,7 +4575,8 @@ TrainingConfiguration GraphCompiler::Compile(
             bool train_has_multiple_sources = false;
             const auto* topology_train = FindDatasetSourceConnectedToSplitInput(
                 nodes, links, *role_split, "Training Dataset",
-                &train_has_connection, &train_has_multiple_sources);
+                &train_has_connection, &train_has_multiple_sources,
+                &config.training_data_needs_pipeline_run);
             if (train_has_multiple_sources) {
                 AddIssue(config, IssueLevel::Error,
                          "Data Split 'Training Dataset' accepts exactly one "
@@ -4550,9 +4603,40 @@ TrainingConfiguration GraphCompiler::Compile(
                 DatasetSourceRef& output) {
                 bool has_connection = false;
                 bool has_multiple_sources = false;
+                bool needs_run = false;
                 const auto* source = FindDatasetSourceConnectedToSplitInput(
                     nodes, links, *role_split, pin_name,
-                    &has_connection, &has_multiple_sources);
+                    &has_connection, &has_multiple_sources, &needs_run);
+                // A supplied input goes through the Training branch's steps,
+                // fitted on the Train rows (TOFIX178 S0-g4); steps of its
+                // own would not run. The Quality Analyzer (it filters image
+                // files) may stay.
+                bool own_steps = needs_run;
+                if (const auto* pin = FindInputPinByName(*role_split, pin_name)) {
+                    int at = -1;
+                    for (const auto& link : links)
+                        if (link.to_node == role_split->id && link.to_pin == pin->id) at = link.from_node;
+                    std::unordered_set<int> seen;
+                    while (at >= 0 && seen.insert(at).second) {
+                        const gui::MLNode* node = FindNodeById(at, nodes);
+                        if (!node || IsDatasetSourceType(node->type)) break;
+                        if (node->type != gui::NodeType::QualityAnalyzer) own_steps = true;
+                        int next = -1;
+                        for (const auto& link : links)
+                            if (link.to_node == at) next = link.from_node;
+                        at = next;
+                    }
+                }
+                if (own_steps) {
+                    AddIssue(config, IssueLevel::Error,
+                             std::string(role_name) +
+                                 " input goes through the Training branch's steps (they learn from the "
+                                 "Train rows and transform its rows too); connect its Data Input to the "
+                                 "Data Split directly",
+                             role_split->id, role_split->name,
+                             errors::Compiler::InvalidConnectivity);
+                    return;
+                }
                 if (has_multiple_sources) {
                     AddIssue(config, IssueLevel::Error,
                              std::string("Data Split '") + pin_name +
@@ -4579,6 +4663,32 @@ TrainingConfiguration GraphCompiler::Compile(
                 "Validation Dataset", "Validation", config.dataset_roles.dev);
             resolve_optional_role(
                 "Test Dataset", "Test", config.dataset_roles.test);
+
+            // The Training branch's steps learn from its Train rows; one that
+            // learns from every row also learns from the Validation and Test
+            // rows (TOFIX178 S0-g5).
+            if (const auto* pin = FindInputPinByName(*role_split, "Training Dataset")) {
+                std::vector<int> pending;
+                for (const auto& link : links)
+                    if (link.to_node == role_split->id && link.to_pin == pin->id) pending.push_back(link.from_node);
+                std::unordered_set<int> seen;
+                while (!pending.empty()) {
+                    const int at = pending.back();
+                    pending.pop_back();
+                    if (!seen.insert(at).second) continue;
+                    const gui::MLNode* node = FindNodeById(at, nodes);
+                    if (!node || IsDatasetSourceType(node->type)) continue;
+                    if (PipelineStepLearnsFromEveryRow(node->type)) {
+                        AddIssue(config, IssueLevel::Warning,
+                                 "'" + node->name + "' learns from every row before the Data Split, the "
+                                 "Validation and Test rows too (it cannot learn from the Train rows only yet), "
+                                 "so their scores read better than new data would",
+                                 node->id, node->name, errors::Compiler::LearnsFromEveryRow);
+                    }
+                    for (const auto& link : links)
+                        if (link.to_node == at) pending.push_back(link.from_node);
+                }
+            }
         }
 
         for (const auto& node : nodes) {
@@ -4675,9 +4785,17 @@ TrainingConfiguration GraphCompiler::Compile(
             ? cat_it_lbl->second : std::string();
         const bool labels_from_structure = GraphCategoryLabelsFromStructure(cat_str);
 
-        const std::string requested_label_col = dataset_node->parameters.count("label_column")
+        std::string requested_label_col = dataset_node->parameters.count("label_column")
             ? dataset_node->parameters.at("label_column")
             : std::string();
+        // The Data Split's Label column wins (TOFIX178 S0-e): steps before the
+        // Split can make or rename the label.
+        if (const gui::MLNode* label_split =
+                FindFirstReachableNodeOfType(nodes, dataset_reachable, gui::NodeType::DataSplit)) {
+            const auto split_label = label_split->parameters.find("label_column");
+            if (split_label != label_split->parameters.end() && !TrimAscii(split_label->second).empty())
+                requested_label_col = TrimAscii(split_label->second);
+        }
 
         std::shared_ptr<arrow::Schema> tabular_schema;
         if (auto arrow_dataset = GraphArrowDataset(config.dataset_name)) {
@@ -4709,6 +4827,22 @@ TrainingConfiguration GraphCompiler::Compile(
         }
 
         if (!requested_label_col.empty() && tabular_schema &&
+            resolved_label_index < 0 && !labels_from_structure &&
+            config.training_data_needs_pipeline_run &&
+            !config.target.IsGeneratedByGraph()) {
+            // A SQL / Rename / Math Formula step before the Split can make the
+            // label column (TOFIX178 S0-e): training checks it on their result.
+            config.dataset_roles.train.label_column = requested_label_col;
+            config.target.origin = TargetOrigin::DatasetColumn;
+            config.target.producer_node_id = dataset_node->id;
+            config.target.producer_node_name = dataset_node->name;
+            config.target.primary_column = requested_label_col;
+            config.target.width = 1;
+            AddIssue(config, IssueLevel::Warning,
+                     "Label column '" + requested_label_col + "' is not in '" + config.dataset_name +
+                         "'; the steps before the Data Split must make it (checked when they run)",
+                     dataset_node->id, dataset_node->name);
+        } else if (!requested_label_col.empty() && tabular_schema &&
             resolved_label_index < 0 && !labels_from_structure) {
             if (config.target.IsGeneratedByGraph()) {
                 AddIssue(config, IssueLevel::Warning,
@@ -4843,6 +4977,7 @@ TrainingConfiguration GraphCompiler::Compile(
     if (const gui::MLNode* split_node = FindFirstReachableNodeOfType(
             nodes, dataset_reachable, gui::NodeType::DataSplit)) {
         config.has_data_split = true;
+        config.data_split_node_id = split_node->id;
         AddIssue(config,
                  IssueLevel::Info,
                  "Data Split resolves its named Dataset inputs into one "
@@ -5143,6 +5278,7 @@ TrainingConfiguration GraphCompiler::Compile(
 
     std::vector<int> sorted_ids = TopologicalSort(nodes, links);
     SuggestSparseFeatureOutput(config, nodes, links, training_path_ids, sorted_ids);
+    ReportLegacyTextConfigNodes(config, nodes, links);
     ValidateSparseFeatureTrainingContract(
         config, nodes, links, training_path_ids, sorted_ids);
     const auto sequence_fusion =
@@ -5438,8 +5574,9 @@ TrainingConfiguration GraphCompiler::Compile(
         }
 
         // Extension nodes (TOFIX125): their own shape function and module.
+        // An extension loss is the objective, not a layer (P7).
         if (node->type == gui::NodeType::PluginCustom) {
-            if (!ContainsWhenFiltered(training_path_ids, node->id)) {
+            if (!ContainsWhenFiltered(training_path_ids, node->id) || IsExtensionLossNode(*node)) {
                 continue;
             }
             CompiledLayer layer;
@@ -5751,6 +5888,21 @@ TrainingConfiguration GraphCompiler::Compile(
     if (loss_node) {
         config.loss_type = loss_node->type;
         config.loss_params = loss_node->parameters;
+        const auto descriptor = IsExtensionLossNode(*loss_node)
+            ? ExtensionNodeRegistry::Instance().Find(loss_node->extension_type_id)
+            : std::nullopt;
+        // Not installed: ValidateExtensionNodes refused the graph.
+        if (descriptor) {
+            config.loss_extension_type_id = loss_node->extension_type_id;
+            config.loss_extension_version = descriptor->version;
+            config.loss_extension_name = descriptor->metadata.name;
+            // The extension says what its targets are.
+            if (config.target.value_kind == TargetValueKind::Unspecified) {
+                config.target.value_kind = descriptor->loss_target == ExtensionLossTarget::Continuous
+                    ? TargetValueKind::Continuous
+                    : TargetValueKind::Categorical;
+            }
+        }
 
         // Resolve target semantics once, at compile time. Target-producing
         // graph operators may already be more specific; otherwise the
@@ -6095,8 +6247,9 @@ TrainingConfiguration GraphCompiler::Compile(
             // Estimate total model memory (weights + gradients + optimizer)
             // and warn if it's likely to exceed reasonable GPU memory.
             if (has_resize && config.image_preprocessing.target_width > 0) {
-                // The model's input after the image transforms (crops, Grayscale).
-                const auto image_shape = config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+                // The model's input after the image steps (crops, Grayscale, OpenCV steps).
+                const auto image_shape = cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps,
+                                                                    DecodedImageShape(config));
                 size_t img_features = image_shape.Size();
                 size_t total_params = 0;
                 size_t prev_size = img_features;
@@ -6188,6 +6341,13 @@ TrainingConfiguration GraphCompiler::Compile(
                                  std::to_string(verdict->total) + " images",
                              config.image_quality_node_id, quality_name);
                 }
+            }
+
+            // The image split as training makes it (TOFIX178 1.5): the counts
+            // for the Data Split's card, the report and Data Studio, and the
+            // parts that would come out empty. Known once the images are indexed.
+            if (GraphDatasetIsKind(config.dataset_name, GraphDatasetKind::Image)) {
+                CompileImageSplit(config, nodes);
             }
 
             // Check 4: Pipeline ordering — Normalize before Resize is
@@ -6615,7 +6775,7 @@ const gui::MLNode* GraphCompiler::FindDatasetInputNode(
 
         const auto reachable = CollectReachableNodeIds(node.id, links);
         for (const auto& candidate : nodes) {
-            if (IsLossNodeType(candidate.type) &&
+            if (IsLossNode(candidate) &&
                 reachable.count(candidate.id) > 0) {
                 return &node;
             }
@@ -6626,7 +6786,7 @@ const gui::MLNode* GraphCompiler::FindDatasetInputNode(
 
 const gui::MLNode* GraphCompiler::FindLossNode(const std::vector<gui::MLNode>& nodes) const {
     for (const auto& node : nodes) {
-        if (IsLossNodeType(node.type)) {
+        if (IsLossNode(node)) {
             return &node;
         }
     }
@@ -6752,6 +6912,82 @@ bool GraphCompiler::IsActivation(gui::NodeType type) const {
 
 namespace {
 
+std::string JoinedNames(const std::vector<std::string>& names) {
+    std::string text;
+    for (const auto& name : names) text += (text.empty() ? "" : ", ") + name;
+    return text;
+}
+
+}  // namespace
+
+// The image split's counts and messages (TOFIX178 1.5), on the Data Split
+// node when the graph has one.
+void CompileImageSplit(TrainingConfiguration& config, const std::vector<gui::MLNode>& nodes) {
+    const gui::MLNode* split_node = FindNodeById(nodes, config.data_split_node_id);
+    const int node_id = split_node ? split_node->id : -1;
+    const std::string node_name = split_node ? split_node->name : std::string();
+    const SampleSplitSettings split{config.train_ratio, config.val_ratio, config.test_ratio, config.stratified,
+                                    static_cast<uint32_t>(config.split_seed)};
+    const auto counts = GraphImageSplit(config.dataset_name, split, config.image_excluded_files);
+    if (!counts || !counts->known) return;
+    config.image_split = *counts;
+    config.image_unreadable_files = counts->unreadable_files;
+
+    // A wired Validation / Test image dataset: read whole, with the training classes.
+    for (auto [role, target, what] :
+         {std::tuple{&config.dataset_roles.dev, &config.image_split_dev, "Validation"},
+          std::tuple{&config.dataset_roles.test, &config.image_split_test, "Test"}}) {
+        if (!role->IsSupplied() || !GraphDatasetIsKind(role->dataset_name, GraphDatasetKind::Image)) continue;
+        const auto whole = GraphImageSplit(role->dataset_name, SampleSplitSettings{0.0f, 0.0f, 1.0f, false, split.seed}, {});
+        if (!whole || !whole->known) continue;
+        *target = *whole;
+        config.image_unreadable_files.insert(config.image_unreadable_files.end(), whole->unreadable_files.begin(),
+                                             whole->unreadable_files.end());
+        if (whole->class_names != counts->class_names)
+            AddIssue(config, IssueLevel::Error,
+                     std::string("The ") + what + " Dataset's classes (" + JoinedNames(whole->class_names) +
+                         ") are not the training classes (" + JoinedNames(counts->class_names) +
+                         "): the model's outputs would not line up.",
+                     node_id, node_name, errors::Data::InvalidSplit);
+    }
+
+    const size_t val = config.image_split_dev.known ? config.image_split_dev.parts[2] : counts->parts[1];
+    const size_t test = config.image_split_test.known ? config.image_split_test.parts[2] : counts->parts[2];
+    auto& manifest = config.dataset_roles.manifest;
+    manifest.train_rows = static_cast<int64_t>(counts->parts[0]);
+    manifest.dev_rows = static_cast<int64_t>(val);
+    manifest.test_rows = static_cast<int64_t>(test);
+    char seed[32];
+    std::snprintf(seed, sizeof(seed), "%d", config.split_seed);
+    AddIssue(config, IssueLevel::Info,
+             "Images: " + CountText(counts->parts[0]) + " train · " + CountText(val) +
+                 " validation · " + CountText(test) + " test, " +
+                 (config.stratified ? "by class" : "one shuffle") + " (seed " + seed + ").",
+             node_id, node_name);
+
+    // A class too small for a part's share: that part has none of it. The
+    // shares are the ratios over their sum, as the split uses them.
+    const auto normalized = split_partition_detail::Normalize(config.train_ratio, config.val_ratio, config.test_ratio);
+    const float shares[3] = {normalized.train, normalized.val, normalized.test};
+    const char* part_names[3] = {"train", "validation", "test"};
+    for (size_t c = 0; c < counts->per_class.size() && c < counts->shown_names.size(); ++c) {
+        const auto& by_part = counts->per_class[c];
+        const size_t images = by_part[0] + by_part[1] + by_part[2];
+        for (size_t part = 1; part < 3; ++part) {
+            if (images == 0 || shares[part] <= 0.0f || by_part[part] > 0) continue;
+            AddIssue(config, IssueLevel::Warning,
+                     "Class '" + counts->shown_names[c] + "' has " + CountText(images) + " image" +
+                         (images == 1 ? "" : "s") + ": its " + part_names[part] + " part is empty (" +
+                         std::to_string(static_cast<int>(shares[part] * 100.0f + 0.5f)) + " % of " +
+                         CountText(images) + " is less than one image). Give it more images or a larger " +
+                         (part == 1 ? "Val" : "Test") + " ratio.",
+                     node_id, node_name, errors::Data::InvalidSplit);
+        }
+    }
+}
+
+namespace {
+
 using ExtractorFn = void(*)(const gui::MLNode&, TrainingConfiguration&);
 
 struct PreprocessingNodeSpec {
@@ -6771,7 +7007,7 @@ static void ExtractOneHot(const gui::MLNode& node, TrainingConfiguration& config
 // --- Image extractors (Phase 1) ---
 
 static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& config) {
-    if (!config.image_augmentation.ops.empty()) {
+    if (!config.image_augmentation.ops.empty() || !config.image_cv_steps.empty()) {
         AddIssue(config, IssueLevel::Error,
                  "Resize must come before the image transforms: the batcher decodes every image at "
                  "the Resize size first",
@@ -6796,24 +7032,107 @@ static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& c
                  static_cast<int>(config.image_preprocessing.resize_mode));
 }
 
+cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config);
+
 static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration& config) {
-    // Every batcher takes these through SetNormalization; the image batcher
-    // applies them on the device after the image transforms.
-    config.preprocessing.has_normalization = true;
-    if (node.parameters.count("mean"))
-        config.preprocessing.norm_mean = std::stof(node.parameters.at("mean"));
-    if (node.parameters.count("std"))
-        config.preprocessing.norm_std = std::stof(node.parameters.at("std"));
+    // Every batcher takes mean / std through SetNormalization; the image
+    // batcher applies them, or one pair per channel (TOFIX178 1.4), on the
+    // device after the image steps.
+    auto& pre = config.preprocessing;
+    pre.has_normalization = true;
+    pre.norm_node_id = node.id;
+    const auto issue = [&](IssueLevel level, const std::string& message) {
+        AddIssue(config, level, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
+    };
+    std::string error;
+    (void)(ParseFloatParam(node.parameters, "mean", 0.0f, pre.norm_mean, error) &&
+           ParseFloatParam(node.parameters, "std", 1.0f, pre.norm_std, error));
+    if (!error.empty()) return issue(IssueLevel::Error, error);
+    const auto it = node.parameters.find("statistics");
+    pre.norm_statistics = it == node.parameters.end() || it->second.empty() ? "same" : it->second;
+    if (pre.norm_statistics == "same") return;
+    if (pre.norm_statistics != "per_channel" && pre.norm_statistics != "imagenet")
+        return issue(IssueLevel::Error, "statistics must be same, per_channel or imagenet");
+    if (config.preprocessing_domain != PreprocessingDomain::Image) {
+        const char* data = config.preprocessing_domain == PreprocessingDomain::Tabular ? "a table"
+                           : config.preprocessing_domain == PreprocessingDomain::Audio ? "audio"
+                           : config.preprocessing_domain == PreprocessingDomain::Text  ? "text"
+                                                                                        : "not images";
+        return issue(IssueLevel::Error, std::string("Per channel needs images: this graph's data is ") + data +
+                                            ". Use Same for every channel.");
+    }
+    const size_t channels = CurrentImageShape(config).channels;
+    pre.norm_channels = channels;
+    if (pre.norm_statistics == "imagenet") {
+        if (channels != 3)
+            return issue(IssueLevel::Error, "ImageNet statistics are for RGB images: the images have " +
+                                                std::to_string(channels) + " channel" + (channels == 1 ? "" : "s") +
+                                                " here.");
+        pre.norm_channel_mean = cyxwiz::ImageNetChannelMean();
+        pre.norm_channel_std = cyxwiz::ImageNetChannelStd();
+        issue(IssueLevel::Info, "ImageNet statistics: right for a model pretrained on ImageNet; for training from "
+                                "scratch, this data's own (Data Studio > Profile > Use in "
+                                "Normalize) centre it better.");
+        return;
+    }
+    std::vector<float> mean, std_dev;
+    const auto text = [&](const char* key) {
+        const auto found = node.parameters.find(key);
+        return found == node.parameters.end() ? std::string() : found->second;
+    };
+    if (!cyxwiz::ParseChannelValues(text("channel_mean"), mean) || !cyxwiz::ParseChannelValues(text("channel_std"), std_dev))
+        return issue(IssueLevel::Error, "Per channel needs a mean and a std for each channel, as numbers "
+                                        "(Data Studio > Profile > Use in Normalize fills them)");
+    if (mean.size() != channels || std_dev.size() != channels) {
+        const size_t given = mean.size() != channels ? mean.size() : std_dev.size();
+        const char* what = mean.size() != channels ? " mean" : " std";
+        return issue(IssueLevel::Error,
+                     std::to_string(given) + what + (given == 1 ? "" : "s") + " for " + std::to_string(channels) +
+                         " channel" + (channels == 1 ? "" : "s") + ": the images have " + std::to_string(channels) +
+                         " here" + (channels == 1 ? " (Grayscale or Image Edges before Normalize)" : "") +
+                         ". Give one mean and one std per channel (Use in Normalize does).");
+    }
+    for (size_t c = 0; c < channels; ++c) {
+        if (!(std_dev[c] > 0.0f)) {
+            char value[32];
+            std::snprintf(value, sizeof(value), "%g", std_dev[c]);
+            return issue(IssueLevel::Error, "Std " + cyxwiz::ChannelName(c, channels) + " is " + value +
+                                                ": every std must be greater than 0.");
+        }
+    }
+    pre.norm_channel_mean = std::move(mean);
+    pre.norm_channel_std = std::move(std_dev);
+}
+
+template <typename T>
+bool ParseChoiceParam(const std::map<std::string, std::string>& params, const std::string& key,
+                      const std::string& fallback, const std::vector<std::pair<std::string, T>>& choices, T& out,
+                      std::string& error) {
+    const auto it = params.find(key);
+    const std::string value = it == params.end() || it->second.empty() ? fallback : it->second;
+    std::string names;
+    for (const auto& [name, choice] : choices) {
+        if (name == value) {
+            out = choice;
+            return true;
+        }
+        names += (names.empty() ? "" : choices.back().first == name ? " or " : ", ") + name;
+    }
+    error = key + " must be " + names;
+    return false;
 }
 
 // --- Image transforms (TOFIX140): appended in graph order, run by the image
 // batcher on the device after Resize and before Normalize. ---
 
-// The [H, W, C] image the next transform receives: the Resize size with three
-// channels, after the transforms already compiled.
+// The [H, W, C] image the next step receives: the Resize size with three
+// channels, after the transforms and OpenCV steps already compiled.
 cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config) {
-    return config.image_augmentation.ShapeAfter(DecodedImageShape(config));
+    return cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
 }
+
+const std::vector<std::pair<std::string, cyxwiz::image::Interpolation>> kInterpolations = {
+    {"nearest", cyxwiz::image::Interpolation::Nearest}, {"bilinear", cyxwiz::image::Interpolation::Bilinear}};
 
 void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
                    const std::string& parse_error, TrainingConfiguration& config) {
@@ -6835,6 +7154,7 @@ void AppendImageOp(const gui::MLNode& node, const cyxwiz::image::ImageOp& op,
         return;
     }
     config.image_augmentation.ops.push_back(op);
+    config.image_op_node_ids.push_back(node.id);
 }
 
 // mixup / cutmix mix whole training batches and their one-hot labels; the
@@ -6946,20 +7266,60 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
                                                                  : ImageOpKind::VerticalFlip;
             ParseFloatParam(p, "probability", 0.5f, op.probability, error);
             break;
-        case gui::NodeType::ImageRotate: {
+        case gui::NodeType::ImageRotate:
             op.kind = ImageOpKind::Rotate;
-            if (ParseFloatParam(p, "max_angle", 15.0f, op.max_angle, error)) {
-                ParseFloatParam(p, "probability", 0.5f, op.probability, error);
-            }
-            const auto it = p.find("interpolation");
-            const std::string interpolation = it == p.end() ? "nearest" : it->second;
-            if (interpolation == "bilinear") {
-                op.interpolation = cyxwiz::image::Interpolation::Bilinear;
-            } else if (interpolation != "nearest" && error.empty()) {
-                error = "interpolation must be nearest or bilinear";
+            if (ParseFloatParam(p, "max_angle", 15.0f, op.max_angle, error) &&
+                ParseFloatParam(p, "probability", 0.5f, op.probability, error)) {
+                ParseChoiceParam(p, "interpolation", "nearest", kInterpolations, op.interpolation, error);
             }
             break;
+        case gui::NodeType::RandomResizedCrop: {
+            // 0 keeps the size of the image coming in.
+            op.kind = ImageOpKind::RandomResizedCrop;
+            const auto incoming = CurrentImageShape(config);
+            if (ParseIntParam(p, "width", 0, op.width, error) && ParseIntParam(p, "height", 0, op.height, error) &&
+                ParseFloatParam(p, "scale_min", 0.08f, op.scale_min, error) &&
+                ParseFloatParam(p, "scale_max", 1.0f, op.scale_max, error) &&
+                ParseFloatParam(p, "ratio_min", 0.75f, op.ratio_min, error) &&
+                ParseFloatParam(p, "ratio_max", 1.3333f, op.ratio_max, error)) {
+                ParseChoiceParam(p, "interpolation", "bilinear", kInterpolations, op.interpolation, error);
+            }
+            if (op.width == 0) op.width = static_cast<int>(incoming.width);
+            if (op.height == 0) op.height = static_cast<int>(incoming.height);
+            break;
         }
+        case gui::NodeType::RandomAffine:
+            op.kind = ImageOpKind::RandomAffine;
+            if (ParseFloatParam(p, "degrees", 10.0f, op.max_angle, error) &&
+                ParseFloatParam(p, "translate_x", 0.1f, op.translate_x, error) &&
+                ParseFloatParam(p, "translate_y", 0.1f, op.translate_y, error) &&
+                ParseFloatParam(p, "scale_min", 0.9f, op.zoom_min, error) &&
+                ParseFloatParam(p, "scale_max", 1.1f, op.zoom_max, error) &&
+                ParseFloatParam(p, "shear_x_min", 0.0f, op.shear_x_min, error) &&
+                ParseFloatParam(p, "shear_x_max", 0.0f, op.shear_x_max, error) &&
+                ParseFloatParam(p, "shear_y_min", 0.0f, op.shear_y_min, error) &&
+                ParseFloatParam(p, "shear_y_max", 0.0f, op.shear_y_max, error) &&
+                ParseFloatParam(p, "fill", 0.0f, op.fill, error)) {
+                ParseChoiceParam(p, "interpolation", "nearest", kInterpolations, op.interpolation, error);
+            }
+            break;
+        case gui::NodeType::RandomPerspective:
+            op.kind = ImageOpKind::RandomPerspective;
+            if (ParseFloatParam(p, "distortion", 0.5f, op.distortion, error) &&
+                ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
+                ParseFloatParam(p, "fill", 0.0f, op.fill, error)) {
+                ParseChoiceParam(p, "interpolation", "bilinear", kInterpolations, op.interpolation, error);
+            }
+            break;
+        case gui::NodeType::GaussianNoise:
+            op.kind = ImageOpKind::GaussianNoise;
+            if (ParseFloatParam(p, "mean", 0.0f, op.noise_mean, error)) ParseFloatParam(p, "sigma", 0.1f, op.sigma, error);
+            op.clip = ParseBoolParam(p, "clip", true);
+            break;
+        case gui::NodeType::RandomGrayscale:
+            op.kind = ImageOpKind::RandomGrayscale;
+            ParseFloatParam(p, "probability", 0.1f, op.probability, error);
+            break;
         case gui::NodeType::ColorJitter:
             op.kind = ImageOpKind::ColorJitter;
             if (ParseFloatParam(p, "brightness", 0.2f, op.brightness, error) &&
@@ -7015,12 +7375,44 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
                 }
                 break;
             }
+            if (method == "autoaugment") {
+                op.kind = ImageOpKind::AutoAugment;
+                if (ParseFloatParam(p, "probability", 0.5f, op.probability, error)) {
+                    using cyxwiz::image::AutoAugmentPolicy;
+                    ParseChoiceParam<AutoAugmentPolicy>(p, "policy", "imagenet",
+                                                        {{"imagenet", AutoAugmentPolicy::ImageNet},
+                                                         {"cifar10", AutoAugmentPolicy::Cifar10},
+                                                         {"svhn", AutoAugmentPolicy::Svhn}},
+                                                        op.policy, error);
+                }
+                break;
+            }
+            if (method == "trivialaugment") {
+                op.kind = ImageOpKind::TrivialAugment;
+                if (ParseFloatParam(p, "probability", 0.5f, op.probability, error)) {
+                    ParseIntParam(p, "magnitude_bins", 31, op.magnitude_bins, error);
+                }
+                break;
+            }
+            if (method == "augmix") {
+                // torchvision AugMix samples its chains with bilinear interpolation.
+                op.kind = ImageOpKind::AugMix;
+                op.interpolation = cyxwiz::image::Interpolation::Bilinear;
+                if (ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
+                    ParseIntParam(p, "severity", 3, op.severity, error) &&
+                    ParseIntParam(p, "mixture_width", 3, op.mixture_width, error) &&
+                    ParseIntParam(p, "chain_depth", -1, op.chain_depth, error)) {
+                    ParseFloatParam(p, "alpha", 1.0f, op.alpha, error);
+                }
+                break;
+            }
             if (method == "cutout") {
                 op.erase_method = cyxwiz::image::EraseMethod::Cutout;
             } else if (method == "random_erasing") {
                 op.erase_method = cyxwiz::image::EraseMethod::RandomErasing;
             } else {
-                error = "method must be cutout, random_erasing, mixup, cutmix or randaugment";
+                error = "method must be cutout, random_erasing, mixup, cutmix, randaugment, autoaugment, "
+                        "trivialaugment or augmix";
             }
             if (error.empty() && ParseFloatParam(p, "probability", 0.5f, op.probability, error) &&
                 ParseIntParam(p, "cutout_size", 16, op.cutout_size, error) &&
@@ -7036,6 +7428,166 @@ static void ExtractImageTransform(const gui::MLNode& node, TrainingConfiguration
             return;
     }
     AppendImageOp(node, op, error, config);
+}
+
+// --- OpenCV image steps (TOFIX178 1.3f): done once when the images are
+// prepared, in canvas order with the device transforms done once. ---
+
+// "0,0, 1,0, 1,1, 0,1": x and y of each point, as fractions of the image.
+bool ParsePointsParam(const std::map<std::string, std::string>& params, const std::string& key, int count,
+                      std::array<float, 8>& out, std::string& error) {
+    const auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) return true;
+    std::string text = it->second;
+    std::replace(text.begin(), text.end(), ',', ' ');
+    std::istringstream in(text);
+    std::vector<float> values;
+    for (float v; in >> v;) values.push_back(v);
+    if (!in.eof() || values.size() != static_cast<size_t>(2 * count)) {
+        error = key + " must be " + std::to_string(2 * count) + " numbers: x, y of each of the " +
+                std::to_string(count) + " points";
+        return false;
+    }
+    for (size_t i = 0; i < values.size(); ++i) out[i] = values[i];
+    return true;
+}
+
+static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& config) {
+    using cyxwiz::CvImageStepKind;
+    cyxwiz::CvImageStep s;
+    s.node_id = node.id;
+    s.node_name = node.name;
+    s.position = config.image_augmentation.ops.size();
+    std::string error;
+    const auto& p = node.parameters;
+    switch (node.type) {
+        case gui::NodeType::ImageContrast:
+            s.kind = CvImageStepKind::Contrast;
+            (void)(ParseFloatParam(p, "clip_limit", 2.0f, s.clip_limit, error) &&
+                ParseIntParam(p, "tile_grid", 8, s.tile_grid, error) &&
+                ParseChoiceParam<cyxwiz::CvContrastColour>(
+                    p, "colour", "lightness",
+                    {{"lightness", cyxwiz::CvContrastColour::Lightness},
+                     {"each_channel", cyxwiz::CvContrastColour::EachChannel}},
+                    s.colour, error));
+            break;
+        case gui::NodeType::ImageDenoise:
+            s.kind = CvImageStepKind::Denoise;
+            (void)(ParseFloatParam(p, "strength", 10.0f, s.strength, error) &&
+                ParseFloatParam(p, "colour_strength", 10.0f, s.colour_strength, error) &&
+                ParseIntParam(p, "patch_size", 7, s.patch_size, error) &&
+                ParseIntParam(p, "search_size", 21, s.search_size, error));
+            break;
+        case gui::NodeType::ImageSharpen:
+            s.kind = CvImageStepKind::Sharpen;
+            (void)(ParseFloatParam(p, "amount", 1.0f, s.amount, error) && ParseFloatParam(p, "radius", 1.0f, s.radius, error) &&
+                ParseFloatParam(p, "threshold", 0.0f, s.threshold, error));
+            break;
+        case gui::NodeType::ImageEdges:
+            s.kind = CvImageStepKind::Edges;
+            (void)(ParseChoiceParam<cyxwiz::CvEdgeMethod>(p, "method", "canny",
+                                                   {{"canny", cyxwiz::CvEdgeMethod::Canny},
+                                                    {"sobel", cyxwiz::CvEdgeMethod::Sobel},
+                                                    {"laplacian", cyxwiz::CvEdgeMethod::Laplacian},
+                                                    {"scharr", cyxwiz::CvEdgeMethod::Scharr}},
+                                                   s.edge_method, error) &&
+                ParseFloatParam(p, "threshold1", 50.0f, s.threshold1, error) &&
+                ParseFloatParam(p, "threshold2", 150.0f, s.threshold2, error) &&
+                ParseIntParam(p, "kernel_size", 3, s.edge_kernel, error));
+            break;
+        case gui::NodeType::ImageSmooth:
+            s.kind = CvImageStepKind::Smooth;
+            (void)(ParseChoiceParam<cyxwiz::CvSmoothMethod>(p, "method", "median",
+                                                     {{"box", cyxwiz::CvSmoothMethod::Box},
+                                                      {"median", cyxwiz::CvSmoothMethod::Median},
+                                                      {"bilateral", cyxwiz::CvSmoothMethod::Bilateral}},
+                                                     s.smooth_method, error) &&
+                ParseIntParam(p, "kernel_size", 5, s.kernel_size, error) &&
+                ParseFloatParam(p, "sigma_color", 75.0f, s.sigma_color, error) &&
+                ParseFloatParam(p, "sigma_space", 75.0f, s.sigma_space, error));
+            break;
+        case gui::NodeType::ImageWarp: {
+            s.kind = CvImageStepKind::Warp;
+            const int count = ParseChoiceParam<cyxwiz::CvWarpMethod>(
+                                  p, "method", "four_corners",
+                                  {{"four_corners", cyxwiz::CvWarpMethod::FourCorners},
+                                   {"three_points", cyxwiz::CvWarpMethod::ThreePoints},
+                                   {"log_polar", cyxwiz::CvWarpMethod::LogPolar},
+                                   {"linear_polar", cyxwiz::CvWarpMethod::LinearPolar}},
+                                  s.warp_method, error)
+                                  ? (s.warp_method == cyxwiz::CvWarpMethod::ThreePoints ? 3 : 4)
+                                  : 0;
+            if (count == 3) s.source_points[6] = s.source_points[7] = s.target_points[6] = s.target_points[7] = 0.0f;
+            const bool polar = s.warp_method == cyxwiz::CvWarpMethod::LogPolar ||
+                               s.warp_method == cyxwiz::CvWarpMethod::LinearPolar;
+            if (count > 0 && !polar) {
+                (void)(ParsePointsParam(p, "source_points", count, s.source_points, error) &&
+                    ParsePointsParam(p, "target_points", count, s.target_points, error));
+            }
+            if (error.empty()) {
+                (void)(ParseChoiceParam<cyxwiz::CvWarpInterpolation>(
+                    p, "interpolation", "linear",
+                    {{"nearest", cyxwiz::CvWarpInterpolation::Nearest},
+                     {"linear", cyxwiz::CvWarpInterpolation::Linear},
+                     {"cubic", cyxwiz::CvWarpInterpolation::Cubic},
+                     {"lanczos", cyxwiz::CvWarpInterpolation::Lanczos}},
+                    s.interpolation, error) &&
+                    ParseFloatParam(p, "center_x", 0.5f, s.center_x, error) &&
+                    ParseFloatParam(p, "center_y", 0.5f, s.center_y, error) &&
+                    ParseFloatParam(p, "max_radius", 0.5f, s.max_radius, error) &&
+                    ParseIntParam(p, "width", 0, s.out_width, error) &&
+                    ParseIntParam(p, "height", 0, s.out_height, error));
+                s.inverse = ParseBoolParam(p, "inverse");
+            }
+            break;
+        }
+        case gui::NodeType::ImagePyramid:
+            s.kind = CvImageStepKind::Pyramid;
+            (void)(ParseChoiceParam<cyxwiz::CvPyramidOperation>(p, "operation", "down",
+                                                         {{"down", cyxwiz::CvPyramidOperation::Down},
+                                                          {"up", cyxwiz::CvPyramidOperation::Up},
+                                                          {"detail", cyxwiz::CvPyramidOperation::Detail}},
+                                                         s.pyramid, error) &&
+                ParseIntParam(p, "levels", 1, s.levels, error));
+            break;
+        default:
+            return;
+    }
+    const auto issue = [&](IssueLevel level, const std::string& message) {
+        AddIssue(config, level, message, node.id, node.name, errors::Compiler::TensorShapeMismatch);
+    };
+    if (!error.empty()) return issue(IssueLevel::Error, error);
+    if (config.preprocessing.has_normalization)
+        return issue(IssueLevel::Error,
+                     "Image steps work on [0, 1] pixels: put this node between Resize and Normalize");
+    for (const auto& op : config.image_augmentation.ops) {
+        if (cyxwiz::image::IsRandomImageOp(op.kind))
+            return issue(IssueLevel::Error, "Runs once on the prepared images, so it must come before the first "
+                                            "random step: move it before " + cyxwiz::ImageOpText(op));
+    }
+    const auto shape = CurrentImageShape(config);
+    if (const std::string why = cyxwiz::ValidateCvImageStep(s, shape); !why.empty())
+        return issue(IssueLevel::Error, why);
+    const auto after = cyxwiz::CvImageShapeAfter(s, shape);
+    if (s.kind == CvImageStepKind::Denoise) {
+        // Measured on this PC's cats vs dogs at 64 x 64 x 3, patch 7, search 21
+        // (TOFIX178 1.3f): 44.5 ms an image on one core; it grows with the area
+        // and the search window.
+        const double ms = 44.5 * static_cast<double>(shape.height * shape.width) / (64.0 * 64.0) *
+                          (static_cast<double>(s.search_size) * s.search_size) / (21.0 * 21.0) *
+                          (shape.channels == 1 ? 0.5 : 1.0);
+        const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+        char text[256];
+        std::snprintf(text, sizeof(text),
+                      "About %.0f ms an image at %zu × %zu: preparing 10,000 images takes about %.0f s on "
+                      "%u cores, once. Later runs read the prepared images.",
+                      ms, shape.width, shape.height, ms * 10000.0 / 1000.0 / cores, cores);
+        issue(IssueLevel::Warning, text);
+    }
+    if (s.kind == CvImageStepKind::Edges && shape.channels > 1)
+        issue(IssueLevel::Info, "Gives one channel: the images become " + std::to_string(after.width) +
+                                    " × " + std::to_string(after.height) + " × 1 here");
+    config.image_cv_steps.push_back(std::move(s));
 }
 
 // --- Audio extractors (Phase 2.1) ---
@@ -7113,8 +7665,8 @@ static void ExtractAudioAugmentation(const gui::MLNode& node, TrainingConfigurat
                  config.audio_preprocessing.pitch_shift);
 }
 
-// --- Text preprocessing (Arrow materializer path) ---
-// TextTokenizer is applied by PipelineMaterializer at runtime. The compiler
+// --- Text preprocessing ---
+// TextTokenizer is applied by the pipeline run before training. The compiler
 // still extracts its shape contract so recurrent preflight uses the graph's
 // current max_length.
 static void ExtractTextTokenizerShape(
@@ -7143,8 +7695,6 @@ static void ExtractTextVectorizerShape(
         config.text_preprocessing.max_length);
 }
 
-// TextVocabulary and TextPadding fold into the reachable tokenizer in
-// PipelineMaterializer; they do not own a separate training shape.
 
 // --- TimeSeries extractors (Phase 4 — deferred) ---
 
@@ -7156,6 +7706,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::Normalize,          PreprocessingDomain::General,     ExtractImageNormalize},
     {gui::NodeType::OneHotEncode,       PreprocessingDomain::Tabular,     ExtractOneHot},
     {gui::NodeType::StandardScaler,     PreprocessingDomain::General,     nullptr},
+    {gui::NodeType::LogTransform,       PreprocessingDomain::General,     nullptr},
     // General (domain-agnostic data pipeline nodes — no extraction needed)
     {gui::NodeType::DataSplit,          PreprocessingDomain::General,     nullptr},
     {gui::NodeType::DataLoader,         PreprocessingDomain::General,     nullptr},
@@ -7176,6 +7727,20 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::AdvancedAugment,    PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::AugmentationPreset, PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::QualityAnalyzer,    PreprocessingDomain::Image,       ExtractImageQuality},
+    // OpenCV steps done once with the images (TOFIX178 1.3f)
+    {gui::NodeType::ImageContrast,      PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageDenoise,       PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageSharpen,       PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageEdges,         PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageSmooth,        PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageWarp,          PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImagePyramid,       PreprocessingDomain::Image,       ExtractImageCvStep},
+    // Augmentation steps drawn per batch (TOFIX178 1.6b)
+    {gui::NodeType::RandomResizedCrop,  PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::RandomAffine,       PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::RandomPerspective,  PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::GaussianNoise,      PreprocessingDomain::Image,       ExtractImageTransform},
+    {gui::NodeType::RandomGrayscale,    PreprocessingDomain::Image,       ExtractImageTransform},
     // Audio (Phase 2.1)
     {gui::NodeType::AudioInput,         PreprocessingDomain::Audio,       nullptr},
     {gui::NodeType::Spectrogram,        PreprocessingDomain::Audio,       ExtractSpectrogram},
@@ -7196,7 +7761,6 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::TimeSeriesFeatures, PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::TimeSeriesSplit,    PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::SeasonalNaive,      PreprocessingDomain::TimeSeries,  nullptr},
-    {gui::NodeType::LogTransform,       PreprocessingDomain::TimeSeries,  nullptr},
     {gui::NodeType::Differencing,       PreprocessingDomain::TimeSeries,  nullptr},
 };
 
@@ -7763,7 +8327,7 @@ void GraphCompiler::ValidateLossTargetsReachLabels(
     // a random preprocessing tensor, etc.). That's the canonical "pin
     // is fooling user" case.
     for (const auto& node : nodes) {
-        if (!IsLossNodeType(node.type)) continue;
+        if (!IsLossNode(node)) continue;
 
         // Identify Targets pin. Every loss node above creates the
         // Targets input as PinType::Labels (see node_editor_nodes.cpp);
@@ -7885,7 +8449,7 @@ void GraphCompiler::ValidateLossPredictionsReachModel(
     for (const auto& node : nodes) node_by_id[node.id] = &node;
 
     for (const auto& node : nodes) {
-        if (!IsLossNodeType(node.type)) continue;
+        if (!IsLossNode(node)) continue;
 
         // Predictions is the FIRST input on every loss node above —
         // it's PinType::Tensor. Match by name "Predictions" for older
@@ -8053,7 +8617,7 @@ void GraphCompiler::ValidateOptimizerReachesLoss(
                 auto node_it = node_by_id.find(owner_it->second);
                 if (node_it == node_by_id.end()) continue;
 
-                if (IsLossNodeType(node_it->second->type)) {
+                if (IsLossNode(*node_it->second)) {
                     found_loss_node = true;
                     break;
                 }

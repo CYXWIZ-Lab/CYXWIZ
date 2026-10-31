@@ -227,6 +227,11 @@ void TestPythonBundleNodes() {
           "one bundle: its name");
 
     cyxwiz::ExtensionPythonState not_approved;
+    auto huber = snake;
+    huber.kind = cyxwiz::ExtensionNodeKind::Loss;
+    Check(cyxwiz::BuildExtensionInfoFacts(huber, {}, &not_approved).chips ==
+              std::vector<std::string>{"Python node", "Loss node", "Code not approved"},
+          "a Python loss node says so (P7)");
     const auto facts = cyxwiz::BuildExtensionInfoFacts(snake, {}, &not_approved);
     Check(facts.category_line == "Python nodes / Activation", "category line: " + facts.category_line);
     Check(facts.chips == std::vector<std::string>{"Python node", "Trainable node", "Code not approved"},

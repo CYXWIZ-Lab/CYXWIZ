@@ -2,6 +2,7 @@
 
 #include "node_config_dialog.h"
 #include "data_input_preview.h"
+#include "data_studio/image_gallery_view.h"
 #include "data_preview_table_renderer.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
@@ -25,6 +26,10 @@ void DataInputDialog::RenderPreviewPanel() {
         return;
     }
     namespace ui = cyxwiz::ui;
+    if (file_category_ == FileCategory::Image) {
+        RenderImagePreview();
+        return;
+    }
     // Shown, the tab reads its rows: the whole loaded dataset after Apply,
     // else a sample from the start of the file (board 7: it emptied to a
     // "Load Preview" button after Apply).
@@ -66,7 +71,6 @@ void DataInputDialog::RenderPreviewPanel() {
     } else {
         switch (file_category_) {
             case FileCategory::Tabular: RenderTabularPreview(); break;
-            case FileCategory::Image:   RenderImagePreview(); break;
             case FileCategory::Audio:   RenderAudioPreview(); break;
             case FileCategory::Text:    RenderTextPreview(); break;
             default: RenderTabularPreview(); break;
@@ -195,34 +199,19 @@ void DataInputDialog::RenderTabularPreview() {
 }
 
 void DataInputDialog::RenderImagePreview() {
-    if (preview_image_textures_.empty()) {
-        ImGui::TextWrapped("%s", PreviewUnavailableMessage());
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    if (data_load_state_ != DataLoadState::InMemory || loaded_dataset_name_.empty()) {
+        ImGui::TextColored(t.text_dim, "Apply to load the folder; its first images show here.");
         return;
     }
-
-    ImGui::Text("%zu images", preview_image_textures_.size());
+    if (!image_preview_) image_preview_ = std::make_unique<cyxwiz::ImageGalleryView>();
+    image_preview_->SetDataset(loaded_dataset_name_);
+    image_preview_->RenderStrip(24);
     ImGui::Spacing();
-
-    float thumb_size = 64.0f;
-    float avail_width = ImGui::GetContentRegionAvail().x;
-    int cols = std::max(1, static_cast<int>(avail_width / (thumb_size + 8)));
-
-    int idx = 0;
-    for (ImTextureID tex_id : preview_image_textures_) {
-        if (idx > 0 && (idx % cols) != 0) {
-            ImGui::SameLine();
-        }
-
-        ImGui::BeginGroup();
-        ImGui::Image(tex_id, ImVec2(thumb_size, thumb_size));
-        if (idx < static_cast<int>(preview_image_labels_.size())) {
-            ImGui::TextDisabled("%s", preview_image_labels_[idx].c_str());
-        }
-        ImGui::EndGroup();
-
-        idx++;
-        if (idx >= 12) break;
-    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "The first 24 images, with their class. Data Studio > Explore > Images shows them all, "
+                                   "by class and size, with each image's details.");
+    ImGui::PopTextWrapPos();
 }
 
 void DataInputDialog::RenderAudioPreview() {

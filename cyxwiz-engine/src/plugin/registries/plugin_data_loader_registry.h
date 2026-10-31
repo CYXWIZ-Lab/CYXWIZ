@@ -1,14 +1,23 @@
 #pragma once
 
 #include "../interfaces/i_data_provider.h"
+#include "plugin_use_counter.h"
+
+#include <arrow/record_batch.h>
+#include <arrow/result.h>
+
+#include <atomic>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
-#include <map>
-#include <mutex>
-#include <memory>
 
 namespace cyxwiz::plugin {
 
+// The dataset formats plugins add (IDataProvider, TOFIX181). Data Input lists
+// them and reads their files through Open, as Arrow record batches.
 class PluginDataLoaderRegistry {
 public:
     static PluginDataLoaderRegistry& Instance();
@@ -16,33 +25,42 @@ public:
     PluginDataLoaderRegistry(const PluginDataLoaderRegistry&) = delete;
     PluginDataLoaderRegistry& operator=(const PluginDataLoaderRegistry&) = delete;
 
-    void Register(const std::string& plugin_id, IDataProvider* provider);
+    void Register(const std::string& plugin_id, const std::string& plugin_version, IDataProvider* provider);
+    // Waits until no stream of the plugin is being read any more.
     void RemoveByPlugin(const std::string& plugin_id);
 
-    // Query
-    std::vector<PluginDataLoaderInfo> GetAllLoaders() const;
-    bool HasLoaderForExtension(const std::string& extension) const;
+    struct Loader {
+        std::string plugin_id;
+        std::string plugin_version;  // from plugin.json
+        PluginDataLoaderInfo info;   // extensions lower case, without the dot
+    };
+    std::vector<Loader> Loaders() const;  // ordered by format name
+    bool Find(const std::string& loader_id, Loader& out) const;
 
-    // Try all registered loaders for a file path
-    std::shared_ptr<PluginDataset> TryLoadDataset(
-        const std::string& file_path,
-        const std::string& dataset_name
-    ) const;
+    // The loader for a file: its extension matches and the loader's CanLoad
+    // accepts it. Empty when none does.
+    std::string LoaderForFile(const std::string& file_path) const;
 
-    size_t GetCount() const;
+    // Opens the file with the loader. The reader streams the plugin's
+    // batches; the plugin stays loaded until the reader is destroyed.
+    arrow::Result<std::shared_ptr<arrow::RecordBatchReader>> Open(
+        const std::string& loader_id, const std::string& file_path) const;
+
+    // Changes whenever a loader is added or removed.
+    uint64_t Generation() const { return generation_.load(); }
 
 private:
     PluginDataLoaderRegistry() = default;
 
-    struct LoaderEntry {
-        std::string plugin_id;
-        PluginDataLoaderInfo info;
-        IDataProvider* provider = nullptr;   // non-owning
+    struct Entry {
+        Loader loader;
+        IDataProvider* provider = nullptr;  // non-owning
     };
 
     mutable std::mutex mutex_;
-    std::map<std::string, LoaderEntry> loaders_;             // loader_id -> entry
-    std::map<std::string, std::vector<std::string>> ext_map_;// ".ext" -> loader_ids
+    std::map<std::string, Entry> loaders_;  // loader_id -> entry
+    std::atomic<uint64_t> generation_{0};
+    mutable PluginUseCounter uses_;
 };
 
 } // namespace cyxwiz::plugin

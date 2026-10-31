@@ -122,6 +122,16 @@ Tokens BuildTokens(const ImGuiStyle& style) {
                                  {1.000f, 0.478f, 0.451f, 1.0f}, {0.949f, 0.482f, 0.769f, 1.0f}};
         for (int i = 0; i < Tokens::kSeriesCount; ++i) t.series[i] = series[i];
     }
+    // Image channels: a red, a green and a blue that read on the window.
+    if (t.light) {
+        t.channel[0] = ImVec4(0.776f, 0.184f, 0.157f, 1.0f);
+        t.channel[1] = ImVec4(0.055f, 0.502f, 0.282f, 1.0f);
+        t.channel[2] = ImVec4(0.122f, 0.471f, 0.706f, 1.0f);
+    } else {
+        t.channel[0] = ImVec4(1.000f, 0.541f, 0.502f, 1.0f);
+        t.channel[1] = ImVec4(0.545f, 0.890f, 0.608f, 1.0f);
+        t.channel[2] = ImVec4(0.541f, 0.706f, 1.000f, 1.0f);
+    }
     // Node families: each one's most-used colour from the old per-type node
     // table, so the canvas keeps its look (Data Input blue, Dense green, ...).
     static_assert(static_cast<int>(NodeHue::Count) == Tokens::kNodeHueCount);

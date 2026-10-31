@@ -40,6 +40,9 @@ struct TextFeatureMatrix {
     std::string label_name;
     // The label codes' names (code i is class_names[i]; empty: unknown).
     std::vector<std::string> class_names;
+    // The input rows' partition when the pipeline run marked them (sparse
+    // output carries it; dense output carries the column).
+    std::vector<int8_t> partition;
 };
 
 struct TextVectorizerMaterialization {

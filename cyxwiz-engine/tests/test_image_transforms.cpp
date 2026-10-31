@@ -17,8 +17,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -59,7 +61,11 @@ ImageOp OpOf(const json& spec) {
         {"rotate", ImageOpKind::Rotate},            {"color_jitter", ImageOpKind::ColorJitter},
         {"gaussian_blur", ImageOpKind::GaussianBlur}, {"grayscale", ImageOpKind::Grayscale},
         {"morphology", ImageOpKind::Morphology},  {"erase", ImageOpKind::Erase},
-        {"randaugment", ImageOpKind::RandAugment},
+        {"randaugment", ImageOpKind::RandAugment},  {"autoaugment", ImageOpKind::AutoAugment},
+        {"trivialaugment", ImageOpKind::TrivialAugment}, {"augmix", ImageOpKind::AugMix},
+        {"random_resized_crop", ImageOpKind::RandomResizedCrop}, {"random_affine", ImageOpKind::RandomAffine},
+        {"random_perspective", ImageOpKind::RandomPerspective}, {"gaussian_noise", ImageOpKind::GaussianNoise},
+        {"random_grayscale", ImageOpKind::RandomGrayscale},
     };
     static const std::map<std::string, cyxwiz::image::MorphologyOp> operations = {
         {"erode", cyxwiz::image::MorphologyOp::Erode},     {"dilate", cyxwiz::image::MorphologyOp::Dilate},
@@ -76,6 +82,10 @@ ImageOp OpOf(const json& spec) {
     if (spec.contains("operation")) op.morphology = operations.at(spec.at("operation").get<std::string>());
     op.kernel_size = spec.value("kernel_size", 5);
     op.sigma = spec.value("sigma", 1.0f);
+    op.fill = spec.value("fill", 0.0f);
+    op.noise_mean = spec.value("noise_mean", 0.0f);
+    op.clip = spec.value("clip", true);
+    op.mixture_width = spec.value("mixture_width", 3);
     if (spec.value("interpolation", std::string("nearest")) == "bilinear") {
         op.interpolation = cyxwiz::image::Interpolation::Bilinear;
     }
@@ -92,6 +102,9 @@ ImageOpDraws DrawsOf(const json& spec) {
     draws.angle = spec.value("angle", std::vector<float>{});
     draws.factors = spec.value("factors", std::vector<std::vector<float>>{});
     draws.order = spec.value("order", std::vector<std::vector<int>>{});
+    draws.corners = spec.value("corners", std::vector<std::vector<int>>{});
+    draws.weights = spec.value("weights", std::vector<std::vector<float>>{});
+    draws.noise = spec.value("noise", std::vector<float>{});
     return draws;
 }
 
@@ -160,20 +173,35 @@ void CheckMixFixtures(const std::filesystem::path& path) {
     }
 }
 
-void CheckRandAugmentTable(const std::filesystem::path& path) {
+void CheckAugmentTables(const std::filesystem::path& path) {
+    using cyxwiz::image::AugmentOp;
+    using cyxwiz::image::AugmentSpace;
+    static const std::map<std::string, AugmentOp> ops = {
+        {"Identity", AugmentOp::Identity},     {"ShearX", AugmentOp::ShearX},     {"ShearY", AugmentOp::ShearY},
+        {"TranslateX", AugmentOp::TranslateX}, {"TranslateY", AugmentOp::TranslateY}, {"Rotate", AugmentOp::Rotate},
+        {"Brightness", AugmentOp::Brightness}, {"Color", AugmentOp::Color},       {"Contrast", AugmentOp::Contrast},
+        {"Sharpness", AugmentOp::Sharpness},   {"Posterize", AugmentOp::Posterize}, {"Solarize", AugmentOp::Solarize},
+        {"AutoContrast", AugmentOp::AutoContrast}, {"Equalize", AugmentOp::Equalize}, {"Invert", AugmentOp::Invert},
+    };
+    static const std::map<std::string, AugmentSpace> spaces = {
+        {"standard", AugmentSpace::Standard}, {"wide", AugmentSpace::Wide}, {"augmix", AugmentSpace::AugMix}};
     std::ifstream in(path);
     const json fixture = json::parse(in);
-    for (const auto& [size, table] : fixture.at("randaugment_magnitudes").items()) {
-        const size_t x = size.find('x');
-        const size_t h = std::stoul(size.substr(0, x)), w = std::stoul(size.substr(x + 1));
-        for (int op = 0; op < cyxwiz::image::kRandAugmentOps; ++op) {
-            for (int bin = 0; bin < cyxwiz::image::kRandAugmentBins; ++bin) {
-                const float expected = table.at(op).at(bin).get<float>();
-                const float got = cyxwiz::image::RandAugmentMagnitude(
-                    static_cast<cyxwiz::image::RandAugmentOp>(op), bin, h, w);
-                Check(got == expected, "RandAugment magnitude op " + std::to_string(op) + " bin " +
-                                           std::to_string(bin) + " at " + size + " is " + std::to_string(got) +
-                                           ", torchvision " + std::to_string(expected));
+    for (const auto& table : fixture.at("augment_magnitudes")) {
+        const auto space = spaces.at(table.at("space").get<std::string>());
+        const int bins = table.at("bins").get<int>();
+        const size_t h = table.at("height").get<size_t>(), w = table.at("width").get<size_t>();
+        const std::string where = table.at("space").get<std::string>() + " " + std::to_string(bins) + " bins at " +
+                                  std::to_string(h) + "x" + std::to_string(w);
+        for (const auto& [name, entry] : table.at("ops").items()) {
+            const AugmentOp op = ops.at(name);
+            Check(cyxwiz::image::AugmentSigned(op) == entry.at("signed").get<bool>(), name + " signed, " + where);
+            const auto values = entry.at("values").get<std::vector<float>>();
+            for (int bin = 0; bin < bins; ++bin) {
+                const float got = cyxwiz::image::AugmentMagnitude(space, op, bins, bin, h, w);
+                Check(got == values[static_cast<size_t>(bin)], name + " magnitude bin " + std::to_string(bin) + ", " +
+                                                                   where + ": " + std::to_string(got) + ", torchvision " +
+                                                                   std::to_string(values[static_cast<size_t>(bin)]));
             }
         }
     }
@@ -188,22 +216,26 @@ void CheckRandAugmentDraws() {
     op.magnitude = 9;
     op.probability = 1.0f;
     const auto draws = cyxwiz::image::DrawImageOp(op, shape, 7000, true, rng);
-    std::vector<int> counts(cyxwiz::image::kRandAugmentOps, 0);
+    std::vector<int> counts(cyxwiz::image::kAugmentOps, 0);
     int negative = 0, signed_picks = 0;
     for (size_t i = 0; i < 7000; ++i) {
         Check(draws.order[i].size() == 2 && draws.factors[i].size() == 2, "two picks per image");
         for (size_t p = 0; p < 2; ++p) {
-            const auto chosen = static_cast<cyxwiz::image::RandAugmentOp>(draws.order[i][p]);
+            const auto chosen = static_cast<cyxwiz::image::AugmentOp>(draws.order[i][p]);
             ++counts[static_cast<size_t>(draws.order[i][p])];
-            const float base = cyxwiz::image::RandAugmentMagnitude(chosen, 9, 32, 40);
+            const float base = cyxwiz::image::AugmentMagnitude(cyxwiz::image::AugmentSpace::Standard, chosen, 31, 9, 32, 40);
             Check(std::fabs(draws.factors[i][p]) == base, "a pick uses the op's magnitude at bin 9");
-            if (cyxwiz::image::RandAugmentSigned(chosen) && base != 0.0f) {
+            if (cyxwiz::image::AugmentSigned(chosen) && base != 0.0f) {
                 ++signed_picks;
                 negative += draws.factors[i][p] < 0.0f ? 1 : 0;
             }
         }
     }
-    for (int c : counts) Check(c > 800 && c < 1200, "each of the 14 ops is picked about equally (" + std::to_string(c) + ")");
+    for (size_t id = 0; id < counts.size(); ++id) {
+        const int c = counts[id];
+        Check(id < 14 ? c > 800 && c < 1200 : c == 0, "each of RandAugment's 14 ops is picked about equally (" +
+                                                          std::to_string(c) + ")");
+    }
     Check(std::fabs(static_cast<double>(negative) / signed_picks - 0.5) < 0.03, "signed ops flip sign half the time");
     Check(cyxwiz::image::DrawImageOp(op, shape, 3, false, rng).order.empty(), "RandAugment passes through outside training");
 }
@@ -346,6 +378,193 @@ void CheckDraws() {
           "draws are reproducible for one seed");
 }
 
+// The 1.6b steps' draws: the ranges torchvision draws from, train-only, and
+// the policies' picks.
+void CheckNewDraws() {
+    const ImageShape shape{32, 40, 3};
+    std::mt19937 rng(178);
+
+    ImageOp crop;
+    crop.kind = ImageOpKind::RandomResizedCrop;
+    crop.height = 24;
+    crop.width = 24;
+    crop.scale_min = 0.08f;
+    crop.scale_max = 1.0f;
+    crop.ratio_min = 0.75f;
+    crop.ratio_max = 4.0f / 3.0f;
+    Check(cyxwiz::image::ImageShapeAfter(crop, shape) == ImageShape{24, 24, 3}, "Random Resized Crop's output size");
+    const auto boxes = cyxwiz::image::DrawImageOp(crop, shape, 500, true, rng);
+    bool varied = false;
+    for (size_t i = 0; i < 500; ++i) {
+        const int h = boxes.box_height[i], w = boxes.box_width[i];
+        Check(h > 0 && w > 0 && boxes.top[i] + h <= 32 && boxes.left[i] + w <= 40, "resized crop boxes fit the image");
+        const double area = static_cast<double>(h) * w / (32.0 * 40.0);
+        Check(area > 0.06 && area < 1.01, "resized crop area follows scale (rounded): " + std::to_string(area));
+        varied = varied || h != boxes.box_height[0];
+    }
+    Check(varied, "resized crop boxes vary");
+    const auto centred = cyxwiz::image::DrawImageOp(crop, shape, 2, false, rng);
+    // 40 / 32 = 1.25 is inside 3:4..4:3: the whole image outside training.
+    Check(centred.top[0] == 0 && centred.left[0] == 0 && centred.box_height[0] == 32 && centred.box_width[0] == 40,
+          "Random Resized Crop takes the whole image outside training");
+    crop.ratio_min = 1.5f;
+    crop.ratio_max = 2.0f;
+    const auto wide = cyxwiz::image::DrawImageOp(crop, shape, 1, false, rng);
+    Check(wide.box_width[0] == 40 && wide.box_height[0] == 27 && wide.top[0] == 2,
+          "outside training: the centred box of the nearest allowed aspect");
+    crop.ratio_min = 100.0f;
+    crop.ratio_max = 200.0f;
+    const auto thin = cyxwiz::image::DrawImageOp(crop, shape, 1, false, rng);
+    Check(thin.box_height[0] == 1 && thin.box_width[0] == 40, "a ratio past the image still keeps a one-pixel box");
+    const std::vector<float> pixels(32 * 40 * 3, 0.5f);
+    const cyxwiz::Tensor one({1, 32 * 40 * 3}, pixels.data(), cyxwiz::DataType::Float32);
+    const auto refused_apply = [&](const ImageOp& op, const cyxwiz::image::ImageOpDraws& draws, const std::string& what) {
+        bool threw = false;
+        try {
+            cyxwiz::image::ApplyImageOp(op, draws, shape, one);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Check(threw, what + " is refused");
+    };
+    auto outside = thin;
+    outside.top[0] = 5;
+    outside.box_height[0] = 30;
+    refused_apply(crop, outside, "a resized crop box past the image");
+    auto empty_box = thin;
+    empty_box.box_height[0] = 0;
+    refused_apply(crop, empty_box, "an empty resized crop box");
+
+    ImageOp affine;
+    affine.kind = ImageOpKind::RandomAffine;
+    affine.max_angle = 10.0f;
+    affine.translate_x = 0.1f;
+    affine.translate_y = 0.2f;
+    affine.zoom_min = 0.9f;
+    affine.zoom_max = 1.1f;
+    affine.shear_x_min = -5.0f;
+    affine.shear_x_max = 5.0f;
+    for (const auto& f : cyxwiz::image::DrawImageOp(affine, shape, 400, true, rng).factors) {
+        Check(std::fabs(f[0]) <= 10.0f && std::fabs(f[1]) <= 4.0f && std::fabs(f[2]) <= 6.0f,
+              "affine angle and whole-pixel shifts in range");
+        Check(f[1] == std::round(f[1]) && f[2] == std::round(f[2]), "affine shifts are whole pixels");
+        Check(f[3] >= 0.9f && f[3] <= 1.1f && std::fabs(f[4]) <= 5.0f && f[5] == 0.0f, "affine scale and shears in range");
+    }
+    Check(cyxwiz::image::DrawImageOp(affine, shape, 3, false, rng).factors.empty(), "affine passes through outside training");
+
+    ImageOp perspective;
+    perspective.kind = ImageOpKind::RandomPerspective;
+    perspective.distortion = 0.5f;
+    perspective.probability = 0.3f;
+    const auto corners = cyxwiz::image::DrawImageOp(perspective, shape, 3000, true, rng);
+    int applied = 0;
+    for (size_t i = 0; i < 3000; ++i) {
+        if (!corners.apply[i]) continue;
+        ++applied;
+        const auto& c = corners.corners[i];
+        // half 20 x 16, distortion 0.5: corners move in by at most 10 x 8 pixels.
+        Check(c[0] <= 10 && c[1] <= 8 && c[2] >= 29 && c[3] <= 8 && c[4] >= 29 && c[5] >= 23 && c[6] <= 10 && c[7] >= 23,
+              "perspective corners move inwards by at most distortion of half a side");
+    }
+    Check(applied > 820 && applied < 980, "perspective follows its probability (" + std::to_string(applied) + ")");
+    cyxwiz::image::ImageOpDraws line;
+    line.apply = {1};
+    line.corners = {{0, 0, 10, 10, 20, 20, 30, 30}};
+    refused_apply(perspective, line, "perspective corners on one line");
+    // A 2 x 2 image at full distortion can draw corners with no mapping: those
+    // samples stay as they are, and every applied one solves.
+    perspective.distortion = 1.0f;
+    perspective.probability = 1.0f;
+    const ImageShape tiny{2, 2, 1};
+    const auto tiny_draws = cyxwiz::image::DrawImageOp(perspective, tiny, 400, true, rng);
+    int tiny_applied = 0;
+    for (int a : tiny_draws.apply) tiny_applied += a;
+    Check(tiny_applied > 0 && tiny_applied < 400, "tiny perspective skips only corners with no mapping (" +
+                                                       std::to_string(tiny_applied) + ")");
+    const std::vector<float> tiny_pixels(400 * 4, 0.5f);
+    const cyxwiz::Tensor tiny_rows({400, 4}, tiny_pixels.data(), cyxwiz::DataType::Float32);
+    cyxwiz::image::ApplyImageOp(perspective, tiny_draws, tiny, tiny_rows);  // throws if one did not solve
+
+    ImageOp gray;
+    gray.kind = ImageOpKind::RandomGrayscale;
+    gray.probability = 0.1f;
+    int grays = 0;
+    for (int a : cyxwiz::image::DrawImageOp(gray, shape, 4000, true, rng).apply) grays += a;
+    Check(grays > 330 && grays < 470, "random grayscale follows its probability (" + std::to_string(grays) + ")");
+
+    // Noise drawn on the device: mean and spread of N(mean, sigma), clip off.
+    ImageOp noise;
+    noise.kind = ImageOpKind::GaussianNoise;
+    noise.noise_mean = 0.05f;
+    noise.sigma = 0.2f;
+    noise.clip = false;
+    const std::vector<float> half(64 * 32 * 40 * 3, 0.5f);
+    const cyxwiz::Tensor rows({64, 32 * 40 * 3}, half.data(), cyxwiz::DataType::Float32);
+    const auto noisy = cyxwiz::image::ApplyImageOp(noise, cyxwiz::image::DrawImageOp(noise, shape, 64, true, rng), shape, rows);
+    const float* v = noisy.ReadData<float>();
+    double sum = 0.0, squares = 0.0;
+    for (size_t i = 0; i < half.size(); ++i) {
+        sum += v[i] - 0.5;
+        squares += (v[i] - 0.5) * (v[i] - 0.5);
+    }
+    const double mean = sum / half.size(), sd = std::sqrt(squares / half.size() - mean * mean);
+    Check(std::fabs(mean - 0.05) < 0.003 && std::fabs(sd - 0.2) < 0.003,
+          "device noise has the mean and sigma asked for (" + std::to_string(mean) + ", " + std::to_string(sd) + ")");
+    const auto clean = cyxwiz::image::ApplyImageOp(noise, cyxwiz::image::DrawImageOp(noise, shape, 64, false, rng), shape, rows);
+    Check(clean.ReadData<float>()[0] == 0.5f, "noise passes through outside training");
+    cyxwiz::image::ImageOpDraws short_noise;
+    short_noise.apply = {1};
+    short_noise.noise.assign(10, 0.0f);
+    refused_apply(noise, short_noise, "recorded noise shorter than the image");
+
+    ImageOp autoaugment;
+    autoaugment.kind = ImageOpKind::AutoAugment;
+    autoaugment.probability = 1.0f;
+    autoaugment.policy = cyxwiz::image::AutoAugmentPolicy::Svhn;
+    int inverts = 0;
+    const auto picks = cyxwiz::image::DrawImageOp(autoaugment, shape, 2000, true, rng);
+    for (const auto& order : picks.order) {
+        Check(order.size() == 2, "AutoAugment draws a sub-policy of two");
+        for (int op : order) inverts += op == static_cast<int>(cyxwiz::image::AugmentOp::Invert) ? 1 : 0;
+    }
+    Check(inverts > 450, "the SVHN policy inverts often (" + std::to_string(inverts) + ")");
+
+    ImageOp trivial;
+    trivial.kind = ImageOpKind::TrivialAugment;
+    trivial.probability = 1.0f;
+    trivial.magnitude_bins = 31;
+    std::vector<int> counts(cyxwiz::image::kAugmentOps, 0);
+    for (const auto& order : cyxwiz::image::DrawImageOp(trivial, shape, 7000, true, rng).order) ++counts[static_cast<size_t>(order[0])];
+    for (size_t op = 0; op < counts.size(); ++op) {
+        Check(op < 14 ? counts[op] > 400 && counts[op] < 600 : counts[op] == 0,
+              "TrivialAugment picks its 14 ops about equally (" + std::to_string(counts[op]) + ")");
+    }
+
+    ImageOp augmix;
+    augmix.kind = ImageOpKind::AugMix;
+    augmix.probability = 1.0f;
+    augmix.mixture_width = 3;
+    augmix.chain_depth = -1;
+    augmix.severity = 3;
+    const auto mixes = cyxwiz::image::DrawImageOp(augmix, shape, 500, true, rng);
+    for (size_t i = 0; i < 500; ++i) {
+        const auto& w = mixes.weights[i];
+        Check(w.size() == 4 && std::fabs(w[0] + w[1] + w[2] + w[3] - 1.0f) < 1e-5f, "AugMix weights sum to one");
+        Check(mixes.order[i].size() == 9, "AugMix: three chains of up to three ops");
+        for (size_t k = 0; k < 9; ++k) {
+            const int op = mixes.order[i][k];
+            Check(op != static_cast<int>(cyxwiz::image::AugmentOp::Invert) && (k % 3 == 0 ? op != 0 : true),
+                  "AugMix chains start with an op and never invert");
+        }
+    }
+    augmix.probability = 0.0f;
+    const auto plain = cyxwiz::image::DrawImageOp(augmix, shape, 2, true, rng);
+    Check(plain.weights[0][0] == 1.0f && plain.weights[0][1] == 0.0f, "AugMix not applied keeps the image");
+    const auto unmixed = cyxwiz::image::ApplyImageOp(augmix, cyxwiz::image::DrawImageOp(augmix, shape, 64, true, rng), shape, rows);
+    Check(unmixed.ReadData<float>()[0] == 0.5f, "AugMix with no sample applied leaves the batch as it is");
+    Check(cyxwiz::image::DrawImageOp(augmix, shape, 2, false, rng).order.empty(), "AugMix passes through outside training");
+}
+
 void CheckRefusals() {
     const ImageShape shape{6, 7, 3};
     const auto refused = [&](ImageOp op, const std::string& needle, const std::string& what) {
@@ -398,6 +617,39 @@ void CheckRefusals() {
     flip.kind = ImageOpKind::VerticalFlip;
     flip.probability = 1.5f;
     refused(flip, "probability", "a probability above 1");
+    ImageOp resized;
+    resized.kind = ImageOpKind::RandomResizedCrop;
+    resized.height = 4;
+    resized.width = 4;
+    resized.scale_min = 0.5f;
+    resized.scale_max = 1.5f;
+    refused(resized, "scale_max <= 1", "a resized crop area above the image");
+    ImageOp affine;
+    affine.kind = ImageOpKind::RandomAffine;
+    affine.shear_x_min = 5.0f;
+    refused(affine, "min <= max", "a reversed shear range");
+    affine.shear_x_min = 0.0f;
+    affine.translate_x = 1.5f;
+    refused(affine, "fraction of the image", "a translation past the image");
+    ImageOp perspective;
+    perspective.kind = ImageOpKind::RandomPerspective;
+    perspective.distortion = 1.2f;
+    refused(perspective, "distortion", "a distortion above 1");
+    ImageOp noise;
+    noise.kind = ImageOpKind::GaussianNoise;
+    noise.sigma = -0.1f;
+    refused(noise, "sigma", "a negative noise sigma");
+    noise.sigma = 0.1f;
+    noise.noise_mean = std::numeric_limits<float>::quiet_NaN();
+    refused(noise, "mean must be a number", "a noise mean that is not a number");
+    ImageOp augmix;
+    augmix.kind = ImageOpKind::AugMix;
+    augmix.chain_depth = 0;
+    refused(augmix, "chain_depth", "a chain depth of 0");
+    ImageOp trivial;
+    trivial.kind = ImageOpKind::TrivialAugment;
+    trivial.magnitude_bins = 1;
+    refused(trivial, "magnitude_bins", "one magnitude bin");
 }
 
 void CheckPlan() {
@@ -449,8 +701,9 @@ int main(int, char** argv) {
     CheckMixFixtures(FixturePath(argv[0]));
     CheckDraws();
     CheckMixDraws();
-    CheckRandAugmentTable(FixturePath(argv[0]));
+    CheckAugmentTables(FixturePath(argv[0]));
     CheckRandAugmentDraws();
+    CheckNewDraws();
     CheckRefusals();
     CheckPlan();
     std::cout << "image transforms match torchvision (" << checks << " checks)\n";

@@ -15,7 +15,8 @@ std::shared_ptr<arrow::Array> Finish(arrow::ArrayBuilder& builder) {
     return array;
 }
 
-// The row_id column first, when the source knows one row per sample.
+// The row_id column first, when the source knows one row per sample, then
+// the file column when it names each row's file.
 bool AddRowIds(const TestPredictionsSource& source, size_t rows, std::vector<std::shared_ptr<arrow::Field>>& fields,
                std::vector<std::shared_ptr<arrow::Array>>& columns) {
     if (source.row_ids.size() != rows) return true;
@@ -23,6 +24,12 @@ bool AddRowIds(const TestPredictionsSource& source, size_t rows, std::vector<std
     if (!ids.AppendValues(source.row_ids).ok()) return false;
     fields.push_back(arrow::field("row_id", arrow::int64()));
     columns.push_back(Finish(ids));
+    if (!columns.back()) return false;
+    if (source.files.size() != rows) return true;
+    arrow::StringBuilder files;
+    if (!files.AppendValues(source.files).ok()) return false;
+    fields.push_back(arrow::field("file", arrow::utf8()));
+    columns.push_back(Finish(files));
     return columns.back() != nullptr;
 }
 

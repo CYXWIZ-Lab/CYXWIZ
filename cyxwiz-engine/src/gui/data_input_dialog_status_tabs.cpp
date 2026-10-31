@@ -34,7 +34,7 @@ void DataInputDialog::RenderMemoryTab() {
             } else if (loaded_backend_ == 3) {
                 ImGui::TextColored(t.success, "Lazy-loaded");
                 ImGui::SameLine();
-                ImGui::TextDisabled("- decoded per batch at the Resize size; nothing is held");
+                ImGui::TextDisabled("- decoded once at the Resize size into cache/images when training starts");
             } else if (loaded_backend_ == 4) {
                 ImGui::TextColored(t.success, "Lazy-loaded");
                 ImGui::SameLine();

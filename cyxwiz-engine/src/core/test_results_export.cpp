@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <fstream>
 #include <iomanip>
@@ -53,7 +54,7 @@ bool WriteTestResultsCsv(const TestingMetrics& m, const std::string& path, std::
     out << "Test Results Summary\nMetric,Value\n";
     out << "Objective," << Objective(m) << "\n";
     out << "Quick test," << (m.partial ? "yes" : "no") << "\n";
-    out << "Loss," << m.test_loss << "\n";
+    if (std::isfinite(m.test_loss)) out << "Loss," << m.test_loss << "\n";  // a table read as a test has none
     out << "Samples," << m.total_samples << "\n";
     if (!m.source_dataset.empty()) out << "Tested table," << Field(m.source_dataset) << "\n";
     if (m.causal_lm_mode) {
@@ -139,7 +140,7 @@ bool WriteTestResultsJson(const TestingMetrics& m, const std::string& path, std:
         j["batch_limit"] = m.batch_limit;
         j["total_batches"] = m.total_batches;
     }
-    j["loss"] = m.test_loss;
+    if (std::isfinite(m.test_loss)) j["loss"] = m.test_loss;
     j["total_samples"] = m.total_samples;
     j["time_seconds"] = m.total_time_seconds;
     j["samples_per_second"] = m.samples_per_second;

@@ -148,33 +148,4 @@ inline void ParseCommaList(const std::string& s, std::vector<std::string>& out) 
     }
 }
 
-// Append a cluster_id int32 column to the input table and return the
-// new table. Clustering operators share this — output semantic is
-// "input + cluster annotation", not "replace features".
-inline arrow::Result<std::shared_ptr<arrow::Table>> AppendClusterIdColumn(
-    const std::shared_ptr<arrow::Table>& input,
-    const std::vector<int>& cluster_ids,
-    const std::string& column_name = "cluster_id") {
-
-    const int64_t n = static_cast<int64_t>(cluster_ids.size());
-    if (input->num_rows() != n) {
-        return arrow::Status::Invalid(
-            "AppendClusterIdColumn: cluster_ids.size() (" +
-            std::to_string(n) + ") != input rows (" +
-            std::to_string(input->num_rows()) + ")");
-    }
-
-    arrow::Int32Builder builder;
-    ARROW_RETURN_NOT_OK(builder.Reserve(n));
-    for (int id : cluster_ids) {
-        ARROW_RETURN_NOT_OK(builder.Append(id));
-    }
-    std::shared_ptr<arrow::Array> arr;
-    ARROW_RETURN_NOT_OK(builder.Finish(&arr));
-
-    auto chunked = std::make_shared<arrow::ChunkedArray>(arr);
-    auto field = arrow::field(column_name, arrow::int32());
-    return input->AddColumn(input->num_columns(), field, chunked);
-}
-
 } // namespace cyxwiz

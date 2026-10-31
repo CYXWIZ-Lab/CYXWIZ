@@ -183,6 +183,9 @@ def cross_check(cases):
                 y = np.clip(stats.norm.ppf(y), stats.norm.ppf(1e-7 - np.spacing(1)),
                             stats.norm.ppf(1 - (1e-7 - np.spacing(1))))
             assert np.allclose(y, c["outputs"][0], rtol=1e-10, atol=1e-12), c["label"]
+        elif c["op"] == "histogram":
+            counts, _ = np.histogram(x, c["bins"], (c["low"], c["high"]))
+            assert counts.tolist() == c["counts"], c["label"]
         elif c["op"] in ("boxcox_lambda_profile", "yeojohnson_lambda_profile"):
             llf_fn = stats.boxcox_llf if c["op"].startswith("boxcox") else stats.yeojohnson_llf
             for lam, ll in zip(c["lambdas"], c["log_likelihoods"]):
@@ -281,6 +284,17 @@ def main():
                      ("ties", ties)]:
         k2, p = normaltest(x)
         add("normaltest", label, [x], statistic=k2, p_value=p)
+
+    # Histograms (the step view's before / after): equal bins over [low, high], the last holding high;
+    # values outside are not counted.
+    for label, x, bins, low, high in [("normal_20", normal, 20, None, None), ("ties_12", ties, 12, None, None),
+                                      ("skewed_30", skewed, 30, None, None), ("normal_inner", normal, 10, 3.0, 7.0)]:
+        x = torch.tensor(vec(x))  # the values as the fixture stores them
+        low = float(x.min()) if low is None else low
+        high = float(x.max()) if high is None else high
+        inside = x[(x >= low) & (x <= high)]
+        add("histogram", label, [x], bins=bins, low=low, high=high,
+            counts=[int(v) for v in torch.histc(inside, bins, low, high).tolist()])
 
     # Refusals: the message must contain the given text.
     add("refuse_boxcox", "non_positive", [small], message="strictly positive")

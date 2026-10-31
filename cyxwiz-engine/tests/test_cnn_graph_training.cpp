@@ -9,8 +9,14 @@
 #include "../src/core/spatial_batch_layout.h"
 #include "../src/core/spatial_sequential_head.h"
 #include "../src/gui/loaders/data_loader.h"
+#include "computation_truth/test_device_selection.h"
 
+#include <nlohmann/json.hpp>
+
+#include <cmath>
 #include <cstdlib>
+#include <fstream>
+#include <map>
 #include <iostream>
 #include <random>
 #include <string>
@@ -77,9 +83,165 @@ const cyxwiz::CompiledLayer& LayerNamed(const cyxwiz::TrainingConfiguration& con
     return config.layers.front();
 }
 
+size_t LayerIndex(const cyxwiz::TrainingConfiguration& config, const std::string& name) {
+    for (size_t i = 0; i < config.layers.size(); ++i) {
+        if (config.layers[i].name == name) return i;
+    }
+    Check(false, "compiled layer missing: " + name);
+    return 0;
+}
+
+cyxwiz::Tensor ReadTensor(const nlohmann::json& value) {
+    const auto shape = value.at("shape").get<std::vector<size_t>>();
+    const auto values = value.at("values").get<std::vector<float>>();
+    return cyxwiz::Tensor(shape, values.data(), cyxwiz::DataType::Float32);
+}
+
+void CheckClose(const cyxwiz::Tensor& actual, const nlohmann::json& expected, const nlohmann::json& tolerance,
+                const std::string& what) {
+    const auto shape = expected.at("shape").get<std::vector<size_t>>();
+    Check(actual.Shape() == shape, what + ": shape " + ShapeText(actual.Shape()) + ", PyTorch " + ShapeText(shape));
+    if (actual.Shape() != shape) return;
+    const auto values = expected.at("values").get<std::vector<float>>();
+    const float* data = actual.ReadData<float>();
+    const float atol = tolerance.at("atol").get<float>();
+    const float rtol = tolerance.at("rtol").get<float>();
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (std::fabs(data[i] - values[i]) > atol + rtol * std::fabs(values[i])) {
+            Check(false, what + ": element " + std::to_string(i) + " expected " + std::to_string(values[i]) +
+                             ", got " + std::to_string(data[i]));
+            return;
+        }
+    }
+}
+
+// The PyTorch residual CNN (computation_truth/fixtures/cnn_graph_pytorch.json,
+// generate_cnn_graph_fixtures.py) built from Engine nodes: a stem, one ResNet
+// downsampling block with a projection shortcut, Global Avg Pool and a Dense
+// head; one training step's forward, gradients and BatchNorm running statistics.
+void CheckResidualCnnAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
+    std::ifstream in(CYXWIZ_CNN_GRAPH_FIXTURE);
+    Check(in.good(), std::string("cannot open ") + CYXWIZ_CNN_GRAPH_FIXTURE);
+    const auto fixture = nlohmann::json::parse(in);
+    const auto& c = fixture.at("cases").at(0);
+    const std::string name = c.at("name").get<std::string>();
+
+    gui::MLNode data;
+    data.id = 1;
+    data.type = gui::NodeType::DataInput;
+    data.name = "Images";
+    data.outputs = {Pin(102, gui::PinType::Tensor, "Data", false), Pin(103, gui::PinType::Labels, "Labels", false)};
+    data.parameters = {{"dataset_name", "residual_fixture"}, {"file_category", "image"},
+                       {"folder_path", "D:/tmp/residual_fixture"}, {"image_layout", "0"}};
+    const auto conv = [](int id, const std::string& n, int filters, int kernel, int stride, int pad) {
+        return Layer(id, gui::NodeType::Conv2D, n,
+                     {{"filters", std::to_string(filters)}, {"kernel_size", std::to_string(kernel)},
+                      {"stride", std::to_string(stride)}, {"padding", std::to_string(pad)}});
+    };
+    const auto bn = [](int id, const std::string& n) {
+        return Layer(id, gui::NodeType::BatchNorm, n, {{"eps", "1e-5"}, {"momentum", "0.1"}});
+    };
+    gui::MLNode add = Layer(30, gui::NodeType::Add, "Block add");
+    add.inputs.push_back(Pin(3003, gui::PinType::Tensor, "Input 2", true));
+    gui::MLNode loss;
+    loss.id = 40;
+    loss.type = gui::NodeType::CrossEntropyLoss;
+    loss.name = "Cross entropy";
+    loss.inputs = {Pin(4001, gui::PinType::Tensor, "Predictions", true), Pin(4002, gui::PinType::Labels, "Targets", true)};
+    loss.outputs = {Pin(4003, gui::PinType::Loss, "Loss", false)};
+    gui::MLNode adam;
+    adam.id = 41;
+    adam.type = gui::NodeType::Adam;
+    adam.name = "Adam";
+    adam.inputs = {Pin(4101, gui::PinType::Loss, "Loss", true)};
+    gui::MLNode output;
+    output.id = 42;
+    output.type = gui::NodeType::Output;
+    output.name = "Output";
+    output.parameters = {{"num_classes", "2"}};
+    std::vector<gui::MLNode> nodes = {
+        data, Layer(2, gui::NodeType::Resize, "Resize 8", {{"width", "8"}, {"height", "8"}, {"mode", "exact"}}),
+        conv(3, "Stem conv", 8, 3, 1, 1), bn(4, "Stem BN"), Layer(5, gui::NodeType::ReLU, "Stem ReLU"),
+        conv(10, "Main conv", 16, 3, 2, 1), bn(11, "Main BN"), Layer(12, gui::NodeType::ReLU, "Main ReLU"),
+        conv(13, "Main conv 2", 16, 3, 1, 1), bn(14, "Main BN 2"),
+        conv(20, "Shortcut conv", 16, 1, 2, 0), bn(21, "Shortcut BN"),
+        add, Layer(31, gui::NodeType::ReLU, "Block ReLU"), Layer(32, gui::NodeType::GlobalAvgPool, "GAP"),
+        Layer(33, gui::NodeType::Dense, "Head", {{"units", "2"}}), loss, adam, output};
+    std::vector<gui::NodeLink> links = {Link(1, 1, 2), Link(2, 2, 3), Link(3, 3, 4), Link(4, 4, 5),
+                                        Link(5, 5, 10), Link(6, 10, 11), Link(7, 11, 12), Link(8, 12, 13),
+                                        Link(9, 13, 14), Link(10, 5, 20), Link(11, 20, 21), Link(12, 14, 30),
+                                        Link(14, 30, 31), Link(15, 31, 32), Link(16, 32, 33)};
+    gui::NodeLink second = Link(13, 21, 30);
+    second.to_pin = 3003;
+    links.push_back(second);
+    gui::NodeLink to_loss = Link(17, 33, 40);
+    to_loss.to_pin = 4001;
+    gui::NodeLink labels;
+    labels.id = 18; labels.from_node = 1; labels.from_pin = 103; labels.to_node = 40; labels.to_pin = 4002;
+    gui::NodeLink to_adam;
+    to_adam.id = 19; to_adam.from_node = 40; to_adam.from_pin = 4003; to_adam.to_node = 41; to_adam.to_pin = 4101;
+    links.push_back(to_loss);
+    links.push_back(labels);
+    links.push_back(to_adam);
+
+    const auto config = compiler.Compile(nodes, links, true);
+    for (const auto& issue : config.issues) {
+        if (issue.level == cyxwiz::IssueLevel::Error)
+            std::cerr << "  issue: " << issue.node_name << ": " << issue.message << "\n";
+    }
+    Check(config.is_valid, name + ": the residual CNN compiles");
+    auto built = cyxwiz::BuildExecutableFromConfig(config);
+    Check(built.ok(), name + ": ModelBuilder builds it: " + built.error_message);
+    if (!built.ok()) return;
+
+    // PyTorch's weights and running statistics, by node name.
+    std::map<std::string, cyxwiz::Tensor> parameters;
+    for (const auto& [layer_name, layer] : c.at("layers").items()) {
+        const std::string prefix = "layer" + std::to_string(LayerIndex(config, layer_name)) + ".";
+        for (const auto& [key, value] : layer.items()) {
+            if (key.rfind("grad_", 0) != 0) parameters[prefix + key] = ReadTensor(value);
+        }
+    }
+    for (const auto& [layer_name, stats] : c.at("state").items()) {
+        const std::string prefix = "layer" + std::to_string(LayerIndex(config, layer_name)) + ".";
+        for (const auto& [key, value] : stats.items()) parameters[prefix + key] = ReadTensor(value);
+    }
+    built.model->SetParameters(parameters);
+    built.model->SetTraining(true);
+
+    const auto& tolerance = c.at("tolerance");
+    const cyxwiz::Tensor logits = built.model->Forward(ReadTensor(c.at("input")));
+    CheckClose(logits, c.at("output"), tolerance, name + " logits");
+    const cyxwiz::Tensor grad_input = built.model->Backward(ReadTensor(c.at("grad_output")));
+    CheckClose(grad_input, c.at("grad_input"), tolerance, name + " input gradient");
+    const auto gradients = built.model->GetGradients();
+    const auto state = built.model->GetParameters();
+    for (const auto& [layer_name, layer] : c.at("layers").items()) {
+        const std::string prefix = "layer" + std::to_string(LayerIndex(config, layer_name)) + ".";
+        for (const auto& [key, value] : layer.items()) {
+            if (key.rfind("grad_", 0) != 0) continue;
+            const auto it = gradients.find(prefix + key.substr(5));
+            Check(it != gradients.end(), name + ": no gradient " + prefix + key.substr(5) + " (" + layer_name + ")");
+            if (it != gradients.end()) CheckClose(it->second, value, tolerance, name + " " + layer_name + " " + key);
+        }
+    }
+    for (const auto& [layer_name, stats] : c.at("state_after").items()) {
+        const std::string prefix = "layer" + std::to_string(LayerIndex(config, layer_name)) + ".";
+        for (const auto& [key, value] : stats.items()) {
+            const auto it = state.find(prefix + key);
+            Check(it != state.end(), name + ": no state " + prefix + key);
+            if (it != state.end()) CheckClose(it->second, value, tolerance, name + " " + layer_name + " " + key);
+        }
+    }
+    std::cout << "residual CNN matches PyTorch: logits, input and " << c.at("layers").size()
+              << " layers' gradients, BatchNorm running statistics\n";
+}
+
 }  // namespace
 
 int main() {
+    // CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu picks the device (the oracle's convention).
+    Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
     // The graph (ids 1..13); the Data Input is an image folder with a Resize.
     gui::MLNode data;
     data.id = 1;
@@ -232,6 +394,145 @@ int main() {
               "per-channel PReLU before Flatten is refused with the reason: " + bad_built.error_message);
     }
 
+    // ---- Conv -> BatchNorm -> ReLU (TOFIX178 1.1): BatchNorm before Flatten is
+    // BatchNorm2D, per channel (it used to stop the compile: "Spatial head requires
+    // Flatten or a global pool before ...") ----
+    {
+        auto variant = nodes;
+        variant.push_back(Layer(30, gui::NodeType::BatchNorm, "BN 16", {{"eps", "1e-5"}, {"momentum", "0.1"}}));
+        variant.push_back(Layer(31, gui::NodeType::BatchNorm, "BN 32", {{"eps", "1e-5"}, {"momentum", "0.1"}}));
+        auto blinks = links;
+        int next_link = 900;
+        for (auto& l : blinks) {
+            if (l.from_node == 3 && l.to_node == 4) l = Link(l.id, 3, 30);
+            if (l.from_node == 6 && l.to_node == 7) l = Link(l.id, 6, 31);
+        }
+        blinks.push_back(Link(next_link++, 30, 4));
+        blinks.push_back(Link(next_link++, 31, 7));
+        const auto bconfig = compiler.Compile(variant, blinks, true);
+        for (const auto& issue : bconfig.issues) {
+            if (issue.level == cyxwiz::IssueLevel::Error) std::cerr << "  issue: " << issue.message << "\n";
+        }
+        Check(bconfig.is_valid, "a CNN with Conv -> BatchNorm -> ReLU compiles");
+        Check(LayerNamed(bconfig, "BN 16").output_shape == std::vector<size_t>{64, 64, 16},
+              "BatchNorm keeps [64, 64, 16]");
+        auto bbuilt = cyxwiz::BuildExecutableFromConfig(bconfig);
+        Check(bbuilt.ok(), "ModelBuilder builds BatchNorm2D: " + bbuilt.error_message);
+        long long bparams = 0;
+        for (const auto& [name, tensor] : bbuilt.model->GetParameters()) bparams += static_cast<long long>(tensor.NumElements());
+        // Per channel: gamma, beta, running mean, running var = 4 x 16 and 4 x 32 (torch BatchNorm2d state).
+        Check(bparams == parameters + 4 * 16 + 4 * 32,
+              "BatchNorm2D holds 4 values per channel, got " + std::to_string(bparams - parameters));
+        const cyxwiz::Tensor blogits = bbuilt.model->Forward(spatial);
+        Check(blogits.Shape() == std::vector<size_t>{batch, 2}, "Conv-BN CNN forward gives [N, 2]");
+        std::vector<float> ones(batch * 2, 1.0f);
+        const cyxwiz::Tensor bgrad = bbuilt.model->Backward(cyxwiz::Tensor({batch, 2}, ones.data(), cyxwiz::DataType::Float32));
+        Check(bgrad.Shape() == std::vector<size_t>{64, 64, 3, batch}, "backward through BatchNorm2D reaches the input");
+        // Eval uses the running statistics: the same batch gives different logits than in training.
+        bbuilt.model->SetTraining(false);
+        const cyxwiz::Tensor eval_logits = bbuilt.model->Forward(spatial);
+        const float* train_values = blogits.ReadData<float>();
+        const float* eval_values = eval_logits.ReadData<float>();
+        bool differs = false;
+        for (size_t i = 0; i < batch * 2; ++i) {
+            Check(std::isfinite(eval_values[i]), "eval logits are finite");
+            differs = differs || std::fabs(train_values[i] - eval_values[i]) > 1e-6f;
+        }
+        Check(differs, "eval mode uses the running statistics, not the batch's");
+    }
+
+    // ---- Residual blocks inside the conv section (TOFIX178 1.2) ----
+    // A two-input Add (Input 1 = id*100+1, Input 2 = id*100+3).
+    const auto add_node = [](int id, const std::string& name) {
+        gui::MLNode node = Layer(id, gui::NodeType::Add, name);
+        node.inputs.push_back(Pin(id * 100 + 3, gui::PinType::Tensor, "Input 2", true));
+        return node;
+    };
+    const auto to_second = [](int id, int from_node, int to_node) {
+        gui::NodeLink link = Link(id, from_node, to_node);
+        link.to_pin = to_node * 100 + 3;
+        return link;
+    };
+    const auto conv = [](int id, const std::string& name, int filters, int kernel, int stride, const std::string& pad) {
+        return Layer(id, gui::NodeType::Conv2D, name,
+                     {{"filters", std::to_string(filters)}, {"kernel_size", std::to_string(kernel)},
+                      {"stride", std::to_string(stride)}, {"padding", pad}});
+    };
+    const auto bn = [](int id, const std::string& name) {
+        return Layer(id, gui::NodeType::BatchNorm, name, {{"eps", "1e-5"}, {"momentum", "0.1"}});
+    };
+    const auto build_and_run = [&](const std::vector<gui::MLNode>& rnodes, const std::vector<gui::NodeLink>& rlinks,
+                                   const std::string& what) {
+        const auto rconfig = compiler.Compile(rnodes, rlinks, true);
+        for (const auto& issue : rconfig.issues) {
+            if (issue.level == cyxwiz::IssueLevel::Error)
+                std::cerr << "  issue: " << issue.node_name << ": " << issue.message << "\n";
+        }
+        Check(rconfig.is_valid, what + " compiles");
+        auto rbuilt = cyxwiz::BuildExecutableFromConfig(rconfig);
+        Check(rbuilt.ok(), what + " builds: " + rbuilt.error_message);
+        const cyxwiz::Tensor rlogits = rbuilt.model->Forward(spatial);
+        Check(rlogits.Shape() == std::vector<size_t>{batch, 2}, what + " forward gives [N, 2], got " + ShapeText(rlogits.Shape()));
+        std::vector<float> rones(batch * 2, 1.0f);
+        const cyxwiz::Tensor rgrad = rbuilt.model->Backward(cyxwiz::Tensor({batch, 2}, rones.data(), cyxwiz::DataType::Float32));
+        Check(rgrad.Shape() == std::vector<size_t>{64, 64, 3, batch}, what + " backward reaches the input as [64, 64, 3, N]");
+        return rconfig;
+    };
+    {
+        // Identity block after the first ReLU: ReLU -> Conv 16 -> BN -> Add(ReLU, BN) -> ReLU -> Pool.
+        auto rnodes = nodes;
+        rnodes.push_back(conv(40, "Res conv", 16, 3, 1, "same"));
+        rnodes.push_back(bn(41, "Res BN"));
+        rnodes.push_back(add_node(42, "Res add"));
+        rnodes.push_back(Layer(43, gui::NodeType::ReLU, "Res ReLU"));
+        std::vector<gui::NodeLink> rlinks;
+        for (const auto& l : links)
+            if (!(l.from_node == 4 && l.to_node == 5)) rlinks.push_back(l);
+        rlinks.push_back(Link(901, 4, 40));
+        rlinks.push_back(Link(902, 40, 41));
+        rlinks.push_back(Link(903, 4, 42));          // the shortcut: the block's input
+        rlinks.push_back(to_second(904, 41, 42));
+        rlinks.push_back(Link(905, 42, 43));
+        rlinks.push_back(Link(906, 43, 5));
+        const auto rconfig = build_and_run(rnodes, rlinks, "an identity residual block");
+        Check(LayerNamed(rconfig, "Res conv").input_shape == std::vector<size_t>{64, 64, 16}, "the block conv takes [64, 64, 16]");
+    }
+    {
+        // Downsampling block (ResNet): main Conv 32 stride 2 -> BN -> ReLU -> Conv 32 -> BN, shortcut
+        // Conv 1x1 32 stride 2 -> BN, Add -> ReLU, then ReLU 2 -> Pool 2 -> Flatten. The shortcut conv
+        // takes the block's input [64, 64, 16], not the main path's [32, 32, 32].
+        std::vector<gui::MLNode> rnodes;
+        for (const auto& n : nodes)
+            if (n.id != 5 && n.id != 6) rnodes.push_back(n);
+        rnodes.push_back(conv(50, "Down conv", 32, 3, 2, "1"));
+        rnodes.push_back(bn(51, "Down BN"));
+        rnodes.push_back(Layer(52, gui::NodeType::ReLU, "Down ReLU"));
+        rnodes.push_back(conv(53, "Down conv 2", 32, 3, 1, "same"));
+        rnodes.push_back(bn(54, "Down BN 2"));
+        rnodes.push_back(conv(55, "Shortcut conv", 32, 1, 2, "0"));
+        rnodes.push_back(bn(56, "Shortcut BN"));
+        rnodes.push_back(add_node(57, "Down add"));
+        rnodes.push_back(Layer(58, gui::NodeType::ReLU, "Down out"));
+        std::vector<gui::NodeLink> rlinks;
+        for (const auto& l : links)
+            if (l.from_node != 4 && l.from_node != 5 && l.from_node != 6) rlinks.push_back(l);
+        rlinks.push_back(Link(911, 4, 50));
+        rlinks.push_back(Link(912, 50, 51));
+        rlinks.push_back(Link(913, 51, 52));
+        rlinks.push_back(Link(914, 52, 53));
+        rlinks.push_back(Link(915, 53, 54));
+        rlinks.push_back(Link(916, 4, 55));
+        rlinks.push_back(Link(917, 55, 56));
+        rlinks.push_back(Link(918, 54, 57));
+        rlinks.push_back(to_second(919, 56, 57));
+        rlinks.push_back(Link(920, 57, 58));
+        rlinks.push_back(Link(921, 58, 7));
+        const auto rconfig = build_and_run(rnodes, rlinks, "a downsampling residual block");
+        Check(LayerNamed(rconfig, "Shortcut conv").input_shape == std::vector<size_t>{64, 64, 16},
+              "the shortcut conv takes the block input [64, 64, 16], got " + ShapeText(LayerNamed(rconfig, "Shortcut conv").input_shape));
+        Check(LayerNamed(rconfig, "Down out").output_shape == std::vector<size_t>{32, 32, 32}, "the block gives [32, 32, 32]");
+    }
+
     // ---- Global Avg Pool ends the conv section instead of Flatten (TOFIX140 A4b) ----
     {
         auto variant = nodes;
@@ -353,6 +654,7 @@ int main() {
         Check(mlogits.Shape() == std::vector<size_t>{batch, 2}, "Global Max Pool CNN forward gives [N, 2]");
     }
 
+    CheckResidualCnnAgainstPyTorch(compiler);
     std::cout << "CNN graph compiles, builds and runs forward: " << parameters << " parameters\n";
     return 0;
 }

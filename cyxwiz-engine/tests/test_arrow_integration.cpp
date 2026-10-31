@@ -298,6 +298,20 @@ bool Test_DuckDB_Queries() {
     auto result = db.Query("SELECT * FROM employees WHERE age > 28");
     TEST_ASSERT(result != nullptr, "Simple SELECT query");
     TEST_ASSERT(result->num_rows() == 4, "Correct filtered result count");
+    // The rows are in a DuckDB table (one pass of DuckDB's C API Arrow scan,
+    // TOFIX178 0.5): a self join reads them twice, rowid is there, and the
+    // name registers again.
+    {
+        const int64_t rows = dataset->GetArrowTable()->num_rows();
+        auto twice = db.Query("SELECT COUNT(*) AS n FROM employees a JOIN employees b ON a.name = b.name");
+        TEST_ASSERT(twice != nullptr && std::static_pointer_cast<arrow::Int64Scalar>(*twice->column(0)->GetScalar(0))->value == rows,
+                    "a self join reads every row on both sides");
+        auto ids = db.Query("SELECT rowid FROM employees");
+        TEST_ASSERT(ids != nullptr && ids->num_rows() == rows, "the table has a rowid");
+        TEST_ASSERT(db.RegisterTable("employees", dataset->GetArrowTable()), "a name registers again");
+        auto again = db.Query("SELECT * FROM employees");
+        TEST_ASSERT(again != nullptr && again->num_rows() == rows, "the registered-again table has its rows");
+    }
 
     // Test 2: Aggregation
     auto agg_result = db.Query("SELECT department, COUNT(*) as count, AVG(salary) as avg_salary FROM employees GROUP BY department");
@@ -328,15 +342,25 @@ bool Test_DuckDB_Queries() {
     TEST_ASSERT(tenth.ok() && std::static_pointer_cast<arrow::DoubleScalar>(*tenth)->value == 0.1, "0.1 stays 0.1");
     TEST_ASSERT(decimals->column(2)->null_count() == 1, "a NULL decimal stays null");
 
-    // The result type table: the per-value path (TINYINT, UINTEGER, DATE) and
-    // the native export give the same Arrow types; the SQL step's exactness
-    // check reads the same table.
-    auto typed = db.Query("SELECT CAST(1 AS TINYINT) AS t, CAST(2 AS UINTEGER) AS u, DATE '2024-01-02' AS d");
+    // The result type table: the per-value path and the native export give
+    // the same Arrow types, integers at their own width (TOFIX178 0.5); the
+    // SQL step's exactness check reads the same table.
+    auto typed = db.Query("SELECT CAST(1 AS TINYINT) AS t, CAST(2 AS UINTEGER) AS u, DATE '2024-01-02' AS d, "
+                          "CAST(200 AS UTINYINT) AS b, CAST(-3 AS SMALLINT) AS s, CAST(60000 AS USMALLINT) AS w");
     TEST_ASSERT(typed != nullptr, "typed query");
-    TEST_ASSERT(typed->schema()->field(0)->type()->id() == arrow::Type::INT32 &&
+    TEST_ASSERT(typed->schema()->field(0)->type()->id() == arrow::Type::INT8 &&
                     typed->schema()->field(1)->type()->id() == arrow::Type::UINT32 &&
-                    typed->schema()->field(2)->type()->id() == arrow::Type::DATE32,
-                "TINYINT int32, UINTEGER uint32, DATE date32");
+                    typed->schema()->field(2)->type()->id() == arrow::Type::DATE32 &&
+                    typed->schema()->field(3)->type()->id() == arrow::Type::UINT8 &&
+                    typed->schema()->field(4)->type()->id() == arrow::Type::INT16 &&
+                    typed->schema()->field(5)->type()->id() == arrow::Type::UINT16,
+                "TINYINT int8, UINTEGER uint32, DATE date32, UTINYINT uint8, SMALLINT int16, USMALLINT uint16");
+    auto narrow = db.Query("SELECT CAST(200 AS UTINYINT) AS b, CAST(-3 AS SMALLINT) AS s, 0.5 AS w");
+    TEST_ASSERT(narrow != nullptr && narrow->schema()->field(0)->type()->id() == arrow::Type::UINT8 &&
+                    narrow->schema()->field(1)->type()->id() == arrow::Type::INT16 &&
+                    std::static_pointer_cast<arrow::UInt8Scalar>(*narrow->column(0)->GetScalar(0))->value == 200 &&
+                    std::static_pointer_cast<arrow::Int16Scalar>(*narrow->column(1)->GetScalar(0))->value == -3,
+                "beside a decimal (per-value path) the small integers keep their width and value");
     auto day = typed->column(2)->GetScalar(0);
     TEST_ASSERT(day.ok() && (*day)->ToString() == "2024-01-02", "the date itself");
     // Natively exported dates and timestamps; a decimal beside them takes the per-value path.

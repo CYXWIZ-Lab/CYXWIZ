@@ -284,7 +284,6 @@ void MigrateLegacyNodeParameters(NodeType type,
             CopyLegacyParamIfMissing(params, "rolling_aggregations", "rolling_features", prefer_legacy);
             break;
 
-        case NodeType::LogTransform:
         case NodeType::Differencing:
             CopyLegacyColumnIfMissing(params, "value_col", "column", prefer_legacy);
             CopyLegacyColumnIfMissing(params, "value_col", "columns", prefer_legacy);

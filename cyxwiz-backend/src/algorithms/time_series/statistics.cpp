@@ -78,49 +78,4 @@ std::vector<double> TimeSeries::RollingStd(const std::vector<double>& data, int 
     return result;
 }
 
-std::vector<double> TimeSeries::CenteredMovingAverage(const std::vector<double>& data, int window) {
-    if (window <= 0 || data.size() < static_cast<size_t>(window)) {
-        return data;
-    }
-
-    std::vector<double> result(data.size(), 0.0);
-    int half = window / 2;
-
-    // For even window, we need an extra average
-    bool even_window = (window % 2 == 0);
-
-    for (size_t i = 0; i < data.size(); i++) {
-        int start = static_cast<int>(i) - half;
-        int end = static_cast<int>(i) + half;
-
-        if (even_window) {
-            // For even window, take average of two moving averages
-            if (start < 0 || end >= static_cast<int>(data.size())) {
-                result[i] = data[i];  // Edge: keep original
-            } else {
-                double sum1 = 0.0, sum2 = 0.0;
-                for (int j = start; j < end; j++) {
-                    sum1 += data[j];
-                }
-                for (int j = start + 1; j <= end; j++) {
-                    sum2 += data[j];
-                }
-                result[i] = (sum1 / window + sum2 / window) / 2.0;
-            }
-        } else {
-            if (start < 0 || end >= static_cast<int>(data.size())) {
-                result[i] = data[i];
-            } else {
-                double sum = 0.0;
-                for (int j = start; j <= end; j++) {
-                    sum += data[j];
-                }
-                result[i] = sum / window;
-            }
-        }
-    }
-
-    return result;
-}
-
 } // namespace cyxwiz

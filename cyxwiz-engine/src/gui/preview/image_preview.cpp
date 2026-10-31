@@ -55,57 +55,6 @@ void ImagePreviewRenderer::RenderSample(const std::vector<float>& data,
     ImGui::EndChild();
 }
 
-void ImagePreviewRenderer::RenderGrid(const cyxwiz::DatasetHandle& handle,
-                                        const cyxwiz::DatasetInfo& info,
-                                        int start_idx, int cols, int rows,
-                                        const std::vector<std::string>& class_names) {
-    if (!handle.IsValid() || info.shape.size() < 2) return;
-
-    int width = static_cast<int>(info.shape[0]);
-    int height = static_cast<int>(info.shape[1]);
-    int channels = info.shape.size() > 2 ? static_cast<int>(info.shape[2]) : 1;
-    size_t dataset_size = handle.Size();
-
-    int item_size = 80;
-    int idx = start_idx;
-
-    for (int row = 0; row < rows && idx < static_cast<int>(dataset_size); ++row) {
-        for (int col = 0; col < cols && idx < static_cast<int>(dataset_size); ++col) {
-            if (col > 0) ImGui::SameLine();
-
-            auto [sample, label] = handle.GetSample(idx);
-
-            ImGui::BeginGroup();
-            ImGui::PushID(idx);
-
-            if (sample.size() == static_cast<size_t>(width * height * channels)) {
-                auto& tm = cyxwiz::TextureManager::Instance();
-                std::string cache_key = "grid_" + std::to_string(idx) + "_" +
-                                       handle.GetName() + "_" +
-                                       std::to_string(width) + "x" + std::to_string(height);
-                uint32_t tex_id = tm.GetOrCreateCachedTexture(cache_key, sample.data(),
-                                                               width, height, channels);
-                if (tex_id) {
-                    ImGui::Image((ImTextureID)(intptr_t)tex_id,
-                                  ImVec2(static_cast<float>(item_size), static_cast<float>(item_size)));
-                }
-            }
-
-            // Label
-            if (label >= 0 && label < static_cast<int>(class_names.size())) {
-                ImGui::TextColored(cyxwiz::ui::CurrentTokens().accent_text, "%s", class_names[label].c_str());
-            } else {
-                ImGui::Text("Label: %d", label);
-            }
-
-            ImGui::PopID();
-            ImGui::EndGroup();
-
-            idx++;
-        }
-    }
-}
-
 void ImagePreviewRenderer::RenderImageInfo(int width, int height, int channels,
                                              const float* data, size_t data_size) {
     ImGui::Text("%dx%d", width, height);

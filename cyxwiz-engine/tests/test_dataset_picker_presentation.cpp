@@ -32,8 +32,8 @@ int main() {
     using namespace cyxwiz;
     const DatasetEntry input = Entry("ds_datainput_1", kBackingArrow, 8582, 15, "Spotify");
     const DatasetEntry kmeans = Entry("ds_operator_KMeansCluster_5", kBackingArrow, 248, 4);
-    DatasetEntry materialized = Entry("ds_datainput_1__materialized", kBackingParquet, 8582, 15);
-    materialized.materialized = true;
+    // A prepared step result read back from the prepared data cache (TOFIX178 S0).
+    const DatasetEntry prepared = Entry("prepared_StandardScaler_3", kBackingParquet, 8582, 15);
     const DatasetEntry legacy = Entry("old", kBackingLegacy, 10, 2);
     DatasetEntry images = Entry("catdog", kBackingImage, 2000, 0, "Cats and dogs");
     images.modality = DatasetModality::Image;
@@ -41,13 +41,13 @@ int main() {
 
     Check(std::string(DatasetOriginText(input)) == "Data Input", "Data Input origin");
     Check(std::string(DatasetOriginText(kmeans)) == "node result", "a pipeline node output is a node result");
-    Check(std::string(DatasetOriginText(materialized)) == "node result", "a materialized result is a node result");
+    Check(std::string(DatasetOriginText(prepared)) == "node result", "a prepared result read from disk is a node result");
     Check(std::string(DatasetOriginText(legacy)) == "older dataset", "legacy origin");
 
     Check(DatasetSizeText(input) == "8,582 rows \xC2\xB7 15 cols", "size text: " + DatasetSizeText(input));
     Check(DatasetSizeText(images) == "2,000 files \xC2\xB7 2 classes", "image size text: " + DatasetSizeText(images));
 
-    Check(IsTabularDataset(input) && IsTabularDataset(kmeans) && IsTabularDataset(materialized), "tables are tabular");
+    Check(IsTabularDataset(input) && IsTabularDataset(kmeans) && IsTabularDataset(prepared), "tables are tabular");
     Check(!IsTabularDataset(images) && !IsTabularDataset(legacy), "images and legacy entries are not tables");
 
     const std::vector<DatasetEntry> entries = {input, kmeans};

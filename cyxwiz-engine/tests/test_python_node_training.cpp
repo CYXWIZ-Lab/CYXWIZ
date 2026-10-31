@@ -3,7 +3,9 @@
 // registered with its Python factory; Softsign and Snake pass the gradient
 // check through the factory and train in the tiny causal-LM graph; Snake's
 // `a` is learned; settings are refused without Python; a Python error stops
-// training and names the node and the Python traceback.
+// training and names the node and the Python traceback. The Python Softsign
+// and Snake give the same loss curve as the C++ ones of the example plugin
+// (plugins/examples/activation_nodes) for one seed (TOFIX125 acceptance).
 //
 // The test starts its own interpreter (as the Engine's scripting engine
 // does), imports pycyxwiz from the folder of this exe, then releases the
@@ -13,6 +15,7 @@
 #include "../src/core/graph_training_job.h"
 #include "../src/core/python_node_bundle.h"
 #include "../src/extension/python/python_node_factory.h"
+#include "../src/plugin/plugin_manager.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
@@ -20,6 +23,7 @@
 #include <nlohmann/json.hpp>
 #include <pybind11/embed.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -88,6 +92,43 @@ cyxwiz::Module* FindModule(cyxwiz::IExecutableModel& executable, const std::stri
         if (model->GetModule(i) && model->GetModule(i)->GetName() == name) return model->GetModule(i);
     }
     return nullptr;
+}
+
+// The same starting weights for every run: the loader's model seed (data
+// order is already fixed by its seed).
+nlohmann::json Seeded(nlohmann::json graph) {
+    for (auto& node : graph["nodes"]) {
+        if (node.value("type", 0) == static_cast<int>(gui::NodeType::DataLoader)) {
+            node["parameters"]["model_seed"] = "125";
+        }
+    }
+    return graph;
+}
+
+// Per-epoch training loss of the example graph with one extension node.
+std::vector<float> TrainLosses(const fs::path& root, const fs::path& parquet, const fs::path& checkpoints,
+                               const std::string& provider, const std::string& type_name,
+                               const std::map<std::string, std::string>& parameters, const std::string& hash,
+                               std::string& error) {
+    cyxwiz::GraphTrainingJobRequest request;
+    request.graph_json = Seeded(GraphWith(root, provider, type_name, parameters, hash)).dump();
+    request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
+    request.epochs_override = 3;
+    request.checkpoint_dir_override = checkpoints.string();
+    std::vector<float> losses;
+    cyxwiz::GraphTrainingJobCallbacks callbacks;
+    callbacks.on_epoch = [&losses](int, float train_loss, float, float, float, float) {
+        losses.push_back(train_loss);
+    };
+    const auto result = cyxwiz::RunGraphTrainingJob(request, callbacks);
+    error = result.error;
+    return result.ok ? losses : std::vector<float>{};
+}
+
+std::string Curve(const std::vector<float>& losses) {
+    std::string text;
+    for (const float loss : losses) text += (text.empty() ? "" : " ") + std::to_string(loss);
+    return text.empty() ? "none" : text;
 }
 
 // Registers every node of a bundle with its Python factory.
@@ -232,6 +273,38 @@ int main() {
         Check(result.model && FindModule(*result.model, "Softsign") != nullptr, "the model holds Softsign");
     }
     Check(!fs::exists(bundle_dir / "__pycache__"), "loading a bundle writes no __pycache__ into its folder");
+
+    // TOFIX125 acceptance: a node written in Python and the same node from a
+    // C++ plugin give the same loss curve for one seed.
+    std::cout << "the Python and the C++ Softsign and Snake give the same loss curve for one seed\n";
+    {
+        constexpr const char* kPluginId = "com.cyxwiz.examples.activation-nodes";
+        auto& manager = cyxwiz::plugin::PluginManager::Instance();
+        const fs::path plugin_dir = root / "plugins" / "examples" / "activation_nodes";
+        std::string load_error;
+        const bool loaded = manager.LoadPlugin(plugin_dir, &load_error) && manager.InitializePlugin(kPluginId);
+        Check(loaded, "the C++ example plugin loads" + (load_error.empty() ? "" : ": " + load_error));
+        for (const char* name : {"Softsign", "Snake"}) {
+            const std::map<std::string, std::string> settings =
+                std::string(name) == "Snake" ? std::map<std::string, std::string>{{"initial_a", "1.0"}}
+                                             : std::map<std::string, std::string>{};
+            std::string python_error, cpp_error;
+            const auto python = TrainLosses(root, parquet, work / ("ck_py_" + std::string(name)), kBundleId, name,
+                                            settings, bundle.content_hash, python_error);
+            const auto cpp = loaded ? TrainLosses(root, parquet, work / ("ck_cpp_" + std::string(name)), kPluginId,
+                                                  name, settings, "", cpp_error)
+                                    : std::vector<float>{};
+            bool same = python.size() == 3 && cpp.size() == python.size();
+            for (size_t i = 0; same && i < python.size(); ++i) {
+                same = std::isfinite(python[i]) &&
+                       std::fabs(python[i] - cpp[i]) <= 1e-4f * std::max(1.0f, std::fabs(cpp[i]));
+            }
+            Check(same, std::string(name) + ": Python " + Curve(python) +
+                            (python_error.empty() ? "" : " (" + python_error + ")") + " / C++ " + Curve(cpp) +
+                            (cpp_error.empty() ? "" : " (" + cpp_error + ")"));
+        }
+        if (loaded) manager.UnloadPlugin(kPluginId);
+    }
 
     std::cout << "a Python error stops training and names the node\n";
     {

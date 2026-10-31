@@ -6,6 +6,8 @@ Two ways to write a node (Part C4):
   its forward and backward are generated. Output shape = input shape.
 - Tier 2, @nodes.node on a pycyxwiz.Module subclass: write forward and
   backward yourself, optionally build(input_shape) and output_shape.
+- A loss, @nodes.loss on a pycyxwiz.Loss subclass: forward(predictions,
+  targets) gives one value, backward gives dLoss/dpredictions (P7).
 
 Settings are declared with nodes.Param as class attributes. A graph stores
 settings as text; create() converts and checks them.
@@ -21,19 +23,30 @@ try:
 except NameError:
     import pycyxwiz as _cyx
 
-__all__ = ["Param", "activation", "node", "create", "output_shape", "describe", "gradcheck",
-           "bundle", "is_node"]
+__all__ = ["Param", "activation", "node", "loss", "create", "output_shape", "describe", "gradcheck",
+           "bundle", "is_node", "is_loss"]
 
 BUNDLE_FORMAT = 1
 
 _ID_PATTERN = _re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _VERSION_PATTERN = _re.compile(r"^\d+\.\d+\.\d+$")
 _ROLES = ("activation", "layer")
+_TARGETS = ("categorical", "continuous")
 _TYPES = {float: "float", int: "int", bool: "bool", str: "string"}
+
+# The settings of the node create() is making, per thread, so a node's
+# __init__ can read them before they are stored on the instance.
+import threading as _threading
+_creating = _threading.local()
 
 
 class Param:
-    """A node setting: Param(float, default=1.0, min=0.01, description="...")."""
+    """A node setting: Param(float, default=1.0, min=0.01, description="...").
+
+    type is float, int, bool or str. Without a default the setting starts at
+    0, 0, False, "" or the first of its choices; the default itself must meet
+    min, max and choices. Read the value in the module as self.<name>.
+    """
 
     def __init__(self, type=float, default=None, min=None, max=None, choices=None, description=""):
         if type not in _TYPES:
@@ -55,7 +68,10 @@ class Param:
     def __get__(self, instance, owner):
         if instance is None:
             return self
-        return instance.__dict__.get("_cyxwiz_settings", {}).get(self.name, self.default)
+        settings = instance.__dict__.get("_cyxwiz_settings")
+        if settings is None:
+            settings = getattr(_creating, "settings", None) or {}
+        return settings.get(self.name, self.default)
 
     def __set__(self, instance, value):
         raise AttributeError("setting '%s' is read-only inside the node; set it in the graph" % self.name)
@@ -86,6 +102,7 @@ class Param:
         return result
 
     def check(self, value, label):
+        """Raise ValueError (naming it as label) when value breaks min, max or choices."""
         if self.min is not None and value < self.min:
             raise ValueError("%s must be at least %s" % (label, self.min))
         if self.max is not None and value > self.max:
@@ -102,6 +119,7 @@ class Param:
         return "%s-%s" % ("" if self.min is None else self.min, "" if self.max is None else self.max)
 
     def describe(self):
+        """The setting's entry in node.json: name, type, default, validation, description, choices."""
         return {"name": self.name, "type": _TYPES[self.type], "default": _text(self.default),
                 "validation": self.validation(), "description": self.description,
                 "choices": [_text(c) for c in self.choices] if self.choices is not None else []}
@@ -122,19 +140,19 @@ def _params(cls):
     return found
 
 
-def _check_identity(id, name, version, role):
+def _check_identity(id, name, version, role, roles=_ROLES):
     if not isinstance(id, str) or not _ID_PATTERN.match(id):
         raise ValueError("id '%s' must be lower case: a-z, 0-9, '.', '-', '_' (for example com.you.my-nodes)" % id)
     if not isinstance(name, str) or not _re.match(r"^[A-Za-z][A-Za-z0-9_]*$", name):
         raise ValueError("name '%s' must start with a letter and use letters, digits and '_'" % name)
     if not isinstance(version, str) or not _VERSION_PATTERN.match(version):
         raise ValueError("version '%s' must look like 1.0.0" % version)
-    if role not in _ROLES:
-        raise ValueError("role must be one of %s" % ", ".join(_ROLES))
+    if role not in roles:
+        raise ValueError("role must be one of %s" % ", ".join(roles))
 
 
-def _attach(cls, tier, id, name, version, category, role, description, display_name):
-    _check_identity(id, name, version, role)
+def _attach(cls, tier, id, name, version, category, role, description, display_name, roles=_ROLES):
+    _check_identity(id, name, version, role, roles)
     cls.__cyxwiz_node__ = {
         "id": id,
         "name": name,
@@ -185,13 +203,44 @@ def node(id, name, version, category="Custom", role="layer", description="", dis
     return wrap
 
 
+def loss(id, name, version, target="categorical", category="Loss", description="", display_name=None):
+    """A loss node: a pycyxwiz.Loss subclass with forward and backward.
+
+    forward(self, predictions, targets) returns one value; backward(self,
+    predictions, targets) returns dLoss/dpredictions with the predictions'
+    shape, the mean scaling included (as the built-in losses).
+    target: "categorical" (targets are one-hot rows as wide as the model's
+    output; accuracy by argmax) or "continuous" (target values; regression
+    metrics).
+    """
+    def wrap(cls):
+        if not (isinstance(cls, type) and issubclass(cls, _cyx.Loss)):
+            raise TypeError("@nodes.loss goes on a subclass of pycyxwiz.Loss")
+        for method in ("forward", "backward"):
+            if method not in {k for klass in cls.__mro__ if klass is not _cyx.Loss for k in vars(klass)}:
+                raise TypeError("@nodes.loss needs %s(self, predictions, targets) on %s" % (method, cls.__name__))
+        if target not in _TARGETS:
+            raise ValueError("target must be one of %s" % ", ".join(_TARGETS))
+        _attach(cls, "loss", id, name, version, category, "loss", description, display_name, roles=("loss",))
+        cls.__cyxwiz_node__["target"] = target
+        return cls
+    return wrap
+
+
 def is_node(cls):
+    """True for a class marked with @nodes.node, @nodes.activation or @nodes.loss."""
     return isinstance(getattr(cls, "__cyxwiz_node__", None), dict)
+
+
+def is_loss(cls):
+    """True for a class marked with @nodes.loss."""
+    return is_node(cls) and cls.__cyxwiz_node__["role"] == "loss"
 
 
 def _require_node(cls):
     if not is_node(cls):
-        raise TypeError("%r is not a node; decorate it with @nodes.node or @nodes.activation" % (cls,))
+        raise TypeError("%r is not a node; decorate it with @nodes.node, @nodes.activation or @nodes.loss"
+                        % (cls,))
 
 
 def _same_as_input(cls):
@@ -204,10 +253,11 @@ def _same_as_input(cls):
 
 
 def create(cls, settings=None, input_shape=None):
-    """A ready module: settings converted and checked, build() called.
+    """A ready module (or loss): settings converted and checked, build() called.
 
     settings: {name: value}; text values as a graph stores them are converted.
-    input_shape: one sample's shape (no batch), as the Engine passes it.
+    input_shape: one sample's shape (no batch), as the Engine passes it; a
+    loss takes none.
     """
     _require_node(cls)
     params = _params(cls)
@@ -217,9 +267,16 @@ def create(cls, settings=None, input_shape=None):
         raise ValueError("%s has no setting %s" % (cls.__cyxwiz_node__["name"], ", ".join(unknown)))
     values = {name: param.convert(settings[name]) if name in settings else param.default
               for name, param in params.items()}
-    module = cls.__new__(cls)
+    # cls() rather than __new__ + __init__: pycyxwiz's own check then refuses
+    # an __init__ that does not call super().__init__() with a clear error;
+    # without it, the half-made module crashes the process when it is used.
+    previous = getattr(_creating, "settings", None)
+    _creating.settings = values
+    try:
+        module = cls()
+    finally:
+        _creating.settings = previous
     module.__dict__["_cyxwiz_settings"] = values
-    module.__init__()
     if input_shape is not None and callable(getattr(module, "build", None)):
         module.build(list(input_shape))
     return module
@@ -228,6 +285,8 @@ def create(cls, settings=None, input_shape=None):
 def output_shape(cls, settings=None, input_shape=()):
     """The output shape for one sample's input shape (no batch)."""
     _require_node(cls)
+    if is_loss(cls):
+        raise TypeError("%s is a loss: it gives one value, not an output per sample" % cls.__cyxwiz_node__["name"])
     if _same_as_input(cls):
         return list(input_shape)
     return list(create(cls, settings).output_shape(list(input_shape)))
@@ -237,16 +296,24 @@ def describe(cls):
     """The node's manifest entry (the fields node.json uses)."""
     _require_node(cls)
     info = dict(cls.__cyxwiz_node__)
-    info["shape_rule"] = "same_as_input" if _same_as_input(cls) else "python"
-    info["inputs"] = [{"name": "Input", "type": "Tensor"}]
-    info["outputs"] = [{"name": "Output", "type": "Tensor"}]
+    if is_loss(cls):
+        # The built-in losses' pins.
+        info["inputs"] = [{"name": "Predictions", "type": "Tensor"}, {"name": "Targets", "type": "Labels"}]
+        info["outputs"] = [{"name": "Loss", "type": "Loss"}]
+    else:
+        info["shape_rule"] = "same_as_input" if _same_as_input(cls) else "python"
+        info["inputs"] = [{"name": "Input", "type": "Tensor"}]
+        info["outputs"] = [{"name": "Output", "type": "Tensor"}]
     info["parameters"] = [p.describe() for p in _params(cls).values()]
     return info
 
 
 def gradcheck(cls, settings=None, **options):
-    """pycyxwiz.gradcheck on fresh modules made with these settings."""
+    """pycyxwiz.gradcheck (gradcheck_loss for a loss) on fresh modules made with these settings."""
     _require_node(cls)
+    if is_loss(cls):
+        targets = "one_hot" if cls.__cyxwiz_node__["target"] == "categorical" else "values"
+        return _cyx.gradcheck_loss(lambda: create(cls, settings), targets=targets, **options)
     return _cyx.gradcheck(lambda shape: create(cls, settings, list(shape)[1:]), **options)
 
 
@@ -300,6 +367,15 @@ def _engine_create(folder, private_name, entry_class, settings, input_shape):
     """(module, its C++ address) for the Engine's model builder."""
     module = create(_engine_class(folder, private_name, entry_class), settings, input_shape)
     return module, _cyx._module_address(module)
+
+
+def _engine_create_loss(folder, private_name, entry_class, settings):
+    """(loss, its C++ address) for the Engine's model builder."""
+    cls = _engine_class(folder, private_name, entry_class)
+    if not is_loss(cls):
+        raise TypeError("%s is not a loss node" % entry_class)
+    loss = create(cls, settings)
+    return loss, _cyx._loss_address(loss)
 
 
 def _engine_output_shape(folder, private_name, entry_class, settings, input_shape):
@@ -388,6 +464,15 @@ def _source_file(cls):
     if not path or not __import__("os").path.isfile(path):
         raise ValueError("%s is not defined in a .py file; save it in a file and import it to bundle it"
                          % cls.__name__)
+    # The module's file is not always where the class came from: code run
+    # with exec() under __main__ reports the main script's file. Copying
+    # that file would bundle other code, so the class must be defined in it.
+    import re
+    with open(path, encoding="utf-8", errors="replace") as f:
+        defined = re.search(r"^class\s+%s\b" % re.escape(cls.__name__), f.read(), re.M)
+    if not defined:
+        raise ValueError("%s is not defined in %s; save it in a .py file and import it to bundle it"
+                         % (cls.__name__, path))
     return __import__("os").path.abspath(path)
 
 
@@ -431,9 +516,10 @@ def bundle(*classes, folder="nodes", name=None, check_gradients=True):
         info = describe(cls)
         entry = {key: info[key] for key in ("name", "version")}
         entry["entry"] = "node.py:" + cls.__name__
-        for key in ("tier", "display_name", "category", "role", "description", "shape_rule",
+        for key in ("tier", "display_name", "category", "role", "description", "shape_rule", "target",
                     "inputs", "outputs", "parameters"):
-            entry[key] = info[key]
+            if key in info:
+                entry[key] = info[key]
         if check_gradients:
             try:
                 result = gradcheck(cls)

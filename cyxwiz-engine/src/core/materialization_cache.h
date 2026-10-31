@@ -15,13 +15,14 @@ namespace cyxwiz {
 // 3: 128-bit keys, node display names left out of the key, content
 // fingerprint for sources without a file identity.
 // 4: a Text Tokenizer label column carries its class names (field metadata).
-inline constexpr int kMaterializationCacheSchemaVersion = 4;
+// 5: entries keep each row's Train / Validation / Test mark, sparse ones too
+// (TOFIX178 S0-g3).
+inline constexpr int kMaterializationCacheSchemaVersion = 5;
 
 enum class MaterializationCacheMode {
     Disabled,
     Auto,
-    Rebuild,
-    RequireHit
+    Rebuild
 };
 
 enum class MaterializationCacheStatus {
@@ -130,11 +131,6 @@ bool ReadMaterializationCacheManifest(
     const std::filesystem::path& manifest_path,
     MaterializationCacheManifest& manifest,
     std::string* error = nullptr);
-
-// Lightweight disk identity for registry-resident reuse. Empty means the
-// artifact cannot be inspected and must not be reused from memory.
-std::string MaterializationArtifactIdentity(
-    const MaterializationCacheManifest& manifest);
 
 // Directory holding every cache entry: <cache_root>/cache/materialized.
 std::filesystem::path MaterializationCacheDirectory(

@@ -1,6 +1,7 @@
 #include "project_manager.h"
 #include "async_task_manager.h"
 #include "core/engine_config.h"
+#include "core/child_process.h"
 #include "core/python_detector.h"
 #include <cstdlib>
 #include <filesystem>
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <system_error>
+#include <vector>
 #include <spdlog/spdlog.h>
 
 namespace fs = std::filesystem;
@@ -27,26 +29,20 @@ std::string GetVenvInterpreterPath(const fs::path& venv_dir) {
 #endif
 }
 
-std::string BuildVenvCommand(const std::string& python_exe, const fs::path& venv_dir, bool with_pip) {
+std::vector<std::string> BuildVenvCommand(const std::string& python_exe, const fs::path& venv_dir, bool with_pip) {
     // Don't use -I flag - it causes venv to miss standard library modules
-    std::string cmd = "\"" + python_exe + "\" -m venv \"" + venv_dir.string() + "\"";
+    std::vector<std::string> args = {python_exe, "-m", "venv", venv_dir.string()};
     if (!with_pip) {
-        cmd += " --without-pip";
+        args.push_back("--without-pip");
     }
-    return cmd;
+    return args;
 }
 
-int RunVenvCommand(const std::string& command) {
-    if (command.empty()) {
-        return -1;
-    }
-#ifdef _WIN32
-    // On Windows, wrap the entire command in quotes for cmd.exe
-    std::string wrapped_cmd = "cmd.exe /c \"" + command + "\"";
-    return std::system(wrapped_cmd.c_str());
-#else
-    return std::system(command.c_str());
-#endif
+// For the log: the arguments joined by spaces.
+std::string CommandText(const std::vector<std::string>& args) {
+    std::string text;
+    for (const auto& arg : args) text += (text.empty() ? "" : " ") + arg;
+    return text;
 }
 
 fs::path NormalizePath(const fs::path& path) {
@@ -228,16 +224,16 @@ bool CreateProjectVenv(const fs::path& project_dir, std::string* error_out) {
 
     // Create venv using system Python
     spdlog::info("Creating project venv using system Python: {}", system_python);
-    std::string command_with_pip = BuildVenvCommand(system_python, venv_dir, true);
-    std::string command_without_pip = BuildVenvCommand(system_python, venv_dir, false);
+    const auto command_with_pip = BuildVenvCommand(system_python, venv_dir, true);
+    const auto command_without_pip = BuildVenvCommand(system_python, venv_dir, false);
 
-    spdlog::info("Venv command: {}", command_with_pip);
-    int result = RunVenvCommand(command_with_pip);
+    spdlog::info("Venv command: {}", CommandText(command_with_pip));
+    int result = cyxwiz::core::RunHidden(command_with_pip);
     if (result != 0) {
         spdlog::warn("Venv creation command failed, exit_code={}", result);
         spdlog::info("Retrying venv creation without pip");
-        spdlog::info("Venv command (no pip): {}", command_without_pip);
-        result = RunVenvCommand(command_without_pip);
+        spdlog::info("Venv command (no pip): {}", CommandText(command_without_pip));
+        result = cyxwiz::core::RunHidden(command_without_pip);
     }
 
     if (result == 0) {
@@ -1093,9 +1089,7 @@ bool RepairProjectVenvBase(const std::string& venv_interpreter, std::string* mes
 
     spdlog::warn("Project environment's base Python is missing ({}); re-pointing it at {}",
                  home, base);
-    const std::string command =
-        "\"" + base + "\" -m venv --upgrade \"" + venv_dir.string() + "\"";
-    const int result = RunVenvCommand(command);
+    const int result = cyxwiz::core::RunHidden({base, "-m", "venv", "--upgrade", venv_dir.string()});
     if (result != 0 || !fs::exists(GetVenvInterpreterPath(venv_dir), ec)) {
         return fail("Could not repair the project environment (exit code " +
                     std::to_string(result) + ")");

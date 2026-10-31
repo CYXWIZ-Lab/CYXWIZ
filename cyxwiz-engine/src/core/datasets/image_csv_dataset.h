@@ -106,12 +106,15 @@ public:
     std::string GetItemSource(size_t index) const override {
         return index < image_paths_.size() ? image_paths_[index] : std::string();
     }
+    int GetItemLabel(size_t index) const override {
+        return index < labels_.size() ? labels_[index] : -1;
+    }
 
 private:
     // Initialization
     void LoadData();
-    void LoadFromCSV(const std::vector<std::string>& valid_extensions);
-    void LoadFromFolder(std::function<bool(const std::string&)> is_image);
+    void LoadFromCSV();
+    void LoadFromFolder();
 
     // CSV parsing
     std::vector<std::string> ParseCSVLine(const std::string& line);

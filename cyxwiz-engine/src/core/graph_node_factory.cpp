@@ -180,6 +180,18 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::MorphologyTransform:
         case NodeType::AdvancedAugment:
         case NodeType::AugmentationPreset:
+        case NodeType::ImageContrast:
+        case NodeType::ImageDenoise:
+        case NodeType::ImageSharpen:
+        case NodeType::ImageEdges:
+        case NodeType::ImageSmooth:
+        case NodeType::ImageWarp:
+        case NodeType::ImagePyramid:
+        case NodeType::RandomResizedCrop:
+        case NodeType::RandomAffine:
+        case NodeType::RandomPerspective:
+        case NodeType::GaussianNoise:
+        case NodeType::RandomGrayscale:
         case NodeType::QualityAnalyzer: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
@@ -831,7 +843,11 @@ MLNode CreateGraphNode(NodeType type,
             out.name = "Transformed";
             out.is_input = false;
             node.outputs.push_back(out);
-            node.parameters["value_col"] = "";
+            node.parameters["columns"] = "";
+            node.parameters["label_col"] = "";
+            node.parameters["exclude_columns"] = "";
+            node.parameters["base"] = "natural";
+            node.parameters["use_log1p"] = "true";
             break;
         }
 
@@ -854,10 +870,8 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        // Phase 5 time-series analysis: real Cat-1 operators that
-        // append analysis columns to the input. Forecast horizon is
-        // fixed to 0 — these are in-sample fit only, which preserves
-        // row count and downstream alignment.
+        // Time series analysis (TOFIX129 D6): the parameters the operators
+        // in time_series_analysis_operators read.
         case NodeType::TimeSeriesDecomposition: {
             NodePin in;
             in.id = next_pin_id_++;
@@ -871,11 +885,12 @@ MLNode CreateGraphNode(NodeType type,
             out.name = "Decomposed";
             out.is_input = false;
             node.outputs.push_back(out);
-            // Canonical params read by TimeSeriesDecompositionOperator.
             node.parameters["signal_col"] = "";
-            node.parameters["period"] = "12";
-            node.parameters["method"] = "additive";     // additive / multiplicative
-            node.parameters["algorithm"] = "classical"; // classical / stl
+            node.parameters["period"] = "-1";          // -1 finds it
+            node.parameters["algorithm"] = "stl";      // stl / classical
+            node.parameters["method"] = "additive";    // classical: additive / multiplicative
+            node.parameters["seasonal_window"] = "7";
+            node.parameters["robust"] = "false";
             break;
         }
 
@@ -894,6 +909,7 @@ MLNode CreateGraphNode(NodeType type,
             node.outputs.push_back(out);
             node.parameters["signal_col"] = "";
             node.parameters["max_lag"] = "-1";
+            node.parameters["confidence"] = "0.95";
             break;
         }
 
@@ -912,6 +928,7 @@ MLNode CreateGraphNode(NodeType type,
             node.outputs.push_back(out);
             node.parameters["signal_col"] = "";
             node.parameters["max_lag"] = "-1";
+            node.parameters["confidence"] = "0.95";
             break;
         }
 
@@ -929,6 +946,7 @@ MLNode CreateGraphNode(NodeType type,
             out.is_input = false;
             node.outputs.push_back(out);
             node.parameters["signal_col"] = "";
+            node.parameters["regression"] = "c";       // c / ct
             node.parameters["max_lags"] = "-1";
             break;
         }
@@ -962,17 +980,17 @@ MLNode CreateGraphNode(NodeType type,
             NodePin out;
             out.id = next_pin_id_++;
             out.type = PinType::Dataset;
-            out.name = "Fitted";
+            out.name = "Forecast";
             out.is_input = false;
             node.outputs.push_back(out);
-            // Canonical params read by ARIMAOperator. p/d/q = -1 lets
-            // the backend auto-select. Horizon is fixed to 0 — this is
-            // in-sample fit; true forecasting needs a row-count-changing
-            // operator deferred in tofix.
+            // p / d / q = -1 are chosen; horizon rows are added with forecast / low / high.
             node.parameters["signal_col"] = "";
+            node.parameters["time_col"] = "";
             node.parameters["p"] = "-1";
             node.parameters["d"] = "-1";
             node.parameters["q"] = "-1";
+            node.parameters["horizon"] = "12";
+            node.parameters["level"] = "0.95";
             break;
         }
 
@@ -986,19 +1004,21 @@ MLNode CreateGraphNode(NodeType type,
             NodePin out;
             out.id = next_pin_id_++;
             out.type = PinType::Dataset;
-            out.name = "Fitted";
+            out.name = "Forecast";
             out.is_input = false;
             node.outputs.push_back(out);
-            // Canonical params read by ExponentialSmoothingOperator.
-            // method picks simple / holt / holt_winters. alpha/beta/gamma=-1
-            // lets the backend auto-tune. period is holt_winters only.
+            // alpha / beta / gamma = -1 are estimated; period -1 is found; horizon rows are added.
             node.parameters["signal_col"] = "";
-            node.parameters["method"] = "simple";  // simple / holt / holt_winters
+            node.parameters["time_col"] = "";
+            node.parameters["method"] = "holt_winters";  // simple / holt / holt_winters
+            node.parameters["seasonal"] = "additive";    // additive / multiplicative
+            node.parameters["period"] = "-1";
+            node.parameters["damped"] = "false";
             node.parameters["alpha"] = "-1";
             node.parameters["beta"] = "-1";
             node.parameters["gamma"] = "-1";
-            node.parameters["period"] = "-1";
-            node.parameters["damped"] = "false";
+            node.parameters["horizon"] = "12";
+            node.parameters["level"] = "0.95";
             break;
         }
 
@@ -1440,45 +1460,9 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::TSNENode: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Embedded";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["n_components"] = "2";
-            node.parameters["perplexity"] = "30";
-            node.parameters["learning_rate"] = "200";
-            break;
-        }
-
+        case NodeType::TSNENode:
         case NodeType::UMAPNode: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Dataset;
-            input_pin.name = "Data";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Dataset;
-            output_pin.name = "Embedded";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-
-            node.parameters["n_components"] = "2";
-            node.parameters["n_neighbors"] = "15";
-            node.parameters["min_dist"] = "0.1";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 
@@ -1523,40 +1507,6 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::LearningCurvesNode: {
-            NodePin model_in;
-            model_in.id = next_pin_id_++;
-            model_in.type = PinType::Parameters;
-            model_in.name = "Model";
-            model_in.is_input = true;
-            node.inputs.push_back(model_in);
-
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin curves_out;
-            curves_out.id = next_pin_id_++;
-            curves_out.type = PinType::Dataset;
-            curves_out.name = "Curves";
-            curves_out.is_input = false;
-            node.outputs.push_back(curves_out);
-
-            node.parameters["cv"] = "5";
-            node.parameters["train_sizes"] = "0.1,0.3,0.5,0.7,0.9";
-            break;
-        }
-
         case NodeType::FeatureImportanceNode: {
             NodePin model_in;
             model_in.id = next_pin_id_++;
@@ -1576,41 +1526,10 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::CrossValidationNode: {
-            NodePin model_in;
-            model_in.id = next_pin_id_++;
-            model_in.type = PinType::Parameters;
-            model_in.name = "Model";
-            model_in.is_input = true;
-            node.inputs.push_back(model_in);
-
-            NodePin data_in;
-            data_in.id = next_pin_id_++;
-            data_in.type = PinType::Dataset;
-            data_in.name = "Data";
-            data_in.is_input = true;
-            node.inputs.push_back(data_in);
-
-            NodePin labels_in;
-            labels_in.id = next_pin_id_++;
-            labels_in.type = PinType::Labels;
-            labels_in.name = "Labels";
-            labels_in.is_input = true;
-            node.inputs.push_back(labels_in);
-
-            NodePin scores_out;
-            scores_out.id = next_pin_id_++;
-            scores_out.type = PinType::Dataset;
-            scores_out.name = "Scores";
-            scores_out.is_input = false;
-            node.outputs.push_back(scores_out);
-
-            node.parameters["cv"] = "5";
-            node.parameters["scoring"] = "accuracy";
-            break;
-        }
-
         case NodeType::RegressionMetricsNode:
+        case NodeType::HypothesisTest:
+        case NodeType::CrossValidationNode:
+        case NodeType::LearningCurvesNode:
         case NodeType::ClassificationMetricsNode:
         case NodeType::TestEvaluationNode: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
@@ -1625,6 +1544,9 @@ MLNode CreateGraphNode(NodeType type,
 
         case NodeType::MinMaxScaler:
         case NodeType::RobustScaler:
+        case NodeType::MaxAbsScaler:
+        case NodeType::QuantileTransform:
+        case NodeType::PowerTransform:
         case NodeType::LabelEncoder:
         case NodeType::OrdinalEncoder:
         case NodeType::TargetEncoder: {

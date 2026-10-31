@@ -1,5 +1,6 @@
 #pragma once
 
+#include "data_input_external_formats.h"
 #include "data_input_parameters.h"
 
 #include <array>
@@ -81,19 +82,33 @@ inline const SourceFormatCapability* DetectFormat(const std::string& path) {
     return nullptr;
 }
 
+// "auto" resolves by the file's extension: a built-in format the Engine
+// reads wins; otherwise a plugin format whose loader accepts the file
+// (data_input_external_formats.h); otherwise the built-in format, which
+// explains why it cannot be read.
 inline std::string ResolveFormat(const std::string& name, const std::string& path) {
     const auto normalized = NormalizeDataInputFormat(name);
     if (normalized != "auto") return normalized;
     const auto* format = DetectFormat(path);
+    if (format && format->executable) return format->name;
+    if (!path.empty()) {
+        if (auto external = DetectExternalFormat(path); !external.empty()) return external;
+    }
     return format ? format->name : "auto";
 }
 
 inline bool IsExecutable(const std::string& name) {
+    if (IsExternalFormatName(name)) {
+        ExternalFormat external;
+        return FindExternalFormat(name, external);
+    }
     const auto* format = FindFormat(name);
     return format && format->executable;
 }
 
 inline const char* UnsupportedReason(const std::string& name, bool hdf5_available) {
+    if (IsExternalFormatName(name))
+        return "This format comes from a plugin that is not loaded; install or enable the plugin in the Plugin Manager";
     const auto* format = FindFormat(name);
     if (!format) return "Tabular file type is not supported yet";
     if (!BuildAvailable(*format, hdf5_available))

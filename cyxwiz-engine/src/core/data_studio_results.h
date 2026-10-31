@@ -7,7 +7,7 @@
 // joined back to the tested table by its row_id, so the error can be sliced
 // by the values of one of its columns (TOFIX157 B2). The run's own figures
 // are the TestingMetrics the table reads back into
-// (test_predictions_metrics.h), shown by the Test Results panel.
+// (test_predictions_metrics.h), shown by Data Studio > Results > Test.
 //
 // Pure data in and out.
 

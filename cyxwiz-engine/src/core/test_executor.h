@@ -105,6 +105,9 @@ struct TestingMetrics {
     // The dataset row of each sample (as Batch::row_ids), in the table named
     // source_dataset; empty when the test batcher does not report rows.
     std::vector<int64_t> row_ids;
+    // Each sample's file (images: the image file, TOFIX178 1.5), when the
+    // source names them; empty otherwise.
+    std::vector<std::string> row_files;
     std::string source_dataset;
 
     // Per-sample class probabilities, row-major [total_samples][probability_classes]
@@ -141,6 +144,25 @@ struct TestingMetrics {
 // view shows the same numbers.
 void FinishClassifierMetrics(TestingMetrics& m);
 
+// One class against the rest (TOFIX129 D4: the positive class of Results >
+// Test's curves and threshold): its ROC and precision-recall curves and how
+// many test samples are of it. Two classes: class 1's are the run's own
+// curves, class 0's are worked out on the device from P(class 0). More
+// classes: the run's one-vs-rest curves. False with `error` when the run
+// kept no class scores or the class has no curve (no sample of it).
+struct ClassCurves {
+    ROCCurveData roc;
+    PRCurveData pr;
+    int positives = 0;
+    int negatives = 0;
+};
+bool CurvesForClass(const TestingMetrics& m, int positive, ClassCurves& out, std::string& error);
+
+// A regression test's R-squared: 1 - SSE / SST per target over the kept rows,
+// averaged over the targets (scikit-learn's r2_score); NaN when no rows were
+// kept or a target is constant.
+double RegressionRSquared(const TestingMetrics& m);
+
 using TestBatchCallback = std::function<void(int batch, int total, float running_accuracy)>;
 using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
 
@@ -149,6 +171,10 @@ using TestCompleteCallback = std::function<void(const TestingMetrics&)>;
 struct ExternalTestSource {
     std::function<std::unique_ptr<IBatcher>(const TrainingConfiguration& config, int batch_size)> make_batcher;
     std::vector<std::string> class_names;
+    // The table the batches' row ids count rows of (an image dataset's index).
+    std::string source_dataset;
+    // A row id's file, called after make_batcher; unset when rows have none.
+    std::function<std::string(int64_t row)> row_file;
 };
 
 /**

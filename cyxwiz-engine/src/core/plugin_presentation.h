@@ -36,20 +36,24 @@ void SetPluginLoadAtStartup(PluginStartupList& list, const std::string& id, bool
 bool PluginLoadsAtStartup(const PluginStartupList& list, const std::string& id);
 std::vector<PluginStartupEntry> PluginsToLoadAtStartup(const PluginStartupList& list);
 
-// The card's note under "Load when the Engine starts".
-std::string PluginStartupNote(bool on);
-
 // What a loaded plugin adds to the Engine.
 struct PluginContribution {
     size_t windows = 0;
     size_t trainable_nodes = 0;
     size_t simulation_nodes = 0;
     std::vector<std::string> node_categories;  // the plugin's own grouping, in order
+    size_t dataset_formats = 0;                // Data Input formats (IDataProvider)
+    size_t analytics = 0;                      // Explore > Plugins analytics (IAnalyticsProvider)
 };
 
-// "Adds: 2 trainable nodes (Activations)"; empty when it adds nothing.
+// The card's note under "Load when the Engine starts", naming what the
+// plugin adds (nodes, dataset formats, analytics, windows).
+std::string PluginStartupNote(bool on, const PluginContribution& contribution);
+
+// "Adds: 2 trainable nodes (Activations)", "Adds: 1 dataset format, 1
+// analytic"; empty when it adds nothing.
 std::string PluginAddsLine(const PluginContribution& contribution);
-// The Apps menu entry's note: "2 nodes", "2 windows, 5 nodes".
+// The Apps menu entry's note: "2 nodes", "2 windows, 5 nodes", "1 format, 1 analytic".
 std::string PluginMenuDetail(const PluginContribution& contribution);
 
 }  // namespace cyxwiz

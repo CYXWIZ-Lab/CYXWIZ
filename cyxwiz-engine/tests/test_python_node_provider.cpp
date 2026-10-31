@@ -2,13 +2,15 @@
 // register their nodes without Python; an unapproved bundle's nodes are
 // refused at compile with the reason (D6); an approval, an edit, a removal
 // are picked up by Refresh() without a restart; the project's bundle wins
-// over a user bundle with the same id.
+// over a user bundle with the same id. A loss node registers with a loss
+// factory (P7).
 #include "../src/core/extension_node_registry.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_document.h"
 #include "../src/extension/python/python_node_provider.h"
 #include "causal_lm_token_window_fixture.h"
 
+#include <cyxwiz/losses/loss_base.h>
 #include <nlohmann/json.hpp>
 
 #include <chrono>
@@ -104,6 +106,14 @@ int main() {
         const auto refused = registry.TensorFactory(kSnake)->InferOutputShape({8, 32}, {});
         Check(!refused.ok && refused.error == cyxwiz::PythonBundleNotApprovedMessage("com.example.acts"),
               "an unapproved node refuses: " + refused.error);
+        // The Engine starts Python ahead of a compile only for approved code.
+        gui::MLNode snake_node;
+        snake_node.type = gui::NodeType::PluginCustom;
+        snake_node.extension_type_id = kSnake;
+        gui::MLNode dense_node;
+        dense_node.type = gui::NodeType::Dense;
+        Check(!provider.UsesApprovedNode({dense_node, snake_node}),
+              "a graph with an unapproved Python node does not ask for Python");
         const std::string issues = CompileErrorOnSnake(root);
         Check(issues.find("not approved yet") != std::string::npos,
               "compiling a graph with it reports the reason on the node: " + issues);
@@ -115,6 +125,9 @@ int main() {
               "approve");
         Check(provider.Refresh(roots), "an approval triggers a rescan");
         Check(provider.Bundles()[0].approved, "the bundle is approved");
+        Check(provider.UsesApprovedNode({dense_node, snake_node}),
+              "a graph with an approved Python node asks for Python before any compile");
+        Check(!provider.UsesApprovedNode({dense_node}), "a graph without Python nodes does not");
         const auto shape = registry.TensorFactory(kSnake)->InferOutputShape({8, 32}, {{"initial_a", "2.0"}});
         Check(shape.ok && shape.output_shape == std::vector<size_t>({8, 32}),
               "the Python factory answers the shape (no Python needed)");
@@ -158,6 +171,59 @@ int main() {
         Check(registry.Has(kSnake), "back for the next check");
     }
     Check(!registry.Has(kSnake), "the provider removes its nodes when it ends");
+
+    std::cout << "a loss node registers with a loss factory\n";
+    {
+        // The fixture with Snake declared as a loss (registering reads no Python).
+        const fs::path folder = project_nodes / "example-losses.cyxnode";
+        CopyBundle(folder);
+        nlohmann::json manifest;
+        {
+            std::ifstream in(folder / "node.json");
+            manifest = nlohmann::json::parse(in);
+        }
+        manifest["id"] = "com.example.losses";
+        nlohmann::json& snake = manifest["nodes"][1];
+        snake["tier"] = "loss";
+        snake["role"] = "loss";
+        snake["target"] = "categorical";
+        snake.erase("shape_rule");
+        snake["inputs"] = nlohmann::json::array({{{"name", "Predictions"}, {"type", "Tensor"}},
+                                                 {{"name", "Targets"}, {"type", "Labels"}}});
+        snake["outputs"] = nlohmann::json::array({{{"name", "Loss"}, {"type", "Loss"}}});
+        {
+            std::ofstream out(folder / "node.json", std::ios::binary);
+            out << manifest.dump(2);
+        }
+        const std::string loss_id = "com.example.losses:Snake";
+        cyxwiz::PythonNodeProvider provider(approvals);
+        provider.Refresh(roots);
+        const auto d = registry.Find(loss_id);
+        Check(d && d->kind == cyxwiz::ExtensionNodeKind::Loss, "registered as a loss node");
+        Check(registry.LossFactory(loss_id) && !registry.TensorFactory(loss_id),
+              "with a loss factory and no tensor factory");
+        // Each call runs before its Check, so the message shows the reason.
+        std::string error;
+        bool created = registry.LossFactory(loss_id)->CreateLoss({}, error) != nullptr;
+        Check(!created && error == cyxwiz::PythonBundleNotApprovedMessage("com.example.losses"),
+              "not approved: creating it is refused with the reason: " + error);
+        cyxwiz::PythonBundle bundle;
+        for (const auto& state : provider.Bundles()) {
+            if (state.bundle.id == "com.example.losses") bundle = state.bundle;
+        }
+        Check(approvals.Approve({bundle.id, bundle.content_hash, bundle.folder.string(), "2026-10-21", "approved"}),
+              "approve");
+        provider.Refresh(roots);
+        error.clear();
+        created = registry.LossFactory(loss_id)->CreateLoss({}, error) != nullptr;
+        Check(!created && error.find("Python is starting for the Python nodes") != std::string::npos,
+              "approved: the Python factory asks for Python (not running in this test): " + error);
+        error.clear();
+        created = registry.LossFactory(loss_id)->CreateLoss({{"no_such", "1"}}, error) != nullptr;
+        Check(!created && error.find("no_such") != std::string::npos,
+              "a setting it does not have is refused without Python: " + error);
+        fs::remove_all(folder);
+    }
 
     fs::remove_all(work, ec);
     if (g_failures > 0) {

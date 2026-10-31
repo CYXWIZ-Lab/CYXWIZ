@@ -32,6 +32,9 @@ class NodeEditor;
 // node, the graph, the compile result or an edit changes.
 class Properties {
 public:
+    // Its configuration dialog is loading (a Data Input's Apply): the graph
+    // must not be replaced under it (TOFIX160 P6).
+    bool IsDialogBusy() const { return active_dialog_ && active_dialog_->IsBusy(); }
     Properties();
     ~Properties();
 
@@ -52,6 +55,18 @@ public:
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
 
+    // A node's settings rows as Properties shows them, for another screen
+    // (Data Studio's image recipe, TOFIX178 1.6): the same typed fields,
+    // ranges, Reset and status, written to the node the same way. Keep
+    // `settings` in place once built (its rows point into its metadata) and
+    // build it again after the node changes.
+    struct SettingsRows {
+        std::optional<cyxwiz::NodeMetadata> metadata;
+        cyxwiz::properties_view::View view;
+    };
+    void BuildSettingsRows(MLNode& node, SettingsRows& settings);
+    void RenderSettingsRows(MLNode& node, const SettingsRows& settings);
+
     // An editor changed the node: the view is rebuilt on the next frame.
     void NotifyEdited() { ++edit_serial_; }
 
@@ -63,6 +78,12 @@ public:
     // (TOFIX146 "Open in Table Viewer"); `title` names the tab.
     using OpenTableCallback = std::function<void(const std::string& dataset_name, const std::string& title)>;
     void SetOpenTableCallback(OpenTableCallback callback) { open_table_ = std::move(callback); }
+    // Opens Data Studio's Profile of a dataset (Normalize: "Measure again in
+    // Data Studio").
+    using OpenProfileCallback = std::function<void(const std::string& dataset_name)>;
+    void SetOpenProfileCallback(OpenProfileCallback callback) { open_profile_ = std::move(callback); }
+    // Opens Data Studio's ML readiness (the Data Split card's "Show the split").
+    void SetOpenReadinessCallback(std::function<void()> callback) { open_readiness_ = std::move(callback); }
 
     void SetBackendPlacementFacts(
         std::vector<properties_truth::BackendPlacementTruthFact> facts);
@@ -73,13 +94,17 @@ private:
 
     // Rebuilds view_ when its key changed (properties.cpp).
     void RefreshView(MLNode& node);
+    void BuildView(MLNode& node, std::optional<cyxwiz::NodeMetadata>& metadata, View& view);
     void RefreshDatasetFacts();
 
     void RenderEmpty();
     void RenderHeader(MLNode& node);
     void RenderActionsMenu(MLNode& node);
     void RenderSettings(MLNode& node);
-    void RenderMetadataRows(MLNode& node);
+    // Normalize per channel (TOFIX178 1.4): a typed row per image channel.
+    void RenderChannelRows(MLNode& node, const cyxwiz::properties_view::Setting& row);
+    size_t NormalizeChannels(const MLNode& node) const;
+    void RenderMetadataRows(MLNode& node, const View& view);
     void RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::Setting& row);
     void RenderLooseTruths(MLNode& node);
     void RenderViewSettings(MLNode& node);  // Plot / Dashboard nodes: saved settings in words
@@ -89,7 +114,6 @@ private:
     void RenderCompiledCard(MLNode& node);
     void RenderFusionCard(MLNode& node);
     // Node executor integration (K-Means)
-    void RenderExecutorSection(MLNode& node);
 
     bool show_window_;
     MLNode* selected_node_ = nullptr;
@@ -142,6 +166,8 @@ private:
     struct SqlStepView;
     std::unique_ptr<SqlStepView> sql_view_;
     OpenTableCallback open_table_;
+    OpenProfileCallback open_profile_;
+    std::function<void()> open_readiness_;
     void RenderSqlStep(MLNode& node, const cyxwiz::NodeMetadata* metadata);
     void RenderSqlStepDetails(MLNode& node, const cyxwiz::NodeMetadata* metadata);
 

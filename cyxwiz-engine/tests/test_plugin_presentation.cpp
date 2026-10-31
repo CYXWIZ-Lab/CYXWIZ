@@ -77,14 +77,14 @@ int main() {
     Check(list.entries.size() == 1 && list.entries[0].id == kMuJoCo, "unload removes");
     Check(cyxwiz::PluginsToLoadAtStartup(list).empty(), "nothing left to load");
 
-    Equal(cyxwiz::PluginStartupNote(true), "Graphs that use its nodes open ready after a restart.", "note on");
-    Equal(cyxwiz::PluginStartupNote(false),
-          "After a restart its nodes show as not installed until you load it here.", "note off");
-
     // What each plugin adds.
     cyxwiz::PluginContribution activation;
     activation.trainable_nodes = 2;
     activation.node_categories = {"Activations"};
+    Equal(cyxwiz::PluginStartupNote(true, activation), "Graphs that use its nodes open ready after a restart.",
+          "note on");
+    Equal(cyxwiz::PluginStartupNote(false, activation),
+          "After a restart its nodes show as not installed until you load it here.", "note off");
     Equal(cyxwiz::PluginAddsLine(activation), "Adds: 2 trainable nodes (Activations)", "activation adds");
     Equal(cyxwiz::PluginMenuDetail(activation), "2 nodes", "activation menu detail");
 
@@ -101,6 +101,23 @@ int main() {
     Equal(cyxwiz::PluginMenuDetail(one), "1 window", "singular detail");
     Equal(cyxwiz::PluginAddsLine({}), "", "adds nothing");
     Equal(cyxwiz::PluginMenuDetail({}), "", "no detail");
+    Equal(cyxwiz::PluginStartupNote(true, {}), "It loads again after a restart.", "note, adds nothing");
+
+    // A data plugin (the SDK's data-formats example): no nodes to speak of.
+    cyxwiz::PluginContribution data;
+    data.dataset_formats = 1;
+    data.analytics = 1;
+    Equal(cyxwiz::PluginAddsLine(data), "Adds: 1 dataset format, 1 analytic", "data plugin adds");
+    Equal(cyxwiz::PluginMenuDetail(data), "1 format, 1 analytic", "data plugin menu detail");
+    Equal(cyxwiz::PluginStartupNote(true, data), "Its dataset formats and analytics are there after a restart.",
+          "data plugin note on");
+    Equal(cyxwiz::PluginStartupNote(false, data),
+          "After a restart its dataset formats and analytics are missing until you load it here.",
+          "data plugin note off");
+    cyxwiz::PluginContribution mixed = activation;
+    mixed.dataset_formats = 2;
+    Equal(cyxwiz::PluginAddsLine(mixed), "Adds: 2 trainable nodes (Activations), 2 dataset formats",
+          "categories stay with the nodes");
 
     std::cout << "test_plugin_presentation: all checks passed\n";
     return 0;

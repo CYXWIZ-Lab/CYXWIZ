@@ -10,6 +10,7 @@
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -602,6 +603,16 @@ void NodeEditor::ApplyStepAfterInsert() {
             deferred_focus_ = {};
         }
     }
+    if (!pending_step_moves_.empty()) {
+        const auto moves = std::move(pending_step_moves_);
+        pending_step_moves_.clear();
+        for (const auto& move : moves) MoveOrRemoveStep(move);
+    }
+    if (!pending_replacements_.empty()) {
+        const auto replacements = std::move(pending_replacements_);
+        pending_replacements_.clear();
+        for (const auto& request : replacements) ReplaceStep(request);
+    }
     if (pending_steps_after_.empty()) return;
     // A recipe being expanded first (Data Studio): its steps join the canvas then.
     if (pending_subgraph_request_.subgraph_id >= 0) return;
@@ -666,6 +677,17 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         for (const auto& [key, value] : request.parameters) step.parameters[key] = value;
         step.initial_pos_x = at.x + 160.0f;
         step.initial_pos_y = at.y + height + 80.0f;
+        // Below any node already there (an earlier branch of the same step), not on top of it.
+        for (bool moved = true; moved;) {
+            moved = false;
+            for (const auto& other : nodes_) {
+                const ImVec2 p = place(other.id, other);
+                if (std::fabs(p.x - step.initial_pos_x) < 120.0f && std::fabs(p.y - step.initial_pos_y) < 90.0f) {
+                    step.initial_pos_y = p.y + 130.0f;
+                    moved = true;
+                }
+            }
+        }
         step.has_initial_position = true;
         if (step.inputs.empty()) {
             spdlog::error("A new {} node has no input pin; nothing added", kind);
@@ -681,6 +703,7 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         RebuildPinLookup();
         ClearValidationState();
         deferred_focus_ = {step_id, 2};
+        last_added_step_ = step_id;
         spdlog::info("Added {} node {} reading node {}", kind, step_id, after_id);
         return;
     }
@@ -768,8 +791,164 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     RebuildPinLookup();
     ClearValidationState();
     deferred_focus_ = {step_id, 2};
+    last_added_step_ = step_id;
     spdlog::info("Added {} node {} after node {} ({} moved right)", kind, step_id, after_id, downstream.size());
     if (request.open_dialog) OpenNodeConfiguration(step_id);
+}
+
+void NodeEditor::MoveOrRemoveStep(const PendingStepMove& move) {
+    const MLNode* step = FindNodeById(move.step);
+    if (!step || step->inputs.empty() || step->outputs.empty()) return;
+    const bool remove = move.after == kRemoveStep;
+    const MLNode* after = remove ? nullptr : FindNodeById(move.after);
+    if (!remove && (!after || after->outputs.empty() || move.after == move.step)) return;
+    if (IsSubgraphMember(step->id) || (after && IsSubgraphMember(after->id))) {
+        spdlog::warn("Node {} is a step of a recipe; open the recipe on the canvas to move it", step->id);
+        return;
+    }
+    const int step_id = step->id;
+    const int step_in = step->inputs.front().id;
+    const int step_out = step->outputs.front().id;
+    const auto feed = std::find_if(links_.begin(), links_.end(), [&](const NodeLink& l) { return l.to_pin == step_in; });
+    if (feed == links_.end()) {
+        spdlog::warn("Node {} has no input link; nothing moved", step_id);
+        return;
+    }
+    const int source = feed->from_node;
+    const int source_pin = feed->from_pin;
+    if (!remove && move.after == source) return;  // already there
+    if (!CanReplaceGraph(remove ? "remove a step" : "move a step")) return;
+    const std::string name = step->name;
+
+    // A chain from a pin (each node read by exactly one link from its first
+    // output), with where its nodes are now.
+    const auto place = [&](int id) {
+        if (const auto pending = pending_positions_.find(id); pending != pending_positions_.end()) return pending->second;
+        if (const auto cached = cached_node_positions_.find(id); cached != cached_node_positions_.end()) return cached->second;
+        const MLNode* node = FindNodeById(id);
+        return node ? ImVec2(node->initial_pos_x, node->initial_pos_y) : ImVec2(0.0f, 0.0f);
+    };
+    const auto chain = [&](int from, int pin) {
+        std::vector<int> ids;
+        for (size_t guard = 0; guard < nodes_.size(); ++guard) {
+            int next = -1, readers = 0;
+            for (const auto& link : links_)
+                if (link.from_node == from && link.from_pin == pin) {
+                    next = link.to_node;
+                    ++readers;
+                }
+            const MLNode* node = readers == 1 ? FindNodeById(next) : nullptr;
+            if (!node || node->outputs.empty() || std::find(ids.begin(), ids.end(), next) != ids.end()) break;
+            ids.push_back(next);
+            from = next;
+            pin = node->outputs.front().id;
+        }
+        return ids;
+    };
+    // The stretch the move reorders: from the upper of its two ends through
+    // the lower; its nodes swap places on the canvas and nothing else moves.
+    // A removal moves nothing.
+    int span_from = source, span_pin = source_pin;
+    size_t span = 0;
+    if (!remove) {
+        const auto index_of = [](const std::vector<int>& ids, int id) {
+            const auto it = std::find(ids.begin(), ids.end(), id);
+            return it == ids.end() ? size_t{0} : static_cast<size_t>(it - ids.begin()) + 1;
+        };
+        span = index_of(chain(source, source_pin), move.after);  // moving down
+        if (span == 0) {                                          // moving up
+            span_from = move.after;
+            span_pin = after->outputs.front().id;
+            span = index_of(chain(span_from, span_pin), step_id);
+        }
+    }
+    std::vector<ImVec2> places;
+    for (const int id : chain(span_from, span_pin)) {
+        if (places.size() == span) break;
+        places.push_back(place(id));
+    }
+
+    SaveUndoState();
+    if (properties_panel_) properties_panel_->ClearNodeReferences();
+    // Take it out: what read its result reads what fed it.
+    links_.erase(std::remove_if(links_.begin(), links_.end(), [&](const NodeLink& l) { return l.to_pin == step_in; }),
+                 links_.end());
+    for (auto& link : links_)
+        if (link.from_node == step_id && link.from_pin == step_out) {
+            link.from_node = source;
+            link.from_pin = source_pin;
+        }
+    if (remove) {
+        DeleteNode(step_id);
+    } else {
+        // Put it back after `after`: it takes over what read after's result.
+        const MLNode* target = FindNodeById(move.after);
+        const int after_out = target->outputs.front().id;
+        for (auto& link : links_)
+            if (link.from_node == move.after && link.from_pin == after_out) {
+                link.from_node = step_id;
+                link.from_pin = step_out;
+            }
+        links_.push_back({next_link_id_++, move.after, after_out, step_id, step_in, LinkType::TensorFlow});
+        RebuildPinLookup();
+    }
+    // The stretch's nodes take its places in their new order, so it stays a line.
+    const std::vector<int> now = chain(span_from, span_pin);
+    for (size_t i = 0; i < now.size() && i < places.size(); ++i) pending_positions_[now[i]] = places[i];
+    if (!places.empty()) pending_positions_frames_ = 3;
+    ClearValidationState();
+    spdlog::info("{} node {} ({})", remove ? "Removed" : "Moved", step_id, name);
+}
+
+void NodeEditor::ReplaceStep(const PendingReplacement& request) {
+    const MLNode* old = FindNodeById(request.step);
+    if (!old || old->inputs.empty() || old->outputs.empty()) return;
+    if (IsSubgraphMember(old->id)) {
+        spdlog::warn("Node {} is a step of a recipe; it is not replaced", old->id);
+        return;
+    }
+    const auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    const auto* meta = registry.GetMetadata(request.type);
+    const auto* old_meta = registry.GetMetadata(old->type);
+    const std::string kind = meta ? meta->name : GetNodeTypeName(request.type);
+    if (!CanReplaceGraph(("switch to " + kind).c_str())) return;
+
+    SaveUndoState();
+    if (properties_panel_) properties_panel_->ClearNodeReferences();
+    const bool default_name = !old_meta || old->name == old_meta->name || old->name == GetNodeTypeName(old->type);
+    MLNode step = CreateNode(request.type, default_name ? kind : old->name);
+    for (const auto& [key, value] : request.parameters) step.parameters[key] = value;
+    if (step.inputs.empty() || step.outputs.empty()) {
+        spdlog::error("A new {} node has no input or output pin; nothing replaced", kind);
+        return;
+    }
+    const auto cached = cached_node_positions_.find(old->id);
+    const ImVec2 position = cached != cached_node_positions_.end() ? cached->second : ImVec2(old->initial_pos_x, old->initial_pos_y);
+    step.initial_pos_x = position.x;
+    step.initial_pos_y = position.y;
+    step.has_initial_position = true;
+    // It takes over the old step's links.
+    const int old_id = old->id, old_in = old->inputs.front().id, old_out = old->outputs.front().id;
+    for (auto& link : links_) {
+        if (link.to_node == old_id && link.to_pin == old_in) {
+            link.to_node = step.id;
+            link.to_pin = step.inputs.front().id;
+        }
+        if (link.from_node == old_id && link.from_pin == old_out) {
+            link.from_node = step.id;
+            link.from_pin = step.outputs.front().id;
+        }
+    }
+    const int step_id = step.id;
+    nodes_.push_back(std::move(step));
+    DeleteNode(old_id);  // `old` is gone from here
+    replaced_by_[old_id] = step_id;
+    pending_positions_[step_id] = position;
+    pending_positions_frames_ = 3;
+    RebuildPinLookup();
+    ClearValidationState();
+    deferred_focus_ = {step_id, 2};
+    spdlog::info("Replaced node {} with {} node {}", old_id, kind, step_id);
 }
 
 void NodeEditor::AddModelInputStepAfter(int input_id, NodeType type) {

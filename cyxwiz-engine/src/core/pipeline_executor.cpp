@@ -11,9 +11,12 @@
 #include "html_document_text.h"
 #include "error_codes.h"
 #include "data_registry.h"
+#include "sparse_feature_dataset.h"
+#include "split_partitioning.h"
 #include "test_evaluation_tables.h"
 #include "test_predictions_metrics.h"
 #include "data_budget.h"
+#include "materialization_memory_guard.h"
 #include "sql_step_presentation.h"
 #include "parquet_backed_dataset.h"
 #include "arrow_dataset.h"
@@ -61,6 +64,13 @@
 namespace cyxwiz {
 
 namespace {
+
+// The column transforms that fit values on their input (TOFIX129 D2): they
+// share the fitted-state parameters, the saved-state path and the leakage guard.
+bool IsFittedColumnTransform(const std::string& type) {
+    return type == "StandardScaler" || type == "MinMaxScaler" || type == "RobustScaler" ||
+           type == "MaxAbsScaler" || type == "QuantileTransform" || type == "PowerTransform";
+}
 
 // The registry name of an operator node's result.
 std::string OperatorOutputName(const std::string& type, int id) {
@@ -2262,9 +2272,6 @@ const char* MissingRequiredParameter(
         if (source_type == "file") {
             return HasNonEmptyParameter(parameters, "file_path") ? nullptr : "file_path";
         }
-        if (source_type == "folder") {
-            return HasNonEmptyParameter(parameters, "folder_path") ? nullptr : "folder_path";
-        }
         return nullptr;
     }
 
@@ -2605,17 +2612,6 @@ bool HasSupportedParameterValues(
             error = "DataInput sheet_idx must be a non-negative integer";
             return false;
         }
-        if (source_type == "folder") {
-            const auto category_it = parameters.find("file_category");
-            const std::string file_category =
-                (category_it != parameters.end() && !category_it->second.empty())
-                    ? ToLowerAscii(TrimString(category_it->second))
-                    : "image";
-            if (file_category != "image") {
-                error = "DataInput folder source only supports image category in PipelineExecutor";
-                return false;
-            }
-        }
     }
 
     if (node_type == "DataOutput" || node_type == "SaveDataset") {
@@ -2888,7 +2884,7 @@ bool ValidateNumericColumnsWithLabelInputSchema(
             table, node_type, parameters, "label_col", "label", error)) {
         return false;
     }
-    if (node_type == "StandardScaler") {
+    if (IsFittedColumnTransform(node_type) || node_type == "LogTransform") {
         return ValidateOptionalRoleColumnListExists(
             table, node_type, parameters, "exclude_columns", "excluded",
             error);
@@ -3007,13 +3003,16 @@ bool ValidatePipelineOperatorInputSchema(
             return ValidateTimeSeriesWindowInputSchema(table, node_type,
                                                        parameters, error);
         case gui::NodeType::TimeSeriesFeatures:
-        case gui::NodeType::LogTransform:
         case gui::NodeType::Differencing:
             return ValidateValueColumnInputSchema(table, node_type,
                                                   parameters, error);
         case gui::NodeType::StandardScaler:
         case gui::NodeType::MinMaxScaler:
         case gui::NodeType::RobustScaler:
+        case gui::NodeType::MaxAbsScaler:
+        case gui::NodeType::QuantileTransform:
+        case gui::NodeType::PowerTransform:
+        case gui::NodeType::LogTransform:
             return ValidateNumericColumnsWithLabelInputSchema(
                 table, node_type, parameters, error);
         case gui::NodeType::OutlierDetector:
@@ -3026,6 +3025,8 @@ bool ValidatePipelineOperatorInputSchema(
         case gui::NodeType::DBSCANCluster:
         case gui::NodeType::HierarchicalCluster:
         case gui::NodeType::GMMCluster:
+        case gui::NodeType::TSNENode:
+        case gui::NodeType::UMAPNode:
             return ValidateFeatureColumnsWithLabelInputSchema(
                 table, node_type, parameters, error);
         case gui::NodeType::LinearRegressionNode:
@@ -3062,10 +3063,129 @@ PipelineExecutor::PipelineExecutor()
     // like the SQL step: RunStepSql, one restricted DuckDB per step.
 }
 
+void PipelineExecutor::ReleaseNodes(const std::set<int>& node_ids, const std::set<std::string>& keep) {
+    if (node_ids.empty()) return;
+    std::set<std::string> release;
+    {
+        std::lock_guard<std::mutex> lock(owned_mutex_);
+        // Names another kept node still uses (a pass-through result is the
+        // input's table) stay, and so do the outputs the user named.
+        std::set<std::string> kept;
+        for (const auto& [id, names] : owned_names_)
+            if (!node_ids.count(id) || kept_nodes_.count(id)) kept.insert(names.begin(), names.end());
+        for (const int id : node_ids) {
+            const auto it = owned_names_.find(id);
+            if (it == owned_names_.end()) continue;
+            if (!kept_nodes_.count(id))
+                for (const auto& name : it->second)
+                    if (!kept.count(name) && !keep.count(name)) release.insert(name);
+            owned_names_.erase(it);
+            kept_nodes_.erase(id);
+        }
+    }
+    for (const int id : node_ids) {
+        run_cache_.erase(id);
+        last_node_results_.erase(id);
+        last_model_artifacts_.erase(id);
+    }
+    for (auto it = last_node_pin_results_.begin(); it != last_node_pin_results_.end();)
+        it = node_ids.count(it->first.first) ? last_node_pin_results_.erase(it) : std::next(it);
+    {
+        // The in-memory copy of a released input goes with it.
+        static const std::string kAdmitted = "_in_memory";
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        for (auto it = admitted_inputs_.begin(); it != admitted_inputs_.end();) {
+            const std::string source = it->size() > kAdmitted.size() ? it->substr(0, it->size() - kAdmitted.size()) : "";
+            if (release.count(source) && !keep.count(*it)) {
+                release.insert(*it);
+                it = admitted_inputs_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    auto& registry = DataRegistry::Instance();
+    for (const auto& name : release) registry.UnregisterTabularDataset(name);
+    if (!release.empty()) {
+        spdlog::debug("[Pipeline] Released {} dataset(s) of {} node(s) that left the graph", release.size(),
+                      node_ids.size());
+        RemoveUnusedStepFiles();
+    }
+}
+
+void PipelineExecutor::ReleaseAll(const std::set<std::string>& keep) {
+    std::set<int> ids;
+    {
+        std::lock_guard<std::mutex> lock(owned_mutex_);
+        for (const auto& [id, names] : owned_names_) ids.insert(id);
+    }
+    for (const auto& [id, cache] : run_cache_) ids.insert(id);
+    ReleaseNodes(ids, keep);
+    std::vector<std::string> admitted;
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        for (auto it = admitted_inputs_.begin(); it != admitted_inputs_.end();) {
+            if (keep.count(*it)) {
+                ++it;
+            } else {
+                admitted.push_back(*it);
+                it = admitted_inputs_.erase(it);
+            }
+        }
+    }
+    for (const auto& name : admitted) DataRegistry::Instance().UnregisterTabularDataset(name);
+    if (!admitted.empty()) RemoveUnusedStepFiles();
+}
+
+std::set<std::string> PipelineExecutor::OwnedNames() {
+    std::set<std::string> names;
+    {
+        std::lock_guard<std::mutex> lock(owned_mutex_);
+        for (const auto& [id, owned] : owned_names_)
+            if (!kept_nodes_.count(id)) names.insert(owned.begin(), owned.end());
+    }
+    std::lock_guard<std::mutex> lock(step_files_mutex_);
+    names.insert(admitted_inputs_.begin(), admitted_inputs_.end());
+    return names;
+}
+
+void PipelineExecutor::ReleaseAdmittedInputs() {
+    std::vector<std::string> admitted;
+    {
+        std::lock_guard<std::mutex> lock(step_files_mutex_);
+        admitted.swap(admitted_inputs_);
+    }
+    for (const auto& name : admitted) DataRegistry::Instance().UnregisterTabularDataset(name);
+    if (!admitted.empty()) RemoveUnusedStepFiles();
+}
+
+void PipelineExecutor::AdoptOwnership(PipelineExecutor& from) {
+    if (&from == this) return;
+    std::map<int, std::set<std::string>> owned;
+    std::set<int> kept;
+    {
+        std::lock_guard<std::mutex> lock(from.owned_mutex_);
+        owned.swap(from.owned_names_);
+        kept.swap(from.kept_nodes_);
+    }
+    std::vector<std::string> admitted;
+    {
+        std::lock_guard<std::mutex> lock(from.step_files_mutex_);
+        admitted.swap(from.admitted_inputs_);
+    }
+    {
+        std::lock_guard<std::mutex> lock(owned_mutex_);
+        for (auto& [id, names] : owned) owned_names_[id].insert(names.begin(), names.end());
+        kept_nodes_.insert(kept.begin(), kept.end());
+    }
+    std::lock_guard<std::mutex> lock(step_files_mutex_);
+    for (auto& name : admitted)
+        if (std::find(admitted_inputs_.begin(), admitted_inputs_.end(), name) == admitted_inputs_.end())
+            admitted_inputs_.push_back(std::move(name));
+}
+
 PipelineExecutor::~PipelineExecutor() {
-    // Its copies of memory tables go with it; result files a dataset still
-    // uses stay until the next prune.
-    for (auto& entry : step_input_copies_) entry.second.table.reset();
+    // Result files a dataset still uses stay until the next prune.
     RemoveUnusedStepFiles();
 }
 
@@ -3106,6 +3226,10 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
         NotifyCompletion(false);
         return false;
     }
+
+    source_node_ids_.clear();
+    for (const auto& node : nodes)
+        if (node.type == "DataInput" || node.type == "DatasetInput" || node.type == "FileInput") source_node_ids_.insert(node.id);
 
     if (!ResolveAutomaticPreprocessingStatePaths(nodes)) {
         ReportError(Error().empty()
@@ -3312,6 +3436,8 @@ bool PipelineExecutor::ParsePipeline(const std::string& pipeline_json,
         std::map<int, std::vector<PendingInputLink>> pending_inputs;
 
         graph_path_ = j.value("graph", std::string());
+        split_policy_ = TrainingSplitPolicyFromJson(j);
+        split_policy_key_ = split_policy_ ? TrainingSplitPolicyJson(*split_policy_).dump() : std::string();
         for (const auto& node_json : j["nodes"]) {
             Node node;
             node.id = node_json["id"];
@@ -3519,8 +3645,7 @@ bool PipelineExecutor::ResolveAutomaticPreprocessingStatePaths(
             }
             continue;
         }
-        if (node.type != "FillMissing" &&
-            node.type != "StandardScaler") {
+        if (node.type != "FillMissing" && !IsFittedColumnTransform(node.type)) {
             continue;
         }
         const std::string operation_mode = ToLowerAscii(TrimString(
@@ -3731,8 +3856,7 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
         nodes_by_id[node.id] = &node;
     }
     for (const auto& node : nodes) {
-        if (node.type != "FillMissing" &&
-            node.type != "StandardScaler") {
+        if (node.type != "FillMissing" && !IsFittedColumnTransform(node.type)) {
             continue;
         }
 
@@ -3806,20 +3930,14 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                     return false;
                 }
             }
-            if (source_roles.empty() ||
-                source_roles.find("unspecified") != source_roles.end()) {
-                spdlog::warn(
-                    "[Preprocessing] Node '{}' will Fit + Transform, but its "
-                    "upstream Dataset role is unspecified. Set the Data Input "
-                    "role to Train so leakage protection can verify intent.",
-                    node.name);
-            }
+            // Roles come from the graph's Data Split (the steps learn from
+            // its Train rows); a Data Input has no role of its own.
             if (!save_state) {
-                spdlog::warn(
-                    "[Preprocessing] Node '{}' will fit statistics without "
-                    "saving them. Validation/test data cannot reproduce this "
+                spdlog::debug(
+                    "[Preprocessing] Node '{}' does not save its fitted "
+                    "statistics: data outside this graph cannot reproduce the "
                     "transform until Save fitted state and a state path are "
-                    "configured.",
+                    "set.",
                     node.name);
             }
         } else {
@@ -3856,6 +3974,17 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
                 if (visited.insert(output_id).second) {
                     pending.push(output_id);
                 }
+            }
+            // A supplied Validation / Test input joins the training input's
+            // rows (TOFIX178 S0-g4): it is connected through it.
+            if (split_policy_ && split_policy_->Supplies()) {
+                const auto& policy = *split_policy_;
+                std::vector<int> joined;
+                if (current == policy.training_input) joined = {policy.validation_input, policy.test_input};
+                else if (current == policy.validation_input || current == policy.test_input)
+                    joined = {policy.training_input};
+                for (const int id : joined)
+                    if (id >= 0 && visited.insert(id).second) pending.push(id);
             }
         }
 
@@ -4271,6 +4400,23 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     disk_backed = true;
                 }
                 spdlog::info("[Pipeline] DataInput Parquet backend: {}", load_status);
+            } else if (data_input::IsExternalFormatName(file_type)) {
+                // A plugin's dataset format, streamed into a Parquet cache (TOFIX181).
+                std::string load_status;
+                const auto backend = registry.LoadTabularExternal(
+                    file_type, file_path, dataset_name,
+                    OptionalBooleanParameterIsTrue(node.parameters, "force_disk_backed"),
+                    selected_columns, &load_status, ingestion_cache_root_,
+                    [this] { return cancel_requested_.load(); });
+                if (backend == DataRegistry::TabularLoadBackend::InMemory) {
+                    arrow_dataset = registry.GetArrowDataset(dataset_name);
+                } else if (backend == DataRegistry::TabularLoadBackend::DiskBacked) {
+                    disk_backed = true;
+                } else {
+                    ReportError("DataInput: " + load_status);
+                    return false;
+                }
+                spdlog::info("[Pipeline] DataInput {} backend: {}", file_type, load_status);
             } else if (file_type == "json") {
                 const auto lines = node.parameters.find("json_lines");
                 const bool json_lines = (lines != node.parameters.end() && lines->second == "true") ||
@@ -4289,19 +4435,6 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                             "' is not supported by PipelineExecutor");
                 return false;
             }
-
-        } else if (source_type == "folder") {
-            // Image folder mode
-            auto path_it = node.parameters.find("folder_path");
-            if (path_it == node.parameters.end() || path_it->second.empty()) {
-                ReportError(GetImprovedErrorMessage("DataInput", "missing_parameter", "folder_path"));
-                return false;
-            }
-            const std::string& folder_path = path_it->second;
-            spdlog::info("[Pipeline] DataInput loading folder: {}", folder_path);
-
-            // For image folders, create a table with file paths and labels
-            arrow_dataset = registry.LoadImageFolderToArrow(folder_path, dataset_name);
 
         } else {
             ReportError("DataInput: Unknown source type: " + source_type);
@@ -4880,7 +5013,7 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
             ParameterOrDefault(node.parameters, "columns", ""));
         if (selected_columns.empty()) {
             for (const auto& field : input_table->schema()->fields()) {
-                if (field->name() != label_col) {
+                if (field->name() != label_col && field->name().rfind("__", 0) != 0) {
                     selected_columns.push_back(field->name());
                 }
             }
@@ -5016,6 +5149,9 @@ bool PipelineExecutor::ExecuteFillMissing(const Node& node, ExecutionContext& ct
                                      quoted;
                 }
                 aggregate_sql += " FROM " + temp_table;
+                // Fitted on the Train rows when the run marked them (TOFIX178 S0-g3).
+                if (input_table->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0)
+                    aggregate_sql += " WHERE " + QuoteSqlIdentifier(kSplitPartitionColumn) + " = 0";
                 auto fitted_table = FetchStepSql({{temp_table, input_dataset_name}}, aggregate_sql,
                                                  "FillMissing: ");
                 if (!fitted_table || fitted_table->num_rows() != 1) {
@@ -5541,6 +5677,77 @@ const std::string* PipelineExecutor::ResultForOutput(const ExecutionContext& ctx
     return &result->second;
 }
 
+std::string PipelineExecutor::PartitionedSource(int input_node, const std::string& name, const ExecutionContext& ctx) {
+    if (!split_policy_ || !source_node_ids_.count(input_node)) return name;
+    // A supplied Validation / Test input joins the training input's rows; it
+    // is not a source of its own.
+    if (input_node == split_policy_->validation_input || input_node == split_policy_->test_input) return name;
+    auto& registry = DataRegistry::Instance();
+    const auto dataset = registry.GetArrowDataset(name);
+    if (!dataset || !dataset->GetArrowTable()) {
+        // A table kept on disk is not partitioned yet: its steps fit on every row.
+        spdlog::warn("[Pipeline] '{}' is on disk: the steps after it learn from every row, not the Train rows only",
+                     name);
+        return name;
+    }
+    const std::string key = name + "|" + split_policy_key_;
+    std::lock_guard<std::mutex> lock(partitioned_mutex_);
+    if (const auto it = partitioned_sources_.find(key);
+        it != partitioned_sources_.end() && registry.GetArrowDataset(it->second))
+        return it->second;
+    const auto& policy = *split_policy_;
+    const bool stratify =
+        policy.stratified && dataset->GetArrowTable()->schema()->GetFieldIndex(policy.label_column) >= 0;
+    if (policy.stratified && !stratify)
+        spdlog::warn("[Pipeline] the label '{}' is not in '{}': its partition is not stratified", policy.label_column,
+                     name);
+    auto partitioned = AddSplitPartitionColumn(
+        dataset->GetArrowTable(),
+        SplitPartitionOptions{policy.label_column, policy.train, policy.val, policy.test, policy.shuffle, policy.seed,
+                              stratify, "[Pipeline] Train rows of '" + name + "'"});
+    if (!partitioned.ok()) {
+        spdlog::warn("[Pipeline] '{}' could not be partitioned ({}): its steps learn from every row", name,
+                     partitioned.status().ToString());
+        return name;
+    }
+    std::shared_ptr<arrow::Table> rows = partitioned.ValueOrDie();
+    // The supplied Validation / Test rows (TOFIX178 S0-g4): the steps after
+    // the training input transform them as they transform its rows.
+    if (input_node == policy.training_input) {
+        for (const auto& [supplied_node, part, role, supplied_label] :
+             {std::tuple{policy.validation_input, int8_t{1}, std::string("Validation"), policy.validation_label_column},
+              std::tuple{policy.test_input, int8_t{2}, std::string("Test"), policy.test_label_column}}) {
+            if (supplied_node < 0) continue;
+            const std::string* supplied_name = ResultForOutput(ctx, supplied_node, std::nullopt);
+            const auto supplied = supplied_name ? registry.GetArrowDataset(*supplied_name) : nullptr;
+            if (!supplied || !supplied->GetArrowTable()) {
+                spdlog::warn("[Pipeline] the {} input is not in memory: training reads its rows without the steps "
+                             "before the Data Split",
+                             role);
+                continue;
+            }
+            auto joined = AppendSuppliedRows(rows, supplied->GetArrowTable(), part, policy.label_column,
+                                             supplied_label, role);
+            if (!joined.ok()) {
+                ReportError(joined.status().message());
+                return {};  // the step fails with the reason
+            }
+            spdlog::info("[Pipeline] the {} input's {} rows join '{}': the steps transform them as they transform "
+                         "its rows, with what they learned from its Train rows",
+                         role, supplied->GetArrowTable()->num_rows(), name);
+            rows = joined.ValueOrDie();
+        }
+    }
+    const std::string partitioned_name = name + "__split";
+    if (!registry.RegisterArrowTable(rows, partitioned_name)) return name;
+    partitioned_sources_[key] = partitioned_name;
+    {
+        std::lock_guard<std::mutex> owned(owned_mutex_);
+        owned_names_[input_node].insert(partitioned_name);  // released with its Data Input
+    }
+    return partitioned_name;
+}
+
 std::string PipelineExecutor::GetInputDatasetName(const Node& node, ExecutionContext& ctx) {
     const auto input_dataset_names = GetInputDatasetNames(node, ctx, 1);
     if (input_dataset_names.empty()) {
@@ -5590,58 +5797,6 @@ int64_t PipelineExecutor::DatasetRows(const std::string& dataset) const {
     return table ? table->rows : 0;
 }
 
-std::string PipelineExecutor::StepInputFile(const std::string& dataset, std::shared_ptr<arrow::Schema>& schema,
-                                            uint64_t& bytes, bool& on_disk) {
-    auto& registry = DataRegistry::Instance();
-    if (const auto disk = registry.GetParquetBackedDataset(dataset)) {
-        schema = disk->GetSchema();
-        bytes = disk->GetInMemoryBytesEstimate();
-        on_disk = true;
-        return disk->GetFilePath();
-    }
-    const auto memory = registry.GetArrowDataset(dataset);
-    const auto table = memory ? memory->GetArrowTable() : nullptr;
-    if (!table) {
-        ReportError("input dataset '" + dataset + "' is not a table");
-        return "";
-    }
-    schema = table->schema();
-    bytes = memory->GetMemoryUsage();
-    on_disk = false;
-    // Written once per table: a step reads the same copy as the steps before
-    // it (or a sibling writing it now), and a table that changes is a new
-    // table object.
-    const auto name_lock = NameLock("input:" + dataset);
-    std::lock_guard<std::mutex> writing(*name_lock);
-    StepInputCopy* found = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(step_files_mutex_);
-        found = &step_input_copies_[dataset];  // map nodes stay put; erased only between runs
-    }
-    auto& copy = *found;
-    if (copy.table.lock() == table && std::filesystem::exists(copy.path)) return copy.path;
-    std::error_code error;
-    if (!copy.path.empty()) std::filesystem::remove(copy.path, error);
-    const auto folder = PipelineCacheRoot() / "inputs";
-    std::filesystem::create_directories(folder, error);
-    const auto path = (folder / (dataset + "_" + std::to_string(reinterpret_cast<uintptr_t>(table.get())) +
-                                 ".parquet")).string();
-    auto out = arrow::io::FileOutputStream::Open(path);
-    arrow::Status status = out.ok() ? parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *out, 128 * 1024)
-                                    : out.status();
-    if (out.ok()) {
-        const auto closed = (*out)->Close();
-        if (status.ok()) status = closed;
-    }
-    if (!status.ok()) {
-        std::filesystem::remove(path, error);
-        ReportError("could not write '" + dataset + "' for DuckDB to read: " + status.ToString());
-        return "";
-    }
-    copy = {table, path};
-    return path;
-}
-
 std::shared_ptr<std::mutex> PipelineExecutor::NameLock(const std::string& key) {
     std::lock_guard<std::mutex> lock(step_files_mutex_);
     auto& entry = name_locks_[key];
@@ -5659,14 +5814,6 @@ void PipelineExecutor::RemoveUnusedStepFiles() {
     std::lock_guard<std::mutex> lock(step_files_mutex_);
     name_locks_.clear();
     std::error_code error;
-    for (auto it = step_input_copies_.begin(); it != step_input_copies_.end();) {
-        if (it->second.table.expired()) {
-            std::filesystem::remove(it->second.path, error);
-            it = step_input_copies_.erase(it);
-        } else {
-            ++it;
-        }
-    }
     auto& registry = DataRegistry::Instance();
     for (auto it = step_result_files_.begin(); it != step_result_files_.end();) {
         const auto disk = registry.GetParquetBackedDataset(it->first);
@@ -5683,7 +5830,7 @@ bool PipelineExecutor::PrepareStepSqlInputs(const std::vector<StepSqlInput>& inp
                                             std::vector<SqlTransformInput>& files, uint64_t& input_bytes,
                                             bool& any_on_disk) {
     // The time-series steps order rows by DuckDB's rowid, which a table has
-    // and a view on a file does not: their input is loaded into DuckDB.
+    // and a view on a file does not: a file input is loaded into DuckDB.
     static const std::regex rowid_pattern(R"(\browid\b)", std::regex::icase);
     const bool needs_rowid = std::regex_search(sql, rowid_pattern);
     input_bytes = 0;
@@ -5691,13 +5838,23 @@ bool PipelineExecutor::PrepareStepSqlInputs(const std::vector<StepSqlInput>& inp
     for (const auto& input : inputs) {
         SqlTransformInput file;
         file.alias = input.alias;
-        uint64_t bytes = 0;
-        bool on_disk = false;
-        file.parquet_path = StepInputFile(input.dataset, file.schema, bytes, on_disk);
-        file.load_file = needs_rowid;
-        if (file.parquet_path.empty()) return false;
-        input_bytes += bytes;
-        any_on_disk = any_on_disk || on_disk;
+        // A disk table's own file, read in place; a memory table as it is
+        // (DuckDB scans its Arrow batches, TOFIX178 0.5).
+        auto& registry = DataRegistry::Instance();
+        if (const auto disk = registry.GetParquetBackedDataset(input.dataset)) {
+            file.parquet_path = disk->GetFilePath();
+            file.schema = disk->GetSchema();
+            file.load_file = needs_rowid;
+            input_bytes += disk->GetInMemoryBytesEstimate();
+            any_on_disk = true;
+        } else if (const auto memory = registry.GetArrowDataset(input.dataset);
+                   memory && memory->GetArrowTable()) {
+            file.table = memory->GetArrowTable();
+            input_bytes += memory->GetMemoryUsage();
+        } else {
+            ReportError("input dataset '" + input.dataset + "' is not a table");
+            return false;
+        }
         files.push_back(std::move(file));
     }
     return true;
@@ -5857,7 +6014,10 @@ bool PipelineExecutor::RunStreamingOperator(const Node& node, IPipelineOperator&
             if (cancel_requested_) return fail("cancelled");
             const auto batch = batch_at(index);
             if (!batch) return fail("could not read rows of '" + input_dataset + "'");
-            if (auto status = op.FitBatch(batch); !status.ok()) return fail(status.ToString());
+            // Learns from the Train rows only (TOFIX178 S0-g3); every row is transformed.
+            auto train_rows = TrainRowsOf(batch);
+            if (!train_rows.ok()) return fail(train_rows.status().ToString());
+            if (auto status = op.FitBatch(train_rows.ValueOrDie()); !status.ok()) return fail(status.ToString());
         }
         if (auto status = op.EndFit(); !status.ok()) return fail(status.ToString());
     }
@@ -5884,7 +6044,12 @@ bool PipelineExecutor::RunStreamingOperator(const Node& node, IPipelineOperator&
             if (!opened.ok()) return abandon(opened.status().ToString());
             out = *opened;
             auto props = parquet::WriterProperties::Builder().compression(parquet::Compression::ZSTD)->build();
-            auto made = parquet::arrow::FileWriter::Open(*table->schema(), arrow::default_memory_pool(), out, props);
+            // The Arrow schema is stored so field metadata (a label's class
+            // names) survives the round trip; the fit pass already saw every
+            // row, so the first batch's metadata is the whole table's.
+            auto arrow_props = parquet::ArrowWriterProperties::Builder().store_schema()->build();
+            auto made = parquet::arrow::FileWriter::Open(*table->schema(), arrow::default_memory_pool(), out, props,
+                                                         arrow_props);
             if (!made.ok()) return abandon(made.status().ToString());
             writer = std::move(*made);
         }
@@ -5978,7 +6143,9 @@ std::vector<std::string> PipelineExecutor::GetInputDatasetNames(
             return {};
         }
         // Steps that read files (SQL, streaming operators) are not admitted.
-        const std::string admitted = StepReadsInputFiles(node) ? *name : AdmitInputTable(node, *name);
+        const std::string source = PartitionedSource(input_node_id, *name, ctx);
+        if (source.empty()) return {};
+        const std::string admitted = StepReadsInputFiles(node) ? source : AdmitInputTable(node, source);
         if (admitted.empty()) return {};
         dataset_names.push_back(admitted);
     }
@@ -6001,7 +6168,9 @@ std::string PipelineExecutor::GetInputDatasetForPin(
                         std::to_string(link.node_id));
             return {};
         }
-        return StepReadsInputFiles(node) ? *result : AdmitInputTable(node, *result);
+        const std::string source = PartitionedSource(link.node_id, *result, ctx);
+        if (source.empty()) return {};
+        return StepReadsInputFiles(node) ? source : AdmitInputTable(node, source);
     }
     ReportError(node.type + ": required Data input pin " +
                 std::to_string(target_pin_index) + " is not connected");
@@ -6040,6 +6209,14 @@ bool PipelineExecutor::FailUnsupportedNode(const Node& node, const std::string& 
                 reason);
     return false;
 }
+
+namespace {
+// Thrown from an operator's progress report when the process grew past the
+// safe memory budget; caught around the operator's run.
+struct OperatorMemoryLimitReached {
+    std::string message;
+};
+}  // namespace
 
 bool PipelineExecutor::ExecutePipelineOperatorNode(
     const Node& node,
@@ -6117,9 +6294,34 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     operator_context.cancellation_requested =
         [this]() { return cancel_requested_.load(); };
     op->SetExecutionContext(std::move(operator_context));
+    // The runtime memory guard (TOFIX178 S0-e2, as training's own preparation
+    // had): a step whose process memory grows by the safe budget - the data
+    // budget, at most 90% of the memory free when it starts - stops with the
+    // numbers instead of exhausting the machine.
+    const std::function<ProcessMemorySnapshot()> read_memory =
+        process_memory_probe_ ? process_memory_probe_ : std::function<ProcessMemorySnapshot()>(DetectProcessMemorySnapshot);
+    const auto memory_baseline = read_memory();
+    const MaterializationMemoryPolicy memory_policy;
+    const uint64_t safe_budget = SaturatingScaleBytes(
+        DetectMaterializationMemorySnapshot().available_bytes, memory_policy.blocked_fraction);
+    const uint64_t data_budget = DataBudgetBytes();
+    const uint64_t memory_limit = data_budget > 0 && safe_budget > 0 ? std::min(data_budget, safe_budget)
+                                                                      : std::max(data_budget, safe_budget);
     // A long step (word2vec training, a vectorizer) reports its own progress:
     // Task View shows it as the run's status, the run's share unchanged.
-    op->SetProgressCallback([this, id = node.id, name = node.name](const PipelineOperatorProgress& event) {
+    op->SetProgressCallback([this, id = node.id, name = node.name, memory_baseline, memory_limit,
+                             read_memory](const PipelineOperatorProgress& event) {
+        if (memory_limit > 0 && memory_baseline.detected) {
+            const auto now = read_memory();
+            if (now.detected && now.resident_bytes > memory_baseline.resident_bytes &&
+                now.resident_bytes - memory_baseline.resident_bytes >= memory_limit) {
+                throw OperatorMemoryLimitReached{
+                    "the memory guard stopped '" + name + "': the Engine grew by " +
+                    FormatMaterializationBytes(now.resident_bytes - memory_baseline.resident_bytes) +
+                    " while it ran, the limit is " + FormatMaterializationBytes(memory_limit) +
+                    ". Use fewer rows or columns (Sample Rows, Select Columns) and run it again."};
+            }
+        }
         if (operator_figures_callback_ && (!event.figures.empty() || !event.notes.empty())) {
             OperatorFigures figures = event.Figures();
             figures.node_id = id;
@@ -6147,12 +6349,57 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
         return false;
     }
 
+    // Sparse output (a Count / TF-IDF vectorizer set to Sparse, TOFIX178
+    // S0-f): a CSR feature dataset made from the whole input; training batches
+    // it as sparse, made dense only at the model.
+    std::string output_format =
+        operator_parameters.count("output_format") ? operator_parameters.at("output_format") : std::string();
+    std::transform(output_format.begin(), output_format.end(), output_format.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (output_format == "sparse") {
+        if (!op->SupportsSparseFeatureOutput()) {
+            ReportError(node.type + ": its Output format is Sparse, but this step makes tables only");
+            return false;
+        }
+        if (const auto ref = registry.GetTableRef(input_dataset_name); ref && ref->kind == TableRef::Kind::Parquet) {
+            input_dataset_name = AdmitInputTable(node, input_dataset_name);
+            if (input_dataset_name.empty()) return false;
+            input_table = InputSchemaTable(input_dataset_name);
+        }
+        arrow::Result<std::shared_ptr<SparseFeatureDataset>> sparse;
+        try {
+            sparse = op->ApplySparse(input_table, output_dataset_name);
+        } catch (const OperatorMemoryLimitReached& stop) {
+            ReportError(node.type + ": " + stop.message);
+            return false;
+        }
+        if (!sparse.ok()) {
+            ReportError(node.type + ": operator execution failed: " + sparse.status().ToString());
+            return false;
+        }
+        if (!registry.RegisterSparseFeatureDataset(sparse.ValueOrDie())) {
+            ReportError(node.type + ": failed to register its sparse features");
+            return false;
+        }
+        spdlog::info("[Pipeline] {}: {} rows, {} sparse features", node.name, sparse.ValueOrDie()->GetNumRows(),
+                     sparse.ValueOrDie()->GetNumFeatures());
+        ctx.node_results[node.id] = output_dataset_name;
+        ctx.output_dataset = output_dataset_name;
+        if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) ctx.node_outcomes[node.id] = std::move(outcome);
+        return true;
+    }
+
     // An operator that streams runs a row group at a time when its input is
     // on disk or large (TOFIX154 step 4); the others read it whole (admitted).
     const auto input_ref = registry.GetTableRef(input_dataset_name);
     if (op->SupportsStreaming() && input_ref &&
         (input_ref->kind == TableRef::Kind::Parquet || input_ref->bytes > DataResultThresholdBytes())) {
-        if (!RunStreamingOperator(node, *op, input_dataset_name, output_dataset_name)) return false;
+        try {
+            if (!RunStreamingOperator(node, *op, input_dataset_name, output_dataset_name)) return false;
+        } catch (const OperatorMemoryLimitReached& stop) {
+            ReportError(node.type + ": " + stop.message);
+            return false;
+        }
         ctx.node_results[node.id] = output_dataset_name;
         ctx.output_dataset = output_dataset_name;
         if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) {
@@ -6191,7 +6438,13 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     WarnIfDenseTextVectorizerMaterializationIsLarge(
         node.type, operator_parameters, input_table);
 
-    auto result = op->Apply(input_table);
+    arrow::Result<std::shared_ptr<arrow::Table>> result;
+    try {
+        result = op->Apply(input_table);
+    } catch (const OperatorMemoryLimitReached& stop) {
+        ReportError(node.type + ": " + stop.message);
+        return false;
+    }
     if (!result.ok()) {
         ReportError(node.type + ": operator execution failed: " +
                     result.status().ToString());
@@ -7106,7 +7359,7 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
     // Simple hash combining node type and parameters
     // Using FNV-1a hash algorithm for fast hashing
     uint64_t hash = 14695981039346656037ULL;  // FNV offset basis
-    const uint64_t prime = 1099511628211ULL;  // FNV prime
+    constexpr uint64_t prime = 1099511628211ULL;  // FNV prime
 
     // Hash node type
     for (char c : node.type) {
@@ -7131,7 +7384,7 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
     }
 
     // The wiring: which node and output pin feeds each input.
-    auto mix = [&hash, prime](const std::string& text) {
+    auto mix = [&hash](const std::string& text) {
         for (char c : text) {
             hash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
             hash *= prime;
@@ -7139,6 +7392,9 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
         hash ^= 0xffULL;
         hash *= prime;
     };
+    // A step after a Data Input reads its rows' partition: another split
+    // (seed, shares, label) is another input.
+    if (!node.inputs.empty() && !split_policy_key_.empty()) mix(split_policy_key_);
     mix(node.recipe);
     for (size_t i = 0; i < node.inputs.size(); ++i) {
         const auto pin = i < node.input_links.size() ? node.input_links[i].source_pin_index : std::nullopt;
@@ -7159,6 +7415,30 @@ uint64_t PipelineExecutor::ComputeNodeHash(const Node& node) const {
     return hash;
 }
 
+std::optional<std::string> PipelineExecutor::CurrentNodeResult(const std::string& pipeline_json, int node_id) {
+    if (executing_) return std::nullopt;
+    // The same steps a run starts with, without running anything.
+    std::vector<Node> nodes;
+    const std::string kept_error = Error();
+    const bool parsed = ParsePipeline(pipeline_json, nodes) && ResolveAutomaticPreprocessingStatePaths(nodes);
+    Error() = kept_error;
+    if (!parsed) {
+        spdlog::debug("[Pipeline] Node {}: no current result (the graph does not parse)", node_id);
+        return std::nullopt;
+    }
+    RestoreRunCache(nodes);
+    MarkDirtyNodes(nodes);
+    const Node* node = FindNodeById(nodes, node_id);
+    if (!node || node->needs_execution || node->cached_output_dataset.empty()) {
+        spdlog::debug("[Pipeline] Node {}: no current result ({})", node_id,
+                      !node ? "not in the graph"
+                      : node->needs_execution ? "it or a step before it changed or has not run"
+                                              : "no result kept");
+        return std::nullopt;
+    }
+    return node->cached_output_dataset;
+}
+
 void PipelineExecutor::RestoreRunCache(std::vector<Node>& nodes) {
     auto& registry = DataRegistry::Instance();
     for (auto& node : nodes) {
@@ -7166,7 +7446,8 @@ void PipelineExecutor::RestoreRunCache(std::vector<Node>& nodes) {
         if (it == run_cache_.end()) continue;
         const NodeRunCache& cache = it->second;
         std::error_code error;
-        const bool output_kept = !cache.output.empty() && registry.GetTableRef(cache.output).has_value();
+        const bool output_kept = !cache.output.empty() && (registry.GetTableRef(cache.output).has_value() ||
+                                                           registry.IsSparseFeatureDataset(cache.output));
         const bool artifact_kept = cache.model_artifact.empty() ||
                                    std::filesystem::exists(cache.model_artifact, error);
         if (!output_kept || !artifact_kept) {
@@ -7185,7 +7466,20 @@ void PipelineExecutor::MarkDirtyNodes(std::vector<Node>& nodes) {
         if (current_hash != node.last_execution_hash) {
             node.needs_execution = true;
             node.last_execution_hash = current_hash;
-            spdlog::debug("[Pipeline] Node {} marked dirty (parameters changed)", node.name);
+            // Name what changed since the kept run: a key, or the wiring or a file.
+            std::string changed;
+            if (const auto cache = run_cache_.find(node.id); cache != run_cache_.end()) {
+                std::map<std::string, std::string> now(node.parameters.begin(), node.parameters.end());
+                for (const auto& [key, value] : now) {
+                    const auto was = cache->second.parameters.find(key);
+                    if (was == cache->second.parameters.end() || was->second != value) changed += (changed.empty() ? "" : ", ") + key;
+                }
+                for (const auto& [key, value] : cache->second.parameters)
+                    if (!now.count(key)) changed += (changed.empty() ? "" : ", ") + key + " (removed)";
+                if (changed.empty()) changed = "its inputs or a file it reads";
+            }
+            spdlog::debug("[Pipeline] Node {} marked dirty (parameters changed{}{})", node.name,
+                          changed.empty() ? "" : ": ", changed);
         } else {
             node.needs_execution = false;
             spdlog::debug("[Pipeline] Node {} cache valid", node.name);
@@ -7238,6 +7532,13 @@ std::vector<int> PipelineExecutor::FindReadyNodes(
                 all_inputs_ready = false;
                 break;
             }
+        }
+        // A step reading the training input waits for the supplied
+        // Validation / Test inputs: their rows join its rows (TOFIX178 S0-g4).
+        if (all_inputs_ready && split_policy_ && split_policy_->Supplies() &&
+            std::find(node.inputs.begin(), node.inputs.end(), split_policy_->training_input) != node.inputs.end()) {
+            for (const int supplied : {split_policy_->validation_input, split_policy_->test_input})
+                if (supplied >= 0 && !completed.count(supplied)) all_inputs_ready = false;
         }
 
         if (all_inputs_ready) {
@@ -7419,6 +7720,19 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                                    written == result.ctx.node_written.end() ? "" : written->second);
             }
 
+            // What it registered, released when it leaves the graph.
+            {
+                std::lock_guard<std::mutex> lock(owned_mutex_);
+                auto& names = owned_names_[node_id];
+                if (const auto dataset = result.ctx.node_results.find(node_id);
+                    dataset != result.ctx.node_results.end() && !dataset->second.empty())
+                    names.insert(dataset->second);
+                for (const auto& [key, dataset] : result.ctx.node_pin_results)
+                    if (key.first == node_id && !dataset.empty()) names.insert(dataset);
+                if (node->type == "SaveDataset" || node->type == "DeployToNodeEditor" || node->type == "DataOutput")
+                    kept_nodes_.insert(node_id);
+            }
+
             // Cache the output for the next run on this executor; a node
             // that wrote a file or prepared a deployment always runs.
             auto result_it = ctx.node_results.find(node_id);
@@ -7428,6 +7742,7 @@ bool PipelineExecutor::ExecuteParallel(std::vector<Node>& nodes) {
                     NodeRunCache cache;
                     cache.hash = node->last_execution_hash;
                     cache.output = result_it->second;
+                    cache.parameters.insert(node->parameters.begin(), node->parameters.end());
                     for (const auto& [key, dataset] : result.ctx.node_pin_results)
                         if (key.first == node_id) cache.pin_outputs[key.second] = dataset;
                     if (const auto model = result.ctx.model_artifacts.find(node_id);
@@ -7681,7 +7996,7 @@ bool PipelineExecutor::ExecuteExportJSON(const Node& node, ExecutionContext& ctx
         return status.ok();
     };
     bool ok = write("[\n", error) &&
-              DataRegistry::Instance().VisitTablePieces(input_dataset_name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
+              DataRegistry::Instance().VisitExportedPieces(input_dataset_name, [&](const std::shared_ptr<arrow::Table>& piece, std::string& why) {
                   std::vector<std::string> names;
                   for (const auto& field : piece->schema()->fields()) names.push_back(QuoteJsonString(field->name()) + ": ");
                   std::string text;
@@ -7832,7 +8147,7 @@ bool PipelineExecutor::ExecuteUnitConverter(const Node& node, ExecutionContext& 
         for (int i = 0; i < input_table->num_columns(); ++i) {
             const auto field = input_table->schema()->field(i);
             const std::string quoted_column = QuoteSqlIdentifier(field->name());
-            if (field && IsNumericArrowType(field->type())) {
+            if (field && IsNumericArrowType(field->type()) && field->name().rfind("__", 0) != 0) {
                 std::string converted_expression;
                 std::string conversion_error;
                 if (!BuildUnitConverterExpression(
@@ -10479,7 +10794,10 @@ bool PipelineExecutor::ExecuteUnpivot(const Node& node, ExecutionContext& ctx) {
         std::vector<std::string> value_columns;
         for (int i = 0; i < input_table->num_columns(); ++i) {
             const std::string field_name = input_table->schema()->field(i)->name();
-            if (id_column_names.find(field_name) == id_column_names.end()) {
+            if (field_name.rfind("__", 0) == 0) {
+                // The run's own columns (the rows' partition) stay with each row.
+                if (id_column_names.insert(field_name).second) id_columns.push_back(field_name);
+            } else if (id_column_names.find(field_name) == id_column_names.end()) {
                 value_columns.push_back(field_name);
             }
         }

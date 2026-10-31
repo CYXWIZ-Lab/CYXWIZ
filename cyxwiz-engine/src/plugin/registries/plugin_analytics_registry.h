@@ -1,14 +1,22 @@
 #pragma once
 
 #include "../interfaces/i_analytics_provider.h"
+#include "plugin_use_counter.h"
+
+#include <arrow/record_batch.h>
+
+#include <atomic>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
-#include <map>
-#include <mutex>
-#include <memory>
 
 namespace cyxwiz::plugin {
 
+// The dataset analytics plugins add (IAnalyticsProvider, TOFIX181), run from
+// Data Studio's Explore > Plugins tab.
 class PluginAnalyticsRegistry {
 public:
     static PluginAnalyticsRegistry& Instance();
@@ -16,33 +24,37 @@ public:
     PluginAnalyticsRegistry(const PluginAnalyticsRegistry&) = delete;
     PluginAnalyticsRegistry& operator=(const PluginAnalyticsRegistry&) = delete;
 
-    void Register(const std::string& plugin_id, IAnalyticsProvider* provider);
+    void Register(const std::string& plugin_id, const std::string& plugin_version, IAnalyticsProvider* provider);
+    // Waits until no analytic of the plugin is computing any more.
     void RemoveByPlugin(const std::string& plugin_id);
 
-    // Query
-    std::vector<PluginAnalyticsInfo> GetAllAnalytics() const;
-    std::vector<PluginAnalyticsInfo> GetAnalyticsByCategory(const std::string& category) const;
-    bool HasAnalytics(const std::string& analytics_id) const;
+    struct Analytic {
+        std::string plugin_id;
+        std::string plugin_version;  // the plugin's version, named with every answer
+        PluginAnalyticsInfo info;
+    };
+    std::vector<Analytic> Analytics() const;  // ordered by category, then name
 
-    // Computation
-    AnalyticsResult Compute(
-        const std::string& analytics_id,
-        std::shared_ptr<PluginDataset> dataset
-    ) const;
+    // Runs the analytic on `data` (the chosen columns), on the caller's thread.
+    // A crash or exception in the plugin comes back as a failed result.
+    AnalyticsResult Compute(const std::string& analytics_id,
+                            std::shared_ptr<arrow::RecordBatchReader> data) const;
 
-    size_t GetCount() const;
+    // Changes whenever an analytic is added or removed.
+    uint64_t Generation() const { return generation_.load(); }
 
 private:
     PluginAnalyticsRegistry() = default;
 
-    struct AnalyticsEntry {
-        std::string plugin_id;
-        PluginAnalyticsInfo info;
+    struct Entry {
+        Analytic analytic;
         IAnalyticsProvider* provider = nullptr;  // non-owning
     };
 
     mutable std::mutex mutex_;
-    std::map<std::string, AnalyticsEntry> analytics_;  // analytics_id -> entry
+    std::map<std::string, Entry> analytics_;  // analytics_id -> entry
+    std::atomic<uint64_t> generation_{0};
+    mutable PluginUseCounter uses_;
 };
 
 } // namespace cyxwiz::plugin

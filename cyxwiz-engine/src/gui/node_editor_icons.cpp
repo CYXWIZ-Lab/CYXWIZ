@@ -411,6 +411,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::CrossValidationNode:
                 return ICON_TI_COPY;
             case NodeType::RegressionMetricsNode:
+            case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
                 return ICON_TI_LIST_NUMBERS;
@@ -419,6 +420,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::StandardScaler:
             case NodeType::MinMaxScaler:
             case NodeType::RobustScaler:
+            case NodeType::MaxAbsScaler:
+            case NodeType::QuantileTransform:
+            case NodeType::PowerTransform:
                 return ICON_TI_RULER;
             case NodeType::LabelEncoder:
             case NodeType::OrdinalEncoder:
@@ -605,6 +609,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
                 return ICON_RI_CALCULATOR;
@@ -627,6 +632,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::StandardScaler:
             case NodeType::MinMaxScaler:
             case NodeType::RobustScaler:
+            case NodeType::MaxAbsScaler:
+            case NodeType::QuantileTransform:
+            case NodeType::PowerTransform:
             case NodeType::SignalSlider:
                 return ICON_RI_SETTINGS;
 
@@ -967,6 +975,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
                 return ICON_LU_CALCULATOR;
@@ -989,6 +998,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::StandardScaler:
             case NodeType::MinMaxScaler:
             case NodeType::RobustScaler:
+            case NodeType::MaxAbsScaler:
+            case NodeType::QuantileTransform:
+            case NodeType::PowerTransform:
             case NodeType::SignalSlider:
             case NodeType::Parameter:
                 return ICON_LU_SETTINGS;
@@ -1286,6 +1298,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
                 return ICON_IO_CALCULATOR;
@@ -1308,6 +1321,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::StandardScaler:
             case NodeType::MinMaxScaler:
             case NodeType::RobustScaler:
+            case NodeType::MaxAbsScaler:
+            case NodeType::QuantileTransform:
+            case NodeType::PowerTransform:
             case NodeType::SignalSlider:
             case NodeType::Parameter:
                 return ICON_IO_SETTINGS;
@@ -1605,6 +1621,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
                 return ICON_PH_CALCULATOR;
@@ -1627,6 +1644,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::StandardScaler:
             case NodeType::MinMaxScaler:
             case NodeType::RobustScaler:
+            case NodeType::MaxAbsScaler:
+            case NodeType::QuantileTransform:
+            case NodeType::PowerTransform:
             case NodeType::SignalSlider:
             case NodeType::Parameter:
                 return ICON_PH_GEAR;
@@ -2162,6 +2182,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::CrossValidationNode:
             return ICON_FA_COPY;
         case NodeType::RegressionMetricsNode:
+        case NodeType::HypothesisTest:
         case NodeType::ClassificationMetricsNode:
         case NodeType::TestEvaluationNode:
             return ICON_FA_CALCULATOR;
@@ -2170,6 +2191,9 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::StandardScaler:
         case NodeType::MinMaxScaler:
         case NodeType::RobustScaler:
+        case NodeType::MaxAbsScaler:
+        case NodeType::QuantileTransform:
+        case NodeType::PowerTransform:
             return ICON_FA_SLIDERS;
         case NodeType::LabelEncoder:
         case NodeType::OrdinalEncoder:

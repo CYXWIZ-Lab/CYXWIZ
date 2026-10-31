@@ -53,6 +53,24 @@ bool ReadPins(const json& node, const char* key, std::vector<PortDefinition>& pi
     return true;
 }
 
+// A loss node's pins: exactly the built-in losses' (TOFIX125 P7).
+bool ReadLossPins(const json& node, NodeMetadata& metadata, std::string& error) {
+    const json inputs = json::array({{{"name", "Predictions"}, {"type", "Tensor"}},
+                                     {{"name", "Targets"}, {"type", "Labels"}}});
+    const json outputs = json::array({{{"name", "Loss"}, {"type", "Loss"}}});
+    const auto pins = [](const json& list) {
+        json plain = json::array();
+        for (const auto& pin : list) plain.push_back({{"name", Text(pin, "name")}, {"type", Text(pin, "type")}});
+        return plain;
+    };
+    if (pins(node.value("inputs", json::array())) != inputs || pins(node.value("outputs", json::array())) != outputs) {
+        error = "a loss has the pins Predictions (Tensor), Targets (Labels) -> Loss (Loss)";
+        return false;
+    }
+    SetExtensionLossPorts(metadata);
+    return true;
+}
+
 bool ReadParameters(const json& node, std::vector<ParameterDefinition>& out, std::string& error) {
     const auto it = node.find("parameters");
     if (it == node.end()) return true;
@@ -185,36 +203,51 @@ bool ReadPythonBundle(const fs::path& folder, PythonBundle& out, std::string& er
         }
         entry.entry_class = target.substr(8);
         entry.tier = Text(node, "tier");
-        if (entry.tier != "activation" && entry.tier != "module") {
-            error = where + "tier must be activation or module";
+        if (entry.tier != "activation" && entry.tier != "module" && entry.tier != "loss") {
+            error = where + "tier must be activation, module or loss";
             return false;
         }
-        const std::string shape_rule = Text(node, "shape_rule");
-        if (shape_rule != "same_as_input" && shape_rule != "python") {
-            error = where + "shape_rule must be same_as_input or python";
-            return false;
-        }
-        entry.same_shape = shape_rule == "same_as_input";
         const std::string role = Text(node, "role");
-        if (role != "activation" && role != "layer") {
-            error = where + "role must be activation or layer";
+        if (role != "activation" && role != "layer" && role != "loss") {
+            error = where + "role must be activation, layer or loss";
             return false;
+        }
+        const bool loss = role == "loss";
+        if (loss != (entry.tier == "loss")) {
+            error = where + "a loss has tier and role loss";
+            return false;
+        }
+        if (loss) {
+            const std::string loss_target = Text(node, "target");
+            if (loss_target != "categorical" && loss_target != "continuous") {
+                error = where + "target must be categorical or continuous";
+                return false;
+            }
+            d.loss_target = loss_target == "continuous" ? ExtensionLossTarget::Continuous : ExtensionLossTarget::Categorical;
+        } else {
+            const std::string shape_rule = Text(node, "shape_rule");
+            if (shape_rule != "same_as_input" && shape_rule != "python") {
+                error = where + "shape_rule must be same_as_input or python";
+                return false;
+            }
+            entry.same_shape = shape_rule == "same_as_input";
         }
 
         d.version = Text(node, "version");
         d.content_hash = out.content_hash;
         d.source = ExtensionSource::PythonBundle;
         d.source_path = folder.string();
-        d.kind = ExtensionNodeKind::TensorLayer;
+        d.kind = loss ? ExtensionNodeKind::Loss : ExtensionNodeKind::TensorLayer;
         d.role = role == "activation" ? ExtensionLayerRole::Activation : ExtensionLayerRole::Layer;
         d.menu_category = Text(node, "category");
         const std::string display = Text(node, "display_name");
         d.metadata.name = display.empty() ? d.type_name : display;
         d.metadata.brief_description = Text(node, "description");
         std::string pin_error;
-        if (!ReadPins(node, "inputs", d.metadata.inputs, pin_error) ||
-            !ReadPins(node, "outputs", d.metadata.outputs, pin_error) ||
-            !ReadParameters(node, d.metadata.parameters, pin_error)) {
+        const bool pins_read = loss ? ReadLossPins(node, d.metadata, pin_error)
+                                    : ReadPins(node, "inputs", d.metadata.inputs, pin_error) &&
+                                          ReadPins(node, "outputs", d.metadata.outputs, pin_error);
+        if (!pins_read || !ReadParameters(node, d.metadata.parameters, pin_error)) {
             error = where + pin_error;
             return false;
         }
@@ -229,11 +262,16 @@ std::vector<fs::path> FindPythonBundles(const std::vector<fs::path>& roots) {
     for (const auto& root : roots) {
         std::error_code ec;
         if (!fs::is_directory(root, ec)) continue;
+        std::vector<fs::path> here;
         for (const auto& item : fs::directory_iterator(root, ec)) {
-            if (item.is_directory(ec) && item.path().extension() == ".cyxnode") found.push_back(item.path());
+            if (item.is_directory(ec) && item.path().extension() == ".cyxnode") here.push_back(item.path());
         }
+        // Sorted within a root only: the roots keep their order, so the
+        // project's bundle comes before a user bundle with the same id
+        // whatever the drive or folder names.
+        std::sort(here.begin(), here.end());
+        found.insert(found.end(), here.begin(), here.end());
     }
-    std::sort(found.begin(), found.end());
     return found;
 }
 

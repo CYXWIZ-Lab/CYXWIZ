@@ -120,8 +120,20 @@ std::vector<double> Clustering::ComputeKDistances(
     const std::vector<std::vector<double>>& data,
     int k
 ) {
+    return ComputeKDistances(data, k, "euclidean");
+}
+
+std::vector<double> Clustering::ComputeKDistances(
+    const std::vector<std::vector<double>>& data,
+    int k,
+    const std::string& metric
+) {
     if (const std::string refusal = MatrixRefusal(data); !refusal.empty() || k < 1 || data.size() < 2) {
         spdlog::error("Clustering::ComputeKDistances: {}", refusal.empty() ? "needs k >= 1 and 2 samples" : refusal);
+        return {};
+    }
+    if (!IsKnownMetric(metric)) {
+        spdlog::error("Clustering::ComputeKDistances: unknown metric '{}' (euclidean, manhattan or cosine)", metric);
         return {};
     }
     try {
@@ -133,7 +145,7 @@ std::vector<double> Clustering::ComputeKDistances(
         for (dim_t start = 0; start < n; start += block) {
             const dim_t stop = std::min(n, start + block);
             const af::seq rows(static_cast<double>(start), static_cast<double>(stop - 1));
-            const af::array sorted = af::sort(PairwiseDistances(x(rows, af::span), x, "euclidean"), 1);
+            const af::array sorted = af::sort(PairwiseDistances(x(rows, af::span), x, metric), 1);
             kth(rows) = sorted(af::span, column);
         }
         return DeviceToHostValues(af::sort(kth), "Clustering::ComputeKDistances");

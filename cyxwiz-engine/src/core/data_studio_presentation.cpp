@@ -35,6 +35,10 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::DataProfiler: case NodeType::Plot: case NodeType::Dashboard: case NodeType::DescribeStats:
         case NodeType::CorrelationMatrix: case NodeType::ValueCounts: case NodeType::VisualizeData:
         case NodeType::CrossTabulation: case NodeType::QualityAnalyzer:
+        // Time series analysis kept as nodes (Explore > Series and Forecast, TOFIX129 D6).
+        case NodeType::TimeSeriesDecomposition: case NodeType::ACFNode: case NodeType::PACFNode:
+        case NodeType::StationarityTest: case NodeType::SeasonalityDetector: case NodeType::ARIMAForecaster:
+        case NodeType::ExponentialSmoothing:
             job = Job::Explore; return true;
         case NodeType::Subgraph: case NodeType::SQLQuery: case NodeType::FilterRows: case NodeType::SelectColumns:
         case NodeType::JoinTables: case NodeType::GroupByAggregate: case NodeType::SortRows:
@@ -47,8 +51,13 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::BinningNode: case NodeType::PolynomialFeaturesNode: case NodeType::CalculatorNode:
         case NodeType::UnitConverter: case NodeType::JSONPathExtractor: case NodeType::RegexTester:
         case NodeType::StandardScaler: case NodeType::MinMaxScaler: case NodeType::RobustScaler:
+        case NodeType::MaxAbsScaler: case NodeType::QuantileTransform: case NodeType::PowerTransform:
+        case NodeType::LogTransform:
         case NodeType::LabelEncoder: case NodeType::OrdinalEncoder: case NodeType::TargetEncoder:
         case NodeType::OutlierDetector:
+        // Groups and projections added as steps (Explore > Groups / Projection, TOFIX129 D5).
+        case NodeType::KMeansCluster: case NodeType::DBSCANCluster: case NodeType::HierarchicalCluster:
+        case NodeType::GMMCluster: case NodeType::PCANode: case NodeType::TSNENode: case NodeType::UMAPNode:
             job = Job::Prepare; return true;
         case NodeType::RowCountCheck: case NodeType::DataValidator:
             job = Job::Validate; return true;
@@ -58,9 +67,26 @@ bool JobOf(NodeType type, Job& job) {
         case NodeType::ExportExcel: case NodeType::ExportSQL:
             job = Job::Publish; return true;
         case NodeType::ConfusionMatrixNode: case NodeType::ROCCurveNode: case NodeType::PRCurveNode:
-        case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode: case NodeType::TestEvaluationNode:
+        case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode:
+        case NodeType::HypothesisTest: case NodeType::TestEvaluationNode:
         case NodeType::LearningCurvesNode: case NodeType::FeatureImportanceNode: case NodeType::CrossValidationNode:
             job = Job::Results; return true;
+        default:
+            return false;
+    }
+}
+
+bool IsImageStepType(NodeType type) {
+    switch (type) {
+        case NodeType::Resize: case NodeType::CenterCrop: case NodeType::RandomCrop: case NodeType::HorizontalFlip:
+        case NodeType::VerticalFlip: case NodeType::ImageRotate: case NodeType::ColorJitter:
+        case NodeType::ImageGaussianBlur: case NodeType::Grayscale: case NodeType::MorphologyTransform:
+        case NodeType::AdvancedAugment: case NodeType::AugmentationPreset: case NodeType::ImageContrast:
+        case NodeType::ImageDenoise: case NodeType::ImageSharpen: case NodeType::ImageEdges:
+        case NodeType::ImageSmooth: case NodeType::ImageWarp: case NodeType::ImagePyramid:
+        case NodeType::RandomResizedCrop: case NodeType::RandomAffine: case NodeType::RandomPerspective:
+        case NodeType::GaussianNoise: case NodeType::RandomGrayscale:
+            return true;
         default:
             return false;
     }
@@ -245,14 +271,17 @@ View Build(const Input& in) {
         Job job;
         if (JobOf(n.type, job) && !(n.type == NodeType::Subgraph && !n.recipe)) per_job[static_cast<size_t>(job)].push_back(&n);
     }
-    size_t recipes = 0, checks = 0, checks_ran = 0, checks_passed = 0, inputs = 0;
+    size_t recipes = 0, checks = 0, checks_ran = 0, checks_passed = 0, inputs = 0, image_steps = 0;
     std::string recipe_name;
+    std::vector<const GraphNode*> image_nodes;
     for (const auto& n : in.nodes) {
+        if (IsImageStepType(n.type)) image_nodes.push_back(&n);
         if (n.recipe) {
             ++recipes;
             recipe_name = n.name;
         }
         if (IsDataInput(n)) ++inputs;
+        if (IsImageStepType(n.type) && n.type != NodeType::Resize) ++image_steps;
         if (IsCheck(n)) {
             ++checks;
             if (n.ran) ++checks_ran;
@@ -266,13 +295,28 @@ View Build(const Input& in) {
         for (const GraphNode* n : per_job[j]) jv.node_ids.push_back(n->id);
         AddChips(jv, per_job[j]);
         const size_t count = per_job[j].size();
+        // An image graph's Prepare is its image steps: one chip naming them.
+        if (jv.job == Job::Prepare && count == 0 && !image_nodes.empty()) {
+            NodeChip chip{"image steps", "", {}};
+            for (size_t i = 0; i < image_nodes.size(); ++i) {
+                chip.ids.push_back(image_nodes[i]->id);
+                if (i < 3) chip.note += (i ? ", " : "") + image_nodes[i]->name;
+            }
+            if (image_nodes.size() > 3) chip.note += ", \xE2\x80\xA6";
+            jv.node_ids = chip.ids;
+            jv.chips.push_back(std::move(chip));
+        }
         switch (jv.job) {
             case Job::BringIn:
                 jv.state = inputs ? Plural(inputs, "Data Input", "Data Inputs") : count ? Plural(count, "source", "sources") : "none yet";
                 break;
             case Job::Explore: jv.state = "query, profile, missing, outliers, plot"; break;
             case Job::Prepare:
-                jv.state = recipes ? Plural(recipes, "recipe", "recipes") : count ? Plural(count, "step", "steps") : "none yet";
+                jv.state = recipes ? Plural(recipes, "recipe", "recipes")
+                           : count ? Plural(count, "step", "steps")
+                           // An image graph's steps (Prepare shows its image recipe).
+                           : image_steps ? Plural(image_steps, "image step", "image steps")
+                                         : "none yet";
                 break;
             case Job::Validate:
                 jv.state = !checks ? (count ? Plural(count, "validator", "validators") : "no checks")
@@ -305,13 +349,20 @@ View Build(const Input& in) {
         row.node_id = n.id;
         row.name = n.name;
         row.file = n.file_path;
+        if (row.file.empty() && !n.folder_path.empty()) {
+            row.file = n.folder_path;
+            if (!n.labels_csv.empty())
+                row.source_note = "image folder, labels from " + FileName(n.labels_csv);
+        }
         if (!n.error.empty()) {
             row.state = "failed";
             row.detail = n.error;
             row.tone = Tone::Error;
         } else if (const Dataset* d = DatasetOfInput(in, n)) {
             row.state = "loaded";
-            row.size = Thousands(static_cast<int64_t>(d->rows)) + " \xC3\x97 " + std::to_string(d->columns);
+            row.size = d->images ? Thousands(static_cast<int64_t>(d->rows)) + " images"
+                                 : Thousands(static_cast<int64_t>(d->rows)) + " \xC3\x97 " + std::to_string(d->columns);
+            if (d->images && row.source_note.empty() && !n.folder_path.empty()) row.source_note = "image folder, class folders";
             row.dataset = d->name;
             row.tone = Tone::Ok;
         } else {
@@ -345,7 +396,26 @@ View Build(const Input& in) {
             item.tone = Tone::Warn;
             item.tip += (item.tip.empty() ? "" : "\n") + std::string("Open its dialog and Apply, or run the graph, to load it.");
         }
+        const Dataset* images = DatasetOfInput(in, n);
         sources.items.push_back(std::move(item));
+        if (!images || !images->images) continue;
+        // Its index table, one row per image, so the table tools work on images.
+        RailItem index;
+        index.kind = RailItem::Kind::ImageIndex;
+        index.label = images->name + "_index";
+        index.tip = "One row per image: path, label, size, bytes (and quality once measured).";
+        if (const Dataset* table = DatasetNamed(in, index.label)) {
+            index.dataset = table->name;
+            index.meta = Thousands(static_cast<int64_t>(table->rows)) + " \xC3\x97 " + std::to_string(table->columns);
+            shown.insert(table->name);
+        } else if (const auto p = in.image_index_progress.find(images->name); p != in.image_index_progress.end()) {
+            index.meta = "indexing";
+            index.tone = Tone::Warn;
+            index.tip += "\nIndexing: " + p->second + " files read.";
+        } else {
+            continue;
+        }
+        sources.items.push_back(std::move(index));
     }
     RailSection results{"Node results", {}};
     for (const auto& n : in.nodes) {

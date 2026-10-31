@@ -2,7 +2,12 @@
 #include "security/plugin_signature.h"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <cstdlib>
 #include <fstream>
+#include <system_error>
 
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
@@ -14,6 +19,136 @@
 namespace cyxwiz::plugin {
 
 namespace {
+
+std::filesystem::path EnvPath(const char* name) {
+    const char* value = std::getenv(name);
+    return value && *value ? std::filesystem::path(value) : std::filesystem::path{};
+}
+
+// Per-user folder of the library copies the Engine loads (shadow copies).
+std::filesystem::path LibraryCacheRoot() {
+#ifdef _WIN32
+    auto base = EnvPath("LOCALAPPDATA");
+    if (!base.empty()) return base / "CyxWiz" / "cache" / "plugins";
+#elif defined(__APPLE__)
+    const auto home = EnvPath("HOME");
+    if (!home.empty()) return home / "Library" / "Caches" / "CyxWiz" / "plugins";
+#else
+    auto base = EnvPath("XDG_CACHE_HOME");
+    if (base.empty() && !EnvPath("HOME").empty()) base = EnvPath("HOME") / ".cache";
+    if (!base.empty()) return base / "cyxwiz" / "plugins";
+#endif
+    std::error_code ec;
+    const auto temp = std::filesystem::temp_directory_path(ec);
+    return (ec ? std::filesystem::path(".") : temp) / "cyxwiz" / "plugins";
+}
+
+// .dll, .dylib, and .so with or without a version (libfoo.so.1).
+bool IsSharedLibraryName(const std::filesystem::path& path) {
+    const auto name = path.filename().string();
+    const auto ext = path.extension().string();
+    return ext == ".dll" || ext == ".DLL" || ext == ".dylib" || name.find(".so") != std::string::npos;
+}
+
+std::string SafeFolderName(const std::string& text) {
+    std::string out;
+    for (char c : text) out += (std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '-') ? c : '_';
+    return out.empty() ? "plugin" : out;
+}
+
+// The shared libraries in the library's folder (the library first).
+std::vector<std::filesystem::path> LibraryFolderFiles(const std::filesystem::path& library) {
+    std::vector<std::filesystem::path> files{library};
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(library.parent_path(), ec)) {
+        if (entry.is_regular_file(ec) && IsSharedLibraryName(entry.path()) && entry.path() != library)
+            files.push_back(entry.path());
+    }
+    return files;
+}
+
+// The library's content (SHA-512, first 16 bytes) and, for the libraries
+// beside it, name, size and time: a rebuild of any of them is a new copy.
+std::string LibraryContentKey(const std::vector<std::filesystem::path>& files) {
+    const auto hash = security::PluginSignature::HashFile(files.front());
+    std::string key = security::PluginSignature::ToHex(hash.data(), std::min<size_t>(hash.size(), 16));
+    uint64_t others = 1469598103934665603ull;  // FNV-1a over the others
+    const auto mix = [&others](const std::string& text) {
+        for (unsigned char c : text) others = (others ^ c) * 1099511628211ull;
+    };
+    std::error_code ec;
+    for (size_t i = 1; i < files.size(); ++i) {
+        mix(files[i].filename().string());
+        mix(std::to_string(std::filesystem::file_size(files[i], ec)));
+        mix(std::to_string(static_cast<long long>(
+            std::filesystem::last_write_time(files[i], ec).time_since_epoch().count())));
+    }
+    if (files.size() > 1) key += "-" + security::PluginSignature::ToHex(
+                                       reinterpret_cast<const uint8_t*>(&others), sizeof(others));
+    return key;
+}
+
+// Copies the plugin's library and the shared libraries beside it into
+// <cache>/<plugin id>/<content key>/ and returns the copy of the library.
+// The Engine loads the copy, so the build output is never locked: a
+// rebuild can replace it while the Engine runs, and Unload + Install loads
+// the new build while models made by the old one keep using theirs.
+std::filesystem::path ShadowCopyLibrary(const std::string& plugin_id, const std::filesystem::path& library,
+                                        std::string& error) {
+    const auto files = LibraryFolderFiles(library);
+    if (security::PluginSignature::HashFile(library).empty()) {
+        error = "cannot read " + library.string();
+        return {};
+    }
+    const auto folder = LibraryCacheRoot() / SafeFolderName(plugin_id) / LibraryContentKey(files);
+    const auto copy = folder / library.filename();
+    std::error_code ec;
+    if (std::filesystem::is_directory(folder, ec)) {
+        // This build was copied before (and may be loaded): fill in what is
+        // missing; a file in use is the same bytes.
+        for (const auto& file : files) {
+            const auto target = folder / file.filename();
+            std::error_code size_error;
+            if (std::filesystem::file_size(target, size_error) == std::filesystem::file_size(file, size_error) &&
+                !size_error)
+                continue;
+            std::filesystem::copy_file(file, target, std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) {
+                error = "cannot copy " + file.string() + ": " + ec.message();
+                return {};
+            }
+        }
+        return copy;
+    }
+    // Staged, then renamed into place: a reader never sees half a copy.
+    const auto staging = folder.parent_path() / (folder.filename().string() + ".staging-" +
+                                                  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::remove_all(staging, ec);
+    std::filesystem::create_directories(staging, ec);
+    if (ec) {
+        error = "cannot create " + staging.string() + ": " + ec.message();
+        return {};
+    }
+    for (const auto& file : files) {
+        std::filesystem::copy_file(file, staging / file.filename(),
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            error = "cannot copy " + file.string() + ": " + ec.message();
+            std::filesystem::remove_all(staging, ec);
+            return {};
+        }
+    }
+    std::filesystem::rename(staging, folder, ec);
+    if (ec) {
+        std::error_code ignored;
+        std::filesystem::remove_all(staging, ignored);
+        if (!std::filesystem::is_regular_file(copy, ignored)) {  // not copied by another Engine meanwhile
+            error = "cannot place the copy in " + folder.string() + ": " + ec.message();
+            return {};
+        }
+    }
+    return copy;
+}
 
 // plugin.json -> manifest. In the Engine, not in plugin_types.h, so the
 // SDK headers need no JSON library (TOFIX125 P5 step 5.3).
@@ -123,20 +258,33 @@ void* PluginLoader::LoadDLL(const std::filesystem::path& path, std::string& erro
     auto dir = path.parent_path().wstring();
     DLL_DIRECTORY_COOKIE cookie = ::AddDllDirectory(dir.c_str());
 
+    // A missing DLL or function fails the call instead of showing Windows'
+    // "Entry Point Not Found" box, which stops the Engine until it is closed.
+    DWORD previous_mode = 0;
+    ::SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, &previous_mode);
     void* handle = ::LoadLibraryExW(
         path.wstring().c_str(), nullptr,
         LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
+    const DWORD load_error = ::GetLastError();
+    ::SetThreadErrorMode(previous_mode, nullptr);
 
     if (cookie) {
         ::RemoveDllDirectory(cookie);
     }
 
     if (!handle) {
+        ::SetLastError(load_error);
         error_out = GetLastDLLError();
+        if (load_error == ERROR_PROC_NOT_FOUND) {
+            error_out += " (the plugin uses a function this Engine does not have: it was built "
+                         "against a newer CyxWiz SDK; rebuild it against this Engine's SDK)";
+        }
     }
     return handle;
 #else
-    void* handle = ::dlopen(path.c_str(), RTLD_LAZY | RTLD_LOCAL);
+    // RTLD_NOW: a function the Engine does not have fails here, with its name,
+    // instead of stopping the Engine when the plugin first calls it.
+    void* handle = ::dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         error_out = ::dlerror();
     }
@@ -329,9 +477,20 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
 
     loaded->dll_path = dll_path;
 
+    // 3a. Load a private copy (see ShadowCopyLibrary); the signature is
+    // checked on the copy, the bytes that run.
+    std::filesystem::path load_path = ShadowCopyLibrary(loaded->manifest.id, dll_path, error_out);
+    if (load_path.empty()) {
+        error_out = "Cannot copy the plugin library for loading: " + error_out;
+        loaded->state = PluginState::Failed;
+        loaded->error_message = error_out;
+        return nullptr;
+    }
+    loaded->loaded_from = load_path;
+
     // 3b. Verify Ed25519 signature
     {
-        auto sig_result = security::PluginSignature::Verify(dll_path, loaded->manifest.signature);
+        auto sig_result = security::PluginSignature::Verify(load_path, loaded->manifest.signature);
         switch (sig_result.status) {
             case security::SignatureStatus::Valid:
                 spdlog::info("Plugin {}: signature valid", loaded->manifest.id);
@@ -352,7 +511,7 @@ std::unique_ptr<LoadedPlugin> PluginLoader::LoadFromDirectory(
     }
 
     // 4. Load DLL
-    loaded->dll_handle = LoadDLL(dll_path, error_out);
+    loaded->dll_handle = LoadDLL(load_path, error_out);
     if (!loaded->dll_handle) {
         error_out = "Failed to load DLL: " + error_out;
         loaded->state = PluginState::Failed;
@@ -521,6 +680,41 @@ void PluginLoader::Unload(LoadedPlugin& plugin) {
     }
 
     plugin.state = PluginState::Unloaded;
+}
+
+void PluginLoader::PruneLibraryCache() {
+    // A copy another Engine has loaded cannot be removed on Windows (it is
+    // skipped); elsewhere the running process keeps its mapping.
+    std::error_code ec;
+    const auto root = LibraryCacheRoot();
+    size_t removed = 0;
+    for (const auto& plugin : std::filesystem::directory_iterator(root, ec)) {
+        std::error_code inner;
+        std::vector<std::filesystem::path> builds;
+        for (const auto& build : std::filesystem::directory_iterator(plugin.path(), inner)) builds.push_back(build.path());
+        for (const auto& build : builds) {
+            // Moved aside first, so the build's own name is never left half
+            // removed: an Engine that loads this build again copies it
+            // afresh. A library still loaded keeps its folder (".prune") until
+            // a later start-up.
+            const std::string name = build.filename().string();
+            const bool aside = name.find(".prune") != std::string::npos || name.find(".staging-") != std::string::npos;
+            const auto doomed = aside ? build : build.parent_path() / (name + ".prune");
+            std::error_code remove_error;
+            if (name.find(".staging-") != std::string::npos) {
+                // Another Engine may be copying into it right now.
+                const auto age = std::filesystem::file_time_type::clock::now() -
+                                 std::filesystem::last_write_time(build, remove_error);
+                if (remove_error || age < std::chrono::hours(1)) continue;
+            }
+            if (!aside) std::filesystem::rename(build, doomed, remove_error);
+            if (remove_error) continue;
+            std::filesystem::remove_all(doomed, remove_error);
+            if (!remove_error) ++removed;
+        }
+        std::filesystem::remove(plugin.path(), inner);  // only when empty
+    }
+    if (removed > 0) spdlog::debug("PluginLoader: removed {} unused plugin library copies from {}", removed, root.string());
 }
 
 } // namespace cyxwiz::plugin

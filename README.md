@@ -12,6 +12,7 @@ CyxWiz is source-available under the [CYXWIZ Commercial Source and Evaluation Li
 - [Install a pre-release](#install-a-pre-release)
 - [Use GPUs](#use-gpus)
 - [Quick start](#quick-start)
+- [Extend CyxWiz: your own nodes](#extend-cyxwiz-your-own-nodes)
 - [Build from source](#build-from-source)
 - [Run and test a source build](#run-and-test-a-source-build)
 - [Architecture](#architecture)
@@ -104,6 +105,21 @@ A GPU pack is published only after its routes pass on real hardware. The Windows
 
 The [examples](examples/README.md) folder contains sample graphs, scripts, and datasets. Available nodes, formats, and execution backends depend on the build and on what the runtime discovers on your machine; a visible node or a GPU preference alone does not prove that a path is implemented or GPU-resident.
 
+The [user guide](docs/usage/README.md) has a page for each feature: Data Studio, the node palette, training, testing, export, scripting and more.
+
+## Extend CyxWiz: your own nodes
+
+You can add layers, activations and losses that CyxWiz does not ship, and train them next to the built-in nodes. There are two routes; both give the Engine a module with a forward and a hand-written backward step, which the Engine checks numerically before training.
+
+| Route | How | Start here |
+| --- | --- | --- |
+| **Python node** | Write a class with `pycyxwiz`, describe it with `@nodes.node` (a layer), `@nodes.activation` or `@nodes.loss`, bundle it into a `.cyxnode` folder in your project (or use **Create node from script** in the Script Editor), approve it once, then use it from the node palette | [Writing a module in Python](docs/extending/python-modules.md), then [Python nodes](docs/extending/python-nodes.md) |
+| **C++ plugin** | Build a shared library against the plugin SDK that every installation carries in its `sdk/` folder (`find_package(CyxWizSDK)`, a template, Apache-2.0), check it with `cyxwiz-plugin-check`, and load it from the Plugin Manager | [Plugin quickstart](docs/extending/plugin-quickstart.md), then the [developer guide](docs/extending/plugin-developer-guide.md) and [API reference](docs/extending/plugin-api-reference.md) |
+
+The SDK in every installation carries ten built-in layers and four losses written as Python nodes (with an example graph), and a C++ plugin template with one trainable node (Bent Identity). The source tree adds a C++ example plugin with trainable Softsign and Snake nodes (`plugins/examples/activation_nodes`). Using extension nodes in the Engine (installing, approving, saving, exporting) is described in [Your own nodes](docs/usage/extension_nodes.md). All pages, the [node contract](docs/extending/node-contract.md) and [troubleshooting](docs/extending/troubleshooting.md) are listed in [Extending CyxWiz](docs/extending/README.md).
+
+Limits today: one tensor in and one out (a loss takes predictions and targets), no autograd, local training only (a remote Server Node refuses graphs with extension nodes), no ONNX or Python-code export of extension nodes, and losses only from Python.
+
 ## Build from source
 
 Builds use CMake presets and vcpkg for dependencies; ArrayFire 3.10 is installed separately. The setup scripts check the toolchain and clone and bootstrap vcpkg in the repository root; the first configure then installs dependencies into the build tree, which can take a long time on a cold cache.
@@ -117,15 +133,18 @@ Builds use CMake presets and vcpkg for dependencies; ArrayFire 3.10 is installed
 | ArrayFire 3.10 | [Windows installer](https://arrayfire.com/download/) | `ArrayFire.sh` installer, e.g. into `/opt` | `brew install arrayfire` |
 | Python (optional scripting) | 3.12 or 3.13 | 3.12 or 3.13 | 3.12 or 3.13 |
 
-**Linux packages** (Ubuntu 22.04 names, as used by CI):
+**Linux packages** (Ubuntu 22.04 names, as used by CI; Arch Linux names are in [INSTALL.md](INSTALL.md#linux-packages)):
 
 ```bash
 sudo apt-get install -y autoconf autoconf-archive automake build-essential cmake curl \
   libgl1-mesa-dev libgtk-3-dev libtool libwayland-dev libxext-dev libxi-dev \
-  libxinerama-dev libxkbcommon-dev libxcursor-dev libxrandr-dev ninja-build patchelf pkg-config
+  libxinerama-dev libxkbcommon-dev libxcursor-dev libxrandr-dev nasm ninja-build patchelf pkg-config \
+  tar unzip zip
 curl -LO https://arrayfire.gateway.scarf.sh/linux/3.10.0/ArrayFire.sh
 chmod +x ArrayFire.sh && sudo ./ArrayFire.sh --include-subdir --prefix=/opt
 ```
+
+The ArrayFire installer is 3.9 GB, served from Amazon S3; on networks where S3 is slow it can take days. [INSTALL.md](INSTALL.md#arrayfire-from-source-linux) builds the CPU backend from ArrayFire's GitHub source release instead (84 MB, about an hour).
 
 **macOS packages:**
 
@@ -155,6 +174,8 @@ chmod +x setup.sh build.sh
 ./build.sh --engine -j 8
 ```
 
+The first build compiles about 330 libraries through vcpkg, among them ONNX Runtime and llama.cpp, which takes hours (most of a day on a four-core laptop). Later builds reuse them.
+
 | Wrapper option | Effect |
 | --- | --- |
 | `--debug` | Debug instead of the default Release configuration |
@@ -163,8 +184,9 @@ chmod +x setup.sh build.sh
 | `--build-dir PATH` | Use a custom or existing compatible build tree |
 | `--clean` | Delete the build tree first (only when a clean rebuild is needed) |
 | `-j N` | Parallel jobs; Windows defaults to 8, Linux/macOS auto-detect |
+| `-DNAME=VALUE` | Linux/macOS: pass a CMake setting through, for example `-DArrayFire_DIR=...` |
 
-With no component option, both the Engine and the Server Node are built. Wrapper builds use `build/<platform>-<configuration>`, for example `build/windows-release`. If CMake cannot find ArrayFire, pass `-DArrayFire_DIR=<ArrayFire>/cmake` (Windows) or the directory containing `ArrayFireConfig.cmake`.
+With no component option, both the Engine and the Server Node are built. Wrapper builds use `build/<platform>-<configuration>`, for example `build/windows-release`. If CMake cannot find ArrayFire, pass `-DArrayFire_DIR=<ArrayFire>/cmake` (Windows) or the directory containing `ArrayFireConfig.cmake`, for example `./build.sh --engine -DArrayFire_DIR=$HOME/opt/ArrayFire-3.10.0/share/ArrayFire/cmake`.
 
 For direct CMake presets, a fast edit/build loop, every build option, backend-only builds, and troubleshooting, see [INSTALL.md](INSTALL.md).
 
@@ -180,7 +202,7 @@ For direct CMake presets, a fast edit/build loop, every build option, backend-on
 ./build/linux-release/bin/cyxwiz-engine     # or build/macos-release/bin/cyxwiz-engine
 ```
 
-ArrayFire's libraries must be on the library search path at run time (on Windows, `af.dll` and the backend DLLs you use; the ArrayFire installer can add them to `PATH`). The Server Node runs as `cyxwiz-server-gui` or `cyxwiz-server-daemon` from the same `bin` folder.
+Scripting needs a Python 3.12 with its `venv` module on the system ([INSTALL.md](INSTALL.md#python-312-for-scripting-linux) has the Linux packages and a source build). ArrayFire's libraries must be on the library search path at run time (on Windows, `af.dll` and the backend DLLs you use; the ArrayFire installer can add them to `PATH`). On Linux, when ArrayFire is not in a system folder, add its `lib` folder: `LD_LIBRARY_PATH=$HOME/opt/ArrayFire-3.10.0/lib ./build/linux-release/bin/cyxwiz-engine`. The Server Node runs as `cyxwiz-server-gui` or `cyxwiz-server-daemon` from the same `bin` folder.
 
 Tests use Catch2 and CTest:
 
@@ -251,7 +273,7 @@ See [Project structure](docs/project-structure.md) for ownership and dependency 
 | Scripting | Embedded Python, `.py`/`.cyx` editing, cell execution, completion, debugging, and graph-to-code surfaces when Python support is built in |
 | Model lifecycle | `.cyxmodel` inspection, packaging, import/export, checkpoints, and selected external formats; exact continuation and some conversions are incomplete |
 | Server Node | GUI and daemon provide worker services and hardware/job reporting; distributed orchestration and training are pre-release |
-| Plugins | Assistant, image, logging, and simulation integrations are optional or experimental |
+| Plugins and extension nodes | Your own trainable nodes from Python bundles or C++ plugins built against the shipped SDK ([Extend CyxWiz](#extend-cyxwiz-your-own-nodes)); the assistant, image, logging, and simulation plugins are optional or experimental |
 
 ## Current limitations
 
@@ -260,7 +282,7 @@ See [Project structure](docs/project-structure.md) for ownership and dependency 
 - checkpoint restoration and exact continuation need further lifecycle work;
 - several GUI and plugin surfaces expose capabilities whose runtime support varies;
 - GPU compute packs are published for Windows only; Linux and macOS installs are CPU-only;
-- current release builds do not include embedded Python scripting; build from source with Python 3.12 or 3.13 to use it;
+- extension nodes train only on this computer, take one tensor in and one out, and need a hand-written backward step;
 - release binaries are not Authenticode-signed or Apple-notarized.
 
 These limitations are stated so public documentation does not over-promise.
@@ -273,6 +295,8 @@ Keep changes scoped, preserve component boundaries (extend the shared backend in
 - [Contributing](CONTRIBUTING.md)
 - [Project structure](docs/project-structure.md)
 - [Examples](examples/README.md)
+- [User guide](docs/usage/README.md)
+- [Extending CyxWiz: Python nodes and C++ plugins](docs/extending/README.md)
 - [Backend overview](cyxwiz-backend/README.md)
 - [Server Node overview](cyxwiz-server-node/README.md)
 - [Known issues](KNOWN_ISSUES.md)

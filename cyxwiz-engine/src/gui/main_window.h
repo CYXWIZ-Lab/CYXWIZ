@@ -2,13 +2,17 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <functional>
 #include <map>
 #include <utility>
+#include "../core/studio_toolbar_presentation.h"
 #include "../core/graph_compiler.h"  // for cyxwiz::ValidationIssue
 #include "../core/compile_report_presentation.h"
+#include "../core/cross_validation_runner.h"
+#include "graph_training_launcher.h"
 
 namespace cyxwiz {
 class ProjectManager;
@@ -56,7 +60,6 @@ class MemoryPanel;
 class MemoryMonitor;
 class VariableExplorerPanel;
 class PlotOutputPanel;
-class TestResultsPanel;
 class ExportDialog;
 class ImportDialog;
 class DeploymentDialog;
@@ -64,32 +67,13 @@ class ModelSummaryPanel;
 class ArchitectureDiagram;
 class LRFinderPanel;
 class StudioDebuggerPanel;
-class HypothesisTestPanel;
-class RegressionPanel;
-class DimReductionPanel;
 class GradCAMPanel;
 class FeatureImportancePanel;
 class NASPanel;
 class HyperparamSearchPanel;
 class ServingPanel;
 class DNNInferencePanel;
-class KMeansPanel;
-class DBSCANPanel;
-class HierarchicalPanel;
-class GMMPanel;
-class ClusterEvalPanel;
 // Model Evaluation panels (Phase 6B)
-class ConfusionMatrixPanel;
-class ROCAUCPanel;
-class PRCurvePanel;
-class CrossValidationPanel;
-class LearningCurvesPanel;
-// Data Transformation panels (Phase 6C)
-class NormalizationPanel;
-class StandardizationPanel;
-class LogTransformPanel;
-class BoxCoxPanel;
-class FeatureScalingPanel;
 // Linear Algebra panels (Phase 7)
 class MatrixCalculatorPanel;
 class EigenDecompPanel;
@@ -109,12 +93,6 @@ class LPPanel;
 class QPPanel;
 class DifferentiationPanel;
 class IntegrationPanel;
-// Time Series Analysis panels (Phase 10)
-class DecompositionPanel;
-class ACFPACFPanel;
-class StationarityPanel;
-class SeasonalityPanel;
-class ForecastingPanel;
 // Text Processing panels (Phase 11)
 class TokenizationPanel;
 class WordFrequencyPanel;
@@ -133,6 +111,7 @@ class RegexTesterPanel;
 class PluginManagerPanel;
 // Data Studio panel (Phase 1 Week 1)
 class DataStudioPanel;
+class FoldsView;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
 struct StudioDebuggerSnapshot;
@@ -232,6 +211,7 @@ private:
     // Status bar height follows the interface text size (TOFIX129).
     static float StatusBarHeight();
     void RenderPythonEnvSetupStatus(const cyxwiz::ProjectManager& pm);
+    void RenderPythonRestartNotice();
     void DetectKeyboardContext();
     void HandleGlobalShortcuts();
 
@@ -244,6 +224,33 @@ private:
         const std::vector<NodeLink>& links, cyxwiz::TrainingConfiguration config);
     std::shared_ptr<cyxwiz::AsyncTask> test_preparation_task_;
     std::shared_ptr<int> test_callback_lifetime_ = std::make_shared<int>(0);
+    // Results > Cross-validation / Learning curve (TOFIX129 D4): Run marks the
+    // next Train launch as theirs; it goes through Train's checks, data loads,
+    // memory question and preparation, and only the dispatch differs: the
+    // prepared table goes to core/cross_validation_runner on a task.
+    struct FoldsLaunch {
+        std::shared_ptr<cyxwiz::FoldsView> view;
+        cyxwiz::CrossValidationSettings settings;
+        std::string results_table;  // where the finished run's table is published
+    };
+    // The graph's Cross-Validation / Learning Curves node (the first one), read.
+    struct FoldsNode {
+        int id = -1;
+        std::string name;
+        cyxwiz::CrossValidationSettings settings;
+        std::string results_table;
+        std::string error;
+    };
+    std::optional<FoldsNode> FindFoldsNode(bool learning_curve) const;
+    // Results' Add to the graph: the node after the graph's Data Input.
+    std::string AddFoldsNode(bool learning_curve, const cyxwiz::CrossValidationSettings& settings);
+    std::optional<FoldsLaunch> folds_launch_;
+    uint64_t folds_task_ = 0;  // the running cross-validation / learning curve task
+    void StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings);
+    // A marked launch that stopped before its task: the view says why.
+    void EndFoldsLaunch(const std::string& why);
+    std::string FoldsBlocker() const;
+    ::gui::GraphTrainingDispatch MakeFoldsDispatch(const FoldsLaunch& launch);
 
 
     // Compile the current graph as a dry-run (no training) and show results in a popup
@@ -296,6 +303,7 @@ private:
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
     cyxwiz::compile_report::Report compile_report_;
+    cyxwiz::compile_report::Mode compile_report_mode_ = cyxwiz::compile_report::Mode::Compile;
 
     // Main-thread confirmation state for a warning/risky operator estimate.
     // The worker is not queued until the user accepts this frozen graph copy.
@@ -325,17 +333,28 @@ private:
     std::vector<DataInputLoad> data_input_loads_;
     std::string data_input_loads_project_;
     bool StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    // Train on a graph whose Training Dataset path has pipeline-run steps
+    // (SQL, Text Clean ...): run them first, then train on the result.
+    bool StartTrainingPipelineRun(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    void PollTrainingPipelineRun();
+    struct TrainingPipelineRun {
+        uint64_t task_id = 0;
+        int feeder = -1;
+        std::string project;
+    };
+    std::optional<TrainingPipelineRun> training_pipeline_run_;
+    std::string training_pipeline_result_;  // read by the next StartTrainingFromGraph
     void PollDataInputLoads();
 
-    // Local Debug staleness cache. `last_debug_graph_hash_` is a stable
-    // fingerprint of the (nodes, links) tuple at the moment of the last
-    // *successful* Local Debug run. `have_last_debug_result_` gates the
-    // cache (0 is a valid hash and "no prior run" needs to be
-    // distinguishable). StartTrainingFromGraph checks these to warn the
-    // user if the graph has drifted since the last debug — or, under
-    // EngineConfig::RequireDebugBeforeTrain(), blocks training outright.
-    uint64_t last_debug_graph_hash_ = 0;
-    bool have_last_debug_result_ = false;
+    // The last Local Debug run (TOFIX178 UI-1): passed or failed, when, why,
+    // and the HashGraphStructure of the graph it ran on. The canvas bar shows
+    // it; StartTrainingFromGraph warns when it is not a pass on the graph as
+    // it is now, or, under EngineConfig::RequireDebugBeforeTrain(), refuses.
+    cyxwiz::studio_toolbar::DebugInputs local_debug_;
+    uint64_t local_debug_graph_hash_ = 0;
+    double local_debug_checked_at_ = -1.0;
+    // Twice a second: is the canvas still the graph the run used?
+    void UpdateLocalDebugStatus();
 
     // Original panels
     std::unique_ptr<NodeEditor> node_editor_;
@@ -346,6 +365,10 @@ private:
     // COMPILED card, link colours and tooltips follow it.
     std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
     uint64_t live_compile_serial_seen_ = 0;
+    // Scopes the dataset catalog subscription that recompiles the graph when a
+    // dataset is added, replaced or removed (declared after live_compile_, so
+    // it goes first).
+    std::shared_ptr<int> live_compile_datasets_ = std::make_shared<int>(0);
     void UpdateLiveCompile();
     // Python node bundles (TOFIX125 P4): registered from <project>/nodes,
     // the user nodes folder and plugin nodes/ folders; Python is started
@@ -353,7 +376,14 @@ private:
     std::unique_ptr<cyxwiz::PythonNodeProvider> python_node_provider_;
     double python_nodes_checked_at_ = -1.0;
     std::string python_start_error_logged_;
+    bool graph_needs_python_ = false;  // the open graph uses an approved Python node
     void UpdatePythonNodes();
+    // The running interpreter follows the open project's environment: moved
+    // in place when it can be, otherwise a restart is asked for.
+    void SyncProjectPython();
+    std::string python_restart_reason_;  // non-empty: this project needs a restart
+    std::string python_restart_project_; // the project that verdict is for
+    bool python_sync_pending_ = false;   // a project closed: sync on the next frame
 
     // New panel system
     std::unique_ptr<cyxwiz::ToolbarPanel> toolbar_;
@@ -375,7 +405,6 @@ private:
     std::unique_ptr<cyxwiz::MemoryMonitor> memory_monitor_;
     std::unique_ptr<cyxwiz::VariableExplorerPanel> variable_explorer_;
     std::unique_ptr<cyxwiz::PlotOutputPanel> plot_output_panel_;
-    std::unique_ptr<cyxwiz::TestResultsPanel> test_results_panel_;
     std::unique_ptr<cyxwiz::ExportDialog> export_dialog_;
     std::unique_ptr<cyxwiz::ImportDialog> import_dialog_;
     std::unique_ptr<cyxwiz::DeploymentDialog> deployment_dialog_;
@@ -387,11 +416,8 @@ private:
     std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
 
     // Statistics panels (Phase 4)
-    std::unique_ptr<cyxwiz::HypothesisTestPanel> hypothesis_test_panel_;
-    std::unique_ptr<cyxwiz::RegressionPanel> regression_panel_;
 
     // Advanced Tools panels (Phase 5)
-    std::unique_ptr<cyxwiz::DimReductionPanel> dim_reduction_panel_;
     std::unique_ptr<cyxwiz::GradCAMPanel> gradcam_panel_;
     std::unique_ptr<cyxwiz::FeatureImportancePanel> feature_importance_panel_;
     std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
@@ -400,25 +426,8 @@ private:
     std::unique_ptr<cyxwiz::DNNInferencePanel> dnn_inference_panel_;
 
     // Clustering panels (Phase 6A)
-    std::unique_ptr<cyxwiz::KMeansPanel> kmeans_panel_;
-    std::unique_ptr<cyxwiz::DBSCANPanel> dbscan_panel_;
-    std::unique_ptr<cyxwiz::HierarchicalPanel> hierarchical_panel_;
-    std::unique_ptr<cyxwiz::GMMPanel> gmm_panel_;
-    std::unique_ptr<cyxwiz::ClusterEvalPanel> cluster_eval_panel_;
 
     // Model Evaluation panels (Phase 6B)
-    std::unique_ptr<cyxwiz::ConfusionMatrixPanel> confusion_matrix_panel_;
-    std::unique_ptr<cyxwiz::ROCAUCPanel> roc_auc_panel_;
-    std::unique_ptr<cyxwiz::PRCurvePanel> pr_curve_panel_;
-    std::unique_ptr<cyxwiz::CrossValidationPanel> cross_validation_panel_;
-    std::unique_ptr<cyxwiz::LearningCurvesPanel> learning_curves_panel_;
-
-    // Data Transformation panels (Phase 6C)
-    std::unique_ptr<cyxwiz::NormalizationPanel> normalization_panel_;
-    std::unique_ptr<cyxwiz::StandardizationPanel> standardization_panel_;
-    std::unique_ptr<cyxwiz::LogTransformPanel> log_transform_panel_;
-    std::unique_ptr<cyxwiz::BoxCoxPanel> boxcox_panel_;
-    std::unique_ptr<cyxwiz::FeatureScalingPanel> feature_scaling_panel_;
 
     // Linear Algebra panels (Phase 7)
     std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;
@@ -441,13 +450,6 @@ private:
     std::unique_ptr<cyxwiz::QPPanel> qp_panel_;
     std::unique_ptr<cyxwiz::DifferentiationPanel> differentiation_panel_;
     std::unique_ptr<cyxwiz::IntegrationPanel> integration_panel_;
-
-    // Time Series Analysis panels (Phase 10)
-    std::unique_ptr<cyxwiz::DecompositionPanel> decomposition_panel_;
-    std::unique_ptr<cyxwiz::ACFPACFPanel> acf_pacf_panel_;
-    std::unique_ptr<cyxwiz::StationarityPanel> stationarity_panel_;
-    std::unique_ptr<cyxwiz::SeasonalityPanel> seasonality_panel_;
-    std::unique_ptr<cyxwiz::ForecastingPanel> forecasting_panel_;
 
     // Text Processing panels (Phase 11)
     std::unique_ptr<cyxwiz::TokenizationPanel> tokenization_panel_;

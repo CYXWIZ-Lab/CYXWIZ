@@ -28,6 +28,24 @@ text, a token-tagging table, a time series, a folder of images or a folder of
 audio. Databases come in through Data Studio's SQL Workbench, not through Data
 Input.
 
+### Formats from plugins
+
+A plugin can add a table format (for example ARFF, with the example plugin
+*Example Data Formats*). While the plugin is loaded, its formats are in the
+**Format** list as *&lt;name&gt; (plugin)*, in **Browse...**'s file types,
+and picked by the file's extension, so a file of such a format behaves like
+any table: Preview after Apply, Data Studio, SQL, training. A format the
+Engine reads itself wins over a plugin's for the same extension; choose the
+plugin's in **Format** to use it instead.
+
+On Apply the Engine reads the file through the plugin once and keeps a
+Parquet copy in the project's cache; it reads that copy again until the file
+or the plugin's version changes. Large files stay on disk like a large
+Parquet file. A graph that uses such a format needs the plugin: without it,
+Apply says *This format comes from a plugin that is not loaded*. Remote
+training receives the loaded table, so the remote computer does not need the
+plugin.
+
 ### Table format options
 
 - **Quote character** (default `"`): a value inside it may hold the
@@ -77,8 +95,8 @@ mono. Under **Preprocessing (done by nodes)** the dialog names the Resize
 feature node, with **Show on canvas** (and **Open it** for nodes with a
 dialog); when one is missing it offers **Add a Resize**, **Add Normalize**
 (after the Resize) or **Add Mel Spectrogram / Spectrogram / MFCC**. An image
-folder holds nothing in memory: images are decoded per batch at the Resize
-size.
+folder holds nothing in memory: when training starts the images are decoded
+once at the Resize size into cache/images (see image_transforms.md).
 
 ### The data strip and the tabs
 
@@ -87,13 +105,25 @@ on every tab: the file or folder, its state (*Not loaded*, *Loading: ...*
 with the seconds so far, *Loaded in 1.79 s as sentiment_mental_health
 (text)*, or a red *Not loaded* with the reason and what to do), the counts
 (*52,681 samples, 7 classes, 30.0 MB on disk*) and how the data is held
-(*30.4 MB in memory*, *kept on disk (Parquet ...)*, *decoded per batch at
-the Resize size*). When an Apply fails while an earlier load stays, the
+(*30.4 MB in memory*, *kept on disk (Parquet ...)*, *decoded once at
+the Resize size into cache/images when training starts*). When an Apply fails while an earlier load stays, the
 strip keeps the earlier load and says the last Apply failed.
 
 The tabs are **Source**, **Preview**, **Profile**, **Rows and columns**
-(which columns to load, then the rows to skip and the row limit),
-**Memory** and **Audit**.
+(which columns to load, then the rows to skip and the row limit; not shown
+for an image or audio folder, which has no rows to read), **Memory** and
+**Audit**. An image folder's Source tab has **Class names** once it is
+loaded: a row per class (its label in the CSV, or its folder) with a name to
+type and a **suggested** one, the file-name prefix every file of the class
+shares (*cat* for `cat.1.jpg`, *dog* for `dog.1.jpg`) when each class has its
+own. **Use suggested** fills them in; Apply saves them with the node (an
+empty name keeps the label) and every screen and the index's label_name use
+them at once, without loading the images again. Class indices do not change:
+they follow the labels, sorted (numbers as numbers).
+For an image folder, **Preview** shows its first 24 images with
+their class once it is loaded (Explore > Images in Data Studio shows them
+all), and **Profile** shows the image profile (counts, classes, sizes,
+prepared sets; see Data Studio > Profile).
 
 ### Source: the file or folder, then how its rows are used
 

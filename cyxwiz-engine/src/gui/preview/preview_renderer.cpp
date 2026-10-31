@@ -7,6 +7,7 @@
 #include "hex_preview.h"
 #include "hdf5_preview.h"
 #include "../ui_tokens.h"
+#include "../../core/image_formats.h"
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -37,9 +38,7 @@ PreviewContentType PreviewRenderer::DetectFileType(const std::string& filepath) 
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
     // Images
-    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" ||
-        ext == ".gif" || ext == ".tga" || ext == ".tiff" || ext == ".webp")
-        return PreviewContentType::Image;
+    if (cyxwiz::image_formats::IsImageExtension(ext)) return PreviewContentType::Image;
 
     // CSV/TSV
     if (ext == ".csv" || ext == ".tsv")

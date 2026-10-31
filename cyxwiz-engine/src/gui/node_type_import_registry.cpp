@@ -1,11 +1,11 @@
-#include "node_type_import_registry.h"
+﻿#include "node_type_import_registry.h"
 
 #include <array>
 
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 211> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 229> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -167,6 +167,10 @@ constexpr std::array<NodeTypeImportName, 211> kNodeTypeImportNames = {{
         {"StandardScaler", NodeType::StandardScaler},
         {"MinMaxScaler", NodeType::MinMaxScaler},
         {"RobustScaler", NodeType::RobustScaler},
+        {"MaxAbsScaler", NodeType::MaxAbsScaler},
+        {"HypothesisTest", NodeType::HypothesisTest},
+        {"QuantileTransform", NodeType::QuantileTransform},
+        {"PowerTransform", NodeType::PowerTransform},
         {"LabelEncoder", NodeType::LabelEncoder},
         {"OrdinalEncoder", NodeType::OrdinalEncoder},
         {"TargetEncoder", NodeType::TargetEncoder},
@@ -178,6 +182,8 @@ constexpr std::array<NodeTypeImportName, 211> kNodeTypeImportNames = {{
         {"DBSCANCluster", NodeType::DBSCANCluster},
         {"HierarchicalCluster", NodeType::HierarchicalCluster},
         {"GMMCluster", NodeType::GMMCluster},
+        {"TSNENode", NodeType::TSNENode},
+        {"UMAPNode", NodeType::UMAPNode},
         {"LinearRegressionNode", NodeType::LinearRegressionNode},
         {"PolynomialRegressionNode", NodeType::PolynomialRegressionNode},
         {"DecisionTreeClassifier", NodeType::DecisionTreeClassifier},
@@ -206,6 +212,18 @@ constexpr std::array<NodeTypeImportName, 211> kNodeTypeImportNames = {{
         {"ImageGaussianBlur", NodeType::ImageGaussianBlur},
         {"Grayscale", NodeType::Grayscale},
         {"MorphologyTransform", NodeType::MorphologyTransform},
+        {"ImageContrast", NodeType::ImageContrast},
+        {"ImageDenoise", NodeType::ImageDenoise},
+        {"ImageSharpen", NodeType::ImageSharpen},
+        {"ImageEdges", NodeType::ImageEdges},
+        {"ImageSmooth", NodeType::ImageSmooth},
+        {"ImageWarp", NodeType::ImageWarp},
+        {"ImagePyramid", NodeType::ImagePyramid},
+        {"RandomResizedCrop", NodeType::RandomResizedCrop},
+        {"RandomAffine", NodeType::RandomAffine},
+        {"RandomPerspective", NodeType::RandomPerspective},
+        {"GaussianNoise", NodeType::GaussianNoise},
+        {"RandomGrayscale", NodeType::RandomGrayscale},
         {"AdvancedAugment", NodeType::AdvancedAugment},
         {"AugmentationPreset", NodeType::AugmentationPreset},
         {"QualityAnalyzer", NodeType::QualityAnalyzer},

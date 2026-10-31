@@ -5,6 +5,7 @@
 #include "one_vs_rest_curves.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace cyxwiz {
 
@@ -129,6 +130,82 @@ void FinishClassifierMetrics(TestingMetrics& m) {
     };
     if (!m.roc->success) m.curves_note = why(m.roc->error_message);
     else if (!m.pr->success) m.curves_note = why(m.pr->error_message);
+}
+
+bool CurvesForClass(const TestingMetrics& m, int positive, ClassCurves& out, std::string& error) {
+    out = ClassCurves{};
+    if (!m.roc || !m.roc->success || !m.pr || !m.pr->success) {
+        error = m.curves_note.empty() ? "this run has no curves" : m.curves_note;
+        return false;
+    }
+    const int classes = m.probability_classes;
+    if (positive < 0 || positive >= classes) {
+        error = "no class " + std::to_string(positive);
+        return false;
+    }
+    for (const int truth : m.ground_truth) (truth == positive ? out.positives : out.negatives)++;
+    if (classes == 2) {
+        if (positive == 1) {
+            out.roc = *m.roc;
+            out.pr = *m.pr;
+        } else {
+            const size_t samples = m.ground_truth.size();
+            std::vector<int> truth(samples);
+            std::vector<double> score(samples);
+            for (size_t i = 0; i < samples; ++i) {
+                truth[i] = m.ground_truth[i] == 0 ? 1 : 0;
+                score[i] = m.class_probabilities[i * 2];
+            }
+            out.roc = ModelEvaluation::ComputeROC(truth, score);
+            out.pr = ModelEvaluation::ComputePRCurve(truth, score);
+        }
+    } else {
+        const size_t c = static_cast<size_t>(positive);
+        if (c >= m.roc->class_fpr.size() || m.roc->class_fpr[c].empty() || c >= m.pr->class_recall.size() ||
+            m.pr->class_recall[c].empty()) {
+            error = "the test has no sample of this class, so it has no curve";
+            return false;
+        }
+        out.roc.fpr = m.roc->class_fpr[c];
+        out.roc.tpr = m.roc->class_tpr[c];
+        out.roc.thresholds = m.roc->class_thresholds[c];
+        out.roc.auc = m.roc->class_auc[c];
+        out.roc.success = true;
+        out.pr.precision = m.pr->class_precision[c];
+        out.pr.recall = m.pr->class_recall[c];
+        out.pr.thresholds = m.pr->class_thresholds[c];
+        out.pr.average_precision = m.pr->class_ap[c];
+        out.pr.success = true;
+    }
+    if (!out.roc.success || !out.pr.success) {
+        error = !out.roc.success ? out.roc.error_message : out.pr.error_message;
+        return false;
+    }
+    return true;
+}
+
+double RegressionRSquared(const TestingMetrics& m) {
+    const size_t width = static_cast<size_t>(std::max(m.regression_width, 0));
+    if (!m.regression_mode || width == 0 || m.regression_truth.empty() ||
+        m.regression_truth.size() != m.regression_predictions.size())
+        return NAN;
+    const size_t rows = m.regression_truth.size() / width;
+    double total = 0.0;
+    for (size_t t = 0; t < width; ++t) {
+        double mean = 0.0;
+        for (size_t i = 0; i < rows; ++i) mean += m.regression_truth[i * width + t];
+        mean /= static_cast<double>(rows);
+        double sse = 0.0, sst = 0.0;
+        for (size_t i = 0; i < rows; ++i) {
+            const double y = m.regression_truth[i * width + t];
+            const double e = y - m.regression_predictions[i * width + t];
+            sse += e * e;
+            sst += (y - mean) * (y - mean);
+        }
+        if (!(sst > 0.0)) return NAN;
+        total += 1.0 - sse / sst;
+    }
+    return total / static_cast<double>(width);
 }
 
 }  // namespace cyxwiz

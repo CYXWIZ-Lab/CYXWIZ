@@ -6,8 +6,12 @@
 //   -> Layer Norm (Python) -> Dense 3 (Python) -> cross entropy -> Adam
 // learns three separable classes; then each Python activation trains in
 // place of the ReLU. The same graph with built-in nodes is the yardstick.
-// Last, the example graph shipped beside the bundle (blobs_python_layers.
-// cyxgraph, four classes from blobs.csv) trains as saved.
+// Each Python loss (TOFIX125 P7) trains the built-in layers as the built-in
+// loss of the same name does: cross entropy on the classes, MSE, L1 and
+// Huber on a regression target, the same epoch losses. Last, the example
+// graph shipped beside the bundle (blobs_python_layers.cyxgraph, four
+// classes from blobs.csv, Python layers and Python cross entropy) trains as
+// saved.
 #include "../src/core/extension_node_registry.h"
 #include "../src/core/graph_training_job.h"
 #include "../src/core/python_node_bundle.h"
@@ -20,6 +24,8 @@
 #include <parquet/arrow/writer.h>
 #include <pybind11/embed.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -52,9 +58,10 @@ void Check(bool condition, const std::string& what) {
 }
 
 // Three separable classes over four features (as test_graph_training_job).
-bool WriteTabularBlobs(const fs::path& path, int rows, int seed) {
+bool WriteTabularBlobs(const fs::path& path, int rows, int seed, bool regression = false) {
     arrow::DoubleBuilder features[4];
     arrow::Int64Builder labels;
+    arrow::DoubleBuilder targets;  // regression: y = x0 + 2 x1 - x2
     uint32_t state = static_cast<uint32_t>(seed);
     const auto noise = [&state] {
         state = state * 1664525u + 1013904223u;
@@ -62,22 +69,23 @@ bool WriteTabularBlobs(const fs::path& path, int rows, int seed) {
     };
     for (int row = 0; row < rows; ++row) {
         const int label = row % 3;
+        double x[4];
         for (int column = 0; column < 4; ++column) {
-            if (!features[column].Append((column == label ? 2.0 : 0.0) + noise()).ok()) return false;
+            x[column] = (column == label ? 2.0 : 0.0) + noise();
+            if (!features[column].Append(x[column]).ok()) return false;
         }
-        if (!labels.Append(label).ok()) return false;
+        if (!labels.Append(label).ok() || !targets.Append(x[0] + 2.0 * x[1] - x[2]).ok()) return false;
     }
     std::vector<std::shared_ptr<arrow::Array>> arrays(5);
     for (int column = 0; column < 4; ++column) {
         if (!features[column].Finish(&arrays[column]).ok()) return false;
     }
-    if (!labels.Finish(&arrays[4]).ok()) return false;
-    auto table = arrow::Table::Make(arrow::schema({arrow::field("x0", arrow::float64()),
-                                                   arrow::field("x1", arrow::float64()),
-                                                   arrow::field("x2", arrow::float64()),
-                                                   arrow::field("x3", arrow::float64()),
-                                                   arrow::field("class", arrow::int64())}),
-                                    arrays);
+    if (!(regression ? targets.Finish(&arrays[4]) : labels.Finish(&arrays[4])).ok()) return false;
+    auto table = arrow::Table::Make(
+        arrow::schema({arrow::field("x0", arrow::float64()), arrow::field("x1", arrow::float64()),
+                       arrow::field("x2", arrow::float64()), arrow::field("x3", arrow::float64()),
+                       regression ? arrow::field("y", arrow::float64()) : arrow::field("class", arrow::int64())}),
+        arrays);
     auto out = arrow::io::FileOutputStream::Open(path.string());
     return out.ok() && parquet::arrow::WriteTable(*table, arrow::default_memory_pool(), *out, 100).ok() &&
            (*out)->Close().ok();
@@ -120,8 +128,17 @@ struct Layer {
     std::map<std::string, std::string> parameters;
 };
 
-// Data Input -> Split -> Loader -> layers... -> cross entropy -> Adam -> Output.
-nlohmann::json Graph(const std::vector<Layer>& layers, const std::string& content_hash) {
+// The loss: a Python loss node of the bundle, or a built-in loss.
+struct LossNode {
+    std::string python;  // node name in the bundle; empty: a built-in node
+    gui::NodeType builtin = gui::NodeType::CrossEntropyLoss;
+    std::map<std::string, std::string> parameters;
+    bool regression = false;  // the target is y, the head one value
+};
+
+// Data Input -> Split -> Loader -> layers... -> loss -> Adam -> Output.
+nlohmann::json Graph(const std::vector<Layer>& layers, const std::string& content_hash,
+                     const LossNode& loss = {}) {
     using gui::NodeType;
     nlohmann::json nodes = nlohmann::json::array();
     const auto add = [&nodes](int id, NodeType type, const std::string& name, nlohmann::json parameters) {
@@ -129,7 +146,7 @@ nlohmann::json Graph(const std::vector<Layer>& layers, const std::string& conten
     };
     add(1, NodeType::DataInput, "Blobs",
         {{"dataset_name", "tabular_blobs"}, {"file_category", "tabular"}, {"file_type", "parquet"},
-         {"label_column", "class"}});
+         {"label_column", loss.regression ? "y" : "class"}});
     add(2, NodeType::DataSplit, "Split",
         {{"seed", "42"}, {"stratified", "false"}, {"train_ratio", "0.8"}, {"val_ratio", "0.1"}, {"test_ratio", "0.1"}});
     add(3, NodeType::DataLoader, "Loader",
@@ -154,9 +171,25 @@ nlohmann::json Graph(const std::vector<Layer>& layers, const std::string& conten
         ++id;
     }
     const int last_layer = id - 1;
-    add(7, NodeType::CrossEntropyLoss, "Cross entropy", nlohmann::json::object());
+    nlohmann::json loss_parameters = nlohmann::json::object();
+    for (const auto& [key, value] : loss.parameters) loss_parameters[key] = value;
+    if (loss.python.empty()) {
+        add(7, loss.builtin, "Built-in loss", loss_parameters);
+    } else {
+        nodes.push_back(
+            {{"id", 7}, {"type", static_cast<int>(NodeType::PluginCustom)},
+             {"category", static_cast<int>(gui::NodeCategory::Plugin)}, {"name", loss.python + " (Python)"},
+             {"parameters", loss_parameters},
+             {"extension",
+              {{"contract", 1}, {"type_id", std::string(kBundleId) + ":" + loss.python}, {"version", "1.0.0"},
+               {"content_hash", content_hash},
+               {"inputs", nlohmann::json::array({{{"name", "Predictions"}, {"type", "Tensor"}},
+                                                  {{"name", "Targets"}, {"type", "Labels"}}})},
+               {"outputs", nlohmann::json::array({{{"name", "Loss"}, {"type", "Loss"}}})}}}});
+    }
     add(8, NodeType::Adam, "Adam", {{"learning_rate", "0.01"}});
-    add(9, NodeType::Output, "Output", {{"num_classes", "3"}});
+    add(9, NodeType::Output, "Output",
+        loss.regression ? nlohmann::json::object() : nlohmann::json{{"num_classes", "3"}});
     nlohmann::json links = nlohmann::json::array();
     int link_id = 1;
     const auto link = [&](int from, int from_index, int to, int to_index) {
@@ -199,6 +232,15 @@ Outcome Train(const nlohmann::json& graph, const fs::path& parquet, const fs::pa
     return outcome;
 }
 
+// The same model and batches with another loss of the same definition: the
+// same epoch losses up to float rounding.
+float LargestEpochDifference(const Outcome& a, const Outcome& b) {
+    if (!a.ok || !b.ok || a.losses.size() != b.losses.size() || a.losses.empty()) return 1e9f;
+    float worst = 0.0f;
+    for (size_t i = 0; i < a.losses.size(); ++i) worst = std::max(worst, std::fabs(a.losses[i] - b.losses[i]));
+    return worst;
+}
+
 std::string Describe(const Outcome& outcome) {
     if (!outcome.ok) return "failed: " + outcome.error;
     if (outcome.losses.empty()) return "no epochs";
@@ -217,7 +259,8 @@ int main() {
     fs::remove_all(work, ec);
     fs::create_directories(work);
     const fs::path parquet = work / "blobs.parquet";
-    if (!WriteTabularBlobs(parquet, 600, 3)) {
+    const fs::path regression_parquet = work / "rows.parquet";
+    if (!WriteTabularBlobs(parquet, 600, 3) || !WriteTabularBlobs(regression_parquet, 600, 3, true)) {
         std::cerr << "could not write the Parquet fixture\n";
         return EXIT_FAILURE;
     }
@@ -227,11 +270,15 @@ int main() {
     cyxwiz::PythonBundle bundle;
     std::string error;
     Check(cyxwiz::ReadPythonBundle(bundle_dir, bundle, error), "the bundle reads" + (error.empty() ? "" : ": " + error));
-    Check(bundle.nodes.size() == 10, "it holds ten nodes (" + std::to_string(bundle.nodes.size()) + ")");
+    Check(bundle.nodes.size() == 14, "it holds ten layers and four losses (" + std::to_string(bundle.nodes.size()) + ")");
     for (const auto& node : bundle.nodes) {
         cyxwiz::ExtensionNodeRegistry::Registration registration;
         registration.descriptor = node.descriptor;
-        registration.tensor_factory = cyxwiz::MakePythonTensorNodeFactory(bundle, node);
+        if (node.descriptor.kind == cyxwiz::ExtensionNodeKind::Loss) {
+            registration.loss_factory = cyxwiz::MakePythonLossFactory(bundle, node);
+        } else {
+            registration.tensor_factory = cyxwiz::MakePythonTensorNodeFactory(bundle, node);
+        }
         if (!cyxwiz::ExtensionNodeRegistry::Instance().Register(std::move(registration), error))
             Check(false, "registers " + node.descriptor.type_id + ": " + error);
     }
@@ -300,6 +347,36 @@ int main() {
               std::string(activation) + ": " + Describe(outcome));
     }
 
+    std::cout << "each Python loss trains as the built-in loss of the same name\n";
+    {
+        const std::vector<Layer> classifier = {{"", gui::NodeType::Dense, {{"units", "16"}}},
+                                               {"", gui::NodeType::ReLU, {}},
+                                               {"", gui::NodeType::Dense, {{"units", "3"}}}};
+        const auto ce = Train(Graph(classifier, bundle.content_hash, {"CrossEntropy"}), parquet, work / "ck_ce");
+        Check(ce.ok && ce.last_accuracy > 0.9f, "Cross Entropy (Python) learns the classes: " + Describe(ce));
+        const float ce_difference = LargestEpochDifference(ce, builtin);
+        Check(ce_difference < 1e-3f, "the built-in cross entropy's epoch losses (largest difference " +
+                                         std::to_string(ce_difference) + ")");
+
+        const std::vector<Layer> regressor = {{"", gui::NodeType::Dense, {{"units", "16"}}},
+                                              {"", gui::NodeType::ReLU, {}},
+                                              {"", gui::NodeType::Dense, {{"units", "1"}}}};
+        const struct {
+            const char* python;
+            gui::NodeType builtin;
+        } pairs[] = {{"MSE", gui::NodeType::MSELoss}, {"L1", gui::NodeType::L1Loss}, {"Huber", gui::NodeType::HuberLoss}};
+        for (const auto& pair : pairs) {
+            const auto ours = Train(Graph(regressor, bundle.content_hash, {pair.python, {}, {}, true}),
+                                    regression_parquet, work / (std::string("ck_") + pair.python));
+            const auto theirs = Train(Graph(regressor, bundle.content_hash, {"", pair.builtin, {}, true}),
+                                      regression_parquet, work / (std::string("ck_builtin_") + pair.python));
+            const float difference = LargestEpochDifference(ours, theirs);
+            Check(ours.ok && ours.losses.back() < ours.losses.front() && difference < 1e-3f,
+                  std::string(pair.python) + " (Python) = the built-in (largest epoch difference " +
+                      std::to_string(difference) + "): " + Describe(ours) + "; built-in: " + Describe(theirs));
+        }
+    }
+
     std::cout << "the example graph shipped with the bundle trains as saved\n";
     {
         const fs::path example = root / "examples" / "python_nodes" / "builtin_layers";
@@ -312,6 +389,9 @@ int main() {
                 current = current && node["extension"].value("content_hash", "") == bundle.content_hash;
         }
         Check(current, "its nodes name the bundle's current content hash");
+        // The Studio opens it ready to train (2 = LocalTraining); in the data
+        // pipeline mode (1) Train is off, which the headless job below ignores.
+        Check(graph.value("execution_mode", -1) == 2, "it opens in the training mode (execution_mode 2)");
         const fs::path blobs = work / "blobs4.parquet";
         Check(CsvToParquet(example / "blobs.csv", blobs), "blobs.csv converts to Parquet");
         cyxwiz::GraphTrainingJobRequest request;
@@ -330,7 +410,8 @@ int main() {
         outcome.error = result.error;
         Check(outcome.ok && !outcome.losses.empty() && outcome.losses.back() < outcome.losses.front() &&
                   outcome.last_accuracy > 0.9f,
-              "four classes, Dense 16 -> ReLU -> Layer Norm -> Dense 4 in Python: " + Describe(outcome));
+              "four classes, Dense 16 -> ReLU -> Layer Norm -> Dense 4 -> Cross Entropy, all Python: " +
+                  Describe(outcome));
     }
 
     fs::remove_all(work, ec);

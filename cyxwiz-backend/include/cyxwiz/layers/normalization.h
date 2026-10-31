@@ -35,6 +35,7 @@ private:
     Tensor std_inv_;
     Tensor grad_gamma_;
     Tensor grad_beta_;
+    bool forward_training_ = true;  // the statistics the last Forward used (batch or running)
 };
 
 class CYXWIZ_API LayerNormLayer : public Layer {

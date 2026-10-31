@@ -219,6 +219,16 @@ int main() {
         Check(view.no_settings_text.empty(), "not 'no settings' when a value is shown");
     }
 
+    // A loss node (P7) has a gradient check like a layer.
+    {
+        const auto loss = Node("Huber", cyxwiz::ExtensionNodeKind::Loss);
+        const std::map<std::string, std::string> none;
+        const auto view = cyxwiz::BuildExtensionPropertiesView(Inputs(loss, none));
+        Check(view.gradient.shown && view.gradient.state == cyxwiz::ExtensionGradientState::NotChecked &&
+                  view.gradient.button_label == "Check gradient",
+              "loss node: the check is offered");
+    }
+
     // A simulation node (MuJoCo) has no gradient check.
     {
         auto plant = Node("RewardFunction", cyxwiz::ExtensionNodeKind::Signal);

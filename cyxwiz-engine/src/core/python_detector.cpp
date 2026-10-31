@@ -1,16 +1,12 @@
 #include "python_detector.h"
+#include "child_process.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <filesystem>
 #include <regex>
 #include <algorithm>
 #include <cstdlib>
-
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -19,27 +15,14 @@ namespace core {
 
 namespace {
 
-std::string QuoteCommandArg(const std::string& value) {
-    std::string quoted = "\"";
-    for (char c : value) {
-        if (c == '"') {
-            quoted += "\\\"";
-        } else {
-            quoted += c;
-        }
-    }
-    quoted += "\"";
-    return quoted;
+// "py -3.12" (the Python launcher and its version) or one interpreter path.
+std::vector<std::string> InterpreterArgs(const std::string& path) {
+    if (path.rfind("py -", 0) != 0) return {path};
+    std::vector<std::string> args;
+    std::istringstream words(path);
+    for (std::string word; words >> word;) args.push_back(word);
+    return args;
 }
-
-#ifdef _WIN32
-std::string WrapForCmdExeIfNeeded(const std::string& command) {
-    if (!command.empty() && command.front() == '"') {
-        return "\"" + command + "\"";
-    }
-    return command;
-}
-#endif
 
 } // namespace
 
@@ -141,52 +124,15 @@ std::vector<std::string> PythonDetector::GetCandidatePaths() {
     return candidates;
 }
 
-int PythonDetector::ExecuteCommand(const std::string& command, std::string& output) {
-    output.clear();
-
-#ifdef _WIN32
-    FILE* pipe = _popen(command.c_str(), "r");
-#else
-    FILE* pipe = popen(command.c_str(), "r");
-#endif
-
-    if (!pipe) {
-        return -1;
-    }
-
-    // Read output from pipe
-    char buffer[2048];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
-    }
-
-    // Always close the pipe, even if fgets encounters an error
-#ifdef _WIN32
-    int exit_code = _pclose(pipe);
-#else
-    int exit_code = pclose(pipe);
-#endif
-
-    return exit_code;
-}
-
 std::optional<PythonDetector::PythonInstallation> PythonDetector::CheckPython(const std::string& path) {
     PythonInstallation result;
 
-    // Build command to get Python info as JSON
-    std::string cmd;
-    if (path.find("py -") == 0) {
-        // Python launcher
-        cmd = path + " -c \"import sys, json; print(json.dumps({'version': '.'.join(map(str, sys.version_info[:3])), 'executable': sys.executable, 'prefix': sys.prefix}))\"";
-    } else {
-        cmd = QuoteCommandArg(path) + " -c \"import sys, json; print(json.dumps({'version': '.'.join(map(str, sys.version_info[:3])), 'executable': sys.executable, 'prefix': sys.prefix}))\"";
-    }
-#ifdef _WIN32
-    cmd = WrapForCmdExeIfNeeded(cmd) + " 2>nul";
-#endif
-
+    // The interpreter's facts as JSON.
+    std::vector<std::string> args = InterpreterArgs(path);
+    args.insert(args.end(), {"-c", "import sys, json; print(json.dumps({'version': '.'.join(map(str, "
+                                   "sys.version_info[:3])), 'executable': sys.executable, 'prefix': sys.prefix}))"});
     std::string output;
-    int exit_code = ExecuteCommand(cmd, output);
+    const int exit_code = RunHidden(args, &output);
 
     if (exit_code != 0 || output.empty()) {
         return std::nullopt;
@@ -217,27 +163,8 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::CheckPython(co
         return std::nullopt;
     }
 
-    // Check for venv module
-    std::string venv_cmd = QuoteCommandArg(result.executable_path) + " -m venv --help";
-#ifdef _WIN32
-    venv_cmd = WrapForCmdExeIfNeeded(venv_cmd);
-    venv_cmd += " >nul 2>&1";
-#else
-    venv_cmd += " >/dev/null 2>&1";
-#endif
-
-    result.has_venv_module = (system(venv_cmd.c_str()) == 0);
-
-    // Check for pip
-    std::string pip_cmd = QuoteCommandArg(result.executable_path) + " -m pip --version";
-#ifdef _WIN32
-    pip_cmd = WrapForCmdExeIfNeeded(pip_cmd);
-    pip_cmd += " >nul 2>&1";
-#else
-    pip_cmd += " >/dev/null 2>&1";
-#endif
-
-    result.has_pip = (system(pip_cmd.c_str()) == 0);
+    result.has_venv_module = RunHidden({result.executable_path, "-m", "venv", "--help"}) == 0;
+    result.has_pip = RunHidden({result.executable_path, "-m", "pip", "--version"}) == 0;
 
     return result;
 }
@@ -263,7 +190,36 @@ bool PythonDetector::MeetsRequirements(const PythonInstallation& python) {
     return true;
 }
 
+namespace {
+
+int EmbeddedMinor() {
+#ifdef CYXWIZ_PYTHON_LINKED_MINOR
+    return CYXWIZ_PYTHON_LINKED_MINOR;
+#else
+    return 0;
+#endif
+}
+
+} // namespace
+
+std::string PythonDetector::SupportedVersionsText() {
+    const int embedded = EmbeddedMinor();
+    return embedded != 0 ? "3." + std::to_string(embedded) : "3.12-3.13";
+}
+
 std::string PythonDetector::GetRequirementError(const PythonInstallation& python) {
+    return GetRequirementError(python, EmbeddedMinor());
+}
+
+std::string PythonDetector::GetRequirementError(const PythonInstallation& python, int embedded_minor) {
+    // An embedded libpython accepts only its own minor version, so the
+    // general 3.12-3.13 range would name versions this Engine cannot use.
+    if (embedded_minor != 0 && (python.major != 3 || python.minor != embedded_minor)) {
+        const std::string embedded = "3." + std::to_string(embedded_minor);
+        return "This Engine embeds Python " + embedded + " and needs a matching " + embedded + "; found " +
+               python.version;
+    }
+
     if (python.major < 3 || (python.major == 3 && python.minor < 12)) {
         return "Python version too old (supported versions: 3.12-3.13; found " + python.version + ")";
     }
@@ -271,13 +227,6 @@ std::string PythonDetector::GetRequirementError(const PythonInstallation& python
     if (python.major > 3 || (python.major == 3 && python.minor > 13)) {
         return "Python version unsupported (supported versions: 3.12-3.13; found " + python.version + ")";
     }
-
-#ifdef CYXWIZ_PYTHON_LINKED_MINOR
-    if (python.major == 3 && python.minor != CYXWIZ_PYTHON_LINKED_MINOR) {
-        return "This Engine embeds Python 3." + std::to_string(CYXWIZ_PYTHON_LINKED_MINOR) +
-               "; found " + python.version;
-    }
-#endif
 
     if (!python.has_venv_module) {
         return "Python missing venv module (required for creating virtual environments)";
@@ -331,7 +280,7 @@ std::optional<PythonDetector::PythonInstallation> PythonDetector::FindBestPython
     }
 
     if (valid.empty()) {
-        spdlog::warn("No supported Python 3.12-3.13 installations found");
+        spdlog::warn("No supported Python {} installations found", SupportedVersionsText());
         return std::nullopt;
     }
 

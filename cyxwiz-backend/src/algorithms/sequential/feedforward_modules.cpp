@@ -224,7 +224,7 @@ Tensor EmbeddingModule::Forward(const Tensor& input) {
         const af::array first_bad = af::where(af::flat(invalid));
         if (first_bad.elements() > 0) {
             const Tensor position = Tensor::FromRowMajorFlatArray(first_bad(0), {1});
-            const unsigned at = position.ReadData<unsigned>()[0];
+            const unsigned at = static_cast<unsigned>(position.ReadData<int64_t>()[0]);  // af::where: u32 -> Int64
             const Tensor value = Tensor::FromRowMajorFlatArray(ids(at).as(f64), {1});
             throw std::runtime_error(
                 "EmbeddingModule: token id " + std::to_string(value.ReadData<double>()[0]) +

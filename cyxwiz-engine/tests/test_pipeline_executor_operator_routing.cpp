@@ -41,6 +41,7 @@
 #include <limits>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <thread>
 
@@ -307,6 +308,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "JSONPathExtractor",
         "KMeansCluster",
         "KNNClassifier",
+        "TSNENode",
+        "UMAPNode",
         "LabelEncoder",
         "LinearRegressionNode",
         "LogisticRegressionNode",
@@ -330,6 +333,11 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "RenameColumns",
         "RandomForestClassifier",
         "RobustScaler",
+        "HypothesisTest",
+        "MaxAbsScaler",
+        "MinMaxScaler",
+        "QuantileTransform",
+        "PowerTransform",
         "ROCCurveNode",
         "RowToColumnNames",
         "RuleEngine",
@@ -364,6 +372,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "TSFeatures",
         "TSLag",
         "TestEvaluationNode",
+        "CrossValidationNode",
+        "LearningCurvesNode",
         "TSWindow",
         "ValueCounts",
         "WordEmbeddings",
@@ -1765,7 +1775,7 @@ void CheckStreamingScaler() {
     auto log_graph = [&](bool disk, const std::string& expected) {
         return std::string(R"({"nodes":[{"id":95201,"type":"DataInput","name":"Values","parameters":{"source_type":"file","type":"parquet","force_disk_backed":")") +
             (disk ? "true" : "false") + R"(","file_path":")" + JsonEscapePath(file.string()) +
-            R"("}},{"id":95202,"type":"LogTransform","name":"Log","parameters":{"value_col":"id"}},)"
+            R"("}},{"id":95202,"type":"LogTransform","name":"Log","parameters":{"columns":"id"}},)"
             R"({"id":95203,"type":"RowCountCheck","name":"Count","parameters":{"check_name":"all rows","expected_rows":")" + expected +
             R"("}}],"links":[{"start_node":95201,"end_node":95202},{"start_node":95202,"end_node":95203}]})";
     };
@@ -3957,16 +3967,16 @@ int main(int argc, char** argv) {
         R"({"id":3,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
-        R"({"id":4,"type":"TSNENode","name":"TSNE","parameters":{}})"
+        R"({"id":4,"type":"FeatureImportanceNode","name":"Importance","parameters":{}})"
         R"(],"links":[{"start_node":3,"end_node":4}]})";
 
     cyxwiz::PipelineExecutor unsupported_executor;
     Check(!unsupported_executor.ExecutePipeline(unsupported_json),
-          "TSNENode should fail closed in PipelineExecutor");
+          "FeatureImportanceNode should fail closed in PipelineExecutor");
     Check(unsupported_executor.GetLastError().find(
-              "legacy t-SNE graph execution is not implemented") !=
+              "feature-importance graph execution is not implemented") !=
               std::string::npos,
-          "TSNENode fail-closed error should come from runtime capabilities: " +
+          "FeatureImportanceNode fail-closed error should come from runtime capabilities: " +
               unsupported_executor.GetLastError());
 
     struct RepresentativeFailClosedCase {
@@ -3986,11 +3996,8 @@ int main(int argc, char** argv) {
           "Retired visualizer rejection should identify its type");
 
     const RepresentativeFailClosedCase representative_fail_closed_nodes[] = {
-        {"UMAPNode", false},
         {"TrainTestSplit", false},
-        {"LearningCurvesNode", false},
         {"FeatureImportanceNode", false},
-        {"CrossValidationNode", false},
         {"Normalize", false},
         {"OneHotEncode", false},
         {"AudioInput", false},
@@ -4443,10 +4450,10 @@ int main(int argc, char** argv) {
     cyxwiz::PipelineExecutor unsupported_folder_category_executor;
     Check(!unsupported_folder_category_executor.ExecutePipeline(
               unsupported_folder_category_json),
-          "DataInput audio folder should fail validation on PipelineExecutor");
+          "DataInput folder source should fail validation on PipelineExecutor");
     Check(unsupported_folder_category_executor.GetLastError().find(
-              "folder source only supports image category") != std::string::npos,
-          "DataInput folder category validation should be specific: " +
+              "DataInput source_type 'folder' is not supported") != std::string::npos,
+          "DataInput folder source error should be specific: " +
               unsupported_folder_category_executor.GetLastError());
 
     const std::string bad_skip_rows_json =
@@ -4909,6 +4916,57 @@ int main(int argc, char** argv) {
               std::string::npos,
           "MinMaxScaler columns validation should be specific: " +
               bad_minmax_scaler_column_type_executor.GetLastError());
+
+    // The Hypothesis Test node (TOFIX129 D3) names a column its input lacks.
+    {
+        const std::string json =
+            R"({"nodes":[)"
+            R"({"id":9401,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":9402,"type":"HypothesisTest","name":"Bad","parameters":{"question":"one_value","values":"no_such_column"}})"
+            R"(],"links":[{"start_node":9401,"end_node":9402}]})";
+        cyxwiz::PipelineExecutor test_executor;
+        Check(!test_executor.ExecutePipeline(json), "HypothesisTest on a missing column should fail");
+        Check(test_executor.GetLastError().find("HypothesisTest") != std::string::npos &&
+                  test_executor.GetLastError().find("no_such_column") != std::string::npos,
+              "HypothesisTest missing-column error should name it: " + test_executor.GetLastError());
+    }
+
+    // The Cross-Validation / Learning Curves nodes (TOFIX129 D4) refuse settings Train could not use.
+    for (const auto& [type, params, word] : {std::tuple{"CrossValidationNode", R"({"folds":"1"})", "folds"},
+                                             std::tuple{"LearningCurvesNode", R"({"train_sizes":"50%"})", "train_sizes"}}) {
+        const std::string json =
+            R"({"nodes":[)"
+            R"({"id":9411,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":9412,"type":")" + std::string(type) + R"(","name":"Bad","parameters":)" + params + "}"
+            R"(],"links":[{"start_node":9411,"end_node":9412}]})";
+        cyxwiz::PipelineExecutor folds_executor;
+        Check(!folds_executor.ExecutePipeline(json), std::string(type) + " with bad settings should fail");
+        Check(folds_executor.GetLastError().find(word) != std::string::npos,
+              std::string(type) + " error should name the setting: " + folds_executor.GetLastError());
+    }
+
+    // The fitted transforms of TOFIX129 D2 refuse a text column, as Min-Max does.
+    {
+        int id = 9301;
+        for (const std::string node : {"MaxAbsScaler", "QuantileTransform", "PowerTransform"}) {
+            const std::string json =
+                R"({"nodes":[)"
+                R"({"id":)" + std::to_string(id) + R"(,"type":"DataInput","name":"Input","parameters":{)"
+                R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+                R"(","type":"csv","has_header":"true"}},)"
+                R"({"id":)" + std::to_string(id + 1) + R"(,"type":")" + node + R"(","name":"Bad","parameters":{"columns":"phrase"}})"
+                R"(],"links":[{"start_node":)" + std::to_string(id) + R"(,"end_node":)" + std::to_string(id + 1) + "}]}";
+            cyxwiz::PipelineExecutor transform_executor;
+            Check(!transform_executor.ExecutePipeline(json), node + " string columns should fail schema validation");
+            Check(transform_executor.GetLastError().find(node + ": column 'phrase' must be numeric") != std::string::npos,
+                  node + " columns validation should be specific: " + transform_executor.GetLastError());
+            id += 2;
+        }
+    }
 
     const std::string bad_robust_scaler_centering_json =
         R"({"nodes":[)"
@@ -5722,6 +5780,40 @@ int main(int argc, char** argv) {
           "GMMCluster feature_cols validation should be specific: " +
               bad_gmm_feature_type_executor.GetLastError());
 
+    // t-SNE and UMAP (TOFIX129 D5): numeric features only; a run adds the embedding beside the input.
+    for (const char* type : {"TSNENode", "UMAPNode"}) {
+        const std::string bad_embedding_json =
+            R"({"nodes":[)"
+            R"({"id":707,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":708,"type":")" + std::string(type) + R"(","name":"BadEmbedding","parameters":{)"
+            R"("feature_cols":"phrase"}})"
+            R"(],"links":[{"start_node":707,"end_node":708}]})";
+        cyxwiz::PipelineExecutor bad_embedding_executor;
+        Check(!bad_embedding_executor.ExecutePipeline(bad_embedding_json),
+              std::string(type) + " string feature_cols should fail schema validation");
+        Check(bad_embedding_executor.GetLastError().find("feature column 'phrase' must be numeric") != std::string::npos,
+              std::string(type) + " feature_cols validation should be specific: " + bad_embedding_executor.GetLastError());
+
+        const std::string embedding_json =
+            R"({"nodes":[)"
+            R"({"id":709,"type":"DataInput","name":"Input","parameters":{)"
+            R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+            R"(","type":"csv","has_header":"true"}},)"
+            R"({"id":710,"type":")" + std::string(type) + R"(","name":"Embedding","parameters":{)"
+            R"("feature_cols":"x,y","perplexity":"2","iterations":"250","n_neighbors":"3"}})"
+            R"(],"links":[{"start_node":709,"end_node":710}]})";
+        cyxwiz::PipelineExecutor embedding_executor;
+        Check(embedding_executor.ExecutePipeline(embedding_json),
+              std::string(type) + " should run as an operator: " + embedding_executor.GetLastError());
+        const auto embedded_dataset = registry.GetArrowDataset("ds_operator_" + std::string(type) + "_710");
+        const auto embedded = embedded_dataset ? embedded_dataset->GetArrowTable() : nullptr;
+        const std::string prefix = std::string(type) == "TSNENode" ? "tsne_" : "umap_";
+        Check(embedded && embedded->GetColumnByName(prefix + "0") && embedded->GetColumnByName(prefix + "1") && embedded->GetColumnByName("x"),
+              std::string(type) + " should add its embedding beside the input columns");
+    }
+
     const std::string bad_exp_smoothing_method_json =
         R"({"nodes":[)"
         R"({"id":324,"type":"DataInput","name":"Input","parameters":{)"
@@ -5968,17 +6060,17 @@ int main(int argc, char** argv) {
         R"("source_type":"file","file_path":")" + JsonEscapePath(mixed_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":708,"type":"LogTransform","name":"BadLogValue","parameters":{)"
-        R"("value_col":"phrase"}})"
+        R"("columns":"phrase"}})"
         R"(],"links":[{"start_node":707,"end_node":708}]})";
 
     cyxwiz::PipelineExecutor bad_log_transform_value_type_executor;
     Check(!bad_log_transform_value_type_executor.ExecutePipeline(
               bad_log_transform_value_type_json),
-          "LogTransform string value_col should fail schema validation");
+          "LogTransform string columns should fail schema validation");
     Check(bad_log_transform_value_type_executor.GetLastError().find(
-              "LogTransform: value column 'phrase' must be numeric") !=
+              "LogTransform: column 'phrase' must be numeric") !=
               std::string::npos,
-          "LogTransform value_col validation should be specific: " +
+          "LogTransform columns validation should be specific: " +
               bad_log_transform_value_type_executor.GetLastError());
 
     const std::string bad_differencing_value_type_json =
@@ -6208,7 +6300,7 @@ int main(int argc, char** argv) {
               bad_decomposition_period_json),
           "TimeSeriesDecomposition period 1 should fail validation");
     Check(bad_decomposition_period_executor.GetLastError().find(
-              "TimeSeriesDecomposition period must be an integer >= 2") !=
+              "TimeSeriesDecomposition period must be an integer >= -1 except 0, 1") !=
               std::string::npos,
           "TimeSeriesDecomposition period validation should be specific: " +
               bad_decomposition_period_executor.GetLastError());
@@ -9074,16 +9166,16 @@ int main(int argc, char** argv) {
         R"("text_col":"phrase","output_format":"sparse"}})"
         R"(],"links":[{"start_node":221,"end_node":224}]})";
 
+    // Sparse output runs in the pipeline run (TOFIX178 S0-f): the node's
+    // result is a CSR feature dataset.
     cyxwiz::PipelineExecutor count_vectorizer_sparse_executor;
-    Check(!count_vectorizer_sparse_executor.ExecutePipeline(
+    Check(count_vectorizer_sparse_executor.ExecutePipeline(
               count_vectorizer_sparse_json),
-          "CountVectorizer sparse output must fail on the Arrow-only pipeline path");
-    Check(count_vectorizer_sparse_executor.GetLastError().find(
-              "CountVectorizer: sparse output requires typed materializer "
-              "publication; the Arrow table path remains fail-closed") !=
-              std::string::npos,
-          "CountVectorizer sparse output validation should be specific: " +
+          "CountVectorizer sparse output runs in the pipeline run: " +
               count_vectorizer_sparse_executor.GetLastError());
+    Check(cyxwiz::DataRegistry::Instance().IsSparseFeatureDataset("ds_operator_CountVectorizer_224"),
+          "CountVectorizer sparse output is registered as sparse features");
+    count_vectorizer_sparse_executor.ReleaseAll();
     Check(!cyxwiz::DataRegistry::Instance().GetArrowDataset(
               "ds_operator_CountVectorizer_224"),
           "rejected sparse output must not publish an Arrow dataset");

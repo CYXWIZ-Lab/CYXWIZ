@@ -7,6 +7,9 @@
 #include "../src/core/extension_node_registry.h"
 #include "../src/core/graph_training_job.h"
 #include "../src/plugin/plugin_manager.h"
+#include "../src/plugin/plugin_version_constraint.h"
+#include "../src/plugin/registries/plugin_panel_registry.h"
+#include "../src/plugin/registries/plugin_training_hook_manager.h"
 #include "causal_lm_token_window_fixture.h"
 #include "route_qualification_test_fixture.h"
 
@@ -20,6 +23,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
@@ -217,6 +221,189 @@ int main() {
         Check(registry.Has(std::string(kPluginId) + ":Snake"), "its nodes are back");
         manager.UnloadPlugin(kPluginId);
         Check(!LibraryLoaded(), "nothing held it: the library is freed with the unload");
+    }
+
+    std::cout << "a node the Engine refuses is reported with its reason, not only logged\n";
+    {
+        // Something else already holds the Snake type id, so the plugin's
+        // Snake cannot register; Softsign still does.
+        struct NoFactory : cyxwiz::ITensorNodeFactory {
+            cyxwiz::ExtensionShapeResult InferOutputShape(const std::vector<size_t>&,
+                                                          const std::map<std::string, std::string>&) const override {
+                return {};
+            }
+            std::unique_ptr<cyxwiz::Module> CreateModule(const std::vector<size_t>&,
+                                                         const std::map<std::string, std::string>&,
+                                                         std::string&) const override {
+                return nullptr;
+            }
+        };
+        cyxwiz::ExtensionNodeRegistry::Registration taken;
+        taken.descriptor.provider_id = kPluginId;
+        taken.descriptor.type_name = "Snake";
+        taken.descriptor.kind = cyxwiz::ExtensionNodeKind::TensorLayer;
+        taken.descriptor.source_path = "a test that took the id first";
+        taken.tensor_factory = std::make_shared<NoFactory>();
+        std::string error;
+        const bool registered = registry.Register(std::move(taken), error);
+        Check(registered, "the Snake id is taken first" + (error.empty() ? std::string() : ": " + error));
+
+        Check(manager.LoadPlugin(plugin_dir) && manager.InitializePlugin(kPluginId), "the plugin still loads");
+        const auto* loaded = manager.GetLoadedPlugin(kPluginId);
+        Check(loaded && loaded->skipped_nodes.size() == 1, "one node is reported as not added");
+        Check(loaded && !loaded->skipped_nodes.empty() &&
+                  loaded->skipped_nodes[0].find("Snake") != std::string::npos &&
+                  loaded->skipped_nodes[0].find("already registered") != std::string::npos,
+              "the reason names the node and why: " +
+                  (loaded && !loaded->skipped_nodes.empty() ? loaded->skipped_nodes[0] : std::string("none")));
+        Check(registry.Has(std::string(kPluginId) + ":Softsign"), "the other node is added");
+        manager.UnloadPlugin(kPluginId);
+    }
+
+    std::cout << "plugin.json dependency versions\n";
+    {
+        using cyxwiz::plugin::PluginVersion;
+        using cyxwiz::plugin::VersionMeetsConstraint;
+        const PluginVersion v = PluginVersion::Parse("1.4.2");
+        Check(VersionMeetsConstraint(v, "") && VersionMeetsConstraint(v, "*"), "no constraint accepts any version");
+        Check(VersionMeetsConstraint(v, "1.4.2") && !VersionMeetsConstraint(v, "1.4.3"), "a bare version is exact");
+        Check(VersionMeetsConstraint(v, ">=1.4") && !VersionMeetsConstraint(v, ">1.4.2") &&
+                  VersionMeetsConstraint(v, "<2") && !VersionMeetsConstraint(v, "<=1.4.1"),
+              ">=, >, <, <= compare");
+        Check(VersionMeetsConstraint(v, "^1.2.0") && !VersionMeetsConstraint(v, "^2.0.0") &&
+                  !VersionMeetsConstraint(PluginVersion::Parse("0.3.0"), "^0.2.0"),
+              "^ keeps the major (the minor below 1.0)");
+        Check(VersionMeetsConstraint(v, "~1.4.0") && !VersionMeetsConstraint(v, "~1.3.0"), "~ keeps major.minor");
+        Check(VersionMeetsConstraint(v, ">=1.0 <2.0") && !VersionMeetsConstraint(v, ">=1.0 <1.4"),
+              "several constraints must all hold");
+        std::string error;
+        Check(!VersionMeetsConstraint(v, ">=one", &error) && error.find("cannot read") != std::string::npos,
+              "an unreadable constraint is refused with the reason: " + error);
+    }
+
+    std::cout << "a plugin starts only after its dependencies\n";
+    {
+        // A copy of the example plugin under another id, with dependencies.
+        const fs::path dependent = work / "dependent";
+        fs::create_directories(dependent / "bin");
+        fs::copy(plugin_dir / "bin", dependent / "bin", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+        nlohmann::json manifest;
+        std::ifstream(plugin_dir / "plugin.json") >> manifest;
+        const std::string dependent_id = "com.cyxwiz.test.dependent";
+        manifest["id"] = dependent_id;
+        const auto start = [&](const nlohmann::json& dependencies) {
+            manifest["dependencies"] = dependencies;
+            std::ofstream(dependent / "plugin.json") << manifest.dump(2);
+            manager.UnloadPlugin(dependent_id);
+            std::string error;
+            Check(manager.LoadPlugin(dependent, &error), "the dependent copy loads" + (error.empty() ? "" : ": " + error));
+            return manager.InitializePlugin(dependent_id);
+        };
+        const auto reason = [&]() {
+            const auto* loaded = manager.GetLoadedPlugin(dependent_id);
+            return loaded ? loaded->error_message : std::string("not loaded");
+        };
+        using cyxwiz::plugin::PluginState;
+
+        // Each result first: the message reads the reason it left.
+        const auto outcome = [&](const nlohmann::json& dependencies, PluginState state, const std::string& words) {
+            const bool started = start(dependencies);
+            return !started && manager.GetPluginState(dependent_id) == state &&
+                   reason().find(words) != std::string::npos;
+        };
+        bool ok = outcome({{{"id", "com.cyxwiz.test.missing"}, {"version", ">=1.0.0"}}}, PluginState::Failed,
+                          "not installed");
+        Check(ok, "a missing dependency stops it: " + reason());
+
+        manager.UnloadPlugin(kPluginId);
+        Check(manager.LoadPlugin(plugin_dir), "the dependency loads (not started)");
+        ok = outcome({{{"id", kPluginId}, {"version", ">=2.0.0"}}}, PluginState::Failed, "version 1.0.0 is installed");
+        Check(ok, "a dependency of another version stops it: " + reason());
+
+        ok = outcome({{{"id", kPluginId}, {"version", "^1.0.0"}}}, PluginState::Loaded, "waits for");
+        Check(ok, "a dependency not started yet makes it wait: " + reason());
+        Check(manager.InitializePlugin(kPluginId) &&
+                  manager.GetPluginState(dependent_id) == PluginState::Initialized,
+              "it starts when its dependency does");
+        manager.UnloadPlugin(dependent_id);
+        manager.UnloadPlugin(kPluginId);
+    }
+
+    std::cout << "a loaded plugin's build output is not locked; a rebuild loads as a new copy\n";
+    {
+        const fs::path rebuild = work / "rebuild";
+        fs::create_directories(rebuild);
+        fs::copy(plugin_dir / "bin", rebuild / "bin", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+        nlohmann::json manifest;
+        std::ifstream(plugin_dir / "plugin.json") >> manifest;
+        const std::string rebuild_id = "com.cyxwiz.test.rebuild";
+        manifest["id"] = rebuild_id;
+        std::ofstream(rebuild / "plugin.json") << manifest.dump(2);
+
+        std::string error;
+        Check(manager.LoadPlugin(rebuild, &error) && manager.InitializePlugin(rebuild_id),
+              "the plugin loads" + (error.empty() ? "" : ": " + error));
+        const auto* first = manager.GetLoadedPlugin(rebuild_id);
+        const fs::path built = first ? first->dll_path : fs::path();
+        const fs::path first_copy = first ? first->loaded_from : fs::path();
+        Check(!first_copy.empty() && first_copy != built && fs::is_regular_file(first_copy),
+              "it runs from a private copy: " + first_copy.string());
+        bool writable = false;
+        {
+            // A rebuild: the linker rewrites the file. Trailing bytes keep
+            // the library loadable and change its content.
+            std::ofstream out(built, std::ios::binary | std::ios::app);
+            out << "rebuilt";
+            writable = static_cast<bool>(out);
+        }
+        Check(writable, "the build output can be rewritten while the plugin is loaded");
+
+        manager.UnloadPlugin(rebuild_id);
+        error.clear();
+        Check(manager.LoadPlugin(rebuild, &error) && manager.InitializePlugin(rebuild_id),
+              "the rebuilt plugin loads again" + (error.empty() ? "" : ": " + error));
+        const auto* second = manager.GetLoadedPlugin(rebuild_id);
+        const fs::path second_copy = second ? second->loaded_from : fs::path();
+        Check(!second_copy.empty() && second_copy.parent_path() != first_copy.parent_path(),
+              "the rebuild runs from a new copy: " + second_copy.string());
+        manager.UnloadPlugin(rebuild_id);
+    }
+
+    std::cout << "a provider offered twice registers once\n";
+    {
+        // A plugin may offer the same object through QueryInterface and a
+        // context Register* call: one registration, no duplicate warnings.
+        struct Hook final : cyxwiz::plugin::ITrainingHook {};
+        struct Panels final : cyxwiz::plugin::IPanelProvider {
+            std::vector<cyxwiz::plugin::PluginPanelInfo> GetPanels() override {
+                cyxwiz::plugin::PluginPanelInfo info;
+                info.panel_id = "com.cyxwiz.test.twice.panel";
+                info.title = "Twice";
+                return {info};
+            }
+            void RenderPanel(const std::string&, bool*) override {}
+        };
+        Hook hook;
+        Panels panels;
+        auto& hooks = cyxwiz::plugin::PluginTrainingHookManager::Instance();
+        auto& panel_registry = cyxwiz::plugin::PluginPanelRegistry::Instance();
+        const size_t hooks_before = hooks.GetHookCount();
+        hooks.RegisterHook("com.cyxwiz.test.twice", &hook);
+        hooks.RegisterHook("com.cyxwiz.test.twice", &hook);
+        Check(hooks.GetHookCount() == hooks_before + 1, "a training hook offered twice is called once");
+        panel_registry.Register("com.cyxwiz.test.twice", &panels);
+        panel_registry.RegisterDirect("com.cyxwiz.test.twice", "com.cyxwiz.test.twice.panel", "Twice", "", false,
+                                      &panels);
+        Check(panel_registry.CountForPlugin("com.cyxwiz.test.twice") == 1, "a panel offered twice is listed once");
+        hooks.RemoveByPlugin("com.cyxwiz.test.twice");
+        panel_registry.RemoveByPlugin("com.cyxwiz.test.twice");
+    }
+
+    std::cout << "a folder that cannot load says why\n";
+    {
+        std::string error;
+        const bool loaded = manager.LoadPlugin(work / "no-such-plugin", &error);
+        Check(!loaded && !error.empty(), "LoadPlugin gives its reason: " + error);
     }
 
     fs::remove_all(work, ec);

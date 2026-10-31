@@ -170,11 +170,8 @@ void DistributionView::RenderControls(const ExploreContext& context, const Datas
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_dim, "Bins");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(60.0f);
-    // The histogram follows when the field is left, not on every key.
-    ImGui::InputInt("##dist_bins", &bins_edit_, 0, 0);
-    if (ImGui::IsItemDeactivatedAfterEdit()) bins_wanted_ = bins_edit_ = std::clamp(bins_edit_, 5, 100);
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("5 to 100 bins (the profile keeps 20)");
+    // Typed; the histogram follows when the field is left.
+    ui::NumberField("##dist_bins", &bins_wanted_, 5, 100, 0, 60.0f, "Bins of the histogram (the profile keeps 20)");
     row.Next(ui::ButtonWidth("Export CSV...", ui::ButtonSize::Small));
     const auto* figures = figures_.Answer(context.dataset + "\x1f" + column_);
     if (ui::SecondaryButton("Export CSV...", figures != nullptr, "The figures are still being computed") && figures)

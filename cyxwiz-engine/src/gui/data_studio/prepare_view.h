@@ -15,6 +15,8 @@
 #include "../guided_editor.h"
 #include "../sql_editor_pane.h"
 #include "../table_grid.h"
+#include "image_recipe_view.h"
+#include "transform_step_view.h"
 
 #include <cstdint>
 #include <functional>
@@ -39,6 +41,14 @@ public:
     void Render();
     // Shows this step (a rail double-click, the node strip).
     void Select(int step_id);
+    // Adds a node of `type` after `after` (Data > Transform), picks it once it
+    // is on the canvas, and opens Compare methods on it when `compare`.
+    void AddAfter(int after, ::gui::NodeType type, std::map<std::string, std::string> parameters, bool compare);
+    // Says why nothing was added (no data to add a step after).
+    void Notice(std::string text) {
+        message_ = std::move(text);
+        message_error_ = true;
+    }
 
     std::function<void()> raise_canvas;              // brings CyxWiz Studio forward
     std::function<void(const std::vector<int>&)> show_on_canvas;
@@ -58,6 +68,8 @@ private:
     // Adds a node after a step (on the canvas): an SQL step (guided or not) or another step node.
     void AddStepAfter(int step_id, ::gui::NodeType type, bool guided = false);
     void RenderAddStepMenu(int step_id);  // the "Add a step" menu's items
+    void RenderEmpty();                   // no steps yet: what to do, Add a step after a Data Input
+    void PickWhenAdded(bool compare);     // picks the next step the canvas adds
     void StartPartCounts(const studio::GraphNode& node);
     // The step's inputs by the names its query uses, with their tables when in memory.
     std::vector<::gui::GuidedEditor::Input> StepInputs(int step_id) const;
@@ -72,6 +84,8 @@ private:
     int recipe_ = -1;                // the recipe shown (-1: the loose steps)
     std::vector<studio::StepRow> steps_;
     int selected_ = -1;
+    int pick_after_ = -2;            // PickWhenAdded: the canvas's last added step before it (-2: none wanted)
+    bool pick_compare_ = false;
     float list_width_ = 270.0f;
 
     ::gui::SqlEditorPane pane_{"data_studio_prepare"};
@@ -86,6 +100,8 @@ private:
     std::string message_;
     bool message_error_ = false;
 
+    TransformStepView transform_;    // a scale, power or log step (TOFIX129 D2)
+    ImageRecipeView image_recipe_;   // an image graph's steps (TOFIX178 1.6)
     TableGrid grid_;
     std::string grid_key_;           // dataset + finish time shown
     std::shared_ptr<PartCounts> parts_;

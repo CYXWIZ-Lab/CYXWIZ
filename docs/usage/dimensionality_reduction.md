@@ -1,10 +1,10 @@
 # Dimensionality reduction
 
-The Dimensionality Reduction panel (PCA, t-SNE, UMAP) and the PCA node in Data
-Studio compute on the device selected in the Devices tab (CUDA, OpenCL, or
-ArrayFire's CPU backend). There is no separate CPU code path; a build without
-ArrayFire reports that the method needs ArrayFire. If a run is refused or fails,
-the panel shows the reason under the settings.
+Data Studio's Explore > Projection tab ([Data Studio](data_studio.md#projection))
+and the PCA, t-SNE and UMAP nodes compute on the device selected in the Devices
+tab (CUDA, OpenCL, or ArrayFire's CPU backend). There is no separate CPU code
+path; a build without ArrayFire reports that the method needs ArrayFire. If a
+run is refused or fails, the tab or the node says why.
 
 ## PCA
 
@@ -62,4 +62,19 @@ updates.
 ## Size
 
 t-SNE and UMAP hold n × n matrices on the device and do n² work per step, so
-they suit up to a few tens of thousands of rows.
+they suit up to a few tens of thousands of rows. The Projection tab reads at
+most 5,000 rows (a seeded sample beyond); the nodes read every row and check
+first that the n × n matrix fits in memory.
+
+## The nodes
+
+- **PCA**: **keep_columns** (default off) keeps the input columns and adds
+  Float64 `pc_0` .. beside them, null on rows missing a feature. Off, the
+  output is Float32 `pc_*` (and the label as `y`) for the rows with every
+  feature. **scale** standardises first.
+- **t-SNE** and **UMAP**: `tsne_*` / `umap_*` beside the input columns
+  (keep_columns, default on), standardised first (standardise, default on),
+  2 or 3 dimensions. t-SNE takes perplexity, learning_rate and iterations (at
+  least 250, the early exaggeration), and stops when the run is cancelled; UMAP
+  takes n_neighbors and min_dist. Rows missing a feature are left out with
+  nulls.

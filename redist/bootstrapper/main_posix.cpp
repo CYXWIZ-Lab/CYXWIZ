@@ -270,14 +270,21 @@ int main(int argc, char** argv) {
         installer_mode = true;
         ++first_forwarded_argument;
     }
-    // Runs the base's plugin check tool with the active runtime's library
-    // path, in the caller's folder so relative plugin paths work (TOFIX125 P5).
+    // cyxwiz-cli, this launcher's command-line build
+    // (CYXWIZ_COMMAND_LINE_TOOL), the same on every platform:
+    // `plugin-check <folder>...` runs the base's plugin check tool with the
+    // active runtime's library path, in the caller's folder so relative
+    // plugin paths work (TOFIX125).
     bool plugin_check_mode = false;
-    if (!installer_mode && argc > first_forwarded_argument &&
-        std::string_view(argv[first_forwarded_argument]) == "--plugin-check") {
-        plugin_check_mode = true;
-        ++first_forwarded_argument;
+#ifdef CYXWIZ_COMMAND_LINE_TOOL
+    if (installer_mode || argc <= first_forwarded_argument ||
+        std::string_view(argv[first_forwarded_argument]) != "plugin-check") {
+        std::cerr << "usage: cyxwiz-cli [--runtime-root <folder>] plugin-check [--open <file>]... <plugin folder>...\n";
+        return 64;
     }
+    plugin_check_mode = true;
+    ++first_forwarded_argument;
+#endif
     std::error_code caller_directory_error;
     const auto caller_directory = std::filesystem::current_path(caller_directory_error);
 

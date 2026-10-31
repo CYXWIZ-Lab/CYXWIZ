@@ -18,6 +18,17 @@ class IExecutableModel;
 /**
  * Checkpoint metadata stored alongside model weights
  */
+// The Data Split a run trained with (absent in older checkpoints). Run Test
+// reads the test part from it, so a model is never tested on rows or images
+// it trained on when the graph's Data Split changed since.
+struct CheckpointDataSplit {
+    bool known = false;
+    float train = 0.8f, val = 0.1f, test = 0.1f;
+    bool stratified = false;
+    int seed = 42;
+    std::vector<std::string> excluded_files;  // images a Quality node left out
+};
+
 struct CheckpointMetadata {
     TrainingRandomness randomness; // Seed provenance, not random-stream continuation.
     // Training state
@@ -57,6 +68,7 @@ struct CheckpointMetadata {
     std::string tokenizer_sha256;   // sha256 of the training token-window vocabulary
     int context = 0;                // training sequence length
     std::string initialized_from;   // warm-start checkpoint this run started from
+    CheckpointDataSplit split;      // the Data Split training used
 };
 
 /**
@@ -206,6 +218,9 @@ public:
     void SetTokenizer(CheckpointTokenizer tokenizer) { tokenizer_ = std::move(tokenizer); }
 
     /** Provenance written into every checkpoint saved after this call. */
+    /** The Data Split written into every checkpoint saved after this call. */
+    void SetDataSplit(CheckpointDataSplit split) { provenance_.split = std::move(split); }
+
     void SetProvenance(std::string tokenizer_sha256, int context, std::string initialized_from) {
         provenance_.tokenizer_sha256 = std::move(tokenizer_sha256);
         provenance_.context = context;
@@ -277,7 +292,7 @@ private:
  * epochs stay fresh. Names, shapes and dtypes must match exactly. When
  * expected_tokenizer_sha256 is set (language-model runs) the checkpoint's
  * tokenizer must match it: from metadata.json, or for checkpoints written
- * before TOFIX143 from the same run's generation_previews/*.json.
+ * before TOFIX143 from the same run's generation_previews JSON files.
  */
 template <typename Model>
 std::optional<CheckpointMetadata> LoadWarmStartCheckpoint(

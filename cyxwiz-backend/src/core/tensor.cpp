@@ -99,7 +99,33 @@ static DataType FromArrayFireType(af::dtype dtype) {
         case af::dtype::s32: return DataType::Int32;
         case af::dtype::s64: return DataType::Int64;
         case af::dtype::u8:  return DataType::UInt8;
-        default: return DataType::Float32;
+        default: throw std::runtime_error("Tensor: unsupported ArrayFire type");
+    }
+}
+
+// An array of a type a Tensor does not have, converted to the nearest one
+// it has (b8 -> UInt8, s16/u16 -> Int32, u32/u64 -> Int64, f16 ->
+// Float32): the data type then always names the bytes.
+static af::array WithTensorType(const af::array& arr) {
+    switch (arr.type()) {
+        case af::dtype::f32:
+        case af::dtype::f64:
+        case af::dtype::s32:
+        case af::dtype::s64:
+        case af::dtype::u8:
+            return arr;
+        case af::dtype::b8:
+            return arr.as(af::dtype::u8);
+        case af::dtype::s16:
+        case af::dtype::u16:
+            return arr.as(af::dtype::s32);
+        case af::dtype::u32:
+        case af::dtype::u64:
+            return arr.as(af::dtype::s64);
+        case af::dtype::f16:
+            return arr.as(af::dtype::f32);
+        default:
+            throw std::runtime_error("Tensor: complex ArrayFire arrays are not supported");
     }
 }
 
@@ -156,11 +182,11 @@ Tensor::Tensor(const std::vector<size_t>& shape, const void* data, DataType dtyp
 }
 
 Tensor::Tensor(const af::array& arr)
-    : device_(nullptr), af_array_(std::make_unique<af::array>(arr)),
+    : device_(nullptr), af_array_(std::make_unique<af::array>(WithTensorType(arr))),
       host_current_(false), device_current_(true), device_layout_(TensorDeviceLayout::ArrayFireNative)
 {
     shape_ = ShapeFromArrayFireDims(arr);
-    dtype_ = FromArrayFireType(arr.type());
+    dtype_ = FromArrayFireType(af_array_->type());
 }
 
 Tensor::Tensor(const Tensor& other)
@@ -485,9 +511,9 @@ af::array Tensor::GetSemanticArray() const {
 
 void Tensor::SetFromArray(const af::array& arr) {
     shape_ = ShapeFromArrayFireDims(arr);
-    dtype_ = FromArrayFireType(arr.type());
     host_buffer_.reset();
-    af_array_ = std::make_unique<af::array>(arr);
+    af_array_ = std::make_unique<af::array>(WithTensorType(arr));
+    dtype_ = FromArrayFireType(af_array_->type());
     host_current_ = false;
     device_current_ = true;
     device_layout_ = TensorDeviceLayout::ArrayFireNative;
@@ -502,9 +528,9 @@ void Tensor::SetFromArrayRowMajor2D(const af::array& arr) {
         static_cast<size_t>(arr.dims(0)),
         static_cast<size_t>(arr.dims(1))
     };
-    dtype_ = FromArrayFireType(arr.type());
     host_buffer_.reset();
-    af_array_ = std::make_unique<af::array>(arr);
+    af_array_ = std::make_unique<af::array>(WithTensorType(arr));
+    dtype_ = FromArrayFireType(af_array_->type());
     host_current_ = false;
     device_current_ = true;
     device_layout_ = TensorDeviceLayout::RowMajor2D;
@@ -520,9 +546,9 @@ void Tensor::SetFromArrayRowMajor3D(const af::array& arr) {
         static_cast<size_t>(arr.dims(1)),
         static_cast<size_t>(arr.dims(2))
     };
-    dtype_ = FromArrayFireType(arr.type());
     host_buffer_.reset();
-    af_array_ = std::make_unique<af::array>(arr);
+    af_array_ = std::make_unique<af::array>(WithTensorType(arr));
+    dtype_ = FromArrayFireType(af_array_->type());
     host_current_ = false;
     device_current_ = true;
     device_layout_ = TensorDeviceLayout::RowMajor3D;
@@ -535,9 +561,9 @@ void Tensor::SetFromArrayRowMajor4D(const af::array& arr) {
         static_cast<size_t>(arr.dims(2)),
         static_cast<size_t>(arr.dims(3))
     };
-    dtype_ = FromArrayFireType(arr.type());
     host_buffer_.reset();
-    af_array_ = std::make_unique<af::array>(arr);
+    af_array_ = std::make_unique<af::array>(WithTensorType(arr));
+    dtype_ = FromArrayFireType(af_array_->type());
     host_current_ = false;
     device_current_ = true;
     device_layout_ = TensorDeviceLayout::RowMajor4D;
@@ -665,9 +691,9 @@ void Tensor::SetFromRowMajorFlatArray(const af::array& flat, std::vector<size_t>
         throw std::runtime_error("Tensor::SetFromRowMajorFlatArray: shape does not match ArrayFire element count");
     }
     shape_ = std::move(shape);
-    dtype_ = FromArrayFireType(flat.type());
     host_buffer_.reset();
-    af_array_ = std::make_unique<af::array>(af::flat(flat));
+    af_array_ = std::make_unique<af::array>(af::flat(WithTensorType(flat)));
+    dtype_ = FromArrayFireType(af_array_->type());
     host_current_ = false;
     device_current_ = true;
     device_layout_ = TensorDeviceLayout::RowMajorFlat;

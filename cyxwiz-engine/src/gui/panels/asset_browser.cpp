@@ -6,6 +6,7 @@
 #include "../ui_widgets.h"
 #include "../editor_fonts.h"
 #include "../../core/project_manager.h"
+#include "../../core/data_input_formats.h"
 #include "../file_browser_launch.h"
 #include <imgui.h>
 #include <filesystem>
@@ -1287,6 +1288,8 @@ void AssetBrowserPanel::BuildDirectoryTree() {
 
 AssetBrowserPanel::AssetType AssetBrowserPanel::DetermineAssetType(const std::string& path) {
     std::string ext = fs::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
     // Scripts
     if (ext == ".py" || ext == ".pyw" || ext == ".cyx" || ext == ".ipynb") return AssetType::Script;
@@ -1295,10 +1298,13 @@ AssetBrowserPanel::AssetType AssetBrowserPanel::DetermineAssetType(const std::st
     if (ext == ".onnx" || ext == ".pt" || ext == ".safetensors" || ext == ".bin")
         return AssetType::Model;
 
-    // Datasets (including HDF5 files which are commonly used for ML datasets)
-    if (ext == ".csv" || ext == ".json" || ext == ".parquet" || ext == ".arrow" || ext == ".txt" ||
-        ext == ".h5" || ext == ".hdf5" || ext == ".hdf")
-        return AssetType::Dataset;
+    // Datasets: every format Data Input recognises, so each gets "Create Data Input"
+    if (data_input::DetectFormat(path)) return AssetType::Dataset;
+    for (const auto& external : data_input::ExternalFormats()) {
+        const auto extension = ext.empty() ? std::string{} : ext.substr(1);
+        if (std::find(external.extensions.begin(), external.extensions.end(), extension) != external.extensions.end())
+            return AssetType::Dataset;
+    }
 
     // Checkpoints
     if (ext == ".ckpt" || ext == ".checkpoint")
@@ -1873,9 +1879,20 @@ void AssetBrowserPanel::RenderFilePreview(const AssetItem& item, const ImVec2& s
         draw->AddText(ImVec2(p.x + (tile - icon_size.x) * 0.5f, p.y + (tile - icon_size.y) * 0.5f), ui::ToU32(colour), icon);
         ImGui::Dummy(ImVec2(tile, tile));
     }
-    ImGui::SameLine();
     const float hide_width = ImGui::CalcTextSize("Hide").x;
-    const float text_right = ImGui::GetContentRegionMax().x - hide_width - ImGui::GetStyle().ItemSpacing.x;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float hide_x = ImGui::GetContentRegionMax().x - hide_width;
+    // The name goes beside the tile when it has room there (8 em); in a narrow
+    // panel it goes below, so it does not wrap a letter per line.
+    const float tile_right = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+    const bool below = hide_x - spacing - (tile_right + spacing) < ImGui::GetFontSize() * 8.0f;
+    if (below) {
+        ImGui::SameLine(std::max(hide_x, tile_right + spacing));
+        if (ui::LinkButton("Hide")) show_dataset_preview_ = false;
+    } else {
+        ImGui::SameLine();
+    }
+    const float text_right = below ? ImGui::GetContentRegionMax().x : hide_x - spacing;
     ImGui::BeginGroup();
     ImGui::PushTextWrapPos(text_right);
     {
@@ -1891,8 +1908,10 @@ void AssetBrowserPanel::RenderFilePreview(const AssetItem& item, const ImVec2& s
     ImGui::PopStyleColor();
     ImGui::PopTextWrapPos();
     ImGui::EndGroup();
-    ImGui::SameLine(ImGui::GetContentRegionMax().x - hide_width);
-    if (ui::LinkButton("Hide")) show_dataset_preview_ = false;
+    if (!below) {
+        ImGui::SameLine(hide_x);
+        if (ui::LinkButton("Hide")) show_dataset_preview_ = false;
+    }
 
     if (!preview_dataset_name_.empty()) {
         ImGui::TextColored(t.success, ICON_FA_CIRCLE_CHECK " Loaded as '%s'", preview_dataset_name_.c_str());

@@ -2,7 +2,7 @@
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 #include "text_column_utils.h"  // ReadLabelColumnAsInt
-#include "ts_column_utils.h"    // ReadColumnAsFloat
+#include "feature_rows.h"
 
 #include <cyxwiz/dimensionality_reduction.h>
 
@@ -113,6 +113,7 @@ bool PCAOperator::Configure(
     n_components_ = 2;
     center_ = true;
     scale_ = false;
+    keep_columns_ = false;
 
     auto fc = params.find("feature_cols");
     const std::string fc_str = (fc != params.end()) ? fc->second : "";
@@ -137,6 +138,7 @@ bool PCAOperator::Configure(
 
     if (!ReadBoolParam(params, "center", true, center_, error)) return false;
     if (!ReadBoolParam(params, "scale", false, scale_, error)) return false;
+    if (!ReadBoolParam(params, "keep_columns", false, keep_columns_, error)) return false;
 
     return true;
 }
@@ -250,85 +252,29 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             "Materialization blocked: " + preflight_message);
     }
 
-    // Read each feature column to a parallel float vector.
+    // The rows with every feature, as doubles (rows missing one are left out).
+    report_progress("Reading feature columns", "Reading the PCA feature columns", 0.20, 0,
+                    static_cast<uint64_t>(resolved_features.size()), preflight_estimate.estimated_peak_bytes);
     const size_t n_features = resolved_features.size();
-    std::vector<std::vector<float>> feat_cols(n_features);
-    int64_t n_samples = 0;
-    for (size_t f = 0; f < n_features; ++f) {
-        report_progress("Reading feature columns",
-                        "Reading PCA feature column '" +
-                        resolved_features[f] + "'",
-                        0.20 + (0.20 * static_cast<double>(f) /
-                                static_cast<double>(n_features)),
-                        static_cast<uint64_t>(f),
-                        static_cast<uint64_t>(n_features),
-                        preflight_estimate.estimated_peak_bytes);
-        auto col = input->GetColumnByName(resolved_features[f]);
-        std::string bad_type;
-        if (!ReadColumnAsFloat(col, feat_cols[f], bad_type)) {
-            return arrow::Status::TypeError(
-                "PCA: feature '" + resolved_features[f] +
-                "' read failed (type='" + bad_type + "')");
-        }
-        if (f == 0) {
-            n_samples = static_cast<int64_t>(feat_cols[f].size());
-        } else if (static_cast<int64_t>(feat_cols[f].size()) != n_samples) {
-            return arrow::Status::Invalid(
-                "PCA: feature '" + resolved_features[f] +
-                "' has different row count than first feature");
-        }
-    }
-
-    const uint64_t estimated_input_matrix_bytes =
-        preflight_estimate.estimated_peak_bytes;
-    const auto output_memory_plan = EstimateDenseMaterializationMemory(
-        static_cast<uint64_t>(n_samples),
-        static_cast<uint64_t>(n_components_ + (label_col_.empty() ? 0 : 1)),
-        static_cast<uint64_t>(sizeof(float)));
+    FeatureRows fit;
+    ARROW_RETURN_NOT_OK(ReadFeatureRows(input, resolved_features, "PCA", false, fit, GetCancellationQuery()));
+    const int64_t n_samples = static_cast<int64_t>(fit.rows.size());
+    const auto& data = fit.data;
+    const uint64_t estimated_input_matrix_bytes = preflight_estimate.estimated_peak_bytes;
     const uint64_t estimated_output_matrix_bytes =
-        output_memory_plan.estimated_peak_bytes;
-    report_progress("Planning PCA matrix",
-                    "Planning PCA matrix " + std::to_string(n_samples) +
-                    " samples x " + std::to_string(n_features) +
-                    " features",
-                    0.40,
-                    0,
-                    static_cast<uint64_t>(n_samples),
-                    estimated_input_matrix_bytes + estimated_output_matrix_bytes);
-
+        EstimateDenseMaterializationMemory(static_cast<uint64_t>(n_samples),
+                                           static_cast<uint64_t>(n_components_ + (label_col_.empty() ? 0 : 1)),
+                                           static_cast<uint64_t>(sizeof(float)))
+            .estimated_peak_bytes;
     if (n_samples < n_components_) {
         return arrow::Status::Invalid(
-            "PCA: n_samples (" + std::to_string(n_samples) +
+            "PCA: rows with every feature (" + std::to_string(n_samples) +
             ") < n_components (" + std::to_string(n_components_) + ")");
     }
     if (static_cast<int>(n_features) < n_components_) {
         return arrow::Status::Invalid(
             "PCA: n_features (" + std::to_string(n_features) +
             ") < n_components (" + std::to_string(n_components_) + ")");
-    }
-
-    // Repack as row-major double matrix [n_samples x n_features] for the
-    // backend (which uses std::vector<std::vector<double>>).
-    report_progress("Packing PCA matrix",
-                    "Packing row-major PCA input matrix",
-                    0.45,
-                    0,
-                    static_cast<uint64_t>(n_samples),
-                    estimated_input_matrix_bytes + estimated_output_matrix_bytes);
-    std::vector<std::vector<double>> data(n_samples,
-                                           std::vector<double>(n_features, 0.0));
-    for (size_t f = 0; f < n_features; ++f) {
-        const auto& col = feat_cols[f];
-        for (int64_t i = 0; i < n_samples; ++i) {
-            data[i][f] = static_cast<double>(col[i]);
-        }
-        report_progress("Packing PCA matrix",
-                        "Packing row-major PCA input matrix",
-                        0.45 + (0.15 * static_cast<double>(f + 1) /
-                                static_cast<double>(n_features)),
-                        static_cast<uint64_t>(f + 1),
-                        static_cast<uint64_t>(n_features),
-                        estimated_input_matrix_bytes + estimated_output_matrix_bytes);
     }
 
     report_progress("Computing PCA",
@@ -350,6 +296,17 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                     static_cast<uint64_t>(n_components_),
                     estimated_input_matrix_bytes + estimated_output_matrix_bytes);
 
+    // Keep the input: pc_* beside its columns, null on the rows left out.
+    if (keep_columns_) {
+        std::vector<std::string> names;
+        for (int i = 0; i < n_components_; ++i) names.push_back("pc_" + std::to_string(i));
+        spdlog::info("PCA: {} of {} rows x {} features -> {} components beside the input, explained variance {:.2f}%",
+                     n_samples, fit.total, n_features, n_components_, result.total_variance_explained * 100.0);
+        report_progress("Complete", "PCA materialization complete", 1.0, static_cast<uint64_t>(n_samples),
+                        static_cast<uint64_t>(n_samples), estimated_output_matrix_bytes);
+        return AppendFittedColumns(input, names, fit.rows, result.transformed);
+    }
+
     // Optional label column passthrough.
     std::vector<int> labels;
     std::vector<std::string> class_names;
@@ -365,10 +322,10 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                 "PCA: label column '" + label_col_ +
                 "' has unsupported type '" + lbad + "'");
         }
-        if (static_cast<int64_t>(labels.size()) != n_samples) {
+        if (static_cast<int64_t>(labels.size()) != fit.total) {
             return arrow::Status::Invalid(
                 "PCA: label count (" + std::to_string(labels.size()) +
-                ") differs from sample count (" + std::to_string(n_samples) + ")");
+                ") differs from row count (" + std::to_string(fit.total) + ")");
         }
     }
 
@@ -399,7 +356,7 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
             ARROW_RETURN_NOT_OK(pc_builders[c]->Append(v));
         }
         if (!labels.empty()) {
-            ARROW_RETURN_NOT_OK(label_builder.Append(labels[r]));
+            ARROW_RETURN_NOT_OK(label_builder.Append(labels[static_cast<size_t>(fit.rows[static_cast<size_t>(r)])]));
         }
         if ((r + 1) == n_samples || ((r + 1) % 1024) == 0) {
             report_progress("Writing PCA rows",

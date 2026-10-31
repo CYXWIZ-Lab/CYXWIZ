@@ -239,8 +239,10 @@ public:
     // Runtime diagnostics for current Python interpreter
     std::string GetPythonRuntimeDiagnostics();
 
-    // Reload interpreter config for active project (picks up python_env.json)
-    bool ReloadPythonForProject();
+    // Moves a running interpreter to the active project's environment
+    // (python_env.json). `detail_out`: the new interpreter, or why a restart
+    // is needed.
+    scripting::PythonProjectSwitch SwitchPythonToProject(std::string* detail_out = nullptr);
 
     // ---- Python REPL support (tofix121) ----
     struct InterpreterInfo {
@@ -267,6 +269,8 @@ public:
 private:
     mutable std::mutex init_error_mutex_;
     std::string last_init_error_;
+    std::string deferred_logged_for_;  // project whose pending setup was logged once
+    std::string run_project_root_;  // project root the last script run put on sys.path
     std::string cached_python_version_;
     std::unique_ptr<PythonEngine> python_engine_;
     std::unique_ptr<LanguageService> language_;  // stopped before Python ends

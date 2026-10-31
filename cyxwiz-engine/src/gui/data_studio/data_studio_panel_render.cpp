@@ -4,6 +4,8 @@
 
 #include "data_studio_panel.h"
 
+#include "../../core/dataset_catalog.h"
+
 #include "../node_editor.h"
 #include "../editor_fonts.h"
 #include "../icons.h"
@@ -34,6 +36,7 @@ ImVec4 ToneColour(studio::Tone tone) {
 const char* KindIcon(studio::RailItem::Kind kind) {
     switch (kind) {
         case studio::RailItem::Kind::DataInput: return ICON_FA_RIGHT_TO_BRACKET;
+        case studio::RailItem::Kind::ImageIndex: return ICON_FA_TABLE;
         case studio::RailItem::Kind::NodeResult: return ICON_FA_TABLE;
         case studio::RailItem::Kind::Published: return ICON_FA_FILE_EXPORT;
         default: return ICON_FA_DATABASE;
@@ -159,10 +162,13 @@ void DataStudioPanel::RenderRail(float height, float max_height) {
         for (const auto& item : section.items) {
             ImGui::PushID(item.node_id >= 0 ? item.node_id : static_cast<int>(std::hash<std::string>{}(item.dataset)));
             const bool chosen = !item.dataset.empty() && item.dataset == active_dataset_;
-            const ImVec2 pos = ImGui::GetCursorScreenPos();
-            const float w = ImGui::GetContentRegionAvail().x;
+            // An image input's index sits under it, indented.
+            const float indent = item.kind == studio::RailItem::Kind::ImageIndex ? 14.0f : 0.0f;
+            const ImVec2 row = ImGui::GetCursorScreenPos();
+            const ImVec2 pos(row.x + indent, row.y);
+            const float w = ImGui::GetContentRegionAvail().x - indent;
             ui::PushListRowColours();
-            if (ImGui::Selectable("##item", chosen, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(w, 0.0f))) {
+            if (ImGui::Selectable("##item", chosen, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(w + indent, 0.0f))) {
                 if (!item.dataset.empty()) SetActiveDataset(item.dataset);
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && item.node_id >= 0) ShowOnCanvas({item.node_id});
             }
@@ -222,12 +228,7 @@ void DataStudioPanel::RenderNodeStrip(const studio::JobView& job) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_faint, "In the graph:");
     const char* const empty_note = "no node does this yet";
-    // Results keeps the latest test as a node (TOFIX157, approved mockup).
-    const bool keep = job.job == studio::Job::Results && results_;
-    const char* const keep_label = "Keep as node";
-    const std::string keep_why = keep ? results_->KeepBlocker(node_editor_ != nullptr) : std::string();
-    const float keep_w = keep ? ui::ButtonWidth(keep_label, ui::ButtonSize::Small) + ImGui::GetStyle().ItemSpacing.x : 0.0f;
-    const float link_w = ImGui::CalcTextSize("Show on canvas").x + 12.0f + keep_w;
+    const float link_w = ImGui::CalcTextSize("Show on canvas").x + 12.0f;
     // The link sits at the top right while the first line still fits beside
     // it; in a narrow panel it goes under the chips instead of over them.
     float first_w = ImGui::CalcTextSize(empty_note).x;
@@ -270,12 +271,6 @@ void DataStudioPanel::RenderNodeStrip(const studio::JobView& job) {
     float bottom = ImGui::GetItemRectMax().y;
     ImGui::SetCursorScreenPos(link_beside ? ImVec2(start.x + width - link_w - 6.0f, start.y + 6.0f)
                                           : ImVec2(start.x + 10.0f, bottom + 4.0f));
-    if (keep) {
-        if (ui::SecondaryButton(keep_label, keep_why.empty(), keep_why.c_str(), ui::ButtonSize::Small)) results_->RequestKeep();
-        if (keep_why.empty() && ImGui::IsItemHovered())
-            ImGui::SetTooltip("Saves the latest test's rows in the project and adds a Test Evaluation node reading them");
-        ImGui::SameLine();
-    }
     ImGui::AlignTextToFramePadding();
     if (ui::LinkButton("Show on canvas", !job.node_ids.empty())) ShowOnCanvas(job.node_ids);
     if (!link_beside) bottom = ImGui::GetItemRectMax().y;
@@ -293,7 +288,12 @@ void DataStudioPanel::RenderJobBody() {
         case studio::Job::Explore: RenderExplore(); break;
         case studio::Job::Prepare: if (prepare_) prepare_->Render(); break;
         case studio::Job::Validate: if (validate_) validate_->Render(); break;
-        case studio::Job::Ready: if (readiness_) readiness_->Render(); break;
+        case studio::Job::Ready:
+            if (readiness_) {
+                if (node_editor_) readiness_->SetLiveCompile(node_editor_->GetLiveCompile());
+                readiness_->Render();
+            }
+            break;
         case studio::Job::Publish: if (publish_) publish_->Render(); break;
         case studio::Job::Results: if (results_) results_->Render(); break;
     }
@@ -332,6 +332,7 @@ void DataStudioPanel::RenderBringIn() {
             ImGui::TextColored(t.text_dim, "%s", row.file.empty() ? "(no file set)" : row.file.c_str());
             ImGui::PopTextWrapPos();
             if (mono) ImGui::PopFont();
+            if (!row.source_note.empty()) ImGui::TextColored(t.text_dim, "%s", row.source_note.c_str());
             ImGui::TextUnformatted(row.size.empty() ? "-" : row.size.c_str());
             ImGui::SameLine(0.0f, 12.0f);
             ImGui::TextColored(ToneColour(row.tone), ICON_FA_CIRCLE " %s", row.state.c_str());
@@ -374,6 +375,7 @@ void DataStudioPanel::RenderBringIn() {
             ImGui::TextColored(t.text_dim, "%s", row.file.empty() ? "(no file set)" : row.file.c_str());
             ImGui::PopTextWrapPos();
             if (mono) ImGui::PopFont();
+            if (!row.source_note.empty()) ImGui::TextColored(t.text_dim, "%s", row.source_note.c_str());
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(row.size.empty() ? "-" : row.size.c_str());
             ImGui::TableNextColumn();
@@ -405,12 +407,20 @@ void DataStudioPanel::RenderBringIn() {
 
 void DataStudioPanel::RenderExplore() {
     static const std::pair<const char*, ExploreTab> kTabs[] = {
-        {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Missing", ExploreTab::Missing},
+        {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Images", ExploreTab::Images}, {"Missing", ExploreTab::Missing},
         {"Outliers", ExploreTab::Outliers}, {"Correlation", ExploreTab::Correlation}, {"Distribution", ExploreTab::Distribution},
-        {"Visualize", ExploreTab::Visualize}};
+        {"Tests", ExploreTab::Tests}, {"Regression", ExploreTab::Regression},
+        {"Groups", ExploreTab::Groups}, {"Projection", ExploreTab::Projection}, {"Series", ExploreTab::Series}, {"Forecast", ExploreTab::Forecast},
+        {"Visualize", ExploreTab::Visualize}, {"Plugins", ExploreTab::Plugins}};
+    const auto picked = DatasetCatalog::Instance().Resolve(active_dataset_);
+    const bool images = picked && picked->modality == DatasetModality::Image &&
+                        picked->storage != DatasetStorageKind::InMemoryArrow &&
+                        picked->storage != DatasetStorageKind::DiskBackedParquet;
+    if (explore_tab_ == ExploreTab::Images && !images) explore_tab_ = ExploreTab::Profile;
     const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
     bool first = true;
     for (const auto& [label, tab] : kTabs) {
+        if (tab == ExploreTab::Images && !images) continue;
         // Wraps in a narrow dock.
         if (!first) SameLineOrWrap(ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 4.0f, right_edge);
         first = false;
@@ -419,12 +429,41 @@ void DataStudioPanel::RenderExplore() {
     ImGui::Spacing();
     switch (explore_tab_) {
         case ExploreTab::Query: if (query_editor_) query_editor_->Render(); break;
-        case ExploreTab::Profile: if (profile_) profile_->Render(); break;
+        case ExploreTab::Profile:
+            if (profile_) {
+                if (node_editor_) {
+                    profile_->SetLiveCompile(node_editor_->GetLiveCompile());
+                    profile_->SetNodeWriter([editor = node_editor_](int id, const std::map<std::string, std::string>& values) {
+                        return editor->SetStepParameters(id, values);
+                    });
+                    profile_->SetShowNode([this](int id) { ShowOnCanvas({id}); });
+                }
+                profile_->Render();
+            }
+            break;
+        case ExploreTab::Images:
+            if (gallery_) {
+                if (node_editor_) gallery_->SetLiveCompile(node_editor_->GetLiveCompile());
+                gallery_->Render();
+            }
+            break;
         case ExploreTab::Missing: if (missing_) missing_->Render(MakeExploreContext()); break;
         case ExploreTab::Outliers: if (outliers_) outliers_->Render(MakeExploreContext()); break;
         case ExploreTab::Correlation: if (correlation_) correlation_->Render(MakeExploreContext()); break;
         case ExploreTab::Distribution: if (distribution_) distribution_->Render(MakeExploreContext()); break;
+        case ExploreTab::Tests: if (tests_) tests_->Render(MakeExploreContext()); break;
+        case ExploreTab::Regression: if (regression_) regression_->Render(MakeExploreContext()); break;
+        case ExploreTab::Groups: if (groups_) groups_->Render(MakeExploreContext()); break;
+        case ExploreTab::Projection: if (projection_) projection_->Render(MakeExploreContext()); break;
+        case ExploreTab::Series: if (series_) series_->Render(MakeExploreContext()); break;
+        case ExploreTab::Forecast:
+            if (forecast_) {
+                if (series_) forecast_->StartFrom(series_->Base());
+                forecast_->Render(MakeExploreContext());
+            }
+            break;
         case ExploreTab::Visualize: if (visualizer_) visualizer_->Render(); break;
+        case ExploreTab::Plugins: if (plugins_) plugins_->Render(MakeExploreContext()); break;
     }
 }
 
@@ -437,6 +476,16 @@ void DataStudioPanel::RenderStatusBar() {
     else if (outliers_ && outliers_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Finding outliers");
     else if (correlation_ && correlation_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Computing correlations");
     else if (distribution_ && distribution_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Fitting distributions");
+    else if (tests_ && tests_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Testing");
+    else if (regression_ && regression_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Fitting");
+    else if (plugins_ && plugins_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Running a plugin's analytic");
+    else if (groups_ && groups_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Grouping");
+    else if (projection_ && projection_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Projecting");
+    else if (series_ && series_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the series");
+    else if (forecast_ && forecast_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Forecasting");
+    else if (results_ && results_->CrossValidation()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Cross-validating");
+    else if (results_ && results_->LearningCurve()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Learning curve");
+    else if (results_ && results_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the test");
     else if (readiness_ && readiness_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Comparing splits");
     else if (validate_ && validate_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Data Pipeline running");
     else ImGui::TextColored(t.success, ICON_FA_CIRCLE " Ready");

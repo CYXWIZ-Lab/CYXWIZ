@@ -4,11 +4,9 @@
 
 #include "../src/core/annotation_manager.h"
 #include "../src/core/data_registry.h"
-#include "../src/preprocessing/image_transform.h"
 #include "../src/preprocessing/normalization_transform.h"
 #include "../src/preprocessing/scaling_transform.h"
 #include "../src/preprocessing/statistics_calculator.h"
-#include "../src/transforms/transform.h"
 
 #include <stdexcept>
 
@@ -28,15 +26,6 @@ PreprocessingConfig DataRegistry::GetPreprocessingConfig(
     PreprocessingConfig config;
     config.dataset_id = dataset_id;
     return config;
-}
-
-bool DataRegistry::HasAugmentationPipeline(const std::string&) const {
-    return false;
-}
-
-std::shared_ptr<transforms::Compose> DataRegistry::GetAugmentationPipeline(
-    const std::string&) const {
-    return nullptr;
 }
 
 AnnotationManager& DataRegistry::GetAnnotationManager() {
@@ -98,14 +87,6 @@ void ScalingTransform::Initialize(const DatasetStatistics&) {
 Tensor ScalingTransform::Apply(const Tensor&) {
     throw std::logic_error(
         "legacy lifecycle harness does not enable scaling");
-}
-
-ImageTransform::ImageTransform(const ImagePreprocessingConfig& config)
-    : config_(config) {}
-
-Tensor ImageTransform::Apply(const Tensor&) {
-    throw std::logic_error(
-        "legacy lifecycle harness does not enable image preprocessing");
 }
 
 } // namespace cyxwiz

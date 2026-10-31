@@ -25,10 +25,10 @@ int main() {
     ScanResult s;
     s.scanned = true;
     s.seconds = 2.43;
-    s.found = {{"3.13.2", "C:/Python313/python.exe", true, true, false, "This Engine embeds Python 3.12; found 3.13.2"},
-               {"3.12.8", "C:/Python312/python.exe", true, true, true, ""},
-               {"3.11.9", "C:/Python311/python.exe", true, true, false, "Python version too old"},
-               {"3.12.4", "C:/Users/me/Python312/python.exe", true, true, true, ""}};
+    s.found = {{"3.13.2", "C:/Python313/python.exe", true, true, false, "This Engine embeds Python 3.12; found 3.13.2", ""},
+               {"3.12.8", "C:/Python312/python.exe", true, true, true, "", ""},
+               {"3.11.9", "C:/Python311/python.exe", true, true, false, "Python version too old", ""},
+               {"3.12.4", "C:/Users/me/Python312/python.exe", true, true, true, "", ""}};
 
     v = BuildPythonView(s, false, "3.12", "C:/Python312/python.exe");
     Check(v.ready && v.level == 0 && v.chip == "Python 3.12.8 ready", "ready chip");
@@ -46,6 +46,12 @@ int main() {
     v = BuildPythonView(missing, false, "3.12", "");
     Check(!v.ready && v.chip == "Python not found" && v.usable.empty() && v.unusable.size() == 2, "missing");
     Check(v.headline.find("3.12") != std::string::npos && !v.install_hint.empty(), "missing says what to install");
+#if !defined(_WIN32) && !defined(__APPLE__)
+    // Not apt alone: Arch has no apt (HP walk, TOFIX181 step 6).
+    Check(v.install_hint.find("python3.12-venv") != std::string::npos &&
+              v.install_hint.find("AUR package python312") != std::string::npos,
+          "the Linux hint names the apt and the AUR packages");
+#endif
 
     ScanResult custom;
     custom.scanned = true;

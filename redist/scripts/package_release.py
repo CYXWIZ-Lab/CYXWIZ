@@ -387,6 +387,25 @@ def backend_runtime(paths: PackagePaths, lib_suffix: str) -> Path:
     raise PackageError(f"Missing CyxWiz backend runtime in {paths.build}")
 
 
+# The NVIDIA neural provider (cyxwiz.nvidia-cublas-cell, TOFIX178 1.0(c)): a
+# module of its own that the backend loads when it is installed. It needs
+# the CUDA libraries, so it ships in the CUDA GPU pack beside afcuda, never
+# in the base.
+NVIDIA_PROVIDER_MODULE_NAMES = ("cyxwiz-nvidia-provider.dll", "libcyxwiz-nvidia-provider.so")
+
+
+def nvidia_provider_module(paths: PackagePaths) -> Path:
+    for directory in build_library_directories(paths):
+        for name in NVIDIA_PROVIDER_MODULE_NAMES:
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate
+    raise PackageError(
+        f"Missing the NVIDIA provider module (cyxwiz-nvidia-provider) in {paths.build}: configure the "
+        "build with -DCYXWIZ_ENABLE_NVIDIA_DNN_PROVIDER=ON and the CUDA Toolkit"
+    )
+
+
 def copy_vcpkg_notices(paths: PackagePaths, stage: Path, system: str) -> None:
     installed_dirs = paths.vcpkg_installed_dirs or (
         paths.root / "build" / "vcpkg_installed",
@@ -468,6 +487,10 @@ def copy_build_payload(
             "package-local runtime bootstrapper",
         ),
         require_file(
+            paths.build / f"cyxwiz-cli{exe_suffix}",
+            "command-line launcher (cyxwiz-cli plugin-check)",
+        ),
+        require_file(
             paths.build / f"cyxwiz-product-removal-finalizer{exe_suffix}",
             "detached product-removal finalizer",
         ),
@@ -490,6 +513,8 @@ def copy_build_payload(
     for library in dynamic_library_matches(paths.build, lib_suffix):
         if re.fullmatch(r"python\d+\.dll", library.name, re.IGNORECASE):
             continue
+        if library.name in NVIDIA_PROVIDER_MODULE_NAMES:
+            continue  # the CUDA GPU pack carries it
         copy_file(library, stage / library.name)
 
     for pattern in ("*.pyd", "pycyxwiz*.so", "*.dylib"):
@@ -534,8 +559,22 @@ def install_plugin_sdk(paths: PackagePaths, destination: Path) -> None:
     if result.returncode != 0:
         raise PackageError(f"Installing the plugin SDK failed:\n{result.stdout}")
     for required in ("LICENSE", "NOTICE", "lib/cmake/CyxWizSDK/CyxWizSDKConfig.cmake",
-                     "include/plugin/plugin_types.h", "template/plugin.json"):
+                     "include/plugin/plugin_types.h", "template/plugin.json",
+                     "examples/plugins/data-formats/data_formats_plugin.cpp",
+                     "examples/plugins/data-formats/built/plugin.json"):
         require_file(destination / required, f"plugin SDK {required}")
+    # The library plugins link (CyxWizSDKConfig finds it by this name); a
+    # symlink would have been dropped from the package (1.0.7 Linux/macOS).
+    linker_library = {"win32": "cyxwiz-backend.lib", "darwin": "libcyxwiz-backend.dylib"}.get(
+        sys.platform, "libcyxwiz-backend.so")
+    library = require_file(destination / "lib" / linker_library, "plugin SDK backend library")
+    if library.is_symlink():
+        raise PackageError(f"plugin SDK {linker_library} is a symlink; the SDK needs the real library")
+    # The data plugin example ships built, ready to Install (TOFIX181).
+    example_library = {"win32": "data_formats.dll", "darwin": "libdata_formats.dylib"}.get(
+        sys.platform, "libdata_formats.so")
+    require_file(destination / "examples/plugins/data-formats/built/bin" / example_library,
+                 "plugin SDK built data plugin example")
 
 
 def arrayfire_library_dir(root: Path) -> Path:
@@ -989,6 +1028,7 @@ def create_deterministic_zip(stage: Path, destination: Path) -> Path:
                     "cyxwiz-installer",
                     "cyxwiz-backend-pack-installer",
                     "cyxwiz-runtime-bootstrapper",
+                    "cyxwiz-cli",
                     "cyxwiz-product-removal-finalizer",
                     "cyxwiz-route-probe",
                     "cyxwiz-plugin-check",
@@ -1272,6 +1312,9 @@ def build_split_artifact(
         stage = paths.output_root / "staging" / pack_id
         safe_clean(stage, paths.output_root)
         package_arrayfire_backend(arrayfire_root, stage, backend, lib_suffix)
+        if backend == "cuda":
+            module = nvidia_provider_module(paths)
+            copy_file(module, stage / "runtime" / module.name)
         if backend == "oneapi":
             intel_notices = args.intel_runtime_license_dir or os.environ.get("INTEL_RUNTIME_LICENSE_DIR")
             if intel_notices is None:
@@ -1403,6 +1446,10 @@ def build_package(args: argparse.Namespace, script: Path | None = None) -> tuple
         assert full_python_version is not None
         assert intel_notices is not None
         versions["arrayfire"] = package_arrayfire(arrayfire_root, stage, backends, lib_suffix)
+        if "cuda" in backends:
+            # Beside afcuda, as in the CUDA GPU pack.
+            module = nvidia_provider_module(paths)
+            copy_file(module, stage / "arrayfire" / ("bin" if lib_suffix == ".dll" else "lib") / module.name)
         versions["python"] = full_python_version
         copy_python_runtime(python_root, stage / "python")
         copy_runtime_notices(stage, intel_notices, nvidia_notices)

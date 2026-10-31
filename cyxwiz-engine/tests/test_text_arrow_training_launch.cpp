@@ -2,9 +2,8 @@
 #include "../src/core/dataset_batcher.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/model_builder.h"
-#include "../src/core/pipeline_materializer.h"
-#include "../src/core/node_executors/pipeline_operator_factory.h"
-#include "../src/core/node_executors/text_tokenizer_operator.h"
+#include "../src/core/data_registry.h"
+#include "../src/core/training_input_preparation.h"
 
 #include <arrow/api.h>
 
@@ -12,6 +11,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -31,43 +31,32 @@ void CheckFinite(float value, const std::string& message) {
     Check(std::isfinite(value), message);
 }
 
-std::shared_ptr<arrow::Array> FinishStringArray(
-    const std::vector<std::string>& values) {
-    arrow::StringBuilder builder;
-    for (const auto& value : values) {
-        auto st = builder.Append(value);
-        Check(st.ok(), st.ToString());
-    }
-
-    std::shared_ptr<arrow::Array> array;
-    auto st = builder.Finish(&array);
-    Check(st.ok(), st.ToString());
-    return array;
+std::filesystem::path WriteTextCsv(const std::filesystem::path& dir) {
+    const auto path = dir / "runtime_text.csv";
+    std::ofstream out(path, std::ios::binary);
+    out << "text,label\n"
+           "Small happy text sample,positive\n"
+           "Another happy sample,positive\n"
+           "Sad text pipeline example,negative\n"
+           "Another sad example,negative\n";
+    return path;
 }
 
-std::shared_ptr<arrow::Table> MakeTextTable() {
-    auto text = FinishStringArray({
-        "Small happy text sample",
-        "Another happy sample",
-        "Sad text pipeline example",
-        "Another sad example",
-    });
-    auto label = FinishStringArray({"positive", "positive", "negative", "negative"});
-
-    auto schema = arrow::schema({
-        arrow::field("text", arrow::utf8()),
-        arrow::field("label", arrow::utf8()),
-    });
-    return arrow::Table::Make(schema, {text, label}, 4);
+gui::MLNode WithPins(gui::MLNode node) {
+    node.inputs = {{0, gui::PinType::Tensor, "in", true}};
+    node.outputs = {{0, gui::PinType::Tensor, "out", false}};
+    return node;
 }
 
-gui::MLNode MakeDataInputNode() {
+gui::MLNode MakeDataInputNode(const std::filesystem::path& csv) {
     gui::MLNode node;
     node.id = 1;
     node.type = gui::NodeType::DataInput;
     node.category = gui::NodeCategory::DataPipeline;
     node.name = "Data Input";
-    return node;
+    node.parameters = {{"source_type", "file"}, {"file_path", csv.string()},
+                       {"type", "csv"}, {"has_header", "true"}};
+    return WithPins(node);
 }
 
 gui::MLNode MakeTokenizerNode() {
@@ -85,7 +74,7 @@ gui::MLNode MakeTokenizerNode() {
         {"min_word_freq", "1"},
         {"max_vocab_size", "100"},
     };
-    return node;
+    return WithPins(node);
 }
 
 cyxwiz::TrainingConfiguration MakeTrainingConfig(
@@ -115,35 +104,6 @@ cyxwiz::TrainingConfiguration MakeTrainingConfig(
 
 } // namespace
 
-namespace cyxwiz {
-
-PipelineOperatorFactory& PipelineOperatorFactory::Instance() {
-    static PipelineOperatorFactory instance;
-    return instance;
-}
-
-PipelineOperatorFactory::PipelineOperatorFactory() = default;
-
-std::unique_ptr<IPipelineOperator> PipelineOperatorFactory::Create(
-    gui::NodeType type) const {
-    if (type == gui::NodeType::TextTokenizer) {
-        return std::make_unique<TextTokenizerOperator>();
-    }
-    return nullptr;
-}
-
-bool PipelineOperatorFactory::HasOperator(gui::NodeType type) const {
-    return type == gui::NodeType::TextTokenizer;
-}
-
-void PipelineOperatorFactory::RegisterCreator(gui::NodeType, Creator) {}
-
-std::vector<gui::NodeType> PipelineOperatorFactory::GetSupportedTypes() const {
-    return {gui::NodeType::TextTokenizer};
-}
-
-} // namespace cyxwiz
-
 int main() {
     const auto work_dir =
         std::filesystem::temp_directory_path() /
@@ -151,24 +111,22 @@ int main() {
     std::filesystem::create_directories(work_dir);
     std::filesystem::current_path(work_dir);
 
+    // The step before training runs in the pipeline run (TOFIX178 S0-e),
+    // the same engine as the canvas; training reads its result.
     std::vector<gui::MLNode> nodes = {
-        MakeDataInputNode(),
+        MakeDataInputNode(WriteTextCsv(work_dir)),
         MakeTokenizerNode(),
     };
     std::vector<gui::NodeLink> links = {
         {1, 1, 0, 2, 0, gui::LinkType::TensorFlow},
     };
-
-    auto materialized = cyxwiz::PipelineMaterializer::MaterializeTable(
-        nodes, links, MakeTextTable());
-    Check(materialized.success, materialized.error_message);
-    Check(materialized.operators_applied == 1, "expected one tokenizer operator");
-    Check(materialized.table != nullptr, "materialized table should not be null");
-    Check(materialized.table->GetColumnByName("y") != nullptr,
-          "materialized table should expose y label column");
-
-    auto dataset = std::make_shared<cyxwiz::ArrowDataset>(
-        materialized.table, "runtime_text_materialized");
+    auto& registry = cyxwiz::DataRegistry::Instance();
+    const auto prepared = cyxwiz::PrepareStepResult(nodes, links, 2, registry, {}, {});
+    Check(prepared.ok && prepared.ran, "the tokenizer step runs: " + prepared.error);
+    auto dataset = registry.GetArrowDataset(prepared.dataset);
+    Check(dataset != nullptr && dataset->GetArrowTable() != nullptr, "the prepared table should be registered");
+    Check(dataset->GetArrowTable()->GetColumnByName("y") != nullptr,
+          "the prepared table should expose the y label column");
 
     std::atomic<bool> started{false};
     std::atomic<bool> completed{false};
@@ -219,6 +177,7 @@ int main() {
     Check(completed.load(), "worker training launch should complete");
     Check(success.load(), "worker training launch should succeed");
 
+    registry.UnregisterTabularDataset(prepared.dataset);
     std::cout << "Text Arrow runtime training launch passed\n";
     return 0;
 }

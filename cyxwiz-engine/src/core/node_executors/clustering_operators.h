@@ -20,6 +20,7 @@ namespace cyxwiz {
 class ClusteringOperatorBase : public IPipelineOperator {
 public:
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    bool LearnsFromEveryRow() const override { return true; }
     void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
         progress_callback_ = std::move(callback);
     }
@@ -27,11 +28,14 @@ public:
 protected:
     std::vector<std::string> feature_cols_;
     std::string label_col_;
+    bool standardise_ = false;
     PipelineOperatorProgressCallback progress_callback_;
 
-    // Shared Configure step — reads feature_cols (comma-sep, optional)
-    // and label_col (optional, excluded from auto-detect). Returns true
-    // on success. Subclasses call this first, then parse their own params.
+    // Shared Configure step — reads feature_cols (comma-sep, optional),
+    // label_col (optional, excluded from auto-detect) and standardise
+    // (true / false: z-scores before fitting, as Explore > Groups). Rows
+    // missing a feature are left out of the fit and get a null cluster_id.
+    // Subclasses call this first, then parse their own params.
     bool ConfigureBase(
         const std::map<std::string, std::string>& params,
         std::string& error);
@@ -139,9 +143,8 @@ private:
  *   n_init          (default 1)
  *   seed            (default 0)
  *
- * v1 emits hard cluster assignments via cluster_id. Soft responsibilities
- * (per-component probabilities) are available in the backend result but
- * we don't expand them to columns — stays a Cat-2 inspection concern.
+ *   probabilities   (default false)     — also add probability_0 .. k-1
+ *                                         (each row's chance of each component).
  */
 class GMMOperator : public ClusteringOperatorBase {
 public:
@@ -161,6 +164,7 @@ private:
     double tol_ = 1e-3;
     int n_init_ = 1;
     unsigned int seed_ = 0;
+    bool probabilities_ = false;
 };
 
 } // namespace cyxwiz

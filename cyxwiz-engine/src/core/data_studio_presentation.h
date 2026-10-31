@@ -21,13 +21,19 @@ const char* JobName(Job job);
 
 // The job a node belongs to; false for nodes no job shows (layers, losses).
 bool JobOf(gui::NodeType type, Job& job);
+// An image step Prepare's image recipe shows (TOFIX178 1.6): Resize, the
+// crops, flips, colour and OpenCV steps and the augmentations.
+bool IsImageStepType(gui::NodeType type);
 
 struct GraphNode {
     int id = -1;
     gui::NodeType type{};
     std::string name;
     std::string file_path;     // a Data Input's source or an export's target
+    std::string folder_path;   // an image or audio Data Input's folder
+    std::string labels_csv;    // an image Data Input's labels CSV ("" for class folders)
     std::string dataset_name;  // a Data Input's registry name once loaded ("documents_train")
+    std::string time_column;   // a Data Input's time column (Explore > Series and Forecast take it first)
     bool recipe = false;       // a Preparation Recipe (a Subgraph)
     int recipe_steps = 0;
     std::vector<int> input_from;  // the node linked to each input pin, in pin order (-1: none)
@@ -46,12 +52,15 @@ struct Dataset {
     std::string label;         // what the graph calls it ("Tier 1 books (ZIP text)"), may be empty
     size_t rows = 0, columns = 0;
     bool tabular = true;
+    bool images = false;       // an image dataset: rows are images
 };
 
 struct Input {
     std::string graph_name;    // the graph file's stem
     std::vector<GraphNode> nodes;
     std::vector<Dataset> datasets;
+    // An image dataset whose index table is still being built: "12,480 of 25,000".
+    std::map<std::string, std::string> image_index_progress;
     // What Results can show besides evaluation nodes: training runs that wrote
     // generation previews, and the latest test run's rows (test_predictions).
     size_t preview_runs = 0;
@@ -61,7 +70,7 @@ struct Input {
 enum class Tone { Plain, Ok, Warn, Error };
 
 struct RailItem {
-    enum class Kind { DataInput, NodeResult, Published, Other };
+    enum class Kind { DataInput, ImageIndex, NodeResult, Published, Other };  // ImageIndex: under its Data Input
     Kind kind = Kind::Other;
     std::string label;
     std::string meta;          // rows, "pass", "not loaded"
@@ -94,8 +103,9 @@ struct JobView {
 struct SourceRow {
     int node_id = -1;
     std::string name;
-    std::string file;          // the node's file_path as written ("datasets/.../tier1_books.zip")
-    std::string size;          // rows x columns ("7 x 6" with a times sign); "" until loaded
+    std::string file;          // the node's file_path as written ("datasets/.../tier1_books.zip"), or its folder
+    std::string source_note;   // what the source is when not one file ("image folder, labels from cat_dog.csv")
+    std::string size;          // rows x columns ("7 x 6" with a times sign), or "25,000 images"; "" until loaded
     std::string state;         // "loaded", "not loaded", "failed"
     std::string detail;        // the error when it failed
     std::string dataset;       // its registry name when loaded

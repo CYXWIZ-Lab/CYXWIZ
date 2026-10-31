@@ -1,4 +1,6 @@
 #include "image_csv_dataset.h"
+#include "class_order.h"
+#include "../image_formats.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
@@ -78,23 +80,15 @@ void ImageCSVDataset::LoadData() {
         return;
     }
 
-    // Valid image extensions
-    std::vector<std::string> valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tga", ".tiff", ".webp"};
-    auto is_image = [&](const std::string& ext) {
-        std::string lower_ext = ext;
-        std::transform(lower_ext.begin(), lower_ext.end(), lower_ext.begin(), ::tolower);
-        return std::find(valid_extensions.begin(), valid_extensions.end(), lower_ext) != valid_extensions.end();
-    };
-
     // Check if CSV is provided and exists
     bool use_csv = !csv_path_.empty() && fs::exists(csv_path_);
 
     if (use_csv) {
         // CSV mode: load images with labels from CSV file
-        LoadFromCSV(valid_extensions);
+        LoadFromCSV();
     } else {
         // Folder mode: scan subfolders, use subfolder names as class labels
-        LoadFromFolder(is_image);
+        LoadFromFolder();
     }
 
     if (image_paths_.empty()) {
@@ -124,7 +118,7 @@ void ImageCSVDataset::LoadData() {
     SetSplit(SplitConfig{});
 }
 
-void ImageCSVDataset::LoadFromCSV(const std::vector<std::string>& valid_extensions) {
+void ImageCSVDataset::LoadFromCSV() {
     std::ifstream file(csv_path_);
     if (!file.is_open()) {
         spdlog::error("ImageDataset: Failed to open CSV file: {}", csv_path_);
@@ -292,18 +286,16 @@ void ImageCSVDataset::LoadFromCSV(const std::vector<std::string>& valid_extensio
 
         raw_data.emplace_back(filename, label_str);
 
-        if (label_map.find(label_str) == label_map.end()) {
-            label_map[label_str] = static_cast<int>(label_map.size());
-        }
+        label_map.emplace(label_str, 0);
     }
 
     file.close();
 
-    // Build class names
-    class_names_.resize(label_map.size());
-    for (const auto& [name, idx] : label_map) {
-        class_names_[idx] = name;
-    }
+    // Class index = position in the sorted class names (not CSV row order)
+    class_names_.clear();
+    for (const auto& entry : label_map) class_names_.push_back(entry.first);
+    SortClassNames(class_names_);
+    for (size_t i = 0; i < class_names_.size(); ++i) label_map[class_names_[i]] = static_cast<int>(i);
 
     // Build filename -> full path map by scanning folder
     std::map<std::string, std::string> filename_to_path;
@@ -312,10 +304,7 @@ void ImageCSVDataset::LoadFromCSV(const std::vector<std::string>& valid_extensio
             if (entry.is_directory()) {
                 self(entry.path(), self);
             } else if (entry.is_regular_file()) {
-                std::string ext = entry.path().extension().string();
-                std::string lower_ext = ext;
-                std::transform(lower_ext.begin(), lower_ext.end(), lower_ext.begin(), ::tolower);
-                if (std::find(valid_extensions.begin(), valid_extensions.end(), lower_ext) != valid_extensions.end()) {
+                if (image_formats::IsImageExtension(entry.path().extension().string())) {
                     std::string full_path = entry.path().string();
                     std::string stem = entry.path().stem().string();
                     std::string name_with_ext = entry.path().filename().string();
@@ -345,8 +334,8 @@ void ImageCSVDataset::LoadFromCSV(const std::vector<std::string>& valid_extensio
                 resolved_path = image_path.string();
             } else {
                 // Try adding extensions
-                for (const auto& ext : valid_extensions) {
-                    fs::path test_path = fs::path(image_folder_) / (filename + ext);
+                for (const auto ext : image_formats::kExtensions) {
+                    fs::path test_path = fs::path(image_folder_) / (filename + std::string(ext));
                     if (fs::exists(test_path)) {
                         resolved_path = test_path.string();
                         break;
@@ -365,8 +354,7 @@ void ImageCSVDataset::LoadFromCSV(const std::vector<std::string>& valid_extensio
     }
 }
 
-void ImageCSVDataset::LoadFromFolder(std::function<bool(const std::string&)> is_image) {
-    std::map<std::string, int> label_map;
+void ImageCSVDataset::LoadFromFolder() {
     bool has_subfolders = false;
 
     // Check if we have class subfolders
@@ -378,37 +366,32 @@ void ImageCSVDataset::LoadFromFolder(std::function<bool(const std::string&)> is_
     }
 
     if (has_subfolders) {
-        // Class subfolder mode
+        // Class subfolder mode: class index = position in the sorted folder
+        // names, files in name order (not the directory listing order)
+        class_names_.clear();
         for (const auto& class_dir : fs::directory_iterator(image_folder_)) {
             if (!class_dir.is_directory()) continue;
-
             std::string class_name = class_dir.path().filename().string();
-
             // Skip hidden folders
             if (class_name.empty() || class_name[0] == '.') continue;
+            class_names_.push_back(class_name);
+        }
+        SortClassNames(class_names_);
 
-            // Assign class index
-            if (label_map.find(class_name) == label_map.end()) {
-                label_map[class_name] = static_cast<int>(label_map.size());
-            }
-            int class_idx = label_map[class_name];
-
-            // Scan images in class folder
-            for (const auto& img_entry : fs::directory_iterator(class_dir.path())) {
+        for (size_t class_idx = 0; class_idx < class_names_.size(); ++class_idx) {
+            std::vector<std::string> files;
+            for (const auto& img_entry : fs::directory_iterator(fs::path(image_folder_) / class_names_[class_idx])) {
                 if (!img_entry.is_regular_file()) continue;
 
-                std::string ext = img_entry.path().extension().string();
-                if (!is_image(ext)) continue;
+                if (!image_formats::IsImageExtension(img_entry.path().extension().string())) continue;
 
-                image_paths_.push_back(img_entry.path().string());
-                labels_.push_back(class_idx);
+                files.push_back(img_entry.path().string());
             }
-        }
-
-        // Build class names
-        class_names_.resize(label_map.size());
-        for (const auto& [name, idx] : label_map) {
-            class_names_[idx] = name;
+            std::sort(files.begin(), files.end());
+            for (auto& file : files) {
+                image_paths_.push_back(std::move(file));
+                labels_.push_back(static_cast<int>(class_idx));
+            }
         }
 
         spdlog::info("ImageDataset: Found {} class subfolders", class_names_.size());
@@ -419,12 +402,12 @@ void ImageCSVDataset::LoadFromFolder(std::function<bool(const std::string&)> is_
         for (const auto& entry : fs::directory_iterator(image_folder_)) {
             if (!entry.is_regular_file()) continue;
 
-            std::string ext = entry.path().extension().string();
-            if (!is_image(ext)) continue;
+            if (!image_formats::IsImageExtension(entry.path().extension().string())) continue;
 
             image_paths_.push_back(entry.path().string());
             labels_.push_back(0);
         }
+        std::sort(image_paths_.begin(), image_paths_.end());
 
         spdlog::info("ImageDataset: Flat folder mode, {} images with single class", image_paths_.size());
     }

@@ -748,6 +748,18 @@ NodeEditor::FindUnsupportedSequentialLayerError(
             case NodeType::MorphologyTransform:
             case NodeType::AdvancedAugment:
             case NodeType::AugmentationPreset:
+            case NodeType::ImageContrast:
+            case NodeType::ImageDenoise:
+            case NodeType::ImageSharpen:
+            case NodeType::ImageEdges:
+            case NodeType::ImageSmooth:
+            case NodeType::ImageWarp:
+            case NodeType::ImagePyramid:
+            case NodeType::RandomResizedCrop:
+            case NodeType::RandomAffine:
+            case NodeType::RandomPerspective:
+            case NodeType::GaussianNoise:
+            case NodeType::RandomGrayscale:
                 return EffectiveNodeName(*node) +
                        ": code export does not include image transforms yet; train it in Studio";
             case NodeType::QualityAnalyzer:

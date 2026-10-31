@@ -48,7 +48,8 @@ three plots the same way, so the demo stays working.
 
 ## Tools without a node
 
-t-SNE, UMAP, Box-Cox / Yeo-Johnson, the quantile transform and the cluster
-scores (silhouette, Davies-Bouldin, Calinski-Harabasz) are tools only
-(Data > Transform, Tools > Clustering and Projection). The tools do not yet read
+t-SNE, UMAP and the cluster scores (silhouette, Davies-Bouldin,
+Calinski-Harabasz) are tools only (Tools > Clustering and Projection).
+Box-Cox / Yeo-Johnson and the quantile transform are nodes now (Power
+Transform, Quantile Transform; see [scaling and transforms](data_transforms.md)). The tools do not yet read
 the Data Input node's datasets; that is the next planned step.
