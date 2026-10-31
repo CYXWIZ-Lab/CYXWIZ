@@ -21,6 +21,7 @@ namespace network {
     class JobManager;
     class ReservationClient;
     class P2PClient;
+    class DataStreamClient;
 }
 
 namespace gui {
@@ -49,6 +50,13 @@ public:
     // Set node editor for accessing model graph
     void SetNodeEditor(gui::NodeEditor* editor) { node_editor_ = editor; }
 
+    // "Change in Preferences" opens Preferences > Servers (TOFIX168 step 3b)
+    void SetOpenServerPreferencesCallback(std::function<void()> callback) {
+        open_server_preferences_ = std::move(callback);
+    }
+    // The server address changed: drop the connections to the old server.
+    void OnServerChanged();
+
     // Set P2P training panel for monitoring
     // Also wires the panel's Resume / Start over actions (TOFIX118 P4 GUI).
     void SetP2PTrainingPanel(P2PTrainingPanel* panel);
@@ -58,6 +66,9 @@ public:
     void SetP2PClient(std::shared_ptr<network::P2PClient> client) {
         p2p_client_ = client;
     }
+    // The Engine's CyxCloud connection (owned by the cloud browser); a job
+    // whose Data Inputs live in CyxCloud gets its access tokens through it.
+    void SetDataStreamClient(network::DataStreamClient* client) { datastream_client_ = client; }
 
     // Get active reservation info
     bool HasActiveReservation() const;
@@ -119,9 +130,10 @@ private:
     network::JobManager* job_manager_;
     std::shared_ptr<network::ReservationClient> reservation_client_;
     std::shared_ptr<network::P2PClient> p2p_client_;
+    network::DataStreamClient* datastream_client_ = nullptr;
 
     bool show_;
-    char server_address_[256];
+    std::function<void()> open_server_preferences_;
     bool connecting_;
     std::string connection_error_;
 

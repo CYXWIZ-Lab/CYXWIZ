@@ -81,13 +81,13 @@ AuthManager::AuthManager() {
     // Try to load auth API URL from config
     auto& backend = cyxwiz::servernode::core::BackendManager::Instance();
     if (backend.IsInitialized()) {
-        api_base_url_ = backend.GetConfig().auth_api_url;
+        api_base_url_ = backend.GetConfig().AuthApiUrl();
     } else {
         // BackendManager not initialized yet, try loading from config file directly
         cyxwiz::servernode::core::ConfigManager config_manager;
         std::string config_path = cyxwiz::servernode::core::ConfigManager::FindConfigFile();
         if (config_manager.Load(config_path)) {
-            api_base_url_ = config_manager.GetConfig().auth_api_url;
+            api_base_url_ = config_manager.GetConfig().AuthApiUrl();
         }
     }
     spdlog::info("AuthManager initialized with API URL: {}", api_base_url_);
@@ -335,8 +335,9 @@ bool AuthManager::FetchUserProfile() {
         // Parse URL (same as DoLogin)
         std::string host = base_url;
         std::string port = "80";
+        const bool https = host.find("https://") == 0;
 
-        if (host.find("https://") == 0) {
+        if (https) {
             host = host.substr(8);
             port = "443";
         } else if (host.find("http://") == 0) {
@@ -357,7 +358,9 @@ bool AuthManager::FetchUserProfile() {
             host = host.substr(0, slash_pos);
         }
 
-        httplib::Client client(host + ":" + port);
+        // The scheme decides TLS: this call used plain HTTP even for an
+        // https:// service (TOFIX168)
+        httplib::Client client((https ? "https://" : "http://") + host + ":" + port);
         client.set_connection_timeout(10);
         client.set_read_timeout(30);
 
@@ -587,46 +590,50 @@ std::string AuthManager::GetRememberedEmail() const {
 
 bool AuthManager::LastSessionExpired() const { return last_session_expired_; }
 
-std::future<bool> AuthManager::ProbeService(std::string api_url) {
-    return std::async(std::launch::async, [api_url]() {
-        try {
-            std::string host = api_url;
-            bool use_ssl = false;
-            int port = 80;
-            if (host.rfind("https://", 0) == 0) {
-                host = host.substr(8);
-                use_ssl = true;
-                port = 443;
-            } else if (host.rfind("http://", 0) == 0) {
-                host = host.substr(7);
-            }
-            const auto slash = host.find('/');
-            if (slash != std::string::npos) host = host.substr(0, slash);
-            const auto colon = host.find(':');
-            if (colon != std::string::npos) {
-                port = std::stoi(host.substr(colon + 1));
-                host = host.substr(0, colon);
-            }
-            if (host.empty()) return false;
-            httplib::Result res;
-            if (use_ssl) {
-                httplib::SSLClient client(host, port);
-                client.set_connection_timeout(3);
-                client.set_read_timeout(3);
-                client.enable_server_certificate_verification(true);
-                res = client.Get("/health");
-            } else {
-                httplib::Client client(host, port);
-                client.set_connection_timeout(3);
-                client.set_read_timeout(3);
-                res = client.Get("/health");
-            }
-            return res && res->status == 200;
-        } catch (const std::exception& e) {
-            spdlog::debug("Service probe failed: {}", e.what());
-            return false;
+int AuthManager::HttpGet(const std::string& url, std::string* body) {
+    try {
+        std::string host = url;
+        bool use_ssl = false;
+        int port = 80;
+        if (host.rfind("https://", 0) == 0) {
+            host = host.substr(8);
+            use_ssl = true;
+            port = 443;
+        } else if (host.rfind("http://", 0) == 0) {
+            host = host.substr(7);
         }
-    });
+        std::string path = "/";
+        const auto slash = host.find('/');
+        if (slash != std::string::npos) {
+            path = host.substr(slash);
+            host = host.substr(0, slash);
+        }
+        const auto colon = host.find(':');
+        if (colon != std::string::npos) {
+            port = std::stoi(host.substr(colon + 1));
+            host = host.substr(0, colon);
+        }
+        if (host.empty()) return 0;
+        httplib::Result res;
+        if (use_ssl) {
+            httplib::SSLClient client(host, port);
+            client.set_connection_timeout(3);
+            client.set_read_timeout(3);
+            client.enable_server_certificate_verification(true);
+            res = client.Get(path);
+        } else {
+            httplib::Client client(host, port);
+            client.set_connection_timeout(3);
+            client.set_read_timeout(3);
+            res = client.Get(path);
+        }
+        if (!res) return 0;
+        if (body) *body = res->body;
+        return res->status;
+    } catch (const std::exception& e) {
+        spdlog::debug("GET {} failed: {}", url, e.what());
+        return 0;
+    }
 }
 
 void AuthManager::OpenWebsite(const std::string& url_text) {
@@ -1262,13 +1269,10 @@ bool AuthManager::SyncNodeIdWithWebApi(const std::string& central_server_node_id
         }
         
         // Create HTTP client
-        std::unique_ptr<httplib::Client> cli;
-        if (protocol == "https") {
-            cli = std::make_unique<httplib::Client>(host, port);
-            cli->enable_server_certificate_verification(false);
-        } else {
-            cli = std::make_unique<httplib::Client>(host, port);
-        }
+        // The scheme decides TLS, with the certificate checked: this call
+        // used plain HTTP for an https:// service and turned verification
+        // off (TOFIX168)
+        auto cli = std::make_unique<httplib::Client>(protocol + "://" + host + ":" + std::to_string(port));
         cli->set_connection_timeout(10);
         cli->set_read_timeout(10);
         

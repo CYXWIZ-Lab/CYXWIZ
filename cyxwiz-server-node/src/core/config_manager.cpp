@@ -1,5 +1,6 @@
 // config_manager.cpp - YAML configuration implementation
 #include "core/config_manager.h"
+#include "common/server_address.h"
 #include <yaml-cpp/yaml.h>
 #include <fstream>
 #include <filesystem>
@@ -45,6 +46,7 @@ bool ConfigManager::LoadConfig(const std::string& path, NodeConfig& config) {
         // Network settings
         if (yaml["network"]) {
             auto network = yaml["network"];
+            if (network["cyxwiz_server"]) config.cyxwiz_server = network["cyxwiz_server"].as<std::string>();
             if (network["central_server"]) config.central_server = network["central_server"].as<std::string>();
             if (network["auth_api_url"]) config.auth_api_url = network["auth_api_url"].as<std::string>();
             if (network["ipc_address"]) config.ipc_address = network["ipc_address"].as<std::string>();
@@ -146,6 +148,7 @@ bool ConfigManager::SaveConfig(const NodeConfig& config, const std::string& path
 
         // Network settings
         out << YAML::Key << "network" << YAML::Value << YAML::BeginMap;
+        out << YAML::Key << "cyxwiz_server" << YAML::Value << config.cyxwiz_server;
         out << YAML::Key << "central_server" << YAML::Value << config.central_server;
         out << YAML::Key << "auth_api_url" << YAML::Value << config.auth_api_url;
         out << YAML::Key << "ipc_address" << YAML::Value << config.ipc_address;
@@ -246,3 +249,23 @@ std::string ConfigManager::FindConfigFile() {
 }
 
 } // namespace cyxwiz::servernode::core
+
+namespace cyxwiz::servernode::core {
+
+std::string NodeConfig::CentralAddress() const {
+    if (!cyxwiz_server.empty()) {
+        const auto e = cyxwiz::protocol::ResolveServerAddress(cyxwiz_server);
+        if (e.error.empty()) return e.central;
+    }
+    return central_server;
+}
+
+std::string NodeConfig::AuthApiUrl() const {
+    if (!cyxwiz_server.empty()) {
+        const auto e = cyxwiz::protocol::ResolveServerAddress(cyxwiz_server);
+        if (e.error.empty()) return e.api_base_url;
+    }
+    return auth_api_url;
+}
+
+}  // namespace cyxwiz::servernode::core

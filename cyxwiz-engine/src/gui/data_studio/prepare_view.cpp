@@ -294,7 +294,7 @@ void PrepareView::AddAfter(int after, ::gui::NodeType type, std::map<std::string
     editor_->RequestStepAfter(after, type, {}, std::move(parameters));
     const auto* meta = NodeMetadataRegistry::Instance().GetMetadata(type);
     const auto* from = NodeById(after);
-    message_ = "Added a " + (meta ? meta->name : std::string("step")) + " step after " +
+    message_ = "Added " + (meta ? meta->name : std::string("a step")) + " after " +
                (from ? from->name : std::string("the data")) + " (Ctrl+Z on the canvas undoes it).";
     message_error_ = false;
 }
@@ -310,7 +310,7 @@ void PrepareView::AddStepAfter(int step_id, ::gui::NodeType type, bool guided) {
     if (type != ::gui::NodeType::SQLQuery) {
         editor_->RequestStepAfter(step_id, type);
         const auto* meta = NodeMetadataRegistry::Instance().GetMetadata(type);
-        message_ = "Added a " + (meta ? meta->name : std::string("step")) + " node after this one (Ctrl+Z on the canvas undoes it).";
+        message_ = "Added " + (meta ? meta->name : std::string("a step")) + " after this one (Ctrl+Z on the canvas undoes it).";
     } else if (guided) {
         editor_->RequestGuidedStepAfter(step_id);
         message_ = "Added a guided step after this one; add its operations.";
@@ -421,6 +421,14 @@ void PrepareView::Render() {
     const ui::Tokens& t = ui::CurrentTokens();
     if (!editor_) {
         ImGui::TextColored(t.text_dim, "No graph is open.");
+        return;
+    }
+    // An image graph prepares images: its image recipe, not table steps.
+    if (ImageRecipeView::IsImageGraph(editor_)) {
+        image_recipe_.show_on_canvas = show_on_canvas;
+        ImGui::BeginChild("##image_recipe", ImVec2(0.0f, 0.0f));
+        image_recipe_.Render(editor_);
+        ImGui::EndChild();
         return;
     }
     if (recipes_.empty() && loose_.empty()) {

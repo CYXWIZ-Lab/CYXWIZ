@@ -1,11 +1,12 @@
 # Image transforms
 
-Ten nodes change images on their way from the Data Input to the model:
-**Center Crop**, **Random Crop**, **Horizontal Flip**, **Vertical Flip**,
-**Image Rotate**, **Color Jitter**, **Image Gaussian Blur**, **Grayscale**,
-**Morphology Transform** and **Advanced Augment**. They follow `torchvision.transforms` (morphology
-follows `kornia.morphology`): each one gives the same pixels as the reference
-function with the same settings.
+Fifteen nodes change images on their way from the Data Input to the model:
+**Center Crop**, **Random Crop**, **Random Resized Crop**, **Horizontal Flip**,
+**Vertical Flip**, **Image Rotate**, **Random Affine**, **Random Perspective**,
+**Color Jitter**, **Random Grayscale**, **Gaussian Noise**, **Image Gaussian
+Blur**, **Grayscale**, **Morphology Transform** and **Advanced Augment**. They
+follow `torchvision.transforms` (morphology follows `kornia.morphology`): each
+one gives the same pixels as the torchvision transform with the same draws.
 
 Seven more run OpenCV once, when the images are prepared:
 **Image Contrast (CLAHE)**, **Image Denoise**, **Image Sharpen**,
@@ -34,9 +35,14 @@ Data Input (images) -> Split -> Loader -> Resize 72 -> Random Crop 64
 | Node | Training | Validation and test |
 | --- | --- | --- |
 | Random Crop | random position per image | centre crop of the same size |
+| Random Resized Crop | random box per image, resized | the centred box of the nearest allowed aspect, resized |
 | Horizontal / Vertical Flip | flipped with `probability` | unchanged |
 | Image Rotate | random angle in `[-max_angle, max_angle]` with `probability` | unchanged |
+| Random Affine | random angle, shift, scale and shear per image | unchanged |
+| Random Perspective | corners moved with `probability` | unchanged |
 | Color Jitter | random factors and order per image | unchanged |
+| Random Grayscale | gray with `probability` | unchanged |
+| Gaussian Noise | noise on every pixel | unchanged |
 | Center Crop | centre crop | centre crop |
 | Image Gaussian Blur | blurred | blurred |
 | Grayscale | one channel | one channel |
@@ -45,6 +51,7 @@ Data Input (images) -> Split -> Loader -> Resize 72 -> Random Crop 64
 | Advanced Augment (cutout, random_erasing) | patch erased with `probability` | unchanged |
 | Advanced Augment (mixup, cutmix) | batch and labels mixed with `probability` | unchanged |
 | Advanced Augment (randaugment) | `num_ops` random ops per image with `probability` | unchanged |
+| Advanced Augment (autoaugment, trivialaugment, augmix) | the policy's ops per image with `probability` | unchanged |
 
 Random nodes make each training epoch see slightly different images, which
 reduces overfitting. Validation and test always see the same images, so their
@@ -61,12 +68,17 @@ image_split.md).
 | Random Crop | `width`, `height`, `padding` (0) | Resize a little larger than the crop so positions differ, or pad: the CIFAR recipe is Random Crop 32 with `padding` 4 on 32 x 32 images. Validation takes the centre of the padded image, so a full-size crop leaves it unchanged. |
 | Horizontal Flip | `probability` (0.5) | Avoid it for text and digits. |
 | Vertical Flip | `probability` (0.5) | For images with no natural up: satellite, microscopy. |
-| Image Rotate | `max_angle` (15), `probability` (0.5), `interpolation` (nearest / bilinear) | Same size. Corners outside the image become 0. |
+| Random Resized Crop | `width`, `height` (0 = the incoming size), `scale_min` / `scale_max` (0.08 / 1), `ratio_min` / `ratio_max` (0.75 / 1.3333), `interpolation` (bilinear / nearest) | A box covering `scale_min` to `scale_max` of the area, aspect ratio (width / height) from `ratio_min` to `ratio_max`, resized to `width` x `height`; after ten misses, the centred box of the nearest allowed ratio. Bilinear is antialiased when shrinking, as torchvision's resize. 0 x 0 keeps the size coming in, so adding the node does not change the model's input. |
+| Image Rotate | `max_angle` (15), `probability` (0.5), `interpolation` (nearest / bilinear) | Same size. Corners outside the image become 0 (torchvision RandomRotation's fill). |
+| Random Affine | `degrees` (10), `translate_x` / `translate_y` (0.1), `scale_min` / `scale_max` (0.9 / 1.1), `shear_x_min` / `shear_x_max`, `shear_y_min` / `shear_y_max` (0), `interpolation` (nearest), `fill` (0) | About the centre. The shift is whole pixels, up to `translate_x` of the width and `translate_y` of the height. Pixels from outside the image take `fill`. |
+| Random Perspective | `distortion` (0.5), `probability` (0.5), `interpolation` (bilinear), `fill` (0) | Each corner moves inwards by up to `distortion` of half the side. |
+| Random Grayscale | `probability` (0.1) | Gray in every channel, so the shape stays the same (unlike Grayscale). One-channel images are unchanged. |
+| Gaussian Noise | `mean` (0), `sigma` (0.1), `clip` (on) | Noise from N(`mean`, `sigma`) on pixels in `[0, 1]`, drawn on the device for every batch; `clip` keeps the result in `[0, 1]`. |
 | Color Jitter | `brightness`, `contrast`, `saturation` (0.2), `hue` (0.1) | Factors come from `[max(0, 1 - v), 1 + v]`; hue shifts by `[-hue, hue]`, with `hue` at most 0.5. 0 turns an adjustment off. |
 | Image Gaussian Blur | `kernel_size` (5, odd), `sigma` (1.0) | Edges are reflected. `kernel_size / 2` must be smaller than both sides. |
 | Grayscale | none | `0.2989 R + 0.587 G + 0.114 B`. The model's input becomes `[H, W, 1]`. |
 | Morphology Transform | `operation` (open), `kernel_size` (3, odd) | Flat square kernel, pixels outside the image ignored. erode = local minimum, dilate = local maximum, open = dilate(erode), close = erode(dilate), gradient = dilate - erode, tophat = image - open, blackhat = close - image. |
-| Advanced Augment | `method` (cutout / random_erasing / mixup / cutmix / randaugment), `probability` (0.5), `alpha` (1.0), `num_ops` (2), `magnitude` (9), `cutout_size` (16), `scale_min` / `scale_max` (0.02 / 0.33), `ratio_min` / `ratio_max` (0.3 / 3.3), `value` (0) | cutout: a square centred at a random pixel, clipped at the edges (DeVries & Taylor). random_erasing: a box of random area and aspect ratio (torchvision RandomErasing); after ten misses the image stays as it is. `value` is a pixel value, written before Normalize. mixup / cutmix and randaugment: see below. |
+| Advanced Augment | `method` (cutout / random_erasing / mixup / cutmix / randaugment / autoaugment / trivialaugment / augmix), `probability` (0.5), and the chosen method's own settings | cutout: a square centred at a random pixel, clipped at the edges (DeVries & Taylor): `cutout_size` (16), `value` (0). random_erasing: a box of random area and aspect ratio (torchvision RandomErasing); after ten misses the image stays as it is: `scale_min` / `scale_max` (0.02 / 0.33), `ratio_min` / `ratio_max` (0.3 / 3.3), `value`. `value` is a pixel value, written before Normalize. mixup / cutmix and the policies: see below. Properties shows only the chosen method's settings. |
 
 ## Augmentation Preset
 
@@ -123,6 +135,21 @@ each picked at random from 14:
 
 The default `num_ops` 2 and `magnitude` 9 are torchvision's. Shear, translate
 and rotate use nearest sampling and fill with 0.
+
+## AutoAugment, TrivialAugment and AugMix
+
+Three more Advanced Augment methods pick ops from the same list as
+RandAugment, with their own strengths. Each runs on a training image with
+`probability`; set it to 1 for torchvision's behaviour.
+
+| `method` | Follows | What each image gets | Settings |
+| --- | --- | --- | --- |
+| autoaugment | `torchvision.transforms.v2.AutoAugment` | one of the policy's 25 learned pairs; each op of the pair runs with its own chance and strength (of 10). The policies also invert images. | `policy`: imagenet, cifar10 or svhn |
+| trivialaugment | `TrivialAugmentWide` | one op of 14 at a random strength bin, on wider scales (shear 0.99, shift 32 pixels, rotate 135 degrees, factors 1 +/- 0.99) | `magnitude_bins` (31) |
+| augmix | `AugMix` | `mixture_width` chains of `chain_depth` ops (-1: 1 to 3) at strength bins below `severity` (of 10), mixed with Dirichlet(`alpha`) weights and blended with the image by Beta(`alpha`, `alpha`); never inverts | `severity` (3), `mixture_width` (3), `chain_depth` (-1), `alpha` (1.0) |
+
+autoaugment and trivialaugment sample with nearest pixels, augmix with
+bilinear ones, as torchvision does. All three keep the image's shape.
 
 The **As compiled** card shows the input shape after the crops and Grayscale.
 
@@ -252,6 +279,18 @@ Horizontal Flip and Normalize run on each batch.
   picked image, an OpenCV step as `56 x 56, once on the CPU`. The Properties
   panel's AS COMPILED card shows the step's input and output shapes.
 - Same result in training, validation and test.
+
+## Checked against torchvision
+
+`cyxwiz-engine/tests/test_image_transforms.cpp` replays fixtures from
+`tests/computation_truth/reference/generate_image_transform_fixtures.py` on
+every ArrayFire backend. For the Random Resized Crop, Random Affine, Random
+Perspective, Gaussian Noise and the three policies, the generator runs
+torchvision's own transform class under a fixed seed and records what it
+drew (the box, the angle and shift, the corners, the noise, the ops and their
+strengths, AugMix's weights); the Engine applies the same draws and must give
+the same pixels within 2e-5. Its own draws are checked for their ranges and
+frequencies.
 
 ## Notes
 

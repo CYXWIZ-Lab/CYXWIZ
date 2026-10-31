@@ -4,6 +4,7 @@
 #include "../icons.h"
 #include "../../auth/auth_client.h"
 #include "../../core/engine_config.h"
+#include "../ui_buttons.h"
 #include "../ui_tokens.h"
 
 #include <chrono>
@@ -319,25 +320,21 @@ void ToolbarPanel::RenderAccountDialogs() {
 
                 ImGui::Spacing();
 
+                // The server in use (TOFIX168 step 3b); it is set in Preferences > Servers.
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
-                ImGui::BeginChild("##ServerCard", ImVec2(340, 65), true, ImGuiWindowFlags_NoScrollbar);
-
-                ImGui::SetCursorPos(ImVec2(12, 10));
-                ImGui::Text("Default Server");
-                ImGui::SetCursorPos(ImVec2(12, 32));
-
-                static char server_address[256] = "";
-                static bool server_address_initialized = false;
-                if (!server_address_initialized) {
-                    std::strncpy(server_address, core::EngineConfig::Instance().GetCentralServerAddress().c_str(), sizeof(server_address) - 1);
-                    server_address[sizeof(server_address) - 1] = '\0';
-                    server_address_initialized = true;
+                ImGui::BeginChild("##ServerCard", ImVec2(340, 0),
+                                  ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                                  ImGuiWindowFlags_NoScrollbar);
+                ImGui::TextColored(t.text_dim, "Signed in at");
+                {
+                    const std::string server = core::EngineConfig::Instance().GetServerAddress();
+                    ImGui::TextUnformatted(server.empty() ? auth.GetApiBaseUrl().c_str() : server.c_str());
                 }
-                ImGui::SetNextItemWidth(316);
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
-                ImGui::InputText("##server", server_address, sizeof(server_address));
-                ImGui::PopStyleColor();
-
+                if (ui::LinkButton("Change in Preferences")) {
+                    show_account_settings_dialog_ = false;
+                    ImGui::CloseCurrentPopup();
+                    OpenPreferences("Servers");
+                }
                 ImGui::EndChild();
                 ImGui::PopStyleColor();
 
@@ -350,18 +347,7 @@ void ToolbarPanel::RenderAccountDialogs() {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::Mix(t.error, t.text_bright, 0.15f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui::Mix(t.error, t.bg_window, 0.25f));
                 if (ImGui::Button("Sign Out", ImVec2(340, 36))) {
-                    auth.Logout();
-                    is_logged_in_ = false;
-                    logged_in_user_.clear();
-                    memset(login_identifier_, 0, sizeof(login_identifier_));
-                    memset(login_password_, 0, sizeof(login_password_));
-                    login_error_message_.clear();
-                    login_success_message_.clear();
-                    spdlog::info("User signed out");
-                    // Notify application of logout
-                    if (on_logout_callback_) {
-                        on_logout_callback_();
-                    }
+                    SignOut();
                 }
                 ImGui::PopStyleColor(3);
             }

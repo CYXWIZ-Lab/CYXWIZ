@@ -864,8 +864,12 @@ void CyxWizApp::Render() {
         // sink. The Commands transcript is reserved for interactive output.
         spdlog::debug("Console panel initialized; runtime logs available");
 
-        // Restore saved auth session
+        // Sign in where the config says (servers.cyxwiz, else auth.api_url).
+        // The Engine used to sign in at the built-in 127.0.0.1:3002 whatever
+        // the config named (TOFIX168).
         auto& auth = cyxwiz::auth::AuthClient::Instance();
+        auth.SetApiBaseUrl(cyxwiz::core::EngineConfig::Instance().GetAuthApiUrl());
+        // Restore saved auth session
         if (auth.LoadSavedSession()) {
             spdlog::info("Auth session restored for: {}", auth.GetUserInfo().email);
         }
@@ -1069,6 +1073,11 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     font_config.OversampleV = needs_manual_oversampling ? 2 : 1;
     font_config.PixelSnapH = true;
     font_config.RasterizerDensity = font_rasterizer_density_;
+    // The text the Engine writes: Latin, then punctuation (… – — ‘ ’ “ ”),
+    // arrows (→) and maths signs (≤ ≥ ≈ −). ImGui's default stops at Latin-1,
+    // which drew those as "?".
+    static const ImWchar text_ranges[] = {0x0020, 0x017F, 0x2000, 0x206F, 0x2190, 0x21FF, 0x2200, 0x22FF, 0};
+    font_config.GlyphRanges = text_ranges;
 
     // Try multiple font paths (running from different directories)
     std::vector<std::string> font_paths = {

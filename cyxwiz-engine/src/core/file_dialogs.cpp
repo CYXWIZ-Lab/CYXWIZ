@@ -288,16 +288,6 @@ std::optional<std::string> FileDialogs::SaveModel(const char* default_path) {
     }, default_path, "model.cyxmodel");
 }
 
-std::optional<std::string> FileDialogs::OpenDataset(const char* default_path) {
-    return OpenFile("Open Dataset", {
-        {"CSV Files", "csv"},
-        {"HDF5 Files", "h5,hdf5"},
-        {"NumPy Files", "npy,npz"},
-        {"All Datasets", "csv,h5,hdf5,npy,npz"},
-        {"All Files", "*"}
-    }, default_path);
-}
-
 std::optional<std::string> FileDialogs::OpenImage(const char* default_path) {
     return OpenFile("Open Image", {
         {"Images", "png,jpg,jpeg,bmp,gif,tiff"},

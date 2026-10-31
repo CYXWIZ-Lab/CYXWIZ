@@ -582,6 +582,21 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"AdvancedAugment", "Advanced Augment is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX140); PipelineExecutor image transforms are not implemented",
          gui::NodeType::AdvancedAugment, std::nullopt, false,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"RandomResizedCrop", "Random Resized Crop is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX178 1.6b); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::RandomResizedCrop, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"RandomAffine", "Random Affine is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX178 1.6b); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::RandomAffine, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"RandomPerspective", "Random Perspective is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX178 1.6b); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::RandomPerspective, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"GaussianNoise", "Gaussian Noise is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX178 1.6b); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::GaussianNoise, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
+        {"RandomGrayscale", "Random Grayscale is a training image transform: the image batcher runs it on the ArrayFire device between Resize and Normalize (TOFIX178 1.6b); PipelineExecutor image transforms are not implemented",
+         gui::NodeType::RandomGrayscale, std::nullopt, false,
+         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"ImageContrast", "Image Contrast (CLAHE) is a training image step done once when the images are prepared: OpenCV on the CPU workers (TOFIX178 1.3f); PipelineExecutor image transforms are not implemented",
          gui::NodeType::ImageContrast, std::nullopt, false,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
@@ -1433,6 +1448,16 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled into the image batcher's device transform plan"},
         {gui::NodeType::AdvancedAugment, PipelineTrainingSupportRole::Preprocessing,
          "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::RandomResizedCrop, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::RandomAffine, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::RandomPerspective, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::GaussianNoise, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
+        {gui::NodeType::RandomGrayscale, PipelineTrainingSupportRole::Preprocessing,
+         "compiled into the image batcher's device transform plan"},
         {gui::NodeType::ImageContrast, PipelineTrainingSupportRole::Preprocessing,
          "done once with the prepared images (OpenCV on the CPU workers)"},
         {gui::NodeType::ImageDenoise, PipelineTrainingSupportRole::Preprocessing,
@@ -1656,6 +1681,8 @@ const char* PipelineMaterializerStorageSupportName(
         return "none";
     case PipelineMaterializerStorageSupport::ArrowTableOnly:
         return "arrow_table_only";
+    case PipelineMaterializerStorageSupport::StreamingOperatorsOnly:
+        return "streaming_operators_only";
     }
     return "unknown";
 }
@@ -1903,6 +1930,13 @@ ResolvePipelineAllowedParameterValues(const std::string& legacy_type_name) {
     for (const auto& capability : capabilities) {
         if (legacy_type_name == capability.legacy_type_name) {
             result.push_back(capability);
+            // Plugin formats come and go with their plugins: add the current ones.
+            const std::string parameter = capability.parameter_name;
+            if (legacy_type_name == "DataInput" && (parameter == "type" || parameter == "file_type")) {
+                for (const auto& external : data_input::ExternalFormats())
+                    result.back().allowed_values.push_back(
+                        data_input::ExternalFormatNameOf(data_input::ExternalFormatId(external.name)));
+            }
         }
     }
     return result;

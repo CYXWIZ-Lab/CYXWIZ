@@ -5,7 +5,7 @@ today. For a walk-through read the [quickstart](plugin-quickstart.md) and the
 [developer guide](plugin-developer-guide.md); for the rules a trainable
 module must keep, the [node contract](node-contract.md).
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 > The CyxWiz SDK is version 0.2.
 
 ## 1. Headers
@@ -25,8 +25,9 @@ SDK installs, with the types it declares, is listed in
 | `plugin/interfaces/i_node_provider.h` | `INodeProvider`, `PluginNodeTypeInfo` (signal nodes) |
 | `plugin/interfaces/i_panel_provider.h` | `IPanelProvider`, `PluginPanelInfo` |
 | `plugin/interfaces/i_training_hook.h` | `ITrainingHook`, `TrainingContext` |
-| `plugin/interfaces/i_data_provider.h` | `IDataProvider`, `PluginDataLoaderInfo`, `PluginDataset` |
-| `plugin/interfaces/i_analytics_provider.h` | `IAnalyticsProvider`, `PluginAnalyticsInfo`, `AnalyticsResult` |
+| `plugin/interfaces/arrow_c_stream.h` | `ArrowSchema`, `ArrowArray`, `ArrowArrayStream` (the Arrow C data and C stream interfaces) |
+| `plugin/interfaces/i_data_provider.h` | `IDataProvider`, `PluginDataLoaderInfo` |
+| `plugin/interfaces/i_analytics_provider.h` | `IAnalyticsProvider`, `PluginAnalyticsInfo`, `AnalyticsColumns`, `AnalyticsResult` |
 | `plugin/interfaces/i_assistant_provider.h` | `IAssistantProvider` (used by the CyxWiz assistant plugin) |
 | `core/extension_node_contract.h`, `core/node_metadata.h`, `core/graph_model.h` | `ExtensionShapeResult` and the types it builds on |
 | `<cyxwiz/sequential.h>` | `cyxwiz::Module`, `cyxwiz::Tensor` and the built-in layers |
@@ -74,7 +75,7 @@ the library. Unknown fields, capabilities and permissions are ignored.
 | `id` | string | Required. `a-z`, `0-9`, `.`, `-`, `_`; a plugin whose id has other characters loads, but all its nodes are refused. Part of every node's saved type id (`<id>:<TypeName>`), so do not change it once graphs use it. A plugin whose id is already loaded is not loaded again: **Refresh** skips it, **Install...** says it is already loaded |
 | `name` | string | Shown in the Plugin Manager (default: `id`) |
 | `version` | `"major.minor.patch"` | Your plugin's version (default `0.0.0`). Permission answers are stored per version |
-| `api_version` | `"major.minor.patch"` | The plugin API you built against (default `1.0.0`). Loads when the major equals the Engine's and the minor is not higher (1.2 today) |
+| `api_version` | `"major.minor.patch"` | The plugin API you built against (default `1.0.0`). Loads when the major equals the Engine's and the minor is not higher (1.3 today) |
 | `description`, `author`, `license`, `homepage`, `repository` | string | Stored; the Plugin Manager card shows `description` and `author` |
 | `capabilities` | array of strings | What the plugin says it provides (table below). Informational: the Engine finds interfaces through `QueryInterface` whatever this says |
 | `permissions` | array of strings | What it may do (table below) |
@@ -166,8 +167,8 @@ return, inside the crash guard. Unloading removes all of it.
 | `"INodeProvider"` | `INodeProvider` | Lists your signal nodes; calls `EvaluateNode` in live graph execution, and `GenerateCode` in code export, where the text is written as a comment (a simulation node is not part of a trained model) |
 | `"IPanelProvider"` | `IPanelProvider` | Adds your panels to the menus and draws them every frame they are open |
 | `"ITrainingHook"` | `ITrainingHook` | Calls it at training start and end, each epoch's and each training batch's start and end, and asks `ShouldStopEarly` (section 8) |
-| `"IDataProvider"` | `IDataProvider` | Registers the loaders; the Engine does not load datasets through them yet |
-| `"IAnalyticsProvider"` | `IAnalyticsProvider` | Registers the analytics; nothing in the Engine runs them yet |
+| `"IDataProvider"` | `IDataProvider` | Registers the dataset formats (plugin API 1.3 or newer): Data Input lists and opens them |
+| `"IAnalyticsProvider"` | `IAnalyticsProvider` | Registers the analytics (plugin API 1.3 or newer); Data Studio's Explore > Plugins tab runs them |
 | `"IAssistantProvider"` | `IAssistantProvider` | Runs assistant commands (the CyxWiz assistant plugin) |
 
 <!-- excerpt: plugins/template/my_nodes_plugin.cpp -->
@@ -309,18 +310,66 @@ ImGui: panels can only be built inside the CyxWiz source tree.
 
 ### `IDataProvider`, `IAnalyticsProvider`
 
-Declared and registered, but not used by the Engine yet (section 6).
-`IDataProvider` has `GetLoaders()`, `CanLoad(path)` and
-`LoadDataset(path, name)` returning a `PluginDataset`;
-`IAnalyticsProvider` has `GetAnalytics()` and `Compute(id, dataset)`
-returning an `AnalyticsResult`.
+A dataset format and a dataset analytic. Data crosses in both directions as
+the Arrow C stream interface (`arrow_c_stream.h`, the structs of the Apache
+Arrow specification): a stream of record batches with one schema. The SDK
+ships no Arrow library and needs none. Fill or read the structs by hand, or
+with any Arrow library of any version (Arrow C++ `arrow::ExportRecordBatchReader`
+/ `ImportRecordBatchReader`, nanoarrow, arrow-rs).
+`plugins/examples/data_formats` (in the SDK `examples/plugins/data-formats`)
+does both by hand, with no Arrow library; [Data plugins](data-plugin-guide.md)
+walks through it.
+
+Both interfaces took this shape in plugin API 1.3. The Engine calls them
+only in a plugin whose `plugin.json` declares `api_version` 1.3 or newer. An
+older plugin loads and its other interfaces work, but the Plugin Manager and
+the check say *IDataProvider: built for plugin API 1.2.0; it needs 1.3.0 or
+newer (rebuild the plugin)*.
+
+`IDataProvider`:
+
+| Method | Called | Contract |
+|---|---|---|
+| `std::vector<PluginDataLoaderInfo> GetLoaders()` | Once, when the plugin starts | One entry per format: `loader_id` (unique across plugins), `format_name` (shown to the user), `extensions` (any case, with or without the dot), `description`. An entry without an id, a name or an extension is skipped; an id another plugin already registered is skipped with a warning |
+| `bool CanLoad(loader_id, file_path)` | When a file's extension matches the loader | Whether this loader reads the file. It may read the file's beginning. Return false for a file of another format with the same extension |
+| `bool OpenDataset(loader_id, file_path, ArrowArrayStream* out, std::string& error)` | On a worker thread | On success fill `*out` and return true. The Engine reads the stream maybe after `OpenDataset` returned, copies each batch into its own memory, and calls `out->release` once. On failure return false with `error` (the user sees *&lt;format_name&gt; could not open &lt;file&gt;: &lt;error&gt;*) and leave `*out` untouched. An error while streaming: return non-zero from `get_next` and the message from `get_last_error` |
+
+Give numbers a numeric type (`g` float64, `f` float32, `l` int64, `i`
+int32) and text `u` (UTF-8): training and the Explore tabs work on numeric
+and text columns. Return batches of a bounded size (the example uses
+50,000 rows), so a file larger than memory streams.
+
+Data Input lists each loader in its **Format** list as *&lt;format_name&gt;
+(plugin)* and in the file types of **Browse...**; a Data Input stores it as
+`file_type` `plugin:<loader_id>` (lower case). Detection by extension: a
+format the Engine reads itself wins, then a loader whose `CanLoad` accepts
+the file. On Apply the Engine streams the file once into a Parquet copy in
+the project's cache and reads that copy until the file is newer or your
+plugin's `version` (plugin.json) changes: raise the version when your reader
+returns different data for the same file.
+
+`IAnalyticsProvider`:
+
+| Member | Contract |
+|---|---|
+| `std::vector<PluginAnalyticsInfo> GetAnalytics()` | One entry per analytic: `analytics_id` (unique across plugins), `name`, `description`, `category` (groups analytics, e.g. *Distribution*), `columns` (`AnalyticsColumns::Any`, `Numeric` or `Text`: the columns the user may pick), `min_columns` (at least 1), `max_columns` (0: no limit) |
+| `AnalyticsResult Compute(analytics_id, ArrowArrayStream* data)` | On a worker thread, when the user presses Run in Explore > Plugins. `data` streams the columns the user picked, in the order picked, every row: in batches, a table kept on disk one row group at a time. The Engine owns the stream and releases it after `Compute` returns: read it during the call, do not keep it. If the user cancels, `get_next` fails and the answer is dropped. A crash or exception inside `Compute` is caught: the user sees its message and the Engine keeps running |
+
+`AnalyticsResult`: a number (`scalar_value` with `has_scalar`, shown large),
+labelled values (`vector_value` with `vector_labels`, shown as bars and as a
+table the user can copy or export as CSV), and `text_value` (shown as a note
+under them); any combination. On failure set `success = false` and `error_message`. An
+empty `name` or `category` is filled from the analytic's info.
+
+Unloading a plugin waits until its streams are read and its analytics have
+returned, then frees its library. Data already read stays readable.
 
 ## 10. Small types
 
 | Type | Members |
 |---|---|
 | `PluginVersion` | `major`, `minor`, `patch`; `Parse("1.2.0")`, `ToString()`, `IsCompatibleWith(engine_api)`, comparisons |
-| `PLUGIN_API_VERSION_MAJOR`, `_MINOR`, `_PATCH` | 1, 2, 0 |
+| `PLUGIN_API_VERSION_MAJOR`, `_MINOR`, `_PATCH` | 1, 3, 0 |
 | `PluginPermission`, `PluginPermissionFlags` | The permission bits; `HasPermission(flags, p)`, `ParsePermissions`, `PermissionsToStrings` |
 | `PluginCapability`, `PluginCapabilityFlags` | The capability bits |
 | `PluginState` | `Unloaded`, `Loaded`, `Initialized`, `Active`, `Failed`, `Disabled`; `PluginStateToString` |
@@ -336,7 +385,7 @@ returning an `AnalyticsResult`.
 | `CyxWiz::Backend` | The backend's import library alone |
 | `cyxwiz_plugin_folder(<target> [FOLDER <dir>])` | Puts the library in `<dir>/bin` for every configuration and copies `plugin.json` from the current source folder to `<dir>` (default `<build>/<target>`). With MSVC every configuration uses the release C++ runtime (`MultiThreadedDLL`), so Debug builds load. Needs policy CMP0091, which `cmake_minimum_required(VERSION 3.15)` or later turns on |
 | `CyxWizSDK_VERSION` | The SDK version (0.2.0) |
-| `CyxWizSDK_PLUGIN_API_VERSION` | The plugin API version (1.2) |
+| `CyxWizSDK_PLUGIN_API_VERSION` | The plugin API version (1.3) |
 | `CyxWizSDK_TEMPLATE_DIR` | The template plugin's folder |
 
 <!-- excerpt: cmake/sdk/CyxWizPluginHelpers.cmake -->
@@ -373,7 +422,7 @@ plugin_sdk --prefix <folder>` installs the SDK.
 ## 12. `cyxwiz-plugin-check`
 
 ```
-cyxwiz-plugin-check <plugin folder> [<plugin folder> ...]
+cyxwiz-plugin-check [--open <file>]... <plugin folder> [<plugin folder> ...]
 ```
 
 The tool is `runtime/base/<base>/cyxwiz-plugin-check` (`.exe`). Start it
@@ -401,10 +450,20 @@ For each folder it:
    ([developer guide](plugin-developer-guide.md#8-the-gradient-check));
    prints *ok node ...* or *FAIL node ...* (*refuses every input shape the
    check uses* when it accepts neither);
-6. prints *FAIL node not added: &lt;reason&gt;* for each node the Engine
-   refused, and *FAIL the plugin registered no nodes* when there are none;
-7. unloads the plugin.
+6. lists the plugin's dataset formats and analytics (*ok dataset format
+   ...*, *ok analytic ...*), prints *FAIL not added: &lt;reason&gt;* for each
+   node, format or analytic the Engine refused, and *FAIL the plugin
+   registered no nodes, dataset formats or analytics* when there is none;
+7. for each `--open <file>`, when the plugin adds a dataset format: picks
+   the format as Data Input does (extension, then `CanLoad`), reads every
+   batch, validates the table, prints *ok open &lt;file&gt; as &lt;format&gt;:
+   &lt;rows&gt; rows, &lt;columns&gt; columns in &lt;n&gt; batches* and the column
+   types, then runs each analytic on the columns it reads and prints its
+   answer (*ok analytic &lt;name&gt; on &lt;file&gt; (&lt;columns&gt;): ...*), or a
+   *FAIL open ...* / *FAIL analytic ...* line with the reason
+   ([data plugin guide](data-plugin-guide.md#7-test-and-debug));
+8. unloads the plugin.
 
 The last line is *cyxwiz-plugin-check: all plugins pass* or
-*cyxwiz-plugin-check: FAILED*. Exit code 0 when every folder passes, 1
-otherwise, 2 for no arguments. The Engine's log lines are printed too.
+*cyxwiz-plugin-check: FAILED*. Exit code 0 when every folder and file
+passes, 1 otherwise, 2 for no folder or an unknown option. The Engine's log lines are printed too.

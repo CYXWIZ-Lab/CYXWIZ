@@ -56,11 +56,6 @@ struct BatchInspectionMetadata {
 // Forward declarations
 class AnnotationManager;
 
-namespace transforms {
-    class Compose;
-    struct Image;
-}
-
 /**
  * A batch of data ready for training
  */
@@ -312,11 +307,6 @@ public:
     void ClearPreprocessing();
     bool HasPreprocessing() const { return preprocessing_enabled_; }
 
-    // Augmentation pipeline (applied before preprocessing during training only)
-    void SetAugmentationPipeline(std::shared_ptr<transforms::Compose> pipeline);
-    void SetApplyAugmentationOnTrain(bool enable) { apply_augmentation_on_train_ = enable; }
-    bool HasAugmentation() const { return augmentation_pipeline_ != nullptr; }
-
     // =========================================================================
     // Annotation-aware batch access (for segmentation training)
     // =========================================================================
@@ -389,10 +379,6 @@ private:
     std::vector<std::unique_ptr<class NormalizationTransform>> normalization_transforms_;
     std::vector<std::unique_ptr<class ScalingTransform>> scaling_transforms_;
     bool preprocessing_enabled_ = false;
-
-    // Augmentation pipeline (applied BEFORE preprocessing, only on training split)
-    std::shared_ptr<transforms::Compose> augmentation_pipeline_;
-    bool apply_augmentation_on_train_ = true;  // Only apply to training split
 
     // Convert float vector to Tensor
     Tensor VectorToTensor(const std::vector<float>& data, const std::vector<size_t>& shape);

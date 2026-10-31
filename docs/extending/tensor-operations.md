@@ -2,7 +2,7 @@
 
 # Tensor operations for nodes
 
-What a node's `forward` and `backward` can do with a tensor, from the C++ header `cyxwiz/tensor.h` (plugin API 1.2.0) and the built pycyxwiz module (0.2.0). A blank cell means the operation does not exist on that side. Tensors are `float32` unless created otherwise; dimension 0 is the batch.
+What a node's `forward` and `backward` can do with a tensor, from the C++ header `cyxwiz/tensor.h` (plugin API 1.3.0) and the built pycyxwiz module (0.2.0). A blank cell means the operation does not exist on that side. Tensors are `float32` unless created otherwise; dimension 0 is the batch.
 
 "Source tree only" marks C++ members whose signature uses ArrayFire types: the plugin SDK ships no ArrayFire headers, so a plugin built against the SDK cannot call them. Activation functions such as `tanh`, `relu` and `sigmoid` are module functions on the Python side (`pycyxwiz.tanh(x)`); in C++ they are layers and activations in `cyxwiz/activation.h` and `cyxwiz/activations/` (see [sdk-contents.md](sdk-contents.md)).
 

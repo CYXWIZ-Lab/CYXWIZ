@@ -73,9 +73,31 @@ public:
 
     // ===== Server Addresses =====
 
+    // The one server address (TOFIX168, `servers.cyxwiz`): https://HOST is a
+    // front door with TLS, http://HOST:PORT one without, a bare HOST the
+    // three services on their own ports. When set it decides central, the
+    // gateway and sign-in below; the per-service keys apply only when it is
+    // empty (development).
+    std::string GetServerAddress() const;
+    void SetServerAddress(const std::string& address);
+
+    // The per-service keys as saved, for Preferences > Servers; the getters
+    // below give the addresses in effect. An empty gateway follows central.
+    struct SeparateAddresses {
+        std::string central;
+        std::string gateway;
+        std::string auth_api;
+    };
+    SeparateAddresses GetSeparateAddresses() const;
+
     // Central Server (gRPC orchestrator)
     std::string GetCentralServerAddress() const;
     void SetCentralServerAddress(const std::string& address);
+
+    // CyxCloud gateway (gRPC: datasets, uploads, access tokens). Empty in the
+    // config means "the central server's host, port 50060" (TOFIX164).
+    std::string GetCloudGatewayAddress() const;
+    void SetCloudGatewayAddress(const std::string& address);
 
     // Auth API Server (JWT login)
     std::string GetAuthApiUrl() const;
@@ -90,10 +112,6 @@ public:
     void SetDefaultP2PPort(int port);
 
     // ===== Feature Flags =====
-
-    // Whether to use secure (TLS) connections
-    bool UseSecureConnection() const;
-    void SetUseSecureConnection(bool secure);
 
     // Auto-connect to central server on startup
     bool AutoConnectOnStartup() const;
@@ -194,18 +212,24 @@ private:
     // Set default values
     void SetDefaults();
 
+    // Effective addresses; callers hold mutex_
+    std::string CentralLocked() const;
+    std::string GatewayLocked() const;
+    std::string AuthApiLocked() const;
+
     mutable std::mutex mutex_;
     std::filesystem::path config_path_;
     bool modified_ = false;
 
     // Server addresses
+    std::string server_address_;  // servers.cyxwiz; empty = the keys below
     std::string central_server_address_;
+    std::string cloud_gateway_address_;  // as configured; empty = derived
     std::string auth_api_url_;
     std::string default_deployment_address_;
     int default_p2p_port_ = 50052;
 
     // Feature flags
-    bool use_secure_connection_ = false;
     bool auto_connect_on_startup_ = false;
 
     // Timeouts

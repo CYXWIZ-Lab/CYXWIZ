@@ -1,6 +1,8 @@
 #include "job_manager.h"
 #include "grpc_client.h"
 #include "p2p_client.h"
+#include "cloud_job_datasets.h"
+#include "../core/engine_config.h"
 #include "common.pb.h"
 #include "../core/data_registry.h"
 #include "../gui/panels/job_status_panel.h"
@@ -478,7 +480,11 @@ bool JobManager::StartP2PExecution(const std::string& job_id) {
     // (TOFIX118 P2); registered before the job is sent.
     if (job->original_config.dataset_uri().rfind("remote://", 0) == 0) {
         std::string dataset_error;
-        if (!p2p_client->RegisterJobDatasets(job_id, job->original_config.model_definition(), dataset_error)) {
+        // This path has no CyxCloud client: a graph with cloud inputs is
+        // refused here with the reason (the Server Connection panel has one).
+        if (!p2p_client->RegisterJobDatasets(job_id, job->original_config.model_definition(), nullptr,
+                                             cyxwiz::core::EngineConfig::Instance().GetCloudGatewayAddress(),
+                                             CloudAccessTtlSeconds(0, 0), job->original_config, dataset_error)) {
             spdlog::error("[P2P WORKFLOW] Cannot train this graph remotely: {}", dataset_error);
             return false;
         }

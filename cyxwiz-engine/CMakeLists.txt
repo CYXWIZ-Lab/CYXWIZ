@@ -93,6 +93,7 @@ set(CYXWIZ_PLUGIN_SDK_HEADERS
     plugin/plugin_types.h
     plugin/plugin_context.h
     plugin/plugin_fingerprint.h
+    plugin/interfaces/arrow_c_stream.h
     plugin/interfaces/i_analytics_provider.h
     plugin/interfaces/i_assistant_provider.h
     plugin/interfaces/i_data_provider.h
@@ -137,6 +138,7 @@ target_include_directories(cyxwiz-plugin-host PUBLIC
     $<TARGET_PROPERTY:cyxwiz-backend,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(cyxwiz-plugin-host PUBLIC
     cyxwiz-training-hooks
+    Arrow::arrow_shared
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     imgui::imgui
@@ -211,6 +213,7 @@ set(ENGINE_SOURCES
     src/core/image_index_service.cpp
     src/core/image_profile_presentation.cpp
     src/core/image_gallery_presentation.cpp
+    src/core/image_recipe_presentation.cpp
     src/core/image_pixels.cpp
     src/core/image_viewer.cpp
     src/core/image_pipeline_preview.cpp
@@ -238,6 +241,8 @@ set(ENGINE_SOURCES
     src/core/stats_presentation.cpp
     src/core/groups_explore.cpp
     src/core/groups_presentation.cpp
+    src/core/explore_plugins_presentation.cpp
+    src/core/dataset_column_stream.cpp
     src/core/series_explore.cpp
     src/core/time_steps.cpp
     src/core/series_presentation.cpp
@@ -361,6 +366,7 @@ set(ENGINE_SOURCES
     src/plugin/plugin_loader.cpp
     src/plugin/plugin_manager.cpp
     src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_data_formats.cpp
     # Preprocessing system
     src/preprocessing/preprocessing_config.cpp
     src/preprocessing/statistics_calculator.cpp
@@ -452,6 +458,8 @@ set(ENGINE_SOURCES
     src/core/compile_report_presentation.cpp
     src/core/studio_toolbar_presentation.cpp
     src/core/data_input_presentation.cpp
+    src/core/cloud_source_presentation.cpp
+    src/core/cloud_connection.cpp
     src/core/test_results_presentation.cpp
     src/core/test_evaluation_tables.cpp
     src/core/kept_tests.cpp
@@ -509,6 +517,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_summary.cpp
     src/gui/data_input_dialog_sequence.cpp
     src/gui/data_input_dialog_source_options.cpp
+    src/gui/data_input_dialog_cloud_source.cpp
     src/gui/data_input_dialog_apply.cpp
     src/gui/data_input_dialog_hdf5_restore.cpp
     src/gui/data_io_dialogs.cpp
@@ -542,6 +551,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_account_dialogs.cpp
     src/gui/panels/toolbar_preferences_dialog.cpp
     src/gui/panels/toolbar_preferences_storage.cpp
+    src/gui/panels/toolbar_preferences_servers.cpp
     src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_compute_devices.cpp
     src/gui/dataset_picker.cpp
@@ -734,6 +744,7 @@ set(ENGINE_SOURCES
     src/network/job_manager.cpp
     src/network/p2p_client.cpp
     src/network/dataset_file_server.cpp
+    src/network/cloud_job_datasets.cpp
     src/network/reservation_client.cpp
     src/network/datastream_client.cpp
     src/core/cloud_data_registry.cpp
@@ -760,6 +771,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/image_profile_view.cpp
     src/gui/data_studio/image_gallery_view.cpp
     src/gui/data_studio/image_viewer_view.cpp
+    src/gui/data_studio/image_recipe_view.cpp
     src/gui/image_thumbnails.cpp
     src/gui/data_studio/missing_view.cpp
     src/gui/data_studio/explore_tab.cpp
@@ -767,6 +779,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/tests_view.cpp
     src/gui/data_studio/regression_view.cpp
     src/gui/data_studio/groups_view.cpp
+    src/gui/data_studio/plugins_view.cpp
     src/gui/data_studio/projection_view.cpp
     src/gui/data_studio/series_view.cpp
     src/gui/data_studio/forecast_view.cpp
@@ -1047,13 +1060,6 @@ set(ENGINE_HEADERS
     src/gui/data_studio/visualizer.h
     src/gui/data_studio/data_studio_panel.h
     # pipeline_executor.h moved to src/core/ (Unified Canvas Phase 2)
-    # Transform/Augmentation system
-    src/transforms/transform.h
-    src/transforms/geometric.h
-    src/transforms/color.h
-    src/transforms/noise.h
-    src/transforms/advanced.h
-    src/transforms/transforms.h
     # Preprocessing system
     src/preprocessing/preprocessing_config.h
     src/preprocessing/statistics_calculator.h
@@ -3133,6 +3139,24 @@ endif()
 set_target_properties(test_plugin_unload_registrations PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
+# ===== Test: plugin dataset formats and analytics (TOFIX181) =====
+add_executable(test_plugin_data_providers
+    tests/test_plugin_data_providers.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_include_directories(test_plugin_data_providers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_plugin_data_providers PRIVATE cyxwiz-plugin-host cyxwiz-backend Arrow::arrow_shared
+                      imgui::imgui spdlog::spdlog)
+if(WIN32)
+    target_compile_definitions(test_plugin_data_providers PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_plugin_data_providers PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_dependencies(test_plugin_data_providers data_formats)
+add_test(NAME plugin_data_providers COMMAND test_plugin_data_providers WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
 # The PipelineExecutor and every operator it runs, without the GUI: the routing
 # test and the out-of-core benchmark (TOFIX154) build from this one list.
 set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
@@ -3235,9 +3259,51 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/csv_records.cpp
     tests/support/stb_image_impl.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
+    src/plugin/security/safe_execute.cpp
 )
 
 # ===== Test: Legacy PipelineExecutor operator routing =====
+# ===== Test: a plugin dataset format through Data Input's path (TOFIX181) =====
+add_executable(test_plugin_data_formats_input
+    tests/test_plugin_data_formats_input.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+    src/plugin/plugin_data_formats.cpp
+)
+target_include_directories(test_plugin_data_formats_input PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_plugin_data_formats_input PRIVATE cyxwiz-training-core cyxwiz-plugin-host cyxwiz-backend
+    Arrow::arrow_shared Parquet::parquet_shared duckdb nlohmann_json::nlohmann_json ${OpenCV_LIBS}
+    imgui::imgui spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_plugin_data_formats_input PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_plugin_data_formats_input PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_dependencies(test_plugin_data_formats_input data_formats)
+add_test(NAME plugin_data_formats_input COMMAND test_plugin_data_formats_input WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+# ===== Test: Explore > Plugins, its model, the column stream and the example analytic (TOFIX181) =====
+add_executable(test_explore_plugins
+    tests/test_explore_plugins.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+    src/core/explore_plugins_presentation.cpp
+    src/core/dataset_column_stream.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_include_directories(test_explore_plugins PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_explore_plugins PRIVATE cyxwiz-training-core cyxwiz-plugin-host cyxwiz-backend
+    Arrow::arrow_shared Parquet::parquet_shared duckdb nlohmann_json::nlohmann_json ${OpenCV_LIBS}
+    imgui::imgui spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_explore_plugins PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_explore_plugins PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_dependencies(test_explore_plugins data_formats)
+add_test(NAME explore_plugins COMMAND test_explore_plugins WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
 add_executable(test_pipeline_executor_operator_routing
     tests/test_pipeline_executor_operator_routing.cpp
     tests/test_ordered_text_aggregation.cpp
@@ -3521,6 +3587,37 @@ target_link_libraries(test_remote_job_presentation PRIVATE
 set_target_properties(test_remote_job_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# Where the Engine looks for the CyxCloud gateway (TOFIX164 slice 1d): header-only
+add_executable(test_cloud_gateway_address
+    tests/test_cloud_gateway_address.cpp
+)
+target_include_directories(test_cloud_gateway_address PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+set_target_properties(test_cloud_gateway_address PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_cloud_gateway_address COMMAND test_cloud_gateway_address)
+
+# One server address: front door or three services (TOFIX168 step 3)
+add_executable(test_server_address
+    tests/test_server_address.cpp
+)
+target_link_libraries(test_server_address PRIVATE cyxwiz-protocol)
+set_target_properties(test_server_address PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_server_address COMMAND test_server_address)
+
+add_executable(test_server_address_view
+    tests/test_server_address_view.cpp
+)
+target_link_libraries(test_server_address_view PRIVATE cyxwiz-protocol)
+set_target_properties(test_server_address_view PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_server_address_view COMMAND test_server_address_view)
 
 # ===== Test: Reservation card presentation (TOFIX118 gaps 5-6) =====
 add_executable(test_reservation_presentation
@@ -4627,6 +4724,19 @@ if(WIN32)
 endif()
 set_target_properties(test_data_input_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME data_input_presentation COMMAND test_data_input_presentation)
+
+# ===== Test: the Data Input dialog's CyxCloud source panel (TOFIX164 4b) =====
+add_executable(test_cloud_source_presentation
+    tests/test_cloud_source_presentation.cpp
+    src/core/cloud_source_presentation.cpp
+    src/core/data_input_presentation.cpp
+)
+target_include_directories(test_cloud_source_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_cloud_source_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_cloud_source_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME cloud_source_presentation COMMAND test_cloud_source_presentation)
 
 # ===== Test: the Row Filter's condition as dialog rows (TOFIX129 B-5) =====
 add_executable(test_filter_condition
@@ -7034,6 +7144,21 @@ set_target_properties(test_image_gallery_presentation PROPERTIES
 )
 add_test(NAME image_gallery_presentation COMMAND test_image_gallery_presentation)
 
+# ===== Test: Data Studio > Prepare's image recipe (TOFIX178 1.6) =====
+add_executable(test_image_recipe_presentation
+    tests/test_image_recipe_presentation.cpp
+    src/core/image_recipe_presentation.cpp
+)
+target_include_directories(test_image_recipe_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_image_recipe_presentation PRIVATE cyxwiz-image-cv cyxwiz-backend nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_image_recipe_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_image_recipe_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME image_recipe_presentation COMMAND test_image_recipe_presentation)
+
 # ===== Test: Explore > Images viewer: zoom, orientation, pixels, histograms =====
 add_executable(test_image_viewer
     tests/test_image_viewer.cpp
@@ -7453,14 +7578,14 @@ set_target_properties(test_large_text_file PROPERTIES
 )
 foreach(data_convert_target IN ITEMS cyxwiz-engine test_data_convert_service
         test_excel_table_adapter test_data_convert_reload
-        test_data_convert_pipeline_input test_pipeline_executor_operator_routing
+        test_data_convert_pipeline_input test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins
         test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows cyxwiz-bench-out-of-core test_pipeline_run_release
         test_text_arrow_materializer test_text_arrow_training_launch test_text_gui_training_launch)
     cyxwiz_target_data_convert(${data_convert_target})
 endforeach()
 if(HighFive_FOUND)
     foreach(data_convert_pipeline_test IN ITEMS test_data_convert_pipeline_input test_pipeline_run_release
-            test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows
+            test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows
             cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
             test_text_gui_training_launch)
         target_sources(${data_convert_pipeline_test} PRIVATE src/core/datasets/hdf5_dataset.cpp)
@@ -7519,7 +7644,7 @@ target_compile_features(test_archive_text_source PRIVATE cxx_std_20)
 target_include_directories(test_archive_text_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_archive_text_source PRIVATE Arrow::arrow_shared LibArchive::LibArchive cyxwiz-backend)
 foreach(archive_input_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows
         cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
         test_text_gui_training_launch)
     target_sources(${archive_input_target} PRIVATE src/core/archive_text_source.cpp)
@@ -7529,7 +7654,7 @@ set_target_properties(test_archive_text_source PROPERTIES RUNTIME_OUTPUT_DIRECTO
 
 # Optional HTML provider is shared by all executables owning pipeline execution.
 foreach(html_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows
         cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
         test_text_gui_training_launch)
     cyxwiz_target_html_parser(${html_target})
@@ -7760,6 +7885,13 @@ add_test(NAME plugin_check_permissions
                  -DPLUGIN=${CMAKE_SOURCE_DIR}/plugins/examples/activation_nodes
                  -DWORK=${CMAKE_CURRENT_BINARY_DIR}/plugin_check_permissions
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/plugin_check_permissions.cmake)
+# --open reads files through the data plugin example and runs its analytic
+# (TOFIX181; needs the data_formats example built, as the ALL build does).
+add_test(NAME plugin_check_open
+         COMMAND ${CMAKE_COMMAND} -DCHECK=$<TARGET_FILE:cyxwiz-plugin-check>
+                 -DPLUGIN=${CMAKE_SOURCE_DIR}/plugins/examples/data_formats
+                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/plugin_check_open
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/plugin_check_open.cmake)
 
 # ===== Test: trainable extension nodes train in a real graph (TOFIX125 P2) =====
 add_executable(test_extension_training tests/test_extension_training.cpp)
@@ -8035,6 +8167,17 @@ add_executable(test_dataset_file_server
 target_link_libraries(test_dataset_file_server PRIVATE cyxwiz-training-core cyxwiz-protocol)
 target_compile_definitions(test_dataset_file_server PRIVATE
     CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+
+# The Engine's side of a CyxCloud dataset in a remote job (TOFIX164 slice 4a):
+# one access token per dataset, into the job, with the gateway address; a
+# fake gateway DataStreamService answers in-process.
+add_executable(test_cloud_job_datasets
+    tests/test_cloud_job_datasets.cpp
+    src/network/cloud_job_datasets.cpp
+    src/network/datastream_client.cpp
+)
+target_link_libraries(test_cloud_job_datasets PRIVATE cyxwiz-training-core cyxwiz-protocol)
+add_test(NAME test_cloud_job_datasets COMMAND test_cloud_job_datasets)
 target_compile_definitions(test_graph_training_job PRIVATE
     CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 

@@ -4,7 +4,11 @@ CyxWiz lets you add nodes it does not ship and train them next to the
 built-in ones. A node you add is an **extension node**: it appears in the
 node editor, saves in `.cyxgraph` files, compiles into the model and trains.
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+A C++ plugin can also add **dataset formats** (Data Input opens their files)
+and **dataset analytics** (Data Studio's Explore > Plugins runs them): see
+[Data plugins](data-plugin-guide.md).
+
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 > Each guide carries this line; a test fails when the plugin API or pycyxwiz
 > version changes until the guide is checked again (see
 > [How these pages stay true](#how-these-pages-stay-true)).
@@ -27,6 +31,8 @@ before it trains. Both follow one [node contract](node-contract.md).
   [Your own nodes in the Engine](../usage/extension_nodes.md).
 - **C++**: [Plugin quickstart](plugin-quickstart.md), then the
   [developer guide](plugin-developer-guide.md).
+- **Dataset formats and analytics (C++)**: the quickstart's sections 1 and
+  3, then [Data plugins](data-plugin-guide.md).
 
 ## Pages
 
@@ -37,6 +43,7 @@ before it trains. Both follow one [node contract](node-contract.md).
 | [python-nodes.md](python-nodes.md) | Describe a Python module or loss as a node, bundle it, approve and use it in the Engine; ten built-in layers and four losses as Python example nodes |
 | [plugin-quickstart.md](plugin-quickstart.md) | Build the template plugin against the SDK, check it, load it and train with its node |
 | [plugin-developer-guide.md](plugin-developer-guide.md) | Write your own C++ plugin with trainable nodes |
+| [data-plugin-guide.md](data-plugin-guide.md) | Add a dataset format to Data Input and an analytic to Explore > Plugins, following the SDK's example (ARFF and coefficient of variation) from build to code |
 | [node-contract.md](node-contract.md) | Know what every extension node must guarantee, in C++ and in Python |
 | [troubleshooting.md](troubleshooting.md) | Fix "not installed", refused settings, failed gradient checks, plugins that do not load |
 

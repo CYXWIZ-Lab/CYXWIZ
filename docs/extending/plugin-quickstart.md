@@ -4,7 +4,7 @@ Build the template plugin from an installed CyxWiz, check it, load it, train
 with its node, and update it after a change. You need no CyxWiz sources:
 every installation carries the plugin SDK and the check tool.
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 > Windows x64 is the main platform; Linux and macOS differences are given
 > where they exist.
 
@@ -83,6 +83,7 @@ The SDK folder holds:
 | `lib/cmake/CyxWizSDK/` | The CMake package: `find_package(CyxWizSDK)`, the target `CyxWiz::PluginSDK`, the function `cyxwiz_plugin_folder()` |
 | `template/` | My Nodes: a plugin with one trainable node, Bent Identity, that builds as delivered |
 | `examples/python-nodes/` | Python example nodes ([python-nodes.md](python-nodes.md)) |
+| `examples/plugins/data-formats/` | A data plugin: an ARFF format for Data Input and an analytic for Explore > Plugins, as source and ready to Install in `built/` ([data-plugin-guide.md](data-plugin-guide.md)) |
 | `LICENSE`, `NOTICE` | The Apache License 2.0, which covers every file of the SDK |
 
 Every header is listed in [sdk-contents.md](sdk-contents.md). The SDK has
@@ -250,7 +251,7 @@ lines, with a time stamp, are mixed in; the result lines are:
 
 ```
 D:\work\my_nodes\build\my_nodes
-  plugin com.example.my-nodes 1.0.0 (API 1.2.0)
+  plugin com.example.my-nodes 1.0.0 (API 1.3.0)
   ok   node com.example.my-nodes:BentIdentity: Passed: largest relative error 5.8e-06 in input (tolerance 2.0e-02)
 cyxwiz-plugin-check: all plugins pass
 ```
@@ -261,14 +262,16 @@ cyxwiz-plugin-check: all plugins pass
 | `FAIL the plugin did not load: ...` | The reason: API version, build fingerprint, a missing library file, or the operating system's error for the library |
 | `permission X: granted for this check only (the Engine asks the user)` | `plugin.json` declares a permission the user must approve in the Engine; the check grants it for this run only and saves nothing |
 | `FAIL the plugin did not initialise: ...` | `OnLoad` or `OnInitialize` returned `false`, threw or crashed |
-| `FAIL node not added: ...` | The Engine refused one of your nodes; the reason says why ([developer guide](plugin-developer-guide.md#nodes-the-engine-refuses)) |
+| `FAIL not added: ...` | The Engine refused one of your nodes (or dataset formats or analytics); the reason says why ([developer guide](plugin-developer-guide.md#nodes-the-engine-refuses)) |
 | `node ...: refuses a [4, 5] input with its default settings: ...` | `InferOutputShape` refused one of the two sample shapes the gradient check uses (`[3]` and `[4, 5]`); the node is checked with the other |
 | `FAIL node ...: refuses every input shape the check uses` | `InferOutputShape` refused both `[3]` and `[4, 5]`, so nothing could be checked |
 | `ok   node ...: Passed ...`, `FAIL node ...: Failed ...` | The gradient check ([developer guide](plugin-developer-guide.md#8-the-gradient-check)) |
-| `FAIL the plugin registered no nodes` | The check expects at least one node |
+| `FAIL the plugin registered no nodes, dataset formats or analytics` | The check expects at least one of them |
 
 The exit code is 0 when every folder passes, 1 otherwise, 2 without a
-folder.
+folder. For a plugin with dataset formats, `--open <file>` before the
+folder also reads that file through the format and runs the plugin's
+analytics on it ([data plugin guide](data-plugin-guide.md#7-test-and-debug)).
 
 ## 4. Load it in the Engine
 

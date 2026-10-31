@@ -236,7 +236,8 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
 
     // What it adds and whether it loads at startup (TOFIX125 steps 2.9-2.10).
     {
-        const std::string adds = cyxwiz::PluginAddsLine(plugin::DescribeContribution(p->manifest.id));
+        const auto contribution = plugin::DescribeContribution(p->manifest.id);
+        const std::string adds = cyxwiz::PluginAddsLine(contribution);
         if (!adds.empty()) {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(t.accent_text, "  %s", adds.c_str());
@@ -250,7 +251,7 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
             ReloadStartupList();
         }
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_dim, "%s", cyxwiz::PluginStartupNote(at_startup).c_str());
+        ImGui::TextColored(t.text_dim, "%s", cyxwiz::PluginStartupNote(at_startup, contribution).c_str());
         ImGui::PopTextWrapPos();
         ImGui::Unindent(t.space_md);
     }

@@ -99,9 +99,9 @@ they are loaded again.
 
 ## Explore
 
-Explore has thirteen views: **Query**, **Profile**, **Missing**, **Outliers**,
+Explore has fourteen views: **Query**, **Profile**, **Missing**, **Outliers**,
 **Correlation**, **Distribution**, **Tests**, **Regression**, **Groups**,
-**Projection**, **Series**, **Forecast** and **Visualize**, and a fourteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+**Projection**, **Series**, **Forecast**, **Visualize** and **Plugins**, and a fifteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
 Correlation Matrix) and Tools > Statistics (Summary Statistics and
@@ -680,6 +680,41 @@ settings as the Dashboard.
   adds a Dashboard connected to the Data Input with the automatic layout
   and this plot. The dashboard opens with the plot selected.
 
+## Plugins
+
+The analytics installed plugins add: questions about a dataset that a plugin
+answers (for example *Coefficient of variation* from the example plugin
+*Example Data Formats*). The tab is there with no such plugin too; it then
+says so and has **Open Plugin Manager**.
+
+- **Analytic** lists every analytic of every loaded plugin, grouped by the
+  category the plugin gives, with the plugin and its version beside it and
+  its description under it.
+- **Columns** starts with every column the analytic reads (numbers, text or
+  any, up to the plugin's maximum). In the list, the columns it cannot read
+  stay, dimmed, with the reason (*text · this analytic reads numbers*).
+- **Run** starts it; nothing runs on its own, since the analytic is the
+  plugin's code and may read every row. Beside it: *reads 14 rows of 2
+  columns*, or why Run is off (too few or too many columns, or *Example Data
+  Formats is not loaded*, with **Open Plugin Manager**).
+- While it runs, the rows read so far and **Cancel**; Task View shows the run.
+  The chosen columns go to the plugin in batches, every row: a table kept on
+  disk is read one row group at a time, so it does not have to fit in memory.
+  The plugin sees only those columns.
+- The answer: the plugin's single number (when it gives one) large, its
+  values per label as bars with the value printed, its note, and *Computed by
+  Example Data Formats 1.0.0 on 14 rows in 3 ms, 11:24:05*. **Values** is
+  the same numbers as a table, with **Copy** and **Export CSV...**.
+- Changing the analytic or the columns keeps the answer, dimmed, under
+  *Choices changed since this answer* with **Run again**. When the plugin is
+  unloaded, the answer stays dimmed and Run is off.
+- A plugin that fails, throws or crashes in its analytic shows its message;
+  the Engine keeps running.
+
+Plugin analytics are not graph nodes: they answer a question and do not
+change the data. Writing one: [the plugin API
+reference](../extending/plugin-api-reference.md) (IAnalyticsProvider).
+
 ## Prepare
 
 The graph's Preparation Recipe, step by step. On the left, **RECIPE STEPS
@@ -754,6 +789,54 @@ earlier run is dropped. A guided step's **Add checks** become these nodes when
 the step is saved: in Prepare, in the SQL Workbench, or by switching the
 operation on in Properties (they need to be its last operation that is on).
 **Validate** lists them all and adds new ones.
+
+### An image graph's recipe
+
+A graph whose images go through a **Resize** shows its **Image recipe** in
+Prepare instead of the table steps: the graph's image steps in the order
+training runs them, each row being the node itself. The subtitle names the
+data, the model input and the counts (*cat_dog to model input [64, 64, 3] ·
+2 steps once, 2 per batch*); the tab caption counts the steps without the
+Resize (*4 image steps*), and the **In the graph** strip has one *image
+steps* chip with Show on canvas.
+
+The rows come in four groups, the same split training makes:
+
+- **First**: the Resize.
+- **Once, before training**: steps done the same way to every image of every
+  part when the images are prepared (they are kept in cache/images): Center
+  Crop, Grayscale, Blur, Morphology and the OpenCV steps (CLAHE, Denoise,
+  Sharpen, Edges, Smooth, Warp, Pyramid).
+- **Per batch, training images only**: everything from the first random step
+  on, drawn again for every batch on the GPU; validation and test images skip
+  them. A Blur or Grayscale after a random step runs here too.
+- **Last**: the Normalize, on the GPU with each batch.
+
+Each row shows the step's picture on a sample image (the image after that
+step; a per-batch row shows several draws, and Normalize shows the picture the
+model gets), its settings in short and the shape after it. **Next sample**
+takes the next image of the index; the pictures show once the images are
+loaded and indexed. The first pictures of a step take a moment (its GPU code is
+built once); the label says *Drawing the pictures of ...* meanwhile.
+
+- **Settings** opens the node's settings in the row, the same typed fields as
+  Properties; a change applies to the node.
+- **Show on canvas**, **Open dialog** and **Remove** (once-only and per-batch
+  rows) act on the node; Ctrl+Z on the canvas undoes a removal.
+- **Drag a row by its handle** to move its step: over the upper half of a row
+  it goes before that row, over the lower half after it, and a line on that
+  side shows where it lands (no line: the order would not change). The node
+  moves on the canvas with its links, and the steps between its old and new
+  place swap places so the line stays in order. Resize stays
+  first and Normalize last, and an OpenCV step can't go after a random one
+  (*Image Contrast (CLAHE) is done once with the images: it must come before
+  the first random step.*); a refused move shows why while you drag.
+- **+ Add a step** offers the steps done once; **+ Add an augmentation** offers
+  the random ones (Random Crop, Random Resized Crop, Horizontal / Vertical
+  Flip, Rotate, Random Affine, Random Perspective, Color Jitter, Random
+  Grayscale, Gaussian Noise, Advanced Augment, Augmentation Preset) and, under **The same for
+  every image**, the device steps that are not random. Only image steps are
+  offered, and the new node goes after the group's last row.
 
 ## Validate
 

@@ -187,6 +187,11 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::ImageSmooth:
         case NodeType::ImageWarp:
         case NodeType::ImagePyramid:
+        case NodeType::RandomResizedCrop:
+        case NodeType::RandomAffine:
+        case NodeType::RandomPerspective:
+        case NodeType::GaussianNoise:
+        case NodeType::RandomGrayscale:
         case NodeType::QualityAnalyzer: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;

@@ -30,9 +30,16 @@ struct NodeConfig {
     std::string node_name = "CyxWiz Server Node";
     std::string region = "us-west-2";
 
-    // Network - Server addresses
+    // Network - Server addresses. `cyxwiz_server` is the one server address
+    // (TOFIX168: https://HOST front door with TLS, http://HOST:PORT without,
+    // a bare HOST the three services on their own ports); when set it
+    // decides central and sign-in, and the two keys below apply only when it
+    // is empty. Read them through CentralAddress() and AuthApiUrl().
+    std::string cyxwiz_server;
     std::string central_server = "localhost:50051";
     std::string auth_api_url = "http://127.0.0.1:3002/api";
+    std::string CentralAddress() const;
+    std::string AuthApiUrl() const;
     std::string ipc_address = "localhost:50054";
     std::string p2p_address = "0.0.0.0:50052";
     std::string terminal_address = "0.0.0.0:50053";
@@ -146,7 +153,9 @@ public:
 
     // Configuration
     const NodeConfig& GetConfig() const { return config_; }
-    void UpdateConfig(const NodeConfig& config);
+    // Keeps the config and saves it to the file it was loaded from
+    // (ConfigManager::FindConfigFile). False when the file was not written.
+    bool UpdateConfig(const NodeConfig& config);
 
 private:
     BackendManager() = default;

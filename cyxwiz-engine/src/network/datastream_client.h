@@ -245,10 +245,10 @@ private:
     void AddAuthMetadata(grpc::ClientContext& context);
 
     // Convert proto types to local types
-    static CloudDatasetInfo ConvertDatasetInfo(const cyxwiz::protocol::DatasetInfo& proto);
-    static CloudFileInfo ConvertFileInfo(const cyxwiz::protocol::DatasetFileInfo& proto);
-    static PublicDatasetInfo ConvertPublicDatasetInfo(const cyxwiz::protocol::PublicDatasetInfo& proto);
-    static TrustLevel ConvertTrustLevel(cyxwiz::protocol::TrustLevel proto);
+    static CloudDatasetInfo ConvertDatasetInfo(const cyxcloud::datastream::DatasetInfo& proto);
+    static CloudFileInfo ConvertFileInfo(const cyxcloud::datastream::DatasetFileInfo& proto);
+    static PublicDatasetInfo ConvertPublicDatasetInfo(const cyxcloud::datastream::PublicDatasetInfo& proto);
+    static TrustLevel ConvertTrustLevel(cyxcloud::datastream::TrustLevel proto);
 
     // Streaming thread function
     void StreamingThread(const std::string& dataset_id,
@@ -269,7 +269,7 @@ private:
     std::string last_error_;
 
     std::shared_ptr<grpc::Channel> channel_;
-    std::unique_ptr<cyxwiz::protocol::DataStreamService::Stub> stub_;
+    std::unique_ptr<cyxcloud::datastream::DataStreamService::Stub> stub_;
 
     // Streaming state
     std::atomic<bool> streaming_{false};

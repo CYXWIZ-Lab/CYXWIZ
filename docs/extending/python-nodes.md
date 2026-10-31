@@ -5,7 +5,7 @@ identity, a category, settings with types and limits, and the shape rule.
 Write the module as in [python-modules.md](python-modules.md), decorate it,
 bundle it, and the Engine lists it in the node palette.
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 > The Python samples on this page run, in order, as one script
 > (`scripts/docs/check_extension_docs.py` runs them). To run them yourself
 > outside the Engine, first make pycyxwiz importable

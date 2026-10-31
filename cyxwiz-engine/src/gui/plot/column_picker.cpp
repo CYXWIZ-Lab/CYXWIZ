@@ -50,7 +50,7 @@ void ColumnPicker::Opened(const char* id) {
 }
 
 int ColumnPicker::DrawList(const std::vector<ColumnSummary>& columns, bool numeric_only,
-                           const std::vector<std::string>& chosen, const std::string& current, bool many,
+                           const std::vector<std::string>* refused, const std::vector<std::string>& chosen, const std::string& current, bool many,
                            std::vector<int>* matches_out) {
     const ui::Tokens& t = ui::CurrentTokens();
     if (focus_search_) {
@@ -62,11 +62,16 @@ int ColumnPicker::DrawList(const std::vector<ColumnSummary>& columns, bool numer
 
     // The columns that fit this field, then those matching the search.
     const std::string needle = Lower(search_);
-    std::vector<int> matches;
+    std::vector<int> matches, refused_matches;
     size_t eligible = 0, one_value = 0;
     for (size_t i = 0; i < columns.size(); ++i) {
         const ColumnSummary& c = columns[i];
         if (numeric_only && !c.numeric) continue;
+        if (refused && i < refused->size() && !(*refused)[i].empty()) {
+            if (needle.empty() || Lower(c.name.c_str()).find(needle) != std::string::npos)
+                refused_matches.push_back(static_cast<int>(i));
+            continue;
+        }
         ++eligible;
         if (c.OneValue()) {
             ++one_value;
@@ -104,9 +109,10 @@ int ColumnPicker::DrawList(const std::vector<ColumnSummary>& columns, bool numer
     }
 
     const float row_h = ImGui::GetTextLineHeightWithSpacing();
-    const float list_h = std::min(320.0f, static_cast<float>(std::max<size_t>(1, matches.size())) * row_h + 4.0f);
+    const size_t rows = matches.size() + refused_matches.size();
+    const float list_h = std::min(320.0f, static_cast<float>(std::max<size_t>(1, rows)) * row_h + 4.0f);
     ImGui::BeginChild("##columns", ImVec2(0, list_h));
-    if (matches.empty()) ImGui::TextColored(t.text_dim, "No column matches.");
+    if (rows == 0) ImGui::TextColored(t.text_dim, "No column matches.");
     ImGuiListClipper clip;
     clip.Begin(static_cast<int>(matches.size()), row_h);
     if (moved) clip.IncludeItemByIndex(cursor_);
@@ -148,6 +154,19 @@ int ColumnPicker::DrawList(const std::vector<ColumnSummary>& columns, bool numer
             ImGui::PopID();
         }
     }
+    // Columns this field cannot take, after the others: dimmed, with why.
+    for (int i : refused_matches) {
+        const ColumnSummary& c = columns[static_cast<size_t>(i)];
+        const std::string& why = (*refused)[static_cast<size_t>(i)];
+        const float x0 = ImGui::GetCursorPosX() + 4.0f;
+        ImGui::SetCursorPosX(x0 + (many ? 20.0f : 0.0f));
+        ImGui::TextColored(t.text_faint, "%s", c.numeric ? "#" : "Aa");
+        ImGui::SameLine(x0 + (many ? 20.0f : 0.0f) + 24.0f);
+        ImGui::TextColored(t.text_faint, "%s", c.name.c_str());
+        const float why_x = x0 + ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(why.c_str()).x - 8.0f;
+        ImGui::SameLine(std::max(why_x, ImGui::GetCursorPosX() + 12.0f));
+        ImGui::TextColored(t.text_faint, "%s", why.c_str());
+    }
     ImGui::EndChild();
     ImGui::TextColored(t.text_faint, "%s", many ? "Up / Down to move, Enter to add or remove. # number, Aa text."
                                                 : "Up / Down to move, Enter to pick. # number, Aa text.");
@@ -168,7 +187,7 @@ bool ColumnPicker::Pick(const char* id, std::string& value, const std::vector<Co
             value.clear();
             changed = true;
         }
-        const int hit = DrawList(columns, numeric_only, {}, value, false, nullptr);
+        const int hit = DrawList(columns, numeric_only, nullptr, {}, value, false, nullptr);
         if (hit >= 0) {
             changed = value != columns[static_cast<size_t>(hit)].name;
             value = columns[static_cast<size_t>(hit)].name;
@@ -183,6 +202,16 @@ bool ColumnPicker::Pick(const char* id, std::string& value, const std::vector<Co
 
 bool ColumnPicker::PickMany(const char* id, std::vector<std::string>& values, const std::vector<ColumnSummary>& columns,
                             bool numeric_only, float width) {
+    return PickManyIn(id, values, columns, numeric_only, nullptr, width);
+}
+
+bool ColumnPicker::PickMany(const char* id, std::vector<std::string>& values, const std::vector<ColumnSummary>& columns,
+                            const std::vector<std::string>& refused, float width) {
+    return PickManyIn(id, values, columns, false, &refused, width);
+}
+
+bool ColumnPicker::PickManyIn(const char* id, std::vector<std::string>& values, const std::vector<ColumnSummary>& columns,
+                              bool numeric_only, const std::vector<std::string>* refused, float width) {
     const ui::Tokens& t = ui::CurrentTokens();
     bool changed = false;
     std::string preview = "(choose)";
@@ -195,7 +224,7 @@ bool ColumnPicker::PickMany(const char* id, std::vector<std::string>& values, co
     if (ImGui::BeginCombo(id, preview.c_str(), ImGuiComboFlags_HeightLargest)) {
         if (ImGui::IsWindowAppearing()) Opened(id);
         std::vector<int> matches;
-        const int hit = DrawList(columns, numeric_only, values, "", true, &matches);
+        const int hit = DrawList(columns, numeric_only, refused, values, "", true, &matches);
         if (hit >= 0) {
             const std::string& name = columns[static_cast<size_t>(hit)].name;
             if (Contains(values, name)) values.erase(std::remove(values.begin(), values.end(), name), values.end());
@@ -229,7 +258,9 @@ bool ColumnPicker::PickMany(const char* id, std::vector<std::string>& values, co
         std::vector<std::string> in_range;
         if (a >= 0 && b >= 0)
             for (int i = a; i <= b; ++i)
-                if (!numeric_only || columns[static_cast<size_t>(i)].numeric) in_range.push_back(columns[static_cast<size_t>(i)].name);
+                if ((!numeric_only || columns[static_cast<size_t>(i)].numeric) &&
+                    !(refused && static_cast<size_t>(i) < refused->size() && !(*refused)[static_cast<size_t>(i)].empty()))
+                    in_range.push_back(columns[static_cast<size_t>(i)].name);
         ImGui::SameLine();
         const std::string add = "Add " + std::to_string(in_range.size()) + "##range";
         if (ui::SecondaryButton(add.c_str(), !in_range.empty(), "Type the first and last column of the range")) {

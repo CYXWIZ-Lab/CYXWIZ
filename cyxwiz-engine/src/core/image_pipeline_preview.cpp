@@ -65,7 +65,33 @@ std::string DrawText(const image::ImageOp& op, const image::ImageOpDraws& d) {
             return d.box_height.empty() || d.box_height[0] == 0 ? "nothing erased"
                                                                  : "erased " + std::to_string(d.box_height[0]) + kTimes +
                                                                        std::to_string(d.box_width[0]);
-        case K::RandAugment: return std::to_string(op.num_ops) + " random ops";
+        case K::RandAugment:
+        case K::AutoAugment:
+        case K::TrivialAugment: {
+            // The ops this draw picked.
+            static const char* kOps[] = {"Identity", "Shear X", "Shear Y", "Translate X", "Translate Y", "Rotate",
+                                         "Brightness", "Color", "Contrast", "Sharpness", "Posterize", "Solarize",
+                                         "Autocontrast", "Equalize", "Invert"};
+            std::string picks;
+            if (!d.order.empty())
+                for (int id : d.order[0])
+                    if (id > 0 && id < image::kAugmentOps) picks += (picks.empty() ? "" : ", ") + std::string(kOps[id]);
+            return picks.empty() ? "unchanged" : picks;
+        }
+        case K::AugMix:
+            return d.weights.empty() ? "mixed" : "image weight " + Number(std::round(d.weights[0][0] * 100.0f) / 100.0f);
+        case K::RandomResizedCrop:
+            return d.box_height.empty() ? "cropped" : "box " + std::to_string(d.box_height[0]) + kTimes +
+                                                          std::to_string(d.box_width[0]);
+        case K::RandomAffine: {
+            if (d.factors.empty() || d.factors[0].size() < 4) return "unchanged";
+            const auto& f = d.factors[0];
+            return "rotated " + Number(std::round(f[0] * 10.0f) / 10.0f) + " degrees, scale " +
+                   Number(std::round(f[3] * 100.0f) / 100.0f);
+        }
+        case K::RandomPerspective: return !d.apply.empty() && d.apply[0] ? "tilted" : "not tilted";
+        case K::GaussianNoise: return "noise added";
+        case K::RandomGrayscale: return !d.apply.empty() && d.apply[0] ? "gray" : "in colour";
         default: return "";
     }
 }
@@ -82,7 +108,12 @@ std::string ImageStepsKey(const PreparedImageSpec& spec, const image::ImageAugme
                         op.saturation, op.hue, static_cast<float>(op.kernel_size), op.sigma,
                         static_cast<float>(op.morphology), static_cast<float>(op.erase_method),
                         static_cast<float>(op.cutout_size), op.scale_min, op.scale_max, op.ratio_min, op.ratio_max,
-                        op.value, static_cast<float>(op.num_ops), static_cast<float>(op.magnitude)})
+                        op.value, static_cast<float>(op.num_ops), static_cast<float>(op.magnitude), op.translate_x,
+                        op.translate_y, op.zoom_min, op.zoom_max, op.shear_x_min, op.shear_x_max, op.shear_y_min,
+                        op.shear_y_max, op.fill, op.distortion, op.noise_mean, op.clip ? 1.0f : 0.0f,
+                        static_cast<float>(op.policy), static_cast<float>(op.magnitude_bins),
+                        static_cast<float>(op.severity), static_cast<float>(op.mixture_width),
+                        static_cast<float>(op.chain_depth), op.alpha})
             key += "," + Number(v);
     }
     for (const auto& step : cv_steps)

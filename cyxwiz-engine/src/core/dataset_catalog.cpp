@@ -6,11 +6,6 @@ namespace cyxwiz {
 
 namespace {
 
-
-bool EndsWith(const std::string& s, const std::string& suffix) {
-    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 uint64_t Combine(uint64_t seed, uint64_t v) {
     return seed ^ (v + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
 }

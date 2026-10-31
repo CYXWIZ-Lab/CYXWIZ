@@ -140,6 +140,11 @@ void DataInputDialog::RenderFileSource() {
 
     // === 1. Source =========================================================
     SectionTitle("1. Source");
+    RenderSourceChoice();
+    if (CloudSourceChosen()) {
+        RenderCloudSource();
+        return;
+    }
     FieldLabel("File or folder");
     const float browse_w = cyxwiz::ui::ButtonWidth("Browse file...", cyxwiz::ui::ButtonSize::Small) +
                            cyxwiz::ui::ButtonWidth("Browse folder...", cyxwiz::ui::ButtonSize::Small) +
@@ -256,6 +261,18 @@ void DataInputDialog::RenderFormatOptions() {
             const bool selected = detected_type_ == option.id;
             if (ImGui::Selectable(option.label, selected)) {
                 detected_type_ = option.id;
+                RefreshColumnList();
+                has_changes_ = true;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        // Formats added by plugins (IDataProvider).
+        for (const auto& external : cyxwiz::data_input::ExternalFormats()) {
+            const int id = cyxwiz::data_input::ExternalFormatId(external.name);
+            const bool selected = detected_type_ == id;
+            const std::string label = external.label + " (plugin)##" + external.name;
+            if (ImGui::Selectable(label.c_str(), selected)) {
+                detected_type_ = id;
                 RefreshColumnList();
                 has_changes_ = true;
             }

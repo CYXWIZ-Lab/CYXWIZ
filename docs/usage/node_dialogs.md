@@ -28,6 +28,24 @@ text, a token-tagging table, a time series, a folder of images or a folder of
 audio. Databases come in through Data Studio's SQL Workbench, not through Data
 Input.
 
+### Formats from plugins
+
+A plugin can add a table format (for example ARFF, with the example plugin
+*Example Data Formats*). While the plugin is loaded, its formats are in the
+**Format** list as *&lt;name&gt; (plugin)*, in **Browse...**'s file types,
+and picked by the file's extension, so a file of such a format behaves like
+any table: Preview after Apply, Data Studio, SQL, training. A format the
+Engine reads itself wins over a plugin's for the same extension; choose the
+plugin's in **Format** to use it instead.
+
+On Apply the Engine reads the file through the plugin once and keeps a
+Parquet copy in the project's cache; it reads that copy again until the file
+or the plugin's version changes. Large files stay on disk like a large
+Parquet file. A graph that uses such a format needs the plugin: without it,
+Apply says *This format comes from a plugin that is not loaded*. Remote
+training receives the loaded table, so the remote computer does not need the
+plugin.
+
 ### Table format options
 
 - **Quote character** (default `"`): a value inside it may hold the

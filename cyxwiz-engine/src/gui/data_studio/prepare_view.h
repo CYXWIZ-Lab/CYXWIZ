@@ -15,6 +15,7 @@
 #include "../guided_editor.h"
 #include "../sql_editor_pane.h"
 #include "../table_grid.h"
+#include "image_recipe_view.h"
 #include "transform_step_view.h"
 
 #include <cstdint>
@@ -100,6 +101,7 @@ private:
     bool message_error_ = false;
 
     TransformStepView transform_;    // a scale, power or log step (TOFIX129 D2)
+    ImageRecipeView image_recipe_;   // an image graph's steps (TOFIX178 1.6)
     TableGrid grid_;
     std::string grid_key_;           // dataset + finish time shown
     std::shared_ptr<PartCounts> parts_;

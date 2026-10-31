@@ -7,7 +7,12 @@ node:
   region: "us-west-2"
 
 network:
-  # Central Server address (gRPC orchestrator)
+  # The CyxWiz server (TOFIX168): https://HOST is a front door with TLS,
+  # http://HOST:PORT one without, a bare HOST the services on their own ports.
+  # When set it decides central_server and auth_api_url below.
+  cyxwiz_server: ""
+
+  # Central Server address (gRPC orchestrator), when cyxwiz_server is empty
   central_server: "localhost:50051"
 
   # Auth API URL (JWT login server)

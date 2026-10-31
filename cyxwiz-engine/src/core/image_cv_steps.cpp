@@ -311,6 +311,34 @@ std::string ImageOpText(const image::ImageOp& op) {
         }
         case K::Erase: return op.erase_method == image::EraseMethod::Cutout ? "Cutout" : "Random Erasing";
         case K::RandAugment: return "RandAugment (" + std::to_string(op.num_ops) + " ops, magnitude " + std::to_string(op.magnitude) + ")";
+        case K::RandomResizedCrop:
+            return "Random Resized Crop " + size + ", area " + Number(op.scale_min * 100.0f) + "\xE2\x80\x93" +
+                   Number(op.scale_max * 100.0f) + " %, aspect " + Number(op.ratio_min) + "\xE2\x80\x93" + Number(op.ratio_max) +
+                   (op.interpolation == image::Interpolation::Nearest ? ", nearest" : "");
+        case K::RandomAffine: {
+            std::string text = "Random Affine: up to " + Number(op.max_angle) + " degrees, shift " +
+                               Number(op.translate_x * 100.0f) + " % / " + Number(op.translate_y * 100.0f) + " %, scale " +
+                               Number(op.zoom_min) + "\xE2\x80\x93" + Number(op.zoom_max);
+            if (op.shear_x_min != 0.0f || op.shear_x_max != 0.0f || op.shear_y_min != 0.0f || op.shear_y_max != 0.0f)
+                text += ", shear " + Number(op.shear_x_min) + "\xE2\x80\x93" + Number(op.shear_x_max) + " / " +
+                        Number(op.shear_y_min) + "\xE2\x80\x93" + Number(op.shear_y_max) + " degrees";
+            return text;
+        }
+        case K::RandomPerspective:
+            return "Random Perspective (distortion " + Number(op.distortion) + ", p " + Number(op.probability) + ")";
+        case K::GaussianNoise:
+            return "Gaussian Noise (mean " + Number(op.noise_mean) + ", sigma " + Number(op.sigma) +
+                   (op.clip ? ", clipped to 0\xE2\x80\x93" "1)" : ")");
+        case K::RandomGrayscale: return "Random Grayscale (p " + Number(op.probability) + ")";
+        case K::AutoAugment: {
+            static const char* kPolicies[] = {"ImageNet", "CIFAR-10", "SVHN"};
+            const int p = static_cast<int>(op.policy);
+            return std::string("AutoAugment, ") + (p >= 0 && p < 3 ? kPolicies[p] : "?") + " policy";
+        }
+        case K::TrivialAugment: return "TrivialAugment (" + std::to_string(op.magnitude_bins) + " bins)";
+        case K::AugMix:
+            return "AugMix (severity " + std::to_string(op.severity) + ", " + std::to_string(op.mixture_width) +
+                   (op.mixture_width == 1 ? " chain)" : " chains)");
     }
     return "transform";
 }

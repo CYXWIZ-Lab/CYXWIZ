@@ -55,6 +55,18 @@ public:
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
 
+    // A node's settings rows as Properties shows them, for another screen
+    // (Data Studio's image recipe, TOFIX178 1.6): the same typed fields,
+    // ranges, Reset and status, written to the node the same way. Keep
+    // `settings` in place once built (its rows point into its metadata) and
+    // build it again after the node changes.
+    struct SettingsRows {
+        std::optional<cyxwiz::NodeMetadata> metadata;
+        cyxwiz::properties_view::View view;
+    };
+    void BuildSettingsRows(MLNode& node, SettingsRows& settings);
+    void RenderSettingsRows(MLNode& node, const SettingsRows& settings);
+
     // An editor changed the node: the view is rebuilt on the next frame.
     void NotifyEdited() { ++edit_serial_; }
 
@@ -82,6 +94,7 @@ private:
 
     // Rebuilds view_ when its key changed (properties.cpp).
     void RefreshView(MLNode& node);
+    void BuildView(MLNode& node, std::optional<cyxwiz::NodeMetadata>& metadata, View& view);
     void RefreshDatasetFacts();
 
     void RenderEmpty();
@@ -91,7 +104,7 @@ private:
     // Normalize per channel (TOFIX178 1.4): a typed row per image channel.
     void RenderChannelRows(MLNode& node, const cyxwiz::properties_view::Setting& row);
     size_t NormalizeChannels(const MLNode& node) const;
-    void RenderMetadataRows(MLNode& node);
+    void RenderMetadataRows(MLNode& node, const View& view);
     void RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::Setting& row);
     void RenderLooseTruths(MLNode& node);
     void RenderViewSettings(MLNode& node);  // Plot / Dashboard nodes: saved settings in words

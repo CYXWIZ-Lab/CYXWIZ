@@ -1748,6 +1748,91 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
          {"hue", "float", "0.1", "Hue shift, 0 to 0.5", {}, "0-0.5", "Hue"}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::RandomResizedCrop, NodeCategory::Preprocessing, "Random Resized Crop", ICON_FA_EXPAND,
+        {"image", "crop", "resize", "scale", "zoom", "augmentation", "random"}, 0, false,
+        "Crop a random box of every training image and resize it to width x height",
+        "Each training image takes a box covering scale_min to scale_max of its area with an aspect "
+        "ratio (width / height) from ratio_min to ratio_max, resized to width x height (torchvision "
+        "RandomResizedCrop: ten tries, then the centred box of the nearest allowed ratio; bilinear "
+        "resizing is antialiased). Validation and test take that centred box. 0 keeps the size of the "
+        "image coming in, so adding the node does not change the model's input.",
+        "Resize 72 -> Random Resized Crop -> Horizontal Flip -> Normalize",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images [height, width, C]"}},
+        {{"width", "int", "0", "Output width in pixels; 0 keeps the incoming width", {}, ">=0", "Width", "Output shape", true},
+         {"height", "int", "0", "Output height in pixels; 0 keeps the incoming height", {}, ">=0", "Height", "Output shape", true},
+         {"scale_min", "float", "0.08", "Smallest box, as a fraction of the image area", {}, "0-1", "Area min"},
+         {"scale_max", "float", "1.0", "Largest box, as a fraction of the image area", {}, "0-1", "Area max"},
+         {"ratio_min", "float", "0.75", "Smallest aspect ratio (width / height)", {}, ">0", "Aspect min"},
+         {"ratio_max", "float", "1.3333", "Largest aspect ratio (width / height)", {}, ">0", "Aspect max"},
+         {"interpolation", "enum", "bilinear", "Pixel sampling", {"bilinear", "nearest"}, "", "Interpolation"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RandomAffine, NodeCategory::Preprocessing, "Random Affine", ICON_FA_OBJECT_UNGROUP,
+        {"image", "affine", "rotate", "translate", "shift", "scale", "shear", "augmentation", "random"}, 0, false,
+        "Rotate, shift, scale and shear training images at random",
+        "Each training image is rotated by an angle from [-degrees, degrees], shifted by up to "
+        "translate_x of its width and translate_y of its height (whole pixels), scaled by a factor "
+        "from scale_min to scale_max and sheared by shear_x / shear_y degrees, about its centre "
+        "(torchvision RandomAffine); pixels from outside the image take fill. Validation and test "
+        "images pass through unchanged.",
+        "Resize -> Random Affine -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"degrees", "float", "10", "Largest rotation in degrees, either way", {}, "0-180", "Degrees"},
+         {"translate_x", "float", "0.1", "Largest shift, as a fraction of the width", {}, "0-1", "Shift x"},
+         {"translate_y", "float", "0.1", "Largest shift, as a fraction of the height", {}, "0-1", "Shift y"},
+         {"scale_min", "float", "0.9", "Smallest scale factor", {}, ">0", "Scale min"},
+         {"scale_max", "float", "1.1", "Largest scale factor", {}, ">0", "Scale max"},
+         {"shear_x_min", "float", "0", "Smallest shear along x, degrees", {}, "", "Shear x min"},
+         {"shear_x_max", "float", "0", "Largest shear along x, degrees", {}, "", "Shear x max"},
+         {"shear_y_min", "float", "0", "Smallest shear along y, degrees", {}, "", "Shear y min"},
+         {"shear_y_max", "float", "0", "Largest shear along y, degrees", {}, "", "Shear y max"},
+         {"interpolation", "enum", "nearest", "Pixel sampling", {"nearest", "bilinear"}, "", "Interpolation"},
+         {"fill", "float", "0", "Value of the pixels from outside the image (0 = black)", {}, "0-1", "Fill"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RandomPerspective, NodeCategory::Preprocessing, "Random Perspective", ICON_FA_DRAW_POLYGON,
+        {"image", "perspective", "warp", "tilt", "augmentation", "random"}, 0, false,
+        "Tilt training images as if seen from another angle, at random",
+        "With the given probability, each corner of a training image moves inwards by up to "
+        "distortion of half the side and the image follows (torchvision RandomPerspective); "
+        "pixels from outside the image take fill. Validation and test images pass through unchanged.",
+        "Resize -> Random Perspective -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"distortion", "float", "0.5", "How far the corners may move, 0 to 1", {}, "0-1", "Distortion"},
+         {"probability", "float", "0.5", "Chance that a training image is tilted", {}, "0-1", "Probability"},
+         {"interpolation", "enum", "bilinear", "Pixel sampling", {"bilinear", "nearest"}, "", "Interpolation"},
+         {"fill", "float", "0", "Value of the pixels from outside the image (0 = black)", {}, "0-1", "Fill"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::RandomGrayscale, NodeCategory::Preprocessing, "Random Grayscale", ICON_FA_IMAGE,
+        {"image", "grayscale", "gray", "color", "augmentation", "random"}, 0, false,
+        "Turn some training images gray, keeping their channels",
+        "With the given probability a training image becomes its luminance (0.2989 R + 0.587 G + "
+        "0.114 B) in every channel, so the shape stays the same (torchvision RandomGrayscale). "
+        "One-channel images are unchanged. Validation and test images pass through unchanged.",
+        "Resize -> Random Grayscale -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"probability", "float", "0.1", "Chance that a training image turns gray", {}, "0-1", "Probability"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::GaussianNoise, NodeCategory::Preprocessing, "Gaussian Noise", ICON_FA_DICE,
+        {"image", "noise", "gaussian", "augmentation", "random"}, 0, false,
+        "Add random noise to every pixel of training images",
+        "Every pixel of a training image gets noise drawn from N(mean, sigma), on the device; with "
+        "clip the result stays in [0, 1] (torchvision v2 GaussianNoise). Pixels are in [0, 1] here, "
+        "before Normalize. Validation and test images pass through unchanged.",
+        "Resize -> Gaussian Noise -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"mean", "float", "0", "Mean of the noise", {}, "", "Mean"},
+         {"sigma", "float", "0.1", "Standard deviation of the noise, 0 or more", {}, ">=0", "Sigma"},
+         {"clip", "bool", "true", "Keep the result in [0, 1]", {}, "", "Clip"}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::ImageGaussianBlur, NodeCategory::Preprocessing, "Image Gaussian Blur", ICON_FA_BRUSH,
         {"image", "blur", "gaussian", "smooth"}, 0, false,
         "Smooth every image with a Gaussian kernel",
@@ -1910,8 +1995,9 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AdvancedAugment, NodeCategory::Preprocessing, "Advanced Augment", ICON_FA_WAND_MAGIC_SPARKLES,
-        {"image", "augmentation", "cutout", "random erasing", "mixup", "cutmix", "randaugment"}, 0, false,
-        "Erase patches of training images, or mix training images and their labels",
+        {"image", "augmentation", "cutout", "random erasing", "mixup", "cutmix", "randaugment", "autoaugment",
+         "trivialaugment", "augmix"}, 0, false,
+        "Erase patches of training images, mix training images and their labels, or apply a policy",
         "cutout: with the given probability, a cutout_size square centred at a random pixel is set "
         "to value, clipped at the edges (DeVries & Taylor 2017). random_erasing: a box covering "
         "scale_min to scale_max of the image, aspect ratio ratio_min to ratio_max, is set to value "
@@ -1923,16 +2009,28 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         "One mixup or cutmix per graph. randaugment (torchvision v2 RandAugment): with the given "
         "probability each training image takes num_ops ops drawn from 14 (identity, shear x / y, "
         "translate x / y, rotate, brightness, color, contrast, sharpness, posterize, solarize, "
-        "autocontrast, equalize) at bin magnitude of 31, signed ops with a random sign. Validation "
-        "and test images pass through unchanged.",
+        "autocontrast, equalize) at bin magnitude of 31, signed ops with a random sign. autoaugment "
+        "(torchvision v2 AutoAugment): one of the policy's 25 learned pairs of ops, each with its own "
+        "chance and strength (imagenet, cifar10 or svhn). trivialaugment (torchvision v2 "
+        "TrivialAugmentWide): one op of 14 at a random bin of magnitude_bins. augmix (torchvision v2 "
+        "AugMix): mixture_width chains of chain_depth ops (-1: 1 to 3) at bins below severity, mixed "
+        "with Dirichlet(alpha) weights and blended with the image by Beta(alpha, alpha). The "
+        "probability gates each image for these too. Validation and test images pass through unchanged.",
         "Resize -> Random Crop -> Advanced Augment (cutout) -> Normalize -> Conv2D",
         {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
         {{"Output", PinType::Tensor, true, "Images, same shape"}},
-        {{"method", "enum", "cutout", "Augmentation method", {"cutout", "random_erasing", "mixup", "cutmix", "randaugment"}, "", "Method"},
-         {"probability", "float", "0.5", "Chance that a training image is erased or augmented (cutout, random_erasing, randaugment) or a training batch is mixed (mixup, cutmix)", {}, "0-1", "Probability"},
+        {{"method", "enum", "cutout", "Augmentation method",
+          {"cutout", "random_erasing", "mixup", "cutmix", "randaugment", "autoaugment", "trivialaugment", "augmix"},
+          "", "Method"},
+         {"probability", "float", "0.5", "Chance that a training image is erased or augmented, or a training batch is mixed (mixup, cutmix)", {}, "0-1", "Probability"},
          {"num_ops", "int", "2", "randaugment: ops applied to each image", {}, "0-10", "Ops"},
          {"magnitude", "int", "9", "randaugment: strength bin, 0 to 30", {}, "0-30", "Magnitude"},
-         {"alpha", "float", "1.0", "mixup / cutmix: Beta(alpha, alpha) for the mixing weight", {}, ">0", "Alpha"},
+         {"policy", "enum", "imagenet", "autoaugment: the learned policy", {"imagenet", "cifar10", "svhn"}, "", "Policy"},
+         {"magnitude_bins", "int", "31", "trivialaugment: strength bins drawn from", {}, "2-100", "Magnitude bins"},
+         {"severity", "int", "3", "augmix: strength bins drawn from, of 10", {}, "1-10", "Severity"},
+         {"mixture_width", "int", "3", "augmix: chains mixed", {}, "1-10", "Chains"},
+         {"chain_depth", "int", "-1", "augmix: ops per chain, -1 for 1 to 3 at random", {}, "-1-10", "Chain depth"},
+         {"alpha", "float", "1.0", "mixup / cutmix: Beta(alpha, alpha) for the mixing weight; augmix: Dirichlet / Beta concentration", {}, ">0", "Alpha"},
          {"cutout_size", "int", "16", "cutout: side of the square in pixels", {}, ">0", "Cutout size"},
          {"scale_min", "float", "0.02", "random_erasing: smallest box area, as a fraction of the image", {}, "0-1", "Scale min"},
          {"scale_max", "float", "0.33", "random_erasing: largest box area, as a fraction of the image", {}, "0-1", "Scale max"},

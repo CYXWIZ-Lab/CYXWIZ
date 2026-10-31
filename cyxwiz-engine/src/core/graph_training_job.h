@@ -10,6 +10,7 @@
 // with preprocessing or data-transform nodes on the data path, other input
 // kinds (image/audio/text folders, CSV), or a graph that does not compile.
 
+#include "cloud_dataset_file_format.h"
 #include "graph_document.h"
 #include "graph_training_job_timing.h"
 #include "training_failure.h"
@@ -99,14 +100,37 @@ GraphTrainingJobResult RunGraphTrainingJob(const GraphTrainingJobRequest& reques
 // Remote jobs ship whole dataset files to the node (owner decision
 // 2026-09-26): the Data Input datasets a graph trains from, and the supplied
 // Test inputs (Data Split's Test role) that never leave the host.
+// A Data Input whose file lives in CyxCloud (TOFIX164): the node streams it
+// from the gateway with a token the Engine obtains; the Engine ships nothing.
+// Read from the Data Input parameters cloud_dataset_id, cloud_file_id,
+// cloud_file_name and cloud_size_bytes.
+struct CloudJobDataset {
+    std::string dataset_name;  // the graph's Data Input dataset_name
+    std::string dataset_id;    // CyxCloud dataset UUID (what the access token covers)
+    std::string file_id;       // the file's UUID in that dataset
+    std::string file_name;     // its name in the dataset; the extension says the format
+    uint64_t size_bytes = 0;   // 0 when unknown
+};
+
 struct GraphJobDatasetPlan {
     std::vector<std::string> ship;          // dataset_name of each training/validation input
     std::vector<std::string> kept_private;  // dataset_name of each supplied Test input
+    std::vector<CloudJobDataset> cloud;     // training/validation inputs fetched from CyxCloud
 };
+
+// CloudDatasetFileFormatKnown (Arrow IPC or Parquet) comes from
+// cloud_dataset_file_format.h, shared with the dialog and the browser.
 
 // False with a reason for a graph RunGraphTrainingJob would refuse
 // (preparation steps, subgraphs, unreadable) - checked before anything is sent.
 bool PlanGraphJobDatasets(const std::string& graph_json, GraphJobDatasetPlan& plan, std::string& error);
+
+// dataset_name -> the file each Data Input reads on this machine: its
+// file_path resolved against the project root (graphs save project-relative
+// paths). For GraphTrainingJobRequest::dataset_files when the Engine runs a
+// job itself (the job-fit probe). Inputs without a file_path (cloud sources)
+// are left out.
+std::map<std::string, std::string> DataInputFiles(const std::string& graph_json, const std::string& project_root);
 
 // The job's graph with each shipped Data Input reading its local file and the
 // `drop` inputs (with their links) removed. Every remaining Data Input needs

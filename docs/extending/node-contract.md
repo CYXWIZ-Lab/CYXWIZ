@@ -4,7 +4,7 @@ What every extension node must guarantee, whichever route it comes from: a
 C++ plugin or a Python node. The Engine relies on these rules; where it can,
 it checks them and stops with a message that names the node.
 
-> Checked against plugin API 1.2.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
 
 Each rule names the C++ member ([developer guide](plugin-developer-guide.md))
 and the Python one ([python-modules.md](python-modules.md),

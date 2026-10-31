@@ -1,5 +1,7 @@
 #include "remote_dataset_fetcher.h"
 
+#include "cloud_dataset_fetcher.h"
+
 #include <spdlog/spdlog.h>
 
 #include <cctype>
@@ -177,15 +179,36 @@ bool RemoteDatasetFetcher::Fetch(const std::string& dataset_name, fs::path& file
     }
 }
 
-bool FetchRemoteJobDatasets(RemoteDatasetFetcher& fetcher, cyxwiz::protocol::JobConfig& config,
-                            std::string& error) {
+bool FetchRemoteJobDatasets(RemoteDatasetFetcher& engine, CloudDatasetFetcher* cloud,
+                            cyxwiz::protocol::JobConfig& config, std::string& error) {
     cyxwiz::GraphJobDatasetPlan plan;
     if (!cyxwiz::PlanGraphJobDatasets(config.model_definition(), plan, error)) return false;
     std::map<std::string, std::string> files;
     for (const auto& name : plan.ship) {
         fs::path file;
-        if (!fetcher.Fetch(name, file, error)) return false;
+        if (!engine.Fetch(name, file, error)) return false;
         files[name] = file.string();
+    }
+    if (!plan.cloud.empty()) {
+        if (!cloud) {
+            error = "dataset '" + plan.cloud.front().dataset_name + "' lives in CyxCloud but this node has no cloud fetcher";
+            return false;
+        }
+        // The Engine sends a gateway address and an access token per cloud
+        // dataset (TOFIX164 slice 4a); a plan entry without one cannot be met.
+        std::map<std::string, const cyxwiz::protocol::CloudDatasetSource*> sources;
+        for (const auto& source : config.cloud_datasets()) sources[source.dataset_name()] = &source;
+        for (const auto& entry : plan.cloud) {
+            const auto source = sources.find(entry.dataset_name);
+            if (source == sources.end()) {
+                error = "dataset '" + entry.dataset_name +
+                        "' lives in CyxCloud but the job carries no access for it (no gateway address or token)";
+                return false;
+            }
+            fs::path file;
+            if (!cloud->Fetch(*source->second, file, error)) return false;
+            files[entry.dataset_name] = file.string();
+        }
     }
     std::string bound;
     if (!cyxwiz::BindGraphJobDatasets(config.model_definition(), files, plan.kept_private, bound, error)) {

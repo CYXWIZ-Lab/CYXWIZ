@@ -1,28 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
+//
+// A plugin's dataset file formats (plugin API 1.3). Each loader names a
+// format and its file extensions; Data Input lists it beside CSV and Parquet,
+// and opens a file of that format through OpenDataset, which hands the rows
+// over as an Arrow C stream of record batches. From there the dataset is like
+// any other: Data Studio, SQL, training and remote training use it.
 #pragma once
+
+#include "arrow_c_stream.h"
 
 #include <string>
 #include <vector>
-#include <memory>
 
 namespace cyxwiz::plugin {
 
 struct PluginDataLoaderInfo {
-    std::string loader_id;              // Unique ID
-    std::string format_name;            // Display name (e.g. "Parquet Dataset")
-    std::vector<std::string> extensions;// e.g. {".parquet", ".pq"}
+    std::string loader_id;               // Unique across plugins, e.g. "com.acme.formats.dicom"
+    std::string format_name;             // Shown in Data Input, e.g. "DICOM series"
+    std::vector<std::string> extensions; // Without the dot, e.g. {"dcm", "dicom"}
     std::string description;
-};
-
-// Opaque dataset handle returned by plugin loaders.
-// Phase 3 will bridge this to the engine's Dataset class.
-struct PluginDataset {
-    std::string name;
-    size_t num_samples = 0;
-    std::vector<std::string> column_names;
-    // Plugin-owned opaque pointer; plugin is responsible for lifetime.
-    void* opaque = nullptr;
 };
 
 class IDataProvider {
@@ -31,13 +28,17 @@ public:
 
     virtual std::vector<PluginDataLoaderInfo> GetLoaders() = 0;
 
-    virtual bool CanLoad(const std::string& file_path) = 0;
+    // Whether loader `loader_id` reads this file (it may look inside it).
+    // Called before OpenDataset when the extension matches.
+    virtual bool CanLoad(const std::string& loader_id, const std::string& file_path) = 0;
 
-    // Load dataset from file. Returns nullptr on failure.
-    virtual std::shared_ptr<PluginDataset> LoadDataset(
-        const std::string& file_path,
-        const std::string& dataset_name
-    ) = 0;
+    // Opens the file. On success fill *out and return true: the Engine reads
+    // the stream on a worker thread, maybe after OpenDataset returned, and
+    // calls out->release once. On failure return false with `error` set (shown
+    // to the user) and leave *out untouched. Streams larger than memory are
+    // fine: the Engine writes big datasets to the project's Parquet cache.
+    virtual bool OpenDataset(const std::string& loader_id, const std::string& file_path,
+                             ArrowArrayStream* out, std::string& error) = 0;
 };
 
 } // namespace cyxwiz::plugin

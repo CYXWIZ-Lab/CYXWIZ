@@ -7,6 +7,7 @@
 #include "job_executor.h"
 #include "node_client.h"
 #include "remote_dataset_fetcher.h"
+#include "cloud_dataset_fetcher.h"
 #include "core/backend_manager.h"
 #include "core/state_manager.h"
 #include "core/device_pool.h"
@@ -457,6 +458,7 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     const auto cancel_fetch = [session] {
         std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
         if (session->dataset_fetcher) session->dataset_fetcher->Cancel();
+        if (session->cloud_fetcher) session->cloud_fetcher->Cancel();
     };
 
     // Flags for reservation-based multi-job flow
@@ -647,18 +649,21 @@ grpc::Status JobExecutionServiceImpl::StreamTrainingMetrics(
     if (run_config.dataset_uri().rfind("remote://", 0) == 0) {
         job_data_dir = NodeJobDataDir(current_job_id);
         auto fetcher = std::make_shared<RemoteDatasetFetcher>(write_update, current_job_id, job_data_dir);
+        auto cloud_fetcher = std::make_shared<CloudDatasetFetcher>(job_data_dir);
         {
             std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
             session->dataset_fetcher = fetcher;
+            session->cloud_fetcher = cloud_fetcher;
         }
         std::string fetch_error;
         const auto fetch_start = std::chrono::steady_clock::now();
-        job_ready = FetchRemoteJobDatasets(*fetcher, run_config, fetch_error);
+        job_ready = FetchRemoteJobDatasets(*fetcher, cloud_fetcher.get(), run_config, fetch_error);
         phases.transfer_seconds =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - fetch_start).count();
         {
             std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
             session->dataset_fetcher.reset();
+            session->cloud_fetcher.reset();
         }
         if (!job_ready) {
             spdlog::error("[P2P WORKFLOW] Job {} not trained: {}", current_job_id, fetch_error);
@@ -1314,6 +1319,7 @@ void JobExecutionServiceImpl::CleanupJob(const std::string& job_id) {
         {
             std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
             if (session->dataset_fetcher) session->dataset_fetcher->Cancel();
+        if (session->cloud_fetcher) session->cloud_fetcher->Cancel();
         }
 
         // Mark job as stopped
@@ -1442,7 +1448,9 @@ void JobExecutionServiceImpl::ResetJobSession(JobSession* session) {
     {
         std::lock_guard<std::mutex> lock(session->dataset_fetcher_mutex);
         if (session->dataset_fetcher) session->dataset_fetcher->Cancel();
+        if (session->cloud_fetcher) session->cloud_fetcher->Cancel();
         session->dataset_fetcher.reset();
+        session->cloud_fetcher.reset();
     }
 
     // Clear paths
