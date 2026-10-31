@@ -29,6 +29,7 @@
 #include "graph_compiler_dataset_hooks.h"
 #include "../gui/node_import_guardrails.h"
 #include <spdlog/spdlog.h>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -4811,6 +4812,39 @@ TrainingConfiguration GraphCompiler::Compile(
             : std::string{};
         config.dataset_roles.train.label_column = resolved_label_col;
 
+        // The Data Input's column roles (TOFIX129 D7a G1, written by Explore >
+        // Profile as `column_roles`: {"column": "id" | "group" | "weight" |
+        // "ignore" | ...}): ID, Group, Weight and Ignore keep their column out
+        // of the features (dataset_contract.h IsFeatureRole). The label stays
+        // whatever its role says.
+        config.excluded_feature_columns.clear();
+        if (const auto roles = dataset_node->parameters.find("column_roles");
+            roles != dataset_node->parameters.end() && !roles->second.empty()) {
+            const auto parsed = nlohmann::json::parse(roles->second, nullptr, false);
+            if (parsed.is_object()) {
+                std::vector<std::string> kept_out;
+                for (const auto& [column, role] : parsed.items()) {
+                    if (!role.is_string() || column == resolved_label_col) continue;
+                    const std::string id = role.get<std::string>();
+                    if (id != "id" && id != "group" && id != "weight" && id != "ignore") continue;
+                    config.excluded_feature_columns.push_back(column);
+                    kept_out.push_back(column + " (" + id + ")");
+                }
+                if (!kept_out.empty()) {
+                    std::string list;
+                    for (const auto& item : kept_out) list += (list.empty() ? "" : ", ") + item;
+                    AddIssue(config, IssueLevel::Info,
+                             "Column roles keep " + std::to_string(kept_out.size()) + " column(s) out of the features: " + list,
+                             dataset_node->id, dataset_node->name, errors::Compiler::ColumnRolesKeepOut);
+                }
+            } else {
+                AddIssue(config, IssueLevel::Warning,
+                         "'" + dataset_node->name + "' has column roles that could not be read (column_roles is not a JSON object); "
+                         "every numeric column is a feature",
+                         dataset_node->id, dataset_node->name, errors::Compiler::InvalidParameter);
+            }
+        }
+
         if (!config.target.IsGeneratedByGraph()) {
             if (!resolved_label_col.empty()) {
                 config.target.origin = TargetOrigin::DatasetColumn;
@@ -4954,12 +4988,13 @@ TrainingConfiguration GraphCompiler::Compile(
         if (tabular_schema && config.input_shape.empty() &&
             resolved_label_index >= 0) {
             const size_t feature_count = CountNumericBatchFeatureColumns(
-                tabular_schema, resolved_label_index);
+                tabular_schema, resolved_label_index, {}, config.excluded_feature_columns);
             if (feature_count == 0) {
                 AddIssue(config, IssueLevel::Error,
                          "Registered dataset '" + config.dataset_name +
                              "' has no numeric feature columns after excluding "
-                             "label column '" + resolved_label_col + "'",
+                             "label column '" + resolved_label_col + "'" +
+                             (config.excluded_feature_columns.empty() ? "" : " and the columns its roles keep out"),
                          dataset_node->id, dataset_node->name,
                          errors::Data::ColumnTypeMismatch);
             } else {

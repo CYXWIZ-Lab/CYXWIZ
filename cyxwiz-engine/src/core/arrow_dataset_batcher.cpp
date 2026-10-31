@@ -445,6 +445,26 @@ void ArrowDatasetBatcher::InitializeColumns() {
                  num_features_, label_col_idx_);
 }
 
+void ArrowDatasetBatcher::ExcludeFeatureColumns(const std::vector<std::string>& names) {
+    if (names.empty() || !dataset_ || !dataset_->GetSchema()) return;
+    const auto schema = dataset_->GetSchema();
+    std::vector<std::string> removed;
+    for (const std::string& name : names) {
+        const int index = schema->GetFieldIndex(name);
+        if (index < 0) continue;
+        const auto at = std::find(feature_cols_.begin(), feature_cols_.end(), index);
+        if (at == feature_cols_.end()) continue;  // not a feature (the label, text, already out)
+        feature_cols_.erase(at);
+        removed.push_back(name);
+    }
+    if (removed.empty()) return;
+    num_features_ = feature_cols_.size();
+    std::string list;
+    for (const auto& name : removed) list += (list.empty() ? "" : ", ") + name;
+    spdlog::info("ArrowDatasetBatcher: {} column(s) kept out of the features by their roles ({}); {} feature columns",
+                 removed.size(), list, num_features_);
+}
+
 void ArrowDatasetBatcher::SetRegressionTargetWidth(
     size_t width, const std::string& target_base) {
     if (width < 1) {

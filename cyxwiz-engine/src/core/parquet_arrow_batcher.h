@@ -91,6 +91,10 @@ public:
                         uint32_t seed = 42,
                         std::shared_ptr<const LabelVocabulary> label_vocabulary = nullptr);
 
+    // Keeps these columns out of the feature tensor (TOFIX129 D7a G1: the
+    // Data Input's ID, Group, Weight, Ignore ... roles), as ArrowDatasetBatcher does.
+    void ExcludeFeatureColumns(const std::vector<std::string>& names);
+
     // IBatcher interface
     Batch GetNextBatch() override;
     void Reset() override;

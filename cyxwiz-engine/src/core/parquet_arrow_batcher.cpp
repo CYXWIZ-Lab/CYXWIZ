@@ -200,6 +200,26 @@ void ParquetArrowBatcher::InitializeColumns() {
     num_features_ = feature_cols_.size();
 }
 
+void ParquetArrowBatcher::ExcludeFeatureColumns(const std::vector<std::string>& names) {
+    auto schema = dataset_ ? dataset_->GetSchema() : nullptr;
+    if (names.empty() || !schema) return;
+    std::vector<std::string> removed;
+    for (const std::string& name : names) {
+        const int index = schema->GetFieldIndex(name);
+        if (index < 0) continue;
+        const auto at = std::find(feature_cols_.begin(), feature_cols_.end(), index);
+        if (at == feature_cols_.end()) continue;
+        feature_cols_.erase(at);
+        removed.push_back(name);
+    }
+    if (removed.empty()) return;
+    num_features_ = feature_cols_.size();
+    std::string list;
+    for (const auto& name : removed) list += (list.empty() ? "" : ", ") + name;
+    spdlog::info("ParquetArrowBatcher: {} column(s) kept out of the features by their roles ({}); {} feature columns",
+                 removed.size(), list, num_features_);
+}
+
 void ParquetArrowBatcher::SetRegressionTargetWidth(
     size_t width, const std::string& target_base) {
     if (width < 1) {

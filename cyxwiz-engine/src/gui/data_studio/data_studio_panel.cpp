@@ -120,6 +120,33 @@ DataStudioPanel::DataStudioPanel() {
     missing_->on_drop_rows = [this](const std::string& column, const std::vector<std::string>& texts) {
         return AddKeepRowsStep(column, texts);
     };
+    // Profile > Treat as missing > Make them empty in Prepare (TOFIX129 D7a G1):
+    // an SQL step that turns the texts into empty cells, so the graph and
+    // training see them as missing, not only Explore.
+    profile_->on_make_empty = [this](const std::string& column, const std::vector<std::string>& texts) -> std::string {
+        const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+        if (!from || !node_editor_) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list.";
+        const auto quote_name = [](const std::string& s) {
+            std::string out = "\"";
+            for (char c : s) out += c == '"' ? std::string("\"\"") : std::string(1, c);
+            return out + "\"";
+        };
+        const auto quote_text = [](const std::string& s) {
+            std::string out = "'";
+            for (char c : s) out += c == '\'' ? std::string("''") : std::string(1, c);
+            return out + "'";
+        };
+        std::string list;
+        for (const auto& t : texts) list += (list.empty() ? "" : ", ") + quote_text(t);
+        const std::string sql = "SELECT * REPLACE (CASE WHEN CAST(" + quote_name(column) + " AS VARCHAR) IN (" + list +
+                                ") THEN NULL ELSE " + quote_name(column) + " END AS " + quote_name(column) + ")\nFROM input";
+        if (const auto it = canvas_node_.find(from->id); it != canvas_node_.end())
+            node_editor_->RequestSubgraphAction(it->second, ::gui::NodeEditor::SubgraphRequest::Expand);
+        const std::string name = "Empty " + column + " where " + list;
+        node_editor_->RequestSqlStepAfter(from->id, name, sql);
+        return "Added the SQL step \"" + name + "\" after \"" + from->name + "\" (Ctrl+Z on the canvas undoes it). " +
+               explore_view::StepAddedNote();
+    };
     // Missing > Fill in Prepare and Outliers > Flag / Clip / Drop rows (TOFIX129
     // D7a G2): steps on the data path, so training reads their result.
     missing_->on_fill = [add_node](const std::string& column, const std::string& strategy, const std::string& value) {
@@ -330,8 +357,9 @@ void DataStudioPanel::RefreshView() {
             if (parameters) {
                 // Validate shows a check's (or validator's) rule from its settings,
                 // Publish an output's file.
+                // Data Inputs too: Profile reads and writes their column roles (D7a G1).
                 if (type == ::gui::NodeType::RowCountCheck || type == ::gui::NodeType::DataValidator ||
-                    studio::IsOutputNode(type))
+                    type == ::gui::NodeType::DataInput || studio::IsOutputNode(type))
                     n.parameters = *parameters;
                 const auto it = parameters->find("file_path");
                 if (it != parameters->end()) n.file_path = it->second;
@@ -440,6 +468,11 @@ void DataStudioPanel::RefreshView() {
     // Nothing picked yet: Explore opens on what training reads (TOFIX129 D7a),
     // so the plots show the data the model sees, not the raw input.
     if (active_dataset_.empty() && !view_.training.dataset.empty()) SetActiveDataset(view_.training.dataset);
+    // Profile writes the roles of a Data Input's table into that node (D7a G1).
+    if (profile_) {
+        const studio::GraphNode* of = NodeOfDataset(active_dataset_);
+        profile_->SetDataInputNode(of && of->type == ::gui::NodeType::DataInput ? of->id : -1);
+    }
     if (prepare_) prepare_->SetGraph(node_editor_, graph_nodes_, view_.jobs[static_cast<size_t>(studio::Job::Prepare)].node_ids);
     if (validate_) {
         std::vector<int> recipes;

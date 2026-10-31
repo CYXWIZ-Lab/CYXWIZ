@@ -62,12 +62,25 @@ public:
     std::function<void(const std::string& column)> on_distribution;
     std::function<void()> on_correlation;
 
+    // The graph's Data Input node this table is (TOFIX129 D7a G1), -1 for a
+    // table that is not one: the roles set here are written into it
+    // (`column_roles`, through the node writer) so training follows them.
+    void SetDataInputNode(int node_id) { data_input_node_ = node_id; }
+    // "Make them empty in Prepare" under Treat as missing: adds a step that
+    // turns the column's missing texts into empty cells; returns what happened.
+    std::function<std::string(const std::string& column, const std::vector<std::string>& texts)> on_make_empty;
+
 private:
     void RenderOverview();
     void RenderColumns(float width);
     void RenderDetail();
     void RebuildContract();
     std::string SourceKey() const;
+    // Writes this table's user roles into its Data Input node (nothing when
+    // the table is not one, or no node writer is set).
+    void SyncRolesToNode();
+    int data_input_node_ = -1;
+    std::string make_empty_message_;
 
     std::string dataset_;           // catalog name
     std::string shown_;             // as the graph calls it

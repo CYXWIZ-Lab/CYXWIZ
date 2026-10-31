@@ -891,6 +891,12 @@ int main(int argc, char** argv) {
           "tabular input size should not use compiled override");
     Check(tabular_resolution.has_separate_label_column,
           "tabular multi-column data should report a separate label column");
+    // The Data Input's roles keep columns out (TOFIX129 D7a G1): an ID role on
+    // f2 and Ignore on f3 leave two features.
+    auto roles_config = MakeConfig();
+    roles_config.excluded_feature_columns = {"f2", "f3", "label"};
+    Check(cyxwiz::ResolveTabularTrainingInputSize(roles_config, tabular_schema, "label").input_size == 2,
+          "column roles keep f2 and f3 out of the input width");
 
     auto single_col_resolution = cyxwiz::ResolveTabularTrainingInputSize(
         MakeConfig(), arrow::schema({arrow::field("x", arrow::float64())}), "");

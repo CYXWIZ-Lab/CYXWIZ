@@ -135,9 +135,15 @@ Detector) learn from the Train rows only. So:
   Plot node** and dashboards read the data and keep their result with the
   graph; training does not read them. The message ends with *Training does not
   read a branch.*
-- **Nothing else changes training.** Profile's column roles and *Treat as
-  missing*, Query's **Save as Dataset**, every **Export CSV...**, ML readiness
-  and Validate's table change no step (a failing check stops the run).
+- **Column roles reach training through the Data Input.** A role set in
+  Profile on a Data Input's table is written into that node (`column_roles`),
+  and training keeps ID, Group, Weight and Ignore columns out of the features
+  (the compile report says which). Group is not used to split and Weight not
+  to weigh rows yet. *Treat as missing* counts in Explore only until **Make
+  them empty in Prepare** adds the step that turns the texts into empty cells.
+- **Nothing else changes training.** Query's **Save as Dataset**, every
+  **Export CSV...**, ML readiness and Validate's table change no step (a
+  failing check stops the run).
 
 The rail marks the table training reads with a cap, and Explore opens on it
 when nothing is picked. One line above every view says what training makes of
@@ -291,7 +297,13 @@ here. The *from* column says who decided:
   cannot be changed here; change the label in the Data Input.
 - **you**: set here. Click the role and pick another (or **Back to
   inferred**). Saved with the project in `datasets/column_roles.json` for
-  this file, and used by dashboards, plots and Visualize.
+  this file, and used by dashboards, plots and Visualize. When the table is
+  a Data Input of the graph, the roles are also written into that node
+  (`column_roles`, Ctrl+Z on the canvas undoes it), and training keeps every
+  ID, Group, Weight and Ignore column out of the features; the line under
+  the table names them (Group is not used to split and Weight not to weigh
+  rows yet). A table that is not a Data Input says its roles guide
+  dashboards and plots only.
 - **inferred**: guessed from the values: text unique per row is an ID, a
   name ending in `_id` is an ID, dates are Date, yes/no and numbers with up
   to 12 values are Category, long or mostly different text is Text, image or
@@ -316,6 +328,10 @@ min, quartiles, max, mean, std, outliers, text length, type).
 as missing (saved with the project for this file). When a frequent value
 looks like one, the panel suggests it. Spotify's artist_genres has `N/A` in
 3,361 rows (39.2%); treated as missing, the table has 2.6% missing cells.
+The cells still hold the texts, so Explore and dashboards count them as
+missing but the graph does not: **Make them empty in Prepare** adds an SQL
+step after the data in use that turns those texts into empty cells, and
+Missing's Fill and Drop steps and training then see them as missing.
 
 The strongest correlations between number columns (Pearson) are listed
 under the details (Spotify: artist_popularity and artist_followers +0.64).

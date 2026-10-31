@@ -11,6 +11,7 @@
 #include "../ui_tokens.h"
 
 #include <imgui.h>
+#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -183,6 +184,16 @@ void ProfileView::RebuildContract() {
     contract_ = BuildContract(SourceKey(), profile_->Facts(), contract_roles, ProjectColumnRoles().RolesFor(SourceKey()));
 }
 
+void ProfileView::SyncRolesToNode() {
+    if (data_input_node_ < 0 || !node_writer_) return;
+    // The user's roles for this file, as the compiler reads them ({"column": "id"}).
+    nlohmann::json roles = nlohmann::json::object();
+    for (const auto& [column, role] : ProjectColumnRoles().RolesFor(SourceKey())) roles[column] = RoleId(role);
+    const std::string value = roles.empty() ? std::string() : roles.dump();
+    if (!node_writer_(data_input_node_, {{"column_roles", value}}))
+        spdlog::warn("Column roles: the Data Input node {} did not take column_roles", data_input_node_);
+}
+
 void ProfileView::Render() {
     const ui::Tokens& t = ui::CurrentTokens();
     // The data changed (re-loaded) or the graph's target changed: profile again / rebuild.
@@ -342,6 +353,7 @@ void ProfileView::RenderColumns(float /*width*/) {
                             save_error_.clear();
                             if (!store.Save(&save_error_)) spdlog::warn("Column roles: {}", save_error_);
                             RebuildContract();
+                            SyncRolesToNode();
                         }
                     }
                     if (cc->source == RoleSource::User) {
@@ -351,6 +363,7 @@ void ProfileView::RenderColumns(float /*width*/) {
                             save_error_.clear();
                             store.Save(&save_error_);
                             RebuildContract();
+                            SyncRolesToNode();
                         }
                     }
                     ImGui::EndPopup();
@@ -403,6 +416,25 @@ void ProfileView::RenderColumns(float /*width*/) {
             ImGui::PopID();
         }
     ImGui::EndTable();
+    // What the roles do for training (TOFIX129 D7a G1): a Data Input of the
+    // graph carries them, and the batchers keep the kept-out columns away.
+    ImGui::PushTextWrapPos(0.0f);
+    if (data_input_node_ >= 0) {
+        std::string kept_out;
+        for (const auto& cc : contract_.columns)
+            if (cc.source != RoleSource::Inferred && !IsFeatureRole(cc.role) && cc.role != ColumnRole::Target && cc.name != target_column_)
+                kept_out += (kept_out.empty() ? "" : ", ") + cc.name;
+        if (kept_out.empty())
+            ImGui::TextColored(t.text_faint, "Training reads every numeric column but the label as a feature. Set ID, Group, Weight or "
+                                             "Ignore here to keep a column out: the Data Input node carries the roles, so training follows them.");
+        else
+            ImGui::TextColored(t.text_dim, ICON_FA_GRADUATION_CAP " Training keeps out of the features: %s (the Data Input node carries the roles). "
+                                           "Group is not used to split and Weight not to weigh rows yet.", kept_out.c_str());
+    } else if (roles_editable_) {
+        ImGui::TextColored(t.text_faint, "This table is not a Data Input of the graph: roles set here guide dashboards, plots and ML readiness, "
+                                         "not training.");
+    }
+    ImGui::PopTextWrapPos();
 }
 
 void ProfileView::RenderDetail() {
@@ -527,6 +559,28 @@ void ProfileView::RenderDetail() {
                     std::string(missing_buf_).find(v) == std::string::npos) {
                     ImGui::TextColored(t.warning, "'%s' appears %s times: treat it as missing?", v.c_str(), Thousands(n).c_str());
                     break;
+                }
+            }
+            // The texts count as missing here only; a step makes them empty
+            // cells for the graph and training (TOFIX129 D7a G1).
+            std::vector<std::string> saved_texts;
+            if (const auto* s = ProjectColumnRoles().Find(SourceKey())) {
+                if (const auto it = s->missing_text.find(c.facts.name); it != s->missing_text.end()) saved_texts = it->second;
+            }
+            if (!saved_texts.empty()) {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(t.text_faint, "Counted as missing in Explore and dashboards only; the cells still hold the texts.");
+                ImGui::PopTextWrapPos();
+                const char* reason = !on_make_empty ? "Prepare is not available" : nullptr;
+                if (ui::SecondaryButton("Make them empty in Prepare", reason == nullptr, reason)) make_empty_message_ = on_make_empty(c.facts.name, saved_texts);
+                if (reason == nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
+                    ImGui::SetTooltip("Adds an SQL step after the Data Input that turns these texts in %s into empty cells, as a step on the way to "
+                                      "training: Missing's Fill and Drop steps and training then see them as missing.",
+                                      c.facts.name.c_str());
+                if (!make_empty_message_.empty()) {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextColored(make_empty_message_.rfind("Added", 0) == 0 ? t.success : t.error, "%s", make_empty_message_.c_str());
+                    ImGui::PopTextWrapPos();
                 }
             }
         }

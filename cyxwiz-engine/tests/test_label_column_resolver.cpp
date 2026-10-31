@@ -68,6 +68,12 @@ int main() {
     Check(cyxwiz::CountNumericBatchFeatureColumns(
               tabular_schema, tabular_label) == 2,
           "feature width should match numeric batch columns while excluding label and internal columns");
+    // Column roles keep columns out (TOFIX129 D7a G1): a numeric ID is not a
+    // feature; a name not in the schema, the label or a text column changes nothing.
+    Check(cyxwiz::CountNumericBatchFeatureColumns(tabular_schema, tabular_label, {}, {"sensor_b"}) == 1,
+          "an excluded numeric column leaves the feature width");
+    Check(cyxwiz::CountNumericBatchFeatureColumns(tabular_schema, tabular_label, {}, {"class", "comment", "nope"}) == 2,
+          "excluding the label, a text column or an unknown name changes nothing");
 
     auto no_label_schema = arrow::schema({
         arrow::field("text", arrow::utf8()),

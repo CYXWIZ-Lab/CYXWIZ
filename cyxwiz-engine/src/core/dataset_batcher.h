@@ -486,6 +486,11 @@ public:
         uint32_t balance_seed = 42
     );
 
+    // Keeps these columns out of the feature tensor (TOFIX129 D7a G1: the
+    // Data Input's ID, Group, Weight, Ignore ... roles). Call before the first
+    // batch; names not in the schema are ignored; the label is never removed.
+    void ExcludeFeatureColumns(const std::vector<std::string>& names);
+
     // IBatcher interface
     Batch GetNextBatch() override;
     void Reset() override;
