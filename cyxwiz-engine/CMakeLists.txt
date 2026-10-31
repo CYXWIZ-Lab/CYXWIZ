@@ -1901,8 +1901,15 @@ add_executable(test_debug_executor
     src/core/node_executors/text_token_windows.cpp
     src/core/text_arrow_adapter.cpp
     src/core/formats/text_dataset.cpp
+    src/gui/node_type_import_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
 )
 target_link_libraries(test_debug_executor PRIVATE cyxwiz-training-core)
+# The ResNet example's Local Debug (TOFIX178 6.0a) opens it from the source tree.
+target_compile_definitions(test_debug_executor PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 target_include_directories(test_debug_executor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

@@ -5,6 +5,7 @@
 
 #include <cyxwiz/sequential.h>
 
+#include <chrono>
 #include <map>
 #include <memory>
 #include <string>
@@ -45,6 +46,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     void UpdateParameters(Optimizer* optimizer) override;
     size_t LayerCount() const override { return layer_node_ids_.size(); }
+    Module* LayerModule(size_t module_index) override { return model_->GetModule(module_index); }
 
     const CompiledGraphPlan& Plan() const { return plan_; }
     const std::vector<int>& LayerNodeIds() const { return layer_node_ids_; }
@@ -55,6 +57,8 @@ private:
     bool IsLayerNode(int node_id, size_t* module_index = nullptr) const;
     bool IsGraphOpNode(int node_id) const;
     void CacheTensor(int node_id, int pin_id, const Tensor& tensor);
+    void ObserveLayer(size_t module_index, const Tensor& input, const Tensor& output,
+                      std::chrono::steady_clock::time_point start) const;
 
     std::unique_ptr<SequentialModel> model_;
     CompiledGraphPlan plan_;

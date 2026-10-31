@@ -578,6 +578,14 @@ void TraceLayer(const char* stage, size_t index, Module& module,
 
 }  // namespace
 
+void GraphExecutableModel::ObserveLayer(size_t module_index, const Tensor& input, const Tensor& output,
+                                        std::chrono::steady_clock::time_point start) const {
+    if (!layer_forward_observer_) return;
+    layer_forward_observer_(
+        module_index, input, output,
+        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - start).count());
+}
+
 Tensor GraphExecutableModel::Forward(const Tensor& input) {
     tensor_cache_.clear();
     CacheTensor(plan_.data_node_id, plan_.data_pin_id, input);
@@ -621,6 +629,7 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
                 const auto layer_start = std::chrono::steady_clock::now();
                 output = module->ForwardInputs(inputs);
                 TraceLayer("ModelForward", module_index, *module, layer_start);
+                ObserveLayer(module_index, inputs.front(), output, layer_start);
                 executed = true;
             } else {
             const auto incoming = TensorIncomingEdges(plan_, node.node_id);
@@ -637,6 +646,7 @@ Tensor GraphExecutableModel::Forward(const Tensor& input) {
             const auto layer_start = std::chrono::steady_clock::now();
             output = module->Forward(*input_tensor);
             TraceLayer("ModelForward", module_index, *module, layer_start);
+            ObserveLayer(module_index, *input_tensor, output, layer_start);
             executed = true;
             }
         } else if (IsGraphOpNode(node.node_id)) {

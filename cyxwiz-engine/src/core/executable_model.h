@@ -4,6 +4,7 @@
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -20,6 +21,13 @@ namespace cyxwiz {
  */
 class IExecutableModel {
 public:
+    // Called after each layer module's forward, in run order: the module's
+    // index in the model, its (first) input, its output and the time it took
+    // (Local Debug's per-layer trace, TOFIX178 6.0a). While unset nothing is
+    // called and the forward runs as usual.
+    using LayerForwardObserver = std::function<void(
+        size_t module_index, const Tensor& input, const Tensor& output, float forward_ms)>;
+
     virtual ~IExecutableModel() = default;
 
     virtual Tensor Forward(const Tensor& input) = 0;
@@ -44,11 +52,20 @@ public:
     virtual void UpdateParameters(Optimizer* optimizer) = 0;
     // Layers that hold parameters (graph operations such as Add are not counted).
     virtual size_t LayerCount() const = 0;
+    // The layer module at a module index (BuiltModuleProvenance::module_index).
+    virtual Module* LayerModule(size_t module_index) = 0;
+
+    void SetLayerForwardObserver(LayerForwardObserver observer) {
+        layer_forward_observer_ = std::move(observer);
+    }
 
     // For checkpoint / export / save paths that still need a real
     // SequentialModel; a graph model (GraphExecutableModel) returns nullptr.
     virtual SequentialModel* AsSequentialModel() { return nullptr; }
     virtual const SequentialModel* AsSequentialModel() const { return nullptr; }
+
+protected:
+    LayerForwardObserver layer_forward_observer_;
 };
 
 class SequentialExecutableModel final : public IExecutableModel {
@@ -71,6 +88,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     void UpdateParameters(Optimizer* optimizer) override;
     size_t LayerCount() const override { return model_->Size(); }
+    Module* LayerModule(size_t module_index) override { return model_->GetModule(module_index); }
 
     SequentialModel* AsSequentialModel() override { return model_.get(); }
     const SequentialModel* AsSequentialModel() const override { return model_.get(); }

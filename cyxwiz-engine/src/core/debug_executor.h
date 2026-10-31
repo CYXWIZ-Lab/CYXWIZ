@@ -2,6 +2,7 @@
 
 #include "debug_graph_trace_executor.h"
 #include "debug_numerics.h"
+#include "executable_model.h"
 #include "graph_compiler.h"
 #include "graph_model.h"
 #include <cyxwiz/loss.h>
@@ -144,7 +145,7 @@ public:
 
 private:
     TrainingConfiguration config_;
-    std::unique_ptr<SequentialModel> model_;
+    std::unique_ptr<IExecutableModel> model_;
     std::unique_ptr<Loss> loss_;
     std::unique_ptr<Optimizer> optimizer_;
 };

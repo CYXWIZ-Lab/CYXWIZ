@@ -12,6 +12,8 @@
 #include "../src/core/model_builder.h"
 #include "../src/core/synthetic_batch.h"
 #include "../src/core/graph_compiler.h"
+#include "../src/core/graph_compiler_dataset_hooks.h"
+#include "../src/core/graph_document.h"
 #include "../src/core/checkpoint_manifest.h"
 #include "../src/core/checkpoint_payload_io.h"
 #include "../src/core/checkpoint_manager.h"
@@ -31,6 +33,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <optional>
 #include <stdexcept>
 
 using namespace cyxwiz;
@@ -235,7 +239,7 @@ TrainingConfiguration MakeSentimentConfig(size_t num_layers = 1) {
     return cfg;
 }
 
-void ExpectEq(size_t a, size_t b, const char* what) {
+void ExpectEq(size_t a, size_t b, const std::string& what) {
     if (a != b) {
         std::cerr << "FAIL: " << what << ": expected " << b
                   << " got " << a << "\n";
@@ -243,7 +247,7 @@ void ExpectEq(size_t a, size_t b, const char* what) {
     }
 }
 
-void ExpectTrue(bool condition, const char* what) {
+void ExpectTrue(bool condition, const std::string& what) {
     if (!condition) {
         std::cerr << "FAIL: " << what << "\n";
         std::exit(1);
@@ -2297,6 +2301,74 @@ void TestDebugExecutorGoldenPath() {
                  res.loss_value);
 }
 
+// TOFIX178 6.0a: Local Debug runs a branched graph the way training does (its
+// graph plan), not as a straight chain. The 1.8 ResNet example (skips into
+// Add, stride-2 blocks with 1x1 projections) used to stop at the first
+// stride-2 block with "Conv2D forward input channel mismatch".
+void TestDebugExecutorResNetExample() {
+    spdlog::info("--- TestDebugExecutorResNetExample ---");
+    cyxwiz::GraphCompilerDatasetHooks hooks;
+    hooks.is_dataset_registered = [](const std::string&) { return false; };
+    hooks.labels_from_structure = [](const std::string& category) -> std::optional<bool> {
+        return category == "image";
+    };
+    hooks.preprocessing_domain = [](const std::string& category) -> std::optional<cyxwiz::PreprocessingDomain> {
+        return category == "image" ? cyxwiz::PreprocessingDomain::Image : cyxwiz::PreprocessingDomain::Tabular;
+    };
+    cyxwiz::SetGraphCompilerDatasetHooks(std::move(hooks));
+
+    const std::filesystem::path path = std::filesystem::path(CYXWIZ_SOURCE_ROOT) / "examples" / "cyxgraph" /
+                                       "cats_dogs_resnet_scratch.cyxgraph";
+    std::ifstream in(path, std::ios::binary);
+    ExpectTrue(static_cast<bool>(in), "ResNet example opens: " + path.string());
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    cyxwiz::GraphDocument graph;
+    std::string error;
+    ExpectTrue(cyxwiz::ParseGraphDocument(text, graph, error), "ResNet example loads: " + error);
+    auto config = cyxwiz::GraphCompiler{}.Compile(graph.nodes, graph.links, /*allow_unloaded_data=*/true);
+    ExpectTrue(config.is_valid, "ResNet example compiles without its data");
+
+    DebugExecutor exe(config);
+    const auto res = exe.Run();
+    ExpectTrue(res.reached == DebugStage::Complete && res.success,
+               "ResNet Local Debug completes: " + res.failure_summary);
+    ExpectEq(res.layer_traces.size(), config.layers.size(), "one forward trace per layer");
+    ExpectEq(res.model_build_traces.size(), config.layers.size(), "one build trace per layer");
+    for (const auto& t : res.layer_traces) {
+        const auto shape_text = [](const std::vector<size_t>& shape) {
+            std::string out;
+            for (size_t d : shape) out += (out.empty() ? "" : ",") + std::to_string(d);
+            return "[" + out + "]";
+        };
+        ExpectTrue(t.shape_matches && t.input_shape_matches && !t.has_nan && !t.has_inf,
+                   "layer " + t.name + " runs with its compiled shapes: input " + shape_text(t.actual_input_shape) +
+                       " (compiled " + shape_text(t.predicted_input_shape) + "), output " +
+                       shape_text(t.actual_shape) + " (compiled " + shape_text(t.predicted_shape) + ")");
+    }
+    // The ReLU after a block is fed by the block's Add, not by the layer run
+    // before it (the projection's BatchNorm).
+    int relus_after_add = 0;
+    for (const auto& t : res.layer_traces) {
+        if (t.name.rfind("ReLU s", 0) == 0 && t.name.size() == 7) {
+            ExpectTrue(t.upstream_node_name == "Add " + t.name.substr(5),
+                       t.name + " is fed by its block's Add, got " + t.upstream_node_name);
+            ++relus_after_add;
+        }
+    }
+    ExpectEq(relus_after_add, 4, "four blocks end in Add -> ReLU");
+    // Every weight gets a gradient. What comes back without one is BatchNorm's
+    // running statistics, which GetParameters lists beside the weights (state,
+    // not trained; TOFIX178 6.0e separates them).
+    for (const auto& g : res.grad_norms) {
+        const bool running_stat = g.param_name.size() > 13 &&
+            (g.param_name.compare(g.param_name.size() - 13, 13, ".running_mean") == 0 ||
+             g.param_name.compare(g.param_name.size() - 12, 12, ".running_var") == 0);
+        ExpectTrue(g.has_gradient || running_stat, g.param_name + " gets a gradient");
+    }
+    spdlog::info("  OK: ResNet layer_traces={}, params_with_grad={}, loss={}",
+                 res.layer_traces.size(), res.params_with_grad, res.loss_value);
+}
+
 void TestDebugExecutorBinaryHeadBackward() {
     spdlog::info("--- TestDebugExecutorBinaryHeadBackward ---");
     auto cfg = MakeTabularConfig();
@@ -2795,6 +2867,7 @@ int main(int argc, char** argv) {
         TestBuildSequentialTimeDistributedHead();
         TestDebugNumericsContract();
         TestDebugExecutorGoldenPath();
+        TestDebugExecutorResNetExample();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();
         TestDebugExecutorSkippedLayerMapping();

@@ -84,11 +84,12 @@ bool ShapesMatchForTrace(const std::vector<size_t>& predicted,
     }
 
     // CompiledLayer::output_shape is per-sample, while DebugExecutor runs a
-    // synthetic batch. Runtime tensors therefore often carry a leading batch
-    // dimension: predicted [512,96] vs actual [1,512,96].
+    // batch. Runtime tensors carry the batch axis first (tabular, sequence:
+    // predicted [512,96] vs actual [1,512,96]) or last (spatial [H,W,C,N]:
+    // predicted [64,64,3] vs actual [64,64,3,1]).
     if (actual.size() == predicted.size() + 1) {
-        return std::equal(predicted.begin(), predicted.end(),
-                          actual.begin() + 1);
+        return std::equal(predicted.begin(), predicted.end(), actual.begin() + 1) ||
+               std::equal(predicted.begin(), predicted.end(), actual.begin());
     }
 
     return false;
@@ -141,9 +142,24 @@ ModuleParameterSummary SummarizeModuleParameters(Module* module) {
     return summary;
 }
 
+// The node feeding a layer's first input in the compiled graph: in a branched
+// graph that can be an Add or a Split, not the layer run before it.
+const CompiledGraphNode* FeedingNode(const CompiledGraphPlan& plan, int node_id) {
+    if (!plan.available) return nullptr;
+    const auto node = std::find_if(plan.nodes.begin(), plan.nodes.end(),
+                                   [&](const CompiledGraphNode& n) { return n.node_id == node_id; });
+    if (node == plan.nodes.end() || node->input_pin_ids.empty()) return nullptr;
+    for (const auto& edge : plan.edges) {
+        if (edge.to_node_id != node_id || edge.to_pin_id != node->input_pin_ids.front()) continue;
+        for (const auto& from : plan.nodes)
+            if (from.node_id == edge.from_node_id) return &from;
+    }
+    return nullptr;
+}
+
 DebugGraphTraceStep BuildModelConstructionTraceStep(
     const BuiltModuleProvenance& provenance,
-    SequentialModel* model) {
+    IExecutableModel* model) {
     DebugGraphTraceStep step;
     step.node_id = provenance.node_id;
     step.node_name = !provenance.node_name.empty()
@@ -168,7 +184,7 @@ DebugGraphTraceStep BuildModelConstructionTraceStep(
     step.payload["source_file"] =
         "cyxwiz-engine/src/core/model_builder.cpp";
     step.payload["source_symbol"] =
-        "cyxwiz::BuildSequentialFromConfig";
+        "cyxwiz::BuildExecutableFromConfig";
     step.payload["compiled_layer_index"] =
         provenance.compiled_layer_index;
     step.payload["module_created"] = provenance.created();
@@ -180,7 +196,7 @@ DebugGraphTraceStep BuildModelConstructionTraceStep(
         const size_t module_index = *provenance.module_index;
         step.payload["module_index"] = module_index;
         const ModuleParameterSummary parameters = SummarizeModuleParameters(
-            model ? model->GetModule(module_index) : nullptr);
+            model ? model->LayerModule(module_index) : nullptr);
         step.payload["parameter_summary_available"] = parameters.available;
         step.payload["parameter_tensor_count"] = parameters.tensor_count;
         step.payload["parameter_numel"] = parameters.element_count;
@@ -211,7 +227,9 @@ DebugResult DebugExecutor::Run() {
         result.reached = DebugStage::BuildModel;
         spdlog::info("DebugExecutor: building model from config ({} layers)",
                      config_.layers.size());
-        auto built = BuildSequentialFromConfig(config_);
+        // The model training runs: a graph with branches (skips into Add,
+        // Concatenate, Split, multi-input layers) runs by its graph plan.
+        auto built = BuildExecutableFromConfig(config_);
         result.model_build_traces.reserve(built.module_provenance.size());
         for (const auto& provenance : built.module_provenance) {
             result.model_build_traces.push_back(
@@ -240,16 +258,17 @@ DebugResult DebugExecutor::Run() {
 
         // ---- Stage: Forward (per-layer shape capture) ---------------------
         result.reached = DebugStage::Forward;
-        Tensor current = batch.features.Clone();
         bool found_shape_mismatch = false;
         const BuiltModuleProvenance* previous_provenance = nullptr;
 
-        auto fstart = std::chrono::steady_clock::now();
-        for (size_t i = 0; i < model_->Size(); ++i) {
-            Module* m = model_->GetModule(i);
+        // Each layer is recorded as it finishes (a throw keeps the layers
+        // before it), in run order.
+        model_->SetLayerForwardObserver([&](size_t i, const Tensor& input, const Tensor& output,
+                                            float forward_ms) {
+            Module* m = model_->LayerModule(i);
             LayerTrace trace;
             trace.module_index = i;
-            trace.module_name = m->GetName();
+            trace.module_name = m ? m->GetName() : std::string();
             trace.name = trace.module_name;
             const auto* provenance = FindModuleProvenance(
                 module_provenance, i);
@@ -264,21 +283,22 @@ DebugResult DebugExecutor::Run() {
                 trace.predicted_input_shape = provenance->input_shape;
                 trace.predicted_shape = provenance->output_shape;
             }
-            if (previous_provenance) {
+            if (const CompiledGraphNode* feeder = provenance
+                    ? FeedingNode(config_.graph_plan, provenance->node_id)
+                    : nullptr) {
+                trace.upstream_node_id = feeder->node_id;
+                trace.upstream_node_name = feeder->name;
+            } else if (previous_provenance) {
                 trace.upstream_node_id = previous_provenance->node_id;
                 trace.upstream_node_name = previous_provenance->node_name;
             }
 
-            trace.actual_input_shape = current.Shape();
+            trace.actual_input_shape = input.Shape();
             trace.input_shape_matches = ShapesMatchForTrace(
                 trace.predicted_input_shape, trace.actual_input_shape);
-            auto lstart = std::chrono::steady_clock::now();
-            current = m->Forward(current);
-            auto lend = std::chrono::steady_clock::now();
-            trace.forward_ms =
-                std::chrono::duration<float, std::milli>(lend - lstart).count();
+            trace.forward_ms = forward_ms;
 
-            trace.actual_shape = current.Shape();
+            trace.actual_shape = output.Shape();
             trace.shape_matches =
                 ShapesMatchForTrace(trace.predicted_shape, trace.actual_shape);
 
@@ -299,7 +319,7 @@ DebugResult DebugExecutor::Run() {
                 found_shape_mismatch = true;
             }
 
-            trace.numerics = ScanDebugTensorNumerics(current, trace.type);
+            trace.numerics = ScanDebugTensorNumerics(output, trace.type);
             trace.has_nan = trace.numerics.nan_count > 0;
             trace.has_inf = trace.numerics.inf_count > 0;
             if (trace.has_nan) {
@@ -316,7 +336,13 @@ DebugResult DebugExecutor::Run() {
 
             result.layer_traces.push_back(std::move(trace));
             previous_provenance = provenance;
-        }
+        });
+        struct ObserverReset {
+            IExecutableModel& model;
+            ~ObserverReset() { model.SetLayerForwardObserver(nullptr); }
+        } observer_reset{*model_};  // the observer refers to this frame
+        auto fstart = std::chrono::steady_clock::now();
+        Tensor current = model_->Forward(batch.features);
         auto fend = std::chrono::steady_clock::now();
         result.forward_total_ms =
             std::chrono::duration<float, std::milli>(fend - fstart).count();

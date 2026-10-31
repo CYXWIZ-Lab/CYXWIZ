@@ -2279,6 +2279,7 @@ BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& conf
     BuiltModel sequential = BuildSequentialFromConfig(config);
     if (!sequential.ok()) {
         out.error_message = sequential.error_message;
+        out.module_provenance = std::move(sequential.module_provenance);
         return out;
     }
 
@@ -2286,6 +2287,7 @@ BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& conf
         std::move(sequential.model));
     out.loss = std::move(sequential.loss);
     out.optimizer = std::move(sequential.optimizer);
+    out.module_provenance = std::move(sequential.module_provenance);
     return out;
 }
 
@@ -2321,6 +2323,7 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
         sequential = BuildSequentialFromConfig(config);
         if (!sequential.ok()) {
             out.error_message = sequential.error_message;
+            out.module_provenance = std::move(sequential.module_provenance);
             return out;
         }
     } else {
@@ -2352,6 +2355,7 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
         config.graph_op_node_ids);
     out.loss = std::move(sequential.loss);
     out.optimizer = std::move(sequential.optimizer);
+    out.module_provenance = std::move(sequential.module_provenance);
     return out;
 }
 

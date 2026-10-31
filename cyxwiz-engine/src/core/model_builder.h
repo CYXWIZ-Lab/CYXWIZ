@@ -49,6 +49,7 @@ struct BuiltExecutableModel {
     std::unique_ptr<Loss>             loss;
     std::unique_ptr<Optimizer>        optimizer;
     std::string                       error_message;
+    std::vector<BuiltModuleProvenance> module_provenance;
 
     bool ok() const { return model != nullptr; }
 };
