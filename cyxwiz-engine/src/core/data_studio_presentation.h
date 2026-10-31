@@ -88,6 +88,7 @@ struct TrainingReader {
     std::string name;          // the node ("tier1_paragraphs")
     std::string dataset;       // its table ("" until it runs, or loads)
     bool split = false;        // through a Data Split (false: a Data Loader alone)
+    bool data_input = false;   // the node is a Data Input (its table loads; it does not run)
 };
 
 // The line Explore shows above a table: what training makes of it.

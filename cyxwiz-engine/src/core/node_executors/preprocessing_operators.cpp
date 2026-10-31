@@ -136,6 +136,29 @@ arrow::Status ReadNumericDouble(
     return arrow::Status::OK();
 }
 
+// A numeric column as doubles, exactly (no float32 hop: an int64 or a double
+// keeps its digits), nulls as NaN; `out_idx` is the column's index.
+arrow::Status ReadColumnDoubles(const std::shared_ptr<arrow::Table>& input, const std::string& col_name,
+                                const std::string& op_name, std::vector<double>& out, int& out_idx) {
+    out_idx = input->schema()->GetFieldIndex(col_name);
+    if (out_idx < 0) return arrow::Status::KeyError(op_name + ": column '" + col_name + "' not found");
+    const auto column = input->column(out_idx);
+    if (!arrow::is_numeric(column->type()->id()) && column->type()->id() != arrow::Type::BOOL) {
+        return arrow::Status::TypeError(op_name + ": column '" + col_name + "' must be numeric (got '" +
+                                        column->type()->ToString() + "')");
+    }
+    ARROW_ASSIGN_OR_RAISE(auto cast, arrow::compute::Cast(column, arrow::float64()));
+    const auto doubles = cast.chunked_array();
+    out.clear();
+    out.reserve(static_cast<size_t>(doubles->length()));
+    for (const auto& chunk : doubles->chunks()) {
+        const auto array = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+        for (int64_t i = 0; i < array->length(); ++i)
+            out.push_back(array->IsNull(i) ? std::numeric_limits<double>::quiet_NaN() : array->Value(i));
+    }
+    return arrow::Status::OK();
+}
+
 // Replace a column with double values, keeping the nulls (NaN in `values`)
 // as nulls; the column becomes float64 under its own name.
 arrow::Result<std::shared_ptr<arrow::Table>> ReplaceColumnWithDouble(
@@ -1444,7 +1467,7 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                        estimated_bytes);
         std::vector<double> learn;
         int learn_idx = -1;
-        ARROW_RETURN_NOT_OK(ReadNumericDouble(train_rows, name, GetName(), learn, learn_idx));
+        ARROW_RETURN_NOT_OK(ReadColumnDoubles(train_rows, name, GetName(), learn, learn_idx));
         // Missing values (NaN) say nothing about the spread.
         learn.erase(std::remove_if(learn.begin(), learn.end(), [](double v) { return !std::isfinite(v); }), learn.end());
         const OutlierBounds bounds = DataTransform::OutlierBoundsOf(learn, method_, threshold_);
@@ -1453,7 +1476,7 @@ OutlierDetectorOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         }
         std::vector<double> data;
         int idx = -1;
-        ARROW_RETURN_NOT_OK(ReadNumericDouble(out, name, GetName(), data, idx));
+        ARROW_RETURN_NOT_OK(ReadColumnDoubles(out, name, GetName(), data, idx));
         const OutlierFlags col_outliers = DataTransform::FlagOutside(data, bounds);
         if (!col_outliers.success) {
             return arrow::Status::Invalid(GetName() + ": column '" + name + "': " + col_outliers.error_message);

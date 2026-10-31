@@ -172,6 +172,9 @@ private:
     std::string AddKeepRowsStep(const std::string& column, const std::vector<std::string>& texts);
     void RenderBringIn();
     void RenderStatusBar();
+    // Tells Profile which Data Input node the active table is, and the roles
+    // that node holds (D7a G1), so the roles set there reach the node.
+    void TellProfileItsNode();
 };
 
 }  // namespace cyxwiz

@@ -467,8 +467,9 @@ Values far from the rest of a number column.
 - **Summary**: how many outliers, low and high, and the bounds.
 - **In Prepare**: **Flag rows**, **Clip values** and **Drop rows** add an
   Outlier Detector step on the column with this rule and factor, and the
-  action flag (an `is_outlier` column), clip (every value pulled into the
-  bounds) or remove (the rows outside dropped). The step learns the bounds
+  action flag (an `is_outlier` column, which training then reads as one more
+  feature), clip (every value pulled into the bounds) or remove (the rows
+  outside dropped). The step learns the bounds
   from the Train rows (every row without a Data Split) and applies them to
   every row, so its count can differ from the one found here, which reads
   the whole table. Training reads the step's result.

@@ -660,9 +660,10 @@ OutlierFlags DataTransform::FlagOutside(const std::vector<double>& data, const O
         result.count = static_cast<size_t>(af::count<double>(flags));
         result.success = true;
     } catch (const af::exception& e) {
+        const std::string error = DeviceError("DataTransform::FlagOutside", e);
         result = OutlierFlags{};
         result.bounds = bounds;
-        result.error_message = DeviceError("DataTransform::FlagOutside", e);
+        result.error_message = error;
     }
     return result;
 }

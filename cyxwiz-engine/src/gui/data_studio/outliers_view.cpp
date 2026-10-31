@@ -412,7 +412,8 @@ void OutliersView::RenderStepButtons(const ExploreContext& context, const explor
                               ev::Count(outliers, "outlier", "outliers").c_str());
         }
     };
-    add("Flag rows", "flag", "an is_outlier column (1 for the rows outside " + ev::Figure(bounds.lo) + " .. " + ev::Figure(bounds.hi) + ")");
+    add("Flag rows", "flag", "an is_outlier column (1 for the rows outside " + ev::Figure(bounds.lo) + " .. " + ev::Figure(bounds.hi) +
+                                 "), which training reads as one more feature; Clip values or Drop rows change the data without adding one");
     ExploreNextButton("Clip values");
     add("Clip values", "clip", column_ + " with every value pulled into " + ev::Figure(bounds.lo) + " .. " + ev::Figure(bounds.hi));
     ExploreNextButton("Drop rows");

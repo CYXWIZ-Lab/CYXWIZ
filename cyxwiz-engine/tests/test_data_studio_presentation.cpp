@@ -341,6 +341,28 @@ int main() {
         const ReadsNote nothing = TrainingReads(Build(none), "spotify");
         Check(nothing.kind == ReadsNote::Kind::None && nothing.link.empty() && nothing.text.find("reads no table") != std::string::npos,
               "no training input: " + nothing.text);
+
+        // An unwired Split is skipped for a wired one (the launcher's rule); a
+        // Loader fed by an unwired Split feeds nothing; an unloaded Data Input
+        // "is not loaded yet", a step "has no table yet".
+        Input two = g;
+        GraphNode unwired = Node(6, NodeType::DataSplit, "Split (unwired)");
+        unwired.input_from = {-1, -1, -1};
+        two.nodes = {raw, scale, unwired, split};
+        Check(Build(two).training.node_id == 2, "the wired Split decides, not the unwired one in front of it");
+        Input loader_after_split = g;
+        GraphNode loader = Node(7, NodeType::DataLoader, "Loader");
+        loader.input_from = {6};
+        loader_after_split.nodes = {raw, unwired, loader};
+        Check(Build(loader_after_split).training.node_id == -1, "a Loader fed by an unwired Split feeds nothing");
+        Input unloaded = g;
+        unloaded.nodes = {Node(1, NodeType::DataInput, "Spotify tracks"), Node(5, NodeType::DataLoader, "Loader")};
+        unloaded.nodes[1].input_from = {1};
+        unloaded.datasets.clear();
+        const View uv = Build(unloaded);
+        Check(uv.training.node_id == 1 && uv.training.data_input && uv.training.dataset.empty(), "an unloaded Data Input feeds training");
+        Check(TrainingReads(uv, "other").text.find("is not loaded yet (open its dialog and Apply)") != std::string::npos,
+              "unloaded wording: " + TrainingReads(uv, "other").text);
     }
 
     Check(Thousands(15349) == "15,349" && Thousands(7) == "7" && Thousands(1234567) == "1,234,567", "thousands");

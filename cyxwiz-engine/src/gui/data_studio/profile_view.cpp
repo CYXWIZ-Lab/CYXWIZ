@@ -185,13 +185,25 @@ void ProfileView::RebuildContract() {
 }
 
 void ProfileView::SyncRolesToNode() {
-    if (data_input_node_ < 0 || !node_writer_) return;
+    if (data_input_node_ < 0 || !node_writer_ || dataset_.empty()) return;
     // The user's roles for this file, as the compiler reads them ({"column": "id"}).
     nlohmann::json roles = nlohmann::json::object();
     for (const auto& [column, role] : ProjectColumnRoles().RolesFor(SourceKey())) roles[column] = RoleId(role);
     const std::string value = roles.empty() ? std::string() : roles.dump();
-    if (!node_writer_(data_input_node_, {{"column_roles", value}}))
+    if (value == node_roles_) return;  // the node already says so
+    if (!node_writer_(data_input_node_, {{"column_roles", value}})) {
         spdlog::warn("Column roles: the Data Input node {} did not take column_roles", data_input_node_);
+        return;
+    }
+    node_roles_ = value;
+}
+
+void ProfileView::SetDataInputNode(int node_id, const std::string& node_roles) {
+    data_input_node_ = node_id;
+    node_roles_ = node_roles;
+    // Roles saved with the project before the node carried them (or a node
+    // added after they were set) reach the node now, not only on the next edit.
+    if (profile_ && !source_path_.empty()) SyncRolesToNode();
 }
 
 void ProfileView::Render() {
@@ -422,7 +434,7 @@ void ProfileView::RenderColumns(float /*width*/) {
     if (data_input_node_ >= 0) {
         std::string kept_out;
         for (const auto& cc : contract_.columns)
-            if (cc.source != RoleSource::Inferred && !IsFeatureRole(cc.role) && cc.role != ColumnRole::Target && cc.name != target_column_)
+            if (cc.source == RoleSource::User && !IsFeatureRole(cc.role) && cc.role != ColumnRole::Target && cc.name != target_column_)
                 kept_out += (kept_out.empty() ? "" : ", ") + cc.name;
         if (kept_out.empty())
             ImGui::TextColored(t.text_faint, "Training reads every numeric column but the label as a feature. Set ID, Group, Weight or "
@@ -574,7 +586,7 @@ void ProfileView::RenderDetail() {
                 const char* reason = !on_make_empty ? "Prepare is not available" : nullptr;
                 if (ui::SecondaryButton("Make them empty in Prepare", reason == nullptr, reason)) make_empty_message_ = on_make_empty(c.facts.name, saved_texts);
                 if (reason == nullptr && ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
-                    ImGui::SetTooltip("Adds an SQL step after the Data Input that turns these texts in %s into empty cells, as a step on the way to "
+                    ImGui::SetTooltip("Adds an SQL step after the data in use that turns these texts in %s into empty cells, as a step on the way to "
                                       "training: Missing's Fill and Drop steps and training then see them as missing.",
                                       c.facts.name.c_str());
                 if (!make_empty_message_.empty()) {

@@ -65,7 +65,9 @@ public:
     // The graph's Data Input node this table is (TOFIX129 D7a G1), -1 for a
     // table that is not one: the roles set here are written into it
     // (`column_roles`, through the node writer) so training follows them.
-    void SetDataInputNode(int node_id) { data_input_node_ = node_id; }
+    // `node_roles` is what the node holds now; roles saved with the project
+    // before the node had them are written as soon as they differ.
+    void SetDataInputNode(int node_id, const std::string& node_roles);
     // "Make them empty in Prepare" under Treat as missing: adds a step that
     // turns the column's missing texts into empty cells; returns what happened.
     std::function<std::string(const std::string& column, const std::vector<std::string>& texts)> on_make_empty;
@@ -80,6 +82,7 @@ private:
     // the table is not one, or no node writer is set).
     void SyncRolesToNode();
     int data_input_node_ = -1;
+    std::string node_roles_;        // the node's column_roles as last seen or written
     std::string make_empty_message_;
 
     std::string dataset_;           // catalog name

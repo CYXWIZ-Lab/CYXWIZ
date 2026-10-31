@@ -459,6 +459,7 @@ void ArrowDatasetBatcher::ExcludeFeatureColumns(const std::vector<std::string>& 
     }
     if (removed.empty()) return;
     num_features_ = feature_cols_.size();
+    DropResidentFeatures();  // the feature columns changed
     std::string list;
     for (const auto& name : removed) list += (list.empty() ? "" : ", ") + name;
     spdlog::info("ArrowDatasetBatcher: {} column(s) kept out of the features by their roles ({}); {} feature columns",

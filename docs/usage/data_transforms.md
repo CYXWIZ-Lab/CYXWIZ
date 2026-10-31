@@ -96,8 +96,10 @@ bounds from the Train rows (every row without a Data Split): IQR, outside
 [q1 - t·IQR, q3 + t·IQR]; Z-score, |z| > t using the std that divides by n;
 Modified Z, |x - median| > t·MAD / 0.6745 (the rule Explore > Outliers
 draws). Then every row is tested, and the action decides: **flag** adds an
-`is_outlier` column (1 when any inspected column is outside its bounds),
-**clip** pulls each value into its column's bounds (the column becomes
-float64), **remove** drops the rows outside. A column with no spread (all
+`is_outlier` column (1 when any inspected column is outside its bounds; a
+numeric column, so training reads it as one more feature), **clip** pulls
+each value into its column's bounds (the column becomes float64; values
+inside the bounds and empty cells stay as they are), **remove** drops the
+rows outside. A column with no spread (all
 values equal, Q1 = Q3, MAD = 0) flags nothing. Explore > Outliers adds the
 step with its rule and factor (see data_studio.md).

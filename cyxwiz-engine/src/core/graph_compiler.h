@@ -444,9 +444,9 @@ struct TrainingConfiguration {
     int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
     ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
     // Columns the Data Input's column roles keep out of the features (TOFIX129
-    // D7a G1): ID, Group, Weight, Ignore, Date, Text and File path columns set
-    // in Explore > Profile and written into the node as `column_roles`. The
-    // batchers skip them by name; the label is never among them.
+    // D7a G1): the ID, Group, Weight and Ignore columns set in Explore >
+    // Profile and written into the node as `column_roles` (dataset_contract.h
+    // IsFeatureRole). The batchers skip them by name; the label is never among them.
     std::vector<std::string> excluded_feature_columns;
     // A step only the pipeline run applies (SQL, Text Clean ...) is on the
     // Training Dataset path: training trains on that run's result.

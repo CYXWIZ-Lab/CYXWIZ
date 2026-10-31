@@ -331,10 +331,22 @@ void DataStudioPanel::AddTransformStep(::gui::NodeType type, std::map<std::strin
     prepare_->AddAfter(from->id, type, std::move(parameters), compare);
 }
 
+void DataStudioPanel::TellProfileItsNode() {
+    if (!profile_) return;
+    const studio::GraphNode* of = NodeOfDataset(active_dataset_);
+    if (!of || of->type != ::gui::NodeType::DataInput) {
+        profile_->SetDataInputNode(-1, "");
+        return;
+    }
+    const auto roles = of->parameters.find("column_roles");
+    profile_->SetDataInputNode(of->id, roles == of->parameters.end() ? std::string() : roles->second);
+}
+
 void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     active_dataset_ = dataset_name;
     if (query_editor_) query_editor_->SetActiveDataset(dataset_name);
     if (profile_) profile_->SetActiveDataset(dataset_name);
+    TellProfileItsNode();  // at once, not on the next refresh (a role edit right after a rail click)
     if (gallery_) gallery_->SetDataset(dataset_name);
     if (visualizer_) visualizer_->SetActiveDataset(dataset_name);
 }
@@ -469,10 +481,7 @@ void DataStudioPanel::RefreshView() {
     // so the plots show the data the model sees, not the raw input.
     if (active_dataset_.empty() && !view_.training.dataset.empty()) SetActiveDataset(view_.training.dataset);
     // Profile writes the roles of a Data Input's table into that node (D7a G1).
-    if (profile_) {
-        const studio::GraphNode* of = NodeOfDataset(active_dataset_);
-        profile_->SetDataInputNode(of && of->type == ::gui::NodeType::DataInput ? of->id : -1);
-    }
+    TellProfileItsNode();
     if (prepare_) prepare_->SetGraph(node_editor_, graph_nodes_, view_.jobs[static_cast<size_t>(studio::Job::Prepare)].node_ids);
     if (validate_) {
         std::vector<int> recipes;

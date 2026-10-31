@@ -169,19 +169,24 @@ const GraphNode* NodeWithId(const Input& in, int id) {
 // Loader's first pin: the same rule as TrainingInputFeeder (the launcher's).
 TrainingReader TrainingReaderOf(const Input& in) {
     TrainingReader reader;
+    // The first node of `type` whose first pin is wired (as TrainingInputFeeder
+    // walks the launcher's graph); an unwired one is skipped.
     const auto feeder_of = [&](NodeType type) -> const GraphNode* {
         for (const auto& n : in.nodes) {
-            if (n.type != type || n.input_from.empty()) continue;
-            return NodeWithId(in, n.input_from[0]);
+            if (n.type != type || n.input_from.empty() || n.input_from[0] < 0) continue;
+            if (const GraphNode* source = NodeWithId(in, n.input_from[0])) return source;
         }
         return nullptr;
     };
     const GraphNode* feeder = feeder_of(NodeType::DataSplit);
     reader.split = feeder != nullptr;
     if (!feeder) feeder = feeder_of(NodeType::DataLoader);
+    // A Loader fed by an unwired Split: nothing reaches training yet.
+    if (feeder && feeder->type == NodeType::DataSplit) feeder = nullptr;
     if (!feeder) return reader;
     reader.node_id = feeder->id;
     reader.name = feeder->name;
+    reader.data_input = IsDataInput(*feeder);
     if (IsDataInput(*feeder)) {
         if (const Dataset* d = DatasetOfInput(in, *feeder)) reader.dataset = d->name;
     } else if (feeder->ran && feeder->error.empty() && DatasetNamed(in, feeder->output_dataset)) {
@@ -580,7 +585,9 @@ ReadsNote TrainingReads(const View& view, const std::string& dataset) {
     }
     if (t.dataset.empty()) {
         note.kind = ReadsNote::Kind::NotRun;
-        note.text = "Training reads \"" + t.name + "\", which has no table yet (run its steps in Prepare); this is not it.";
+        note.text = "Training reads \"" + t.name + "\", which " +
+                    (t.data_input ? "is not loaded yet (open its dialog and Apply)" : "has no table yet (run its steps in Prepare)") +
+                    "; this is not it.";
         note.link = "Show the node";
         return note;
     }
