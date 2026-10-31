@@ -25,7 +25,6 @@ void Theme::ApplyCyxWizDark() {
     const ImVec4 text_dim      = ImVec4(0.545f, 0.580f, 0.655f, 1.00f);  // #8B94A7
     const ImVec4 accent        = ImVec4(0.357f, 0.239f, 0.961f, 1.00f);  // #5B3DF5
     const ImVec4 accent_hover  = ImVec4(0.439f, 0.333f, 0.980f, 1.00f);
-    const ImVec4 accent_active = ImVec4(0.290f, 0.192f, 0.820f, 1.00f);
     const ImVec4 accent_light  = ImVec4(0.702f, 0.651f, 1.000f, 1.00f);  // #B3A6FF
     const ImVec4 success       = ImVec4(0.240f, 0.840f, 0.550f, 1.00f);  // #3DD68C
     const auto with_alpha = [](ImVec4 c, float a) { c.w = a; return c; };

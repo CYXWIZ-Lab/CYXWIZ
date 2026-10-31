@@ -19,6 +19,8 @@
 
 namespace {
 
+// The host-sync observer exists in debug builds only, like its test below.
+#ifndef NDEBUG
 std::vector<cyxwiz::ArrayFireHostSyncEvent>* g_loss_host_sync_events = nullptr;
 
 void CaptureLossHostSync(const cyxwiz::ArrayFireHostSyncEvent& event) {
@@ -39,7 +41,6 @@ public:
     }
 };
 
-#ifndef NDEBUG
 using LossFactory = std::function<std::unique_ptr<cyxwiz::Loss>()>;
 #endif
 

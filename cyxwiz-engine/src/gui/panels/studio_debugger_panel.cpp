@@ -37,10 +37,6 @@ ImVec4 RecommendationColor(DebugRecommendationSeverity severity) {
     return DebuggerText();
 }
 
-ImVec4 TraceStatusColor(const std::string& status) {
-    return DebuggerTraceStatusColor(status);
-}
-
 const char* ClassifyTrainingWarning(const std::string& text) {
     std::string lower = text;
     std::transform(lower.begin(), lower.end(), lower.begin(),
