@@ -246,6 +246,8 @@ set(ENGINE_SOURCES
     src/core/series_explore.cpp
     src/core/time_steps.cpp
     src/core/series_presentation.cpp
+    src/core/signal_explore.cpp
+    src/core/signal_presentation.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
@@ -7809,6 +7811,24 @@ target_compile_definitions(test_series_explore PRIVATE
     CYXWIZ_AIRLINE_CSV="${CMAKE_SOURCE_DIR}/examples/datasets/airline_passengers.csv")
 set_target_properties(test_series_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME SeriesExplore COMMAND test_series_explore)
+
+# Data Studio > Explore > Signal (TOFIX129 D7): the model over the signal backend.
+add_executable(test_signal_explore tests/test_signal_explore.cpp
+    src/core/signal_explore.cpp src/core/signal_presentation.cpp
+    src/core/series_explore.cpp src/core/series_presentation.cpp src/core/time_steps.cpp src/core/explore_read.cpp src/core/explore_presentation.cpp
+    src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
+    src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
+target_include_directories(test_signal_explore PRIVATE src)
+target_link_libraries(test_signal_explore PRIVATE cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared duckdb
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_signal_explore PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+target_compile_definitions(test_signal_explore PRIVATE
+    CYXWIZ_AIRLINE_CSV="${CMAKE_SOURCE_DIR}/examples/datasets/airline_passengers.csv")
+set_target_properties(test_signal_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME SignalExplore COMMAND test_signal_explore)
 
 # Data Studio > Explore > Groups and Projection (TOFIX129 D5), against scikit-learn / scipy.
 add_executable(test_groups_explore tests/test_groups_explore.cpp

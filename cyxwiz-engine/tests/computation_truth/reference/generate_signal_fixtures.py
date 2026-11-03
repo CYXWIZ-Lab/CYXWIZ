@@ -18,7 +18,8 @@ and scipy's / numpy's / pywt's outputs:
   window        scipy.signal.get_window, periodic (fftbins True) and symmetric
   firwin        scipy.signal.firwin (hamming, scale True, fs) for low / high /
                 band-pass / band-stop, freqz on the inclusive 0..Nyquist grid,
-                and the zero-phase apply numpy.convolve(x, b, "same")
+                and the zero-phase apply: numpy.convolve of the edge-padded
+                signal (numpy.pad "edge", (taps - 1) // 2 left) with b, "valid"
   convolve      numpy.convolve full / same / valid, N > M and M > N
   dwt           pywt.wavedec(x, w, mode="symmetric", level) per wavelet and
                 length, pywt.waverec back, energy shares, dwt_max_level
@@ -157,7 +158,8 @@ def main():
                                            ("lowpass_short", 11, 200.0, True)]:
         b = sig.firwin(taps, cutoff, window="hamming", pass_zero=pass_zero, scale=True, fs=fs)
         w, h = sig.freqz(b, worN=grid)
-        y = np.convolve(x, b, "same")
+        left = (taps - 1) // 2
+        y = np.convolve(np.pad(x, (left, taps - 1 - left), mode="edge"), b, "valid")  # zero-phase, edges repeated
         add("firwin", label, taps=taps, cutoff=cutoff if isinstance(cutoff, list) else [cutoff], pass_zero=pass_zero, fs=fs,
             b=vec(b), response_mag=vec(np.abs(h)), response_phase=vec(np.angle(h)), signal="tones", filtered=vec(y))
     # 7. convolve

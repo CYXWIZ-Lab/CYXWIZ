@@ -223,8 +223,9 @@ public:
         int taps = 31
     );
 
-    // Zero-phase FIR apply: numpy.convolve(signal, b, "same") (the edges see
-    // zeros beyond the signal); `a` is ignored (FIR only)
+    // Zero-phase FIR apply, the kernel centred on each sample; beyond the ends
+    // the signal repeats its edge value (numpy.convolve(pad(x, "edge"), b,
+    // "valid")); `a` is ignored (FIR only)
     static std::vector<double> ApplyFilter(
         const std::vector<double>& signal,
         const FilterCoefficients& filter

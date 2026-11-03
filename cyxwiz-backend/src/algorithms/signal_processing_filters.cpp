@@ -119,9 +119,19 @@ FilterCoefficients SignalProcessing::DesignBandstop(double low_freq, double high
 
 std::vector<double> SignalProcessing::ApplyFilter(const std::vector<double>& signal, const FilterCoefficients& filter) {
     if (signal.empty() || filter.b.empty()) return signal;
-    // Zero-phase FIR: the kernel centred on each sample (numpy.convolve "same").
-    const ConvolutionResult out = Convolve1D(signal, filter.b, "same");
-    return out.success ? out.output : signal;
+    // Zero-phase FIR: the kernel centred on each sample. The rows beyond the
+    // ends repeat the edge value (numpy.pad "edge"), so an offset signal does
+    // not sink towards zero at its edges as a zero-padded "same" would:
+    // numpy.convolve(pad(x, (left, right), "edge"), b, "valid").
+    const size_t taps = filter.b.size();
+    const size_t left = (taps - 1) / 2, right = taps - 1 - left;
+    std::vector<double> padded;
+    padded.reserve(signal.size() + taps - 1);
+    padded.insert(padded.end(), left, signal.front());
+    padded.insert(padded.end(), signal.begin(), signal.end());
+    padded.insert(padded.end(), right, signal.back());
+    const ConvolutionResult out = Convolve1D(padded, filter.b, "valid");
+    return out.success && out.output.size() == signal.size() ? out.output : signal;
 }
 
 void SignalProcessing::ComputeFrequencyResponse(FilterCoefficients& filter, int num_points) {
