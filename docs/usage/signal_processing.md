@@ -77,7 +77,9 @@ at least 100 s apart), 34 min apart on the median."). The rows plot marks
 them.
 
 **Keep as a node** adds the FFT node after the data in use as a branch: its
-table is the spectrum (one row per bin), so training does not read it.
+table is the spectrum (one row per bin), so training does not read it. The
+node has no Welch averaging, so the button is off while Average is Welch
+(its reason on hover).
 **Export CSV** writes the bins (frequency, period, amplitude, power density);
 **Export the row peaks** writes them (row, time, value, stands_out_by).
 
@@ -131,9 +133,9 @@ The column split by scale with the discrete wavelet transform (PyWavelets'
 `wavedec`, symmetric mode): a **Wavelet** (db4 by default; haar, db1 .. db8,
 sym2 .. sym8, coif1 .. coif5), **Levels** (0: 4, or the maximum for the rows,
 which is said) and each part brought back to the rows: the approximation
-A<L> (the cycles of 2^L steps and longer) and the details D<L> .. D1 (each
-an octave: D1 is 1 to 2 steps, D2 2 to 4, ...), named in time units from the
-step ("D4: 80 s .. 2.7 min"). The figures: each part's share of the energy
+A<L> (the cycles of 2^(L+1) steps and longer) and the details D<L> .. D1
+(each an octave: D1 holds the cycles of 2 to 4 steps, D2 4 to 8, ...), named
+in time units from the step ("D4: 2.7 min .. 5.3 min" at 10-second steps). The figures: each part's share of the energy
 (the sum of its squared coefficients over the total), the reconstruction
 error (the largest difference between the column and the parts summed: 0 up
 to rounding), and the threshold when denoising. The plots: the column with
@@ -159,7 +161,7 @@ fill the parameters from what it showed, the sample rate resolved.
 
 | Node | Parameters | Output |
 | --- | --- | --- |
-| FFT | `signal_col`, `sample_rate` (per second; the tab writes the step's), `window` hann / hamming / blackman / boxcar, `remove_mean` | a NEW table of n / 2 + 1 rows: `frequency`, `period` (null at 0), `amplitude` (2 \|X\| / the window's sum), `phase`, `power_density`, `real`, `imag` (numpy's `rfft` of the windowed, mean-removed signal). A branch: the row count changes, so training does not read it |
+| FFT | `signal_col`, `sample_rate` (per second; the tab writes the step's), `window` hann / hamming / blackman / boxcar, `remove_mean`, `remove_trend` | a NEW table of n / 2 + 1 rows: `frequency`, `period` (null at 0), `amplitude` (2 \|X\| / the window's sum), `phase`, `power_density`, `real`, `imag` (numpy's `rfft` of the windowed, mean-removed signal). A branch: the row count changes, so training does not read it |
 | IFFT | `samples` (0: 2 (bins − 1), the even length) | a NEW table of `samples` rows with `signal` from `real` and `imag` (numpy's `irfft`): the signal the FFT node transformed, windowed and mean-removed as it was |
 | Filter Designer | `signal_col`, `filter_type` lowpass / highpass / bandpass / bandstop, `cutoff` (per second; 0.1 by default), `cutoff_high` (band filters), `sample_rate` (1 by default), `taps` (31; odd for highpass / bandstop), `window` hamming / hann / blackman / boxcar | the input plus `<signal_col>_filtered` (float64), zero-phase with the edges repeated |
 | Convolution 1D | `signal_col`, `kernel` (comma-separated taps) | the input plus `<signal_col>_filtered`, "same" length, zero-phase |

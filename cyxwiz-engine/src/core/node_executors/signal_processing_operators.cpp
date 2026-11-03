@@ -5,6 +5,7 @@
 #include "ts_column_utils.h"
 
 #include <cyxwiz/signal_processing.h>
+#include <cyxwiz/statistical_tests.h>
 
 #include <arrow/api.h>
 #include <arrow/builder.h>
@@ -16,6 +17,7 @@
 #include <complex>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -63,7 +65,8 @@ bool ParseCsvDoubles(const std::string& s, std::vector<double>& out,
 }
 
 // One numeric column as doubles, exactly (an Arrow cast to float64, no
-// float32 hop), nulls as NaN; `out_col_idx` is its index.
+// float32 hop); a missing value is refused (a filter would spread it over its
+// taps); `out_col_idx` is its index.
 arrow::Status ReadColumnAsDouble(
     const std::shared_ptr<arrow::Table>& input,
     const std::string& col_name,
@@ -83,12 +86,15 @@ arrow::Status ReadColumnAsDouble(
     }
     ARROW_ASSIGN_OR_RAISE(auto cast, arrow::compute::Cast(col, arrow::float64()));
     const auto doubles = cast.chunked_array();
+    if (doubles->null_count() > 0) {
+        return arrow::Status::Invalid(op_name + ": column '" + col_name + "' has " + std::to_string(doubles->null_count()) +
+                                      " missing value(s); fill or drop those rows first (Fill Missing Values)");
+    }
     out.clear();
     out.reserve(static_cast<size_t>(doubles->length()));
     for (const auto& chunk : doubles->chunks()) {
         const auto array = std::static_pointer_cast<arrow::DoubleArray>(chunk);
-        for (int64_t i = 0; i < array->length(); ++i)
-            out.push_back(array->IsNull(i) ? std::numeric_limits<double>::quiet_NaN() : array->Value(i));
+        for (int64_t i = 0; i < array->length(); ++i) out.push_back(array->Value(i));
     }
     return arrow::Status::OK();
 }
@@ -217,6 +223,7 @@ bool FFTOperator::Configure(
     sample_rate_ = 1.0;
     window_ = "hann";
     remove_mean_ = true;
+    remove_trend_ = false;
     auto it = params.find("signal_col");
     if (it == params.end() || it->second.empty()) {
         error = "FFT: 'signal_col' parameter is required";
@@ -239,6 +246,10 @@ bool FFTOperator::Configure(
         const std::string v = NormalizeTimeSeriesParameterChoice(m->second);
         remove_mean_ = v == "true" || v == "1" || v == "yes";
     }
+    if (const auto t = params.find("remove_trend"); t != params.end() && !t->second.empty()) {
+        const std::string v = NormalizeTimeSeriesParameterChoice(t->second);
+        remove_trend_ = v == "true" || v == "1" || v == "yes";
+    }
     return true;
 }
 
@@ -251,6 +262,14 @@ FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     std::vector<double> signal;
     int col_idx = -1;
     ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, signal_col_, "FFT", signal, col_idx));
+    if (remove_trend_) {
+        // A least-squares line on the row index taken out first (as the Signal tab does; its residuals have no mean either).
+        std::vector<double> index(signal.size());
+        std::iota(index.begin(), index.end(), 0.0);
+        const LinearFit fit = StatisticalTests::FitLinear({index}, signal, {"row"});
+        if (!fit.ok) return arrow::Status::ExecutionError("FFT: the trend could not be fitted: " + fit.error);
+        signal = fit.residuals;
+    }
     ReportProgress(progress_callback_, "Computing spectrum", "One-sided spectrum of " + std::to_string(signal.size()) + " samples", 0.35, 0, rows, memory);
     const SpectrumResult spectrum = SignalProcessing::Spectrum(signal, sample_rate_, window_, remove_mean_);
     if (!spectrum.success) {

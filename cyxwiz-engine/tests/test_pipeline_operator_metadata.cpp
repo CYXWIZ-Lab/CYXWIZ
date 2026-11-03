@@ -2138,10 +2138,10 @@ void CheckSignalProcessingFamilyContract(
     const auto* filter = metadata.GetMetadata(gui::NodeType::FilterDesigner);
     const auto* convolution =
         metadata.GetMetadata(gui::NodeType::Convolution1D);
-    Check(fft->parameters.size() == 4 &&
+    Check(fft->parameters.size() == 5 &&
               ParameterMatches(fft, "sample_rate", "float", "1.0") &&
               ParameterMatches(fft, "window", "dropdown", "hann") && HasEnumValue(fft, "window", "boxcar") &&
-              ParameterMatches(fft, "remove_mean", "bool", "true"),
+              ParameterMatches(fft, "remove_mean", "bool", "true") && ParameterMatches(fft, "remove_trend", "bool", "false"),
           "FFT metadata should expose its operator parameters (TOFIX129 D7)");
     Check(filter->parameters.size() == 7 &&
               ParameterMatches(filter, "filter_type", "dropdown", "lowpass") &&

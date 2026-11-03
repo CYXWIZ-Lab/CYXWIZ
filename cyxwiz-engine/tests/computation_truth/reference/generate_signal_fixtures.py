@@ -142,7 +142,7 @@ def main():
         X = np.fft.rfft(y)
         add("irfft", label, signal=label, real=vec(X.real), imag=vec(X.imag), samples=len(x), y=vec(np.fft.irfft(X, len(x))))
     # 3. welch
-    for label, nperseg in [("slow", 1024), ("tones", 256), ("odd", 64)]:
+    for label, nperseg in [("slow", 1024), ("tones", 256), ("odd", 64), ("odd", 3), ("tones", 2)]:
         x, fs = S[label]
         f, p = sig.welch(x, fs=fs, window="hann", nperseg=nperseg, noverlap=nperseg // 2, detrend="constant", scaling="density")
         add("welch", f"{label}_{nperseg}", signal=label, fs=fs, nperseg=nperseg, frequencies=vec(f), psd=vec(p))

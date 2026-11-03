@@ -184,7 +184,7 @@ struct WaveletPart {
     std::string name;          // "A4", "D4" .. "D1"
     int level = 0;
     bool approximation = false;
-    double scale_low = 0.0;    // seconds (or units / rows): the shortest cycle in the part
+    double scale_low = 0.0;    // seconds (or units / rows): the shortest cycle in the part (D<j>: 2^j rows; A<L>: 2^(L+1) rows)
     double scale_high = 0.0;   // 0 for the approximation ("and longer")
     size_t coefficients = 0;
     double energy_share = 0.0;
@@ -206,7 +206,9 @@ WaveletAnswer RunWavelet(const std::string& table, const WaveletRequest& request
 
 // ---- Into the graph
 
-// The FFT node (a branch: a one-sided spectrum table) with the look's settings.
+// The FFT node (a branch: a one-sided spectrum table) with the look's settings
+// (window, mean and trend removal; the node has no Welch averaging: the view
+// keeps the button off with the reason while Welch is on).
 std::map<std::string, std::string> NodeParameters(const SpectrumRequest& request);
 // "FilterDesigner" (Design) or "Convolution1D" (Kernel), and its parameters; both add <col>_filtered beside the columns.
 const char* FilterNodeType(const FilterRequest& request);

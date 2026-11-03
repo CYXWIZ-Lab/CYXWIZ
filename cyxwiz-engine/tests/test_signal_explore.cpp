@@ -159,7 +159,8 @@ int main() {
     Near(1.0 / welch.peaks[0].frequency, 2560.0, 0.01, "Welch's strongest bin at 512-row segments (bins 5,120 s apart in period: 2,560 s is the nearest to the 2,040 s cycle): " + std::to_string(1.0 / welch.peaks[0].frequency));
     Contains(signal_view::SpectrumTitle(welch), "Welch power density (Hann, segments of 512 rows, 4 averaged), per hour", signal_view::SpectrumTitle(welch));
     const auto node = signal::NodeParameters(welch.request);
-    Check(node.at("signal_col") == "Motor_current" && node.at("window") == "hann" && node.at("sample_rate") == "0.1", "FFT node parameters carry the resolved rate: " + node.at("sample_rate"));
+    Check(node.at("signal_col") == "Motor_current" && node.at("window") == "hann" && node.at("sample_rate") == "0.1" && node.at("remove_trend") == "false",
+          "FFT node parameters carry the resolved rate: " + node.at("sample_rate"));
 
     // ---- Spectrogram: 128-row window, hop 32 (42 frames); a tiny frame budget raises the hop and says so
     signal::SpectrogramRequest spec;
@@ -191,7 +192,7 @@ int main() {
     Contains(signal_view::FilterSentence(lp), "first and last 50 rows lean on the edge values", "edge words");
     Check(signal::FilterNodeType(filter) == std::string("FilterDesigner"), "Design -> Filter Designer node");
     const auto fp = signal::NodeParameters(lp.request);
-    Check(fp.at("filter_type") == "lowpass" && fp.at("taps") == "101" && fp.at("cutoff") == "0.00166667" && fp.at("sample_rate") == "0.1",
+    Check(fp.at("filter_type") == "lowpass" && fp.at("taps") == "101" && std::fabs(std::stod(fp.at("cutoff")) - 1.0 / 600.0) < 1e-12 && fp.at("sample_rate") == "0.1",
           "filter node parameters: " + fp.at("cutoff") + " at " + fp.at("sample_rate"));
     filter.kind = signal::FilterKind::Highpass;
     filter.taps = 100;
@@ -202,7 +203,7 @@ int main() {
     const auto ma = signal::RunFilter("sensor", filter, run, {});
     Check(ma.ok() && ma.kernel.size() == 30 && ma.edge_rows == 14 && ma.rms_removed < 0.3, "moving average: " + ma.error);
     Contains(signal_view::FilterSentence(ma), "A 30-row moving average (5 min) removes", signal_view::FilterSentence(ma));
-    Check(signal::FilterNodeType(filter) == std::string("Convolution1D") && signal::NodeParameters(filter).at("kernel").rfind("0.0333333,", 0) == 0,
+    Check(signal::FilterNodeType(filter) == std::string("Convolution1D") && signal::NodeParameters(filter).at("kernel").rfind("0.0333333333333,", 0) == 0,
           "Kernel -> Convolution 1D node: " + signal::NodeParameters(filter).at("kernel"));
     filter.preset = signal::KernelPreset::Typed;
     filter.kernel_typed = {};
@@ -228,9 +229,9 @@ int main() {
         worst = std::max(worst, std::fabs(sum - x[i]));
     }
     Check(worst < 1e-9, "the parts brought back to the rows add up to the column: " + std::to_string(worst));
-    Check(signal_view::PartScale(wv.parts[0], wv.data) == "A4: 2.7 min and longer" && signal_view::PartScale(wv.parts[4], wv.data) == "D1: 10 s .. 20 s",
+    Check(signal_view::PartScale(wv.parts[0], wv.data) == "A4: 5.3 min and longer" && signal_view::PartScale(wv.parts[4], wv.data) == "D1: 20 s .. 40 s",
           "part scales: " + signal_view::PartScale(wv.parts[0], wv.data) + " / " + signal_view::PartScale(wv.parts[4], wv.data));
-    Contains(signal_view::WaveletSentence(wv), "Most of Motor_current is slow: the approximation over 2.7 min and longer holds", signal_view::WaveletSentence(wv));
+    Contains(signal_view::WaveletSentence(wv), "Most of Motor_current is slow: the approximation over 5.3 min and longer holds", signal_view::WaveletSentence(wv));
     wavelet.denoise = signal::DenoiseMode::Soft;
     const auto dn = signal::RunWavelet("sensor", wavelet, run, {});
     Check(dn.ok() && dn.denoised.success && dn.denoised.denoised.size() == x.size() && dn.denoised.threshold > 0.0, "denoised: " + dn.error);

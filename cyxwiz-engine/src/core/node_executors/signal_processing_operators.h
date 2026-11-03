@@ -29,6 +29,7 @@ namespace cyxwiz {
  *   sample_rate   (default 1.0)    — samples per second (per unit, per row).
  *   window        (default "hann") — "hann", "hamming", "blackman", "boxcar".
  *   remove_mean   (default true)   — the mean taken out first.
+ *   remove_trend  (default false)  — a least-squares line taken out first (a trending signal otherwise puts its whole length on top).
  */
 class FFTOperator : public IPipelineOperator {
 public:
@@ -51,6 +52,7 @@ private:
     double sample_rate_ = 1.0;
     std::string window_ = "hann";
     bool remove_mean_ = true;
+    bool remove_trend_ = false;
     PipelineOperatorProgressCallback progress_callback_;
 };
 

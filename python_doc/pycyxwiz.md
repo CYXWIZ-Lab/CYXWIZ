@@ -947,10 +947,18 @@ FFT and convolution:
 - `spectrogram(x, window_size=256, hop_size=128, sample_rate=1.0, window='hann')`
 
 Filters:
-- `lowpass(cutoff, fs, order=4)` -> `{'b':..., 'a':...}`
-- `highpass(cutoff, fs, order=4)`
-- `bandpass(low, high, fs, order=4)`
+- `lowpass(cutoff, fs, taps=31)` -> `{'b':..., 'a':...}` (scipy.signal.firwin; `taps` means taps, odd for highpass / bandstop)
+- `highpass(cutoff, fs, taps=31)`
+- `bandpass(low, high, fs, taps=31)`
+- `bandstop(low, high, fs, taps=31)`
 - `filter(x, b, a)`
+
+Spectra, wavelets and peaks:
+- `spectrum(x, sample_rate=1.0, window='hann', remove_mean=True)` -> frequencies, amplitude, psd
+- `welch(x, sample_rate=1.0, nperseg=256, window='hann')` -> frequencies, psd
+- `wavedec(x, wavelet='db4', level=3)` -> approximation, details (details[0] is the finest)
+- `denoise(x, wavelet='db4', level=3, threshold=0.0, soft=True)` -> denoised, sigma, threshold
+- `findpeaks_prominence(x, prominence, distance=1)` -> indices, values, prominences
 
 Signal generation:
 - `sine(freq, fs, n, amp=1.0, phase=0.0)`
@@ -962,7 +970,7 @@ Signal generation:
 import pycyxwiz.signal as sp
 
 x = sp.sine(freq=10, fs=200, n=2000)
-f = sp.lowpass(cutoff=20, fs=200, order=4)
+f = sp.lowpass(cutoff=20, fs=200, taps=31)
 y = sp.filter(x, f["b"], f["a"])
 ```
 

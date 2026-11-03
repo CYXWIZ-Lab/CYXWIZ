@@ -4741,7 +4741,8 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         {{"signal_col", "string", "", "Numeric signal column", {}, "", "", "", true, false},
          {"sample_rate", "float", "1.0", "Samples per second (per unit, per row) for the frequency axis", {}, "> 0"},
          {"window", "dropdown", "hann", "The window applied first (periodic, as scipy.signal.get_window)", {"hann", "hamming", "blackman", "boxcar"}, ""},
-         {"remove_mean", "bool", "true", "Take the mean out before the transform", {}, ""}},
+         {"remove_mean", "bool", "true", "Take the mean out before the transform", {}, ""},
+         {"remove_trend", "bool", "false", "Take a least-squares line out first (a trending signal otherwise puts its whole length on top)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::IFFTNode, NodeCategory::Signal, "IFFT", ICON_FA_WAVE_SQUARE,

@@ -15,7 +15,7 @@ using series::TimeKind;
 
 std::string Number(double v) {
     char buf[32];
-    std::snprintf(buf, sizeof(buf), "%.6g", v);
+    std::snprintf(buf, sizeof(buf), "%.12g", v);  // graph parameters: enough digits to come back as typed
     return buf;
 }
 
@@ -308,7 +308,7 @@ WaveletAnswer RunWavelet(const std::string& table, const WaveletRequest& request
     approx.name = "A" + std::to_string(levels);
     approx.level = levels;
     approx.approximation = true;
-    approx.scale_low = step * std::pow(2.0, levels);
+    approx.scale_low = step * std::pow(2.0, levels + 1);  // the band below fs / 2^(L+1): cycles of 2^(L+1) rows and longer
     approx.scale_high = 0.0;
     approx.coefficients = a.coefficients.approximation.size();
     approx.energy_share = total > 0.0 ? energy[0] / total : 0.0;
@@ -318,8 +318,8 @@ WaveletAnswer RunWavelet(const std::string& table, const WaveletRequest& request
         WaveletPart part;
         part.name = "D" + std::to_string(level);
         part.level = level;
-        part.scale_low = step * std::pow(2.0, level - 1);
-        part.scale_high = step * std::pow(2.0, level);
+        part.scale_low = step * std::pow(2.0, level);        // the band fs / 2^(j+1) .. fs / 2^j: cycles of 2^j .. 2^(j+1) rows
+        part.scale_high = step * std::pow(2.0, level + 1);
         part.coefficients = a.coefficients.details[static_cast<size_t>(level - 1)].size();
         part.energy_share = total > 0.0 ? energy[static_cast<size_t>(level)] / total : 0.0;
         part.rows = alone(level - 1);
@@ -362,7 +362,7 @@ const char* PresetName(KernelPreset preset) {
 
 std::map<std::string, std::string> NodeParameters(const SpectrumRequest& r) {
     return {{"signal_col", r.base.value}, {"sample_rate", Number(r.base.sample_rate)}, {"window", r.window},
-            {"remove_mean", r.remove_mean ? "true" : "false"}};
+            {"remove_mean", r.remove_mean ? "true" : "false"}, {"remove_trend", r.remove_trend ? "true" : "false"}};
 }
 
 const char* FilterNodeType(const FilterRequest& r) { return r.mode == FilterMode::Design ? "FilterDesigner" : "Convolution1D"; }

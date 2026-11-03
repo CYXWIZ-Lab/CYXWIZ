@@ -540,9 +540,9 @@ void SignalView::RenderSpectrum(const ExploreContext& context) {
     if (split) ImGui::EndTable();
     ImGui::Spacing();
     if (add_to_graph) {
-        if (ui::SecondaryButton("Keep as a node"))
+        if (ui::SecondaryButton("Keep as a node", !welch, "The FFT node has no Welch averaging; set Average to whole series to keep this spectrum as a node"))
             Message(add_to_graph("FFTNode", "Spectrum (" + base_.value + ")", signal::NodeParameters(a->request), false), false);
-        if (ImGui::IsItemHovered())
+        if (!welch && ImGui::IsItemHovered())
             ImGui::SetTooltip("%s", (explore_view::BranchTip("FFT") + " Its table has one row per frequency bin: frequency, period, amplitude, phase, power density, real, imag.").c_str());
         ExploreNextButton("Export CSV...");
     }

@@ -29,10 +29,8 @@ af::array OneSidedDensity(const af::array& spectrum, int nperseg, double sample_
     const dim_t bins = nperseg / 2 + 1;
     af::array power = af::real(spectrum * af::conjg(spectrum))(af::seq(0, static_cast<double>(bins - 1)), af::span);
     power = power / (sample_rate * window_energy);
-    if (bins > 2) {
-        const dim_t last = nperseg % 2 == 0 ? bins - 2 : bins - 1;  // Nyquist stays single when n is even
-        power(af::seq(1, static_cast<double>(last)), af::span) *= 2.0;
-    }
+    const dim_t last = nperseg % 2 == 0 ? bins - 2 : bins - 1;  // Nyquist stays single when n is even
+    if (last >= 1) power(af::seq(1, static_cast<double>(last)), af::span) *= 2.0;  // n = 3 doubles its one interior bin, as scipy
     return power;
 }
 
