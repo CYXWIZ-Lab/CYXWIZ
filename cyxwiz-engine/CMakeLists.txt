@@ -685,11 +685,6 @@ set(ENGINE_SOURCES
     src/gui/panels/svd_panel.cpp
     src/gui/panels/qr_panel.cpp
     src/gui/panels/cholesky_panel.cpp
-    src/gui/panels/fft_panel.cpp
-    src/gui/panels/spectrogram_panel.cpp
-    src/gui/panels/filter_designer_panel.cpp
-    src/gui/panels/convolution_panel.cpp
-    src/gui/panels/wavelet_panel.cpp
     src/gui/panels/gradient_descent_panel.cpp
     src/gui/panels/convexity_panel.cpp
     src/gui/panels/lp_panel.cpp
@@ -985,11 +980,6 @@ set(ENGINE_HEADERS
     src/gui/panels/svd_panel.h
     src/gui/panels/qr_panel.h
     src/gui/panels/cholesky_panel.h
-    src/gui/panels/fft_panel.h
-    src/gui/panels/spectrogram_panel.h
-    src/gui/panels/filter_designer_panel.h
-    src/gui/panels/convolution_panel.h
-    src/gui/panels/wavelet_panel.h
     src/gui/panels/gradient_descent_panel.h
     src/gui/panels/convexity_panel.h
     src/gui/panels/lp_panel.h

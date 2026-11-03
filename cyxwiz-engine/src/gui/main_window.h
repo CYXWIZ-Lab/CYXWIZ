@@ -80,12 +80,6 @@ class EigenDecompPanel;
 class SVDPanel;
 class QRPanel;
 class CholeskyPanel;
-// Signal Processing panels (Phase 8)
-class FFTPanel;
-class SpectrogramPanel;
-class FilterDesignerPanel;
-class ConvolutionPanel;
-class WaveletPanel;
 // Optimization & Calculus panels (Phase 9)
 class GradientDescentPanel;
 class ConvexityPanel;
@@ -435,13 +429,6 @@ private:
     std::unique_ptr<cyxwiz::SVDPanel> svd_panel_;
     std::unique_ptr<cyxwiz::QRPanel> qr_panel_;
     std::unique_ptr<cyxwiz::CholeskyPanel> cholesky_panel_;
-
-    // Signal Processing panels (Phase 8)
-    std::unique_ptr<cyxwiz::FFTPanel> fft_panel_;
-    std::unique_ptr<cyxwiz::SpectrogramPanel> spectrogram_panel_;
-    std::unique_ptr<cyxwiz::FilterDesignerPanel> filter_designer_panel_;
-    std::unique_ptr<cyxwiz::ConvolutionPanel> convolution_panel_;
-    std::unique_ptr<cyxwiz::WaveletPanel> wavelet_panel_;
 
     // Optimization & Calculus panels (Phase 9)
     std::unique_ptr<cyxwiz::GradientDescentPanel> gradient_descent_panel_;

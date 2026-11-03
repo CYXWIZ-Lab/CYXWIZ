@@ -96,11 +96,6 @@
 #include "panels/svd_panel.h"
 #include "panels/qr_panel.h"
 #include "panels/cholesky_panel.h"
-#include "panels/fft_panel.h"
-#include "panels/spectrogram_panel.h"
-#include "panels/filter_designer_panel.h"
-#include "panels/convolution_panel.h"
-#include "panels/wavelet_panel.h"
 #include "panels/gradient_descent_panel.h"
 #include "panels/convexity_panel.h"
 #include "panels/lp_panel.h"
@@ -109,6 +104,7 @@
 #include "panels/integration_panel.h"
 #include "data_studio/folds_view.h"
 #include "data_studio/series_view.h"
+#include "data_studio/signal_view.h"
 #include "../core/node_executors/training_evaluation_operator.h"
 #include "panels/tokenization_panel.h"
 #include "panels/word_frequency_panel.h"
@@ -683,13 +679,6 @@ MainWindow::MainWindow()
     svd_panel_ = std::make_unique<cyxwiz::SVDPanel>();
     qr_panel_ = std::make_unique<cyxwiz::QRPanel>();
     cholesky_panel_ = std::make_unique<cyxwiz::CholeskyPanel>();
-
-    // Signal Processing panels (Phase 8)
-    fft_panel_ = std::make_unique<cyxwiz::FFTPanel>();
-    spectrogram_panel_ = std::make_unique<cyxwiz::SpectrogramPanel>();
-    filter_designer_panel_ = std::make_unique<cyxwiz::FilterDesignerPanel>();
-    convolution_panel_ = std::make_unique<cyxwiz::ConvolutionPanel>();
-    wavelet_panel_ = std::make_unique<cyxwiz::WaveletPanel>();
 
     // Optimization & Calculus panels (Phase 9)
     gradient_descent_panel_ = std::make_unique<cyxwiz::GradientDescentPanel>();
@@ -2010,37 +1999,17 @@ MainWindow::MainWindow()
         }
     });
 
-    // Signal Processing callbacks (Phase 8)
-    toolbar_->SetOpenFFTCallback([this]() {
-        if (fft_panel_) {
-            fft_panel_->Toggle();
-            spdlog::info("Toggled FFT panel");
-        }
-    });
-    toolbar_->SetOpenSpectrogramCallback([this]() {
-        if (spectrogram_panel_) {
-            spectrogram_panel_->Toggle();
-            spdlog::info("Toggled Spectrogram panel");
-        }
-    });
-    toolbar_->SetOpenFilterDesignerCallback([this]() {
-        if (filter_designer_panel_) {
-            filter_designer_panel_->Toggle();
-            spdlog::info("Toggled Filter Designer panel");
-        }
-    });
-    toolbar_->SetOpenConvolutionCallback([this]() {
-        if (convolution_panel_) {
-            convolution_panel_->Toggle();
-            spdlog::info("Toggled Convolution panel");
-        }
-    });
-    toolbar_->SetOpenWaveletCallback([this]() {
-        if (wavelet_panel_) {
-            wavelet_panel_->Toggle();
-            spdlog::info("Toggled Wavelet Transform panel");
-        }
-    });
+    // Tools > Signal Processing opens Data Studio's Explore tab Signal on that
+    // look, for the data in use (TOFIX129 D7); the Convolution Calculator is
+    // the Filter look in Kernel mode.
+    const auto open_signal = [this](cyxwiz::SignalView::Look look, bool kernel) {
+        if (data_studio_panel_) data_studio_panel_->ShowSignal(look, kernel);
+    };
+    toolbar_->SetOpenFFTCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Spectrum, false); });
+    toolbar_->SetOpenSpectrogramCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Spectrogram, false); });
+    toolbar_->SetOpenFilterDesignerCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Filter, false); });
+    toolbar_->SetOpenConvolutionCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Filter, true); });
+    toolbar_->SetOpenWaveletCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Wavelet, false); });
 
     // Optimization & Calculus callbacks (Phase 9)
     toolbar_->SetOpenGradientDescentCallback([this]() {
@@ -2678,16 +2647,6 @@ MainWindow::~MainWindow() {
     convexity_panel_.reset();
     spdlog::info("~MainWindow: gradient_descent_panel_");
     gradient_descent_panel_.reset();
-    spdlog::info("~MainWindow: wavelet_panel_");
-    wavelet_panel_.reset();
-    spdlog::info("~MainWindow: convolution_panel_");
-    convolution_panel_.reset();
-    spdlog::info("~MainWindow: filter_designer_panel_");
-    filter_designer_panel_.reset();
-    spdlog::info("~MainWindow: spectrogram_panel_");
-    spectrogram_panel_.reset();
-    spdlog::info("~MainWindow: fft_panel_");
-    fft_panel_.reset();
     spdlog::info("~MainWindow: cholesky_panel_");
     cholesky_panel_.reset();
     spdlog::info("~MainWindow: qr_panel_");
@@ -3136,13 +3095,6 @@ void MainWindow::Render() {
     TimedRender("svd", svd_panel_);
     TimedRender("qr", qr_panel_);
     TimedRender("cholesky", cholesky_panel_);
-
-    // Signal Processing panels (Phase 8)
-    TimedRender("fft", fft_panel_);
-    TimedRender("spectrogram", spectrogram_panel_);
-    TimedRender("filter designer", filter_designer_panel_);
-    TimedRender("convolution", convolution_panel_);
-    TimedRender("wavelet", wavelet_panel_);
 
     // Optimization & Calculus panels (Phase 9)
     TimedRender("gradient descent", gradient_descent_panel_);
@@ -3627,13 +3579,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (svd_panel_) svd_panel_->SetVisible(false);
     if (qr_panel_) qr_panel_->SetVisible(false);
     if (cholesky_panel_) cholesky_panel_->SetVisible(false);
-
-    // Signal Processing panels (Phase 8)
-    if (fft_panel_) fft_panel_->SetVisible(false);
-    if (spectrogram_panel_) spectrogram_panel_->SetVisible(false);
-    if (filter_designer_panel_) filter_designer_panel_->SetVisible(false);
-    if (convolution_panel_) convolution_panel_->SetVisible(false);
-    if (wavelet_panel_) wavelet_panel_->SetVisible(false);
 
     // Optimization & Calculus panels (Phase 9)
     if (gradient_descent_panel_) gradient_descent_panel_->SetVisible(false);
