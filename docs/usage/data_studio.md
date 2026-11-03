@@ -99,9 +99,9 @@ they are loaded again.
 
 ## Explore
 
-Explore has fourteen views: **Query**, **Profile**, **Missing**, **Outliers**,
+Explore has fifteen views: **Query**, **Profile**, **Missing**, **Outliers**,
 **Correlation**, **Distribution**, **Tests**, **Regression**, **Groups**,
-**Projection**, **Series**, **Forecast**, **Visualize** and **Plugins**, and a fifteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+**Projection**, **Series**, **Forecast**, **Signal**, **Visualize** and **Plugins**, and a sixteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
 Correlation Matrix) and Tools > Statistics (Summary Statistics and
@@ -110,7 +110,9 @@ Polynomial Regression opens Regression) and Tools > Clustering and Projection
 (K-Means, DBSCAN, Hierarchical Clustering and Gaussian Mixture Models open
 Groups on that method, Cluster Evaluation opens Groups, PCA / t-SNE / UMAP opens
 Projection) and Tools > Time Series (Decomposition, ACF / PACF, Stationarity and
-Seasonality open Series on that look; Forecasting opens Forecast). In Profile, a column's missing or outlier count opens
+Seasonality open Series on that look; Forecasting opens Forecast) and Tools > Signal
+Processing (FFT opens Signal on Spectrum; Spectrogram; Filter Designer opens Filter;
+Convolution Calculator opens Filter in Kernel mode; Wavelet Transform opens Wavelet). In Profile, a column's missing or outlier count opens
 Missing or Outliers on it, "More about this column" opens Distribution, and
 "See the matrix" opens Correlation. The views wrap to a second line in a
 narrow dock.
@@ -126,12 +128,13 @@ Detector) learn from the Train rows only. So:
 
 - **A step feeds training.** Everything on the way to that node does: every
   Prepare step, Missing's **Drop these rows** and **Fill in Prepare**,
-  Outliers' **Flag / Clip / Drop rows**, Groups', Projection's, Series' and
-  Forecast's **Add as a step**, Query's **Turn into step**, Images' **Use in
-  Normalize**. Their buttons say so on hover, and the message after adding one
+  Outliers' **Flag / Clip / Drop rows**, Groups', Projection's, Series',
+  Forecast's and Signal's (Filter, Wavelet) **Add as a step**, Query's **Turn
+  into step**, Images' **Use in Normalize**. Their buttons say so on hover, and the message after adding one
   ends with *Training reads its result.*
 - **A branch only shows.** **Keep as a node** (Tests, Regression, Series'
-  Seasonality / Stationarity / ACF, Groups, Projection, Forecast), **Keep as
+  Seasonality / Stationarity / ACF, Groups, Projection, Forecast, Signal's
+  Spectrum: the FFT node's table has one row per bin), **Keep as
   Plot node** and dashboards read the data and keep their result with the
   graph; training does not read them. The message ends with *Training does not
   read a branch.*
@@ -650,6 +653,29 @@ series with the fit and the band, the forecast table and the held-out
 table. **Add as a step** / **Keep as a node** add the ARIMA or Exp. Smoothing
 node with these settings; **Stop** ends a long search ([time
 series](time_series.md#forecast)).
+
+## Signal
+
+One number column read as a signal over the same **Time** as Series (the
+step gives the sample rate: 0.1 Hz for rows every 10 s, typed over in Hz;
+frequencies read in the unit that fits, per hour for a 10-second step), in
+four looks: **Spectrum** (the one-sided amplitude spectrum with a window and
+the mean or the trend removed, or Welch segments; the peaks in the spectrum
+with their harmonics named, and the peaks in the rows by how many SDs they
+stand out and how far apart), **Spectrogram** (frames of N rows every N rows
+as a heatmap in dB with a typed floor), **Filter** (a windowed-sinc FIR kept
+below / above / between / outside a cut typed in the display unit, or a
+kernel: moving average, Gaussian, difference, second difference, typed;
+applied zero-phase, the removed and kept RMS and the response in dB) and
+**Wavelet** (the column split by scale into an approximation and details,
+each brought back to the rows with its share of the energy; denoised at the
+universal threshold or a typed one). Each look says the signal ("Sample rate
+0.1 Hz = 360 per hour (from the step: every 10 s, even); 1,440 rows, none
+missing.") and puts its node into the graph: **Keep as a node** (Spectrum: the
+FFT branch) or **Add as a step** (Filter Designer / Convolution 1D, Wavelet
+Transform: new columns beside the others). The figures match numpy, scipy and
+PyWavelets; the rules, the words and the nodes are in [signal
+processing](signal_processing.md).
 
 ## Visualize
 
