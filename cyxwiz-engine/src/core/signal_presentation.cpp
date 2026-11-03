@@ -76,8 +76,8 @@ std::string PeriodWords(double frequency, const signal::SignalData& d) {
 
 std::string RateWords(const signal::SignalData& d) {
     const signal::FrequencyUnit& u = d.unit;
-    std::string out = FrequencyWords(d.sample_rate, u);
-    if (d.series.kind == TimeKind::Dates && u.name != "Hz") out += " (" + Figure(d.sample_rate) + " Hz)";
+    std::string out = d.series.kind == TimeKind::Dates ? Figure(d.sample_rate) + " Hz" : FrequencyWords(d.sample_rate, u);
+    if (d.series.kind == TimeKind::Dates && u.name != "Hz") out += " = " + FrequencyWords(d.sample_rate, u);
     if (!d.rate_from_step) return out + " (typed)";
     out += " (from the step: every " + SpanWords(d.step_seconds, d);
     if (d.series.kind != TimeKind::Order) out += d.series.step.even ? ", even" : ", uneven: the rows are taken in order";

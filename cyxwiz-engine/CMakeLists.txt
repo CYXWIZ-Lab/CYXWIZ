@@ -785,6 +785,7 @@ set(ENGINE_SOURCES
     src/gui/data_studio/projection_view.cpp
     src/gui/data_studio/series_view.cpp
     src/gui/data_studio/forecast_view.cpp
+    src/gui/data_studio/signal_view.cpp
     src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/correlation_view.cpp
     src/gui/data_studio/distribution_view.cpp

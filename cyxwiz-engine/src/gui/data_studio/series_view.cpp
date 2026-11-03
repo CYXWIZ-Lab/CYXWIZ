@@ -158,7 +158,8 @@ void SeriesView::Render(const ExploreContext& context) {
     }
 }
 
-bool RenderSeriesPickers(const char* id, const ExploreContext& context, const DatasetProfile& p, plot::ColumnPicker& picker, series::SeriesRequest& base) {
+bool RenderSeriesPickers(const char* id, const ExploreContext& context, const DatasetProfile& p, plot::ColumnPicker& picker, series::SeriesRequest& base,
+                         bool period, const char* value_label) {
     // Time candidates: date columns, texts that read as dates, numbers; the
     // Data Input's time column first; "(row order)" when none.
     std::vector<plot::ColumnSummary> times, numbers;
@@ -201,9 +202,10 @@ bool RenderSeriesPickers(const char* id, const ExploreContext& context, const Da
     changed |= picker.Pick((sid + "_time").c_str(), base.time, times, false, "(row order)", 200.0f);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("A date column, a text that reads as dates, or numbers; the rows are sorted by it. (row order): the table as it is.");
-    row.Next(ImGui::CalcTextSize("Value").x + 240.0f);
-    Label("Value");
+    row.Next(ImGui::CalcTextSize(value_label).x + 240.0f);
+    Label(value_label);
     changed |= picker.Pick((sid + "_value").c_str(), base.value, numbers, true, nullptr, 200.0f);
+    if (!period) return changed;
     row.Next(ImGui::CalcTextSize("Period").x + 150.0f);
     Label("Period");
     changed |= ui::NumberField((sid + "_period").c_str(), &base.period, 0, 100000, 1, 56.0f,

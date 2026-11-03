@@ -66,4 +66,13 @@ void Dendrogram(const std::vector<std::array<double, 4>>& xs, const std::vector<
 // Bars of counts over lo .. hi (a histogram's bins), with the ends labelled.
 void Bars(const std::vector<int64_t>& bins, double lo, double hi, float width, float height);
 
+// A heatmap of `cells[column][row]` (a spectrogram: frames across, bins up,
+// row 0 at the bottom), each value placed on the sequential scale from `lo`
+// (and below: the floor) to `hi`; at most `rows` rows are drawn (0: all). A
+// cell at or below the floor takes the plot background. The x axis ends are
+// labelled `x_lo` .. `x_hi` with `x_label` between; the y ends `y_lo` ..
+// `y_hi` inside the plot.
+void Heatmap(const std::vector<std::vector<double>>& cells, size_t rows, double lo, double hi, float width, float height,
+             const std::string& x_lo, const char* x_label, const std::string& x_hi, const std::string& y_lo, const std::string& y_hi);
+
 }  // namespace cyxwiz::explore_plot

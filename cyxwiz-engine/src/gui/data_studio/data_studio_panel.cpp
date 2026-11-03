@@ -53,6 +53,7 @@ DataStudioPanel::DataStudioPanel() {
     plugins_ = std::make_unique<PluginsView>();
     series_ = std::make_unique<SeriesView>();
     forecast_ = std::make_unique<ForecastView>();
+    signal_ = std::make_unique<SignalView>();
     projection_->groups_shown = [this](const std::string& dataset) { return groups_ ? groups_->Shown(dataset) : nullptr; };
     // Groups and projections go into the graph as their nodes (TOFIX129 D5): in the
     // data path (a step: the rest of the graph gets the new columns) or as a branch.
@@ -91,6 +92,8 @@ DataStudioPanel::DataStudioPanel() {
         return add_node(*node_type, name, std::move(params), step);
     };
     forecast_->add_to_graph = series_->add_to_graph;
+    // Explore > Signal adds the FFT branch or the filter / wavelet steps (TOFIX129 D7).
+    signal_->add_to_graph = series_->add_to_graph;
     // Explore's Tests and Regression keep what they found as nodes reading the data in use (TOFIX129 D3).
     tests_->keep_as_node = [this](const stats::TestRequest& r) -> std::string {
         const studio::GraphNode* from = NodeOfDataset(active_dataset_);
@@ -272,6 +275,11 @@ void DataStudioPanel::ShowSeries(SeriesView::Look look) {
 }
 
 void DataStudioPanel::ShowForecast() { ShowExplore(active_dataset_, ExploreTab::Forecast); }
+
+void DataStudioPanel::ShowSignal(SignalView::Look look, bool kernel) {
+    if (signal_) signal_->SelectLook(look, kernel);
+    ShowExplore(active_dataset_, ExploreTab::Signal);
+}
 
 ExploreContext DataStudioPanel::MakeExploreContext() const {
     ExploreContext c;

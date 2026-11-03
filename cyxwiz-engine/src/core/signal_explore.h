@@ -90,7 +90,7 @@ struct RowPeak {
 struct SpectrumAnswer {
     std::string error;
     bool ok() const { return error.empty(); }
-    SpectrumRequest request;
+    SpectrumRequest request;          // as asked, with the sample rate resolved
     SignalData data;
     SpectrumResult spectrum;              // frequencies per second / unit / row
     std::vector<SpectrumPeak> peaks;      // the strongest first, at most 10
@@ -116,7 +116,7 @@ struct SpectrogramRequest {
 struct SpectrogramAnswer {
     std::string error;
     bool ok() const { return error.empty(); }
-    SpectrogramRequest request;
+    SpectrogramRequest request;       // as asked, with the sample rate resolved
     SignalData data;
     SpectrogramResult spectrogram;
     int hop_used = 0;
@@ -151,7 +151,7 @@ struct FilterRequest {
 struct FilterAnswer {
     std::string error;
     bool ok() const { return error.empty(); }
-    FilterRequest request;
+    FilterRequest request;            // as asked, with the sample rate and the cut resolved
     SignalData data;
     FilterCoefficients filter;        // Design: b and the response; Kernel: b = the kernel, response too
     std::vector<double> kernel;       // the taps applied
@@ -194,7 +194,7 @@ struct WaveletPart {
 struct WaveletAnswer {
     std::string error;
     bool ok() const { return error.empty(); }
-    WaveletRequest request;
+    WaveletRequest request;           // as asked, with the sample rate and the levels resolved
     SignalData data;
     WaveletResult coefficients;
     std::vector<WaveletPart> parts;   // the approximation, then the coarsest detail to the finest

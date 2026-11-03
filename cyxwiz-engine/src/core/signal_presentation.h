@@ -13,7 +13,7 @@
 
 namespace cyxwiz::signal_view {
 
-// "0.1 Hz (from the step: every 10 s, even)" / "12 per year (typed)" / "1 per row".
+// "0.1 Hz = 360 per hour (from the step: every 10 s, even)" / "12 per year (typed)" / "1 per row".
 std::string RateWords(const signal::SignalData& d);
 // A frequency (per second / unit / row) in the display unit: "1.75 per hour".
 std::string FrequencyWords(double frequency, const signal::FrequencyUnit& unit);

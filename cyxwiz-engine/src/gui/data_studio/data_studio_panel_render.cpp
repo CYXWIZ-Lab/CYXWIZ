@@ -413,7 +413,7 @@ void DataStudioPanel::RenderExplore() {
         {"Query", ExploreTab::Query}, {"Profile", ExploreTab::Profile}, {"Images", ExploreTab::Images}, {"Missing", ExploreTab::Missing},
         {"Outliers", ExploreTab::Outliers}, {"Correlation", ExploreTab::Correlation}, {"Distribution", ExploreTab::Distribution},
         {"Tests", ExploreTab::Tests}, {"Regression", ExploreTab::Regression},
-        {"Groups", ExploreTab::Groups}, {"Projection", ExploreTab::Projection}, {"Series", ExploreTab::Series}, {"Forecast", ExploreTab::Forecast},
+        {"Groups", ExploreTab::Groups}, {"Projection", ExploreTab::Projection}, {"Series", ExploreTab::Series}, {"Forecast", ExploreTab::Forecast}, {"Signal", ExploreTab::Signal},
         {"Visualize", ExploreTab::Visualize}, {"Plugins", ExploreTab::Plugins}};
     const auto picked = DatasetCatalog::Instance().Resolve(active_dataset_);
     const bool images = picked && picked->modality == DatasetModality::Image &&
@@ -485,6 +485,7 @@ void DataStudioPanel::RenderExplore() {
                 forecast_->Render(MakeExploreContext());
             }
             break;
+        case ExploreTab::Signal: if (signal_) signal_->Render(MakeExploreContext()); break;
         case ExploreTab::Visualize: if (visualizer_) visualizer_->Render(); break;
         case ExploreTab::Plugins: if (plugins_) plugins_->Render(MakeExploreContext()); break;
     }
@@ -506,6 +507,7 @@ void DataStudioPanel::RenderStatusBar() {
     else if (projection_ && projection_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Projecting");
     else if (series_ && series_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the series");
     else if (forecast_ && forecast_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Forecasting");
+    else if (signal_ && signal_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the signal");
     else if (results_ && results_->CrossValidation()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Cross-validating");
     else if (results_ && results_->LearningCurve()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Learning curve");
     else if (results_ && results_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the test");

@@ -24,6 +24,7 @@
 #include "projection_view.h"
 #include "plugins_view.h"
 #include "series_view.h"
+#include "signal_view.h"
 #include "forecast_view.h"
 #include "prepare_view.h"
 #include "readiness_view.h"
@@ -48,7 +49,7 @@ class DataStudioPanel {
 public:
     // Explore's tabs, in the order they show.
     // Images shows only for an image dataset.
-    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Series, Forecast, Visualize, Plugins };
+    enum class ExploreTab { Query, Profile, Images, Missing, Outliers, Correlation, Distribution, Tests, Regression, Groups, Projection, Series, Forecast, Signal, Visualize, Plugins };
 
     DataStudioPanel();
     ~DataStudioPanel() = default;
@@ -87,6 +88,8 @@ public:
     void ShowSeries(SeriesView::Look look);
     // Explore > Forecast, for the data in use (Tools > Time Series > Forecasting).
     void ShowForecast();
+    // Explore > Signal on a look, for the data in use (Tools > Signal Processing); `kernel`: Filter in Kernel mode.
+    void ShowSignal(SignalView::Look look, bool kernel = false);
 
     // Data > Transform (TOFIX129 D2): opens Prepare and adds a step of `type`
     // after the data in use (a Data Input or a node's result; the graph's
@@ -134,6 +137,7 @@ private:
     std::unique_ptr<PluginsView> plugins_;
     std::unique_ptr<SeriesView> series_;
     std::unique_ptr<ForecastView> forecast_;
+    std::unique_ptr<SignalView> signal_;
     std::unique_ptr<PrepareView> prepare_;
     std::unique_ptr<ValidateView> validate_;
     std::unique_ptr<PublishView> publish_;

@@ -107,6 +107,7 @@ SpectrumAnswer RunSpectrum(const std::string& table, const SpectrumRequest& requ
     SignalAnswer read = ReadSignal(table, request.base, run, texts);
     if (!read.ok()) return a.error = read.error, a;
     a.data = std::move(read.data);
+    a.request.base.sample_rate = a.data.sample_rate;  // resolved (the node needs it)
     const std::vector<double>& x = a.data.series.values;
     const double fs = a.data.sample_rate;
     // The trend out first when asked: a least-squares line on the row index
@@ -163,6 +164,7 @@ SpectrogramAnswer RunSpectrogram(const std::string& table, const SpectrogramRequ
     SignalAnswer read = ReadSignal(table, request.base, run, texts);
     if (!read.ok()) return a.error = read.error, a;
     a.data = std::move(read.data);
+    a.request.base.sample_rate = a.data.sample_rate;  // resolved (the node needs it)
     const std::vector<double>& x = a.data.series.values;
     const int n = static_cast<int>(x.size());
     if (request.window_rows < 2 || request.window_rows > n)
@@ -233,6 +235,7 @@ FilterAnswer RunFilter(const std::string& table, const FilterRequest& request, c
     SignalAnswer read = ReadSignal(table, request.base, run, texts);
     if (!read.ok()) return a.error = read.error, a;
     a.data = std::move(read.data);
+    a.request.base.sample_rate = a.data.sample_rate;  // resolved (the node needs it)
     const std::vector<double>& x = a.data.series.values;
     const double fs = a.data.sample_rate, nyquist = fs / 2.0;
     if (request.mode == FilterMode::Design) {
@@ -278,6 +281,7 @@ WaveletAnswer RunWavelet(const std::string& table, const WaveletRequest& request
     SignalAnswer read = ReadSignal(table, request.base, run, texts);
     if (!read.ok()) return a.error = read.error, a;
     a.data = std::move(read.data);
+    a.request.base.sample_rate = a.data.sample_rate;  // resolved (the node needs it)
     const std::vector<double>& x = a.data.series.values;
     const int max_levels = SignalProcessing::WaveletMaxLevel(static_cast<int>(x.size()), request.wavelet);
     if (max_levels < 1) return a.error = "Too few rows for " + request.wavelet + " (" + std::to_string(x.size()) + ").", a;

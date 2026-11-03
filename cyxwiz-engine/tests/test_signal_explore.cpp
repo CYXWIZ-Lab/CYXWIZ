@@ -123,7 +123,7 @@ int main() {
     Check(d.series.rows == 1440 && d.series.used == 1439 && d.series.unordered == 1, "1,439 of 1,440 rows, one swap");
     Near(d.sample_rate, 0.1, 1e-9, "0.1 Hz from the 10 s step");
     Check(d.rate_from_step && d.unit.name == "per hour" && d.series.step.even, "unit per hour, even step");
-    Contains(signal_view::RateWords(d), "360 per hour (0.1 Hz) (from the step: every 10 s, even)", "rate words: " + signal_view::RateWords(d));
+    Contains(signal_view::RateWords(d), "0.1 Hz = 360 per hour (from the step: every 10 s, even)", "rate words: " + signal_view::RateWords(d));
     Check(signal_view::RowsWords(d) == "1,439 of 1,440 rows (1 has no value or time); the rows were not in time order and were sorted", signal_view::RowsWords(d));
     Check(signal_view::PeriodWords(1.0 / 2040.0, d) == "every 34 min" && signal_view::SpanWords(9720.0, d) == "2.7 h" && signal_view::SpanWords(10.0, d) == "10 s",
           "period and span words: " + signal_view::PeriodWords(1.0 / 2040.0, d) + " / " + signal_view::SpanWords(9720.0, d));
@@ -158,8 +158,8 @@ int main() {
     Check(welch.ok() && welch.spectrum.segments == 4 && welch.spectrum.amplitude.empty() && !welch.peaks.empty(), "Welch: 4 segments, power only: " + welch.error);
     Near(1.0 / welch.peaks[0].frequency, 2560.0, 0.01, "Welch's strongest bin at 512-row segments (bins 5,120 s apart in period: 2,560 s is the nearest to the 2,040 s cycle): " + std::to_string(1.0 / welch.peaks[0].frequency));
     Contains(signal_view::SpectrumTitle(welch), "Welch power density (Hann, segments of 512 rows, 4 averaged), per hour", signal_view::SpectrumTitle(welch));
-    const auto node = signal::NodeParameters(spectrum);
-    Check(node.at("signal_col") == "Motor_current" && node.at("window") == "hann", "FFT node parameters");
+    const auto node = signal::NodeParameters(welch.request);
+    Check(node.at("signal_col") == "Motor_current" && node.at("window") == "hann" && node.at("sample_rate") == "0.1", "FFT node parameters carry the resolved rate: " + node.at("sample_rate"));
 
     // ---- Spectrogram: 128-row window, hop 32 (42 frames); a tiny frame budget raises the hop and says so
     signal::SpectrogramRequest spec;
@@ -190,8 +190,9 @@ int main() {
     Contains(signal_view::FilterSentence(lp), "A low-pass of 101 taps = 17 min of rows keeps the cycles of 10 min and longer (half power at", signal_view::FilterSentence(lp));
     Contains(signal_view::FilterSentence(lp), "first and last 50 rows lean on the edge values", "edge words");
     Check(signal::FilterNodeType(filter) == std::string("FilterDesigner"), "Design -> Filter Designer node");
-    const auto fp = signal::NodeParameters(filter);
-    Check(fp.at("filter_type") == "lowpass" && fp.at("taps") == "101" && fp.at("cutoff") == "0.00166667", "filter node parameters: " + fp.at("cutoff"));
+    const auto fp = signal::NodeParameters(lp.request);
+    Check(fp.at("filter_type") == "lowpass" && fp.at("taps") == "101" && fp.at("cutoff") == "0.00166667" && fp.at("sample_rate") == "0.1",
+          "filter node parameters: " + fp.at("cutoff") + " at " + fp.at("sample_rate"));
     filter.kind = signal::FilterKind::Highpass;
     filter.taps = 100;
     Check(!signal::RunFilter("sensor", filter, run, {}).ok(), "an even high-pass is refused");
@@ -234,8 +235,8 @@ int main() {
     const auto dn = signal::RunWavelet("sensor", wavelet, run, {});
     Check(dn.ok() && dn.denoised.success && dn.denoised.denoised.size() == x.size() && dn.denoised.threshold > 0.0, "denoised: " + dn.error);
     Contains(signal_view::WaveletSentence(dn), "soft thresholding at", "denoise words");
-    const auto wp = signal::NodeParameters(wavelet);
-    Check(wp.at("wavelet") == "db4" && wp.at("level") == "0" && wp.at("denoise") == "soft", "wavelet node parameters");
+    const auto wp = signal::NodeParameters(dn.request);
+    Check(wp.at("wavelet") == "db4" && wp.at("level") == "4" && wp.at("denoise") == "soft", "wavelet node parameters carry the levels used: " + wp.at("level"));
     wavelet.levels = 9;
     Check(!signal::RunWavelet("sensor", wavelet, run, {}).ok(), "too many levels refused");
     Contains(signal_view::WaveletCsv(dn), "row,time,Motor_current,Motor_current_A4,Motor_current_D4,Motor_current_D3,Motor_current_D2,Motor_current_D1,Motor_current_denoised\n", "wavelet csv");
