@@ -13,7 +13,7 @@ struct Opts {
     bool checkable = false;
     bool checked = false;
     bool planned = false;
-    std::string argument;
+    std::string argument{};
 };
 
 MenuItem Action(Context focus, const std::string& id, const std::string& label,

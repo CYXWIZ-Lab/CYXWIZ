@@ -63,6 +63,7 @@ cyxwiz::Tensor IntTensor(const std::vector<size_t>& shape,
     return cyxwiz::Tensor(shape, values.data(), cyxwiz::DataType::Int64);
 }
 
+#ifndef NDEBUG  // the host-sync checks below are the only users
 cyxwiz::Tensor DeviceFloatTensor(const std::vector<size_t>& shape,
                                  const std::vector<float>& values) {
     const auto host = FloatTensor(shape, values);
@@ -76,6 +77,7 @@ cyxwiz::Tensor DeviceIntTensor(const std::vector<size_t>& shape,
     return cyxwiz::Tensor::FromSemanticArray(
         host.GetSemanticArray(), host.Shape());
 }
+#endif
 
 void TestContrastivePairDistanceMetrics() {
     const auto left = FloatTensor({4, 2}, {

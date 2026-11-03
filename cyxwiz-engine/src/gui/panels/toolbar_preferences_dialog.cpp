@@ -40,27 +40,6 @@ const char* ArrayFireBackendDisplayName(DeviceType type) {
     }
 }
 
-const char* ArrayFireBackendIcon(DeviceType type) {
-    switch (type) {
-        case DeviceType::CUDA: return ICON_FA_BOLT;
-        case DeviceType::OPENCL: return ICON_FA_DESKTOP;
-        case DeviceType::CPU:
-        case DeviceType::ONEAPI:
-        default: return ICON_FA_MICROCHIP;
-    }
-}
-
-ImVec4 ArrayFireBackendColor(DeviceType type) {
-    const ui::Tokens& t = ui::CurrentTokens();
-    switch (type) {
-        case DeviceType::CPU: return t.series[0];
-        case DeviceType::CUDA: return t.series[1];
-        case DeviceType::OPENCL: return t.series[2];
-        case DeviceType::ONEAPI: return t.series[3];
-        default: return t.text_dim;
-    }
-}
-
 } // namespace
 
 void ToolbarPanel::RenderPreferencesDialog() {

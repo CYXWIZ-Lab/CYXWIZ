@@ -1314,8 +1314,6 @@ void NodeEditor::RenderMinimap() {
         );
     };
 
-    // Minimap content area rect (window already provides background)
-    ImVec2 minimap_content_max = ImVec2(window_pos.x + window_size.x, window_pos.y + window_size.y);
 
     // Draw links first (underneath nodes)
     for (const auto& saved_link : links_) {

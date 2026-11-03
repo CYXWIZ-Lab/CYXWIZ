@@ -138,7 +138,7 @@ void JSONTreeRenderer::RenderValue(const nlohmann::json& value) {
         ImGui::PopStyleColor();
     } else if (value.is_number_integer()) {
         ImGui::PushStyleColor(ImGuiCol_Text, t.series[3]); // numbers
-        ImGui::Text("%lld", value.get<int64_t>());
+        ImGui::Text("%lld", static_cast<long long>(value.get<int64_t>()));
         ImGui::PopStyleColor();
     } else if (value.is_number_float()) {
         ImGui::PushStyleColor(ImGuiCol_Text, t.series[3]); // numbers

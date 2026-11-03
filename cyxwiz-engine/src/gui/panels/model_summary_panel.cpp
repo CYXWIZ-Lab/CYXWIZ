@@ -394,10 +394,10 @@ void ModelSummaryPanel::RenderDetailPopup() {
             ImGui::Text("Input Shape: %s", FormatShape(layer.input_shape).c_str());
             ImGui::Text("Output Shape: %s", FormatShape(layer.output_shape).c_str());
             ImGui::Separator();
-            ImGui::Text("Parameters: %s (%lld)", FormatParameterCount(layer.parameters).c_str(), layer.parameters);
-            ImGui::Text("Non-trainable: %s (%lld)", FormatParameterCount(layer.non_trainable_params).c_str(), layer.non_trainable_params);
-            ImGui::Text("FLOPs: %s (%lld)", FormatFLOPs(layer.flops).c_str(), layer.flops);
-            ImGui::Text("Memory: %s (%lld bytes)", FormatMemory(layer.memory_bytes).c_str(), layer.memory_bytes);
+            ImGui::Text("Parameters: %s (%lld)", FormatParameterCount(layer.parameters).c_str(), static_cast<long long>(layer.parameters));
+            ImGui::Text("Non-trainable: %s (%lld)", FormatParameterCount(layer.non_trainable_params).c_str(), static_cast<long long>(layer.non_trainable_params));
+            ImGui::Text("FLOPs: %s (%lld)", FormatFLOPs(layer.flops).c_str(), static_cast<long long>(layer.flops));
+            ImGui::Text("Memory: %s (%lld bytes)", FormatMemory(layer.memory_bytes).c_str(), static_cast<long long>(layer.memory_bytes));
         }
 
         ImGui::Separator();

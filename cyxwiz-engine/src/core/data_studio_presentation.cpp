@@ -303,10 +303,10 @@ void AddChips(JobView& view, const std::vector<const GraphNode*>& nodes) {
 std::vector<StepRow> StepRows(const std::vector<GraphNode>& steps) {
     std::vector<StepRow> rows;
     for (const auto& n : steps) {
+        const char* kind = TypeLabel(n.type);
         StepRow r;
         r.id = n.id;
         r.name = n.name;
-        const char* kind = TypeLabel(n.type);
         r.kind = kind ? kind : "step node";
         r.sql = n.type == NodeType::SQLQuery;
         if (!n.error.empty()) {

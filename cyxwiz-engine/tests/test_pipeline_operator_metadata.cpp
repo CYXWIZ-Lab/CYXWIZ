@@ -276,31 +276,6 @@ void CheckRuntimeOwnerContract(
     CheckRuntimeModeOwnerCompatibility(support, context);
 }
 
-std::vector<std::string> ParseCatalogEnumValues(
-    const std::string& parameter_type) {
-    std::vector<std::string> values;
-    if (parameter_type.rfind("enum:", 0) != 0) {
-        return values;
-    }
-
-    const std::string raw_values = parameter_type.substr(5);
-    std::size_t start = 0;
-    while (start <= raw_values.size()) {
-        const std::size_t end = raw_values.find(',', start);
-        const std::string value = raw_values.substr(
-            start,
-            end == std::string::npos ? std::string::npos : end - start);
-        if (!value.empty()) {
-            values.push_back(value);
-        }
-        if (end == std::string::npos) {
-            break;
-        }
-        start = end + 1;
-    }
-    return values;
-}
-
 bool IsSupportedPropertiesParameterType(const std::string& type) {
     static const std::set<std::string> supported = {
         "bool",

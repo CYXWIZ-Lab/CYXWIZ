@@ -33,9 +33,9 @@ class DuckDBConnector;
 struct SqlTransformInput {
     std::string alias;
     std::shared_ptr<arrow::Table> table;   // copied in, or
-    std::string parquet_path;              // read in place (then `schema` is its schema)
+    std::string parquet_path{};            // read in place (then `schema` is its schema)
     bool load_file = false;                // the file loaded into a DuckDB table (rowid order)
-    std::shared_ptr<arrow::Schema> schema;
+    std::shared_ptr<arrow::Schema> schema{};
 };
 
 struct SqlTransformResult {

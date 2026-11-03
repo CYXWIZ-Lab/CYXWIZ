@@ -78,6 +78,8 @@ target_include_directories(cyxwiz-implot3d PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ex
 target_link_libraries(cyxwiz-implot3d PUBLIC imgui::imgui)
 if(MSVC)
     target_compile_options(cyxwiz-implot3d PRIVATE /W0)
+else()
+    target_compile_options(cyxwiz-implot3d PRIVATE -w)
 endif()
 
 # Plugin SDK: headers only (TOFIX125 P5 step 5.2). PluginContext is an
@@ -1116,9 +1118,10 @@ endif()
 # Use BEFORE to ensure bundled libraries take priority over system-installed versions
 target_include_directories(cyxwiz-engine BEFORE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imnodes
 )
+# Vendored: its header's warnings are not ours (TOFIX187).
+target_include_directories(cyxwiz-engine SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/external/ImGuiColorTextEdit)
 
 include(CyxWizInstallerTargets)
 
@@ -8223,6 +8226,13 @@ target_compile_definitions(test_graph_training_job PRIVATE
     CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 set_source_files_properties(src/gui/dialogs/about_dialog.cpp PROPERTIES COMPILE_DEFINITIONS "CYXWIZ_GIT_COMMIT=\"${CYXWIZ_GIT_COMMIT}\"")
+
+# Vendored sources stay as upstream wrote them: GCC and Clang warnings in them
+# are not ours to fix (TOFIX187).
+if(NOT MSVC)
+    set_property(SOURCE external/ImGuiColorTextEdit/TextEditor.cpp src/plugin/security/tweetnacl.c
+        APPEND PROPERTY COMPILE_OPTIONS "-w")
+endif()
 
 # Precompiled headers for the test targets with several sources of their own
 # (the smaller ones would spend more on the header than they save).

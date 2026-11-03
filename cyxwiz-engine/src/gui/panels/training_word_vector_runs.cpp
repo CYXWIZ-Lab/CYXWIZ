@@ -37,11 +37,6 @@ ImVec4 PillColour(const std::string& pill, const DashColors& c) {
     return c.caution;  // Cancelled
 }
 
-std::string FileName(const std::string& path) {
-    const std::string name = std::filesystem::path(path).filename().string();
-    return name.empty() ? path : name;
-}
-
 bool WriteText(const std::string& path, const std::string& text, std::string& message) {
     std::error_code error;
     std::filesystem::create_directories(std::filesystem::path(path).parent_path(), error);

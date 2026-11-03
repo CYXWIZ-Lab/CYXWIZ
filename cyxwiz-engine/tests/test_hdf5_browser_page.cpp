@@ -11,6 +11,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 
 namespace {
 
@@ -56,10 +57,12 @@ void CheckPage(const Hdf5BrowsePage& page, const Hdf5BrowseRequest& request,
           "pagination advances only by returned entries");
 }
 
-const cyxwiz::Hdf5BrowseEntry& Find(const Hdf5BrowsePage& page, const std::string& name) {
+// Takes a view: a reference returned for a temporary std::string argument looks
+// dangling to GCC (-Wdangling-reference).
+const cyxwiz::Hdf5BrowseEntry& Find(const Hdf5BrowsePage& page, std::string_view name) {
     const auto it = std::find_if(page.entries.begin(), page.entries.end(),
                                  [&](const auto& entry) { return entry.name == name; });
-    Check(it != page.entries.end(), "entry should be listed: " + name);
+    Check(it != page.entries.end(), "entry should be listed: " + std::string(name));
     return *it;
 }
 

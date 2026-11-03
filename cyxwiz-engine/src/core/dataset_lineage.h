@@ -33,8 +33,8 @@ struct LineageFile {
     std::string path;
     uint64_t bytes = 0;
     std::string sha256;  // "" when it could not be read, or was not read (note)
-    std::string modified;  // the file's write time (identifies a file not hashed)
-    std::string note;      // why sha256 is empty, when it was not read on purpose
+    std::string modified{};  // the file's write time (identifies a file not hashed)
+    std::string note{};      // why sha256 is empty, when it was not read on purpose
 };
 
 struct LineageCheck {
