@@ -13,7 +13,7 @@ The figures are the same as numpy, scipy and PyWavelets give (`numpy.fft.rfft`
 / `irfft`, `scipy.signal.periodogram`, `welch`, `spectrogram`, `firwin`,
 `freqz`, `find_peaks`, `pywt.wavedec` / `waverec`): the backend is checked
 against them on three signals (two tones in noise at 1 kHz, an odd length, a
-slow 0.1 Hz series) in `test_computation_truth_signal`, 78 cases. The device
+slow 0.1 Hz series) in `test_computation_truth_signal`, 80 cases. The device
 does the work: the FFTs, the spectrogram as one batched FFT over the frames,
 the convolutions, the windowed sincs, the wavelet filter passes. Only the
 filter tables (PyWavelets' coefficients) and the peak search run on the host.
