@@ -1,243 +1,154 @@
+#ifdef _WIN32
+#define NOMINMAX
+#endif
+
 #include <cyxwiz/signal_processing.h>
 
+#include "signal_device.h"
+
 #include <cmath>
-#include <complex>
-#include <numeric>
-#include <stdexcept>
+#include <string>
 #include <vector>
 
+#include <arrayfire.h>
+
 namespace cyxwiz {
+
+using namespace signal_detail;
+
 namespace {
 constexpr double PI = 3.14159265358979323846;
-constexpr double TWO_PI = 2.0 * PI;
-} // namespace
+
+double Sinc(double x) { return x == 0.0 ? 1.0 : std::sin(PI * x) / (PI * x); }
+}  // namespace
 
 // ============================================================================
-// Filter Design
+// Filter Design: scipy.signal.firwin (TOFIX129 D7)
 // ============================================================================
 
-FilterCoefficients SignalProcessing::DesignLowpass(double cutoff_freq, double sample_rate, int order) {
+FilterCoefficients SignalProcessing::DesignFIR(const std::string& filter_type, double cutoff_low, double cutoff_high,
+                                               double sample_rate, int taps, const std::string& window) {
     FilterCoefficients result;
-    result.filter_type = "lowpass";
-    result.cutoff_low = cutoff_freq;
+    result.filter_type = filter_type;
+    result.cutoff_low = cutoff_low;
+    result.cutoff_high = cutoff_high;
     result.sample_rate = sample_rate;
-    result.order = order;
-
-    if (cutoff_freq <= 0 || cutoff_freq >= sample_rate / 2) {
-        result.error_message = "Cutoff frequency must be between 0 and Nyquist frequency";
+    result.order = taps;
+    result.window = window;
+    const bool band = filter_type == "bandpass" || filter_type == "bandstop";
+    if (filter_type != "lowpass" && filter_type != "highpass" && !band) {
+        result.error_message = "Filter type must be lowpass, highpass, bandpass or bandstop (got '" + filter_type + "')";
         return result;
     }
-
-    try {
-        // Design FIR lowpass using windowed sinc
-        int N = order * 2 + 1;  // Filter length
-        double fc = cutoff_freq / sample_rate;  // Normalized cutoff
-
-        result.b.resize(N);
-        auto window = HammingWindow(N);
-
-        for (int i = 0; i < N; i++) {
-            int n = i - order;
-            if (n == 0) {
-                result.b[i] = 2.0 * fc;
-            } else {
-                result.b[i] = std::sin(TWO_PI * fc * n) / (PI * n);
-            }
-            result.b[i] *= window[i];
-        }
-
-        // Normalize
-        double sum = std::accumulate(result.b.begin(), result.b.end(), 0.0);
-        for (auto& coef : result.b) {
-            coef /= sum;
-        }
-
-        result.a = {1.0};  // FIR filter
-
-        // Compute frequency response
-        ComputeFrequencyResponse(result);
-
-        result.success = true;
-    } catch (const std::exception& e) {
-        result.error_message = std::string("Filter design failed: ") + e.what();
+    if (!(sample_rate > 0.0)) {
+        result.error_message = "The sample rate must be positive";
+        return result;
     }
-
+    const double nyquist = sample_rate / 2.0;
+    if (!(cutoff_low > 0.0) || !(cutoff_low < nyquist)) {
+        result.error_message = "The cutoff must lie between 0 and the Nyquist frequency " + std::to_string(nyquist);
+        return result;
+    }
+    if (band && (!(cutoff_high > cutoff_low) || !(cutoff_high < nyquist))) {
+        result.error_message = "The upper cutoff must lie between the lower cutoff and the Nyquist frequency " + std::to_string(nyquist);
+        return result;
+    }
+    if (taps < 3) {
+        result.error_message = "A filter needs at least 3 taps";
+        return result;
+    }
+    const bool pass_zero = filter_type == "lowpass" || filter_type == "bandstop";
+    // scipy: pass_nyquist = (number of cutoffs is odd) xor pass_zero; it needs an odd length.
+    const bool pass_nyquist = (band ? false : true) != pass_zero;
+    if (pass_nyquist && taps % 2 == 0) {
+        result.error_message = "A " + filter_type + " filter needs an odd number of taps (it passes the Nyquist frequency)";
+        return result;
+    }
+    const std::vector<double> win = Window(window, taps, false);
+    if (win.empty()) {
+        result.error_message = "Unknown window '" + window + "' (hamming, hann, blackman, boxcar)";
+        return result;
+    }
+    // The pass bands in Nyquist units: [0, c] lowpass, [c, 1] highpass, [c1, c2] bandpass, [0, c1] + [c2, 1] bandstop.
+    std::vector<double> edges;
+    if (pass_zero) edges.push_back(0.0);
+    edges.push_back(cutoff_low / nyquist);
+    if (band) edges.push_back(cutoff_high / nyquist);
+    if (pass_nyquist) edges.push_back(1.0);
+    // The windowed sinc of each band (the coefficient table is made on the host).
+    const double alpha = 0.5 * (taps - 1);
+    std::vector<double> h(static_cast<size_t>(taps), 0.0);
+    for (int i = 0; i < taps; ++i) {
+        const double m = i - alpha;
+        for (size_t b = 0; b + 1 < edges.size(); b += 2) {
+            const double left = edges[b], right = edges[b + 1];
+            h[static_cast<size_t>(i)] += right * Sinc(right * m) - left * Sinc(left * m);
+        }
+        h[static_cast<size_t>(i)] *= win[static_cast<size_t>(i)];
+    }
+    // scipy scale=True: unit gain at the centre of the first pass band (0 for a
+    // lowpass, Nyquist for a highpass, the band centre otherwise).
+    const double left = edges[0], right = edges[1];
+    const double scale_frequency = left == 0.0 ? 0.0 : (right == 1.0 ? 1.0 : 0.5 * (left + right));
+    double s = 0.0;
+    for (int i = 0; i < taps; ++i) s += h[static_cast<size_t>(i)] * std::cos(PI * (i - alpha) * scale_frequency);
+    if (s != 0.0)
+        for (double& v : h) v /= s;
+    result.b = h;
+    result.a = {1.0};
+    ComputeFrequencyResponse(result);
+    result.success = result.error_message.empty();
     return result;
 }
 
-FilterCoefficients SignalProcessing::DesignHighpass(double cutoff_freq, double sample_rate, int order) {
-    FilterCoefficients result;
-    result.filter_type = "highpass";
-    result.cutoff_low = cutoff_freq;
-    result.sample_rate = sample_rate;
-    result.order = order;
-
-    if (cutoff_freq <= 0 || cutoff_freq >= sample_rate / 2) {
-        result.error_message = "Cutoff frequency must be between 0 and Nyquist frequency";
-        return result;
-    }
-
-    try {
-        // Design highpass using spectral inversion of lowpass
-        auto lowpass = DesignLowpass(cutoff_freq, sample_rate, order);
-        if (!lowpass.success) {
-            result.error_message = lowpass.error_message;
-            return result;
-        }
-
-        result.b = lowpass.b;
-        int N = static_cast<int>(result.b.size());
-
-        // Spectral inversion
-        for (int i = 0; i < N; i++) {
-            result.b[i] = -result.b[i];
-        }
-        result.b[N / 2] += 1.0;
-
-        result.a = {1.0};
-
-        ComputeFrequencyResponse(result);
-
-        result.success = true;
-    } catch (const std::exception& e) {
-        result.error_message = std::string("Filter design failed: ") + e.what();
-    }
-
-    return result;
+FilterCoefficients SignalProcessing::DesignLowpass(double cutoff_freq, double sample_rate, int taps) {
+    return DesignFIR("lowpass", cutoff_freq, 0.0, sample_rate, taps);
 }
 
-FilterCoefficients SignalProcessing::DesignBandpass(
-    double low_freq, double high_freq, double sample_rate, int order) {
-
-    FilterCoefficients result;
-    result.filter_type = "bandpass";
-    result.cutoff_low = low_freq;
-    result.cutoff_high = high_freq;
-    result.sample_rate = sample_rate;
-    result.order = order;
-
-    if (low_freq >= high_freq) {
-        result.error_message = "Low cutoff must be less than high cutoff";
-        return result;
-    }
-
-    if (low_freq <= 0 || high_freq >= sample_rate / 2) {
-        result.error_message = "Cutoff frequencies must be between 0 and Nyquist frequency";
-        return result;
-    }
-
-    try {
-        // Design bandpass using windowed sinc
-        int N = order * 2 + 1;
-        double fc_low = low_freq / sample_rate;
-        double fc_high = high_freq / sample_rate;
-
-        result.b.resize(N);
-        auto window = HammingWindow(N);
-
-        for (int i = 0; i < N; i++) {
-            int n = i - order;
-            if (n == 0) {
-                result.b[i] = 2.0 * (fc_high - fc_low);
-            } else {
-                double sinc_high = std::sin(TWO_PI * fc_high * n) / (PI * n);
-                double sinc_low = std::sin(TWO_PI * fc_low * n) / (PI * n);
-                result.b[i] = sinc_high - sinc_low;
-            }
-            result.b[i] *= window[i];
-        }
-
-        result.a = {1.0};
-
-        ComputeFrequencyResponse(result);
-
-        result.success = true;
-    } catch (const std::exception& e) {
-        result.error_message = std::string("Filter design failed: ") + e.what();
-    }
-
-    return result;
+FilterCoefficients SignalProcessing::DesignHighpass(double cutoff_freq, double sample_rate, int taps) {
+    return DesignFIR("highpass", cutoff_freq, 0.0, sample_rate, taps);
 }
 
-FilterCoefficients SignalProcessing::DesignBandstop(
-    double low_freq, double high_freq, double sample_rate, int order) {
-
-    FilterCoefficients result;
-    result.filter_type = "bandstop";
-    result.cutoff_low = low_freq;
-    result.cutoff_high = high_freq;
-    result.sample_rate = sample_rate;
-    result.order = order;
-
-    if (low_freq >= high_freq) {
-        result.error_message = "Low cutoff must be less than high cutoff";
-        return result;
-    }
-
-    try {
-        // Design bandstop using spectral inversion of bandpass
-        auto bandpass = DesignBandpass(low_freq, high_freq, sample_rate, order);
-        if (!bandpass.success) {
-            result.error_message = bandpass.error_message;
-            return result;
-        }
-
-        result.b = bandpass.b;
-        int N = static_cast<int>(result.b.size());
-
-        // Spectral inversion
-        for (int i = 0; i < N; i++) {
-            result.b[i] = -result.b[i];
-        }
-        result.b[N / 2] += 1.0;
-
-        result.a = {1.0};
-
-        ComputeFrequencyResponse(result);
-
-        result.success = true;
-    } catch (const std::exception& e) {
-        result.error_message = std::string("Filter design failed: ") + e.what();
-    }
-
-    return result;
+FilterCoefficients SignalProcessing::DesignBandpass(double low_freq, double high_freq, double sample_rate, int taps) {
+    return DesignFIR("bandpass", low_freq, high_freq, sample_rate, taps);
 }
 
-std::vector<double> SignalProcessing::ApplyFilter(
-    const std::vector<double>& signal,
-    const FilterCoefficients& filter) {
+FilterCoefficients SignalProcessing::DesignBandstop(double low_freq, double high_freq, double sample_rate, int taps) {
+    return DesignFIR("bandstop", low_freq, high_freq, sample_rate, taps);
+}
 
-    if (signal.empty() || filter.b.empty()) {
-        return signal;
-    }
-
-    // FIR filtering using convolution
-    auto result = Convolve1D(signal, filter.b, "same");
-    return result.output;
+std::vector<double> SignalProcessing::ApplyFilter(const std::vector<double>& signal, const FilterCoefficients& filter) {
+    if (signal.empty() || filter.b.empty()) return signal;
+    // Zero-phase FIR: the kernel centred on each sample (numpy.convolve "same").
+    const ConvolutionResult out = Convolve1D(signal, filter.b, "same");
+    return out.success ? out.output : signal;
 }
 
 void SignalProcessing::ComputeFrequencyResponse(FilterCoefficients& filter, int num_points) {
-    filter.freq_axis.resize(num_points);
-    filter.freq_response_mag.resize(num_points);
-    filter.freq_response_phase.resize(num_points);
-
-    double nyquist = filter.sample_rate / 2.0;
-
-    for (int i = 0; i < num_points; i++) {
-        double freq = i * nyquist / (num_points - 1);
-        filter.freq_axis[i] = freq;
-
-        // Evaluate filter at this frequency
-        double omega = TWO_PI * freq / filter.sample_rate;
-        std::complex<double> H(0.0, 0.0);
-
-        for (size_t k = 0; k < filter.b.size(); k++) {
-            H += filter.b[k] * std::exp(std::complex<double>(0.0, -omega * k));
-        }
-
-        filter.freq_response_mag[i] = std::abs(H);
-        filter.freq_response_phase[i] = std::arg(H);
+    filter.freq_axis.clear();
+    filter.freq_response_mag.clear();
+    filter.freq_response_phase.clear();
+    if (filter.b.empty() || num_points < 2 || !(filter.sample_rate > 0.0)) return;
+    const int taps = static_cast<int>(filter.b.size());
+    // H(w) = sum_k b_k e^{-i w k} on w = 0 .. pi inclusive (scipy.signal.freqz on
+    // that grid): the cosine and sine tables are one outer product each, the
+    // sums one matrix product each, on the device.
+    std::vector<double> omega(static_cast<size_t>(num_points)), index(static_cast<size_t>(taps));
+    for (int i = 0; i < num_points; ++i) omega[static_cast<size_t>(i)] = PI * i / (num_points - 1);
+    for (int k = 0; k < taps; ++k) index[static_cast<size_t>(k)] = k;
+    try {
+        const af::array phase = af::matmul(ToDevice(omega), af::transpose(ToDevice(index)));  // [points, taps]
+        const af::array b = ToDevice(filter.b);
+        const af::array re = af::matmul(af::cos(phase), b);
+        const af::array im = af::matmul(-af::sin(phase), b);
+        filter.freq_response_mag = ToHost(af::sqrt(re * re + im * im), "SignalProcessing::ComputeFrequencyResponse");
+        filter.freq_response_phase = ToHost(af::atan2(im, re), "SignalProcessing::ComputeFrequencyResponse");
+    } catch (const af::exception& e) {
+        filter.error_message = DeviceError("SignalProcessing::ComputeFrequencyResponse", e);
+        return;
     }
+    filter.freq_axis.resize(static_cast<size_t>(num_points));
+    for (int i = 0; i < num_points; ++i) filter.freq_axis[static_cast<size_t>(i)] = omega[static_cast<size_t>(i)] * filter.sample_rate / (2.0 * PI);
 }
 
 } // namespace cyxwiz

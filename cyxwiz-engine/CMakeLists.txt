@@ -6535,6 +6535,25 @@ target_compile_definitions(test_computation_truth_time_series PRIVATE
 set_target_properties(test_computation_truth_time_series PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME ComputationTruthTimeSeries COMMAND test_computation_truth_time_series)
 
+# Signal processing against numpy.fft / scipy.signal / PyWavelets (TOFIX129 D7).
+set(CYXWIZ_SIGNAL_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/signal_scipy.json")
+add_executable(test_computation_truth_signal
+    tests/computation_truth/test_computation_truth_signal.cpp
+)
+target_include_directories(test_computation_truth_signal PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_signal PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_signal PRIVATE
+    CYXWIZ_SIGNAL_FIXTURE="${CYXWIZ_SIGNAL_FIXTURE}"
+)
+set_target_properties(test_computation_truth_signal PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME ComputationTruthSignal COMMAND test_computation_truth_signal)
+
 add_executable(test_computation_truth_clustering
     tests/computation_truth/test_computation_truth_clustering.cpp
 )

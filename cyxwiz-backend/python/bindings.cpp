@@ -1795,20 +1795,69 @@ PYBIND11_MODULE(pycyxwiz, m) {
         );
     }, "Compute spectrogram (STFT)", py::arg("x"), py::arg("window_size") = 256, py::arg("hop_size") = 128, py::arg("sample_rate") = 1.0, py::arg("window") = "hann");
 
-    signal.def("lowpass", [](double cutoff, double fs, int order) {
-        auto result = cyxwiz::SignalProcessing::DesignLowpass(cutoff, fs, order);
+    // The FIR designs follow scipy.signal.firwin (TOFIX129 D7): `taps` is the
+    // number of coefficients; a failed design raises with the reason.
+    signal.def("lowpass", [](double cutoff, double fs, int taps) {
+        auto result = cyxwiz::SignalProcessing::DesignLowpass(cutoff, fs, taps);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return py::dict("b"_a = result.b, "a"_a = result.a);
-    }, "Design lowpass filter", py::arg("cutoff"), py::arg("fs"), py::arg("order") = 4);
+    }, "Design a windowed-sinc lowpass FIR filter (scipy.signal.firwin)", py::arg("cutoff"), py::arg("fs"), py::arg("taps") = 31);
 
-    signal.def("highpass", [](double cutoff, double fs, int order) {
-        auto result = cyxwiz::SignalProcessing::DesignHighpass(cutoff, fs, order);
+    signal.def("highpass", [](double cutoff, double fs, int taps) {
+        auto result = cyxwiz::SignalProcessing::DesignHighpass(cutoff, fs, taps);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return py::dict("b"_a = result.b, "a"_a = result.a);
-    }, "Design highpass filter", py::arg("cutoff"), py::arg("fs"), py::arg("order") = 4);
+    }, "Design a windowed-sinc highpass FIR filter (odd taps)", py::arg("cutoff"), py::arg("fs"), py::arg("taps") = 31);
 
-    signal.def("bandpass", [](double low, double high, double fs, int order) {
-        auto result = cyxwiz::SignalProcessing::DesignBandpass(low, high, fs, order);
+    signal.def("bandpass", [](double low, double high, double fs, int taps) {
+        auto result = cyxwiz::SignalProcessing::DesignBandpass(low, high, fs, taps);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return py::dict("b"_a = result.b, "a"_a = result.a);
-    }, "Design bandpass filter", py::arg("low"), py::arg("high"), py::arg("fs"), py::arg("order") = 4);
+    }, "Design a windowed-sinc bandpass FIR filter", py::arg("low"), py::arg("high"), py::arg("fs"), py::arg("taps") = 31);
+
+    signal.def("bandstop", [](double low, double high, double fs, int taps) {
+        auto result = cyxwiz::SignalProcessing::DesignBandstop(low, high, fs, taps);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict("b"_a = result.b, "a"_a = result.a);
+    }, "Design a windowed-sinc bandstop FIR filter (odd taps)", py::arg("low"), py::arg("high"), py::arg("fs"), py::arg("taps") = 31);
+
+    signal.def("spectrum", [](const std::vector<double>& x, double sample_rate, const std::string& window, bool remove_mean) {
+        auto result = cyxwiz::SignalProcessing::Spectrum(x, sample_rate, window, remove_mean);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict("frequencies"_a = result.frequencies, "amplitude"_a = result.amplitude, "psd"_a = result.psd);
+    }, "One-sided amplitude spectrum and power density (periodic window, mean removed)",
+       py::arg("x"), py::arg("sample_rate") = 1.0, py::arg("window") = "hann", py::arg("remove_mean") = true);
+
+    signal.def("welch", [](const std::vector<double>& x, double sample_rate, int nperseg, const std::string& window) {
+        auto result = cyxwiz::SignalProcessing::Welch(x, sample_rate, nperseg, window);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict("frequencies"_a = result.frequencies, "psd"_a = result.psd, "segments"_a = result.segments);
+    }, "Welch power density (scipy.signal.welch)", py::arg("x"), py::arg("sample_rate") = 1.0, py::arg("nperseg") = 256, py::arg("window") = "hann");
+
+    signal.def("wavedec", [](const std::vector<double>& x, const std::string& wavelet, int level) {
+        auto result = cyxwiz::SignalProcessing::DWT(x, wavelet, level);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict("approximation"_a = result.approximation, "details"_a = result.details, "max_level"_a = result.max_levels);
+    }, "Discrete wavelet transform (pywt.wavedec, symmetric mode); details[0] is the finest level",
+       py::arg("x"), py::arg("wavelet") = "db4", py::arg("level") = 3);
+
+    signal.def("denoise", [](const std::vector<double>& x, const std::string& wavelet, int level, double threshold, bool soft) {
+        auto result = cyxwiz::SignalProcessing::WaveletDenoise(x, wavelet, level, threshold, soft);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict("denoised"_a = result.denoised, "sigma"_a = result.sigma, "threshold"_a = result.threshold);
+    }, "Wavelet denoising at the universal threshold (threshold <= 0) or a given one",
+       py::arg("x"), py::arg("wavelet") = "db4", py::arg("level") = 3, py::arg("threshold") = 0.0, py::arg("soft") = true);
+
+    signal.def("findpeaks_prominence", [](const std::vector<double>& x, double prominence, int distance) {
+        auto peaks = cyxwiz::SignalProcessing::FindPeaksByProminence(x, prominence, distance);
+        std::vector<int> indices;
+        std::vector<double> prominences;
+        for (const auto& p : peaks) {
+            indices.push_back(p.index);
+            prominences.push_back(p.prominence);
+        }
+        return py::dict("indices"_a = indices, "prominences"_a = prominences);
+    }, "Peaks by prominence and distance (scipy.signal.find_peaks)", py::arg("x"), py::arg("prominence"), py::arg("distance") = 1);
 
     signal.def("filter", [](const std::vector<double>& x, const std::vector<double>& b, const std::vector<double>& a) {
         cyxwiz::FilterCoefficients coeffs;

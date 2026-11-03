@@ -136,7 +136,8 @@ private:
     double cutoff_ = 0.5;
     double cutoff_high_ = 0.0;
     double sample_rate_ = 1.0;
-    int order_ = 4;
+    int order_ = 4;   // the old parameter: 2 * order + 1 taps (kept until `taps` is set)
+    int taps_ = 0;    // the number of coefficients (scipy.signal.firwin); 0: from order_
     PipelineOperatorProgressCallback progress_callback_;
 };
 

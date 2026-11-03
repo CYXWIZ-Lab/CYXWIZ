@@ -1578,19 +1578,25 @@ Signal processing functions (MATLAB-style)
 
 | Function | What it does |
 |---|---|
-| `bandpass(low: float, high: float, fs: float, order: int = 4) -> dict` | Design bandpass filter |
+| `bandpass(low: float, high: float, fs: float, taps: int = 31) -> dict` | Design a windowed-sinc bandpass FIR filter |
+| `bandstop(low: float, high: float, fs: float, taps: int = 31) -> dict` | Design a windowed-sinc bandstop FIR filter (odd taps) |
 | `conv(x: Sequence[float], h: Sequence[float], mode: str = 'same') -> list[float]` | 1D Convolution |
 | `conv2(x: Sequence[Sequence[float]], h: Sequence[Sequence[float]], mode: str = 'same') -> list[list[float]]` | 2D Convolution |
+| `denoise(x: Sequence[float], wavelet: str = 'db4', level: int = 3, threshold: float = 0.0, soft: bool = True) -> dict` | Wavelet denoising at the universal threshold (threshold <= 0) or a given one |
 | `fft(x: Sequence[float], sample_rate: float = 1.0) -> dict` | Fast Fourier Transform |
 | `filter(x: Sequence[float], b: Sequence[float], a: Sequence[float]) -> list[float]` | Apply filter to signal |
 | `findpeaks(x: Sequence[float], min_height: float = 0.0, min_distance: int = 1) -> dict` | Find peaks in signal |
-| `highpass(cutoff: float, fs: float, order: int = 4) -> dict` | Design highpass filter |
+| `findpeaks_prominence(x: Sequence[float], prominence: float, distance: int = 1) -> dict` | Peaks by prominence and distance (scipy.signal.find_peaks) |
+| `highpass(cutoff: float, fs: float, taps: int = 31) -> dict` | Design a windowed-sinc highpass FIR filter (odd taps) |
 | `ifft(arg0: Sequence[complex]) -> list[float]` | Inverse FFT |
-| `lowpass(cutoff: float, fs: float, order: int = 4) -> dict` | Design lowpass filter |
+| `lowpass(cutoff: float, fs: float, taps: int = 31) -> dict` | Design a windowed-sinc lowpass FIR filter (scipy.signal.firwin) |
 | `noise(n: int, amp: float = 1.0) -> list[float]` | Generate white noise |
 | `sine(freq: float, fs: float, n: int, amp: float = 1.0, phase: float = 0.0) -> list[float]` | Generate sine wave |
 | `spectrogram(x: Sequence[float], window_size: int = 256, hop_size: int = 128, sample_rate: float = 1.0, window: str = 'hann') -> dict` | Compute spectrogram (STFT) |
+| `spectrum(x: Sequence[float], sample_rate: float = 1.0, window: str = 'hann', remove_mean: bool = True) -> dict` | One-sided amplitude spectrum and power density (periodic window, mean removed) |
 | `square(freq: float, fs: float, n: int, amp: float = 1.0) -> list[float]` | Generate square wave |
+| `wavedec(x: Sequence[float], wavelet: str = 'db4', level: int = 3) -> dict` | Discrete wavelet transform (pywt.wavedec, symmetric mode); details[0] is the finest level |
+| `welch(x: Sequence[float], sample_rate: float = 1.0, nperseg: int = 256, window: str = 'hann') -> dict` | Welch power density (scipy.signal.welch) |
 
 ## pycyxwiz.stats
 

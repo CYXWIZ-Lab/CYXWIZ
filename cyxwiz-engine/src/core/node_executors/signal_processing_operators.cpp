@@ -539,6 +539,17 @@ bool FilterDesignerOperator::Configure(
             return false;
         }
     }
+    // `taps` is the number of coefficients (TOFIX129 D7, scipy.signal.firwin);
+    // without it the old `order` still means 2 * order + 1 taps.
+    taps_ = 0;
+    auto t = params.find("taps");
+    if (t != params.end() && !t->second.empty()) {
+        try { taps_ = std::stoi(t->second); }
+        catch (...) {
+            error = "FilterDesigner: 'taps' is not a valid integer: " + t->second;
+            return false;
+        }
+    }
 
     if (sample_rate_ <= 0.0) {
         error = "FilterDesigner: sample_rate must be > 0";
@@ -551,6 +562,11 @@ bool FilterDesignerOperator::Configure(
     if (order_ < 1) {
         error = "FilterDesigner: order must be >= 1 (got " +
                 std::to_string(order_) + ")";
+        return false;
+    }
+    if (taps_ == 0) taps_ = 2 * order_ + 1;
+    if (taps_ < 3) {
+        error = "FilterDesigner: taps must be at least 3 (got " + std::to_string(taps_) + ")";
         return false;
     }
     if ((filter_type_ == "bandpass" || filter_type_ == "bandstop") &&
@@ -642,15 +658,15 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    estimated_signal_bytes);
     FilterCoefficients filter;
     if (filter_type_ == "lowpass") {
-        filter = SignalProcessing::DesignLowpass(cutoff_, sample_rate_, order_);
+        filter = SignalProcessing::DesignLowpass(cutoff_, sample_rate_, taps_);
     } else if (filter_type_ == "highpass") {
-        filter = SignalProcessing::DesignHighpass(cutoff_, sample_rate_, order_);
+        filter = SignalProcessing::DesignHighpass(cutoff_, sample_rate_, taps_);
     } else if (filter_type_ == "bandpass") {
         filter = SignalProcessing::DesignBandpass(
-            cutoff_, cutoff_high_, sample_rate_, order_);
+            cutoff_, cutoff_high_, sample_rate_, taps_);
     } else {
         filter = SignalProcessing::DesignBandstop(
-            cutoff_, cutoff_high_, sample_rate_, order_);
+            cutoff_, cutoff_high_, sample_rate_, taps_);
     }
     if (!filter.success) {
         return arrow::Status::ExecutionError(
@@ -689,12 +705,12 @@ FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         auto new_table,
         ReplaceColumnWithFloat(input, col_idx, out_floats, row_count));
 
-    spdlog::info("FilterDesigner: type={}, cutoff={}{}, order={}, "
+    spdlog::info("FilterDesigner: type={}, cutoff={}{}, taps={}, "
                  "sample_rate={}, {} samples filtered",
                  filter_type_, cutoff_,
                  (filter_type_ == "bandpass" || filter_type_ == "bandstop")
                     ? ("/" + std::to_string(cutoff_high_)) : std::string(),
-                 order_, sample_rate_, signal.size());
+                 taps_, sample_rate_, signal.size());
     ReportProgress(progress_callback_, "Complete",
                    "FilterDesigner materialization complete",
                    1.0,
