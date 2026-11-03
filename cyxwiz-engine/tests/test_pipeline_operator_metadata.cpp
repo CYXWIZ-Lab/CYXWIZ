@@ -2090,6 +2090,7 @@ void CheckSignalProcessingFamilyContract(
         gui::NodeType::FFTNode,
         gui::NodeType::FilterDesigner,
         gui::NodeType::Convolution1D,
+        gui::NodeType::WaveletTransform,
     };
     for (const auto type : types) {
         const auto* meta = metadata.GetMetadata(type);
@@ -2137,19 +2138,23 @@ void CheckSignalProcessingFamilyContract(
     const auto* filter = metadata.GetMetadata(gui::NodeType::FilterDesigner);
     const auto* convolution =
         metadata.GetMetadata(gui::NodeType::Convolution1D);
-    Check(fft->parameters.size() == 2 &&
-              ParameterMatches(fft, "sample_rate", "float", "1.0"),
-          "FFT metadata should expose only its operator parameters");
-    Check(filter->parameters.size() == 6 &&
+    Check(fft->parameters.size() == 4 &&
+              ParameterMatches(fft, "sample_rate", "float", "1.0") &&
+              ParameterMatches(fft, "window", "dropdown", "hann") && HasEnumValue(fft, "window", "boxcar") &&
+              ParameterMatches(fft, "remove_mean", "bool", "true"),
+          "FFT metadata should expose its operator parameters (TOFIX129 D7)");
+    Check(filter->parameters.size() == 7 &&
               ParameterMatches(filter, "filter_type", "dropdown", "lowpass") &&
               HasEnumValue(filter, "filter_type", "highpass") &&
               HasEnumValue(filter, "filter_type", "bandpass") &&
               HasEnumValue(filter, "filter_type", "bandstop") &&
-              ParameterMatches(filter, "cutoff", "float", "0.5") &&
+              ParameterMatches(filter, "cutoff", "float", "0.1") &&
               ParameterMatches(filter, "cutoff_high", "float", "0") &&
               ParameterMatches(filter, "sample_rate", "float", "1.0") &&
-              ParameterMatches(filter, "order", "int", "4"),
-          "FilterDesigner metadata should match its operator defaults/options");
+              ParameterMatches(filter, "taps", "int", "31") &&
+              ParameterMatches(filter, "window", "dropdown", "hamming") &&
+              !HasParameter(filter, "order"),
+          "FilterDesigner metadata should match its operator defaults/options (taps mean taps, a cutoff below Nyquist)");
     Check(convolution->parameters.size() == 2 &&
               FindParameter(convolution, "kernel") != nullptr &&
               FindParameter(convolution, "kernel")->required &&
@@ -2158,11 +2163,20 @@ void CheckSignalProcessingFamilyContract(
               !HasParameter(convolution, "mode"),
           "Convolution1D should not advertise its ignored legacy mode");
 
+    // IFFT and Wavelet Transform are real now (TOFIX129 D7): operator-backed,
+    // one Dataset in and out, their settings the operators' own.
     const auto* ifft = metadata.GetMetadata(gui::NodeType::IFFTNode);
     const auto* wavelet = metadata.GetMetadata(gui::NodeType::WaveletTransform);
-    Check(ifft != nullptr && ifft->IsTemplate() &&
-              wavelet != nullptr && wavelet->IsTemplate(),
-          "IFFT and Wavelet should remain explicitly blocked outside this family");
+    Check(ifft != nullptr && ifft->status == cyxwiz::NodeImplementationStatus::Implemented &&
+              ifft->inputs.size() == 1 && ifft->outputs.size() == 1 && ParameterMatches(ifft, "samples", "int", "0") &&
+              cyxwiz::PipelineOperatorFactory::Instance().Create(gui::NodeType::IFFTNode) != nullptr,
+          "IFFT is implemented: one table in, one out, an operator");
+    Check(wavelet != nullptr && wavelet->status == cyxwiz::NodeImplementationStatus::Implemented &&
+              wavelet->inputs.size() == 1 && wavelet->outputs.size() == 1 && wavelet->parameters.size() == 5 &&
+              ParameterMatches(wavelet, "wavelet", "dropdown", "db4") && HasEnumValue(wavelet, "wavelet", "coif5") &&
+              ParameterMatches(wavelet, "level", "int", "3") && ParameterMatches(wavelet, "denoise", "dropdown", "off") &&
+              ParameterMatches(wavelet, "threshold", "float", "0"),
+          "Wavelet Transform is implemented with PyWavelets' names, a level, denoise and threshold");
 }
 
 void CheckTextVectorizerSentimentFamilyContract(
@@ -5215,8 +5229,6 @@ int main() {
         gui::NodeType::QualityAnalyzer,
         gui::NodeType::TableSplitter,
         gui::NodeType::ExportExcel,
-        gui::NodeType::IFFTNode,
-        gui::NodeType::WaveletTransform,
         gui::NodeType::NamedEntityRecognizer,
         gui::NodeType::ImageFolderDataset,
         gui::NodeType::AugmentationPreset,
@@ -5248,8 +5260,6 @@ int main() {
         gui::NodeType::FeatureImportanceNode,
         gui::NodeType::ExportExcel,
         gui::NodeType::TableSplitter,
-        gui::NodeType::IFFTNode,
-        gui::NodeType::WaveletTransform,
         gui::NodeType::NamedEntityRecognizer,
         gui::NodeType::TSVFile,
         gui::NodeType::TXTFile,

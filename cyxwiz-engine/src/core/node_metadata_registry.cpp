@@ -4732,42 +4732,56 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
 
     // ===== Signal Processing Nodes (Phase 4) =====
     RegisterNode({NodeType::FFTNode, NodeCategory::Signal, "FFT", ICON_FA_WAVE_SQUARE,
-        {"fft", "fourier", "frequency"}, 0, false, "Fast Fourier Transform",
-        "Computes a one-sided frequency spectrum from one numeric table column.", "",
+        {"fft", "fourier", "frequency", "spectrum"}, 0, false, "One-sided spectrum of a column",
+        "The one-sided spectrum of one numeric column as a new table of n / 2 + 1 rows: frequency, period, amplitude "
+        "(2 |X| / sum of the window, the amplitude of a tone), phase, power density (scipy periodogram), real and imag "
+        "(numpy.fft.rfft of the windowed, mean-removed signal). A branch for looking at a signal: the row count changes, so training does not read it.", "",
         {{"Data", PinType::Dataset, true, "Input table containing the signal column"}},
-        {{"Spectrum", PinType::Dataset, true, "Frequency, magnitude, and phase columns"}},
+        {{"Spectrum", PinType::Dataset, true, "frequency, period, amplitude, phase, power_density, real, imag"}},
         {{"signal_col", "string", "", "Numeric signal column", {}, "", "", "", true, false},
-         {"sample_rate", "float", "1.0", "Samples per second used for the frequency axis", {}, "> 0"}},
+         {"sample_rate", "float", "1.0", "Samples per second (per unit, per row) for the frequency axis", {}, "> 0"},
+         {"window", "dropdown", "hann", "The window applied first (periodic, as scipy.signal.get_window)", {"hann", "hamming", "blackman", "boxcar"}, ""},
+         {"remove_mean", "bool", "true", "Take the mean out before the transform", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::IFFTNode, NodeCategory::Signal, "IFFT", ICON_FA_WAVE_SQUARE,
-        {"ifft", "inverse", "fourier"}, 0, false, "Inverse FFT",
-        "Convert frequency domain back to time domain.", "",
-        {{"Spectrum", PinType::Tensor, true, "Frequency spectrum"}},
-        {{"Signal", PinType::Tensor, true, "Time-domain signal"}},
-        {}, NodeImplementationStatus::Template, 0, "Blocked"});
+        {"ifft", "inverse", "fourier"}, 0, false, "The FFT node's table back to a signal",
+        "Rebuilds the signal from the FFT node's real and imag columns (numpy.fft.irfft) as a new table with one column, "
+        "signal, of `samples` rows (0: the even length 2 (bins - 1)). What comes back is the signal the FFT node transformed: "
+        "windowed and mean-removed as it was.", "",
+        {{"Spectrum", PinType::Dataset, true, "The FFT node's table (real, imag)"}},
+        {{"Signal", PinType::Dataset, true, "One column, signal"}},
+        {{"samples", "int", "0", "The length of the signal the spectrum came from (0: 2 (bins - 1))", {}, ">= 0"}},
+        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::FilterDesigner, NodeCategory::Signal, "Filter Designer", ICON_FA_FILTER,
-        {"filter", "fir", "iir", "lowpass"}, 0, false, "Design and apply a digital filter",
-        "Designs and applies a filter to one numeric signal column.", "",
+        {"filter", "fir", "firwin", "lowpass", "highpass", "bandpass"}, 0, false, "Design and apply an FIR filter",
+        "A windowed-sinc FIR filter (scipy.signal.firwin) designed from the settings and applied zero-phase (centred; the rows "
+        "beyond the ends repeat the edge value) to one numeric column, added as <column>_filtered beside every input column.", "",
         {{"Data", PinType::Dataset, true, "Input table containing the signal column"}},
-        {{"Filtered", PinType::Dataset, true, "Input table with the selected column replaced by Float32 filtered values"}},
+        {{"Filtered", PinType::Dataset, true, "Input table plus <signal_col>_filtered"}},
         {{"signal_col", "string", "", "Numeric signal column", {}, "", "", "", true, false},
          {"filter_type", "dropdown", "lowpass", "Filter type", {"lowpass", "highpass", "bandpass", "bandstop"}, ""},
-         {"cutoff", "float", "0.5", "Primary cutoff frequency", {}, "> 0"},
+         {"cutoff", "float", "0.1", "The cutoff, per second at the sample rate (below Nyquist)", {}, "> 0 and below sample_rate / 2"},
          {"cutoff_high", "float", "0", "Upper cutoff required by bandpass and bandstop", {}, "Greater than cutoff for band filters"},
-         {"sample_rate", "float", "1.0", "Samples per second", {}, "> 0"},
-         {"order", "int", "4", "Filter order", {}, ">= 1"}},
+         {"sample_rate", "float", "1.0", "Samples per second (per unit, per row)", {}, "> 0"},
+         {"taps", "int", "31", "Coefficients; odd for highpass and bandstop", {}, ">= 3"},
+         {"window", "dropdown", "hamming", "The window of the sinc (symmetric)", {"hamming", "hann", "blackman", "boxcar"}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::WaveletTransform, NodeCategory::Signal, "Wavelet Transform", ICON_FA_WATER,
-        {"wavelet", "dwt", "cwt"}, 0, false, "Discrete Wavelet Transform",
-        "Multi-resolution analysis using wavelets.", "",
-        {{"Signal", PinType::Tensor, true, "Input signal"}},
-        {{"Coefficients", PinType::Tensor, true, "Wavelet coefficients"}, {"Approximation", PinType::Tensor, true, "Approximation"}, {"Detail", PinType::Tensor, true, "Detail coefficients"}},
-        {{"wavelet", "enum", "db4", "Wavelet family", {"db4", "haar", "sym4", "coif2"}, ""},
-         {"level", "int", "3", "Decomposition level", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+        {"wavelet", "dwt", "denoise", "parts"}, 0, false, "Discrete wavelet parts of a column",
+        "pywt.wavedec of one numeric column (symmetric mode): each part brought back to the rows and added beside every input "
+        "column as <column>_A<level> and <column>_D<level> .. <column>_D1, plus <column>_denoised when the details are "
+        "thresholded (soft or hard, at the universal threshold or the one typed).", "",
+        {{"Data", PinType::Dataset, true, "Input table containing the signal column"}},
+        {{"Parts", PinType::Dataset, true, "Input table plus the part columns (and the denoised column)"}},
+        {{"signal_col", "string", "", "Numeric signal column", {}, "", "", "", true, false},
+         {"wavelet", "dropdown", "db4", "PyWavelets' filters", {"haar", "db1", "db2", "db3", "db4", "db5", "db6", "db7", "db8", "sym2", "sym3", "sym4", "sym5", "sym6", "sym7", "sym8", "coif1", "coif2", "coif3", "coif4", "coif5"}, ""},
+         {"level", "int", "3", "Levels (at most pywt.dwt_max_level for the rows and the wavelet)", {}, ">= 1"},
+         {"denoise", "dropdown", "off", "Threshold the details and add <column>_denoised", {"off", "soft", "hard"}, ""},
+         {"threshold", "float", "0", "0: the universal threshold sigma sqrt(2 ln n), sigma from the finest details", {}, ">= 0"}},
+        NodeImplementationStatus::Implemented, 0});
 
     // ===== Text Analytics Nodes (Phase 4) =====
     RegisterNode({NodeType::TFIDFVectorizer, NodeCategory::TextProcessing, "TF-IDF", ICON_FA_ALIGN_LEFT,
@@ -5188,10 +5202,11 @@ void NodeMetadataRegistry::InitializeAdditionalTextNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Convolution1D, NodeCategory::Signal, "Convolution 1D", ICON_FA_WAVE_SQUARE,
-        {"convolution", "1d", "signal", "filter", "kernel"}, 0, false,
-        "Apply same-length 1D convolution", "Convolves one numeric column and replaces it with Float32 values while preserving row alignment and all other columns.", "",
+        {"convolution", "1d", "signal", "filter", "kernel", "moving average"}, 0, false,
+        "Apply a kernel to a column", "Convolves one numeric column with the kernel, zero-phase (centred; the rows beyond the ends repeat the edge value), "
+        "and adds the result as <column>_filtered beside every input column.", "",
         {{"Data", PinType::Dataset, true, "Input table containing the signal column"}},
-        {{"Convolved", PinType::Dataset, true, "Input table with the selected column replaced by convolved values"}},
+        {{"Convolved", PinType::Dataset, true, "Input table plus <signal_col>_filtered"}},
         {{"signal_col", "string", "", "Numeric signal column", {}, "", "", "", true, false},
          {"kernel", "string", "0.25,0.5,0.25", "Required comma-separated finite kernel taps", {}, "", "", "", true, false}},
         NodeImplementationStatus::Implemented, 0});

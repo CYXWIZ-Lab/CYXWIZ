@@ -65,6 +65,7 @@ SpectrumResult SignalProcessing::Spectrum(const std::vector<double>& signal, dou
         amplitude(0) /= 2.0;
         if (n % 2 == 0) amplitude(static_cast<int>(bins - 1)) /= 2.0;
         result.amplitude = ToHost(amplitude, "SignalProcessing::Spectrum");
+        result.complex_output = ComplexToHost(spectrum(af::seq(0, static_cast<double>(bins - 1))), "SignalProcessing::Spectrum");
         result.psd = ToHost(OneSidedDensity(spectrum, n, sample_rate, SumOfSquares(w)), "SignalProcessing::Spectrum");
         result.frequencies.resize(static_cast<size_t>(bins));
         for (dim_t k = 0; k < bins; ++k) result.frequencies[static_cast<size_t>(k)] = static_cast<double>(k) * sample_rate / n;

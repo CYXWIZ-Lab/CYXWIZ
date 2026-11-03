@@ -43,6 +43,7 @@ struct CYXWIZ_API SpectrumResult {
     std::vector<double> frequencies;  // numpy.fft.rfftfreq(n, 1 / sample_rate) (Spectrum), scipy.signal.welch's (Welch)
     std::vector<double> amplitude;    // Spectrum only: 2 |X| / sum(window), DC and Nyquist not doubled (the amplitude of a tone)
     std::vector<double> psd;          // power density, scipy.signal.periodogram / welch (window hann, detrend constant, density)
+    std::vector<std::complex<double>> complex_output;  // Spectrum only: numpy.fft.rfft of the windowed, mean-removed signal (InverseSpectrum takes it back)
     int n = 0;                        // samples (Spectrum) or samples per segment (Welch)
     int segments = 1;                 // Welch: segments averaged
     double sample_rate = 1.0;
@@ -141,6 +142,15 @@ public:
     // Inverse FFT (2D): the real part of numpy.fft.ifft2
     static std::vector<std::vector<double>> IFFT2D(
         const std::vector<std::vector<std::complex<double>>>& spectrum
+    );
+
+    // A one-sided spectrum (n / 2 + 1 bins, as Spectrum's complex_output or
+    // numpy.fft.rfft) back to its `samples` real values (numpy.fft.irfft(X, n));
+    // samples 0 means 2 (bins - 1). Empty with the reason unavailable when the
+    // bins do not fit the sample count.
+    static std::vector<double> InverseSpectrum(
+        const std::vector<std::complex<double>>& one_sided,
+        int samples = 0
     );
 
     // ==================== Spectrum ====================

@@ -100,6 +100,21 @@ std::vector<double> SignalProcessing::IFFT(const std::vector<std::complex<double
     }
 }
 
+std::vector<double> SignalProcessing::InverseSpectrum(const std::vector<std::complex<double>>& one_sided, int samples) {
+    const int bins = static_cast<int>(one_sided.size());
+    if (bins < 1) return {};
+    const int n = samples > 0 ? samples : 2 * (bins - 1);
+    if (n < 1 || n / 2 + 1 != bins) return {};
+    // numpy.fft.irfft: the full Hermitian spectrum X[n - k] = conj(X[k]), then ifft's real part.
+    std::vector<std::complex<double>> full(static_cast<size_t>(n));
+    for (int k = 0; k < bins && k < n; ++k) full[static_cast<size_t>(k)] = one_sided[static_cast<size_t>(k)];
+    for (int k = 1; k < bins && n - k >= bins; ++k) full[static_cast<size_t>(n - k)] = std::conj(one_sided[static_cast<size_t>(k)]);
+    // irfft ignores the imaginary part of the DC and Nyquist bins.
+    full[0] = {full[0].real(), 0.0};
+    if (n % 2 == 0) full[static_cast<size_t>(n / 2)] = {full[static_cast<size_t>(n / 2)].real(), 0.0};
+    return IFFT(full);
+}
+
 std::vector<std::vector<double>> SignalProcessing::IFFT2D(
     const std::vector<std::vector<std::complex<double>>>& spectrum) {
     if (spectrum.empty() || spectrum[0].empty()) return {};

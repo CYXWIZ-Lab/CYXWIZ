@@ -2405,7 +2405,7 @@ bool HasSupportedParameterValues(
                 return false;
             }
             const double cutoff =
-                FloatParameterOrDefault(parameters, "cutoff", 0.5);
+                FloatParameterOrDefault(parameters, "cutoff", 0.1);
             const double cutoff_high =
                 FloatParameterOrDefault(parameters, "cutoff_high", 0.0);
             if (cutoff_high <= cutoff) {
@@ -2819,6 +2819,26 @@ bool ValidateValueColumnInputSchema(
         IsNumericArrowType, error);
 }
 
+// The IFFT node reads the FFT node's table: numeric `real` and `imag` columns.
+bool ValidateIFFTInputSchema(const std::shared_ptr<arrow::Table>& table, std::string& error) {
+    if (!table) {
+        error = "IFFTNode input table is missing";
+        return false;
+    }
+    for (const char* name : {"real", "imag"}) {
+        const int index = table->schema()->GetFieldIndex(name);
+        if (index < 0) {
+            error = std::string("IFFTNode needs the FFT node's table: column '") + name + "' is missing";
+            return false;
+        }
+        if (!IsNumericArrowType(table->schema()->field(index)->type())) {
+            error = std::string("IFFTNode column '") + name + "' must be numeric";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ValidateTimeSeriesWindowInputSchema(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& node_type,
@@ -2987,9 +3007,12 @@ bool ValidatePipelineOperatorInputSchema(
         case gui::NodeType::SentimentAnalyzer:
             return ValidateTextOperatorInputSchema(table, node_type,
                                                    parameters, error);
+        case gui::NodeType::IFFTNode:
+            return ValidateIFFTInputSchema(table, error);
         case gui::NodeType::FFTNode:
         case gui::NodeType::Convolution1D:
         case gui::NodeType::FilterDesigner:
+        case gui::NodeType::WaveletTransform:
         case gui::NodeType::TimeSeriesDecomposition:
         case gui::NodeType::ACFNode:
         case gui::NodeType::PACFNode:

@@ -1686,47 +1686,9 @@ MLNode CreateGraphNode(NodeType type,
             break;
         }
 
-        case NodeType::IFFTNode: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Spectrum";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin output_pin;
-            output_pin.id = next_pin_id_++;
-            output_pin.type = PinType::Tensor;
-            output_pin.name = "Signal";
-            output_pin.is_input = false;
-            node.outputs.push_back(output_pin);
-            break;
-        }
-
+        case NodeType::IFFTNode:
         case NodeType::WaveletTransform: {
-            NodePin input_pin;
-            input_pin.id = next_pin_id_++;
-            input_pin.type = PinType::Tensor;
-            input_pin.name = "Signal";
-            input_pin.is_input = true;
-            node.inputs.push_back(input_pin);
-
-            NodePin approx_out;
-            approx_out.id = next_pin_id_++;
-            approx_out.type = PinType::Tensor;
-            approx_out.name = "Approximation";
-            approx_out.is_input = false;
-            node.outputs.push_back(approx_out);
-
-            NodePin detail_out;
-            detail_out.id = next_pin_id_++;
-            detail_out.type = PinType::Tensor;
-            detail_out.name = "Detail";
-            detail_out.is_input = false;
-            node.outputs.push_back(detail_out);
-
-            node.parameters["wavelet"] = "db4";
-            node.parameters["level"] = "1";
+            PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
 

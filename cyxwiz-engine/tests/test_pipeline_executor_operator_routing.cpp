@@ -299,6 +299,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "FileInput",
         "FillMissing",
         "FilterDesigner",
+        "IFFTNode",
+        "WaveletTransform",
         "FilterRows",
         "GMMCluster",
         "GradientBoostingClassifier",
@@ -4062,8 +4064,6 @@ int main(int argc, char** argv) {
         {"QualityAnalyzer", false},
         {"TableSplitter", false},
         {"ExportExcel", false},
-        {"IFFTNode", false},
-        {"WaveletTransform", false},
         {"NamedEntityRecognizer", false},
         {"ImageFolderDataset", true},
         {"AugmentationPreset", false},
@@ -5943,6 +5943,64 @@ int main(int argc, char** argv) {
               uppercase_filter_type_executor.GetLastError());
     check_operator_field("ds_operator_FilterDesigner_355", "signal",
                          "FilterDesigner uppercase filter_type");
+    check_operator_field("ds_operator_FilterDesigner_355", "signal_filtered",
+                         "FilterDesigner adds the filtered column beside the signal");
+
+    // The signal nodes' column contracts (TOFIX129 D7): a one-sided spectrum
+    // table, a filtered column beside the input's, the wavelet parts, and
+    // the FFT table back to the 32 samples.
+    const auto rows_of = [&registry](const std::string& dataset_id) {
+        auto output = registry.GetArrowDataset(dataset_id);
+        return output && output->GetArrowTable() ? output->GetArrowTable()->num_rows() : int64_t{-1};
+    };
+    const std::string signal_input_json =
+        R"({"id":360,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(ts_analysis_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)";
+    const std::string fft_chain_json =
+        R"({"nodes":[)" + signal_input_json +
+        R"({"id":361,"type":"FFTNode","name":"Spectrum","parameters":{"signal_col":"signal","sample_rate":"10"}},)"
+        R"({"id":362,"type":"IFFTNode","name":"Back","parameters":{"samples":"32"}})"
+        R"(],"links":[{"start_node":360,"end_node":361},{"start_node":361,"end_node":362}]})";
+    cyxwiz::PipelineExecutor fft_chain_executor;
+    Check(fft_chain_executor.ExecutePipeline(fft_chain_json),
+          "FFT then IFFT should execute: " + fft_chain_executor.GetLastError());
+    for (const char* column : {"frequency", "period", "amplitude", "phase", "power_density", "real", "imag"})
+        check_operator_field("ds_operator_FFTNode_361", column, "FFT spectrum table");
+    Check(rows_of("ds_operator_FFTNode_361") == 17, "FFT: 32 samples give 17 one-sided bins");
+    check_operator_field("ds_operator_IFFTNode_362", "signal", "IFFT signal table");
+    Check(rows_of("ds_operator_IFFTNode_362") == 32, "IFFT: the 32 samples come back");
+
+    const std::string convolution_json =
+        R"({"nodes":[)" + signal_input_json +
+        R"({"id":363,"type":"Convolution1D","name":"Smooth","parameters":{"signal_col":"signal","kernel":"0.25,0.5,0.25"}})"
+        R"(],"links":[{"start_node":360,"end_node":363}]})";
+    cyxwiz::PipelineExecutor convolution_executor;
+    Check(convolution_executor.ExecutePipeline(convolution_json),
+          "Convolution1D should execute: " + convolution_executor.GetLastError());
+    check_operator_field("ds_operator_Convolution1D_363", "signal", "Convolution1D keeps the signal");
+    check_operator_field("ds_operator_Convolution1D_363", "signal_filtered", "Convolution1D adds the filtered column");
+    Check(rows_of("ds_operator_Convolution1D_363") == 32, "Convolution1D keeps the rows");
+
+    const std::string wavelet_json =
+        R"({"nodes":[)" + signal_input_json +
+        R"({"id":364,"type":"WaveletTransform","name":"Parts","parameters":{"signal_col":"signal","wavelet":"db2","level":"2","denoise":"soft"}})"
+        R"(],"links":[{"start_node":360,"end_node":364}]})";
+    cyxwiz::PipelineExecutor wavelet_executor;
+    Check(wavelet_executor.ExecutePipeline(wavelet_json),
+          "WaveletTransform should execute: " + wavelet_executor.GetLastError());
+    for (const char* column : {"signal", "signal_A2", "signal_D2", "signal_D1", "signal_denoised"})
+        check_operator_field("ds_operator_WaveletTransform_364", column, "WaveletTransform parts");
+    Check(rows_of("ds_operator_WaveletTransform_364") == 32, "WaveletTransform keeps the rows");
+
+    const std::string default_filter_json =
+        R"({"nodes":[)" + signal_input_json +
+        R"({"id":365,"type":"FilterDesigner","name":"Defaults","parameters":{"signal_col":"signal"}})"
+        R"(],"links":[{"start_node":360,"end_node":365}]})";
+    cyxwiz::PipelineExecutor default_filter_executor;
+    Check(default_filter_executor.ExecutePipeline(default_filter_json),
+          "FilterDesigner runs with its defaults (cutoff 0.1 at fs 1, 31 taps): " + default_filter_executor.GetLastError());
+    check_operator_field("ds_operator_FilterDesigner_365", "signal_filtered", "FilterDesigner defaults");
 
     const std::string uppercase_decomposition_choices_json =
         R"({"nodes":[)"

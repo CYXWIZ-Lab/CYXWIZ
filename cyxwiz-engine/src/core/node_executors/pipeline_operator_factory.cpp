@@ -116,11 +116,16 @@ void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::GMMCluster, []() {
         return std::make_unique<GMMOperator>();
     });
-    // Tool-to-Node signal processing block. IFFT + WaveletTransform
-    // deferred to tofix (complex inputs / variable-length outputs
-    // don't fit Arrow column schema cleanly).
+    // The signal nodes (TOFIX129 D7): FFT and IFFT as spectrum tables, the
+    // filters and the wavelet parts as columns beside the input's.
     RegisterCreator(gui::NodeType::FFTNode, []() {
         return std::make_unique<FFTOperator>();
+    });
+    RegisterCreator(gui::NodeType::IFFTNode, []() {
+        return std::make_unique<IFFTOperator>();
+    });
+    RegisterCreator(gui::NodeType::WaveletTransform, []() {
+        return std::make_unique<WaveletTransformOperator>();
     });
     RegisterCreator(gui::NodeType::Convolution1D, []() {
         return std::make_unique<Convolve1DOperator>();

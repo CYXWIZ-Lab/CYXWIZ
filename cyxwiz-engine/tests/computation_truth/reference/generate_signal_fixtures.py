@@ -134,6 +134,13 @@ def main():
         fp, pxx = sig.periodogram(x, fs=fs, window="hann", detrend="constant", scaling="density")
         assert np.allclose(f, fp)
         add("spectrum", label, signal=label, fs=fs, frequencies=vec(f), amplitude=vec(amp), psd=vec(pxx))
+    # 2b. irfft: the one-sided spectrum of the windowed, mean-removed signal back to it (even and odd lengths)
+    for label in ["tones", "odd"]:
+        x, fs = S[label]
+        w = sig.get_window("hann", len(x), fftbins=True)
+        y = (x - x.mean()) * w
+        X = np.fft.rfft(y)
+        add("irfft", label, signal=label, real=vec(X.real), imag=vec(X.imag), samples=len(x), y=vec(np.fft.irfft(X, len(x))))
     # 3. welch
     for label, nperseg in [("slow", 1024), ("tones", 256), ("odd", 64)]:
         x, fs = S[label]

@@ -74,6 +74,7 @@ double Tol(double f64, double f32) { return cyxwiz::test::DeviceTolerance(f64, f
 std::map<std::string, std::vector<double>> g_signals;
 
 const std::vector<double>& Signal(const json& c) {
+    Check(c.contains("signal"), "case " + c.value("op", std::string()) + "/" + c.value("label", std::string()) + " names no signal");
     const std::string name = c.at("signal").get<std::string>();
     Check(g_signals.count(name) == 1, "unknown signal " + name);
     return g_signals[name];
@@ -82,6 +83,7 @@ const std::vector<double>& Signal(const json& c) {
 void RunCase(const json& c) {
     const std::string op = c.at("op").get<std::string>();
     const std::string name = op + "/" + c.at("label").get<std::string>();
+    if (std::getenv("CYXWIZ_TRACE_CASES")) std::cerr << "case " << name << std::endl;  // set it to see which case a crash is in
     if (op == "fft") {
         const auto r = SignalProcessing::FFT(Signal(c), c["fs"].get<double>());
         Check(r.success, name + ": " + r.error_message);
@@ -95,6 +97,18 @@ void RunCase(const json& c) {
         std::vector<std::complex<double>> spectrum(re.size());
         for (size_t i = 0; i < re.size(); ++i) spectrum[i] = {re[i], im[i]};
         NearAll(SignalProcessing::IFFT(spectrum), json(Signal(c)), Tol(1e-9, 1e-4), name);
+        return;
+    }
+    if (op == "irfft") {
+        const std::vector<double> re = Doubles(c["real"]), im = Doubles(c["imag"]);
+        std::vector<std::complex<double>> half(re.size());
+        for (size_t i = 0; i < re.size(); ++i) half[i] = {re[i], im[i]};
+        NearAll(SignalProcessing::InverseSpectrum(half, c["samples"].get<int>()), c["y"], Tol(1e-9, 1e-4), name);
+        // Spectrum's own one-sided output goes back the same way.
+        const auto sp = SignalProcessing::Spectrum(Signal(c), 1.0, "hann", true);
+        Check(sp.success && sp.complex_output.size() == half.size(), name + ": Spectrum complex output");
+        NearAll(SignalProcessing::InverseSpectrum(sp.complex_output, sp.n), c["y"], Tol(1e-9, 1e-4), name + " from Spectrum");
+        Check(SignalProcessing::InverseSpectrum(half, static_cast<int>(re.size()) * 3).empty(), name + ": a sample count that does not fit is refused");
         return;
     }
     if (op == "spectrum") {

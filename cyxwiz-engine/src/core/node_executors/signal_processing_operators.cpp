@@ -8,9 +8,12 @@
 
 #include <arrow/api.h>
 #include <arrow/builder.h>
+#include <arrow/compute/api.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
+#include <complex>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -59,29 +62,34 @@ bool ParseCsvDoubles(const std::string& s, std::vector<double>& out,
     return true;
 }
 
-// Read one numeric column and return it as std::vector<double> suitable
-// for the signal-processing backend (which uses double internally).
+// One numeric column as doubles, exactly (an Arrow cast to float64, no
+// float32 hop), nulls as NaN; `out_col_idx` is its index.
 arrow::Status ReadColumnAsDouble(
     const std::shared_ptr<arrow::Table>& input,
     const std::string& col_name,
     const std::string& op_name,
     std::vector<double>& out,
     int& out_col_idx) {
-
     out_col_idx = input->schema()->GetFieldIndex(col_name);
     if (out_col_idx < 0) {
         return arrow::Status::KeyError(
             op_name + ": signal column '" + col_name + "' not found");
     }
-    auto col = input->column(out_col_idx);
-    std::vector<float> floats;
-    std::string bad;
-    if (!ReadColumnAsFloat(col, floats, bad)) {
+    const auto col = input->column(out_col_idx);
+    if (!arrow::is_numeric(col->type()->id()) && col->type()->id() != arrow::Type::BOOL) {
         return arrow::Status::TypeError(
             op_name + ": signal column '" + col_name +
-            "' must be numeric (got '" + bad + "')");
+            "' must be numeric (got '" + col->type()->ToString() + "')");
     }
-    out.assign(floats.begin(), floats.end());
+    ARROW_ASSIGN_OR_RAISE(auto cast, arrow::compute::Cast(col, arrow::float64()));
+    const auto doubles = cast.chunked_array();
+    out.clear();
+    out.reserve(static_cast<size_t>(doubles->length()));
+    for (const auto& chunk : doubles->chunks()) {
+        const auto array = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+        for (int64_t i = 0; i < array->length(); ++i)
+            out.push_back(array->IsNull(i) ? std::numeric_limits<double>::quiet_NaN() : array->Value(i));
+    }
     return arrow::Status::OK();
 }
 
@@ -92,31 +100,26 @@ arrow::Result<int64_t> CheckedSizeForArrow(size_t size, const std::string& conte
     return static_cast<int64_t>(size);
 }
 
-std::string BuildFftMemoryPreflightMessage(
-    const MaterializationMemoryEstimate& estimate,
-    const MaterializationMemoryDecision& decision) {
-    std::ostringstream ss;
-    ss << "FFT memory preflight: risk="
-       << MaterializationMemoryRiskName(decision.risk)
-       << ", samples=" << estimate.rows
-       << ", planned_columns=" << estimate.output_features
-       << ", raw=" << FormatMaterializationBytes(estimate.raw_output_bytes)
-       << ", estimated_peak="
-       << FormatMaterializationBytes(estimate.estimated_peak_bytes)
-       << ", available="
-       << FormatMaterializationBytes(decision.available_bytes)
-       << ", safe_budget="
-       << FormatMaterializationBytes(decision.safe_budget_bytes)
-       << ". " << decision.reason
-       << ". Suggestion: reduce signal rows, window the signal first, "
-          "or use a future chunked/sampled FFT materialization path.";
-    return ss.str();
+// A float64 column of `values` (NaN as null) appended to the table under `name`.
+arrow::Result<std::shared_ptr<arrow::Table>> AddDoubleColumn(
+    const std::shared_ptr<arrow::Table>& table, const std::string& name, const std::vector<double>& values) {
+    if (table->schema()->GetFieldIndex(name) >= 0) {
+        return arrow::Status::Invalid("the table already has a column '" + name + "'");
+    }
+    arrow::DoubleBuilder builder(arrow::default_memory_pool());
+    ARROW_RETURN_NOT_OK(builder.Reserve(static_cast<int64_t>(values.size())));
+    for (const double v : values) {
+        if (std::isfinite(v)) builder.UnsafeAppend(v);
+        else builder.UnsafeAppendNull();
+    }
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    return table->AddColumn(table->num_columns(), arrow::field(name, arrow::float64()), std::make_shared<arrow::ChunkedArray>(array));
 }
 
-std::string BuildSignalReplacementMemoryPreflightMessage(
-    const std::string& op_name,
-    const MaterializationMemoryEstimate& estimate,
-    const MaterializationMemoryDecision& decision) {
+std::string PreflightMessage(const std::string& op_name,
+                             const MaterializationMemoryEstimate& estimate,
+                             const MaterializationMemoryDecision& decision) {
     std::ostringstream ss;
     ss << op_name << " memory preflight: risk="
        << MaterializationMemoryRiskName(decision.risk)
@@ -130,43 +133,111 @@ std::string BuildSignalReplacementMemoryPreflightMessage(
        << ", safe_budget="
        << FormatMaterializationBytes(decision.safe_budget_bytes)
        << ". " << decision.reason
-       << ". Suggestion: reduce signal rows, filter a sampled/windowed "
-          "signal first, or use a future chunked signal materialization path.";
+       << ". Suggestion: reduce signal rows, or window or sample the signal first.";
     return ss.str();
+}
+
+// The memory preflight every signal operator runs: `columns` float64 columns
+// of `rows`; the estimate is reported and a blocked plan stops the operator.
+arrow::Result<uint64_t> Preflight(const std::string& op_name, uint64_t rows, uint64_t columns,
+                                  const PipelineOperatorProgressCallback& callback, const MaterializationMemoryContext& context) {
+    const auto estimate = EstimateDenseMaterializationMemory(rows, columns, static_cast<uint64_t>(sizeof(double)));
+    const auto decision = EvaluateMaterializationMemory(estimate, context);
+    const std::string message = PreflightMessage(op_name, estimate, decision);
+    uint64_t cells = 0;
+    if (!CheckedMulU64(rows, columns, cells)) cells = std::numeric_limits<uint64_t>::max();
+    if (callback) {
+        PipelineOperatorProgress event;
+        event.stage = op_name + " memory preflight";
+        event.message = message;
+        event.status = MaterializationMemoryRiskToProgressStatus(decision.risk);
+        event.progress = 0.03f;
+        event.estimated_memory_bytes = estimate.estimated_peak_bytes;
+        event.memory_risk_level = MaterializationMemoryRiskName(decision.risk);
+        event.processed_items = 0;
+        event.total_items = cells;
+        callback(event);
+    }
+    if (decision.blocked) return arrow::Status::CapacityError("Materialization blocked: " + message);
+    return estimate.estimated_peak_bytes;
+}
+
+// The signal column's checks shared by the operators: present, numeric, not empty.
+arrow::Result<uint64_t> SignalRows(const std::shared_ptr<arrow::Table>& input, const std::string& signal_col, const std::string& op_name) {
+    if (!input) return arrow::Status::Invalid(op_name + ": input table is null");
+    const int col_idx = input->schema()->GetFieldIndex(signal_col);
+    if (col_idx < 0) return arrow::Status::KeyError(op_name + ": signal column '" + signal_col + "' not found");
+    const auto column = input->column(col_idx);
+    if (!IsNumericChunked(column)) {
+        const std::string got = column && column->num_chunks() > 0 ? column->chunk(0)->type()->ToString() : "<empty>";
+        return arrow::Status::TypeError(op_name + ": signal column '" + signal_col + "' must be numeric (got '" + got + "')");
+    }
+    if (column->length() == 0) return arrow::Status::Invalid(op_name + ": signal column is empty");
+    return static_cast<uint64_t>(column->length());
+}
+
+bool ReadDouble(const std::map<std::string, std::string>& params, const char* name, double& value, const std::string& op, std::string& error) {
+    const auto it = params.find(name);
+    if (it == params.end() || it->second.empty()) return true;
+    try {
+        value = std::stod(it->second);
+    } catch (...) {
+        error = op + ": '" + name + "' is not a valid float: " + it->second;
+        return false;
+    }
+    return true;
+}
+
+bool ReadInt(const std::map<std::string, std::string>& params, const char* name, int& value, const std::string& op, std::string& error) {
+    const auto it = params.find(name);
+    if (it == params.end() || it->second.empty()) return true;
+    try {
+        value = std::stoi(it->second);
+    } catch (...) {
+        error = op + ": '" + name + "' is not a valid integer: " + it->second;
+        return false;
+    }
+    return true;
+}
+
+bool KnownWindow(const std::string& name) {
+    return name == "hann" || name == "hamming" || name == "blackman" || name == "boxcar";
 }
 
 } // namespace
 
 // ============================================================================
-// FFTOperator
+// FFTOperator: the one-sided spectrum as a table (a branch)
 // ============================================================================
 
 bool FFTOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
-
     signal_col_.clear();
     sample_rate_ = 1.0;
-
+    window_ = "hann";
+    remove_mean_ = true;
     auto it = params.find("signal_col");
     if (it == params.end() || it->second.empty()) {
         error = "FFT: 'signal_col' parameter is required";
         return false;
     }
     signal_col_ = it->second;
-
-    auto sr = params.find("sample_rate");
-    if (sr != params.end() && !sr->second.empty()) {
-        try { sample_rate_ = std::stod(sr->second); }
-        catch (...) {
-            error = "FFT: 'sample_rate' is not a valid float: " + sr->second;
+    if (!ReadDouble(params, "sample_rate", sample_rate_, "FFT", error)) return false;
+    if (sample_rate_ <= 0.0) {
+        error = "FFT: sample_rate must be > 0 (got " + std::to_string(sample_rate_) + ")";
+        return false;
+    }
+    if (const auto w = params.find("window"); w != params.end() && !w->second.empty()) {
+        window_ = NormalizeTimeSeriesParameterChoice(w->second);
+        if (!KnownWindow(window_)) {
+            error = "FFT: 'window' must be hann, hamming, blackman or boxcar (got '" + window_ + "')";
             return false;
         }
     }
-    if (sample_rate_ <= 0.0) {
-        error = "FFT: sample_rate must be > 0 (got " +
-                std::to_string(sample_rate_) + ")";
-        return false;
+    if (const auto m = params.find("remove_mean"); m != params.end() && !m->second.empty()) {
+        const std::string v = NormalizeTimeSeriesParameterChoice(m->second);
+        remove_mean_ = v == "true" || v == "1" || v == "yes";
     }
     return true;
 }
@@ -174,163 +245,121 @@ bool FFTOperator::Configure(
 arrow::Result<std::shared_ptr<arrow::Table>>
 FFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     CYXWIZ_PROFILE_ZONE("CyxWiz FFT Materializer");
-
-    if (!input) return arrow::Status::Invalid("FFT: input table is null");
-
-    int col_idx = input->schema()->GetFieldIndex(signal_col_);
-    if (col_idx < 0) {
-        return arrow::Status::KeyError(
-            "FFT: signal column '" + signal_col_ + "' not found");
-    }
-    auto signal_column = input->column(col_idx);
-    if (!IsNumericChunked(signal_column)) {
-        std::string got = signal_column && signal_column->num_chunks() > 0
-            ? signal_column->chunk(0)->type()->ToString()
-            : "<empty>";
-        return arrow::Status::TypeError(
-            "FFT: signal column '" + signal_col_ +
-            "' must be numeric (got '" + got + "')");
-    }
-    const uint64_t planned_samples =
-        static_cast<uint64_t>(std::max<int64_t>(0, signal_column->length()));
-    if (planned_samples == 0) {
-        return arrow::Status::Invalid("FFT: signal column is empty");
-    }
-    const uint64_t planned_columns = 4;
-    const auto preflight_estimate = EstimateDenseMaterializationMemory(
-        planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
-    const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, GetMaterializationMemoryContext());
-    const std::string preflight_message = BuildFftMemoryPreflightMessage(
-        preflight_estimate, preflight_decision);
-    uint64_t planned_cells = 0;
-    if (!CheckedMulU64(planned_samples, planned_columns, planned_cells)) {
-        planned_cells = std::numeric_limits<uint64_t>::max();
-    }
-    if (progress_callback_) {
-        PipelineOperatorProgress event;
-        event.stage = "FFT memory preflight";
-        event.message = preflight_message;
-        event.status = MaterializationMemoryRiskToProgressStatus(
-            preflight_decision.risk);
-        event.progress = 0.03f;
-        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
-        event.memory_risk_level = MaterializationMemoryRiskName(
-            preflight_decision.risk);
-        event.processed_items = 0;
-        event.total_items = planned_cells;
-        progress_callback_(event);
-    }
-    if (preflight_decision.blocked) {
-        return arrow::Status::CapacityError(
-            "Materialization blocked: " + preflight_message);
-    }
-
-    ReportProgress(progress_callback_, "Reading signal",
-                   "Reading FFT signal column '" + signal_col_ + "'",
-                   0.10,
-                   0,
-                   planned_samples,
-                   preflight_estimate.estimated_peak_bytes);
+    ARROW_ASSIGN_OR_RAISE(const uint64_t rows, SignalRows(input, signal_col_, "FFT"));
+    ARROW_ASSIGN_OR_RAISE(const uint64_t memory, Preflight("FFT", rows / 2 + 1, 7, progress_callback_, GetMaterializationMemoryContext()));
+    ReportProgress(progress_callback_, "Reading signal", "Reading FFT signal column '" + signal_col_ + "'", 0.10, 0, rows, memory);
     std::vector<double> signal;
-    int read_col_idx = -1;
-    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, signal_col_, "FFT", signal, read_col_idx));
-    col_idx = read_col_idx;
-
-    const uint64_t estimated_signal_bytes =
-        preflight_estimate.estimated_peak_bytes;
-    ReportProgress(progress_callback_, "Computing FFT",
-                   "Computing FFT over " + std::to_string(signal.size()) +
-                   " samples",
-                   0.35,
-                   0,
-                   static_cast<uint64_t>(signal.size()),
-                   estimated_signal_bytes);
-
-    auto result = SignalProcessing::FFT(signal, sample_rate_);
-    if (!result.success) {
-        return arrow::Status::ExecutionError(
-            "FFT: backend FFT failed: " + result.error_message);
+    int col_idx = -1;
+    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, signal_col_, "FFT", signal, col_idx));
+    ReportProgress(progress_callback_, "Computing spectrum", "One-sided spectrum of " + std::to_string(signal.size()) + " samples", 0.35, 0, rows, memory);
+    const SpectrumResult spectrum = SignalProcessing::Spectrum(signal, sample_rate_, window_, remove_mean_);
+    if (!spectrum.success) {
+        return arrow::Status::ExecutionError("FFT: " + spectrum.error_message);
     }
-
-    ARROW_ASSIGN_OR_RAISE(
-        const int64_t nbins,
-        CheckedSizeForArrow(result.magnitude.size(), "FFT"));
-    if (nbins == 0 ||
-        result.phase.size() != result.magnitude.size() ||
-        result.frequencies.size() != result.magnitude.size()) {
-        return arrow::Status::ExecutionError(
-            "FFT: backend returned inconsistent bin counts "
-            "(mag=" + std::to_string(result.magnitude.size()) +
-            ", phase=" + std::to_string(result.phase.size()) +
-            ", freq=" + std::to_string(result.frequencies.size()) + ")");
+    const size_t bins = spectrum.frequencies.size();
+    if (bins == 0 || spectrum.amplitude.size() != bins || spectrum.psd.size() != bins || spectrum.complex_output.size() != bins) {
+        return arrow::Status::ExecutionError("FFT: the backend returned inconsistent bin counts");
     }
-
-    const auto output_memory_plan = EstimateDenseMaterializationMemory(
-        static_cast<uint64_t>(nbins), 3, static_cast<uint64_t>(sizeof(double)));
-    const uint64_t estimated_output_bytes =
-        output_memory_plan.estimated_peak_bytes;
-    ReportProgress(progress_callback_, "Building Arrow table",
-                   "Building FFT frequency-domain output table",
-                   0.70,
-                   0,
-                   static_cast<uint64_t>(nbins),
-                   estimated_output_bytes);
+    ARROW_ASSIGN_OR_RAISE(const int64_t nbins, CheckedSizeForArrow(bins, "FFT"));
+    ReportProgress(progress_callback_, "Building table", "Building the spectrum table", 0.70, 0, static_cast<uint64_t>(nbins), memory);
     arrow::MemoryPool* pool = arrow::default_memory_pool();
-    arrow::DoubleBuilder freq_builder(pool);
-    arrow::DoubleBuilder mag_builder(pool);
-    arrow::DoubleBuilder phase_builder(pool);
-    ARROW_RETURN_NOT_OK(freq_builder.Reserve(nbins));
-    ARROW_RETURN_NOT_OK(mag_builder.Reserve(nbins));
-    ARROW_RETURN_NOT_OK(phase_builder.Reserve(nbins));
-    for (int64_t i = 0; i < nbins; ++i) {
-        ARROW_RETURN_NOT_OK(freq_builder.Append(result.frequencies[i]));
-        ARROW_RETURN_NOT_OK(mag_builder.Append(result.magnitude[i]));
-        ARROW_RETURN_NOT_OK(phase_builder.Append(result.phase[i]));
+    arrow::DoubleBuilder frequency(pool), period(pool), amplitude(pool), phase(pool), power(pool), real(pool), imag(pool);
+    arrow::DoubleBuilder* builders[7] = {&frequency, &period, &amplitude, &phase, &power, &real, &imag};
+    for (arrow::DoubleBuilder* b : builders) ARROW_RETURN_NOT_OK(b->Reserve(nbins));
+    for (size_t k = 0; k < bins; ++k) {
+        const double f = spectrum.frequencies[k];
+        frequency.UnsafeAppend(f);
+        if (f > 0.0) period.UnsafeAppend(1.0 / f);
+        else period.UnsafeAppendNull();
+        amplitude.UnsafeAppend(spectrum.amplitude[k]);
+        phase.UnsafeAppend(std::arg(spectrum.complex_output[k]));
+        power.UnsafeAppend(spectrum.psd[k]);
+        real.UnsafeAppend(spectrum.complex_output[k].real());
+        imag.UnsafeAppend(spectrum.complex_output[k].imag());
     }
-
-    std::shared_ptr<arrow::Array> freq_arr, mag_arr, phase_arr;
-    ARROW_RETURN_NOT_OK(freq_builder.Finish(&freq_arr));
-    ARROW_RETURN_NOT_OK(mag_builder.Finish(&mag_arr));
-    ARROW_RETURN_NOT_OK(phase_builder.Finish(&phase_arr));
-
+    std::vector<std::shared_ptr<arrow::Array>> arrays(7);
+    for (size_t i = 0; i < 7; ++i) ARROW_RETURN_NOT_OK(builders[i]->Finish(&arrays[i]));
     auto schema = arrow::schema({
         arrow::field("frequency", arrow::float64()),
-        arrow::field("magnitude", arrow::float64()),
+        arrow::field("period", arrow::float64()),
+        arrow::field("amplitude", arrow::float64()),
         arrow::field("phase", arrow::float64()),
+        arrow::field("power_density", arrow::float64()),
+        arrow::field("real", arrow::float64()),
+        arrow::field("imag", arrow::float64()),
     });
-    auto table = arrow::Table::Make(
-        schema, {freq_arr, mag_arr, phase_arr}, nbins);
-
-    spdlog::info("FFT: {} samples -> {} bins, sample_rate={}",
-                 signal.size(), nbins, sample_rate_);
-    ReportProgress(progress_callback_, "Complete",
-                   "FFT materialization complete",
-                   1.0,
-                   static_cast<uint64_t>(nbins),
-                   static_cast<uint64_t>(nbins),
-                   estimated_output_bytes);
+    auto table = arrow::Table::Make(schema, arrays, nbins);
+    spdlog::info("FFT: {} samples -> {} one-sided bins (sample_rate={}, window={}, mean {})", signal.size(), nbins, sample_rate_, window_,
+                 remove_mean_ ? "removed" : "kept");
+    ReportProgress(progress_callback_, "Complete", "FFT materialization complete", 1.0, static_cast<uint64_t>(nbins), static_cast<uint64_t>(nbins), memory);
     return table;
 }
 
 // ============================================================================
-// Convolve1DOperator
+// IFFTOperator: the spectrum table back to a signal
+// ============================================================================
+
+bool IFFTOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
+    samples_ = 0;
+    if (!ReadInt(params, "samples", samples_, "IFFT", error)) return false;
+    if (samples_ < 0) {
+        error = "IFFT: samples must be 0 (even length from the bins) or the signal's length";
+        return false;
+    }
+    return true;
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> IFFTOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz IFFT Materializer");
+    if (!input) return arrow::Status::Invalid("IFFT: input table is null");
+    for (const char* name : {"real", "imag"}) {
+        if (input->schema()->GetFieldIndex(name) < 0)
+            return arrow::Status::KeyError(std::string("IFFT: the table has no '") + name + "' column; it reads the FFT node's table (real, imag)");
+    }
+    const uint64_t bins = static_cast<uint64_t>(input->num_rows());
+    if (bins == 0) return arrow::Status::Invalid("IFFT: the spectrum table is empty");
+    const uint64_t samples = samples_ > 0 ? static_cast<uint64_t>(samples_) : 2 * (bins - 1);
+    ARROW_ASSIGN_OR_RAISE(const uint64_t memory, Preflight("IFFT", samples, 1, progress_callback_, GetMaterializationMemoryContext()));
+    std::vector<double> re, im;
+    int idx = -1;
+    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, "real", "IFFT", re, idx));
+    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, "imag", "IFFT", im, idx));
+    std::vector<std::complex<double>> half(re.size());
+    for (size_t k = 0; k < re.size(); ++k) {
+        if (!std::isfinite(re[k]) || !std::isfinite(im[k])) return arrow::Status::Invalid("IFFT: bin " + std::to_string(k) + " is empty");
+        half[k] = {re[k], im[k]};
+    }
+    ReportProgress(progress_callback_, "Inverting spectrum", "Rebuilding " + std::to_string(samples) + " samples from " + std::to_string(bins) + " bins", 0.4, 0, samples, memory);
+    const std::vector<double> signal = SignalProcessing::InverseSpectrum(half, samples_);
+    if (signal.empty()) {
+        return arrow::Status::Invalid("IFFT: " + std::to_string(bins) + " bins do not fit a signal of " + std::to_string(samples) +
+                                      " samples (a one-sided spectrum has samples / 2 + 1 bins); set 'samples' to the FFT node's row count");
+    }
+    arrow::DoubleBuilder builder(arrow::default_memory_pool());
+    ARROW_RETURN_NOT_OK(builder.AppendValues(signal));
+    std::shared_ptr<arrow::Array> array;
+    ARROW_RETURN_NOT_OK(builder.Finish(&array));
+    auto table = arrow::Table::Make(arrow::schema({arrow::field("signal", arrow::float64())}), {array}, static_cast<int64_t>(signal.size()));
+    spdlog::info("IFFT: {} bins -> {} samples", bins, signal.size());
+    ReportProgress(progress_callback_, "Complete", "IFFT materialization complete", 1.0, samples, samples, memory);
+    return table;
+}
+
+// ============================================================================
+// Convolve1DOperator: a kernel applied zero-phase, a column added
 // ============================================================================
 
 bool Convolve1DOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
-
     signal_col_.clear();
     kernel_.clear();
-
     auto it = params.find("signal_col");
     if (it == params.end() || it->second.empty()) {
         error = "Convolve1D: 'signal_col' parameter is required";
         return false;
     }
     signal_col_ = it->second;
-
     auto k = params.find("kernel");
     if (k == params.end() || k->second.empty()) {
         error = "Convolve1D: 'kernel' parameter is required "
@@ -339,13 +368,18 @@ bool Convolve1DOperator::Configure(
     }
     std::string bad;
     if (!ParseCsvDoubles(k->second, kernel_, bad)) {
-        error = "Convolve1D: 'kernel' token '" + bad +
-                "' is not a valid float";
+        error = "Convolve1D: 'kernel' token '" + bad + "' is not a valid float";
         return false;
     }
     if (kernel_.empty()) {
         error = "Convolve1D: 'kernel' parsed to empty list";
         return false;
+    }
+    for (const double v : kernel_) {
+        if (!std::isfinite(v)) {
+            error = "Convolve1D: 'kernel' has a value that is not a finite number";
+            return false;
+        }
     }
     return true;
 }
@@ -353,204 +387,75 @@ bool Convolve1DOperator::Configure(
 arrow::Result<std::shared_ptr<arrow::Table>>
 Convolve1DOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     CYXWIZ_PROFILE_ZONE("CyxWiz Convolve1D Materializer");
-
-    if (!input) return arrow::Status::Invalid("Convolve1D: input table is null");
-
-    int col_idx = input->schema()->GetFieldIndex(signal_col_);
-    if (col_idx < 0) {
-        return arrow::Status::KeyError(
-            "Convolve1D: signal column '" + signal_col_ + "' not found");
+    ARROW_ASSIGN_OR_RAISE(const uint64_t rows, SignalRows(input, signal_col_, "Convolve1D"));
+    ARROW_ASSIGN_OR_RAISE(const uint64_t memory, Preflight("Convolve1D", rows, 3, progress_callback_, GetMaterializationMemoryContext()));
+    if (kernel_.size() > rows) {
+        return arrow::Status::Invalid("Convolve1D: the kernel has " + std::to_string(kernel_.size()) + " taps but the column only " +
+                                      std::to_string(rows) + " rows");
     }
-    auto signal_column = input->column(col_idx);
-    if (!IsNumericChunked(signal_column)) {
-        std::string got = signal_column && signal_column->num_chunks() > 0
-            ? signal_column->chunk(0)->type()->ToString()
-            : "<empty>";
-        return arrow::Status::TypeError(
-            "Convolve1D: signal column '" + signal_col_ +
-            "' must be numeric (got '" + got + "')");
-    }
-    const uint64_t planned_samples =
-        static_cast<uint64_t>(std::max<int64_t>(0, signal_column->length()));
-    if (planned_samples == 0) {
-        return arrow::Status::Invalid("Convolve1D: signal column is empty");
-    }
-    const uint64_t planned_columns = 3;
-    const auto preflight_estimate = EstimateDenseMaterializationMemory(
-        planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
-    const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, GetMaterializationMemoryContext());
-    const std::string preflight_message =
-        BuildSignalReplacementMemoryPreflightMessage(
-            "Convolve1D", preflight_estimate, preflight_decision);
-    uint64_t planned_cells = 0;
-    if (!CheckedMulU64(planned_samples, planned_columns, planned_cells)) {
-        planned_cells = std::numeric_limits<uint64_t>::max();
-    }
-    if (progress_callback_) {
-        PipelineOperatorProgress event;
-        event.stage = "Convolve1D memory preflight";
-        event.message = preflight_message;
-        event.status = MaterializationMemoryRiskToProgressStatus(
-            preflight_decision.risk);
-        event.progress = 0.03f;
-        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
-        event.memory_risk_level = MaterializationMemoryRiskName(
-            preflight_decision.risk);
-        event.processed_items = 0;
-        event.total_items = planned_cells;
-        progress_callback_(event);
-    }
-    if (preflight_decision.blocked) {
-        return arrow::Status::CapacityError(
-            "Materialization blocked: " + preflight_message);
-    }
-
-    ReportProgress(progress_callback_, "Reading signal",
-                   "Reading Convolve1D signal column '" + signal_col_ + "'",
-                   0.10,
-                   0,
-                   planned_samples,
-                   preflight_estimate.estimated_peak_bytes);
+    ReportProgress(progress_callback_, "Reading signal", "Reading Convolve1D signal column '" + signal_col_ + "'", 0.10, 0, rows, memory);
     std::vector<double> signal;
-    int read_col_idx = -1;
-    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(
-        input, signal_col_, "Convolve1D", signal, read_col_idx));
-    col_idx = read_col_idx;
-
-    const uint64_t estimated_signal_bytes =
-        preflight_estimate.estimated_peak_bytes;
-
-    // "same" mode keeps row count aligned with all other input columns.
-    ReportProgress(progress_callback_, "Convolving signal",
-                   "Applying Convolve1D kernel with " +
-                   std::to_string(kernel_.size()) + " taps",
-                   0.45,
-                   0,
-                   static_cast<uint64_t>(signal.size()),
-                   estimated_signal_bytes);
-    auto result = SignalProcessing::Convolve1D(signal, kernel_, "same");
-    if (!result.success) {
-        return arrow::Status::ExecutionError(
-            "Convolve1D: backend failed: " + result.error_message);
+    int col_idx = -1;
+    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, signal_col_, "Convolve1D", signal, col_idx));
+    ReportProgress(progress_callback_, "Convolving signal", "Applying the kernel of " + std::to_string(kernel_.size()) + " taps, centred", 0.45, 0, rows, memory);
+    FilterCoefficients filter;
+    filter.b = kernel_;
+    filter.a = {1.0};
+    const std::vector<double> filtered = SignalProcessing::ApplyFilter(signal, filter);
+    if (filtered.size() != signal.size()) {
+        return arrow::Status::ExecutionError("Convolve1D: the backend returned " + std::to_string(filtered.size()) + " samples, expected " +
+                                             std::to_string(signal.size()));
     }
-
-    if (result.output.size() != signal.size()) {
-        return arrow::Status::ExecutionError(
-            "Convolve1D: 'same' mode produced " +
-            std::to_string(result.output.size()) +
-            " samples, expected " + std::to_string(signal.size()));
-    }
-
-    ARROW_ASSIGN_OR_RAISE(
-        const int64_t row_count,
-        CheckedSizeForArrow(signal.size(), "Convolve1D"));
-    std::vector<float> out_floats;
-    out_floats.reserve(result.output.size());
-    for (double value : result.output) {
-        out_floats.push_back(static_cast<float>(value));
-    }
-    ReportProgress(progress_callback_, "Replacing column",
-                   "Writing Convolve1D output column",
-                   0.85,
-                   static_cast<uint64_t>(out_floats.size()),
-                   static_cast<uint64_t>(out_floats.size()),
-                   static_cast<uint64_t>(out_floats.size()) * sizeof(float));
-    ARROW_ASSIGN_OR_RAISE(
-        auto new_table,
-        ReplaceColumnWithFloat(input, col_idx, out_floats, row_count));
-
-    spdlog::info("Convolve1D: {} samples, kernel size {}, column '{}' replaced",
-                 signal.size(), kernel_.size(), signal_col_);
-    ReportProgress(progress_callback_, "Complete",
-                   "Convolve1D materialization complete",
-                   1.0,
-                   static_cast<uint64_t>(out_floats.size()),
-                   static_cast<uint64_t>(out_floats.size()),
-                   static_cast<uint64_t>(out_floats.size()) * sizeof(float));
-    return new_table;
+    const std::string name = signal_col_ + "_filtered";
+    ReportProgress(progress_callback_, "Adding column", "Adding " + name, 0.85, rows, rows, memory);
+    ARROW_ASSIGN_OR_RAISE(auto out, AddDoubleColumn(input, name, filtered));
+    spdlog::info("Convolve1D: {} samples, kernel of {} taps, column '{}' added", signal.size(), kernel_.size(), name);
+    ReportProgress(progress_callback_, "Complete", "Convolve1D materialization complete", 1.0, rows, rows, memory);
+    return out;
 }
 
 // ============================================================================
-// FilterDesignerOperator
+// FilterDesignerOperator: a firwin FIR designed and applied, a column added
 // ============================================================================
 
 bool FilterDesignerOperator::Configure(
     const std::map<std::string, std::string>& params,
     std::string& error) {
-
     signal_col_.clear();
     filter_type_ = "lowpass";
-    cutoff_ = 0.5;
+    cutoff_ = 0.1;
     cutoff_high_ = 0.0;
     sample_rate_ = 1.0;
-    order_ = 4;
-
+    order_ = 15;
+    taps_ = 0;
+    window_ = "hamming";
     auto it = params.find("signal_col");
     if (it == params.end() || it->second.empty()) {
         error = "FilterDesigner: 'signal_col' parameter is required";
         return false;
     }
     signal_col_ = it->second;
-
-    auto ft = params.find("filter_type");
-    if (ft != params.end() && !ft->second.empty()) {
+    if (const auto ft = params.find("filter_type"); ft != params.end() && !ft->second.empty()) {
         filter_type_ = NormalizeTimeSeriesParameterChoice(ft->second);
-        if (filter_type_ != "lowpass" && filter_type_ != "highpass" &&
-            filter_type_ != "bandpass" && filter_type_ != "bandstop") {
-            error = "FilterDesigner: 'filter_type' must be lowpass/highpass/"
-                    "bandpass/bandstop (got '" + filter_type_ + "')";
+        if (filter_type_ != "lowpass" && filter_type_ != "highpass" && filter_type_ != "bandpass" && filter_type_ != "bandstop") {
+            error = "FilterDesigner: 'filter_type' must be lowpass/highpass/bandpass/bandstop (got '" + filter_type_ + "')";
             return false;
         }
     }
-
-    auto c = params.find("cutoff");
-    if (c != params.end() && !c->second.empty()) {
-        try { cutoff_ = std::stod(c->second); }
-        catch (...) {
-            error = "FilterDesigner: 'cutoff' is not a valid float: " + c->second;
+    if (!ReadDouble(params, "cutoff", cutoff_, "FilterDesigner", error)) return false;
+    if (!ReadDouble(params, "cutoff_high", cutoff_high_, "FilterDesigner", error)) return false;
+    if (!ReadDouble(params, "sample_rate", sample_rate_, "FilterDesigner", error)) return false;
+    if (!ReadInt(params, "order", order_, "FilterDesigner", error)) return false;
+    // `taps` is the number of coefficients (scipy.signal.firwin); without it
+    // the old `order` still means 2 * order + 1 taps.
+    if (!ReadInt(params, "taps", taps_, "FilterDesigner", error)) return false;
+    if (const auto w = params.find("window"); w != params.end() && !w->second.empty()) {
+        window_ = NormalizeTimeSeriesParameterChoice(w->second);
+        if (!KnownWindow(window_)) {
+            error = "FilterDesigner: 'window' must be hamming, hann, blackman or boxcar (got '" + window_ + "')";
             return false;
         }
     }
-
-    auto ch = params.find("cutoff_high");
-    if (ch != params.end() && !ch->second.empty()) {
-        try { cutoff_high_ = std::stod(ch->second); }
-        catch (...) {
-            error = "FilterDesigner: 'cutoff_high' is not a valid float: " + ch->second;
-            return false;
-        }
-    }
-
-    auto sr = params.find("sample_rate");
-    if (sr != params.end() && !sr->second.empty()) {
-        try { sample_rate_ = std::stod(sr->second); }
-        catch (...) {
-            error = "FilterDesigner: 'sample_rate' is not a valid float: " + sr->second;
-            return false;
-        }
-    }
-
-    auto o = params.find("order");
-    if (o != params.end() && !o->second.empty()) {
-        try { order_ = std::stoi(o->second); }
-        catch (...) {
-            error = "FilterDesigner: 'order' is not a valid integer: " + o->second;
-            return false;
-        }
-    }
-    // `taps` is the number of coefficients (TOFIX129 D7, scipy.signal.firwin);
-    // without it the old `order` still means 2 * order + 1 taps.
-    taps_ = 0;
-    auto t = params.find("taps");
-    if (t != params.end() && !t->second.empty()) {
-        try { taps_ = std::stoi(t->second); }
-        catch (...) {
-            error = "FilterDesigner: 'taps' is not a valid integer: " + t->second;
-            return false;
-        }
-    }
-
     if (sample_rate_ <= 0.0) {
         error = "FilterDesigner: sample_rate must be > 0";
         return false;
@@ -559,9 +464,12 @@ bool FilterDesignerOperator::Configure(
         error = "FilterDesigner: cutoff must be > 0";
         return false;
     }
+    if (cutoff_ >= sample_rate_ / 2.0) {
+        error = "FilterDesigner: cutoff must be below the Nyquist frequency " + std::to_string(sample_rate_ / 2.0);
+        return false;
+    }
     if (order_ < 1) {
-        error = "FilterDesigner: order must be >= 1 (got " +
-                std::to_string(order_) + ")";
+        error = "FilterDesigner: order must be >= 1 (got " + std::to_string(order_) + ")";
         return false;
     }
     if (taps_ == 0) taps_ = 2 * order_ + 1;
@@ -569,11 +477,13 @@ bool FilterDesignerOperator::Configure(
         error = "FilterDesigner: taps must be at least 3 (got " + std::to_string(taps_) + ")";
         return false;
     }
-    if ((filter_type_ == "bandpass" || filter_type_ == "bandstop") &&
-        cutoff_high_ <= cutoff_) {
-        error = "FilterDesigner: '" + filter_type_ +
-                "' requires cutoff_high (" + std::to_string(cutoff_high_) +
-                ") > cutoff (" + std::to_string(cutoff_) + ")";
+    if ((filter_type_ == "highpass" || filter_type_ == "bandstop") && taps_ % 2 == 0) {
+        error = "FilterDesigner: a " + filter_type_ + " filter needs an odd number of taps (got " + std::to_string(taps_) + ")";
+        return false;
+    }
+    if ((filter_type_ == "bandpass" || filter_type_ == "bandstop") && cutoff_high_ <= cutoff_) {
+        error = "FilterDesigner: '" + filter_type_ + "' requires cutoff_high (" + std::to_string(cutoff_high_) + ") > cutoff (" +
+                std::to_string(cutoff_) + ")";
         return false;
     }
     return true;
@@ -582,142 +492,126 @@ bool FilterDesignerOperator::Configure(
 arrow::Result<std::shared_ptr<arrow::Table>>
 FilterDesignerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     CYXWIZ_PROFILE_ZONE("CyxWiz FilterDesigner Materializer");
-
-    if (!input) return arrow::Status::Invalid("FilterDesigner: input table is null");
-
-    int col_idx = input->schema()->GetFieldIndex(signal_col_);
-    if (col_idx < 0) {
-        return arrow::Status::KeyError(
-            "FilterDesigner: signal column '" + signal_col_ + "' not found");
+    ARROW_ASSIGN_OR_RAISE(const uint64_t rows, SignalRows(input, signal_col_, "FilterDesigner"));
+    ARROW_ASSIGN_OR_RAISE(const uint64_t memory, Preflight("FilterDesigner", rows, 3, progress_callback_, GetMaterializationMemoryContext()));
+    if (static_cast<uint64_t>(taps_) > rows) {
+        return arrow::Status::Invalid("FilterDesigner: " + std::to_string(taps_) + " taps but the column only has " + std::to_string(rows) + " rows");
     }
-    auto signal_column = input->column(col_idx);
-    if (!IsNumericChunked(signal_column)) {
-        std::string got = signal_column && signal_column->num_chunks() > 0
-            ? signal_column->chunk(0)->type()->ToString()
-            : "<empty>";
-        return arrow::Status::TypeError(
-            "FilterDesigner: signal column '" + signal_col_ +
-            "' must be numeric (got '" + got + "')");
-    }
-    const uint64_t planned_samples =
-        static_cast<uint64_t>(std::max<int64_t>(0, signal_column->length()));
-    if (planned_samples == 0) {
-        return arrow::Status::Invalid("FilterDesigner: signal column is empty");
-    }
-    const uint64_t planned_columns = 3;
-    const auto preflight_estimate = EstimateDenseMaterializationMemory(
-        planned_samples, planned_columns, static_cast<uint64_t>(sizeof(double)));
-    const auto preflight_decision = EvaluateMaterializationMemory(
-        preflight_estimate, GetMaterializationMemoryContext());
-    const std::string preflight_message =
-        BuildSignalReplacementMemoryPreflightMessage(
-            "FilterDesigner", preflight_estimate, preflight_decision);
-    uint64_t planned_cells = 0;
-    if (!CheckedMulU64(planned_samples, planned_columns, planned_cells)) {
-        planned_cells = std::numeric_limits<uint64_t>::max();
-    }
-    if (progress_callback_) {
-        PipelineOperatorProgress event;
-        event.stage = "FilterDesigner memory preflight";
-        event.message = preflight_message;
-        event.status = MaterializationMemoryRiskToProgressStatus(
-            preflight_decision.risk);
-        event.progress = 0.03f;
-        event.estimated_memory_bytes = preflight_estimate.estimated_peak_bytes;
-        event.memory_risk_level = MaterializationMemoryRiskName(
-            preflight_decision.risk);
-        event.processed_items = 0;
-        event.total_items = planned_cells;
-        progress_callback_(event);
-    }
-    if (preflight_decision.blocked) {
-        return arrow::Status::CapacityError(
-            "Materialization blocked: " + preflight_message);
-    }
-
-    ReportProgress(progress_callback_, "Reading signal",
-                   "Reading FilterDesigner signal column '" + signal_col_ + "'",
-                   0.10,
-                   0,
-                   planned_samples,
-                   preflight_estimate.estimated_peak_bytes);
+    ReportProgress(progress_callback_, "Reading signal", "Reading FilterDesigner signal column '" + signal_col_ + "'", 0.10, 0, rows, memory);
     std::vector<double> signal;
-    int read_col_idx = -1;
-    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(
-        input, signal_col_, "FilterDesigner", signal, read_col_idx));
-    col_idx = read_col_idx;
-
-    const uint64_t estimated_signal_bytes =
-        preflight_estimate.estimated_peak_bytes;
-
-    ReportProgress(progress_callback_, "Designing filter",
-                   "Designing " + filter_type_ + " filter",
-                   0.35,
-                   0,
-                   static_cast<uint64_t>(signal.size()),
-                   estimated_signal_bytes);
-    FilterCoefficients filter;
-    if (filter_type_ == "lowpass") {
-        filter = SignalProcessing::DesignLowpass(cutoff_, sample_rate_, taps_);
-    } else if (filter_type_ == "highpass") {
-        filter = SignalProcessing::DesignHighpass(cutoff_, sample_rate_, taps_);
-    } else if (filter_type_ == "bandpass") {
-        filter = SignalProcessing::DesignBandpass(
-            cutoff_, cutoff_high_, sample_rate_, taps_);
-    } else {
-        filter = SignalProcessing::DesignBandstop(
-            cutoff_, cutoff_high_, sample_rate_, taps_);
-    }
+    int col_idx = -1;
+    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, signal_col_, "FilterDesigner", signal, col_idx));
+    ReportProgress(progress_callback_, "Designing filter", "Designing the " + filter_type_ + " filter", 0.35, 0, rows, memory);
+    const FilterCoefficients filter = SignalProcessing::DesignFIR(filter_type_, cutoff_, cutoff_high_, sample_rate_, taps_, window_);
     if (!filter.success) {
-        return arrow::Status::ExecutionError(
-            "FilterDesigner: filter design failed: " + filter.error_message);
+        return arrow::Status::ExecutionError("FilterDesigner: filter design failed: " + filter.error_message);
     }
-
-    ReportProgress(progress_callback_, "Applying filter",
-                   "Applying designed filter to signal",
-                   0.60,
-                   0,
-                   static_cast<uint64_t>(signal.size()),
-                   estimated_signal_bytes);
-    auto filtered = SignalProcessing::ApplyFilter(signal, filter);
+    ReportProgress(progress_callback_, "Applying filter", "Applying the filter, centred", 0.60, 0, rows, memory);
+    const std::vector<double> filtered = SignalProcessing::ApplyFilter(signal, filter);
     if (filtered.size() != signal.size()) {
-        return arrow::Status::ExecutionError(
-            "FilterDesigner: ApplyFilter returned " +
-            std::to_string(filtered.size()) + " samples, expected " +
-            std::to_string(signal.size()));
+        return arrow::Status::ExecutionError("FilterDesigner: ApplyFilter returned " + std::to_string(filtered.size()) + " samples, expected " +
+                                             std::to_string(signal.size()));
     }
+    const std::string name = signal_col_ + "_filtered";
+    ReportProgress(progress_callback_, "Adding column", "Adding " + name, 0.85, rows, rows, memory);
+    ARROW_ASSIGN_OR_RAISE(auto out, AddDoubleColumn(input, name, filtered));
+    spdlog::info("FilterDesigner: type={}, cutoff={}{}, taps={}, window={}, sample_rate={}, {} samples, column '{}' added",
+                 filter_type_, cutoff_, (filter_type_ == "bandpass" || filter_type_ == "bandstop") ? ("/" + std::to_string(cutoff_high_)) : std::string(),
+                 taps_, window_, sample_rate_, signal.size(), name);
+    ReportProgress(progress_callback_, "Complete", "FilterDesigner materialization complete", 1.0, rows, rows, memory);
+    return out;
+}
 
-    ARROW_ASSIGN_OR_RAISE(
-        const int64_t row_count,
-        CheckedSizeForArrow(signal.size(), "FilterDesigner"));
-    std::vector<float> out_floats;
-    out_floats.reserve(filtered.size());
-    for (double value : filtered) {
-        out_floats.push_back(static_cast<float>(value));
+// ============================================================================
+// WaveletTransformOperator: the parts (and the denoised signal) as columns
+// ============================================================================
+
+bool WaveletTransformOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
+    signal_col_.clear();
+    wavelet_ = "db4";
+    level_ = 3;
+    denoise_ = "off";
+    threshold_ = 0.0;
+    auto it = params.find("signal_col");
+    if (it == params.end() || it->second.empty()) {
+        error = "WaveletTransform: 'signal_col' parameter is required";
+        return false;
     }
-    ReportProgress(progress_callback_, "Replacing column",
-                   "Writing filtered signal column",
-                   0.85,
-                   static_cast<uint64_t>(out_floats.size()),
-                   static_cast<uint64_t>(out_floats.size()),
-                   static_cast<uint64_t>(out_floats.size()) * sizeof(float));
-    ARROW_ASSIGN_OR_RAISE(
-        auto new_table,
-        ReplaceColumnWithFloat(input, col_idx, out_floats, row_count));
+    signal_col_ = it->second;
+    if (const auto w = params.find("wavelet"); w != params.end() && !w->second.empty()) {
+        wavelet_ = NormalizeTimeSeriesParameterChoice(w->second);
+        const auto names = SignalProcessing::WaveletNames();
+        if (std::find(names.begin(), names.end(), wavelet_) == names.end()) {
+            error = "WaveletTransform: unknown wavelet '" + wavelet_ + "' (haar, db1..db8, sym2..sym8, coif1..coif5)";
+            return false;
+        }
+    }
+    if (!ReadInt(params, "level", level_, "WaveletTransform", error)) return false;
+    if (level_ < 1) {
+        error = "WaveletTransform: level must be at least 1 (got " + std::to_string(level_) + ")";
+        return false;
+    }
+    if (const auto d = params.find("denoise"); d != params.end() && !d->second.empty()) {
+        denoise_ = NormalizeTimeSeriesParameterChoice(d->second);
+        if (denoise_ != "off" && denoise_ != "soft" && denoise_ != "hard") {
+            error = "WaveletTransform: 'denoise' must be off, soft or hard (got '" + denoise_ + "')";
+            return false;
+        }
+    }
+    if (!ReadDouble(params, "threshold", threshold_, "WaveletTransform", error)) return false;
+    if (threshold_ < 0.0) {
+        error = "WaveletTransform: threshold must be 0 (the universal threshold) or positive";
+        return false;
+    }
+    return true;
+}
 
-    spdlog::info("FilterDesigner: type={}, cutoff={}{}, taps={}, "
-                 "sample_rate={}, {} samples filtered",
-                 filter_type_, cutoff_,
-                 (filter_type_ == "bandpass" || filter_type_ == "bandstop")
-                    ? ("/" + std::to_string(cutoff_high_)) : std::string(),
-                 taps_, sample_rate_, signal.size());
-    ReportProgress(progress_callback_, "Complete",
-                   "FilterDesigner materialization complete",
-                   1.0,
-                   static_cast<uint64_t>(out_floats.size()),
-                   static_cast<uint64_t>(out_floats.size()),
-                   static_cast<uint64_t>(out_floats.size()) * sizeof(float));
-    return new_table;
+arrow::Result<std::shared_ptr<arrow::Table>> WaveletTransformOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    CYXWIZ_PROFILE_ZONE("CyxWiz WaveletTransform Materializer");
+    ARROW_ASSIGN_OR_RAISE(const uint64_t rows, SignalRows(input, signal_col_, "WaveletTransform"));
+    const uint64_t columns = static_cast<uint64_t>(level_) + 2 + (denoise_ == "off" ? 0 : 1);
+    ARROW_ASSIGN_OR_RAISE(const uint64_t memory, Preflight("WaveletTransform", rows, columns, progress_callback_, GetMaterializationMemoryContext()));
+    ReportProgress(progress_callback_, "Reading signal", "Reading WaveletTransform signal column '" + signal_col_ + "'", 0.10, 0, rows, memory);
+    std::vector<double> signal;
+    int col_idx = -1;
+    ARROW_RETURN_NOT_OK(ReadColumnAsDouble(input, signal_col_, "WaveletTransform", signal, col_idx));
+    ReportProgress(progress_callback_, "Decomposing", wavelet_ + " over " + std::to_string(level_) + " levels", 0.30, 0, rows, memory);
+    const WaveletResult coefficients = SignalProcessing::DWT(signal, wavelet_, level_);
+    if (!coefficients.success) {
+        return arrow::Status::ExecutionError("WaveletTransform: " + coefficients.error_message);
+    }
+    // Each part alone, back to the rows: the approximation, then the coarsest detail to the finest.
+    const auto alone = [&](int keep_level) {
+        WaveletResult only = coefficients;
+        if (keep_level >= 0) std::fill(only.approximation.begin(), only.approximation.end(), 0.0);
+        for (int level = 0; level < level_; ++level)
+            if (level != keep_level) std::fill(only.details[static_cast<size_t>(level)].begin(), only.details[static_cast<size_t>(level)].end(), 0.0);
+        return SignalProcessing::IDWT(only);
+    };
+    std::shared_ptr<arrow::Table> out = input;
+    const std::string approximation = signal_col_ + "_A" + std::to_string(level_);
+    ReportProgress(progress_callback_, "Adding parts", "Adding " + approximation, 0.5, 0, rows, memory);
+    std::vector<double> part = alone(-1);
+    if (part.size() != signal.size()) return arrow::Status::ExecutionError("WaveletTransform: the approximation could not be brought back to the rows");
+    ARROW_ASSIGN_OR_RAISE(out, AddDoubleColumn(out, approximation, part));
+    for (int level = level_; level >= 1; --level) {
+        const std::string name = signal_col_ + "_D" + std::to_string(level);
+        part = alone(level - 1);
+        if (part.size() != signal.size()) return arrow::Status::ExecutionError("WaveletTransform: " + name + " could not be brought back to the rows");
+        ARROW_ASSIGN_OR_RAISE(out, AddDoubleColumn(out, name, part));
+    }
+    if (denoise_ != "off") {
+        ReportProgress(progress_callback_, "Denoising", "Thresholding the details", 0.85, 0, rows, memory);
+        const DenoiseResult denoised = SignalProcessing::WaveletDenoise(signal, wavelet_, level_, threshold_, denoise_ == "soft");
+        if (!denoised.success) return arrow::Status::ExecutionError("WaveletTransform: " + denoised.error_message);
+        ARROW_ASSIGN_OR_RAISE(out, AddDoubleColumn(out, signal_col_ + "_denoised", denoised.denoised));
+        spdlog::info("WaveletTransform: {} {} levels, {} denoising at {} (noise {}), {} samples", wavelet_, level_, denoise_, denoised.threshold,
+                     denoised.sigma, signal.size());
+    } else {
+        spdlog::info("WaveletTransform: {} {} levels, {} samples, {} part columns added", wavelet_, level_, signal.size(), level_ + 1);
+    }
+    ReportProgress(progress_callback_, "Complete", "WaveletTransform materialization complete", 1.0, rows, rows, memory);
+    return out;
 }
 
 } // namespace cyxwiz
