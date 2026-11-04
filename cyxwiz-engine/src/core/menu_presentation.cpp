@@ -641,12 +641,13 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Action(f, "tools.hypothesis_test", "Hypothesis Testing", "Opens Data Studio's Tests tab: two groups, paired columns, several groups, one value, two categories."),
                          Action(f, "tools.regression", "Linear / Polynomial Regression", "Opens Data Studio's Regression tab: predict a number column from others, or a curve in one."),
                          Action(f, "tools.distribution_fitter", "Distribution Fitter", "Opens Data Studio's Distribution tab: Normal, Uniform, Exponential and Log-Normal fits.")}));
-        i.push_back(Sub("tools.linear_algebra", "Linear Algebra", "Matrix tools.",
-                        {Tool(f, "tools.matrix_calculator", "Matrix Calculator"),
-                         Tool(f, "tools.eigen", "Eigenvalue Decomposition"),
-                         Tool(f, "tools.svd", "SVD (Singular Value Decomposition)"),
-                         Tool(f, "tools.qr", "QR Decomposition"),
-                         Tool(f, "tools.cholesky", "Cholesky Decomposition")}));
+        i.push_back(Sub("tools.linear_algebra", "Linear Algebra", "Matrices: combine, describe, solve and factor them.",
+                        {Action(f, "tools.matrix_calculator", "Matrix Calculator",
+                                "Opens the Linear Algebra window on A × B: sums, products, the inverse, determinant, rank, A x = b."),
+                         Action(f, "tools.eigen", "Eigenvalue Decomposition", "Opens the Linear Algebra window on Eigen: the directions A only stretches."),
+                         Action(f, "tools.svd", "SVD (Singular Value Decomposition)", "Opens the Linear Algebra window on SVD: A's directions and their strengths."),
+                         Action(f, "tools.qr", "QR Decomposition", "Opens the Linear Algebra window on QR: orthonormal columns times an upper triangle."),
+                         Action(f, "tools.cholesky", "Cholesky Decomposition", "Opens the Linear Algebra window on Cholesky: A = L L^T.")}));
         i.push_back(Sub("tools.signal", "Signal Processing", "Frequencies, filters and wavelets of a number column.",
                         {Action(f, "tools.fft", "FFT (Fourier Transform)", "Opens Data Studio's Signal tab on Spectrum: the frequencies of a column and its peaks."),
                          Action(f, "tools.spectrogram", "Spectrogram (STFT)", "Opens the Signal tab on Spectrogram: the frequencies over time."),

@@ -75,11 +75,7 @@ class ServingPanel;
 class DNNInferencePanel;
 // Model Evaluation panels (Phase 6B)
 // Linear Algebra panels (Phase 7)
-class MatrixCalculatorPanel;
-class EigenDecompPanel;
-class SVDPanel;
-class QRPanel;
-class CholeskyPanel;
+class LinearAlgebraPanel;
 // Optimization & Calculus panels (Phase 9)
 class GradientDescentPanel;
 class ConvexityPanel;
@@ -419,11 +415,7 @@ private:
     // Model Evaluation panels (Phase 6B)
 
     // Linear Algebra panels (Phase 7)
-    std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;
-    std::unique_ptr<cyxwiz::EigenDecompPanel> eigen_decomp_panel_;
-    std::unique_ptr<cyxwiz::SVDPanel> svd_panel_;
-    std::unique_ptr<cyxwiz::QRPanel> qr_panel_;
-    std::unique_ptr<cyxwiz::CholeskyPanel> cholesky_panel_;
+    std::unique_ptr<cyxwiz::LinearAlgebraPanel> linear_algebra_panel_;
 
     // Optimization & Calculus panels (Phase 9)
     std::unique_ptr<cyxwiz::GradientDescentPanel> gradient_descent_panel_;

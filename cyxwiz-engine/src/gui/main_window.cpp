@@ -91,11 +91,7 @@
 #include "panels/hyperparam_search_panel.h"
 #include "panels/serving_panel.h"
 #include "panels/dnn_inference_panel.h"
-#include "panels/matrix_calculator_panel.h"
-#include "panels/eigen_decomp_panel.h"
-#include "panels/svd_panel.h"
-#include "panels/qr_panel.h"
-#include "panels/cholesky_panel.h"
+#include "panels/linear_algebra_panel.h"
 #include "panels/gradient_descent_panel.h"
 #include "panels/convexity_panel.h"
 #include "panels/lp_panel.h"
@@ -670,11 +666,7 @@ MainWindow::MainWindow()
     // Model Evaluation panels (Phase 6B)
 
     // Linear Algebra panels (Phase 7)
-    matrix_calculator_panel_ = std::make_unique<cyxwiz::MatrixCalculatorPanel>();
-    eigen_decomp_panel_ = std::make_unique<cyxwiz::EigenDecompPanel>();
-    svd_panel_ = std::make_unique<cyxwiz::SVDPanel>();
-    qr_panel_ = std::make_unique<cyxwiz::QRPanel>();
-    cholesky_panel_ = std::make_unique<cyxwiz::CholeskyPanel>();
+    linear_algebra_panel_ = std::make_unique<cyxwiz::LinearAlgebraPanel>();
 
     // Optimization & Calculus panels (Phase 9)
     gradient_descent_panel_ = std::make_unique<cyxwiz::GradientDescentPanel>();
@@ -1946,40 +1938,10 @@ MainWindow::MainWindow()
         if (data_studio_panel_) data_studio_panel_->AddTransformStep(gui::NodeType::StandardScaler, {}, true);
     });
 
-    // Linear Algebra callbacks (Phase 7)
-    toolbar_->SetOpenMatrixCalculatorCallback([this]() {
-        if (matrix_calculator_panel_) {
-            matrix_calculator_panel_->Toggle();
-            spdlog::info("Toggled Matrix Calculator panel");
-        }
-    });
-
-    toolbar_->SetOpenEigenDecompCallback([this]() {
-        if (eigen_decomp_panel_) {
-            eigen_decomp_panel_->Toggle();
-            spdlog::info("Toggled Eigen Decomposition panel");
-        }
-    });
-
-    toolbar_->SetOpenSVDCallback([this]() {
-        if (svd_panel_) {
-            svd_panel_->Toggle();
-            spdlog::info("Toggled SVD panel");
-        }
-    });
-
-    toolbar_->SetOpenQRCallback([this]() {
-        if (qr_panel_) {
-            qr_panel_->Toggle();
-            spdlog::info("Toggled QR Decomposition panel");
-        }
-    });
-
-    toolbar_->SetOpenCholeskyCallback([this]() {
-        if (cholesky_panel_) {
-            cholesky_panel_->Toggle();
-            spdlog::info("Toggled Cholesky Decomposition panel");
-        }
+    // Tools > Linear Algebra opens the one Linear Algebra window on that
+    // operation (TOFIX129 D9).
+    toolbar_->SetOpenLinearAlgebraCallback([this](const std::string& operation) {
+        if (linear_algebra_panel_) linear_algebra_panel_->Open(operation);
     });
 
     // Tools > Signal Processing opens Data Studio's Explore tab Signal on that
@@ -2599,16 +2561,8 @@ MainWindow::~MainWindow() {
     convexity_panel_.reset();
     spdlog::info("~MainWindow: gradient_descent_panel_");
     gradient_descent_panel_.reset();
-    spdlog::info("~MainWindow: cholesky_panel_");
-    cholesky_panel_.reset();
-    spdlog::info("~MainWindow: qr_panel_");
-    qr_panel_.reset();
-    spdlog::info("~MainWindow: svd_panel_");
-    svd_panel_.reset();
-    spdlog::info("~MainWindow: eigen_decomp_panel_");
-    eigen_decomp_panel_.reset();
-    spdlog::info("~MainWindow: matrix_calculator_panel_");
-    matrix_calculator_panel_.reset();
+    spdlog::info("~MainWindow: linear_algebra_panel_");
+    linear_algebra_panel_.reset();
     spdlog::info("~MainWindow: serving_panel_");
     serving_panel_.reset();
     spdlog::info("~MainWindow: hyperparam_search_panel_");
@@ -3037,16 +2991,7 @@ void MainWindow::Render() {
     TimedRender("serving", serving_panel_);
     TimedRender("dnn inference", dnn_inference_panel_);
 
-    // Render Clustering panels (Phase 6A)
-
-    // Render Model Evaluation panels (Phase 6B)
-
-    // Linear Algebra panels (Phase 7)
-    TimedRender("matrix calculator", matrix_calculator_panel_);
-    TimedRender("eigen decomp", eigen_decomp_panel_);
-    TimedRender("svd", svd_panel_);
-    TimedRender("qr", qr_panel_);
-    TimedRender("cholesky", cholesky_panel_);
+    TimedRender("linear algebra", linear_algebra_panel_);
 
     // Optimization & Calculus panels (Phase 9)
     TimedRender("gradient descent", gradient_descent_panel_);
@@ -3518,14 +3463,7 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
 
     // Clustering panels (Phase 6A)
 
-    // Model Evaluation panels (Phase 6B)
-
-    // Linear Algebra panels (Phase 7)
-    if (matrix_calculator_panel_) matrix_calculator_panel_->SetVisible(false);
-    if (eigen_decomp_panel_) eigen_decomp_panel_->SetVisible(false);
-    if (svd_panel_) svd_panel_->SetVisible(false);
-    if (qr_panel_) qr_panel_->SetVisible(false);
-    if (cholesky_panel_) cholesky_panel_->SetVisible(false);
+    if (linear_algebra_panel_) linear_algebra_panel_->SetVisible(false);
 
     // Optimization & Calculus panels (Phase 9)
     if (gradient_descent_panel_) gradient_descent_panel_->SetVisible(false);

@@ -686,11 +686,7 @@ set(ENGINE_SOURCES
     src/gui/panels/serving_panel.cpp
     src/gui/panels/dnn_inference_panel.cpp
     src/serving/inference_server.cpp
-    src/gui/panels/matrix_calculator_panel.cpp
-    src/gui/panels/eigen_decomp_panel.cpp
-    src/gui/panels/svd_panel.cpp
-    src/gui/panels/qr_panel.cpp
-    src/gui/panels/cholesky_panel.cpp
+    src/gui/panels/linear_algebra_panel.cpp
     src/gui/panels/gradient_descent_panel.cpp
     src/gui/panels/convexity_panel.cpp
     src/gui/panels/lp_panel.cpp
@@ -977,11 +973,7 @@ set(ENGINE_HEADERS
     src/core/hyperparam_search.h
     src/gui/panels/serving_panel.h
     src/serving/inference_server.h
-    src/gui/panels/matrix_calculator_panel.h
-    src/gui/panels/eigen_decomp_panel.h
-    src/gui/panels/svd_panel.h
-    src/gui/panels/qr_panel.h
-    src/gui/panels/cholesky_panel.h
+    src/gui/panels/linear_algebra_panel.h
     src/gui/panels/gradient_descent_panel.h
     src/gui/panels/convexity_panel.h
     src/gui/panels/lp_panel.h

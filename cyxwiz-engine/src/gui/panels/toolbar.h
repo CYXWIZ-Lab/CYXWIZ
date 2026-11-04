@@ -249,11 +249,8 @@ public:
     void SetOpenFeatureScalingCallback(std::function<void()> cb) { open_feature_scaling_callback_ = cb; }
 
     // Linear Algebra callbacks (Phase 7)
-    void SetOpenMatrixCalculatorCallback(std::function<void()> cb) { open_matrix_calculator_callback_ = cb; }
-    void SetOpenEigenDecompCallback(std::function<void()> cb) { open_eigen_decomp_callback_ = cb; }
-    void SetOpenSVDCallback(std::function<void()> cb) { open_svd_callback_ = cb; }
-    void SetOpenQRCallback(std::function<void()> cb) { open_qr_callback_ = cb; }
-    void SetOpenCholeskyCallback(std::function<void()> cb) { open_cholesky_callback_ = cb; }
+    // Tools > Linear Algebra: the operation to open the window on ("multiply", "eigen", "svd", "qr", "cholesky").
+    void SetOpenLinearAlgebraCallback(std::function<void(const std::string&)> cb) { open_linear_algebra_callback_ = std::move(cb); }
 
     // Signal Processing callbacks (Phase 8)
     void SetOpenFFTCallback(std::function<void()> cb) { open_fft_callback_ = cb; }
@@ -735,12 +732,7 @@ private:
     std::function<void()> open_boxcox_callback_;
     std::function<void()> open_feature_scaling_callback_;
 
-    // Linear Algebra callbacks (Phase 7)
-    std::function<void()> open_matrix_calculator_callback_;
-    std::function<void()> open_eigen_decomp_callback_;
-    std::function<void()> open_svd_callback_;
-    std::function<void()> open_qr_callback_;
-    std::function<void()> open_cholesky_callback_;
+    std::function<void(const std::string&)> open_linear_algebra_callback_;
 
     // Signal Processing callbacks (Phase 8)
     std::function<void()> open_fft_callback_;

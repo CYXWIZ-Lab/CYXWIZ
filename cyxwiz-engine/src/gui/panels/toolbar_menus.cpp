@@ -511,11 +511,11 @@ void ToolbarPanel::BuildActionHandlers() {
     call("tools.hypothesis_test", open_hypothesis_test_callback_);
     call("tools.regression", open_regression_callback_);
     call("tools.distribution_fitter", open_distribution_fitter_callback_);
-    call("tools.matrix_calculator", open_matrix_calculator_callback_);
-    call("tools.eigen", open_eigen_decomp_callback_);
-    call("tools.svd", open_svd_callback_);
-    call("tools.qr", open_qr_callback_);
-    call("tools.cholesky", open_cholesky_callback_);
+    for (const auto& [id, operation] : {std::pair<const char*, const char*>{"tools.matrix_calculator", "multiply"},
+                                        {"tools.eigen", "eigen"}, {"tools.svd", "svd"}, {"tools.qr", "qr"}, {"tools.cholesky", "cholesky"}})
+        h[id] = [this, operation = std::string(operation)](const std::string&) {
+            if (open_linear_algebra_callback_) open_linear_algebra_callback_(operation);
+        };
     call("tools.fft", open_fft_callback_);
     call("tools.spectrogram", open_spectrogram_callback_);
     call("tools.filter_designer", open_filter_designer_callback_);
