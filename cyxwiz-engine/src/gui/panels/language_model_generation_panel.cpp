@@ -49,7 +49,9 @@ void TextBox(const char* id, const std::string& text, const ImVec4& background, 
 // Links laid out from the right edge of the current line, in their own ID
 // scope `id` (two rows may both have "Copy"); `clicked` gets the index of
 // the one clicked.
-bool RightLinks(const char* id, const std::vector<const char*>& labels, int* clicked) {
+// `blocked[i]`, when given and not empty, turns link i off with that reason on hover.
+bool RightLinks(const char* id, const std::vector<const char*>& labels, int* clicked,
+                const std::vector<std::string>& blocked = {}) {
     float width = 0.0f;
     for (const char* label : labels) width += ImGui::CalcTextSize(label).x + 14.0f;
     ui::SameLineRight(width);
@@ -57,10 +59,12 @@ bool RightLinks(const char* id, const std::vector<const char*>& labels, int* cli
     bool any = false;
     for (size_t i = 0; i < labels.size(); ++i) {
         if (i) ImGui::SameLine(0.0f, 14.0f);
-        if (ui::LinkButton(labels[i])) {
+        const std::string reason = i < blocked.size() ? blocked[i] : std::string();
+        if (ui::LinkButton(labels[i], reason.empty())) {
             *clicked = static_cast<int>(i);
             any = true;
         }
+        if (!reason.empty()) ui::Tooltip(reason.c_str());
     }
     ImGui::PopID();
     return any;
@@ -316,13 +320,6 @@ void LanguageModelGenerationPanel::RenderDetails() {
 
 void LanguageModelGenerationPanel::RenderRawTokenIds() {
     const auto& t = ui::CurrentTokens();
-    if (raw_run_ && raw_run_->done.load()) {
-        std::lock_guard<std::mutex> lock(raw_run_->mutex);
-        raw_result_ = raw_run_->ok ? "Generated IDs: " + JoinIds(raw_run_->reply.new_token_ids) + "\nDecodes to: " +
-                                         raw_run_->reply.text + "\n" + LanguageModelReplyStopLabel(raw_run_->reply)
-                                   : raw_run_->error;
-        raw_run_.reset();
-    }
     ImGui::Spacing();
     ImGui::TextColored(t.text_bright, "Raw token IDs");
     ImGui::SameLine();
@@ -533,25 +530,33 @@ void LanguageModelGenerationPanel::RenderReplyFooter(size_t index, bool latest) 
     const bool saw = saw_open_.count(index) > 0;
     const bool tokens = tokens_reply_ == static_cast<int>(index);
     std::vector<const char*> links = {"Copy"};
-    if (latest && !run_) links.push_back(Chat() ? "Regenerate" : "Generate again");
-    if (latest && !run_ && !Chat()) links.push_back("Continue further");
+    std::vector<std::string> blocked = {""};
+    if (latest && !run_) {
+        // Off for the same reasons as Send (another run, training on this model, settings).
+        const std::string blocker = SendBlocker();
+        links.push_back(Chat() ? "Regenerate" : "Generate again");
+        blocked.push_back(blocker);
+        if (!Chat()) {
+            links.push_back("Continue further");
+            blocked.push_back(blocker);
+        }
+    }
     links.push_back(saw ? "Hide what the model saw" : "What the model saw");
     links.push_back(tokens ? "Hide tokens" : "Tokens");
     int clicked = -1;
-    if (RightLinks("##reply_links", links, &clicked)) {
+    if (RightLinks("##reply_links", links, &clicked, blocked)) {
         const std::string label = links[static_cast<size_t>(clicked)];
         if (label == "Copy") {
             ImGui::SetClipboardText(reply.text.c_str());
         } else if (label == "Regenerate" || label == "Generate again") {
             const std::string message = reply.message;
-            replies_.pop_back();
-            saw_open_.erase(index);
-            if (tokens_reply_ == static_cast<int>(index)) tokens_reply_ = -1;
-            Start(message);
+            if (Start(message, true)) {
+                saw_open_.erase(index);
+                if (tokens_reply_ == static_cast<int>(index)) tokens_reply_ = -1;
+            }
         } else if (label == "Continue further") {
-            message_ = reply.message + reply.text;
-            const std::string message = message_;
-            Start(message);
+            const std::string message = reply.message + reply.text;
+            if (Start(message)) message_ = message;
         } else if (label == "What the model saw" || label == "Hide what the model saw") {
             if (saw) saw_open_.erase(index);
             else saw_open_.insert(index);
@@ -726,8 +731,7 @@ void LanguageModelGenerationPanel::RenderComposer() {
     }
     if ((ui::PrimaryButton(primary, blocker.empty(), blocker.c_str()) || entered) && blocker.empty()) {
         const std::string message = message_;
-        if (Chat()) message_.clear();
-        Start(message);
+        if (Start(message) && Chat()) message_.clear();
     }
     ImGui::EndChild();
 }
@@ -853,12 +857,6 @@ void LanguageModelGenerationPanel::RenderSettingsRail() {
 
 void LanguageModelGenerationPanel::RenderSpeed() {
     const auto& t = ui::CurrentTokens();
-    if (speed_run_ && speed_run_->done.load()) {
-        std::lock_guard<std::mutex> lock(speed_run_->mutex);
-        speed_text_ = speed_run_->text;
-        speed_failed_ = speed_run_->failed;
-        speed_run_.reset();
-    }
     ImGui::TextColored(t.text_bright, "Speed");
     const auto* sequential = model_->model->AsSequentialModel();
     const bool cache = sequential && sequential->SupportsIncrementalDecoding();
@@ -931,11 +929,17 @@ void LanguageModelGenerationPanel::StartSpeedMeasurement() {
         owner);
 }
 
-void LanguageModelGenerationPanel::Start(const std::string& message) {
-    if (!model_ || run_) return;
+bool LanguageModelGenerationPanel::Start(const std::string& message, bool replace_last) {
+    if (const auto blocker = SendBlocker(); !blocker.empty()) {
+        note_ = blocker;
+        note_is_error_ = true;
+        return false;
+    }
+    std::vector<LanguageModelReply> earlier = replies_;
+    if (replace_last && !earlier.empty()) earlier.pop_back();
     LanguageModelPrompt prompt;
     try {
-        prompt = BuildLanguageModelPrompt(settings_, LanguageModelHistory(replies_), send_history_, message,
+        prompt = BuildLanguageModelPrompt(settings_, LanguageModelHistory(earlier), send_history_, message,
                                           [this](const std::string& text) { return model_->tokenizer->Encode(text); },
                                           static_cast<size_t>(std::max(0, settings_.context)));
     } catch (const std::exception& error) {
@@ -944,8 +948,9 @@ void LanguageModelGenerationPanel::Start(const std::string& message) {
     if (!prompt.error.empty()) {
         note_ = prompt.error;
         note_is_error_ = true;
-        return;
+        return false;
     }
+    if (replace_last && !replies_.empty()) replies_.pop_back();
     auto state = std::make_shared<RunState>();
     state->reply.message = message;
     state->max_new_tokens = static_cast<int>(prompt.new_tokens_fit);
@@ -988,9 +993,25 @@ void LanguageModelGenerationPanel::Start(const std::string& message) {
             state->done.store(true);
         },
         owner);
+    return true;
 }
 
+// Every frame the window draws: the reply, the raw-IDs run (Details may be
+// closed) and the speed measurement, when done.
 void LanguageModelGenerationPanel::PollRun() {
+    if (raw_run_ && raw_run_->done.load()) {
+        std::lock_guard<std::mutex> lock(raw_run_->mutex);
+        raw_result_ = raw_run_->ok ? "Generated IDs: " + JoinIds(raw_run_->reply.new_token_ids) + "\nDecodes to: " +
+                                         raw_run_->reply.text + "\n" + LanguageModelReplyStopLabel(raw_run_->reply)
+                                   : raw_run_->error;
+        raw_run_.reset();
+    }
+    if (speed_run_ && speed_run_->done.load()) {
+        std::lock_guard<std::mutex> lock(speed_run_->mutex);
+        speed_text_ = speed_run_->text;
+        speed_failed_ = speed_run_->failed;
+        speed_run_.reset();
+    }
     if (!run_ || !run_->done.load()) return;
     bool added = false;
     {

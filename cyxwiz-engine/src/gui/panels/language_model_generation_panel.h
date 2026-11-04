@@ -57,7 +57,10 @@ private:
     void RenderSpeed();
     void StartSpeedMeasurement();
     void PollRun();
-    void Start(const std::string& message);
+    // Starts a reply to `message`; `replace_last` sends the history without the
+    // last reply and removes it once the prompt is built (Regenerate). False,
+    // with the reason in the note, when it could not start.
+    bool Start(const std::string& message, bool replace_last = false);
     void SaveConversation();
     void SetModel(std::shared_ptr<LoadedLanguageModel> model);
     bool Chat() const;
