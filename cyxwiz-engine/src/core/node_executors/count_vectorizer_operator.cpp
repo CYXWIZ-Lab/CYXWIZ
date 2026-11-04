@@ -20,7 +20,6 @@
 #include <numeric>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace cyxwiz {
@@ -34,8 +33,9 @@ namespace {
 
 struct CountTermStats {
     std::string term;
-    int doc_freq = 0;
-    int corpus_count = 0;
+    int64_t doc_freq = 0;
+    int64_t corpus_count = 0;
+    int32_t id = -1;  // the counted term (fit), or -1 (fitted state)
 };
 
 bool IsStringLikeColumn(const std::shared_ptr<arrow::ChunkedArray>& column,
@@ -353,39 +353,45 @@ CountVectorizerOperator::ApplyConfigured(
     const std::vector<bool> fit_row = TrainRowMask(input);
     const size_t fit_n = fit_row.empty()
         ? n : static_cast<size_t>(std::count(fit_row.begin(), fit_row.end(), true));
-    std::vector<std::unordered_map<std::string, int>> doc_counts;
-    std::unordered_map<std::string, CountTermStats> term_stats_by_name;
-    doc_counts.reserve(n);
-
-    for (size_t row = 0; row < texts.size(); ++row) {
-        if ((row & 1023) == 0) {
-            ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-        }
-        // The shared word rule (Data Studio's Text tab counts the same).
-        const auto tokens = TextProcessing::Terms(
-            texts[row], stop_words_ == "english", ngram_min_, ngram_max_);
-        std::unordered_map<std::string, int> counts;
-        for (const auto& token : tokens) {
-            counts[token]++;
-        }
-        if (!state_options_.IsTransformOnly() && (fit_row.empty() || fit_row[row])) {
-            for (const auto& pair : counts) {
-                auto& stats = term_stats_by_name[pair.first];
-                stats.term = pair.first;
-                stats.doc_freq++;
-                stats.corpus_count += pair.second;
-            }
-        }
-        doc_counts.push_back(std::move(counts));
+    // The shared word rule (Data Studio's Text tab counts the same).
+    text_vectorizer_contract::CountedTerms counted;
+    arrow::Status cancelled = arrow::Status::OK();
+    try {
+        const bool counted_all = text_vectorizer_contract::CountTerms(
+            texts, stop_words_ == "english", ngram_min_, ngram_max_,
+            [&](size_t row) {
+                return !state_options_.IsTransformOnly() &&
+                       (fit_row.empty() || fit_row[row]);
+            },
+            [&](size_t) {
+                cancelled = CheckCancellation(GetName());
+                return cancelled.ok();
+            },
+            counted);
+        if (!counted_all) return cancelled;
+    } catch (const std::bad_alloc&) {
+        return arrow::Status::CapacityError(
+            "CountVectorizer: insufficient memory while counting terms");
     }
 
+    // The terms to choose from: the fitted ones, or those of the fit rows.
+    std::vector<CountTermStats> all_terms;
     if (state_options_.IsTransformOnly()) {
-        for (auto& term : fitted_terms) {
-            term_stats_by_name.emplace(term.term, std::move(term));
+        all_terms = std::move(fitted_terms);
+    } else {
+        for (size_t id = 0; id < counted.terms.size(); ++id) {
+            if (counted.doc_freq[id] == 0) {
+                continue;
+            }
+            CountTermStats stats;
+            stats.term = std::move(counted.terms[id]);
+            stats.doc_freq = counted.doc_freq[id];
+            stats.corpus_count = counted.corpus_count[id];
+            stats.id = static_cast<int32_t>(id);
+            all_terms.push_back(std::move(stats));
         }
     }
-
-    const size_t full_vocab = term_stats_by_name.size();
+    const size_t full_vocab = all_terms.size();
     if (n == 0 || full_vocab == 0) {
         return arrow::Status::Invalid(
             "CountVectorizer: empty corpus or empty vocabulary "
@@ -403,11 +409,6 @@ CountVectorizerOperator::ApplyConfigured(
     // Match sklearn max_features selection: keep the terms with the highest
     // corpus counts, then use document frequency and term name as stable
     // tie-breakers.
-    std::vector<CountTermStats> all_terms;
-    all_terms.reserve(full_vocab);
-    for (auto& pair : term_stats_by_name) {
-        all_terms.push_back(std::move(pair.second));
-    }
     std::sort(all_terms.begin(), all_terms.end(),
               [](const CountTermStats& a, const CountTermStats& b) {
                   return a.term < b.term;
@@ -418,7 +419,7 @@ CountVectorizerOperator::ApplyConfigured(
     if (full_vocab > kept) {
         std::partial_sort(
             all_terms.begin(),
-            all_terms.begin() + kept,
+            all_terms.begin() + static_cast<std::ptrdiff_t>(kept),
             all_terms.end(),
             [](const CountTermStats& a, const CountTermStats& b) {
                 if (a.corpus_count != b.corpus_count) {
@@ -434,26 +435,28 @@ CountVectorizerOperator::ApplyConfigured(
                   [](const CountTermStats& a, const CountTermStats& b) {
                       return a.term < b.term;
                   });
-    } else {
-        all_terms.resize(kept);
     }
 
-    std::unordered_map<std::string, size_t> kept_index_by_term;
-    kept_index_by_term.reserve(kept);
-    for (size_t i = 0; i < kept; ++i) {
-        kept_index_by_term[all_terms[i].term] = i;
-    }
-    uint64_t expected_nnz = 0;
-    for (const auto& counts : doc_counts) {
-        for (const auto& [term, _] : counts) {
-            if (kept_index_by_term.find(term) != kept_index_by_term.end()) {
-                if (expected_nnz == (std::numeric_limits<uint64_t>::max)()) {
-                    return arrow::Status::CapacityError(
-                        "CountVectorizer: sparse nnz count overflow");
-                }
-                ++expected_nnz;
-            }
+    // Each counted term's column: by id after a fit, by name for a fitted state.
+    std::vector<int32_t> column_of;
+    if (state_options_.IsTransformOnly()) {
+        std::vector<std::string> kept_names;
+        kept_names.reserve(kept);
+        for (const auto& term : all_terms) {
+            kept_names.push_back(term.term);
         }
+        column_of = text_vectorizer_contract::ColumnsOf(counted, kept_names);
+    } else {
+        column_of.assign(counted.terms.size(), -1);
+        for (size_t j = 0; j < all_terms.size(); ++j) {
+            column_of[static_cast<size_t>(all_terms[j].id)] =
+                static_cast<int32_t>(j);
+        }
+    }
+    counted.terms = {};
+    uint64_t expected_nnz = 0;
+    for (const int32_t id : counted.ids) {
+        if (column_of[static_cast<size_t>(id)] >= 0) ++expected_nnz;
     }
     constexpr uint64_t kSparseIndexMax = static_cast<uint64_t>(
         (std::numeric_limits<int32_t>::max)());
@@ -554,16 +557,19 @@ CountVectorizerOperator::ApplyConfigured(
             ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         }
         std::vector<TextFeatureEntry> row_entries;
-        const auto& counts = doc_counts[r];
-        row_entries.reserve(std::min(counts.size(), kept));
-        for (const auto& pair : counts) {
-            auto kept_it = kept_index_by_term.find(pair.first);
-            if (kept_it == kept_index_by_term.end()) {
+        const int64_t begin = counted.starts[r];
+        const int64_t end = counted.starts[r + 1];
+        row_entries.reserve(std::min(static_cast<size_t>(end - begin), kept));
+        for (int64_t k = begin; k < end; ++k) {
+            const int32_t column =
+                column_of[static_cast<size_t>(counted.ids[static_cast<size_t>(k)])];
+            if (column < 0) {
                 continue;
             }
             row_entries.push_back({
-                static_cast<int32_t>(kept_it->second),
-                binary_ ? 1.0f : static_cast<float>(pair.second)});
+                column,
+                binary_ ? 1.0f
+                        : static_cast<float>(counted.counts[static_cast<size_t>(k)])});
         }
         ARROW_RETURN_NOT_OK(AppendNormalizedTextFeatureRow(
             feature_matrix, std::move(row_entries), norm_));

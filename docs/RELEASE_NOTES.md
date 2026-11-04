@@ -122,3 +122,8 @@ private Data Studio tickets (`tofix*/track*`).
   built, and Send keeps a chat message that could not start.
 - Data Studio Signal > Spectrogram labels its frequencies beside the cells,
   not on top of them.
+- The TF-IDF and Count Vectorizer nodes and Explore > Text's Terms count a
+  large column in a fraction of the memory: each term is kept once, and a
+  row holds its term ids and counts, not a table of strings (300,000 rows of
+  words and word pairs, min_df 1: 1.8 GB instead of 6.3 GB, and 29 s instead
+  of 102 s, with the same figures).

@@ -15,8 +15,10 @@
 #include <cmath>
 #include <numeric>
 #include <random>
+#include <limits>
 #include <set>
 #include <sstream>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -251,10 +253,8 @@ TermsAnswer RunTerms(const std::string& table, const TermsRequest& request, cons
     const int ngram_max = std::clamp(request.ngram_max, 1, 2);
     const int min_df = std::max(1, request.min_df);
 
-    // The counts per row and the rows each term is in, as the TF-IDF node counts them.
-    std::vector<std::unordered_map<std::string, int>> counts(d.texts.size());
-    std::unordered_map<std::string, int64_t> df;
-    std::unordered_set<std::string> seen;
+    // The text quality the terms show.
+    std::unordered_set<std::string_view> seen;
     for (size_t i = 0; i < d.texts.size(); ++i) {
         if ((i & 1023) == 0 && Stopped(stop)) return a.error = "Cancelled.", a;
         const std::string& t = d.texts[i];
@@ -266,35 +266,55 @@ TermsAnswer RunTerms(const std::string& table, const TermsRequest& request, cons
                 ++a.broken;
                 break;
             }
-        for (const std::string& term : TextProcessing::Terms(t, request.stop_words, 1, ngram_max)) ++counts[i][term];
-        for (const auto& [term, n] : counts[i]) ++df[term];
     }
+    seen = {};
+    // The counts per row and the rows each term is in, as the TF-IDF node counts them.
+    contract::CountedTerms counted;
+    if (!contract::CountTerms(
+            d.texts, request.stop_words, 1, ngram_max, [](size_t) { return true; }, [&](size_t) { return !Stopped(stop); }, counted))
+        return a.error = "Cancelled.", a;
     // The vocabulary: terms in at least min_df rows, in term order.
+    std::vector<int32_t> order;
+    for (size_t id = 0; id < counted.terms.size(); ++id)
+        if (counted.doc_freq[id] >= min_df) order.push_back(static_cast<int32_t>(id));
+    std::sort(order.begin(), order.end(),
+              [&](int32_t x, int32_t y) { return counted.terms[static_cast<size_t>(x)] < counted.terms[static_cast<size_t>(y)]; });
+    a.terms = order.size();
+    if (order.empty()) return a.error = "No term is in " + std::to_string(min_df) + " rows or more; lower \"in at least\".", a;
+    std::vector<int32_t> column(counted.terms.size(), -1);
     std::vector<std::string> vocab;
-    for (const auto& [term, n] : df)
-        if (n >= min_df) vocab.push_back(term);
-    std::sort(vocab.begin(), vocab.end());
-    a.terms = vocab.size();
-    if (vocab.empty()) return a.error = "No term is in " + std::to_string(min_df) + " rows or more; lower \"in at least\".", a;
-    std::unordered_map<std::string, int> column;
-    column.reserve(vocab.size());
-    for (size_t j = 0; j < vocab.size(); ++j) column.emplace(vocab[j], static_cast<int>(j));
-    std::vector<double> idf(vocab.size());
-    for (size_t j = 0; j < vocab.size(); ++j)
-        idf[j] = contract::Idf(static_cast<double>(d.texts.size()), static_cast<double>(df[vocab[j]]), true);
+    vocab.reserve(order.size());
+    std::vector<double> idf(order.size());
+    for (size_t j = 0; j < order.size(); ++j) {
+        const size_t id = static_cast<size_t>(order[j]);
+        column[id] = static_cast<int32_t>(j);
+        vocab.push_back(std::move(counted.terms[id]));
+        idf[j] = contract::Idf(static_cast<double>(d.texts.size()), static_cast<double>(counted.doc_freq[id]), true);
+    }
+    counted.terms = {};
+    counted.doc_freq = {};
+    counted.corpus_count = {};
+    order = {};
+    std::vector<int32_t>& ids = counted.ids;
+    const std::vector<int32_t>& tf = counted.counts;
+    const std::vector<int64_t>& starts = counted.starts;
 
-    // Each row's TF-IDF (count x idf, normalised), as CSR.
-    std::vector<int> row_offsets{0}, columns;
-    std::vector<float> values;
+    // Each row's TF-IDF (count x idf, normalised), as CSR: the ids become columns in place.
+    std::vector<int> row_offsets{0};
+    row_offsets.reserve(d.texts.size() + 1);
+    std::vector<double> values;
+    values.reserve(ids.size());
     std::vector<double> norms;
+    norms.reserve(d.texts.size());
     std::vector<double> mean(vocab.size(), 0.0);
-    std::vector<std::vector<double>> group_sum(d.groups.size(), std::vector<double>(vocab.size(), 0.0));
+    std::vector<std::pair<int, double>> row;
+    size_t kept = 0;
     for (size_t i = 0; i < d.texts.size(); ++i) {
         if ((i & 1023) == 0 && Stopped(stop)) return a.error = "Cancelled.", a;
-        std::vector<std::pair<int, double>> row;
-        for (const auto& [term, n] : counts[i]) {
-            const auto it = column.find(term);
-            if (it != column.end()) row.emplace_back(it->second, static_cast<double>(n) * idf[static_cast<size_t>(it->second)]);
+        row.clear();
+        for (int64_t k = starts[i]; k < starts[i + 1]; ++k) {
+            const int32_t j = column[static_cast<size_t>(ids[static_cast<size_t>(k)])];
+            if (j >= 0) row.emplace_back(j, static_cast<double>(tf[static_cast<size_t>(k)]) * idf[static_cast<size_t>(j)]);
         }
         std::sort(row.begin(), row.end());
         double norm = 0.0;
@@ -306,14 +326,18 @@ TermsAnswer RunTerms(const std::string& table, const TermsRequest& request, cons
         for (const auto& [j, v] : row) {
             length += v * v;
             mean[static_cast<size_t>(j)] += v;
-            if (!d.group_of.empty()) group_sum[static_cast<size_t>(d.group_of[i])][static_cast<size_t>(j)] += v;
-            columns.push_back(j);
-            values.push_back(static_cast<float>(v));
+            ids[kept++] = j;
+            values.push_back(v);
         }
         norms.push_back(std::sqrt(length));
-        row_offsets.push_back(static_cast<int>(columns.size()));
-        counts[i].clear();
+        if (kept > static_cast<size_t>(std::numeric_limits<int>::max()))
+            return a.error = "Too many terms over the rows to compare them (over 2^31); raise \"in at least\" or use words only.", a;
+        row_offsets.push_back(static_cast<int>(kept));
     }
+    ids.resize(kept);
+    const std::vector<int32_t>& columns = ids;
+    counted.counts = {};
+    counted.starts = {};
     const double n_rows = static_cast<double>(d.texts.size());
     for (double& m : mean) m /= n_rows;
     const auto best = [&](const std::vector<double>& score, const std::vector<double>* base, size_t k) {
@@ -333,8 +357,15 @@ TermsAnswer RunTerms(const std::string& table, const TermsRequest& request, cons
     };
     const size_t top = static_cast<size_t>(std::max(1, request.top));
     a.overall = best(mean, nullptr, top);
+    // Each group's mean, one group at a time (one vector of the vocabulary's size, not one per group).
+    std::vector<double> m;
     for (size_t g = 0; g < d.groups.size(); ++g) {
-        std::vector<double> m = group_sum[g];
+        if (Stopped(stop)) return a.error = "Cancelled.", a;
+        m.assign(vocab.size(), 0.0);
+        for (size_t i = 0; i < d.texts.size(); ++i)
+            if (static_cast<size_t>(d.group_of[i]) == g)
+                for (int k = row_offsets[i]; k < row_offsets[i + 1]; ++k)
+                    m[static_cast<size_t>(columns[static_cast<size_t>(k)])] += values[static_cast<size_t>(k)];
         for (double& v : m) v /= static_cast<double>(std::max<int64_t>(1, d.group_rows[g]));
         a.distinctive.push_back(best(m, &mean, top));
     }
@@ -352,8 +383,11 @@ TermsAnswer RunTerms(const std::string& table, const TermsRequest& request, cons
     if (!columns.empty() && norms[r] > 0) {
         std::vector<float> similarity;
         try {
+            std::vector<float> device_values;
+            device_values.reserve(values.size());
+            for (const double x : values) device_values.push_back(static_cast<float>(x));
             const af::array csr = af::sparse(static_cast<dim_t>(d.texts.size()), static_cast<dim_t>(vocab.size()),
-                                             af::array(static_cast<dim_t>(values.size()), values.data()),
+                                             af::array(static_cast<dim_t>(device_values.size()), device_values.data()),
                                              af::array(static_cast<dim_t>(row_offsets.size()), row_offsets.data()),
                                              af::array(static_cast<dim_t>(columns.size()), columns.data()), AF_STORAGE_CSR);
             std::vector<float> dense;
