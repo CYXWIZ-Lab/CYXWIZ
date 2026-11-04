@@ -14,6 +14,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 - [pycyxwiz.nodes](#pycyxwiznodes)
 - [pycyxwiz.signal](#pycyxwizsignal)
 - [pycyxwiz.stats](#pycyxwizstats)
+- [pycyxwiz.text](#pycyxwiztext)
 - [pycyxwiz.timeseries](#pycyxwiztimeseries)
 
 ## pycyxwiz
@@ -1614,6 +1615,20 @@ Statistics and clustering functions
 | `roc(arg0: Sequence[int], arg1: Sequence[float]) -> dict` | ROC curve and AUC |
 | `silhouette(arg0: Sequence[Sequence[float]], arg1: Sequence[int]) -> float` | Silhouette score |
 | `tsne(data: Sequence[Sequence[float]], n_dims: int = 2, perplexity: int = 30) -> list[list[float]]` | t-SNE embedding |
+
+## pycyxwiz.text
+
+Words, terms, stop words, Porter stems and VADER sentiment
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `english_stop_words() -> list[str]` | The English stop words, sorted: scikit-learn's ENGLISH_STOP_WORDS (318) and their contractions |
+| `stem(word: str) -> str` | The Porter (1980) stem of a word, lower-cased first (NLTK's PorterStemmer(mode='ORIGINAL_ALGORITHM')) |
+| `terms(text: str, stop_words: str \| None = 'english', ngram_range: tuple[int, int] = (1, 1)) -> list[str]` | The terms of a text as the TF-IDF and Count Vectorizer nodes count them: the words, the English stop words left out first when asked, then the word n-grams joined by a space |
+| `vader(text: str) -> dict` | VADER sentiment as vaderSentiment 3.3.2's polarity_scores, unrounded, with each word's valence after the rules |
+| `words(text: str) -> list[str]` | The words of a text: lower-cased runs of letters and digits, two or more long, an apostrophe between two kept (Python: re.finditer(r"[^\W_]+(?:'[^\W_]+)*", text), lower-cased) |
 
 ## pycyxwiz.timeseries
 

@@ -715,10 +715,11 @@ if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
     target_sources(pycyxwiz PRIVATE ${_pycyxwiz_nodes_inc})
     target_include_directories(pycyxwiz PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
-    # Python subclasses of pycyxwiz.Module (TOFIX125 P3): run with the Python
+    # Python subclasses of pycyxwiz.Module (TOFIX125 P3) and pycyxwiz.text
+    # against the text truth fixture (TOFIX129 D8): run with the Python
     # pycyxwiz is built for; the backend DLLs are in the runtime folder.
     if(Python3_EXECUTABLE)
-        foreach(_pycyxwiz_test python_modules python_nodes python_bundle)
+        foreach(_pycyxwiz_test python_modules python_nodes python_bundle python_text)
             add_test(NAME pycyxwiz_${_pycyxwiz_test}
                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_${_pycyxwiz_test}.py
                         $<TARGET_FILE_DIR:pycyxwiz> ${CMAKE_BINARY_DIR}/bin/$<CONFIG>)

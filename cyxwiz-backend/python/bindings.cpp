@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <filesystem>
 #include <cstdlib>
@@ -1973,6 +1974,49 @@ PYBIND11_MODULE(pycyxwiz, m) {
             "auc"_a = result.auc
         );
     }, "ROC curve and AUC");
+
+    // ============================================================================
+    // TEXT SUBMODULE
+    // ============================================================================
+    // The rules Data Studio's Text tab and the text nodes use (TOFIX129 D8),
+    // checked against Python, scikit-learn, NLTK and vaderSentiment.
+    auto text = m.def_submodule("text", "Words, terms, stop words, Porter stems and VADER sentiment");
+
+    text.def("words", &cyxwiz::TextProcessing::Words,
+             "The words of a text: lower-cased runs of letters and digits, two or more long, an apostrophe between "
+             "two kept (Python: re.finditer(r\"[^\\W_]+(?:'[^\\W_]+)*\", text), lower-cased)",
+             py::arg("text"));
+
+    text.def("terms", [](const std::string& value, const std::optional<std::string>& stop_words, std::pair<int, int> ngram_range) {
+        if (stop_words && *stop_words != "english" && *stop_words != "none")
+            throw std::invalid_argument("stop_words must be 'english', 'none' or None");
+        if (ngram_range.first < 1 || ngram_range.second < ngram_range.first)
+            throw std::invalid_argument("ngram_range must be (min, max) with 1 <= min <= max");
+        return cyxwiz::TextProcessing::Terms(value, stop_words && *stop_words == "english", ngram_range.first, ngram_range.second);
+    }, "The terms of a text as the TF-IDF and Count Vectorizer nodes count them: the words, the English stop words "
+       "left out first when asked, then the word n-grams joined by a space",
+       py::arg("text"), py::arg("stop_words") = "english", py::arg("ngram_range") = std::make_pair(1, 1));
+
+    text.def("english_stop_words", []() {
+        const auto& stop = cyxwiz::TextProcessing::GetStopwords();
+        return std::vector<std::string>(stop.begin(), stop.end());
+    }, "The English stop words, sorted: scikit-learn's ENGLISH_STOP_WORDS (318) and their contractions");
+
+    text.def("stem", &cyxwiz::TextProcessing::Stem,
+             "The Porter (1980) stem of a word, lower-cased first (NLTK's PorterStemmer(mode='ORIGINAL_ALGORITHM'))",
+             py::arg("word"));
+
+    text.def("vader", [](const std::string& value) {
+        const auto scores = cyxwiz::TextProcessing::Vader(value);
+        return py::dict(
+            "neg"_a = scores.negative,
+            "neu"_a = scores.neutral,
+            "pos"_a = scores.positive,
+            "compound"_a = scores.compound,
+            "words"_a = scores.words
+        );
+    }, "VADER sentiment as vaderSentiment 3.3.2's polarity_scores, unrounded, with each word's valence after the rules",
+       py::arg("text"));
 
     // ============================================================================
     // TIME SERIES SUBMODULE

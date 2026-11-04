@@ -59,6 +59,7 @@ The binding is a compiled native extension built via pybind11 from `cyxwiz-backe
 - `pycyxwiz.signal`
 - `pycyxwiz.stats`
 - `pycyxwiz.timeseries`
+- `pycyxwiz.text`
 - `pycyxwiz.distributed`
 
 The binding is a thin layer over the C++ API. Prefer:
@@ -1090,10 +1091,49 @@ Usage notes:
 
 ---
 
-## 9. Tokenization
+## 9. Text and Tokenization
+
+### 9.1 Words, terms and sentiment (`pycyxwiz.text`)
+
+The rules Data Studio's Explore > Text and the text nodes use, checked against
+Python, scikit-learn, NLTK and vaderSentiment (`test_python_text.py`):
+
+- `words(text)` -> `list[str]`: lower-cased runs of letters and digits of any
+  script, two or more long, an apostrophe between two kept ("don't"; a
+  typographic apostrophe reads as one). Python: each match of
+  `re.finditer(r"[^\W_]+(?:'[^\W_]+)*", text)`, lower-cased character by
+  character (`str.lower` of each), kept when two or more long.
+  scikit-learn's default `token_pattern` splits "don't" into "don".
+- `terms(text, stop_words="english", ngram_range=(1, 1))` -> `list[str]`: the
+  terms the TF-IDF and Count Vectorizer nodes count: the words, the English stop
+  words left out first (`stop_words="english"`; `"none"` or `None` keeps them),
+  then the word n-grams joined by one space, the shortest first. A bad
+  `stop_words` or `ngram_range` raises `ValueError`.
+- `english_stop_words()` -> `list[str]`: scikit-learn's `ENGLISH_STOP_WORDS`
+  (318) and their contractions (54), sorted.
+- `stem(word)` -> `str`: the Porter (1980) stem, lower-cased first (NLTK's
+  `PorterStemmer(mode="ORIGINAL_ALGORITHM")`).
+- `vader(text)` -> `dict` with `neg`, `neu`, `pos`, `compound` as
+  vaderSentiment 3.3.2's `polarity_scores` gives them, but unrounded
+  (vaderSentiment rounds `neg` / `neu` / `pos` to 3 places and `compound` to 4),
+  and `words`: each word or emoticon with its valence after the rules.
+
+```python
+import pycyxwiz.text as tx
+
+tx.words("I don't feel like myself.")        # ["don't", 'feel', 'like', 'myself']
+tx.terms("not good at all", stop_words=None, ngram_range=(1, 2))
+# ['not', 'good', 'at', 'all', 'not good', 'good at', 'at all']
+tx.stem("feeling")                           # 'feel'
+tx.vader("The food was not good.")["compound"]  # -0.3412...
+```
+
+### 9.2 Tokenizers
 
 Enum:
-- `TokenizerType`: `Whitespace`, `Word`, `Character`
+- `TokenizerType`: `Whitespace`, `Word`, `Character` (byte level), `ByteBPE`,
+  `WordPiece`, `SentencePieceBPE`, `SentencePieceUnigram` (the two
+  SentencePiece types need the optional SentencePiece provider)
 
 `Vocabulary`:
 - `build_from_documents(documents, min_freq=1, max_vocab_size=-1, lowercase=True)`
