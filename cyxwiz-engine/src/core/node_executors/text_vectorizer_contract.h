@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cyxwiz/text_processing.h>
+
 #include <charconv>
+#include <cmath>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -153,6 +156,27 @@ inline std::vector<std::string> BuildNGramFeatures(
         }
     }
     return features;
+}
+
+// The terms of one text as the TF-IDF and Count Vectorizer nodes and Data
+// Studio's Text tab count them (TOFIX129 D8): TextProcessing::Words, the
+// English stop words left out first when asked, then the n-grams.
+inline std::vector<std::string> Terms(const std::string& text,
+                                      bool english_stop_words,
+                                      int ngram_min,
+                                      int ngram_max) {
+    std::vector<std::string> words = TextProcessing::Words(text);
+    if (english_stop_words) {
+        words = TextProcessing::RemoveStopwords(words, "english");
+    }
+    return BuildNGramFeatures(words, ngram_min, ngram_max);
+}
+
+// scikit-learn's idf of a term in `df` of `rows` texts: ln(n / df) + 1, or
+// smoothed ln((1 + n) / (1 + df)) + 1.
+inline double Idf(double rows, double df, bool smooth) {
+    return smooth ? std::log((rows + 1.0) / (df + 1.0)) + 1.0
+                  : std::log(rows / df) + 1.0;
 }
 
 }  // namespace cyxwiz::text_vectorizer_contract
