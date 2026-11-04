@@ -225,7 +225,6 @@ set(ENGINE_SOURCES
     src/core/audio_dataset_batcher.cpp
     src/core/legacy_dataset_batchers.cpp
     src/core/text_arrow_adapter.cpp
-    src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/session_query_engine.cpp
     src/core/session_query_service.cpp
@@ -836,7 +835,6 @@ set(ENGINE_HEADERS
     src/core/sparse_feature_dataset.h
     src/core/sparse_feature_dataset_cache.h
     src/core/sparse_feature_dataset_batcher.h
-    src/core/arrow_converters.h
     src/core/duckdb_connector.h
     src/core/pipeline_executor.h  # Unified Canvas Phase 2: Moved from data_studio
     src/core/node_metadata.h       # Node Browser: node metadata structures
@@ -1528,10 +1526,9 @@ set_target_properties(test_opencv_integration PROPERTIES
 # HDF5 Loading test - run via engine's Python console or dedicated test runner
 # The HDF5Dataset class is tested as part of cyxwiz-engine
 
-# ===== Test: Arrow Integration (Phase 0 Day 5) =====
+# ===== Test: Arrow integration (ArrowDataset, DataRegistry, DuckDB on Arrow tables) =====
 add_executable(test_arrow_integration
     tests/test_arrow_integration.cpp
-    src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
