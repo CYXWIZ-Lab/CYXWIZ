@@ -410,22 +410,22 @@ int main() {
           "GRU capability kind should be Recurrent");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::LayerNorm).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
-          "LayerNorm runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+          "LayerNorm runs on ArrayFire only: ArrayFireTensor");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::MultiHeadAttention).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
-          "MultiHeadAttention runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+          "MultiHeadAttention runs on ArrayFire only: ArrayFireTensor");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::CrossAttention).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
-          "CrossAttention runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+          "CrossAttention runs on ArrayFire only: ArrayFireTensor");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::TransformerEncoder).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
-          "TransformerEncoder runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+          "TransformerEncoder runs on ArrayFire only: ArrayFireTensor");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::TransformerDecoder).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
-          "TransformerDecoder runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+          "TransformerDecoder runs on ArrayFire only: ArrayFireTensor");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::PositionalEncoding).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
-          "PositionalEncoding runs on ArrayFire only (TOFIX140): ArrayFireTensor");
+          "PositionalEncoding runs on ArrayFire only: ArrayFireTensor");
     Check(cyxwiz::backend_placement::ClassifyLayer(gui::NodeType::Dropout).kind ==
               cyxwiz::backend_placement::LayerCapabilityKind::ArrayFireTensor,
           "Dropout capability kind should remain ArrayFireTensor");

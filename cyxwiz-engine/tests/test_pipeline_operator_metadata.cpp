@@ -2117,7 +2117,7 @@ void CheckSignalProcessingFamilyContract(
               ParameterMatches(fft, "sample_rate", "float", "1.0") &&
               ParameterMatches(fft, "window", "dropdown", "hann") && HasEnumValue(fft, "window", "boxcar") &&
               ParameterMatches(fft, "remove_mean", "bool", "true") && ParameterMatches(fft, "remove_trend", "bool", "false"),
-          "FFT metadata should expose its operator parameters (TOFIX129 D7)");
+          "FFT metadata should expose its operator parameters");
     Check(filter->parameters.size() == 7 &&
               ParameterMatches(filter, "filter_type", "dropdown", "lowpass") &&
               HasEnumValue(filter, "filter_type", "highpass") &&
@@ -2602,7 +2602,7 @@ void CheckClassicalRegressionFamilyContract(
               ParameterMatches(polynomial, "degree", "int", "2") &&
               FindParameter(polynomial, "degree")->validation == "1-6" &&
               FindParameter(polynomial, "degree")->group == "Fit Options",
-          "PolynomialRegression metadata should match its 1-6 degree contract (TOFIX129 D3)");
+          "PolynomialRegression metadata should match its 1-6 degree contract");
 
     const auto* predictor =
         metadata.GetMetadata(gui::NodeType::RegressionModelPredictor);
@@ -3118,7 +3118,7 @@ void CheckPreprocessingScalerEncoderFamilyContract(
               ParameterMatches(outlier, "threshold", "float", "1.5") &&
               ParameterMatches(outlier, "action", "dropdown", "flag") &&
               HasEnumValue(outlier, "action", "clip") && HasEnumValue(outlier, "action", "remove"),
-          "OutlierDetector metadata should match its flag / clip / remove operator contract (TOFIX129 D7a)");
+          "OutlierDetector metadata should match its flag / clip / remove operator contract");
 
     const auto configure_defaults = [](const cyxwiz::NodeMetadata* meta,
                                        bool expected) {
@@ -3314,7 +3314,7 @@ void CheckTensorFanInFamilyContract(
               HasOutputType(batch_matmul, "Output", gui::PinType::Tensor) &&
               batch_matmul->parameters.empty(),
           "TensorBatchMatMul should expose its implemented two-input graph "
-          "contract (TOFIX140 Group C)");
+          "contract");
 
     const auto* compare = metadata.GetMetadata(gui::NodeType::TensorCompare);
     Check(compare != nullptr && HasInput(compare, "A", true) &&
