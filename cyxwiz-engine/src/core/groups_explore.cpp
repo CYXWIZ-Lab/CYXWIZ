@@ -1,4 +1,5 @@
 #include "groups_explore.h"
+#include "tsne_learning_rate.h"
 
 #include "explore_read.h"
 
@@ -340,7 +341,7 @@ ProjectionAnswer RunProjection(const std::string& table, const ProjectionRequest
             struct Stopped {};
             tSNEResult r;
             try {
-                r = DimensionalityReduction::ComputetSNE(data, 2, req.perplexity, req.learning_rate, req.iterations,
+                r = DimensionalityReduction::ComputetSNE(data, 2, req.perplexity, TsneLearningRate(req.learning_rate, data.size()), req.iterations,
                                                          [&](int iteration, double kl) {
                                                              if (hooks.progress) {
                                                                  char text[64];

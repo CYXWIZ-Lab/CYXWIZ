@@ -606,7 +606,8 @@ chosen number columns (Scale as in Groups).
   of the first two (those of 0.4 or more stand out) and what the components
   are in words ("Component 1: flipper_length_mm, body_mass_g and
   bill_length_mm together, against bill_depth_mm").
-- t-SNE takes perplexity, learning rate and iterations; UMAP neighbours and
+- t-SNE takes perplexity, learning rate (0: auto, the rows / 48 and at least
+  50, as scikit-learn) and iterations; UMAP neighbours and
   min distance. Both read at most 5,000 rows: beyond that a seeded sample (the
   seed is typed) in table order, and the sentence says so. t-SNE shows its
   iteration, KL divergence and a progress bar; **Cancel** stops it. UMAP has no

@@ -74,7 +74,9 @@ first that the n × n matrix fits in memory.
   feature. **scale** standardises first.
 - **t-SNE** and **UMAP**: `tsne_*` / `umap_*` beside the input columns
   (keep_columns, default on), standardised first (standardise, default on),
-  2 or 3 dimensions. t-SNE takes perplexity, learning_rate and iterations (at
+  2 or 3 dimensions. t-SNE takes perplexity, learning_rate (0, the default:
+  auto, the rows / 48 and at least 50, as scikit-learn's learning_rate="auto";
+  a fixed 200 overshoots on small tables and in 3D) and iterations (at
   least 250, the early exaggeration), and stops when the run is cancelled; UMAP
   takes n_neighbors and min_dist. Rows missing a feature are left out with
   nulls.

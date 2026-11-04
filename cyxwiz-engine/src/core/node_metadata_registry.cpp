@@ -2176,7 +2176,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"label_col", "string", "", "Optional column excluded from automatic feature detection", {}, "", "Label column", "Columns"},
          {"n_components", "int", "2", "Output dimensions (2 or 3)", {}, "2-3"},
          {"perplexity", "int", "30", "About how many neighbours each row keeps close; below the rows used", {}, "1-2147483647"},
-         {"learning_rate", "float", "200", "Step size of the layout", {}, ""},
+         {"learning_rate", "float", "0", "Step size of the layout; 0: auto (rows / 48, at least 50, as scikit-learn)", {}, ""},
          {"iterations", "int", "1000", "Steps of the layout (the first 250 exaggerate early clusters)", {}, "250-2147483647"},
          {"standardise", "bool", "true", "Scale each feature to z-scores first", {}, ""},
          {"keep_columns", "bool", "true", "Keep the input columns and add tsne_* beside them", {}, ""}},

@@ -178,11 +178,17 @@ void ProjectionView::RenderControls(const DatasetProfile& p, const groups::Group
             ui::NumberField("##projection_perplexity", &request_.perplexity, 1, 500, 5, 40.0f, "About how many neighbours each row keeps close");
             Setting("learning rate", 110.0f);
             ui::NumberFieldOptions o;
-            o.min = 1.0;
+            o.min = 0.0;
             o.max = 10000.0;
             o.format = "%.0f";
             o.width = 60.0f;
+            o.hint = "The step size of the layout; 0: auto, the rows / 48 and at least 50 (scikit-learn's default)";
             ui::NumberField("##projection_lr", &request_.learning_rate, o);
+            if (request_.learning_rate <= 0.0) {
+                ImGui::SameLine(0.0f, 6.0f);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(ui::CurrentTokens().text_faint, "auto");
+            }
             Setting("iterations", 120.0f);
             ui::NumberField("##projection_iterations", &request_.iterations, 250, 10000, 250, 50.0f, "Steps of the layout");
             break;
