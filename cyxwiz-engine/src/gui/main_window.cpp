@@ -5079,6 +5079,12 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
             exe.SetInputSample(sample.features, sample.labels, sample.description);
         }
         session.debug_result = exe.Run();
+        // Name what actually ran: the picked item and its split part, or the
+        // synthetic stand-in.
+        if (!session.debug_result.input_description.empty()) {
+            session.sample_summary = std::string("Studio Debugger mode: ") + mode_name + " | " +
+                session.debug_result.input_description;
+        }
         if (!sample.ok()) {
             session.debug_result.issues.push_back(
                 {cyxwiz::IssueLevel::Warning, -1, "Local Debug",
