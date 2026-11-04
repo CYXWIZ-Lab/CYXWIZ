@@ -1,5 +1,7 @@
 #include "linear_algebra_presentation.h"
 
+#include "session_query_engine.h"
+
 #include <cyxwiz/linear_algebra.h>
 
 #include <algorithm>
@@ -113,6 +115,11 @@ std::string Join(const std::vector<double>& v, double scale) {
     std::string s;
     for (const double x : v) s += (s.empty() ? "" : " · ") + Number(x, scale);
     return s;
+}
+
+// A's column names, when they fit `count` (A from a table).
+bool HasNames(const Request& r, size_t count) {
+    return r.a_columns.size() == count && std::any_of(r.a_columns.begin(), r.a_columns.end(), [](const std::string& n) { return !n.empty(); });
 }
 
 struct Stopper {
@@ -277,6 +284,7 @@ Answer RunSolve(const Request& r, const Stopper& stopped) {
         xs = "x (" + Size(x.matrix) + ")";
     }
     Table t = MatrixTable("x (" + Size(x.matrix) + ")", x.matrix, x.matrix[0].size() == 1 ? "x" : "b", "x");
+    if (HasNames(r, x.matrix.size())) t.row_names = r.a_columns;
     if (x.matrix[0].size() == 1) t.columns = {"x"};
     a.tabs.push_back(t);
     if (r.op == Op::Solve) {
@@ -370,6 +378,7 @@ Answer RunEigen(const Request& r, const Stopper& stopped) {
         for (size_t k = 0; k < n; ++k)
             for (size_t i = 0; i < n; ++i) v[i][k] = e.eigenvectors[i][order[k]].real();
         Table vectors = MatrixTable("Eigenvectors", v, "v");
+        if (HasNames(r, n)) vectors.row_names = r.a_columns;
         vectors.note = "One column per eigenvalue, of length 1; a vector and its negative are the same direction.";
         a.tabs.push_back(vectors);
         const MatrixResult av = LinearAlgebra::Multiply(r.a, v);
@@ -432,6 +441,7 @@ Answer RunSVD(const Request& r, const Stopper& stopped) {
     u.note = "Reduced: as many columns as singular values.";
     a.tabs.push_back(u);
     Table vt = MatrixTable("V^T (" + Size(s.Vt) + ")", s.Vt, "c", "v");
+    if (HasNames(r, n)) vt.columns = r.a_columns;
     a.tabs.push_back(vt);
     const int keep = std::clamp(r.low_rank, 1, std::max(1, full));
     const MatrixResult low = LinearAlgebra::LowRankApproximation(r.a, keep);
@@ -611,6 +621,158 @@ Answer Run(const Request& request, const std::function<bool()>& stop) {
         return Refuse(std::string("The device could not compute it: ") + e.what());
     }
     return Refuse("Unknown operation.");
+}
+
+// ---- A matrix from a table
+
+namespace {
+
+bool IsNumber(const arrow::DataType& type) {
+    switch (type.id()) {
+        case arrow::Type::INT8:
+        case arrow::Type::INT16:
+        case arrow::Type::INT32:
+        case arrow::Type::INT64:
+        case arrow::Type::UINT8:
+        case arrow::Type::UINT16:
+        case arrow::Type::UINT32:
+        case arrow::Type::UINT64:
+        case arrow::Type::HALF_FLOAT:
+        case arrow::Type::FLOAT:
+        case arrow::Type::DOUBLE:
+        case arrow::Type::DECIMAL128:
+        case arrow::Type::DECIMAL256: return true;
+        default: return false;
+    }
+}
+
+std::string Rows(size_t n) { return std::to_string(n) + (n == 1 ? " row" : " rows"); }
+
+}  // namespace
+
+std::vector<std::string> NumberColumns(const std::string& table, const QueryRunner& run, std::string& error) {
+    std::vector<std::string> out;
+    QueryRequest q;
+    q.sql = "SELECT * FROM " + SessionQueryEngine::QuoteIdentifier(table) + " LIMIT 0";
+    q.label = "Linear Algebra: " + table;
+    const QueryResult result = run(q);
+    if (!result.ok || !result.table) {
+        error = result.error.empty() ? "Cannot read " + table + "." : result.error;
+        return out;
+    }
+    for (const auto& field : result.table->schema()->fields())
+        if (IsNumber(*field->type())) out.push_back(field->name());
+    return out;
+}
+
+TableMatrix ReadMatrix(const TableChoice& choice, const QueryRunner& run) {
+    TableMatrix out;
+    if (choice.table.empty()) return out.error = "Pick a table.", out;
+    if (choice.columns.empty()) return out.error = "Pick the number columns of " + choice.table + ".", out;
+    std::vector<QueryParam> params;
+    std::vector<std::string> exprs;
+    for (size_t j = 0; j < choice.columns.size(); ++j)
+        exprs.push_back(explore_read::NumberExpr(choice.columns[j], {}, params, "c" + std::to_string(j)));
+    const explore_read::Read read = explore_read::Select(choice.table, exprs, params, run, "Linear Algebra: read");
+    if (!read.table) return out.error = read.error.empty() ? "Cannot read " + choice.table + "." : read.error, out;
+    const size_t k = choice.columns.size(), n = static_cast<size_t>(read.table->num_rows());
+    if (choice.matrix == FromTable::Rows && n * k > kMaxTableValues)
+        return out.error = choice.table + " has " + Rows(n) + " × " + std::to_string(k) + " columns: more than " +
+                           std::to_string(kMaxTableValues) + " values to read as a matrix. Take its correlation or covariance, or sample the rows in Prepare.",
+               out;
+    std::vector<std::vector<std::optional<double>>> columns;
+    for (size_t j = 0; j < k; ++j) columns.push_back(explore_read::Numbers(*read.table, "c" + std::to_string(j)));
+    Matrix rows;
+    rows.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+        std::vector<double> row(k);
+        bool missing = false;
+        for (size_t j = 0; j < k && !missing; ++j) {
+            if (!columns[j][i]) missing = true;
+            else row[j] = *columns[j][i];
+        }
+        if (missing) ++out.dropped;
+        else rows.push_back(std::move(row));
+    }
+    out.rows = n;
+    out.names = choice.columns;
+    const std::string left = out.dropped ? Rows(out.dropped) + " with a missing value left out" : "none left out";
+    if (rows.empty()) return out.error = "Every row of " + choice.table + " has a missing value in the chosen columns.", out;
+    if (choice.matrix == FromTable::Rows) {
+        out.m = std::move(rows);
+        out.note = "The rows of " + choice.table + ": " + Size(out.m) + " (" + left + ").";
+        return out;
+    }
+    if (rows.size() < 2) return out.error = "A correlation or covariance needs 2 rows or more.", out;
+    // Centred on the device: X - 1 mean, then X^T X / (n - 1).
+    const double count = static_cast<double>(rows.size());
+    const MatrixResult ones = LinearAlgebra::Ones(1, static_cast<int>(rows.size()));
+    const MatrixResult sum = LinearAlgebra::Multiply(ones.matrix, rows);
+    if (!sum.success) return out.error = sum.error_message, out;
+    const MatrixResult mean = LinearAlgebra::ScalarMultiply(sum.matrix, 1.0 / count);
+    const MatrixResult column = LinearAlgebra::Ones(static_cast<int>(rows.size()), 1);
+    const MatrixResult spread = LinearAlgebra::Multiply(column.matrix, mean.matrix);
+    const MatrixResult centred = LinearAlgebra::Subtract(rows, spread.matrix);
+    if (!centred.success) return out.error = centred.error_message, out;
+    const MatrixResult cross = LinearAlgebra::Multiply(LinearAlgebra::Transpose(centred.matrix).matrix, centred.matrix);
+    if (!cross.success) return out.error = cross.error_message, out;
+    const MatrixResult covariance = LinearAlgebra::ScalarMultiply(cross.matrix, 1.0 / (count - 1.0));
+    out.m = covariance.matrix;
+    if (choice.matrix == FromTable::Correlation) {
+        for (size_t j = 0; j < k; ++j)
+            if (!(out.m[j][j] > 0)) return out.error = choice.columns[j] + " has one value in every row: it has no correlation.", out;
+        Matrix c(k, std::vector<double>(k));
+        for (size_t i = 0; i < k; ++i)
+            for (size_t j = 0; j < k; ++j) c[i][j] = i == j ? 1.0 : out.m[i][j] / std::sqrt(out.m[i][i] * out.m[j][j]);
+        out.m = std::move(c);
+    }
+    out.note = std::string(choice.matrix == FromTable::Correlation ? "The correlation" : "The covariance") + " of " + std::to_string(k) +
+               " columns of " + choice.table + ", over " + Rows(rows.size()) + " (" + left + ").";
+    return out;
+}
+
+TableAnswer RunWithTables(Request request, const Sources& sources, const QueryRunner& run, const std::function<bool()>& stop) {
+    TableAnswer out;
+    const auto stopped = [&] { return stop && stop(); };
+    if (sources.a) {
+        out.a = ReadMatrix(*sources.a, run);
+        if (out.a.error == "Cancelled.") return out.error = "Cancelled.", out;
+        if (!out.a.ok()) return out.answer = Refuse("A: " + out.a.error), out;
+        request.a = out.a.m;
+        request.a_columns = out.a.names;
+    }
+    if (stopped()) return out.error = "Cancelled.", out;
+    if (sources.b) {
+        out.b = ReadMatrix(*sources.b, run);
+        if (out.b.error == "Cancelled.") return out.error = "Cancelled.", out;
+        if (!out.b.ok()) return out.answer = Refuse("b: " + out.b.error), out;
+        request.b = out.b.m;
+        const bool same_table = sources.a && sources.a->table == sources.b->table;
+        if (!same_table && (out.a.dropped || out.b.dropped))
+            return out.answer = Refuse("A and b come from two tables and " + std::string(out.a.dropped ? "A" : "b") +
+                                       " has rows with a missing value: the rows cannot be lined up with one side left out. Fill or remove them in Prepare first."),
+                   out;
+        if (same_table && (out.a.dropped || out.b.dropped)) {
+            // One table: read both sides together, so a row missing on either side is left out of both.
+            TableChoice both = *sources.a;
+            both.columns.insert(both.columns.end(), sources.b->columns.begin(), sources.b->columns.end());
+            const TableMatrix joined = ReadMatrix(both, run);
+            if (!joined.ok()) return out.answer = Refuse(joined.error), out;
+            const size_t ka = sources.a->columns.size();
+            request.a.clear();
+            request.b.clear();
+            for (const auto& row : joined.m) {
+                request.a.emplace_back(row.begin(), row.begin() + static_cast<std::ptrdiff_t>(ka));
+                request.b.emplace_back(row.begin() + static_cast<std::ptrdiff_t>(ka), row.end());
+            }
+            out.a.note = out.b.note = "The rows of " + sources.a->table + ": " + Rows(joined.m.size()) + " (" + Rows(joined.dropped) +
+                                       " with a missing value in A or b left out).";
+        }
+    }
+    if (stopped()) return out.error = "Cancelled.", out;
+    out.answer = Run(request, stop);
+    if (out.answer.error == "Cancelled.") out.error = "Cancelled.";
+    return out;
 }
 
 bool ParseMatrix(const std::string& text, Matrix& out, std::string& error) {

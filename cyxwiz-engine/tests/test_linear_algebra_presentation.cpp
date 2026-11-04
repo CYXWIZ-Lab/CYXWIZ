@@ -5,12 +5,16 @@
 // list, pasted text, the numbers as shown, Copy and CSV, and a stop.
 
 #include "../src/core/linear_algebra_presentation.h"
+#include "../src/core/session_query_engine.h"
 #include "computation_truth/test_device_selection.h"
+
+#include <arrow/api.h>
 
 #include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <set>
@@ -193,6 +197,75 @@ int main() {
         std::string big;
         for (int i = 0; i < 65; ++i) big += "1\n";
         Check(!linalg::ParseMatrix(big, m, error) && error.find("up to 64 × 64") != std::string::npos, "paste: too large");
+    }
+
+    // ---- a matrix from a table (two tables for A x = b)
+    {
+        const json& tf = f["tables"];
+        const auto make = [](const json& columns) {
+            std::vector<std::shared_ptr<arrow::Field>> fields;
+            std::vector<std::shared_ptr<arrow::Array>> arrays;
+            for (const auto& [name, values] : columns.items()) {
+                std::shared_ptr<arrow::Array> array;
+                if (values[0].is_string()) {
+                    arrow::StringBuilder b;
+                    for (const auto& v : values) (void)b.Append(v.get<std::string>());
+                    (void)b.Finish(&array);
+                    fields.push_back(arrow::field(name, arrow::utf8()));
+                } else {
+                    arrow::DoubleBuilder b;
+                    for (const auto& v : values) (void)(v.is_null() ? b.AppendNull() : b.Append(v.get<double>()));
+                    (void)b.Finish(&array);
+                    fields.push_back(arrow::field(name, arrow::float64()));
+                }
+                arrays.push_back(array);
+            }
+            return arrow::Table::Make(arrow::schema(fields), arrays);
+        };
+        const std::filesystem::path root = std::filesystem::temp_directory_path() / "cyxwiz_test_linear_algebra";
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root);
+        SessionQueryEngine engine(root.string());
+        std::string error;
+        Check(engine.AttachArrow("t", 1, make(tf["t"]), &error) && engine.AttachArrow("u", 2, make(tf["u"]), &error), "attach: " + error);
+        const QueryRunner run = [&](const QueryRequest& q) { return engine.Run(q); };
+        const auto columns = linalg::NumberColumns("t", run, error);
+        Check(columns == std::vector<std::string>({"x", "y", "z"}), "number columns: the text column left out");
+        const linalg::TableMatrix rows = linalg::ReadMatrix({"t", {"x", "y", "z"}, linalg::FromTable::Rows}, run);
+        Check(rows.ok() && rows.rows == 6 && rows.dropped == 1, "rows: one with a missing value left out: " + rows.error);
+        NearMatrix(rows.m, tf["rows"], "rows");
+        Check(rows.note == "The rows of t: 5 × 3 (1 row with a missing value left out).", "rows: the note: " + rows.note);
+        NearMatrix(linalg::ReadMatrix({"t", {"x", "y", "z"}, linalg::FromTable::Covariance}, run).m, tf["covariance"], "covariance (numpy, ddof 1)");
+        const linalg::TableMatrix corr = linalg::ReadMatrix({"t", {"x", "y", "z"}, linalg::FromTable::Correlation}, run);
+        NearMatrix(corr.m, tf["correlation"], "correlation");
+        Check(corr.names == std::vector<std::string>({"x", "y", "z"}), "correlation: named by its columns");
+        Check(!linalg::ReadMatrix({"t", {}, linalg::FromTable::Rows}, run).ok(), "no column chosen");
+
+        // Eigen of the correlation: the eigenvectors are named by the columns.
+        linalg::Request er;
+        er.op = linalg::Op::Eigen;
+        const linalg::TableAnswer e = linalg::RunWithTables(er, {linalg::TableChoice{"t", {"x", "y", "z"}, linalg::FromTable::Correlation}, std::nullopt}, run);
+        Check(e.answer.ok() && e.answer.tabs.size() == 2 && e.answer.tabs[1].row_names == std::vector<std::string>({"x", "y", "z"}),
+              "eigen of a correlation: rows named by the columns: " + e.answer.error);
+
+        // A x = b with A from t and b from u, line by line.
+        linalg::Request sr;
+        sr.op = linalg::Op::LeastSquares;
+        const linalg::TableAnswer two =
+            linalg::RunWithTables(sr, {linalg::TableChoice{"t", {"y", "z"}}, linalg::TableChoice{"u", {"target"}}}, run);
+        Check(two.answer.ok(), "A from t, b from u: " + two.answer.error);
+        NearMatrix(two.answer.tabs[0].values, tf["two_tables_x"], "least squares across two tables");
+        Check(two.answer.tabs[0].row_names == std::vector<std::string>({"y", "z"}), "x: one row per column of A");
+        // A with a missing value cannot line up with another table's b.
+        const linalg::TableAnswer refused =
+            linalg::RunWithTables(sr, {linalg::TableChoice{"t", {"x", "y"}}, linalg::TableChoice{"u", {"target"}}}, run);
+        Check(!refused.answer.ok() && refused.answer.error.find("cannot be lined up") != std::string::npos, "two tables, a missing value: refused");
+        // One table: the row missing on either side is left out of both.
+        const linalg::TableAnswer same =
+            linalg::RunWithTables(sr, {linalg::TableChoice{"t", {"x", "z"}}, linalg::TableChoice{"t", {"y"}}}, run);
+        Check(same.answer.ok() && same.a.note.find("5 rows (1 row with a missing value in A or b left out)") != std::string::npos,
+              "one table: rows left out of both sides: " + same.a.note + same.answer.error);
+        std::filesystem::remove_all(root);
     }
 
     // ---- numbers, Copy and CSV

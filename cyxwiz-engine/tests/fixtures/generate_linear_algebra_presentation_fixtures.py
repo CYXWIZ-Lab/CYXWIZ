@@ -73,5 +73,21 @@ add("cholesky_indefinite", "cholesky", INDEFINITE, error="A is symmetric but not
 add("cholesky_nonsymmetric", "cholesky", NONSYM, error="A is not symmetric")
 add("lu", "lu", LU_A, det=float(np.linalg.det(LU_A)))
 
-OUT.write_text(json.dumps({"numpy_version": np.__version__, "cases": cases}, indent=1))
+# A matrix from a table: three number columns, a text column, a row with a missing value (row 3).
+t = {"x": [1.0, 2.0, None, 4.0, 5.0, 7.0], "y": [2.1, 3.9, 6.2, 8.1, 9.8, 14.2], "z": [1.0, 0.0, 1.0, 1.0, 0.0, 2.0],
+     "name": ["a", "b", "c", "d", "e", "f"]}
+kept = np.array([[t["x"][i], t["y"][i], t["z"][i]] for i in range(6) if t["x"][i] is not None])
+u = {"target": [3.0, 5.0, 7.5, 9.0, 11.2, 15.1]}  # b in a second table, one row per row of t
+full = np.array([[t["y"][i], t["z"][i]] for i in range(6)])
+x_two, *_ = np.linalg.lstsq(full, np.array(u["target"]).reshape(-1, 1), rcond=None)
+tables = {
+    "t": t,
+    "u": u,
+    "rows": mat(kept),
+    "covariance": mat(np.cov(kept, rowvar=False)),
+    "correlation": mat(np.corrcoef(kept, rowvar=False)),
+    "two_tables_x": mat(x_two),  # A = t[y, z], b = u[target]
+}
+
+OUT.write_text(json.dumps({"numpy_version": np.__version__, "cases": cases, "tables": tables}, indent=1))
 print(f"wrote {OUT} ({len(cases)} cases)")

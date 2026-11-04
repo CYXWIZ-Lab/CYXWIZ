@@ -7,7 +7,10 @@
 // check that the factors give A back, or the reason it cannot run; and the
 // matrix read from pasted text, and the result as text to copy or save.
 
+#include "explore_read.h"
+
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,6 +49,7 @@ struct Request {
     Matrix a, b;           // b: B, or b as a column (n x 1, or n x k)
     double k = 2.0;        // k x A
     int low_rank = 1;      // SVD: the directions kept
+    std::vector<std::string> a_columns;  // A's column names (from a table), "" when typed
 };
 
 struct Figure {
@@ -81,6 +85,48 @@ struct Answer {
 
 // The answer to `request`; `stop` is asked between the device calls.
 Answer Run(const Request& request, const std::function<bool()>& stop = {});
+
+// ---- A matrix from a table of the session (a Data Input's data, a node's result)
+
+enum class FromTable { Rows, Correlation, Covariance };
+constexpr size_t kMaxTableValues = 1000000;  // the rows read as a matrix: rows × columns at most
+
+struct TableChoice {
+    std::string table;
+    std::vector<std::string> columns;   // number columns, in order
+    FromTable matrix = FromTable::Rows;
+};
+
+struct TableMatrix {
+    std::string error;
+    bool ok() const { return error.empty(); }
+    Matrix m;
+    std::vector<std::string> names;     // the columns (and, for a correlation or covariance, the rows)
+    size_t rows = 0;                    // rows read
+    size_t dropped = 0;                 // rows left out for a missing value
+    std::string note;                   // "150 rows of iris (none left out)"
+};
+
+// The number columns of `table`, in order.
+std::vector<std::string> NumberColumns(const std::string& table, const QueryRunner& run, std::string& error);
+// The chosen columns as a matrix: the rows (a row with a missing value left
+// out and counted), or their correlation or covariance (on the device, with
+// the backend's LinearAlgebra).
+TableMatrix ReadMatrix(const TableChoice& choice, const QueryRunner& run);
+
+struct Sources {
+    std::optional<TableChoice> a, b;    // set: that input comes from a table
+};
+struct TableAnswer {
+    Answer answer;
+    TableMatrix a, b;                   // as read (empty when typed)
+    bool ok() const { return error.empty(); }
+    std::string error;                  // "Cancelled." only
+};
+// Reads the inputs that come from tables, then answers. A and b from two
+// tables line up row by row: their row counts must match, and a missing
+// value is refused there (rows cannot be left out of one side alone).
+TableAnswer RunWithTables(Request request, const Sources& sources, const QueryRunner& run, const std::function<bool()>& stop = {});
 
 // A matrix from pasted text: rows on lines, values split by tabs, commas,
 // semicolons or spaces; a first line or column of names is left out. Every

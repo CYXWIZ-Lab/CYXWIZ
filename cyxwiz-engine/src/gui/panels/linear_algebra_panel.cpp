@@ -1,6 +1,7 @@
 #include "linear_algebra_panel.h"
 
 #include "../../core/file_dialogs.h"
+#include "../../core/session_query_service.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
@@ -121,22 +122,37 @@ void LinearAlgebraPanel::Render() {
         request_.k = k_;
         request_.low_rank = low_rank_;
         key_ = Key(request_);
+        const auto choice_key = [](const linalg::TableChoice& c) {
+            std::string k = c.table + "|" + std::to_string(static_cast<int>(c.matrix));
+            for (const auto& name : c.columns) k += "|" + name;
+            return k;
+        };
+        if (source_ == 2) key_ += "|A:" + choice_key(a_table_.choice);
+        if (b_source_ == 1 && (linalg::InfoOf(op_).second == linalg::Second::MatrixB || linalg::InfoOf(op_).second == linalg::Second::VectorB))
+            key_ += "|B:" + choice_key(b_table_.choice);
+        key_ += "|" + std::to_string(refresh_);
     }
     if (key_ != stopped_key_) {
         const linalg::Request request = request_;
-        job_.Ask(std::string("Linear Algebra: ") + linalg::InfoOf(op_).label, key_, [request](LambdaTask& task) {
+        linalg::Sources sources;
+        if (source_ == 2) sources.a = a_table_.choice;
+        const auto second = linalg::InfoOf(op_).second;
+        if (b_source_ == 1 && (second == linalg::Second::MatrixB || second == linalg::Second::VectorB)) sources.b = b_table_.choice;
+        job_.Ask(std::string("Linear Algebra: ") + linalg::InfoOf(op_).label, key_, [request, sources](LambdaTask& task) {
             Job job;
             const auto start = std::chrono::steady_clock::now();
-            job.answer = linalg::Run(request, [&task] { return task.ShouldStop(); });
+            const auto stop = [&task] { return task.ShouldStop(); };
+            const QueryRunner run = [](const QueryRequest& q) { return SessionQueryService::Instance().RunNow(q); };
+            job.result = linalg::RunWithTables(request, sources, run, stop);
             job.milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-            if (job.answer.error == "Cancelled.") job.error = "Cancelled.";
+            if (!job.result.error.empty() || job.result.answer.error == "Cancelled.") job.error = "Cancelled.";
             return job;
         });
     }
     if (const Job* answer = job_.Answer(key_); answer && shown_key_ != key_) {
         shown_ = std::make_shared<const Job>(*answer);
         shown_key_ = key_;
-        if (tab_ >= static_cast<int>(shown_->answer.tabs.size())) tab_ = 0;
+        if (tab_ >= static_cast<int>(shown_->result.answer.tabs.size())) tab_ = 0;
     }
 
     RenderOperations();
@@ -216,10 +232,16 @@ bool LinearAlgebraPanel::RenderGrid(const char* id, Matrix& m, bool rows_fixed) 
 void LinearAlgebraPanel::RenderInputs() {
     const ui::Tokens& t = ui::CurrentTokens();
     ui::SettingsSection("Matrix A");
-    static const char* const kSources[] = {"Typed", "Paste"};
-    if (ui::SegmentedControl("##source", kSources, 2, &source_)) paste_note_.clear();
+    static const char* const kSources[] = {"Typed", "Paste", "From a table"};
+    if (ui::SegmentedControl("##source", kSources, 3, &source_)) {
+        paste_note_.clear();
+        Changed();
+    }
     ImGui::Spacing();
-    if (source_ == 0) {
+    if (source_ == 2) {
+        if (RenderTableInput("a_table", a_table_, true)) Changed();
+        if (shown_ && shown_key_ == key_) RenderRead(shown_->result.a, "A as read");
+    } else if (source_ == 0) {
         if (RenderGrid("a", a_, false)) {
             edited_ = true;
             Changed();
@@ -296,14 +318,126 @@ void LinearAlgebraPanel::RenderSecond() {
         if (ui::NumberField("##k", &k_, o)) Changed();
         return;
     }
-    if (second == linalg::Second::VectorB) {
-        ui::SettingsSection("Right-hand side b");
-        if (b_.size() != a_.size()) Resize(b_, static_cast<int>(a_.size()), b_.empty() ? 1 : static_cast<int>(b_[0].size()));
-        if (RenderGrid("b", b_, true)) Changed();
+    ui::SettingsSection(second == linalg::Second::VectorB ? "Right-hand side b" : "Matrix B");
+    static const char* const kSources[] = {"Typed", "From a table"};
+    if (ui::SegmentedControl("##b_source", kSources, 2, &b_source_)) Changed();
+    ImGui::Spacing();
+    if (b_source_ == 1) {
+        if (RenderTableInput("b_table", b_table_, false)) Changed();
+        if (shown_ && shown_key_ == key_) RenderRead(shown_->result.b, second == linalg::Second::VectorB ? "b as read" : "B as read");
         return;
     }
-    ui::SettingsSection("Matrix B");
+    if (second == linalg::Second::VectorB) {
+        if (source_ != 2 && b_.size() != a_.size()) Resize(b_, static_cast<int>(a_.size()), b_.empty() ? 1 : static_cast<int>(b_[0].size()));
+        if (RenderGrid("b", b_, source_ != 2)) Changed();
+        return;
+    }
     if (RenderGrid("B", b_, false)) Changed();
+}
+
+bool LinearAlgebraPanel::RenderTableInput(const char* id, TableInput& input, bool matrix_choice) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    bool changed = false;
+    ImGui::PushID(id);
+    ui::FieldLabel("Table");
+    if (ImGui::BeginCombo("##table", input.choice.table.empty() ? "Pick a table" : input.choice.table.c_str())) {
+        tables_ = SessionQueryService::Instance().QueryableNames();
+        if (tables_.empty()) ImGui::TextColored(t.text_dim, "No table yet: load a Data Input, or run a node's result.");
+        for (const auto& name : tables_)
+            if (ImGui::Selectable(name.c_str(), name == input.choice.table) && name != input.choice.table) {
+                input.choice.table = name;
+                input.choice.columns.clear();
+                changed = true;
+            }
+        ImGui::EndCombo();
+    }
+    if (!input.choice.table.empty() && input.columns_for != input.choice.table && input.task == 0) {
+        // The number columns, from the table's schema (a background query).
+        input.columns_for = input.choice.table;
+        input.columns.clear();
+        input.picked.clear();
+        input.error.clear();
+        QueryRequest q;
+        q.sql = "SELECT * FROM " + SessionQueryEngine::QuoteIdentifier(input.choice.table) + " LIMIT 0";
+        q.label = "Linear Algebra: " + input.choice.table;
+        TableInput* target = &input;
+        const std::string table = input.choice.table;
+        input.task = SessionQueryService::Instance().Submit(
+            q,
+            [this, target, table](const QueryResult& r) {
+                target->task = 0;
+                if (table != target->choice.table) return;
+                if (!r.ok || !r.table) {
+                    target->error = r.error.empty() ? "Cannot read " + table + "." : r.error;
+                    return;
+                }
+                std::string error;
+                const QueryRunner schema = [&r](const QueryRequest&) { return r; };
+                target->columns = linalg::NumberColumns(table, schema, error);
+                target->picked.assign(target->columns.size(), 1);
+                if (target->columns.empty()) target->error = table + " has no number column.";
+                target->choice.columns = target->columns;
+                Changed();
+            },
+            alive_);
+    }
+    if (input.task != 0) ImGui::TextColored(t.text_dim, "Reading the columns...");
+    if (!input.error.empty()) ImGui::TextColored(t.warning, "%s", input.error.c_str());
+    if (!input.columns.empty()) {
+        ui::FieldLabel("Number columns");
+        ui::BeginInsetList("##columns", std::min(170.0f, ImGui::GetFrameHeightWithSpacing() * (static_cast<float>(input.columns.size()) + 0.4f)));
+        for (size_t j = 0; j < input.columns.size(); ++j) {
+            bool on = input.picked[j] != 0;
+            ImGui::PushID(static_cast<int>(j));
+            if (ImGui::Checkbox(input.columns[j].c_str(), &on)) {
+                input.picked[j] = on ? 1 : 0;
+                input.choice.columns.clear();
+                for (size_t c = 0; c < input.columns.size(); ++c)
+                    if (input.picked[c]) input.choice.columns.push_back(input.columns[c]);
+                changed = true;
+            }
+            ImGui::PopID();
+        }
+        ui::EndInsetList();
+    }
+    if (matrix_choice) {
+        ui::FieldLabel("Matrix");
+        static const char* const kMatrix[] = {"The rows", "Correlation", "Covariance"};
+        int which = static_cast<int>(input.choice.matrix);
+        if (ui::SegmentedControl("##matrix", kMatrix, 3, &which)) {
+            input.choice.matrix = static_cast<linalg::FromTable>(which);
+            changed = true;
+        }
+    }
+    if (!input.choice.table.empty() && ui::LinkButton("Read again")) {
+        ++refresh_;
+        changed = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Read the table again (its data changed)");
+    ImGui::PopID();
+    return changed;
+}
+
+void LinearAlgebraPanel::RenderRead(const linalg::TableMatrix& read, const char* title) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (read.m.empty()) return;
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "%s", read.note.c_str());
+    ImGui::PopTextWrapPos();
+    linalg::Table preview;
+    preview.title = title;
+    preview.columns = read.names;
+    const bool square_named = read.m.size() == read.names.size() && read.note.rfind("The rows", 0) != 0;
+    constexpr size_t kPreview = 12;
+    for (size_t i = 0; i < read.m.size() && i < kPreview; ++i) {
+        preview.values.push_back(read.m[i]);
+        preview.row_names.push_back(square_named ? read.names[i] : "r" + std::to_string(i + 1));
+    }
+    if (read.m.size() > kPreview) preview.note = "The first " + std::to_string(kPreview) + " of " + std::to_string(read.m.size()) + " rows.";
+    ImGui::PushID(title);
+    RenderTable(preview);
+    ImGui::PopID();
 }
 
 void LinearAlgebraPanel::RenderTable(const linalg::Table& table) {
@@ -355,7 +489,7 @@ void LinearAlgebraPanel::RenderAnswer() {
         if (!job_.Error().empty()) ImGui::TextColored(t.error, "%s", job_.Error().c_str());
         return;
     }
-    const linalg::Answer& a = shown_->answer;
+    const linalg::Answer& a = shown_->result.answer;
     if (!a.ok()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION);
@@ -438,6 +572,7 @@ void LinearAlgebraPanel::RenderAnswer() {
     const bool usable = has_tab && a.tabs[static_cast<size_t>(tab_)].matrix;
     if (ui::SecondaryButton("Use as A", usable, "Only a matrix result can become A")) {
         a_ = a.tabs[static_cast<size_t>(tab_)].values;
+        if (a_.size() > static_cast<size_t>(linalg::kMaxTyped) || a_[0].size() > static_cast<size_t>(linalg::kMaxTyped)) Resize(a_, std::min<int>(linalg::kMaxTyped, static_cast<int>(a_.size())), std::min<int>(linalg::kMaxTyped, static_cast<int>(a_[0].size())));
         source_ = 0;
         edited_ = true;
         Changed();

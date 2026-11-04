@@ -7829,9 +7829,14 @@ set_target_properties(test_text_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${C
 add_test(NAME TextExplore COMMAND test_text_explore)
 
 # Tools > Linear Algebra (TOFIX129 D9): the window's answers against numpy.
-add_executable(test_linear_algebra_presentation tests/test_linear_algebra_presentation.cpp src/core/linear_algebra_presentation.cpp)
+add_executable(test_linear_algebra_presentation tests/test_linear_algebra_presentation.cpp src/core/linear_algebra_presentation.cpp
+    src/core/explore_read.cpp src/core/explore_presentation.cpp
+    src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
+    src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
 target_include_directories(test_linear_algebra_presentation PRIVATE src)
-target_link_libraries(test_linear_algebra_presentation PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_link_libraries(test_linear_algebra_presentation PRIVATE cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared duckdb
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
 target_compile_definitions(test_linear_algebra_presentation PRIVATE
     CYXWIZ_LINEAR_ALGEBRA_PRESENTATION_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/linear_algebra_presentation.json")
 if(WIN32)
