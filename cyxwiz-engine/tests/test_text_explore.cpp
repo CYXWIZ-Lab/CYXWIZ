@@ -257,6 +257,9 @@ int main() {
     const auto kp = text::NodeParameters(k.request);
     Check(kp.at("tokenizer_type") == "1" && kp.at("max_length") == "10" && kp.at("min_word_freq") == "2" && kp.at("max_vocab_size") == "10000",
           "Tokenizer node parameters");
+    text::TokensRequest no_cap = k.request;
+    no_cap.vocabulary = 0;
+    Check(text::NodeParameters(no_cap).at("max_vocab_size") == "1", "Tokenizer node parameters: a vocabulary of 1 or more, as the node takes it");
     er.method = "glove";
     er.window = 0;
     er.epochs = 0;

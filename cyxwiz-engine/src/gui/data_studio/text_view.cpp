@@ -358,7 +358,7 @@ void TextView::RenderLookSettings() {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Tokenizer node's tokenizers, trained on this column as the node trains them");
             Setting("Vocabulary", 120.0f);
-            ui::NumberField("##text_vocab", &tokens_.vocabulary, 0, 1 << 24, 1000, 72.0f, "The largest vocabulary (max_vocab_size); 0: every token");
+            ui::NumberField("##text_vocab", &tokens_.vocabulary, 1, 1 << 24, 1000, 72.0f, "The largest vocabulary (max_vocab_size)");
             Setting("seen at least", 120.0f);
             ui::NumberField("##text_min_freq", &tokens_.min_frequency, 1, 1 << 20, 1, 48.0f, "A token joins the vocabulary when seen this many times (min_word_freq)");
             Setting("Length limit", 120.0f);

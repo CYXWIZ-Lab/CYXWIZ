@@ -121,7 +121,7 @@ What a tokenizer makes of the rows, with the Tokenizer node's tokenizers
 trained on this column as the node trains them: **Tokenizer** (Word by
 default; Whitespace, Character, Byte BPE, WordPiece, and SentencePiece BPE /
 Unigram when the SentencePiece provider is installed), **Vocabulary** (the
-largest vocabulary, max_vocab_size: 10,000; 0 keeps every token), **seen at
+largest vocabulary, max_vocab_size: 10,000), **seen at
 least** N times (min_word_freq: 2) and the **Length limit** (max_length: 256
 tokens).
 

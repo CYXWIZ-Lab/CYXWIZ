@@ -480,7 +480,7 @@ TokensAnswer RunTokens(const std::string& table, const TokensRequest& request, c
     tokenizer.SetPadding(false);
     tokenizer.SetTruncation(false);
     try {
-        tokenizer.Train(d.texts, std::max(1, request.min_frequency), request.vocabulary > 0 ? request.vocabulary : -1);
+        tokenizer.Train(d.texts, std::max(1, request.min_frequency), std::max(1, request.vocabulary));
     } catch (const std::exception& e) {
         if (Stopped(stop)) return a.error = "Cancelled.", a;
         return a.error = std::string("The tokenizer could not learn this column: ") + e.what(), a;
@@ -627,7 +627,7 @@ std::map<std::string, std::string> NodeParameters(const TokensRequest& request) 
             {"label_col", request.base.group},
             {"max_length", std::to_string(request.max_length)},
             {"min_word_freq", std::to_string(std::max(1, request.min_frequency))},
-            {"max_vocab_size", std::to_string(request.vocabulary)}};
+            {"max_vocab_size", std::to_string(std::max(1, request.vocabulary))}};
 }
 
 std::map<std::string, std::string> NodeParameters(const EmbeddingsRequest& request) {
