@@ -2519,6 +2519,26 @@ int main() {
     Check(HasIssueText(config, "typed named-batch contract"),
           "multi-input graph should point to missing named-batch contract");
 
+    // A second Data Input into a Linear Projection's Matrix pin is that
+    // step's parameters, not training rows (TOFIX129 D9): no second source.
+    auto projection = Node(70,
+                           gui::NodeType::LinearProjection,
+                           "Project",
+                           {Pin(7001, gui::PinType::Dataset, "Data", true), Pin(7002, gui::PinType::Dataset, "Matrix", true)},
+                           {Pin(7003, gui::PinType::Dataset, "Transformed", false)});
+    nodes = {data, second_data, projection, dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 70, 7001),
+        Link(2, 23, 2301, 70, 7002),
+        Link(3, 70, 7003, 2, 201),
+        Link(4, 2, 202, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+    config = compiler.Compile(nodes, links, true);
+    Check(!HasIssueText(config, "exactly one dataset source"),
+          "a Data Input into Linear Projection's Matrix pin is not a second dataset source");
+
     auto role_train = Node(
         60,
         gui::NodeType::DataInput,

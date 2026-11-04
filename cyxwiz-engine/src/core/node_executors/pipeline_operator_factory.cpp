@@ -91,6 +91,8 @@ void PipelineOperatorFactory::RegisterDefaults() {
     });
     RegisterCreator(gui::NodeType::TruncatedSVD, []() { return std::make_unique<TruncatedSVDOperator>(); });
     RegisterCreator(gui::NodeType::Whitening, []() { return std::make_unique<WhiteningOperator>(); });
+    RegisterCreator(gui::NodeType::LinearSolve, []() { return std::make_unique<LinearSolveOperator>(); });
+    RegisterCreator(gui::NodeType::LinearProjection, []() { return std::make_unique<LinearProjectionOperator>(); });
     // t-SNE and UMAP embeddings (TOFIX129 D5), beside the input columns.
     RegisterCreator(gui::NodeType::TSNENode, []() {
         return std::make_unique<TSNEOperator>();

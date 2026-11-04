@@ -4916,8 +4916,30 @@ void NodeMetadataRegistry::InitializeLinearAlgebraNodes() {
          {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
          {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
         NodeImplementationStatus::Implemented, 0});
-}
 
+    RegisterNode({NodeType::LinearSolve, NodeCategory::Analytics, "Linear Solve", ICON_FA_SQUARE_ROOT_VARIABLE,
+        {"solve", "linear", "system", "least", "squares", "lstsq", "ax=b", "matrix"}, 0, false,
+        "Solve A x = b from table columns",
+        "A is the A columns of the Data input; b is the b columns of the b input (a second table, lined up row by row: the same row count, no missing value) or of the same table. Square A of full rank: the one solution; otherwise least squares, the shortest of the best x (Method decides). Fitted on the Train rows when a Data Split marks them. Output: one row per column of A (column, then x_<b column>). Tools > Linear Algebra shows the same with its sentence and checks.", "",
+        {{"Data", PinType::Dataset, true, "The table holding A's columns"}, {"b", PinType::Dataset, false, "A second table holding b's columns, row for row with A"}},
+        {{"x", PinType::Dataset, true, "One row per column of A: column, x_<b column>"}},
+        {{"a_cols", "string", "", "Comma-separated columns of A; empty: every number column but b's", {}, "", "A columns", "Columns"},
+         {"b_cols", "string", "", "Comma-separated columns of b (in the b input, or in the same table)", {}, "", "b columns", "Columns", true},
+         {"method", "enum", "auto", "auto: the one solution for a square A of full rank, else least squares", {"auto", "solve", "least_squares"}, "", "Method"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::LinearProjection, NodeCategory::Analytics, "Linear Projection", ICON_FA_TABLE_CELLS,
+        {"projection", "project", "matrix", "multiply", "loadings", "transform", "linear"}, 0, false,
+        "Multiply every row by a matrix from a second table",
+        "The Matrix input's number columns are the outputs; its rows weigh the data's columns, in order, or as its text column names them (a matrix exported from Tools > Linear Algebra or another run's loadings). The Matrix table is a parameter of this step, not training rows. Outputs Float32 columns named after the matrix's (with Prefix) alone, with the label as y and the split carried, or beside the input with Keep columns.", "",
+        {{"Data", PinType::Dataset, true, "Input table containing numeric features"}, {"Matrix", PinType::Dataset, true, "The matrix: one row per data column, one column per output"}},
+        {{"Transformed", PinType::Dataset, true, "The outputs (and y), or the input with them beside it"}},
+        {{"feature_cols", "string", "", "Comma-separated data columns, one per matrix row; empty: every number column but the label (or the matrix's names)", {}, "", "Feature columns", "Columns"},
+         {"label_col", "string", "", "Optional label column passed through as y", {}, "", "Label column", "Columns"},
+         {"prefix", "string", "", "Put before each output column's name", {}, "", "Prefix"},
+         {"keep_columns", "bool", "false", "Keep the input columns and add the outputs beside them", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
+}
 
 // =============================================================================
 // Time Series Analysis Nodes (Tool-to-Node Migration)

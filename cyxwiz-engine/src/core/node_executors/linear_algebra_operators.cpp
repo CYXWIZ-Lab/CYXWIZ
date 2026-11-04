@@ -1,5 +1,7 @@
 #include "linear_algebra_operators.h"
 
+#include "../split_partitioning.h"
+
 #include <cyxwiz/linear_algebra.h>
 
 #include <spdlog/spdlog.h>
@@ -203,6 +205,177 @@ arrow::Status WhiteningOperator::Fit(const LinearMatrix& train, const std::vecto
     map.w = w.matrix;
     for (const auto& f : features) map.outputs.push_back(f + "_white");
     return arrow::Status::OK();
+}
+
+// ---- Linear Solve
+
+namespace {
+
+std::shared_ptr<arrow::Table> XTable(const std::vector<std::string>& a_cols, const std::vector<std::string>& b_cols, const LinearMatrix& x) {
+    arrow::StringBuilder names;
+    for (const auto& n : a_cols) (void)names.Append(n);
+    std::shared_ptr<arrow::Array> name_array;
+    (void)names.Finish(&name_array);
+    std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("column", arrow::utf8())};
+    std::vector<std::shared_ptr<arrow::Array>> arrays = {name_array};
+    for (size_t c = 0; c < b_cols.size(); ++c) {
+        arrow::DoubleBuilder b;
+        for (const auto& row : x) (void)b.Append(row[c]);
+        std::shared_ptr<arrow::Array> a;
+        (void)b.Finish(&a);
+        fields.push_back(arrow::field("x_" + b_cols[c], arrow::float64()));
+        arrays.push_back(a);
+    }
+    return arrow::Table::Make(arrow::schema(fields), arrays);
+}
+
+// Strings of a text column (null: "").
+std::vector<std::string> TextColumn(const std::shared_ptr<arrow::ChunkedArray>& column) {
+    std::vector<std::string> out;
+    for (const auto& chunk : column->chunks()) {
+        if (chunk->type_id() == arrow::Type::STRING) {
+            const auto s = std::static_pointer_cast<arrow::StringArray>(chunk);
+            for (int64_t i = 0; i < s->length(); ++i) out.push_back(s->IsNull(i) ? "" : s->GetString(i));
+        } else if (chunk->type_id() == arrow::Type::LARGE_STRING) {
+            const auto s = std::static_pointer_cast<arrow::LargeStringArray>(chunk);
+            for (int64_t i = 0; i < s->length(); ++i) out.push_back(s->IsNull(i) ? "" : s->GetString(i));
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+bool LinearSolveOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
+    const auto list = [&](const char* key) {
+        const auto it = params.find(key);
+        return ParseColumnList(it != params.end() ? it->second : "");
+    };
+    a_cols_ = list("a_cols");
+    b_cols_ = list("b_cols");
+    if (b_cols_.empty()) return error = "LinearSolve: b_cols names b's column(s)", false;
+    const auto m = params.find("method");
+    method_ = m == params.end() || m->second.empty() ? "auto" : m->second;
+    if (method_ != "auto" && method_ != "solve" && method_ != "least_squares")
+        return error = "LinearSolve: method must be 'auto', 'solve' or 'least_squares' (got '" + method_ + "')", false;
+    return true;
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> LinearSolveOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    if (!input) return arrow::Status::Invalid("LinearSolve: input table is null");
+    const bool two_tables = b_table_ != nullptr;
+    const std::shared_ptr<arrow::Table> b_source = two_tables ? b_table_ : input;
+    // A's columns: given, or every number column of the input but b's.
+    std::vector<std::string> a_cols;
+    if (!a_cols_.empty()) {
+        ARROW_RETURN_NOT_OK(ResolveNumberFeatures(input, a_cols_, "", GetName(), a_cols));
+    } else {
+        std::vector<std::string> all;
+        ARROW_RETURN_NOT_OK(ResolveNumberFeatures(input, {}, "", GetName(), all));
+        for (const auto& c : all)
+            if (two_tables || std::find(b_cols_.begin(), b_cols_.end(), c) == b_cols_.end()) a_cols.push_back(c);
+        if (a_cols.empty()) return arrow::Status::Invalid("LinearSolve: no number column is left for A");
+    }
+    std::vector<std::string> b_cols;
+    ARROW_RETURN_NOT_OK(ResolveNumberFeatures(b_source, b_cols_, "", GetName(), b_cols));
+    LinearMatrix a, b;
+    if (two_tables) {
+        // Two tables line up row by row: the same count, no row left out of one side.
+        if (b_table_->num_rows() != input->num_rows())
+            return arrow::Status::Invalid("LinearSolve: A has " + std::to_string(input->num_rows()) + " rows and b has " +
+                                          std::to_string(b_table_->num_rows()) + ": two tables line up row by row");
+        FeatureRows ar, br;
+        ARROW_RETURN_NOT_OK(ReadFeatureRows(input, a_cols, GetName(), false, ar, GetCancellationQuery()));
+        ARROW_RETURN_NOT_OK(ReadFeatureRows(b_table_, b_cols, GetName(), false, br, GetCancellationQuery()));
+        if (ar.rows.size() != static_cast<size_t>(ar.total) || br.rows.size() != static_cast<size_t>(br.total))
+            return arrow::Status::Invalid(std::string("LinearSolve: A and b come from two tables and ") +
+                                          (ar.rows.size() != static_cast<size_t>(ar.total) ? "A" : "b") +
+                                          " has rows with a missing value: the rows cannot be lined up with one side left out. Fill or remove them first.");
+        const std::vector<bool> train = TrainRowMask(input);
+        for (size_t i = 0; i < ar.data.size(); ++i)
+            if (train.empty() || train[i]) {
+                a.push_back(ar.data[i]);
+                b.push_back(br.data[i]);
+            }
+    } else {
+        std::vector<std::string> both = a_cols;
+        both.insert(both.end(), b_cols.begin(), b_cols.end());
+        FeatureRows rows;
+        ARROW_RETURN_NOT_OK(ReadFeatureRows(input, both, GetName(), false, rows, GetCancellationQuery()));
+        for (const auto& row : TrainSubset(input, rows)) {
+            a.emplace_back(row.begin(), row.begin() + static_cast<std::ptrdiff_t>(a_cols.size()));
+            b.emplace_back(row.begin() + static_cast<std::ptrdiff_t>(a_cols.size()), row.end());
+        }
+    }
+    ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
+    if (a.empty()) return arrow::Status::Invalid("LinearSolve: no row has every column of A and b");
+    const ScalarResult rank = LinearAlgebra::Rank(a);
+    if (!rank.success) return arrow::Status::ExecutionError("LinearSolve: " + rank.error_message);
+    const bool square = a.size() == a_cols.size();
+    const bool full = static_cast<size_t>(std::lround(rank.value)) == a_cols.size();
+    const bool solve = method_ == "solve" || (method_ == "auto" && square && full);
+    if (solve && !(square && full))
+        return arrow::Status::Invalid("LinearSolve: A x = b needs a square A of full rank; A is " + std::to_string(a.size()) + " × " +
+                                      std::to_string(a_cols.size()) + " of rank " + std::to_string(std::lround(rank.value)) +
+                                      ". Least squares takes any A.");
+    const MatrixResult x = solve ? LinearAlgebra::Solve(a, b) : LinearAlgebra::LeastSquares(a, b);
+    if (!x.success) return arrow::Status::ExecutionError("LinearSolve: " + x.error_message);
+    spdlog::info("LinearSolve: {} rows, A {} columns of rank {}, b {} columns: {}", a.size(), a_cols.size(), std::lround(rank.value),
+                 b_cols.size(), solve ? "the one solution" : "least squares");
+    return XTable(a_cols, b_cols, x.matrix);
+}
+
+// ---- Linear Projection
+
+bool LinearProjectionOperator::Configure(const std::map<std::string, std::string>& params, std::string& error) {
+    const auto fc = params.find("feature_cols");
+    feature_cols_ = ParseColumnList(fc != params.end() ? fc->second : "");
+    const auto lc = params.find("label_col");
+    label_col_ = lc != params.end() ? lc->second : "";
+    const auto px = params.find("prefix");
+    prefix_ = px != params.end() ? px->second : "";
+    return ReadBoolParameter(params, "keep_columns", false, keep_columns_, GetName(), error);
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> LinearProjectionOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
+    if (!input) return arrow::Status::Invalid("LinearProjection: input table is null");
+    if (!matrix_) return arrow::Status::Invalid("LinearProjection: link a table to the Matrix input (its number columns are the outputs)");
+    // The matrix: its number columns are the outputs; a text column names the data column of each row.
+    std::vector<std::string> outputs, names;
+    for (const auto& field : matrix_->schema()->fields()) {
+        const auto id = field->type()->id();
+        if (id == arrow::Type::STRING || id == arrow::Type::LARGE_STRING) {
+            if (names.empty()) names = TextColumn(matrix_->GetColumnByName(field->name()));
+        } else if (field->name().rfind("__", 0) != 0) {
+            outputs.push_back(field->name());
+        }
+    }
+    std::vector<std::string> checked;
+    ARROW_RETURN_NOT_OK(ResolveNumberFeatures(matrix_, outputs, "", GetName(), checked));
+    FeatureRows m;
+    ARROW_RETURN_NOT_OK(ReadFeatureRows(matrix_, outputs, GetName(), false, m));
+    if (m.rows.size() != static_cast<size_t>(m.total)) return arrow::Status::Invalid("LinearProjection: the matrix has a missing value");
+    std::vector<std::string> features;
+    if (!names.empty()) {
+        ARROW_RETURN_NOT_OK(ResolveNumberFeatures(input, names, "", GetName(), features));
+    } else {
+        ARROW_RETURN_NOT_OK(ResolveNumberFeatures(input, feature_cols_, label_col_, GetName(), features));
+    }
+    if (features.size() != m.data.size())
+        return arrow::Status::Invalid("LinearProjection: the matrix has " + std::to_string(m.data.size()) + " rows and the data " +
+                                      std::to_string(features.size()) + " columns: one row per data column (or name them in a text column)");
+    LinearMap map;
+    map.inputs = features;
+    map.shift.assign(features.size(), 0.0);
+    map.divisor.assign(features.size(), 1.0);
+    map.w = m.data;
+    for (const auto& o : outputs) map.outputs.push_back(prefix_ + o);
+    FeatureRows rows;
+    ARROW_RETURN_NOT_OK(ReadFeatureRows(input, features, GetName(), false, rows, GetCancellationQuery()));
+    LinearMatrix mapped;
+    std::string error;
+    if (!ApplyLinearMap(map, rows.data, mapped, error)) return arrow::Status::ExecutionError("LinearProjection: " + error);
+    return LinearMapTable(input, map, rows, mapped, keep_columns_, label_col_, GetName());
 }
 
 }  // namespace cyxwiz

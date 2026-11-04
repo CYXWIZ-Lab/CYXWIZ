@@ -3772,6 +3772,13 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             required_input_count =
                 static_cast<int>(SqlStepInputAliases(node.parameters).size());
         }
+        if (node.type == "LinearSolve") {
+            // Data, plus b when it is connected (else b's columns are in Data).
+            const bool b_linked = std::any_of(
+                node.input_links.begin(), node.input_links.end(),
+                [](const auto& link) { return link.target_pin_index == 1; });
+            required_input_count = b_linked ? 2 : 1;
+        }
         if (node.type == "ClassicModelPredictor") {
             // Data, plus the Model input when it is connected (optional:
             // without it the saved model file is used).
@@ -6289,6 +6296,9 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
                 saved->second = ResolveProjectDataPath(TrimString(saved->second), project_root_);
             }
         }
+    } else if (type == gui::NodeType::LinearSolve || type == gui::NodeType::LinearProjection) {
+        // The rows on pin 0; a second table on pin 1 (handed to the operator below).
+        input_dataset_name = GetInputDatasetForPin(node, ctx, 0);
     } else {
         input_dataset_name = GetInputDatasetName(node, ctx);
     }
@@ -6319,6 +6329,20 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     operator_context.cancellation_requested =
         [this]() { return cancel_requested_.load(); };
     op->SetExecutionContext(std::move(operator_context));
+    if (const int pin = op->SecondTablePin(); pin >= 0) {
+        const bool linked = std::any_of(node.input_links.begin(), node.input_links.end(),
+                                        [pin](const auto& link) { return link.target_pin_index == pin; });
+        std::shared_ptr<arrow::Table> second;
+        if (linked) {
+            const std::string name = GetInputDatasetForPin(node, ctx, pin);
+            second = name.empty() ? nullptr : InputSchemaTable(name);
+            if (!second) {
+                ReportError(node.type + ": its second input (pin " + std::to_string(pin + 1) + ") is not a table");
+                return false;
+            }
+        }
+        op->SetSecondTable(second);
+    }
     // The runtime memory guard (TOFIX178 S0-e2, as training's own preparation
     // had): a step whose process memory grows by the safe budget - the data
     // budget, at most 90% of the memory free when it starts - stops with the

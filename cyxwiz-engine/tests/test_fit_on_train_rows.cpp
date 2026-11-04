@@ -294,6 +294,68 @@ void CheckExecutor() {
 // Supplied Validation / Test inputs (S0-g4): their rows join the training
 // rows with partition 1 / 2; the scaler learns from the training rows only
 // and transforms them all.
+// Linear Solve and Linear Projection (TOFIX129 D9). One table: x = (a . y) /
+// (a . a) over the Train rows (a = 1, 2, 4, 3; y = 1, 0, 1, 1): 8 / 30.
+// Two Data Inputs through the executor: A = [2 1; 1 3], b = (5, 10) from a
+// second table on pin 2 gives x = (1, 3); a projection by a named matrix
+// (x1: 1, x2: -1) gives x1 - x2.
+void CheckSolveAndProjection() {
+    LinearSolveOperator one;
+    const auto x = Run(one, {{"a_cols", "a"}, {"b_cols", "y"}}, Table());
+    Expect(Column(x, "x_y"), {8.0 / 30.0}, "Linear Solve: least squares on the Train rows");
+
+    const fs::path dir = fs::temp_directory_path() / "cyxwiz_test_linear_steps";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const auto write = [&](const char* name, const char* text) {
+        std::ofstream(dir / name, std::ios::binary) << text;
+        return (dir / name).string();
+    };
+    const std::string a_csv = write("a.csv", "x1,x2\n2,1\n1,3\n");
+    const std::string b_csv = write("b.csv", "t\n5\n10\n");
+    const std::string m_csv = write("m.csv", "column,p\nx2,-1\nx1,1\n");
+    const auto input = [](int id, const std::string& path) {
+        return nlohmann::json{{"id", id}, {"type", "DataInput"}, {"name", "In" + std::to_string(id)},
+                              {"parameters", {{"source_type", "file"}, {"file_path", path}, {"type", "csv"}, {"has_header", "true"},
+                                              {"delimiter", ","}, {"force_disk_backed", "false"}}}};
+    };
+    auto& registry = DataRegistry::Instance();
+    const auto result = [&](PipelineExecutor& executor, int id) {
+        const auto it = executor.NodeResults().find(id);
+        Check(it != executor.NodeResults().end(), "node " + std::to_string(id) + " has a result");
+        return registry.GetArrowDataset(it->second)->GetArrowTable();
+    };
+    nlohmann::json solve;
+    solve["nodes"] = nlohmann::json::array({input(1, a_csv), input(2, b_csv),
+                                            {{"id", 3}, {"type", "LinearSolve"}, {"name", "Solve"}, {"parameters", {{"b_cols", "t"}}}}});
+    solve["links"] = nlohmann::json::array({{{"start_node", 1}, {"end_node", 3}, {"end_pin_index", 0}},
+                                            {{"start_node", 2}, {"end_node", 3}, {"end_pin_index", 1}}});
+    PipelineExecutor solver;
+    Check(solver.ExecutePipeline(solve.dump()), "Linear Solve over two Data Inputs: " + solver.GetLastError());
+    Expect(Column(result(solver, 3), "x_t"), {1.0, 3.0}, "Linear Solve: A from one table, b from another");
+
+    nlohmann::json project;
+    project["nodes"] = nlohmann::json::array({input(1, a_csv), input(2, m_csv),
+                                              {{"id", 3}, {"type", "LinearProjection"}, {"name", "Project"}, {"parameters", nlohmann::json::object()}}});
+    project["links"] = nlohmann::json::array({{{"start_node", 1}, {"end_node", 3}, {"end_pin_index", 0}},
+                                              {{"start_node", 2}, {"end_node", 3}, {"end_pin_index", 1}}});
+    PipelineExecutor projector;
+    Check(projector.ExecutePipeline(project.dump()), "Linear Projection with a Matrix input: " + projector.GetLastError());
+    Expect(Column(result(projector, 3), "p"), {1.0, -2.0}, "Linear Projection: the matrix rows matched by name");
+
+    // Two tables of different lengths are refused; a missing Matrix too.
+    const std::string short_b = write("b2.csv", "t\n5\n");
+    solve["nodes"][1] = input(2, short_b);
+    PipelineExecutor uneven;
+    Check(!uneven.ExecutePipeline(solve.dump()) && uneven.GetLastError().find("line up row by row") != std::string::npos,
+          "Linear Solve: two tables of different lengths: " + uneven.GetLastError());
+    LinearProjectionOperator alone;
+    std::string error;
+    Check(alone.Configure({}, error) && !alone.Apply(Table()).ok(), "Linear Projection without a Matrix is refused");
+    fs::remove_all(dir, ec);
+}
+
 void CheckSuppliedInputs() {
     // The helper: columns by name, the supplied label renamed, a cast, extra
     // columns left out, a missing column refused.
@@ -467,9 +529,10 @@ int main() {
     CheckOperators();
     CheckPCA();
     CheckLinearSteps();
+    CheckSolveAndProjection();
     CheckExecutor();
     CheckSuppliedInputs();
-    std::cout << "fit on Train rows: scaler, target encoder, PCA, Truncated SVD, Whitening, TF-IDF, count and tokenizer learn from the Train rows "
+    std::cout << "fit on Train rows: scaler, target encoder, PCA, Truncated SVD, Whitening, Linear Solve, TF-IDF, count and tokenizer learn from the Train rows "
                  "(scikit-learn values); the run marks rows with the shared split rule; supplied Validation / Test rows join and are transformed; exports leave the partition out. OK\n";
     return 0;
 }

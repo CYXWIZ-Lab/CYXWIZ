@@ -638,6 +638,8 @@ enum class NodeType {
     // Fitted on the Train rows, on the device (linear_algebra_operators.h).
     TruncatedSVD,       // the k strongest directions of the uncentred columns (LSA)
     Whitening,          // PCA or ZCA whitening: decorrelated, unit variance
+    LinearSolve,        // A x = b from table columns (b from a second table or the same)
+    LinearProjection,   // every row times a matrix from a second table
 
     // Special sentinel value
     Unknown

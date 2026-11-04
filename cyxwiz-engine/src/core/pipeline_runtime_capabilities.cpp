@@ -329,6 +329,8 @@ GetPipelineOperatorRuntimeCapabilities() {
         {"PCA", gui::NodeType::PCANode},
         {"TruncatedSVD", gui::NodeType::TruncatedSVD},
         {"Whitening", gui::NodeType::Whitening},
+        {"LinearSolve", gui::NodeType::LinearSolve},
+        {"LinearProjection", gui::NodeType::LinearProjection},
         {"TSNENode", gui::NodeType::TSNENode},
         {"UMAPNode", gui::NodeType::UMAPNode},
         {"KMeansCluster", gui::NodeType::KMeansCluster},
@@ -851,6 +853,7 @@ GetPipelineInputArityRuntimeCapabilities() {
         {"RowAppender", 2},
         {"ColumnAppender", 2},
         {"RegressionModelPredictor", 2},
+        {"LinearProjection", 2},
     };
     return capabilities;
 }
@@ -862,6 +865,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"DataConvert", {"output_path"}},
         {"ParquetInput", {"file_path"}},
         {"RuleEngine", {"rules"}},
+        {"LinearSolve", {"b_cols"}},
         {"JSONPathExtractor", {"path"}},
         {"RegexTester", {"pattern"}},
         {"RegressionMetricsNode", {"actual_col", "predicted_col"}},
@@ -973,6 +977,7 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"TruncatedSVD", "save_state", "false", {"true", "false"}},
         {"TruncatedSVD", "state_overwrite", "false", {"true", "false"}},
         {"Whitening", "method", "pca", {"pca", "zca"}},
+        {"LinearSolve", "method", "auto", {"auto", "solve", "least_squares"}},
         {"Whitening", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
         {"Whitening", "save_state", "false", {"true", "false"}},
         {"Whitening", "state_overwrite", "false", {"true", "false"}},

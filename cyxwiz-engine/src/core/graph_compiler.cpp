@@ -3090,7 +3090,19 @@ void ValidateSingleDatasetSourceForSelectedLoss(
         return;
     }
 
-    const auto loss_ancestors = CollectAncestorNodeIds(selected_loss->id, links);
+    // A table into a step's parameter pin (Linear Projection's Matrix, Linear
+    // Solve's b; TOFIX129 D9) is that step's parameters, not training rows:
+    // the source behind it is not a second dataset source.
+    std::vector<gui::NodeLink> row_links;
+    for (const auto& link : links) {
+        const gui::MLNode* target = FindNodeById(nodes, link.to_node);
+        const char* parameter_pin = !target ? nullptr
+            : target->type == gui::NodeType::LinearProjection ? "Matrix"
+            : target->type == gui::NodeType::LinearSolve ? "b" : nullptr;
+        const auto* pin = parameter_pin ? FindInputPinByName(*target, parameter_pin) : nullptr;
+        if (!(pin && link.to_pin == pin->id)) row_links.push_back(link);
+    }
+    const auto loss_ancestors = CollectAncestorNodeIds(selected_loss->id, row_links);
     std::vector<const gui::MLNode*> selected_sources;
     for (const auto& node : nodes) {
         if (!IsDatasetSourceType(node.type) ||

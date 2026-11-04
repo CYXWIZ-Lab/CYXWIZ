@@ -77,4 +77,46 @@ private:
     double epsilon_ = 0.0;        // added to each variance before its root
 };
 
+// A x = b from table columns (TOFIX129 D9): A's columns from the Data
+// input, b's from the b input (a second table, row by row) or from the same
+// table. Square A of full rank: the one solution; otherwise least squares,
+// the shortest of the best x (the backend's LinearAlgebra). Fitted on the
+// Train rows when the run marks them. Output: one row per column of A
+// ("column", then x_<b column> per column of b).
+class LinearSolveOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "LinearSolve"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    int SecondTablePin() const override { return 1; }
+    void SetSecondTable(std::shared_ptr<arrow::Table> table) override { b_table_ = std::move(table); }
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+
+private:
+    std::vector<std::string> a_cols_, b_cols_;
+    std::string method_ = "auto";  // "auto", "solve" or "least_squares"
+    std::shared_ptr<arrow::Table> b_table_;
+};
+
+// Every row times a matrix from the Matrix input (TOFIX129 D9): the matrix
+// table's number columns are the outputs, its rows the data's columns in
+// order (or named by its text column, matched by name). Output as the
+// fitted steps: the outputs alone (y, the split) or beside the input.
+class LinearProjectionOperator : public IPipelineOperator {
+public:
+    std::string GetName() const override { return "LinearProjection"; }
+    PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+    int SecondTablePin() const override { return 1; }
+    void SetSecondTable(std::shared_ptr<arrow::Table> table) override { matrix_ = std::move(table); }
+    bool Configure(const std::map<std::string, std::string>& params, std::string& error) override;
+    arrow::Result<std::shared_ptr<arrow::Table>> Apply(const std::shared_ptr<arrow::Table>& input) override;
+
+private:
+    std::vector<std::string> feature_cols_;
+    std::string label_col_;
+    std::string prefix_;
+    bool keep_columns_ = false;
+    std::shared_ptr<arrow::Table> matrix_;
+};
+
 }  // namespace cyxwiz
