@@ -36,12 +36,14 @@ void Require(bool condition, const std::string& message) {
 }
 
 #ifdef CYXWIZ_HAS_HDF5
-std::string Graph(const fs::path& file, const std::string& data_path, const std::string& label_path) {
+std::string Graph(const fs::path& file, const std::string& data_path, const std::string& label_path,
+                  const std::string& selected_columns = "") {
     cyxwiz::Hdf5InputSettings settings;
     settings.selection.data_path = data_path;
     settings.selection.label_path = label_path;
     std::map<std::string, std::string> parameters{
         {"source_type", "file"}, {"file_path", file.string()}, {"type", "hdf5"}};
+    if (!selected_columns.empty()) parameters["selected_columns"] = selected_columns;
     std::string error;
     Require(cyxwiz::WriteHdf5InputSettings(settings, parameters, error), "HDF5 settings: " + error);
     nlohmann::json graph;
@@ -102,6 +104,20 @@ void RunDataInputHdf5PipelineTests(const fs::path& work_dir) {
             "a dataset path the file does not have must fail the run");
     Require(missing.GetLastError().find("HDF5") != std::string::npos,
             "the refusal names HDF5: " + missing.GetLastError());
+
+    // Column projection keeps only the chosen columns, in the chosen order.
+    cyxwiz::PipelineExecutor projected;
+    projected.SetIngestionCacheRoot((work_dir / "ingestion_hdf5_projected").string());
+    Require(projected.ExecutePipeline(Graph(file, "/train/features", "/train/labels", R"(["label","col_1"])")),
+            "a projected HDF5 Data Input should run: " + projected.GetLastError());
+    const auto narrow = cyxwiz::DataRegistry::Instance().GetArrowDataset("ds_datainput_1")->GetArrowTable();
+    Require(narrow->num_columns() == 2 && narrow->schema()->field(0)->name() == "label" &&
+                narrow->schema()->field(1)->name() == "col_1",
+            "the projection keeps label, col_1, got " + narrow->schema()->ToString());
+    Require(Value(narrow, "col_1", 2) == features[2][1], "projected value at row 2");
+    cyxwiz::PipelineExecutor unknown_column;
+    Require(!unknown_column.ExecutePipeline(Graph(file, "/train/features", "", R"(["no_such"])")),
+            "projecting a column the dataset does not have must fail the run");
 
     // A file another writer made: h5py (examples/datasets/make_metric_blobs_h5.py)
     // from metric_blobs.csv, so every value must match the CSV it came from.

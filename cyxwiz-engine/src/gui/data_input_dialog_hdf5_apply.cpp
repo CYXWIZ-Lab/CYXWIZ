@@ -62,6 +62,7 @@ void DataInputDialog::PollHdf5Apply() {
     // Check the project owner before touching the node during delivery.
     if (!hdf5_apply_.OwnerAlive()) {
         hdf5_apply_.Cancel();
+        apply_in_progress_ = false;
         return;
     }
     if (!node_ || node_->parameters != hdf5_apply_parameters_) {
@@ -80,9 +81,11 @@ void DataInputDialog::PollHdf5Apply() {
         spdlog::warn("DataInputDialog: HDF5 Apply failed - {}", apply_status_message_);
         return;
     }
-    if (hdf5_inspector_.Selection().data_path != cyxwiz::ReadHdf5InputSettings(result.parameters).settings.selection.data_path) {
+    const auto chosen = hdf5_inspector_.Selection();
+    const auto staged = cyxwiz::ReadHdf5InputSettings(result.parameters).settings.selection;
+    if (chosen.data_path != staged.data_path || chosen.label_path != staged.label_path) {
         apply_success_ = false;
-        apply_status_message_ = "HDF5 load discarded: a different dataset is selected now";
+        apply_status_message_ = "HDF5 load discarded: a different dataset or label set is selected now";
         return;
     }
     std::string error;
