@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Part of the CyxWiz plugin SDK examples (see cmake/sdk/NOTICE).
-"""pycyxwiz.text against the Python truth (TOFIX129 D8).
+# TOFIX129 D8.
+"""pycyxwiz.text against the Python truth.
 
 The cases are cyxwiz-engine/tests/computation_truth/fixtures/text_truth.json,
 written by generate_text_fixtures.py from Python's re and str.lower,

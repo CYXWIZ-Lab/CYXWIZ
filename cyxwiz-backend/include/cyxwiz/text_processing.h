@@ -104,6 +104,8 @@ public:
      * two of them kept ("don't", "i've"; a typographic apostrophe reads as
      * one). The rule Data Studio's Text tab and the TF-IDF / Count Vectorizer
      * nodes share; Python: re.finditer(r"[^\W_]+(?:'[^\W_]+)*", text).
+     * Lower-cased character by character; a character Python lowers to
+     * several (U+0130, capital I with a dot) is kept as it is.
      */
     static std::vector<std::string> Words(const std::string& text);
 

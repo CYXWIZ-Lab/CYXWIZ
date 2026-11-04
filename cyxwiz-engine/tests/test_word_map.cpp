@@ -4,6 +4,7 @@
 // three clusters of vectors apart, k-means naming them by their commonest
 // words, "leans to a group", and the view around a word.
 
+#include "../src/core/node_executors/word_embeddings_operator.h"
 #include "../src/core/word_map.h"
 
 #include <cmath>
@@ -134,6 +135,15 @@ int main() {
     Check(std::fabs(f.centre[0] - pca.xyz[0][0]) < 1e-12, "focus: centred on the word");
     Check(word_map::FocusOn(pca, "nope", {}).half == 1.1, "focus: an unknown word shows the whole map");
 
-    std::cout << "word map: words placed, PCA / t-SNE / UMAP keep the kinds apart, k-means names, leans to a group, focus. OK\n";
+    // A typed word as the vectors know it (the Word Embeddings node's split).
+    Check(word_map::QueryWord("Therapist") == "therapist", "query: lower-cased");
+    Check(word_map::QueryWord("  Feel ") == "feel", "query: spaces dropped");
+    Check(word_map::QueryWord("I") == "i", "query: one letter only lower-cased");
+    const std::string dont = word_map::QueryWord("Don't");
+    std::string split;
+    for (const std::string& w : WordEmbeddingsOperator::SplitWords("Don't")) split += (split.empty() ? "" : " ") + w;
+    Check(dont == split, "query: split as the node splits (" + dont + ")");
+
+    std::cout << "word map: words placed, PCA / t-SNE / UMAP keep the kinds apart, k-means names, leans to a group, focus, query words. OK\n";
     return 0;
 }

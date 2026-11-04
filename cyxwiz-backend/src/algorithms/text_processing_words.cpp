@@ -112,7 +112,7 @@ U32 Step1b(const U32& w) {
     }
     U32 intermediate;
     bool removed = false;
-    for (const U32 suffix : {U32(U"ed"), U32(U"ing")}) {
+    for (const U32& suffix : {U32(U"ed"), U32(U"ing")}) {
         if (EndsWith(w, suffix)) {
             intermediate = w.substr(0, w.size() - suffix.size());
             if (ContainsVowel(intermediate)) {

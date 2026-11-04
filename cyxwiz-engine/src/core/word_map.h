@@ -21,6 +21,12 @@ namespace cyxwiz::word_map {
 enum class Layout { TSNE, UMAP, PCA };
 const char* LayoutName(Layout layout);  // "t-SNE", "UMAP", "PCA"
 
+// A typed word as the vectors know it: split and lower-cased as the Word
+// Embeddings node splits its text (WordEmbeddingsOperator::SplitWords), the
+// pieces joined by a space; a word that split leaves nothing of (one letter)
+// is only lower-cased.
+std::string QueryWord(const std::string& typed);
+
 // The words to place: the `n` commonest of the vectors (they come most
 // frequent first) that are words of three letters or more and not common
 // English words, then `extra` (the word looked up and its neighbours) when

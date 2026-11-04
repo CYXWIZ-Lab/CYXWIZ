@@ -79,9 +79,7 @@ void WordMapView::Open() {
 
 void WordMapView::LookUp(const std::string& word) {
     std::snprintf(query_, sizeof query_, "%s", word.c_str());
-    word_.clear();
-    for (const std::string& w : TextProcessing::Words(word)) word_ += (word_.empty() ? "" : " ") + w;
-    if (word_.empty()) word_ = word;
+    word_ = word_map::QueryWord(word);
     neighbours_for_.clear();
     focus_word_ = true;
     refit_ = true;
@@ -102,19 +100,27 @@ void WordMapView::FindNeighbours() {
 void WordMapView::Ask() {
     if (!source_.vectors) return;
     std::vector<std::string> extra;
+    std::string wanted = source_.key + "|" + std::to_string(words_);
     if (!word_.empty()) {
         extra.push_back(word_);
         for (const auto& [w, c] : neighbours_) extra.push_back(w);
+        for (const std::string& w : extra) wanted += "|" + w;
     }
-    auto words = std::make_shared<std::vector<std::string>>(word_map::MapWords(*source_.vectors, static_cast<size_t>(std::max(50, words_)), extra));
-    std::string key = source_.key + "|" + word_map::LayoutName(layout_) + "|" + std::to_string(words_) + "|" + std::to_string(clusters_);
-    // Only the extra words that are past the commonest change the layout.
-    const size_t base = word_map::MapWords(*source_.vectors, static_cast<size_t>(std::max(50, words_)), {}).size();
-    for (size_t i = base; i < words->size(); ++i) key += "|" + (*words)[i];
+    if (wanted != words_for_) {
+        words_for_ = wanted;
+        const size_t n = static_cast<size_t>(std::max(50, words_));
+        words_list_ = word_map::MapWords(*source_.vectors, n, extra);
+        // Only the extra words that are past the commonest change the layout.
+        const size_t base = extra.empty() ? words_list_.size() : word_map::MapWords(*source_.vectors, n, {}).size();
+        extra_key_.clear();
+        for (size_t i = base; i < words_list_.size(); ++i) extra_key_ += "|" + words_list_[i];
+    }
+    const std::string key =
+        source_.key + "|" + word_map::LayoutName(layout_) + "|" + std::to_string(words_) + "|" + std::to_string(clusters_) + extra_key_;
     if (key != asked_key_) {
         asked_key_ = key;
         word_map::MapRequest request;
-        request.words = *words;
+        request.words = words_list_;
         request.layout = layout_;
         request.clusters = clusters_;
         const auto vectors = source_.vectors;
@@ -124,14 +130,13 @@ void WordMapView::Ask() {
         });
     }
     if (const word_map::MapAnswer* a = job_.Answer(asked_key_)) {
-        if (!map_ || map_.get() != a) {
-            if (!map_ || map_->words != a->words || map_->xyz.size() != a->xyz.size() || map_->request.layout != a->request.layout) {
-                map_ = std::make_shared<word_map::MapAnswer>(*a);
-                map_index_.clear();
-                for (size_t i = 0; i < map_->words.size(); ++i) map_index_.emplace(map_->words[i], i);
-                leans_ = source_.groups.empty() ? std::vector<int>{} : word_map::LeansTo(map_->words, source_.word_rows, source_.group_rows);
-                if (focus_word_) refit_ = true;
-            }
+        if (shown_key_ != asked_key_) {
+            shown_key_ = asked_key_;
+            map_ = std::make_shared<word_map::MapAnswer>(*a);
+            map_index_.clear();
+            for (size_t i = 0; i < map_->words.size(); ++i) map_index_.emplace(map_->words[i], i);
+            leans_ = source_.groups.empty() ? std::vector<int>{} : word_map::LeansTo(map_->words, source_.word_rows, source_.group_rows);
+            if (focus_word_) refit_ = true;
         }
         error_.clear();
     } else if (!job_.Error().empty()) {

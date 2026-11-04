@@ -7841,7 +7841,7 @@ add_test(NAME SignalExplore COMMAND test_signal_explore)
 
 # Data Studio > Explore > Text (TOFIX129 D8): the model over the text backend.
 add_executable(test_text_explore tests/test_text_explore.cpp
-    src/core/text_explore.cpp src/core/text_presentation.cpp
+    src/core/text_explore.cpp src/core/text_presentation.cpp src/core/word_map.cpp
     src/core/explore_read.cpp src/core/explore_presentation.cpp
     src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
     src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp

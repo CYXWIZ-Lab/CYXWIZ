@@ -246,7 +246,7 @@ EmbeddingsAnswer RunEmbeddings(const std::string& table, const EmbeddingsRequest
                                const explore::MissingTexts& texts, const StopQuery& stop = {},
                                const std::function<void(double)>& progress = {});
 
-// The `k` nearest words to `word` (lower-cased) by cosine, on the device.
+// The `k` nearest words to `word` (as word_map::QueryWord reads it) by cosine, on the device.
 std::vector<std::pair<std::string, double>> NearestWords(const WordVectors& vectors, const std::string& word, int k, std::string* error);
 
 // ---- The nodes the tab adds (Add as a step / Keep as a node)

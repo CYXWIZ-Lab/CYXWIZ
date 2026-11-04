@@ -67,9 +67,11 @@ and the commonest pairs. **Export CSV** writes rank, word, count and share;
 
 ## Terms
 
-TF-IDF over the rows, as the TF-IDF node weighs it: a term's count in the row
-times its smoothed idf, ln((1 + n) / (1 + df)) + 1, the row then normalised
-(**Normalise**: L2, L1 or none). **Terms**: words, or words and pairs; a term
+TF-IDF over the rows with the TF-IDF node's weights: a term's count in the
+row times its smoothed idf, ln((1 + n) / (1 + df)) + 1, the row then
+normalised (**Normalise**: L2, L1 or none) over every term the look keeps
+(the node keeps its `max_features` commonest, so its normalised values can
+differ a little). **Terms**: words, or words and pairs; a term
 counts when it is **in at least** N rows (min_df, 5 by default).
 
 - With a group column, **what sets each group apart**: the terms whose mean

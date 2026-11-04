@@ -3,6 +3,9 @@
 #include "explore_read.h"
 #include "node_executors/text_vectorizer_contract.h"
 #include "node_executors/word_embeddings_operator.h"
+#include "word_map.h"
+
+#include "algorithms/arrayfire_host_materialization.h"
 
 #include <cyxwiz/tokenizer.h>
 
@@ -358,7 +361,8 @@ TermsAnswer RunTerms(const std::string& table, const TermsRequest& request, cons
             for (const double x : row_dense) dense.push_back(static_cast<float>(x));
             const af::array product = af::matmul(csr, af::array(static_cast<dim_t>(dense.size()), dense.data()));
             similarity.resize(d.texts.size());
-            product.host(similarity.data());
+            MaterializeArrayFireToHost(product, similarity.data(), ArrayFireHostSyncCategory::OutputMaterialization, "text::RunTerms",
+                                       "arrayfire_vector", "bounded_output_readback", "one row's TF-IDF similarity to every row");
         } catch (const af::exception& e) {
             return a.error = std::string("The device could not compare the rows: ") + e.what(), a;
         }
@@ -562,10 +566,7 @@ EmbeddingsAnswer RunEmbeddings(const std::string& table, const EmbeddingsRequest
 }
 
 std::vector<std::pair<std::string, double>> NearestWords(const WordVectors& vectors, const std::string& word, int k, std::string* error) {
-    std::string lower;
-    for (const std::string& w : TextProcessing::Words(word)) lower += (lower.empty() ? "" : " ") + w;
-    if (lower.empty()) lower = word;
-    return WordEmbeddings::Nearest(vectors, lower, std::max(1, k), error);
+    return WordEmbeddings::Nearest(vectors, word_map::QueryWord(word), std::max(1, k), error);
 }
 
 // ---- The nodes

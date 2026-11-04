@@ -906,8 +906,7 @@ void TextView::RenderEmbeddings(const ExploreContext& context) {
                                     : "every row"},
         {"words read", explore_view::Number(static_cast<size_t>(a->words_read))}};
     ExploreFigures("##text_embeddings_figures", figures);
-    std::string query_words;
-    for (const std::string& w : TextProcessing::Words(query_)) query_words += (query_words.empty() ? "" : " ") + w;
+    const std::string query_words = query_[0] ? word_map::QueryWord(query_) : std::string();
     Wrapped(t.text, tv::EmbeddingsSentence(*a, query_words, nearest_));
     RenderRowsLine(a->data);
     ImGui::Spacing();

@@ -1,5 +1,6 @@
 #include "word_map.h"
 
+#include "node_executors/word_embeddings_operator.h"
 #include "tsne_learning_rate.h"
 
 #include <cyxwiz/clustering.h>
@@ -34,6 +35,12 @@ const char* LayoutName(Layout layout) {
         case Layout::PCA: return "PCA";
     }
     return "";
+}
+
+std::string QueryWord(const std::string& typed) {
+    std::string word;
+    for (const std::string& w : WordEmbeddingsOperator::SplitWords(typed)) word += (word.empty() ? "" : " ") + w;
+    return word.empty() ? TextProcessing::ToLowercase(typed) : word;
 }
 
 std::vector<std::string> MapWords(const WordVectors& vectors, size_t n, const std::vector<std::string>& extra) {

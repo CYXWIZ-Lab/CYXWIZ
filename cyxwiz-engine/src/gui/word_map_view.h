@@ -83,6 +83,10 @@ private:
     std::unordered_map<std::string, size_t> map_index_;
     std::vector<int> leans_;
     std::string asked_key_;
+    std::string shown_key_;      // the key of map_
+    std::string words_for_;      // what words_list_ was made for (the source, the count, the extra words)
+    std::vector<std::string> words_list_;
+    std::string extra_key_;      // the words past the commonest, as they enter the key
     ExploreJob<word_map::MapAnswer> job_;
     std::string error_;
 };
