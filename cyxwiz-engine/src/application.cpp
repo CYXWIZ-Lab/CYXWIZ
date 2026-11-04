@@ -1,3 +1,10 @@
+// gRPC (network/grpc_client.h) brings winsock2.h; ArrayFire's af/timing.h,
+// reached first through the device headers, brings windows.h, whose full
+// form includes the old winsock.h. The lean form leaves winsock.h out.
+#if defined(_WIN32) && !defined(WIN32_LEAN_AND_MEAN)
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include "application.h"
 #include "gui/appearance_settings.h"
 #include "gui/main_window.h"
