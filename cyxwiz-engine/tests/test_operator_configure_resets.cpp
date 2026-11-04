@@ -8,6 +8,7 @@
 #include "../src/core/node_executors/time_series_window_operator.h"
 
 #include <arrow/api.h>
+#include <cyxwiz/text_processing.h>
 
 #include <cstdlib>
 #include <iostream>
@@ -209,7 +210,7 @@ void TestTextVectorizerNGramContractRejectsMalformedRanges() {
           "canonical ngram_range should win over legacy aliases");
 
     const auto features =
-        cyxwiz::text_vectorizer_contract::BuildNGramFeatures(
+        cyxwiz::TextProcessing::NGrams(
             {"not", "very", "good"}, 1, 3);
     Check(features == std::vector<std::string>({
               "not", "very", "good", "not very", "very good",

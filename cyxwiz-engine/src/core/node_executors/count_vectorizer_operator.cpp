@@ -3,6 +3,8 @@
 #include "text_column_utils.h"
 #include "text_vectorizer_contract.h"
 
+#include <cyxwiz/text_processing.h>
+
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 
@@ -360,7 +362,7 @@ CountVectorizerOperator::ApplyConfigured(
             ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         }
         // The shared word rule (Data Studio's Text tab counts the same).
-        const auto tokens = text_vectorizer_contract::Terms(
+        const auto tokens = TextProcessing::Terms(
             texts[row], stop_words_ == "english", ngram_min_, ngram_max_);
         std::unordered_map<std::string, int> counts;
         for (const auto& token : tokens) {

@@ -1,12 +1,8 @@
 #pragma once
 
-#include <cyxwiz/text_processing.h>
-
 #include <charconv>
 #include <cmath>
-#include <limits>
 #include <map>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -106,70 +102,6 @@ inline bool ParseNGramRange(
         return false;
     }
     return true;
-}
-
-inline std::string JoinNGram(const std::vector<std::string>& tokens,
-                             size_t start,
-                             size_t width) {
-    std::string output;
-    for (size_t offset = 0; offset < width; ++offset) {
-        if (offset > 0) {
-            output += ' ';
-        }
-        output += tokens[start + offset];
-    }
-    return output;
-}
-
-inline std::vector<std::string> BuildNGramFeatures(
-    const std::vector<std::string>& tokens,
-    int ngram_min,
-    int ngram_max) {
-    std::vector<std::string> features;
-    if (tokens.empty() || ngram_min < 1 || ngram_max < ngram_min) {
-        return features;
-    }
-
-    size_t total = 0;
-    for (int n = ngram_min; n <= ngram_max; ++n) {
-        const size_t width = static_cast<size_t>(n);
-        if (tokens.size() < width) {
-            continue;
-        }
-        const size_t count = tokens.size() - width + 1;
-        if (total > std::numeric_limits<size_t>::max() - count) {
-            throw std::length_error("text n-gram feature count overflow");
-        }
-        total += count;
-    }
-    features.reserve(total);
-
-    for (int n = ngram_min; n <= ngram_max; ++n) {
-        const size_t width = static_cast<size_t>(n);
-        if (tokens.size() < width) {
-            continue;
-        }
-        for (size_t start = 0; start + width <= tokens.size(); ++start) {
-            features.push_back(width == 1
-                ? tokens[start]
-                : JoinNGram(tokens, start, width));
-        }
-    }
-    return features;
-}
-
-// The terms of one text as the TF-IDF and Count Vectorizer nodes and Data
-// Studio's Text tab count them (TOFIX129 D8): TextProcessing::Words, the
-// English stop words left out first when asked, then the n-grams.
-inline std::vector<std::string> Terms(const std::string& text,
-                                      bool english_stop_words,
-                                      int ngram_min,
-                                      int ngram_max) {
-    std::vector<std::string> words = TextProcessing::Words(text);
-    if (english_stop_words) {
-        words = TextProcessing::RemoveStopwords(words, "english");
-    }
-    return BuildNGramFeatures(words, ngram_min, ngram_max);
 }
 
 // scikit-learn's idf of a term in `df` of `rows` texts: ln(n / df) + 1, or

@@ -108,6 +108,20 @@ public:
     static std::vector<std::string> Words(const std::string& text);
 
     /**
+     * The word n-grams of tokens, ngram_min to ngram_max words long: the
+     * shortest first, each in text order, joined by one space (scikit-learn's
+     * word n-grams); empty for an empty or reversed range
+     */
+    static std::vector<std::string> NGrams(const std::vector<std::string>& tokens, int ngram_min, int ngram_max);
+
+    /**
+     * The terms of a text as the TF-IDF and Count Vectorizer nodes and Data
+     * Studio's Text tab count them: Words, the English stop words left out
+     * first when asked, then NGrams
+     */
+    static std::vector<std::string> Terms(const std::string& text, bool english_stop_words, int ngram_min, int ngram_max);
+
+    /**
      * Remove the stopwords (GetStopwords) from tokens, compared lower-cased
      * @param tokens Input tokens
      * @param language Language for stopwords ("english")

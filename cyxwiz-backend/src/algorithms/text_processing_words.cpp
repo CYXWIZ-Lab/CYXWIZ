@@ -6,6 +6,8 @@
 #include "text_unicode.h"
 
 #include <functional>
+#include <limits>
+#include <stdexcept>
 
 namespace cyxwiz {
 namespace {
@@ -225,6 +227,35 @@ std::vector<std::string> TextProcessing::RemoveStopwords(const std::vector<std::
     for (const std::string& token : tokens)
         if (stop.find(tu::Encode(tu::LowerString(tu::Decode(token)))) == stop.end()) kept.push_back(token);
     return kept;
+}
+
+std::vector<std::string> TextProcessing::NGrams(const std::vector<std::string>& tokens, int ngram_min, int ngram_max) {
+    std::vector<std::string> grams;
+    if (tokens.empty() || ngram_min < 1 || ngram_max < ngram_min) return grams;
+    size_t total = 0;
+    for (int n = ngram_min; n <= ngram_max; ++n) {
+        const size_t width = static_cast<size_t>(n);
+        if (tokens.size() < width) continue;
+        const size_t count = tokens.size() - width + 1;
+        if (total > std::numeric_limits<size_t>::max() - count) throw std::length_error("text n-gram count overflow");
+        total += count;
+    }
+    grams.reserve(total);
+    for (int n = ngram_min; n <= ngram_max; ++n) {
+        const size_t width = static_cast<size_t>(n);
+        for (size_t start = 0; start + width <= tokens.size(); ++start) {
+            std::string gram = tokens[start];
+            for (size_t k = 1; k < width; ++k) gram += ' ' + tokens[start + k];
+            grams.push_back(std::move(gram));
+        }
+    }
+    return grams;
+}
+
+std::vector<std::string> TextProcessing::Terms(const std::string& text, bool english_stop_words, int ngram_min, int ngram_max) {
+    std::vector<std::string> words = Words(text);
+    if (english_stop_words) words = RemoveStopwords(words, "english");
+    return NGrams(words, ngram_min, ngram_max);
 }
 
 std::string TextProcessing::Stem(const std::string& word) {

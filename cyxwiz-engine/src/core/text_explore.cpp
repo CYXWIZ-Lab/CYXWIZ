@@ -263,7 +263,7 @@ TermsAnswer RunTerms(const std::string& table, const TermsRequest& request, cons
                 ++a.broken;
                 break;
             }
-        for (const std::string& term : contract::Terms(t, request.stop_words, 1, ngram_max)) ++counts[i][term];
+        for (const std::string& term : TextProcessing::Terms(t, request.stop_words, 1, ngram_max)) ++counts[i][term];
         for (const auto& [term, n] : counts[i]) ++df[term];
     }
     // The vocabulary: terms in at least min_df rows, in term order.
