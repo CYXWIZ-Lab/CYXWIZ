@@ -941,6 +941,7 @@ int main(int, char** argv) {
           std::tuple{gui::NodeType::Augmentation, "Old augmentation", "Augmentation Preset replaced"},
           std::tuple{gui::NodeType::GeometricTransform, "Old geometric", "Random Crop, Image Rotate"},
           std::tuple{gui::NodeType::ColorTransform, "Old color", "Color Jitter replaced"},
+          std::tuple{gui::NodeType::HDF5Dataset, "Old HDF5 reader", "Data Input replaced"},
           std::tuple{gui::NodeType::ImagePreprocessor, "Old preprocessor", "Resize and Normalize replaced"}}) {
         const json saved = {
             {"nodes", json::array({{{"id", 1}, {"type", static_cast<int>(retired)},

@@ -23,7 +23,7 @@ as well as browsing.
 ## Data Input
 
 Data Input reads a file or a folder: a table (CSV, TSV, JSON Lines, Parquet,
-Feather, Arrow / IPC, a ZIP of text documents; HDF5 files can be inspected),
+Feather, Arrow / IPC, a ZIP of text documents, a dataset in an HDF5 file),
 text, a token-tagging table, a time series, a folder of images or a folder of
 audio. Databases come in through Data Studio's SQL Workbench, not through Data
 Input.
@@ -56,6 +56,34 @@ plugin.
 - **Limit Rows** skips the first rows and caps how many are loaded. To keep
   only some rows, filter them in Data Studio's Prepare step or with a Filter
   or SQL node.
+
+### HDF5 files
+
+An HDF5 file (`.h5`, `.hdf5`, `.hdf`) holds groups and datasets; Data Input
+loads one numeric dataset as a table. The Source tab shows the file's
+hierarchy (name, shape, type; open a group to go into it, the arrow goes back
+up). With **Data** chosen above it, click the dataset to load; with
+**Labels**, the dataset of class labels (optional). The paths are also in
+**Data path** and **Label path (optional)**, to type. **Preview** shows the
+selected rows, a page at a time. Apply stays unavailable until a dataset is
+chosen ("Choose the dataset to load in the HDF5 hierarchy").
+
+- The data is a rank-1 dataset (one column, named `value`) or a rank-2 one
+  (rows x columns, named `col_0`, `col_1`, ...), of integers or float32 /
+  float64. The labels are a rank-1 dataset with one value per row; they are
+  the last column, `label`, and the node's label column.
+- Apply reads the dataset into memory, at most 256 MB; a larger one is
+  refused with the estimate. Training and graph runs read the same dataset
+  from the node's settings, so a reopened project needs no new Apply.
+- Not loaded (refused with the reason): rank 3 and up (image stacks such as
+  N x H x W x C), strings and compound types, virtual or external storage,
+  and labels whose row count differs from the data's.
+
+Example: `examples/datasets/metric_blobs.h5` holds the `metric_blobs.csv`
+table, the features in `/blobs/features` (480 x 8, float32) and the class in
+`/blobs/labels`; `make_metric_blobs_h5.py` beside it writes it with h5py.
+The template `examples/cyxgraph/blobs_hdf5_classifier.cyxgraph` trains a
+classifier from it.
 
 ### Text needs a node that turns it into numbers
 

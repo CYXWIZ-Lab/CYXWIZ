@@ -67,7 +67,8 @@ here instead, with the sim time, its speed or the RL episode and reward.
   **Apply** would (the Training Dashboard says "Loading Sentiment CSV before
   training..."), then trains. If one cannot be loaded, *Cannot Start
   Training* says why ("Could not load the data before training: ... file not
-  found: ..."). HDF5 sources are still applied in their dialog.
+  found: ..."). This includes an HDF5 file, read from the dataset saved in
+  the node (a template opened without Apply trains at once).
 - On a training graph, **Execute Pipeline** runs the data steps (Data Input
   and the preparation steps before the Data Split) and leaves the Split,
   Loader, model, loss and optimizer to training.

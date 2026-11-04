@@ -53,7 +53,6 @@ public:
     bool LoadFromTXT(const std::string& filepath, char delimiter = '\t');
     bool SaveToTXT(const std::string& filepath, char delimiter = '\t') const;
 
-    bool LoadFromHDF5(const std::string& filepath, const std::string& dataset_name = "data");
     bool SaveToHDF5(const std::string& filepath, const std::string& dataset_name = "data") const;
 
     // Python-based loaders (uses ScriptingEngine)

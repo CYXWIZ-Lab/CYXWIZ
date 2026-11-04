@@ -26,6 +26,9 @@
 #include "data_convert_service.h"
 #include "data_input_parameters.h"
 #include "data_input_formats.h"
+#ifdef CYXWIZ_HAS_HDF5
+#include "hdf5_source_load_task.h"
+#endif
 #include "ner_sequence_builder.h"
 #include "node_executors/pipeline_operator_factory.h"
 #include "node_executors/word_embeddings_operator.h"
@@ -4316,6 +4319,15 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     "[Pipeline] DataInput applying source column projection: {} column(s)",
                     selected_columns.size());
             }
+            // ZIP text and HDF5 read every column, then keep the projected ones.
+            const auto register_projected = [&](const std::shared_ptr<arrow::Table>& table, const char* source) {
+                auto dataset = registry.RegisterArrowTable(table, dataset_name);
+                if (!dataset || selected_columns.empty()) return dataset;
+                auto selected = dataset->SelectColumns(selected_columns);
+                if (!selected || selected->GetNumColumns() != static_cast<int64_t>(selected_columns.size()))
+                    throw std::runtime_error(std::string(source) + ": selected columns do not match the source columns");
+                return registry.RegisterArrowTable(selected->GetArrowTable(), dataset_name);
+            };
 
             // Get file type and options from parameters
             std::string file_type =
@@ -4404,13 +4416,7 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                 }
                 auto table = LoadZipTextSelection(file_path, member->second, {},
                     [this] { return cancel_requested_.load(); });
-                arrow_dataset = registry.RegisterArrowTable(table, dataset_name);
-                if (arrow_dataset && !selected_columns.empty()) {
-                    auto selected = arrow_dataset->SelectColumns(selected_columns);
-                    if (!selected || selected->GetNumColumns() != static_cast<int64_t>(selected_columns.size()))
-                        throw std::runtime_error("DataInput ZIP text: selected columns do not match document schema");
-                    arrow_dataset = registry.RegisterArrowTable(selected->GetArrowTable(), dataset_name);
-                }
+                arrow_dataset = register_projected(table, "DataInput ZIP text");
             } else if (file_type == "parquet") {
                 std::string load_status;
                 const auto backend = registry.LoadTabularParquet(
@@ -4440,6 +4446,26 @@ bool PipelineExecutor::ExecuteDataInput(const Node& node, ExecutionContext& ctx)
                     return false;
                 }
                 spdlog::info("[Pipeline] DataInput {} backend: {}", file_type, load_status);
+#ifdef CYXWIZ_HAS_HDF5
+            } else if (file_type == "hdf5") {
+                // One numeric dataset (rank 1 or 2) and its optional labels,
+                // within the node's own memory cap (TOFIX189).
+                const auto settings = ReadHdf5InputSettings(node.parameters);
+                if (!settings.ok) {
+                    ReportError("DataInput HDF5: " + settings.error);
+                    return false;
+                }
+                Hdf5SourceLoadRequest request;
+                request.path = file_path;
+                request.settings = settings.settings;
+                request.cancel_requested = [this] { return cancel_requested_.load(); };
+                auto loaded = PrepareHdf5Source(request);
+                if (loaded.read.status != Hdf5TableStatus::Ok) {
+                    ReportError("DataInput HDF5: " + loaded.read.error);
+                    return false;
+                }
+                arrow_dataset = register_projected(loaded.read.table, "DataInput HDF5");
+#endif
             } else if (file_type == "json") {
                 const auto lines = node.parameters.find("json_lines");
                 const bool json_lines = (lines != node.parameters.end() && lines->second == "true") ||

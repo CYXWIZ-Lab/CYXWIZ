@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -49,5 +50,11 @@ arrow::Result<std::shared_ptr<arrow::Table>> EncodeLabelColumn(const std::shared
 // not text.
 std::shared_ptr<arrow::ChunkedArray> TextLabelColumn(const std::shared_ptr<arrow::Table>& table,
                                                      const std::string& label_column);
+
+// The classes a label column trains: text labels count their vocabulary; whole
+// non-negative numbers are class indices, so max + 1 (the width one-hot needs);
+// booleans are 2. Empty for a missing or all-null column and for fractional or
+// negative values (a regression target, not classes).
+std::optional<size_t> LabelClassCount(const std::shared_ptr<arrow::Table>& table, const std::string& label_column);
 
 }  // namespace cyxwiz
