@@ -17,6 +17,7 @@
 #include "activations/relu.h"
 #include "activations/sigmoid.h"
 #include "activations/tanh.h"
+#include <set>
 #include <vector>
 #include <memory>
 #include <string>
@@ -189,6 +190,12 @@ public:
     virtual size_t InputCount() const { return 1; }
     virtual Tensor ForwardInputs(const std::vector<Tensor>& inputs) { return Forward(inputs.at(0)); }
     virtual std::vector<Tensor> BackwardInputs(const Tensor& grad_output) { return {Backward(grad_output)}; }
+
+    // The names among GetParameters() that are state the module keeps, not
+    // trained (torch buffers, such as BatchNorm's running statistics): they
+    // have no gradient and the optimizer leaves them; checkpoints save them
+    // with the weights.
+    virtual std::vector<std::string> GetStateNames() const { return {}; }
 
 protected:
     bool is_training_ = true;
@@ -1389,6 +1396,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    std::vector<std::string> GetStateNames() const override { return {"running_mean", "running_var"}; }
 
 private:
     size_t num_features_;
@@ -1512,6 +1520,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    std::vector<std::string> GetStateNames() const override { return {"running_mean", "running_var"}; }
 
 private:
     std::unique_ptr<BatchNorm2DLayer> layer_;
@@ -1610,6 +1619,10 @@ public:
      * @return Map of "layer_idx.param_name" -> gradient tensor
      */
     std::map<std::string, Tensor> GetGradients();
+
+    // The "layerN.name" keys of GetParameters() that are state, not trained
+    // (Module::GetStateNames).
+    std::set<std::string> GetStateParameterNames() const;
 
     /**
      * @brief Apply optimizer to all parameters

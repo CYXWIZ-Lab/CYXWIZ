@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -49,6 +50,9 @@ public:
     virtual std::map<std::string, Tensor> GetParameters() = 0;
     virtual void SetParameters(const std::map<std::string, Tensor>& params) = 0;
     virtual std::map<std::string, Tensor> GetGradients() = 0;
+    // The GetParameters() keys that are state, not trained (BatchNorm's
+    // running statistics): no gradient is expected for them.
+    virtual std::set<std::string> GetStateParameterNames() const { return {}; }
     virtual void UpdateParameters(Optimizer* optimizer) = 0;
     // Layers that hold parameters (graph operations such as Add are not counted).
     virtual size_t LayerCount() const = 0;
@@ -86,6 +90,7 @@ public:
     std::map<std::string, Tensor> GetParameters() override;
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
+    std::set<std::string> GetStateParameterNames() const override { return model_->GetStateParameterNames(); }
     void UpdateParameters(Optimizer* optimizer) override;
     size_t LayerCount() const override { return model_->Size(); }
     Module* LayerModule(size_t module_index) override { return model_->GetModule(module_index); }

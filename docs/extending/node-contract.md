@@ -38,6 +38,7 @@ and the Python one ([python-modules.md](python-modules.md),
 | Learnable tensors and their gradients use the same names and shapes | `GetParameters`, `GetGradients`, `SetParameters` with the same keys; a module that ignores `SetParameters` never learns | `add_parameter(name, value)` in `__init__` or `build`; `set_gradient(name, g)` in `backward`; read with `parameter(name)` | The optimizer reads both, steps, and writes back. Checked |
 | Parameter names are part of saved models | | | A trained model saves its parameters by name; renaming one breaks loading older `.cyxmodel` packages |
 | Report whether there are parameters | `HasParameters()` | automatic once `add_parameter` was called | Modules without parameters are skipped by the optimizer |
+| State kept beside the weights, not trained (running statistics) is named | `GetStateNames()` lists those `GetParameters` keys | not available yet | No gradient is expected for them; saved with the weights. Any other key without a gradient fails the check |
 | Do not change the input tensor | | | Other modules may hold it |
 | Use tensor operations, not raw device arrays | `cyxwiz::Tensor` ([tensor-operations.md](tensor-operations.md)) | `pycyxwiz.Tensor` and the pycyxwiz functions | Same results on every device |
 | Honour training mode when behaviour differs in training (as Dropout does) | `SetTraining(bool)` | `set_training(self, training)` / `is_training(self)` | Evaluation and inference switch it off |

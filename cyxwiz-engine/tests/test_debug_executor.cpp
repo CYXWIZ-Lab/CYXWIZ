@@ -2351,6 +2351,20 @@ void TestDebugExecutorResNetExample() {
     const auto res = exe.Run();
     ExpectTrue(res.reached == DebugStage::Complete && res.success,
                "ResNet Local Debug completes: " + res.failure_summary);
+    // The 12 BatchNorm layers' running mean and variance are state, not
+    // parameters missing a gradient; every trained parameter has one.
+    ExpectEq(res.state_tensors, 24, "BatchNorm running statistics counted as state");
+    ExpectEq(res.params_missing_grad, 0, "ResNet params_missing_grad");
+    for (const auto& g : res.grad_norms)
+        ExpectTrue(g.param_name.find("running_") == std::string::npos,
+                   "no running statistic among the gradients: " + g.param_name);
+    // BN stem (32 channels): gamma and beta trained, running mean and
+    // variance its state.
+    const auto& bn_stem = res.model_build_traces.at(1).payload;
+    ExpectEq(bn_stem["parameter_tensor_count"].get<size_t>(), 2, "BN stem trained tensors");
+    ExpectEq(bn_stem["parameter_numel"].get<size_t>(), 64, "BN stem trained elements");
+    ExpectEq(bn_stem["state_tensor_count"].get<size_t>(), 2, "BN stem state tensors");
+    ExpectEq(bn_stem["state_numel"].get<size_t>(), 64, "BN stem state elements");
     ExpectEq(res.layer_traces.size(), config.layers.size(), "one forward trace per layer");
     ExpectEq(res.model_build_traces.size(), config.layers.size(), "one build trace per layer");
     for (const auto& t : res.layer_traces) {

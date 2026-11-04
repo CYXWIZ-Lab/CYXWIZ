@@ -306,6 +306,16 @@ std::map<std::string, Tensor> SequentialModel::GetGradients() {
     return all_grads;
 }
 
+std::set<std::string> SequentialModel::GetStateParameterNames() const {
+    std::set<std::string> names;
+    // The same modules GetParameters reports.
+    for (size_t i = 0; i < modules_.size(); ++i) {
+        if (!modules_[i]->HasParameters() || !modules_[i]->IsTrainable()) continue;
+        for (const auto& name : modules_[i]->GetStateNames()) names.insert("layer" + std::to_string(i) + "." + name);
+    }
+    return names;
+}
+
 void SequentialModel::UpdateParameters(Optimizer* optimizer) {
     if (!optimizer) {
         spdlog::error("SequentialModel::UpdateParameters: No optimizer provided");

@@ -17,6 +17,12 @@ private Data Studio tickets (`tofix*/track*`).
   project, Local Debug (and the other Studio Debugger runs) loads the graph's
   data first, the way Train does, instead of stopping with "Data is not
   loaded".
+- **BatchNorm's running mean and variance are state, not parameters missing
+  a gradient.** Local Debug no longer reports them (24 on the ResNet example)
+  as "parameters missing gradient", and Gradient Health no longer says needs
+  attention for them. Plugin SDK: `Module::GetStateNames()` names the
+  `GetParameters` keys a module keeps but does not train; the gradient check
+  skips them.
 - **Audio augmentation applies to training clips only.** The AudioAugmentation
   node's noise, time stretch and pitch shift used to alter validation and
   test clips too, so their metrics changed from run to run.

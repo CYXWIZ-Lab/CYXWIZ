@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -111,6 +112,32 @@ int main() {
             const auto reloaded = manager.LoadCheckpoint(*Model(3), nullptr, "best");
             Require(reloaded && reloaded->initialized_from == best.string() && reloaded->context == 512 &&
                     reloaded->tokenizer_sha256 == "abc123", "provenance round trip");
+        }
+        // BatchNorm's running statistics are state, not trained: named as
+        // such, saved with the weights, and a checkpoint from before they
+        // were saved still loads (the state starts from the model's own).
+        {
+            const auto bn_model = [] {
+                auto model = std::make_unique<SequentialModel>();
+                model->Add<LinearModule>(4, 3);
+                model->Add<BatchNormModule>(3);
+                return model;
+            };
+            auto bn = bn_model();
+            const std::set<std::string> state{"layer1.running_mean", "layer1.running_var"};
+            Require(bn->GetStateParameterNames() == state, "the BatchNorm running statistics are its state");
+            Require(bn->GetParameters().count("layer1.running_mean") == 1, "state is saved with the weights");
+            Require(bn->GetGradients().count("layer1.running_mean") == 0, "state has no gradient");
+            const fs::path bn_run = run.parent_path() / "train-bn";
+            CheckpointManager manager(bn_run.string());
+            Require(!manager.SaveCheckpoint(*bn, nullptr, TrainingMetrics{}, "best").empty(), "save BatchNorm model");
+            const fs::path manifest_path = bn_run / "best" / "model" / "manifest.json";
+            auto manifest = ReadJson(manifest_path);
+            manifest.erase("layer1_running_mean.bin");
+            manifest.erase("layer1_running_var.bin");
+            WriteJson(manifest_path, manifest);
+            Require(manager.LoadCheckpoint(*bn_model(), nullptr, "best").has_value(),
+                    "a checkpoint without the running statistics loads");
         }
         fs::remove_all(run.parent_path());
         std::cout << "Warm start checkpoint passed: " << checks << " checks\n";

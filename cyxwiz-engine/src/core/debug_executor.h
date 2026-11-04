@@ -120,6 +120,9 @@ struct DebugResult {
     std::vector<GradNormEntry> grad_norms;
     size_t params_with_grad = 0;
     size_t params_missing_grad = 0;
+    // State the layers keep beside their weights (BatchNorm's running
+    // statistics): no gradient is expected, so these are not in grad_norms.
+    size_t state_tensors = 0;
 
     std::vector<ValidationIssue> issues;
 

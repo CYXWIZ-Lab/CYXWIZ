@@ -399,7 +399,10 @@ short:
 - `Backward` returns the gradient for the input of the last `Forward`, with
   that input's shape, and stores the gradients of your weights.
 - `GetParameters`, `GetGradients` and `SetParameters` use the same keys;
-  `HasParameters` returns `true` when there are any.
+  `HasParameters` returns `true` when there are any. State you keep beside
+  the weights without training it (a running mean, as BatchNorm does) goes in
+  `GetParameters` and `SetParameters` only, so saved models keep it, and
+  `GetStateNames` names those keys: they need no gradient.
 - `SetParameters` may receive only some of your keys (the gradient check
   sets one at a time): update the ones it holds and keep the others, as
   `SnakeModule` does.

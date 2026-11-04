@@ -44,6 +44,7 @@ public:
     std::map<std::string, Tensor> GetParameters() override;
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
+    std::set<std::string> GetStateParameterNames() const override { return model_->GetStateParameterNames(); }
     void UpdateParameters(Optimizer* optimizer) override;
     size_t LayerCount() const override { return layer_node_ids_.size(); }
     Module* LayerModule(size_t module_index) override { return model_->GetModule(module_index); }

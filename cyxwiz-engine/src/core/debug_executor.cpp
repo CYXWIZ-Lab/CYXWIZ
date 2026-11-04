@@ -108,9 +108,13 @@ const BuiltModuleProvenance* FindModuleProvenance(
     return nullptr;
 }
 
+// The trained tensors; state the module keeps beside them (BatchNorm's
+// running statistics) is counted apart.
 struct ModuleParameterSummary {
     size_t tensor_count = 0;
     size_t element_count = 0;
+    size_t state_tensor_count = 0;
+    size_t state_element_count = 0;
     bool available = false;
     bool overflow = false;
 };
@@ -123,11 +127,16 @@ ModuleParameterSummary SummarizeModuleParameters(Module* module) {
 
     try {
         const auto parameters = module->GetParameters();
+        const auto state = module->GetStateNames();
         summary.available = true;
-        summary.tensor_count = parameters.size();
         for (const auto& [name, tensor] : parameters) {
-            (void)name;
             const size_t count = tensor.NumElements();
+            if (std::find(state.begin(), state.end(), name) != state.end()) {
+                ++summary.state_tensor_count;
+                summary.state_element_count += count;
+                continue;
+            }
+            ++summary.tensor_count;
             if (count > std::numeric_limits<size_t>::max() -
                             summary.element_count) {
                 summary.element_count = std::numeric_limits<size_t>::max();
@@ -203,6 +212,8 @@ DebugGraphTraceStep BuildModelConstructionTraceStep(
         step.payload["parameter_tensor_count"] = parameters.tensor_count;
         step.payload["parameter_numel"] = parameters.element_count;
         step.payload["parameter_numel_overflow"] = parameters.overflow;
+        step.payload["state_tensor_count"] = parameters.state_tensor_count;
+        step.payload["state_numel"] = parameters.state_element_count;
     } else {
         step.payload["module_index"] = nullptr;
         step.payload["parameter_summary_available"] = false;
@@ -399,12 +410,17 @@ DebugResult DebugExecutor::Run() {
         // ---- Grad norms ---------------------------------------------------
         auto params = model_->GetParameters();
         auto grads  = model_->GetGradients();
+        const auto state_names = model_->GetStateParameterNames();
 
         // Track which layers produced any grad so we can warn on
         // dead subgraphs (learnable layer with every grad == 0).
         std::map<int, bool> layer_any_nonzero;
 
         for (const auto& [param_name, param_tensor] : params) {
+            if (state_names.count(param_name)) {
+                ++result.state_tensors;
+                continue;
+            }
             GradNormEntry entry;
             entry.param_name = param_name;
             entry.parameter_shape = param_tensor.Shape();
@@ -536,11 +552,11 @@ DebugResult DebugExecutor::Run() {
         result.success = !has_error;
         spdlog::info("DebugExecutor: reached={} success={} forward={:.2f}ms "
                      "backward={:.2f}ms loss={:.4f} "
-                     "params_with_grad={} params_missing_grad={} issues={}",
+                     "params_with_grad={} params_missing_grad={} state={} issues={}",
                      StageName(result.reached), result.success,
                      result.forward_total_ms, result.backward_total_ms,
                      result.loss_value,
-                     result.params_with_grad, result.params_missing_grad,
+                     result.params_with_grad, result.params_missing_grad, result.state_tensors,
                      result.issues.size());
     } catch (const std::exception& e) {
         result.failure_summary =

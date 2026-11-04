@@ -3025,8 +3025,8 @@ void StudioDebuggerPanel::RenderGradientHealth() {
                         JsonNumber(payload, "attention_layer_count"),
                         JsonNumber(payload, "unobserved_layer_count"));
     ImGui::TextDisabled(
-        "One synthetic Local Debug step; derived from existing bounded scalar "
-        "evidence with no added Tensor reads.");
+        "One Local Debug step on the run's sample (the Sample line names it); "
+        "BatchNorm running statistics are state and not listed.");
     if (JsonBool(payload, "layers_truncated", false)) {
         ImGui::TextDisabled("Detail is bounded to %.0f of %.0f layers.",
                             JsonNumber(payload, "retained_layer_count"),
@@ -3471,6 +3471,10 @@ void StudioDebuggerPanel::RenderModelConstructionTrace() {
                     payload, "parameter_numel"));
                 ImGui::TextDisabled("%.0f tensors", JsonNumber(
                     payload, "parameter_tensor_count"));
+                if (JsonNumber(payload, "state_tensor_count") > 0) {
+                    ImGui::TextDisabled("+ %.0f state (not trained)", JsonNumber(
+                        payload, "state_numel"));
+                }
                 if (JsonBool(payload, "parameter_numel_overflow", false)) {
                     ImGui::TextColored(DebuggerDanger(),
                                        "count overflow");

@@ -616,19 +616,11 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, Model& model) {
         // model. A failed load must leave the previously active model intact.
         const auto expected = model.GetParameters();
         std::vector<std::string> migrated_batch_norm_state;
-        const auto is_legacy_batch_norm_state = [](const std::string& name) {
-            const auto has_suffix = [&](const char* suffix) {
-                const size_t suffix_size = std::char_traits<char>::length(suffix);
-                return name.size() >= suffix_size &&
-                       name.compare(name.size() - suffix_size,
-                                    suffix_size,
-                                    suffix) == 0;
-            };
-            return has_suffix(".running_mean") || has_suffix(".running_var");
-        };
+        // A checkpoint from before BatchNorm saved its running statistics:
+        // that state starts from the model's own.
+        const auto state_names = model.GetStateParameterNames();
         for (const auto& [name, expected_tensor] : expected) {
-            if (params.find(name) == params.end() &&
-                is_legacy_batch_norm_state(name)) {
+            if (params.find(name) == params.end() && state_names.count(name)) {
                 params.emplace(name, expected_tensor);
                 migrated_batch_norm_state.push_back(name);
             }
