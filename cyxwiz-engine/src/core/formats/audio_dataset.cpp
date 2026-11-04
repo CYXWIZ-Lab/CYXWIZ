@@ -125,7 +125,7 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
     size_t silent_probes = 0;
     const size_t kMaxProbeAttempts = 32;
     for (size_t i = 0; i < file_paths_.size() && i < kMaxProbeAttempts; ++i) {
-        AudioFeatures probe = ExtractFeatures(file_paths_[i]);
+        AudioFeatures probe = ExtractFeatures(file_paths_[i], false);
         if (probe.valid && probe.rows > 0 && probe.cols > 0) {
             probed_rows = probe.rows;
             probed_cols = probe.cols;
@@ -398,7 +398,7 @@ void AudioDataset::LoadFromCSV(const std::string& directory) {
     for (size_t i = 0; i < file_paths_.size(); ++i) all_indices_[i] = i;
 }
 
-AudioFeatures AudioDataset::ExtractFeatures(const std::string& filepath) const {
+AudioFeatures AudioDataset::ExtractFeatures(const std::string& filepath, bool augment) const {
     // Load audio
     AudioData audio = AudioProcessing::LoadAudio(filepath, config_.target_sr);
     if (!audio.valid) {
@@ -445,15 +445,15 @@ AudioFeatures AudioDataset::ExtractFeatures(const std::string& filepath) const {
     // v1 uses hardcoded ranges for stretch (±10%) and pitch (±2
     // semitones). When the GUI node grows float range params,
     // replace the hardcoded values with the user-configured range.
-    if (config_.noise_level > 0.0f) {
+    if (augment && config_.noise_level > 0.0f) {
         audio = AudioProcessing::AddNoise(audio, config_.noise_level);
     }
-    if (config_.time_stretch) {
+    if (augment && config_.time_stretch) {
         static thread_local std::mt19937 rng(std::random_device{}());
         std::uniform_real_distribution<float> dist(0.9f, 1.1f);
         audio = AudioProcessing::TimeStretch(audio, dist(rng));
     }
-    if (config_.pitch_shift) {
+    if (augment && config_.pitch_shift) {
         static thread_local std::mt19937 rng(std::random_device{}());
         std::uniform_real_distribution<float> dist(-2.0f, 2.0f);
         audio = AudioProcessing::PitchShift(audio, dist(rng));
@@ -508,12 +508,12 @@ size_t AudioDataset::Size() const {
     return file_paths_.size();
 }
 
-std::pair<std::vector<float>, int> AudioDataset::GetItem(size_t index) const {
+std::pair<std::vector<float>, int> AudioDataset::GetItem(size_t index, bool augment) const {
     if (index >= file_paths_.size()) {
         return {{}, -1};
     }
 
-    AudioFeatures features = ExtractFeatures(file_paths_[index]);
+    AudioFeatures features = ExtractFeatures(file_paths_[index], augment);
     if (!features.valid) {
         // Rate-limit the warning spam. Real-world datasets (e.g. the
         // Kaggle Binary Drone Audio set) can have hundreds of silent

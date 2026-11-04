@@ -142,10 +142,13 @@ Batch AudioDatasetBatcher::GetNextBatch() {
 
     std::vector<std::pair<std::vector<float>, int>> samples(actual_size);
 
+    // The AudioAugmentation node's random noise, stretch and pitch shift are
+    // for training clips only: validation and test read each clip as it is.
+    const bool augment = current_phase_ == BatcherPhase::Train;
     auto load_range = [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
             size_t idx = epoch_order_[current_idx_ + i];
-            samples[i] = dataset_->GetItem(idx);
+            samples[i] = dataset_->GetItem(idx, augment);
         }
     };
 

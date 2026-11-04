@@ -439,6 +439,26 @@ void TestAudioBatcher(const fs::path& root) {
     cyxwiz::AudioDatasetBatcher wired(entry, preprocessing, 2, whole_val, true, 0, 1);
     cyxwiz::AudioDatasetBatcher wired_other(entry, preprocessing, 2, whole_val, true, 0, 77);
     CheckThreeParts(wired, wired_other, 4, 0, 4, 0, "AudioDatasetBatcher wired as validation");
+
+    // The AudioAugmentation node's noise is for training clips only:
+    // validation reads each clip as it is (it used to be noised too).
+    cyxwiz::AudioPreprocessingConfig augmented = preprocessing;
+    augmented.has_augmentation = true;
+    augmented.noise_level = 0.5f;
+    const cyxwiz::SampleSplitSettings halves{0.5f, 0.5f, 0.0f, false, 23};
+    const auto read_part = [&](const cyxwiz::AudioPreprocessingConfig& config, cyxwiz::BatcherPhase phase) {
+        cyxwiz::AudioDatasetBatcher reader(entry, config, 4, halves, false, 0, 23);
+        reader.SetPhase(phase);
+        reader.Reset();
+        const auto batch = reader.GetNextBatch();
+        const float* values = batch.data.ReadData<float>();
+        return std::vector<float>(values, values + batch.data.NumElements());
+    };
+    const auto clean_val = read_part(preprocessing, cyxwiz::BatcherPhase::Val);
+    Check(!clean_val.empty() && read_part(augmented, cyxwiz::BatcherPhase::Val) == clean_val,
+          "AudioDatasetBatcher does not augment validation clips");
+    Check(read_part(augmented, cyxwiz::BatcherPhase::Train) != read_part(preprocessing, cyxwiz::BatcherPhase::Train),
+          "AudioDatasetBatcher still augments training clips");
 }
 
 } // namespace
