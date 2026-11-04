@@ -3254,10 +3254,6 @@ void TrainingPlotPanel::RenderTrainingStatus() {
                     : (restored_checkpoint
                         ? "Best validation checkpoint restored"
                         : "Final state from executed run"));
-            if (!active_model_provenance_.empty()) {
-                row("Provenance");
-                ImGui::TextWrapped("%s", active_model_provenance_.c_str());
-            }
             if (checkpoint_epoch_ > 0) {
                 row("Checkpoint epoch");
                 ImGui::Text("%d", checkpoint_epoch_);
