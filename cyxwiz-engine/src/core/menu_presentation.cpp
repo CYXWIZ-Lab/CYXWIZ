@@ -593,7 +593,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                                 "Adds a Power Transform step (Box-Cox) in Data Studio's Prepare, after the data in use."),
                          Action(f, "data.feature_scaling", "Feature Scaling (All Methods)",
                                 "Adds a scaling step in Data Studio's Prepare and compares every method on it.")}));
-        i.push_back(Tool(f, "tools.tokenization", "Tokenization"));
+        i.push_back(Action(f, "tools.tokenization", "Tokenization",
+                           "Opens Data Studio's Text tab on Tokens: a tokenizer trained on a text column, the tokens per row and the length limit."));
         i.push_back(Planned(f, "data.augment", "Augment", "Data augmentation."));
         model.menus.push_back(std::move(m));
     }
@@ -646,12 +647,12 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Tool(f, "tools.svd", "SVD (Singular Value Decomposition)"),
                          Tool(f, "tools.qr", "QR Decomposition"),
                          Tool(f, "tools.cholesky", "Cholesky Decomposition")}));
-        i.push_back(Sub("tools.signal", "Signal Processing", "Signal tools.",
-                        {Tool(f, "tools.fft", "FFT (Fourier Transform)"),
-                         Tool(f, "tools.spectrogram", "Spectrogram (STFT)"),
-                         Tool(f, "tools.filter_designer", "Filter Designer"),
-                         Tool(f, "tools.convolution", "Convolution Calculator"),
-                         Tool(f, "tools.wavelet", "Wavelet Transform")}));
+        i.push_back(Sub("tools.signal", "Signal Processing", "Frequencies, filters and wavelets of a number column.",
+                        {Action(f, "tools.fft", "FFT (Fourier Transform)", "Opens Data Studio's Signal tab on Spectrum: the frequencies of a column and its peaks."),
+                         Action(f, "tools.spectrogram", "Spectrogram (STFT)", "Opens the Signal tab on Spectrogram: the frequencies over time."),
+                         Action(f, "tools.filter_designer", "Filter Designer", "Opens the Signal tab on Filter: a band kept or removed, its response and the column filtered."),
+                         Action(f, "tools.convolution", "Convolution Calculator", "Opens the Signal tab on Filter with a typed kernel: the column convolved with it."),
+                         Action(f, "tools.wavelet", "Wavelet Transform", "Opens the Signal tab on Wavelet: the column split by scale, each part's share of the energy.")}));
         i.push_back(Sub("tools.optimization", "Optimization and Calculus", "Optimisation and calculus tools.",
                         {Tool(f, "tools.gradient_descent", "Gradient Descent Visualizer"),
                          Tool(f, "tools.convexity", "Convexity Analyzer"),
@@ -659,18 +660,19 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Tool(f, "tools.qp", "Quadratic Programming (QP)"),
                          Tool(f, "tools.differentiation", "Numerical Differentiation"),
                          Tool(f, "tools.integration", "Numerical Integration")}));
-        i.push_back(Sub("tools.time_series", "Time Series", "Time series tools.",
-                        {Tool(f, "tools.decomposition", "Time Series Decomposition"),
-                         Tool(f, "tools.acf_pacf", "ACF / PACF (Correlogram)"),
-                         Tool(f, "tools.stationarity", "Stationarity Testing"),
-                         Tool(f, "tools.seasonality", "Seasonality Detection"),
-                         Tool(f, "tools.forecasting", "Forecasting")}));
-        i.push_back(Sub("tools.text", "Text", "Text tools.",
-                        {Tool(f, "tools.tokenization", "Tokenization"),
-                         Tool(f, "tools.word_frequency", "Word Frequency"),
-                         Tool(f, "tools.tfidf", "TF-IDF Analysis"),
-                         Tool(f, "tools.embeddings", "Word Embeddings"),
-                         Tool(f, "tools.sentiment", "Sentiment Analysis"),
+        i.push_back(Sub("tools.time_series", "Time Series", "A column over time: its parts, its season, its forecast.",
+                        {Action(f, "tools.decomposition", "Time Series Decomposition", "Opens Data Studio's Series tab on Parts: trend, season and the rest."),
+                         Action(f, "tools.acf_pacf", "ACF / PACF (Correlogram)", "Opens the Series tab on Correlogram: how the series follows its own past."),
+                         Action(f, "tools.stationarity", "Stationarity Testing", "Opens the Series tab on Stationarity: the ADF and KPSS tests."),
+                         Action(f, "tools.seasonality", "Seasonality Detection", "Opens the Series tab on Seasonality: the period the series repeats on."),
+                         Action(f, "tools.forecasting", "Forecasting", "Opens Data Studio's Forecast tab: a forecast with its range, checked on the last rows held out.")}));
+        i.push_back(Sub("tools.text", "Text", "A text column: its words, terms, sentiment, tokens and word vectors.",
+                        {Action(f, "tools.tokenization", "Tokenization",
+                                "Opens Data Studio's Text tab on Tokens: a tokenizer trained on a text column, the tokens per row and the length limit."),
+                         Action(f, "tools.word_frequency", "Word Frequency", "Opens the Text tab on Words: the commonest words or pairs, per group too."),
+                         Action(f, "tools.tfidf", "TF-IDF Analysis", "Opens the Text tab on Terms: what sets each group apart, and the rows alike."),
+                         Action(f, "tools.embeddings", "Word Embeddings", "Opens the Text tab on Embeddings: word vectors learned from the column, nearest words and the word map."),
+                         Action(f, "tools.sentiment", "Sentiment Analysis", "Opens the Text tab on Sentiment: VADER on every row, per group too."),
                          Tool(f, "tools.language_model", "Language Model Generation")}));
         i.push_back(Sub("tools.utilities", "Utilities", "Small helper tools.",
                         {Tool(f, "tools.calculator", "Calculator"),
