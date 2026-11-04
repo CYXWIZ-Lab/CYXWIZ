@@ -87,12 +87,7 @@ class LPPanel;
 class QPPanel;
 class DifferentiationPanel;
 class IntegrationPanel;
-// Text Processing panels (Phase 11)
-class TokenizationPanel;
-class WordFrequencyPanel;
-class TFIDFPanel;
-class EmbeddingsPanel;
-class SentimentPanel;
+// Text: Language Model Generation (the data tools are Explore > Text)
 class LanguageModelGenerationPanel;
 // Utilities panels (Phase 12)
 class CalculatorPanel;
@@ -438,12 +433,7 @@ private:
     std::unique_ptr<cyxwiz::DifferentiationPanel> differentiation_panel_;
     std::unique_ptr<cyxwiz::IntegrationPanel> integration_panel_;
 
-    // Text Processing panels (Phase 11)
-    std::unique_ptr<cyxwiz::TokenizationPanel> tokenization_panel_;
-    std::unique_ptr<cyxwiz::WordFrequencyPanel> word_frequency_panel_;
-    std::unique_ptr<cyxwiz::TFIDFPanel> tfidf_panel_;
-    std::unique_ptr<cyxwiz::EmbeddingsPanel> embeddings_panel_;
-    std::unique_ptr<cyxwiz::SentimentPanel> sentiment_panel_;
+    // Text: Language Model Generation
     std::unique_ptr<cyxwiz::LanguageModelGenerationPanel> language_model_generation_panel_;
 
     // Utilities panels (Phase 12)

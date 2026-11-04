@@ -255,9 +255,7 @@ set(BACKEND_SOURCES
     src/algorithms/time_series/windowing.cpp
     src/algorithms/text_processing.cpp
     src/algorithms/text_processing_tfidf.cpp
-    src/algorithms/text_processing_sentiment.cpp
     src/algorithms/text_processing_embeddings.cpp
-    src/algorithms/text_processing_samples.cpp
     src/algorithms/text_processing_frequency.cpp
     src/algorithms/text_processing_utilities.cpp
     src/algorithms/text_processing_words.cpp

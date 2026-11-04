@@ -8,7 +8,6 @@
 #include <map>
 #include <set>
 #include <utility>
-#include <random>
 
 namespace cyxwiz {
 
@@ -57,23 +56,9 @@ struct CYXWIZ_API EmbeddingResult {
     std::vector<std::vector<double>> embeddings;    // words x dimensions matrix
     std::vector<std::string> words;                 // Vocabulary (rows)
     int embedding_dim = 0;                          // Embedding dimension
-    std::string method;                             // Method used (onehot, random)
+    std::string method;                             // How the vectors were made (the caller's name)
     std::vector<std::pair<std::string, double>> similar_words;  // For similarity query
     double similarity_score = 0.0;                  // Similarity result
-    bool success = false;
-    std::string error_message;
-};
-
-struct CYXWIZ_API SentimentResult {
-    double polarity = 0.0;                          // -1.0 (negative) to 1.0 (positive)
-    double subjectivity = 0.0;                      // 0.0 (objective) to 1.0 (subjective)
-    std::string label;                              // "positive", "negative", "neutral"
-    double confidence = 0.0;                        // 0.0 to 1.0
-    std::vector<std::pair<std::string, double>> word_scores;  // Word-level sentiment
-    int positive_count = 0;                         // Number of positive words
-    int negative_count = 0;                         // Number of negative words
-    int neutral_count = 0;                          // Number of neutral words
-    std::string analysis;                           // Detailed text analysis
     bool success = false;
     std::string error_message;
 };
@@ -260,28 +245,6 @@ public:
     // ==================== Word Embeddings ====================
 
     /**
-     * Create one-hot embeddings for vocabulary
-     * @param vocabulary List of words
-     * @return EmbeddingResult
-     */
-    static EmbeddingResult CreateOneHotEmbeddings(
-        const std::vector<std::string>& vocabulary
-    );
-
-    /**
-     * Create random embeddings for vocabulary
-     * @param vocabulary List of words
-     * @param embedding_dim Dimension of embeddings
-     * @param seed Random seed (-1 for random)
-     * @return EmbeddingResult
-     */
-    static EmbeddingResult CreateRandomEmbeddings(
-        const std::vector<std::string>& vocabulary,
-        int embedding_dim = 50,
-        int seed = -1
-    );
-
-    /**
      * Find similar words using cosine similarity
      * @param word Query word
      * @param embeddings Embedding result
@@ -307,38 +270,7 @@ public:
         const EmbeddingResult& embeddings
     );
 
-    // ==================== Sentiment Analysis ====================
-
-    /**
-     * Analyze sentiment of text using lexicon-based approach
-     * @param text Input text
-     * @param method "simple", "vader", "afinn"
-     * @return SentimentResult
-     */
-    static SentimentResult AnalyzeSentiment(
-        const std::string& text,
-        const std::string& method = "simple"
-    );
-
-    /**
-     * Get sentiment lexicon
-     * @param name Lexicon name ("simple", "afinn")
-     * @return Word to score mapping
-     */
-    static const std::map<std::string, double>& GetSentimentLexicon(
-        const std::string& name = "simple"
-    );
-
-    /**
-     * Compute polarity score from tokens and lexicon
-     * @param tokens Input tokens
-     * @param lexicon Sentiment lexicon
-     * @return Polarity score
-     */
-    static double ComputePolarityScore(
-        const std::vector<std::string>& tokens,
-        const std::map<std::string, double>& lexicon
-    );
+    // ==================== Sentiment ====================
 
     /**
      * The VADER sentiment of a text (Hutto and Gilbert, 2014): its lexicon,
@@ -395,37 +327,6 @@ public:
      */
     static std::string NormalizeWhitespace(const std::string& text);
 
-    // ==================== Sample Text Generation ====================
-
-    /**
-     * Generate sample text
-     * @param type "lorem", "news", "review_positive", "review_negative", "technical"
-     * @return Sample text
-     */
-    static std::string GenerateSampleText(const std::string& type = "lorem");
-
-    /**
-     * Generate sample documents
-     * @param num_docs Number of documents
-     * @param type Document type ("news", "reviews", "technical")
-     * @return List of documents
-     */
-    static std::vector<std::string> GenerateSampleDocuments(
-        int num_docs,
-        const std::string& type = "news"
-    );
-
-    /**
-     * Generate sample vocabulary
-     * @param size Vocabulary size
-     * @param domain Domain ("general", "tech", "science")
-     * @return List of words
-     */
-    static std::vector<std::string> GenerateSampleVocabulary(
-        int size = 100,
-        const std::string& domain = "general"
-    );
-
 private:
     // Helper functions
     static std::vector<std::string> TokenizeWhitespace(const std::string& text);
@@ -433,7 +334,6 @@ private:
     static std::vector<std::string> TokenizeSentence(const std::string& text);
     static std::vector<std::string> TokenizeNgram(const std::string& text, int n, bool lowercase);
 
-    static void InitSentimentLexicons();
 
     static double L2Norm(const std::vector<double>& vec);
     static double L1Norm(const std::vector<double>& vec);

@@ -67,7 +67,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/statistical_tests.h` | Hypothesis tests and linear models (TOFIX129 D3): the sums, variances, ranks and least-squares solves run on ArrayFire (the selected device); the t / F / chi-square / studentized-range distributions are scalar functions on the host. Every function follows scipy (statsmodels for the linear model)... | `TestResult`, `TukeyPair`, `ChiSquareResult`, `LinearFit`, `StatisticalTests` |
 | `cyxwiz/stats_utils.h` | stats_utils.h - Lightweight statistical utilities Pure math functions that work on std::vector<double>. No DataTable dependency, header-only for simplicity. | `DescriptiveStats` |
 | `cyxwiz/tensor.h` |  Needs ArrayFire headers. | `Tensor`, `AlwaysFalse`, `DataType`, `TensorDeviceLayout` |
-| `cyxwiz/text_processing.h` |  | `TokenizationResult`, `WordFrequencyResult`, `TFIDFResult`, `EmbeddingResult`, `SentimentResult`, `TextProcessing` |
+| `cyxwiz/text_processing.h` |  | `TokenizationResult`, `WordFrequencyResult`, `TFIDFResult`, `EmbeddingResult`, `VaderScores`, `TextProcessing` |
 | `cyxwiz/time_series.h` |  | `DecompositionResult`, `AutocorrelationResult`, `StationarityResult`, `Differenced`, `SeasonalityResult`, `ForecastResult`, `TimeSeries`, `WindowConfig`, `WindowResult` |
 | `cyxwiz/tokenizer.h` |  | `TokenizedText`, `Vocabulary`, `Tokenizer`, `TokenizerType`, `ByteBPEPiecePolicy`, `BPEInitialUnit` |
 | `cyxwiz/utilities.h` |  | `CalculatorResult`, `UnitConversionResult`, `RandomNumberResult`, `HashResult`, `JSONResult`, `RegexMatch`, `RegexResult`, `Utilities`, `ParserState` |

@@ -61,7 +61,6 @@ public:
     void SetDeployToServerCallback(std::function<void()> callback) { deploy_to_server_callback_ = callback; }
     void SetImportDatasetCallback(std::function<void()> callback) { import_dataset_callback_ = callback; }
     void SetCreateCustomDatasetCallback(std::function<void()> callback) { create_custom_dataset_callback_ = callback; }
-    void SetTokenizeDatasetCallback(std::function<void()> callback) { tokenize_dataset_callback_ = callback; }
     void SetAugmentDatasetCallback(std::function<void()> callback) { augment_dataset_callback_ = callback; }
     void SetDatasetStatisticsCallback(std::function<void()> callback) { dataset_statistics_callback_ = callback; }
     void SetCompileGraphCallback(std::function<void()> callback) { compile_graph_callback_ = callback; }
@@ -410,7 +409,6 @@ private:
     std::function<void()> deploy_to_server_callback_;
     std::function<void()> import_dataset_callback_;
     std::function<void()> create_custom_dataset_callback_;
-    std::function<void()> tokenize_dataset_callback_;
     std::function<void()> augment_dataset_callback_;
     std::function<void()> dataset_statistics_callback_;
     std::function<void()> compile_graph_callback_;

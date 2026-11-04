@@ -696,11 +696,6 @@ set(ENGINE_SOURCES
     src/gui/panels/qp_panel.cpp
     src/gui/panels/differentiation_panel.cpp
     src/gui/panels/integration_panel.cpp
-    src/gui/panels/tokenization_panel.cpp
-    src/gui/panels/word_frequency_panel.cpp
-    src/gui/panels/tfidf_panel.cpp
-    src/gui/panels/embeddings_panel.cpp
-    src/gui/panels/sentiment_panel.cpp
     src/gui/panels/language_model_generation_panel.cpp
     src/gui/panels/language_model_load_dialog.cpp
     src/gui/panels/calculator_panel.cpp
@@ -993,11 +988,6 @@ set(ENGINE_HEADERS
     src/gui/panels/qp_panel.h
     src/gui/panels/differentiation_panel.h
     src/gui/panels/integration_panel.h
-    src/gui/panels/tokenization_panel.h
-    src/gui/panels/word_frequency_panel.h
-    src/gui/panels/tfidf_panel.h
-    src/gui/panels/embeddings_panel.h
-    src/gui/panels/sentiment_panel.h
     src/gui/panels/language_model_generation_panel.h
     src/gui/panels/language_model_load_dialog.h
     src/gui/panels/calculator_panel.h

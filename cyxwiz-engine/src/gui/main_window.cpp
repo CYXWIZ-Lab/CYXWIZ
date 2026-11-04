@@ -106,11 +106,7 @@
 #include "data_studio/series_view.h"
 #include "data_studio/signal_view.h"
 #include "../core/node_executors/training_evaluation_operator.h"
-#include "panels/tokenization_panel.h"
-#include "panels/word_frequency_panel.h"
-#include "panels/tfidf_panel.h"
-#include "panels/embeddings_panel.h"
-#include "panels/sentiment_panel.h"
+#include "data_studio/text_view.h"
 #include "panels/language_model_generation_panel.h"
 // Utilities panels (Phase 12)
 #include "panels/calculator_panel.h"
@@ -688,12 +684,7 @@ MainWindow::MainWindow()
     differentiation_panel_ = std::make_unique<cyxwiz::DifferentiationPanel>();
     integration_panel_ = std::make_unique<cyxwiz::IntegrationPanel>();
 
-    // Text Processing panels (Phase 11)
-    tokenization_panel_ = std::make_unique<cyxwiz::TokenizationPanel>();
-    word_frequency_panel_ = std::make_unique<cyxwiz::WordFrequencyPanel>();
-    tfidf_panel_ = std::make_unique<cyxwiz::TFIDFPanel>();
-    embeddings_panel_ = std::make_unique<cyxwiz::EmbeddingsPanel>();
-    sentiment_panel_ = std::make_unique<cyxwiz::SentimentPanel>();
+    // Text: Language Model Generation (the data tools are Explore > Text, TOFIX129 D8)
     language_model_generation_panel_ =
         std::make_unique<cyxwiz::LanguageModelGenerationPanel>();
 
@@ -1181,14 +1172,6 @@ MainWindow::MainWindow()
 
     toolbar_->SetCreateCustomDatasetCallback([this]() {
         if (node_editor_) node_editor_->AddDataInputAndConfigure();
-    });
-
-    // Tokenize - opens existing TokenizationPanel
-    toolbar_->SetTokenizeDatasetCallback([this]() {
-        if (tokenization_panel_) {
-            tokenization_panel_->SetVisible(true);
-            spdlog::info("Opened Tokenization panel");
-        }
     });
 
     toolbar_->SetAugmentDatasetCallback([this]() {
@@ -2062,37 +2045,16 @@ MainWindow::MainWindow()
         if (data_studio_panel_) data_studio_panel_->ShowForecast();
     });
 
-    // Text Processing callbacks (Phase 11)
-    toolbar_->SetOpenTokenizationCallback([this]() {
-        if (tokenization_panel_) {
-            tokenization_panel_->SetVisible(true);
-            spdlog::info("Opened Tokenization panel");
-        }
-    });
-    toolbar_->SetOpenWordFrequencyCallback([this]() {
-        if (word_frequency_panel_) {
-            word_frequency_panel_->SetVisible(true);
-            spdlog::info("Opened Word Frequency panel");
-        }
-    });
-    toolbar_->SetOpenTFIDFCallback([this]() {
-        if (tfidf_panel_) {
-            tfidf_panel_->SetVisible(true);
-            spdlog::info("Opened TF-IDF panel");
-        }
-    });
-    toolbar_->SetOpenEmbeddingsCallback([this]() {
-        if (embeddings_panel_) {
-            embeddings_panel_->SetVisible(true);
-            spdlog::info("Opened Embeddings panel");
-        }
-    });
-    toolbar_->SetOpenSentimentCallback([this]() {
-        if (sentiment_panel_) {
-            sentiment_panel_->SetVisible(true);
-            spdlog::info("Opened Sentiment Analysis panel");
-        }
-    });
+    // Tools > Text (and Data > Tokenization) opens Data Studio's Explore tab
+    // Text on that look, for the data in use (TOFIX129 D8).
+    const auto open_text = [this](cyxwiz::TextView::Look look) {
+        if (data_studio_panel_) data_studio_panel_->ShowText(look);
+    };
+    toolbar_->SetOpenTokenizationCallback([open_text]() { open_text(cyxwiz::TextView::Look::Tokens); });
+    toolbar_->SetOpenWordFrequencyCallback([open_text]() { open_text(cyxwiz::TextView::Look::Words); });
+    toolbar_->SetOpenTFIDFCallback([open_text]() { open_text(cyxwiz::TextView::Look::Terms); });
+    toolbar_->SetOpenEmbeddingsCallback([open_text]() { open_text(cyxwiz::TextView::Look::Embeddings); });
+    toolbar_->SetOpenSentimentCallback([open_text]() { open_text(cyxwiz::TextView::Look::Sentiment); });
     toolbar_->SetOpenLanguageModelGenerationCallback([this]() {
         if (language_model_generation_panel_) {
             language_model_generation_panel_->SetVisible(true);
@@ -2625,16 +2587,6 @@ MainWindow::~MainWindow() {
     unit_converter_panel_.reset();
     spdlog::info("~MainWindow: calculator_panel_");
     calculator_panel_.reset();
-    spdlog::info("~MainWindow: sentiment_panel_");
-    sentiment_panel_.reset();
-    spdlog::info("~MainWindow: embeddings_panel_");
-    embeddings_panel_.reset();
-    spdlog::info("~MainWindow: tfidf_panel_");
-    tfidf_panel_.reset();
-    spdlog::info("~MainWindow: word_frequency_panel_");
-    word_frequency_panel_.reset();
-    spdlog::info("~MainWindow: tokenization_panel_");
-    tokenization_panel_.reset();
     spdlog::info("~MainWindow: integration_panel_");
     integration_panel_.reset();
     spdlog::info("~MainWindow: differentiation_panel_");
@@ -3104,12 +3056,7 @@ void MainWindow::Render() {
     TimedRender("differentiation", differentiation_panel_);
     TimedRender("integration", integration_panel_);
 
-    // Text Processing panels (Phase 11)
-    TimedRender("tokenization", tokenization_panel_);
-    TimedRender("word frequency", word_frequency_panel_);
-    TimedRender("tfidf", tfidf_panel_);
-    TimedRender("embeddings", embeddings_panel_);
-    TimedRender("sentiment", sentiment_panel_);
+    // Text: Language Model Generation
     TimedRender("language model generation", language_model_generation_panel_);
 
     // Render Utilities panels (Phase 12)
@@ -3588,12 +3535,7 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (differentiation_panel_) differentiation_panel_->SetVisible(false);
     if (integration_panel_) integration_panel_->SetVisible(false);
 
-    // Text Processing panels (Phase 11)
-    if (tokenization_panel_) tokenization_panel_->SetVisible(false);
-    if (word_frequency_panel_) word_frequency_panel_->SetVisible(false);
-    if (tfidf_panel_) tfidf_panel_->SetVisible(false);
-    if (embeddings_panel_) embeddings_panel_->SetVisible(false);
-    if (sentiment_panel_) sentiment_panel_->SetVisible(false);
+    // Text: Language Model Generation
     if (language_model_generation_panel_) language_model_generation_panel_->SetVisible(false);
 
     // Utilities panels (Phase 12)
