@@ -795,6 +795,12 @@ bool StudioDebuggerPanel::StartRun(StudioDebuggerRunMode mode,
     if (run_in_progress_ || !run_debug_callback_) {
         return false;
     }
+    if (run_wait_callback_) {
+        if (auto waiting = run_wait_callback_(mode, sample_index, explain_node_id)) {
+            run_status_message_ = std::move(*waiting);
+            return true;
+        }
+    }
     auto task = std::make_shared<std::function<StudioDebuggerSnapshot(
         const StudioDebuggerRunControl&)>>(
         run_debug_callback_(mode, sample_index, explain_node_id));

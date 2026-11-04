@@ -64,7 +64,16 @@ public:
     // The current graph's compiled data domain, for Smoke capability.
     using GraphDomainCallback = std::function<std::string()>;
 
+    // Asked on the UI thread before a run starts: a message when the run
+    // waits (its data loads first, as for Train) and is started again later.
+    using RunWaitCallback =
+        std::function<std::optional<std::string>(StudioDebuggerRunMode, int sample_index, int explain_node_id)>;
+
     void SetRunDebugCallback(RunDebugCallback callback) { run_debug_callback_ = std::move(callback); }
+    void SetRunWaitCallback(RunWaitCallback callback) { run_wait_callback_ = std::move(callback); }
+    // The line under the run controls: a wait, or why a waiting run did not
+    // start.
+    void SetRunStatusMessage(std::string message) { run_status_message_ = std::move(message); }
     void SetRunCompletedCallback(RunCompletedCallback callback) { run_completed_callback_ = std::move(callback); }
     void SetFocusNodeCallback(FocusNodeCallback callback) { focus_node_callback_ = std::move(callback); }
     void SetGraphDomainCallback(GraphDomainCallback callback) { graph_domain_callback_ = std::move(callback); }
@@ -174,6 +183,7 @@ private:
     static std::string FormatShape(const std::vector<size_t>& shape);
 
     RunDebugCallback run_debug_callback_;
+    RunWaitCallback run_wait_callback_;
     RunCompletedCallback run_completed_callback_;
     FocusNodeCallback focus_node_callback_;
     CanvasLinks canvas_links_;

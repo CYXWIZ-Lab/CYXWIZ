@@ -13,7 +13,10 @@ private Data Studio tickets (`tofix*/track*`).
   features and audio; the Overview's Sample line names it and its part of the
   split ("row 7 of blobs, test"). Other data kinds still run a synthetic
   sample and say so. Local Debug also runs branched graphs (skip connections,
-  Add, Concatenate) by their graph plan, as training does.
+  Add, Concatenate) by their graph plan, as training does. On a reopened
+  project, Local Debug (and the other Studio Debugger runs) loads the graph's
+  data first, the way Train does, instead of stopping with "Data is not
+  loaded".
 - **Audio augmentation applies to training clips only.** The AudioAugmentation
   node's noise, time stretch and pitch shift used to alter validation and
   test clips too, so their metrics changed from run to run.

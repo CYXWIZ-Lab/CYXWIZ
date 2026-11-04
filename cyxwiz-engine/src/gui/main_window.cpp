@@ -1037,6 +1037,19 @@ MainWindow::MainWindow()
     });
 
     if (studio_debugger_panel_) {
+        // Every mode but Runtime Trace compiles the graph, and the compile
+        // gate needs its data loaded: a run on a reopened project loads it
+        // first with Train's loads, then starts (PollDataInputLoads).
+        studio_debugger_panel_->SetRunWaitCallback(
+            [this](cyxwiz::StudioDebuggerRunMode mode, int sample_index,
+                   int explain_node_id) -> std::optional<std::string> {
+                if (!node_editor_ || mode == cyxwiz::StudioDebuggerRunMode::RuntimeTrace) return std::nullopt;
+                const std::string loading = StartDataInputLoads(node_editor_->GetNodes(), node_editor_->GetLinks());
+                if (loading.empty()) return std::nullopt;
+                spdlog::info("Studio Debugger: loading {} first; the run starts when it is loaded", loading);
+                debug_run_after_loads_ = DebugRunAfterLoads{mode, sample_index, explain_node_id};
+                return "Loading " + loading + " first; the run starts when it is loaded.";
+            });
         // One run path for the panel's Run, F6 and Explain Node: the graph is
         // frozen here on the UI thread and the run executes on a worker.
         studio_debugger_panel_->SetRunDebugCallback([this](cyxwiz::StudioDebuggerRunMode mode,
@@ -3670,12 +3683,9 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     spdlog::debug("Default panel visibility set - showing only core panels");
 }
 
-bool MainWindow::StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-    if (!data_input_loads_.empty()) {
-        spdlog::info("Train: the graph's data is still loading; training starts when it is loaded");
-        return true;
-    }
-    if (!node_editor_) return false;
+std::string MainWindow::StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    if (!data_input_loads_.empty()) return data_input_loads_names_;
+    if (!node_editor_) return {};
     const auto ids = cyxwiz::CollectDataInputsToLoad(nodes, links, [](const std::string& name) {
         return cyxwiz::loaders::GetByRegisteredDataset(name) != nullptr;
     });
@@ -3686,17 +3696,14 @@ bool MainWindow::StartDataInputLoads(const std::vector<MLNode>& nodes, const std
         auto dialog = std::make_unique<DataInputDialog>(node);
         dialog->SetNodeEditor(node_editor_.get());
         dialog->Apply();
-        spdlog::info("Train: loading '{}' first (its data is not loaded in this session)", node->name);
+        spdlog::info("Loading '{}' first (its data is not loaded in this session)", node->name);
         names += (names.empty() ? "" : ", ") + node->name;
         data_input_loads_.push_back({id, node->name, std::move(dialog)});
     }
-    if (data_input_loads_.empty()) return false;
+    if (data_input_loads_.empty()) return {};
     data_input_loads_project_ = cyxwiz::ProjectManager::Instance().GetProjectRoot();
-    if (training_plot_panel_) {
-        training_plot_panel_->SetPreparationState(true, "Loading " + names + " before training...", 0.01f);
-        training_plot_panel_->SetVisible(true);
-    }
-    return true;
+    data_input_loads_names_ = names;
+    return names;
 }
 
 // Runs the graph's data steps through the Training Dataset input's feeder on
@@ -3760,8 +3767,8 @@ void MainWindow::PollTrainingPipelineRun() {
     StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
 }
 
-// The loads Train started: when all have ended, train, or say which data
-// could not be loaded and why.
+// The loads Train or a Studio Debugger run started: when all have ended,
+// start what waited for them, or say which data could not be loaded and why.
 void MainWindow::PollDataInputLoads() {
     if (data_input_loads_.empty()) return;
     bool busy = false;
@@ -3779,19 +3786,26 @@ void MainWindow::PollDataInputLoads() {
         if (node && name != node->parameters.end() && cyxwiz::loaders::GetByRegisteredDataset(name->second)) continue;
         const std::string why = load.dialog->LoadMessage().empty() ? "the node was removed" : load.dialog->LoadMessage();
         failures.push_back({cyxwiz::IssueLevel::Error, load.node_id, load.node_name,
-                            "Could not load the data before training: " + why, ""});
+                            "Could not load the data: " + why, ""});
         failed_names += (failed_names.empty() ? "" : ", ") + load.node_name;
     }
     data_input_loads_.clear();
+    data_input_loads_names_.clear();
+    const bool train = std::exchange(train_after_loads_, false);
+    const auto debug_run = std::exchange(debug_run_after_loads_, std::nullopt);
+    const auto debugger_not_started = [&](const std::string& why) {
+        if (debug_run && studio_debugger_panel_) studio_debugger_panel_->SetRunStatusMessage("Not started: " + why);
+    };
     if (!node_editor_ || cyxwiz::ProjectManager::Instance().GetProjectRoot() != data_input_loads_project_) {
-        spdlog::info("Train: the project changed while its data loaded; not training");
-        EndFoldsLaunch("Not started: the project changed while its data loaded.");
+        spdlog::info("The project changed while its data loaded; not starting");
+        if (train) EndFoldsLaunch("Not started: the project changed while its data loaded.");
+        debugger_not_started("the project changed while its data loaded.");
         return;
     }
     const auto nodes = node_editor_->GetNodes();
     const auto links = node_editor_->GetLinks();
     if (!failures.empty()) {
-        spdlog::error("Train: could not load {}", failed_names);
+        spdlog::error("Could not load {}", failed_names);
         BuildCompileResult(nodes, links);
         // The load's reason replaces the compiler's "open the node and click
         // Apply" for those nodes: Apply would fail the same way.
@@ -3802,12 +3816,18 @@ void MainWindow::PollDataInputLoads() {
         });
         compile_result_issues_.insert(compile_result_issues_.begin(), failures.begin(), failures.end());
         compile_result_success_ = false;
-        ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the data could not be loaded");
-        if (training_plot_panel_) training_plot_panel_->SetPreparationFailed("Could not load " + failed_names);
-        EndFoldsLaunch("Not started: could not load " + failed_names + " (the compile report says why).");
+        ShowCompileReport(train ? cyxwiz::compile_report::Mode::TrainBlocked : cyxwiz::compile_report::Mode::DebugBlocked,
+                          "the data could not be loaded");
+        if (train) {
+            if (training_plot_panel_) training_plot_panel_->SetPreparationFailed("Could not load " + failed_names);
+            EndFoldsLaunch("Not started: could not load " + failed_names + " (the compile report says why).");
+        }
+        debugger_not_started("could not load " + failed_names + " (the compile report says why).");
         return;
     }
-    StartTrainingFromGraph(nodes, links);
+    if (debug_run && studio_debugger_panel_)
+        studio_debugger_panel_->StartRun(debug_run->mode, debug_run->sample_index, debug_run->explain_node_id);
+    if (train) StartTrainingFromGraph(nodes, links);
 }
 
 void MainWindow::StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings) {
@@ -3973,7 +3993,13 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     }
     // A reopened project keeps each Data Input's settings, not its loaded
     // data: load what training needs first, then train.
-    if (StartDataInputLoads(nodes, links)) {
+    if (const std::string loading = StartDataInputLoads(nodes, links); !loading.empty()) {
+        spdlog::info("Train: loading {} first; training starts when it is loaded", loading);
+        train_after_loads_ = true;
+        if (training_plot_panel_) {
+            training_plot_panel_->SetPreparationState(true, "Loading " + loading + " before training...", 0.01f);
+            training_plot_panel_->SetVisible(true);
+        }
         folds_waiting = true;
         return;
     }

@@ -67,7 +67,10 @@ here instead, with the sim time, its speed or the RL episode and reward.
   **Apply** would (the Training Dashboard says "Loading Sentiment CSV before
   training..."), then trains. If one cannot be loaded, *Cannot Start
   Training* says why ("Could not load the data before training: ... file not
-  found: ..."). HDF5 sources are still applied in their dialog.
+  found: ..."). HDF5 sources are still applied in their dialog. Local Debug
+  and the other Studio Debugger runs (all but Runtime Trace) load it the
+  same way first: the debugger says "Loading Metric blobs first; the run
+  starts when it is loaded", and a Train afterwards finds it loaded.
 - On a training graph, **Execute Pipeline** runs the data steps (Data Input
   and the preparation steps before the Data Split) and leaves the Split,
   Loader, model, loss and optimizer to training.
@@ -215,5 +218,5 @@ for example "row 7 of blobs, test" or "image 5 of cat_dog, train". Images,
 tables in memory or on disk, sparse features and audio work this way. Token
 tagging sequences and data loaded through the old dataset path still run a
 synthetic sample; the Sample line then says "a synthetic sample (seed 1337)"
-and a warning gives the reason. Load the data first (open the data node, then
-OK or Apply): Local Debug stops with "Data is not loaded" otherwise.
+and a warning gives the reason. Data a reopened project has not loaded yet
+loads first, as for Train.

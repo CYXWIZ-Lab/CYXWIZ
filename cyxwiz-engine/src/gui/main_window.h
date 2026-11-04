@@ -322,17 +322,27 @@ private:
     std::vector<MLNode> pending_memory_confirmation_nodes_;
     std::vector<NodeLink> pending_memory_confirmation_links_;
 
-    // Train on a reopened project: the Data Inputs it has not loaded load
-    // first, each through an unshown Data Input dialog (the same Apply as its
-    // OK), then training starts with the loaded graph.
+    // Train or a Studio Debugger run on a reopened project: the Data Inputs
+    // it has not loaded load first, each through an unshown Data Input dialog
+    // (the same Apply as its OK), then what asked starts with the loaded graph.
     struct DataInputLoad {
         int node_id = -1;
         std::string node_name;
         std::unique_ptr<DataInputDialog> dialog;
     };
+    struct DebugRunAfterLoads {
+        cyxwiz::StudioDebuggerRunMode mode;
+        int sample_index = 0;
+        int explain_node_id = -1;
+    };
     std::vector<DataInputLoad> data_input_loads_;
     std::string data_input_loads_project_;
-    bool StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    std::string data_input_loads_names_;
+    bool train_after_loads_ = false;
+    std::optional<DebugRunAfterLoads> debug_run_after_loads_;
+    // The names of the Data Inputs loading for the graph (started here when
+    // none are), empty when its data is loaded.
+    std::string StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
     // Train on a graph whose Training Dataset path has pipeline-run steps
     // (SQL, Text Clean ...): run them first, then train on the result.
     bool StartTrainingPipelineRun(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
