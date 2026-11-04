@@ -462,12 +462,17 @@ enum class NodeType {
     DataProfiler,       // Comprehensive data profiling
 
 
-    // ===== Linear Algebra Nodes (Phase 5 - Tool-to-Node Migration) =====
-    SVDNode,            // Singular Value Decomposition
-    QRDecomposition,    // QR matrix decomposition
-    CholeskyDecomposition, // Cholesky factorization
-    EigenDecomposition, // Eigenvalue/eigenvector decomposition
-    MatrixCalculator,   // General matrix operations
+    // ===== Retired linear algebra templates (TOFIX129 D9) =====
+    // Never implemented (no executor); Tools > Linear Algebra factors and
+    // solves matrices, and the Truncated SVD, Whitening, Linear Solve and
+    // Linear Projection steps (appended below) bring linear algebra into a
+    // graph. The slots stay so the numeric ids of the types after them do
+    // not move; nothing registers or creates these.
+    SVDNode,
+    QRDecomposition,
+    CholeskyDecomposition,
+    EigenDecomposition,
+    MatrixCalculator,
 
     // ===== Time Series Analysis Nodes (Phase 5) =====
     TimeSeriesDecomposition, // Trend/Seasonal/Residual decomposition
@@ -628,6 +633,11 @@ enum class NodeType {
     RandomPerspective,  // corners moved inwards at random
     GaussianNoise,      // N(mean, sigma) added to every pixel
     RandomGrayscale,    // gray in the same channels, at random
+
+    // ===== Appended linear algebra steps (TOFIX129 D9) =====
+    // Fitted on the Train rows, on the device (linear_algebra_operators.h).
+    TruncatedSVD,       // the k strongest directions of the uncentred columns (LSA)
+    Whitening,          // PCA or ZCA whitening: decorrelated, unit variance
 
     // Special sentinel value
     Unknown

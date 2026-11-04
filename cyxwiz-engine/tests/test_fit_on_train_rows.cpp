@@ -11,6 +11,7 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/node_executors/count_vectorizer_operator.h"
+#include "../src/core/node_executors/linear_algebra_operators.h"
 #include "../src/core/node_executors/pca_operator.h"
 #include "../src/core/node_executors/preprocessing_operators.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
@@ -418,12 +419,57 @@ void CheckPCA() {
     fs::remove(state);
 }
 
+// Truncated SVD and Whitening (TOFIX129 D9), fitted on the Train rows of
+// (a, y): scikit-learn 1.8's TruncatedSVD(1, algorithm="arpack") and
+// PCA(2, whiten=True), and ZCA ((x - mean) V diag(1 / sqrt(λ)) V^T, the
+// covariance's eigenvectors with n - 1) from numpy.
+void CheckLinearSteps() {
+    TruncatedSVDOperator svd;
+    const auto s = Run(svd, {{"feature_cols", "a,y"}, {"n_components", "1"}}, Table());
+    Expect(Column(s, "svd_0"), {1.2287401639, 1.9288812994, 4.122062113, 9.9087060113, 6.751084548, 3.1576214633}, "Truncated SVD");
+    CheckPartitionCarried(s, "Truncated SVD");
+    WhiteningOperator pca;
+    const auto w = Run(pca, {{"feature_cols", "a,y"}, {"n_components", "2"}}, Table());
+    Expect(Column(w, "white_0"), {-1.1253105883, -0.4490937385, 1.1697047137, 5.7597353176, 3.3759317648, 0.404699613}, "PCA whitening 1");
+    Expect(Column(w, "white_1"), {0.8771489985, -1.4311934929, 0.1569968969, -1.2833073064, -2.6314469956, 0.3970475974}, "PCA whitening 2");
+    WhiteningOperator zca;
+    const auto z = Run(zca, {{"feature_cols", "a,y"}, {"method", "zca"}, {"keep_columns", "true"}}, Table());
+    Expect(Column(z, "a_white"), {-1.2189321934, -0.281099197, 1.143805273, 5.8692802058, 3.6567965803, 0.3562261175}, "ZCA a");
+    Expect(Column(z, "y_white"), {0.7415649624, -1.4734256824, 0.2908034395, -0.6107196064, -2.2246948873, 0.4410572805}, "ZCA y");
+    Check(z->GetColumnByName("text") != nullptr, "ZCA beside the input");
+
+    // A direction with no variance needs epsilon; too many components are refused.
+    WhiteningOperator flat;
+    std::string error;
+    Check(flat.Configure({{"feature_cols", "a,a2"}}, error), "whitening configure");
+    auto two = Table();
+    two = *two->AddColumn(two->num_columns(), arrow::field("a2", arrow::float64()), two->GetColumnByName("a"));
+    const auto refused = flat.Apply(two);
+    Check(!refused.ok() && refused.status().message().find("no variance") != std::string::npos, "whitening: a direction with no variance is refused");
+    Check(flat.Configure({{"feature_cols", "a,a2"}, {"n_components", "1"}}, error) && flat.Apply(two).ok(), "whitening: fewer components then run");
+    TruncatedSVDOperator wide;
+    Check(wide.Configure({{"feature_cols", "a,y"}, {"n_components", "3"}}, error) && !wide.Apply(Table()).ok(), "Truncated SVD: k above the features");
+
+    // The saved values on an unmarked table.
+    const fs::path state = fs::temp_directory_path() / "cyxwiz_fit_on_train_svd.cyxstate.json";
+    fs::remove(state);
+    TruncatedSVDOperator fit;
+    Run(fit, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"save_state", "true"}, {"state_path", state.string()}}, Table());
+    TruncatedSVDOperator reuse;
+    Expect(Column(Run(reuse, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"operation_mode", "transform_only"}, {"state_path", state.string()}},
+                      Table(false)),
+                  "svd_0"),
+           {1.2287401639, 1.9288812994, 4.122062113, 9.9087060113, 6.751084548, 3.1576214633}, "Truncated SVD from its saved values");
+    fs::remove(state);
+}
+
 int main() {
     CheckOperators();
     CheckPCA();
+    CheckLinearSteps();
     CheckExecutor();
     CheckSuppliedInputs();
-    std::cout << "fit on Train rows: scaler, target encoder, PCA, TF-IDF, count and tokenizer learn from the Train rows "
+    std::cout << "fit on Train rows: scaler, target encoder, PCA, Truncated SVD, Whitening, TF-IDF, count and tokenizer learn from the Train rows "
                  "(scikit-learn values); the run marks rows with the shared split rule; supplied Validation / Test rows join and are transformed; exports leave the partition out. OK\n";
     return 0;
 }

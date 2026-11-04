@@ -4881,46 +4881,43 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
 // Linear Algebra Nodes (Tool-to-Node Migration)
 // =============================================================================
 void NodeMetadataRegistry::InitializeLinearAlgebraNodes() {
-    RegisterNode({NodeType::SVDNode, NodeCategory::Analytics, "SVD", ICON_FA_TABLE_CELLS,
-        {"svd", "singular", "value", "decomposition", "matrix"}, 0, false,
-        "Singular Value Decomposition", "", "",
-        {{"Matrix", PinType::Dataset, true, "Matrix"}},
-        {{"U", PinType::Dataset, false, "U"}, {"S", PinType::Dataset, false, "S"}, {"V", PinType::Dataset, false, "V"}},
-        {},
-        NodeImplementationStatus::Template, 0});
+    // TOFIX129 D9: fitted on the Train rows, mapped on the device with the
+    // backend's LinearAlgebra (test_fit_on_train_rows against scikit-learn).
+    RegisterNode({NodeType::TruncatedSVD, NodeCategory::Analytics, "Truncated SVD", ICON_FA_COMPRESS,
+        {"svd", "truncated", "singular", "lsa", "latent", "semantic", "dimensionality", "reduce"}, 0, false,
+        "Reduce number columns to their k strongest directions",
+        "The singular value decomposition of the Train rows, uncentred (scikit-learn's TruncatedSVD): each row becomes x V_k, Float32 svd_0..svd_{k-1} alone (with the label as y and the split carried) or beside the input with Keep columns. Uncentred, so it suits word counts and TF-IDF columns (latent semantic analysis); for centred directions use PCA. Each component's largest weight is positive.", "",
+        {{"Data", PinType::Dataset, true, "Input table containing numeric features"}},
+        {{"Transformed", PinType::Dataset, true, "svd_* (and y), or the input with svd_* beside it"}},
+        {{"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns", {}, "", "Feature columns", "Columns"},
+         {"label_col", "string", "", "Optional label column passed through as y and excluded from automatic features", {}, "", "Label column", "Columns"},
+         {"n_components", "int", "2", "The directions kept", {}, "1-2147483647"},
+         {"keep_columns", "bool", "false", "Keep the input columns and add svd_* beside them", {}, ""},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Persist fitted values to an engine-managed project artifact for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
+        NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::QRDecomposition, NodeCategory::Analytics, "QR Decomposition", ICON_FA_TABLE_COLUMNS,
-        {"qr", "decomposition", "matrix", "orthogonal"}, 0, false,
-        "QR Matrix Decomposition", "", "",
-        {{"Matrix", PinType::Dataset, true, "Matrix"}},
-        {{"Q", PinType::Dataset, false, "Q"}, {"R", PinType::Dataset, false, "R"}},
-        {},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::CholeskyDecomposition, NodeCategory::Analytics, "Cholesky", ICON_FA_SQUARE_ROOT_VARIABLE,
-        {"cholesky", "decomposition", "matrix", "positive", "definite"}, 0, false,
-        "Cholesky Decomposition", "", "",
-        {{"Matrix", PinType::Dataset, true, "Matrix"}},
-        {{"L", PinType::Dataset, false, "L"}},
-        {},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::EigenDecomposition, NodeCategory::Analytics, "Eigenvalue", ICON_FA_CHART_LINE,
-        {"eigen", "eigenvalue", "eigenvector", "decomposition"}, 0, false,
-        "Eigenvalue Decomposition", "", "",
-        {{"Matrix", PinType::Dataset, true, "Matrix"}},
-        {{"Eigenvalues", PinType::Dataset, false, "Eigenvalues"}, {"Eigenvectors", PinType::Dataset, false, "Eigenvectors"}},
-        {},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::MatrixCalculator, NodeCategory::Analytics, "Matrix Calculator", ICON_FA_CALCULATOR,
-        {"matrix", "calculator", "operations", "multiply", "transpose", "inverse"}, 0, false,
-        "Matrix Operations", "", "",
-        {{"A", PinType::Dataset, true, "A"}, {"B", PinType::Dataset, false, "B"}},
-        {{"Result", PinType::Dataset, false, "Result"}},
-        {{"operation", "dropdown", "multiply", "Operation", {"multiply", "add", "subtract", "transpose", "inverse", "determinant"}, ""}},
-        NodeImplementationStatus::Template, 0});
+    RegisterNode({NodeType::Whitening, NodeCategory::Analytics, "Whitening", ICON_FA_TABLE_CELLS,
+        {"whitening", "whiten", "zca", "pca", "decorrelate", "sphering", "covariance"}, 0, false,
+        "Decorrelate number columns and scale them to unit variance",
+        "Centred on the Train rows' means, then rotated onto the directions of their covariance and divided by each direction's standard deviation (n - 1). PCA whitening (scikit-learn's PCA(whiten=True)) outputs white_0.. for the n_components strongest directions (0: every one); ZCA rotates back onto the columns (<column>_white), the whitened data closest to the input. Epsilon is added to each variance before its root; a direction with no variance needs it above 0.", "",
+        {{"Data", PinType::Dataset, true, "Input table containing numeric features"}},
+        {{"Transformed", PinType::Dataset, true, "white_* or <column>_white (and y), or beside the input"}},
+        {{"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns", {}, "", "Feature columns", "Columns"},
+         {"label_col", "string", "", "Optional label column passed through as y and excluded from automatic features", {}, "", "Label column", "Columns"},
+         {"method", "enum", "pca", "PCA whitening (directions) or ZCA (back onto the columns)", {"pca", "zca"}, "", "Method"},
+         {"n_components", "int", "0", "PCA whitening: the directions kept; 0 keeps every one", {}, "0-2147483647"},
+         {"epsilon", "float", "0", "Added to each variance before its square root", {}, ""},
+         {"keep_columns", "bool", "false", "Keep the input columns and add the whitened columns beside them", {}, ""},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Persist fitted values to an engine-managed project artifact for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
+        NodeImplementationStatus::Implemented, 0});
 }
+
 
 // =============================================================================
 // Time Series Analysis Nodes (Tool-to-Node Migration)

@@ -70,7 +70,8 @@ namespace {
 // leakage guard.
 bool IsFittedColumnTransform(const std::string& type) {
     return type == "StandardScaler" || type == "MinMaxScaler" || type == "RobustScaler" ||
-           type == "MaxAbsScaler" || type == "QuantileTransform" || type == "PowerTransform" || type == "PCANode";
+           type == "MaxAbsScaler" || type == "QuantileTransform" || type == "PowerTransform" || type == "PCANode" ||
+           type == "TruncatedSVD" || type == "Whitening";
 }
 
 // The registry name of an operator node's result.

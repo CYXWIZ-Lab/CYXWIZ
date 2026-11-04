@@ -20,7 +20,69 @@ bool ColumnSums(const LinearMatrix& x, std::vector<double>& sums, std::string& e
     return true;
 }
 
+bool IsNumberColumn(const std::shared_ptr<arrow::ChunkedArray>& col) {
+    if (!col) return false;
+    switch (col->type()->id()) {
+        case arrow::Type::DOUBLE:
+        case arrow::Type::FLOAT:
+        case arrow::Type::INT64:
+        case arrow::Type::INT32:
+        case arrow::Type::INT16:
+        case arrow::Type::INT8:
+        case arrow::Type::UINT64:
+        case arrow::Type::UINT32:
+        case arrow::Type::UINT16:
+        case arrow::Type::UINT8: return true;
+        default: return false;
+    }
+}
+
 }  // namespace
+
+std::vector<std::string> ParseColumnList(const std::string& text) {
+    std::vector<std::string> out;
+    size_t start = 0;
+    while (start <= text.size()) {
+        const size_t comma = text.find(',', start);
+        std::string name = text.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        const size_t first = name.find_first_not_of(" \t"), last = name.find_last_not_of(" \t");
+        if (first != std::string::npos) out.push_back(name.substr(first, last - first + 1));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return out;
+}
+
+bool ReadBoolParameter(const std::map<std::string, std::string>& params, const char* key, bool fallback, bool& out,
+                       const std::string& op_name, std::string& error) {
+    const auto it = params.find(key);
+    if (it == params.end() || it->second.empty()) return out = fallback, true;
+    if (it->second == "true" || it->second == "false") return out = it->second == "true", true;
+    error = op_name + ": '" + key + "' must be 'true' or 'false' (got '" + it->second + "')";
+    return false;
+}
+
+arrow::Status ResolveNumberFeatures(const std::shared_ptr<arrow::Table>& input, const std::vector<std::string>& wanted,
+                                    const std::string& label_col, const std::string& op_name, std::vector<std::string>& out) {
+    out.clear();
+    if (!wanted.empty()) {
+        for (const auto& name : wanted) {
+            const auto col = input->GetColumnByName(name);
+            if (!col) return arrow::Status::KeyError(op_name + ": feature column '" + name + "' not found");
+            if (!IsNumberColumn(col)) return arrow::Status::TypeError(op_name + ": feature column '" + name + "' is not numeric");
+            out.push_back(name);
+        }
+        return arrow::Status::OK();
+    }
+    for (const auto& field : input->schema()->fields()) {
+        const std::string& name = field->name();
+        if (name == label_col || name.rfind("__", 0) == 0) continue;
+        if (IsNumberColumn(input->GetColumnByName(name))) out.push_back(name);
+    }
+    if (out.empty())
+        return arrow::Status::Invalid(op_name + ": no numeric feature columns found (auto-detect). Specify feature_cols explicitly.");
+    return arrow::Status::OK();
+}
 
 bool Centred(const LinearMatrix& x, const std::vector<double>& mean, LinearMatrix& out, std::string& error) {
     const MatrixResult column = LinearAlgebra::Ones(static_cast<int>(x.size()), 1);

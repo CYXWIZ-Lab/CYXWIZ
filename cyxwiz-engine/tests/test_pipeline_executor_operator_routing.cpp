@@ -311,6 +311,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "KMeansCluster",
         "KNNClassifier",
         "TSNENode",
+        "TruncatedSVD",
+        "Whitening",
         "UMAPNode",
         "LabelEncoder",
         "LinearRegressionNode",

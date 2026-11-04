@@ -23,62 +23,6 @@ namespace cyxwiz {
 
 namespace {
 
-void ParseColList(const std::string& s, std::vector<std::string>& out) {
-    out.clear();
-    if (s.empty()) return;
-    std::stringstream ss(s);
-    std::string token;
-    while (std::getline(ss, token, ',')) {
-        size_t start = token.find_first_not_of(" \t");
-        size_t end = token.find_last_not_of(" \t");
-        if (start == std::string::npos) continue;
-        out.push_back(token.substr(start, end - start + 1));
-    }
-}
-
-// True iff the column type is one we can read as float.
-bool IsNumericArrowType(const std::shared_ptr<arrow::ChunkedArray>& col) {
-    if (!col || col->num_chunks() == 0) return false;
-    switch (col->chunk(0)->type_id()) {
-        case arrow::Type::DOUBLE:
-        case arrow::Type::FLOAT:
-        case arrow::Type::INT64:
-        case arrow::Type::INT32:
-        case arrow::Type::INT16:
-        case arrow::Type::INT8:
-        case arrow::Type::UINT64:
-        case arrow::Type::UINT32:
-        case arrow::Type::UINT16:
-        case arrow::Type::UINT8:
-            return true;
-        default:
-            return false;
-    }
-}
-
-bool ReadBoolParam(const std::map<std::string, std::string>& params,
-                   const char* key,
-                   bool default_value,
-                   bool& out,
-                   std::string& error) {
-    auto it = params.find(key);
-    if (it == params.end() || it->second.empty()) {
-        out = default_value;
-        return true;
-    }
-    if (it->second == "true") {
-        out = true;
-        return true;
-    }
-    if (it->second == "false") {
-        out = false;
-        return true;
-    }
-    error = std::string("PCA: '") + key +
-            "' must be 'true' or 'false' (got '" + it->second + "')";
-    return false;
-}
-
 std::string BuildPcaMemoryPreflightMessage(
     const MaterializationMemoryEstimate& estimate,
     const MaterializationMemoryDecision& decision,
@@ -116,9 +60,8 @@ bool PCAOperator::Configure(
     scale_ = false;
     keep_columns_ = false;
 
-    auto fc = params.find("feature_cols");
-    const std::string fc_str = (fc != params.end()) ? fc->second : "";
-    ParseColList(fc_str, feature_cols_);
+    const auto fc = params.find("feature_cols");
+    feature_cols_ = ParseColumnList(fc != params.end() ? fc->second : "");
 
     auto lc = params.find("label_col");
     if (lc != params.end()) label_col_ = lc->second;
@@ -137,9 +80,9 @@ bool PCAOperator::Configure(
         return false;
     }
 
-    if (!ReadBoolParam(params, "center", true, center_, error)) return false;
-    if (!ReadBoolParam(params, "scale", false, scale_, error)) return false;
-    if (!ReadBoolParam(params, "keep_columns", false, keep_columns_, error)) return false;
+    if (!ReadBoolParameter(params, "center", true, center_, GetName(), error)) return false;
+    if (!ReadBoolParameter(params, "scale", false, scale_, GetName(), error)) return false;
+    if (!ReadBoolParameter(params, "keep_columns", false, keep_columns_, GetName(), error)) return false;
     if (!ParseFittedPreprocessingOptions(params, GetName(), options_, error)) return false;
 
     return true;
@@ -181,34 +124,7 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     // numeric columns except label_col and any internal `__*` metadata
     // columns (matches ArrowDatasetBatcher's feature detection).
     std::vector<std::string> resolved_features;
-    if (!feature_cols_.empty()) {
-        for (const auto& name : feature_cols_) {
-            auto col = input->GetColumnByName(name);
-            if (!col) {
-                return arrow::Status::KeyError(
-                    "PCA: feature column '" + name + "' not found");
-            }
-            if (!IsNumericArrowType(col)) {
-                return arrow::Status::TypeError(
-                    "PCA: feature column '" + name + "' is not numeric");
-            }
-            resolved_features.push_back(name);
-        }
-    } else {
-        for (const auto& field : input->schema()->fields()) {
-            const std::string& name = field->name();
-            if (name == label_col_) continue;
-            if (name.rfind("__", 0) == 0) continue;
-            auto col = input->GetColumnByName(name);
-            if (!col || !IsNumericArrowType(col)) continue;
-            resolved_features.push_back(name);
-        }
-        if (resolved_features.empty()) {
-            return arrow::Status::Invalid(
-                "PCA: no numeric feature columns found (auto-detect). "
-                "Specify feature_cols explicitly.");
-        }
-    }
+    ARROW_RETURN_NOT_OK(ResolveNumberFeatures(input, feature_cols_, label_col_, "PCA", resolved_features));
     report_progress("Features resolved",
                     "Resolved " + std::to_string(resolved_features.size()) +
                     " numeric PCA feature columns",

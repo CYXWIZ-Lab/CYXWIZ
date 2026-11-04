@@ -340,6 +340,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/count_vectorizer_operator.cpp    # Tool-to-Node Band 1
     src/core/node_executors/pca_operator.cpp                 # Tool-to-Node Band 1
     src/core/node_executors/linear_map.cpp
+    src/core/node_executors/linear_algebra_operators.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp  # Tool-to-Node Band 1
     src/core/node_executors/clustering_operators.cpp         # Tool-to-Node Band 1
     src/core/node_executors/feature_rows.cpp
@@ -2462,6 +2463,7 @@ add_executable(test_operator_configure_resets
     src/core/node_executors/text_feature_matrix.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/linear_map.cpp
+    src/core/node_executors/linear_algebra_operators.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
@@ -2820,6 +2822,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/differencing_operator.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/linear_map.cpp
+    src/core/node_executors/linear_algebra_operators.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
@@ -3210,6 +3213,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/node_executors/differencing_operator.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/linear_map.cpp
+    src/core/node_executors/linear_algebra_operators.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
@@ -4050,6 +4054,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/differencing_operator.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/linear_map.cpp
+    src/core/node_executors/linear_algebra_operators.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
@@ -7863,7 +7868,7 @@ add_test(NAME WordMap COMMAND test_word_map)
 # Data Studio > Explore > Groups and Projection (TOFIX129 D5), against scikit-learn / scipy.
 add_executable(test_groups_explore tests/test_groups_explore.cpp
     src/core/groups_explore.cpp src/core/groups_presentation.cpp src/core/explore_read.cpp src/core/explore_presentation.cpp
-    src/core/node_executors/clustering_operators.cpp src/core/node_executors/pca_operator.cpp src/core/node_executors/linear_map.cpp
+    src/core/node_executors/clustering_operators.cpp src/core/node_executors/pca_operator.cpp src/core/node_executors/linear_map.cpp src/core/node_executors/linear_algebra_operators.cpp
     src/core/node_executors/projection_operators.cpp src/core/node_executors/feature_rows.cpp
     src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
     src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
@@ -8174,6 +8179,7 @@ add_executable(test_engine_node_parity
     src/core/node_executors/differencing_operator.cpp
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/linear_map.cpp
+    src/core/node_executors/linear_algebra_operators.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp

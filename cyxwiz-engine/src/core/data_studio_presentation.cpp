@@ -58,6 +58,8 @@ bool JobOf(NodeType type, Job& job) {
         // Groups and projections added as steps (Explore > Groups / Projection, TOFIX129 D5).
         case NodeType::KMeansCluster: case NodeType::DBSCANCluster: case NodeType::HierarchicalCluster:
         case NodeType::GMMCluster: case NodeType::PCANode: case NodeType::TSNENode: case NodeType::UMAPNode:
+        // Linear algebra steps (Tools > Linear Algebra, TOFIX129 D9).
+        case NodeType::TruncatedSVD: case NodeType::Whitening:
         // Text features and the signal columns training reads (Explore > Text / Signal, TOFIX129 D8).
         case NodeType::TFIDFVectorizer: case NodeType::CountVectorizer: case NodeType::TextTokenizer:
         case NodeType::SentimentAnalyzer: case NodeType::WordEmbeddings:

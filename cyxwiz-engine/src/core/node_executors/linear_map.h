@@ -32,6 +32,16 @@ struct LinearMap {
     std::vector<std::string> outputs;  // k column names
 };
 
+// A comma-separated column list (spaces around names dropped).
+std::vector<std::string> ParseColumnList(const std::string& text);
+// A "true" / "false" parameter (absent or empty: `fallback`); false + error otherwise.
+bool ReadBoolParameter(const std::map<std::string, std::string>& params, const char* key, bool fallback, bool& out,
+                       const std::string& op_name, std::string& error);
+// The number columns to map: `wanted` (each must be a number column), or
+// every number column but the label and the internal "__" ones.
+arrow::Status ResolveNumberFeatures(const std::shared_ptr<arrow::Table>& input, const std::vector<std::string>& wanted,
+                                    const std::string& label_col, const std::string& op_name, std::vector<std::string>& out);
+
 // The column means and population standard deviations (divides by n) of x
 // [n × d], on the device. False + error when the device fails.
 bool ColumnMoments(const LinearMatrix& x, std::vector<double>& mean, std::vector<double>& sd, std::string& error);
