@@ -218,13 +218,27 @@ int main() {
     const text::EmbeddingsAnswer e = text::RunEmbeddings("corpus", er, run, missing);
     Check(e.ok(), "embeddings: " + e.error);
     Check(e.vectors.dim == 8 && !e.vectors.words.empty() && e.words_read > 0, "embeddings: vectors learned");
-    Check(!e.common.empty() && e.common.size() <= 40, "embeddings: the map's words");
+    Check(!e.sampled && e.rows_used == 9, "embeddings: a small column is learned whole");
+    Check(e.group_rows.size() == 3 && e.group_rows[0] == 3 && e.word_group_rows.count("sad") && e.word_group_rows.at("sad")[1] == 3,
+          "embeddings: rows per group for the word map (\"sad\" in the 3 Depression rows)");
     std::string nearest_error;
     const auto nearest = text::NearestWords(e.vectors, "Sad", 3, &nearest_error);
     Check(nearest.size() == 3, "nearest words: " + nearest_error);
     Contains(text_view::EmbeddingsSentence(e, "sad", nearest), "\"sad\" sits nearest to", "embeddings sentence");
-    const text::WordMap map = text::MapWords(e.vectors, e.common);
-    Check(map.points.size() == e.common.size() && map.share_x >= map.share_y && map.share_x + map.share_y <= 1.0 + 1e-9, "map: PCA");
+    Contains(text_view::EmbeddingsSentence(e, "sad", nearest), "Learned from this column alone", "embeddings sentence: whole column");
+    // A sample: rows drawn until the words asked for.
+    text::EmbeddingsRequest sample = er;
+    sample.sample_words = 20;
+    const text::EmbeddingsAnswer es = text::RunEmbeddings("corpus", sample, run, missing);
+    Check(es.ok() && es.sampled && es.rows_used >= 2 && es.rows_used < 9 && es.words_read >= 20, "embeddings: a sample of the rows");
+    Contains(text_view::EmbeddingsSentence(es, "", {}), "Learned from " + std::to_string(es.rows_used) + " of the column's 9 rows", "sample sentence");
+    // CBOW trains too, and the node gets the architecture.
+    text::EmbeddingsRequest cbow = er;
+    cbow.cbow = true;
+    const text::EmbeddingsAnswer ec = text::RunEmbeddings("corpus", cbow, run, missing);
+    Check(ec.ok() && ec.vectors.dim == 8, "embeddings: CBOW: " + ec.error);
+    Check(text::NodeParameters(cbow).at("architecture") == "cbow" && text::NodeParameters(er).at("architecture") == "skipgram",
+          "Word Embeddings node architecture");
     er.method = "nope";
     Check(!text::RunEmbeddings("corpus", er, run, missing).ok(), "embeddings: unknown method");
 

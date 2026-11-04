@@ -53,6 +53,7 @@ void SameLineOrWrap(float width, float right_edge) {
 
 void DataStudioPanel::Render() {
     if (query_editor_) query_editor_->RenderWindows();
+    if (text_) text_->RenderWindows();  // the word map (Explore > Text > Embeddings)
     if (!visible_) return;
 
     ImGui::SetNextWindowSize(ImVec2(1200, 800), ImGuiCond_FirstUseEver);
@@ -414,6 +415,7 @@ void DataStudioPanel::RenderExplore() {
         {"Outliers", ExploreTab::Outliers}, {"Correlation", ExploreTab::Correlation}, {"Distribution", ExploreTab::Distribution},
         {"Tests", ExploreTab::Tests}, {"Regression", ExploreTab::Regression},
         {"Groups", ExploreTab::Groups}, {"Projection", ExploreTab::Projection}, {"Series", ExploreTab::Series}, {"Forecast", ExploreTab::Forecast}, {"Signal", ExploreTab::Signal},
+        {"Text", ExploreTab::Text},
         {"Visualize", ExploreTab::Visualize}, {"Plugins", ExploreTab::Plugins}};
     const auto picked = DatasetCatalog::Instance().Resolve(active_dataset_);
     const bool images = picked && picked->modality == DatasetModality::Image &&
@@ -486,6 +488,7 @@ void DataStudioPanel::RenderExplore() {
             }
             break;
         case ExploreTab::Signal: if (signal_) signal_->Render(MakeExploreContext()); break;
+        case ExploreTab::Text: if (text_) text_->Render(MakeExploreContext()); break;
         case ExploreTab::Visualize: if (visualizer_) visualizer_->Render(); break;
         case ExploreTab::Plugins: if (plugins_) plugins_->Render(MakeExploreContext()); break;
     }
@@ -508,6 +511,7 @@ void DataStudioPanel::RenderStatusBar() {
     else if (series_ && series_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the series");
     else if (forecast_ && forecast_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Forecasting");
     else if (signal_ && signal_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the signal");
+    else if (text_ && text_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the text");
     else if (results_ && results_->CrossValidation()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Cross-validating");
     else if (results_ && results_->LearningCurve()->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Learning curve");
     else if (results_ && results_->IsRunning()) ImGui::TextColored(t.info, ICON_FA_CIRCLE " Reading the test");

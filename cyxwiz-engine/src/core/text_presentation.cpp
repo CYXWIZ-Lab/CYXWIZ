@@ -16,7 +16,7 @@ std::string N(int64_t n) { return Number(static_cast<size_t>(std::max<int64_t>(0
 
 std::string Percent(double share) {
     char buf[32];
-    std::snprintf(buf, sizeof buf, share >= 0.995 || share < 0.1 ? "%.1f%%" : "%.0f%%", share * 100.0);
+    std::snprintf(buf, sizeof buf, share > 0.9 || share < 0.1 ? "%.1f%%" : "%.0f%%", share * 100.0);
     return buf;
 }
 
@@ -115,6 +115,7 @@ std::string TermsSentence(const text::TermsAnswer& a) {
     if (a.html_entities > 0) quality.push_back(N(a.html_entities) + " rows carry HTML entities (&quot;)");
     if (a.links > 0) quality.push_back(N(a.links) + " hold links");
     if (a.repeated > 0) quality.push_back(N(a.repeated) + " repeat an earlier row");
+    if (a.broken > 0) quality.push_back(N(a.broken) + " hold broken characters (text saved in one encoding and read in another)");
     if (!quality.empty()) s += " " + List(quality) + (a.html_entities > 0 ? ": Text Clean with remove HTML takes the entities out first." : ".");
     return s;
 }
@@ -161,8 +162,8 @@ std::string TokensSentence(const text::TokensAnswer& a) {
 
 std::string EmbeddingsSentence(const text::EmbeddingsAnswer& a, const std::string& word,
                                const std::vector<std::pair<std::string, double>>& nearest) {
-    std::string s = "Learned from this column alone (" + Number(a.vectors.words.size()) + " words seen " + std::to_string(a.request.min_count) +
-                    " times or more)";
+    std::string s = "Learned from " + (a.sampled ? N(a.rows_used) + " of the column's " + Number(a.data.texts.size()) + " rows" : std::string("this column alone")) + " (" +
+                    Number(a.vectors.words.size()) + " words seen " + std::to_string(a.request.min_count) + " times or more)";
     if (nearest.empty()) return s + (word.empty() ? "." : ", " + Quoted(word) + " has no vector: it is not seen often enough.");
     std::vector<std::string> alike;
     for (size_t i = 0; i < nearest.size() && i < 3; ++i) alike.push_back(nearest[i].first + " (" + Fixed(nearest[i].second, 2) + ")");

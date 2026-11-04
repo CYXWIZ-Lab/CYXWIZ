@@ -62,7 +62,7 @@ struct TextAnswer {
 TextAnswer ReadText(const std::string& table, const TextRequest& request, const QueryRunner& run, const explore::MissingTexts& texts);
 
 // Words / tokens per row: the figures and a histogram of `bins` bins up to a
-// round cap near the 99th percentile (the longer rows counted in `over`).
+// round cap near the 95th percentile (the longer rows counted in `over`).
 struct LengthFigures {
     double mean = 0.0, median = 0.0, p95 = 0.0;
     int64_t max = 0;
@@ -141,6 +141,7 @@ struct TermsAnswer {
     std::vector<TermScore> row_terms;
     std::vector<NearRow> nearest;                     // 5, most alike first (cosine)
     int64_t html_entities = 0, links = 0, repeated = 0;  // text quality the terms show
+    int64_t broken = 0;        // rows with broken characters (UTF-8 read as Latin-1 and saved again, or U+FFFD)
 };
 TermsAnswer RunTerms(const std::string& table, const TermsRequest& request, const QueryRunner& run, const explore::MissingTexts& texts,
                      const StopQuery& stop = {});
@@ -217,16 +218,13 @@ TokensAnswer RunTokens(const std::string& table, const TokensRequest& request, c
 struct EmbeddingsRequest {
     TextRequest base;
     std::string method = "word2vec";  // "word2vec", "fasttext", "glove"
+    bool cbow = false;     // word2vec / fastText: CBOW (a word from its context) instead of skip-gram
     int size = 100;
     int window = 5;        // glove: its own default 10 when 0
     int min_count = 5;
     int epochs = 5;        // glove: 25 when 0
     unsigned seed = 1;
-};
-
-struct MapPoint {
-    std::string word;
-    double x = 0.0, y = 0.0;
+    int64_t sample_words = 500000;  // learn from rows drawn at random (seed) until this many words; 0: every row
 };
 
 struct EmbeddingsAnswer {
@@ -235,8 +233,14 @@ struct EmbeddingsAnswer {
     EmbeddingsRequest request;
     TextData data;
     WordVectors vectors;
-    int64_t words_read = 0;            // words in the sentences trained on
-    std::vector<std::string> common;   // the commonest words learned, common English words left out (40)
+    int64_t words_read = 0;    // words in the sentences trained on
+    int64_t rows_used = 0;     // rows trained on (all of data.texts unless sampled)
+    bool sampled = false;
+    // Per learned word, the rows of each group it is in (the groups of
+    // data.groups; empty without a group column), and the rows per group,
+    // both over the rows trained on: what "leans to a group" reads.
+    std::map<std::string, std::vector<int64_t>> word_group_rows;
+    std::vector<int64_t> group_rows;
 };
 EmbeddingsAnswer RunEmbeddings(const std::string& table, const EmbeddingsRequest& request, const QueryRunner& run,
                                const explore::MissingTexts& texts, const StopQuery& stop = {},
@@ -244,14 +248,6 @@ EmbeddingsAnswer RunEmbeddings(const std::string& table, const EmbeddingsRequest
 
 // The `k` nearest words to `word` (lower-cased) by cosine, on the device.
 std::vector<std::pair<std::string, double>> NearestWords(const WordVectors& vectors, const std::string& word, int k, std::string* error);
-
-// The words on the first two principal components of their vectors, and the
-// share of the spread each axis holds; words without a vector are left out.
-struct WordMap {
-    std::vector<MapPoint> points;
-    double share_x = 0.0, share_y = 0.0;
-};
-WordMap MapWords(const WordVectors& vectors, const std::vector<std::string>& words);
 
 // ---- The nodes the tab adds (Add as a step / Keep as a node)
 

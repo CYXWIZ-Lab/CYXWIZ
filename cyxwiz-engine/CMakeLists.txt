@@ -252,6 +252,7 @@ set(ENGINE_SOURCES
     src/core/signal_presentation.cpp
     src/core/text_explore.cpp
     src/core/text_presentation.cpp
+    src/core/word_map.cpp
     src/core/project_column_roles.cpp
     src/core/dashboard/dashboard_model.cpp
     src/core/dashboard/stop_words.cpp
@@ -785,6 +786,8 @@ set(ENGINE_SOURCES
     src/gui/data_studio/series_view.cpp
     src/gui/data_studio/forecast_view.cpp
     src/gui/data_studio/signal_view.cpp
+    src/gui/data_studio/text_view.cpp
+    src/gui/word_map_view.cpp
     src/gui/data_studio/outliers_view.cpp
     src/gui/data_studio/correlation_view.cpp
     src/gui/data_studio/distribution_view.cpp
@@ -7861,6 +7864,16 @@ if(WIN32)
 endif()
 set_target_properties(test_text_explore PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME TextExplore COMMAND test_text_explore)
+
+# The word map (TOFIX129 D8, M-1 .. M-8): words placed, layouts, clusters, groups.
+add_executable(test_word_map tests/test_word_map.cpp src/core/word_map.cpp)
+target_include_directories(test_word_map PRIVATE src)
+target_link_libraries(test_word_map PRIVATE cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_word_map PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_word_map PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME WordMap COMMAND test_word_map)
 
 # Data Studio > Explore > Groups and Projection (TOFIX129 D5), against scikit-learn / scipy.
 add_executable(test_groups_explore tests/test_groups_explore.cpp

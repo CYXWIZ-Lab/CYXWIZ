@@ -4,7 +4,6 @@
 #include "node_executors/text_vectorizer_contract.h"
 #include "node_executors/word_embeddings_operator.h"
 
-#include <cyxwiz/dimensionality_reduction.h>
 #include <cyxwiz/tokenizer.h>
 
 #include <arrayfire.h>
@@ -12,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <random>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -182,7 +182,7 @@ LengthFigures Lengths(const std::vector<int64_t>& lengths, int bins) {
     f.median = Median(v);
     f.p95 = Percentile(v, 95.0);
     f.max = *std::max_element(lengths.begin(), lengths.end());
-    f.cap = std::max<int64_t>(RoundUp(Percentile(v, 99.0)), bins);
+    f.cap = std::max<int64_t>(RoundUp(f.p95), bins);
     const int64_t width = (f.cap + bins - 1) / bins;
     f.cap = width * bins;
     f.bins.assign(static_cast<size_t>(bins), 0);
@@ -258,6 +258,11 @@ TermsAnswer RunTerms(const std::string& table, const TermsRequest& request, cons
         if (t.find("&quot;") != std::string::npos || t.find("&amp;") != std::string::npos || t.find("&#") != std::string::npos) ++a.html_entities;
         if (t.find("http://") != std::string::npos || t.find("https://") != std::string::npos) ++a.links;
         if (!seen.insert(t).second) ++a.repeated;
+        for (const char* broken : {"\xC3\x83", "\xC3\xA2\xE2\x82\xAC", "\xC3\xB0\xC5\xB8", "\xC3\xB0\xC3\xBF", "\xEF\xBF\xBD"})
+            if (t.find(broken) != std::string::npos) {
+                ++a.broken;
+                break;
+            }
         for (const std::string& term : contract::Terms(t, request.stop_words, 1, ngram_max)) ++counts[i][term];
         for (const auto& [term, n] : counts[i]) ++df[term];
     }
@@ -480,13 +485,23 @@ EmbeddingsAnswer RunEmbeddings(const std::string& table, const EmbeddingsRequest
     if (request.method != "word2vec" && request.method != "fasttext" && request.method != "glove") return a.error = "Learn with word2vec, fastText or GloVe.", a;
     if (request.size < 2) return a.error = "The size must be 2 or more.", a;
     if (!Read(a, table, request.base, run, texts)) return a;
-    // The Word Embeddings node's own split of the text, so its vectors are these.
+    // The Word Embeddings node's own split of the text, so its vectors are
+    // these; a large column learns from rows drawn at random (the seed's) until
+    // sample_words, so the look takes seconds (the node learns from every row).
+    const TextData& d = a.data;
+    std::vector<size_t> order(d.texts.size());
+    std::iota(order.begin(), order.end(), size_t{0});
+    if (request.sample_words > 0) std::shuffle(order.begin(), order.end(), std::mt19937(request.seed));
     std::vector<std::vector<std::string>> sentences;
-    sentences.reserve(a.data.texts.size());
-    for (const std::string& t : a.data.texts) {
-        sentences.push_back(WordEmbeddingsOperator::SplitWords(t));
+    std::vector<size_t> used;
+    for (const size_t i : order) {
+        if (request.sample_words > 0 && a.words_read >= request.sample_words) break;
+        sentences.push_back(WordEmbeddingsOperator::SplitWords(d.texts[i]));
         a.words_read += static_cast<int64_t>(sentences.back().size());
+        used.push_back(i);
     }
+    a.rows_used = static_cast<int64_t>(used.size());
+    a.sampled = used.size() < d.texts.size();
     const auto on_progress = [&](double done, int) {
         if (progress) progress(done);
         return !Stopped(stop);
@@ -504,6 +519,7 @@ EmbeddingsAnswer RunEmbeddings(const std::string& table, const EmbeddingsRequest
         a.vectors = std::move(m.vectors);
     } else if (request.method == "fasttext") {
         FastTextOptions o;
+        o.cbow = request.cbow;
         o.vector_size = request.size;
         o.window = std::max(1, request.window);
         o.min_count = std::max(1, request.min_count);
@@ -515,6 +531,7 @@ EmbeddingsAnswer RunEmbeddings(const std::string& table, const EmbeddingsRequest
         a.vectors = WordEmbeddings::FastTextVectors(m);
     } else {
         Word2VecOptions o;
+        o.cbow = request.cbow;
         o.vector_size = request.size;
         o.window = std::max(1, request.window);
         o.min_count = std::max(1, request.min_count);
@@ -526,11 +543,20 @@ EmbeddingsAnswer RunEmbeddings(const std::string& table, const EmbeddingsRequest
         a.vectors = std::move(m.vectors);
     }
     if (a.vectors.words.empty()) return a.error = "No word is seen " + std::to_string(request.min_count) + " times or more; lower it.", a;
-    // The trainers keep the most frequent first: the map's words come from there.
-    const std::set<std::string>& stop_words = TextProcessing::GetStopwords();
-    for (const std::string& w : a.vectors.words) {
-        if (a.common.size() >= 40) break;
-        if (w.size() >= 3 && stop_words.count(w) == 0) a.common.push_back(w);
+    if (!d.group_of.empty()) {
+        a.group_rows.assign(d.groups.size(), 0);
+        const std::unordered_set<std::string> learned(a.vectors.words.begin(), a.vectors.words.end());
+        for (size_t s = 0; s < used.size(); ++s) {
+            const size_t g = static_cast<size_t>(d.group_of[used[s]]);
+            ++a.group_rows[g];
+            std::unordered_set<std::string> seen;
+            for (const std::string& w : sentences[s]) {
+                if (!learned.count(w) || !seen.insert(w).second) continue;
+                auto& rows = a.word_group_rows[w];
+                if (rows.empty()) rows.assign(d.groups.size(), 0);
+                ++rows[g];
+            }
+        }
     }
     return a;
 }
@@ -540,29 +566,6 @@ std::vector<std::pair<std::string, double>> NearestWords(const WordVectors& vect
     for (const std::string& w : TextProcessing::Words(word)) lower += (lower.empty() ? "" : " ") + w;
     if (lower.empty()) lower = word;
     return WordEmbeddings::Nearest(vectors, lower, std::max(1, k), error);
-}
-
-WordMap MapWords(const WordVectors& vectors, const std::vector<std::string>& words) {
-    WordMap map;
-    std::unordered_map<std::string, size_t> row;
-    for (size_t i = 0; i < vectors.words.size(); ++i) row.emplace(vectors.words[i], i);
-    std::vector<std::vector<double>> data;
-    std::vector<std::string> kept;
-    for (const std::string& w : words) {
-        const auto it = row.find(w);
-        if (it == row.end() || vectors.dim <= 0) continue;
-        const float* v = vectors.values.data() + it->second * static_cast<size_t>(vectors.dim);
-        data.emplace_back(v, v + vectors.dim);
-        kept.push_back(w);
-    }
-    if (data.size() < 3) return map;
-    const PCAResult pca = DimensionalityReduction::ComputePCA(data, 2);
-    if (!pca.success || pca.transformed.size() != data.size()) return map;
-    for (size_t i = 0; i < kept.size(); ++i)
-        map.points.push_back({kept[i], pca.transformed[i][0], pca.transformed[i].size() > 1 ? pca.transformed[i][1] : 0.0});
-    if (!pca.explained_variance_ratio.empty()) map.share_x = pca.explained_variance_ratio[0];
-    if (pca.explained_variance_ratio.size() > 1) map.share_y = pca.explained_variance_ratio[1];
-    return map;
 }
 
 // ---- The nodes
@@ -594,6 +597,7 @@ std::map<std::string, std::string> NodeParameters(const TokensRequest& request) 
 
 std::map<std::string, std::string> NodeParameters(const EmbeddingsRequest& request) {
     std::map<std::string, std::string> p = {{"source", request.method},
+                                            {"architecture", request.cbow ? "cbow" : "skipgram"},
                                             {"text_col", request.base.text},
                                             {"vector_size", std::to_string(request.size)},
                                             {"min_count", std::to_string(std::max(1, request.min_count))},

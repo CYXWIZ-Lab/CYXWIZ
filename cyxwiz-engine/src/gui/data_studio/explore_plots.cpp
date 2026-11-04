@@ -119,7 +119,7 @@ void Scatter(const std::vector<double>& xs, const std::vector<double>& ys, float
     XAxis(at, width, lx, x_label, hx);
 }
 
-void Bars(const std::vector<int64_t>& bins, double lo, double hi, float width, float height) {
+void Bars(const std::vector<int64_t>& bins, double lo, double hi, float width, float height, double mark, const std::string& caption) {
     const ui::Tokens& t = ui::CurrentTokens();
     const ImVec2 at = ImGui::GetCursorScreenPos();
     ImGui::Dummy(ImVec2(width, height));
@@ -138,11 +138,55 @@ void Bars(const std::vector<int64_t>& bins, double lo, double hi, float width, f
         dl->AddRectFilled(ImVec2(x + 1.0f, at.y + height - h), ImVec2(x + std::max(2.0f, bw - 1.0f), at.y + height), ui::ToU32(fill), 2.0f,
                           ImDrawFlags_RoundCornersTop);
     }
+    if (std::isfinite(mark) && hi > lo && mark >= lo && mark <= hi) {
+        const float x = at.x + width * static_cast<float>((mark - lo) / (hi - lo));
+        for (float y = at.y + 2.0f; y < at.y + height; y += 7.0f)
+            dl->AddLine(ImVec2(x, y), ImVec2(x, std::min(y + 4.0f, at.y + height)), ui::ToU32(t.caution), 1.5f);
+        if (!caption.empty()) dl->AddText(ImVec2(x + 5.0f, at.y + 3.0f), ui::ToU32(t.text_dim), caption.c_str());
+    }
     const std::string l = sv::Num(lo), h = sv::Num(hi);
     ImGui::TextColored(t.text_faint, "%s", l.c_str());
     ImGui::SameLine();
     ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), at.x - ImGui::GetWindowPos().x + ImGui::GetScrollX() + width - ImGui::CalcTextSize(h.c_str()).x));
     ImGui::TextColored(t.text_faint, "%s", h.c_str());
+}
+
+void NamedBars(const std::vector<std::string>& names, const std::vector<double>& values, float width,
+               const std::vector<std::string>* texts) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const size_t n = std::min(names.size(), values.size());
+    if (n == 0) return;
+    double top = 0.0;
+    for (size_t i = 0; i < n; ++i)
+        if (std::isfinite(values[i])) top = std::max(top, values[i]);
+    float label_w = 0.0f, value_w = 0.0f;
+    std::vector<std::string> shown(n);
+    for (size_t i = 0; i < n; ++i) {
+        shown[i] = texts && i < texts->size() ? (*texts)[i] : sv::Num(values[i]);
+        label_w = std::max(label_w, ImGui::CalcTextSize(names[i].c_str()).x);
+        value_w = std::max(value_w, ImGui::CalcTextSize(shown[i].c_str()).x);
+    }
+    label_w = std::min(label_w, width * 0.4f);
+    const float line = ImGui::GetTextLineHeight() + 4.0f;
+    const float height = line * static_cast<float>(n) + 6.0f;
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(width, height));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(at, ImVec2(at.x + width, at.y + height), ui::ToU32(t.plot_bg), 4.0f);
+    ImVec4 fill = t.accent_text;
+    fill.w = 0.75f;
+    const float x0 = at.x + 8.0f + label_w + 8.0f;
+    const float span = std::max(10.0f, at.x + width - 8.0f - value_w - 6.0f - x0);
+    for (size_t i = 0; i < n; ++i) {
+        const float y = at.y + 3.0f + line * static_cast<float>(i);
+        const ImVec2 size = ImGui::CalcTextSize(names[i].c_str());
+        dl->PushClipRect(ImVec2(at.x, y), ImVec2(at.x + 8.0f + label_w, y + line), true);
+        dl->AddText(ImVec2(at.x + 8.0f + label_w - std::min(size.x, label_w), y + 2.0f), ui::ToU32(t.text_dim), names[i].c_str());
+        dl->PopClipRect();
+        const float w = top > 0.0 && std::isfinite(values[i]) ? span * static_cast<float>(values[i] / top) : 0.0f;
+        dl->AddRectFilled(ImVec2(x0, y + 3.0f), ImVec2(x0 + std::max(1.0f, w), y + line - 3.0f), ui::ToU32(fill), 2.0f);
+        dl->AddText(ImVec2(x0 + w + 6.0f, y + 2.0f), ui::ToU32(t.text_faint), shown[i].c_str());
+    }
 }
 
 void Lines(const std::vector<double>& xs, const std::vector<Line>& lines, float width, float height, bool own_scale,
