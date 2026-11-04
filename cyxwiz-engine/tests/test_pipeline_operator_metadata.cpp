@@ -2505,7 +2505,11 @@ void CheckPcaContract(cyxwiz::NodeMetadataRegistry& metadata) {
               HasOutputType(pca, "Transformed", gui::PinType::Dataset) &&
               !HasOutputType(pca, "Components", gui::PinType::Dataset),
           "PCA should expose only the table its operator materializes");
-    Check(pca->parameters.size() == 6 &&
+    Check(pca->parameters.size() == 10 &&
+              ParameterMatches(pca, "operation_mode", "enum", "fit_transform") &&
+              ParameterMatches(pca, "save_state", "bool", "false") &&
+              ParameterMatches(pca, "state_path", "file", "") &&
+              ParameterMatches(pca, "state_overwrite", "bool", "false") &&
               ParameterMatches(pca, "keep_columns", "bool", "false") &&
               ParameterMatches(pca, "feature_cols", "string", "") &&
               ParameterMatches(pca, "label_col", "string", "") &&
@@ -2513,7 +2517,7 @@ void CheckPcaContract(cyxwiz::NodeMetadataRegistry& metadata) {
               ParameterMatches(pca, "center", "bool", "true") &&
               ParameterMatches(pca, "scale", "bool", "false") &&
               !HasParameter(pca, "whiten"),
-          "PCA metadata should match every consumed operator field without whitening");
+          "PCA metadata should match every consumed operator field (fitted state too) without whitening");
 
     const auto support =
         cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::PCANode);

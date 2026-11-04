@@ -3,6 +3,7 @@
 #include "../profiler_trace.h"
 #include "text_column_utils.h"  // ReadLabelColumnAsInt
 #include "feature_rows.h"
+#include "linear_map.h"
 
 #include <cyxwiz/dimensionality_reduction.h>
 
@@ -139,6 +140,7 @@ bool PCAOperator::Configure(
     if (!ReadBoolParam(params, "center", true, center_, error)) return false;
     if (!ReadBoolParam(params, "scale", false, scale_, error)) return false;
     if (!ReadBoolParam(params, "keep_columns", false, keep_columns_, error)) return false;
+    if (!ParseFittedPreprocessingOptions(params, GetName(), options_, error)) return false;
 
     return true;
 }
@@ -266,146 +268,66 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                                            static_cast<uint64_t>(n_components_ + (label_col_.empty() ? 0 : 1)),
                                            static_cast<uint64_t>(sizeof(float)))
             .estimated_peak_bytes;
-    if (n_samples < n_components_) {
-        return arrow::Status::Invalid(
-            "PCA: rows with every feature (" + std::to_string(n_samples) +
-            ") < n_components (" + std::to_string(n_components_) + ")");
-    }
-    if (static_cast<int>(n_features) < n_components_) {
-        return arrow::Status::Invalid(
-            "PCA: n_features (" + std::to_string(n_features) +
-            ") < n_components (" + std::to_string(n_components_) + ")");
-    }
-
-    report_progress("Computing PCA",
-                    "Computing PCA projection",
-                    0.65,
-                    0,
-                    static_cast<uint64_t>(n_components_),
-                    estimated_input_matrix_bytes + estimated_output_matrix_bytes);
-    auto result = DimensionalityReduction::ComputePCA(
-        data, n_components_, center_, scale_);
-    if (!result.success) {
-        return arrow::Status::ExecutionError(
-            "PCA: ComputePCA failed: " + result.error_message);
-    }
-    report_progress("PCA computed",
-                    "PCA projection computed",
-                    0.75,
-                    static_cast<uint64_t>(n_components_),
-                    static_cast<uint64_t>(n_components_),
-                    estimated_input_matrix_bytes + estimated_output_matrix_bytes);
-
-    // Keep the input: pc_* beside its columns, null on the rows left out.
-    if (keep_columns_) {
-        std::vector<std::string> names;
-        for (int i = 0; i < n_components_; ++i) names.push_back("pc_" + std::to_string(i));
-        spdlog::info("PCA: {} of {} rows x {} features -> {} components beside the input, explained variance {:.2f}%",
-                     n_samples, fit.total, n_features, n_components_, result.total_variance_explained * 100.0);
-        report_progress("Complete", "PCA materialization complete", 1.0, static_cast<uint64_t>(n_samples),
-                        static_cast<uint64_t>(n_samples), estimated_output_matrix_bytes);
-        return AppendFittedColumns(input, names, fit.rows, result.transformed);
-    }
-
-    // Optional label column passthrough.
-    std::vector<int> labels;
-    std::vector<std::string> class_names;
-    if (!label_col_.empty()) {
-        auto label_column = input->GetColumnByName(label_col_);
-        if (!label_column) {
-            return arrow::Status::KeyError(
-                "PCA: label column '" + label_col_ + "' not found");
-        }
-        std::string lbad;
-        if (!ReadLabelColumnAsInt(label_column, labels, class_names, lbad)) {
-            return arrow::Status::TypeError(
-                "PCA: label column '" + label_col_ +
-                "' has unsupported type '" + lbad + "'");
-        }
-        if (static_cast<int64_t>(labels.size()) != fit.total) {
-            return arrow::Status::Invalid(
-                "PCA: label count (" + std::to_string(labels.size()) +
-                ") differs from row count (" + std::to_string(fit.total) + ")");
-        }
-    }
-
-    // Build wide output: pc_0..pc_{n-1}, y.
-    report_progress("Building Arrow columns",
-                    "Allocating PCA output columns",
-                    0.80,
-                    0,
-                    static_cast<uint64_t>(n_samples),
-                    estimated_output_matrix_bytes);
-    arrow::MemoryPool* pool = arrow::default_memory_pool();
-    std::vector<std::unique_ptr<arrow::FloatBuilder>> pc_builders;
-    pc_builders.reserve(n_components_);
-    for (int i = 0; i < n_components_; ++i) {
-        pc_builders.push_back(std::make_unique<arrow::FloatBuilder>(pool));
-        ARROW_RETURN_NOT_OK(pc_builders.back()->Reserve(n_samples));
-    }
-    arrow::Int32Builder label_builder(pool);
-    if (!labels.empty()) {
-        ARROW_RETURN_NOT_OK(label_builder.Reserve(n_samples));
-    }
-
-    for (int64_t r = 0; r < n_samples; ++r) {
-        const auto& row = result.transformed[r];
+    const std::map<std::string, std::string> settings = {
+        {"n_components", std::to_string(n_components_)}, {"center", center_ ? "true" : "false"}, {"scale", scale_ ? "true" : "false"}};
+    LinearMap map;
+    int64_t fit_rows = 0;
+    if (options_.IsTransformOnly()) {
+        FittedPreprocessingState state;
+        std::string state_error;
+        if (!LoadFittedPreprocessingState(options_.state_path, GetName(), state, state_error) ||
+            !ValidateFittedPreprocessingConfiguration(state, settings, state_error) ||
+            !LinearMapFromState(state, map, state_error))
+            return arrow::Status::Invalid("PCA: " + state_error);
+        if (map.inputs != resolved_features)
+            return arrow::Status::Invalid("PCA: the feature columns differ from the saved values' columns. Keep the columns used when fitting.");
+        fit_rows = state.fit_rows;
+    } else {
+        // Fitted on the Train rows (all rows when the run marks none), as the scalers are.
+        const LinearMatrix train = TrainSubset(input, fit);
+        if (static_cast<int64_t>(train.size()) < std::max(2, n_components_))
+            return arrow::Status::Invalid("PCA: Train rows with every feature (" + std::to_string(train.size()) +
+                                          ") < n_components (" + std::to_string(n_components_) + ")");
+        if (static_cast<int>(n_features) < n_components_)
+            return arrow::Status::Invalid("PCA: n_features (" + std::to_string(n_features) + ") < n_components (" +
+                                          std::to_string(n_components_) + ")");
+        report_progress("Computing PCA", "Computing PCA on the Train rows", 0.65, 0, static_cast<uint64_t>(n_components_),
+                        estimated_input_matrix_bytes + estimated_output_matrix_bytes);
+        const auto result = DimensionalityReduction::ComputePCA(train, n_components_, center_, scale_);
+        if (!result.success) return arrow::Status::ExecutionError("PCA: ComputePCA failed: " + result.error_message);
+        std::vector<double> mean, sd;
+        std::string error;
+        if (!ColumnMoments(train, mean, sd, error)) return arrow::Status::ExecutionError("PCA: " + error);
+        map.inputs = resolved_features;
+        map.shift = center_ ? mean : std::vector<double>(n_features, 0.0);
+        map.divisor.assign(n_features, 1.0);
+        if (scale_)  // ComputePCA's deviation: divides by n, 1 when below 1e-10
+            for (size_t j = 0; j < n_features; ++j) map.divisor[j] = sd[j] < 1e-10 ? 1.0 : sd[j];
+        map.w.assign(n_features, std::vector<double>(static_cast<size_t>(n_components_)));
         for (int c = 0; c < n_components_; ++c) {
-            const float v = (c < static_cast<int>(row.size()))
-                ? static_cast<float>(row[c]) : 0.0f;
-            ARROW_RETURN_NOT_OK(pc_builders[c]->Append(v));
+            map.outputs.push_back("pc_" + std::to_string(c));
+            for (size_t j = 0; j < n_features; ++j) map.w[j][static_cast<size_t>(c)] = result.components[static_cast<size_t>(c)][j];
         }
-        if (!labels.empty()) {
-            ARROW_RETURN_NOT_OK(label_builder.Append(labels[static_cast<size_t>(fit.rows[static_cast<size_t>(r)])]));
-        }
-        if ((r + 1) == n_samples || ((r + 1) % 1024) == 0) {
-            report_progress("Writing PCA rows",
-                            "Writing PCA rows to Arrow columns",
-                            0.82 + (0.13 * static_cast<double>(r + 1) /
-                                    static_cast<double>(n_samples)),
-                            static_cast<uint64_t>(r + 1),
-                            static_cast<uint64_t>(n_samples),
-                            estimated_output_matrix_bytes);
-        }
+        fit_rows = static_cast<int64_t>(train.size());
+        spdlog::info("PCA: fitted on {} Train rows x {} features -> {} components, explained variance {:.2f}%, center={}, scale={}",
+                     train.size(), n_features, n_components_, result.total_variance_explained * 100.0, center_, scale_);
     }
 
-    report_progress("Finishing Arrow table",
-                    "Finalizing PCA Arrow table",
-                    0.97,
-                    static_cast<uint64_t>(n_samples),
-                    static_cast<uint64_t>(n_samples),
+    // Every row with all its features, through the fitted map on the device.
+    LinearMatrix projected;
+    std::string error;
+    if (!ApplyLinearMap(map, data, projected, error)) return arrow::Status::ExecutionError("PCA: " + error);
+    if (!options_.IsTransformOnly() && options_.save_state) {
+        std::string state_error;
+        if (!SaveFittedPreprocessingState(options_.state_path, LinearMapState(map, GetName(), fit_rows, input->schema(), settings),
+                                          options_.state_overwrite, state_error))
+            return arrow::Status::IOError("PCA: failed to save the fitted values: " + state_error);
+    }
+    report_progress("Building Arrow columns", "Writing the PCA columns", 0.85, 0, static_cast<uint64_t>(n_samples),
                     estimated_output_matrix_bytes);
-    std::vector<std::shared_ptr<arrow::Array>> arrays;
-    std::vector<std::shared_ptr<arrow::Field>> fields;
-    arrays.reserve(n_components_ + (labels.empty() ? 0 : 1));
-    fields.reserve(n_components_ + (labels.empty() ? 0 : 1));
-    for (int i = 0; i < n_components_; ++i) {
-        std::shared_ptr<arrow::Array> arr;
-        ARROW_RETURN_NOT_OK(pc_builders[i]->Finish(&arr));
-        arrays.push_back(std::move(arr));
-        fields.push_back(arrow::field("pc_" + std::to_string(i), arrow::float32()));
-    }
-    if (!labels.empty()) {
-        std::shared_ptr<arrow::Array> arr;
-        ARROW_RETURN_NOT_OK(label_builder.Finish(&arr));
-        arrays.push_back(std::move(arr));
-        fields.push_back(arrow::field("y", arrow::int32()));
-    }
-
-    auto out_schema = arrow::schema(fields);
-    auto out_table = arrow::Table::Make(out_schema, arrays, n_samples);
-
-    spdlog::info("PCA: {} samples x {} features -> {} components, "
-                 "explained variance {:.2f}%, center={}, scale={}",
-                 n_samples, n_features, n_components_,
-                 result.total_variance_explained * 100.0,
-                 center_, scale_);
-    report_progress("Complete",
-                    "PCA materialization complete",
-                    1.0,
-                    static_cast<uint64_t>(n_samples),
-                    static_cast<uint64_t>(n_samples),
-                    estimated_output_matrix_bytes);
+    ARROW_ASSIGN_OR_RAISE(auto out_table, LinearMapTable(input, map, fit, projected, keep_columns_, label_col_, "PCA"));
+    report_progress("Complete", "PCA materialization complete", 1.0, static_cast<uint64_t>(n_samples),
+                    static_cast<uint64_t>(n_samples), estimated_output_matrix_bytes);
     return out_table;
 }
 

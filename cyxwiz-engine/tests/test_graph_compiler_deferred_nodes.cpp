@@ -177,15 +177,15 @@ const cyxwiz::BackendPlacementEntry* FindPlacement(
     return nullptr;
 }
 
-// A step before the Data Split that learns from every row (PCA here, behind
+// A step before the Data Split that learns from every row (K-Means here, behind
 // another step) is warned with CW-C-0206 (TOFIX178 S0-g5). Its own function:
 // main's frame is near the stack limit.
 void CheckEveryRowStepWarned(const gui::MLNode& source, const gui::MLNode& run_step,
                              const std::vector<gui::MLNode>& split_to_model) {
     auto every_row = Node(
         68,
-        gui::NodeType::PCANode,
-        "Reduce",
+        gui::NodeType::KMeansCluster,
+        "Group",
         {Pin(6801, gui::PinType::Dataset, "Data", true)},
         {Pin(6802, gui::PinType::Dataset, "Reduced", false)});
     std::vector<gui::MLNode> nodes = {source, run_step, every_row};
@@ -204,8 +204,8 @@ void CheckEveryRowStepWarned(const gui::MLNode& source, const gui::MLNode& run_s
     for (const auto& issue : config.issues)
         warned |= issue.level == cyxwiz::IssueLevel::Warning && issue.node_id == every_row.id &&
                   issue.error_code == std::string(cyxwiz::errors::Compiler::LearnsFromEveryRow) &&
-                  issue.message.find("'Reduce' learns from every row before the Data Split") != std::string::npos;
-    Check(warned, "PCA behind another step before the Data Split is warned (CW-C-0206)");
+                  issue.message.find("'Group' learns from every row before the Data Split") != std::string::npos;
+    Check(warned, "K-Means behind another step before the Data Split is warned (CW-C-0206)");
 }
 
 // A label the steps make (a SQL / Rename before the Split): not in the

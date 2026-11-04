@@ -2156,7 +2156,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
     RegisterNode({NodeType::PCANode, NodeCategory::Analytics, "PCA", ICON_FA_COMPRESS,
         {"pca", "principal", "dimensionality"}, 0, false,
         "Project numeric features onto principal components",
-        "With Keep columns on, adds Float64 pc_0..pc_n beside the input columns (null on rows missing a feature); otherwise emits Float32 pc_0..pc_n alone for the rows with every feature, with the label passed through as Int32 y.", "",
+        "Fitted on the Train rows when a Data Split marks them (the means, deviations and components), then every row with all its features is projected. With Keep columns on, adds Float64 pc_0..pc_n beside the input columns (null on rows missing a feature); otherwise emits Float32 pc_0..pc_n alone for the rows with every feature, with the label as Int32 y and the split carried.", "",
         {{"Data", PinType::Dataset, true, "Input table containing numeric features"}},
         {{"Transformed", PinType::Dataset, true, "Input plus pc_* columns, or pc_* (and y) alone"}},
         {{"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns", {}, "", "Feature columns", "Columns"},
@@ -2164,7 +2164,11 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"n_components", "int", "2", "Number of principal components", {}, "1-2147483647"},
          {"center", "bool", "true", "Subtract each feature mean before projection", {}, ""},
          {"scale", "bool", "false", "Scale each feature to unit variance before projection", {}, ""},
-         {"keep_columns", "bool", "false", "Keep the input columns and add pc_* beside them", {}, ""}},
+         {"keep_columns", "bool", "false", "Keep the input columns and add pc_* beside them", {}, ""},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Persist fitted values to an engine-managed project artifact for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TSNENode, NodeCategory::Analytics, "t-SNE", ICON_FA_DIAGRAM_PROJECT,

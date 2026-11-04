@@ -130,6 +130,11 @@ private Data Studio tickets (`tofix*/track*`).
   row holds its term ids and counts, not a table of strings (300,000 rows of
   words and word pairs, min_df 1: 1.8 GB instead of 6.3 GB, and 29 s instead
   of 102 s, with the same figures).
+- The PCA node learns from the Train rows only (it learned from every row,
+  validation and test rows included, and dropped the split column when it
+  output pc_* alone): its means, deviations and components come from the
+  Train rows, every row is projected, the split is carried, and it can save
+  and reuse its fitted values like the scalers.
 - Data Studio Series and Forecast: Stop ends the fit running in the
   background (it ran on to its end, up to minutes on a long series).
 - Training Dashboard: the Active model card no longer shows the internal

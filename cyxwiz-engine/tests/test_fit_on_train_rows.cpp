@@ -11,6 +11,7 @@
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/node_executors/count_vectorizer_operator.h"
+#include "../src/core/node_executors/pca_operator.h"
 #include "../src/core/node_executors/preprocessing_operators.h"
 #include "../src/core/node_executors/text_tokenizer_operator.h"
 #include "../src/core/node_executors/tfidf_vectorizer_operator.h"
@@ -383,11 +384,46 @@ void CheckSuppliedInputs() {
 }
 }  // namespace
 
+// PCA (TOFIX129 D9): the means and the component come from the Train rows,
+// then every row is projected: scikit-learn 1.8's
+// PCA(n_components=1).fit(X[[0, 1, 2, 5]]).transform(X) on (a, y). Fitted on
+// every row it would be (-3.5, -2.5, -0.5, 5.5, 2.5, -1.5). The saved values
+// project an unmarked table the same way.
+void CheckPCA() {
+    const std::vector<double> want = {-1.4611759914, -0.5831323328, 1.5188201928, 7.4788125611, 4.3835279741, 0.5254881314};
+    PCAOperator pca;
+    const auto out = Run(pca, {{"feature_cols", "a,y"}, {"n_components", "1"}}, Table());
+    Expect(Column(out, "pc_0"), want, "PCA fitted on the Train rows");
+    CheckPartitionCarried(out, "PCA");
+    const auto beside = Run(pca, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"keep_columns", "true"}}, Table());
+    Expect(Column(beside, "pc_0"), want, "PCA beside the input");
+    Check(beside->GetColumnByName("text") != nullptr, "PCA beside the input: the other columns kept");
+
+    const fs::path state = fs::temp_directory_path() / "cyxwiz_fit_on_train_pca.cyxstate.json";
+    fs::remove(state);
+    PCAOperator fit;
+    Run(fit, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"save_state", "true"}, {"state_path", state.string()}}, Table());
+    PCAOperator reuse;
+    const auto again = Run(reuse, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"operation_mode", "transform_only"},
+                                   {"state_path", state.string()}},
+                           Table(false));
+    Expect(Column(again, "pc_0"), want, "PCA from its saved values on an unmarked table");
+    PCAOperator other;
+    std::string error;
+    Check(other.Configure({{"feature_cols", "a,y"}, {"n_components", "1"}, {"center", "false"}, {"operation_mode", "transform_only"},
+                           {"state_path", state.string()}},
+                          error) &&
+              !other.Apply(Table(false)).ok(),
+          "PCA: saved values fitted with other settings are refused");
+    fs::remove(state);
+}
+
 int main() {
     CheckOperators();
+    CheckPCA();
     CheckExecutor();
     CheckSuppliedInputs();
-    std::cout << "fit on Train rows: scaler, target encoder, TF-IDF, count and tokenizer learn from the Train rows "
+    std::cout << "fit on Train rows: scaler, target encoder, PCA, TF-IDF, count and tokenizer learn from the Train rows "
                  "(scikit-learn values); the run marks rows with the shared split rule; supplied Validation / Test rows join and are transformed; exports leave the partition out. OK\n";
     return 0;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_operator.h"
+#include "../preprocessing_state.h"
 #include <utility>
 #include <vector>
 
@@ -36,12 +37,23 @@ namespace cyxwiz {
  *   center        (default true)         — subtract per-feature mean.
  *   scale         (default false)        — divide by per-feature std (unit
  *                                          variance).
+ *   operation_mode / state_path / save_state / state_overwrite — the fitted
+ *                 values (means, deviations, components), as the scalers.
+ *
+ * Fitted on the Train rows when the run marks them (the means, the
+ * deviations and the components), then every row with all its features is
+ * projected; the split column is carried (TOFIX129 D9).
  */
 class PCAOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "PCA"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
-    bool LearnsFromEveryRow() const override { return true; }
+    // The output is kept unless the step saves its fitted values (a hit would not write them).
+    bool IsCacheable() const override { return options_.IsTransformOnly() || !options_.save_state; }
+    bool CollectCacheDependencies(std::vector<PipelineOperatorCacheDependency>& dependencies, std::string&) const override {
+        if (options_.IsTransformOnly()) dependencies.push_back({"fitted_state", options_.state_path});
+        return true;
+    }
 
     bool Configure(
         const std::map<std::string, std::string>& params,
@@ -61,6 +73,7 @@ private:
     bool center_ = true;
     bool scale_ = false;
     bool keep_columns_ = false;  // the input with pc_* beside it, else pc_* (and y) alone
+    FittedPreprocessingOptions options_;
     PipelineOperatorProgressCallback progress_callback_;
 };
 

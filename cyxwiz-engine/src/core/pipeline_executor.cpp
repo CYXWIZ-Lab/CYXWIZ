@@ -65,11 +65,12 @@ namespace cyxwiz {
 
 namespace {
 
-// The column transforms that fit values on their input (TOFIX129 D2): they
-// share the fitted-state parameters, the saved-state path and the leakage guard.
+// The transforms that fit values on their input's Train rows (TOFIX129 D2,
+// D9): they share the fitted-state parameters, the saved-state path and the
+// leakage guard.
 bool IsFittedColumnTransform(const std::string& type) {
     return type == "StandardScaler" || type == "MinMaxScaler" || type == "RobustScaler" ||
-           type == "MaxAbsScaler" || type == "QuantileTransform" || type == "PowerTransform";
+           type == "MaxAbsScaler" || type == "QuantileTransform" || type == "PowerTransform" || type == "PCANode";
 }
 
 // The registry name of an operator node's result.

@@ -966,6 +966,9 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"QuantileTransform", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
         {"QuantileTransform", "save_state", "false", {"true", "false"}},
         {"QuantileTransform", "state_overwrite", "false", {"true", "false"}},
+        {"PCANode", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"PCANode", "save_state", "false", {"true", "false"}},
+        {"PCANode", "state_overwrite", "false", {"true", "false"}},
         {"PowerTransform", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
         {"PowerTransform", "save_state", "false", {"true", "false"}},
         {"PowerTransform", "state_overwrite", "false", {"true", "false"}},
@@ -1870,7 +1873,6 @@ ResolvePipelineLegacyAliasDecision(const std::string& alias_type_name) {
 bool PipelineStepLearnsFromEveryRow(gui::NodeType type) {
     using gui::NodeType;
     switch (type) {
-        case NodeType::PCANode:
         case NodeType::KMeansCluster:
         case NodeType::DBSCANCluster:
         case NodeType::HierarchicalCluster:
