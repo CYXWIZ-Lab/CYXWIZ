@@ -9,6 +9,7 @@
 #include "core/pipeline_execution_task.h"
 #include "core/async_task_manager.h"
 #include "core/csv_ingestion_options.h"
+#include "core/data_input_formats.h"
 #include "core/pipeline_runtime_capabilities.h"
 #include "core/project_data_path.h"
 #include "core/preparation_recipe.h"
@@ -2808,15 +2809,19 @@ void CheckDataInputFormats() {
                 Check(!executor.ExecutePipeline(pipeline({
                     {"source_type", "file"}, {key, format},
                     {"file_path", std::string("not-opened.") + extension}}).dump()),
-                    "Explicit and Auto HDF5 must fail preflight");
+                    "Explicit and Auto HDF5 of a missing file must fail");
                 const auto error = executor.GetLastError();
-                Check(error.find("not supported") != std::string::npos &&
-                          (error.find("HDF5") != std::string::npos || error.find("hdf5") != std::string::npos),
-                      "HDF5 must fail with a format reason before file I/O: " + error);
+                // With HighFive the HDF5 reader runs and names the source it
+                // could not open; without it the format is refused up front.
+                const bool reason = cyxwiz::data_input::kHdf5BuildAvailable
+                    ? error.find("DataInput HDF5") != std::string::npos
+                    : error.find("not supported") != std::string::npos;
+                Check(reason && (error.find("HDF5") != std::string::npos || error.find("hdf5") != std::string::npos),
+                      "HDF5 must fail with an HDF5 reason: " + error);
             }
         }
     }
-    std::cout << "Data Input formats passed (2 CSV configurations, 12 HDF5 rejections)\n";
+    std::cout << "Data Input formats passed (2 CSV configurations, 12 HDF5 failures)\n";
 }
 
 int main(int argc, char** argv) {
@@ -3934,20 +3939,6 @@ int main(int argc, char** argv) {
           "the older source-shaped SQLQuery rejection is specific: " +
               sql_query_executor.GetLastError());
 
-    const std::string hdf5_json =
-        R"({"nodes":[)"
-        R"({"id":430,"type":"HDF5Dataset","name":"HDF5","parameters":{)"
-        R"("file_path":"ignored.h5"}})"
-        R"(],"links":[]})";
-
-    cyxwiz::PipelineExecutor hdf5_executor;
-    Check(!hdf5_executor.ExecutePipeline(hdf5_json),
-          "HDF5Dataset should fail closed until HDF5 loading is real");
-    Check(hdf5_executor.GetLastError().find(
-              "HDF5 loading is not implemented") != std::string::npos,
-          "HDF5Dataset fail-closed error should be specific: " +
-              hdf5_executor.GetLastError());
-
     const std::string rest_api_json =
         R"({"nodes":[)"
         R"({"id":431,"type":"RESTAPISource","name":"REST","parameters":{)"
@@ -4312,7 +4303,7 @@ int main(int argc, char** argv) {
     const std::string bad_data_input_type_json =
         R"({"nodes":[)"
         R"({"id":196,"type":"DataInput","name":"BadType","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.h5","type":"hdf5"}})"
+        R"("source_type":"file","file_path":"ignored.arff","type":"arff"}})"
         R"(],"links":[]})";
 
     cyxwiz::PipelineExecutor bad_data_input_type_executor;
@@ -4320,7 +4311,7 @@ int main(int argc, char** argv) {
               bad_data_input_type_json),
           "DataInput unsupported file type should fail validation");
     Check(bad_data_input_type_executor.GetLastError().find(
-              "DataInput type 'hdf5' is not supported") !=
+              "DataInput type 'arff' is not supported") !=
               std::string::npos,
           "DataInput unsupported file type error should be specific: " +
               bad_data_input_type_executor.GetLastError());

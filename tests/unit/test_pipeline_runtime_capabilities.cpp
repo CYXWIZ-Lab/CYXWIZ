@@ -7,8 +7,9 @@
 
 TEST_CASE("Data Input runtime formats follow the production source catalog",
           "[pipeline][capabilities][data_input]") {
-    const std::set<std::string> expected{
+    std::set<std::string> expected{
         "auto", "csv", "tsv", "json", "jsonl", "parquet", "feather", "arrow", "ipc", "zip_text"};
+    if (cyxwiz::data_input::kHdf5BuildAvailable) expected.insert({"hdf5", "h5", "hdf"});
     int checked = 0;
     for (const auto& capability : cyxwiz::ResolvePipelineAllowedParameterValues("DataInput")) {
         if (std::string(capability.parameter_name) != "type" &&
@@ -20,8 +21,9 @@ TEST_CASE("Data Input runtime formats follow the production source catalog",
         ++checked;
     }
     CHECK(checked == 2);
-    CHECK_FALSE(cyxwiz::data_input::IsExecutable("hdf5"));
-    CHECK_FALSE(cyxwiz::data_input::IsExecutable("h5"));
+    // HDF5 runs exactly where the build has HighFive.
+    CHECK(cyxwiz::data_input::IsExecutable("hdf5") == cyxwiz::data_input::kHdf5BuildAvailable);
+    CHECK(cyxwiz::data_input::IsExecutable("h5") == cyxwiz::data_input::kHdf5BuildAvailable);
 }
 
 TEST_CASE("Training capability registry allows the CNN stack (TOFIX140 A1)",
