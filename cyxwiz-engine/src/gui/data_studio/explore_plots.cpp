@@ -455,10 +455,13 @@ void Heatmap(const std::vector<std::vector<double>>& cells, size_t rows, double 
     const float line_h = ImGui::GetTextLineHeight();
     const float top = at.y + 4.0f, bottom = at.y + height - line_h - 4.0f;
     const float plot_h = bottom - top;
+    // The frequency labels sit in a gutter left of the cells, never on them.
+    const float gutter = std::max(ImGui::CalcTextSize(y_hi.c_str()).x, ImGui::CalcTextSize(y_lo.c_str()).x) + 8.0f;
+    const float left = at.x + gutter, cells_w = std::max(1.0f, width - gutter);
     // One drawn column per pixel at most, one drawn row per pixel at most: a
     // long series or a wide spectrum is binned by its maximum (the loudest
     // cell shows, as a spectrogram wants).
-    const size_t px_columns = std::min<size_t>(columns, static_cast<size_t>(std::max(1.0f, width)));
+    const size_t px_columns = std::min<size_t>(columns, static_cast<size_t>(cells_w));
     const size_t px_rows = std::min<size_t>(rows, static_cast<size_t>(std::max(1.0f, plot_h)));
     const auto colour = [&](double v) {
         const double u = std::clamp((v - lo) / (hi - lo), 0.0, 1.0);
@@ -471,8 +474,8 @@ void Heatmap(const std::vector<std::vector<double>>& cells, size_t rows, double 
     };
     for (size_t cx = 0; cx < px_columns; ++cx) {
         const size_t c0 = cx * columns / px_columns, c1 = std::max(c0 + 1, (cx + 1) * columns / px_columns);
-        const float x0 = at.x + width * static_cast<float>(cx) / static_cast<float>(px_columns);
-        const float x1 = at.x + width * static_cast<float>(cx + 1) / static_cast<float>(px_columns);
+        const float x0 = left + cells_w * static_cast<float>(cx) / static_cast<float>(px_columns);
+        const float x1 = left + cells_w * static_cast<float>(cx + 1) / static_cast<float>(px_columns);
         for (size_t ry = 0; ry < px_rows; ++ry) {
             const size_t r0 = ry * rows / px_rows, r1 = std::max(r0 + 1, (ry + 1) * rows / px_rows);
             double v = -INFINITY;
@@ -486,7 +489,7 @@ void Heatmap(const std::vector<std::vector<double>>& cells, size_t rows, double 
         }
     }
     dl->AddText(ImVec2(at.x + 4.0f, top), ui::ToU32(t.text_faint), y_hi.c_str());
-    dl->AddText(ImVec2(at.x + 4.0f, bottom - line_h - 2.0f), ui::ToU32(t.text_faint), y_lo.c_str());
+    dl->AddText(ImVec2(at.x + 4.0f, bottom - line_h), ui::ToU32(t.text_faint), y_lo.c_str());
     XAxis(at, width, x_lo, x_label, x_hi);
 }
 
