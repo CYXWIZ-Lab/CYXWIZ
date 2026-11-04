@@ -99,9 +99,9 @@ they are loaded again.
 
 ## Explore
 
-Explore has fifteen views: **Query**, **Profile**, **Missing**, **Outliers**,
+Explore has sixteen views: **Query**, **Profile**, **Missing**, **Outliers**,
 **Correlation**, **Distribution**, **Tests**, **Regression**, **Groups**,
-**Projection**, **Series**, **Forecast**, **Signal**, **Visualize** and **Plugins**, and a sixteenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
+**Projection**, **Series**, **Forecast**, **Signal**, **Text**, **Visualize** and **Plugins**, and a seventeenth, **Images**, when an image dataset is picked. A dashboard's "Open in Data Studio", "Edit roles", the Asset
 Browser's "Open in Data Studio" and Data > Dataset Statistics open the
 right one, as do Data > Explore (Missing Value Analysis, Outlier Detection,
 Correlation Matrix) and Tools > Statistics (Summary Statistics and
@@ -112,7 +112,9 @@ Groups on that method, Cluster Evaluation opens Groups, PCA / t-SNE / UMAP opens
 Projection) and Tools > Time Series (Decomposition, ACF / PACF, Stationarity and
 Seasonality open Series on that look; Forecasting opens Forecast) and Tools > Signal
 Processing (FFT opens Signal on Spectrum; Spectrogram; Filter Designer opens Filter;
-Convolution Calculator opens Filter in Kernel mode; Wavelet Transform opens Wavelet). In Profile, a column's missing or outlier count opens
+Convolution Calculator opens Filter in Kernel mode; Wavelet Transform opens Wavelet) and Tools > Text
+(Tokenization opens Text on Tokens, Word Frequency on Words, TF-IDF Analysis on Terms, Word Embeddings
+on Embeddings, Sentiment Analysis on Sentiment; Data > Tokenization opens Tokens). In Profile, a column's missing or outlier count opens
 Missing or Outliers on it, "More about this column" opens Distribution, and
 "See the matrix" opens Correlation. The views wrap to a second line in a
 narrow dock.
@@ -677,6 +679,27 @@ FFT branch) or **Add as a step** (Filter Designer / Convolution 1D, Wavelet
 Transform: new columns beside the others). The figures match numpy, scipy and
 PyWavelets; the rules, the words and the nodes are in [signal
 processing](signal_processing.md).
+
+## Text
+
+One text column, optionally **Group by** a category or the label (the 12
+largest groups, the rest as "other"), in five looks: **Words** (the commonest
+words or word pairs, the common English words left out or kept, by Porter stem
+when asked; each group's own words; words per row), **Terms** (TF-IDF as the
+TF-IDF node weighs it: what sets each group apart, a row's terms and the five
+rows that read most like it, and the text quality the terms show: HTML
+entities, links, repeated rows, broken characters), **Sentiment** (VADER on
+every row: negative, neutral and positive rows at VADER's thresholds, the
+compound per group, a row word by word), **Tokens** (the Tokenizer node's
+tokenizer trained on the column: tokens per row, the rows a length limit cuts,
+the vocabulary's coverage, a row's tokens and ids) and **Embeddings** (word
+vectors learned with the Word Embeddings node's trainers on the device, from a
+sample of 500,000 words by default, skip-gram or CBOW: the nearest words and a
+3D word map in a window of its own). Each look puts its node into the graph:
+**Add as a step** (TF-IDF, Sentiment Analysis, Tokenizer) or **Keep as a
+node** (Word Embeddings). Every look splits the words as the TF-IDF and Count
+Vectorizer nodes do; the figures match Python, scikit-learn, NLTK and
+vaderSentiment. The rules, the words and the nodes are in [text](text.md).
 
 ## Visualize
 

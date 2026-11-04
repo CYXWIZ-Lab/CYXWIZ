@@ -7,6 +7,38 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Tools > Text opens Data Studio's Explore > Text** (Tokenization: Tokens,
+  Word Frequency: Words, TF-IDF Analysis: Terms, Word Embeddings: Embeddings,
+  Sentiment Analysis: Sentiment; Data > Tokenization: Tokens). The five
+  separate text windows are gone; Language Model Generation stays a window.
+- **The Sentiment Analysis node is VADER** (vaderSentiment 3.3.2, checked
+  rule for rule): it adds `<text>_compound`, `<text>_positive`,
+  `<text>_neutral`, `<text>_negative` and `<text>_sentiment` ("positive" from
+  0.05, "negative" at -0.05 and below, else "neutral") beside the input
+  columns and keeps the label and the split. The Simple and AFINN methods are
+  gone: a saved graph's `method` and `label_col` settings are ignored, and a
+  graph that read the old output columns needs the new names.
+- **The TF-IDF and Count Vectorizer nodes split words by one rule** shared
+  with Explore > Text: letters and digits of any script, lower-cased, two or
+  more long, an apostrophe inside a word kept ("don't"); the English stop
+  words are scikit-learn's `ENGLISH_STOP_WORDS` and their contractions. The
+  feature columns can differ from before: refit a saved vectorizer state
+  rather than reusing it.
+- **Text Clean keeps the letters, digits and marks of every script** when it
+  removes special characters (it kept ASCII only).
+- **The t-SNE node's `learning_rate` defaults to 0 = auto** (scikit-learn's
+  rows / 48, at least 50); a typed value still wins. Small data now
+  separates in 3D as it does in scikit-learn.
+- The Template nodes Word Frequency and the second Tokenizer are no longer in
+  the node list (Explore > Text > Words and the Tokenizer node do that work).
+- **Plugin SDK (`cyxwiz/text_processing.h`)**: `Stem` is the Porter (1980)
+  algorithm (NLTK's ORIGINAL_ALGORITHM); `GetStopwords` returns
+  scikit-learn's list and the contractions; `ComputeTFIDF` / `ComputeTF` use
+  raw counts on `Words`. Removed: `SentimentResult` and the lexicon sentiment
+  functions (use `Vader`), the sample text generators, and
+  `CreateOneHotEmbeddings` / `CreateRandomEmbeddings`. Added: `Words`,
+  `NGrams`, `Terms`, `Vader` and `VaderScores`.
+
 - **Training Dashboard points are the mean since the previous point**, not
   the epoch's running mean, so the curves no longer jump at each epoch start;
   the training cards' "best" names a whole epoch, never one batch.
@@ -38,6 +70,20 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Data Studio Explore > Text**: one text column, grouped by a category or
+  the label, in five looks: Words, Terms (TF-IDF: what sets each group apart,
+  a row's terms and the rows most like it, the text quality), Sentiment
+  (VADER per row and group), Tokens (the Tokenizer node's tokenizer: lengths,
+  the rows a limit cuts, the vocabulary's coverage) and Embeddings (word2vec /
+  fastText skip-gram or CBOW, GloVe, from a sample by default; nearest words).
+  Each look adds its node to the graph. Guide in `docs/usage/text.md`.
+- **The word map**: word vectors in 3D (t-SNE, UMAP or PCA, k-means clusters
+  named by their words), the word looked up and its neighbours ringed and
+  joined, labels clear of each other, in a window of its own; also the **Map**
+  tab of the Word Embeddings node's dialog.
+- **Python: `pycyxwiz.text`** with `words`, `terms`, `english_stop_words`,
+  `stem` and `vader`, the same rules as the tab and the nodes (example:
+  `examples/python/text_words_and_sentiment.py`).
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in
   `docs/usage/image_classifier_resnet.md`): 92.6 % test accuracy on one
@@ -65,3 +111,14 @@ private Data Studio tickets (`tofix*/track*`).
 - The OpenCL provider is verified on NVIDIA and on Intel integrated
   graphics (UHD 630). When a machine has several OpenCL GPUs, the run's
   selected device decides which one serves it.
+
+### Fixed
+
+- Language Model Generation: a Generate from IDs run started with Details
+  open now finishes when Details is closed (the panel stayed "Generating");
+  Regenerate, Generate again and Continue further are off while another run
+  or a speed measurement runs, or training runs on the session's model, with
+  the reason on hover; Regenerate keeps the reply when the prompt cannot be
+  built, and Send keeps a chat message that could not start.
+- Data Studio Signal > Spectrogram labels its frequencies beside the cells,
+  not on top of them.
