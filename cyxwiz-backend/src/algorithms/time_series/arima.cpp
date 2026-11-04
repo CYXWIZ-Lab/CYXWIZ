@@ -110,6 +110,7 @@ struct StateSpace {
 };
 
 Filtered KalmanFilter(const std::vector<double>& w, const Arma& model) {
+    series_detail::ThrowIfStopped();
     Filtered f;
     const StateSpace ss(model);
     const size_t r = ss.r, n = w.size();
@@ -307,139 +308,141 @@ std::vector<double> PsiWeights(const Arma& m, int d, int count) {
 }  // namespace
 
 ForecastResult TimeSeries::ARIMA(const std::vector<double>& data, int horizon, int p, int d, int q, double level) {
-    ForecastResult r;
-    r.method = "ARIMA";
-    r.horizon = horizon;
-    r.level = level;
-    if (const std::string refusal = series_detail::SeriesRefusal(data, 10, "ARIMA"); !refusal.empty()) {
-        r.error_message = refusal;
-        return r;
-    }
-    if (horizon < 0 || !(level > 0.0 && level < 1.0)) {
-        r.error_message = "The horizon cannot be negative and the level is between 0 and 1";
-        return r;
-    }
-    if (p > 5 || q > 5 || d > 2) {
-        r.error_message = "ARIMA orders go up to p 5, d 2, q 5";
-        return r;
-    }
-    if (d < 0) {
-        const StationarityResult s = TestStationarity(data, -1, "c");
-        d = s.success ? std::max(0, std::min(2, s.suggested_differencing < 0 ? 2 : s.suggested_differencing)) : 1;
-    }
-    std::vector<double> w = Difference(data, d);
-    const int n = static_cast<int>(w.size());
-    const bool mean = d == 0;
-    const int need = std::max(p, 0) + std::max(q, 0) + 5;
-    if (n < need || n < 8) {
-        r.error_message = "Too few values after differencing for these orders";
-        return r;
-    }
-    // Orders by AIC when asked (p, q up to 3).
-    Fitted fit;
-    if (p < 0 || q < 0) {
-        double best = INFINITY;
-        // The bounds first: p and q take the best orders as the search goes.
-        // Orders up to 3 each; a long series (over 200,000 rows) tries up to 1 each, every fit being a full Kalman pass.
-        const int top = n > 200000 ? 1 : 3;
-        const int p_lo = p < 0 ? 0 : p, p_hi = p < 0 ? top : p, q_lo = q < 0 ? 0 : q, q_hi = q < 0 ? top : q;
-        for (int pp = p_lo; pp <= p_hi; ++pp)
-            for (int qq = q_lo; qq <= q_hi; ++qq) {
-                if (n < pp + qq + 5) continue;
-                const Fitted candidate = FitArma(w, pp, qq, mean);
-                if (candidate.ok && candidate.aic < best) {
-                    best = candidate.aic;
-                    fit = candidate;
-                    p = pp;
-                    q = qq;
+    return series_detail::UnlessStopped<ForecastResult>([&]() -> ForecastResult {
+        ForecastResult r;
+        r.method = "ARIMA";
+        r.horizon = horizon;
+        r.level = level;
+        if (const std::string refusal = series_detail::SeriesRefusal(data, 10, "ARIMA"); !refusal.empty()) {
+            r.error_message = refusal;
+            return r;
+        }
+        if (horizon < 0 || !(level > 0.0 && level < 1.0)) {
+            r.error_message = "The horizon cannot be negative and the level is between 0 and 1";
+            return r;
+        }
+        if (p > 5 || q > 5 || d > 2) {
+            r.error_message = "ARIMA orders go up to p 5, d 2, q 5";
+            return r;
+        }
+        if (d < 0) {
+            const StationarityResult s = TestStationarity(data, -1, "c");
+            d = s.success ? std::max(0, std::min(2, s.suggested_differencing < 0 ? 2 : s.suggested_differencing)) : 1;
+        }
+        std::vector<double> w = Difference(data, d);
+        const int n = static_cast<int>(w.size());
+        const bool mean = d == 0;
+        const int need = std::max(p, 0) + std::max(q, 0) + 5;
+        if (n < need || n < 8) {
+            r.error_message = "Too few values after differencing for these orders";
+            return r;
+        }
+        // Orders by AIC when asked (p, q up to 3).
+        Fitted fit;
+        if (p < 0 || q < 0) {
+            double best = INFINITY;
+            // The bounds first: p and q take the best orders as the search goes.
+            // Orders up to 3 each; a long series (over 200,000 rows) tries up to 1 each, every fit being a full Kalman pass.
+            const int top = n > 200000 ? 1 : 3;
+            const int p_lo = p < 0 ? 0 : p, p_hi = p < 0 ? top : p, q_lo = q < 0 ? 0 : q, q_hi = q < 0 ? top : q;
+            for (int pp = p_lo; pp <= p_hi; ++pp)
+                for (int qq = q_lo; qq <= q_hi; ++qq) {
+                    if (n < pp + qq + 5) continue;
+                    const Fitted candidate = FitArma(w, pp, qq, mean);
+                    if (candidate.ok && candidate.aic < best) {
+                        best = candidate.aic;
+                        fit = candidate;
+                        p = pp;
+                        q = qq;
+                    }
                 }
+        } else {
+            fit = FitArma(w, p, q, mean);
+        }
+        if (!fit.ok) {
+            r.error_message = "The ARIMA likelihood could not be maximised for these orders";
+            return r;
+        }
+        r.method = "ARIMA(" + std::to_string(p) + "," + std::to_string(d) + "," + std::to_string(q) + ")";
+        for (int i = 0; i < p; ++i) r.parameters["ar.L" + std::to_string(i + 1)] = fit.model.ar[static_cast<size_t>(i)];
+        for (int i = 0; i < q; ++i) r.parameters["ma.L" + std::to_string(i + 1)] = fit.model.ma[static_cast<size_t>(i)];
+        if (mean) r.parameters["const"] = fit.model.mu;
+        r.parameters["sigma2"] = fit.filter.sigma2;
+        r.log_likelihood = fit.filter.loglik;
+        r.aic = fit.aic;
+        r.bic = fit.bic;
+        r.n_params = fit.k;
+
+        // One-step fits of the differenced series back on the original scale.
+        const size_t total = data.size();
+        r.fitted_values.assign(total, NAN);
+        r.residuals.assign(total, NAN);
+        std::vector<double> w_fit(static_cast<size_t>(n));
+        for (int t = 0; t < n; ++t) w_fit[static_cast<size_t>(t)] = w[static_cast<size_t>(t)] - fit.filter.innovations[static_cast<size_t>(t)];
+        for (int t = 0; t < n; ++t) {
+            // y_t = w_t + (y_{t-1} for d = 1; 2 y_{t-1} - y_{t-2} for d = 2), t counted on the original index.
+            const size_t i = static_cast<size_t>(t + d);
+            double base = 0.0;
+            if (d == 1) base = data[i - 1];
+            else if (d == 2) base = 2.0 * data[i - 1] - data[i - 2];
+            r.fitted_values[i] = base + w_fit[static_cast<size_t>(t)];
+            r.residuals[i] = data[i] - r.fitted_values[i];
+        }
+        double sse = 0.0, abs_sum = 0.0, ape_sum = 0.0;
+        int count = 0, ape_count = 0;
+        for (size_t i = static_cast<size_t>(d); i < total; ++i) {
+            const double e = r.residuals[i];
+            sse += e * e;
+            abs_sum += std::fabs(e);
+            ++count;
+            if (std::fabs(data[i]) > 1e-12) {
+                ape_sum += std::fabs(e / data[i]);
+                ++ape_count;
             }
-    } else {
-        fit = FitArma(w, p, q, mean);
-    }
-    if (!fit.ok) {
-        r.error_message = "The ARIMA likelihood could not be maximised for these orders";
+        }
+        r.sse = sse;
+        r.mse = sse / std::max(count, 1);
+        r.rmse = std::sqrt(r.mse);
+        r.mae = abs_sum / std::max(count, 1);
+        r.mape = ape_count > 0 ? 100.0 * ape_sum / ape_count : NAN;
+
+        // Forecasts from the filtered state; the levels by integrating; intervals from the psi weights.
+        const StateSpace ss(fit.model);
+        std::vector<double> a = fit.filter.state;
+        std::vector<double> w_forecast(static_cast<size_t>(horizon));
+        for (int h = 0; h < horizon; ++h) {
+            a = ss.Apply(a);
+            w_forecast[static_cast<size_t>(h)] = fit.model.mu + a[0];
+        }
+        std::vector<double> last(data.end() - std::min<size_t>(total, 2), data.end());
+        r.forecast.resize(static_cast<size_t>(horizon));
+        for (int h = 0; h < horizon; ++h) {
+            double value = w_forecast[static_cast<size_t>(h)];
+            if (d >= 1) value += last.back();
+            if (d == 2) value += last.back() - last[last.size() - 2];
+            r.forecast[static_cast<size_t>(h)] = value;
+            if (d >= 1) {
+                last.push_back(value);
+                if (last.size() > 2) last.erase(last.begin());
+            }
+        }
+        const std::vector<double> psi = PsiWeights(fit.model, d, horizon);
+        const double z = series_detail::NormalPpf(1.0 - (1.0 - level) / 2.0);
+        r.lower_bound.resize(static_cast<size_t>(horizon));
+        r.upper_bound.resize(static_cast<size_t>(horizon));
+        double var = 0.0;
+        for (int h = 0; h < horizon; ++h) {
+            var += psi[static_cast<size_t>(h)] * psi[static_cast<size_t>(h)];
+            const double half = z * std::sqrt(fit.filter.sigma2 * var);
+            r.lower_bound[static_cast<size_t>(h)] = r.forecast[static_cast<size_t>(h)] - half;
+            r.upper_bound[static_cast<size_t>(h)] = r.forecast[static_cast<size_t>(h)] + half;
+        }
+        char summary[160];
+        std::snprintf(summary, sizeof(summary), "%s: log-likelihood %.2f, AIC %.1f, sigma2 %.4g", r.method.c_str(), r.log_likelihood, r.aic, fit.filter.sigma2);
+        r.model_summary = summary;
+        r.success = true;
         return r;
-    }
-    r.method = "ARIMA(" + std::to_string(p) + "," + std::to_string(d) + "," + std::to_string(q) + ")";
-    for (int i = 0; i < p; ++i) r.parameters["ar.L" + std::to_string(i + 1)] = fit.model.ar[static_cast<size_t>(i)];
-    for (int i = 0; i < q; ++i) r.parameters["ma.L" + std::to_string(i + 1)] = fit.model.ma[static_cast<size_t>(i)];
-    if (mean) r.parameters["const"] = fit.model.mu;
-    r.parameters["sigma2"] = fit.filter.sigma2;
-    r.log_likelihood = fit.filter.loglik;
-    r.aic = fit.aic;
-    r.bic = fit.bic;
-    r.n_params = fit.k;
-
-    // One-step fits of the differenced series back on the original scale.
-    const size_t total = data.size();
-    r.fitted_values.assign(total, NAN);
-    r.residuals.assign(total, NAN);
-    std::vector<double> w_fit(static_cast<size_t>(n));
-    for (int t = 0; t < n; ++t) w_fit[static_cast<size_t>(t)] = w[static_cast<size_t>(t)] - fit.filter.innovations[static_cast<size_t>(t)];
-    for (int t = 0; t < n; ++t) {
-        // y_t = w_t + (y_{t-1} for d = 1; 2 y_{t-1} - y_{t-2} for d = 2), t counted on the original index.
-        const size_t i = static_cast<size_t>(t + d);
-        double base = 0.0;
-        if (d == 1) base = data[i - 1];
-        else if (d == 2) base = 2.0 * data[i - 1] - data[i - 2];
-        r.fitted_values[i] = base + w_fit[static_cast<size_t>(t)];
-        r.residuals[i] = data[i] - r.fitted_values[i];
-    }
-    double sse = 0.0, abs_sum = 0.0, ape_sum = 0.0;
-    int count = 0, ape_count = 0;
-    for (size_t i = static_cast<size_t>(d); i < total; ++i) {
-        const double e = r.residuals[i];
-        sse += e * e;
-        abs_sum += std::fabs(e);
-        ++count;
-        if (std::fabs(data[i]) > 1e-12) {
-            ape_sum += std::fabs(e / data[i]);
-            ++ape_count;
-        }
-    }
-    r.sse = sse;
-    r.mse = sse / std::max(count, 1);
-    r.rmse = std::sqrt(r.mse);
-    r.mae = abs_sum / std::max(count, 1);
-    r.mape = ape_count > 0 ? 100.0 * ape_sum / ape_count : NAN;
-
-    // Forecasts from the filtered state; the levels by integrating; intervals from the psi weights.
-    const StateSpace ss(fit.model);
-    std::vector<double> a = fit.filter.state;
-    std::vector<double> w_forecast(static_cast<size_t>(horizon));
-    for (int h = 0; h < horizon; ++h) {
-        a = ss.Apply(a);
-        w_forecast[static_cast<size_t>(h)] = fit.model.mu + a[0];
-    }
-    std::vector<double> last(data.end() - std::min<size_t>(total, 2), data.end());
-    r.forecast.resize(static_cast<size_t>(horizon));
-    for (int h = 0; h < horizon; ++h) {
-        double value = w_forecast[static_cast<size_t>(h)];
-        if (d >= 1) value += last.back();
-        if (d == 2) value += last.back() - last[last.size() - 2];
-        r.forecast[static_cast<size_t>(h)] = value;
-        if (d >= 1) {
-            last.push_back(value);
-            if (last.size() > 2) last.erase(last.begin());
-        }
-    }
-    const std::vector<double> psi = PsiWeights(fit.model, d, horizon);
-    const double z = series_detail::NormalPpf(1.0 - (1.0 - level) / 2.0);
-    r.lower_bound.resize(static_cast<size_t>(horizon));
-    r.upper_bound.resize(static_cast<size_t>(horizon));
-    double var = 0.0;
-    for (int h = 0; h < horizon; ++h) {
-        var += psi[static_cast<size_t>(h)] * psi[static_cast<size_t>(h)];
-        const double half = z * std::sqrt(fit.filter.sigma2 * var);
-        r.lower_bound[static_cast<size_t>(h)] = r.forecast[static_cast<size_t>(h)] - half;
-        r.upper_bound[static_cast<size_t>(h)] = r.forecast[static_cast<size_t>(h)] + half;
-    }
-    char summary[160];
-    std::snprintf(summary, sizeof(summary), "%s: log-likelihood %.2f, AIC %.1f, sigma2 %.4g", r.method.c_str(), r.log_likelihood, r.aic, fit.filter.sigma2);
-    r.model_summary = summary;
-    r.success = true;
-    return r;
+    });
 }
 
 }  // namespace cyxwiz

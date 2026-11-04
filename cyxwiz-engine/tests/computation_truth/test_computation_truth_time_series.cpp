@@ -261,6 +261,29 @@ int main() {
     }();
     Check(!TimeSeries::STLDecompose(with_nan, 12).success, "a missing value is refused");
 
+    // ---- a stop asked through TimeSeriesStop
+    {
+        const cyxwiz::TimeSeriesStop stop([] { return true; });
+        const auto hw = TimeSeries::HoltWinters(airline, 12, 12, "multiplicative");
+        Check(!hw.success && hw.error_message == "Cancelled.", "a stop ends Holt-Winters: " + hw.error_message);
+        // ARIMA's own stationarity test (d chosen) stops too, rather than falling back to d = 1.
+        const auto arima = TimeSeries::ARIMA(airline, 12, 1, -1, 1);
+        Check(!arima.success && arima.error_message == "Cancelled.", "a stop ends ARIMA: " + arima.error_message);
+        const auto stl = TimeSeries::STLDecompose(airline, 12);
+        Check(!stl.success && stl.error_message == "Cancelled.", "a stop ends STL: " + stl.error_message);
+        const auto adf = TimeSeries::TestStationarity(airline);
+        Check(!adf.success && adf.error_message == "Cancelled.", "a stop ends the stationarity tests: " + adf.error_message);
+    }
+    const auto unstopped = TimeSeries::HoltWinters(airline, 12, 12, "multiplicative");
+    Check(unstopped.success, "outside a stop scope the fits run");
+    {
+        int asked = 0;
+        const cyxwiz::TimeSeriesStop stop([&asked] { return ++asked < 0; });
+        const auto hw = TimeSeries::HoltWinters(airline, 12, 12, "multiplicative");
+        Check(hw.success && asked > 0, "a stop asked but never true leaves the fit to finish");
+        Check(hw.forecast == unstopped.forecast, "a stop never true changes nothing");
+    }
+
     std::cout << "time series match the references: " << g_checks << " checks\n";
     return 0;
 }

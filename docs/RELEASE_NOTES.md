@@ -70,6 +70,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- SDK: `cyxwiz::TimeSeriesStop` (time_series.h): while one lives, the time
+  series fits of the thread (exponential smoothing, ARIMA, STL, the ADF
+  test) ask its stop query between passes and end with "Cancelled.".
 - **Data Studio Explore > Text**: one text column, grouped by a category or
   the label, in five looks: Words, Terms (TF-IDF: what sets each group apart,
   a row's terms and the rows most like it, the text quality), Sentiment
@@ -127,3 +130,8 @@ private Data Studio tickets (`tofix*/track*`).
   row holds its term ids and counts, not a table of strings (300,000 rows of
   words and word pairs, min_df 1: 1.8 GB instead of 6.3 GB, and 29 s instead
   of 102 s, with the same figures).
+- Data Studio Series and Forecast: Stop ends the fit running in the
+  background (it ran on to its end, up to minutes on a long series).
+- Training Dashboard: the Active model card no longer shows the internal
+  provenance key (`restored_best_checkpoint`, wrapped mid-word) under the
+  State line that says it in words.

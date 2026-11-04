@@ -286,7 +286,10 @@ void SeriesView::RenderParts(const ExploreContext& context) {
     const std::string dataset = context.dataset;
     const series::PartsRequest req = parts_;
     const explore::MissingTexts texts = context.missing_texts;
-    if (key != stopped_key_) parts_job_.Ask("Series: parts", key, [dataset, req, texts](LambdaTask&) { return series::RunParts(dataset, req, RunNow, texts); });
+    if (key != stopped_key_) parts_job_.Ask("Series: parts", key, [dataset, req, texts](LambdaTask& task) {
+        const TimeSeriesStop stop([&task] { return task.ShouldStop(); });
+        return series::RunParts(dataset, req, RunNow, texts);
+    });
     const series::PartsAnswer* a = parts_job_.Answer(key);
     if (!a) {
         Waiting(parts_job_, key, "Splitting the series on the device...");
@@ -331,7 +334,10 @@ void SeriesView::RenderSeasonality(const ExploreContext& context) {
     const std::string dataset = context.dataset;
     const series::SeriesRequest req = base_;
     const explore::MissingTexts texts = context.missing_texts;
-    if (key != stopped_key_) season_job_.Ask("Series: seasonality", key, [dataset, req, texts](LambdaTask&) { return series::RunSeasonality(dataset, req, RunNow, texts); });
+    if (key != stopped_key_) season_job_.Ask("Series: seasonality", key, [dataset, req, texts](LambdaTask& task) {
+        const TimeSeriesStop stop([&task] { return task.ShouldStop(); });
+        return series::RunSeasonality(dataset, req, RunNow, texts);
+    });
     const series::SeasonalityAnswer* a = season_job_.Answer(key);
     if (!a) {
         Waiting(season_job_, key, "Reading the periodogram on the device...");
@@ -414,7 +420,10 @@ void SeriesView::RenderStationarity(const ExploreContext& context) {
     const std::string dataset = context.dataset;
     const series::StationarityRequest req = stationarity_;
     const explore::MissingTexts texts = context.missing_texts;
-    if (key != stopped_key_) stationarity_job_.Ask("Series: stationarity", key, [dataset, req, texts](LambdaTask&) { return series::RunStationarity(dataset, req, RunNow, texts); });
+    if (key != stopped_key_) stationarity_job_.Ask("Series: stationarity", key, [dataset, req, texts](LambdaTask& task) {
+        const TimeSeriesStop stop([&task] { return task.ShouldStop(); });
+        return series::RunStationarity(dataset, req, RunNow, texts);
+    });
     const series::StationarityAnswer* a = stationarity_job_.Answer(key);
     if (!a) {
         Waiting(stationarity_job_, key, "Running ADF and KPSS on the device...");
@@ -498,7 +507,10 @@ void SeriesView::RenderCorrelogram(const ExploreContext& context) {
     const std::string dataset = context.dataset;
     const series::CorrelogramRequest req = correlogram_;
     const explore::MissingTexts texts = context.missing_texts;
-    if (key != stopped_key_) correlogram_job_.Ask("Series: correlogram", key, [dataset, req, texts](LambdaTask&) { return series::RunCorrelogram(dataset, req, RunNow, texts); });
+    if (key != stopped_key_) correlogram_job_.Ask("Series: correlogram", key, [dataset, req, texts](LambdaTask& task) {
+        const TimeSeriesStop stop([&task] { return task.ShouldStop(); });
+        return series::RunCorrelogram(dataset, req, RunNow, texts);
+    });
     const series::CorrelogramAnswer* a = correlogram_job_.Answer(key);
     if (!a) {
         Waiting(correlogram_job_, key, "Computing the autocorrelations on the device...");

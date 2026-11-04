@@ -145,7 +145,10 @@ void ForecastView::Render(const ExploreContext& context) {
     const std::string dataset = context.dataset;
     const series::ForecastRequest req = request_;
     const explore::MissingTexts texts = context.missing_texts;
-    job_.Ask(std::string("Forecast: ") + series::MethodName(req.method), key, [dataset, req, texts](LambdaTask&) { return series::RunForecast(dataset, req, RunNow, texts); });
+    job_.Ask(std::string("Forecast: ") + series::MethodName(req.method), key, [dataset, req, texts](LambdaTask& task) {
+        const TimeSeriesStop stop([&task] { return task.ShouldStop(); });
+        return series::RunForecast(dataset, req, RunNow, texts);
+    });
     const series::ForecastAnswer* a = job_.Answer(key);
     if (!a) {
         if (!job_.Error().empty()) {
