@@ -78,6 +78,16 @@ struct CYXWIZ_API SentimentResult {
     std::string error_message;
 };
 
+// The VADER sentiment of a text (TextProcessing::Vader).
+struct CYXWIZ_API VaderScores {
+    double negative = 0.0;  // the shares of the text's weight that read negative,
+    double neutral = 0.0;   // neutral and positive (they sum to 1; 0 for a text
+    double positive = 0.0;  // with no words)
+    double compound = 0.0;  // the valences summed and normalised to -1 .. 1
+    std::vector<std::pair<std::string, double>> words;  // each word or emoticon as VADER splits
+                                                        // the text, with its valence after the rules
+};
+
 // ============================================================================
 // Text Processing Class
 // ============================================================================
@@ -104,7 +114,16 @@ public:
     );
 
     /**
-     * Remove stopwords from tokens
+     * The words of a text: lower-cased runs of letters and digits of any
+     * script (Python's str.isalnum), two or more long, an apostrophe between
+     * two of them kept ("don't", "i've"; a typographic apostrophe reads as
+     * one). The rule Data Studio's Text tab and the TF-IDF / Count Vectorizer
+     * nodes share; Python: re.finditer(r"[^\W_]+(?:'[^\W_]+)*", text).
+     */
+    static std::vector<std::string> Words(const std::string& text);
+
+    /**
+     * Remove the stopwords (GetStopwords) from tokens, compared lower-cased
      * @param tokens Input tokens
      * @param language Language for stopwords ("english")
      * @return Filtered tokens
@@ -115,7 +134,8 @@ public:
     );
 
     /**
-     * Apply Porter stemming to a word
+     * The Porter (1980) stem of a word, lower-cased first: NLTK's
+     * PorterStemmer(mode=ORIGINAL_ALGORITHM)
      * @param word Input word
      * @return Stemmed word
      */
@@ -129,7 +149,8 @@ public:
     static std::vector<std::string> StemWords(const std::vector<std::string>& words);
 
     /**
-     * Get English stopwords set
+     * The English stop words: scikit-learn's ENGLISH_STOP_WORDS (318) plus
+     * their contractions ("don't", "i'm", ...), lower case
      * @return Set of stopwords
      */
     static const std::set<std::string>& GetStopwords();
@@ -319,6 +340,14 @@ public:
         const std::map<std::string, double>& lexicon
     );
 
+    /**
+     * The VADER sentiment of a text (Hutto and Gilbert, 2014): its lexicon,
+     * negation, boosters and dampeners, capitals, "but", "least", the special
+     * idioms, emoticons, emojis and ! / ?, as vaderSentiment 3.3.2 gives them
+     * (unrounded).
+     */
+    static VaderScores Vader(const std::string& text);
+
     // ==================== Text Utilities ====================
 
     /**
@@ -404,7 +433,6 @@ private:
     static std::vector<std::string> TokenizeSentence(const std::string& text);
     static std::vector<std::string> TokenizeNgram(const std::string& text, int n, bool lowercase);
 
-    static void InitStopwords();
     static void InitSentimentLexicons();
 
     static double L2Norm(const std::vector<double>& vec);

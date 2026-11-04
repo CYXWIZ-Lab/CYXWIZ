@@ -6550,6 +6550,26 @@ target_compile_definitions(test_computation_truth_signal PRIVATE
 set_target_properties(test_computation_truth_signal PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME ComputationTruthSignal COMMAND test_computation_truth_signal)
 
+# The word rule, stop words, Porter and VADER against Python / sklearn / NLTK /
+# vaderSentiment (TOFIX129 D8).
+set(CYXWIZ_TEXT_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/text_truth.json")
+add_executable(test_computation_truth_text
+    tests/computation_truth/test_computation_truth_text.cpp
+)
+target_include_directories(test_computation_truth_text PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_text PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_text PRIVATE
+    CYXWIZ_TEXT_FIXTURE="${CYXWIZ_TEXT_FIXTURE}"
+)
+set_target_properties(test_computation_truth_text PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME ComputationTruthText COMMAND test_computation_truth_text)
+
 add_executable(test_computation_truth_clustering
     tests/computation_truth/test_computation_truth_clustering.cpp
 )

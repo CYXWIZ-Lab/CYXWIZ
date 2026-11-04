@@ -260,6 +260,9 @@ set(BACKEND_SOURCES
     src/algorithms/text_processing_samples.cpp
     src/algorithms/text_processing_frequency.cpp
     src/algorithms/text_processing_utilities.cpp
+    src/algorithms/text_processing_words.cpp
+    src/algorithms/text_processing_vader.cpp
+    src/algorithms/text_unicode.cpp
     src/algorithms/tokenizer.cpp
     src/algorithms/tokenizer/vocabulary_persistence.cpp
     src/algorithms/tokenizer/byte_bpe.cpp
