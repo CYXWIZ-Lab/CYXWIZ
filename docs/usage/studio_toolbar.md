@@ -199,3 +199,21 @@ debugger hides, F6 or View > Studio Debugger brings it back with its run),
 **Compile report** (F7), and, once Local Debug passed on the graph as it is
 now, **Train** (F5), with the result: "Local Debug: Passed at 16:52, graph
 unchanged".
+
+### Which sample Local Debug runs
+
+Local Debug runs one item of your data through the model, forward and
+backward. Pick it with **Sample** (- / +) next to Run: Sample 7 is item 7 of
+the dataset (row, image or clip), in the dataset's own numbering, whichever
+part of the split it falls in. The item is prepared the way validation sees
+it: the data steps before the Data Split, Resize / Crop and Normalize, the
+label form, but no random augmentation (flips, crops, audio noise), so the
+same sample gives the same numbers every run.
+
+The Overview's **Sample** line names what ran and its part of the split,
+for example "row 7 of blobs, test" or "image 5 of cat_dog, train". Images,
+tables in memory or on disk, sparse features and audio work this way. Token
+tagging sequences and data loaded through the old dataset path still run a
+synthetic sample; the Sample line then says "a synthetic sample (seed 1337)"
+and a warning gives the reason. Load the data first (open the data node, then
+OK or Apply): Local Debug stops with "Data is not loaded" otherwise.

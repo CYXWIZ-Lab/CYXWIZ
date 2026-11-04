@@ -7,6 +7,16 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Studio Debugger Local Debug runs the sample you pick**, item N of your
+  data prepared the way validation sees it (fixed steps and Normalize, no
+  random augmentation), for images, tables in memory or on disk, sparse
+  features and audio; the Overview's Sample line names it and its part of the
+  split ("row 7 of blobs, test"). Other data kinds still run a synthetic
+  sample and say so. Local Debug also runs branched graphs (skip connections,
+  Add, Concatenate) by their graph plan, as training does.
+- **Audio augmentation applies to training clips only.** The AudioAugmentation
+  node's noise, time stretch and pitch shift used to alter validation and
+  test clips too, so their metrics changed from run to run.
 - **Training Dashboard points are the mean since the previous point**, not
   the epoch's running mean, so the curves no longer jump at each epoch start;
   the training cards' "best" names a whole epoch, never one batch.
