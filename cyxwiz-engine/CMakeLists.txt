@@ -522,6 +522,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_cloud_source.cpp
     src/gui/data_input_dialog_apply.cpp
     src/gui/data_input_dialog_hdf5_restore.cpp
+    src/gui/data_input_dialog_hdf5_apply.cpp
     src/gui/data_io_dialogs.cpp
     src/gui/data_loader_generation_tab.cpp
     src/gui/generation_settings_widgets.cpp
@@ -534,6 +535,7 @@ set(ENGINE_SOURCES
     src/core/hdf5_apply_preparation.cpp
     src/core/hdf5_registered_source.cpp
     src/gui/hdf5_loaded_source_verifier.cpp
+    src/gui/hdf5_apply_loader.cpp
     src/gui/hdf5_source_inspector.cpp
     src/gui/hdf5_source_inspector_render.cpp
     src/gui/data_input_dialog.cpp
@@ -3193,6 +3195,11 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/guided_sql.cpp
     src/core/pipeline_execution_task.cpp
     src/core/async_task_manager.cpp
+    # Data Input HDF5 runs (TOFIX189); the table adapter comes with cyxwiz_target_data_convert.
+    src/core/hdf5_source_load_task.cpp
+    src/core/hdf5_input_settings.cpp
+    src/core/hdf5_source_identity.cpp
+    src/core/dataset_audit.cpp
     src/core/prepared_data_cache.cpp
     src/core/training_input_preparation.cpp
     src/core/materialization_cache.cpp
@@ -3410,9 +3417,12 @@ set_target_properties(test_pipeline_operator_materializer_parity PROPERTIES
 add_executable(test_data_convert_pipeline_input
     tests/test_data_convert_pipeline_input.cpp
     tests/test_data_convert_pipeline_reload.cpp
+    tests/test_data_input_hdf5_pipeline.cpp
     ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
 )
 target_link_libraries(test_data_convert_pipeline_input PRIVATE cyxwiz-training-core)
+# The HDF5 test reads examples/datasets/metric_blobs.h5, written by h5py.
+target_compile_definitions(test_data_convert_pipeline_input PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 target_include_directories(test_data_convert_pipeline_input PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
