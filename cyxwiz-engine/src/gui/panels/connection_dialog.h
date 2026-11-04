@@ -132,6 +132,14 @@ private:
     std::shared_ptr<network::P2PClient> p2p_client_;
     network::DataStreamClient* datastream_client_ = nullptr;
 
+    // The CyxCloud dataset tokens the running job got (TOFIX171): revoked
+    // when the job ends, the node is left or the reservation ends. The
+    // training-stream callbacks only raise the flag; Render revokes on the
+    // UI thread, where datastream_client_ is used.
+    void RevokeJobTokens();
+    std::vector<std::string> job_cloud_tokens_;
+    std::atomic<bool> revoke_job_tokens_{false};
+
     bool show_;
     std::function<void()> open_server_preferences_;
     bool connecting_;
