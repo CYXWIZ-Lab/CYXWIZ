@@ -47,10 +47,8 @@ public:
     bool HasResults() const;
     // The latest successful test's main score: accuracy, or MAE (regression).
     std::optional<double> LatestScore() const;
-    // What to show: a kept test (path), the latest test on its Comparison
-    // section (Train > Test > Compare test results), or A table... (Tools >
-    // Evaluation with no test yet).
-    void ShowKept(const std::string& path);
+    // What to show: the latest test on its Comparison section (Train > Test >
+    // Compare test results), or A table... (Tools > Evaluation with no test yet).
     void ShowComparison();
     void ShowTable();
     // Train > Test > Export test report: the shown run as JSON (a Save dialog).

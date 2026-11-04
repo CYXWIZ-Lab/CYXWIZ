@@ -141,11 +141,6 @@ std::optional<double> TestView::LatestScore() const {
     return results_.regression_mode ? static_cast<double>(results_.test_mae) : static_cast<double>(results_.test_accuracy);
 }
 
-void TestView::ShowKept(const std::string& path) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    LoadKept(path);
-}
-
 void TestView::LoadKept(const std::string& path) {
     source_ = Source::Kept;
     dirty_ = true;

@@ -2,7 +2,6 @@
 
 #include "../materialization_memory_types.h"
 #include "../operator_figures.h"
-#include "../process_memory_snapshot.h"
 
 #include <arrow/result.h>
 #include <arrow/status.h>
@@ -78,7 +77,6 @@ using PipelineOperatorProgressCallback =
     std::function<void(const PipelineOperatorProgress&)>;
 
 using PipelineOperatorCancellationQuery = std::function<bool()>;
-using ProcessMemorySnapshotQuery = std::function<ProcessMemorySnapshot()>;
 
 struct PipelineOperatorCacheDependency {
     std::string role;
@@ -88,20 +86,9 @@ struct PipelineOperatorCacheDependency {
 struct PipelineOperatorExecutionContext {
     MaterializationMemoryContext memory;
     PipelineOperatorCancellationQuery cancellation_requested;
-    ProcessMemorySnapshotQuery process_memory_snapshot;
-    // Pre-start planning uses the normal operator estimator and stops as soon
-    // as that estimator publishes its first memory decision. The materializer
-    // owns the control flow; operators never need a UI-specific branch.
-    bool stop_after_memory_preflight = false;
 
     bool IsCancellationRequested() const {
         return cancellation_requested && cancellation_requested();
-    }
-
-    ProcessMemorySnapshot CaptureProcessMemory() const {
-        return process_memory_snapshot
-            ? process_memory_snapshot()
-            : DetectProcessMemorySnapshot();
     }
 };
 
