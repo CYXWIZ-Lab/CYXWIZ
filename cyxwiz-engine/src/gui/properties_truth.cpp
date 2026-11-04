@@ -2737,7 +2737,7 @@ PropertyTruth BuildDatasetClassesTruth(const DatasetTruthFact& fact) {
     if (!fact.has_class_count) {
         AddStatus(classes, TruthStatus::RuntimeOnly);
         classes.effective_value = "unknown";
-        classes.message = "Loaded dataset does not expose class-count metadata.";
+        classes.message = fact.message.empty() ? "Loaded dataset does not expose class-count metadata." : fact.message;
         return classes;
     }
 
