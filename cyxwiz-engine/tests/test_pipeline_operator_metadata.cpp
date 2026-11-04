@@ -5081,17 +5081,6 @@ int main() {
               "SQLQuery metadata reports the implemented SQL step");
     }
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
-              gui::NodeType::HDF5Dataset)) == "HDF5Dataset",
-          "fail-closed runtime enum lookup for HDF5Dataset is stable");
-    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::HDF5Dataset).mode ==
-              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
-          "HDF5Dataset enum support should resolve to fail-closed");
-    const auto* hdf5_meta = metadata.GetMetadata(gui::NodeType::HDF5Dataset);
-    if (hdf5_meta != nullptr) {
-        Check(hdf5_meta->status == cyxwiz::NodeImplementationStatus::Template,
-              "HDF5Dataset metadata should be blocked until HDF5 loading is real");
-    }
-    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::RESTAPISource)) == "RESTAPISource",
           "fail-closed runtime enum lookup for RESTAPISource is stable");
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::RESTAPISource).mode ==
@@ -6038,6 +6027,8 @@ int main() {
     }
     Check(metadata.GetMetadata(gui::NodeType::TensorReshape) == nullptr,
           "retired Tensor Reshape (the Reshape node replaced it) is not registered");
+    Check(metadata.GetMetadata(gui::NodeType::HDF5Dataset) == nullptr,
+          "retired HDF5 Reader (Data Input replaced it) is not registered");
     Check(metadata.GetMetadata(gui::NodeType::Bidirectional) == nullptr,
           "retired Bidirectional (the recurrent layers' bidirectional setting replaced it) is not registered");
     Check(metadata.GetMetadata(gui::NodeType::SelfAttention) == nullptr,

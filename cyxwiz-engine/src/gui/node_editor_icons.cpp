@@ -265,7 +265,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::ExcelFile:
                 return ICON_TI_FILE_SPREADSHEET;
             case NodeType::SQLQuery:
-            case NodeType::HDF5Dataset:
                 return ICON_TI_FILE_DATABASE;
             case NodeType::ParquetFile:
             case NodeType::FeatherFile:
@@ -709,7 +708,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // RL
             case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
-            case NodeType::HDF5Dataset:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
             case NodeType::AudioFolderDataset:
@@ -801,7 +799,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::DataLoader:
             case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
-            case NodeType::HDF5Dataset:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
             case NodeType::AudioFolderDataset:
@@ -1124,7 +1121,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::DataLoader:
             case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
-            case NodeType::HDF5Dataset:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
             case NodeType::AudioFolderDataset:
@@ -1447,7 +1443,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::DataLoader:
             case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
-            case NodeType::HDF5Dataset:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
             case NodeType::AudioFolderDataset:
@@ -2036,7 +2031,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::ExcelFile:
             return ICON_FA_FILE_EXCEL;
         case NodeType::SQLQuery:
-        case NodeType::HDF5Dataset:
             return ICON_FA_DATABASE;
         case NodeType::ParquetFile:
         case NodeType::FeatherFile:

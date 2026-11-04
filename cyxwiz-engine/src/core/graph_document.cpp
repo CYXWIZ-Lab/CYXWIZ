@@ -361,6 +361,12 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
                         ": remove it from the file or rebuild that step with those nodes";
                 return false;
             }
+            if (node_type == NodeType::HDF5Dataset) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                        "' is an HDF5 Reader node, which Data Input replaced: remove it from the file or rebuild "
+                        "that step with a Data Input (it loads a dataset of an HDF5 file)";
+                return false;
+            }
             if (node_type == NodeType::SelfAttention) {
                 error = "node '" + node_json.value("name", std::string("<unnamed>")) +
                         "' is a Self Attention node, which Multi-Head Attention replaced: remove it from the file "

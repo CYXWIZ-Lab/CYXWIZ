@@ -1396,12 +1396,6 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
 
 
 
-    RegisterNode({NodeType::HDF5Dataset, NodeCategory::DataSources, "HDF5 Reader", ICON_FA_HARD_DRIVE,
-        {"hdf5", "h5", "scientific"}, 0, false, "Read HDF5 dataset", "", "",
-        {}, {{"Table", PinType::Dataset, true, "Arrow table"}},
-        {{"file_path", "file", "", "HDF5 file", {}, "*.h5;*.hdf5"}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
-
     RegisterNode({NodeType::RESTAPISource, NodeCategory::DataSources, "REST API", ICON_FA_GLOBE,
         {"rest", "api", "http"}, 0, false, "Fetch from REST API", "", "",
         {}, {{"Response", PinType::Dataset, true, "API response"}},

@@ -28,7 +28,7 @@ bool JobOf(NodeType type, Job& job) {
     switch (type) {
         // Data enters through a Data Input; older file nodes are sources too.
         case NodeType::DataInput: case NodeType::CSVFile: case NodeType::ParquetFile: case NodeType::JSONFile:
-        case NodeType::ExcelFile: case NodeType::TSVFile: case NodeType::TXTFile: case NodeType::HDF5Dataset:
+        case NodeType::ExcelFile: case NodeType::TSVFile: case NodeType::TXTFile:
         case NodeType::FeatherFile: case NodeType::ArrowIPCFile: case NodeType::NumPyFile: case NodeType::TimeSeriesCSV:
         case NodeType::TextCorpusDataset: case NodeType::DataConvert:
             job = Job::BringIn; return true;
