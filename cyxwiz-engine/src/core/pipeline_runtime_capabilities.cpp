@@ -1008,7 +1008,6 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"TFIDFVectorizer", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
         {"TFIDFVectorizer", "save_state", "false", {"true", "false"}},
         {"TFIDFVectorizer", "state_overwrite", "false", {"true", "false"}},
-        {"SentimentAnalyzer", "method", "vader", {"simple", "vader", "afinn"}},
         {"DecisionTreeClassifier", "criterion", "gini", {"gini", "entropy"}},
         {"KNNClassifier", "weights", "uniform", {"uniform", "distance"}},
         {"KNNClassifier", "metric", "euclidean", {"euclidean", "manhattan", "cosine"}},

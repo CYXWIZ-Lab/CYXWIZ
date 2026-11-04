@@ -494,9 +494,13 @@ enum class NodeType {
     NumericalDifferentiation, // Numerical derivatives
     NumericalIntegration,     // Numerical integration
 
-    // ===== Additional Text Processing (Phase 5) =====
-    WordFrequencyNode,  // Word frequency analysis
-    TokenizerNode,      // Text tokenization
+    // ===== Retired text templates (TOFIX129 D8) =====
+    // Never implemented (no executor, not addable); Data Studio's Explore >
+    // Text counts words and the TextTokenizer tokenizes. The slots stay so
+    // the numeric ids of the types after them do not move; nothing
+    // registers or creates these.
+    WordFrequencyNode,
+    TokenizerNode,
 
     // ===== Retired plot node types (TOFIX134 P2) =====
     // Replaced by the single Plot node (appended below): its window picks the

@@ -580,7 +580,7 @@ std::map<std::string, std::string> NodeParameters(const TermsRequest& request) {
 }
 
 std::map<std::string, std::string> NodeParameters(const SentimentRequest& request) {
-    return {{"text_col", request.base.text}, {"label_col", request.base.group}};
+    return {{"text_col", request.base.text}};
 }
 
 std::map<std::string, std::string> NodeParameters(const TokensRequest& request) {

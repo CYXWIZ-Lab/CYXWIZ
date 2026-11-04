@@ -4157,7 +4157,7 @@ void NodeMetadataRegistry::InitializeTextNodes() {
          {"html_mode", "enum", "legacy_tags", "HTML handling: legacy tag regex or optional parsed body with entities and paragraph boundaries", {"legacy_tags", "parsed_html"}, ""},
          {"html_begin_comment", "string", "", "Parsed HTML: exact opening comment text (without delimiters); supply both markers or neither", {}, ""},
          {"html_end_comment", "string", "", "Parsed HTML: exact closing comment text; missing/duplicate markers fail", {}, ""},
-         {"remove_special_chars", "bool", "true", "Normalize special characters", {}, ""}},
+         {"remove_special_chars", "bool", "true", "Remove punctuation and symbols (letters and digits of every script stay)", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode(WithPropertiesEditor({NodeType::TextTokenizer, NodeCategory::TextProcessing, "Tokenizer", ICON_FA_ALIGN_LEFT,
@@ -4826,13 +4826,13 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::SentimentAnalyzer, NodeCategory::TextProcessing, "Sentiment Analysis", ICON_FA_FACE_SMILE,
-        {"sentiment", "opinion", "polarity"}, 0, false, "Sentiment analysis",
-        "Compute lexicon-based sentiment for each text row without loading an external model.", "",
+        {"sentiment", "opinion", "polarity", "vader"}, 0, false, "Sentiment analysis",
+        "Score each text row with VADER (its lexicon and rules: negation, boosters, capitals, but, emoticons, emojis) "
+        "and add the scores beside the columns, so the label and the split stay.", "",
         {{"Text", PinType::Dataset, true, "Input table containing text"}},
-        {{"Sentiment", PinType::Dataset, true, "Polarity, subjectivity, sentiment_label, confidence, and optional y columns"}},
-        {{"text_col", "string", "", "Text column", {}, "", "", "", true, false},
-         {"label_col", "string", "", "Optional label column copied to output as y", {}, ""},
-         {"method", "enum", "vader", "Sentiment method", {"simple", "vader", "afinn"}, ""}},
+        {{"Sentiment", PinType::Dataset, true,
+          "The input plus <text_col>_compound, _positive, _neutral, _negative and <text_col>_sentiment"}},
+        {{"text_col", "string", "", "Text column", {}, "", "", "", true, false}},
         NodeImplementationStatus::Implemented, 0});
 
     // ===== Utility Tools (Phase 4) =====
@@ -5167,22 +5167,6 @@ void NodeMetadataRegistry::InitializeOptimizationNodes() {
 // Additional Text Processing Nodes (Tool-to-Node Migration)
 // =============================================================================
 void NodeMetadataRegistry::InitializeAdditionalTextNodes() {
-    RegisterNode({NodeType::WordFrequencyNode, NodeCategory::TextProcessing, "Word Frequency", ICON_FA_CHART_BAR,
-        {"word", "frequency", "count", "text", "analysis"}, 0, false,
-        "Word Frequency Analysis", "", "",
-        {{"Text", PinType::Dataset, true, "Text"}},
-        {{"Frequencies", PinType::Dataset, false, "Frequencies"}},
-        {{"top_n", "int", "100", "Top N words", {}, ""}},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::TokenizerNode, NodeCategory::TextProcessing, "Tokenizer", ICON_FA_SCISSORS,
-        {"tokenize", "text", "words", "split", "nlp"}, 0, false,
-        "Text Tokenization", "", "",
-        {{"Text", PinType::Dataset, true, "Text"}},
-        {{"Tokens", PinType::Dataset, false, "Tokens"}},
-        {{"method", "dropdown", "word", "Method", {"word", "sentence", "ngram", "bpe"}, ""}},
-        NodeImplementationStatus::Template, 0});
-
     // Also register existing enum entries that weren't registered
     RegisterNode({NodeType::GMMCluster, NodeCategory::Analytics, "GMM Clustering", ICON_FA_CHART_PIE,
         {"gmm", "gaussian", "mixture", "clustering", "soft"}, 0, false,

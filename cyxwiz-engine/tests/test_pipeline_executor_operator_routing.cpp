@@ -5521,22 +5521,24 @@ int main(int argc, char** argv) {
           "OrdinalEncoder columns validation should be specific: " +
               bad_ordinal_column_type_executor.GetLastError());
 
-    const std::string uppercase_sentiment_method_json =
+    const std::string sentiment_columns_json =
         R"({"nodes":[)"
         R"({"id":352,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":353,"type":"SentimentAnalyzer","name":"Sentiment","parameters":{)"
-        R"("text_col":"phrase","method":" SIMPLE "}})"
+        R"("text_col":"phrase"}})"
         R"(],"links":[{"start_node":352,"end_node":353}]})";
 
-    cyxwiz::PipelineExecutor uppercase_sentiment_method_executor;
-    Check(uppercase_sentiment_method_executor.ExecutePipeline(
-              uppercase_sentiment_method_json),
-          "SentimentAnalyzer uppercase method should execute after normalization: " +
-              uppercase_sentiment_method_executor.GetLastError());
-    check_operator_field("ds_operator_SentimentAnalyzer_353", "sentiment_label",
-                         "SentimentAnalyzer uppercase method");
+    cyxwiz::PipelineExecutor sentiment_columns_executor;
+    Check(sentiment_columns_executor.ExecutePipeline(sentiment_columns_json),
+          "SentimentAnalyzer should score with VADER: " + sentiment_columns_executor.GetLastError());
+    check_operator_field("ds_operator_SentimentAnalyzer_353", "phrase_compound",
+                         "SentimentAnalyzer adds the VADER compound beside the columns");
+    check_operator_field("ds_operator_SentimentAnalyzer_353", "phrase_sentiment",
+                         "SentimentAnalyzer adds the sentiment label");
+    check_operator_field("ds_operator_SentimentAnalyzer_353", "phrase",
+                         "SentimentAnalyzer keeps the input's columns");
 
     const std::string bad_tokenizer_text_type_json =
         R"({"nodes":[)"
@@ -5601,7 +5603,7 @@ int main(int argc, char** argv) {
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":398,"type":"SentimentAnalyzer","name":"BadSentimentText","parameters":{)"
-        R"("text_col":"x","method":"simple"}})"
+        R"("text_col":"x"}})"
         R"(],"links":[{"start_node":397,"end_node":398}]})";
 
     cyxwiz::PipelineExecutor bad_sentiment_text_type_executor;
@@ -8989,6 +8991,32 @@ int main(int argc, char** argv) {
           "TextClean legacy alias output table exists");
     Check(ReadStringValue(text_clean_alias_table, "phrase_cleaned", 0) == "tea cup",
           "TextClean legacy alias should write cleaned output column");
+
+    // Special characters go; letters of every script stay (TOFIX129 D8).
+    const fs::path script_csv_path = fs::temp_directory_path() / "cyxwiz_pipeline_executor_scripts.csv";
+    {
+        std::ofstream script_csv(script_csv_path, std::ios::binary);
+        script_csv << "phrase\n\"Caf\xC3\xA9 \xC3\x9C" "ber, \xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82! 42%\"\n";
+    }
+    const std::string text_clean_scripts_json =
+        R"({"nodes":[)"
+        R"({"id":254,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(script_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":255,"type":"TextCleanNode","name":"CleanScripts","parameters":{)"
+        R"("text_column":"phrase","lowercase":"true","remove_special_chars":"true"}})"
+        R"(],"links":[{"start_node":254,"end_node":255}]})";
+    cyxwiz::PipelineExecutor text_clean_scripts_executor;
+    Check(text_clean_scripts_executor.ExecutePipeline(text_clean_scripts_json),
+          "TextCleanNode on accented and Cyrillic text: " + text_clean_scripts_executor.GetLastError());
+    auto text_clean_scripts = registry.GetArrowDataset("ds_textclean_255");
+    Check(text_clean_scripts != nullptr && text_clean_scripts->GetArrowTable() != nullptr,
+          "TextCleanNode scripts output is registered");
+    Check(ReadStringValue(text_clean_scripts->GetArrowTable(), "phrase_cleaned", 0) ==
+              "caf\xC3\xA9 \xC3\xBC" "ber \xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82 42",
+          "TextCleanNode keeps letters of every script: " +
+              ReadStringValue(text_clean_scripts->GetArrowTable(), "phrase_cleaned", 0));
+    fs::remove(script_csv_path);
 
     const std::string text_clean_stopwords_json =
         R"({"nodes":[)"

@@ -6,8 +6,6 @@
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 
-#include <cyxwiz/text_processing.h>
-
 #include <arrow/api.h>
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
@@ -361,19 +359,9 @@ CountVectorizerOperator::ApplyConfigured(
         if ((row & 1023) == 0) {
             ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
         }
-        auto tokenized = TextProcessing::Tokenize(
-            texts[row], "word", 2, /*lowercase=*/true,
-            /*remove_punctuation=*/true);
-        if (!tokenized.success) {
-            return arrow::Status::ExecutionError(
-                "CountVectorizer: tokenization failed: " +
-                tokenized.error_message);
-        }
-        auto base_tokens = stop_words_ == "english"
-            ? TextProcessing::RemoveStopwords(tokenized.tokens, "english")
-            : tokenized.tokens;
-        auto tokens = text_vectorizer_contract::BuildNGramFeatures(
-            base_tokens, ngram_min_, ngram_max_);
+        // The shared word rule (Data Studio's Text tab counts the same).
+        const auto tokens = text_vectorizer_contract::Terms(
+            texts[row], stop_words_ == "english", ngram_min_, ngram_max_);
         std::unordered_map<std::string, int> counts;
         for (const auto& token : tokens) {
             counts[token]++;

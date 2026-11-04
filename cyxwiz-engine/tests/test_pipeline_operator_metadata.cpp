@@ -2258,11 +2258,11 @@ void CheckTextVectorizerSentimentFamilyContract(
               ParameterMatches(count, "binary", "bool", "false"),
           "CountVectorizer metadata should match its materializer fields");
     Check(HasOutputType(sentiment, "Sentiment", gui::PinType::Dataset) &&
-              sentiment->parameters.size() == 3 &&
-              HasParameter(sentiment, "label_col") &&
-              ParameterMatches(sentiment, "method", "enum", "vader") &&
+              sentiment->parameters.size() == 1 &&
+              HasParameter(sentiment, "text_col") &&
+              !HasParameter(sentiment, "method") &&
               !HasParameter(sentiment, "model"),
-          "SentimentAnalyzer should expose its lexicon table contract without a fake model");
+          "SentimentAnalyzer is VADER only: text_col, no method, no fake model");
 }
 
 void CheckTabularTransformFamilyContract(

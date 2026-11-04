@@ -6,8 +6,6 @@
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
 
-#include <cyxwiz/text_processing.h>
-
 #include <arrow/api.h>
 #include <arrow/builder.h>
 #include <spdlog/spdlog.h>
@@ -395,20 +393,9 @@ TFIDFVectorizerOperator::ApplyConfigured(
                 ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
             }
             const auto& text = texts[row];
-            auto tokenized = TextProcessing::Tokenize(
-                text, "word", 2, /*lowercase=*/true,
-                /*remove_punctuation=*/true);
-            if (!tokenized.success) {
-                return arrow::Status::ExecutionError(
-                    "TFIDFVectorizer: tokenization failed: " +
-                    tokenized.error_message);
-            }
-
-            auto base_tokens = stop_words_ == "english"
-                ? TextProcessing::RemoveStopwords(tokenized.tokens, "english")
-                : tokenized.tokens;
-            auto tokens = text_vectorizer_contract::BuildNGramFeatures(
-                base_tokens, ngram_min_, ngram_max_);
+            // The shared word rule (Data Studio's Text tab counts the same).
+            const auto tokens = text_vectorizer_contract::Terms(
+                text, stop_words_ == "english", ngram_min_, ngram_max_);
             std::unordered_map<std::string, int> counts;
             for (const auto& token : tokens) {
                 counts[token]++;
@@ -470,13 +457,9 @@ TFIDFVectorizerOperator::ApplyConfigured(
                 continue;
             }
             if (use_idf_) {
-                const double df = smooth_idf_
-                    ? static_cast<double>(stats.doc_freq + 1)
-                    : static_cast<double>(stats.doc_freq);
-                const double total = smooth_idf_
-                    ? static_cast<double>(fit_n + 1)
-                    : static_cast<double>(fit_n);
-                stats.idf = std::log(total / df) + 1.0;
+                stats.idf = text_vectorizer_contract::Idf(
+                    static_cast<double>(fit_n),
+                    static_cast<double>(stats.doc_freq), smooth_idf_);
             } else {
                 stats.idf = 1.0;
             }

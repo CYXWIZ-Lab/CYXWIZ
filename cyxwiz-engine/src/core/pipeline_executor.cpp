@@ -6597,7 +6597,10 @@ bool PipelineExecutor::ExecuteTextClean(const Node& node, ExecutionContext& ctx)
             transform = "regexp_replace(" + transform + ", '<[^>]*>', '', 'g')";
         }
         if (remove_special_chars) {
-            transform = "regexp_replace(" + transform + ", '[^a-zA-Z0-9\\s]', '', 'g')";
+            // Punctuation and symbols go; letters, digits and accents of
+            // every script stay (TOFIX129 D8: [^a-zA-Z0-9] erased accented
+            // letters and every non-Latin word).
+            transform = "regexp_replace(" + transform + ", '[^\\p{L}\\p{N}\\p{M}\\s]', '', 'g')";
         }
         if (lowercase) {
             transform = "lower(" + transform + ")";
