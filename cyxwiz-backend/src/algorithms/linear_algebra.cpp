@@ -11,6 +11,7 @@
 #include "cyxwiz/linear_algebra.h"
 #include "arrayfire_backend_utils.h"
 #include "arrayfire_host_values.h"
+#include "least_squares_device.h"
 
 #include <algorithm>
 #include <cmath>
@@ -563,8 +564,8 @@ MatrixResult LinearAlgebra::LeastSquares(const std::vector<std::vector<double>>&
         return result;
     }
     try {
-        // af::solve takes the QR least-squares route for a non-square A.
-        return MatrixFromDevice(af::solve(ToDevice(A), ToDevice(b)), "LinearAlgebra::LeastSquares");
+        // The shortest of the best x when A's columns depend on each other (detail::LeastSquaresSvd).
+        return MatrixFromDevice(detail::LeastSquaresSvd(ToDevice(A), ToDevice(b)), "LinearAlgebra::LeastSquares");
     } catch (const af::exception& e) {
         return Failure<MatrixResult>(DeviceError("LinearAlgebra::LeastSquares", e));
     }
