@@ -22,7 +22,8 @@ private Data Studio tickets (`tofix*/track*`).
   as "parameters missing gradient", and Gradient Health no longer says needs
   attention for them. Plugin SDK: `Module::GetStateNames()` names the
   `GetParameters` keys a module keeps but does not train; the gradient check
-  skips them.
+  and training skip them. Python modules declare such a tensor with
+  `add_state(name, value)` and update it with `set_state`.
 - **Audio augmentation applies to training clips only.** The AudioAugmentation
   node's noise, time stretch and pitch shift used to alter validation and
   test clips too, so their metrics changed from run to run.

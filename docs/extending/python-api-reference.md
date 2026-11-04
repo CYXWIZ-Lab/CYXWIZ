@@ -809,12 +809,14 @@ Base class of every module. Subclass it in Python to write your own: define forw
 |---|---|
 | `Module(self: Module) -> None` | Create a module (for Python subclasses) |
 | `add_parameter(self: Module, name: str, value: Tensor) -> None` | Declare a learnable tensor. The optimizer updates it; read it with parameter(name) |
+| `add_state(self: Module, name: str, value: Tensor) -> None` | Declare a tensor the module keeps but does not train, such as a running mean. It is saved with the weights and takes no gradient; update it with set_state |
 | `backward(self: Module, grad_output: Tensor) -> Tensor` | Backward pass |
 | `forward(self: Module, input: Tensor) -> Tensor` | Forward pass through the module |
 | `freeze(self: Module) -> None` | Freeze module (disable parameter updates) |
 | `get_gradients(self: Module) -> dict[str, Tensor]` | Get parameter gradients |
 | `get_name(self: Module) -> str` | Get module name |
 | `get_parameters(self: Module) -> dict[str, Tensor]` | Get module parameters |
+| `get_state_names(self: Module) -> list[str]` | Names of the get_parameters entries kept but not trained (no gradient) |
 | `gradient(self: Module, name: str) -> Tensor` | The last gradient stored for a parameter |
 | `has_parameters(self: Module) -> bool` | Check if module has trainable parameters |
 | `is_trainable(self: Module) -> bool` | Check if module is trainable |
@@ -823,7 +825,10 @@ Base class of every module. Subclass it in Python to write your own: define forw
 | `parameter_names(self: Module) -> list[str]` | Names of the parameters added with add_parameter |
 | `set_gradient(self: Module, name: str, gradient: Tensor) -> None` | Store the loss gradient of a parameter; call it in backward |
 | `set_parameters(self: Module, params: Mapping[str, Tensor]) -> None` | Set module parameters |
+| `set_state(self: Module, name: str, value: Tensor) -> None` | Replace a state tensor (same shape) |
 | `set_training(self: Module, training: bool) -> None` | Set training mode |
+| `state(self: Module, name: str) -> Tensor` | The current value of a state tensor |
+| `state_names(self: Module) -> list[str]` | Names of the state tensors added with add_state |
 | `unfreeze(self: Module) -> None` | Unfreeze module (enable parameter updates) |
 
 ### `MultiHeadAttention`

@@ -176,6 +176,7 @@ public:
     void SetParameters(const std::map<std::string, Tensor>& params) override { target_->SetParameters(params); }
     std::map<std::string, Tensor> GetGradients() override { return target_->GetGradients(); }
     bool HasParameters() const override { return target_->HasParameters(); }
+    std::vector<std::string> GetStateNames() const override { return target_->GetStateNames(); }
     std::string GetName() const override { return target_->GetName(); }
     void SetTraining(bool training) override {
         is_training_ = training;
