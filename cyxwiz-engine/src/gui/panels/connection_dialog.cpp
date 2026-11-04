@@ -762,6 +762,17 @@ void ConnectionDialog::StartP2PTraining() {
     // device (TOFIX118 P4b). 0 = not measured, the node skips the check.
     config.set_estimated_memory(static_cast<int64_t>(CurrentJobFitCard().estimated_memory));
 
+    // The previous job's tokens go first (one job runs at a time); this
+    // job's are revoked on any return before it is running.
+    RevokeJobTokens();
+    struct RevokeUnlessRunning {
+        ConnectionDialog* dialog;
+        bool running = false;
+        ~RevokeUnlessRunning() {
+            if (!running) dialog->RevokeJobTokens();
+        }
+    } job_tokens{this};
+
     // remote://: the node fetches the graph's dataset files from the Engine
     // (TOFIX118 P2). Registered before the job is sent so the node's first
     // request is answered; refused graphs never reach the node.
@@ -860,6 +871,7 @@ void ConnectionDialog::StartP2PTraining() {
         return;
     }
 
+    job_tokens.running = true;
     spdlog::info("P2P training started successfully!");
     spdlog::info("  Job ID: {}", active_reservation_.job_id);
     spdlog::info("  Training on Server Node: {}", active_reservation_.node_endpoint);
@@ -971,6 +983,17 @@ void ConnectionDialog::StartNewP2PTraining(const std::string& resume_job_id) {
     config.set_epochs(reservation_epochs_);
     config.set_required_device(cyxwiz::protocol::DEVICE_CUDA);
     config.set_estimated_memory(static_cast<int64_t>(CurrentJobFitCard().estimated_memory));
+
+    // The previous job's tokens go first (one job runs at a time); this
+    // job's are revoked on any return before it is running.
+    RevokeJobTokens();
+    struct RevokeUnlessRunning {
+        ConnectionDialog* dialog;
+        bool running = false;
+        ~RevokeUnlessRunning() {
+            if (!running) dialog->RevokeJobTokens();
+        }
+    } job_tokens{this};
 
     // remote://: the node fetches the graph's dataset files from the Engine
     // (TOFIX118 P2). Registered before the job is sent so the node's first
@@ -1092,6 +1115,7 @@ void ConnectionDialog::StartNewP2PTraining(const std::string& resume_job_id) {
         spdlog::info("P2P Training Panel: Started monitoring for new job {}", new_job_id);
     }
 
+    job_tokens.running = true;
     ++jobs_started_;
     spdlog::info("New P2P training started successfully!");
     spdlog::info("  New Job ID: {}", new_job_id);
