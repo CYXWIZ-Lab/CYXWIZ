@@ -22,6 +22,8 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -700,6 +702,35 @@ void TestParquetRowSplit(const std::filesystem::path& work_dir) {
     Check(!overlap, "no row is served twice");
     Check(std::count(seen.begin(), seen.end(), -1) == 0, "every row is served once");
     Check(class1_held_out == 60, "validation and test hold 60 rows of class 1");
+
+    // Rows by number (TOFIX178 6.0b, Local Debug's picked sample): each file
+    // row as the batchers read it, from its own row group, with its part.
+    const std::vector<size_t> picks{5, 565, 650, 705, 990};
+    const auto picked = batchers.parquet_val->GetSourceSamples(picks);
+    Check(picked && picked->size == picks.size() && picked->data.Shape()[0] == picks.size(),
+          "rows on disk are picked by number");
+    for (size_t i = 0; i < picks.size(); ++i) {
+        const float* row = picked->data.Data<float>() + i * 2;
+        Check(row[0] == static_cast<float>(picks[i]) && row[1] == static_cast<float>(picks[i] % 7) &&
+                  picked->row_ids[i] == static_cast<int64_t>(picks[i]),
+              "a picked row is that file row");
+        std::optional<cyxwiz::BatcherPhase> part;
+        for (const cyxwiz::IBatcher* batcher :
+             {static_cast<cyxwiz::IBatcher*>(batchers.parquet_train.get()),
+              static_cast<cyxwiz::IBatcher*>(batchers.parquet_val.get()),
+              static_cast<cyxwiz::IBatcher*>(batchers.parquet_test.get())})
+            if (!part) part = batcher->SourceSamplePart(picks[i]);
+        Check(part && static_cast<int>(*part) == static_cast<int>(split->bucket[picks[i]]),
+              "a picked row names its part of the row split");
+    }
+    bool refused = false;
+    try {
+        batchers.parquet_val->GetSourceSamples({static_cast<size_t>(kRows)});
+    } catch (const std::out_of_range&) {
+        refused = true;
+    }
+    Check(refused, "a row past the file is refused");
+
     std::error_code ignored;  // the batchers above still map the file
     std::filesystem::remove(path, ignored);
 }

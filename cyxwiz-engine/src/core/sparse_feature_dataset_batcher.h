@@ -62,6 +62,10 @@ public:
     bool IsEpochComplete() const override;
     size_t GetNumBatches() const override;
     size_t GetNumSamples() const override { return indices_.size(); }
+    // Rows of the dataset by number, as validation sees them (TOFIX178 6.0b).
+    std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    // This batcher's part when the row is in it (it holds one part).
+    std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
 
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;
@@ -91,8 +95,9 @@ private:
     void ValidateDenseBatchMemory(size_t rows) const;
     void ShuffleIndices();
     void RebuildBalancedIndices();
+    Batch AssembleBatch(const int64_t* rows, size_t actual_batch_size);
     void PopulateInspection(Batch& batch,
-                            size_t batch_start,
+                            const int64_t* rows,
                             size_t actual_batch_size) const;
 
     std::shared_ptr<const SparseFeatureDataset> dataset_;

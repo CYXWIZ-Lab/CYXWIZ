@@ -1,8 +1,10 @@
 #include "debug_sample_source.h"
 
+#include "audio_dataset_batcher.h"
 #include "data_registry.h"
 #include "graph_training_prep.h"
 #include "image_batchers.h"
+#include "sparse_feature_dataset.h"
 #include "training_batcher_setup.h"
 
 #include <exception>
@@ -30,6 +32,10 @@ DebugSample Take(IBatcher& source, std::initializer_list<const IBatcher*> parts,
     const auto batch = source.GetSourceSamples({index});
     if (!batch) {
         sample.unavailable = "this data's batcher cannot reach an item by number yet";
+        return sample;
+    }
+    if (batch->data.NumElements() == 0) {
+        sample.unavailable = "this data's batches carry sparse (CSR) features, which Local Debug does not feed yet";
         return sample;
     }
     std::optional<BatcherPhase> part;
@@ -64,10 +70,12 @@ DebugSample TableSample(TrainingConfiguration& config, const DebugSampleRequest&
             dataset = prepared.dataset;
         }
     }
+    // In memory, on disk (Parquet) or sparse features, as Train picks them.
     const auto table = registry.GetArrowDataset(dataset);
-    if (!table) {
-        sample.unavailable = "'" + dataset + "' is not a table in memory (picking a row of a table kept on disk or of "
-                             "sparse features comes later)";
+    const auto disk = table ? nullptr : registry.GetParquetBackedDataset(dataset);
+    const auto sparse = table || disk ? nullptr : registry.GetSparseFeatureDataset(dataset);
+    if (!table && !disk && !sparse) {
+        sample.unavailable = "'" + dataset + "' is not a loaded table";
         return sample;
     }
     std::string label = config.dataset_roles.train.label_column;
@@ -76,13 +84,37 @@ DebugSample TableSample(TrainingConfiguration& config, const DebugSampleRequest&
     label = ResolveRuntimeArrowLabelColumn(dataset, label);
     ReconcileRuntimeDatasetTarget(config, label, dataset);
     ReconcileRuntimeTabularFeatureWidth(dataset, label, config);
-    auto set = BuildArrowTrainingBatchers(config, table, label, 1);
-    if (!set.arrow_val) {
-        sample.unavailable = "the table's batchers could not be built";
-        return sample;
+    TrainingBatcherSet set;
+    if (table) {
+        set = BuildArrowTrainingBatchers(config, table, label, 1);
+    } else if (disk) {
+        set = BuildParquetTrainingBatchers(config, disk, label, 1);
+    } else {
+        // Sparse features train through the resolved partitions (TabularLoader).
+        if (!config.dataset_roles.train.IsSupplied()) {
+            config.dataset_roles.train.dataset_name = dataset;
+            config.dataset_roles.train.label_column = sparse->GetLabelName();
+        }
+        ResolvedTabularDatasets datasets;
+        datasets.train_sparse = sparse;
+        auto built = BuildResolvedTabularTrainingBatchers(config, datasets, 1);
+        if (!built.ok()) {
+            sample.unavailable = "the sparse batchers could not be built: " + built.error_message;
+            return sample;
+        }
+        set = std::move(built.batchers);
     }
-    return Take(*set.arrow_val, {set.arrow_train.get(), set.arrow_val.get(), set.arrow_test.get()}, request.index,
-                "row", dataset);
+    if (set.arrow_val)
+        return Take(*set.arrow_val, {set.arrow_train.get(), set.arrow_val.get(), set.arrow_test.get()},
+                    request.index, "row", dataset);
+    if (set.parquet_val)
+        return Take(*set.parquet_val, {set.parquet_train.get(), set.parquet_val.get(), set.parquet_test.get()},
+                    request.index, "row", dataset);
+    if (set.sparse_val)
+        return Take(*set.sparse_val, {set.sparse_train.get(), set.sparse_val.get(), set.sparse_test.get()},
+                    request.index, "row", dataset);
+    sample.unavailable = "the table's batchers could not be built";
+    return sample;
 }
 
 }  // namespace
@@ -97,11 +129,28 @@ DebugSample MakeDebugSample(TrainingConfiguration& config, const DebugSampleRequ
             auto batcher = MakeImageBatcher(entry, config, 1, ImageSplitOf(config), request.stop);
             return Take(*batcher, {batcher.get()}, request.index, "image", config.dataset_name);
         }
+        if (const auto* found = registry.GetAudioDatasetEntry(config.dataset_name)) {
+            const DataRegistry::AudioDatasetEntry entry = *found;  // a copy: the registry may reload
+            if (!config.audio_preprocessing.has_feature_node) {
+                sample.unavailable = kAudioFeaturesMissingMessage;
+                return sample;
+            }
+            // The batcher training makes, one clip per batch; the model's
+            // input follows its features, as it does for Train.
+            auto batcher = MakeAudioTrainingBatcher(entry, config, 1, AudioTrainingSplit(config));
+            if (batcher->GetNumSamples() == 0) {
+                sample.unavailable = "the audio dataset has no clips";
+                return sample;
+            }
+            ApplyAudioInputShape(*batcher, config);
+            return Take(*batcher, {batcher.get()}, request.index, "clip", config.dataset_name);
+        }
         if (config.sequence_batch.enabled) {
             sample.unavailable = "picking a sequence (token tagging) sample comes later";
             return sample;
         }
-        if (registry.GetArrowDataset(config.dataset_name) || config.training_data_needs_pipeline_run)
+        if (registry.GetArrowDataset(config.dataset_name) || registry.GetParquetBackedDataset(config.dataset_name) ||
+            registry.GetSparseFeatureDataset(config.dataset_name) || config.training_data_needs_pipeline_run)
             return TableSample(config, request);
         sample.unavailable = config.dataset_name.empty()
                                  ? "the graph's data is not loaded"

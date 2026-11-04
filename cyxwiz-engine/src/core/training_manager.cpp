@@ -828,14 +828,7 @@ bool TrainingManager::StartTrainingAudio(
     // features config.audio_preprocessing describes (Spectrogram /
     // MelSpectrogram / MFCC / AudioAugmentation nodes) and probes a sample
     // for the actual feature shape.
-    auto batcher = std::make_shared<AudioDatasetBatcher>(
-        audio_entry,
-        config.audio_preprocessing,
-        batch_size,
-        SampleSplitSettings{config.train_ratio, config.val_ratio, config.test_ratio, config.stratified,
-                            static_cast<uint32_t>(config.split_seed)},
-        config.shuffle, config.num_workers, static_cast<uint32_t>(config.dataloader_seed));
-    batcher->SetDropLast(config.drop_last);
+    auto batcher = MakeAudioTrainingBatcher(audio_entry, config, batch_size, AudioTrainingSplit(config));
 
     if (batcher->GetNumSamples() == 0) {
         spdlog::error("TrainingManager: Audio dataset has 0 samples");
@@ -845,18 +838,7 @@ bool TrainingManager::StartTrainingAudio(
     // input_size is feature_rows × feature_cols (the flattened feature map
     // — Spectrogram or MelSpec or MFCC). The model's first Dense layer
     // sees this many features.
-    config.input_size = static_cast<size_t>(batcher->GetFeatureRows()) *
-                        static_cast<size_t>(batcher->GetFeatureCols());
-    config.input_shape = {
-        static_cast<size_t>(batcher->GetFeatureRows()),
-        static_cast<size_t>(batcher->GetFeatureCols())
-    };
-    // [rows, cols] = [bins, frames] per sample, torch [N, C, L]: a Conv1D
-    // convolves over the frames with one channel per bin.
-    config.sequence_input_shape = {
-        static_cast<size_t>(batcher->GetFeatureCols()),
-        static_cast<size_t>(batcher->GetFeatureRows())
-    };
+    ApplyAudioInputShape(*batcher, config);
 
     spdlog::info("TrainingManager: Audio dataset {} train / {} validation / {} test clips, input_size={} ({}x{}), "
                  "num_workers={}, split seed={}", batcher->SamplesIn(BatcherPhase::Train),
@@ -886,12 +868,9 @@ bool TrainingManager::StartTrainingAudio(
                           "they must be the same, in the same order", role->dataset_name, part);
             return false;
         }
-        auto set = std::make_shared<AudioDatasetBatcher>(
-            *entry, config.audio_preprocessing, batch_size,
-            SampleSplitSettings{0.0f, dev ? 1.0f : 0.0f, dev ? 0.0f : 1.0f, false,
-                                static_cast<uint32_t>(config.split_seed)},
-            config.shuffle, config.num_workers, static_cast<uint32_t>(config.dataloader_seed));
-        set->SetDropLast(config.drop_last);
+        auto set = MakeAudioTrainingBatcher(*entry, config, batch_size,
+                                            SampleSplitSettings{0.0f, dev ? 1.0f : 0.0f, dev ? 0.0f : 1.0f, false,
+                                                                static_cast<uint32_t>(config.split_seed)});
         if (set->SamplesIn(dev ? BatcherPhase::Val : BatcherPhase::Test) == 0) {
             spdlog::error("TrainingManager: '{}' (wired as {}) has no clips", role->dataset_name, part);
             return false;
@@ -906,19 +885,6 @@ bool TrainingManager::StartTrainingAudio(
         spdlog::info("TrainingManager: '{}' is the {} part: {} clips", role->dataset_name, part,
                      set->SamplesIn(dev ? BatcherPhase::Val : BatcherPhase::Test));
         *wired = std::move(set);
-    }
-
-    // Mirror image path: hand normalization / one-hot through to the batchers.
-    for (AudioDatasetBatcher* b : {batcher.get(), wired_dev.get(), wired_test.get()}) {
-        if (!b) continue;
-        if (config.preprocessing.has_normalization) {
-            b->SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);
-        }
-        if (UsesScalarBinaryTargets(config.loss_type)) {
-            b->SetScalarLabelMode(true);
-        } else if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
-            b->SetOneHotEncoding(config.preprocessing.num_classes);
-        }
     }
 
     // One batcher, three parts by phase (the held-out test runs at the end);

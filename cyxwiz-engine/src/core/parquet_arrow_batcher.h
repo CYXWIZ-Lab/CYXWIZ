@@ -101,6 +101,11 @@ public:
     bool IsEpochComplete() const override;
     size_t GetNumBatches() const override;
     size_t GetNumSamples() const override { return num_samples_; }
+    // Rows of the file by number, as validation sees them (TOFIX178 6.0b):
+    // each read from its row group.
+    std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    // This batcher's part when the row is in it (it holds one part).
+    std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
 
     // Preprocessing (IBatcher)
     void SetNormalization(float mean, float std_dev) override;
@@ -197,6 +202,11 @@ private:
     std::unordered_map<std::string, uint32_t> balance_ids_;  // label value -> class
     std::vector<BalanceClass> balance_classes_;
     std::mt19937_64 balance_rng_;
+    void FillRows(const arrow::Table& table, const size_t* local_rows, size_t n, size_t dst,
+                  std::vector<float>& batch_data, std::vector<int>& batch_labels,
+                  std::vector<float>& batch_labels_float) const;
+    void FinishBatch(Batch& batch, size_t rows_filled, std::vector<float>& batch_data,
+                     const std::vector<int>& batch_labels, const std::vector<float>& batch_labels_float) const;
     bool CountBalanceClasses();        // false: fewer than two classes, or the labels cannot be read
     void StartBalancedEpoch();         // this epoch's draw; sets num_samples_
     void BalanceCurrentGroupRows();    // repeats current_row_indices_ by the draw

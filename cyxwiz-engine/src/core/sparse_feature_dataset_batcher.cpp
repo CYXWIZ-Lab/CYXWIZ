@@ -341,6 +341,34 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
     }
     const size_t remaining = indices_.size() - current_index_;
     const size_t actual_batch_size = std::min(batch_size_, remaining);
+    Batch batch = AssembleBatch(indices_.data() + current_index_, actual_batch_size);
+    current_index_ += actual_batch_size;
+    return batch;
+}
+
+std::optional<Batch> SparseFeatureDatasetBatcher::GetSourceSamples(const std::vector<size_t>& indices) {
+    if (!dataset_ || indices.empty()) return std::nullopt;
+    std::vector<int64_t> rows;
+    rows.reserve(indices.size());
+    for (size_t index : indices) {
+        if (index >= static_cast<size_t>(dataset_->GetNumRows()))
+            throw std::out_of_range("row " + std::to_string(index) + " is outside the " +
+                                    std::to_string(dataset_->GetNumRows()) + " rows");
+        rows.push_back(static_cast<int64_t>(index));
+    }
+    return AssembleBatch(rows.data(), rows.size());
+}
+
+std::optional<BatcherPhase> SparseFeatureDatasetBatcher::SourceSamplePart(size_t index) const {
+    // This batcher holds one part of the split.
+    return std::find(base_indices_.begin(), base_indices_.end(), static_cast<int64_t>(index)) != base_indices_.end()
+               ? std::optional<BatcherPhase>(split_phase_)
+               : std::nullopt;
+}
+
+// These rows as one batch: CSR or dense features, Normalize, the label form
+// and the inspection.
+Batch SparseFeatureDatasetBatcher::AssembleBatch(const int64_t* rows, size_t actual_batch_size) {
 
     const size_t num_features =
         static_cast<size_t>(dataset_->GetNumFeatures());
@@ -360,7 +388,7 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
         for (size_t batch_row = 0;
              batch_row < actual_batch_size;
              ++batch_row) {
-            const int64_t source_row = indices_[current_index_ + batch_row];
+            const int64_t source_row = rows[batch_row];
             const size_t begin = static_cast<size_t>(
                 offsets[static_cast<size_t>(source_row)]);
             const size_t end = static_cast<size_t>(
@@ -380,7 +408,7 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
         for (size_t batch_row = 0;
              batch_row < actual_batch_size;
              ++batch_row) {
-            const int64_t source_row = indices_[current_index_ + batch_row];
+            const int64_t source_row = rows[batch_row];
             const size_t begin = static_cast<size_t>(
                 offsets[static_cast<size_t>(source_row)]);
             const size_t end = static_cast<size_t>(
@@ -408,7 +436,7 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
         for (size_t batch_row = 0;
              batch_row < actual_batch_size;
              ++batch_row) {
-            const int64_t source_row = indices_[current_index_ + batch_row];
+            const int64_t source_row = rows[batch_row];
             const size_t begin = static_cast<size_t>(
                 offsets[static_cast<size_t>(source_row)]);
             const size_t end = static_cast<size_t>(
@@ -434,7 +462,7 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
             std::vector<float> output(actual_batch_size);
             for (size_t row = 0; row < actual_batch_size; ++row) {
                 output[row] = static_cast<float>(
-                    ReadLabel(indices_[current_index_ + row], false).scalar);
+                    ReadLabel(rows[row], false).scalar);
             }
             batch.labels = Tensor(
                 {actual_batch_size, 1}, output.data(), DataType::Float32);
@@ -442,7 +470,7 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
             std::vector<int32_t> output(actual_batch_size);
             for (size_t row = 0; row < actual_batch_size; ++row) {
                 const int64_t label =
-                    ReadLabel(indices_[current_index_ + row], true).class_index;
+                    ReadLabel(rows[row], true).class_index;
                 if (label < (std::numeric_limits<int32_t>::min)() ||
                     label > (std::numeric_limits<int32_t>::max)()) {
                     throw std::runtime_error(
@@ -457,7 +485,7 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
                 actual_batch_size * num_classes_, 0.0f);
             for (size_t row = 0; row < actual_batch_size; ++row) {
                 const int64_t label =
-                    ReadLabel(indices_[current_index_ + row], true).class_index;
+                    ReadLabel(rows[row], true).class_index;
                 if (label < 0 || static_cast<uint64_t>(label) >= num_classes_) {
                     throw std::runtime_error(
                         "SparseFeatureDatasetBatcher class index is outside "
@@ -472,7 +500,7 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
             std::vector<float> output(actual_batch_size);
             for (size_t row = 0; row < actual_batch_size; ++row) {
                 output[row] = static_cast<float>(
-                    ReadLabel(indices_[current_index_ + row], true).class_index);
+                    ReadLabel(rows[row], true).class_index);
             }
             batch.labels = Tensor(
                 {actual_batch_size}, output.data(), DataType::Float32);
@@ -480,9 +508,8 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
     }
 
     if (batch_inspection_enabled_) {
-        PopulateInspection(batch, current_index_, actual_batch_size);
+        PopulateInspection(batch, rows, actual_batch_size);
     }
-    current_index_ += actual_batch_size;
     batch.size = actual_batch_size;
     return batch;
 }
@@ -573,7 +600,7 @@ void SparseFeatureDatasetBatcher::ShuffleIndices() {
 
 void SparseFeatureDatasetBatcher::PopulateInspection(
     Batch& batch,
-    size_t batch_start,
+    const int64_t* rows,
     size_t actual_batch_size) const {
     auto& inspection = batch.inspection;
     inspection.available = true;
@@ -598,7 +625,7 @@ void SparseFeatureDatasetBatcher::PopulateInspection(
             dataset_->GetLabelName(), labels->type()->ToString()});
     }
     for (size_t row = 0; row < actual_batch_size; ++row) {
-        const int64_t source_row = indices_[batch_start + row];
+        const int64_t source_row = rows[row];
         inspection.inspected_value_count += static_cast<uint64_t>(
             dataset_->GetRowOffsets()[static_cast<size_t>(source_row + 1)] -
             dataset_->GetRowOffsets()[static_cast<size_t>(source_row)]);

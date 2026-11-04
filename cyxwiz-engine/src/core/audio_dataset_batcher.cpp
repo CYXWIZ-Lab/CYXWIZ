@@ -1,9 +1,12 @@
 #include "audio_dataset_batcher.h"
+#include "classification_decision.h"
 #include <cyxwiz/error_codes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -120,12 +123,36 @@ AudioDatasetBatcher::AudioDatasetBatcher(
 }
 
 Batch AudioDatasetBatcher::GetNextBatch() {
-    Batch batch;
-    if (!dataset_ || IsEpochComplete()) return batch;
+    if (!dataset_ || IsEpochComplete()) return {};
+    const size_t actual_size = std::min(static_cast<size_t>(batch_size_), epoch_order_.size() - current_idx_);
+    if (actual_size == 0) return {};
+    // The AudioAugmentation node's random noise, stretch and pitch shift are
+    // for training clips only: validation and test read each clip as it is.
+    Batch batch = AssembleBatch(epoch_order_.data() + current_idx_, actual_size,
+                                current_phase_ == BatcherPhase::Train);
+    current_idx_ += actual_size;
+    return batch;
+}
 
-    size_t actual_size = std::min(static_cast<size_t>(batch_size_),
-                                   epoch_order_.size() - current_idx_);
-    if (actual_size == 0) return batch;
+std::optional<Batch> AudioDatasetBatcher::GetSourceSamples(const std::vector<size_t>& indices) {
+    if (!dataset_ || indices.empty()) return std::nullopt;
+    for (size_t index : indices)
+        if (index >= dataset_->Size())
+            throw std::out_of_range("clip " + std::to_string(index) + " is outside the " +
+                                    std::to_string(dataset_->Size()) + " clips");
+    return AssembleBatch(indices.data(), indices.size(), false);
+}
+
+std::optional<BatcherPhase> AudioDatasetBatcher::SourceSamplePart(size_t index) const {
+    for (const BatcherPhase phase : {BatcherPhase::Train, BatcherPhase::Val, BatcherPhase::Test}) {
+        const auto& part = Part(phase);
+        if (std::find(part.begin(), part.end(), index) != part.end()) return phase;
+    }
+    return std::nullopt;
+}
+
+Batch AudioDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_size, bool augment) {
+    Batch batch;
 
     size_t sample_dim = static_cast<size_t>(feature_rows_) *
                         static_cast<size_t>(feature_cols_);
@@ -142,12 +169,9 @@ Batch AudioDatasetBatcher::GetNextBatch() {
 
     std::vector<std::pair<std::vector<float>, int>> samples(actual_size);
 
-    // The AudioAugmentation node's random noise, stretch and pitch shift are
-    // for training clips only: validation and test read each clip as it is.
-    const bool augment = current_phase_ == BatcherPhase::Train;
     auto load_range = [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
-            size_t idx = epoch_order_[current_idx_ + i];
+            size_t idx = indices[i];
             samples[i] = dataset_->GetItem(idx, augment);
         }
     };
@@ -243,10 +267,8 @@ Batch AudioDatasetBatcher::GetNextBatch() {
     }
 
     // Clip numbers in the dataset: test results name the clips with them.
-    batch.row_ids.assign(epoch_order_.begin() + static_cast<std::ptrdiff_t>(current_idx_),
-                         epoch_order_.begin() + static_cast<std::ptrdiff_t>(current_idx_ + actual_size));
+    batch.row_ids.assign(indices, indices + actual_size);
     batch.size = actual_size;
-    current_idx_ += actual_size;
     return batch;
 }
 
@@ -301,6 +323,38 @@ void AudioDatasetBatcher::SetOneHotEncoding(size_t num_classes) {
 
 void AudioDatasetBatcher::SetFlatten(bool flatten) {
     flatten_ = flatten;
+}
+
+SampleSplitSettings AudioTrainingSplit(const TrainingConfiguration& config) {
+    return {config.train_ratio, config.val_ratio, config.test_ratio, config.stratified,
+            static_cast<uint32_t>(config.split_seed)};
+}
+
+std::shared_ptr<AudioDatasetBatcher> MakeAudioTrainingBatcher(const DataRegistry::AudioDatasetEntry& entry,
+                                                              const TrainingConfiguration& config, int batch_size,
+                                                              const SampleSplitSettings& split) {
+    auto batcher = std::make_shared<AudioDatasetBatcher>(entry, config.audio_preprocessing, batch_size, split,
+                                                         config.shuffle, config.num_workers,
+                                                         static_cast<uint32_t>(config.dataloader_seed));
+    batcher->SetDropLast(config.drop_last);
+    if (config.preprocessing.has_normalization)
+        batcher->SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);
+    if (UsesScalarBinaryTargets(config.loss_type)) {
+        batcher->SetScalarLabelMode(true);
+    } else if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
+        batcher->SetOneHotEncoding(config.preprocessing.num_classes);
+    }
+    return batcher;
+}
+
+void ApplyAudioInputShape(const AudioDatasetBatcher& batcher, TrainingConfiguration& config) {
+    const auto rows = static_cast<size_t>(batcher.GetFeatureRows());
+    const auto cols = static_cast<size_t>(batcher.GetFeatureCols());
+    config.input_size = rows * cols;
+    config.input_shape = {rows, cols};
+    // [rows, cols] = [bins, frames] per sample, torch [N, C, L]: a Conv1D
+    // convolves over the frames with one channel per bin.
+    config.sequence_input_shape = {cols, rows};
 }
 
 } // namespace cyxwiz
