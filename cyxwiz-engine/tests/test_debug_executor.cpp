@@ -29,11 +29,13 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 
@@ -2324,8 +2326,7 @@ void TestDebugExecutorInputSample() {
 // graph plan), not as a straight chain. The 1.8 ResNet example (skips into
 // Add, stride-2 blocks with 1x1 projections) used to stop at the first
 // stride-2 block with "Conv2D forward input channel mismatch".
-void TestDebugExecutorResNetExample() {
-    spdlog::info("--- TestDebugExecutorResNetExample ---");
+TrainingConfiguration CompileResNetExample() {
     cyxwiz::GraphCompilerDatasetHooks hooks;
     hooks.is_dataset_registered = [](const std::string&) { return false; };
     hooks.labels_from_structure = [](const std::string& category) -> std::optional<bool> {
@@ -2346,7 +2347,12 @@ void TestDebugExecutorResNetExample() {
     ExpectTrue(cyxwiz::ParseGraphDocument(text, graph, error), "ResNet example loads: " + error);
     auto config = cyxwiz::GraphCompiler{}.Compile(graph.nodes, graph.links, /*allow_unloaded_data=*/true);
     ExpectTrue(config.is_valid, "ResNet example compiles without its data");
+    return config;
+}
 
+void TestDebugExecutorResNetExample() {
+    spdlog::info("--- TestDebugExecutorResNetExample ---");
+    const auto config = CompileResNetExample();
     DebugExecutor exe(config);
     const auto res = exe.Run();
     ExpectTrue(res.reached == DebugStage::Complete && res.success,
@@ -2412,6 +2418,185 @@ void TestDebugExecutorResNetExample() {
                "a batch-first picked image runs the ResNet: " + picked_res.failure_summary);
     spdlog::info("  OK: ResNet layer_traces={}, params_with_grad={}, loss={}",
                  res.layer_traces.size(), res.params_with_grad, res.loss_value);
+}
+
+// TOFIX178 6.1a: Local Debug keeps what every layer held.
+std::vector<float> HostValues(const Tensor& t) {
+    const float* data = t.ReadData<float>();
+    return std::vector<float>(data, data + t.NumElements());
+}
+
+float MaxAbsDifference(const std::vector<float>& a, const std::vector<float>& b) {
+    if (a.size() != b.size()) return std::numeric_limits<float>::infinity();
+    float worst = 0.0f;
+    for (size_t i = 0; i < a.size(); ++i) worst = std::max(worst, std::fabs(a[i] - b[i]));
+    return worst;
+}
+
+const CapturedLayer& CapturedNamed(const LayerCapture& capture, const std::string& name) {
+    for (const auto& layer : capture.Layers())
+        if (layer.node_name == name) return layer;
+    std::cerr << "FAIL: no captured layer named " << name << "\n";
+    std::exit(1);
+}
+
+const Tensor& CapturedTensorOf(const CapturedLayer& layer, CapturedTensorRole role, const std::string& name = {}) {
+    const CapturedTensor* t = layer.Find(role, name);
+    ExpectTrue(t != nullptr, layer.node_name + " captured its " + CapturedTensorRoleName(role) + " " + name);
+    return t->tensor;
+}
+
+void TestLayerCaptureTabular() {
+    spdlog::info("--- TestLayerCaptureTabular ---");
+    const auto cfg = MakeTabularConfig();
+
+    DebugExecutor off(cfg);
+    const auto plain = off.Run();
+    ExpectTrue(plain.success && !plain.layer_capture, "capture off: nothing is kept");
+
+    DebugExecutor exe(cfg);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "capture on: the run keeps its layers");
+    const LayerCapture& capture = *res.layer_capture;
+    ExpectEq(capture.Layers().size(), 3, "one captured layer per module");
+    ExpectTrue(!capture.Truncated(), "a small model fits the default budget");
+    size_t bytes = 0;
+    for (size_t i = 0; i < capture.Layers().size(); ++i) {
+        const auto& layer = capture.Layers()[i];
+        ExpectEq(layer.module_index, i, "captured layers in run order");
+        ExpectEq(static_cast<size_t>(layer.node_id), static_cast<size_t>(101 + i), "captured layer node id");
+        ExpectTrue(layer.node_name == res.layer_traces[i].name, "captured layer named as its trace");
+        const Tensor& output = CapturedTensorOf(layer, CapturedTensorRole::Output);
+        ExpectTrue(output.Shape() == res.layer_traces[i].actual_shape, layer.node_name + " output shape");
+        for (const auto& t : layer.tensors) bytes += t.tensor.NumBytes();
+        if (i + 1 < capture.Layers().size()) {
+            const Tensor& next_input = CapturedTensorOf(capture.Layers()[i + 1], CapturedTensorRole::Input);
+            ExpectTrue(MaxAbsDifference(HostValues(output), HostValues(next_input)) == 0.0f,
+                       layer.node_name + " output is the next layer's input");
+        }
+    }
+    ExpectEq(capture.BytesHeld(), bytes, "bytes held is what the layers keep");
+
+    // The kept weights are the ones that ran: Dense recomputed on the host
+    // from the captured input, weight and bias gives the captured output.
+    const auto& dense = capture.Layers()[0];
+    const auto x = HostValues(CapturedTensorOf(dense, CapturedTensorRole::Input));
+    const Tensor& w_tensor = CapturedTensorOf(dense, CapturedTensorRole::Parameter, "weight");
+    const auto w = HostValues(w_tensor);
+    const auto b = HostValues(CapturedTensorOf(dense, CapturedTensorRole::Parameter, "bias"));
+    const auto y = HostValues(CapturedTensorOf(dense, CapturedTensorRole::Output));
+    const size_t in = 10, out = 32, rows = x.size() / in;
+    const bool out_by_in = w_tensor.Shape() == std::vector<size_t>{out, in};
+    ExpectTrue(out_by_in || w_tensor.Shape() == std::vector<size_t>{in, out}, "Dense weight is [out, in] or [in, out]");
+    float worst = 0.0f;
+    for (size_t r = 0; r < rows; ++r)
+        for (size_t o = 0; o < out; ++o) {
+            double sum = b[o];
+            for (size_t k = 0; k < in; ++k) sum += x[r * in + k] * w[out_by_in ? o * in + k : k * out + o];
+            worst = std::max(worst, std::fabs(static_cast<float>(sum) - y[r * out + o]));
+        }
+    ExpectTrue(worst < 1e-4f, "Dense output recomputed from the captured tensors, worst " + std::to_string(worst));
+
+    // Parameters and gradients are the model's, before the optimizer step:
+    // the same norms Local Debug reports.
+    size_t gradients = 0;
+    for (const auto& entry : res.grad_norms) {
+        const auto& layer = capture.Layers().at(static_cast<size_t>(entry.layer_index));
+        const auto field = entry.param_name.substr(entry.param_name.find('.') + 1);
+        const auto p = HostValues(CapturedTensorOf(layer, CapturedTensorRole::Parameter, field));
+        const auto g = HostValues(CapturedTensorOf(layer, CapturedTensorRole::Gradient, field));
+        double p2 = 0, g2 = 0;
+        for (float v : p) p2 += double(v) * v;
+        for (float v : g) g2 += double(v) * v;
+        ExpectNear(static_cast<float>(std::sqrt(p2)), entry.parameter_l2_norm, 1e-4f * (1 + entry.parameter_l2_norm),
+                   "captured parameter is the model's");
+        ExpectNear(static_cast<float>(std::sqrt(g2)), entry.l2_norm, 1e-4f * (1 + entry.l2_norm),
+                   "captured gradient is the model's");
+        ++gradients;
+    }
+    ExpectEq(gradients, 4, "two Dense layers: weight and bias gradients");
+
+    // What to keep.
+    DebugExecutor weights_only(cfg);
+    weights_only.SetLayerCapture({/*activations=*/false, /*parameters=*/true, /*gradients=*/false});
+    const auto w_res = weights_only.Run();
+    ExpectEq(w_res.layer_capture->Layers().size(), 2, "weights only: the two Dense layers");
+    for (const auto& layer : w_res.layer_capture->Layers())
+        for (const auto& t : layer.tensors)
+            ExpectTrue(t.role == CapturedTensorRole::Parameter, "weights only keeps parameters");
+
+    // The budget: tensors past it are skipped and counted, none is cut.
+    LayerCaptureOptions small;
+    small.byte_budget = bytes / 2;
+    DebugExecutor bounded(cfg);
+    bounded.SetLayerCapture(small);
+    const auto b_res = bounded.Run();
+    const LayerCapture& kept = *b_res.layer_capture;
+    ExpectTrue(b_res.success && kept.Truncated(), "a budget below the model's tensors truncates");
+    ExpectTrue(kept.BytesHeld() <= small.byte_budget, "held within the budget");
+    ExpectEq(kept.BytesHeld() + kept.SkippedBytes(), bytes, "held + skipped is everything");
+    size_t held_tensors = 0, all_tensors = 0;
+    for (const auto& layer : kept.Layers()) held_tensors += layer.tensors.size();
+    for (const auto& layer : capture.Layers()) all_tensors += layer.tensors.size();
+    ExpectEq(held_tensors + kept.SkippedTensors(), all_tensors, "held + skipped tensors is every tensor");
+    spdlog::info("  OK: capture {} bytes, Dense recompute worst {}", bytes, worst);
+}
+
+// The graph model (branches into Add): each layer is captured with its
+// compiled name, BatchNorm keeps its running statistics as state, and the
+// ReLU after a block is fed the sum of the block's two branches.
+void TestLayerCaptureResNetExample() {
+    spdlog::info("--- TestLayerCaptureResNetExample ---");
+    const auto config = CompileResNetExample();
+    DebugExecutor exe(config);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "ResNet runs with capture: " + res.failure_summary);
+    const LayerCapture& capture = *res.layer_capture;
+    ExpectTrue(!capture.Truncated(), "the ResNet's one-image step fits the default budget");
+    ExpectEq(capture.Layers().size(), res.layer_traces.size(), "one captured layer per layer that ran");
+    for (const auto& trace : res.layer_traces) {
+        const auto& layer = CapturedNamed(capture, trace.name);
+        ExpectTrue(CapturedTensorOf(layer, CapturedTensorRole::Output).Shape() == trace.actual_shape,
+                   trace.name + " captured output shape");
+        ExpectTrue(CapturedTensorOf(layer, CapturedTensorRole::Input).Shape() == trace.actual_input_shape,
+                   trace.name + " captured input shape");
+    }
+    size_t state = 0;
+    for (const auto& layer : capture.Layers())
+        for (const auto& t : layer.tensors)
+            if (t.role == CapturedTensorRole::State) {
+                ++state;
+                ExpectTrue(t.name.rfind("running_", 0) == 0, layer.node_name + " state is a running statistic");
+                ExpectTrue(!layer.Find(CapturedTensorRole::Gradient, t.name), "no gradient for state " + t.name);
+            }
+    ExpectEq(state, res.state_tensors, "every running statistic kept as state");
+    const auto& stem = CapturedNamed(capture, "Conv 32 stem");
+    ExpectTrue(CapturedTensorOf(stem, CapturedTensorRole::Gradient, "weights").Shape() ==
+                   CapturedTensorOf(stem, CapturedTensorRole::Parameter, "weights").Shape(),
+               "the stem's weight gradient has the weight's shape");
+    ExpectTrue(MaxAbsDifference(HostValues(CapturedTensorOf(stem, CapturedTensorRole::Output)),
+                                HostValues(CapturedTensorOf(CapturedNamed(capture, "BN stem"),
+                                                            CapturedTensorRole::Input))) == 0.0f,
+               "the stem's output is BN stem's input");
+
+    const auto add_input = [&](const std::string& relu, const std::string& main, const std::string& skip) {
+        const auto in = HostValues(CapturedTensorOf(CapturedNamed(capture, relu), CapturedTensorRole::Input));
+        const auto a = HostValues(CapturedTensorOf(CapturedNamed(capture, main), CapturedTensorRole::Output));
+        const auto b = HostValues(CapturedTensorOf(CapturedNamed(capture, skip), CapturedTensorRole::Output));
+        ExpectTrue(in.size() == a.size() && a.size() == b.size(), relu + " input and branch sizes agree");
+        float worst = 0.0f;
+        for (size_t i = 0; i < in.size(); ++i) worst = std::max(worst, std::fabs(in[i] - (a[i] + b[i])));
+        ExpectTrue(worst < 1e-5f, relu + " input is " + main + " + " + skip + ", worst " + std::to_string(worst));
+        const auto out = HostValues(CapturedTensorOf(CapturedNamed(capture, relu), CapturedTensorRole::Output));
+        float relu_worst = 0.0f;
+        for (size_t i = 0; i < in.size(); ++i) relu_worst = std::max(relu_worst, std::fabs(out[i] - std::max(0.0f, in[i])));
+        ExpectTrue(relu_worst == 0.0f, relu + " output is max(0, input)");
+    };
+    add_input("ReLU s1", "BN s1b", "ReLU stem");  // identity skip
+    add_input("ReLU s2", "BN s2b", "BN s2s");     // 1x1 projection skip
+    spdlog::info("  OK: ResNet capture {} layers, {} MB", capture.Layers().size(), capture.BytesHeld() >> 20);
 }
 
 void TestDebugExecutorBinaryHeadBackward() {
@@ -2914,6 +3099,8 @@ int main(int argc, char** argv) {
         TestDebugExecutorGoldenPath();
         TestDebugExecutorResNetExample();
         TestDebugExecutorInputSample();
+        TestLayerCaptureTabular();
+        TestLayerCaptureResNetExample();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();
         TestDebugExecutorSkippedLayerMapping();

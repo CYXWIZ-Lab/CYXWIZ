@@ -5,6 +5,7 @@
 #include "executable_model.h"
 #include "graph_compiler.h"
 #include "graph_model.h"
+#include "layer_capture.h"
 #include <cyxwiz/loss.h>
 #include <cyxwiz/optimizer.h>
 #include <cyxwiz/sequential.h>
@@ -12,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -124,6 +126,9 @@ struct DebugResult {
     // statistics): no gradient is expected, so these are not in grad_norms.
     size_t state_tensors = 0;
 
+    // What every layer held (SetLayerCapture); null when capture is off.
+    std::shared_ptr<const LayerCapture> layer_capture;
+
     std::vector<ValidationIssue> issues;
 
     std::chrono::steady_clock::time_point timestamp{};
@@ -148,6 +153,10 @@ public:
     // item, see debug_sample_source.h). `description` names it in the result.
     void SetInputSample(Tensor features, Tensor labels, std::string description);
 
+    // Keep what every layer held during the run in DebugResult::layer_capture
+    // (TOFIX178 6.1a). Off unless set.
+    void SetLayerCapture(LayerCaptureOptions options);
+
     // Execute the debug pass. Catches exceptions at every stage — a
     // throw leaves `result.reached` at the stage where it failed and
     // `result.failure_summary` set to the exception message.
@@ -161,6 +170,7 @@ private:
     Tensor input_features_;
     Tensor input_labels_;
     std::string input_description_;
+    std::optional<LayerCaptureOptions> capture_options_;
 };
 
 } // namespace cyxwiz

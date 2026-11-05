@@ -236,6 +236,10 @@ void DebugExecutor::SetInputSample(Tensor features, Tensor labels, std::string d
     input_description_ = std::move(description);
 }
 
+void DebugExecutor::SetLayerCapture(LayerCaptureOptions options) {
+    capture_options_ = options;
+}
+
 DebugResult DebugExecutor::Run() {
     DebugResult result;
     result.timestamp = std::chrono::steady_clock::now();
@@ -269,6 +273,11 @@ DebugResult DebugExecutor::Run() {
         optimizer_ = std::move(built.optimizer);
         model_->SetTraining(true);
         const auto module_provenance = std::move(built.module_provenance);
+        std::shared_ptr<LayerCapture> capture;
+        if (capture_options_) {
+            capture = std::make_shared<LayerCapture>(*capture_options_, module_provenance);
+            result.layer_capture = capture;
+        }
 
         // ---- Synthetic batch ----------------------------------------------
         SyntheticBatch batch;
@@ -367,6 +376,7 @@ DebugResult DebugExecutor::Run() {
 
             result.layer_traces.push_back(std::move(trace));
             previous_provenance = provenance;
+            if (capture) capture->RecordForward(i, input, output);
         });
         struct ObserverReset {
             IExecutableModel& model;
@@ -406,6 +416,8 @@ DebugResult DebugExecutor::Run() {
         auto bend = std::chrono::steady_clock::now();
         result.backward_total_ms =
             std::chrono::duration<float, std::milli>(bend - bstart).count();
+
+        if (capture) capture->RecordModuleTensors(*model_);
 
         // ---- Grad norms ---------------------------------------------------
         auto params = model_->GetParameters();
