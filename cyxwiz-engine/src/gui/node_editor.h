@@ -750,6 +750,16 @@ public:
         request.branch = true;
         pending_steps_after_.push_back(std::move(request));
     }
+    // As RequestStepAfter (`branch` false) or RequestBranchAfter, and the
+    // result of `second_id` into the new node's second input (Linear Solve's
+    // b, Linear Projection's Matrix; Tools > Linear Algebra, TOFIX129 D9).
+    void RequestNodeAfter(int step_id, NodeType type, std::map<std::string, std::string> parameters, std::string name, bool branch,
+                          int second_id) {
+        PendingStepAfter request{step_id, type, false, std::move(name), {}, std::move(parameters)};
+        request.branch = branch;
+        request.second_source = second_id;
+        pending_steps_after_.push_back(std::move(request));
+    }
     // A guided step's checks as Check nodes right after it, in order (TOFIX148
     // D4; Prepare, the SQL Workbench and Properties): a collapsed recipe
     // holding the step opens first, since they are placed on the canvas.
@@ -1122,7 +1132,10 @@ private:
         std::map<std::string, std::string> parameters;  // over the node's defaults
         bool branch = false;  // RequestBranchAfter: a new reader, the step's links stay
         bool open_dialog = false;  // open the new node's dialog once it is added
+        int second_source = -1;    // the node whose result goes into the new node's second input
     };
+    // The link from `request.second_source`'s result into `step`'s second input (none when unset).
+    void LinkSecondInput(const PendingStepAfter& request, const MLNode& step);
     std::vector<PendingStepAfter> pending_steps_after_;
     static constexpr int kRemoveStep = -2;
     struct PendingStepMove {

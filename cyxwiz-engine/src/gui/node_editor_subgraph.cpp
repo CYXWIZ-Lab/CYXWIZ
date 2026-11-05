@@ -695,6 +695,7 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         }
         // It stays outside any recipe: a recipe's every step must lead to its output.
         links_.push_back({next_link_id_++, after_id, after_out, step.id, step.inputs.front().id, LinkType::TensorFlow});
+        LinkSecondInput(request, step);
         const int step_id = step.id;
         const ImVec2 position(step.initial_pos_x, step.initial_pos_y);
         nodes_.push_back(std::move(step));
@@ -773,6 +774,7 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         }
     }
     links_.push_back({next_link_id_++, after_id, after_out, step.id, step_in, LinkType::TensorFlow});
+    LinkSecondInput(request, step);
     // Inside a recipe it becomes a step of that recipe, and its output when
     // the old step was.
     for (auto& data : subgraphs_) {
@@ -794,6 +796,14 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     last_added_step_ = step_id;
     spdlog::info("Added {} node {} after node {} ({} moved right)", kind, step_id, after_id, downstream.size());
     if (request.open_dialog) OpenNodeConfiguration(step_id);
+}
+
+void NodeEditor::LinkSecondInput(const PendingStepAfter& request, const MLNode& step) {
+    if (request.second_source < 0 || step.inputs.size() < 2) return;
+    const int source_id = BranchSource(request.second_source);
+    const MLNode* source = FindNodeById(source_id);
+    if (!source || source->outputs.empty()) return;
+    links_.push_back({next_link_id_++, source_id, source->outputs.front().id, step.id, step.inputs[1].id, LinkType::TensorFlow});
 }
 
 void NodeEditor::MoveOrRemoveStep(const PendingStepMove& move) {

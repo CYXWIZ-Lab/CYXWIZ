@@ -10,6 +10,7 @@
 #include "explore_read.h"
 
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -127,6 +128,25 @@ struct TableAnswer {
 // tables line up row by row: their row counts must match, and a missing
 // value is refused there (rows cannot be left out of one side alone).
 TableAnswer RunWithTables(Request request, const Sources& sources, const QueryRunner& run, const std::function<bool()>& stop = {});
+
+// ---- The answer as a node of the graph: the same work on every run, fitted on
+// the Train rows (Add as a step / Keep as a node). Only an answer read from
+// tables has one: SVD of rows -> Truncated SVD; SVD or eigen of a covariance
+// or correlation -> PCA (and Whitening); A x = b or least squares with b from
+// a table -> Linear Solve (a branch: its result is x); A B with B from a table
+// -> Linear Projection (B into its Matrix input).
+struct HandOff {
+    std::string label;          // the button ("Add as a step: Truncated SVD")
+    std::string hint;           // what the node does on a run
+    std::string type;           // the node's import name ("TruncatedSVD")
+    std::string name;           // the node's name
+    std::map<std::string, std::string> parameters;
+    bool step = true;           // in the data path, else a branch reading A's table
+    bool second_input = false;  // B's table goes into the node's second input
+};
+// `b_number_columns`: every number column of B's table (Linear Projection
+// takes them all as its outputs, so B must use them all).
+std::vector<HandOff> HandOffs(Op op, const Sources& sources, int keep, const std::vector<std::string>& b_number_columns);
 
 // A matrix from pasted text: rows on lines, values split by tabs, commas,
 // semicolons or spaces; a first line or column of names is left out. Every

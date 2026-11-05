@@ -10,6 +10,8 @@
 #include "../../core/linear_algebra_presentation.h"
 #include "../data_studio/explore_tab.h"
 
+#include <functional>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -25,6 +27,9 @@ public:
     void SetVisible(bool v) { visible_ = v; }
     // Opens the window on the operation `id` ("svd", "multiply", ...).
     void Open(const std::string& id);
+    // Add as a step / Keep as a node: (A's table, B's table or empty, the node) -> what happened.
+    using AddToGraph = std::function<std::string(const std::string&, const std::string&, const linalg::HandOff&)>;
+    void SetAddToGraph(AddToGraph add) { add_to_graph_ = std::move(add); }
 
 private:
     struct Job {
@@ -53,6 +58,9 @@ private:
     void RenderRead(const linalg::TableMatrix& read, const char* title);
     // A typed grid; true when a value changed.
     bool RenderGrid(const char* id, linalg::Matrix& m, bool rows_fixed);
+    void RenderHandOffs();
+    // The inputs that come from tables, as chosen.
+    linalg::Sources CurrentSources() const;
     void SetOp(linalg::Op op);
     void LoadExample();
     void Changed();
@@ -85,6 +93,7 @@ private:
     int tab_ = 0;
     std::string message_;
     bool message_error_ = false;
+    AddToGraph add_to_graph_;
 };
 
 }  // namespace cyxwiz

@@ -869,4 +869,41 @@ std::string CopyText(const Answer& answer, size_t tab) {
 
 std::string Csv(const Table& table) { return Rows(table, ',', true); }
 
+std::vector<HandOff> HandOffs(Op op, const Sources& sources, int keep, const std::vector<std::string>& b_number_columns) {
+    std::vector<HandOff> out;
+    if (!sources.a || sources.a->columns.empty()) return out;
+    const TableChoice& a = *sources.a;
+    std::string features;
+    for (const auto& c : a.columns) features += (features.empty() ? "" : ",") + c;
+    const std::string components = std::to_string(std::clamp<int>(keep, 1, static_cast<int>(a.columns.size())));
+    if (op == Op::SVD && a.matrix == FromTable::Rows) {
+        out.push_back({"Add as a step: Truncated SVD", "Fits the top " + components + " directions on the Train rows of every run and maps each row onto them",
+                       "TruncatedSVD", "Truncated SVD (" + components + ")", {{"feature_cols", features}, {"n_components", components}}});
+    }
+    if ((op == Op::SVD || op == Op::Eigen) && a.matrix != FromTable::Rows) {
+        const bool scale = a.matrix == FromTable::Correlation;
+        out.push_back({"Add as a step: PCA", std::string("Fits the principal directions of the ") + (scale ? "correlation" : "covariance") +
+                           " on the Train rows of every run and maps each row onto the top " + components,
+                       "PCANode", "PCA (" + components + ")",
+                       {{"feature_cols", features}, {"n_components", components}, {"center", "true"}, {"scale", scale ? "true" : "false"}}});
+        if (!scale)
+            out.push_back({"Add as a step: Whitening", "Rotates and rescales the columns on the Train rows' covariance of every run: no correlation, variance 1",
+                           "Whitening", "Whitening (PCA)", {{"feature_cols", features}, {"method", "pca"}, {"n_components", "0"}}});
+    }
+    if ((op == Op::Solve || op == Op::LeastSquares) && a.matrix == FromTable::Rows && sources.b && !sources.b->columns.empty()) {
+        std::string b_cols;
+        for (const auto& c : sources.b->columns) b_cols += (b_cols.empty() ? "" : ",") + c;
+        const bool two = sources.b->table != a.table;
+        out.push_back({"Keep as a node: Linear Solve", std::string("Solves for x on the Train rows of every run") + (two ? " (b's table into its b input)" : ""),
+                       "LinearSolve", "Linear Solve (" + b_cols + ")",
+                       {{"a_cols", features}, {"b_cols", b_cols}, {"method", op == Op::Solve ? "solve" : "least_squares"}}, false, two});
+    }
+    if (op == Op::Multiply && a.matrix == FromTable::Rows && sources.b && sources.b->matrix == FromTable::Rows && sources.b->table != a.table &&
+        sources.b->columns == b_number_columns) {
+        out.push_back({"Add as a step: Linear Projection", "Multiplies each row of every run by B (B's table into its Matrix input)",
+                       "LinearProjection", "Linear Projection", {{"feature_cols", features}}, true, true});
+    }
+    return out;
+}
+
 }  // namespace cyxwiz::linalg

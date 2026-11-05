@@ -134,10 +134,7 @@ void LinearAlgebraPanel::Render() {
     }
     if (key_ != stopped_key_) {
         const linalg::Request request = request_;
-        linalg::Sources sources;
-        if (source_ == 2) sources.a = a_table_.choice;
-        const auto second = linalg::InfoOf(op_).second;
-        if (b_source_ == 1 && (second == linalg::Second::MatrixB || second == linalg::Second::VectorB)) sources.b = b_table_.choice;
+        const linalg::Sources sources = CurrentSources();
         job_.Ask(std::string("Linear Algebra: ") + linalg::InfoOf(op_).label, key_, [request, sources](LambdaTask& task) {
             Job job;
             const auto start = std::chrono::steady_clock::now();
@@ -579,7 +576,37 @@ void LinearAlgebraPanel::RenderAnswer() {
     }
     ImGui::SameLine();
     ImGui::TextColored(t.text_dim, "%.0f ms on the device", shown_->milliseconds);
-    if (!message_.empty()) ImGui::TextColored(message_error_ ? t.error : t.text_dim, "%s", message_.c_str());
+    RenderHandOffs();
+    if (!message_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(message_error_ ? t.error : t.text_dim, "%s", message_.c_str());
+        ImGui::PopTextWrapPos();
+    }
+}
+
+linalg::Sources LinearAlgebraPanel::CurrentSources() const {
+    linalg::Sources sources;
+    if (source_ == 2) sources.a = a_table_.choice;
+    const auto second = linalg::InfoOf(op_).second;
+    if (b_source_ == 1 && (second == linalg::Second::MatrixB || second == linalg::Second::VectorB)) sources.b = b_table_.choice;
+    return sources;
+}
+
+// The same work as a node of the graph, on every run (only for an answer read from tables).
+void LinearAlgebraPanel::RenderHandOffs() {
+    if (!add_to_graph_ || shown_key_ != key_ || !shown_->result.answer.ok()) return;
+    const linalg::Sources sources = CurrentSources();
+    const std::vector<linalg::HandOff> offs = linalg::HandOffs(op_, sources, low_rank_, b_table_.columns);
+    if (offs.empty()) return;
+    ImGui::Spacing();
+    for (size_t i = 0; i < offs.size(); ++i) {
+        if (i > 0) ExploreNextButton(offs[i].label.c_str());
+        if (ui::SecondaryButton(offs[i].label.c_str())) {
+            message_ = add_to_graph_(sources.a->table, offs[i].second_input ? sources.b->table : std::string(), offs[i]);
+            message_error_ = message_.rfind("Added", 0) != 0;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", offs[i].hint.c_str());
+    }
 }
 
 void LinearAlgebraPanel::Export(const linalg::Table& table) {

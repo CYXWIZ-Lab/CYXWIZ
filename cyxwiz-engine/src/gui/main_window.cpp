@@ -766,6 +766,9 @@ MainWindow::MainWindow()
 
     // Data Studio's Show graph, Open dialog and Add Data Input bring the
     // CyxWiz Studio tab to the front (a node is added when Studio draws).
+    linear_algebra_panel_->SetAddToGraph([this](const std::string& a, const std::string& b, const cyxwiz::linalg::HandOff& h) {
+        return data_studio_panel_->AddNodeReading(a, h.type, h.name, h.parameters, h.step, b);
+    });
     data_studio_panel_->SetOpenNodeEditorCallback([this]() {
         if (node_editor_) {
             node_editor_->Raise();
