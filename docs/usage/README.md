@@ -52,7 +52,7 @@ To write your own nodes in Python or C++, see
 | [Time series](time_series.md) | Explore > Series and Forecast, and the time series nodes |
 | [Signal processing](signal_processing.md) | Explore > Signal: spectrum, spectrogram, filters, wavelets |
 | [Text](text.md) | Explore > Text: words, TF-IDF terms, VADER sentiment, tokens, word vectors and the word map |
-| [Linear algebra tools](linear_algebra.md) | Matrix calculator, SVD, QR, Cholesky, Eigen |
+| [Linear algebra](linear_algebra.md) | Tools > Linear Algebra (matrices typed, pasted or from tables; into the graph), the PCA, Truncated SVD, Whitening, Linear Solve and Linear Projection nodes |
 | [Feature Importance](feature_importance.md) | Which columns matter to a model |
 | [Analysis demo graph](analysis_demo_graph.md) | Analysis nodes working together on one dataset |
 | [Plotting](plotting.md) | Plots, the Plot node and Python plotting |

@@ -11,9 +11,18 @@ run is refused or fails, the tab or the node says why.
 As scikit-learn `PCA`: the components are the eigenvectors of the covariance
 (divided by n − 1), largest first, each signed so its largest entry is positive.
 "Scale" divides each feature by its standard deviation first (constant features
-are left as they are). Asking for more components than min(rows, features), or
-0, gives that minimum. Checked against PyTorch to 1e-8 (5e-5 on a GPU without
-float64, such as an Intel Iris Xe).
+are left as they are). In the Projection tab, asking for more components than
+min(rows, features), or 0, gives that minimum; the node refuses more components
+than features or Train rows, with the reason. Checked against PyTorch to 1e-8
+(5e-5 on a GPU without float64, such as an Intel Iris Xe).
+
+The node learns from the Train rows, as scikit-learn's
+`PCA().fit(X_train).transform(X)`: with a Data Split in the graph, the
+covariance (and the means and scales) come from the Train rows only, and every
+row is then mapped onto those directions. Without a Split it learns from every
+row. Its fitted state (the means, the scales and the directions) is saved with
+the step like the scalers' (Fitted preprocessing state in Properties), so a run
+in `transform` mode maps new rows with the directions it learned.
 
 ## t-SNE
 
@@ -71,7 +80,9 @@ first that the n × n matrix fits in memory.
 - **PCA**: **keep_columns** (default off) keeps the input columns and adds
   Float64 `pc_0` .. beside them, null on rows missing a feature. Off, the
   output is Float32 `pc_*` (and the label as `y`) for the rows with every
-  feature. **scale** standardises first.
+  feature. **scale** standardises first. The other linear steps (Truncated
+  SVD, Whitening, Linear Projection) and Linear Solve are in
+  [Linear algebra](linear_algebra.md#the-nodes).
 - **t-SNE** and **UMAP**: `tsne_*` / `umap_*` beside the input columns
   (keep_columns, default on), standardised first (standardise, default on),
   2 or 3 dimensions. t-SNE takes perplexity, learning_rate (0, the default:
