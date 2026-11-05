@@ -189,6 +189,17 @@ void CheckOperators() {
         Check(SparseFeatureDatasetCache::SaveAtomically(**sparse, file.string()).ok(), "save the sparse dataset");
         auto loaded = SparseFeatureDatasetCache::Load(file.string());
         Check(loaded.ok() && (*loaded)->GetPartition() == want, "the cache file keeps the partition");
+
+        // Truncated SVD reads the sparse features without a dense copy (TOFIX129
+        // D9): the same components as on the dense tfidf_* columns.
+        TruncatedSVDOperator on_dense, on_sparse;
+        const auto from_dense = Run(on_dense, {{"feature_cols", "tfidf_0,tfidf_1,tfidf_2,tfidf_3"}, {"n_components", "2"}}, out);
+        Check(on_sparse.Configure({{"n_components", "2"}}, error), "sparse Truncated SVD configure: " + error);
+        const auto from_sparse = on_sparse.ApplySparseInput(**sparse);
+        Check(from_sparse.ok(), "Truncated SVD on sparse TF-IDF: " + from_sparse.status().ToString());
+        Expect(Column(*from_sparse, "svd_0"), Column(from_dense, "svd_0"), "Truncated SVD: sparse = dense, component 1");
+        Expect(Column(*from_sparse, "svd_1"), Column(from_dense, "svd_1"), "Truncated SVD: sparse = dense, component 2");
+        CheckPartitionCarried(*from_sparse, "Truncated SVD on sparse features");
         std::error_code ec;
         fs::remove(file, ec);
         for (const auto& [phase, rows] : std::vector<std::pair<BatcherPhase, size_t>>{

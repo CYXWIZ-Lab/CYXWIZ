@@ -661,9 +661,15 @@ void ValidateSparseFeatureTrainingContract(
     for (int node_id : sorted_ids) {
         if (training_path_ids.count(node_id) == 0) continue;
         const auto* node = FindNodeById(nodes, node_id);
-        if (node && RequestsSparseFeatureOutput(*node)) {
-            sparse_vectorizers.push_back(node);
-        }
+        if (!node || !RequestsSparseFeatureOutput(*node)) continue;
+        // A Truncated SVD after it reads the sparse features and gives dense
+        // columns (TOFIX129 D9): training then reads a table, not sparse batches.
+        const auto after = CollectReachableNodeIds(node->id, links);
+        const bool densified = std::any_of(after.begin(), after.end(), [&](int id) {
+            const auto* next = FindNodeById(nodes, id);
+            return next && training_path_ids.count(id) && next->type == gui::NodeType::TruncatedSVD;
+        });
+        if (!densified) sparse_vectorizers.push_back(node);
     }
     if (sparse_vectorizers.empty()) return;
 

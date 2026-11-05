@@ -41,7 +41,6 @@ protected:
     // The map from the Train rows `train` [n × d] of `features`.
     virtual arrow::Status Fit(const LinearMatrix& train, const std::vector<std::string>& features, LinearMap& map) = 0;
 
-private:
     std::vector<std::string> feature_cols_;  // empty: every number column but the label
     std::string label_col_;
     bool keep_columns_ = false;
@@ -52,6 +51,10 @@ private:
 class TruncatedSVDOperator : public FittedLinearOperator {
 public:
     std::string GetName() const override { return "TruncatedSVD"; }
+    // TF-IDF / Count set to Sparse: fitted from the Train rows' X^T X, every
+    // row mapped by a sparse product (no dense copy of the features).
+    bool AcceptsSparseInput() const override { return true; }
+    arrow::Result<std::shared_ptr<arrow::Table>> ApplySparseInput(const SparseFeatureDataset& input) override;
 
 protected:
     bool ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) override;

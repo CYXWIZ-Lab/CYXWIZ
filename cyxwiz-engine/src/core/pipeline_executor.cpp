@@ -6309,7 +6309,9 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
 
     auto& registry = DataRegistry::Instance();
     auto input_table = InputSchemaTable(input_dataset_name);
-    if (!input_table) {
+    // Sparse features (a vectorizer set to Sparse) go to a step that reads them (TOFIX129 D9).
+    const auto sparse_input = input_table ? nullptr : registry.GetSparseFeatureDataset(input_dataset_name);
+    if (!input_table && !sparse_input) {
         ReportError(node.type + ": input dataset '" + input_dataset_name + "' is not a table");
         return false;
     }
@@ -6388,6 +6390,33 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
                         ? node.type + ": operator configuration failed"
                         : configure_error);
         return false;
+    }
+
+    if (sparse_input) {
+        if (!op->AcceptsSparseInput()) {
+            ReportError(node.type + ": its input is sparse features (a vectorizer set to Sparse), which this step cannot read: "
+                                    "set the vectorizer's Output format to Dense, or put Truncated SVD between them");
+            return false;
+        }
+        arrow::Result<std::shared_ptr<arrow::Table>> mapped;
+        try {
+            mapped = op->ApplySparseInput(*sparse_input);
+        } catch (const OperatorMemoryLimitReached& stop) {
+            ReportError(node.type + ": " + stop.message);
+            return false;
+        }
+        if (!mapped.ok()) {
+            ReportError(node.type + ": operator execution failed: " + mapped.status().ToString());
+            return false;
+        }
+        if (!registry.RegisterArrowTable(mapped.ValueOrDie(), output_dataset_name)) {
+            ReportError(node.type + ": failed to register operator output dataset");
+            return false;
+        }
+        ctx.node_results[node.id] = output_dataset_name;
+        ctx.output_dataset = output_dataset_name;
+        if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) ctx.node_outcomes[node.id] = std::move(outcome);
+        return true;
     }
 
     std::string schema_error;

@@ -1,5 +1,6 @@
 #include "linear_algebra_operators.h"
 
+#include "../sparse_feature_dataset.h"
 #include "../split_partitioning.h"
 
 #include <cyxwiz/linear_algebra.h>
@@ -114,14 +115,12 @@ bool TruncatedSVDOperator::ConfigureOwn(const std::map<std::string, std::string>
 
 std::map<std::string, std::string> TruncatedSVDOperator::Settings() const { return {{"n_components", std::to_string(n_components_)}}; }
 
-arrow::Status TruncatedSVDOperator::Fit(const LinearMatrix& train, const std::vector<std::string>& features, LinearMap& map) {
-    const size_t d = features.size(), k = static_cast<size_t>(n_components_);
-    if (k > std::min(train.size(), d))
-        return arrow::Status::Invalid("TruncatedSVD: n_components (" + std::to_string(k) + ") is above min(Train rows, features) = " +
-                                      std::to_string(std::min(train.size(), d)));
-    const SVDResult svd = LinearAlgebra::SVD(train, false);
-    if (!svd.success) return arrow::Status::ExecutionError("TruncatedSVD: " + svd.error_message);
-    LinearMatrix vt(svd.Vt.begin(), svd.Vt.begin() + static_cast<std::ptrdiff_t>(k));
+namespace {
+
+// The map x V_k from the right singular vectors Vt (rows), signed.
+void SvdMap(const LinearMatrix& right, const std::vector<std::string>& features, size_t k, LinearMap& map) {
+    const size_t d = features.size();
+    LinearMatrix vt(right.begin(), right.begin() + static_cast<std::ptrdiff_t>(k));
     SignComponents(vt);
     map.inputs = features;
     map.shift.assign(d, 0.0);
@@ -131,7 +130,120 @@ arrow::Status TruncatedSVDOperator::Fit(const LinearMatrix& train, const std::ve
         map.outputs.push_back("svd_" + std::to_string(c));
         for (size_t j = 0; j < d; ++j) map.w[j][c] = vt[c][j];
     }
+}
+
+}  // namespace
+
+arrow::Status TruncatedSVDOperator::Fit(const LinearMatrix& train, const std::vector<std::string>& features, LinearMap& map) {
+    const size_t d = features.size(), k = static_cast<size_t>(n_components_);
+    if (k > std::min(train.size(), d))
+        return arrow::Status::Invalid("TruncatedSVD: n_components (" + std::to_string(k) + ") is above min(Train rows, features) = " +
+                                      std::to_string(std::min(train.size(), d)));
+    const SVDResult svd = LinearAlgebra::SVD(train, false);
+    if (!svd.success) return arrow::Status::ExecutionError("TruncatedSVD: " + svd.error_message);
+    SvdMap(svd.Vt, features, k, map);
     return arrow::Status::OK();
+}
+
+arrow::Result<std::shared_ptr<arrow::Table>> TruncatedSVDOperator::ApplySparseInput(const SparseFeatureDataset& input) {
+    const std::string name = GetName();
+    if (keep_columns_) return arrow::Status::Invalid(name + ": Keep columns needs a table; sparse features have no columns to keep");
+    std::vector<std::string> features = input.GetFeatureNames();
+    if (features.size() != static_cast<size_t>(input.GetNumFeatures())) {
+        features.clear();
+        for (int64_t j = 0; j < input.GetNumFeatures(); ++j) features.push_back("f" + std::to_string(j));
+    }
+    const auto& offsets = input.GetRowOffsets();
+    const auto& columns = input.GetColumnIndices();
+    const auto& values = input.GetValues();
+    const auto& partition = input.GetPartition();
+    CsrView all;
+    all.rows = static_cast<int>(input.GetNumRows());
+    all.cols = static_cast<int>(input.GetNumFeatures());
+    all.row_offsets = offsets.data();
+    all.column_indices = columns.data();
+    all.values = values.data();
+    LinearMap map;
+    int64_t fit_rows = 0;
+    if (options_.IsTransformOnly()) {
+        FittedPreprocessingState state;
+        std::string error;
+        if (!LoadFittedPreprocessingState(options_.state_path, name, state, error) ||
+            !ValidateFittedPreprocessingConfiguration(state, Settings(), error) || !LinearMapFromState(state, map, error))
+            return arrow::Status::Invalid(name + ": " + error);
+        if (map.inputs != features)
+            return arrow::Status::Invalid(name + ": the features differ from the saved values' (fit the vectorizer and this step together)");
+        fit_rows = state.fit_rows;
+    } else {
+        // The Train rows' CSR (all rows when the run marks none).
+        std::vector<int> train_offsets{0}, train_columns;
+        std::vector<float> train_values;
+        CsrView train = all;
+        if (!partition.empty()) {
+            for (int r = 0; r < all.rows; ++r) {
+                if (partition[static_cast<size_t>(r)] != 0) continue;
+                for (int k = offsets[static_cast<size_t>(r)]; k < offsets[static_cast<size_t>(r) + 1]; ++k) {
+                    train_columns.push_back(columns[static_cast<size_t>(k)]);
+                    train_values.push_back(values[static_cast<size_t>(k)]);
+                }
+                train_offsets.push_back(static_cast<int>(train_columns.size()));
+            }
+            train.rows = static_cast<int>(train_offsets.size()) - 1;
+            train.row_offsets = train_offsets.data();
+            train.column_indices = train_columns.data();
+            train.values = train_values.data();
+        }
+        const size_t k = static_cast<size_t>(n_components_);
+        if (train.rows < 2) return arrow::Status::Invalid(name + ": fewer than 2 Train rows");
+        if (k > std::min<size_t>(static_cast<size_t>(train.rows), features.size()))
+            return arrow::Status::Invalid(name + ": n_components (" + std::to_string(k) + ") is above min(Train rows, features) = " +
+                                          std::to_string(std::min<size_t>(static_cast<size_t>(train.rows), features.size())));
+        // The right singular vectors of X are the eigenvectors of X^T X.
+        const MatrixResult gram = LinearAlgebra::SparseGram(train);
+        if (!gram.success) return arrow::Status::ExecutionError(name + ": " + gram.error_message);
+        ARROW_RETURN_NOT_OK(CheckCancellation(name));
+        const SVDResult svd = LinearAlgebra::SVD(gram.matrix, false);
+        if (!svd.success) return arrow::Status::ExecutionError(name + ": " + svd.error_message);
+        SvdMap(svd.Vt, features, k, map);
+        fit_rows = train.rows;
+    }
+    ARROW_RETURN_NOT_OK(CheckCancellation(name));
+    const MatrixResult mapped = LinearAlgebra::SparseMultiply(all, map.w);
+    if (!mapped.success) return arrow::Status::ExecutionError(name + ": " + mapped.error_message);
+    if (!options_.IsTransformOnly() && options_.save_state) {
+        std::string error;
+        FittedPreprocessingState state = LinearMapState(map, name, fit_rows, nullptr, Settings());
+        if (!SaveFittedPreprocessingState(options_.state_path, state, options_.state_overwrite, error))
+            return arrow::Status::IOError(name + ": failed to save the fitted values: " + error);
+    }
+    // svd_* (Float32), the label as y, the split.
+    const int64_t n = input.GetNumRows();
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::ChunkedArray>> arrays;
+    for (size_t c = 0; c < map.outputs.size(); ++c) {
+        arrow::FloatBuilder b;
+        ARROW_RETURN_NOT_OK(b.Reserve(n));
+        for (int64_t r = 0; r < n; ++r) b.UnsafeAppend(static_cast<float>(mapped.matrix[static_cast<size_t>(r)][c]));
+        std::shared_ptr<arrow::Array> a;
+        ARROW_RETURN_NOT_OK(b.Finish(&a));
+        fields.push_back(arrow::field(map.outputs[c], arrow::float32()));
+        arrays.push_back(std::make_shared<arrow::ChunkedArray>(a));
+    }
+    if (const auto& labels = input.GetLabels(); labels && labels->length() == n) {
+        fields.push_back(arrow::field("y", labels->type()));
+        arrays.push_back(std::make_shared<arrow::ChunkedArray>(labels->chunks(), labels->type()));
+    }
+    if (static_cast<int64_t>(partition.size()) == n) {
+        arrow::Int8Builder b;
+        ARROW_RETURN_NOT_OK(b.AppendValues(partition));
+        std::shared_ptr<arrow::Array> a;
+        ARROW_RETURN_NOT_OK(b.Finish(&a));
+        fields.push_back(arrow::field(kSplitPartitionColumn, arrow::int8()));
+        arrays.push_back(std::make_shared<arrow::ChunkedArray>(a));
+    }
+    spdlog::info("{}: {} rows x {} sparse features -> {} components (fitted on {} Train rows)", name, n, features.size(),
+                 map.outputs.size(), fit_rows);
+    return arrow::Table::Make(arrow::schema(fields), arrays, n);
 }
 
 // ---- Whitening

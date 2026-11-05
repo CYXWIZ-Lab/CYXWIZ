@@ -457,6 +457,75 @@ MatrixResult LinearAlgebra::LowRankApproximation(const std::vector<std::vector<d
     }
 }
 
+// ============================================================================
+// Sparse (CSR)
+// ============================================================================
+
+namespace {
+
+std::string CsrRefusal(const CsrView& X) {
+    if (X.rows <= 0 || X.cols <= 0 || !X.row_offsets) return "The sparse matrix is empty";
+    if (X.row_offsets[0] != 0) return "The sparse matrix's first row offset is not 0";
+    for (int r = 0; r < X.rows; ++r)
+        if (X.row_offsets[r + 1] < X.row_offsets[r]) return "The sparse matrix's row offsets go down";
+    if (X.row_offsets[X.rows] > 0 && (!X.column_indices || !X.values)) return "The sparse matrix has entries but no values";
+    return "";
+}
+
+// Rows [first, last) of X as a dense block on the device, in the compute
+// type: zeros with each entry scattered to its place (column-major).
+af::array DenseRows(const CsrView& X, int first, int last) {
+    const dim_t rows = last - first;
+    const int begin = X.row_offsets[first], end = X.row_offsets[last];
+    af::array block = af::constant(0.0, rows * X.cols, DeviceHasDouble() ? f64 : f32);
+    if (end > begin) {
+        std::vector<int> place(static_cast<size_t>(end - begin));
+        for (int r = first; r < last; ++r)
+            for (int k = X.row_offsets[r]; k < X.row_offsets[r + 1]; ++k)
+                place[static_cast<size_t>(k - begin)] = (r - first) + X.column_indices[k] * static_cast<int>(rows);
+        af::array values(static_cast<dim_t>(end - begin), X.values + begin);
+        block(af::array(static_cast<dim_t>(place.size()), place.data())) = values.as(block.type());
+    }
+    return af::moddims(block, rows, X.cols);
+}
+
+}  // namespace
+
+MatrixResult LinearAlgebra::SparseGram(const CsrView& X) {
+    if (const std::string refusal = CsrRefusal(X); !refusal.empty()) return Failure<MatrixResult>(refusal);
+    try {
+        // Blocks of rows made dense on the device, up to ~8M values each.
+        const int block = std::max(1, std::min(X.rows, 8000000 / std::max(1, X.cols)));
+        af::array gram = af::constant(0.0, X.cols, X.cols, DeviceHasDouble() ? f64 : f32);
+        for (int first = 0; first < X.rows; first += block) {
+            const af::array dense = DenseRows(X, first, std::min(X.rows, first + block));
+            gram += af::matmul(dense, dense, AF_MAT_TRANS, AF_MAT_NONE);
+        }
+        return MatrixFromDevice(gram, "LinearAlgebra::SparseGram");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::SparseGram", e));
+    }
+}
+
+MatrixResult LinearAlgebra::SparseMultiply(const CsrView& X, const std::vector<std::vector<double>>& B) {
+    if (const std::string refusal = CsrRefusal(X); !refusal.empty()) return Failure<MatrixResult>(refusal);
+    MatrixResult check;
+    if (!RequireMatrix(B, check)) return check;
+    if (static_cast<int>(B.size()) != X.cols)
+        return Failure<MatrixResult>("B must have as many rows as X has columns");
+    try {
+        // The CSR in float32 (the features' own type), as the device's sparse product takes it.
+        const dim_t nnz = X.row_offsets[X.rows];
+        const af::array b = ToDevice(B).as(f32);
+        if (nnz == 0) return MatrixFromDevice(af::constant(0.0, X.rows, b.dims(1), f32), "LinearAlgebra::SparseMultiply");
+        const af::array x = af::sparse(X.rows, X.cols, af::array(nnz, X.values), af::array(static_cast<dim_t>(X.rows + 1), X.row_offsets),
+                                       af::array(nnz, X.column_indices), AF_STORAGE_CSR);
+        return MatrixFromDevice(af::matmul(x, b), "LinearAlgebra::SparseMultiply");
+    } catch (const af::exception& e) {
+        return Failure<MatrixResult>(DeviceError("LinearAlgebra::SparseMultiply", e));
+    }
+}
+
 // Reduced QR (PyTorch's default): Q m x k with orthonormal columns, R k x n,
 // k = min(m, n).
 QRResult LinearAlgebra::QR(const std::vector<std::vector<double>>& A) {

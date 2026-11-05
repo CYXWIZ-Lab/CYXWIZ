@@ -557,6 +557,27 @@ int main() {
                            "must be the final preprocessing output"),
           "sparse output must reject downstream Arrow materializers at compile time");
 
+    // Truncated SVD reads the sparse features and gives dense columns
+    // (TOFIX129 D9): the path after it is a table, not a sparse batch.
+    auto lsa = Node(11,
+                    gui::NodeType::TruncatedSVD,
+                    "LSA",
+                    {Pin(1101, gui::PinType::Dataset, "Data", true)},
+                    {Pin(1102, gui::PinType::Dataset, "Transformed", false)});
+    lsa.parameters = {{"n_components", "4"}};
+    auto lsa_nodes = std::vector<gui::MLNode>{data, sparse_count, lsa, dense, loss, optimizer};
+    auto lsa_links = std::vector<gui::NodeLink>{
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 11, 1101),
+        Link(3, 11, 1102, 2, 201),
+        Link(4, 2, 202, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+    const auto lsa_config = compiler.Compile(lsa_nodes, lsa_links, true);
+    Check(!HasIssueText(lsa_config, "must be the final preprocessing output"),
+          "Truncated SVD after a sparse vectorizer is not a downstream Arrow step on sparse features");
+
     auto sparse_sequence_data = data;
     sparse_sequence_data.parameters["token_column"] = "tokens";
     auto sparse_sequence_nodes = sparse_nodes;

@@ -235,6 +235,35 @@ int main(int, char** argv) {
         }
         ++passed;
     }
+
+    // Sparse (CSR), TOFIX129 D9: X = [1 0 2; 0 3 0; 4 0 0; 0 0 5] read in two
+    // ways must give its dense products: X^T X and X B.
+    {
+        const std::vector<int> offsets = {0, 2, 3, 4, 5}, columns = {0, 2, 1, 0, 2};
+        const std::vector<float> values = {1, 2, 3, 4, 5};
+        cyxwiz::CsrView x;
+        x.rows = 4;
+        x.cols = 3;
+        x.row_offsets = offsets.data();
+        x.column_indices = columns.data();
+        x.values = values.data();
+        const auto gram = cyxwiz::LinearAlgebra::SparseGram(x);
+        Check(gram.success, "SparseGram: " + gram.error_message);
+        const std::vector<std::vector<double>> want_gram = {{17, 0, 2}, {0, 9, 0}, {2, 0, 29}};
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                Check(std::fabs(gram.matrix[i][j] - want_gram[i][j]) < 1e-4, "SparseGram [" + std::to_string(i) + "," + std::to_string(j) + "]: " +
+                                                                                 std::to_string(gram.matrix[i][j]));
+        const auto product = cyxwiz::LinearAlgebra::SparseMultiply(x, {{1, 0}, {0, 1}, {1, 1}});
+        Check(product.success, "SparseMultiply: " + product.error_message);
+        const std::vector<std::vector<double>> want_product = {{3, 2}, {0, 3}, {4, 0}, {5, 5}};
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 2; ++j)
+                Check(std::fabs(product.matrix[i][j] - want_product[i][j]) < 1e-4,
+                      "SparseMultiply [" + std::to_string(i) + "," + std::to_string(j) + "]: " + std::to_string(product.matrix[i][j]));
+        Check(!cyxwiz::LinearAlgebra::SparseMultiply(x, {{1}, {2}}).success, "SparseMultiply: B of the wrong height is refused");
+        passed += 3;
+    }
     std::cout << "linear algebra matches PyTorch: " << passed << " cases" << std::endl;
     return 0;
 }

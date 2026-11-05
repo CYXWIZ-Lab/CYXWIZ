@@ -70,6 +70,17 @@ struct CYXWIZ_API CholeskyResult {
     std::string error_message;
 };
 
+// A sparse matrix in compressed rows (CSR) the caller owns: row r's entries
+// are column_indices / values [row_offsets[r], row_offsets[r + 1]). A view,
+// so nothing is copied (TF-IDF and Count features are kept this way).
+struct CYXWIZ_API CsrView {
+    int rows = 0;
+    int cols = 0;
+    const int* row_offsets = nullptr;     // rows + 1
+    const int* column_indices = nullptr;  // nnz
+    const float* values = nullptr;        // nnz
+};
+
 struct CYXWIZ_API LUResult {
     std::vector<std::vector<double>> L;      // Lower triangular
     std::vector<std::vector<double>> U;      // Upper triangular
@@ -244,6 +255,15 @@ public:
         const std::vector<std::vector<double>>& A,
         int k
     );
+
+    // ==================== Sparse (CSR) ====================
+
+    // X^T X (cols x cols) of a CSR matrix, on the device, a block of rows at
+    // a time (X is never made dense whole).
+    static MatrixResult SparseGram(const CsrView& X);
+
+    // X B for a CSR X (rows x cols) and a dense B (cols x k), on the device.
+    static MatrixResult SparseMultiply(const CsrView& X, const std::vector<std::vector<double>>& B);
 
     // ==================== Tensor-First Operations ====================
 
