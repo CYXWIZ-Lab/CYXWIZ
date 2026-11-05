@@ -136,7 +136,7 @@ void TestCanvasStyle() {
 void TestInfoFacts() {
     const auto nodes = MuJoCoNodes();
     auto plant = nodes[4];
-    plant.source_path = "D:/dev/CyxWiz_Engine/plugins/mujoco_simulation";
+    plant.source_path = "D:/dev/CyxWiz_Engine/plugins/simulation/mujoco";
     const auto facts = cyxwiz::BuildExtensionInfoFacts(
         plant, {"MuJoCo Simulation", "1.0.0", "CyxWiz Lab"});
     Check(facts.category_line == "Plugins / Simulation / Control", "category line");
@@ -147,7 +147,7 @@ void TestInfoFacts() {
     Check(rows["Plugin"] == "MuJoCo Simulation" && rows["Version"] == "1.0.0" &&
               rows["Author"] == "CyxWiz Lab" &&
               rows["Type id"] == "com.cyxwiz.simulation.mujoco:MuJoCoPlant" &&
-              rows["Source"] == "D:/dev/CyxWiz_Engine/plugins/mujoco_simulation",
+              rows["Source"] == "D:/dev/CyxWiz_Engine/plugins/simulation/mujoco",
           "provided-by rows");
     Check(rows.count("Node version") == 0, "an empty value is left out");
 

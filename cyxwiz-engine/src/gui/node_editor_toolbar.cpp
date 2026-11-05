@@ -15,7 +15,6 @@
 #include "../core/async_task_manager.h"
 #include "../core/graph_executor.h"
 #include "../core/live_graph_compile.h"
-#include "../core/rl_training_executor.h"
 #include "../core/studio_toolbar_presentation.h"
 #include "../core/training_manager.h"
 
@@ -137,7 +136,7 @@ void NodeEditor::ShowToolbar() {
     const bool pipeline_running = execution_mode_ == ExecutionMode::DuckDBPipeline && pipeline_execution_active_ && pipeline_task;
     const bool has_sim = HasSimulationNodes();
     const bool has_rl = HasRLNodes();
-    const bool rl_running = rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining());
+    const bool rl_running = rl_script_running_;
     const bool sim_graph = has_sim || has_rl;
     const int num_selected = ImNodes::NumSelectedNodes();
 
@@ -221,8 +220,8 @@ void NodeEditor::ShowToolbar() {
             actions_icons += W(ICON_FA_PLAY) + 70.0f + sp;
         }
         if (has_rl) {
-            actions_full += W(ICON_FA_PLAY " Train RL") + W(ICON_FA_FILE_EXPORT " Export ONNX") + 110.0f + 2.0f * sp;
-            actions_icons += W(ICON_FA_PLAY) + W(ICON_FA_FILE_EXPORT) + 90.0f + 2.0f * sp;
+            actions_full += W(ICON_FA_PLAY " Train RL") + 110.0f + sp;
+            actions_icons += W(ICON_FA_PLAY) + 90.0f + sp;
         }
     } else {
         widths.mode_full = ui::SegmentedControlWidth(kModeFull, 3);
@@ -436,21 +435,11 @@ void NodeEditor::ShowToolbar() {
                 if (ui::DangerButton(short_labels ? ICON_FA_STOP "##stop_rl" : ICON_FA_STOP " Stop RL")) OnStopRLTraining();
                 ImGui::SameLine();
                 ImGui::AlignTextToFramePadding();
-                if (rl_script_running_) {
-                    ImGui::TextColored(t.success, "Training via Python...");
-                } else if (rl_executor_) {
-                    const auto m = rl_executor_->GetMetrics();
-                    ImGui::TextColored(t.success, "Ep %d | R: %.1f", m.episode_count, m.mean_episode_reward);
-                }
+                ImGui::TextColored(t.success, "Training via Python...");
             } else if (ui::GhostButton(short_labels ? ICON_FA_PLAY "##train_rl" : ICON_FA_PLAY " Train RL", !is_simulating_,
                                        "Stop graph simulation first", true)) {
                 OnStartRLTraining();
             }
-            ImGui::SameLine();
-            const bool has_trained = rl_executor_ && !rl_executor_->IsTraining() && rl_executor_->GetMetrics().episode_count > 0;
-            if (ui::GhostButton(short_labels ? ICON_FA_FILE_EXPORT "##onnx" : ICON_FA_FILE_EXPORT " Export ONNX", has_trained,
-                                "Train an RL agent first"))
-                export_onnx_dialog_open_ = true;
             ImGui::SameLine();
         }
         // Simulation speed while simulating.
@@ -563,27 +552,6 @@ void NodeEditor::ShowToolbar() {
     ImGui::EndChild();
 
     DrawClearConfirm();
-
-    // ONNX Export dialog
-    if (export_onnx_dialog_open_) {
-        ImGui::OpenPopup("Export Policy (ONNX)");
-        export_onnx_dialog_open_ = false;
-    }
-    if (ImGui::BeginPopupModal("Export Policy (ONNX)", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Export trained RL policy to ONNX format.");
-        ImGui::Spacing();
-        static char onnx_path[512] = "policy.onnx";
-        ImGui::TextColored(t.text_dim, "Output path");
-        ImGui::InputText("##onnx_path", onnx_path, sizeof(onnx_path));
-        ImGui::Spacing();
-        if (ui::PrimaryButton("Export##onnx", true, nullptr, ui::ButtonSize::Regular)) {
-            ExportPolicyONNX(std::string(onnx_path));
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ui::SecondaryButton("Cancel##onnx", true, nullptr, ui::ButtonSize::Regular)) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
 }
 
 void NodeEditor::RenderCanvasFooter() {

@@ -30,7 +30,6 @@ namespace scripting { class ScriptingEngine; }
 namespace cyxwiz {
 class ScriptEditorPanel;
 class GraphExecutor;
-class RLTrainingExecutor;
 class TrainingDashboardPanel;
 class PipelineExecutor;
 class PipelineExecutionTracker;
@@ -1326,7 +1325,6 @@ private:
     bool HasSimulationNodes() const;  // Check if graph contains signal/plant nodes
 
     // ===== RL Training State =====
-    std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
     std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;
 
     // Plot nodes (TOFIX134 P2): the result lane and one Plot window per
@@ -1417,8 +1415,6 @@ private:
     bool HasRLNodes() const;
     void OnStartRLTraining();
     void OnStopRLTraining();
-    void ExportPolicyONNX(const std::string& output_path);
-    bool export_onnx_dialog_open_ = false;
 
     // Phase 4.7: Performance metrics
     float last_eval_time_ms_ = 0.0f;

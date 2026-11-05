@@ -20,7 +20,6 @@
 #include "../core/project_manager.h"
 #include "../core/graph_executor.h"
 #include "../core/simulation_runtime_capabilities.h"
-#include "../core/rl_training_executor.h"
 #include "separate_windows.h"
 #include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
 #include "../core/pipeline_execution_task.h"
@@ -237,7 +236,7 @@ std::string NodeEditor::GetGraphReplacementBlockReason() const {
         training_data_loading_callback_ && training_data_loading_callback_(),
         properties_panel_ && properties_panel_->IsDialogBusy(),
         is_simulating_.load(), pipeline_execution_active_,
-        rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())}));
+        rl_script_running_.load()}));
 }
 
 bool NodeEditor::CanReplaceGraph(const char* operation) {
@@ -4274,7 +4273,7 @@ bool NodeEditor::HasRLNodes() const {
 }
 
 void NodeEditor::OnStartRLTraining() {
-    if (rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())) return;
+    if (rl_script_running_) return;
     if (!scripting_engine_) {
         spdlog::error("NodeEditor: ScriptingEngine not set, cannot run Python RL training");
         return;
@@ -4315,7 +4314,6 @@ void NodeEditor::OnStartRLTraining() {
     for (const auto& node : nodes_) {
         if (node.type == NodeType::PluginCustom) {
             if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant")) {
-                config.plugin_qualified_name = node.extension_type_id;
                 auto mp = node.parameters.find("mjcf_path");
                 if (mp != node.parameters.end() && !mp->second.empty()) {
                     config.env_mjcf_path = mp->second;
@@ -4383,55 +4381,6 @@ void NodeEditor::OnStartRLTraining() {
 }
 
 
-// ===== ONNX Export =====
-
-void NodeEditor::ExportPolicyONNX(const std::string& output_path) {
-    if (!rl_executor_) {
-        spdlog::error("NodeEditor: No RL executor for ONNX export");
-        return;
-    }
-
-    auto metrics = rl_executor_->GetMetrics();
-    if (metrics.episode_count == 0) {
-        spdlog::error("NodeEditor: No trained policy to export");
-        return;
-    }
-
-    // Request export via plugin's EvaluateNode with "export_onnx" command
-    std::string plugin_qname;
-    for (const auto& node : nodes_) {
-        if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant") ||
-            cyxwiz::IsExtensionTypeName(node, "MuJoCoEnv") ||
-            cyxwiz::IsExtensionTypeName(node, "RLAgent")) {
-            plugin_qname = node.extension_type_id;
-            break;
-        }
-    }
-
-    if (plugin_qname.empty()) {
-        spdlog::error("NodeEditor: No MuJoCo plugin node found for ONNX export");
-        return;
-    }
-
-    auto* provider = cyxwiz::ExtensionNodeRegistry::Instance().SignalProvider(plugin_qname);
-    if (!provider) {
-        spdlog::error("NodeEditor: Plugin provider not found");
-        return;
-    }
-
-    cyxwiz::plugin::PluginNodeEvalContext ctx;
-    ctx.node_type_name = "RLAgent";
-    ctx.parameters["command"] = "export_onnx";
-    ctx.parameters["output_path"] = output_path;
-
-    auto result = provider->EvaluateNode(ctx);
-    if (result.success) {
-        spdlog::info("NodeEditor: Policy exported to {}", output_path);
-    } else {
-        spdlog::warn("NodeEditor: ONNX export: {}", result.error_message.empty() ? "not yet fully wired" : result.error_message);
-    }
-}
-
 void NodeEditor::OnStopRLTraining() {
     spdlog::info("NodeEditor: Stopping RL training");
 
@@ -4441,12 +4390,6 @@ void NodeEditor::OnStopRLTraining() {
         scripting_engine_->ExecuteCommand("import pycyxwiz; pycyxwiz.rl_set_stop(True)");
         scripting_engine_->StopScript();
         rl_script_running_ = false;
-    }
-
-    // Stop old C++ executor (for backward compat)
-    if (rl_executor_) {
-        rl_executor_->Stop();
-        rl_executor_.reset();
     }
 
     if (rl_dashboard_) {

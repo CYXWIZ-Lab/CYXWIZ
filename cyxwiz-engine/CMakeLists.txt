@@ -284,7 +284,6 @@ set(ENGINE_SOURCES
     src/core/large_text_file.cpp
     src/core/dataset_audit.cpp
     src/core/graph_executor.cpp
-    src/core/rl_training_executor.cpp
     src/core/rl_script_generator.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
@@ -404,7 +403,6 @@ set(ENGINE_SOURCES
     src/core/formats/text_dataset.cpp
     src/core/formats/timeseries_dataset.cpp
     src/core/formats/audio_dataset.cpp
-    src/core/gym_connector.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/engine_graph_training_dispatch.cpp
     src/gui/main_window.cpp

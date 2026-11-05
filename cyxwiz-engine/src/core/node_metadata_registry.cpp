@@ -1169,7 +1169,6 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::TopK, NodeCategory::Utility, "Top K", {"tensor", "topk"}},
         {NodeType::ThresholdFilter, NodeCategory::DNN, "Threshold Filter", {"threshold", "filter"}},
         {NodeType::AudioAugmentation, NodeCategory::Audio, "Audio Augmentation", {"audio", "augmentation"}},
-        {NodeType::RLTraining, NodeCategory::RL, "RL Training", {"reinforcement", "training"}},
         {NodeType::PivotTable, NodeCategory::DataTransform, "Pivot Table", {"table", "pivot"}},
         {NodeType::UnionTables, NodeCategory::DataTransform, "Union Tables", {"table", "union"}},
         {NodeType::CrossTabulation, NodeCategory::DataTransform, "Cross Tabulation", {"table", "crosstab"}},
@@ -4440,32 +4439,46 @@ void NodeMetadataRegistry::InitializeAudioNodes() {
 // =============================================================================
 void NodeMetadataRegistry::InitializeRLNodes() {
     RegisterNode({NodeType::GymEnvironment, NodeCategory::RL, "Gym Environment", ICON_FA_ROCKET,
-        {"gym", "environment", "rl"}, 0, false, "OpenAI Gym connector", "", "",
+        {"gym", "environment", "rl"}, 0, false, "OpenAI Gym connector",
+        "Blocked: the graph compiler refuses reinforcement learning graphs until native RL training exists. Train RL does not use this node.", "",
         {}, {{"Observation", PinType::Tensor, true, "Obs"}, {"Info", PinType::Parameters, true, "Info"}},
         {{"env_name", "string", "CartPole-v1", "Environment", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::ReplayBufferNode, NodeCategory::RL, "Replay Buffer", ICON_FA_DATABASE,
-        {"replay", "buffer", "experience"}, 0, false, "Experience replay", "", "",
+        {"replay", "buffer", "experience"}, 0, false, "Experience replay",
+        "Blocked: the graph compiler refuses reinforcement learning graphs until native RL training exists. Train RL does not use this node.", "",
         {{"State", PinType::Tensor, true, "State"}, {"Action", PinType::Tensor, true, "Action"},
          {"Reward", PinType::Tensor, true, "Reward"}, {"NextState", PinType::Tensor, true, "Next"}},
         {{"Batch", PinType::Dataset, true, "Batch"}},
         {{"capacity", "int", "100000", "Capacity", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::PolicyNetwork, NodeCategory::RL, "Policy Network", ICON_FA_BRAIN,
-        {"policy", "actor"}, 0, false, "Actor/Policy network", "", "",
+        {"policy", "actor"}, 0, false, "Actor/Policy network",
+        "Blocked: the graph compiler refuses reinforcement learning graphs until native RL training exists. Train RL does not use this node.", "",
         {{"Observation", PinType::Tensor, true, "Obs"}},
         {{"Action", PinType::Tensor, true, "Action"}},
         {{"hidden_sizes", "string", "256,256", "Hidden sizes", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
 
     RegisterNode({NodeType::ValueNetwork, NodeCategory::RL, "Value Network", ICON_FA_CHART_LINE,
-        {"value", "critic"}, 0, false, "Critic/Value network", "", "",
+        {"value", "critic"}, 0, false, "Critic/Value network",
+        "Blocked: the graph compiler refuses reinforcement learning graphs until native RL training exists. Train RL does not use this node.", "",
         {{"Observation", PinType::Tensor, true, "Obs"}},
         {{"Value", PinType::Tensor, true, "Value"}},
         {{"hidden_sizes", "string", "256,256", "Hidden sizes", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
+        NodeImplementationStatus::Template, 0, "Blocked"});
+
+    // Train RL reads this node and runs a generated Python script; the Engine's
+    // own trainer does not run it yet.
+    RegisterNode({NodeType::RLTraining, NodeCategory::RL, "RL Training", ICON_FA_ROCKET,
+        {"reinforcement", "training", "ppo", "rl"}, 0, false,
+        "Reinforcement learning settings for Train RL",
+        "Train RL generates a Python script that trains stable-baselines3 PPO on the MuJoCo Plant's model, "
+        "using this node's timesteps, learning rate, gamma, clip range, steps, batch size and epochs. "
+        "It needs the MuJoCo plugin and the mujoco, gymnasium and stable-baselines3 Python packages.",
+        "", {}, {}, {}, NodeImplementationStatus::External, 0, "Python"});
 }
 
 // =============================================================================
