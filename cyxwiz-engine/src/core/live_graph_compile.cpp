@@ -1,6 +1,5 @@
 #include "live_graph_compile.h"
 
-#include "device_display_name.h"
 #include "extension_node_registry.h"
 #include "model_builder.h"
 
@@ -138,7 +137,7 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
                     if (const auto selected = Device::GetProcessDevice()) {
                         const DeviceInfo device = Device(selected->type, selected->device_id).GetInfo();
                         if (device.memory_total_known) {
-                            result->memory.device_name = DeviceDisplayName(device.name);
+                            result->memory.device_name = device.name;
                             result->memory.device_memory_bytes = device.memory_total;
                         }
                     }

@@ -1,5 +1,6 @@
 #include "installer_verification_summary.h"
-#include "device_display_name.h"
+
+#include <cyxwiz/device.h>
 
 #include <algorithm>
 #include <cmath>

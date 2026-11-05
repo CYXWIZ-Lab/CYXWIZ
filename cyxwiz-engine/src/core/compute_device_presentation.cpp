@@ -1,5 +1,6 @@
 #include "compute_device_presentation.h"
-#include "device_display_name.h"
+
+#include <cyxwiz/device.h>
 
 #include <algorithm>
 #include <cctype>

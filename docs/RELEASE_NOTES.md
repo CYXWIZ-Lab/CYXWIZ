@@ -17,6 +17,10 @@ private Data Studio tickets (`tofix*/track*`).
   project, Local Debug (and the other Studio Debugger runs) loads the graph's
   data first, the way Train does, instead of stopping with "Data is not
   loaded".
+- **Device names read as names everywhere.** ArrayFire reports CUDA and OpenCL
+  devices as "NVIDIA_GeForce_GTX_1050_Ti"; the backend now gives them with
+  spaces, so the Training Dashboard, the Studio Debugger, logs and Compile show
+  "NVIDIA GeForce GTX 1050 Ti". Plugin SDK: `cyxwiz::DeviceDisplayName`.
 - **Compile (F7) estimates a training step's memory for every layer kind.**
   The old note counted only Dense layers on image graphs (3 MB for the 1.2 M
   parameter ResNet example, and an error above a guessed 3 GB). The estimate
