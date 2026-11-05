@@ -2599,6 +2599,29 @@ void TestLayerCaptureResNetExample() {
     spdlog::info("  OK: ResNet capture {} layers, {} MB", capture.Layers().size(), capture.BytesHeld() >> 20);
 }
 
+// TOFIX178 6.1b: a training snapshot runs in eval mode, so BatchNorm's
+// running statistics and every weight are left exactly as they were.
+void TestCaptureStepLeavesTheModel() {
+    spdlog::info("--- TestCaptureStepLeavesTheModel ---");
+    const auto config = CompileResNetExample();
+    auto built = BuildExecutableFromConfig(config);
+    ExpectTrue(built.ok(), "ResNet builds: " + built.error_message);
+    built.model->SetTraining(true);
+    const auto batch = MakeSyntheticBatch(config, 5);
+    const Tensor& input = batch.features;  // synthetic batches are model-ready
+    std::map<std::string, std::vector<float>> before;
+    for (const auto& [name, t] : built.model->GetParameters()) before[name] = HostValues(t);
+    const auto capture = CaptureStep(*built.model, *built.loss, input, batch.labels, {}, built.module_provenance);
+    ExpectEq(capture->Layers().size(), config.layers.size(), "the snapshot holds every layer");
+    size_t changed = 0;
+    for (const auto& [name, t] : built.model->GetParameters())
+        if (HostValues(t) != before.at(name)) ++changed;
+    ExpectEq(changed, 0, "a snapshot changes no weight and no running statistic");
+    const auto& stem = CapturedNamed(*capture, "Conv 32 stem");
+    ExpectTrue(stem.Find(CapturedTensorRole::Gradient, "weights") != nullptr, "the snapshot holds gradients");
+    spdlog::info("  OK: snapshot of {} layers, model unchanged", capture->Layers().size());
+}
+
 void TestDebugExecutorBinaryHeadBackward() {
     spdlog::info("--- TestDebugExecutorBinaryHeadBackward ---");
     auto cfg = MakeTabularConfig();
@@ -3101,6 +3124,7 @@ int main(int argc, char** argv) {
         TestDebugExecutorInputSample();
         TestLayerCaptureTabular();
         TestLayerCaptureResNetExample();
+        TestCaptureStepLeavesTheModel();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();
         TestDebugExecutorSkippedLayerMapping();

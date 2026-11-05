@@ -8,11 +8,10 @@
 // host; a view reads the slice it shows. A byte budget bounds what is held;
 // tensors past it are skipped and counted. No capture object, no cost.
 
-#include "model_builder.h"
-
 #include <cyxwiz/tensor.h>
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -20,6 +19,8 @@
 namespace cyxwiz {
 
 class IExecutableModel;
+class Loss;
+struct BuiltModuleProvenance;
 
 struct LayerCaptureOptions {
     bool activations = true;  // each layer's input and output
@@ -50,7 +51,8 @@ struct CapturedLayer {
 
 class LayerCapture {
 public:
-    LayerCapture(LayerCaptureOptions options, std::vector<BuiltModuleProvenance> provenance);
+    // `provenance` names the layers (node id and name by module index).
+    LayerCapture(LayerCaptureOptions options, const std::vector<BuiltModuleProvenance>& provenance);
 
     const LayerCaptureOptions& Options() const { return options_; }
 
@@ -75,11 +77,26 @@ private:
     void Hold(CapturedLayer& layer, CapturedTensorRole role, std::string name, const Tensor& tensor);
 
     LayerCaptureOptions options_;
-    std::vector<BuiltModuleProvenance> provenance_;
+    struct LayerName {
+        size_t module_index = 0;
+        int node_id = -1;
+        std::string name;
+    };
+    std::vector<LayerName> names_;
     std::vector<CapturedLayer> layers_;
     size_t bytes_held_ = 0;
     size_t skipped_tensors_ = 0;
     size_t skipped_bytes_ = 0;
 };
+
+// A training snapshot (TOFIX178 6.1b): one forward and backward of the
+// model-ready `input` with the model in eval mode (BatchNorm on its running
+// statistics, no dropout), so the running statistics and the random state
+// training uses are left as they were; no optimizer step, and the next
+// training backward replaces the gradients it leaves. The model is left in
+// training mode. Throws what the model or the loss throws.
+std::shared_ptr<LayerCapture> CaptureStep(IExecutableModel& model, Loss& loss, const Tensor& input,
+                                          const Tensor& labels, LayerCaptureOptions options,
+                                          const std::vector<BuiltModuleProvenance>& provenance);
 
 } // namespace cyxwiz

@@ -1,6 +1,9 @@
 #include "layer_capture.h"
 
 #include "executable_model.h"
+#include "model_builder.h"
+
+#include <cyxwiz/loss.h>
 
 #include <algorithm>
 #include <utility>
@@ -24,8 +27,12 @@ const CapturedTensor* CapturedLayer::Find(CapturedTensorRole role, std::string_v
     return nullptr;
 }
 
-LayerCapture::LayerCapture(LayerCaptureOptions options, std::vector<BuiltModuleProvenance> provenance)
-    : options_(options), provenance_(std::move(provenance)) {}
+LayerCapture::LayerCapture(LayerCaptureOptions options, const std::vector<BuiltModuleProvenance>& provenance)
+    : options_(options) {
+    for (const auto& p : provenance)
+        if (p.module_index)
+            names_.push_back({*p.module_index, p.node_id, p.node_name.empty() ? p.module_name : p.node_name});
+}
 
 const CapturedLayer* LayerCapture::FindLayer(int node_id) const {
     for (const auto& layer : layers_)
@@ -38,10 +45,10 @@ CapturedLayer& LayerCapture::LayerFor(size_t module_index) {
         if (layer.module_index == module_index) return layer;
     CapturedLayer layer;
     layer.module_index = module_index;
-    for (const auto& p : provenance_) {
-        if (p.module_index && *p.module_index == module_index) {
-            layer.node_id = p.node_id;
-            layer.node_name = p.node_name.empty() ? p.module_name : p.node_name;
+    for (const auto& n : names_) {
+        if (n.module_index == module_index) {
+            layer.node_id = n.node_id;
+            layer.node_name = n.name;
             break;
         }
     }
@@ -88,6 +95,31 @@ void LayerCapture::RecordModuleTensors(IExecutableModel& model) {
                 if (!is_state(name)) Hold(layer, CapturedTensorRole::Gradient, name, tensor);
         }
     }
+}
+
+std::shared_ptr<LayerCapture> CaptureStep(IExecutableModel& model, Loss& loss, const Tensor& input,
+                                          const Tensor& labels, LayerCaptureOptions options,
+                                          const std::vector<BuiltModuleProvenance>& provenance) {
+    auto capture = std::make_shared<LayerCapture>(options, provenance);
+    struct Restore {
+        IExecutableModel& model;
+        ~Restore() {
+            model.SetLayerForwardObserver(nullptr);
+            model.SetTraining(true);
+        }
+    } restore{model};
+    model.SetTraining(false);
+    model.SetLayerForwardObserver([&](size_t i, const Tensor& in, const Tensor& out, float) {
+        capture->RecordForward(i, in, out);
+    });
+    const Tensor prediction = model.Forward(input);
+    model.SetLayerForwardObserver(nullptr);
+    if (options.gradients) {
+        loss.Forward(prediction, labels);  // a loss may keep what its backward reads
+        model.Backward(loss.Backward(prediction, labels));
+    }
+    capture->RecordModuleTensors(model);
+    return capture;
 }
 
 } // namespace cyxwiz

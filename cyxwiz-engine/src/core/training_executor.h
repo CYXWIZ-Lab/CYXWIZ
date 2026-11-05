@@ -2,6 +2,7 @@
 
 #include "executable_model.h"
 #include "graph_compiler.h"
+#include "layer_capture.h"
 #include "metric_learning_metrics.h"
 #include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
 #include "parquet_arrow_batcher.h"
@@ -274,6 +275,24 @@ public:
         resume_checkpoint_callback_ = std::move(callback);
     }
 
+    // Layer snapshots (TOFIX178 6.1b). Enable before Train: after every
+    // `every_epochs`-th epoch and after the last one (an early stop's too),
+    // CaptureStep on `features` / `labels`, batch first as a batcher hands
+    // them out. A snapshot that fails is logged and training goes on.
+    struct LayerSnapshotSchedule {
+        LayerCaptureOptions options;
+        int every_epochs = 5;
+        Tensor features;
+        Tensor labels;
+    };
+    void EnableLayerSnapshots(LayerSnapshotSchedule schedule);
+    struct LayerSnapshot {
+        int epoch = 0;
+        std::shared_ptr<const LayerCapture> capture;
+    };
+    // The snapshots taken so far, in epoch order (any thread).
+    std::vector<LayerSnapshot> LayerSnapshots() const;
+
     /**
      * Pause training (thread-safe)
      */
@@ -414,6 +433,11 @@ private:
     ResumeCheckpointCallback resume_checkpoint_callback_;
     int last_mid_epoch_checkpoint_step_ = -1;
     std::optional<TrainingEpochProgress> pending_epoch_resume_;
+    std::optional<LayerSnapshotSchedule> layer_snapshot_schedule_;
+    std::vector<BuiltModuleProvenance> module_provenance_;
+    mutable std::mutex layer_snapshots_mutex_;
+    std::vector<LayerSnapshot> layer_snapshots_;
+    void TakeLayerSnapshot(int epoch);
     // Generation previews (TOFIX159): bound for the duration of Train.
     std::unique_ptr<TrainingGenerationPreview> generation_preview_;
     std::filesystem::path generation_preview_dir_;

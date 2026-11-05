@@ -698,6 +698,7 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
         return false;
     }
     model_ = std::move(built.model);
+    module_provenance_ = std::move(built.module_provenance);
     loss_ = std::move(built.loss);
     optimizer_ = std::move(built.optimizer);
     scheduler_controller_.reset();
@@ -1219,6 +1220,10 @@ void TrainingExecutor::Train(
             "Training loop attached to existing setup trace");
     }
     ReportPinMemoryTransferStatus(config_);
+    {
+        std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
+        layer_snapshots_.clear();
+    }
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
     gradient_accumulation_weight_ = 0.0f;
@@ -1694,6 +1699,12 @@ void TrainingExecutor::Train(
             point.step = GetMetrics().optimizer_step_count;
             if (validation_ran_this_epoch) point.validation_loss = current.val_loss;
             if (!RunGenerationPreview(point)) break;
+        }
+
+        if (layer_snapshot_schedule_ &&
+            (epoch % std::max(1, layer_snapshot_schedule_->every_epochs) == 0 || epoch == epochs ||
+             stop_after_epoch)) {
+            TakeLayerSnapshot(epoch);
         }
 
         // Notify plugin hooks: epoch end
@@ -2315,6 +2326,32 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     gradient_accumulation_device_weight_ = Tensor();
     gradient_accumulation_device_weight_initialized_ = false;
     return true;
+}
+
+void TrainingExecutor::EnableLayerSnapshots(LayerSnapshotSchedule schedule) {
+    layer_snapshot_schedule_ = std::move(schedule);
+}
+
+std::vector<TrainingExecutor::LayerSnapshot> TrainingExecutor::LayerSnapshots() const {
+    std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
+    return layer_snapshots_;
+}
+
+void TrainingExecutor::TakeLayerSnapshot(int epoch) {
+    const auto& schedule = *layer_snapshot_schedule_;
+    try {
+        const Tensor input = UsesSpatialSequentialInput(config_)
+                                 ? SpatialBatchFromRows(schedule.features, config_.input_shape)
+                                 : schedule.features;
+        auto capture = CaptureStep(*model_, *loss_, input, schedule.labels, schedule.options, module_provenance_);
+        spdlog::info("TrainingExecutor: layer snapshot after epoch {} ({} layers, {:.1f} MB{})", epoch,
+                     capture->Layers().size(), capture->BytesHeld() / 1048576.0,
+                     capture->Truncated() ? ", over the budget: some tensors left out" : "");
+        std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
+        layer_snapshots_.push_back({epoch, std::move(capture)});
+    } catch (const std::exception& e) {
+        spdlog::warn("TrainingExecutor: layer snapshot after epoch {} failed: {}", epoch, e.what());
+    }
 }
 
 bool TrainingExecutor::RunGenerationPreview(GenerationPreviewPoint point) {
