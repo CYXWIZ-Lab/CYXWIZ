@@ -261,6 +261,7 @@ model = )" << algo << R"((
     n_epochs=)" << config.n_epochs << R"(,
     ent_coef=)" << config.entropy_coeff << R"(,
     vf_coef=)" << config.value_coeff << R"(,
+    max_grad_norm=)" << config.max_grad_norm << R"(,
     policy_kwargs=dict(net_arch=[)" << hidden_str << R"(]),
     verbose=0,
 )

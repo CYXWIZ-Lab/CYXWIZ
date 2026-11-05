@@ -23,6 +23,7 @@ struct RLTrainingConfig {
     std::vector<int> hidden_sizes = {64, 64};
     float entropy_coeff = 0.01f;
     float value_coeff = 0.5f;
+    float max_grad_norm = 0.5f;
 
     // Reward shaping
     float alive_bonus = 1.0f;

@@ -9,7 +9,6 @@
 
 #include <string>
 #include <vector>
-#include <deque>
 #include <map>
 #include <functional>
 #include <mutex>
@@ -73,8 +72,6 @@ public:
     // --- Episode statistics ---
     float GetEpisodeReward() const { return episode_reward_; }
     int GetEpisodeCount() const { return episode_count_; }
-    float GetMeanEpisodeReward() const;
-    float GetMeanEpisodeLength() const;
 
     // --- Raw MuJoCo access (for renderer) ---
     const mjModel* GetModel() const { return model_; }
@@ -100,9 +97,6 @@ private:
     // Episode tracking
     float episode_reward_ = 0.0f;
     int episode_count_ = 0;
-    std::deque<float> recent_episode_rewards_;
-    std::deque<int> recent_episode_lengths_;
-    static constexpr int kRecentBufferSize = 100;
 
     // Optional custom functions
     RewardFn reward_fn_;

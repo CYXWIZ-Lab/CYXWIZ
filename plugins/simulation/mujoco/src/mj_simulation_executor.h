@@ -2,17 +2,13 @@
 
 // MjSimulationExecutor — Runs the MuJoCo simulation on its own thread
 //
-// Manual Control: applies actuator values, calls mj_step(), publishes sensor
-// outputs. Supports Play/Pause/Step.
+// Manual Control: steps the loaded model in real time (or faster) with its
+// current controls. Supports Play/Pause/Step.
 
 #include "mj_env_manager.h"
-#include <string>
-#include <vector>
-#include <map>
 #include <mutex>
 #include <atomic>
 #include <thread>
-#include <functional>
 
 namespace cyxwiz::plugin::mujoco {
 
@@ -26,18 +22,6 @@ enum class SimState {
     Running,
     Paused,
     Stepping  // Single-step mode
-};
-
-// Per-actuator value from the node graph (populated by engine before each step)
-struct ActuatorInput {
-    std::string name;
-    float value = 0.0f;
-};
-
-// Per-sensor output pushed back to the node graph after each step
-struct SensorOutput {
-    std::string name;
-    std::vector<float> values;  // dim >= 1
 };
 
 // Simulation metrics exposed to UI
@@ -68,12 +52,6 @@ public:
     void Resume();
     void SingleStep();  // Advance one timestep
 
-    // Set actuator values (called by engine each frame before step)
-    void SetActuatorInputs(const std::vector<ActuatorInput>& inputs);
-
-    // Get sensor outputs (called by engine each frame after step)
-    std::vector<SensorOutput> GetSensorOutputs() const;
-
     // --- State queries ---
     SimMode GetMode() const { return mode_; }
     SimState GetState() const { return state_; }
@@ -83,10 +61,6 @@ public:
     // Simulation rate control
     void SetRealtimeFactor(float factor) { realtime_factor_ = factor; }  // 1.0 = real-time, 0 = as fast as possible
     float GetRealtimeFactor() const { return realtime_factor_; }
-
-    // Callback: called after each step with current sensor data
-    using StepCallback = std::function<void(const std::vector<SensorOutput>& sensors, const SimMetrics& metrics)>;
-    void SetStepCallback(StepCallback cb) { step_callback_ = std::move(cb); }
 
 private:
     void ManualControlLoop();
@@ -103,13 +77,9 @@ private:
     // Thread for simulation loop
     std::thread sim_thread_;
 
-    // Actuator inputs (written by engine, read by sim thread)
+    // Metrics (written by the sim thread, read by the viewport)
     mutable std::mutex io_mutex_;
-    std::vector<ActuatorInput> actuator_inputs_;
-    std::vector<SensorOutput> sensor_outputs_;
     SimMetrics metrics_;
-
-    StepCallback step_callback_;
 };
 
 } // namespace cyxwiz::plugin::mujoco

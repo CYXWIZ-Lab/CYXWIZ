@@ -2,7 +2,6 @@
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
-#include <numeric>
 
 namespace cyxwiz::plugin::mujoco {
 
@@ -18,8 +17,6 @@ MjEnvManager::MjEnvManager(MjEnvManager&& other) noexcept
       current_step_(other.current_step_),
       episode_reward_(other.episode_reward_),
       episode_count_(other.episode_count_),
-      recent_episode_rewards_(std::move(other.recent_episode_rewards_)),
-      recent_episode_lengths_(std::move(other.recent_episode_lengths_)),
       reward_fn_(std::move(other.reward_fn_)),
       termination_fn_(std::move(other.termination_fn_)),
       observation_fn_(std::move(other.observation_fn_)) {
@@ -42,8 +39,6 @@ MjEnvManager& MjEnvManager::operator=(MjEnvManager&& other) noexcept {
         current_step_ = other.current_step_;
         episode_reward_ = other.episode_reward_;
         episode_count_ = other.episode_count_;
-        recent_episode_rewards_ = std::move(other.recent_episode_rewards_);
-        recent_episode_lengths_ = std::move(other.recent_episode_lengths_);
         reward_fn_ = std::move(other.reward_fn_);
         termination_fn_ = std::move(other.termination_fn_);
         observation_fn_ = std::move(other.observation_fn_);
@@ -161,12 +156,6 @@ StepResult MjEnvManager::Step(const std::vector<float>& action) {
 
     // Track episode stats on terminal
     if (terminated || truncated) {
-        recent_episode_rewards_.push_back(episode_reward_);
-        recent_episode_lengths_.push_back(current_step_);
-        if (static_cast<int>(recent_episode_rewards_.size()) > kRecentBufferSize) {
-            recent_episode_rewards_.pop_front();
-            recent_episode_lengths_.pop_front();
-        }
         episode_count_++;
         result.info["episode_reward"] = episode_reward_;
         result.info["episode_length"] = static_cast<float>(current_step_);
@@ -214,20 +203,6 @@ int MjEnvManager::GetObservationDim() const {
 int MjEnvManager::GetActionDim() const {
     if (!model_) return 0;
     return static_cast<int>(model_->nu);
-}
-
-float MjEnvManager::GetMeanEpisodeReward() const {
-    if (recent_episode_rewards_.empty()) return 0.0f;
-    float sum = std::accumulate(recent_episode_rewards_.begin(),
-                                recent_episode_rewards_.end(), 0.0f);
-    return sum / static_cast<float>(recent_episode_rewards_.size());
-}
-
-float MjEnvManager::GetMeanEpisodeLength() const {
-    if (recent_episode_lengths_.empty()) return 0.0f;
-    int sum = std::accumulate(recent_episode_lengths_.begin(),
-                              recent_episode_lengths_.end(), 0);
-    return static_cast<float>(sum) / static_cast<float>(recent_episode_lengths_.size());
 }
 
 // =============================================================================

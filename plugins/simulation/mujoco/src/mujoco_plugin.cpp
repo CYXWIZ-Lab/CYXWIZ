@@ -7,6 +7,8 @@
 #include <mujoco/mujoco.h>
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <string_view>
 
@@ -31,14 +33,12 @@ int ActuatorId(const mjModel* m, const std::string& pin_name) {
     if (id >= 0) return id;
     constexpr std::string_view kPrefix = "actuator_";
     if (pin_name.rfind(kPrefix, 0) != 0) return -1;
-    try {
-        size_t used = 0;
-        const int index = std::stoi(pin_name.substr(kPrefix.size()), &used);
-        if (used == pin_name.size() - kPrefix.size() && index >= 0 && index < m->nu &&
-            !mj_id2name(m, mjOBJ_ACTUATOR, index))
-            return index;
-    } catch (...) {
-    }
+    const std::string digits = pin_name.substr(kPrefix.size());
+    if (digits.empty() || digits.size() > 9 ||
+        !std::all_of(digits.begin(), digits.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; }))
+        return -1;
+    const int index = std::stoi(digits);
+    if (index < m->nu && !mj_id2name(m, mjOBJ_ACTUATOR, index)) return index;
     return -1;
 }
 
@@ -82,7 +82,7 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
 bool MuJoCoPlugin::OnInitialize(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnInitialize");
 
-    // Note: Registration of interfaces (IPanelProvider, INodeProvider, ITrainingHook)
+    // Note: Registration of interfaces (IPanelProvider, INodeProvider)
     // is handled engine-side via QueryInterface in PluginManager to avoid DLL singleton
     // duplication issues. Do NOT call ctx.Register*() here.
 
@@ -94,7 +94,11 @@ void MuJoCoPlugin::OnShutdown(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnShutdown");
     sim_executor_.Stop();  // Must stop before freeing model/renderer
     renderer_.Shutdown();
-    env_manager_.Close();
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        env_manager_.Close();
+        loaded_mjcf_path_.clear();
+    }
     state_ = PluginState::Loaded;
 }
 
@@ -113,18 +117,21 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
         renderer_.Shutdown();
     }
 
-    if (!env_manager_.LoadModel(mjcf_path)) {
-        return false;
+    // Nothing may step the old model while it is replaced: the executor stops
+    // first, and the graph simulation's EvaluateNode waits on the physics lock.
+    sim_executor_.Stop();
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        if (!env_manager_.LoadModel(mjcf_path)) {
+            loaded_mjcf_path_.clear();
+            return false;
+        }
+        // The loaded path, for ResolveDynamicPins and the Plant's model check
+        loaded_mjcf_path_ = mjcf_path;
+        env_manager_.Reset();
     }
 
-    // Store the loaded path so ResolveDynamicPins can use it
-    loaded_mjcf_path_ = mjcf_path;
-
-    // Reset environment to get initial state
-    env_manager_.Reset();
-
     // Wire simulation executor and viewport
-    sim_executor_.Stop();
     sim_executor_.SetEnvManager(&env_manager_);
     viewport_panel_.SetSimExecutor(&sim_executor_);
 
@@ -203,7 +210,6 @@ std::vector<PluginNodeTypeInfo> MuJoCoPlugin::GetNodeTypes() {
         n.default_parameters["mjcf_path"]       = "inverted_pendulum.xml";
         n.default_parameters["max_steps"]        = "1000";
         n.default_parameters["frame_skip"]       = "1";
-        n.default_parameters["reward_threshold"] = "inf";
         nodes.push_back(std::move(n));
     }
 
@@ -460,7 +466,7 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
     PluginNodeEvalResult result;
 
     if (ctx.node_type_name == "MuJoCoPlant") {
-        // If sim_executor is already running (manual control or RL training),
+        // If sim_executor is already running (manual control),
         // don't step physics here — would cause concurrent access crash
         if (sim_executor_.GetMode() != SimMode::Stopped) {
             sim_executor_.Stop();  // Request stop and wait for thread to finish
@@ -469,6 +475,9 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
         // Signal viewport that graph sim is driving physics
         viewport_panel_.SetGraphSimActive(true);
 
+        // One physics transaction: the model cannot be replaced (LoadEnvironment)
+        // or rendered while this tick checks, applies, steps and reads it.
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         if (!env_manager_.IsLoaded()) {
             result.success = false;
             result.error_message = "No MuJoCo model loaded";
@@ -476,13 +485,25 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
         }
 
         // The node's model is the model it steps: never another one silently.
-        const auto node_path = ctx.parameters.find("mjcf_path");
-        if (node_path != ctx.parameters.end() && !node_path->second.empty() &&
-            !SameModelFile(node_path->second, loaded_mjcf_path_)) {
+        // Its own mjcf_path, or else the model its pins were synced from.
+        const auto param = [&](const char* key) {
+            const auto it = ctx.parameters.find(key);
+            return it == ctx.parameters.end() ? std::string() : it->second;
+        };
+        const std::string node_model = param("mjcf_path");
+        const std::string synced_model = param("_meta_loaded_path");
+        if (!node_model.empty() && !SameModelFile(node_model, loaded_mjcf_path_)) {
             result.success = false;
-            result.error_message = "The MuJoCo Plant's model '" + node_path->second +
+            result.error_message = "The MuJoCo Plant's model '" + node_model +
                                    "' is not the model loaded in the viewport ('" + loaded_mjcf_path_ +
                                    "'); load it from the Environment Library";
+            return result;
+        }
+        if (node_model.empty() && !synced_model.empty() && !SameModelFile(synced_model, loaded_mjcf_path_)) {
+            result.success = false;
+            result.error_message = "The MuJoCo Plant's pins were made for '" + synced_model +
+                                   "' but the viewport has '" + loaded_mjcf_path_ +
+                                   "' loaded; sync the node again or load that model";
             return result;
         }
 
@@ -513,10 +534,7 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
             }
         }
 
-        // Apply, step and read as one physics transaction (the viewport renders
-        // from the same data under this lock).
         const int frame_skip = env_manager_.GetFrameSkip();
-        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         for (const auto& [id, v] : controls) d->ctrl[id] = v;
         for (int i = 0; i < frame_skip; i++) {
             mj_step(m, d);
@@ -568,10 +586,10 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
         state.sensor = get_vec("sensor");
         state.sim_time = ctx.sim_time;
 
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         const mjData* d = env_manager_.GetData();
         const mjModel* m = env_manager_.GetModel();
         if (d && m) {
-            std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
             if (state.qpos.empty()) state.qpos = ToFloats(d->qpos, m->nq);
             if (state.qvel.empty()) state.qvel = ToFloats(d->qvel, m->nv);
             if (state.ctrl.empty()) state.ctrl = ToFloats(d->ctrl, m->nu);
@@ -602,27 +620,25 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
         std::vector<float> qvel = get_vec("qvel");
         std::vector<float> sensors = get_vec("sensor");
 
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         const mjData* d = env_manager_.GetData();
         const mjModel* m = env_manager_.GetModel();
         if (d && m) {
-            std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
             if (qpos.empty()) qpos = ToFloats(d->qpos, m->nq);
             if (qvel.empty()) qvel = ToFloats(d->qvel, m->nv);
             if (sensors.empty() && m->nsensordata > 0)
                 sensors = ToFloats(d->sensordata, m->nsensordata);
         }
 
-        // Keep the running normalisation across ticks; a new simulation (time
-        // going back) or new settings start it again.
-        const auto& old_cfg = obs_filter_.GetConfig();
-        const bool same_cfg = old_cfg.include_qpos == cfg.include_qpos && old_cfg.include_qvel == cfg.include_qvel &&
-                              old_cfg.include_sensors == cfg.include_sensors && old_cfg.normalize == cfg.normalize;
-        if (!same_cfg || ctx.sim_time <= obs_filter_last_time_) {
-            obs_filter_.SetConfig(cfg);
-            obs_filter_.Reset();
-        }
-        obs_filter_last_time_ = ctx.sim_time;
-        std::vector<float> obs = obs_filter_.Filter(qpos, qvel, sensors);
+        // Keep the running normalisation across the ticks of a run, one filter
+        // per settings; the first tick of a run (time 0) starts it again.
+        // Nodes with the same settings share one filter: the evaluation
+        // context does not say which node is evaluated.
+        const std::string key = std::string(cfg.include_qpos ? "p" : "-") + (cfg.include_qvel ? "v" : "-") +
+                                (cfg.include_sensors ? "s" : "-") + (cfg.normalize ? "n" : "-");
+        auto [filter, inserted] = obs_filters_.try_emplace(key, cfg);
+        if (!inserted && ctx.sim_time <= 0.0) filter->second.Reset();
+        std::vector<float> obs = filter->second.Filter(qpos, qvel, sensors);
         result.output_values["obs"] = std::move(obs);
         return result;
     }

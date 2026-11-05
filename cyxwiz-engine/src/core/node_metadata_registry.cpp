@@ -4476,7 +4476,9 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         {"reinforcement", "training", "ppo", "rl"}, 0, false,
         "Reinforcement learning settings for Train RL",
         "Train RL generates a Python script that trains stable-baselines3 PPO on the MuJoCo Plant's model, "
-        "using this node's timesteps, learning rate, gamma, clip range, steps, batch size and epochs. "
+        "using this node's timesteps, learning rate, gamma, GAE lambda, clip range, "
+        "batch size, epochs, entropy and value coefficients and gradient clip. It runs PPO only; the other "
+        "algorithms and their settings are for Code Gen, and Train RL does not use the node's pins. "
         "It needs the MuJoCo plugin and the mujoco, gymnasium and stable-baselines3 Python packages.",
         "", {}, {}, {}, NodeImplementationStatus::External, 0, "Python"});
 }

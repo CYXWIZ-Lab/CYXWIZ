@@ -21,6 +21,7 @@
 #include "mj_env_browser_panel.h"
 #include "rl/observation_filter.h"
 
+#include <map>
 #include <string>
 
 struct GLFWwindow;  // Forward declare
@@ -97,10 +98,8 @@ private:
 
     std::string loaded_mjcf_path_;  // Path of the currently loaded MJCF model
 
-    // Observation Filter state across the ticks of one graph simulation
-    // (running normalisation); reset when a new simulation starts.
-    rl::ObservationFilter obs_filter_;
-    double obs_filter_last_time_ = -1.0;
+    // Observation Filter running normalisation, one per settings (see EvaluateNode)
+    std::map<std::string, rl::ObservationFilter> obs_filters_;
     bool viewport_visible_ = true;
     bool renderer_needs_init_ = false;
 };

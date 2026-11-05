@@ -4289,25 +4289,58 @@ void NodeEditor::OnStartRLTraining() {
     cyxwiz::RLTrainingConfig config;
 
     for (const auto& node : nodes_) {
-        if (node.type == NodeType::RLTraining) {
-            auto it = node.parameters.find("total_timesteps");
-            if (it != node.parameters.end()) config.total_timesteps = std::stoi(it->second);
-            it = node.parameters.find("max_episode_steps");
-            if (it != node.parameters.end()) config.max_episode_steps = std::stoi(it->second);
-            it = node.parameters.find("learning_rate");
-            if (it != node.parameters.end()) config.learning_rate = std::stof(it->second);
-            it = node.parameters.find("gamma");
-            if (it != node.parameters.end()) config.gamma = std::stof(it->second);
-            it = node.parameters.find("clip_range");
-            if (it != node.parameters.end()) config.clip_range = std::stof(it->second);
-            it = node.parameters.find("n_steps");
-            if (it != node.parameters.end()) config.n_steps = std::stoi(it->second);
-            it = node.parameters.find("batch_size");
-            if (it != node.parameters.end()) config.batch_size = std::stoi(it->second);
-            it = node.parameters.find("n_epochs");
-            if (it != node.parameters.end()) config.n_epochs = std::stoi(it->second);
-            break;
+        if (node.type != NodeType::RLTraining) continue;
+        // Train RL runs stable-baselines3 PPO; the other algorithms the node
+        // offers are for Code Gen.
+        const auto algorithm = node.parameters.find("algorithm");
+        if (algorithm != node.parameters.end() && !algorithm->second.empty() && algorithm->second != "PPO") {
+            spdlog::error("Train RL runs PPO only; RL Training is set to {} (use Code Gen for it)", algorithm->second);
+            return;
         }
+        // A typed value that is not a number stops Train RL with its name
+        // instead of throwing on the UI thread.
+        std::string bad_setting;
+        const auto read_int = [&](const char* key, int& out) {
+            const auto it = node.parameters.find(key);
+            if (it == node.parameters.end()) return;
+            try {
+                size_t used = 0;
+                const int value = std::stoi(it->second, &used);
+                if (used != it->second.size()) throw std::invalid_argument(key);
+                out = value;
+            } catch (const std::exception&) {
+                if (bad_setting.empty()) bad_setting = key;
+            }
+        };
+        const auto read_float = [&](const char* key, float& out) {
+            const auto it = node.parameters.find(key);
+            if (it == node.parameters.end()) return;
+            try {
+                size_t used = 0;
+                const float value = std::stof(it->second, &used);
+                if (used != it->second.size()) throw std::invalid_argument(key);
+                out = value;
+            } catch (const std::exception&) {
+                if (bad_setting.empty()) bad_setting = key;
+            }
+        };
+        read_int("total_timesteps", config.total_timesteps);
+        read_int("max_episode_steps", config.max_episode_steps);
+        read_float("learning_rate", config.learning_rate);
+        read_float("gamma", config.gamma);
+        read_float("gae_lambda", config.gae_lambda);
+        read_float("clip_range", config.clip_range);
+        read_int("n_steps", config.n_steps);
+        read_int("batch_size", config.batch_size);
+        read_int("n_epochs", config.n_epochs);
+        read_float("ent_coef", config.entropy_coeff);
+        read_float("vf_coef", config.value_coeff);
+        read_float("max_grad_norm", config.max_grad_norm);
+        if (!bad_setting.empty()) {
+            spdlog::error("Train RL not started: RL Training's '{}' is not a number", bad_setting);
+            return;
+        }
+        break;
     }
 
     // Find MuJoCo Plant node for MJCF path

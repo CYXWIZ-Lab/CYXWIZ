@@ -68,16 +68,6 @@ void MjSimulationExecutor::SingleStep() {
     }
 }
 
-void MjSimulationExecutor::SetActuatorInputs(const std::vector<ActuatorInput>& inputs) {
-    std::lock_guard lock(io_mutex_);
-    actuator_inputs_ = inputs;
-}
-
-std::vector<SensorOutput> MjSimulationExecutor::GetSensorOutputs() const {
-    std::lock_guard lock(io_mutex_);
-    return sensor_outputs_;
-}
-
 SimMetrics MjSimulationExecutor::GetMetrics() const {
     std::lock_guard lock(io_mutex_);
     return metrics_;
@@ -136,55 +126,20 @@ void MjSimulationExecutor::ExecuteOneStep() {
     const mjModel* m = env_->GetModel();
     if (!d || !m) return;
 
-    std::vector<ActuatorInput> inputs;
-    {
-        std::lock_guard lock(io_mutex_);
-        inputs = actuator_inputs_;
-    }
-
-    // Apply inputs, step and read the outputs as one physics transaction
-    int frame_skip = env_->GetFrameSkip();
-    std::vector<SensorOutput> outputs;
+    // Step and read the time as one physics transaction
+    const int frame_skip = env_->GetFrameSkip();
     double sim_time = 0.0;
     {
         std::lock_guard phys_lock(env_->GetPhysicsMutex());
-        for (const auto& input : inputs) {
-            int id = mj_name2id(m, mjOBJ_ACTUATOR, input.name.c_str());
-            if (id >= 0 && id < m->nu) {
-                d->ctrl[id] = input.value;
-            }
-        }
         for (int i = 0; i < frame_skip; i++) {
             mj_step(m, d);
-        }
-        for (int i = 0; i < m->nsensor; i++) {
-            SensorOutput so;
-            const char* name = mj_id2name(m, mjOBJ_SENSOR, i);
-            so.name = name ? name : ("sensor_" + std::to_string(i));
-            int dim = m->sensor_dim[i];
-            int adr = m->sensor_adr[i];
-            so.values.resize(dim);
-            for (int j = 0; j < dim && (adr + j) < m->nsensordata; j++) {
-                so.values[j] = static_cast<float>(d->sensordata[adr + j]);
-            }
-            outputs.push_back(std::move(so));
         }
         sim_time = d->time;
     }
 
-    // Update shared state
-    {
-        std::lock_guard lock(io_mutex_);
-        sensor_outputs_ = std::move(outputs);
-        metrics_.step_count++;
-        metrics_.sim_time = sim_time;
-    }
-
-    // Notify callback
-    if (step_callback_) {
-        std::lock_guard lock(io_mutex_);
-        step_callback_(sensor_outputs_, metrics_);
-    }
+    std::lock_guard lock(io_mutex_);
+    metrics_.step_count++;
+    metrics_.sim_time = sim_time;
 }
 
 } // namespace cyxwiz::plugin::mujoco
