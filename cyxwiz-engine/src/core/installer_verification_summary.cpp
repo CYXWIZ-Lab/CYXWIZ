@@ -1,4 +1,5 @@
 #include "installer_verification_summary.h"
+#include "device_display_name.h"
 
 #include <algorithm>
 #include <cmath>
@@ -106,16 +107,6 @@ std::string ActionFor(InstallerRouteVerificationStatus status) {
     return "Run Verify All again.";
 }
 
-// Same wording as the Engine device cards (compute_device_presentation.cpp):
-// ArrayFire names like "NVIDIA_GeForce_GTX_1050_Ti" read with spaces.
-std::string CleanName(std::string name) {
-    std::replace(name.begin(), name.end(), '_', ' ');
-    const auto first = name.find_first_not_of(' ');
-    if (first == std::string::npos) return {};
-    const auto last = name.find_last_not_of(' ');
-    return name.substr(first, last - first + 1);
-}
-
 std::string FormatMs(double ms) {
     char buffer[32];
     std::snprintf(buffer, sizeof(buffer), ms < 1.0 ? "%.2f ms" : "%.1f ms", ms);
@@ -125,7 +116,7 @@ std::string FormatMs(double ms) {
 std::string RouteLabel(const InstallerRouteVerificationResult& route) {
     std::ostringstream label;
     label << route.backend;
-    const std::string name = CleanName(route.display_name);
+    const std::string name = DeviceDisplayName(route.display_name);
     if (!name.empty()) label << " - " << name;
     label << " (device " << route.device_id << ')';
     return label.str();

@@ -1,4 +1,5 @@
 #include "compute_device_presentation.h"
+#include "device_display_name.h"
 
 #include <algorithm>
 #include <cctype>
@@ -50,15 +51,6 @@ const char* MetadataLabel(DeviceMetadataStatus status) {
     return "Not queried";
 }
 
-// ArrayFire reports names like "NVIDIA_GeForce_GTX_1050_Ti".
-std::string CleanName(std::string name) {
-    std::replace(name.begin(), name.end(), '_', ' ');
-    const auto first = name.find_first_not_of(' ');
-    if (first == std::string::npos) return {};
-    const auto last = name.find_last_not_of(' ');
-    return name.substr(first, last - first + 1);
-}
-
 std::string Lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](char c) {
         return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -82,10 +74,10 @@ std::string FormatGb(size_t bytes) {
 std::string RouteName(const ComputeRouteInput& input) {
     if (input.device && input.device->name_known &&
         !input.device->name_is_fallback) {
-        return CleanName(input.device->name);
+        return DeviceDisplayName(input.device->name);
     }
     if (input.evidence && !input.evidence->display_name.empty()) {
-        return CleanName(input.evidence->display_name);
+        return DeviceDisplayName(input.evidence->display_name);
     }
     return {};
 }
