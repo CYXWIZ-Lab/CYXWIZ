@@ -115,6 +115,14 @@ bool GuardedExtensionModule::HasParameters() const { return inner_->HasParameter
 
 std::vector<std::string> GuardedExtensionModule::GetStateNames() const { return inner_->GetStateNames(); }
 
+size_t GuardedExtensionModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return inner_->CachedElementsPerSample(sample_input_shape);
+}
+
+size_t GuardedExtensionModule::BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return inner_->BackwardWorkingElementsPerSample(sample_input_shape);
+}
+
 std::string GuardedExtensionModule::GetName() const { return inner_->GetName(); }
 
 void GuardedExtensionModule::SetTraining(bool training) {

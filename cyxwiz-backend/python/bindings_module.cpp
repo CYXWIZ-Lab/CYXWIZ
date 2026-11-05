@@ -95,6 +95,22 @@ public:
         });
     }
 
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override {
+        return Call("cached_elements_per_sample", [&]() -> size_t {
+            if (py::function f = Override("cached_elements_per_sample")) return f(sample_input_shape).cast<size_t>();
+            return 0;
+        });
+    }
+
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override {
+        return Call("backward_working_elements_per_sample", [&]() -> size_t {
+            if (py::function f = Override("backward_working_elements_per_sample")) {
+                return f(sample_input_shape).cast<size_t>();
+            }
+            return 0;
+        });
+    }
+
     std::string GetName() const override {
         return Call("get_name", [&]() {
             if (py::function f = Override("get_name")) return f().cast<std::string>();
@@ -268,6 +284,12 @@ public:
     TensorMap GetGradients() override { return target_->GetGradients(); }
     bool HasParameters() const override { return target_->HasParameters(); }
     std::vector<std::string> GetStateNames() const override { return target_->GetStateNames(); }
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override {
+        return target_->CachedElementsPerSample(sample_input_shape);
+    }
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override {
+        return target_->BackwardWorkingElementsPerSample(sample_input_shape);
+    }
     std::string GetName() const override { return target_->GetName(); }
     void SetTraining(bool training) override {
         is_training_ = training;
@@ -424,6 +446,12 @@ void BindModuleBase(py::module_& m) {
         .def("has_parameters", &Module::HasParameters, "Check if module has trainable parameters")
         .def("get_state_names", &Module::GetStateNames,
             "Names of the get_parameters entries kept but not trained (no gradient)")
+        .def("cached_elements_per_sample", &Module::CachedElementsPerSample, py::arg("sample_input_shape"),
+            "For memory estimates: elements one training forward keeps for backward beyond the output, "
+            "per sample of this shape (no batch axis); 0 by default")
+        .def("backward_working_elements_per_sample", &Module::BackwardWorkingElementsPerSample,
+            py::arg("sample_input_shape"),
+            "For memory estimates: elements backward holds at once while it runs, per sample; 0 by default")
         .def("get_name", &Module::GetName, "Get module name")
         .def("set_training", &Module::SetTraining, py::arg("training"), "Set training mode")
         .def("is_training", &Module::IsTraining, "Check if in training mode")

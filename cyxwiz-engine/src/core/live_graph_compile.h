@@ -4,13 +4,15 @@
 // edit (TOFIX123), so the Properties panel and canvas colours always show
 // the compile of the current graph. One worker at a time; a newer edit
 // waits for it and compiles again. The worker also builds the model once to
-// count learnable parameters per layer (skipped while training runs).
+// count learnable parameters per layer and estimate a training step's memory
+// (skipped while training runs).
 //
 // Not an AsyncTaskManager task on purpose: a compile per edit would flood
 // Task View. Update() is called from the UI thread every frame.
 
 #include "compiled_node_presentation.h"
 #include "graph_compiler.h"
+#include "model_memory_estimate.h"
 
 #include <chrono>
 #include <cstdint>
@@ -41,6 +43,8 @@ public:
     const TrainingConfiguration* Config() const { return result_ ? &result_->config : nullptr; }
     const std::map<size_t, long long>& LayerParameters() const;
     bool ParametersCounted() const { return result_ && result_->parameters_counted; }
+    // A training step's memory for the built model (available once counted).
+    const ModelMemoryEstimate& Memory() const;
     bool ParametersCounting() const { return pending_.valid(); }
     // Increments each time a compile finishes (for callers that mirror it).
     uint64_t ResultSerial() const { return result_serial_; }
@@ -73,6 +77,7 @@ private:
         uint64_t revision = 0;
         TrainingConfiguration config;
         std::map<size_t, long long> layer_parameters;
+        ModelMemoryEstimate memory;
         bool parameters_counted = false;
         // Counting was asked for (it may still have failed). A compile made
         // while training ran is redone once training ends, so its count

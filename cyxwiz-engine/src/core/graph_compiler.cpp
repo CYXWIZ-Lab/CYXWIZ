@@ -6247,68 +6247,6 @@ TrainingConfiguration GraphCompiler::Compile(
                 }
             }
 
-            // Check 3: Memory estimation for image models.
-            // Estimate total model memory (weights + gradients + optimizer)
-            // and warn if it's likely to exceed reasonable GPU memory.
-            if (has_resize && config.image_preprocessing.target_width > 0) {
-                // The model's input after the image steps (crops, Grayscale, OpenCV steps).
-                const auto image_shape = cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps,
-                                                                    DecodedImageShape(config));
-                size_t img_features = image_shape.Size();
-                size_t total_params = 0;
-                size_t prev_size = img_features;
-                for (const auto& layer : config.layers) {
-                    if (layer.type == gui::NodeType::Dense) {
-                        total_params += prev_size * layer.units + layer.units;
-                        prev_size = layer.units;
-                    } else if (layer.type == gui::NodeType::Flatten) {
-                        // prev_size stays the same (just reshaped)
-                    }
-                }
-                // Memory = weights × 4 (weights + grads + adam_m + adam_v)
-                // + batch activations (batch_size × largest_layer)
-                size_t model_bytes = total_params * 4 * sizeof(float);
-                size_t batch_bytes = static_cast<size_t>(config.batch_size) *
-                    img_features * sizeof(float);
-                size_t total_est = model_bytes + batch_bytes;
-
-                double est_mb = total_est / (1024.0 * 1024.0);
-
-                std::ostringstream mem_msg;
-                mem_msg << "Estimated GPU memory: " << std::fixed
-                        << std::setprecision(0) << est_mb << " MB ("
-                        << total_params << " parameters, batch_size="
-                        << config.batch_size << ", input="
-                        << image_shape.width << "x" << image_shape.height << "x"
-                        << image_shape.channels << ")";
-
-                // Real GPU usage is ~3-5x the raw parameter estimate due to
-                // CUDA context (~300 MB), forward/backward activations,
-                // matmul temporaries, and optimizer state. Use a 4x
-                // multiplier for a realistic bound.
-                double realistic_mb = est_mb * 4.0;
-
-                if (realistic_mb > 3000) {
-                    // Suggest a smaller size that would fit
-                    int safe_features = 64 * 64 * 3;  // 12288
-                    mem_msg << ". WARNING: real GPU usage is ~"
-                            << std::setprecision(0) << realistic_mb
-                            << " MB (incl. activations + optimizer + CUDA "
-                            << "overhead). This will likely OOM on your GPU. "
-                            << "Set the Resize node to a smaller size "
-                            << "(e.g. 64x64 for " << safe_features
-                            << " features)";
-                    AddIssue(config, IssueLevel::Error, mem_msg.str());
-                } else if (realistic_mb > 2000) {
-                    mem_msg << ". This is close to typical GPU memory limits "
-                            << "— consider reducing Resize dimensions or "
-                            << "batch_size if training crashes";
-                    AddIssue(config, IssueLevel::Warning, mem_msg.str());
-                } else {
-                    AddIssue(config, IssueLevel::Info, mem_msg.str());
-                }
-            }
-
             // mixup / cutmix mix the one-hot labels, which only Cross Entropy takes.
             if (config.image_mix_node_id >= 0 &&
                 (!config.preprocessing.has_onehot || UsesScalarBinaryTargets(config.loss_type))) {

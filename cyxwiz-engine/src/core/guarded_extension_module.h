@@ -33,6 +33,8 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override;
     std::vector<std::string> GetStateNames() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
     std::string GetName() const override;
     void SetTraining(bool training) override;
 

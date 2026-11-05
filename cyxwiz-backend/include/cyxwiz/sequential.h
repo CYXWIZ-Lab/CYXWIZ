@@ -197,6 +197,24 @@ public:
     // with the weights.
     virtual std::vector<std::string> GetStateNames() const { return {}; }
 
+    // For memory estimates: the elements one training forward keeps for the
+    // backward pass beyond the module's output, per sample of
+    // sample_input_shape (no batch axis), such as attention weights or a
+    // recurrent layer's per-step gates. 0 when the output, and the input the
+    // previous module already holds, are all it keeps.
+    virtual size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+        (void)sample_input_shape;
+        return 0;
+    }
+    // For memory estimates: the elements the module's backward pass holds at
+    // once while it runs (a convolution's unfolded input columns and their
+    // gradient), per sample; freed when it returns, so only the largest over
+    // the model counts. 0 when it needs no more than its gradients.
+    virtual size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+        (void)sample_input_shape;
+        return 0;
+    }
+
 protected:
     bool is_training_ = true;
     bool trainable_ = true;  // For transfer learning - frozen layers won't update
@@ -223,6 +241,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     std::unique_ptr<Conv1DLayer> layer_;
@@ -254,6 +273,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     std::unique_ptr<Conv2DLayer> layer_;
@@ -281,6 +301,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     std::unique_ptr<DepthwiseConv2DLayer> layer_;
@@ -311,6 +332,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     std::unique_ptr<ConvTranspose2DLayer> layer_;
@@ -347,6 +369,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
     // The [D', H', W', F] sample each output row holds.
     std::vector<size_t> OutputSample() const { return {out_depth_, out_height_, out_width_, filters_}; }
@@ -734,6 +757,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     // Batch-first LSTMLayer; a bidirectional one builds its forward and
@@ -778,6 +802,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     // Same layout and key translation as LSTMModule.
@@ -811,6 +836,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     // Same layout and key translation as LSTMModule.
@@ -850,6 +876,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     std::unique_ptr<TransformerEncoderLayer> layer_;
@@ -889,6 +916,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
     IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::Stateful; }
     Tensor ForwardIncremental(const Tensor& input, size_t position_offset) override;
     void ResetIncrementalState() override;
@@ -940,6 +968,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
     // Only causal attention can decode incrementally.
     IncrementalDecoding GetIncrementalDecoding() const override {
         return options_.causal ? IncrementalDecoding::Stateful : IncrementalDecoding::Unsupported;
@@ -979,6 +1008,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     std::unique_ptr<MultiHeadAttentionLayer> layer_;
@@ -1011,6 +1041,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     Tensor Project(const Tensor& rows, const std::string& name) const;
@@ -1128,6 +1159,7 @@ public:
     Tensor Backward(const Tensor& grad_output) override;
     void SetTraining(bool training) override;
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     float p_;  // Dropout probability
@@ -1396,6 +1428,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
     std::vector<std::string> GetStateNames() const override { return {"running_mean", "running_var"}; }
 
 private:
@@ -1437,6 +1470,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return elementwise_affine_; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
     // Position-wise only when it normalizes over the feature axis alone.
     IncrementalDecoding GetIncrementalDecoding() const override {
         return normalized_shape_.size() == 1 ? IncrementalDecoding::PositionWise : IncrementalDecoding::Unsupported;
@@ -1468,6 +1502,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return affine_; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     std::unique_ptr<GroupNormLayer> layer_;
@@ -1520,6 +1555,7 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
     std::vector<std::string> GetStateNames() const override { return {"running_mean", "running_var"}; }
 
 private:

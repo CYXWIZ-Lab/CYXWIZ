@@ -811,6 +811,8 @@ Base class of every module. Subclass it in Python to write your own: define forw
 | `add_parameter(self: Module, name: str, value: Tensor) -> None` | Declare a learnable tensor. The optimizer updates it; read it with parameter(name) |
 | `add_state(self: Module, name: str, value: Tensor) -> None` | Declare a tensor the module keeps but does not train, such as a running mean. It is saved with the weights and takes no gradient; update it with set_state |
 | `backward(self: Module, grad_output: Tensor) -> Tensor` | Backward pass |
+| `backward_working_elements_per_sample(self: Module, sample_input_shape: Sequence[int]) -> int` | For memory estimates: elements backward holds at once while it runs, per sample; 0 by default |
+| `cached_elements_per_sample(self: Module, sample_input_shape: Sequence[int]) -> int` | For memory estimates: elements one training forward keeps for backward beyond the output, per sample of this shape (no batch axis); 0 by default |
 | `forward(self: Module, input: Tensor) -> Tensor` | Forward pass through the module |
 | `freeze(self: Module) -> None` | Freeze module (disable parameter updates) |
 | `get_gradients(self: Module) -> dict[str, Tensor]` | Get parameter gradients |

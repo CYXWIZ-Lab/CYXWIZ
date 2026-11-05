@@ -18,6 +18,7 @@ public:
               const std::map<std::string, Tensor>& gradients) override;
 
     void ZeroGrad() override;
+    size_t StateTensorsPerParameter() const override { return momentum_ > 0.0 ? 1 : 0; }  // velocity
 
     bool ExportState(OptimizerState& state, std::string& error) const override;
     bool ImportState(const OptimizerState& state, std::string& error) override;

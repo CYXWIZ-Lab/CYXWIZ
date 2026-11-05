@@ -97,13 +97,14 @@ void MainWindow::ShowCompileReport(cyxwiz::compile_report::Mode mode, std::strin
     in.placements = compile_result_backend_placements_;
     in.has_config = compile_result_has_config_;
     in.config = compile_result_config_;
-    // Parameters: the layers' counts of the live compile (the AS COMPILED
-    // cards' numbers), when it compiled the same layers.
+    // Parameters and the training-step memory: from the live compile's build
+    // (the AS COMPILED cards' numbers), when it compiled the same layers.
     if (in.has_config && live_compile_ && live_compile_->ParametersCounted() && live_compile_->Config() &&
         live_compile_->Config()->layers.size() == in.config.layers) {
         long long total = 0;
         for (const auto& [layer, count] : live_compile_->LayerParameters()) total += count;
         in.config.parameters = total;
+        in.config.memory = live_compile_->Memory();
     }
     compile_report_ = report::BuildReport(in);
     compile_report_mode_ = mode;

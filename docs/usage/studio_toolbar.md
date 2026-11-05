@@ -177,11 +177,23 @@ Compile (F7) shows what the graph compiles to, in a window titled
   layer in plain words. Layers that need attention come first, with what to
   do. Each row's **Details** keeps the reason code, the expected and fallback
   backends and what was observed.
-- **Configuration**: layers, input per sample, outputs and the learnable
-  parameters (the layers' AS COMPILED counts), then Data (dataset, where it
-  is: in memory, on disk or loaded lazily, and the split), the training loop
-  (batches, epochs, metrics, workers, seed, gradient accumulation) and
-  learning (loss, optimizer and learning rate, labels).
+- **Configuration**: layers, input per sample, outputs, the learnable
+  parameters (the layers' AS COMPILED counts; BatchNorm's running statistics
+  are kept state, not parameters) and about how much memory one training step
+  needs, then Data (dataset, where it is: in memory, on disk or loaded lazily,
+  and the split), the training loop (batches, epochs, metrics, workers, seed,
+  gradient accumulation) and learning (loss, optimizer and learning rate,
+  labels).
+- **Memory of a training step (estimate)** breaks that number down: the
+  weights, their gradients, the optimizer's state (Adam keeps two tensors per
+  parameter, SGD without momentum none), kept state, and the activations of
+  one batch (each layer's output and what it keeps for the backward pass:
+  attention weights, recurrent gates, a convolution's unfolded input). It is
+  counted from the model the graph builds, so every layer kind, extension
+  nodes included, is in it. The device runtime and the training data come on
+  top. When the device's memory size is known, the last row gives the share;
+  above 100% the tile says so and suggests a smaller batch or input. The
+  estimate never blocks training.
 - **Copy report** puts all of it on the clipboard as text for a bug report.
   When the graph is ready, **Train** sits next to **Close**.
 

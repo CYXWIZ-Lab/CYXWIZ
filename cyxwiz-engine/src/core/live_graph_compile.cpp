@@ -123,11 +123,24 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
                 Device::ActivateProcessDeviceOnThisThread();
                 auto built = BuildExecutableFromConfig(buildable);
                 if (built.ok()) {
+                    // Learnable parameters: state such as BatchNorm's running
+                    // statistics is not trained.
+                    const auto state = built.model->GetStateParameterNames();
                     std::vector<std::pair<std::string, long long>> named;
                     for (const auto& [name, tensor] : built.model->GetParameters()) {
+                        if (state.count(name)) continue;
                         named.emplace_back(name, static_cast<long long>(tensor.NumElements()));
                     }
                     result->layer_parameters = CountParametersPerLayer(named);
+                    result->memory = EstimateTrainingMemory(built, result->config.input_shape,
+                                                            result->config.batch_size);
+                    if (const auto selected = Device::GetProcessDevice()) {
+                        const DeviceInfo device = Device(selected->type, selected->device_id).GetInfo();
+                        if (device.memory_total_known) {
+                            result->memory.device_name = device.name;
+                            result->memory.device_memory_bytes = device.memory_total;
+                        }
+                    }
                     result->parameters_counted = true;
                 }
             } catch (const std::exception& error) {
@@ -146,6 +159,11 @@ LiveCompileState LiveGraphCompile::State() const {
 const std::map<size_t, long long>& LiveGraphCompile::LayerParameters() const {
     static const std::map<size_t, long long> empty;
     return result_ ? result_->layer_parameters : empty;
+}
+
+const ModelMemoryEstimate& LiveGraphCompile::Memory() const {
+    static const ModelMemoryEstimate none;
+    return result_ ? result_->memory : none;
 }
 
 bool LiveGraphCompile::NodeHasError(int node_id) const {

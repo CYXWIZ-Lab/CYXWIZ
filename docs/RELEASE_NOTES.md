@@ -17,6 +17,17 @@ private Data Studio tickets (`tofix*/track*`).
   project, Local Debug (and the other Studio Debugger runs) loads the graph's
   data first, the way Train does, instead of stopping with "Data is not
   loaded".
+- **Compile (F7) estimates a training step's memory for every layer kind.**
+  The old note counted only Dense layers on image graphs (3 MB for the 1.2 M
+  parameter ResNet example, and an error above a guessed 3 GB). The estimate
+  now comes from the built model: weights, gradients, the optimizer's state,
+  kept state and the batch's activations, including attention weights,
+  recurrent gates and convolution columns; on the ResNet example it is
+  1.35 GB against 1.41 GB measured. It shows as a tile and a breakdown, with
+  the device's share when known, and never blocks training. The parameter
+  count leaves BatchNorm's running statistics out. Plugin SDK:
+  `Module::CachedElementsPerSample` and `BackwardWorkingElementsPerSample`
+  let a module report what it keeps; `Optimizer::StateTensorsPerParameter`.
 - **BatchNorm's running mean and variance are state, not parameters missing
   a gradient.** Local Debug no longer reports them (24 on the ResNet example)
   as "parameters missing gradient", and Gradient Health no longer says needs

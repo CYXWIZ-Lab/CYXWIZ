@@ -221,6 +221,14 @@ class RunningCenter(cyx.Module):
 `parameter` and `set_gradient` refuse a state name, and `gradcheck` skips
 state.
 
+The Engine's training-memory estimate (Compile, F7) counts each layer's
+output. A module that keeps more for `backward`, such as attention weights,
+can say how much by defining `cached_elements_per_sample(self,
+sample_input_shape)`; one whose `backward` allocates large temporaries can
+define `backward_working_elements_per_sample(self, sample_input_shape)`. Both
+return a number of elements per sample (the shape has no batch axis) and
+default to 0.
+
 ## 5. Training and evaluation mode
 
 The model tells each module whether it is training: `Sequential.train()`

@@ -7,6 +7,7 @@
 // same words and the wording is tested.
 
 #include "graph_compiler.h"
+#include "model_memory_estimate.h"
 
 #include <cstdint>
 #include <string>
@@ -65,6 +66,8 @@ struct ConfigFacts {
     // Learnable parameters summed from the layers (the AS COMPILED cards'
     // counts); -1 while not counted.
     long long parameters = -1;
+    // A training step's memory, from the same build (not available while not counted).
+    ModelMemoryEstimate memory;
 };
 
 struct Input {

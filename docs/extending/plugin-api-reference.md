@@ -257,6 +257,8 @@ Plugin Manager's **Install...** and `cyxwiz-plugin-check` show them.
 | `std::map<std::string, Tensor> GetParameters()`, `SetParameters(...)`, `GetGradients()` | The module has weights. The three use the same keys; `SetParameters` may get only some keys |
 | `bool HasParameters() const` | The module has weights (return `true`) |
 | `std::vector<std::string> GetStateNames() const` | `GetParameters` also returns state the module keeps but does not train, such as BatchNorm's running statistics: name those keys. They need no gradient; the optimizer leaves them, the gradient check skips them, and saved models keep them |
+| `size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const` | Your forward keeps more than its output for the backward pass (attention weights, gate values, a mask): return how many elements, per sample of that shape (no batch axis). The Engine's training-memory estimate (Compile, F7) adds it |
+| `size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const` | Your backward allocates large temporaries while it runs (unfolded input columns): return their elements per sample. Only the largest over the model counts |
 | `IncrementalDecoding GetIncrementalDecoding() const` | Return `PositionWise` when each output position depends only on the same input position (activations, per-position layers) |
 | `void SetTraining(bool)` | Behaviour differs between training and evaluation; keep `is_training_` set |
 

@@ -1939,6 +1939,37 @@ set_target_properties(test_debug_executor PROPERTIES
 )
 add_test(NAME debug_executor COMMAND test_debug_executor)
 
+# ===== Test: training-step memory estimate for every layer kind (TOFIX178 6.0d) =====
+# Compiles example graphs without their data and checks the estimate against
+# ArrayFire's measured allocation over one training step.
+add_executable(test_model_memory_estimate
+    tests/test_model_memory_estimate.cpp
+    src/core/synthetic_batch.cpp
+    src/gui/node_type_import_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+)
+target_compile_definitions(test_model_memory_estimate PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+target_include_directories(test_model_memory_estimate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_model_memory_estimate PRIVATE
+    cyxwiz-training-core
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    OpenSSL::Crypto
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_model_memory_estimate PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_model_memory_estimate PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME model_memory_estimate COMMAND test_model_memory_estimate)
+
 # ===== Test: Siamese Backend Smoke =====
 add_executable(test_siamese_backend_smoke
     tests/test_siamese_backend_smoke.cpp
