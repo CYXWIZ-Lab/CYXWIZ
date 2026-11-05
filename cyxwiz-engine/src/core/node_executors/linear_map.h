@@ -12,7 +12,6 @@
 #include "../preprocessing_state.h"
 
 #include <cyxwiz/linear_algebra.h>
-#include "feature_rows.h"
 
 #include <arrow/api.h>
 

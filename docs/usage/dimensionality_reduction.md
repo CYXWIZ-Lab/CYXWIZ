@@ -22,7 +22,7 @@ covariance (and the means and scales) come from the Train rows only, and every
 row is then mapped onto those directions. Without a Split it learns from every
 row. Its fitted state (the means, the scales and the directions) is saved with
 the step like the scalers' (Fitted preprocessing state in Properties), so a run
-in `transform` mode maps new rows with the directions it learned.
+in `transform_only` mode maps new rows with the directions it learned.
 
 ## t-SNE
 

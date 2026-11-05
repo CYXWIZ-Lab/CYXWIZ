@@ -2,6 +2,7 @@
 
 #include "../sparse_feature_dataset.h"
 #include "../split_partitioning.h"
+#include "feature_rows.h"  // Linear Projection's matrix
 
 #include <cyxwiz/linear_algebra.h>
 
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace cyxwiz {
@@ -182,6 +184,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> TruncatedSVDOperator::ApplySparseIn
                 }
                 train_offsets.push_back(static_cast<int>(train_columns.size()));
             }
+            ARROW_RETURN_NOT_OK(CheckCancellation(name));
             train.rows = static_cast<int>(train_offsets.size()) - 1;
             train.row_offsets = train_offsets.data();
             train.column_indices = train_columns.data();
@@ -283,8 +286,10 @@ arrow::Status WhiteningOperator::Fit(const NumberColumns& train, const std::vect
     const size_t k = wanted;
     std::vector<double> scale(k);
     const double top = variances.empty() ? 0.0 : variances[0];
+    // Below the rounding of the sums (float32: ~1e-7 of the largest per column), a variance is noise.
+    const double floor = std::max(1e-12, summary.precision * static_cast<double>(d)) * std::max(1.0, top);
     for (size_t c = 0; c < k; ++c) {
-        if (epsilon_ == 0.0 && !(variances[c] > 1e-12 * std::max(1.0, top)))
+        if (epsilon_ == 0.0 && !(variances[c] > floor))
             return arrow::Status::Invalid("Whitening: direction " + std::to_string(c + 1) +
                                           " of the Train rows has no variance, so it cannot be scaled to 1: " +
                                           (method_ == "pca" ? "keep fewer components, or " : "") + "set epsilon above 0.");

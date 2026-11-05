@@ -1,8 +1,6 @@
 #include "pca_operator.h"
 #include "../materialization_memory_guard.h"
 #include "../profiler_trace.h"
-#include "text_column_utils.h"  // ReadLabelColumnAsInt
-#include "feature_rows.h"
 #include "linear_map.h"
 
 

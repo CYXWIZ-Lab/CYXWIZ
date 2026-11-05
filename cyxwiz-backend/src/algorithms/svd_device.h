@@ -56,9 +56,12 @@ inline void ThinSvd(const af::array& a, af::array& u, af::array& s, af::array& v
 inline af::array LeastSquaresSvd(const af::array& a, const af::array& b) {
     af::array u, s, vt;
     ThinSvd(a, u, s, vt, true);
-    const double noise = std::max(static_cast<double>(std::max(a.dims(0), a.dims(1))) *
-                                      (a.type() == f64 ? std::numeric_limits<double>::epsilon() : std::numeric_limits<float>::epsilon()),
-                                  UsesGram(a) ? SingularNoise(a) : 0.0);
+    // LAPACK gelsd's cutoff, eps x max(m, n); on the Gram route (the m x m U is
+    // never formed) a small singular value carries sqrt(eps) of the largest,
+    // times the columns, as Rank counts them. Not eps x m there: at 1M rows in
+    // float32 that would drop every direction under 12 % of the largest.
+    const double noise = UsesGram(a) ? SingularNoise(a) * static_cast<double>(a.dims(1))
+                                     : static_cast<double>(std::max(a.dims(0), a.dims(1))) * SingularNoise(a);
     const double cutoff = noise * af::max<double>(s);
     const af::array kept = (s > cutoff).as(s.type());
     const af::array inverse = kept / (s + (1.0 - kept));  // 1 / s where kept, 0 elsewhere

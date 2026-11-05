@@ -37,7 +37,7 @@ The operations are in four groups along the top. Hover over one to see what it d
   rows themselves, or the columns' correlation or covariance (n − 1), which is
   worked out on the device. Rows with a missing value in a ticked column are
   left out, and the note under the table says how many. Rows are read up to
-  1,000,000 values (rows × columns). A larger table is refused, with a pointer
+  1,000,000 values (rows × columns), counted before the table is read. A larger table is refused, with a pointer
   to its correlation or covariance, or to sampling it in Prepare.
   **Read again** reads the table again after a run changed it.
 
@@ -55,7 +55,7 @@ The answer shows:
 - its figures (rank, determinant, condition, the residual);
 - bars for the singular values or eigenvalues, with each one's share;
 - one tab per result matrix (U, Vᵀ, Q, R, L, ...);
-- a check that the factors give A back ("U S Vᵀ gives A back: largest
+- a check that the factors give A back ("U S V^T gives A back: largest
   difference 1.8e-15").
 
 The SVD's **Low rank** tab keeps the top *k* directions you choose. Values
@@ -87,8 +87,9 @@ under the answer when it applies:
 
 Linear Projection is offered only when B uses every number column of its
 table, because the node takes them all as its outputs. A step goes in the data
-path after the table's node. A branch reads the table and leaves the data path
-as it is. The message under the buttons says where the node went. Ctrl+Z on
+path after the table's node, and keeps the table's columns with its own beside
+them (Keep columns on), so the nodes after it still find theirs. A branch reads
+the table and leaves the data path as it is. The message under the buttons says where the node went. Ctrl+Z on
 the canvas undoes it.
 
 ## The nodes
@@ -155,8 +156,10 @@ relative). The nodes are checked against scikit-learn (`test_fit_on_train_rows`)
 - **A tall matrix** (more than 4,096 rows and twice as many rows as columns)
   takes its SVD through the Gram matrix AᵀA, so the m × m U is never formed.
   Its rank threshold is sqrt(epsilon) times the columns.
-- **Least squares** drops singular values below the same cutoff as LAPACK's
-  `gelsd`, so a rank-deficient A gets the shortest x.
+- **Least squares** drops singular values below LAPACK `gelsd`'s cutoff
+  (epsilon times max(m, n) of the largest), so a rank-deficient A gets the
+  shortest x. On the Gram route the cutoff is the rank threshold above, so
+  Rank and Least squares agree on which directions count.
 
 ## Errors and limits
 

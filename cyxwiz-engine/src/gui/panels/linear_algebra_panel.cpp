@@ -406,11 +406,15 @@ bool LinearAlgebraPanel::RenderTableInput(const char* id, TableInput& input, boo
             changed = true;
         }
     }
-    if (!input.choice.table.empty() && ui::LinkButton("Read again")) {
-        ++refresh_;
-        changed = true;
+    if (!input.choice.table.empty()) {
+        if (ui::LinkButton("Read again")) {
+            ++refresh_;
+            // Its columns again too when they could not be read (a Data Input still loading).
+            if (!input.error.empty() || input.columns.empty()) input.columns_for.clear();
+            changed = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Read the table again (its data changed)");
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Read the table again (its data changed)");
     ImGui::PopID();
     return changed;
 }
@@ -566,7 +570,8 @@ void LinearAlgebraPanel::RenderAnswer() {
     ExploreNextButton("Export CSV...");
     if (ui::SecondaryButton("Export CSV...", has_tab, "Nothing to save: this answer has no table")) Export(a.tabs[static_cast<size_t>(tab_)]);
     ExploreNextButton("Use as A");
-    const bool usable = has_tab && a.tabs[static_cast<size_t>(tab_)].matrix;
+    const bool usable = has_tab && a.tabs[static_cast<size_t>(tab_)].matrix && !a.tabs[static_cast<size_t>(tab_)].values.empty() &&
+                        !a.tabs[static_cast<size_t>(tab_)].values[0].empty();
     if (ui::SecondaryButton("Use as A", usable, "Only a matrix result can become A")) {
         a_ = a.tabs[static_cast<size_t>(tab_)].values;
         if (a_.size() > static_cast<size_t>(linalg::kMaxTyped) || a_[0].size() > static_cast<size_t>(linalg::kMaxTyped)) Resize(a_, std::min<int>(linalg::kMaxTyped, static_cast<int>(a_.size())), std::min<int>(linalg::kMaxTyped, static_cast<int>(a_[0].size())));
@@ -596,7 +601,7 @@ linalg::Sources LinearAlgebraPanel::CurrentSources() const {
 void LinearAlgebraPanel::RenderHandOffs() {
     if (!add_to_graph_ || shown_key_ != key_ || !shown_->result.answer.ok()) return;
     const linalg::Sources sources = CurrentSources();
-    const std::vector<linalg::HandOff> offs = linalg::HandOffs(op_, sources, low_rank_, b_table_.columns);
+    const std::vector<linalg::HandOff> offs = linalg::HandOffs(op_, sources, op_ == Op::SVD ? low_rank_ : 2, b_table_.columns);  // Keep is SVD's only
     if (offs.empty()) return;
     ImGui::Spacing();
     for (size_t i = 0; i < offs.size(); ++i) {

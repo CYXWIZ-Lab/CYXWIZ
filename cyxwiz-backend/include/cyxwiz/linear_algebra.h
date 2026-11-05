@@ -96,6 +96,7 @@ struct CYXWIZ_API ColumnSummaryResult {
     std::vector<double> sd;                   // population (divides by n)
     std::vector<std::vector<double>> cross;   // (A - mean)^T (A - mean), cols x cols
     int rows = 0;
+    double precision = 0.0;                   // the epsilon of the type the sums were made in (float32 or float64)
     bool success = false;
     std::string error_message;
 };
@@ -281,8 +282,8 @@ public:
     // One upload and one download each, with no n x d temporary on the host.
 
     // Each column's mean and population standard deviation (divides by n),
-    // and the columns' cross products about their means (divided by n - 1:
-    // the covariance), from one upload of A.
+    // and the columns' cross products about their means, (A - mean)^T (A - mean)
+    // (not divided: divide by n - 1 for the covariance), from one upload of A.
     static ColumnSummaryResult ColumnSummary(const std::vector<std::vector<double>>& A);
     static ColumnSummaryResult ColumnSummary(const DenseView& A);
 

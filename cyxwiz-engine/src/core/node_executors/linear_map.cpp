@@ -189,6 +189,10 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_pt
     const size_t k = map.outputs.size();
     if (keep_columns) {
         // Float64 beside the input, null on the rows left out.
+        for (const auto& name : map.outputs)
+            if (input->schema()->GetFieldIndex(name) >= 0)
+                return arrow::Status::Invalid(op_name + ": the input already has a column '" + name +
+                                              "' (an earlier step's output?): turn Keep columns off, or give the outputs another name");
         std::shared_ptr<arrow::Table> out = input;
         for (size_t c = 0; c < k; ++c) {
             arrow::DoubleBuilder b;

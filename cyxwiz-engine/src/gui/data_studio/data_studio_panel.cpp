@@ -536,7 +536,7 @@ std::string DataStudioPanel::AddNodeReading(const std::string& dataset, const st
         second_name = second->name;
     }
     const std::string from_name = from->name;
-    node_editor_->RequestNodeAfter(from->id, *node_type, std::move(parameters), name, step, second_id);
+    node_editor_->RequestNodeAfter(from->id, *node_type, std::move(parameters), name, !step, second_id);
     return "Added the node \"" + name + "\" " + (step ? "after" : "reading") + " \"" + from_name + "\"" +
            (second_id >= 0 ? ", with \"" + second_name + "\" into its second input" : std::string()) +
            " (Ctrl+Z on the canvas undoes it). " + (step ? explore_view::StepAddedNote() : explore_view::BranchAddedNote());

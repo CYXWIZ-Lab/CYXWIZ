@@ -510,6 +510,7 @@ ColumnSummaryResult SummaryOf(const af::array& a) {
     result.sd = DeviceToHostValues(sd, "LinearAlgebra::ColumnSummary");
     result.cross = ToHostMatrix(af::matmul(centred, centred, AF_MAT_TRANS, AF_MAT_NONE), "LinearAlgebra::ColumnSummary");
     result.rows = static_cast<int>(a.dims(0));
+    result.precision = a.type() == f64 ? std::numeric_limits<double>::epsilon() : std::numeric_limits<float>::epsilon();
     result.success = true;
     return result;
 }

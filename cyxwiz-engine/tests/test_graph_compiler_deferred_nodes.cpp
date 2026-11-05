@@ -577,6 +577,25 @@ int main() {
     const auto lsa_config = compiler.Compile(lsa_nodes, lsa_links, true);
     Check(!HasIssueText(lsa_config, "must be the final preprocessing output"),
           "Truncated SVD after a sparse vectorizer is not a downstream Arrow step on sparse features");
+    // Only when it reads the vectorizer itself: a step between gets the sparse columns.
+    auto scaler = Node(12,
+                       gui::NodeType::StandardScaler,
+                       "Scale",
+                       {Pin(1201, gui::PinType::Dataset, "Data", true)},
+                       {Pin(1202, gui::PinType::Dataset, "Scaled", false)});
+    auto between_nodes = std::vector<gui::MLNode>{data, sparse_count, scaler, lsa, dense, loss, optimizer};
+    auto between_links = std::vector<gui::NodeLink>{
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 12, 1201),
+        Link(7, 12, 1202, 11, 1101),
+        Link(3, 11, 1102, 2, 201),
+        Link(4, 2, 202, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+    const auto between_config = compiler.Compile(between_nodes, between_links, true);
+    Check(HasIssueText(between_config, "must be the final preprocessing output"),
+          "a step between a sparse vectorizer and Truncated SVD still reads sparse features");
 
     auto sparse_sequence_data = data;
     sparse_sequence_data.parameters["token_column"] = "tokens";

@@ -293,7 +293,7 @@ int main() {
         Check(linalg::HandOffs(linalg::Op::SVD, {}, 2, {}).empty(), "hand-off: none for a typed A");
         const auto svd = linalg::HandOffs(linalg::Op::SVD, {TableChoice{"t", {"x", "y", "z"}}, std::nullopt}, 5, {});
         Check(svd.size() == 1 && svd[0].type == "TruncatedSVD" && svd[0].step && !svd[0].second_input &&
-                  param(svd[0], "feature_cols") == "x,y,z" && param(svd[0], "n_components") == "3",
+                  param(svd[0], "feature_cols") == "x,y,z" && param(svd[0], "n_components") == "3" && param(svd[0], "keep_columns") == "true",
               "hand-off: SVD of rows -> Truncated SVD, Keep clipped to the columns");
         const auto cov = linalg::HandOffs(linalg::Op::Eigen, {TableChoice{"t", {"x", "y"}, FromTable::Covariance}, std::nullopt}, 1, {});
         Check(cov.size() == 2 && cov[0].type == "PCANode" && param(cov[0], "scale") == "false" && param(cov[0], "n_components") == "1" &&
@@ -309,7 +309,9 @@ int main() {
         Check(one.size() == 1 && !one[0].second_input && param(one[0], "method") == "solve", "hand-off: b from A's table -> one input");
         Check(linalg::HandOffs(linalg::Op::Solve, {TableChoice{"t", {"x", "z"}}, std::nullopt}, 1, {}).empty(), "hand-off: none for a typed b");
         const auto mul = linalg::HandOffs(linalg::Op::Multiply, {TableChoice{"t", {"x", "y"}}, TableChoice{"w", {"p", "q"}}}, 1, {"p", "q"});
-        Check(mul.size() == 1 && mul[0].type == "LinearProjection" && mul[0].step && mul[0].second_input, "hand-off: A B -> Linear Projection");
+        Check(mul.size() == 1 && mul[0].type == "LinearProjection" && mul[0].step && mul[0].second_input && param(mul[0], "keep_columns") == "true",
+              "hand-off: A B -> Linear Projection, beside the input");
+        Check(param(two[0], "keep_columns").empty(), "hand-off: Linear Solve's result is x, not the rows");
         Check(linalg::HandOffs(linalg::Op::Multiply, {TableChoice{"t", {"x", "y"}}, TableChoice{"w", {"p"}}}, 1, {"p", "q"}).empty(),
               "hand-off: none when B leaves out a number column (the node takes them all)");
     }

@@ -14,8 +14,9 @@ namespace cyxwiz {
  * Arrow table of numeric features into a lower-dimensional projection:
  *   `pc_0, pc_1, ..., pc_{n_components-1}, y`
  *
- * Wraps `cyxwiz::DimensionalityReduction::ComputePCA` (SVD-based PCA
- * with optional centering and unit-variance scaling). Schema mirrors
+ * The top eigenvectors of the Train rows' covariance (optionally of
+ * standardised columns), as a fitted LinearMap (linear_map.h) applied
+ * to every row on the device. Schema mirrors
  * TFIDFVectorizer / CountVectorizer / TextTokenizer — wide float
  * columns + optional `y` int label column.
  *

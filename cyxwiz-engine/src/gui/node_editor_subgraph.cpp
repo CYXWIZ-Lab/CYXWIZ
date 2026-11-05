@@ -647,6 +647,29 @@ int NodeEditor::BranchSource(int step_id) const {
 }
 
 void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
+    if (!request.branch && request.second_source >= 0) {
+        // In the data path, everything after `after` would come after the
+        // step: a second source among them would feed the step its own
+        // result. Such a node goes in as a branch reading `after`.
+        const int second = BranchSource(request.second_source);
+        std::set<int> reached;
+        std::vector<int> frontier{request.after};
+        while (!frontier.empty()) {
+            const int from = frontier.back();
+            frontier.pop_back();
+            for (const auto& link : links_)
+                if (link.from_node == from && reached.insert(link.to_node).second) frontier.push_back(link.to_node);
+        }
+        if (reached.count(second)) {
+            spdlog::info("Node {} reads node {}'s result, so the new node's second input cannot come from it in the data path: "
+                         "added as a branch",
+                         second, request.after);
+            PendingStepAfter branch = request;
+            branch.branch = true;
+            InsertStepAfter(branch);
+            return;
+        }
+    }
     const int after_id = request.branch ? BranchSource(request.after) : request.after;
     const MLNode* after = FindNodeById(after_id);
     if (!after || after->outputs.empty()) return;

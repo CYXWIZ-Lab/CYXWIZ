@@ -669,17 +669,29 @@ TableMatrix ReadMatrix(const TableChoice& choice, const QueryRunner& run) {
     TableMatrix out;
     if (choice.table.empty()) return out.error = "Pick a table.", out;
     if (choice.columns.empty()) return out.error = "Pick the number columns of " + choice.table + ".", out;
+    const size_t k = choice.columns.size();
+    if (choice.matrix == FromTable::Rows) {
+        // Counted before the read: a table too large to be a matrix is not loaded.
+        QueryRequest count;
+        count.sql = "SELECT COUNT(*) AS n FROM " + SessionQueryEngine::QuoteIdentifier(choice.table);
+        count.label = "Linear Algebra: count";
+        const QueryResult counted = run(count);
+        if (!counted.ok || !counted.table) return out.error = counted.error.empty() ? "Cannot read " + choice.table + "." : counted.error, out;
+        const auto rows = explore_read::Numbers(*counted.table, "n");
+        const size_t n = rows.empty() || !rows[0] ? 0 : static_cast<size_t>(*rows[0]);
+        if (n * k > kMaxTableValues)
+            return out.error = choice.table + " has " + Rows(n) + " × " + std::to_string(k) + " columns: more than " +
+                               std::to_string(kMaxTableValues) +
+                               " values to read as a matrix. Take its correlation or covariance, or sample the rows in Prepare.",
+                   out;
+    }
     std::vector<QueryParam> params;
     std::vector<std::string> exprs;
     for (size_t j = 0; j < choice.columns.size(); ++j)
         exprs.push_back(explore_read::NumberExpr(choice.columns[j], {}, params, "c" + std::to_string(j)));
     const explore_read::Read read = explore_read::Select(choice.table, exprs, params, run, "Linear Algebra: read");
     if (!read.table) return out.error = read.error.empty() ? "Cannot read " + choice.table + "." : read.error, out;
-    const size_t k = choice.columns.size(), n = static_cast<size_t>(read.table->num_rows());
-    if (choice.matrix == FromTable::Rows && n * k > kMaxTableValues)
-        return out.error = choice.table + " has " + Rows(n) + " × " + std::to_string(k) + " columns: more than " +
-                           std::to_string(kMaxTableValues) + " values to read as a matrix. Take its correlation or covariance, or sample the rows in Prepare.",
-               out;
+    const size_t n = static_cast<size_t>(read.table->num_rows());
     std::vector<std::vector<std::optional<double>>> columns;
     for (size_t j = 0; j < k; ++j) columns.push_back(explore_read::Numbers(*read.table, "c" + std::to_string(j)));
     Matrix rows;
@@ -749,7 +761,7 @@ TableAnswer RunWithTables(Request request, const Sources& sources, const QueryRu
             TableChoice both = *sources.a;
             both.columns.insert(both.columns.end(), sources.b->columns.begin(), sources.b->columns.end());
             const TableMatrix joined = ReadMatrix(both, run);
-            if (!joined.ok()) return out.answer = Refuse(joined.error), out;
+            if (!joined.ok()) return out.answer = Refuse("A and b read together (to leave out the rows missing on either side): " + joined.error), out;
             const size_t ka = sources.a->columns.size();
             request.a.clear();
             request.b.clear();
@@ -872,23 +884,29 @@ std::string Csv(const Table& table) { return Rows(table, ',', true); }
 std::vector<HandOff> HandOffs(Op op, const Sources& sources, int keep, const std::vector<std::string>& b_number_columns) {
     std::vector<HandOff> out;
     if (!sources.a || sources.a->columns.empty()) return out;
+    // A step keeps the input's columns and adds its own beside them (as Explore's
+    // steps do), so what reads the table after it still finds its columns.
+    const auto beside = [](std::map<std::string, std::string> p) {
+        p["keep_columns"] = "true";
+        return p;
+    };
     const TableChoice& a = *sources.a;
     std::string features;
     for (const auto& c : a.columns) features += (features.empty() ? "" : ",") + c;
     const std::string components = std::to_string(std::clamp<int>(keep, 1, static_cast<int>(a.columns.size())));
     if (op == Op::SVD && a.matrix == FromTable::Rows) {
         out.push_back({"Add as a step: Truncated SVD", "Fits the top " + components + " directions on the Train rows of every run and maps each row onto them",
-                       "TruncatedSVD", "Truncated SVD (" + components + ")", {{"feature_cols", features}, {"n_components", components}}});
+                       "TruncatedSVD", "Truncated SVD (" + components + ")", beside({{"feature_cols", features}, {"n_components", components}})});
     }
     if ((op == Op::SVD || op == Op::Eigen) && a.matrix != FromTable::Rows) {
         const bool scale = a.matrix == FromTable::Correlation;
         out.push_back({"Add as a step: PCA", std::string("Fits the principal directions of the ") + (scale ? "correlation" : "covariance") +
                            " on the Train rows of every run and maps each row onto the top " + components,
                        "PCANode", "PCA (" + components + ")",
-                       {{"feature_cols", features}, {"n_components", components}, {"center", "true"}, {"scale", scale ? "true" : "false"}}});
+                       beside({{"feature_cols", features}, {"n_components", components}, {"center", "true"}, {"scale", scale ? "true" : "false"}})});
         if (!scale)
             out.push_back({"Add as a step: Whitening", "Rotates and rescales the columns on the Train rows' covariance of every run: no correlation, variance 1",
-                           "Whitening", "Whitening (PCA)", {{"feature_cols", features}, {"method", "pca"}, {"n_components", "0"}}});
+                           "Whitening", "Whitening (PCA)", beside({{"feature_cols", features}, {"method", "pca"}, {"n_components", "0"}})});
     }
     if ((op == Op::Solve || op == Op::LeastSquares) && a.matrix == FromTable::Rows && sources.b && !sources.b->columns.empty()) {
         std::string b_cols;
@@ -901,7 +919,7 @@ std::vector<HandOff> HandOffs(Op op, const Sources& sources, int keep, const std
     if (op == Op::Multiply && a.matrix == FromTable::Rows && sources.b && sources.b->matrix == FromTable::Rows && sources.b->table != a.table &&
         sources.b->columns == b_number_columns) {
         out.push_back({"Add as a step: Linear Projection", "Multiplies each row of every run by B (B's table into its Matrix input)",
-                       "LinearProjection", "Linear Projection", {{"feature_cols", features}}, true, true});
+                       "LinearProjection", "Linear Projection", beside({{"feature_cols", features}}), true, true});
     }
     return out;
 }

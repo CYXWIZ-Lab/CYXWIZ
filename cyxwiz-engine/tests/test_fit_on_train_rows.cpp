@@ -472,6 +472,15 @@ void CheckPCA() {
     const auto beside = Run(pca, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"keep_columns", "true"}}, Table());
     Expect(Column(beside, "pc_0"), want, "PCA beside the input");
     Check(beside->GetColumnByName("text") != nullptr, "PCA beside the input: the other columns kept");
+    {
+        // A second PCA beside the first would add pc_0 twice: refused with the reason.
+        PCAOperator twice;
+        std::string error;
+        Check(twice.Configure({{"feature_cols", "a,y"}, {"n_components", "1"}, {"keep_columns", "true"}}, error), "PCA configure: " + error);
+        const auto again = twice.Apply(beside);
+        Check(!again.ok() && again.status().ToString().find("already has a column 'pc_0'") != std::string::npos,
+              "PCA beside an input that has pc_0: " + (again.ok() ? std::string("ran") : again.status().ToString()));
+    }
 
     const fs::path state = fs::temp_directory_path() / "cyxwiz_fit_on_train_pca.cyxstate.json";
     fs::remove(state);
