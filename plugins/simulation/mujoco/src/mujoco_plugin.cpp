@@ -43,9 +43,9 @@ int ActuatorId(const mjModel* m, const std::string& pin_name) {
 }
 
 // MuJoCo state (mjtNum, double) as the float values node pins carry.
-std::vector<float> ToFloats(const mjtNum* values, int count) {
+std::vector<float> ToFloats(const mjtNum* values, mjtSize count) {
     std::vector<float> out(static_cast<size_t>(count));
-    for (int i = 0; i < count; ++i) out[static_cast<size_t>(i)] = static_cast<float>(values[i]);
+    for (mjtSize i = 0; i < count; ++i) out[static_cast<size_t>(i)] = static_cast<float>(values[i]);
     return out;
 }
 
@@ -58,12 +58,7 @@ std::vector<float> ToFloats(const mjtNum* values, int count) {
 bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnLoad");
 
-    // Log MuJoCo version (mj_versionString available since MuJoCo 2.3.0)
-    int ver = mj_version();
-    ctx.LogInfo("MuJoCo Simulation: Using MuJoCo version " +
-                std::to_string(ver / 100) + "." +
-                std::to_string((ver / 10) % 10) + "." +
-                std::to_string(ver % 10));
+    ctx.LogInfo(std::string("MuJoCo Simulation: Using MuJoCo version ") + mj_versionString());
 
     // Capture main GLFW window for renderer context management.
     main_window_ = glfwGetCurrentContext();

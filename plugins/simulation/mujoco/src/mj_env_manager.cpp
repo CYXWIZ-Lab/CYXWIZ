@@ -120,7 +120,7 @@ StepResult MjEnvManager::Step(const std::vector<float>& action) {
     }
 
     // Apply action to actuators (clamp to model limits)
-    int nu = model_->nu;
+    const int nu = static_cast<int>(model_->nu);
     for (int i = 0; i < nu && i < static_cast<int>(action.size()); ++i) {
         float a = action[i];
         // Clamp to actuator range if defined
@@ -208,12 +208,12 @@ std::vector<float> MjEnvManager::GetObservation() const {
 int MjEnvManager::GetObservationDim() const {
     if (!model_) return 0;
     // Default observation: qpos + qvel + sensor data
-    return model_->nq + model_->nv + model_->nsensordata;
+    return static_cast<int>(model_->nq + model_->nv + model_->nsensordata);
 }
 
 int MjEnvManager::GetActionDim() const {
     if (!model_) return 0;
-    return model_->nu;
+    return static_cast<int>(model_->nu);
 }
 
 float MjEnvManager::GetMeanEpisodeReward() const {
