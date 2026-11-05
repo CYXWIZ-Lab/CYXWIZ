@@ -121,6 +121,11 @@ bool TrainingManager::StartTrainingCommon(
         cached_metrics_.total_epochs = epochs;
         cached_metrics_.is_training = true;
     }
+    {
+        std::lock_guard<std::mutex> lock(next_layer_snapshots_mutex_);
+        if (executor && next_layer_snapshots_) executor->EnableLayerSnapshots(std::move(*next_layer_snapshots_));
+        next_layer_snapshots_.reset();
+    }
     const bool sequence_mode =
         executor && executor->GetConfig().sequence_batch.enabled;
     const bool regression_mode =

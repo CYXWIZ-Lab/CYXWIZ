@@ -1317,6 +1317,11 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::EndTabItem();
                 }
 
+                if (ImGui::BeginTabItem(ICON_FA_BUG " Studio Debugger")) {
+                    RenderStudioDebuggerPreferences();
+                    ImGui::EndTabItem();
+                }
+
                 if (ImGui::BeginTabItem(ICON_FA_HARD_DRIVE " Storage")) {
                     RenderStorageTab();
                     ImGui::EndTabItem();

@@ -402,6 +402,26 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        studio_debugger_ = StudioDebuggerConfig{};
+        if (config.contains("studio_debugger") && config["studio_debugger"].is_object()) {
+            const auto& sd = config["studio_debugger"];
+            StudioDebuggerConfig loaded;
+            const std::string when = sd.value("capture_when", std::string("off"));
+            loaded.capture_when = when == "local_debug" ? LayerCaptureWhen::LocalDebug
+                                : when == "training"    ? LayerCaptureWhen::Training
+                                                        : LayerCaptureWhen::Off;
+            loaded.capture_every_epochs = std::clamp(sd.value("capture_every_epochs", 5), 1, 1000);
+            loaded.capture_activations = sd.value("capture_activations", true);
+            loaded.capture_parameters = sd.value("capture_parameters", true);
+            loaded.capture_gradients = sd.value("capture_gradients", true);
+            loaded.capture_batch = sd.value("capture_batch", false);
+            loaded.feature_map_colour = sd.value("feature_map_colour", std::string("heat")) == "grayscale"
+                                            ? FeatureMapColour::Grayscale
+                                            : FeatureMapColour::Heat;
+            loaded.keep_capture_runs = std::clamp(sd.value("keep_capture_runs", 10), 1, 1000);
+            studio_debugger_ = loaded;
+        }
+
         if (config.contains("appearance") && config["appearance"].is_object()) {
             const auto& look = config["appearance"];
             AppearanceConfig loaded;
@@ -538,6 +558,20 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
             {"saved_filters", std::move(saved_runtime_filters)}
+        };
+
+        config["studio_debugger"] = {
+            {"capture_when", studio_debugger_.capture_when == LayerCaptureWhen::LocalDebug ? "local_debug"
+                             : studio_debugger_.capture_when == LayerCaptureWhen::Training ? "training"
+                                                                                           : "off"},
+            {"capture_every_epochs", studio_debugger_.capture_every_epochs},
+            {"capture_activations", studio_debugger_.capture_activations},
+            {"capture_parameters", studio_debugger_.capture_parameters},
+            {"capture_gradients", studio_debugger_.capture_gradients},
+            {"capture_batch", studio_debugger_.capture_batch},
+            {"feature_map_colour",
+             studio_debugger_.feature_map_colour == FeatureMapColour::Grayscale ? "grayscale" : "heat"},
+            {"keep_capture_runs", studio_debugger_.keep_capture_runs}
         };
 
         config["appearance"] = {
@@ -854,6 +888,22 @@ void EngineConfig::SetRequireDebugBeforeTrain(bool require) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (require_debug_before_train_ != require) {
         require_debug_before_train_ = require;
+        modified_ = true;
+    }
+}
+
+StudioDebuggerConfig EngineConfig::GetStudioDebugger() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return studio_debugger_;
+}
+
+void EngineConfig::SetStudioDebugger(const StudioDebuggerConfig& studio_debugger) {
+    StudioDebuggerConfig value = studio_debugger;
+    value.capture_every_epochs = std::clamp(value.capture_every_epochs, 1, 1000);
+    value.keep_capture_runs = std::clamp(value.keep_capture_runs, 1, 1000);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(studio_debugger_ == value)) {
+        studio_debugger_ = value;
         modified_ = true;
     }
 }

@@ -210,6 +210,12 @@ public:
     using ProgressCallback = std::function<void(int epoch, float loss, float accuracy)>;
 
     void SetOnTrainingStart(TrainingStartCallback callback) { on_training_start_ = callback; }
+    // Layer snapshots for the next training started (TOFIX178 6.1c); nullopt
+    // turns them off. Set before each start: a start takes and clears it.
+    void SetNextLayerSnapshots(std::optional<TrainingExecutor::LayerSnapshotSchedule> schedule) {
+        std::lock_guard<std::mutex> lock(next_layer_snapshots_mutex_);
+        next_layer_snapshots_ = std::move(schedule);
+    }
     void SetOnTrainingEnd(TrainingEndCallback callback) { on_training_end_ = callback; }
     void SetOnProgress(ProgressCallback callback) { on_progress_ = callback; }
 
@@ -328,6 +334,8 @@ private:
 
     // Callbacks
     TrainingStartCallback on_training_start_;
+    std::mutex next_layer_snapshots_mutex_;
+    std::optional<TrainingExecutor::LayerSnapshotSchedule> next_layer_snapshots_;
     TrainingEndCallback on_training_end_;
     ProgressCallback on_progress_;
 

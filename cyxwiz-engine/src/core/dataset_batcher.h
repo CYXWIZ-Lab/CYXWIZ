@@ -5,6 +5,7 @@
 #include <cyxwiz/layers/linear_sparse_csr.h>
 #include <cyxwiz/tensor.h>
 #include <cstdint>
+#include <exception>
 #include <optional>
 #include <vector>
 #include <random>
@@ -232,6 +233,26 @@ public:
     // out, e.g. by a Quality node) or the batcher cannot tell.
     virtual std::optional<BatcherPhase> SourceSamplePart(size_t /*index*/) const { return std::nullopt; }
 };
+
+// Items index .. index + count - 1 by number as one batch (GetSourceSamples),
+// or the item at `index` alone when the data ends before them; `taken` gets
+// how many. nullopt: the batcher cannot reach items by number. An `index`
+// outside the data throws.
+inline std::optional<Batch> GetSourceSampleRange(IBatcher& batcher, size_t index, size_t count,
+                                                 size_t* taken = nullptr) {
+    std::vector<size_t> indices;
+    for (size_t i = 0; i < (count > 0 ? count : 1); ++i) indices.push_back(index + i);
+    std::optional<Batch> batch;
+    try {
+        batch = batcher.GetSourceSamples(indices);
+    } catch (const std::exception&) {
+        if (indices.size() == 1) throw;
+        indices.resize(1);
+        batch = batcher.GetSourceSamples(indices);
+    }
+    if (taken) *taken = batch ? indices.size() : 0;
+    return batch;
+}
 
 /**
  * DatasetBatcher - Provides batched iteration over a dataset

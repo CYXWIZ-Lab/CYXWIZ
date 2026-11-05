@@ -10,6 +10,7 @@
 #include "metric_learning_evaluation.h"
 #include "metric_learning_sampling.h"
 #include "checkpoint_manager.h"
+#include "layer_capture_store.h"
 #include "sequence_arrow_batcher.h"
 #include "crash_run_recorder.h"
 #include "error_codes.h"
@@ -1066,6 +1067,31 @@ void TrainingExecutor::Train(
         return;
     }
 
+    // Layer snapshots on items by number (6.1c): from the batchers built
+    // here, before any metric sampler wraps them.
+    if (layer_snapshot_schedule_ && layer_snapshot_schedule_->source_count > 0) {
+        auto& schedule = *layer_snapshot_schedule_;
+        std::optional<Batch> items;
+        std::string off;
+        for (IBatcher* source : {active_val_ibatcher, active_train_ibatcher, active_test_ibatcher}) {
+            if (!source || items || !off.empty()) continue;
+            try {
+                items = GetSourceSampleRange(*source, schedule.source_index, schedule.source_count);
+            } catch (const std::exception& e) {
+                off = "item " + std::to_string(schedule.source_index) + " is not in the data (" + e.what() + ")";
+            }
+        }
+        if (off.empty() && !items) off = "this data's batchers cannot reach an item by number";
+        if (off.empty() && items->data.NumElements() == 0) off = "this data's batches carry sparse (CSR) features";
+        if (off.empty()) {
+            schedule.features = items->data;
+            schedule.labels = items->labels;
+        } else {
+            spdlog::warn("TrainingExecutor: layer snapshots are off: {}", off);
+            layer_snapshot_schedule_.reset();
+        }
+    }
+
     if (config_.metric_sampling != MetricSampling::None) {
         // Table batchers hand out class-index labels; the image, audio and
         // text batchers only one-hot to the model width (the embedding size).
@@ -1704,7 +1730,7 @@ void TrainingExecutor::Train(
         if (layer_snapshot_schedule_ &&
             (epoch % std::max(1, layer_snapshot_schedule_->every_epochs) == 0 || epoch == epochs ||
              stop_after_epoch)) {
-            TakeLayerSnapshot(epoch);
+            TakeLayerSnapshot(epoch, training_run_id);
         }
 
         // Notify plugin hooks: epoch end
@@ -2337,7 +2363,7 @@ std::vector<TrainingExecutor::LayerSnapshot> TrainingExecutor::LayerSnapshots() 
     return layer_snapshots_;
 }
 
-void TrainingExecutor::TakeLayerSnapshot(int epoch) {
+void TrainingExecutor::TakeLayerSnapshot(int epoch, const std::string& run_id) {
     const auto& schedule = *layer_snapshot_schedule_;
     try {
         const Tensor input = UsesSpatialSequentialInput(config_)
@@ -2347,8 +2373,20 @@ void TrainingExecutor::TakeLayerSnapshot(int epoch) {
         spdlog::info("TrainingExecutor: layer snapshot after epoch {} ({} layers, {:.1f} MB{})", epoch,
                      capture->Layers().size(), capture->BytesHeld() / 1048576.0,
                      capture->Truncated() ? ", over the budget: some tensors left out" : "");
+        LayerSnapshot snapshot{epoch, std::move(capture), {}, {}};
+        if (schedule.save) {
+            const std::string label = EpochCaptureLabel(epoch);
+            std::string error;
+            if (SaveLayerCapture(*snapshot.capture, run_id, label, &error)) {
+                snapshot.run_id = run_id;
+                snapshot.label = label;
+                PruneLayerCaptures(schedule.keep_runs);
+            } else {
+                spdlog::warn("TrainingExecutor: the layer snapshot after epoch {} was not saved: {}", epoch, error);
+            }
+        }
         std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
-        layer_snapshots_.push_back({epoch, std::move(capture)});
+        layer_snapshots_.push_back(std::move(snapshot));
     } catch (const std::exception& e) {
         spdlog::warn("TrainingExecutor: layer snapshot after epoch {} failed: {}", epoch, e.what());
     }

@@ -358,6 +358,8 @@ private:
     void ApplyServerAddress(const std::string& address);
     void SignOut();
     void RenderAppearancePreferences();  // Preferences > Appearance
+    // Preferences > Studio Debugger (toolbar_preferences_studio_debugger.cpp)
+    void RenderStudioDebuggerPreferences();
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
     bool RenderBackendManagerSection(bool training_active);
     // Compute devices: one card per physical device (tofix119 C).

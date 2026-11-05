@@ -31,6 +31,27 @@ struct AppearanceConfig {
     bool operator==(const AppearanceConfig&) const = default;
 };
 
+// Preferences > Studio Debugger (TOFIX178 6.1c): the user's defaults for
+// layer capture and the layer views. Each run's capture control starts from
+// them. Values are clamped when read.
+enum class LayerCaptureWhen { Off, LocalDebug, Training };  // Training: also Local Debug runs
+enum class FeatureMapColour { Heat, Grayscale };
+
+inline constexpr int kLayerCaptureBatchSamples = 8;
+
+struct StudioDebuggerConfig {
+    LayerCaptureWhen capture_when = LayerCaptureWhen::Off;
+    int capture_every_epochs = 5;  // and after the last epoch
+    bool capture_activations = true;
+    bool capture_parameters = true;
+    bool capture_gradients = true;
+    bool capture_batch = false;  // a batch of kLayerCaptureBatchSamples from the picked sample on
+    FeatureMapColour feature_map_colour = FeatureMapColour::Heat;
+    int keep_capture_runs = 10;  // runs whose captures stay on disk
+
+    bool operator==(const StudioDebuggerConfig&) const = default;
+};
+
 /**
  * @brief Centralized configuration management for the CyxWiz Engine.
  *
@@ -165,6 +186,9 @@ public:
     bool RequireDebugBeforeTrain() const;
     void SetRequireDebugBeforeTrain(bool require);
 
+    StudioDebuggerConfig GetStudioDebugger() const;
+    void SetStudioDebugger(const StudioDebuggerConfig& studio_debugger);
+
     // ===== Runtime Observability =====
 
     std::vector<RuntimeLogSavedFilterConfig> GetRuntimeLogSavedFilters() const;
@@ -244,6 +268,7 @@ private:
 
     // Local Debug settings
     bool require_debug_before_train_ = false;
+    StudioDebuggerConfig studio_debugger_;
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;

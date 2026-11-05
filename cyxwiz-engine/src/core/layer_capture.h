@@ -53,6 +53,9 @@ class LayerCapture {
 public:
     // `provenance` names the layers (node id and name by module index).
     LayerCapture(LayerCaptureOptions options, const std::vector<BuiltModuleProvenance>& provenance);
+    // A capture read back from the run store (layer_capture_store.h).
+    LayerCapture(LayerCaptureOptions options, std::vector<CapturedLayer> layers, size_t skipped_tensors,
+                 size_t skipped_bytes);
 
     const LayerCaptureOptions& Options() const { return options_; }
 

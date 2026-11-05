@@ -33,6 +33,10 @@ struct DebugSample {
 
 struct DebugSampleRequest {
     size_t index = 0;
+    // Items index .. index + count - 1 as one batch (a layer capture's
+    // "batch of 8", TOFIX178 6.1c); the picked item alone when the data ends
+    // before them.
+    size_t count = 1;
     const std::vector<gui::MLNode>* nodes = nullptr;
     const std::vector<gui::NodeLink>* links = nullptr;
     // The project folders and prepared-data cache Train uses, for the data

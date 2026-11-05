@@ -14,12 +14,8 @@ namespace cyxwiz {
 
 namespace {
 
-std::filesystem::path StoreRoot() {
-    return GetDebugRunRoot() / "studio";
-}
-
 std::filesystem::path RunPath(const std::string& run_id) {
-    return StoreRoot() / run_id / "session.json";
+    return GetDebugRunStoreRoot() / run_id / "session.json";
 }
 
 const char* IssueLevelName(IssueLevel level) {
@@ -667,7 +663,7 @@ std::optional<DebugRunStoreRecord> DebugRunStore::Load(const std::string& run_id
 
 std::vector<DebugRunStoreSummary> DebugRunStore::ListRecent(size_t max_runs) {
     std::vector<DebugRunStoreSummary> out;
-    const auto root = StoreRoot();
+    const auto root = GetDebugRunStoreRoot();
     if (!std::filesystem::exists(root)) {
         return out;
     }

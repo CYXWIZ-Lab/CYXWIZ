@@ -94,6 +94,8 @@ public:
     bool StartRun(StudioDebuggerRunMode mode, int sample_index, int explain_node_id = -1);
     void RequestStop();
     bool IsRunning() const { return run_in_progress_; }
+    // The sample the debugger runs on (Local Debug, training layer snapshots).
+    int SelectedSampleIndex() const { return selected_sample_index_; }
     // True once after the user asked the next run to rebuild prepared data.
     bool ConsumeRebuildPreparedDataRequest() {
         const bool requested = rebuild_prepared_data_next_run_;

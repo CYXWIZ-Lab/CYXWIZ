@@ -266,16 +266,6 @@ private:
     bool LoadModelParameters(const std::filesystem::path& dir, Model& model);
 
     /**
-     * Save a single tensor to binary file
-     */
-    bool SaveTensor(const std::filesystem::path& path, const Tensor& tensor);
-
-    /**
-     * Load a single tensor from binary file
-     */
-    std::optional<Tensor> LoadTensor(const std::filesystem::path& path);
-
-    /**
      * Clean up old checkpoints to maintain max_to_keep limit
      */
     void CleanupOldCheckpoints();

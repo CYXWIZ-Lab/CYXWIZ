@@ -14,6 +14,7 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_node_factory.h"
+#include "../src/core/layer_capture_store.h"
 #include "../src/core/training_executor.h"
 #include "route_qualification_test_fixture.h"
 
@@ -373,7 +374,58 @@ void CheckLayerSnapshots(const json& fixture, const std::shared_ptr<cyxwiz::Arro
         Check(std::vector<double>(data, data + p->tensor.NumElements()) == values,
               "the last snapshot's " + name + " is the trained one");
     }
-    std::cout << "Layer snapshots: " << taken.size() << " taken, training unchanged\n";
+
+    // Saved with the run as they are taken (6.1c): one capture per snapshot,
+    // read back tensor for tensor.
+    const std::string run_id = taken.back().run_id;
+    Check(!run_id.empty(), "the snapshots are saved with the training run");
+    std::vector<std::string> labels;
+    for (const auto& snapshot : taken) {
+        Check(snapshot.run_id == run_id && snapshot.label == cyxwiz::EpochCaptureLabel(snapshot.epoch),
+              "snapshot after epoch " + std::to_string(snapshot.epoch) + " is saved under its epoch");
+        labels.push_back(snapshot.label);
+    }
+    Check(cyxwiz::ListLayerCaptures(run_id) == labels, "the run lists its saved snapshots");
+    std::string error;
+    const auto loaded = cyxwiz::LoadLayerCapture(run_id, taken.back().label, &error);
+    Check(loaded != nullptr, "the last snapshot reads back: " + error);
+    const auto& kept = taken.back().capture->Layers();
+    Check(loaded->Layers().size() == kept.size() && loaded->BytesHeld() == taken.back().capture->BytesHeld(),
+          "the saved snapshot holds every layer and byte");
+    for (size_t l = 0; l < kept.size(); ++l) {
+        const auto& a = kept[l];
+        const auto& b = loaded->Layers()[l];
+        Check(a.node_id == b.node_id && a.node_name == b.node_name && a.tensors.size() == b.tensors.size(),
+              "saved layer " + a.node_name + " keeps its node and tensors");
+        for (size_t t = 0; t < a.tensors.size(); ++t) {
+            const auto& x = a.tensors[t];
+            const auto& y = b.tensors[t];
+            const float* xd = x.tensor.ReadData<float>();
+            const float* yd = y.tensor.ReadData<float>();
+            Check(x.role == y.role && x.name == y.name && x.tensor.Shape() == y.tensor.Shape() &&
+                      std::equal(xd, xd + x.tensor.NumElements(), yd),
+                  "saved " + x.name + " reads back bit for bit");
+        }
+    }
+
+    // On items by number from the run's own batchers: rows 0 and 1, as
+    // validation reads them.
+    cyxwiz::TrainingExecutor::LayerSnapshotSchedule by_number;
+    by_number.every_epochs = epochs;
+    by_number.source_index = 0;
+    by_number.source_count = 2;
+    by_number.save = false;
+    std::vector<cyxwiz::TrainingExecutor::LayerSnapshot> numbered;
+    const auto with_numbered = TrainAndRead(config, dataset, epochs, "with snapshots by number", by_number, &numbered);
+    Check(with_numbered == without, "snapshots on items by number leave the training as it was");
+    Check(numbered.size() == 1 && numbered[0].run_id.empty(), "one unsaved snapshot after the last epoch");
+    const auto* rows = numbered[0].capture->Layers()[0].Find(cyxwiz::CapturedTensorRole::Input);
+    Check(rows && rows->tensor.Shape() == std::vector<size_t>({2, 2}), "the snapshot ran rows 0 and 1");
+    const float* r = rows->tensor.ReadData<float>();
+    for (size_t i = 0; i < 2; ++i)
+        Check(r[2 * i] == fixture.at("x0").at(i).get<float>() && r[2 * i + 1] == fixture.at("x1").at(i).get<float>(),
+              "snapshot row " + std::to_string(i) + " is the dataset's row " + std::to_string(i));
+    std::cout << "Layer snapshots: " << taken.size() << " taken and saved, training unchanged\n";
 }
 
 int main(int, char** argv) {

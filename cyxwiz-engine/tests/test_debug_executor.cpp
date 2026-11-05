@@ -17,6 +17,10 @@
 #include "../src/core/checkpoint_manifest.h"
 #include "../src/core/checkpoint_payload_io.h"
 #include "../src/core/checkpoint_manager.h"
+#include "../src/core/debug_run_paths.h"
+#include "../src/core/layer_capture_store.h"
+#include "../src/core/tensor_file.h"
+#include "algorithms/arrayfire_backend_utils.h"
 
 #include <cyxwiz/loss.h>
 #include <cyxwiz/optimizers/sgd.h>
@@ -26,6 +30,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -38,6 +43,7 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <thread>
 
 using namespace cyxwiz;
 
@@ -2622,6 +2628,98 @@ void TestCaptureStepLeavesTheModel() {
     spdlog::info("  OK: snapshot of {} layers, model unchanged", capture->Layers().size());
 }
 
+// TOFIX178 6.1c: a capture saved with its run reads back as it was kept, a
+// damaged one is refused, and only the last runs keep their captures.
+void TestLayerCaptureStore() {
+    spdlog::info("--- TestLayerCaptureStore ---");
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "cyxwiz_layer_capture_store";
+    fs::remove_all(root);
+    const ScopedDebugRunRootOverrideForTesting debug_root(root);
+
+    DebugExecutor exe(MakeTabularConfig());
+    LayerCaptureOptions options;
+    options.byte_budget = 4096;  // some tensors left out, so the counts travel too
+    exe.SetLayerCapture(options);
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture && res.layer_capture->Truncated(), "a capture over its budget");
+    const LayerCapture& kept = *res.layer_capture;
+
+    std::string error;
+    ExpectTrue(SaveLayerCapture(kept, "run-a", kLocalDebugCaptureLabel, &error), "the capture saves: " + error);
+    const auto loaded = LoadLayerCapture("run-a", kLocalDebugCaptureLabel, &error);
+    ExpectTrue(loaded != nullptr, "the capture reads back: " + error);
+    ExpectEq(loaded->Layers().size(), kept.Layers().size(), "every layer reads back");
+    ExpectEq(loaded->BytesHeld(), kept.BytesHeld(), "bytes held read back");
+    ExpectEq(loaded->SkippedTensors(), kept.SkippedTensors(), "skipped tensors read back");
+    ExpectEq(loaded->SkippedBytes(), kept.SkippedBytes(), "skipped bytes read back");
+    ExpectEq(loaded->Options().byte_budget, options.byte_budget, "the budget reads back");
+    for (size_t l = 0; l < kept.Layers().size(); ++l) {
+        const auto& a = kept.Layers()[l];
+        const auto& b = loaded->Layers()[l];
+        ExpectTrue(a.module_index == b.module_index && a.node_id == b.node_id && a.node_name == b.node_name &&
+                       a.tensors.size() == b.tensors.size(),
+                   a.node_name + " keeps its module, node and tensors");
+        for (size_t t = 0; t < a.tensors.size(); ++t) {
+            const auto& x = a.tensors[t];
+            const auto& y = b.tensors[t];
+            ExpectTrue(x.role == y.role && x.name == y.name && x.tensor.Shape() == y.tensor.Shape() &&
+                           HostValues(x.tensor) == HostValues(y.tensor),
+                       a.node_name + " " + x.name + " reads back bit for bit");
+        }
+    }
+    ExpectTrue(ListLayerCaptures("run-a") == std::vector<std::string>{kLocalDebugCaptureLabel},
+               "the run lists its capture");
+    ExpectTrue(EpochCaptureLabel(5) == "epoch_0005", "epoch labels sort by epoch");
+
+    // Not a folder name: refused, nothing written outside the store.
+    ExpectTrue(!SaveLayerCapture(kept, "../run", kLocalDebugCaptureLabel, &error), "a run id with a path is refused");
+    ExpectTrue(!SaveLayerCapture(kept, "run-a", "", &error), "an empty label is refused");
+
+    // A damaged tensor file: the load says why instead of returning a part.
+    const fs::path dir = LayerCaptureDir("run-a", kLocalDebugCaptureLabel);
+    fs::path victim;
+    for (const auto& entry : fs::directory_iterator(dir))
+        if (entry.path().extension() == ".bin") victim = entry.path();
+    ExpectTrue(!victim.empty(), "the capture wrote tensor files");
+    fs::resize_file(victim, fs::file_size(victim) - 1);
+    ExpectTrue(LoadLayerCapture("run-a", kLocalDebugCaptureLabel, &error) == nullptr &&
+                   error.find("truncated") != std::string::npos,
+               "a truncated tensor file is refused: " + error);
+    // Saving again replaces it whole.
+    ExpectTrue(SaveLayerCapture(kept, "run-a", kLocalDebugCaptureLabel, &error), "the capture saves again");
+    ExpectTrue(LoadLayerCapture("run-a", kLocalDebugCaptureLabel, &error) != nullptr, "the new save reads back");
+    // An unfinished save (no capture.json) is not listed.
+    fs::create_directories(LayerCaptureDir("run-a", "epoch_0001"));
+    ExpectEq(ListLayerCaptures("run-a").size(), 1, "an unfinished save is not listed");
+
+    // Tensor files keep their data type.
+    const uint8_t bytes[6] = {0, 1, 2, 250, 254, 255};
+    const Tensor u8({2, 3}, bytes, DataType::UInt8);
+    ExpectTrue(WriteTensorFile(root / "u8.bin", u8, ArrayFireHostSyncCategory::DebugSampleDump, "test", &error),
+               "a uint8 tensor writes: " + error);
+    const auto u8_back = ReadTensorFile(root / "u8.bin", &error);
+    ExpectTrue(u8_back && u8_back->GetDataType() == DataType::UInt8 && u8_back->Shape() == u8.Shape() &&
+                   std::memcmp(u8_back->ReadData(), bytes, sizeof(bytes)) == 0,
+               "a uint8 tensor reads back as it was");
+    ExpectTrue(!ReadTensorFile(root / "missing.bin", &error) && error.find("unreadable") != std::string::npos,
+               "a missing tensor file says so");
+
+    // Only the last runs keep their captures; their folders stay.
+    for (const char* run : {"run-b", "run-c"}) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));  // distinct folder times
+        ExpectTrue(SaveLayerCapture(kept, run, kLocalDebugCaptureLabel, &error), std::string(run) + " saves");
+    }
+    ExpectEq(PruneLayerCaptures(2), 1, "one run past the last two is cleared");
+    ExpectTrue(ListLayerCaptures("run-a").empty() && fs::exists(GetDebugRunStoreRoot() / "run-a"),
+               "the oldest run's captures are gone, its folder stays");
+    ExpectEq(ListLayerCaptures("run-b").size() + ListLayerCaptures("run-c").size(), 2, "the last two keep theirs");
+    ExpectEq(PruneLayerCaptures(2), 0, "nothing more to clear");
+    fs::remove_all(root);
+    spdlog::info("  OK: {} layers saved and read back, damaged files refused, old runs pruned",
+                 kept.Layers().size());
+}
+
 void TestDebugExecutorBinaryHeadBackward() {
     spdlog::info("--- TestDebugExecutorBinaryHeadBackward ---");
     auto cfg = MakeTabularConfig();
@@ -3125,6 +3223,7 @@ int main(int argc, char** argv) {
         TestLayerCaptureTabular();
         TestLayerCaptureResNetExample();
         TestCaptureStepLeavesTheModel();
+        TestLayerCaptureStore();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();
         TestDebugExecutorSkippedLayerMapping();

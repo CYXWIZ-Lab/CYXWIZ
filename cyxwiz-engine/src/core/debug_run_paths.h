@@ -73,6 +73,12 @@ inline std::filesystem::path GetDebugRunRoot() {
     return root;
 }
 
+// The Studio Debugger's run store: one folder per run (session.json, layer
+// captures).
+inline std::filesystem::path GetDebugRunStoreRoot() {
+    return GetDebugRunRoot() / "studio";
+}
+
 class ScopedDebugRunRootOverrideForTesting {
 public:
     explicit ScopedDebugRunRootOverrideForTesting(

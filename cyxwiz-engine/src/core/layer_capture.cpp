@@ -34,6 +34,13 @@ LayerCapture::LayerCapture(LayerCaptureOptions options, const std::vector<BuiltM
             names_.push_back({*p.module_index, p.node_id, p.node_name.empty() ? p.module_name : p.node_name});
 }
 
+LayerCapture::LayerCapture(LayerCaptureOptions options, std::vector<CapturedLayer> layers, size_t skipped_tensors,
+                           size_t skipped_bytes)
+    : options_(options), layers_(std::move(layers)), skipped_tensors_(skipped_tensors), skipped_bytes_(skipped_bytes) {
+    for (const auto& layer : layers_)
+        for (const auto& t : layer.tensors) bytes_held_ += t.tensor.NumBytes();
+}
+
 const CapturedLayer* LayerCapture::FindLayer(int node_id) const {
     for (const auto& layer : layers_)
         if (layer.node_id == node_id) return &layer;

@@ -278,17 +278,30 @@ public:
     // Layer snapshots (TOFIX178 6.1b). Enable before Train: after every
     // `every_epochs`-th epoch and after the last one (an early stop's too),
     // CaptureStep on `features` / `labels`, batch first as a batcher hands
-    // them out. A snapshot that fails is logged and training goes on.
+    // them out; or, when `source_count` > 0, on items `source_index` ..
+    // `source_index + source_count - 1` taken from the run's own batchers at
+    // the start of Train (as validation sees them, GetSourceSampleRange;
+    // snapshots are off when no batcher reaches items by number). Each is saved with the training run in the debug run store
+    // (layer_capture_store.h, label EpochCaptureLabel) when `save`, and the
+    // captures of all but the last `keep_runs` runs are then deleted (6.1c).
+    // A snapshot that fails is logged and training goes on.
     struct LayerSnapshotSchedule {
         LayerCaptureOptions options;
         int every_epochs = 5;
         Tensor features;
         Tensor labels;
+        size_t source_index = 0;
+        size_t source_count = 0;
+        bool save = true;
+        size_t keep_runs = 10;
     };
     void EnableLayerSnapshots(LayerSnapshotSchedule schedule);
     struct LayerSnapshot {
         int epoch = 0;
         std::shared_ptr<const LayerCapture> capture;
+        // The run and label it is saved under; empty when not saved.
+        std::string run_id;
+        std::string label;
     };
     // The snapshots taken so far, in epoch order (any thread).
     std::vector<LayerSnapshot> LayerSnapshots() const;
@@ -437,7 +450,7 @@ private:
     std::vector<BuiltModuleProvenance> module_provenance_;
     mutable std::mutex layer_snapshots_mutex_;
     std::vector<LayerSnapshot> layer_snapshots_;
-    void TakeLayerSnapshot(int epoch);
+    void TakeLayerSnapshot(int epoch, const std::string& run_id);
     // Generation previews (TOFIX159): bound for the duration of Train.
     std::unique_ptr<TrainingGenerationPreview> generation_preview_;
     std::filesystem::path generation_preview_dir_;
