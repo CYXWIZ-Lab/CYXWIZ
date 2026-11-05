@@ -272,7 +272,7 @@ int main() {
                              (result.error.empty() ? "" : " (" + result.error + ")"));
     }
 
-    std::cout << "keeps inputs over the data budget on disk (TOFIX154)\n";
+    std::cout << "keeps inputs over the data budget on disk\n";
     {
         // The same graph with a validation input and no test share, unshuffled
         // and seeded: in memory, then with a 1-byte budget so both files stay
@@ -355,7 +355,7 @@ int main() {
         cyxwiz::SetDataBudgetBytes(0);
     }
 
-    std::cout << "trains a table kept on disk (TOFIX154)\n";
+    std::cout << "trains a table kept on disk\n";
     {
         const fs::path blobs = work / "blobs.parquet";
         const fs::path blobs_validation = work / "blobs_validation.parquet";

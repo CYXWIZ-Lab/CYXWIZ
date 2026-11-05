@@ -1008,7 +1008,7 @@ int main() {
               "standalone MultiHeadAttention placement should name the node type");
         Check(mha_placement->status ==
                   cyxwiz::BackendPlacementStatus::Gpu,
-              "MultiHeadAttention runs on ArrayFire only (TOFIX140)");
+              "MultiHeadAttention runs on ArrayFire only");
         Check(mha_placement->reason_code ==
                   cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
               "standalone MultiHeadAttention placement should use the ArrayFire tensor reason");
@@ -1359,7 +1359,7 @@ int main() {
     Check(config.is_valid,
           "decoder-only TransformerDecoder path should compile under current engine support");
     Check(config.SummarizeBackendPlacements().cpu == 0,
-          "decoder-only TransformerDecoder path runs on ArrayFire only (TOFIX140): no CPU placement");
+          "decoder-only TransformerDecoder path runs on ArrayFire only: no CPU placement");
     Check(config.SummarizeBackendPlacements().unknown == 0,
           "decoder-only TransformerDecoder path should not carry unknown backend placement");
 

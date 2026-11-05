@@ -26,7 +26,7 @@ TEST_CASE("Data Input runtime formats follow the production source catalog",
     CHECK(cyxwiz::data_input::IsExecutable("h5") == cyxwiz::data_input::kHdf5BuildAvailable);
 }
 
-TEST_CASE("Training capability registry allows the CNN stack (TOFIX140 A1)",
+TEST_CASE("Training capability registry allows the CNN stack",
           "[pipeline][capabilities][spatial]") {
     using cyxwiz::PipelineTrainingBackendSupportMode;
     using gui::NodeType;
@@ -74,7 +74,7 @@ TEST_CASE("Training capability registry exposes tested causal LM building blocks
         NodeType::CrossEntropyLoss));
 }
 
-TEST_CASE("Linear Attention is a supported trainable model layer (TOFIX140 Group C)",
+TEST_CASE("Linear Attention is a supported trainable model layer",
           "[pipeline_runtime_capabilities][attention]") {
     const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::LinearAttention);
     REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::Allowed);
@@ -83,7 +83,7 @@ TEST_CASE("Linear Attention is a supported trainable model layer (TOFIX140 Group
     REQUIRE_FALSE(cyxwiz::IsPipelineUnsupportedSequentialModelLayer(gui::NodeType::LinearAttention));
 }
 
-TEST_CASE("Cross Attention is a supported trainable model layer (TOFIX140 Group C)",
+TEST_CASE("Cross Attention is a supported trainable model layer",
           "[pipeline_runtime_capabilities][attention]") {
     const auto support = cyxwiz::ResolvePipelineTrainingBackendSupport(gui::NodeType::CrossAttention);
     REQUIRE(support.mode == cyxwiz::PipelineTrainingBackendSupportMode::Allowed);
