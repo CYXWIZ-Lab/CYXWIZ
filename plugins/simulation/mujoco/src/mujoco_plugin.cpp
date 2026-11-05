@@ -7,7 +7,49 @@
 #include <mujoco/mujoco.h>
 #include <GLFW/glfw3.h>
 
+#include <filesystem>
+#include <string_view>
+
 namespace cyxwiz::plugin::mujoco {
+
+namespace {
+
+// Two spellings of one model file (relative/absolute, slashes) are the same model.
+bool SameModelFile(const std::string& a, const std::string& b) {
+    if (a == b) return true;
+    if (a.empty() || b.empty()) return false;
+    std::error_code ec_a, ec_b;
+    const auto ca = std::filesystem::weakly_canonical(std::filesystem::path(a), ec_a);
+    const auto cb = std::filesystem::weakly_canonical(std::filesystem::path(b), ec_b);
+    return !ec_a && !ec_b && ca == cb;
+}
+
+// The actuator a Plant input pin drives: by name, or "actuator_<i>" for an
+// unnamed actuator (the name ParseMjcfFile gives it).
+int ActuatorId(const mjModel* m, const std::string& pin_name) {
+    const int id = mj_name2id(m, mjOBJ_ACTUATOR, pin_name.c_str());
+    if (id >= 0) return id;
+    constexpr std::string_view kPrefix = "actuator_";
+    if (pin_name.rfind(kPrefix, 0) != 0) return -1;
+    try {
+        size_t used = 0;
+        const int index = std::stoi(pin_name.substr(kPrefix.size()), &used);
+        if (used == pin_name.size() - kPrefix.size() && index >= 0 && index < m->nu &&
+            !mj_id2name(m, mjOBJ_ACTUATOR, index))
+            return index;
+    } catch (...) {
+    }
+    return -1;
+}
+
+// MuJoCo state (mjtNum, double) as the float values node pins carry.
+std::vector<float> ToFloats(const mjtNum* values, int count) {
+    std::vector<float> out(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) out[static_cast<size_t>(i)] = static_cast<float>(values[i]);
+    return out;
+}
+
+}  // namespace
 
 // =============================================================================
 // IPlugin Lifecycle
@@ -26,10 +68,8 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     // Capture main GLFW window for renderer context management.
     main_window_ = glfwGetCurrentContext();
 
-    // Set assets directory for the environment library.
-    // Assets are in the source tree: plugins/simulation/mujoco/assets/
-    // At runtime, resolve relative to known plugin search paths.
-    env_library_.SetAssetsDir("plugins/simulation/mujoco/assets");
+    // The built-in environments ship in the plugin's own folder (next to plugin.json).
+    env_library_.SetAssetsDir((ctx.GetPluginDir() / "assets").string());
 
     // Scan for previously downloaded Menagerie models
     env_library_.ScanDownloadedModels();
@@ -60,7 +100,6 @@ void MuJoCoPlugin::OnShutdown(PluginContext& ctx) {
     sim_executor_.Stop();  // Must stop before freeing model/renderer
     renderer_.Shutdown();
     env_manager_.Close();
-    current_env_id_.clear();
     state_ = PluginState::Loaded;
 }
 
@@ -145,47 +184,6 @@ void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
     } else if (panel_id == "mujoco_env_browser") {
         browser_panel_.Render(env_library_, env_manager_, visible);
     }
-}
-
-// =============================================================================
-// ITrainingHook - RL Metric Logging
-// =============================================================================
-
-void MuJoCoPlugin::OnTrainingStart(TrainingContext& ctx) {
-    spdlog::info("[MuJoCo] RL training started — env='{}', epochs={}",
-                 current_env_id_.empty() ? "(none)" : current_env_id_,
-                 ctx.total_epochs);
-}
-
-void MuJoCoPlugin::OnTrainingEnd([[maybe_unused]] TrainingContext& ctx) {
-    spdlog::info("[MuJoCo] RL training ended — {} episodes completed, "
-                 "mean_reward={:.2f}, mean_length={:.1f}",
-                 env_manager_.GetEpisodeCount(),
-                 env_manager_.GetMeanEpisodeReward(),
-                 env_manager_.GetMeanEpisodeLength());
-}
-
-void MuJoCoPlugin::OnEpochEnd(TrainingContext& ctx) {
-    // Inject RL-specific metrics into training context
-    if (env_manager_.IsLoaded()) {
-        ctx.custom_metrics["mean_episode_reward"] = env_manager_.GetMeanEpisodeReward();
-        ctx.custom_metrics["mean_episode_length"] = env_manager_.GetMeanEpisodeLength();
-        ctx.custom_metrics["total_episodes"] = static_cast<float>(env_manager_.GetEpisodeCount());
-        ctx.custom_metrics["total_env_steps"] = static_cast<float>(env_manager_.GetCurrentStep());
-    }
-}
-
-bool MuJoCoPlugin::ShouldStopEarly([[maybe_unused]] const TrainingContext& ctx) {
-    // Stop if reward exceeds the solved threshold for this environment
-    if (reward_threshold_ < std::numeric_limits<float>::max()) {
-        float mean_reward = env_manager_.GetMeanEpisodeReward();
-        if (mean_reward >= reward_threshold_) {
-            spdlog::info("[MuJoCo] Environment solved! mean_reward={:.2f} >= threshold={:.2f}",
-                         mean_reward, reward_threshold_);
-            return true;
-        }
-    }
-    return false;
 }
 
 // =============================================================================
@@ -468,7 +466,7 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
 
     if (ctx.node_type_name == "MuJoCoPlant") {
         // If sim_executor is already running (manual control or RL training),
-        // don't step physics here � would cause concurrent access crash
+        // don't step physics here — would cause concurrent access crash
         if (sim_executor_.GetMode() != SimMode::Stopped) {
             sim_executor_.Stop();  // Request stop and wait for thread to finish
         }
@@ -482,30 +480,17 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
             return result;
         }
 
-        // Gather actuator controls from input pins
-        std::vector<ActuatorInput> actuators;
-        for (const auto& [pin_name, value] : ctx.input_values) {
-            if (pin_name == "u") {
-                // Vector mode: single control vector
-                if (std::holds_alternative<std::vector<float>>(value)) {
-                    const auto& vec = std::get<std::vector<float>>(value);
-                    for (size_t i = 0; i < vec.size(); ++i) {
-                        actuators.push_back({std::to_string(i), vec[i]});
-                    }
-                } else if (std::holds_alternative<float>(value)) {
-                    actuators.push_back({"0", std::get<float>(value)});
-                }
-            } else {
-                // Bus mode: per-actuator scalar pins
-                float v = 0.0f;
-                if (std::holds_alternative<float>(value)) {
-                    v = std::get<float>(value);
-                }
-                actuators.push_back({pin_name, v});
-            }
+        // The node's model is the model it steps: never another one silently.
+        const auto node_path = ctx.parameters.find("mjcf_path");
+        if (node_path != ctx.parameters.end() && !node_path->second.empty() &&
+            !SameModelFile(node_path->second, loaded_mjcf_path_)) {
+            result.success = false;
+            result.error_message = "The MuJoCo Plant's model '" + node_path->second +
+                                   "' is not the model loaded in the viewport ('" + loaded_mjcf_path_ +
+                                   "'); load it from the Environment Library";
+            return result;
         }
 
-        // Step physics directly (avoid sim_executor thread contention)
         mjData* d = env_manager_.GetMutableData();
         const mjModel* m = env_manager_.GetModel();
         if (!d || !m) {
@@ -514,24 +499,34 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
             return result;
         }
 
-        // Apply actuator controls
-        for (const auto& act : actuators) {
-            int id = mj_name2id(m, mjOBJ_ACTUATOR, act.name.c_str());
-            if (id >= 0 && id < m->nu) {
-                d->ctrl[id] = act.value;
+        // Controls from the input pins: "u" is the whole control vector by
+        // actuator index; any other pin is one actuator by name (the pin names
+        // ResolveDynamicPins gave it, "actuator_<i>" for an unnamed one).
+        std::vector<std::pair<int, float>> controls;
+        for (const auto& [pin_name, value] : ctx.input_values) {
+            if (pin_name == "u") {
+                if (std::holds_alternative<std::vector<float>>(value)) {
+                    const auto& vec = std::get<std::vector<float>>(value);
+                    for (size_t i = 0; i < vec.size() && static_cast<int>(i) < m->nu; ++i)
+                        controls.emplace_back(static_cast<int>(i), vec[i]);
+                } else if (std::holds_alternative<float>(value) && m->nu > 0) {
+                    controls.emplace_back(0, std::get<float>(value));
+                }
+            } else if (std::holds_alternative<float>(value)) {
+                const int id = ActuatorId(m, pin_name);
+                if (id >= 0) controls.emplace_back(id, std::get<float>(value));
             }
         }
 
-        // Step physics under physics mutex (prevents concurrent render access)
-        int frame_skip = env_manager_.GetFrameSkip();
-        {
-            std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
-            for (int i = 0; i < frame_skip; i++) {
-                mj_step(m, d);
-            }
+        // Apply, step and read as one physics transaction (the viewport renders
+        // from the same data under this lock).
+        const int frame_skip = env_manager_.GetFrameSkip();
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        for (const auto& [id, v] : controls) d->ctrl[id] = v;
+        for (int i = 0; i < frame_skip; i++) {
+            mj_step(m, d);
         }
 
-        // Read sensor outputs
         for (int i = 0; i < m->nsensor; i++) {
             const char* name = mj_id2name(m, mjOBJ_SENSOR, i);
             std::string sname = name ? name : ("sensor_" + std::to_string(i));
@@ -547,17 +542,10 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
                 result.output_values[sname] = std::move(vals);
             }
         }
-        if (d && m) {
-            std::vector<float> qpos(d->qpos, d->qpos + m->nq);
-            std::vector<float> qvel(d->qvel, d->qvel + m->nv);
-            result.output_values["qpos"] = std::move(qpos);
-            result.output_values["qvel"] = std::move(qvel);
-        }
-
-        // Sensor vector (concatenation of all sensor readings)
-        if (d && m && m->nsensor > 0) {
-            std::vector<float> sensor_data(d->sensordata, d->sensordata + m->nsensordata);
-            result.output_values["sensor"] = std::move(sensor_data);
+        result.output_values["qpos"] = ToFloats(d->qpos, m->nq);
+        result.output_values["qvel"] = ToFloats(d->qvel, m->nv);
+        if (m->nsensor > 0) {
+            result.output_values["sensor"] = ToFloats(d->sensordata, m->nsensordata);
         }
 
         return result;
@@ -588,11 +576,12 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
         const mjData* d = env_manager_.GetData();
         const mjModel* m = env_manager_.GetModel();
         if (d && m) {
-            if (state.qpos.empty()) state.qpos.assign(d->qpos, d->qpos + m->nq);
-            if (state.qvel.empty()) state.qvel.assign(d->qvel, d->qvel + m->nv);
-            if (state.ctrl.empty()) state.ctrl.assign(d->ctrl, d->ctrl + m->nu);
+            std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+            if (state.qpos.empty()) state.qpos = ToFloats(d->qpos, m->nq);
+            if (state.qvel.empty()) state.qvel = ToFloats(d->qvel, m->nv);
+            if (state.ctrl.empty()) state.ctrl = ToFloats(d->ctrl, m->nu);
             if (state.sensor.empty() && m->nsensordata > 0)
-                state.sensor.assign(d->sensordata, d->sensordata + m->nsensordata);
+                state.sensor = ToFloats(d->sensordata, m->nsensordata);
         }
 
         float reward = shaper.ComputeReward(state);
@@ -621,14 +610,24 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
         const mjData* d = env_manager_.GetData();
         const mjModel* m = env_manager_.GetModel();
         if (d && m) {
-            if (qpos.empty()) qpos.assign(d->qpos, d->qpos + m->nq);
-            if (qvel.empty()) qvel.assign(d->qvel, d->qvel + m->nv);
+            std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+            if (qpos.empty()) qpos = ToFloats(d->qpos, m->nq);
+            if (qvel.empty()) qvel = ToFloats(d->qvel, m->nv);
             if (sensors.empty() && m->nsensordata > 0)
-                sensors.assign(d->sensordata, d->sensordata + m->nsensordata);
+                sensors = ToFloats(d->sensordata, m->nsensordata);
         }
 
-        rl::ObservationFilter filter(cfg);
-        std::vector<float> obs = filter.Filter(qpos, qvel, sensors);
+        // Keep the running normalisation across ticks; a new simulation (time
+        // going back) or new settings start it again.
+        const auto& old_cfg = obs_filter_.GetConfig();
+        const bool same_cfg = old_cfg.include_qpos == cfg.include_qpos && old_cfg.include_qvel == cfg.include_qvel &&
+                              old_cfg.include_sensors == cfg.include_sensors && old_cfg.normalize == cfg.normalize;
+        if (!same_cfg || ctx.sim_time <= obs_filter_last_time_) {
+            obs_filter_.SetConfig(cfg);
+            obs_filter_.Reset();
+        }
+        obs_filter_last_time_ = ctx.sim_time;
+        std::vector<float> obs = obs_filter_.Filter(qpos, qvel, sensors);
         result.output_values["obs"] = std::move(obs);
         return result;
     }
@@ -718,7 +717,7 @@ DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
     result.metadata["timestep"] = std::to_string(info.timestep);
 
     spdlog::info("MuJoCoPlant: Resolved {} pins for '{}' ({})",
-                 result.pins.size(), it->second, info.model_name);
+                 result.pins.size(), mjcf_path, info.model_name);
     return result;
 }
 

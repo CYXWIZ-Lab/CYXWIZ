@@ -2,21 +2,15 @@
 
 // MuJoCo Simulation Plugin for CyxWiz Engine
 //
-// Phase 1: Core physics wrapper + training hook integration
-// Phase 2: 3D viewport rendering via IPanelProvider
-// Phase 3: Node editor integration via INodeProvider
-//
 // - IPlugin lifecycle: initialize/shutdown MuJoCo
-// - ITrainingHook: log RL metrics (episode reward, length, success rate)
-// - IPanelProvider: MuJoCo 3D viewport panel
-// - INodeProvider: RL simulation nodes for visual pipeline editor
+// - IPanelProvider: MuJoCo 3D viewport and Environment Library panels
+// - INodeProvider: simulation nodes for the node editor
 
 #include <imgui.h>
 #include "plugin/plugin_types.h"
 #include "mj_simulation_executor.h"
 #include "mj_menagerie_downloader.h"
 #include "plugin/plugin_context.h"
-#include "plugin/interfaces/i_training_hook.h"
 #include "plugin/interfaces/i_panel_provider.h"
 #include "plugin/interfaces/i_node_provider.h"
 
@@ -25,16 +19,15 @@
 #include "mj_renderer.h"
 #include "mj_viewport_panel.h"
 #include "mj_env_browser_panel.h"
+#include "rl/observation_filter.h"
 
 #include <string>
-#include <limits>
 
 struct GLFWwindow;  // Forward declare
 
 namespace cyxwiz::plugin::mujoco {
 
 class MuJoCoPlugin : public IPlugin,
-                     public ITrainingHook,
                      public IPanelProvider,
                      public INodeProvider {
 public:
@@ -49,23 +42,15 @@ public:
 
     const PluginManifest& GetManifest() const override { return manifest_; }
     PluginPermissionFlags GetRequiredPermissions() const override {
-        return static_cast<uint32_t>(PluginPermission::Training) |
-               static_cast<uint32_t>(PluginPermission::UIModify);
+        return static_cast<uint32_t>(PluginPermission::UIModify);
     }
     PluginState GetState() const override { return state_; }
     void SetImGuiContext(void* ctx) override { ImGui::SetCurrentContext(static_cast<ImGuiContext*>(ctx)); }
     void* QueryInterface(const char* name) override {
         if (std::string(name) == "IPanelProvider") return static_cast<IPanelProvider*>(this);
         if (std::string(name) == "INodeProvider") return static_cast<INodeProvider*>(this);
-        if (std::string(name) == "ITrainingHook") return static_cast<ITrainingHook*>(this);
         return nullptr;
     }
-
-    // ===== ITrainingHook =====
-    void OnTrainingStart(TrainingContext& ctx) override;
-    void OnTrainingEnd(TrainingContext& ctx) override;
-    void OnEpochEnd(TrainingContext& ctx) override;
-    bool ShouldStopEarly(const TrainingContext& ctx) override;
 
     // ===== IPanelProvider =====
     std::vector<PluginPanelInfo> GetPanels() override;
@@ -110,10 +95,12 @@ private:
 
     GLFWwindow* main_window_ = nullptr;
 
-    // RL training config
-    std::string current_env_id_;
     std::string loaded_mjcf_path_;  // Path of the currently loaded MJCF model
-    float reward_threshold_ = std::numeric_limits<float>::max();
+
+    // Observation Filter state across the ticks of one graph simulation
+    // (running normalisation); reset when a new simulation starts.
+    rl::ObservationFilter obs_filter_;
+    double obs_filter_last_time_ = -1.0;
     bool viewport_visible_ = true;
     bool renderer_needs_init_ = false;
 };

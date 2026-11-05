@@ -1,12 +1,9 @@
 #pragma once
 
-// MjSimulationExecutor — Runs MuJoCo simulation driven by node graph signals
+// MjSimulationExecutor — Runs the MuJoCo simulation on its own thread
 //
-// Two modes:
-//   1. Manual Control: Reads actuator values from connected signal sources,
-//      calls mj_step(), pushes sensor outputs. Supports Play/Pause/Step.
-//   2. RL Training: Wraps env in Gymnasium-style loop, agent receives obs,
-//      produces actions, trains policy. Uses MjEnvManager's Step/Reset API.
+// Manual Control: applies actuator values, calls mj_step(), publishes sensor
+// outputs. Supports Play/Pause/Step.
 
 #include "mj_env_manager.h"
 #include <string>
@@ -21,8 +18,7 @@ namespace cyxwiz::plugin::mujoco {
 
 enum class SimMode {
     Stopped,
-    ManualControl,  // Simulink-style: signal sources -> actuators -> step -> sensors
-    RLTraining      // RL loop: env.step(action) with agent policy
+    ManualControl   // Simulink-style: signal sources -> actuators -> step -> sensors
 };
 
 enum class SimState {
@@ -50,9 +46,6 @@ struct SimMetrics {
     double wall_time = 0.0;     // Wall clock time (seconds)
     double real_time_factor = 0.0;
     int step_count = 0;
-    int episode_count = 0;
-    float episode_reward = 0.0f;
-    float mean_reward = 0.0f;
 };
 
 class MjSimulationExecutor {
@@ -81,9 +74,6 @@ public:
     // Get sensor outputs (called by engine each frame after step)
     std::vector<SensorOutput> GetSensorOutputs() const;
 
-    // --- RL Training Mode ---
-    void StartRLTraining(int total_timesteps = 1000000);
-
     // --- State queries ---
     SimMode GetMode() const { return mode_; }
     SimState GetState() const { return state_; }
@@ -100,7 +90,6 @@ public:
 
 private:
     void ManualControlLoop();
-    void RLTrainingLoop(int total_timesteps);
     void ExecuteOneStep();
 
     MjEnvManager* env_ = nullptr;

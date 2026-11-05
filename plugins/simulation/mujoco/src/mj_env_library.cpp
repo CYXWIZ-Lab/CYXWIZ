@@ -211,19 +211,7 @@ std::string MjEnvLibrary::GetAssetPath(const EnvInfo& info) const {
         return scene.string();
     }
 
-    // Builtin models: look in assets dir
-    if (!assets_dir_.empty()) {
-        fs::path p = fs::path(assets_dir_) / info.filename;
-        if (fs::exists(p)) return p.string();
-    }
-    // Fallback: try common locations relative to CWD
-    for (const auto& dir : {
-        "plugins/simulation/mujoco/assets",
-        "plugins/mujoco_simulation/assets",
-    }) {
-        fs::path p = fs::path(dir) / info.filename;
-        if (fs::exists(p)) return p.string();
-    }
+    // Builtin models: the plugin's assets dir
     if (assets_dir_.empty()) return info.filename;
     return (fs::path(assets_dir_) / info.filename).string();
 }

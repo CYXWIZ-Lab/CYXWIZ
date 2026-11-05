@@ -8,6 +8,8 @@
 #include "mj_renderer.h"
 #include "mj_env_manager.h"
 
+#include <atomic>
+
 namespace cyxwiz::plugin::mujoco {
 
 // Forward declaration
@@ -41,8 +43,8 @@ private:
 
     MjSimulationExecutor* sim_executor_ = nullptr;
     bool playing_ = false;
-    bool graph_sim_active_ = false;
-    int graph_sim_frames_ = 0;  // frames since last SetGraphSimActive(true)
+    std::atomic<bool> graph_sim_active_{false};  // set from the graph simulation thread
+    std::atomic<int> graph_sim_frames_{0};       // frames since last SetGraphSimActive(true)
     bool show_settings_ = false;
     float playback_speed_ = 1.0f;
     int steps_per_frame_ = 1;

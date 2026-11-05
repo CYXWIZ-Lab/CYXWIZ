@@ -189,8 +189,7 @@ void MjViewportPanel::RenderSimControls() {
 
     // Auto-clear graph_sim_active if EvaluateNode hasn't been called recently
     if (graph_sim_active_) {
-        graph_sim_frames_++;
-        if (graph_sim_frames_ > 30) {  // ~0.5s at 60fps without EvaluateNode call
+        if (++graph_sim_frames_ > 30) {  // ~0.5s at 60fps without EvaluateNode call
             graph_sim_active_ = false;
         }
     }
@@ -205,10 +204,6 @@ void MjViewportPanel::RenderSimControls() {
         } else {
             if (ImGui::Button("Manual Control")) {
                 sim_executor_->StartManualControl();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("RL Training")) {
-                sim_executor_->StartRLTraining();
             }
         }
     } else {
@@ -246,14 +241,8 @@ void MjViewportPanel::RenderSimControls() {
         // Metrics
         auto metrics = sim_executor_->GetMetrics();
         ImGui::SameLine(ImGui::GetWindowWidth() - 350);
-        if (mode == SimMode::ManualControl) {
-            ImGui::Text("t=%.3fs | Steps: %d | RTF: %.1f",
-                        metrics.sim_time, metrics.step_count, metrics.real_time_factor);
-        } else {
-            ImGui::Text("Steps: %d | Ep: %d | R: %.1f | Mean: %.1f",
-                        metrics.step_count, metrics.episode_count,
-                        metrics.episode_reward, metrics.mean_reward);
-        }
+        ImGui::Text("t=%.3fs | Steps: %d | RTF: %.1f",
+                    metrics.sim_time, metrics.step_count, metrics.real_time_factor);
     }
 }
 

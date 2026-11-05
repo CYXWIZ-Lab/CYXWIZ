@@ -83,27 +83,6 @@ SimMetrics MjSimulationExecutor::GetMetrics() const {
     return metrics_;
 }
 
-void MjSimulationExecutor::StartRLTraining(int total_timesteps) {
-    Stop();
-
-    if (!env_ || !env_->IsLoaded()) {
-        spdlog::error("SimExecutor: Cannot start RL training — no model loaded");
-        return;
-    }
-
-    should_stop_ = false;
-    mode_ = SimMode::RLTraining;
-    state_ = SimState::Running;
-
-    {
-        std::lock_guard lock(io_mutex_);
-        metrics_ = {};
-    }
-
-    sim_thread_ = std::thread([this, total_timesteps]() { RLTrainingLoop(total_timesteps); });
-    spdlog::info("SimExecutor: RL training started ({} timesteps)", total_timesteps);
-}
-
 void MjSimulationExecutor::ManualControlLoop() {
     using clock = std::chrono::high_resolution_clock;
     auto wall_start = clock::now();
@@ -157,23 +136,24 @@ void MjSimulationExecutor::ExecuteOneStep() {
     const mjModel* m = env_->GetModel();
     if (!d || !m) return;
 
-    // Apply actuator inputs
+    std::vector<ActuatorInput> inputs;
     {
         std::lock_guard lock(io_mutex_);
-        for (const auto& input : actuator_inputs_) {
-            // Find actuator by name
+        inputs = actuator_inputs_;
+    }
+
+    // Apply inputs, step and read the outputs as one physics transaction
+    int frame_skip = env_->GetFrameSkip();
+    std::vector<SensorOutput> outputs;
+    double sim_time = 0.0;
+    {
+        std::lock_guard phys_lock(env_->GetPhysicsMutex());
+        for (const auto& input : inputs) {
             int id = mj_name2id(m, mjOBJ_ACTUATOR, input.name.c_str());
             if (id >= 0 && id < m->nu) {
                 d->ctrl[id] = input.value;
             }
         }
-    }
-
-    // Step physics and read sensors under physics mutex
-    int frame_skip = env_->GetFrameSkip();
-    std::vector<SensorOutput> outputs;
-    {
-        std::lock_guard phys_lock(env_->GetPhysicsMutex());
         for (int i = 0; i < frame_skip; i++) {
             mj_step(m, d);
         }
@@ -189,6 +169,7 @@ void MjSimulationExecutor::ExecuteOneStep() {
             }
             outputs.push_back(std::move(so));
         }
+        sim_time = d->time;
     }
 
     // Update shared state
@@ -196,7 +177,7 @@ void MjSimulationExecutor::ExecuteOneStep() {
         std::lock_guard lock(io_mutex_);
         sensor_outputs_ = std::move(outputs);
         metrics_.step_count++;
-        metrics_.sim_time = d->time;
+        metrics_.sim_time = sim_time;
     }
 
     // Notify callback
@@ -204,52 +185,6 @@ void MjSimulationExecutor::ExecuteOneStep() {
         std::lock_guard lock(io_mutex_);
         step_callback_(sensor_outputs_, metrics_);
     }
-}
-
-void MjSimulationExecutor::RLTrainingLoop(int total_timesteps) {
-    // RL training uses the MjEnvManager's Step/Reset API
-    // This is a placeholder — full RL training would use the existing
-    // RLAgent node's generated Python code via the scripting engine.
-    // Here we provide a basic random-action loop for testing.
-
-    env_->Reset();
-    int action_dim = env_->GetActionDim();
-
-    for (int t = 0; t < total_timesteps && !should_stop_; t++) {
-        if (state_ == SimState::Paused) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            t--;  // Don't count paused time
-            continue;
-        }
-
-        // Random action (placeholder — real training hooks into Python agent)
-        std::vector<float> action(action_dim);
-        for (auto& a : action) {
-            a = static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f;
-        }
-
-        StepResult result;
-        {
-            std::lock_guard phys_lock(env_->GetPhysicsMutex());
-            result = env_->Step(action);
-        }
-
-        {
-            std::lock_guard lock(io_mutex_);
-            metrics_.step_count = t + 1;
-            metrics_.episode_reward = env_->GetEpisodeReward();
-            metrics_.mean_reward = env_->GetMeanEpisodeReward();
-            metrics_.episode_count = env_->GetEpisodeCount();
-        }
-
-        if (result.terminated || result.truncated) {
-            std::lock_guard phys_lock(env_->GetPhysicsMutex());
-            env_->Reset();
-        }
-    }
-
-    state_ = SimState::Idle;
-    spdlog::info("SimExecutor: RL training finished ({} steps)", total_timesteps);
 }
 
 } // namespace cyxwiz::plugin::mujoco
