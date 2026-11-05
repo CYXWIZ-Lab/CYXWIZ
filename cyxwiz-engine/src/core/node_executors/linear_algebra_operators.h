@@ -39,7 +39,7 @@ protected:
     // The settings the saved values must have been fitted with.
     virtual std::map<std::string, std::string> Settings() const = 0;
     // The map from the Train rows `train` [n × d] of `features`.
-    virtual arrow::Status Fit(const LinearMatrix& train, const std::vector<std::string>& features, LinearMap& map) = 0;
+    virtual arrow::Status Fit(const NumberColumns& train, const std::vector<std::string>& features, LinearMap& map) = 0;
 
     std::vector<std::string> feature_cols_;  // empty: every number column but the label
     std::string label_col_;
@@ -59,7 +59,7 @@ public:
 protected:
     bool ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) override;
     std::map<std::string, std::string> Settings() const override;
-    arrow::Status Fit(const LinearMatrix& train, const std::vector<std::string>& features, LinearMap& map) override;
+    arrow::Status Fit(const NumberColumns& train, const std::vector<std::string>& features, LinearMap& map) override;
 
 private:
     int n_components_ = 2;
@@ -72,7 +72,7 @@ public:
 protected:
     bool ConfigureOwn(const std::map<std::string, std::string>& params, std::string& error) override;
     std::map<std::string, std::string> Settings() const override;
-    arrow::Status Fit(const LinearMatrix& train, const std::vector<std::string>& features, LinearMap& map) override;
+    arrow::Status Fit(const NumberColumns& train, const std::vector<std::string>& features, LinearMap& map) override;
 
 private:
     std::string method_ = "pca";  // "pca" or "zca"

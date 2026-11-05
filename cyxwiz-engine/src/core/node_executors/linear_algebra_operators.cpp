@@ -28,17 +28,6 @@ bool ReadInt(const std::map<std::string, std::string>& params, const char* key, 
     return true;
 }
 
-// The rows of Vt [k × d] signed so each one's largest-magnitude entry is positive.
-void SignComponents(LinearMatrix& vt) {
-    for (auto& row : vt) {
-        size_t peak = 0;
-        for (size_t j = 1; j < row.size(); ++j)
-            if (std::fabs(row[j]) > std::fabs(row[peak])) peak = j;
-        if (!row.empty() && row[peak] < 0)
-            for (double& v : row) v = -v;
-    }
-}
-
 }  // namespace
 
 // ---- the shared step
@@ -68,8 +57,8 @@ arrow::Result<std::shared_ptr<arrow::Table>> FittedLinearOperator::Apply(const s
     std::vector<std::string> features;
     ARROW_RETURN_NOT_OK(ResolveNumberFeatures(input, feature_cols_, label_col_, name, features));
     progress("Reading feature columns", "Reading " + std::to_string(features.size()) + " number columns", 0.1f);
-    FeatureRows rows;
-    ARROW_RETURN_NOT_OK(ReadFeatureRows(input, features, name, false, rows, GetCancellationQuery()));
+    NumberColumns rows;
+    ARROW_RETURN_NOT_OK(ReadNumberColumns(input, features, name, rows, GetCancellationQuery()));
     ARROW_RETURN_NOT_OK(CheckCancellation(name));
 
     LinearMap map;
@@ -85,17 +74,17 @@ arrow::Result<std::shared_ptr<arrow::Table>> FittedLinearOperator::Apply(const s
         fit_rows = state.fit_rows;
     } else {
         // Fitted on the Train rows (all rows when the run marks none).
-        const LinearMatrix train = TrainSubset(input, rows);
-        if (train.size() < 2) return arrow::Status::Invalid(name + ": fewer than 2 Train rows have every feature");
-        progress("Fitting", "Fitting on " + std::to_string(train.size()) + " Train rows", 0.4f);
+        const NumberColumns train = TrainColumns(input, rows);
+        if (train.rows.size() < 2) return arrow::Status::Invalid(name + ": fewer than 2 Train rows have every feature");
+        progress("Fitting", "Fitting on " + std::to_string(train.rows.size()) + " Train rows", 0.4f);
         ARROW_RETURN_NOT_OK(Fit(train, features, map));
-        fit_rows = static_cast<int64_t>(train.size());
+        fit_rows = static_cast<int64_t>(train.rows.size());
     }
     ARROW_RETURN_NOT_OK(CheckCancellation(name));
     progress("Mapping rows", "Mapping " + std::to_string(rows.rows.size()) + " rows on the device", 0.7f);
-    LinearMatrix mapped;
+    std::vector<double> mapped;
     std::string error;
-    if (!ApplyLinearMap(map, rows.data, mapped, error)) return arrow::Status::ExecutionError(name + ": " + error);
+    if (!ApplyLinearMap(map, rows, mapped, error)) return arrow::Status::ExecutionError(name + ": " + error);
     if (!options_.IsTransformOnly() && options_.save_state) {
         if (!SaveFittedPreprocessingState(options_.state_path, LinearMapState(map, name, fit_rows, input->schema(), Settings()),
                                           options_.state_overwrite, error))
@@ -117,11 +106,9 @@ std::map<std::string, std::string> TruncatedSVDOperator::Settings() const { retu
 
 namespace {
 
-// The map x V_k from the right singular vectors Vt (rows), signed.
-void SvdMap(const LinearMatrix& right, const std::vector<std::string>& features, size_t k, LinearMap& map) {
+// The map x V_k from the leading directions of X^T X (rows, signed).
+void SvdMap(const LinearMatrix& vt, const std::vector<std::string>& features, size_t k, LinearMap& map) {
     const size_t d = features.size();
-    LinearMatrix vt(right.begin(), right.begin() + static_cast<std::ptrdiff_t>(k));
-    SignComponents(vt);
     map.inputs = features;
     map.shift.assign(d, 0.0);
     map.divisor.assign(d, 1.0);
@@ -134,14 +121,21 @@ void SvdMap(const LinearMatrix& right, const std::vector<std::string>& features,
 
 }  // namespace
 
-arrow::Status TruncatedSVDOperator::Fit(const LinearMatrix& train, const std::vector<std::string>& features, LinearMap& map) {
+arrow::Status TruncatedSVDOperator::Fit(const NumberColumns& train, const std::vector<std::string>& features, LinearMap& map) {
     const size_t d = features.size(), k = static_cast<size_t>(n_components_);
-    if (k > std::min(train.size(), d))
+    if (k > std::min(train.rows.size(), d))
         return arrow::Status::Invalid("TruncatedSVD: n_components (" + std::to_string(k) + ") is above min(Train rows, features) = " +
-                                      std::to_string(std::min(train.size(), d)));
-    const SVDResult svd = LinearAlgebra::SVD(train, false);
-    if (!svd.success) return arrow::Status::ExecutionError("TruncatedSVD: " + svd.error_message);
-    SvdMap(svd.Vt, features, k, map);
+                                      std::to_string(std::min(train.rows.size(), d)));
+    // The right singular vectors of X are the eigenvectors of X^T X (d × d: a
+    // table of many rows never makes its n × n U), as on sparse features.
+    const ColumnSummaryResult summary = LinearAlgebra::ColumnSummary(train.View());
+    if (!summary.success) return arrow::Status::ExecutionError("TruncatedSVD: " + summary.error_message);
+    LinearMatrix vt;
+    std::vector<double> values;
+    std::string error;
+    if (!TopDirections(SecondMoments(summary, true, {}, 1.0), k, vt, values, error))
+        return arrow::Status::ExecutionError("TruncatedSVD: " + error);
+    SvdMap(vt, features, k, map);
     return arrow::Status::OK();
 }
 
@@ -202,9 +196,11 @@ arrow::Result<std::shared_ptr<arrow::Table>> TruncatedSVDOperator::ApplySparseIn
         const MatrixResult gram = LinearAlgebra::SparseGram(train);
         if (!gram.success) return arrow::Status::ExecutionError(name + ": " + gram.error_message);
         ARROW_RETURN_NOT_OK(CheckCancellation(name));
-        const SVDResult svd = LinearAlgebra::SVD(gram.matrix, false);
-        if (!svd.success) return arrow::Status::ExecutionError(name + ": " + svd.error_message);
-        SvdMap(svd.Vt, features, k, map);
+        LinearMatrix vt;
+        std::vector<double> strengths;
+        std::string error;
+        if (!TopDirections(gram.matrix, k, vt, strengths, error)) return arrow::Status::ExecutionError(name + ": " + error);
+        SvdMap(vt, features, k, map);
         fit_rows = train.rows;
     }
     ARROW_RETURN_NOT_OK(CheckCancellation(name));
@@ -269,34 +265,31 @@ std::map<std::string, std::string> WhiteningOperator::Settings() const {
     return {{"method", method_}, {"n_components", std::to_string(n_components_)}, {"epsilon", eps}};
 }
 
-arrow::Status WhiteningOperator::Fit(const LinearMatrix& train, const std::vector<std::string>& features, LinearMap& map) {
-    const size_t d = features.size(), n = train.size();
-    std::vector<double> mean, sd;
-    LinearMatrix centred;
+arrow::Status WhiteningOperator::Fit(const NumberColumns& train, const std::vector<std::string>& features, LinearMap& map) {
+    const size_t d = features.size(), n = train.rows.size();
+    // The covariance (d × d, n - 1) from one summary of the Train rows: its
+    // eigenvectors are the directions, its eigenvalues their variances.
+    const ColumnSummaryResult summary = LinearAlgebra::ColumnSummary(train.View());
+    if (!summary.success) return arrow::Status::ExecutionError("Whitening: " + summary.error_message);
+    const std::vector<double>& mean = summary.mean;
+    const size_t wanted = method_ == "zca" || n_components_ == 0 ? d : static_cast<size_t>(n_components_);
+    if (wanted > d)
+        return arrow::Status::Invalid("Whitening: n_components (" + std::to_string(wanted) + ") is above the features (" + std::to_string(d) + ")");
+    LinearMatrix vt;
+    std::vector<double> variances;
     std::string error;
-    if (!ColumnMoments(train, mean, sd, error) || !Centred(train, mean, centred, error))
+    if (!TopDirections(SecondMoments(summary, false, {}, static_cast<double>(n - 1)), wanted, vt, variances, error))
         return arrow::Status::ExecutionError("Whitening: " + error);
-    const SVDResult svd = LinearAlgebra::SVD(centred, false);
-    if (!svd.success) return arrow::Status::ExecutionError("Whitening: " + svd.error_message);
-    LinearMatrix vt = svd.Vt;
-    SignComponents(vt);
-    // Each direction's variance (divides by n - 1, as PCA's explained variance).
-    std::vector<double> scale(svd.S.size());
-    const double top = svd.S.empty() ? 0.0 : svd.S[0] * svd.S[0] / static_cast<double>(n - 1);
-    const size_t k = method_ == "zca" ? svd.S.size() : (n_components_ == 0 ? svd.S.size() : static_cast<size_t>(n_components_));
-    if (k > svd.S.size())
-        return arrow::Status::Invalid("Whitening: n_components (" + std::to_string(k) + ") is above min(Train rows, features) = " +
-                                      std::to_string(svd.S.size()));
-    for (size_t c = 0; c < svd.S.size(); ++c) {
-        const double variance = svd.S[c] * svd.S[c] / static_cast<double>(n - 1);
-        if (c < k && epsilon_ == 0.0 && !(variance > 1e-12 * std::max(1.0, top)))
+    const size_t k = wanted;
+    std::vector<double> scale(k);
+    const double top = variances.empty() ? 0.0 : variances[0];
+    for (size_t c = 0; c < k; ++c) {
+        if (epsilon_ == 0.0 && !(variances[c] > 1e-12 * std::max(1.0, top)))
             return arrow::Status::Invalid("Whitening: direction " + std::to_string(c + 1) +
                                           " of the Train rows has no variance, so it cannot be scaled to 1: " +
                                           (method_ == "pca" ? "keep fewer components, or " : "") + "set epsilon above 0.");
-        scale[c] = 1.0 / std::sqrt(variance + epsilon_);
+        scale[c] = 1.0 / std::sqrt(std::max(0.0, variances[c]) + epsilon_);
     }
-    if (method_ == "zca" && svd.S.size() < d)
-        return arrow::Status::Invalid("Whitening: ZCA needs more Train rows (" + std::to_string(n) + ") than features (" + std::to_string(d) + ")");
     map.inputs = features;
     map.shift = mean;
     map.divisor.assign(d, 1.0);
@@ -390,49 +383,53 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearSolveOperator::Apply(const st
     }
     std::vector<std::string> b_cols;
     ARROW_RETURN_NOT_OK(ResolveNumberFeatures(b_source, b_cols_, "", GetName(), b_cols));
-    LinearMatrix a, b;
+    NumberColumns a, b;
     if (two_tables) {
         // Two tables line up row by row: the same count, no row left out of one side.
         if (b_table_->num_rows() != input->num_rows())
             return arrow::Status::Invalid("LinearSolve: A has " + std::to_string(input->num_rows()) + " rows and b has " +
                                           std::to_string(b_table_->num_rows()) + ": two tables line up row by row");
-        FeatureRows ar, br;
-        ARROW_RETURN_NOT_OK(ReadFeatureRows(input, a_cols, GetName(), false, ar, GetCancellationQuery()));
-        ARROW_RETURN_NOT_OK(ReadFeatureRows(b_table_, b_cols, GetName(), false, br, GetCancellationQuery()));
+        NumberColumns ar, br;
+        ARROW_RETURN_NOT_OK(ReadNumberColumns(input, a_cols, GetName(), ar, GetCancellationQuery()));
+        ARROW_RETURN_NOT_OK(ReadNumberColumns(b_table_, b_cols, GetName(), br, GetCancellationQuery()));
         if (ar.rows.size() != static_cast<size_t>(ar.total) || br.rows.size() != static_cast<size_t>(br.total))
             return arrow::Status::Invalid(std::string("LinearSolve: A and b come from two tables and ") +
                                           (ar.rows.size() != static_cast<size_t>(ar.total) ? "A" : "b") +
                                           " has rows with a missing value: the rows cannot be lined up with one side left out. Fill or remove them first.");
-        const std::vector<bool> train = TrainRowMask(input);
-        for (size_t i = 0; i < ar.data.size(); ++i)
-            if (train.empty() || train[i]) {
-                a.push_back(ar.data[i]);
-                b.push_back(br.data[i]);
-            }
+        // A's split chooses the Train rows of both (row r of b goes with row r of A).
+        a = TrainColumns(input, ar);
+        b = TrainColumns(input, br);
     } else {
         std::vector<std::string> both = a_cols;
         both.insert(both.end(), b_cols.begin(), b_cols.end());
-        FeatureRows rows;
-        ARROW_RETURN_NOT_OK(ReadFeatureRows(input, both, GetName(), false, rows, GetCancellationQuery()));
-        for (const auto& row : TrainSubset(input, rows)) {
-            a.emplace_back(row.begin(), row.begin() + static_cast<std::ptrdiff_t>(a_cols.size()));
-            b.emplace_back(row.begin() + static_cast<std::ptrdiff_t>(a_cols.size()), row.end());
-        }
+        NumberColumns rows;
+        ARROW_RETURN_NOT_OK(ReadNumberColumns(input, both, GetName(), rows, GetCancellationQuery()));
+        const NumberColumns train = TrainColumns(input, rows);
+        // The first columns are A's, the rest b's (column-major: a split of the buffer).
+        const size_t n = train.rows.size(), split = a_cols.size() * n;
+        a.rows = b.rows = train.rows;
+        a.total = b.total = train.total;
+        a.cols = a_cols.size();
+        b.cols = b_cols.size();
+        a.data.assign(train.data.begin(), train.data.begin() + static_cast<std::ptrdiff_t>(split));
+        b.data.assign(train.data.begin() + static_cast<std::ptrdiff_t>(split), train.data.end());
     }
     ARROW_RETURN_NOT_OK(CheckCancellation(GetName()));
-    if (a.empty()) return arrow::Status::Invalid("LinearSolve: no row has every column of A and b");
-    const ScalarResult rank = LinearAlgebra::Rank(a);
+    const size_t n = a.rows.size();
+    if (n == 0) return arrow::Status::Invalid("LinearSolve: no row has every column of A and b");
+    const ScalarResult rank = LinearAlgebra::Rank(a.View());
     if (!rank.success) return arrow::Status::ExecutionError("LinearSolve: " + rank.error_message);
-    const bool square = a.size() == a_cols.size();
+    const bool square = n == a_cols.size();
     const bool full = static_cast<size_t>(std::lround(rank.value)) == a_cols.size();
     const bool solve = method_ == "solve" || (method_ == "auto" && square && full);
     if (solve && !(square && full))
-        return arrow::Status::Invalid("LinearSolve: A x = b needs a square A of full rank; A is " + std::to_string(a.size()) + " × " +
+        return arrow::Status::Invalid("LinearSolve: A x = b needs a square A of full rank; A is " + std::to_string(n) + " × " +
                                       std::to_string(a_cols.size()) + " of rank " + std::to_string(std::lround(rank.value)) +
                                       ". Least squares takes any A.");
-    const MatrixResult x = solve ? LinearAlgebra::Solve(a, b) : LinearAlgebra::LeastSquares(a, b);
+    // A square A of full rank: least squares is its one solution (the same SVD route).
+    const MatrixResult x = LinearAlgebra::LeastSquares(a.View(), b.View());
     if (!x.success) return arrow::Status::ExecutionError("LinearSolve: " + x.error_message);
-    spdlog::info("LinearSolve: {} rows, A {} columns of rank {}, b {} columns: {}", a.size(), a_cols.size(), std::lround(rank.value),
+    spdlog::info("LinearSolve: {} rows, A {} columns of rank {}, b {} columns: {}", n, a_cols.size(), std::lround(rank.value),
                  b_cols.size(), solve ? "the one solution" : "least squares");
     return XTable(a_cols, b_cols, x.matrix);
 }
@@ -482,11 +479,11 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearProjectionOperator::Apply(con
     map.divisor.assign(features.size(), 1.0);
     map.w = m.data;
     for (const auto& o : outputs) map.outputs.push_back(prefix_ + o);
-    FeatureRows rows;
-    ARROW_RETURN_NOT_OK(ReadFeatureRows(input, features, GetName(), false, rows, GetCancellationQuery()));
-    LinearMatrix mapped;
+    NumberColumns rows;
+    ARROW_RETURN_NOT_OK(ReadNumberColumns(input, features, GetName(), rows, GetCancellationQuery()));
+    std::vector<double> mapped;
     std::string error;
-    if (!ApplyLinearMap(map, rows.data, mapped, error)) return arrow::Status::ExecutionError("LinearProjection: " + error);
+    if (!ApplyLinearMap(map, rows, mapped, error)) return arrow::Status::ExecutionError("LinearProjection: " + error);
     return LinearMapTable(input, map, rows, mapped, keep_columns_, label_col_, GetName());
 }
 

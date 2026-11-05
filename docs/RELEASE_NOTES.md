@@ -130,6 +130,11 @@ private Data Studio tickets (`tofix*/track*`).
   row holds its term ids and counts, not a table of strings (300,000 rows of
   words and word pairs, min_df 1: 1.8 GB instead of 6.3 GB, and 29 s instead
   of 102 s, with the same figures).
+- Linear algebra on a table of many rows no longer runs the GPU out of
+  memory: the SVD (and rank, condition, least squares) of a tall matrix
+  comes from its small Gram matrix instead of the full SVD, whose U is rows
+  x rows (160,000 rows: 200 GB). Tools > Linear Algebra's From a table and
+  the new steps use it.
 - The PCA node learns from the Train rows only (it learned from every row,
   validation and test rows included, and dropped the split column when it
   output pc_* alone): its means, deviations and components come from the

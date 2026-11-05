@@ -4,6 +4,7 @@
 
 #include "api_export.h"
 #include "tensor.h"
+#include <cstdint>
 #include <vector>
 #include <string>
 #include <complex>
@@ -81,6 +82,24 @@ struct CYXWIZ_API CsrView {
     const float* values = nullptr;        // nnz
 };
 
+// A dense matrix the caller owns, column-major (column j is data[j * rows]
+// .. data[(j + 1) * rows - 1]): a table's number columns read once into one
+// buffer go to the device as they are, nothing repacked.
+struct CYXWIZ_API DenseView {
+    int64_t rows = 0;
+    int cols = 0;
+    const double* data = nullptr;
+};
+
+struct CYXWIZ_API ColumnSummaryResult {
+    std::vector<double> mean;                 // per column
+    std::vector<double> sd;                   // population (divides by n)
+    std::vector<std::vector<double>> cross;   // (A - mean)^T (A - mean), cols x cols
+    int rows = 0;
+    bool success = false;
+    std::string error_message;
+};
+
 struct CYXWIZ_API LUResult {
     std::vector<std::vector<double>> L;      // Lower triangular
     std::vector<std::vector<double>> U;      // Upper triangular
@@ -150,6 +169,7 @@ public:
         const std::vector<std::vector<double>>& A,
         double tolerance = 1e-10
     );
+    static ScalarResult Rank(const DenseView& A, double tolerance = 1e-10);
 
     // Frobenius norm
     static ScalarResult FrobeniusNorm(
@@ -202,6 +222,7 @@ public:
         const std::vector<std::vector<double>>& A,
         const std::vector<std::vector<double>>& b
     );
+    static MatrixResult LeastSquares(const DenseView& A, const DenseView& b);
 
     // ==================== Matrix Properties ====================
 
@@ -255,6 +276,29 @@ public:
         const std::vector<std::vector<double>>& A,
         int k
     );
+
+    // ==================== Tables of rows ====================
+    // One upload and one download each, with no n x d temporary on the host.
+
+    // Each column's mean and population standard deviation (divides by n),
+    // and the columns' cross products about their means (divided by n - 1:
+    // the covariance), from one upload of A.
+    static ColumnSummaryResult ColumnSummary(const std::vector<std::vector<double>>& A);
+    static ColumnSummaryResult ColumnSummary(const DenseView& A);
+
+    // The k leading eigenvectors (as rows) and eigenvalues of a symmetric
+    // positive semi-definite S (d x d), by a randomized subspace iteration
+    // on the device (scikit-learn's randomized TruncatedSVD on S; a fixed
+    // seed): for a few of many directions, where a full SVD of S is slow.
+    static SVDResult LeadingEigenvectors(const std::vector<std::vector<double>>& S, int k, int iterations = 8);
+
+    // ((A - 1 shift) / divisor) W: each column shifted and divided by its
+    // entries (empty: 0 and 1), then times W (cols x k).
+    static MatrixResult AffineProjection(const std::vector<std::vector<double>>& A, const std::vector<double>& shift,
+                                         const std::vector<double>& divisor, const std::vector<std::vector<double>>& W);
+    // The same of a DenseView, into `out` column-major (rows x W's columns).
+    static bool AffineProjection(const DenseView& A, const std::vector<double>& shift, const std::vector<double>& divisor,
+                                 const std::vector<std::vector<double>>& W, std::vector<double>& out, std::string& error);
 
     // ==================== Sparse (CSR) ====================
 

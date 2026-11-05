@@ -5,7 +5,6 @@
 #include "feature_rows.h"
 #include "linear_map.h"
 
-#include <cyxwiz/dimensionality_reduction.h>
 
 #include <arrow/api.h>
 #include <arrow/builder.h>
@@ -174,10 +173,9 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     report_progress("Reading feature columns", "Reading the PCA feature columns", 0.20, 0,
                     static_cast<uint64_t>(resolved_features.size()), preflight_estimate.estimated_peak_bytes);
     const size_t n_features = resolved_features.size();
-    FeatureRows fit;
-    ARROW_RETURN_NOT_OK(ReadFeatureRows(input, resolved_features, "PCA", false, fit, GetCancellationQuery()));
+    NumberColumns fit;
+    ARROW_RETURN_NOT_OK(ReadNumberColumns(input, resolved_features, "PCA", fit, GetCancellationQuery()));
     const int64_t n_samples = static_cast<int64_t>(fit.rows.size());
-    const auto& data = fit.data;
     const uint64_t estimated_input_matrix_bytes = preflight_estimate.estimated_peak_bytes;
     const uint64_t estimated_output_matrix_bytes =
         EstimateDenseMaterializationMemory(static_cast<uint64_t>(n_samples),
@@ -200,39 +198,48 @@ PCAOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
         fit_rows = state.fit_rows;
     } else {
         // Fitted on the Train rows (all rows when the run marks none), as the scalers are.
-        const LinearMatrix train = TrainSubset(input, fit);
-        if (static_cast<int64_t>(train.size()) < std::max(2, n_components_))
-            return arrow::Status::Invalid("PCA: Train rows with every feature (" + std::to_string(train.size()) +
+        const NumberColumns train = TrainColumns(input, fit);
+        if (static_cast<int64_t>(train.rows.size()) < std::max(2, n_components_))
+            return arrow::Status::Invalid("PCA: Train rows with every feature (" + std::to_string(train.rows.size()) +
                                           ") < n_components (" + std::to_string(n_components_) + ")");
         if (static_cast<int>(n_features) < n_components_)
             return arrow::Status::Invalid("PCA: n_features (" + std::to_string(n_features) + ") < n_components (" +
                                           std::to_string(n_components_) + ")");
         report_progress("Computing PCA", "Computing PCA on the Train rows", 0.65, 0, static_cast<uint64_t>(n_components_),
                         estimated_input_matrix_bytes + estimated_output_matrix_bytes);
-        const auto result = DimensionalityReduction::ComputePCA(train, n_components_, center_, scale_);
-        if (!result.success) return arrow::Status::ExecutionError("PCA: ComputePCA failed: " + result.error_message);
-        std::vector<double> mean, sd;
-        std::string error;
-        if (!ColumnMoments(train, mean, sd, error)) return arrow::Status::ExecutionError("PCA: " + error);
+        // ComputePCA's model from one summary of the Train rows: the eigenvectors of
+        // the n - 1 covariance of the (centred, scaled) columns, signed as its.
+        const ColumnSummaryResult summary = LinearAlgebra::ColumnSummary(train.View());
+        if (!summary.success) return arrow::Status::ExecutionError("PCA: " + summary.error_message);
         map.inputs = resolved_features;
-        map.shift = center_ ? mean : std::vector<double>(n_features, 0.0);
+        map.shift = center_ ? summary.mean : std::vector<double>(n_features, 0.0);
         map.divisor.assign(n_features, 1.0);
         if (scale_)  // ComputePCA's deviation: divides by n, 1 when below 1e-10
-            for (size_t j = 0; j < n_features; ++j) map.divisor[j] = sd[j] < 1e-10 ? 1.0 : sd[j];
+            for (size_t j = 0; j < n_features; ++j) map.divisor[j] = summary.sd[j] < 1e-10 ? 1.0 : summary.sd[j];
+        const LinearMatrix covariance = SecondMoments(summary, !center_, map.divisor, static_cast<double>(train.rows.size() - 1));
+        LinearMatrix vt;
+        std::vector<double> variances;
+        std::string error;
+        if (!TopDirections(covariance, static_cast<size_t>(n_components_), vt, variances, error))
+            return arrow::Status::ExecutionError("PCA: " + error);
+        double total = 0, explained = 0;
+        for (size_t j = 0; j < n_features; ++j) total += covariance[j][j];
+        for (const double v : variances) explained += v;
+        if (!(total > 0)) return arrow::Status::ExecutionError("PCA: the Train rows have zero variance");
         map.w.assign(n_features, std::vector<double>(static_cast<size_t>(n_components_)));
         for (int c = 0; c < n_components_; ++c) {
             map.outputs.push_back("pc_" + std::to_string(c));
-            for (size_t j = 0; j < n_features; ++j) map.w[j][static_cast<size_t>(c)] = result.components[static_cast<size_t>(c)][j];
+            for (size_t j = 0; j < n_features; ++j) map.w[j][static_cast<size_t>(c)] = vt[static_cast<size_t>(c)][j];
         }
-        fit_rows = static_cast<int64_t>(train.size());
+        fit_rows = static_cast<int64_t>(train.rows.size());
         spdlog::info("PCA: fitted on {} Train rows x {} features -> {} components, explained variance {:.2f}%, center={}, scale={}",
-                     train.size(), n_features, n_components_, result.total_variance_explained * 100.0, center_, scale_);
+                     train.rows.size(), n_features, n_components_, 100.0 * explained / total, center_, scale_);
     }
 
     // Every row with all its features, through the fitted map on the device.
-    LinearMatrix projected;
+    std::vector<double> projected;
     std::string error;
-    if (!ApplyLinearMap(map, data, projected, error)) return arrow::Status::ExecutionError("PCA: " + error);
+    if (!ApplyLinearMap(map, fit, projected, error)) return arrow::Status::ExecutionError("PCA: " + error);
     if (!options_.IsTransformOnly() && options_.save_state) {
         std::string state_error;
         if (!SaveFittedPreprocessingState(options_.state_path, LinearMapState(map, GetName(), fit_rows, input->schema(), settings),

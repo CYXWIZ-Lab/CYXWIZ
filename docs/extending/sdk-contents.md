@@ -50,7 +50,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/image_augmentation.h` | Image transforms for training batches (TOFIX140 image transforms). A batch is rows [N, H*W*C], each row one [H, W, C] image in [0, 1]. The transforms follow torchvision.transforms.functional and run on the whole batch on the ArrayFire device; the host only draws each sample's settings (flip... | `ImageShape`, `ImageOp`, `ImageOpDraws`, `BatchMixDraw`, `ImageAugmentation`, `ImageOpKind`, `AugmentOp`, `AugmentSpace`, `AutoAugmentPolicy`, `Interpolation`, `MorphologyOp`, `EraseMethod`, `BatchMix` |
 | `cyxwiz/image_quality.h` | Image quality measurements for the Quality Analyzer (TOFIX140). A batch is rows [N, H*W*C], each row one [H, W, C] RGB (or 1-channel) image in [0, 1], as the image batcher decodes it at the Resize size. Every metric is taken on the luminance L = 255 * (0.299 R + 0.587 G + 0.114 B), the OpenCV... | `ImageQualityMetrics`, `ImageQualityChecks` |
 | `cyxwiz/layer.h` |  |  |
-| `cyxwiz/linear_algebra.h` |  | `MatrixResult`, `ScalarResult`, `TensorResult`, `EigenResult`, `SVDResult`, `QRResult`, `CholeskyResult`, `CsrView`, `LUResult`, `LinearAlgebra` |
+| `cyxwiz/linear_algebra.h` |  | `MatrixResult`, `ScalarResult`, `TensorResult`, `EigenResult`, `SVDResult`, `QRResult`, `CholeskyResult`, `CsrView`, `DenseView`, `ColumnSummaryResult`, `LUResult`, `LinearAlgebra` |
 | `cyxwiz/loss.h` |  |  |
 | `cyxwiz/memory_manager.h` |  | `MemoryManager` |
 | `cyxwiz/model.h` |  | `Model` |

@@ -5,20 +5,14 @@
 
 #include <cyxwiz/linear_algebra.h>
 
+#include <arrow/compute/api.h>
+
+#include <algorithm>
 #include <cmath>
 
 namespace cyxwiz {
 
 namespace {
-
-// 1 x n of ones times x: the column sums.
-bool ColumnSums(const LinearMatrix& x, std::vector<double>& sums, std::string& error) {
-    const MatrixResult ones = LinearAlgebra::Ones(1, static_cast<int>(x.size()));
-    const MatrixResult s = LinearAlgebra::Multiply(ones.matrix, x);
-    if (!s.success) return error = s.error_message, false;
-    sums = s.matrix[0];
-    return true;
-}
 
 bool IsNumberColumn(const std::shared_ptr<arrow::ChunkedArray>& col) {
     if (!col) return false;
@@ -84,66 +78,141 @@ arrow::Status ResolveNumberFeatures(const std::shared_ptr<arrow::Table>& input, 
     return arrow::Status::OK();
 }
 
-bool Centred(const LinearMatrix& x, const std::vector<double>& mean, LinearMatrix& out, std::string& error) {
-    const MatrixResult column = LinearAlgebra::Ones(static_cast<int>(x.size()), 1);
-    const MatrixResult spread = LinearAlgebra::Multiply(column.matrix, LinearMatrix{mean});
-    const MatrixResult centred = LinearAlgebra::Subtract(x, spread.matrix);
-    if (!centred.success) return error = centred.error_message, false;
-    out = centred.matrix;
+LinearMatrix SecondMoments(const ColumnSummaryResult& summary, bool uncentred, const std::vector<double>& divisor, double denominator) {
+    LinearMatrix m = summary.cross;
+    const size_t d = m.size();
+    const double n = static_cast<double>(summary.rows);
+    for (size_t i = 0; i < d; ++i)
+        for (size_t j = 0; j < d; ++j) {
+            if (uncentred) m[i][j] += n * summary.mean[i] * summary.mean[j];  // about 0: + n mean_i mean_j
+            if (!divisor.empty()) m[i][j] /= divisor[i] * divisor[j];
+            m[i][j] /= denominator;
+        }
+    return m;
+}
+
+bool TopDirections(const LinearMatrix& m, size_t k, LinearMatrix& vt, std::vector<double>& values, std::string& error) {
+    const size_t d = m.size();
+    const SVDResult s = d > 256 && k * 4 <= d ? LinearAlgebra::LeadingEigenvectors(m, static_cast<int>(k)) : LinearAlgebra::SVD(m, false);
+    if (!s.success) return error = s.error_message, false;
+    vt.assign(s.Vt.begin(), s.Vt.begin() + static_cast<std::ptrdiff_t>(std::min(k, s.Vt.size())));
+    values.assign(s.S.begin(), s.S.begin() + static_cast<std::ptrdiff_t>(std::min(k, s.S.size())));
+    for (auto& row : vt) {  // the largest-magnitude weight positive
+        size_t peak = 0;
+        for (size_t j = 1; j < row.size(); ++j)
+            if (std::fabs(row[j]) > std::fabs(row[peak])) peak = j;
+        if (!row.empty() && row[peak] < 0)
+            for (double& v : row) v = -v;
+    }
     return true;
 }
 
-bool ColumnMoments(const LinearMatrix& x, std::vector<double>& mean, std::vector<double>& sd, std::string& error) {
-    if (x.empty()) return error = "no rows", false;
-    if (!ColumnSums(x, mean, error)) return false;
-    const double n = static_cast<double>(x.size());
-    for (double& m : mean) m /= n;
-    LinearMatrix c;
-    if (!Centred(x, mean, c, error)) return false;
-    // The diagonal of c^T c: the squared deviations of each column.
-    const MatrixResult t = LinearAlgebra::Transpose(c);
-    const MatrixResult cross = LinearAlgebra::Multiply(t.matrix, c);
-    if (!cross.success) return error = cross.error_message, false;
-    sd.assign(mean.size(), 0.0);
-    for (size_t j = 0; j < sd.size(); ++j) sd[j] = std::sqrt(std::max(0.0, cross.matrix[j][j]) / n);
-    return true;
+arrow::Status ReadNumberColumns(const std::shared_ptr<arrow::Table>& table, const std::vector<std::string>& names,
+                                const std::string& op_name, NumberColumns& out, const std::function<bool()>& cancelled) {
+    out = NumberColumns{};
+    if (!table) return arrow::Status::Invalid(op_name + ": input table is null");
+    const int64_t n = table->num_rows();
+    out.total = n;
+    out.cols = names.size();
+    // Each feature as float64 (a cast keeps nulls; NaN counts as missing), and which rows have every one.
+    std::vector<std::shared_ptr<arrow::ChunkedArray>> columns;
+    std::vector<uint8_t> complete(static_cast<size_t>(n), 1);
+    for (const auto& name : names) {
+        const auto column = table->GetColumnByName(name);
+        if (!column) return arrow::Status::KeyError(op_name + ": feature column '" + name + "' not found");
+        ARROW_ASSIGN_OR_RAISE(auto cast, arrow::compute::Cast(arrow::Datum(column), arrow::float64()));
+        const auto chunked = cast.chunked_array();
+        int64_t r = 0;
+        for (const auto& chunk : chunked->chunks()) {
+            const auto values = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+            const double* raw = values->raw_values();
+            for (int64_t i = 0; i < values->length(); ++i, ++r)
+                if (values->IsNull(i) || !std::isfinite(raw[i])) complete[static_cast<size_t>(r)] = 0;
+        }
+        if (r != n) return arrow::Status::Invalid(op_name + ": feature '" + name + "' has a different row count");
+        columns.push_back(chunked);
+        if (cancelled && cancelled()) return arrow::Status::Cancelled(op_name + ": cancelled while reading features");
+    }
+    for (int64_t r = 0; r < n; ++r)
+        if (complete[static_cast<size_t>(r)]) out.rows.push_back(r);
+    const size_t kept = out.rows.size();
+    out.data.resize(kept * out.cols);
+    const bool all = kept == static_cast<size_t>(n);
+    for (size_t j = 0; j < out.cols; ++j) {
+        double* dest = out.data.data() + j * kept;
+        size_t k = 0;
+        int64_t r = 0;
+        for (const auto& chunk : columns[j]->chunks()) {
+            const auto values = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+            const double* raw = values->raw_values();
+            if (all) {
+                std::copy(raw, raw + values->length(), dest + k);
+                k += static_cast<size_t>(values->length());
+                r += values->length();
+                continue;
+            }
+            for (int64_t i = 0; i < values->length(); ++i, ++r)
+                if (complete[static_cast<size_t>(r)]) dest[k++] = raw[i];
+        }
+    }
+    return arrow::Status::OK();
 }
 
-bool ApplyLinearMap(const LinearMap& map, const LinearMatrix& rows, LinearMatrix& out, std::string& error) {
-    if (rows.empty()) return out.clear(), true;
-    LinearMatrix x;
-    if (!Centred(rows, map.shift, x, error)) return false;
-    // Dividing each column by its divisor is a product with diag(1 / divisor), folded into W.
-    LinearMatrix w = map.w;
-    for (size_t j = 0; j < w.size(); ++j)
-        for (double& v : w[j]) v /= map.divisor[j];
-    const MatrixResult p = LinearAlgebra::Multiply(x, w);
-    if (!p.success) return error = p.error_message, false;
-    out = p.matrix;
-    return true;
-}
-
-LinearMatrix TrainSubset(const std::shared_ptr<arrow::Table>& table, const FeatureRows& fit) {
+NumberColumns TrainColumns(const std::shared_ptr<arrow::Table>& table, const NumberColumns& all) {
     const std::vector<bool> train = TrainRowMask(table);
-    if (train.empty()) return fit.data;
-    LinearMatrix out;
-    for (size_t i = 0; i < fit.rows.size(); ++i)
-        if (train[static_cast<size_t>(fit.rows[i])]) out.push_back(fit.data[i]);
+    if (train.empty()) return all;
+    NumberColumns out;
+    out.total = all.total;
+    out.cols = all.cols;
+    std::vector<size_t> picked;
+    for (size_t i = 0; i < all.rows.size(); ++i)
+        if (train[static_cast<size_t>(all.rows[i])]) {
+            picked.push_back(i);
+            out.rows.push_back(all.rows[i]);
+        }
+    const size_t n = all.rows.size(), kept = picked.size();
+    out.data.resize(kept * all.cols);
+    for (size_t j = 0; j < all.cols; ++j)
+        for (size_t k = 0; k < kept; ++k) out.data[j * kept + k] = all.data[j * n + picked[k]];
     return out;
 }
 
+bool ApplyLinearMap(const LinearMap& map, const NumberColumns& rows, std::vector<double>& out, std::string& error) {
+    if (rows.rows.empty()) return out.clear(), true;
+    return LinearAlgebra::AffineProjection(rows.View(), map.shift, map.divisor, map.w, out, error);
+}
+
 arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_ptr<arrow::Table>& input, const LinearMap& map,
-                                                            const FeatureRows& fit, const LinearMatrix& projected,
+                                                            const NumberColumns& rows, const std::vector<double>& mapped,
                                                             bool keep_columns, const std::string& label_col, const std::string& op_name) {
-    if (keep_columns) return AppendFittedColumns(input, map.outputs, fit.rows, projected);
-    const int64_t n = static_cast<int64_t>(fit.rows.size());
+    const int64_t n = static_cast<int64_t>(rows.rows.size());
     const size_t k = map.outputs.size();
+    if (keep_columns) {
+        // Float64 beside the input, null on the rows left out.
+        std::shared_ptr<arrow::Table> out = input;
+        for (size_t c = 0; c < k; ++c) {
+            arrow::DoubleBuilder b;
+            ARROW_RETURN_NOT_OK(b.Reserve(rows.total));
+            const double* column = mapped.data() + c * static_cast<size_t>(n);
+            size_t next = 0;
+            for (int64_t r = 0; r < rows.total; ++r) {
+                if (next < rows.rows.size() && rows.rows[next] == r) b.UnsafeAppend(column[next++]);
+                else b.UnsafeAppendNull();
+            }
+            std::shared_ptr<arrow::Array> a;
+            ARROW_RETURN_NOT_OK(b.Finish(&a));
+            ARROW_ASSIGN_OR_RAISE(out, out->AddColumn(out->num_columns(), arrow::field(map.outputs[c], arrow::float64()),
+                                                      std::make_shared<arrow::ChunkedArray>(a)));
+        }
+        return out;
+    }
     std::vector<std::shared_ptr<arrow::Field>> fields;
     std::vector<std::shared_ptr<arrow::Array>> arrays;
     for (size_t c = 0; c < k; ++c) {
         arrow::FloatBuilder b;
         ARROW_RETURN_NOT_OK(b.Reserve(n));
-        for (int64_t r = 0; r < n; ++r) b.UnsafeAppend(static_cast<float>(projected[static_cast<size_t>(r)][c]));
+        const double* column = mapped.data() + c * static_cast<size_t>(n);
+        for (int64_t r = 0; r < n; ++r) b.UnsafeAppend(static_cast<float>(column[r]));
         std::shared_ptr<arrow::Array> a;
         ARROW_RETURN_NOT_OK(b.Finish(&a));
         fields.push_back(arrow::field(map.outputs[c], arrow::float32()));
@@ -159,7 +228,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_pt
             return arrow::Status::TypeError(op_name + ": label column '" + label_col + "' has unsupported type '" + bad + "'");
         arrow::Int32Builder b;
         ARROW_RETURN_NOT_OK(b.Reserve(n));
-        for (const int64_t row : fit.rows) b.UnsafeAppend(labels[static_cast<size_t>(row)]);
+        for (const int64_t row : rows.rows) b.UnsafeAppend(labels[static_cast<size_t>(row)]);
         std::shared_ptr<arrow::Array> a;
         ARROW_RETURN_NOT_OK(b.Finish(&a));
         fields.push_back(arrow::field("y", arrow::int32()));
@@ -170,7 +239,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_pt
     if (!parts.empty()) {
         arrow::Int8Builder b;
         ARROW_RETURN_NOT_OK(b.Reserve(n));
-        for (const int64_t row : fit.rows) b.UnsafeAppend(parts[static_cast<size_t>(row)]);
+        for (const int64_t row : rows.rows) b.UnsafeAppend(parts[static_cast<size_t>(row)]);
         std::shared_ptr<arrow::Array> a;
         ARROW_RETURN_NOT_OK(b.Finish(&a));
         fields.push_back(arrow::field(kSplitPartitionColumn, arrow::int8()));

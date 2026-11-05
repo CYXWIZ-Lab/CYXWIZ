@@ -704,19 +704,11 @@ TableMatrix ReadMatrix(const TableChoice& choice, const QueryRunner& run) {
         return out;
     }
     if (rows.size() < 2) return out.error = "A correlation or covariance needs 2 rows or more.", out;
-    // Centred on the device: X - 1 mean, then X^T X / (n - 1).
+    // On the device: the means, then the cross products about them / (n - 1).
     const double count = static_cast<double>(rows.size());
-    const MatrixResult ones = LinearAlgebra::Ones(1, static_cast<int>(rows.size()));
-    const MatrixResult sum = LinearAlgebra::Multiply(ones.matrix, rows);
-    if (!sum.success) return out.error = sum.error_message, out;
-    const MatrixResult mean = LinearAlgebra::ScalarMultiply(sum.matrix, 1.0 / count);
-    const MatrixResult column = LinearAlgebra::Ones(static_cast<int>(rows.size()), 1);
-    const MatrixResult spread = LinearAlgebra::Multiply(column.matrix, mean.matrix);
-    const MatrixResult centred = LinearAlgebra::Subtract(rows, spread.matrix);
-    if (!centred.success) return out.error = centred.error_message, out;
-    const MatrixResult cross = LinearAlgebra::Multiply(LinearAlgebra::Transpose(centred.matrix).matrix, centred.matrix);
-    if (!cross.success) return out.error = cross.error_message, out;
-    const MatrixResult covariance = LinearAlgebra::ScalarMultiply(cross.matrix, 1.0 / (count - 1.0));
+    const ColumnSummaryResult summary = LinearAlgebra::ColumnSummary(rows);
+    if (!summary.success) return out.error = summary.error_message, out;
+    const MatrixResult covariance = LinearAlgebra::ScalarMultiply(summary.cross, 1.0 / (count - 1.0));
     out.m = covariance.matrix;
     if (choice.matrix == FromTable::Correlation) {
         for (size_t j = 0; j < k; ++j)

@@ -4,7 +4,7 @@
 #endif
 
 #include "cyxwiz/linear_algebra.h"
-#include "least_squares_device.h"
+#include "svd_device.h"
 #include <cmath>
 #include <string>
 #include <vector>

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -262,6 +263,47 @@ int main(int, char** argv) {
                 Check(std::fabs(product.matrix[i][j] - want_product[i][j]) < 1e-4,
                       "SparseMultiply [" + std::to_string(i) + "," + std::to_string(j) + "]: " + std::to_string(product.matrix[i][j]));
         Check(!cyxwiz::LinearAlgebra::SparseMultiply(x, {{1}, {2}}).success, "SparseMultiply: B of the wrong height is refused");
+        passed += 3;
+    }
+
+    // The leading eigenvectors of a 400 x 400 PSD matrix with a decaying
+    // spectrum (A^T A, A's singular values 1 / (1 + i)), against the full SVD,
+    // and a tall matrix's SVD by the Gram route (5,000 x 8) against the
+    // eigenvalues of A^T A it is built from (TOFIX129 D9).
+    {
+        std::mt19937 rng(5);
+        std::normal_distribution<double> z(0.0, 1.0);
+        const int d = 400;
+        Matrix a(d, std::vector<double>(d));
+        for (auto& row : a)
+            for (double& v : row) v = z(rng);
+        for (int j = 0; j < d; ++j)
+            for (int i = 0; i < d; ++i) a[i][j] /= (1.0 + j);
+        const auto s = cyxwiz::LinearAlgebra::Multiply(cyxwiz::LinearAlgebra::Transpose(a).matrix, a).matrix;
+        const auto full = cyxwiz::LinearAlgebra::SVD(s, false);
+        const auto lead = cyxwiz::LinearAlgebra::LeadingEigenvectors(s, 5);
+        Check(full.success && lead.success, "LeadingEigenvectors: " + lead.error_message);
+        for (int c = 0; c < 5; ++c) {
+            Check(std::fabs(lead.S[c] - full.S[c]) <= 1e-6 * full.S[0], "LeadingEigenvectors value " + std::to_string(c));
+            double dot = 0;
+            for (int j = 0; j < d; ++j) dot += lead.Vt[c][j] * full.Vt[c][j];
+            Check(std::fabs(std::fabs(dot) - 1.0) <= 1e-5, "LeadingEigenvectors vector " + std::to_string(c) + ": |v . v'| " + std::to_string(dot));
+        }
+        Matrix tall(5000, std::vector<double>(8));
+        for (auto& row : tall)
+            for (double& v : row) v = z(rng);
+        const auto thin = cyxwiz::LinearAlgebra::SVD(tall, false);
+        Check(thin.success && thin.U.size() == 5000 && thin.U[0].size() == 8, "a tall SVD gives the reduced U: " + thin.error_message);
+        const auto back = cyxwiz::LinearAlgebra::Multiply(thin.U, [&] {
+            Matrix sv(8, std::vector<double>(8, 0.0));
+            for (int i = 0; i < 8; ++i) sv[i][i] = thin.S[i];
+            return cyxwiz::LinearAlgebra::Multiply(sv, thin.Vt).matrix;
+        }());
+        double worst = 0;
+        for (int i = 0; i < 5000; ++i)
+            for (int j = 0; j < 8; ++j) worst = std::max(worst, std::fabs(back.matrix[i][j] - tall[i][j]));
+        Check(worst < 1e-6, "a tall SVD by the Gram route gives A back: " + std::to_string(worst));
+        Check(!cyxwiz::LinearAlgebra::SVD(tall, true).success, "a tall SVD's full U (5000 x 5000) is refused");
         passed += 3;
     }
     std::cout << "linear algebra matches PyTorch: " << passed << " cases" << std::endl;

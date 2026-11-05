@@ -10,6 +10,8 @@
 // and row of W).
 
 #include "../preprocessing_state.h"
+
+#include <cyxwiz/linear_algebra.h>
 #include "feature_rows.h"
 
 #include <arrow/api.h>
@@ -42,24 +44,42 @@ bool ReadBoolParameter(const std::map<std::string, std::string>& params, const c
 arrow::Status ResolveNumberFeatures(const std::shared_ptr<arrow::Table>& input, const std::vector<std::string>& wanted,
                                     const std::string& label_col, const std::string& op_name, std::vector<std::string>& out);
 
-// The column means and population standard deviations (divides by n) of x
-// [n × d], on the device. False + error when the device fails.
-bool ColumnMoments(const LinearMatrix& x, std::vector<double>& mean, std::vector<double>& sd, std::string& error);
+// The Train rows' second moments from their column summary (one upload,
+// LinearAlgebra::ColumnSummary): the cross products about the means, or
+// about 0 when `uncentred`, each divided by divisor_i divisor_j (empty: 1)
+// and by `denominator` (n - 1: the covariance).
+LinearMatrix SecondMoments(const ColumnSummaryResult& summary, bool uncentred, const std::vector<double>& divisor, double denominator);
 
-// x [n × d] centred by `mean`, on the device.
-bool Centred(const LinearMatrix& x, const std::vector<double>& mean, LinearMatrix& out, std::string& error);
+// The k leading directions of a symmetric positive semi-definite M (d × d)
+// as rows, each signed so its largest weight is positive, and their values:
+// a randomized subspace iteration for a few of many (d above 256, k at most
+// d / 4), else the full SVD of M; on the device.
+bool TopDirections(const LinearMatrix& m, size_t k, LinearMatrix& vt, std::vector<double>& values, std::string& error);
 
-// ((x - shift) / divisor) W for each row, on the device.
-bool ApplyLinearMap(const LinearMap& map, const LinearMatrix& rows, LinearMatrix& out, std::string& error);
+// The rows of a table with every feature (null or not finite: left out),
+// their number columns in one column-major buffer: what goes to the device
+// as it is (LinearAlgebra's DenseView), with no row-by-row repacking.
+struct NumberColumns {
+    int64_t total = 0;            // rows in the table
+    std::vector<int64_t> rows;    // each kept row's index in the table
+    size_t cols = 0;
+    std::vector<double> data;     // column j: data[j * rows.size()] ..
+    DenseView View() const { return DenseView{static_cast<int64_t>(rows.size()), static_cast<int>(cols), data.data()}; }
+};
+arrow::Status ReadNumberColumns(const std::shared_ptr<arrow::Table>& table, const std::vector<std::string>& names,
+                                const std::string& op_name, NumberColumns& out, const std::function<bool()>& cancelled = {});
+// The Train rows of `all` (all of them when the table carries no split).
+NumberColumns TrainColumns(const std::shared_ptr<arrow::Table>& table, const NumberColumns& all);
 
-// The rows of `fit` that are Train rows (all of them when the table carries no split).
-LinearMatrix TrainSubset(const std::shared_ptr<arrow::Table>& table, const FeatureRows& fit);
+// ((x - shift) / divisor) W for each row, on the device (one pass); `out`
+// column-major (rows × outputs).
+bool ApplyLinearMap(const LinearMap& map, const NumberColumns& rows, std::vector<double>& out, std::string& error);
 
 // The output: with `keep_columns`, the input with the outputs beside it
-// (null on the rows left out); else the outputs alone for the rows read,
-// with `y` from `label_col` (int32 codes) and the split column carried.
+// (Float64, null on the rows left out); else the outputs alone (Float32) for
+// the rows read, with `y` from `label_col` (int32 codes) and the split carried.
 arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_ptr<arrow::Table>& input, const LinearMap& map,
-                                                            const FeatureRows& fit, const LinearMatrix& projected,
+                                                            const NumberColumns& rows, const std::vector<double>& mapped,
                                                             bool keep_columns, const std::string& label_col, const std::string& op_name);
 
 // The fitted state of `map` (fit_rows, the schema and the settings that must match on reuse).
