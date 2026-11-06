@@ -42,6 +42,7 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <thread>
 
@@ -2218,6 +2219,76 @@ void TestDebugNumericsContract() {
     spdlog::info("  OK: bounded summaries and shape contracts");
 }
 
+// The device scan against a plain host pass over the same values: random
+// data with NaN, Inf, zeros and large values, a ReLU, a Sigmoid, a Tanh and
+// a Softmax-shaped tensor, so every count and every reduction is compared.
+void TestDebugNumericsMatchHostReference() {
+    spdlog::info("--- TestDebugNumericsMatchHostReference ---");
+    std::mt19937 random(20261106);
+    std::normal_distribution<float> normal(0.0f, 1.5f);
+    std::vector<float> values(6000);
+    for (size_t i = 0; i < values.size(); ++i) {
+        values[i] = normal(random);
+        if (i % 97 == 0) values[i] = 0.0f;
+        if (i % 211 == 0) values[i] = std::numeric_limits<float>::quiet_NaN();
+        if (i % 307 == 0) values[i] = -std::numeric_limits<float>::infinity();
+        if (i % 401 == 0) values[i] = 2.0e6f;
+        if (i % 13 == 0) values[i] = std::abs(values[i]) < 1.0f ? 0.995f : values[i];
+    }
+    for (const auto type : {gui::NodeType::Dense, gui::NodeType::ReLU, gui::NodeType::Sigmoid,
+                            gui::NodeType::Tanh, gui::NodeType::Softmax}) {
+        // [rows, 6] so the Softmax case has rows of 6 classes.
+        Tensor tensor({values.size() / 6, 6}, values.data(), DataType::Float32);
+        const auto summary = ScanDebugTensorNumerics(tensor, type);
+        size_t nan = 0, inf = 0, finite = 0, zero = 0, exploding = 0, saturated = 0;
+        long double sum = 0.0L, squares = 0.0L;
+        double low = std::numeric_limits<double>::infinity(), high = -low, largest = 0.0;
+        for (const float value : values) {
+            if (std::isnan(value)) { ++nan; continue; }
+            if (std::isinf(value)) { ++inf; continue; }
+            ++finite;
+            sum += value;
+            squares += static_cast<long double>(value) * value;
+            low = std::min(low, static_cast<double>(value));
+            high = std::max(high, static_cast<double>(value));
+            largest = std::max(largest, std::abs(static_cast<double>(value)));
+            if (value == 0.0f) ++zero;
+            if (std::abs(value) >= kDebugExplodingAbsoluteThreshold) ++exploding;
+            if ((type == gui::NodeType::Sigmoid && (value <= 0.01f || value >= 0.99f)) ||
+                (type == gui::NodeType::Tanh && std::abs(value) >= 0.99f) ||
+                (type == gui::NodeType::ReLU && value <= 0.0f)) {
+                ++saturated;
+            }
+        }
+        if (type == gui::NodeType::Softmax) {
+            for (size_t row = 0; row < values.size() / 6; ++row) {
+                double row_high = -std::numeric_limits<double>::infinity();
+                for (size_t column = 0; column < 6; ++column) {
+                    const float value = values[row * 6 + column];
+                    if (std::isfinite(value)) row_high = std::max(row_high, static_cast<double>(value));
+                }
+                if (row_high >= kDebugSoftmaxProbabilityThreshold) ++saturated;
+            }
+        }
+        const std::string kind = std::to_string(static_cast<int>(type));
+        ExpectEq(summary.element_count, values.size(), "device numerics element count " + kind);
+        ExpectEq(summary.nan_count, nan, "device numerics NaN count " + kind);
+        ExpectEq(summary.inf_count, inf, "device numerics Inf count " + kind);
+        ExpectEq(summary.finite_count, finite, "device numerics finite count " + kind);
+        ExpectEq(summary.zero_count, zero, "device numerics zero count " + kind);
+        ExpectEq(summary.exploding_count, exploding, "device numerics exploding count " + kind);
+        ExpectEq(summary.saturation_candidate_count, saturated, "device numerics saturation count " + kind);
+        const double mean = static_cast<double>(sum / static_cast<long double>(finite));
+        const double l2 = std::sqrt(static_cast<double>(squares));
+        ExpectTrue(std::abs(summary.mean - mean) <= 1e-5 * std::max(1.0, std::abs(mean)) + 1e-3,
+                   "device numerics mean " + kind);
+        ExpectTrue(std::abs(summary.l2_norm - l2) <= 1e-5 * l2, "device numerics L2 norm " + kind);
+        ExpectTrue(summary.minimum == low && summary.maximum == high && summary.maximum_absolute == largest,
+                   "device numerics range " + kind);
+    }
+    spdlog::info("  OK: device numerics equal the host reference");
+}
+
 void TestDebugExecutorGoldenPath() {
     spdlog::info("--- TestDebugExecutorGoldenPath ---");
     auto cfg = MakeTabularConfig();
@@ -3217,6 +3288,7 @@ int main(int argc, char** argv) {
         TestTimeDistributedDenseModule();
         TestBuildSequentialTimeDistributedHead();
         TestDebugNumericsContract();
+        TestDebugNumericsMatchHostReference();
         TestDebugExecutorGoldenPath();
         TestDebugExecutorResNetExample();
         TestDebugExecutorInputSample();
