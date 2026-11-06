@@ -5152,6 +5152,9 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         if (const auto& layers = session.debug_result.layer_capture) {
             std::string error;
             if (cyxwiz::SaveLayerCapture(*layers, run_id, cyxwiz::kLocalDebugCaptureLabel, &error)) {
+                spdlog::debug("Local Debug: layer capture saved ({} layers, {:.1f} MB{})", layers->Layers().size(),
+                              layers->BytesHeld() / 1048576.0,
+                              layers->Truncated() ? ", over the budget: some tensors left out" : "");
                 cyxwiz::PruneLayerCaptures(static_cast<size_t>(studio_debugger.keep_capture_runs));
             } else {
                 spdlog::warn("Local Debug: the layer capture was not saved: {}", error);
