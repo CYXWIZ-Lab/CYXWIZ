@@ -1029,7 +1029,7 @@ MainWindow::MainWindow()
     });
 
     // Local Debug (F6): a background Studio Debugger run (compile gate,
-    // preflight, one synthetic batch through DebugExecutor).
+    // preflight, the picked sample through DebugExecutor).
     node_editor_->SetDebugCallback([this]() {
         this->LocalDebugGraphAndReport();
     });
@@ -4352,7 +4352,7 @@ void MainWindow::LocalDebugGraphAndReport() {
     }
 
     // F6 runs Local Debug through the Studio Debugger's background run path
-    // (compile gate, preflight, one synthetic batch), with progress and Stop.
+    // (compile gate, preflight, the picked sample), with progress and Stop.
     // The staleness cache is updated by the run-completed callback.
     studio_debugger_panel_->Show();
     if (!studio_debugger_panel_->StartRun(cyxwiz::StudioDebuggerRunMode::LocalDebug, 0)) {

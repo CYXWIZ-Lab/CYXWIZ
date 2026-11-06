@@ -536,7 +536,7 @@ void NodeEditor::ShowToolbar() {
             }
             if (ImGui::BeginPopup("##debug_popup")) {
                 ImGui::TextColored(tone(debug_chip.tone), ICON_FA_BUG "  %s", debug_chip.headline.c_str());
-                ImGui::TextColored(t.text_dim, "One synthetic batch: build, forward, loss, backward, step");
+                ImGui::TextColored(t.text_dim, "The picked sample: build, forward, loss, backward, step");
                 ImGui::Separator();
                 if (ImGui::MenuItem("Run Local Debug", "F6", false, !local_debug_status_.running)) debug_callback_();
                 if (ImGui::MenuItem("Open the Studio Debugger", nullptr, false, static_cast<bool>(open_debugger_callback_)))

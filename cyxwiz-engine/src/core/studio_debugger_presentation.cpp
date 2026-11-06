@@ -213,7 +213,7 @@ SmokeCapability EvaluateSmokeCapability(const std::string& graph_domain) {
         ? "Smoke Run needs a compiled graph with a loaded dataset."
         : "Smoke Run supports text graphs only; this graph's data is " + graph_domain + ".";
     capability.alternative =
-        "Use Local Debug to check the model on a synthetic batch, then Train.";
+        "Use Local Debug to check the model on one sample, then Train.";
     return capability;
 }
 

@@ -191,8 +191,9 @@ void StudioDebuggerPanel::RenderSampleStepper() {
     ImGui::EndGroup();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip(
-            "Dataset row inspected by preprocessing traces.\n"
-            "It does not change the Local Debug synthetic batch or the Smoke Run set.");
+            "Dataset item that Local Debug runs and preprocessing traces inspect;\n"
+            "a layer capture on a batch takes the items after it too.\n"
+            "It does not change the Smoke Run set.");
     }
 }
 
