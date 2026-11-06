@@ -4,6 +4,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace {
@@ -49,6 +51,62 @@ int main() {
     Check(!ResolveServerAddress("host:9999").error.empty(), "bare host:port is ambiguous");
     Check(!ResolveServerAddress("https://x/y").error.empty(), "a path");
     Check(!ResolveServerAddress("http://x:99999").error.empty(), "a port out of range");
+
+    // Plain text only to this machine or a private network (the cyxcloud
+    // CLI's rule): a public server must be https
+    using cyxwiz::protocol::IsLoopbackHost;
+    using cyxwiz::protocol::PlainHttpAllowed;
+    for (const char* host : {"localhost", "127.0.0.1", "::1", "[::1]", "10.1.2.3", "172.16.0.9", "172.31.255.1",
+                             "192.168.1.180", "169.254.10.1", "100.100.1.2", "fd12:3456::1", "fe80::1",
+                             "::ffff:192.168.1.5", "hp-linux", "gateway", "nas.local", "box.lan", "svc.internal",
+                             "printer.home.arpa"}) {
+        Check(PlainHttpAllowed(host), host);
+    }
+    for (const char* host : {"8.8.8.8", "203.0.113.9", "172.32.0.1", "100.128.0.1", "2001:db8::1", "::ffff:8.8.8.8",
+                             "cloud.cyxwiz.ai", "example.com", ""}) {
+        Check(!PlainHttpAllowed(host), host);
+    }
+    e = ResolveServerAddress("http://cloud.cyxwiz.ai:8000");
+    Check(!e.error.empty() && e.error.find("https://") != std::string::npos,
+          "plain to a public front door is refused, with what to use");
+    Check(!ResolveServerAddress("203.0.113.9").error.empty(), "a bare public host is plain too");
+    Check(ResolveServerAddress("http://192.168.1.180:8000").error.empty(), "a LAN front door may be plain");
+    Check(ResolveServerAddress("https://203.0.113.9").error.empty(), "https to anywhere");
+    Check(IsLoopbackHost("localhost") && IsLoopbackHost("127.0.0.1") && IsLoopbackHost("[::1]"), "loopback");
+    Check(!IsLoopbackHost("192.168.1.180") && !IsLoopbackHost("hp-linux"), "the LAN is not this machine");
+
+    // The server's CA: set by the app, else CYXWIZ_CA_FILE; a bad file is named
+    using cyxwiz::protocol::ServerCaError;
+    using cyxwiz::protocol::ServerCaFile;
+    using cyxwiz::protocol::SetServerCaFile;
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_test_server_ca";
+    std::filesystem::create_directories(dir);
+    const auto good = (dir / "ca.crt").string();
+    const auto bad = (dir / "notes.txt").string();
+    std::ofstream(good) << "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+    std::ofstream(bad) << "not a certificate";
+    SetServerCaFile("");
+#ifdef _WIN32
+    _putenv_s("CYXWIZ_CA_FILE", good.c_str());
+#else
+    setenv("CYXWIZ_CA_FILE", good.c_str(), 1);
+#endif
+    Check(ServerCaFile() == good, "no setting: the environment's CA");
+    SetServerCaFile(bad);
+    Check(ServerCaFile() == bad, "the app's setting wins");
+    Check(!ServerCaError().empty(), "a file with no certificate is named");
+    SetServerCaFile((dir / "missing.crt").string());
+    Check(!ServerCaError().empty(), "a missing file is named");
+    SetServerCaFile(good);
+    Check(ServerCaError().empty(), "a PEM file is fine");
+#ifdef _WIN32
+    _putenv_s("CYXWIZ_CA_FILE", "");
+#else
+    unsetenv("CYXWIZ_CA_FILE");
+#endif
+    SetServerCaFile("");
+    Check(ServerCaFile().empty() && ServerCaError().empty(), "none: the system's roots");
+    std::filesystem::remove_all(dir);
 
     // gRPC addresses as channel targets
     auto t = ParseGrpcAddress("https://cloud.cyxwiz.ai:443");

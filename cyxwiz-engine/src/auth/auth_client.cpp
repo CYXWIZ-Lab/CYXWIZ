@@ -4,6 +4,7 @@
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
+#include "common/server_http_trust.h"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <atomic>
@@ -161,6 +162,7 @@ AuthResult AuthClient::DoLogin(const std::string& endpoint, const std::string& j
 
         if (is_https) {
             httplib::SSLClient client(parsed.host, parsed.port);
+            cyxwiz::protocol::TrustServer(client);
             client.set_connection_timeout(10);
             client.set_read_timeout(30);
             res = client.Post(full_endpoint, json_body, "application/json");
@@ -295,6 +297,7 @@ bool AuthClient::RefreshJwtToken() {
 
         if (is_https) {
             httplib::SSLClient client(parsed.host, parsed.port);
+            cyxwiz::protocol::TrustServer(client);
             client.set_connection_timeout(10);
             client.set_read_timeout(30);
             res = client.Post(full_endpoint, headers, "", "application/json");
@@ -461,7 +464,7 @@ int AuthClient::HttpGet(const std::string& url, std::string* body) {
         httplib::Result res;
         if (url.rfind("https://", 0) == 0) {
             httplib::SSLClient client(parsed.host, parsed.port);
-            client.enable_server_certificate_verification(true);
+            cyxwiz::protocol::TrustServer(client);
             client.set_connection_timeout(3);
             client.set_read_timeout(3);
             res = client.Get(path);
