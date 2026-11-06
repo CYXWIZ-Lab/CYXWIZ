@@ -664,6 +664,70 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertEqual("opencl", manifest["signed"]["backend"])
         package_release.validate_pack_manifest(manifest)
 
+    def create_plugin(self) -> Path:
+        plugin = self.root / "plugins" / "simulation" / "mujoco"
+        (plugin / "bin").mkdir(parents=True)
+        (plugin / "assets").mkdir()
+        (plugin / "plugin.json").write_text(json.dumps({
+            "id": "com.cyxwiz.simulation.mujoco",
+            "version": "1.0.0",
+            "platforms": {"windows": {"library": "bin/mujoco_plugin.dll"}},
+        }), encoding="utf-8")
+        for name in ("mujoco_plugin.dll", "mujoco.dll", "fmt.dll"):
+            (plugin / "bin" / name).write_bytes(name.encode("ascii"))
+        (plugin / "bin" / "MUJOCO_LICENSE.txt").write_text("apache", encoding="ascii")
+        (plugin / "assets" / "cartpole.xml").write_text("<mujoco/>", encoding="ascii")
+        return plugin
+
+    @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
+    def test_plugin_pack_ships_the_plugin_without_base_libraries(self) -> None:
+        plugin = self.create_plugin()
+        args = self.artifact_args(
+            "plugin", "--plugin-dir", str(plugin),
+            "--base-pack-id", "cyxwiz-base-1.2.3-1-windows-x86_64",
+            "--third-party-license", "MuJoCo=bin/MUJOCO_LICENSE.txt",
+            "--generated-utc", "2026-11-06T12:00:00Z",
+            "--signing-key-id", "release-2026", "--signature", "A" * 86,
+        )
+
+        stage, archive = package_release.build_package(args, self.script)
+
+        self.assertTrue((stage / "bin" / "mujoco_plugin.dll").is_file())
+        self.assertTrue((stage / "bin" / "mujoco.dll").is_file())
+        # fmt.dll is in the base's build output: the plugin uses that copy.
+        self.assertFalse((stage / "bin" / "fmt.dll").exists())
+        self.assertFalse((stage / "bin" / "MUJOCO_LICENSE.txt").exists())
+        self.assertTrue((stage / "THIRD_PARTY_LICENSES" / "MuJoCo" / "MUJOCO_LICENSE.txt").is_file())
+        self.assertTrue((stage / "assets" / "cartpole.xml").is_file())
+        manifest = json.loads(archive.with_suffix(".zip.manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(2, manifest["schema_version"])
+        signed = manifest["signed"]
+        self.assertEqual("plugin_pack", signed["pack_kind"])
+        self.assertEqual("com.cyxwiz.simulation.mujoco", signed["plugin_id"])
+        self.assertEqual("cyxwiz-base-1.2.3-1-windows-x86_64", signed["companion_base_id"])
+        self.assertEqual("diagnostic", signed["support_status"])
+        sources = {item["path"]: item["source"] for item in signed["components"]}
+        self.assertEqual("plugin-runtime", sources["bin/mujoco.dll"])
+        self.assertEqual("cyxwiz-plugin", sources["bin/mujoco_plugin.dll"])
+        self.assertIn({"component": "mujoco", "path": "THIRD_PARTY_LICENSES/MuJoCo/MUJOCO_LICENSE.txt"},
+                      signed["licenses"])
+        package_release.validate_pack_manifest(manifest)
+
+    @unittest.skipUnless(sys.platform == "win32", "Plugin packs are qualified on Windows first")
+    def test_plugin_pack_requires_its_plugin_folder_and_notice(self) -> None:
+        with self.assertRaisesRegex(package_release.PackageError, "--plugin-dir"):
+            package_release.build_package(self.args("plugin"), self.script)
+        plugin = self.create_plugin()
+        with self.assertRaisesRegex(package_release.PackageError, "NAME=PATH"):
+            package_release.build_package(
+                self.args("plugin", "--plugin-dir", str(plugin), "--third-party-license", "MuJoCo"),
+                self.script)
+        with self.assertRaisesRegex(package_release.PackageError, "MuJoCo notice"):
+            package_release.build_package(
+                self.args("plugin", "--plugin-dir", str(plugin),
+                          "--third-party-license", "MuJoCo=bin/missing.txt"),
+                self.script)
+
     def cuda_pack_args(self):
         notices = self.root / "nvidia-notices"
         notices.mkdir()
