@@ -10,6 +10,7 @@
 #include "../../core/debug_run_store.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/studio_debugger_presentation.h"
+#include "../../core/layer_capture.h"
 #include "../icons.h"
 #include <atomic>
 #include <cstddef>
@@ -164,6 +165,14 @@ private:
     void RenderMemoryTrace(const TrainingTraceSummary& trace);
     void RenderBatchInspector();
     void RenderModelConstructionTrace();
+    // Model > Layers (TOFIX178 6.2, studio_debugger_layers.cpp): the shown
+    // run's layer capture, its views and the Inspector's sample and channel.
+    void RenderLayersView();
+    // False when the Layers view has nothing for the Inspector.
+    bool RenderLayersInspector();
+    // The capture of the shown run: the live one, else read from the run
+    // store in the background.
+    void RefreshLayerCaptureSource();
     void RenderShapeProphecyTrace();
     void RenderGradientHealth();
     void RenderLossMetricExplainer();
@@ -216,6 +225,24 @@ private:
     int selected_graph_node_ = -1;
     // Selected sub-view per section (Summary / Runs / Compare, ...).
     int section_view_[6] = {0, 0, 0, 0, 0, 0};
+
+    // Model > Layers. The cache holds what the shown view read from the
+    // device and its textures (studio_debugger_layers.cpp).
+    struct LayerViewCache;
+    std::shared_ptr<const LayerCapture> layer_capture_;
+    std::string layer_capture_run_id_;   // the run the capture belongs to
+    std::string layer_capture_label_;    // "local_debug", "epoch_0005"
+    std::vector<std::string> layer_capture_labels_;
+    bool layer_capture_loading_ = false;
+    bool layer_capture_listed_ = false;  // the run store was asked for this run
+    size_t selected_layer_ = 0;
+    int selected_layer_tab_ = 0;
+    size_t selected_layer_sample_ = 0;   // item within a captured batch
+    size_t selected_channel_rank_ = 0;   // in strongest-first order
+    bool layer_all_channels_ = false;
+    int layer_colour_ = -1;              // 0 Heat, 1 Grayscale; -1 = Preferences
+    size_t heatmap_row_begin_ = 0;
+    std::shared_ptr<LayerViewCache> layer_view_cache_;
 
     StudioDebuggerSnapshot session_;
     // The latest run, held here (moved, not copied) only while an older saved

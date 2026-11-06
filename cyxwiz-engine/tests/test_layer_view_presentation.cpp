@@ -124,6 +124,12 @@ void TestViewsFollowShapes() {
               "42.6 % zeros",
               "first conv facts");
 
+    DebugTensorNumericSummary conv_out = relu;
+    conv_out.zero_count = 0;
+    CheckText(PlanLayerViews(Conv32(), &conv_out, true).facts,
+              "weights [3, 3, 3, 32] + bias [32], 896 parameters \xC2\xB7 output 64 \xC3\x97 64 \xC3\x97 32",
+              "no zeros in the facts when nothing is zero");
+
     const auto deeper = PlanLayerViews(Conv64(), nullptr, false);
     Check(Later(deeper).empty(), "a deeper conv has no Filters or occlusion");
     CheckText(deeper.facts,
@@ -221,6 +227,10 @@ void TestHistogramAndNumbers() {
     n.nan_count = 3;
     n.inf_count = 1;
     CheckText(NumbersLines(n, false).back(), "131,072 values, 3 NaN, 1 Inf", "NaN and Inf counted");
+    n.zero_count = 0;
+    Check(NumbersLines(n, true).size() == 2, "no zeros line when nothing is zero");
+    n.zero_count = 55837;
+    CheckText(ElementText({R::Parameter, "w", {2}}, 1, -0.0f), "[1] = 0", "negative zero reads 0");
     Check(NumbersLines(n, false).size() == 2, "weights skip the zeros line");
     DebugTensorNumericSummary none;
     CheckText(NumbersLines(none, true).front(), "No summary: the tensor is not Float32.", "no summary");

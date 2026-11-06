@@ -19,6 +19,7 @@
 #include "../src/core/checkpoint_manager.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/layer_capture_store.h"
+#include "../src/core/layer_tensor_reader.h"
 #include "../src/core/tensor_file.h"
 #include "algorithms/arrayfire_backend_utils.h"
 
@@ -2289,6 +2290,87 @@ void TestDebugNumericsMatchHostReference() {
     spdlog::info("  OK: device numerics equal the host reference");
 }
 
+// The layer view reads (TOFIX178 6.2c) against host arithmetic on tensors
+// whose every value is known: one sample of [H, W, C, N], its channels'
+// means, maxima and pictures, flat units, a histogram, and heatmap rows of
+// conv [kh, kw, cin, cout] and Dense [out, in] weights.
+void TestLayerTensorReader() {
+    spdlog::info("--- TestLayerTensorReader ---");
+    using namespace cyxwiz::layer_view;
+    const size_t H = 3, W = 4, C = 5, N = 2;
+    std::vector<float> spatial(H * W * C * N);
+    for (size_t i = 0; i < spatial.size(); ++i) spatial[i] = static_cast<float>(i % 23) - 7.0f;
+    const auto at = [&](size_t h, size_t w, size_t c, size_t n) { return spatial[((h * W + w) * C + c) * N + n]; };
+    const Tensor activation({H, W, C, N}, spatial.data(), DataType::Float32);
+
+    const Tensor sample = SampleOf(activation, 1);
+    ExpectTrue(sample.Shape() == std::vector<size_t>({H, W, C}), "a spatial sample is [H, W, C]");
+    const std::vector<float> sample_values = ReadValues(sample);
+    bool same = sample_values.size() == H * W * C;
+    for (size_t h = 0; same && h < H; ++h)
+        for (size_t w = 0; w < W; ++w)
+            for (size_t c = 0; c < C; ++c) same = same && sample_values[(h * W + w) * C + c] == at(h, w, c, 1);
+    ExpectTrue(same, "sample 1 holds the batch's second item, row-major");
+
+    const auto summary = ReadChannelSummary(sample);
+    bool sums = summary.means.size() == C && summary.maxima.size() == C;
+    for (size_t c = 0; sums && c < C; ++c) {
+        double sum = 0.0;
+        float high = -1e30f;
+        for (size_t h = 0; h < H; ++h)
+            for (size_t w = 0; w < W; ++w) {
+                sum += at(h, w, c, 1);
+                high = std::max(high, at(h, w, c, 1));
+            }
+        sums = sums && std::abs(summary.means[c] - static_cast<float>(sum / (H * W))) < 1e-5f &&
+               summary.maxima[c] == high;
+    }
+    ExpectTrue(sums, "channel means and maxima");
+
+    const auto pictures = ReadChannelImages(sample, {4, 1});
+    bool pictured = pictures.size() == 2 * H * W;
+    for (size_t h = 0; pictured && h < H; ++h)
+        for (size_t w = 0; w < W; ++w)
+            pictured = pictured && pictures[h * W + w] == at(h, w, 4, 1) &&
+                       pictures[H * W + h * W + w] == at(h, w, 1, 1);
+    ExpectTrue(pictured, "the shown channels' pictures, row by row, in the asked order");
+
+    std::vector<float> rows(3 * 6);
+    for (size_t i = 0; i < rows.size(); ++i) rows[i] = static_cast<float>(i) * 0.5f;
+    const Tensor flat({3, 6}, rows.data(), DataType::Float32);
+    const auto units = ReadValues(SampleOf(flat, 2));
+    ExpectTrue(units.size() == 6 && units[0] == 6.0f && units[5] == 8.5f, "a flat sample's units");
+
+    const float histogram_values[] = {0.0f, 0.1f, 0.9f, 1.0f, 2.5f, 3.9f, std::numeric_limits<float>::quiet_NaN(),
+                                      4.0f};
+    const Tensor for_histogram({8}, histogram_values, DataType::Float32);
+    const auto histogram = ReadHistogram(for_histogram, 0.0f, 4.0f, 4);
+    ExpectTrue(histogram.counts == std::vector<unsigned>({3, 1, 1, 2}),
+               "histogram of the finite values over [low, high] (the top value in the last bin)");
+
+    const size_t kh = 2, kw = 2, cin = 3, cout = 4;
+    std::vector<float> conv(kh * kw * cin * cout);
+    for (size_t i = 0; i < conv.size(); ++i) conv[i] = static_cast<float>(i);
+    const Tensor conv_weights({kh, kw, cin, cout}, conv.data(), DataType::Float32);
+    const TensorInfo conv_info{CapturedTensorRole::Parameter, "weights", {kh, kw, cin, cout}};
+    const auto page = ReadMatrixRows(conv_info, conv_weights, 1, 2);
+    const size_t columns = kh * kw * cin;
+    bool conv_rows = page.size() == 2 * columns;
+    for (size_t r = 0; conv_rows && r < 2; ++r)
+        for (size_t col = 0; col < columns; ++col)
+            conv_rows = conv_rows && page[r * columns + col] == conv[MatrixFlatIndex(conv_info, 1 + r, col)];
+    ExpectTrue(conv_rows, "conv heatmap rows are output channels over (ky, kx, cin)");
+
+    std::vector<float> dense(3 * 5);
+    for (size_t i = 0; i < dense.size(); ++i) dense[i] = static_cast<float>(i) - 4.0f;
+    const Tensor dense_weights({3, 5}, dense.data(), DataType::Float32);
+    const TensorInfo dense_info{CapturedTensorRole::Parameter, "weight", {3, 5}};
+    const auto dense_page = ReadMatrixRows(dense_info, dense_weights, 2, 9);
+    ExpectTrue(dense_page.size() == 5 && dense_page[0] == dense[10] && dense_page[4] == dense[14],
+               "Dense heatmap rows, clipped to the matrix");
+    spdlog::info("  OK: layer view reads equal host arithmetic");
+}
+
 void TestDebugExecutorGoldenPath() {
     spdlog::info("--- TestDebugExecutorGoldenPath ---");
     auto cfg = MakeTabularConfig();
@@ -3289,6 +3371,7 @@ int main(int argc, char** argv) {
         TestBuildSequentialTimeDistributedHead();
         TestDebugNumericsContract();
         TestDebugNumericsMatchHostReference();
+        TestLayerTensorReader();
         TestDebugExecutorGoldenPath();
         TestDebugExecutorResNetExample();
         TestDebugExecutorInputSample();

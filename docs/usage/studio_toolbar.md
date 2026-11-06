@@ -271,3 +271,42 @@ Debug as `local_debug`, training snapshots as `epoch_0005` and so on. On the
 ResNet example one step takes 25 MB for all 36 layers. Data that cannot hand
 an item over by number (token tagging sequences, sparse features in
 training) has no training snapshots; the log says why.
+
+### Model > Layers
+
+**Model > Layers** (the Model section's first view) shows the shown run's
+layer capture. A live Local Debug run shows its own capture; a run picked in
+**Saved runs** reads its capture from the run store. Without a capture the view
+says how to get one.
+
+- The **layer list** names every captured layer, its kind and its output for
+  one sample ("64 × 64 × 32"). Above it: how many layers were captured, the
+  sample, and, for a batch of 8, an **Item** stepper over the batch. When the
+  run has more than one capture (training snapshots), a list picks it.
+- The **views** follow the layer's tensors, not its kind, so every layer gets
+  the views its data supports:
+  - **Feature maps** (an output of height × width × channels): the 16 channels
+    with the largest mean for the sample, strongest first; **All N channels**
+    shows every channel (up to 256). **Colour** switches Heat and Grayscale;
+    the scale runs from 0 to the 99.5th percentile, so one bright pixel does
+    not darken the rest. The count of dead channels (zero everywhere) is
+    under the maps. Click a map to enlarge it in the Inspector.
+  - **Units** (a flat output): each unit's value for the sample; hover a bar
+    for its number.
+  - **Values**: a histogram of every output value (log counts), with min, max,
+    mean, the share of zeros and any NaN or Inf.
+  - **Weights** and **Gradients**: the layer's main parameter as a heatmap in
+    the blue (negative) to red (positive) scale. Conv weights [kh, kw, cin,
+    cout] show one row per output channel over kernel × input channels; Dense
+    weights [out, in] one row per output. Hover a cell for its index in the
+    tensor and its value; − and + page through the rows of a large matrix.
+    The histogram and numbers are under it.
+  - Greyed views are next: **Where it looks** (occlusion) and **Filters** on
+    the first convolution, **Contributions** on a Dense layer and **Embedding**
+    on flat outputs. Hover one for what it will show.
+- The **Inspector** shows the sample as the first layer received it (after
+  the data steps), the model's output for it, and the clicked feature map
+  enlarged with its mean, maximum and rank.
+
+Everything is computed on the compute device; only what a view draws (the
+shown maps, a page of heatmap rows, a histogram) is copied to the host.

@@ -63,6 +63,11 @@ struct Tokens {
     ImVec4 plot_grid;
     ImVec4 scale_sequential[4];  // low to high
     ImVec4 scale_diverging[3];   // negative, middle, positive
+    // Feature maps (Studio Debugger layer views): Heat (perceptual, black
+    // through red to yellow) and Grayscale (brightness only). Picture data,
+    // so the same on light and dark windows.
+    ImVec4 scale_heat[6];
+    ImVec4 scale_gray[2];
 
     // Node canvas: one fill per node family (NodeHue); text on a node uses
     // ReadableOn. The same set on light and dark windows - they are fills.
@@ -109,6 +114,9 @@ ImVec4 NodeColour(const Tokens& tokens, NodeHue hue);
 ImVec4 SequentialAt(const Tokens& tokens, float v);
 // The diverging scale at v in [-1, 1] (negative, middle, positive).
 ImVec4 DivergingAt(const Tokens& tokens, float v);
+// The feature-map scales at v in [0, 1].
+ImVec4 HeatAt(const Tokens& tokens, float v);
+ImVec4 GrayAt(const Tokens& tokens, float v);
 // Text that reads on a filled background such as a heatmap cell (the
 // higher-contrast of bright text and the window colour).
 ImVec4 ReadableOn(const Tokens& tokens, const ImVec4& background);

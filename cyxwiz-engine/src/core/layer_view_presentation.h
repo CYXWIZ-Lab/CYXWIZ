@@ -64,7 +64,7 @@ struct LaterTab {
 struct LayerViews {
     std::vector<ViewTab> tabs;
     std::vector<LaterTab> later;
-    std::string facts;  // "output 64 × 64 × 32, 42.6 % zeros" (zeros when known)
+    std::string facts;  // "output 64 × 64 × 32, 42.6 % zeros" (zeros when known and any)
     std::string hint;   // the inspector's note for views without a channel
 };
 // `output_numerics` (optional) adds the share of zeros to the facts.
@@ -110,7 +110,8 @@ float HistogramQuantile(const std::vector<unsigned>& counts, float low, float hi
 // Bar heights in [0, 1]; log counts for activations (zeros dwarf the rest).
 std::vector<float> HistogramBars(const std::vector<unsigned>& counts, bool log_scale);
 
-// "min 0 · max 6.81 · mean 0.286", "42.6 % zeros", "131,072 values, no NaN or Inf".
+// "min 0 · max 6.81 · mean 0.286", "42.6 % zeros" (when there are zeros and
+// `show_zeros`), "131,072 values, no NaN or Inf".
 std::vector<std::string> NumbersLines(const DebugTensorNumericSummary& numerics, bool show_zeros);
 
 }  // namespace cyxwiz::layer_view

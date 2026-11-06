@@ -22,6 +22,7 @@ size_t Elements(const std::vector<size_t>& shape) {
 }
 
 std::string Number(double value) {
+    if (value == 0.0) value = 0.0;  // no "-0"
     char buffer[32];
     std::snprintf(buffer, sizeof(buffer), "%.4g", value);
     return buffer;
@@ -149,7 +150,9 @@ LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummar
     if (output) {
         if (!facts.empty()) facts += kDot;
         facts += "output " + ShapeText(PerSampleShape(output->shape));
-        if (output_numerics && output_numerics->available && output_numerics->finite_count > 0) {
+        // Zeros only when there are any (a ReLU's dead share, not a conv's 0 %).
+        if (output_numerics && output_numerics->available && output_numerics->finite_count > 0 &&
+            output_numerics->zero_count > 0) {
             facts += ", " + Percent(static_cast<double>(output_numerics->zero_count) /
                                     static_cast<double>(output_numerics->finite_count)) + " zeros";
         }
@@ -281,7 +284,7 @@ std::vector<std::string> NumbersLines(const DebugTensorNumericSummary& n, bool s
     if (n.finite_count > 0) {
         lines.push_back("min " + Number(n.minimum) + kDot + "max " + Number(n.maximum) + kDot + "mean " +
                         Number(n.mean));
-        if (show_zeros)
+        if (show_zeros && n.zero_count > 0)
             lines.push_back(Percent(static_cast<double>(n.zero_count) / static_cast<double>(n.finite_count)) +
                             " zeros");
     }

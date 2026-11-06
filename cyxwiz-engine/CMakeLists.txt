@@ -308,6 +308,7 @@ set(ENGINE_SOURCES
     src/core/debug_run_store.cpp
     src/core/studio_debugger_presentation.cpp
     src/core/layer_view_presentation.cpp
+    src/core/layer_tensor_reader.cpp
     src/core/training_manager.cpp
     src/core/cross_validation_runner.cpp
     src/core/cross_validation_presentation.cpp
@@ -673,6 +674,7 @@ set(ENGINE_SOURCES
     src/gui/panels/lr_finder_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
+    src/gui/panels/studio_debugger_layers.cpp
     src/gui/panels/gradcam_panel.cpp
     src/gui/panels/feature_importance_panel.cpp
     src/gui/panels/nas_panel.cpp
@@ -1894,6 +1896,8 @@ add_executable(test_debug_executor
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
     src/core/debug_numerics.cpp
+    src/core/layer_view_presentation.cpp
+    src/core/layer_tensor_reader.cpp
     src/core/debug_loss_metric_explainer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp

@@ -78,10 +78,17 @@ private Data Studio tickets (`tofix*/track*`).
   output, weights and gradients. Training takes a snapshot every N epochs and
   after the last one, on the debugger's picked sample or a batch of 8, and
   training comes out exactly the same with it on or off. Captures are saved
-  with their run, and only the last 10 runs keep theirs. The layer views that
-  show them come next. Your defaults for when, what, which input and the
+  with their run, and only the last 10 runs keep theirs; Model > Layers shows
+  them (below). Your defaults for when, what, which input and the
   feature-map colour (Heat or Grayscale) are kept in Preferences. Guide:
   `docs/usage/studio_toolbar.md`, "Layer capture".
+- **Studio Debugger > Model > Layers**: every captured layer with the views
+  its tensors support. Feature maps (strongest channels first, Heat or
+  Grayscale), each unit's value, a histogram of the values, and weights and
+  gradients as a heatmap whose cells give their index and value. The
+  Inspector shows the sample as the model received it and the clicked map
+  enlarged. Saved runs show their captures too, and a batch of 8 steps
+  through its items. Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in
   `docs/usage/image_classifier_resnet.md`): 92.6 % test accuracy on one
