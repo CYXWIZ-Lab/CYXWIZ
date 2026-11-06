@@ -27,8 +27,9 @@ constexpr std::array<RunModeOption, 5> kRunModeOptions = {{
      "Compiles the graph and checks dataset, preprocessing, shape, loss and "
      "training readiness. It does not execute model forward or backward passes."},
     {StudioDebuggerRunMode::LocalDebug,
-     "Compiles and validates the graph, then executes one bounded synthetic "
-     "batch through forward, loss, backward, gradient and optimizer checks. "
+     "Compiles and validates the graph, then runs the picked sample (a "
+     "synthetic one when the data cannot hand it over) through forward, loss, "
+     "backward, gradient and optimizer checks. "
      "Timings are host wall-clock evidence; device kernel time is not claimed."},
     {StudioDebuggerRunMode::SmokeRun,
      "Exercises preprocessing and a bounded real-data training sample before "
