@@ -117,8 +117,17 @@ void PluginManager::SetSearchPaths(const std::vector<std::filesystem::path>& pat
     }
 }
 
+void PluginManager::SetPackPlugins(std::vector<std::pair<std::string, std::filesystem::path>> plugins) {
+    std::lock_guard lock(mutex_);
+    pack_plugins_ = std::move(plugins);
+    for (const auto& [id, folder] : pack_plugins_) {
+        spdlog::debug("  Plugin pack {}: {}", id, folder.string());
+    }
+}
+
 std::vector<std::filesystem::path> PluginManager::DiscoverPlugins() const {
     std::vector<std::filesystem::path> plugin_dirs;
+    for (const auto& pack : pack_plugins_) plugin_dirs.push_back(pack.second);
 
     for (const auto& search_path : search_paths_) {
         if (!std::filesystem::exists(search_path)) {

@@ -77,7 +77,9 @@ bool LoadsAtStartup(const std::string& plugin_id) {
 
 size_t LoadStartupPlugins(PluginManager& manager) {
     size_t loaded = 0;
-    const auto entries = PluginsToLoadAtStartup(ReadPluginStartupList());
+    std::vector<PluginStartupEntry> packs;
+    for (const auto& [id, folder] : manager.GetPackPlugins()) packs.push_back({id, folder.generic_string(), true});
+    const auto entries = PluginsToLoadAtStartup(ReadPluginStartupList(), packs);
     for (const auto& entry : entries) {
         if (manager.GetLoadedPlugin(entry.id)) continue;
         if (!std::filesystem::exists(std::filesystem::path(entry.folder) / "plugin.json")) {

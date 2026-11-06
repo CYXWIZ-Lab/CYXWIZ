@@ -1,5 +1,6 @@
 #include "application.h"
 #include "engine_runtime_ownership.h"
+#include "runtime_layout.h"
 #include "backend_pack_platform.h"
 #include "plugin/plugin_manager.h"
 #include "plugin/plugin_data_formats.h"
@@ -463,6 +464,26 @@ int main(int argc, char** argv) {
             if (!user_dir.empty()) search_paths.push_back(user_dir);
             pm.SetSearchPaths(search_paths);
             spdlog::debug("Plugin system: {} search paths configured", search_paths.size());
+            // An installed Engine also loads the plugin packs active in its
+            // runtime (runtime/active-plugins.json), from their exact folders.
+            if (const auto runtime_root = EnvironmentRuntimeRoot(); !runtime_root.empty()) {
+                cyxwiz::runtime::ActiveRuntimeState active;
+                std::vector<cyxwiz::runtime::ActivePluginPack> packs;
+                std::vector<std::string> skipped;
+                std::string error;
+                if (cyxwiz::runtime::LoadActiveRuntimeState(runtime_root / "active-runtime.json",
+                                                            active, error) &&
+                    cyxwiz::runtime::ResolveActivePluginPacks(runtime_root, active.base_pack_id,
+                                                              packs, skipped, error)) {
+                    std::vector<std::pair<std::string, std::filesystem::path>> pack_plugins;
+                    for (auto& pack : packs) pack_plugins.emplace_back(pack.plugin_id, pack.directory);
+                    pm.SetPackPlugins(std::move(pack_plugins));
+                    for (const auto& reason : skipped)
+                        spdlog::warn("Plugin pack not loaded: {}", reason);
+                } else {
+                    spdlog::warn("Installed plugin packs were not read: {}", error);
+                }
+            }
             // Plugins loaded in an earlier session and set to load at startup
             // (TOFIX125 step 2.9); others load from the Plugin Manager.
             // Plugin dataset formats reach Data Input through the core's hook (TOFIX181).

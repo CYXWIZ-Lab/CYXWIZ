@@ -5,7 +5,9 @@
 #include "engine_plugin_context.h"
 #include "security/permission_dialog.h"
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <mutex>
 #include <set>
@@ -38,7 +40,14 @@ public:
     void SetSearchPaths(const std::vector<std::filesystem::path>& paths);
     const std::vector<std::filesystem::path>& GetSearchPaths() const { return search_paths_; }
 
-    // Discover all plugin directories in search paths
+    // Plugin packs active in the installed runtime: exact plugin folders (id,
+    // folder), listed by discovery and loaded at startup from where they are.
+    void SetPackPlugins(std::vector<std::pair<std::string, std::filesystem::path>> plugins);
+    const std::vector<std::pair<std::string, std::filesystem::path>>& GetPackPlugins() const {
+        return pack_plugins_;
+    }
+
+    // Discover all plugin directories in search paths and the active plugin packs
     std::vector<std::filesystem::path> DiscoverPlugins() const;
 
     // ===== Loading =====
@@ -140,6 +149,7 @@ private:
 
     // Search paths for plugin directories
     std::vector<std::filesystem::path> search_paths_;
+    std::vector<std::pair<std::string, std::filesystem::path>> pack_plugins_;
 
     // Thread safety
     mutable std::recursive_mutex mutex_;
