@@ -21,7 +21,10 @@ enum class BackendPackSupportStatus {
 
 enum class BackendPackManifestKind {
     BackendPack,
-    Base
+    Base,
+    // Manifest schema 2: an Engine plugin with its own runtime. No backend,
+    // ArrayFire identity or device compatibility; support status only.
+    PluginPack
 };
 
 // Catalog discovery may authenticate other targets, but delivery must use
@@ -78,6 +81,7 @@ struct VerifiedBackendPackManifest {
     BackendPackManifestKind kind = BackendPackManifestKind::BackendPack;
     std::string pack_id;
     std::string backend;
+    std::string plugin_id;
     std::string package_version;
     std::string platform;
     std::string architecture;

@@ -18,6 +18,8 @@ struct VerifiedBackendPackPayload {
     std::string companion_base_id;
     std::string backend;
     std::string pack_id;
+    // Set only for a plugin pack (backend and runtime_set_id are then empty).
+    std::string plugin_id;
     std::filesystem::path source_directory;
     std::vector<VerifiedPackComponent> components;
 };

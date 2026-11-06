@@ -275,6 +275,9 @@ bool VerifyEd25519(
                payload.size()) == 1;
 }
 
+// Plugin-pack manifests use envelope schema 2; everything else is schema 1.
+constexpr std::uint64_t kPluginManifestSchemaVersion = 2;
+
 bool ValidateEnvelope(
     const Json& document,
     const char* expected_kind,
@@ -282,18 +285,20 @@ bool ValidateEnvelope(
     const std::optional<std::string>& required_key_id,
     TrustedMetadataRole role,
     const Json*& signed_body,
-    std::string& error) {
+    std::string& error,
+    std::uint64_t schema_version = 1) {
     if (!HasExactKeys(
             document, {"schema_version", "kind", "signed", "signatures"}) ||
         !document["schema_version"].is_number_unsigned() ||
-        document["schema_version"].get<std::uint64_t>() != 1 ||
+        document["schema_version"].get<std::uint64_t>() != schema_version ||
         !document["kind"].is_string() ||
         document["kind"].get<std::string>() != expected_kind ||
         !document["signed"].is_object() ||
         ContainsFloat(document["signed"]) ||
         !document["signatures"].is_array() ||
         document["signatures"].empty()) {
-        error = "Signed envelope violates schema 1";
+        error = schema_version == 1 ? "Signed envelope violates schema 1"
+                                    : "Signed envelope violates schema 2";
         return false;
     }
     const std::string canonical = document["signed"].dump();
@@ -485,11 +490,153 @@ bool ParseTrustStore(
     return true;
 }
 
+bool ReadReleaseRange(const Json& release, VerifiedBackendPackManifest& output,
+                      std::string& error) {
+    return HasExactKeys(release, {"minimum", "maximum"}) &&
+           ReadVersion(release, "minimum", output.minimum_cyxwiz_release, error) &&
+           ReadVersion(release, "maximum", output.maximum_cyxwiz_release, error);
+}
+
+bool ReadConflicts(const Json& conflicts, VerifiedBackendPackManifest& output,
+                   std::string& error) {
+    if (!ReadIdentifierArray(conflicts, output.conflicts, error) ||
+        std::find(output.conflicts.begin(), output.conflicts.end(),
+                  output.pack_id) != output.conflicts.end()) {
+        error = "Manifest conflicts are invalid";
+        return false;
+    }
+    return true;
+}
+
+// Components, licenses and archive: the same rules for every manifest schema.
+bool ReadPayloadInventory(const Json& signed_body,
+                          VerifiedBackendPackManifest& output,
+                          std::string& error) {
+    const auto& components = signed_body["components"];
+    if (!components.is_array() || components.empty()) {
+        error = "Manifest components must not be empty";
+        return false;
+    }
+    std::set<std::string> component_paths;
+    std::set<std::string> folded_paths;
+    for (const auto& component : components) {
+        VerifiedPackComponent parsed;
+        std::string source;
+        if (!HasExactKeys(
+                component,
+                {"path", "size", "sha256", "source", "executable"}) ||
+            !ReadString(component, "path", parsed.relative_path, error) ||
+            !IsCanonicalBackendPackRelativePath(parsed.relative_path) ||
+            !folded_paths.insert(
+                FoldBackendPackPath(parsed.relative_path)).second ||
+            !ReadUnsigned(component, "size", parsed.size, 0, error) ||
+            !ReadSha256(component, "sha256", parsed.sha256, error) ||
+            !ReadIdentifier(component, "source", source, error) ||
+            !component["executable"].is_boolean()) {
+            error = "Manifest component inventory is invalid";
+            return false;
+        }
+        component_paths.insert(parsed.relative_path);
+        output.components.push_back(std::move(parsed));
+    }
+
+    const auto& licenses = signed_body["licenses"];
+    if (!licenses.is_array() || licenses.empty()) {
+        error = "Manifest licenses must not be empty";
+        return false;
+    }
+    for (const auto& license : licenses) {
+        std::string component;
+        std::string path;
+        if (!HasExactKeys(license, {"component", "path"}) ||
+            !ReadIdentifier(license, "component", component, error) ||
+            !ReadString(license, "path", path, error) ||
+            !IsCanonicalBackendPackRelativePath(path) ||
+            !component_paths.contains(path)) {
+            error = "Manifest license inventory is invalid";
+            return false;
+        }
+        if (std::find(
+                output.licenses.begin(), output.licenses.end(), component) ==
+            output.licenses.end()) {
+            output.licenses.push_back(std::move(component));
+        }
+    }
+
+    const auto& archive = signed_body["archive"];
+    if (!HasExactKeys(archive, {"file_name", "size", "sha256"}) ||
+        !ReadString(archive, "file_name", output.archive.file_name, error) ||
+        !IsCanonicalBackendPackRelativePath(output.archive.file_name) ||
+        output.archive.file_name.find('/') != std::string::npos ||
+        !ReadUnsigned(archive, "size", output.archive.size, 1, error) ||
+        !ReadSha256(archive, "sha256", output.archive.sha256, error)) {
+        error = "Manifest archive identity is invalid";
+        return false;
+    }
+    return true;
+}
+
+// Manifest schema 2 body (plugin pack); the envelope is already verified.
+bool VerifyPluginManifestBody(
+    const Json& signed_body,
+    const BackendPackCatalogEntry& catalog_entry,
+    VerifiedBackendPackManifest& output, std::string& error,
+    BackendPackManifestTargetScope target_scope, bool installed_evidence,
+    const std::string& client_version, const std::string& platform,
+    const std::string& architecture) {
+    std::string pack_kind;
+    if (!HasExactKeys(
+            signed_body,
+            {"pack_id", "pack_kind", "plugin_id", "package_version", "platform",
+             "architecture", "cyxwiz_release", "companion_base_id", "conflicts",
+             "support_status", "components", "licenses", "archive",
+             "generated_utc"}) ||
+        !ReadIdentifier(signed_body, "pack_id", output.pack_id, error) ||
+        output.pack_id != catalog_entry.pack_id ||
+        !ReadString(signed_body, "pack_kind", pack_kind, error) ||
+        pack_kind != "plugin_pack" ||
+        !ReadIdentifier(signed_body, "plugin_id", output.plugin_id, error) ||
+        !ReadVersion(
+            signed_body, "package_version", output.package_version, error) ||
+        !ReadString(signed_body, "platform", output.platform, error) ||
+        !IsAllowedPlatform(output.platform) ||
+        (target_scope == BackendPackManifestTargetScope::CurrentClient &&
+         output.platform != platform) ||
+        !ReadString(signed_body, "architecture", output.architecture, error) ||
+        !IsAllowedArchitecture(output.architecture) ||
+        (target_scope == BackendPackManifestTargetScope::CurrentClient &&
+         output.architecture != architecture) ||
+        !ReadString(signed_body, "generated_utc", output.generated_utc, error) ||
+        !IsUtc(output.generated_utc) ||
+        !ReadIdentifier(
+            signed_body, "companion_base_id", output.companion_base_id, error) ||
+        output.companion_base_id == output.pack_id) {
+        error = "Signed manifest is not a plugin pack for this client target";
+        return false;
+    }
+    output.kind = BackendPackManifestKind::PluginPack;
+    if (!ReadReleaseRange(signed_body["cyxwiz_release"], output, error) ||
+        (!installed_evidence &&
+         (!VersionAtLeast(client_version, output.minimum_cyxwiz_release) ||
+          !VersionAtMost(client_version, output.maximum_cyxwiz_release)))) {
+        error = "Plugin pack does not support this CyxWiz release";
+        return false;
+    }
+    if (!ReadConflicts(signed_body["conflicts"], output, error)) return false;
+    const auto support = ParseSupportStatus(signed_body["support_status"]);
+    if (!support || (!installed_evidence && *support != catalog_entry.support_status)) {
+        error = "Manifest and catalog support policy differ";
+        return false;
+    }
+    output.compatibility.support_status = *support;
+    return ReadPayloadInventory(signed_body, output, error);
+}
+
 }  // namespace
 
 VerifiedBackendPackPayload VerifiedBackendPackManifest::BindExtractedDirectory(
     std::filesystem::path source_directory) const {
-    return {runtime_set_id, companion_base_id, backend, pack_id,
+    return {runtime_set_id, companion_base_id, backend, pack_id, plugin_id,
             std::move(source_directory), components};
 }
 
@@ -687,11 +834,17 @@ bool BackendPackMetadataVerifier::VerifyManifestInternal(
         return false;
     }
     const Json* signed_body = nullptr;
+    const bool plugin = expected_kind == BackendPackManifestKind::PluginPack;
     if (!ValidateEnvelope(
             document, "cyxwiz-backend-pack-manifest", trust_store_,
             installed_evidence ? std::nullopt : std::optional<std::string>(catalog_entry.signing_key_id), TrustedMetadataRole::Pack,
-            signed_body, error)) {
+            signed_body, error, plugin ? kPluginManifestSchemaVersion : 1)) {
         return false;
+    }
+    if (plugin) {
+        return VerifyPluginManifestBody(*signed_body, catalog_entry, output,
+                                        error, target_scope, installed_evidence,
+                                        client_version_, platform_, architecture_);
     }
     std::string pack_kind;
     if (!HasExactKeys(
@@ -743,12 +896,7 @@ bool BackendPackMetadataVerifier::VerifyManifestInternal(
         output.companion_base_id.clear();
     }
 
-    const auto& release = (*signed_body)["cyxwiz_release"];
-    if (!HasExactKeys(release, {"minimum", "maximum"}) ||
-        !ReadVersion(
-            release, "minimum", output.minimum_cyxwiz_release, error) ||
-        !ReadVersion(
-            release, "maximum", output.maximum_cyxwiz_release, error) ||
+    if (!ReadReleaseRange((*signed_body)["cyxwiz_release"], output, error) ||
         (!installed_evidence &&
          (!VersionAtLeast(client_version_, output.minimum_cyxwiz_release) ||
           !VersionAtMost(client_version_, output.maximum_cyxwiz_release)))) {
@@ -762,13 +910,7 @@ bool BackendPackMetadataVerifier::VerifyManifestInternal(
         error = "ArrayFire manifest identity is invalid";
         return false;
     }
-    if (!ReadIdentifierArray(
-            (*signed_body)["conflicts"], output.conflicts, error) ||
-        std::find(output.conflicts.begin(), output.conflicts.end(),
-                  output.pack_id) != output.conflicts.end()) {
-        error = "Manifest conflicts are invalid";
-        return false;
-    }
+    if (!ReadConflicts((*signed_body)["conflicts"], output, error)) return false;
 
     const auto& compatibility = (*signed_body)["compatibility"];
     if (!HasExactKeys(
@@ -826,69 +968,7 @@ bool BackendPackMetadataVerifier::VerifyManifestInternal(
         return false;
     }
     output.compatibility.support_status = *support;
-
-    const auto& components = (*signed_body)["components"];
-    if (!components.is_array() || components.empty()) {
-        error = "Manifest components must not be empty";
-        return false;
-    }
-    std::set<std::string> component_paths;
-    std::set<std::string> folded_paths;
-    for (const auto& component : components) {
-        VerifiedPackComponent parsed;
-        std::string source;
-        if (!HasExactKeys(
-                component,
-                {"path", "size", "sha256", "source", "executable"}) ||
-            !ReadString(component, "path", parsed.relative_path, error) ||
-            !IsCanonicalBackendPackRelativePath(parsed.relative_path) ||
-            !folded_paths.insert(
-                FoldBackendPackPath(parsed.relative_path)).second ||
-            !ReadUnsigned(component, "size", parsed.size, 0, error) ||
-            !ReadSha256(component, "sha256", parsed.sha256, error) ||
-            !ReadIdentifier(component, "source", source, error) ||
-            !component["executable"].is_boolean()) {
-            error = "Manifest component inventory is invalid";
-            return false;
-        }
-        component_paths.insert(parsed.relative_path);
-        output.components.push_back(std::move(parsed));
-    }
-
-    const auto& licenses = (*signed_body)["licenses"];
-    if (!licenses.is_array() || licenses.empty()) {
-        error = "Manifest licenses must not be empty";
-        return false;
-    }
-    for (const auto& license : licenses) {
-        std::string component;
-        std::string path;
-        if (!HasExactKeys(license, {"component", "path"}) ||
-            !ReadIdentifier(license, "component", component, error) ||
-            !ReadString(license, "path", path, error) ||
-            !IsCanonicalBackendPackRelativePath(path) ||
-            !component_paths.contains(path)) {
-            error = "Manifest license inventory is invalid";
-            return false;
-        }
-        if (std::find(
-                output.licenses.begin(), output.licenses.end(), component) ==
-            output.licenses.end()) {
-            output.licenses.push_back(std::move(component));
-        }
-    }
-
-    const auto& archive = (*signed_body)["archive"];
-    if (!HasExactKeys(archive, {"file_name", "size", "sha256"}) ||
-        !ReadString(archive, "file_name", output.archive.file_name, error) ||
-        !IsCanonicalBackendPackRelativePath(output.archive.file_name) ||
-        output.archive.file_name.find('/') != std::string::npos ||
-        !ReadUnsigned(archive, "size", output.archive.size, 1, error) ||
-        !ReadSha256(archive, "sha256", output.archive.sha256, error)) {
-        error = "Manifest archive identity is invalid";
-        return false;
-    }
-    return true;
+    return ReadPayloadInventory(*signed_body, output, error);
 }
 
 const char* BackendPackSupportStatusName(BackendPackSupportStatus status) {

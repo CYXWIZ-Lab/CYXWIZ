@@ -134,10 +134,11 @@ Json Envelope(
     const char* kind,
     Json signed_body,
     const char* key_id,
-    const KeyPair& key) {
+    const KeyPair& key,
+    std::uint64_t schema_version = 1) {
     const auto signature = Sign(signed_body, key);
     return {
-        {"schema_version", std::uint64_t{1}},
+        {"schema_version", schema_version},
         {"kind", kind},
         {"signed", std::move(signed_body)},
         {"signatures", Json::array({{
@@ -208,6 +209,19 @@ Json BaseManifest(const KeyPair& pack_key) {
     return Envelope(
         "cyxwiz-backend-pack-manifest", std::move(signed_body),
         "pack-2026", pack_key);
+}
+
+// Manifest schema 2: a plugin pack has no backend, ArrayFire or device fields.
+Json PluginBody(const KeyPair& pack_key) {
+    auto signed_body = Manifest(pack_key)["signed"];
+    for (const char* name : {"backend", "runtime_set_id", "arrayfire", "compatibility"})
+        signed_body.erase(name);
+    signed_body["pack_id"] = "mujoco-v1";
+    signed_body["pack_kind"] = "plugin_pack";
+    signed_body["plugin_id"] = "com.cyxwiz.simulation.mujoco";
+    signed_body["support_status"] = "supported";
+    signed_body["archive"]["file_name"] = "mujoco-v1.zip";
+    return signed_body;
 }
 
 Json Catalog(
@@ -534,6 +548,93 @@ int main() {
             !policy_verifier.VerifyCatalog(
                 catalog_path, "2026-10-14T12:00:00Z", catalog, error),
             "expired catalog was accepted")) return 1;
+
+    // Plugin packs: schema 2 only, verified only when a plugin pack is expected.
+    {
+        BackendPackMetadataVerifier plugin_verifier(
+            *BackendPackTrustStore::Load(trust_path, error), "0.2.0", "win64", "x86_64");
+        const auto write_plugin = [&](const std::filesystem::path& path, const Json& document,
+                                      const char* support) {
+            const auto bytes = WriteJson(path, document);
+            const auto catalog_file = temporary.Path() / "plugin-catalog.json";
+            WriteJson(catalog_file, Catalog(catalog_key, Sha256(bytes), support,
+                                            document["signed"]["pack_id"].get<std::string>()));
+            VerifiedBackendPackCatalog parsed;
+            if (!plugin_verifier.VerifyCatalog(catalog_file, "2026-08-14T12:00:00Z", parsed, error))
+                return BackendPackCatalogEntry{};
+            return parsed.packs.front();
+        };
+        const auto plugin_path = temporary.Path() / "plugin-manifest.json";
+        const auto plugin_document = Envelope("cyxwiz-backend-pack-manifest", PluginBody(pack_key),
+                                              "pack-2026", pack_key, 2);
+        const auto plugin_entry = write_plugin(plugin_path, plugin_document, "supported");
+        VerifiedBackendPackManifest plugin;
+        if (!Expect(plugin_verifier.VerifyManifest(plugin_path, plugin_entry, plugin, error,
+                                                   BackendPackManifestKind::PluginPack),
+                    error.c_str()) ||
+            !Expect(plugin.kind == BackendPackManifestKind::PluginPack &&
+                        plugin.plugin_id == "com.cyxwiz.simulation.mujoco" &&
+                        plugin.companion_base_id == "base-v1" && plugin.backend.empty() &&
+                        plugin.runtime_set_id.empty() && plugin.arrayfire_abi.empty() &&
+                        plugin.compatibility.support_status == BackendPackSupportStatus::Supported,
+                    "plugin manifest identity differs") ||
+            !Expect(plugin.BindExtractedDirectory(temporary.Path()).plugin_id ==
+                        "com.cyxwiz.simulation.mujoco",
+                    "bound plugin payload lost its plugin ID") ||
+            !Expect(!plugin_verifier.VerifyManifest(plugin_path, plugin_entry, plugin, error),
+                    "backend-pack verification accepted a plugin manifest") ||
+            !Expect(!plugin_verifier.VerifyManifest(plugin_path, plugin_entry, plugin, error,
+                                                    BackendPackManifestKind::Base),
+                    "base verification accepted a plugin manifest") ||
+            !Expect(plugin_verifier.VerifyInstalledManifest(plugin_path, "mujoco-v1",
+                                                            BackendPackManifestKind::PluginPack,
+                                                            plugin, error),
+                    "installed plugin evidence was rejected"))
+            return 1;
+
+        // A schema-1 backend manifest is never a plugin pack.
+        const auto backend_path = temporary.Path() / "backend-as-plugin.json";
+        const auto backend_entry = write_plugin(backend_path, Manifest(pack_key), "supported");
+        if (!Expect(!plugin_verifier.VerifyManifest(backend_path, backend_entry, plugin, error,
+                                                    BackendPackManifestKind::PluginPack),
+                    "plugin verification accepted a schema-1 backend manifest"))
+            return 1;
+
+        // Schema 2 fails closed on ArrayFire fields and on a schema-1 envelope.
+        auto with_arrayfire = PluginBody(pack_key);
+        with_arrayfire["arrayfire"] = {{"version", "3.10.0"}, {"abi", "arrayfire-3.10"}};
+        const auto bad_path = temporary.Path() / "plugin-bad.json";
+        auto bad_entry = write_plugin(
+            bad_path, Envelope("cyxwiz-backend-pack-manifest", with_arrayfire, "pack-2026", pack_key, 2),
+            "supported");
+        if (!Expect(!plugin_verifier.VerifyManifest(bad_path, bad_entry, plugin, error,
+                                                    BackendPackManifestKind::PluginPack),
+                    "a plugin manifest with ArrayFire identity was accepted"))
+            return 1;
+        bad_entry = write_plugin(
+            bad_path, Envelope("cyxwiz-backend-pack-manifest", PluginBody(pack_key), "pack-2026", pack_key, 1),
+            "supported");
+        if (!Expect(!plugin_verifier.VerifyManifest(bad_path, bad_entry, plugin, error,
+                                                    BackendPackManifestKind::PluginPack),
+                    "a plugin body in a schema-1 envelope was accepted"))
+            return 1;
+        auto no_base = PluginBody(pack_key);
+        no_base["companion_base_id"] = nullptr;
+        bad_entry = write_plugin(
+            bad_path, Envelope("cyxwiz-backend-pack-manifest", no_base, "pack-2026", pack_key, 2),
+            "supported");
+        if (!Expect(!plugin_verifier.VerifyManifest(bad_path, bad_entry, plugin, error,
+                                                    BackendPackManifestKind::PluginPack),
+                    "a plugin pack without a companion base was accepted"))
+            return 1;
+
+        // Catalog and manifest support policy must agree.
+        const auto diagnostic_entry = write_plugin(plugin_path, plugin_document, "diagnostic");
+        if (!Expect(!plugin_verifier.VerifyManifest(plugin_path, diagnostic_entry, plugin, error,
+                                                    BackendPackManifestKind::PluginPack),
+                    "plugin support policy differing from the catalog was accepted"))
+            return 1;
+    }
 
     std::cout << "backend pack metadata verifier contract tests passed\n";
     return 0;
