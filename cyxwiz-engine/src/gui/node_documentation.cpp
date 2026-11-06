@@ -66,8 +66,11 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
 
     ImGui::Separator();
 
+    // Every line wraps at one width, so a long parameter description or
+    // usage line cannot stretch the tooltip across the screen.
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
+
     // Description
-    ImGui::PushTextWrapPos(400.0f);
     if (!brief.empty()) {
         ImGui::TextWrapped("%s", brief.c_str());
     }
@@ -75,7 +78,6 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
         ImGui::Spacing();
         ImGui::TextWrapped("%s", details.c_str());
     }
-    ImGui::PopTextWrapPos();
 
     // Parameters
     if (metadata && !metadata->parameters.empty()) {
@@ -85,8 +87,8 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
             const std::string& label = param.display_name.empty()
                 ? param.name
                 : param.display_name;
-            ImGui::BulletText("%s%s", label.c_str(),
-                              param.required ? " *" : "");
+            ImGui::Bullet();
+            ImGui::Text("%s%s", label.c_str(), param.required ? " *" : "");
             ImGui::SameLine();
             ImGui::TextDisabled("- %s", param.description.c_str());
         }
@@ -94,7 +96,8 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
         ImGui::Spacing();
         ImGui::TextColored(t.text_bright, "Parameters:");
         for (const auto& param : doc->parameters) {
-            ImGui::BulletText("%s", param.first.c_str());
+            ImGui::Bullet();
+            ImGui::Text("%s", param.first.c_str());
             ImGui::SameLine();
             ImGui::TextDisabled("- %s", param.second.c_str());
         }
@@ -106,7 +109,8 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
         ImGui::Spacing();
         ImGui::TextColored(t.text_bright, "Tips:");
         for (const auto& tip : doc->tips) {
-            ImGui::BulletText("%s", tip.c_str());
+            ImGui::Bullet();
+            ImGui::Text("%s", tip.c_str());
         }
     }
 
@@ -117,6 +121,7 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
         ImGui::TextDisabled("%s", usage.c_str());
     }
 
+    ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }
 
