@@ -1,6 +1,7 @@
 #include "properties_rows.h"
 
 #include "icons.h"
+#include "ui_buttons.h"
 #include "ui_tokens.h"
 #include "ui_widgets.h"
 
@@ -131,7 +132,11 @@ Rows::~Rows() {
     ImGui::PopStyleVar();
 }
 
-void Label(const char* label, bool required, const char* tooltip) {
+namespace {
+
+// The label cell: the text (wrapped at the cell), " *" when required, and
+// `tooltip` on hover. Leaves the cursor in the label cell.
+void LabelCell(const char* label, bool required, const char* tooltip) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
@@ -144,8 +149,37 @@ void Label(const char* label, bool required, const char* tooltip) {
         ImGui::TextColored(t.warning, "*");
     }
     if (tooltip && tooltip[0]) cyxwiz::ui::Tooltip(tooltip);
+}
+
+void EditorCell() {
     ImGui::TableSetColumnIndex(1);
     ImGui::SetNextItemWidth(-FLT_MIN);
+}
+
+}  // namespace
+
+void Label(const char* label, bool required, const char* tooltip) {
+    LabelCell(label, required, tooltip);
+    EditorCell();
+}
+
+bool LabelWithReset(const char* label, bool required, const char* tooltip, const char* reset_tooltip, bool* drawn) {
+    LabelCell(label, required, tooltip);
+    // LinkButton pads 2 px on each side.
+    const char* reset_label = ICON_FA_ROTATE_LEFT "##reset";
+    const float gap = cyxwiz::ui::CurrentTokens().space_sm;
+    const float width = ImGui::CalcTextSize(reset_label, nullptr, true).x + 4.0f;
+    const float cell_end = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    const bool fits = ImGui::GetItemRectMax().x + gap + width <= cell_end;
+    bool clicked = false;
+    if (fits) {
+        ImGui::SameLine(0.0f, gap);
+        clicked = cyxwiz::ui::LinkButton(reset_label);
+        if (reset_tooltip && reset_tooltip[0]) cyxwiz::ui::Tooltip(reset_tooltip);
+    }
+    if (drawn) *drawn = fits;
+    EditorCell();
+    return clicked;
 }
 
 void Note(const char* text) {

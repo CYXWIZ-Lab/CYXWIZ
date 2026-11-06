@@ -41,6 +41,11 @@ struct Rows {
 // Starts a row: the label cell (with " *" when required and `tooltip` on
 // hover), then moves to the editor cell with the next item filling it.
 void Label(const char* label, bool required = false, const char* tooltip = nullptr);
+// Label() with a reset arrow (hover: `reset_tooltip`) after the label text,
+// when it fits in the label cell, so the editor keeps its full width. Returns
+// whether it was clicked; *drawn says whether it fit (else the caller draws
+// its own beside the editor).
+bool LabelWithReset(const char* label, bool required, const char* tooltip, const char* reset_tooltip, bool* drawn);
 // A muted note on its own full-width row (a hint under a setting).
 void Note(const char* text);
 // The status cell for the setting `key`: its truth chip, with the provenance

@@ -731,20 +731,39 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
     }
     if (!param.default_value.empty()) tip += std::string(tip.empty() ? "" : "\n") + "Default: " + param.default_value;
     tip += std::string(tip.empty() ? "" : "\n") + (param.required ? "Required" : "Optional");
-    properties_rows::Label(row.label.c_str(), row.required, tip.c_str());
-
     // Widgets work on a copy; the node is written only on a change.
     std::string value = row.value;
     bool changed = false;
+    // A changed value gets a reset arrow: after the label when it fits there,
+    // so the editor keeps its width (and a number its - / + steps), else
+    // beside the editor. A fixed value is never reset here.
+    const bool has_reset = row.differs_from_default && param.type != "fixed";
+    const std::string reset_tip = "Reset to default: " + param.default_value;
+    bool reset_in_label = false;
+    if (has_reset) {
+        if (properties_rows::LabelWithReset(row.label.c_str(), row.required, tip.c_str(), reset_tip.c_str(),
+                                            &reset_in_label)) {
+            value = param.default_value;
+            changed = true;
+        }
+    } else {
+        properties_rows::Label(row.label.c_str(), row.required, tip.c_str());
+    }
     const properties_rules::NumericRange range = properties_rules::ParseNumericRange(param.validation);
-    const bool has_reset = row.differs_from_default;
-    const float reset_width = has_reset ? ImGui::CalcTextSize("Reset").x + t.space_md : 0.0f;
+    // LinkButton pads 2 px on each side.
+    const char* reset_label = ICON_FA_ROTATE_LEFT "##reset";
+    const float reset_width = has_reset && !reset_in_label
+                                  ? ImGui::CalcTextSize(reset_label, nullptr, true).x + 4.0f + t.space_sm
+                                  : 0.0f;
     const float editor_width = ImGui::GetContentRegionAvail().x - reset_width;
     // The -/+ step buttons only when the number keeps room beside them; in a
-    // narrow panel they would leave no space for the value itself.
+    // narrow panel they would leave no space for the value itself. A whole
+    // number needs room for its own digits (two at least), a decimal for four
+    // places.
     const ImGuiStyle& style = ImGui::GetStyle();
+    const char* digits = param.type == "int" ? (value.size() > 2 ? value.c_str() : "00") : "0.0000";
     const bool step_buttons = editor_width >= 2.0f * (ImGui::GetFrameHeight() + style.ItemInnerSpacing.x) +
-                                                  ImGui::CalcTextSize("0.0000").x + 2.0f * style.FramePadding.x;
+                                                  ImGui::CalcTextSize(digits).x + 2.0f * style.FramePadding.x;
 
     if (param.type == "fixed") {
         // Set by the engine (a contract version): shown, never edited here.
@@ -911,13 +930,13 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
         }
     }
 
-    if (has_reset) {
+    if (has_reset && !reset_in_label) {
         ImGui::SameLine(0.0f, t.space_sm);
-        if (cyxwiz::ui::LinkButton("Reset")) {
+        if (cyxwiz::ui::LinkButton(reset_label)) {
             value = param.default_value;
             changed = true;
         }
-        cyxwiz::ui::Tooltip(("Reset to default: " + param.default_value).c_str());
+        cyxwiz::ui::Tooltip(reset_tip.c_str());
     }
 
     if (changed) {
