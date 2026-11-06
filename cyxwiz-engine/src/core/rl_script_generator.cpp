@@ -5,6 +5,10 @@
 
 namespace cyxwiz {
 
+// The MuJoCo Python package the plugin's C++ build matches (CYXWIZ_MUJOCO_VERSION in
+// plugins/simulation/mujoco/cmake/MuJoCoSdk.cmake): change both together (TOFIX195 D6).
+static constexpr const char* kMuJoCoPythonVersion = "3.17.0";
+
 static std::string GetParam(const std::map<std::string, std::string>& params,
                             const std::string& key, const std::string& default_val) {
     auto it = params.find(key);
@@ -79,13 +83,17 @@ for _mod in ['gymnasium', 'mujoco', 'stable_baselines3']:
         _missing.append(_mod)
 if _missing:
     print(f"ERROR: Missing Python packages: {', '.join(_missing)}")
-    print("Install with: pip install mujoco gymnasium stable-baselines3")
+    print("Install with: pip install mujoco==)" << kMuJoCoPythonVersion << R"( gymnasium stable-baselines3")
     sys.exit(1)
+
+import mujoco
+if mujoco.__version__ != ")" << kMuJoCoPythonVersion << R"(":
+    print(f"WARNING: MuJoCo {mujoco.__version__} is installed; the MuJoCo plugin uses )" << kMuJoCoPythonVersion
+       << R"(, so physics can differ. Install it with: pip install mujoco==)" << kMuJoCoPythonVersion << R"(")
 
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-import mujoco
 import pycyxwiz
 from stable_baselines3 import )" << algo << R"(
 from stable_baselines3.common.callbacks import BaseCallback
