@@ -6,6 +6,8 @@ Schema 1 is the frozen desktop release boundary for Ticket 88.
 The implementation is dependency-free and lives in
 `scripts/backend_pack_contract.py`. A schema change requires a new
 `schema_version`; readers must fail closed on unknown versions or fields.
+Manifest schema 2 adds plugin packs only (see Plugin Packs); schema-1 base and
+backend-pack manifests are unchanged.
 
 ## Runtime Layout
 
@@ -30,11 +32,14 @@ runtime/
     cuda/<pack-id>/
     opencl/<pack-id>/
     oneapi/<pack-id>/
+  plugins/
+    <plugin-id>/<pack-id>/
   staging/
     <transaction-id>/
   rollback/
     <runtime-set-id>/
   active-runtime.json
+  active-plugins.json
 ```
 
 The stable bootstrapper is installed beside `runtime/` and retained inside the
@@ -447,6 +452,55 @@ passes that identity to the shared qualification adapter. It activates only a
 is unchanged when qualification completes. Diagnostic, missing-adapter,
 failed, cancelled, and stale-evidence results leave a complete pack inactive.
 
+## Plugin Packs
+
+A plugin pack delivers one Engine plugin together with the runtime it needs (for
+example the MuJoCo simulation plugin and `mujoco.dll`). It reuses the signed
+envelope, trust roles, catalog entry, acquisition, extraction, staging,
+rollback and removal of backend packs, but it is not part of the ArrayFire
+runtime set and needs no route qualification.
+
+Its manifest uses envelope `schema_version` 2 with the same
+`cyxwiz-backend-pack-manifest` kind. The signed body contains exactly:
+
+- `pack_id`, `pack_kind=plugin_pack`, `plugin_id` (the `plugin.json` id) and
+  `package_version`;
+- `platform` and `architecture`;
+- compatible CyxWiz release minimum/maximum;
+- the companion base ID (required: the plugin uses that base's shared
+  libraries and never ships its own copies) and conflicting pack IDs;
+- `support_status`;
+- components, licenses and archive, with the schema-1 rules;
+- generation time in UTC.
+
+There is no `backend`, `arrayfire`, `runtime_set_id` or device compatibility
+object; any of them fails closed. A schema-1 manifest cannot declare
+`plugin_pack`, and a schema-2 manifest cannot declare any other kind. A reader
+that knows only schema 1 rejects a plugin manifest, and the catalog stays
+browsable with delivery disabled for that entry, as for any invalid manifest.
+
+Compatibility is the signed support status, platform, architecture, release
+range and companion base. A `supported` plugin pack is activated after
+extraction and integrity checks; it never takes a route verification.
+
+Plugin packs install under `runtime/plugins/<plugin-id>/<pack-id>/`. Their
+local state is `active-plugins.json`, a separate document so that plugin
+activation never changes `active-runtime.json`, its generation, the ArrayFire
+DLL checks, the loader paths or the route evidence tied to that identity:
+
+```json
+{
+  "schema_version": 1,
+  "base_pack_id": "<base-pack-id>",
+  "plugins": [{"plugin_id": "<plugin-id>", "pack_id": "<pack-id>"}]
+}
+```
+
+At most one pack is active per plugin ID. It is published atomically under the
+same runtime mutation lease. Plugins whose companion base differs from the
+active base are inactive. The Engine loads each active plugin pack folder as an
+exact plugin folder; it does not scan `plugins/` for other versions.
+
 ## Customer Verification Summary
 
 The consolidated installer reads the shared machine-local qualification
@@ -515,6 +569,9 @@ Release engineering must review redistribution rights for the exact versions
 being shipped. The base may include CyxWiz, Python 3.12, ArrayFire unified/CPU,
 MKL/TBB, and required VC++ application runtimes. Optional packs may include
 legally redistributable ArrayFire plugins and their user-mode runtime closure.
+Plugin packs may include the plugin, its reviewed third-party runtime (for
+example MuJoCo, Apache-2.0) and that runtime's notices, but not libraries the
+base already provides.
 Hardware-vendor display, kernel, or compute drivers are never bundled.
 
 Missing or incomplete notices fail packaging. A new runtime component cannot
