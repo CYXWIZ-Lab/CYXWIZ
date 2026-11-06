@@ -149,6 +149,13 @@ void BackendPackLifecycleService::ReadInstalledMetadata(
     };
     read(active.base_pack_id, BackendPackManifestKind::Base);
     for (const auto& pack : active.packs) read(pack.pack_id, BackendPackManifestKind::BackendPack);
+    ActivePluginsState plugins;
+    std::string error;
+    if (LoadActivePluginsState(root / kActivePluginsFileName, plugins, error) &&
+        plugins.base_pack_id == active.base_pack_id) {
+        for (const auto& plugin : plugins.plugins)
+            read(plugin.pack_id, BackendPackManifestKind::PluginPack);
+    }
 }
 
 bool BackendPackLifecycleService::ReadCatalogSnapshot(
@@ -191,8 +198,15 @@ bool BackendPackLifecycleService::ReadCatalogSnapshot(
                         BackendPackManifestTargetScope::CatalogDiscovery)) {
                     record.manifest = std::move(manifest);
                     record.manifest_error.clear();
+                } else if (std::string plugin_error; metadata_verifier_.VerifyManifest(
+                               record.manifest_path, entry, manifest, plugin_error,
+                               BackendPackManifestKind::PluginPack,
+                               BackendPackManifestTargetScope::CatalogDiscovery)) {
+                    record.manifest = std::move(manifest);
+                    record.manifest_error.clear();
                 } else {
-                    record.manifest_error += "; base manifest: " + base_error;
+                    record.manifest_error += "; base manifest: " + base_error +
+                                             "; plugin manifest: " + plugin_error;
                 }
             }
         }
@@ -252,11 +266,23 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverBaseRepair(
     return DeliverInternal(request, nullptr, DeliveryTarget::BaseRepair, ownership);
 }
 
+BackendPackLifecycleResult BackendPackLifecycleService::DeliverPlugin(
+    const BackendPackDeliveryRequest& request,
+    BackendPackArtifactSource& source) {
+    return DeliverInternal(request, &source, DeliveryTarget::PluginPack);
+}
+
+BackendPackLifecycleResult BackendPackLifecycleService::DeliverPlugin(
+    const BackendPackDeliveryRequest& request) {
+    return DeliverInternal(request, nullptr, DeliveryTarget::PluginPack);
+}
+
 BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     const BackendPackDeliveryRequest& request,
     BackendPackArtifactSource* source,
     DeliveryTarget target, const RuntimeOperationLock* ownership) {
-    const bool base = target != DeliveryTarget::OptionalPack;
+    const bool plugin = target == DeliveryTarget::PluginPack;
+    const bool base = target != DeliveryTarget::OptionalPack && !plugin;
     const bool updating_base = target == DeliveryTarget::BaseUpdate;
     const bool repairing_base = target == DeliveryTarget::BaseRepair;
     std::unique_lock<std::mutex> operation_lock(
@@ -289,7 +315,7 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             "CPU repair requires an execution guard and deferred Engine device verification",
             request.pack_id);
     }
-    if (!repairing_base && request.repair && request.route_verification ==
+    if (!repairing_base && !plugin && request.repair && request.route_verification ==
             BackendPackRouteVerificationPolicy::DeferredToEngine) {
         return Finish(
             BackendPackLifecycleStatus::InvalidRequest,
@@ -335,8 +361,8 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     }
     if (catalog_entry->support_status == BackendPackSupportStatus::Blocked ||
         catalog_entry->support_status == BackendPackSupportStatus::Revoked ||
-        (base && catalog_entry->support_status !=
-                     BackendPackSupportStatus::Supported)) {
+        ((base || plugin) && catalog_entry->support_status !=
+                                 BackendPackSupportStatus::Supported)) {
         return Finish(
             BackendPackLifecycleStatus::PolicyRejected,
             "Requested pack is blocked by the verified release catalog",
@@ -349,8 +375,9 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
     VerifiedBackendPackManifest manifest;
     if (!metadata_verifier_.VerifyManifest(
             request.manifest_path, *catalog_entry, manifest, error,
-            base ? BackendPackManifestKind::Base
-                 : BackendPackManifestKind::BackendPack)) {
+            plugin ? BackendPackManifestKind::PluginPack
+            : base ? BackendPackManifestKind::Base
+                   : BackendPackManifestKind::BackendPack)) {
         return Finish(
             BackendPackLifecycleStatus::MetadataFailure, error,
             request.pack_id);
@@ -394,7 +421,20 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
                           "Cannot establish the installed runtime before update: " + error,
                           manifest.pack_id, manifest.backend);
         std::string previous_id = updating_base ? active.base_pack_id : std::string{};
-        if (!base) {
+        if (plugin) {
+            if (manifest.companion_base_id != active.base_pack_id)
+                return Finish(BackendPackLifecycleStatus::PolicyRejected,
+                              "This plugin pack was built for another CPU base",
+                              manifest.pack_id);
+            ActivePluginsState plugins;
+            if (!LoadActivePluginsState(runtime_root_ / kActivePluginsFileName, plugins, error))
+                return Finish(BackendPackLifecycleStatus::PolicyRejected,
+                              "Cannot read the active plugin state: " + error, manifest.pack_id);
+            if (plugins.base_pack_id == active.base_pack_id) {
+                for (const auto& value : plugins.plugins)
+                    if (value.plugin_id == manifest.plugin_id) previous_id = value.pack_id;
+            }
+        } else if (!base) {
             for (const auto& pack : active.packs)
                 if (pack.backend == manifest.backend) previous_id = pack.pack_id;
         }
@@ -416,7 +456,9 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
         }
     }
 
-    const auto installed_directory = base
+    const auto installed_directory = plugin
+        ? PluginPackDirectory(runtime_root_, manifest.plugin_id, manifest.pack_id)
+        : base
         ? runtime_root_ / "base" / manifest.pack_id
         : runtime_root_ / "packs" / manifest.backend / manifest.pack_id;
     std::error_code filesystem_error;
@@ -573,7 +615,10 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
             "CPU-base delivery does not accept repair mode",
             manifest.pack_id, manifest.backend);
     }
-    const auto install_action = repairing_base
+    const auto install_action = plugin
+        ? (request.repair ? BackendPackInstaller::PrivateExtractionAction::RepairPluginPack
+                          : BackendPackInstaller::PrivateExtractionAction::InstallPluginPack)
+        : repairing_base
         ? BackendPackInstaller::PrivateExtractionAction::RepairBase
         : updating_base
         ? BackendPackInstaller::PrivateExtractionAction::UpdateBase
@@ -606,6 +651,35 @@ BackendPackLifecycleResult BackendPackLifecycleService::DeliverInternal(
         discard_successful_artifact(message);
         return Finish(BackendPackLifecycleStatus::InstalledAndActivated,
             std::move(message), manifest.pack_id, manifest.backend, installed.installed_directory);
+    }
+    if (plugin) {
+        // No route qualification: retain the signed evidence, then activate.
+        if (cancel_requested_.load()) {
+            discard_cancelled_operation(
+                acquired.status == BackendPackAcquisitionStatus::Downloaded, true);
+            return Finish(BackendPackLifecycleStatus::Interrupted,
+                          "Complete plugin pack is installed but delivery was cancelled before activation",
+                          manifest.pack_id, {}, installed.installed_directory);
+        }
+        if (!RetainInstalledBackendPackMetadata(runtime_root_, request.manifest_path,
+                *catalog_entry, manifest.kind, metadata_verifier_, error))
+            return Finish(BackendPackLifecycleStatus::MetadataFailure,
+                "Cannot preserve signed installed-version evidence: " + error,
+                manifest.pack_id, {}, installed.installed_directory);
+        SetStage(BackendPackLifecycleStage::Activating, "Activating the verified plugin pack");
+        BackendPackStateService state_service(runtime_root_, execution_active_);
+        const auto activation =
+            state_service.ActivatePluginPack(manifest.plugin_id, manifest.pack_id);
+        if (activation.status != BackendPackStateStatus::Completed)
+            return Finish(BackendPackLifecycleStatus::ActivationFailure,
+                "Verified plugin pack remains installed but activation failed: " +
+                    activation.message,
+                manifest.pack_id, {}, installed.installed_directory);
+        std::string message =
+            "Plugin pack installed and activated; CyxWiz Engine loads it at its next start";
+        discard_successful_artifact(message);
+        return Finish(BackendPackLifecycleStatus::InstalledAndActivated, std::move(message),
+                      manifest.pack_id, {}, installed.installed_directory);
     }
     const bool verification_deferred = request.route_verification ==
         BackendPackRouteVerificationPolicy::DeferredToEngine;
@@ -944,6 +1018,33 @@ BackendPackLifecycleResult BackendPackLifecycleService::Remove(
             : BackendPackLifecycleStatus::MaintenanceFailure,
         removal.message, std::move(pack_id), std::move(backend),
         removal.quarantined_directory);
+}
+
+BackendPackLifecycleResult BackendPackLifecycleService::RemovePlugin(
+    std::string plugin_id,
+    std::string pack_id) {
+    std::unique_lock<std::mutex> operation_lock(
+        operation_mutex_, std::try_to_lock);
+    if (!operation_lock.owns_lock()) {
+        return {BackendPackLifecycleStatus::Busy,
+                "A backend-pack lifecycle operation is already running"};
+    }
+    cancel_requested_.store(false);
+    BackendPackLifecycleProgress progress;
+    progress.stage = BackendPackLifecycleStage::Removing;
+    progress.pack_id = pack_id;
+    progress.message = "Removing the plugin pack";
+    SetProgress(progress);
+    const auto removal = remover_.RemovePlugin(std::move(plugin_id), pack_id);
+    if (removal.status == BackendPackRemovalStatus::Removed ||
+        removal.status == BackendPackRemovalStatus::AlreadyAbsent) {
+        return Finish(BackendPackLifecycleStatus::Removed, removal.message, std::move(pack_id));
+    }
+    return Finish(
+        removal.status == BackendPackRemovalStatus::Interrupted
+            ? BackendPackLifecycleStatus::Interrupted
+            : BackendPackLifecycleStatus::MaintenanceFailure,
+        removal.message, std::move(pack_id), {}, removal.quarantined_directory);
 }
 
 BackendPackLifecycleResult BackendPackLifecycleService::Rollback() {

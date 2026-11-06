@@ -636,8 +636,8 @@ bool VerifyPluginManifestBody(
 
 VerifiedBackendPackPayload VerifiedBackendPackManifest::BindExtractedDirectory(
     std::filesystem::path source_directory) const {
-    return {runtime_set_id, companion_base_id, backend, pack_id, plugin_id,
-            std::move(source_directory), components};
+    return {runtime_set_id, companion_base_id, backend, pack_id,
+            std::move(source_directory), components, plugin_id};
 }
 
 std::optional<BackendPackTrustStore> BackendPackTrustStore::Load(

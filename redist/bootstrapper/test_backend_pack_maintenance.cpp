@@ -280,6 +280,51 @@ int main() {
             "removal must be idempotent for absent optional packs and reject the CPU base");
     }
 
+    {
+        // Plugin packs: deactivated in active-plugins.json, then deleted;
+        // active-runtime.json is never rewritten.
+        namespace rt = cyxwiz::runtime;
+        Fixture fixture;
+        const auto plugin_source = fixture.source.parent_path() /
+            (fixture.source.filename().string() + "-plugin");
+        Fixture::Touch(plugin_source / "plugin.json");
+        rt::VerifiedBackendPackPayload plugin;
+        plugin.companion_base_id = "base-v1";
+        plugin.plugin_id = "com.cyxwiz.simulation.mujoco";
+        plugin.pack_id = "mujoco-v1";
+        plugin.source_directory = plugin_source;
+        plugin.components = {{"plugin.json", 1, kZeroByteSha256}};
+        rt::BackendPackInstaller installer(fixture.root);
+        const auto installed = installer.InstallOrUpdatePlugin(plugin, 1024);
+        const auto read_text = [](const std::filesystem::path& path) {
+            std::ifstream stream(path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(stream),
+                               std::istreambuf_iterator<char>());
+        };
+        const auto runtime_before = read_text(fixture.root / "active-runtime.json");
+        rt::BackendPackRemover remover(fixture.root);
+        const auto removed = remover.RemovePlugin(plugin.plugin_id, plugin.pack_id);
+        rt::ActivePluginsState plugins;
+        std::string error;
+        failures += !Expect(
+            installed.status == rt::BackendPackInstallStatus::InstalledAndActivated &&
+                removed.status == rt::BackendPackRemovalStatus::Removed &&
+                removed.deactivation.has_value() &&
+                !std::filesystem::exists(
+                    rt::PluginPackDirectory(fixture.root, plugin.plugin_id, plugin.pack_id)) &&
+                rt::LoadActivePluginsState(fixture.root / rt::kActivePluginsFileName, plugins,
+                                           error) &&
+                plugins.plugins.empty() &&
+                read_text(fixture.root / "active-runtime.json") == runtime_before,
+            "an active plugin pack must be deactivated and deleted: " + removed.message);
+        const auto absent = remover.RemovePlugin(plugin.plugin_id, plugin.pack_id);
+        const auto invalid = remover.RemovePlugin("../escape", plugin.pack_id);
+        failures += !Expect(
+            absent.status == rt::BackendPackRemovalStatus::AlreadyAbsent &&
+                invalid.status == rt::BackendPackRemovalStatus::InvalidRequest,
+            "plugin removal must be idempotent and reject unsafe identities");
+        std::filesystem::remove_all(plugin_source);
+    }
     if (failures == 0) {
         std::cout << "backend pack maintenance contract tests passed\n";
     }
