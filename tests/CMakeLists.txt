@@ -79,6 +79,10 @@ add_executable(cyxwiz-tests
     ../cyxwiz-engine/src/inference/text_inference_input.cpp
 )
 target_link_libraries(cyxwiz-tests PRIVATE cyxwiz-training-core)
+# The same HDF5 / XLSX build features as cyxwiz-training-core, whose Data Input
+# format list these tests compare with data_input_formats.h.
+include("${CMAKE_SOURCE_DIR}/cmake/CyxWizDataConvert.cmake")
+cyxwiz_target_data_convert(cyxwiz-tests)
 
 target_link_libraries(cyxwiz-tests PRIVATE
     Catch2::Catch2

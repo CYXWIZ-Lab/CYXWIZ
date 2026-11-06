@@ -82,10 +82,13 @@ properties_truth::DatasetTruthFact BuildDatasetTruthFact(const MLNode& node) {
         fact.columns = arrow_dataset->GetColumnNames();
         fact.has_labels = !ParamOrEmpty(node, "label_column").empty() ||
                           !ParamOrEmpty(node, "text_label_column").empty();
-        // Text class labels: their distinct values are the classes (TOFIX145).
-        if (auto text = cyxwiz::TextLabelColumn(arrow_dataset->GetArrowTable(), ParamOrEmpty(node, "label_column"))) {
+        // Text labels count their distinct values (TOFIX145), whole-number labels max + 1.
+        if (const auto classes = cyxwiz::LabelClassCount(arrow_dataset->GetArrowTable(), ParamOrEmpty(node, "label_column"))) {
             fact.has_class_count = true;
-            fact.class_count = cyxwiz::BuildLabelVocabulary({text}).names.size();
+            fact.class_count = *classes;
+        } else if (const auto labels = arrow_dataset->GetArrowTable()->GetColumnByName(ParamOrEmpty(node, "label_column"));
+                   labels && labels->null_count() < labels->length()) {
+            fact.message = "The label values are not classes (text, true/false or whole numbers from 0), so they are a regression target.";
         }
         return fact;
     }

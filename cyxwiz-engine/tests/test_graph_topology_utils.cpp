@@ -81,7 +81,7 @@ int main() {
           "should ignore stale first DataLoader and find active one");
 
     // Train loads the Data Inputs a reopened project has not loaded: the
-    // one feeding the loader, not the stale one, not a loaded one, not HDF5.
+    // one feeding the loader, not the stale one, not a loaded one.
     nodes[1].parameters = {{"source_type", "file"}, {"file_path", "stale.csv"}};
     nodes[2].parameters = {{"source_type", "file"}, {"file_path", "posts.csv"}};
     const auto none_loaded = [](const std::string&) { return false; };
@@ -94,7 +94,8 @@ int main() {
     Check(cyxwiz::CollectDataInputsToLoad(nodes, links, none_loaded) == std::vector<int>{2},
           "a saved name whose data is gone loads");
     nodes[2].parameters = {{"source_type", "file"}, {"file_path", "cells.H5"}};
-    Check(cyxwiz::CollectDataInputsToLoad(nodes, links, none_loaded).empty(), "HDF5 is left out");
+    Check(cyxwiz::CollectDataInputsToLoad(nodes, links, none_loaded) == std::vector<int>{2},
+          "an HDF5 file loads like any table");
     nodes[2].parameters = {{"source_type", "file"}, {"folder_path", "images"}};
     Check(cyxwiz::CollectDataInputsToLoad(nodes, links, none_loaded) == std::vector<int>{2},
           "a folder source loads");

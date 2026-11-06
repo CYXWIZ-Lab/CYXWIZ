@@ -1,5 +1,7 @@
 #include "label_vocabulary.h"
 
+#include <arrow/compute/api.h>
+
 #include <algorithm>
 #include <set>
 #include <string_view>
@@ -107,6 +109,29 @@ std::shared_ptr<arrow::ChunkedArray> TextLabelColumn(const std::shared_ptr<arrow
     if (position < 0) return nullptr;
     auto column = table->column(position);
     return IsTextLabelType(*column->type()) ? column : nullptr;
+}
+
+std::optional<size_t> LabelClassCount(const std::shared_ptr<arrow::Table>& table, const std::string& label_column) {
+    if (!table || label_column.empty()) return std::nullopt;
+    const auto column = table->GetColumnByName(label_column);
+    if (!column || column->null_count() == column->length()) return std::nullopt;
+    if (IsTextLabelType(*column->type())) return BuildLabelVocabulary({column}).names.size();
+    if (column->type()->id() == arrow::Type::BOOL) return 2;
+    if (!arrow::is_integer(column->type()->id()) && !arrow::is_floating(column->type()->id())) return std::nullopt;
+    // A safe cast refuses fractions (and NaN), so only whole numbers pass.
+    const auto whole = arrow::compute::Cast(column, arrow::int64(), arrow::compute::CastOptions::Safe());
+    if (!whole.ok()) return std::nullopt;
+    // A plain scan: min_max lives in Arrow's separate compute library, which this build does not register.
+    int64_t high = -1;
+    for (const auto& chunk : whole->chunked_array()->chunks()) {
+        const auto& values = static_cast<const arrow::Int64Array&>(*chunk);
+        for (int64_t i = 0; i < values.length(); ++i) {
+            if (values.IsNull(i)) continue;
+            if (values.Value(i) < 0) return std::nullopt;
+            high = std::max(high, values.Value(i));
+        }
+    }
+    return static_cast<size_t>(high) + 1;
 }
 
 }  // namespace cyxwiz

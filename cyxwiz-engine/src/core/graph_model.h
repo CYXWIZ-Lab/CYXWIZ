@@ -308,7 +308,8 @@ enum class NodeType {
     // ===== Legacy Data Source Nodes (kept for compatibility) =====
     CSVFile,            // Load CSV file into Arrow table
     SQLQuery,           // Execute SQL query, return Arrow table
-    HDF5Dataset,        // Load HDF5 dataset into Arrow
+    HDF5Dataset,        // Retired (Data Input loads HDF5): the slot stays so later ids
+                        // do not move; a saved graph with one fails to load.
     ParquetFile,        // Load Parquet file into Arrow
     JSONFile,           // Load JSON file into Arrow
     ExcelFile,          // Load Excel file into Arrow

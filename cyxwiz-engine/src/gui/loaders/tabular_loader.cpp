@@ -671,7 +671,6 @@ std::vector<ParamSchema> TabularLoader::NodeParams() const {
         {"sheet_range",       "",       "Excel cell range"},
         {"json_lines",        "false",  "JSON lines (NDJSON) mode"},
         {"json_path",         "",       "JSONPath selector"},
-        {"hdf5_dataset",      "data",   "HDF5 dataset name"},
     };
 }
 

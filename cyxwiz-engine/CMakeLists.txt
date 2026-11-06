@@ -192,7 +192,6 @@ set(ENGINE_SOURCES
     src/core/data_convert_service.cpp
     src/core/data_preview_service.cpp
     src/core/datasets/kaggle_dataset.cpp
-    src/core/datasets/hdf5_dataset.cpp
     src/core/datasets/image_csv_dataset.cpp
     src/core/datasets/streaming_dataset.cpp
     src/core/datasets/mnist_dataset.cpp
@@ -225,7 +224,6 @@ set(ENGINE_SOURCES
     src/core/audio_dataset_batcher.cpp
     src/core/legacy_dataset_batchers.cpp
     src/core/text_arrow_adapter.cpp
-    src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/session_query_engine.cpp
     src/core/session_query_service.cpp
@@ -530,6 +528,7 @@ set(ENGINE_SOURCES
     src/gui/data_input_dialog_cloud_source.cpp
     src/gui/data_input_dialog_apply.cpp
     src/gui/data_input_dialog_hdf5_restore.cpp
+    src/gui/data_input_dialog_hdf5_apply.cpp
     src/gui/data_io_dialogs.cpp
     src/gui/data_loader_generation_tab.cpp
     src/gui/generation_settings_widgets.cpp
@@ -542,6 +541,7 @@ set(ENGINE_SOURCES
     src/core/hdf5_apply_preparation.cpp
     src/core/hdf5_registered_source.cpp
     src/gui/hdf5_loaded_source_verifier.cpp
+    src/gui/hdf5_apply_loader.cpp
     src/gui/hdf5_source_inspector.cpp
     src/gui/hdf5_source_inspector_render.cpp
     src/gui/data_input_dialog.cpp
@@ -830,7 +830,6 @@ set(ENGINE_HEADERS
     src/core/sparse_feature_dataset.h
     src/core/sparse_feature_dataset_cache.h
     src/core/sparse_feature_dataset_batcher.h
-    src/core/arrow_converters.h
     src/core/duckdb_connector.h
     src/core/pipeline_executor.h  # Unified Canvas Phase 2: Moved from data_studio
     src/core/node_metadata.h       # Node Browser: node metadata structures
@@ -1505,13 +1504,9 @@ set_target_properties(test_opencv_integration PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# HDF5 Loading test - run via engine's Python console or dedicated test runner
-# The HDF5Dataset class is tested as part of cyxwiz-engine
-
-# ===== Test: Arrow Integration (Phase 0 Day 5) =====
+# ===== Test: Arrow integration (ArrowDataset, DataRegistry, DuckDB on Arrow tables) =====
 add_executable(test_arrow_integration
     tests/test_arrow_integration.cpp
-    src/core/arrow_converters.cpp
     src/core/duckdb_connector.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
@@ -3179,6 +3174,11 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/guided_sql.cpp
     src/core/pipeline_execution_task.cpp
     src/core/async_task_manager.cpp
+    # Data Input HDF5 runs (TOFIX189); the table adapter comes with cyxwiz_target_data_convert.
+    src/core/hdf5_source_load_task.cpp
+    src/core/hdf5_input_settings.cpp
+    src/core/hdf5_source_identity.cpp
+    src/core/dataset_audit.cpp
     src/core/prepared_data_cache.cpp
     src/core/training_input_preparation.cpp
     src/core/materialization_cache.cpp
@@ -3409,9 +3409,12 @@ set_target_properties(test_pipeline_operator_materializer_parity PROPERTIES
 add_executable(test_data_convert_pipeline_input
     tests/test_data_convert_pipeline_input.cpp
     tests/test_data_convert_pipeline_reload.cpp
+    tests/test_data_input_hdf5_pipeline.cpp
     ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
 )
 target_link_libraries(test_data_convert_pipeline_input PRIVATE cyxwiz-training-core)
+# The HDF5 test reads examples/datasets/metric_blobs.h5, written by h5py.
+target_compile_definitions(test_data_convert_pipeline_input PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 target_include_directories(test_data_convert_pipeline_input PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -7618,14 +7621,6 @@ foreach(data_convert_target IN ITEMS cyxwiz-engine test_data_convert_service
         test_text_arrow_materializer test_text_arrow_training_launch test_text_gui_training_launch)
     cyxwiz_target_data_convert(${data_convert_target})
 endforeach()
-if(HighFive_FOUND)
-    foreach(data_convert_pipeline_test IN ITEMS test_data_convert_pipeline_input test_pipeline_run_release
-            test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows bench_linear_steps
-            cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
-            test_text_gui_training_launch)
-        target_sources(${data_convert_pipeline_test} PRIVATE src/core/datasets/hdf5_dataset.cpp)
-    endforeach()
-endif()
 
 # ===== ASan Memory Test (standalone, no vcpkg deps) =====
 if(CYXWIZ_ENABLE_ASAN)
