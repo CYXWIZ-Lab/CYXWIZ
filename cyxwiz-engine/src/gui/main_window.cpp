@@ -92,12 +92,7 @@
 #include "panels/serving_panel.h"
 #include "panels/dnn_inference_panel.h"
 #include "panels/linear_algebra_panel.h"
-#include "panels/gradient_descent_panel.h"
-#include "panels/convexity_panel.h"
-#include "panels/lp_panel.h"
-#include "panels/qp_panel.h"
-#include "panels/differentiation_panel.h"
-#include "panels/integration_panel.h"
+#include "panels/optimization_panel.h"
 #include "data_studio/folds_view.h"
 #include "data_studio/series_view.h"
 #include "data_studio/signal_view.h"
@@ -668,13 +663,8 @@ MainWindow::MainWindow()
     // Linear Algebra panels (Phase 7)
     linear_algebra_panel_ = std::make_unique<cyxwiz::LinearAlgebraPanel>();
 
-    // Optimization & Calculus panels (Phase 9)
-    gradient_descent_panel_ = std::make_unique<cyxwiz::GradientDescentPanel>();
-    convexity_panel_ = std::make_unique<cyxwiz::ConvexityPanel>();
-    lp_panel_ = std::make_unique<cyxwiz::LPPanel>();
-    qp_panel_ = std::make_unique<cyxwiz::QPPanel>();
-    differentiation_panel_ = std::make_unique<cyxwiz::DifferentiationPanel>();
-    integration_panel_ = std::make_unique<cyxwiz::IntegrationPanel>();
+    // Tools > Optimization and Calculus: one window (TOFIX129 D10)
+    optimization_panel_ = std::make_unique<cyxwiz::OptimizationPanel>();
 
     // Text: Language Model Generation (the data tools are Explore > Text, TOFIX129 D8)
     language_model_generation_panel_ =
@@ -1959,42 +1949,9 @@ MainWindow::MainWindow()
     toolbar_->SetOpenConvolutionCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Filter, true); });
     toolbar_->SetOpenWaveletCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Wavelet, false); });
 
-    // Optimization & Calculus callbacks (Phase 9)
-    toolbar_->SetOpenGradientDescentCallback([this]() {
-        if (gradient_descent_panel_) {
-            gradient_descent_panel_->Toggle();
-            spdlog::info("Toggled Gradient Descent panel");
-        }
-    });
-    toolbar_->SetOpenConvexityCallback([this]() {
-        if (convexity_panel_) {
-            convexity_panel_->Toggle();
-            spdlog::info("Toggled Convexity Analyzer panel");
-        }
-    });
-    toolbar_->SetOpenLPCallback([this]() {
-        if (lp_panel_) {
-            lp_panel_->Toggle();
-            spdlog::info("Toggled Linear Programming panel");
-        }
-    });
-    toolbar_->SetOpenQPCallback([this]() {
-        if (qp_panel_) {
-            qp_panel_->Toggle();
-            spdlog::info("Toggled Quadratic Programming panel");
-        }
-    });
-    toolbar_->SetOpenDifferentiationCallback([this]() {
-        if (differentiation_panel_) {
-            differentiation_panel_->Toggle();
-            spdlog::info("Toggled Numerical Differentiation panel");
-        }
-    });
-    toolbar_->SetOpenIntegrationCallback([this]() {
-        if (integration_panel_) {
-            integration_panel_->Toggle();
-            spdlog::info("Toggled Numerical Integration panel");
-        }
+    // Tools > Optimization and Calculus opens the window on an operation (TOFIX129 D10).
+    toolbar_->SetOpenOptimizationCallback([this](const std::string& operation) {
+        if (optimization_panel_) optimization_panel_->Open(operation);
     });
 
     // Tools > Time Series opens Data Studio's Explore tabs Series (on that
@@ -2552,18 +2509,8 @@ MainWindow::~MainWindow() {
     unit_converter_panel_.reset();
     spdlog::info("~MainWindow: calculator_panel_");
     calculator_panel_.reset();
-    spdlog::info("~MainWindow: integration_panel_");
-    integration_panel_.reset();
-    spdlog::info("~MainWindow: differentiation_panel_");
-    differentiation_panel_.reset();
-    spdlog::info("~MainWindow: qp_panel_");
-    qp_panel_.reset();
-    spdlog::info("~MainWindow: lp_panel_");
-    lp_panel_.reset();
-    spdlog::info("~MainWindow: convexity_panel_");
-    convexity_panel_.reset();
-    spdlog::info("~MainWindow: gradient_descent_panel_");
-    gradient_descent_panel_.reset();
+    spdlog::info("~MainWindow: optimization_panel_");
+    optimization_panel_.reset();
     spdlog::info("~MainWindow: linear_algebra_panel_");
     linear_algebra_panel_.reset();
     spdlog::info("~MainWindow: serving_panel_");
@@ -2997,12 +2944,7 @@ void MainWindow::Render() {
     TimedRender("linear algebra", linear_algebra_panel_);
 
     // Optimization & Calculus panels (Phase 9)
-    TimedRender("gradient descent", gradient_descent_panel_);
-    TimedRender("convexity", convexity_panel_);
-    TimedRender("lp", lp_panel_);
-    TimedRender("qp", qp_panel_);
-    TimedRender("differentiation", differentiation_panel_);
-    TimedRender("integration", integration_panel_);
+    TimedRender("optimization", optimization_panel_);
 
     // Text: Language Model Generation
     TimedRender("language model generation", language_model_generation_panel_);
@@ -3469,12 +3411,7 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (linear_algebra_panel_) linear_algebra_panel_->SetVisible(false);
 
     // Optimization & Calculus panels (Phase 9)
-    if (gradient_descent_panel_) gradient_descent_panel_->SetVisible(false);
-    if (convexity_panel_) convexity_panel_->SetVisible(false);
-    if (lp_panel_) lp_panel_->SetVisible(false);
-    if (qp_panel_) qp_panel_->SetVisible(false);
-    if (differentiation_panel_) differentiation_panel_->SetVisible(false);
-    if (integration_panel_) integration_panel_->SetVisible(false);
+    if (optimization_panel_) optimization_panel_->SetVisible(false);
 
     // Text: Language Model Generation
     if (language_model_generation_panel_) language_model_generation_panel_->SetVisible(false);

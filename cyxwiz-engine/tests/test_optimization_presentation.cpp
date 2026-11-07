@@ -75,6 +75,8 @@ void CheckMinimize() {
               Has(answer.sentence, "SGD at learning rate 0.01 diverged: its steps grew without limit"),
           "sentence: " + answer.sentence);
     Check(answer.paths[0].points.size() == 1001, "a path holds every step");
+    const std::string csv = MinimizeText(request, answer, ',');
+    Check(Has(csv, "optimizer,learning_rate,step,x,y,f,gradient_norm\nSGD + momentum 0.9,0.001,0,-2,2,409,"), "paths as CSV");
     int asked = 0;
     const auto stopped = RunMinimize(request, [&asked] { return ++asked > 10; });
     Check(stopped.ok() && Has(stopped.rows[0].word, "Stopped at step"), "Stop: " + stopped.rows[0].word);
@@ -138,6 +140,12 @@ void CheckPrograms() {
           "rows pasted: " + why);
     Check(!ParseRows("1 2 3 <= 4", 2, rows, why) && why == "Line 1 has 3 coefficients; the problem has 2 variables", "row size: " + why);
     Check(!ParseRows("1 2 4", 2, rows, why) && Has(why, "needs <=, >= or ="), "no sign: " + why);
+
+    const std::string text = ProgramText(LinearExamples()[0].request, two, ',');
+    Check(Has(text, "status,Optimal\nobjective,12\n") && Has(text, "C1,<=,4,0,3,yes\n") &&
+              Has(text, "C2,<=,6,2,0,no\n"),
+          "the program as CSV: " + text);
+    Check(Has(ProgramText(QuadraticExamples()[0].request, quad, '\t'), "x1\t0.75"), "tab-separated to paste");
 }
 
 void CheckCalculus() {
@@ -147,6 +155,8 @@ void CheckCalculus() {
     Check(sine.rules.size() == 6 && sine.rules[3].name == "Simpson, 100" && sine.rules[3].difference == "1.1e-8",
           "rules compared with the adaptive answer");
     Check(sine.curve_x.size() == 241 && sine.curve_y.size() == 241, "the curve");
+    Check(Has(IntegralText(sine, ','), "\"Simpson, 100\",2.00000001082450") && Has(IntegralText(sine, ','), "Adaptive"),
+          "rules as CSV, a name with a comma quoted: " + IntegralText(sine, ','));
     IntegralRequest gauss{"exp(-x^2)", "-inf", "inf"};
     const auto bell = RunIntegral(gauss);
     Check(bell.ok() && std::abs(bell.value - 1.7724538509055159) < 1e-10 && bell.rules.size() == 1 &&

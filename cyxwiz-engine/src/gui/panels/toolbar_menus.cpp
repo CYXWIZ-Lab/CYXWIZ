@@ -521,12 +521,12 @@ void ToolbarPanel::BuildActionHandlers() {
     call("tools.filter_designer", open_filter_designer_callback_);
     call("tools.convolution", open_convolution_callback_);
     call("tools.wavelet", open_wavelet_callback_);
-    call("tools.gradient_descent", open_gradient_descent_callback_);
-    call("tools.convexity", open_convexity_callback_);
-    call("tools.lp", open_lp_callback_);
-    call("tools.qp", open_qp_callback_);
-    call("tools.differentiation", open_differentiation_callback_);
-    call("tools.integration", open_integration_callback_);
+    for (const auto& [id, operation] : {std::pair<const char*, const char*>{"tools.gradient_descent", "optimizers"},
+                                        {"tools.convexity", "curvature"}, {"tools.lp", "linear"}, {"tools.qp", "quadratic"},
+                                        {"tools.differentiation", "derivative"}, {"tools.integration", "integral"}})
+        h[id] = [this, operation = std::string(operation)](const std::string&) {
+            if (open_optimization_callback_) open_optimization_callback_(operation);
+        };
     call("tools.decomposition", open_decomposition_callback_);
     call("tools.acf_pacf", open_acf_pacf_callback_);
     call("tools.stationarity", open_stationarity_callback_);

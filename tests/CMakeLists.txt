@@ -40,7 +40,6 @@ add_executable(cyxwiz-tests
     unit/test_model_evaluation.cpp
     unit/test_device.cpp
     unit/test_optimizer.cpp
-    unit/test_optimization.cpp
     unit/test_scheduler.cpp
     unit/test_flatten_layer.cpp
     unit/test_dropout_layer.cpp

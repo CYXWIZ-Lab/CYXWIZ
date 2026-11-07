@@ -696,7 +696,8 @@ IntegralAnswer RunIntegral(const IntegralRequest& request) {
                           Number(adaptive.error_estimate, 2) + ").";
     }
     answer.rules.push_back({RuleName(QuadratureRule::Adaptive), Number(adaptive.value, 15), Count(adaptive.evaluations),
-                            "estimate " + Number(adaptive.error_estimate, 2)});
+                            "estimate " + Number(adaptive.error_estimate, 2), adaptive.value, adaptive.error_estimate,
+                            adaptive.evaluations});
     if (finite) {
         const int n = (std::max)(2, request.n);
         const std::pair<QuadratureRule, int> rules[] = {{QuadratureRule::Trapezoid, n}, {QuadratureRule::Midpoint, n},
@@ -705,7 +706,8 @@ IntegralAnswer RunIntegral(const IntegralRequest& request) {
             const QuadratureResult q = Calculus::Integrate(f, a, b, {rule, k});
             if (!q.success) continue;
             answer.rules.push_back({std::string(RuleName(rule)) + ", " + Count(k), Number(q.value, 15), Count(q.evaluations),
-                                    Number(std::abs(q.value - adaptive.value), 2)});
+                                    Number(std::abs(q.value - adaptive.value), 2), q.value, std::abs(q.value - adaptive.value),
+                                    q.evaluations});
         }
     }
     // The curve over the range, its finite part when a bound is infinite.
@@ -815,6 +817,112 @@ CurvatureAnswer RunCurvature(const CurvatureRequest& request) {
             answer.range_sentence = where + "no point curves down, so f looks convex here (a check of samples, not a proof).";
     }
     return answer;
+}
+
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::string Plain(double v) {
+    char buffer[40];
+    std::snprintf(buffer, sizeof buffer, "%.17g", v);
+    return buffer;
+}
+
+// A cell: quoted when it holds the separator, a quote or a line break.
+std::string Cell(const std::string& text, char separator) {
+    if (text.find(separator) == std::string::npos && text.find('"') == std::string::npos && text.find('\n') == std::string::npos)
+        return text;
+    std::string out = "\"";
+    for (const char c : text) out += c == '"' ? std::string("\"\"") : std::string(1, c);
+    return out + "\"";
+}
+
+std::string Line(const std::vector<std::string>& cells, char separator) {
+    std::string out;
+    for (size_t i = 0; i < cells.size(); ++i) out += (i ? std::string(1, separator) : std::string()) + Cell(cells[i], separator);
+    return out + "\n";
+}
+
+const char* SenseAscii(ConstraintSense sense) {
+    return sense == ConstraintSense::LessEqual ? "<=" : (sense == ConstraintSense::GreaterEqual ? ">=" : "=");
+}
+
+}  // namespace
+
+std::string MinimizeText(const MinimizeRequest& request, const MinimizeAnswer& answer, char separator) {
+    std::string out = Line({"optimizer", "learning_rate", "step", "x", "y", "f", "gradient_norm"}, separator);
+    for (size_t k = 0; k < answer.paths.size() && k < answer.rows.size(); ++k) {
+        const OptimizerPath& path = answer.paths[k];
+        const OptimizerChoice& choice = request.optimizers[answer.rows[k].choice];
+        for (size_t i = 0; i < path.points.size(); ++i)
+            out += Line({OptimizerName(choice), Plain(choice.learning_rate), std::to_string(i), Plain(path.points[i][0]),
+                         Plain(path.points[i][1]), Plain(path.values[i]), Plain(path.gradient_norms[i])},
+                        separator);
+    }
+    return out;
+}
+
+std::string ProgramText(const ProgramRequest& request, const ProgramAnswer& answer, char separator) {
+    const ProgramResult& r = answer.result;
+    std::string out = Line({"status", answer.status}, separator);
+    if (!r.success) return out + Line({"reason", r.error_message}, separator);
+    out += Line({"objective", Plain(r.objective)}, separator);
+    out += Line({"variable", "value"}, separator);
+    for (size_t i = 0; i < request.variables.size() && i < r.x.size(); ++i)
+        out += Line({request.variables[i], Plain(r.x[i])}, separator);
+    out += Line({"constraint", "sense", "rhs", "room", "shadow_price", "binding"}, separator);
+    for (size_t i = 0; i < request.rows.size() && i < r.slack.size(); ++i)
+        out += Line({request.rows[i].name, SenseAscii(request.rows[i].sense), Plain(request.rows[i].rhs), Plain(r.slack[i]),
+                     Plain(r.shadow_prices[i]), r.binding[i] ? "yes" : "no"},
+                    separator);
+    return out;
+}
+
+std::string IntegralText(const IntegralAnswer& answer, char separator) {
+    std::string out = Line({"rule", "value", "evaluations", "difference_from_adaptive"}, separator);
+    for (size_t i = 0; i < answer.rules.size(); ++i) {
+        const RuleRow& r = answer.rules[i];
+        out += Line({r.name, Plain(r.raw_value), std::to_string(r.raw_evaluations), i == 0 ? "" : Plain(r.raw_difference)}, separator);
+    }
+    return out;
+}
+
+std::string DerivativeText(const DerivativeAnswer& answer, char separator) {
+    const DifferentiationResult& r = answer.result;
+    std::string out = Line({"quantity", "value"}, separator);
+    if (r.has_exact) {
+        out += Line({"f'", Plain(r.exact_first)}, separator);
+        out += Line({"f''", Plain(r.exact_second)}, separator);
+    }
+    out += Line({"f' numerical", Plain(r.numerical_first)}, separator);
+    out += Line({"f'' numerical", Plain(r.numerical_second)}, separator);
+    out += Line({"h", Plain(r.step)}, separator);
+    if (answer.curve.success) {
+        out += Line({"h", "forward_error", "central_error"}, separator);
+        for (size_t i = 0; i < answer.curve.steps.size(); ++i)
+            out += Line({Plain(answer.curve.steps[i]), Plain(answer.curve.forward_error[i]), Plain(answer.curve.central_error[i])},
+                        separator);
+    }
+    return out;
+}
+
+std::string CurvatureText(const CurvatureAnswer& answer, char separator) {
+    const CurvatureResult& r = answer.result;
+    std::string out = Line({"gradient"}, separator);
+    std::vector<std::string> cells;
+    for (const double v : r.gradient) cells.push_back(Plain(v));
+    out += Line(cells, separator);
+    out += Line({"hessian"}, separator);
+    for (const auto& row : r.hessian) {
+        cells.clear();
+        for (const double v : row) cells.push_back(Plain(v));
+        out += Line(cells, separator);
+    }
+    out += Line({"eigenvalues"}, separator);
+    cells.clear();
+    for (const double v : r.eigenvalues) cells.push_back(Plain(v));
+    return out + Line(cells, separator);
 }
 
 } // namespace cyxwiz::optcalc

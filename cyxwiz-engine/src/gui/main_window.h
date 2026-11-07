@@ -77,12 +77,7 @@ class DNNInferencePanel;
 // Linear Algebra panels (Phase 7)
 class LinearAlgebraPanel;
 // Optimization & Calculus panels (Phase 9)
-class GradientDescentPanel;
-class ConvexityPanel;
-class LPPanel;
-class QPPanel;
-class DifferentiationPanel;
-class IntegrationPanel;
+class OptimizationPanel;
 // Text: Language Model Generation (the data tools are Explore > Text)
 class LanguageModelGenerationPanel;
 // Utilities panels (Phase 12)
@@ -418,12 +413,7 @@ private:
     std::unique_ptr<cyxwiz::LinearAlgebraPanel> linear_algebra_panel_;
 
     // Optimization & Calculus panels (Phase 9)
-    std::unique_ptr<cyxwiz::GradientDescentPanel> gradient_descent_panel_;
-    std::unique_ptr<cyxwiz::ConvexityPanel> convexity_panel_;
-    std::unique_ptr<cyxwiz::LPPanel> lp_panel_;
-    std::unique_ptr<cyxwiz::QPPanel> qp_panel_;
-    std::unique_ptr<cyxwiz::DifferentiationPanel> differentiation_panel_;
-    std::unique_ptr<cyxwiz::IntegrationPanel> integration_panel_;
+    std::unique_ptr<cyxwiz::OptimizationPanel> optimization_panel_;
 
     // Text: Language Model Generation
     std::unique_ptr<cyxwiz::LanguageModelGenerationPanel> language_model_generation_panel_;

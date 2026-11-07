@@ -207,6 +207,8 @@ struct RuleRow {
     std::string value;
     std::string evaluations;
     std::string difference;    // from the adaptive answer
+    double raw_value = 0.0, raw_difference = 0.0;  // for Copy / Export (the adaptive row: its estimate)
+    int raw_evaluations = 0;
 };
 
 struct IntegralAnswer {
@@ -258,5 +260,15 @@ struct CurvatureAnswer {
     RangeCurvature range;
 };
 CurvatureAnswer RunCurvature(const CurvatureRequest& request);
+
+// ---------------------------------------------------------------------------
+// Copy and Export: the answer as rows of plain numbers (a '-' sign, full
+// precision), separated by `separator` (',' for a CSV file, '\t' to paste).
+
+std::string MinimizeText(const MinimizeRequest& request, const MinimizeAnswer& answer, char separator);
+std::string ProgramText(const ProgramRequest& request, const ProgramAnswer& answer, char separator);
+std::string IntegralText(const IntegralAnswer& answer, char separator);
+std::string DerivativeText(const DerivativeAnswer& answer, char separator);
+std::string CurvatureText(const CurvatureAnswer& answer, char separator);
 
 } // namespace cyxwiz::optcalc

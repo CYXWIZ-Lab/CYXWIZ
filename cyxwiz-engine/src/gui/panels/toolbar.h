@@ -260,12 +260,8 @@ public:
     void SetOpenWaveletCallback(std::function<void()> cb) { open_wavelet_callback_ = cb; }
 
     // Optimization & Calculus callbacks (Phase 9)
-    void SetOpenGradientDescentCallback(std::function<void()> cb) { open_gradient_descent_callback_ = cb; }
-    void SetOpenConvexityCallback(std::function<void()> cb) { open_convexity_callback_ = cb; }
-    void SetOpenLPCallback(std::function<void()> cb) { open_lp_callback_ = cb; }
-    void SetOpenQPCallback(std::function<void()> cb) { open_qp_callback_ = cb; }
-    void SetOpenDifferentiationCallback(std::function<void()> cb) { open_differentiation_callback_ = cb; }
-    void SetOpenIntegrationCallback(std::function<void()> cb) { open_integration_callback_ = cb; }
+    // Tools > Optimization and Calculus: the window on an operation ("optimizers", "linear", ...).
+    void SetOpenOptimizationCallback(std::function<void(const std::string&)> cb) { open_optimization_callback_ = std::move(cb); }
 
     // Time Series Analysis callbacks (Phase 10)
     void SetOpenDecompositionCallback(std::function<void()> cb) { open_decomposition_callback_ = cb; }
@@ -742,12 +738,7 @@ private:
     std::function<void()> open_wavelet_callback_;
 
     // Optimization & Calculus callbacks (Phase 9)
-    std::function<void()> open_gradient_descent_callback_;
-    std::function<void()> open_convexity_callback_;
-    std::function<void()> open_lp_callback_;
-    std::function<void()> open_qp_callback_;
-    std::function<void()> open_differentiation_callback_;
-    std::function<void()> open_integration_callback_;
+    std::function<void(const std::string&)> open_optimization_callback_;
 
     // Time Series Analysis callbacks (Phase 10)
     std::function<void()> open_decomposition_callback_;

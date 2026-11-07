@@ -246,7 +246,6 @@ set(BACKEND_SOURCES
     src/algorithms/signal_processing_spectrum.cpp
     src/algorithms/calculus.cpp
     src/algorithms/expression.cpp
-    src/algorithms/optimization.cpp
     src/algorithms/optimization_paths.cpp
     src/algorithms/optimization_programs.cpp
     src/algorithms/time_series.cpp

@@ -690,12 +690,8 @@ set(ENGINE_SOURCES
     src/gui/panels/dnn_inference_panel.cpp
     src/serving/inference_server.cpp
     src/gui/panels/linear_algebra_panel.cpp
-    src/gui/panels/gradient_descent_panel.cpp
-    src/gui/panels/convexity_panel.cpp
-    src/gui/panels/lp_panel.cpp
-    src/gui/panels/qp_panel.cpp
-    src/gui/panels/differentiation_panel.cpp
-    src/gui/panels/integration_panel.cpp
+    src/gui/panels/optimization_panel.cpp
+    src/gui/panels/optimization_plots.cpp
     src/gui/panels/language_model_generation_panel.cpp
     src/gui/panels/language_model_load_dialog.cpp
     src/gui/panels/calculator_panel.cpp
@@ -976,12 +972,8 @@ set(ENGINE_HEADERS
     src/gui/panels/serving_panel.h
     src/serving/inference_server.h
     src/gui/panels/linear_algebra_panel.h
-    src/gui/panels/gradient_descent_panel.h
-    src/gui/panels/convexity_panel.h
-    src/gui/panels/lp_panel.h
-    src/gui/panels/qp_panel.h
-    src/gui/panels/differentiation_panel.h
-    src/gui/panels/integration_panel.h
+    src/gui/panels/optimization_panel.h
+    src/gui/panels/optimization_plots.h
     src/gui/panels/language_model_generation_panel.h
     src/gui/panels/language_model_load_dialog.h
     src/gui/panels/calculator_panel.h

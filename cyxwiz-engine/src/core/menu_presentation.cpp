@@ -654,13 +654,14 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Action(f, "tools.filter_designer", "Filter Designer", "Opens the Signal tab on Filter: a band kept or removed, its response and the column filtered."),
                          Action(f, "tools.convolution", "Convolution Calculator", "Opens the Signal tab on Filter with a typed kernel: the column convolved with it."),
                          Action(f, "tools.wavelet", "Wavelet Transform", "Opens the Signal tab on Wavelet: the column split by scale, each part's share of the energy.")}));
-        i.push_back(Sub("tools.optimization", "Optimization and Calculus", "Optimisation and calculus tools.",
-                        {Tool(f, "tools.gradient_descent", "Gradient Descent Visualizer"),
-                         Tool(f, "tools.convexity", "Convexity Analyzer"),
-                         Tool(f, "tools.lp", "Linear Programming (LP)"),
-                         Tool(f, "tools.qp", "Quadratic Programming (QP)"),
-                         Tool(f, "tools.differentiation", "Numerical Differentiation"),
-                         Tool(f, "tools.integration", "Numerical Integration")}));
+        i.push_back(Sub("tools.optimization", "Optimization and Calculus", "Typed formulas minimized, integrated and differentiated; linear and quadratic programs.",
+                        {Action(f, "tools.gradient_descent", "Gradient Descent Visualizer",
+                                "Opens the Optimization and Calculus window on Optimizers: the training optimizers' paths on a formula's map."),
+                         Action(f, "tools.convexity", "Convexity Analyzer", "Opens the window on Curvature: how a formula curves at a point and over a range."),
+                         Action(f, "tools.lp", "Linear Programming (LP)", "Opens the window on Linear: the best c . x under linear constraints, any number of variables."),
+                         Action(f, "tools.qp", "Quadratic Programming (QP)", "Opens the window on Quadratic: the smallest 0.5 x' Q x + c' x under linear constraints."),
+                         Action(f, "tools.differentiation", "Numerical Differentiation", "Opens the window on Derivative: f' and f'' exactly and by differences."),
+                         Action(f, "tools.integration", "Numerical Integration", "Opens the window on Integral: adaptive with an error estimate, and the fixed rules.")}));
         i.push_back(Sub("tools.time_series", "Time Series", "A column over time: its parts, its season, its forecast.",
                         {Action(f, "tools.decomposition", "Time Series Decomposition", "Opens Data Studio's Series tab on Parts: trend, season and the rest."),
                          Action(f, "tools.acf_pacf", "ACF / PACF (Correlogram)", "Opens the Series tab on Correlogram: how the series follows its own past."),
