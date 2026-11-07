@@ -51,9 +51,10 @@ public:
     // event in words ("Division by zero").
     double Evaluate(const std::vector<double>& values, std::string* problem = nullptr) const;
 
-    // The values at many points on the device (float64 where it has it):
-    // columns[v][i] is variable v at point i; every column has the same
-    // length. Returns one value per point.
+    // The values at many points, always in float64: on the device when it
+    // computes in float64, else on the host (a float32 device cannot meet an
+    // integral's 1e-8 tolerance). columns[v][i] is variable v at point i;
+    // every column has the same length. Returns one value per point.
     std::vector<double> EvaluateMany(const std::vector<std::vector<double>>& columns) const;
 
     // The exact derivative with respect to variable `index`, simplified.

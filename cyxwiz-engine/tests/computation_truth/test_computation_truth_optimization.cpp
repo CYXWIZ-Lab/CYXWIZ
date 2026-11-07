@@ -5,15 +5,25 @@
 // expression  cyxwiz::Expression: values and exact derivatives at points
 //             (host, and the device for many points at once), parse errors,
 //             printing back, and the Calculator that reads through it.
+// quad        Calculus::Integrate, adaptive, against the exact value and
+//             scipy.integrate.quad; an unconverged answer's estimate covers
+//             its error.
+// fixed       trapezoid / midpoint / Simpson / Gauss-Legendre and the
+//             Legendre nodes against numpy / scipy.
+// derivative  exact f' and f'', the numerical ones, the error by step.
+// curvature   Rosenbrock's Hessian eigenvalues and the range count.
 
 #include "test_device_selection.h"
 
+#include <cyxwiz/calculus.h>
 #include <cyxwiz/expression.h>
 #include <cyxwiz/utilities.h>
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -21,6 +31,7 @@
 #include <vector>
 
 using json = nlohmann::json;
+using cyxwiz::Calculus;
 using cyxwiz::Expression;
 
 namespace {
@@ -53,7 +64,6 @@ std::vector<std::string> Strings(const json& j) {
 }
 
 void CheckExpressions(const json& cases) {
-    const double device_tol = cyxwiz::test::DeviceTolerance(1e-12, 2e-5);
     for (const auto& c : cases) {
         const std::string text = c.at("text").get<std::string>();
         const auto variables = Strings(c.at("variables"));
@@ -87,7 +97,7 @@ void CheckExpressions(const json& cases) {
         const std::vector<double> many = f.EvaluateMany(columns);
         Check(many.size() == points.size(), text + ": one device value per point");
         for (size_t p = 0; p < many.size(); ++p)
-            Near(many[p], c.at("values")[p].get<double>(), device_tol, text + " on the device at point " + std::to_string(p));
+            Near(many[p], c.at("values")[p].get<double>(), 1e-12, text + " on the device at point " + std::to_string(p));
     }
 }
 
@@ -142,6 +152,124 @@ void CheckCalculator() {
     Check(!unknown.success && unknown.error_message.find("Unknown name 'q'") != std::string::npos, "unknown name");
 }
 
+double Bound(const json& j) {
+    const std::string b = j.get<std::string>();
+    if (b == "inf") return std::numeric_limits<double>::infinity();
+    if (b == "-inf") return -std::numeric_limits<double>::infinity();
+    if (b == "pi") return 3.14159265358979323846;
+    return std::stod(b);
+}
+
+void CheckQuad(const json& cases) {
+    for (const auto& c : cases) {
+        const std::string text = c.at("text").get<std::string>();
+        const std::string label = text + " from " + c.at("a").get<std::string>() + " to " + c.at("b").get<std::string>();
+        const auto r = Calculus::Integrate(Expression::Parse(text, {"x"}), Bound(c.at("a")), Bound(c.at("b")));
+        Check(r.success, label + ": " + r.error_message);
+        const double exact = c.at("exact").get<double>(), miss = std::fabs(r.value - exact);
+        std::cout << "  " << label << ": " << r.value << " (estimate " << r.error_estimate << ", " << r.evaluations
+                  << " evaluations, " << r.intervals << " intervals" << (r.converged ? "" : ", not converged") << "; quad "
+                  << c.at("quad_evaluations").get<int>() << ")\n";
+        Check(miss <= (std::max)(r.error_estimate, 4e-16 * (1.0 + std::fabs(exact))),
+              label + ": the estimate covers the error (" + std::to_string(miss) + " vs " + std::to_string(r.error_estimate) + ")");
+        if (r.converged)
+            Check(miss <= (std::max)(1.49e-8, 1.49e-8 * std::fabs(exact)), label + ": within quad's tolerance, off by " + std::to_string(miss));
+        if (c.at("quad_evaluations").get<int>() == 21) {  // one interval: the same rule as QUADPACK
+            Check(r.evaluations == 21, label + ": one interval");
+            Near(r.value, c.at("quad").get<double>(), 1e-15, label + " = quad");
+            Near(r.error_estimate, c.at("quad_error").get<double>(), 1e-6, label + " estimate = quad's");
+        }
+    }
+    const auto odd = Calculus::Integrate(Expression::Parse("x", {"x"}), 0, 1, {cyxwiz::QuadratureRule::Simpson, 7});
+    Check(!odd.success && odd.error_message.find("even number") != std::string::npos, "Simpson refuses an odd n");
+    const auto open = Calculus::Integrate(Expression::Parse("exp(-x)", {"x"}), 0, std::numeric_limits<double>::infinity(),
+                                          {cyxwiz::QuadratureRule::Trapezoid, 10});
+    Check(!open.success && open.error_message.find("adaptive") != std::string::npos, "infinite bounds need the adaptive rule");
+    const auto two = Calculus::Integrate(Expression::Parse("x*y", {"x", "y"}), 0, 1);
+    Check(!two.success && two.error_message.find("one variable") != std::string::npos, "one variable");
+    const auto pole = Calculus::Integrate(Expression::Parse("1/(x - 0.5)", {"x"}), 0, 1, {cyxwiz::QuadratureRule::Trapezoid, 2});
+    Check(!pole.success && pole.error_message.find("not finite at x = 0.5") != std::string::npos, "a pole named: " + pole.error_message);
+}
+
+void CheckFixed(const json& c) {
+    const Expression f = Expression::Parse(c.at("text").get<std::string>(), {"x"});
+    const double a = Bound(c.at("a")), b = Bound(c.at("b"));
+    const int n = c.at("n").get<int>();
+    const std::pair<const char*, cyxwiz::QuadratureRule> rules[] = {{"trapezoid", cyxwiz::QuadratureRule::Trapezoid},
+        {"midpoint", cyxwiz::QuadratureRule::Midpoint}, {"simpson", cyxwiz::QuadratureRule::Simpson}};
+    for (const auto& [name, rule] : rules) {
+        const auto r = Calculus::Integrate(f, a, b, {rule, n});
+        Check(r.success && std::isnan(r.error_estimate), std::string(name) + " runs, no estimate");
+        Near(r.value, c.at("rules").at(name).get<double>(), 1e-13, name);
+    }
+    for (const auto& [k, value] : c.at("gauss").items()) {
+        const auto r = Calculus::Integrate(f, a, b, {cyxwiz::QuadratureRule::GaussLegendre, std::stoi(k)});
+        Check(r.success && r.evaluations == std::stoi(k), "Gauss " + k + " points");
+        Near(r.value, value.get<double>(), 1e-14, "Gauss-Legendre " + k);
+    }
+    for (const auto& [k, table] : c.at("legendre").items()) {
+        std::vector<double> nodes, weights;
+        Calculus::GaussLegendre(std::stoi(k), nodes, weights);
+        const auto en = Doubles(table.at("nodes")), ew = Doubles(table.at("weights"));
+        Check(nodes.size() == en.size(), "Legendre " + k + " size");
+        for (size_t i = 0; i < en.size(); ++i) {
+            Near(nodes[i], en[i], 1e-14, "Legendre " + k + " node " + std::to_string(i));
+            Near(weights[i], ew[i], 1e-13, "Legendre " + k + " weight " + std::to_string(i));
+        }
+    }
+}
+
+void CheckDerivatives(const json& cases) {
+    for (const auto& c : cases) {
+        const std::string text = c.at("text").get<std::string>();
+        const Expression f = Expression::Parse(text, {"x"});
+        const double x = c.at("x").get<double>();
+        const auto r = Calculus::Differentiate(f, x);
+        Check(r.success && r.has_exact, text + " differentiates: " + r.error_message);
+        Near(r.exact_first, c.at("first").get<double>(), 1e-14, text + " f'");
+        Near(r.exact_second, c.at("second").get<double>(), 1e-13, text + " f''");
+        Near(r.numerical_first, r.exact_first, 1e-9, text + " central f' at h = " + std::to_string(r.step));
+        Near(r.numerical_second, r.exact_second, 1e-6, text + " f'' at h = " + std::to_string(r.second_step));
+        const auto forward = Calculus::Differentiate(f, x, cyxwiz::DifferenceRule::Forward, 1e-4);
+        const auto backward = Calculus::Differentiate(f, x, cyxwiz::DifferenceRule::Backward, 1e-4);
+        Check(std::fabs(forward.numerical_first - r.exact_first) > 1e-12 &&
+                  std::fabs(forward.numerical_first + backward.numerical_first - 2 * r.exact_first) <
+                      std::fabs(forward.numerical_first - r.exact_first),
+              text + ": forward and backward err on opposite sides");
+        const auto steps = Doubles(c.at("steps"));
+        const auto curve = Calculus::ErrorByStep(f, x, steps.front(), steps.back(), static_cast<int>(steps.size()));
+        Check(curve.success && curve.steps.size() == steps.size(), text + " error curve");
+        const double fx = std::fabs(f.Evaluate({x})) + 1.0;
+        for (size_t i = 0; i < steps.size(); ++i) {
+            Near(curve.steps[i], steps[i], 1e-12, text + " step " + std::to_string(i));
+            const double noise = 8 * 2.2e-16 * fx / steps[i];
+            const double ef = c.at("forward_error")[i].get<double>(), ec = c.at("central_error")[i].get<double>();
+            Check(std::fabs(curve.forward_error[i] - ef) <= (std::max)(1e-3 * ef, noise), text + " forward error at h " + std::to_string(steps[i]));
+            Check(std::fabs(curve.central_error[i] - ec) <= (std::max)(1e-3 * ec, noise), text + " central error at h " + std::to_string(steps[i]));
+        }
+    }
+    const auto none = Calculus::Differentiate(Expression::Parse("max(x, 0)", {"x"}), 1.0);
+    Check(none.success && !none.has_exact && std::fabs(none.numerical_first - 1.0) < 1e-9, "no exact derivative, numerical still");
+}
+
+void CheckCurvature(const json& c) {
+    const Expression f = Expression::Parse(c.at("text").get<std::string>(), {"x", "y"});
+    for (const auto& p : c.at("at")) {
+        const auto point = Doubles(p.at("point"));
+        const auto r = Calculus::CurvatureAt(f, point);
+        Check(r.success, "curvature at a point: " + r.error_message);
+        const auto e = Doubles(p.at("eigenvalues"));
+        for (size_t i = 0; i < e.size(); ++i) Near(r.eigenvalues[i], e[i], 1e-10, "eigenvalue " + std::to_string(i));
+    }
+    const auto& range = c.at("range");
+    const auto r = Calculus::CurvatureOverRange(f, range.at("x")[0].get<double>(), range.at("x")[1].get<double>(),
+                                                range.at("y")[0].get<double>(), range.at("y")[1].get<double>(),
+                                                range.at("per_side").get<int>());
+    Check(r.success && r.points == 1600, "range check: " + r.error_message);
+    Check(r.negative_points == range.at("negative").get<int>(),
+          "negative-curvature points: " + std::to_string(r.negative_points));
+}
+
 }  // namespace
 
 int main() {
@@ -153,6 +281,10 @@ int main() {
     CheckRefusals();
     CheckReadable();
     CheckCalculator();
+    CheckQuad(fixture.at("quad"));
+    CheckFixed(fixture.at("fixed"));
+    CheckDerivatives(fixture.at("derivative"));
+    CheckCurvature(fixture.at("curvature"));
     std::cout << "Optimization truth test passed: " << checks << " checks\n";
     return 0;
 }

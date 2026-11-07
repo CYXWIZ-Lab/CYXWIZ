@@ -31,6 +31,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/api_export.h` | This header includes the CMake-generated export header and provides the CYXWIZ_API macro for backward compatibility |  |
 | `cyxwiz/audio_processing.h` |  | `AudioData`, `SpectrogramConfig`, `MelConfig`, `MFCCConfig`, `AudioFeatures`, `AudioProcessing` |
 | `cyxwiz/backend_fallback_reason.h` |  | `BackendFallbackReason` |
+| `cyxwiz/calculus.h` | Integrals, derivatives and curvature of a typed formula (TOFIX129 D10). The formula is a cyxwiz::Expression; its points are evaluated on the selected ArrayFire device, many at a time (float64 where the device has it). | `QuadratureOptions`, `QuadratureResult`, `DifferentiationResult`, `StepErrorCurve`, `CurvatureResult`, `RangeCurvature`, `Calculus`, `QuadratureRule`, `DifferenceRule` |
 | `cyxwiz/classic_ml.h` | Classical supervised models on ArrayFire (TOFIX145 Group C): fit on host rows, compute on the selected device (float64 where it has it), results back as host values. scikit-learn is the oracle: same formulas, same class order (classes are 0..k-1 in the caller's sorted label order), same tie... | `ClassicPrediction`, `GaussianNBModel`, `KNNModel`, `LogisticModel`, `SVMModel`, `ClassicML` |
 | `cyxwiz/clustering.h` |  | `KMeansResult`, `DBSCANResult`, `HierarchicalResult`, `GMMResult`, `ClusterMetrics`, `ElbowAnalysis`, `Clustering` |
 | `cyxwiz/cyxwiz.h` | Main header file for CyxWiz Backend Include this to get access to all backend functionality |  |

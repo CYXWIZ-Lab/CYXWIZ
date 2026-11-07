@@ -646,11 +646,18 @@ std::vector<double> Expression::EvaluateMany(const std::vector<std::vector<doubl
     for (const auto& c : columns)
         if (c.size() != count) return {};
     if (count == 0) return {};
-    const af::dtype type = DeviceHasDouble() ? f64 : f32;
+    if (!DeviceHasDouble()) {
+        std::vector<double> out(count), point(columns.size());
+        for (size_t i = 0; i < count; ++i) {
+            for (size_t v = 0; v < columns.size(); ++v) point[v] = columns[v][i];
+            out[i] = EvaluateHost(root_, point, nullptr);
+        }
+        return out;
+    }
     std::vector<af::array> device;
     device.reserve(columns.size());
-    for (const auto& c : columns) device.push_back(HostValuesToDevice(c).as(type));
-    return DeviceToHostValues(EvaluateDevice(root_, device, static_cast<dim_t>(count), type), "Expression::EvaluateMany");
+    for (const auto& c : columns) device.push_back(HostValuesToDevice(c));
+    return DeviceToHostValues(EvaluateDevice(root_, device, static_cast<dim_t>(count), f64), "Expression::EvaluateMany");
 }
 
 Expression Expression::Derivative(size_t index) const {
