@@ -155,6 +155,7 @@ only until `OnUnload` returns.
 | `AssistantContextSnapshot GetAssistantContextSnapshot() const` | What the user is looking at (workspace, graph, selection); for the assistant plugin. The Engine fills it in when the user sends an assistant command, just before your `RunAssistantCommand`, so read it there |
 | `PluginUi* GetUi()` | The Engine's buttons, fields and theme colours for your panels (API 1.4, section 9). Null only in hosts without windows (`cyxwiz-plugin-check`) |
 | `bool ShowPanel(const std::string& panel_id)` | Opens one of your own panels and brings it to the front, for a button in one panel that leads to another (API 1.4). `false` when you have no panel with that id |
+| `void RequestFullFrameRate()` | Keeps the Engine drawing at full frame rate for the next second (API 1.4). Without mouse or key input the Engine draws 10 frames a second, so call it every frame while something in your panel moves, such as a running simulation. Stop calling it and the Engine goes back to the idle rate |
 
 Each `Register*` returns `false` when the permission is missing (section 3)
 and logs why. Use either `QueryInterface` (section 6) or `Register*` for an

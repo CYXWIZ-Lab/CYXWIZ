@@ -155,6 +155,8 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     const bool paused = rs.paused;
     const bool can_drive = rs.can_drive;
     const char* busy = graph ? kGraphReason : nullptr;
+    // The scene moves: keep the Engine at full frame rate without input
+    if (running || graph) ctx_->RequestFullFrameRate();
 
     // The model's name and source, then the controls centred on its two lines
     const float row_y = ImGui::GetCursorPosY();

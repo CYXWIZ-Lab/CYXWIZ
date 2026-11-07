@@ -23,6 +23,7 @@
 #include "core/dataset_catalog.h"
 #include "core/project_manager.h"
 #include "core/training_manager.h"
+#include "plugin/engine_plugin_context.h"
 #include "core/engine_config.h"
 #include "core/python_detector.h"
 #include "core/texture_manager.h"
@@ -661,10 +662,12 @@ void CyxWizApp::HandleInput() {
 
     bool has_activity = mouse_moved || mouse_clicked || mouse_scrolled || key_pressed;
 
-    // Check if training is active (need full frame rate)
-    bool training_active = cyxwiz::TrainingManager::Instance().IsTrainingActive();
+    // Training, and a plugin with something moving (a running simulation),
+    // need the full frame rate without input.
+    const bool keep_full_rate = cyxwiz::TrainingManager::Instance().IsTrainingActive() ||
+                                cyxwiz::plugin::EnginePluginContext::FullFrameRateRequested();
 
-    if (has_activity || training_active) {
+    if (has_activity || keep_full_rate) {
         last_activity_time_ = current_time;
         is_idle_ = false;
     } else if (current_time - last_activity_time_ > IDLE_TIMEOUT) {
@@ -676,7 +679,7 @@ void CyxWizApp::HandleInput() {
 
     const bool focused = glfwGetWindowAttrib(window_, GLFW_FOCUSED) != 0;
 
-    if (is_idle_ && !training_active) {
+    if (is_idle_ && !keep_full_rate) {
         // Use wait with timeout for reduced CPU/GPU usage when idle
         glfwWaitEventsTimeout(IDLE_FRAME_TIME);
 

@@ -20,7 +20,8 @@ constexpr uint16_t PLUGIN_API_VERSION_MAJOR = 1;
 // 1.1: ITensorNodeProvider; 1.2: build fingerprint (TOFIX125); 1.3: typed
 // Tensor accessors check the type (Tensor::DataTypeName), data and analytics
 // providers on the Arrow C stream (TOFIX181); 1.4: PluginContext::GetUi, the
-// Engine's widgets and theme colours for plugin panels (TOFIX195).
+// Engine's widgets and theme colours for plugin panels, ShowPanel,
+// RequestFullFrameRate and ICommandProvider (TOFIX195).
 constexpr uint16_t PLUGIN_API_VERSION_MINOR = 4;
 constexpr uint16_t PLUGIN_API_VERSION_PATCH = 0;
 

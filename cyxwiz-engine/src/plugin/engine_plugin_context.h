@@ -5,6 +5,7 @@
 
 #include "plugin_context.h"
 
+#include <atomic>
 #include <mutex>
 
 namespace cyxwiz::plugin {
@@ -39,6 +40,9 @@ public:
 
     PluginUi* GetUi() override { return ui_; }
     bool ShowPanel(const std::string& panel_id) override;
+    void RequestFullFrameRate() override;
+    // Engine side: whether a plugin asked for full frame rate in the last second.
+    static bool FullFrameRateRequested();
     // Engine side: the GUI hands its PluginUi to every plugin context before
     // plugins load; hosts without windows leave it null.
     static void SetUi(PluginUi* ui) { ui_ = ui; }
@@ -62,6 +66,7 @@ private:
     AssistantContextSnapshot assistant_context_;
     mutable std::mutex assistant_context_mutex_;
     static inline PluginUi* ui_ = nullptr;
+    static inline std::atomic<long long> full_rate_requested_at_{0};  // steady clock, ns
 };
 
 } // namespace cyxwiz::plugin

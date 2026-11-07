@@ -85,6 +85,12 @@ public:
     // no panel with that id.
     virtual bool ShowPanel(const std::string& panel_id) = 0;
 
+    // Keeps the Engine drawing at full frame rate for the next second. Call
+    // it every frame while something in your panel moves (a running
+    // simulation, an animation): without mouse or key input the Engine draws
+    // 10 frames a second.
+    virtual void RequestFullFrameRate() = 0;
+
 protected:
     PluginContext() = default;
     PluginContext(const PluginContext&) = delete;
