@@ -250,6 +250,7 @@ set(ENGINE_SOURCES
     src/core/signal_presentation.cpp
     src/core/text_explore.cpp
     src/core/linear_algebra_presentation.cpp
+    src/core/optimization_presentation.cpp
     src/core/text_presentation.cpp
     src/core/word_map.cpp
     src/core/project_column_roles.cpp
@@ -7881,6 +7882,16 @@ if(WIN32)
 endif()
 set_target_properties(test_linear_algebra_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME LinearAlgebraPresentation COMMAND test_linear_algebra_presentation)
+
+# Tools > Optimization and Calculus: the window's model (TOFIX129 D10).
+add_executable(test_optimization_presentation tests/test_optimization_presentation.cpp src/core/optimization_presentation.cpp)
+target_include_directories(test_optimization_presentation PRIVATE src)
+target_link_libraries(test_optimization_presentation PRIVATE cyxwiz-backend)
+if(MSVC)
+    target_compile_definitions(test_optimization_presentation PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_optimization_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME OptimizationPresentation COMMAND test_optimization_presentation)
 
 # The word map (TOFIX129 D8, M-1 .. M-8): words placed, layouts, clusters, groups.
 add_executable(test_word_map tests/test_word_map.cpp src/core/word_map.cpp)
