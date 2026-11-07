@@ -311,6 +311,7 @@ set(ENGINE_SOURCES
     src/core/layer_capture_settings.cpp
     src/core/layer_tensor_reader.cpp
     src/core/training_manager.cpp
+    src/core/training_recipe.cpp
     src/core/cross_validation_runner.cpp
     src/core/cross_validation_presentation.cpp
     src/core/test_executor.cpp
@@ -5609,6 +5610,7 @@ configure_training_executor_harness(test_training_scheduler_lifecycle)
 add_executable(test_training_manager_session
     tests/test_training_manager_session.cpp
     src/core/training_manager.cpp
+    src/core/training_recipe.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
     src/gui/generation_preview_view.cpp
@@ -8121,6 +8123,7 @@ add_executable(test_engine_node_parity
     tests/test_engine_node_parity.cpp
     src/gui/engine_graph_training_dispatch.cpp
     src/core/training_manager.cpp
+    src/core/training_recipe.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/gui/generation_preview_view.cpp

@@ -17,6 +17,7 @@
 namespace cyxwiz {
 
 class TrainingPlotPanel;
+struct TrainingRecipe;
 
 enum class ActiveModelOrigin {
     None,
@@ -89,88 +90,13 @@ public:
     TrainingMetrics GetCurrentMetrics() const;
 
     /**
-     * Start training with compiled graph configuration
-     * @param config Compiled training configuration from GraphCompiler
-     * @param dataset Dataset handle
-     * @param epochs Number of epochs
-     * @param batch_size Batch size
-     * @param plot_panel Optional plot panel for progress visualization
-     * @param node_editor_callback Callback to update node editor training state
-     * @return true if training started, false if already training
+     * Start a training run from a recipe (training_recipe.h): how the run's
+     * data is read, the same for a search's trials. False, with the reason
+     * logged, when already training or the recipe cannot build the run.
      */
-    bool StartTraining(
+    bool StartTrainingRecipe(
+        const TrainingRecipe& recipe,
         TrainingConfiguration config,
-        ExternalBatcherFactory batcher_factory,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-    /**
-     * Start training from role-resolved external batchers. The caller owns
-     * modality-specific construction; TrainingManager owns the common loop.
-     */
-    bool StartTrainingExternal(
-        TrainingConfiguration config,
-        ResolvedExternalBatchers batchers,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
-    /**
-     * Start training with Arrow dataset (modern API)
-     */
-    bool StartTrainingArrow(
-        TrainingConfiguration config,
-        std::shared_ptr<ArrowDataset> arrow_dataset,
-        const std::string& label_column,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
-    /**
-     * Start training with a disk-backed Parquet dataset. Used when
-     * DataRegistry::LoadTabularCSV picked the disk-backed path because
-     * the CSV was larger than available RAM. Mirrors StartTrainingArrow
-     * exactly; differs only in the dataset type carried through to the
-     * TrainingExecutor, which picks its Parquet batcher accordingly.
-     */
-    bool StartTrainingParquet(
-        TrainingConfiguration config,
-        std::shared_ptr<class ParquetBackedDataset> parquet_dataset,
-        const std::string& label_column,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
-    bool StartTrainingSequence(
-        TrainingConfiguration config,
-        std::unique_ptr<ISequenceBatcher> sequence_batcher,
-        std::vector<std::string> id_to_label,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
-    bool StartTrainingImage(
-        TrainingConfiguration config,
-        const DataRegistry::ImageDatasetEntry& image_entry,
-        int epochs,
-        int batch_size,
-        std::weak_ptr<TrainingPlotPanel> plot_panel = {},
-        std::function<void(bool)> node_editor_callback = nullptr
-    );
-
-    bool StartTrainingAudio(
-        TrainingConfiguration config,
-        const DataRegistry::AudioDatasetEntry& audio_entry,
         int epochs,
         int batch_size,
         std::weak_ptr<TrainingPlotPanel> plot_panel = {},

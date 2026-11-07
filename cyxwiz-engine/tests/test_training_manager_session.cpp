@@ -3,6 +3,7 @@
 #include "../src/core/crash_run_recorder.h"
 #include "../src/core/debug_run_paths.h"
 #include "../src/core/training_manager.h"
+#include "../src/core/training_recipe.h"
 #include "../src/core/training_trace_collector.h"
 #include "../src/gui/panels/training_plot_panel.h"
 #include "route_qualification_test_fixture.h"
@@ -22,6 +23,14 @@
 #include <vector>
 
 namespace {
+
+// Train starts tables through an Arrow recipe (training_recipe.h).
+bool StartArrow(cyxwiz::TrainingManager& manager, cyxwiz::TrainingConfiguration config,
+                std::shared_ptr<cyxwiz::ArrowDataset> dataset, const std::string& label, int epochs, int batch_size,
+                std::weak_ptr<cyxwiz::TrainingPlotPanel> panel, std::function<void(bool)> callback = nullptr) {
+    return manager.StartTrainingRecipe(cyxwiz::ArrowTrainingRecipe(std::move(dataset), label), std::move(config),
+                                       epochs, batch_size, panel, std::move(callback));
+}
 std::string expected_backend;
 
 void Check(bool condition, const std::string& message) {
@@ -221,14 +230,14 @@ int main(int argc, char** argv) {
         while (!release_completion.load()) std::this_thread::yield();
     });
     auto restart_config = MakeConfig(work_dir / "restart_checkpoints");
-    Check(manager.StartTrainingArrow(restart_config, MakeDataset(), "label", 1, 2, {}),
+    Check(StartArrow(manager, restart_config, MakeDataset(), "label", 1, 2, {}),
           "restart fixture should start");
     const auto restart_task_id = manager.GetCurrentTaskId();
     const bool reached_completion = WaitFor([&] { return completion_entered.load(); }, std::chrono::seconds(60));
     const bool admission_closed = manager.IsTrainingActive();
     bool restart_rejected = false;
     if (reached_completion && admission_closed) {
-        restart_rejected = !manager.StartTrainingArrow(restart_config, MakeDataset(), "label", 1, 2, {});
+        restart_rejected = !StartArrow(manager, restart_config, MakeDataset(), "label", 1, 2, {});
     }
     release_completion.store(true);
     manager.WaitForTrainingStop();
@@ -260,7 +269,7 @@ int main(int argc, char** argv) {
 
     auto panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
     auto config = MakeConfig(work_dir / "checkpoints");
-    const bool started = manager.StartTrainingArrow(
+    const bool started = StartArrow(manager, 
         config,
         MakeDataset(),
         "label",
@@ -341,7 +350,7 @@ int main(int argc, char** argv) {
     auto cancelled_config = MakeConfig(work_dir / "cancelled_checkpoints");
     cancelled_config.epochs = 1000;
     auto cancelled_panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
-    const bool cancel_started = manager.StartTrainingArrow(
+    const bool cancel_started = StartArrow(manager, 
         cancelled_config,
         MakeDataset(),
         "label",
@@ -430,7 +439,7 @@ int main(int argc, char** argv) {
     early_stop_config.save_best_checkpoint = true;
     early_stop_config.early_stopping_patience = 1;
     auto early_stop_panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
-    const bool early_stop_started = manager.StartTrainingArrow(
+    const bool early_stop_started = StartArrow(manager, 
         early_stop_config,
         MakeDataset(),
         "label",
@@ -557,7 +566,7 @@ int main(int argc, char** argv) {
     auto failure_config = MakeConfig(work_dir / "failure_checkpoints");
     failure_config.optimizer_type = gui::NodeType::Output;
     auto failure_panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
-    const bool failure_started = manager.StartTrainingArrow(
+    const bool failure_started = StartArrow(manager, 
         failure_config,
         MakeDataset(),
         "label",
@@ -632,7 +641,7 @@ int main(int argc, char** argv) {
     callback_success.store(true);
     auto device_failure_panel = std::make_shared<cyxwiz::TrainingPlotPanel>();
     auto device_failure_config = MakeConfig(work_dir / "device_failure_checkpoints");
-    Check(manager.StartTrainingArrow(device_failure_config, MakeDataset(), "label",
+    Check(StartArrow(manager, device_failure_config, MakeDataset(), "label",
               1, 2, device_failure_panel), "accept device-preflight failure fixture");
     const auto device_failure_task = WaitForTerminalTask(manager, tasks,
         manager.GetCurrentTaskId(), "device preflight failure");
