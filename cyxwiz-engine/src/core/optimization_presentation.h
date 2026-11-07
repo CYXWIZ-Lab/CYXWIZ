@@ -259,7 +259,7 @@ struct DerivativeRequest {
     std::string formula = "sin(x)";
     std::string x = "1";
     DifferenceRule rule = DifferenceRule::Central;
-    double h = 0.0;            // 0: the step that suits float64
+    std::string step;          // h as typed; empty: the step that suits float64
 };
 
 struct DerivativeAnswer {

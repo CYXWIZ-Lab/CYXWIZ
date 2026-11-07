@@ -73,7 +73,7 @@ OptimizerPath Optimization::FollowOptimizer(const Expression& f, const std::vect
         path.error_message = "The number of steps cannot be negative";
         return path;
     }
-    if (!(setting.learning_rate > 0.0)) {
+    if (!(setting.learning_rate > 0.0) || !std::isfinite(setting.learning_rate)) {
         path.error_message = "The learning rate must be above 0";
         return path;
     }
@@ -85,7 +85,13 @@ OptimizerPath Optimization::FollowOptimizer(const Expression& f, const std::vect
             return path;
         }
     }
-    std::unique_ptr<Optimizer> optimizer = Make(setting, path.error_message);
+    std::unique_ptr<Optimizer> optimizer;
+    try {
+        optimizer = Make(setting, path.error_message);
+    } catch (const std::exception& e) {
+        path.error_message = std::string("The optimizer refused its settings: ") + e.what();
+        return path;
+    }
     if (!optimizer) return path;
 
     try {

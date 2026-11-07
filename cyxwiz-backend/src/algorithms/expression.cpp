@@ -6,10 +6,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
+#include <system_error>
 
 namespace cyxwiz {
 
@@ -91,7 +93,7 @@ NodePtr Raw(Op op, NodePtr a, NodePtr b = nullptr, Fn fn = Fn::Sin) {
 
 double Factorial(double x) {
     const double n = std::trunc(x);
-    if (n < 0) return std::numeric_limits<double>::quiet_NaN();
+    if (std::isnan(n) || n < 0) return std::numeric_limits<double>::quiet_NaN();
     double result = 1.0;
     for (double i = 2; i <= n && std::isfinite(result); ++i) result *= i;
     return result;
@@ -190,7 +192,7 @@ NodePtr Pow(NodePtr a, NodePtr b) {
 }
 
 NodePtr Call(Fn fn, NodePtr a, NodePtr b = nullptr) {
-    if (IsNumber(a) && (!b || IsNumber(b)) && fn != Fn::Mod)
+    if (IsNumber(a) && (!b || IsNumber(b)) && fn != Fn::Mod && fn != Fn::Factorial)
         return Number(b ? Apply2(fn, a->value, b->value) : Apply1(fn, a->value));
     return Raw(Op::Function, std::move(a), std::move(b), fn);
 }
@@ -310,12 +312,19 @@ private:
                 while (pos_ < text_.size() && std::isdigit(static_cast<unsigned char>(text_[pos_]))) ++pos_;
             }
         }
-        const std::string digits = text_.substr(start, pos_ - start);
-        if (digits == ".") {
+        double value = 0.0;
+        const char* first = text_.data() + start;
+        const char* last = text_.data() + pos_;
+        const auto [end, ec] = std::from_chars(first, last, value);
+        if (ec == std::errc::result_out_of_range) {
+            pos_ = start;
+            Fail("Number out of range");
+        }
+        if (ec != std::errc() || end != last) {
             pos_ = start;
             Fail("Expected a number");
         }
-        return Number(std::stod(digits));
+        return Number(value);
     }
 
     NodePtr ParseName() {
@@ -575,7 +584,7 @@ int Precedence(const NodePtr& n) {
     switch (n->op) {
         case Op::Add: case Op::Subtract: return 1;
         case Op::Multiply: case Op::Divide: return 2;
-        case Op::Negate: return 3;
+        case Op::Negate: return Precedence(n->a) == 2 ? 2 : 3;  // -x*y reads as a product
         case Op::Power: return 4;
         case Op::Number: return n->value < 0 ? 3 : 5;
         default: return 5;

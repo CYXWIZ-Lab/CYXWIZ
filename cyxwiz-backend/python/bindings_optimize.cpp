@@ -48,7 +48,7 @@ double Limit(const py::handle& v, double none) { return v.is_none() ? none : v.c
 
 // None: the program's default; one (low, high) pair: every variable; else a
 // pair per variable. None inside a pair is no limit.
-std::vector<cyxwiz::VariableBound> Bounds(const py::object& bounds, size_t n) {
+std::vector<cyxwiz::VariableBound> Bounds(const py::object& bounds, size_t n) try {
     std::vector<cyxwiz::VariableBound> out;
     if (bounds.is_none()) return out;
     const auto seq = bounds.cast<py::sequence>();
@@ -61,6 +61,8 @@ std::vector<cyxwiz::VariableBound> Bounds(const py::object& bounds, size_t n) {
     if (py::len(seq) != n) throw py::value_error("bounds needs one (low, high) per variable, or one pair for all");
     for (const auto item : seq) out.push_back(pair(item));
     return out;
+} catch (const py::cast_error&) {
+    throw py::type_error("bounds is None, one (low, high) pair, or a (low, high) pair per variable, of numbers or None");
 }
 
 cyxwiz::ConstraintSense Sense(const std::string& s) {
@@ -71,7 +73,7 @@ cyxwiz::ConstraintSense Sense(const std::string& s) {
 }
 
 // (coefficients, sense, rhs) or (coefficients, sense, rhs, name) per row.
-std::vector<cyxwiz::LinearConstraint> Rows(const py::object& constraints) {
+std::vector<cyxwiz::LinearConstraint> Rows(const py::object& constraints) try {
     std::vector<cyxwiz::LinearConstraint> rows;
     if (constraints.is_none()) return rows;
     for (const auto item : constraints) {
@@ -87,6 +89,8 @@ std::vector<cyxwiz::LinearConstraint> Rows(const py::object& constraints) {
         rows.push_back(std::move(row));
     }
     return rows;
+} catch (const py::cast_error&) {
+    throw py::type_error("a constraint is (coefficients: numbers, sense: text, rhs: number[, name: text])");
 }
 
 const char* StatusName(cyxwiz::ProgramStatus s) {
@@ -171,8 +175,8 @@ void BindCalculus(py::module_& m) {
                  for (const auto& column : columns)
                      if (column.size() != columns.front().size()) throw py::value_error("the columns must be the same length");
                  return f.EvaluateMany(columns);
-             }, "The values at many points, a list of values per variable; on the device (float64 where it has it). "
-                "Points without a value give nan or inf", "columns"_a)
+             }, "The values at many points, a list of values per variable: on the device when it has float64, "
+                "otherwise on the host. Points without a value give nan or inf", "columns"_a)
         .def("derivative", [](const cyxwiz::Expression& f, const py::object& variable) {
                  size_t index = 0;
                  const auto& names = f.Variables();
@@ -182,9 +186,11 @@ void BindCalculus(py::module_& m) {
                      const auto it = std::find(names.begin(), names.end(), variable.cast<std::string>());
                      if (it == names.end()) throw py::value_error("not a variable of the formula: " + variable.cast<std::string>());
                      index = static_cast<size_t>(it - names.begin());
-                 } else {
+                 } else if (py::isinstance<py::int_>(variable) && variable.cast<long long>() >= 0) {
                      index = variable.cast<size_t>();
                      if (index >= names.size()) throw py::value_error("variable index out of range");
+                 } else {
+                     throw py::type_error("variable is a name or an index from 0");
                  }
                  cyxwiz::Expression d = f.Derivative(index);
                  if (!d.Valid()) throw py::value_error(d.Error());
@@ -203,7 +209,12 @@ void BindCalculus(py::module_& m) {
         options.absolute_tolerance = epsabs;
         options.relative_tolerance = epsrel;
         options.max_intervals = limit;
-        const auto r = cyxwiz::Calculus::Integrate(Formula(formula, {variable}), a, b, options);
+        const cyxwiz::Expression f = Formula(formula, {variable});
+        cyxwiz::QuadratureResult r;
+        {
+            py::gil_scoped_release release;
+            r = cyxwiz::Calculus::Integrate(f, a, b, options);
+        }
         if (!r.success) throw py::value_error(r.error_message);
         return py::dict("value"_a = r.value, "error"_a = NoneIfNaN(r.error_estimate), "converged"_a = r.converged,
                         "evaluations"_a = r.evaluations, "intervals"_a = r.intervals);
@@ -277,7 +288,12 @@ void BindOptimize(py::module_& m) {
         p.objective = c;
         p.constraints = Rows(constraints);
         p.bounds = Bounds(bounds, c.size());
-        return Answer(cyxwiz::Optimization::SolveLinearProgram(p));
+        cyxwiz::ProgramResult r;
+        {
+            py::gil_scoped_release release;
+            r = cyxwiz::Optimization::SolveLinearProgram(p);
+        }
+        return Answer(r);
     }, "Minimize (or maximize) c . x subject to the constraints, each (coefficients, '<=' / '>=' / '=', rhs[, name]), "
        "and the bounds (None: every x >= 0). Returns a dict: success, status ('optimal', 'infeasible', 'unbounded', "
        "'failed'), message, x, fun, slack, binding and shadow_prices (per row: how much the best value changes when "
@@ -291,7 +307,12 @@ void BindOptimize(py::module_& m) {
         p.c = c;
         p.constraints = Rows(constraints);
         p.bounds = Bounds(bounds, c.size());
-        return Answer(cyxwiz::Optimization::SolveQuadraticProgram(p));
+        cyxwiz::ProgramResult r;
+        {
+            py::gil_scoped_release release;
+            r = cyxwiz::Optimization::SolveQuadraticProgram(p);
+        }
+        return Answer(r);
     }, "Minimize 0.5 x' Q x + c . x subject to the constraints and the bounds (None: every x free). Q must be "
        "symmetric positive semidefinite, else status 'not convex' names its most negative eigenvalue. Returns the "
        "same dict as linprog",
@@ -301,7 +322,12 @@ void BindOptimize(py::module_& m) {
                                  const std::optional<double>& target_return, bool long_only) {
         const auto p = cyxwiz::Optimization::PortfolioProgram(
             means, covariance, target_return ? *target_return : std::numeric_limits<double>::quiet_NaN(), long_only);
-        return Answer(cyxwiz::Optimization::SolveQuadraticProgram(p));
+        cyxwiz::ProgramResult r;
+        {
+            py::gil_scoped_release release;
+            r = cyxwiz::Optimization::SolveQuadraticProgram(p);
+        }
+        return Answer(r);
     }, "The least risky mix of assets (Markowitz), as the Portfolio Weights node: minimize 0.5 w' C w with the "
        "weights summing to 1 (row 'Budget'), earning at least target_return a period (row 'Return'; None: the "
        "minimum-variance mix), and with long_only no weight below 0. means and covariance per period",
@@ -323,7 +349,8 @@ void BindOptimize(py::module_& m) {
                         "converged"_a = path.converged, "diverged"_a = path.diverged,
                         "diverged_at"_a = path.diverged ? py::object(py::int_(path.diverged_at)) : py::object(py::none()));
     }, "The path of a training optimizer (the update rules training uses, in float32 as training) minimizing a "
-       "formula from `start`, the gradient exact from the formula. Ends early when |grad f| < tolerance or a value "
+       "formula from `start`, the gradient exact from the formula (momentum: SGD and RMSprop only). Ends early "
+       "when |grad f| < tolerance or a value "
        "stops being finite (diverged, with the step). Returns points (the start, then one per step), values, "
        "gradient_norms, converged, diverged, diverged_at",
        "formula"_a, "start"_a, "optimizer"_a = "adam", "lr"_a = 0.001, "momentum"_a = 0.0, "steps"_a = 1000,

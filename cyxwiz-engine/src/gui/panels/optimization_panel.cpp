@@ -207,6 +207,9 @@ void OptimizationPanel::Render() {
     if (key_ != stopped_key_) {
         Job request;
         request.op = op_;
+        request.at = at_;
+        request.point_x = point_x_;
+        request.point_y = point_y_;
         if (op_ == Op::Optimizers) {
             request.minimize_request.formula = surface_;
             request.minimize_request.x0 = x0_;
@@ -220,11 +223,7 @@ void OptimizationPanel::Render() {
             request.portfolio = portfolio_;
         }
         optcalc::IntegralRequest integral{line_, a_, b_, static_cast<QuadratureRule>(rule_), n_};
-        optcalc::DerivativeRequest derivative{line_, at_, static_cast<DifferenceRule>(difference_), 0.0};
-        if (!step_text_.empty()) {
-            std::string error;
-            optcalc::ReadValue(step_text_, derivative.h, error);
-        }
+        optcalc::DerivativeRequest derivative{line_, at_, static_cast<DifferenceRule>(difference_), step_text_};
         optcalc::CurvatureRequest curvature{surface_, point_x_, point_y_, x_min_, x_max_, y_min_, y_max_, 40};
         const double x_min = x_min_, x_max = x_max_, y_min = y_min_, y_max = y_max_;
         job_.Ask(std::string("Optimization and Calculus: ") + optcalc::InfoOf(op_).label, key_,
@@ -1006,7 +1005,7 @@ void OptimizationPanel::RenderDerivative(const Job& job) {
     std::vector<explore_plot::Line> lines = {{"f", a.curve_f}};
     if (!a.curve_df.empty()) lines.push_back({"f\xE2\x80\xB2", a.curve_df});
     explore_plot::Lines(a.curve_x, lines, width, width * 0.4f, false, a.curve_x.empty() ? NAN : a.curve_x[a.curve_x.size() / 2],
-                        "x = " + at_, "x");
+                        "x = " + job.at, "x");
     RenderActions(job);
 }
 
@@ -1038,7 +1037,7 @@ void OptimizationPanel::RenderCurvature(const Job& job) {
         double px = 0, py = 0;
         std::string error;
         std::vector<optplot::Mark> marks;
-        if (optcalc::ReadValue(point_x_, px, error) && optcalc::ReadValue(point_y_, py, error)) marks.push_back({px, py, "here", false});
+        if (optcalc::ReadValue(job.point_x, px, error) && optcalc::ReadValue(job.point_y, py, error)) marks.push_back({px, py, "here", false});
         const float width = (std::min)(PlotWidth(), 640.0f);
         optplot::Map(job.map, {}, marks, width, width * 0.66f);
     }

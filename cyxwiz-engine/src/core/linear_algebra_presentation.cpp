@@ -661,7 +661,7 @@ std::vector<std::string> NumberColumns(const std::string& table, const QueryRunn
         return out;
     }
     for (const auto& field : result.table->schema()->fields())
-        if (IsNumber(*field->type())) out.push_back(field->name());
+        if (IsNumber(*field->type()) && field->name().rfind("__", 0) != 0) out.push_back(field->name());
     return out;
 }
 

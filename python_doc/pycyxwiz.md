@@ -1023,12 +1023,12 @@ typed text, read once into a `calculus.Expression`; derivatives are exact
 sympy, scipy, numpy and torch by `cyxwiz-backend/python/tests/test_python_optimize.py`.
 
 `pycyxwiz.calculus`:
-- `Expression(text, variables=["x"], degrees=False)`: `f(*values)`, `f.evaluate_many(columns)` (on the device), `f.derivative(variable=None)` -> `Expression`, `str(f)`, `.variables`, `.text`. A bad formula, an unknown name ("Unknown name 'z' at 5") or a division by zero at a point raises `ValueError`.
+- `Expression(text, variables=["x"], degrees=False)`: `f(*values)`, `f.evaluate_many(columns)` (on the device when it has float64, else on the host), `f.derivative(variable=None)` -> `Expression`, `str(f)`, `.variables`, `.text`. A bad formula, an unknown name ("Unknown name 'z' at 5") or a division by zero at a point raises `ValueError`.
 - `integrate(formula, a, b, rule="adaptive", n=100, epsabs=1.49e-8, epsrel=1.49e-8, limit=50, variable="x")` -> dict `value`, `error` (the adaptive estimate; `None` for the fixed rules), `converged`, `evaluations`, `intervals`. `adaptive` is Gauss-Kronrod 21 on bisected intervals as `scipy.integrate.quad` (infinite bounds allowed); `trapezoid`, `midpoint`, `simpson` (even `n`) and `gauss` (n Gauss-Legendre points) take finite bounds.
 - `derivative(formula, x, rule="central", h=0.0, variable="x")` -> dict `first`, `second` (exact; `None` when the formula uses max, mod, ...), `first_formula`, `second_formula`, `numerical_first`, `numerical_second`, `step`, `second_step`. `h=0` picks the step that suits float64 for the rule.
-- `step_errors(formula, x, h_from=0.1, h_to=1e-12, count=45)` -> dict `steps`, `forward_error`, `central_error`: how the difference error falls, then rises, as h shrinks.
+- `step_errors(formula, x, h_from=0.1, h_to=1e-12, count=45, variable="x")` -> dict `steps`, `forward_error`, `central_error`: how the difference error falls, then rises, as h shrinks.
 - `curvature(formula, point, variables=None)` -> dict `gradient`, `hessian`, `eigenvalues` (ascending), at that point.
-- `curvature_over_range(formula, x_range, y_range, per_side=40)` -> dict `points`, `negative_points`, `positive_points`, `first_negative`.
+- `curvature_over_range(formula, x_range, y_range, per_side=40, variables=["x", "y"])` -> dict `points`, `negative_points`, `positive_points`, `first_negative`.
 - `gauss_legendre(n)` -> `(nodes, weights)` on [-1, 1].
 
 `pycyxwiz.optimize` (programs solved by HiGHS, the solver scipy's `linprog` uses):
@@ -1036,7 +1036,7 @@ sympy, scipy, numpy and torch by `cyxwiz-backend/python/tests/test_python_optimi
 - `qp(Q, c, constraints=None, bounds=None)`: minimize 0.5 x'Qx + c.x (bounds `None`: every x free). A Q that is not positive semidefinite comes back as `"not convex"` naming its most negative eigenvalue.
 - `portfolio(means, covariance, target_return=None, long_only=True)`: the least risky mix of assets, as the Portfolio Weights node (rows `Budget` and `Return`).
 - All three return a dict: `success`, `status` (`"optimal"`, `"infeasible"`, `"unbounded"`, `"not convex"`, `"failed"`), `message` (why not, in words), `x`, `fun` (`None` unless optimal), `slack`, `binding`, `shadow_prices` (per row: how much the best value changes when that row's rhs grows by 1), `iterations`.
-- `follow(formula, start, optimizer="adam", lr=0.001, momentum=0.0, steps=1000, tolerance=1e-8, variables=None)`: the path of a training optimizer (`sgd`, `adam`, `adamw`, `nadam`, `rmsprop`, `adagrad`; float32 as in training) with the exact gradient -> dict `points`, `values`, `gradient_norms`, `converged`, `diverged`, `diverged_at`. Ctrl+C stops it.
+- `follow(formula, start, optimizer="adam", lr=0.001, momentum=0.0, steps=1000, tolerance=1e-8, variables=None)`: the path of a training optimizer (`sgd`, `adam`, `adamw`, `nadam`, `rmsprop`, `adagrad`; float32 as in training; `momentum` for SGD and RMSprop only) with the exact gradient -> dict `points`, `values`, `gradient_norms`, `converged`, `diverged`, `diverged_at`. Ctrl+C stops it.
 
 **Use case: integrals and derivatives**
 ```python

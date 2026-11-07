@@ -2,9 +2,15 @@
 // scipy.optimize.linprog uses. Any number of variables and rows; the answer
 // comes back with each row's room, binding flag and shadow price.
 
+// arrayfire.h brings windows.h; its min / max macros break HiGHS's headers.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include "cyxwiz/optimization.h"
 
 #include "cyxwiz/linear_algebra.h"
+#include "arrayfire_host_values.h"
 
 #include <Highs.h>
 
@@ -178,12 +184,13 @@ ProgramResult Optimization::SolveQuadraticProgram(const QuadraticProgram& proble
     r.error_message = CheckShape(n, problem.constraints, problem.bounds);
     if (r.error_message.empty() && problem.Q.size() != n)
         r.error_message = "Q has " + std::to_string(problem.Q.size()) + " rows; c has " + std::to_string(n) + " entries";
-    for (size_t i = 0; r.error_message.empty() && i < n; ++i) {
+    for (size_t i = 0; r.error_message.empty() && i < n; ++i)
         if (problem.Q[i].size() != n) r.error_message = "Q must be square (" + std::to_string(n) + " x " + std::to_string(n) + ")";
-        for (size_t j = 0; r.error_message.empty() && j < problem.Q[i].size(); ++j) {
+    for (size_t i = 0; r.error_message.empty() && i < n; ++i) {
+        for (size_t j = 0; r.error_message.empty() && j < n; ++j) {
             if (!std::isfinite(problem.Q[i][j]) || !std::isfinite(problem.c[i]))
                 r.error_message = "Q and c must be numbers";
-            else if (j < n && std::abs(problem.Q[i][j] - problem.Q[j][i]) > 1e-12 * (1.0 + std::abs(problem.Q[i][j])))
+            else if (std::abs(problem.Q[i][j] - problem.Q[j][i]) > 1e-12 * (1.0 + std::abs(problem.Q[i][j])))
                 r.error_message = "Q must be symmetric: Q[" + std::to_string(i + 1) + "][" + std::to_string(j + 1) +
                                   "] differs from Q[" + std::to_string(j + 1) + "][" + std::to_string(i + 1) + "]";
         }
@@ -191,7 +198,20 @@ ProgramResult Optimization::SolveQuadraticProgram(const QuadraticProgram& proble
     if (!r.error_message.empty()) return r;
 
     // Convex only: the smallest eigenvalue of Q may not be negative.
-    const EigenResult eigen = LinearAlgebra::Eigen(problem.Q);
+    std::vector<std::vector<double>> symmetric = problem.Q;
+    double frobenius = 0.0;
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j = 0; j < n; ++j) {
+            symmetric[i][j] = 0.5 * (problem.Q[i][j] + problem.Q[j][i]);
+            frobenius += symmetric[i][j] * symmetric[i][j];
+        }
+    EigenResult eigen;
+    try {
+        eigen = LinearAlgebra::Eigen(symmetric);
+    } catch (const std::exception& e) {
+        eigen.success = false;
+        eigen.error_message = e.what();
+    }
     if (!eigen.success) {
         r.error_message = "Q's eigenvalues could not be found: " + eigen.error_message;
         return r;
@@ -202,7 +222,8 @@ ProgramResult Optimization::SolveQuadraticProgram(const QuadraticProgram& proble
         if (k == 0 || v < low) low = v;
         if (k == 0 || v > high) high = v;
     }
-    if (low < -1e-10 * std::max(1.0, std::abs(high))) {
+    const double rounding = DeviceHasDouble() ? 1e-10 * std::max(1.0, std::abs(high)) : 1e-6 * (1.0 + std::sqrt(frobenius));
+    if (low < -rounding) {
         char buffer[200];
         std::snprintf(buffer, sizeof buffer,
                       "Q is not positive semidefinite (its smallest eigenvalue is %.6g), so the problem has no single "

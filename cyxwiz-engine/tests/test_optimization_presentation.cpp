@@ -3,6 +3,7 @@
 // tests/computation_truth/reference/generate_optimization_fixtures.py); this
 // test checks the words, rows and shapes the window shows for them.
 
+#include "core/linear_algebra_presentation.h"
 #include "core/optimization_presentation.h"
 #include "core/session_query_engine.h"
 
@@ -183,6 +184,10 @@ void CheckCalculus() {
     Check(Has(d.sentence, "From the formula: f\xE2\x80\xB2 = cos(x), f\xE2\x80\xB3 = -sin(x). Central differences with h = 6.1e-6"),
           "derivative sentence: " + d.sentence);
     Check(d.curve.success && d.curve.steps.size() == 45 && d.curve_df.size() == d.curve_x.size(), "error curve and f'");
+    Check(RunDerivative({"sin(x)", "1", DifferenceRule::Central, "0"}).error == "The step h must be above 0 (empty: the step that suits float64)",
+          "a step of 0 refused");
+    Check(Has(RunDerivative({"sin(x)", "1", DifferenceRule::Central, "1e-"}).error, "is not a number"), "a step that is not a number refused");
+    Check(RunDerivative({"sin(x)", "1", DifferenceRule::Central, "1e-5"}).ok(), "a typed step");
     DerivativeRequest kink{"max(x, 0)", "1"};
     const auto k = RunDerivative(kink);
     Check(k.ok() && Has(k.title, "\xE2\x89\x88") && k.curve_df.empty(), "no derivative formula: " + k.title);
@@ -246,6 +251,36 @@ void CheckPortfolioFromTable() {
     Check(PortfolioFromTable({"", assets, "", true}, run).error == "Pick a table of returns", "no table picked");
     Check(PortfolioFromTable({"returns", {"bonds"}, "", true}, run).error == "Tick at least two asset columns", "one asset refused");
     Check(Has(PortfolioFromTable({"returns", assets, "lots", true}, run).error, "is not a number"), "a target that is not a number");
+    // The window hands the node a number, whatever formula the target was typed as.
+    Check(PortfolioHandOff({"returns", assets, " 1/100 ", true}).parameters.at("target_return") == "0.01",
+          "a typed target reaches the node as a number");
+
+    // A table a Data Split marked: the Train rows, as the node reads them; the
+    // split marker is not offered as a column.
+    arrow::Int8Builder marks;
+    for (const auto& v : p.at("partition")) (void)marks.Append(static_cast<int8_t>(v.get<int>()));
+    std::shared_ptr<arrow::Array> marked;
+    (void)marks.Finish(&marked);
+    auto split_fields = fields;
+    auto split_arrays = arrays;
+    split_fields.push_back(arrow::field("__partition__", arrow::int8()));
+    split_arrays.push_back(marked);
+    Check(engine.AttachArrow("split_returns", 2, arrow::Table::Make(arrow::schema(split_fields), split_arrays), &error),
+          "attach the split table: " + error);
+    std::string columns_error;
+    Check(linalg::NumberColumns("split_returns", run, columns_error) == assets, "the split marker is not a column to tick");
+    for (const auto& sc : p.at("cases")) {
+        if (!sc.at("split").get<bool>() || !sc.at("long_only").get<bool>() || sc.at("target_return").is_null()) continue;
+        char split_target[32];
+        std::snprintf(split_target, sizeof split_target, "%.17g", sc.at("target_return").get<double>());
+        const auto train = PortfolioFromTable({"split_returns", assets, split_target, true}, run);
+        Check(train.ok() && Has(train.note, "90 periods of split_returns (its Train rows, 30 Validation / Test rows left out"),
+              "the Train rows read: " + train.error + train.note);
+        const auto solved = RunProgram(train.request);
+        for (size_t i = 0; i < assets.size(); ++i)
+            Check(solved.ok() && std::abs(solved.result.x[i] - sc.at("weight")[i].get<double>()) < 1e-7,
+                  "Train-row weight of " + assets[i] + " = the node's");
+    }
 }
 
 }  // namespace

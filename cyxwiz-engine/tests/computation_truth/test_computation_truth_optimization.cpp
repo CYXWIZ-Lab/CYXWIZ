@@ -157,6 +157,21 @@ void CheckCalculator() {
     Check(!zero.success && zero.error_message == "Division by zero", "1/0 refused: " + zero.error_message);
     const auto unknown = Utilities::Evaluate("2 * q");
     Check(!unknown.success && unknown.error_message.find("Unknown name 'q'") != std::string::npos, "unknown name");
+    // Numbers the scanner takes but are not numbers, or do not fit a double, are refused in words.
+    const auto dot = Utilities::Evaluate(".e5");
+    Check(!dot.success && dot.error_message.find("Expected a number") != std::string::npos, ".e5 refused: " + dot.error_message);
+    const auto huge = Utilities::Evaluate("1e400");
+    Check(!huge.success && huge.error_message.find("out of range") != std::string::npos, "1e400 refused: " + huge.error_message);
+    const auto negative = Utilities::Evaluate("factorial(-3)");
+    Check(!negative.success && negative.error_message.find("Factorial undefined") != std::string::npos,
+          "factorial(-3) refused: " + negative.error_message);
+    // A negated product keeps its brackets where it is an exponent or a divisor.
+    for (const char* text : {"2^(-x*y)", "x/(-x*y)"}) {
+        const Expression f = Expression::Parse(text, {"x", "y"});
+        const Expression again = Expression::Parse(f.ToString(), {"x", "y"});
+        Check(again.Valid() && std::fabs(again.Evaluate({1.5, 2.0}) - f.Evaluate({1.5, 2.0})) < 1e-15,
+              std::string(text) + " prints as " + f.ToString() + ", which reads back the same");
+    }
 }
 
 double Bound(const json& j) {

@@ -129,7 +129,8 @@ def constraints(rows):
 
 
 def program_ok(r, c, price_tolerance):
-    return (r["success"] and all(near(x, e, 1e-7) for x, e in zip(r["x"], c["x"])) and near(r["fun"], c["value"], 1e-9)
+    return (r["success"] and len(r["x"]) == len(c["x"]) and all(near(x, e, 1e-7) for x, e in zip(r["x"], c["x"]))
+            and near(r["fun"], c["value"], 1e-9)
             and len(r["shadow_prices"]) == len(c["shadow_prices"])
             and all(near(p, e, price_tolerance) for p, e in zip(r["shadow_prices"], c["shadow_prices"])))
 
@@ -149,7 +150,22 @@ for c in truth["qp"]:
 r = opt.qp([[1, 2], [2, 1]], [0, 0])
 check(r["status"] == "not convex" and "eigenvalue" in r["message"], "qp refuses a Q that is not convex: " + r["message"])
 check(raises(lambda: opt.linprog([1], [([1], "<", 1)]), "'<'"), "linprog refuses an unknown sense")
-check(opt.linprog([1, 1], [([1, 1], ">=", 2)], bounds=(0, None))["fun"] == 2.0, "linprog: one (low, high) pair for every variable")
+check(abs(opt.linprog([-1, -1], bounds=(0, 0.5))["fun"] + 1.0) < 1e-9, "linprog: one (low, high) pair for every variable")
+check(abs(opt.linprog([-1, -1], bounds=[(0, 1), (0, 2)])["fun"] + 3.0) < 1e-9, "linprog: a (low, high) pair per variable")
+try:
+    opt.linprog([1, 1], bounds=5)
+    check(False, "linprog: bounds of the wrong type raise TypeError")
+except TypeError:
+    check(True, "linprog: bounds of the wrong type raise TypeError")
+check(raises(lambda: calc.Expression(".e5"), "Expected a number") and raises(lambda: calc.Expression("1e400"), "out of range"),
+      "Expression: '.e5' and '1e400' are refused in words")
+check(str(calc.Expression("2^(-x*y)", ["x", "y"])) == "2^(-x*y)", "Expression prints the brackets a negated exponent needs")
+check(raises(lambda: opt.follow("x^2", [1.0], "sgd", momentum=-0.1), "refused its settings"),
+      "follow: an optimizer that refuses its settings is a ValueError")
+ragged = opt.qp([[1, 2], []], [0, 0])
+check(ragged["status"] == "failed" and "square" in ragged["message"], "qp: a ragged Q is refused: " + ragged["message"])
+check(calc.curvature_over_range("(0.1*x + 0.3*y)^2", (-1, 1), (-1, 1))["negative_points"] == 0,
+      "curvature_over_range: a semidefinite Hessian does not curve down")
 
 
 # The portfolio against the exact KKT solve: means and covariance (n - 1) here.

@@ -45,7 +45,7 @@ then read its Train rows.
 
 Tools > Optimization and Calculus > **Quadratic**, **From a returns table**:
 pick Returns (the five assets are ticked; `month` is text, so not offered), and leave
-Target empty or type 0.005. **Keep as a node: Portfolio weights** adds the
+**Target return a period** empty or type 0.005. **Keep as a node: Portfolio weights** adds the
 node this graph has.
 
 The same portfolios from Python, checked against scipy, together with a

@@ -74,7 +74,7 @@ arrow::Status ResolveNumberFeatures(const std::shared_ptr<arrow::Table>& input, 
         if (IsNumberColumn(input->GetColumnByName(name))) out.push_back(name);
     }
     if (out.empty())
-        return arrow::Status::Invalid(op_name + ": no numeric feature columns found (auto-detect). Specify feature_cols explicitly.");
+        return arrow::Status::Invalid(op_name + ": no number columns found; name the columns to read in its settings.");
     return arrow::Status::OK();
 }
 

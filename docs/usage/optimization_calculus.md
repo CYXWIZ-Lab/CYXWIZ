@@ -9,9 +9,9 @@ portfolio work on every run of a graph. Python has the same work as
 `pycyxwiz.calculus` and `pycyxwiz.optimize`.
 
 The Tools > Optimization and Calculus menu items (Gradient Descent
-Visualizer, Convexity Analyzer, Linear Programming, Quadratic Programming,
-Numerical Differentiation, Numerical Integration) open this window on that
-operation.
+Visualizer, Convexity Analyzer, Linear Programming (LP), Quadratic
+Programming (QP), Numerical Differentiation, Numerical Integration) open this
+window on that operation.
 
 ## The window
 
@@ -43,8 +43,9 @@ A formula is typed as text, for example `(1 - x)^2 + 100*(y - x^2)^2`.
   name 'z' at 5`). Unbalanced brackets, too, for example `Expected ')' at 12`.
 
 Derivatives come exactly from the formula, as a formula. A formula that uses
-`max`, `mod`, `floor` and the like has no exact derivative; the window then
-shows the numerical one only.
+`min`, `max`, `mod`, `fmod` or `factorial` has no exact derivative; the window
+then shows the numerical one only. `floor`, `ceil`, `round` and `sign` count
+as flat (derivative 0).
 
 ### Minimize: Optimizers
 
@@ -59,8 +60,8 @@ shows the numerical one only.
 
 The answer:
 
-- a sentence naming the best result, and any optimizer that diverged with the
-  step it did;
+- a sentence naming the best result, and any optimizer that diverged, with
+  its learning rate;
 - the contour map with each path, the start and a diamond on a known minimum.
   When f spans many orders of magnitude, the lines are of log10(f − min + 1);
   the caption says so.
@@ -113,6 +114,10 @@ one column per asset and one row per period:
 - **Long only**: no weight below 0;
 - **Read again**: reads the table again after a run changed it.
 
+When a Data Split marked the table (a node result after the Split), the window
+reads its Train rows, as the node does, and the note says how many other rows
+it left out.
+
 The window works out the means and the covariance (n − 1) of the rows on the
 device, and solves: minimize ½ w′C w, with the weights summing to 1 (row
 **Budget**) and earning at least the target (row **Return**). A row with a
@@ -130,7 +135,7 @@ says what it added, and Ctrl+Z on the canvas undoes it.
   when its error estimate is below 1.5e-8 of the answer, as
   `scipy.integrate.quad`. **Trapezoid**, **Midpoint** and **Simpson** use
   equal intervals (Simpson an even count), and **Gauss–Legendre** uses n
-  points. The fixed rules take finite bounds.
+  points (up to 1,000). The fixed rules take finite bounds.
 
 The answer shows the value with its error estimate, the curve with the area
 shaded, and a table of every rule's value, evaluations and difference from
@@ -139,8 +144,8 @@ the adaptive answer.
 ### Calculus: Derivative
 
 - **Formula** f(x), **At** x, the **Differences** rule (Forward, Backward,
-  Central) and **Step h**. Leave h empty for the step that suits float64
-  for that rule.
+  Central) and **Step h** (a number above 0). Leave h empty for the step that
+  suits float64 for that rule.
 
 The answer shows f′ and f″ exactly (with their formulas) and numerically,
 and a log-log plot of the numerical f′'s error against h. At large h the
@@ -159,8 +164,9 @@ point says nothing about the rest of the formula. The range check below it
 counts the points of a 40 × 40 grid where the smallest eigenvalue is below 0
 ("Over the shown range (x -2..2, y -1..3, 40 × 40 points): not convex. The
 Hessian has a negative eigenvalue at 672 of the 1,600 points, for example
-(-0.05128, 0.02564)."), and the map marks the point. No such point is "f looks
-convex here (a check of samples, not a proof)".
+(-0.05128, 0.02564)."), and the map marks the point. With no such point it
+says "no point curves down, so f looks convex here (a check of samples, not a
+proof)".
 
 ## The Portfolio Weights node
 
@@ -177,8 +183,8 @@ It reads the Train rows when a Data Split marks them, otherwise every row,
 and leaves out a row with a missing value. Its output is one row per asset:
 `asset`, `weight`, `mean_return`, `sd` and `risk_share` (the asset's share
 of the mix's variance, w_i (C w)_i / w′C w; the shares sum to 1). A target
-no mix can earn is refused, naming the highest mean: "no mix of these assets
-earns 0.02 a period without short positions; the highest mean is 0.00935647
+no mix can earn is refused, naming the highest mean: "PortfolioWeights: no
+mix of these assets earns 0.02 a period without short positions; the highest mean is 0.00935647
 (growth)".
 
 Example: `examples/cyxgraph/portfolio/` (five assets, 120 months).
@@ -194,8 +200,8 @@ example checked against scipy and torch is
 
 ## Precision and checks
 
-- Formulas are evaluated in float64, on the device when it has float64
-  (NVIDIA CUDA and OpenCL, the CPU backend), otherwise on the host.
+- Formulas are evaluated in float64: on the device when it has float64
+  (CUDA, the CPU backend, most OpenCL GPUs), otherwise on the host.
 - Programs are solved by HiGHS (the solver scipy's `linprog` uses) on the
   CPU. A quadratic program's objective is solved scaled to entries of size 1,
   so small covariances (1e-4 a month) are as exact as large ones.

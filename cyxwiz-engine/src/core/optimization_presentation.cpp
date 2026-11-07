@@ -1,6 +1,7 @@
 #include "optimization_presentation.h"
 
 #include "linear_algebra_presentation.h"
+#include "split_partitioning.h"
 
 #include <cyxwiz/linear_algebra.h>
 
@@ -646,10 +647,29 @@ PortfolioRead PortfolioFromTable(const PortfolioChoice& choice, const QueryRunne
     }
     double target = std::numeric_limits<double>::quiet_NaN();
     if (!choice.target.empty() && !ReadValue(choice.target, target, read.error)) return read;
-    const linalg::TableMatrix rows = linalg::ReadMatrix({choice.table, choice.assets, linalg::FromTable::Rows}, run);
+    // A table a Data Split marked: its Train rows, as the node reads them.
+    QueryRequest schema;
+    schema.sql = "SELECT * FROM " + SessionQueryEngine::QuoteIdentifier(choice.table) + " LIMIT 0";
+    schema.label = "Optimization and Calculus: " + choice.table;
+    const QueryResult columns = run(schema);
+    const bool split = columns.ok && columns.table && columns.table->GetColumnByName(kSplitPartitionColumn) != nullptr;
+    std::vector<std::string> read_columns = choice.assets;
+    if (split) read_columns.push_back(kSplitPartitionColumn);
+    linalg::TableMatrix rows = linalg::ReadMatrix({choice.table, read_columns, linalg::FromTable::Rows}, run);
     if (!rows.ok()) {
         read.error = rows.error;
         return read;
+    }
+    size_t other_rows = 0;
+    if (split) {
+        linalg::Matrix train;
+        for (auto& row : rows.m) {
+            const double part = row.back();
+            row.pop_back();
+            if (part == 0.0) train.push_back(std::move(row));
+            else ++other_rows;
+        }
+        rows.m = std::move(train);
     }
     if (rows.m.size() < 2) {
         read.error = "At least two periods (rows) with every return are needed";
@@ -673,7 +693,8 @@ PortfolioRead PortfolioFromTable(const PortfolioChoice& choice, const QueryRunne
     r.objective = qp.c;
     for (const auto& row : qp.constraints) r.rows.push_back({row.name, row.coefficients, row.sense, row.rhs});
     r.bounds = qp.bounds;
-    const std::string left_out = rows.dropped == 0 ? "none left out" : Count(static_cast<long long>(rows.dropped)) + " with a missing value left out";
+    std::string left_out = rows.dropped == 0 ? "none left out" : Count(static_cast<long long>(rows.dropped)) + " with a missing value left out";
+    if (split) left_out = "its Train rows, " + Count(static_cast<long long>(other_rows)) + " Validation / Test rows left out; " + left_out;
     read.note = Count(static_cast<long long>(rows.m.size())) + " periods of " + choice.table + " (" + left_out + "); " +
                 (std::isnan(target) ? "no target: the least risky mix." : "a target of " + Number(target) + " a period.");
     return read;
@@ -688,7 +709,16 @@ GraphHandOff PortfolioHandOff(const PortfolioChoice& choice) {
     h.name = "Portfolio weights";
     std::string assets;
     for (size_t i = 0; i < choice.assets.size(); ++i) assets += (i ? "," : "") + choice.assets[i];
-    h.parameters = {{"asset_cols", assets}, {"target_return", choice.target}, {"long_only", choice.long_only ? "true" : "false"}};
+    // The target as a number: the window reads "1/100" or "pi/300", the node a number.
+    std::string target;
+    double value = 0.0;
+    std::string error;
+    if (!choice.target.empty() && ReadValue(choice.target, value, error)) {
+        char buffer[32];
+        std::snprintf(buffer, sizeof buffer, "%.17g", value);
+        target = buffer;
+    }
+    h.parameters = {{"asset_cols", assets}, {"target_return", target}, {"long_only", choice.long_only ? "true" : "false"}};
     return h;
 }
 
@@ -800,7 +830,15 @@ DerivativeAnswer RunDerivative(const DerivativeRequest& request) {
     }
     double x = 0;
     if (!ReadValue(request.x, x, answer.error)) return answer;
-    answer.result = Calculus::Differentiate(f, x, request.rule, request.h);
+    double h = 0.0;
+    if (!request.step.empty()) {
+        if (!ReadValue(request.step, h, answer.error)) return answer;
+        if (!(h > 0.0)) {
+            answer.error = "The step h must be above 0 (empty: the step that suits float64)";
+            return answer;
+        }
+    }
+    answer.result = Calculus::Differentiate(f, x, request.rule, h);
     if (!answer.result.success) {
         answer.error = answer.result.error_message;
         return answer;

@@ -48,6 +48,7 @@ private:
         optcalc::IntegralAnswer integral;
         optcalc::DerivativeAnswer derivative;
         optcalc::CurvatureAnswer curvature;
+        std::string at, point_x, point_y;        // the inputs the labels name, as asked
         std::string error;                       // "Cancelled." only: a refusal is an answer
         double milliseconds = 0;
         bool ok() const { return error.empty(); }

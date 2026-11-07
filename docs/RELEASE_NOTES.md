@@ -15,9 +15,8 @@ private Data Studio tickets (`tofix*/track*`).
   with HiGHS (shadow prices, infeasible and unbounded in words), and gives
   adaptive integrals with an error estimate. The six separate windows are
   gone.
-- The Template nodes Gradient Descent Visualizer, Convexity Analyzer, LP
-  Solver, QP Solver, Numerical Differentiation and Numerical Integration are
-  no longer in the node list. They had no executor; the window does that
+- The Template nodes GD Visualizer, Convexity Analyzer, LP Solver, QP
+  Solver, Differentiation and Integration are no longer in the node list. They had no executor; the window does that
   work, and the Portfolio Weights node brings a program into a graph.
 - **Plugin SDK (`cyxwiz/optimization.h`) is rewritten**: `LinearProgram`,
   `QuadraticProgram`, `ProgramResult`, `Optimization::SolveLinearProgram`,

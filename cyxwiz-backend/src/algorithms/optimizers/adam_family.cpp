@@ -111,7 +111,7 @@ bool ReadMuProductTensor(
         return false;
     }
     const float value = tensor.ReadData<float>()[0];
-    if (!std::isfinite(value) || value <= 0.0f || value > 1.0f) {
+    if (!std::isfinite(value) || value < 0.0f || value > 1.0f) {
         error = "Optimizer state tensor '" + key +
                 "' contains an invalid momentum product.";
         return false;

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <exception>
 #include <limits>
 #include <numeric>
 
@@ -219,6 +220,10 @@ QuadratureResult Fixed(const Expression& f, double a, double b, const Quadrature
         r.error_message = "The rule needs at least 1 interval";
         return r;
     }
+    if (o.rule == QuadratureRule::GaussLegendre && n > 1000) {
+        r.error_message = "Gauss-Legendre takes at most 1,000 points (" + std::to_string(n) + " given)";
+        return r;
+    }
     if (o.rule == QuadratureRule::Simpson && n % 2 != 0) {
         r.error_message = "Simpson's rule needs an even number of intervals (" + std::to_string(n) + " given)";
         return r;
@@ -298,16 +303,18 @@ QuadratureResult Calculus::Integrate(const Expression& f, double a, double b, co
     // Integrate low to high, then flip the sign.
     const bool flipped = a > b;
     if (flipped) std::swap(a, b);
-    if (std::isinf(a) && std::isinf(b) && a == b) {
-        r.error_message = "Both bounds are the same infinity";
-        return r;
-    }
     const bool infinite = std::isinf(a) || std::isinf(b);
     if (infinite && options.rule != QuadratureRule::Adaptive) {
         r.error_message = "Infinite bounds need the adaptive rule";
         return r;
     }
-    r = options.rule == QuadratureRule::Adaptive ? Adaptive(f, a, b, options) : Fixed(f, a, b, options);
+    try {
+        r = options.rule == QuadratureRule::Adaptive ? Adaptive(f, a, b, options) : Fixed(f, a, b, options);
+    } catch (const std::exception& e) {
+        r = QuadratureResult{};
+        r.error_message = std::string("The device failed: ") + e.what();
+        return r;
+    }
     if (flipped) r.value = -r.value;
     return r;
 }
@@ -441,7 +448,13 @@ CurvatureResult Calculus::CurvatureAt(const Expression& f, const std::vector<dou
                 r.error_message = "The Hessian is not finite at this point";
                 return r;
             }
-    const EigenResult eigen = LinearAlgebra::Eigen(r.hessian);
+    EigenResult eigen;
+    try {
+        eigen = LinearAlgebra::Eigen(r.hessian);
+    } catch (const std::exception& e) {
+        eigen.success = false;
+        eigen.error_message = std::string("The device failed: ") + e.what();
+    }
     if (!eigen.success) {
         r.error_message = eigen.error_message;
         return r;
@@ -484,21 +497,34 @@ RangeCurvature Calculus::CurvatureOverRange(const Expression& f, double x_min, d
             xs.push_back(x_min + (x_max - x_min) * i / (per_side - 1));
             ys.push_back(y_min + (y_max - y_min) * j / (per_side - 1));
         }
-    const std::vector<double> a = h[0].EvaluateMany({xs, ys}), b = h[1].EvaluateMany({xs, ys}), d = h[2].EvaluateMany({xs, ys});
+    std::vector<double> a, b, d;
+    try {
+        a = h[0].EvaluateMany({xs, ys});
+        b = h[1].EvaluateMany({xs, ys});
+        d = h[2].EvaluateMany({xs, ys});
+    } catch (const std::exception& e) {
+        r.error_message = std::string("The device failed: ") + e.what();
+        return r;
+    }
     bool first = true;
     for (size_t p = 0; p < xs.size(); ++p) {
         if (!std::isfinite(a[p]) || !std::isfinite(b[p]) || !std::isfinite(d[p])) continue;
         ++r.points;
-        const double mean = 0.5 * (a[p] + d[p]), radius = std::hypot(0.5 * (a[p] - d[p]), b[p]);
-        const double low = mean - radius, high = mean + radius;
-        if (low < 0.0) {
+        // The signs of the eigenvalues from the determinant and the trace,
+        // with rounding at the entries' scale counted as 0: a semidefinite
+        // Hessian ((0.1x + 0.3y)^2) does not curve down.
+        const double scale = (std::max)({std::abs(a[p]), std::abs(b[p]), std::abs(d[p])});
+        const double det = a[p] * d[p] - b[p] * b[p], trace = a[p] + d[p];
+        const double zero = 1e-12 * scale * scale;
+        const bool down = det < -zero || (det <= zero && trace < -1e-12 * scale) || (det > zero && trace < 0.0);
+        if (down) {
             ++r.negative_points;
             if (first) {
                 r.first_negative_x = xs[p];
                 r.first_negative_y = ys[p];
                 first = false;
             }
-        } else if (low > 0.0 && high > 0.0) {
+        } else if (det > zero && trace > 0.0) {
             ++r.positive_points;
         }
     }
