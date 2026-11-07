@@ -1111,7 +1111,6 @@ const char* StudioDebuggerPanel::ActiveLensName() const {
         case StudioDebuggerLens::Gradients: return "Gradients";
         case StudioDebuggerLens::Runtime: return "Runtime";
         case StudioDebuggerLens::StudioEvents: return "Studio Events";
-        case StudioDebuggerLens::Recommendations: return "Recommendations";
     }
     return "Overview";
 }
@@ -1132,14 +1131,6 @@ bool StudioDebuggerPanel::TraceMatchesActiveLens(const DebugTraceRecord& trace) 
             return IsRuntimeTrace(trace);
         case StudioDebuggerLens::StudioEvents:
             return trace.role == DebugTraceRole::StudioEvent;
-        case StudioDebuggerLens::Recommendations:
-            return trace.status == "warning" ||
-                trace.status == "failed" ||
-                trace.status == "shape_mismatch" ||
-                trace.status == "zero" ||
-                trace.status == "nan" ||
-                trace.role == DebugTraceRole::Warning ||
-                trace.role == DebugTraceRole::Error;
     }
     return true;
 }

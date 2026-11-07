@@ -37,8 +37,7 @@ enum class StudioDebuggerLens {
     Values,
     Gradients,
     Runtime,
-    StudioEvents,
-    Recommendations
+    StudioEvents
 };
 
 enum class StudioDebuggerSection {
