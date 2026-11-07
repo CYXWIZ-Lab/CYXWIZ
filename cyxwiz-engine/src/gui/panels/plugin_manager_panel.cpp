@@ -196,6 +196,10 @@ void PluginManagerPanel::RenderPluginList(const std::vector<const plugin::Loaded
 // Plugin Card
 // ============================================================================
 
+namespace {
+constexpr float kBadgePaddingX = 4.0f;
+}  // namespace
+
 void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
     const ui::Tokens& t = ui::CurrentTokens();
     float card_width = ImGui::GetContentRegionAvail().x;
@@ -256,11 +260,8 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
         ImGui::Unindent(t.space_md);
     }
 
-    // Permission badges + action buttons on same line
-    ImGui::Text("  ");
-    ImGui::SameLine();
-
-    // Permission badges
+    // Permission badges wrap within the card; the actions get their own line below them
+    ImGui::Indent(t.space_md);
     static constexpr plugin::PluginPermission all_perms[] = {
         plugin::PluginPermission::FileSystem,
         plugin::PluginPermission::Network,
@@ -272,17 +273,21 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
         plugin::PluginPermission::UIModify,
     };
 
+    const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    bool first_badge = true;
     for (auto perm : all_perms) {
         if (plugin::HasPermission(p->manifest.permissions, perm)) {
+            const char* name = plugin::security::PermissionStore::PermissionDisplayName(perm);
+            const float badge_width = ImGui::CalcTextSize(name).x + 2.0f * kBadgePaddingX;
+            if (!first_badge) {
+                ImGui::SameLine();
+                if (ImGui::GetCursorScreenPos().x + badge_width > right_edge) ImGui::NewLine();
+            }
             bool dangerous = plugin::security::PermissionStore::IsDangerousPermission(perm);
             RenderPermissionBadge(perm, dangerous);
-            ImGui::SameLine();
+            first_badge = false;
         }
     }
-
-    // Action buttons (right-aligned)
-    float buttons_width = 140.0f;
-    ImGui::SameLine(card_width - buttons_width);
 
     auto& mgr = plugin::PluginManager::Instance();
     std::string plugin_id = p->manifest.id;  // Copy ID before any mutation
@@ -321,6 +326,7 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
         // Defer unload to after iteration (CRITICAL-1/HIGH-4)
         deferred_unloads_.push_back(plugin_id);
     }
+    ImGui::Unindent(t.space_md);
 
     // Separator between cards
     ImGui::Separator();
@@ -345,7 +351,7 @@ void PluginManagerPanel::RenderPermissionBadge(plugin::PluginPermission perm, bo
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bg);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, bg);
     ImGui::PushStyleColor(ImGuiCol_Text, text_col);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 1));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(kBadgePaddingX, 1));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
 
     ImGui::SmallButton(name);
@@ -384,11 +390,10 @@ void PluginManagerPanel::RenderStatusBar(const std::vector<const plugin::LoadedP
         }
     }
 
-    ImGui::TextDisabled("%d active, %d failed, %d disabled", active, failed, disabled);
-    std::string count_text = std::to_string(plugins.size()) + " plugins";
-    float count_width = ImGui::CalcTextSize(count_text.c_str()).x;
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - count_width - 10.0f);
-    ImGui::TextDisabled("%s", count_text.c_str());
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%zu %s: %d active, %d failed, %d disabled", plugins.size(),
+                        plugins.size() == 1 ? "plugin" : "plugins", active, failed, disabled);
+    ImGui::PopTextWrapPos();
 }
 
 // ============================================================================
