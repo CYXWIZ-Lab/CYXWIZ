@@ -312,6 +312,7 @@ set(ENGINE_SOURCES
     src/core/layer_tensor_reader.cpp
     src/core/training_manager.cpp
     src/core/training_recipe.cpp
+    src/core/trial_runner.cpp
     src/core/cross_validation_runner.cpp
     src/core/cross_validation_presentation.cpp
     src/core/test_executor.cpp
@@ -8119,8 +8120,9 @@ endif()
 # ===== Test: Engine vs Server Node training parity (TOFIX118 P2 slice 4) =====
 # The Engine path (launcher preparation + MainWindow's dispatch + TrainingManager)
 # and the node path (RunGraphTrainingJob) train the same graph, data and seed.
-add_executable(test_engine_node_parity
-    tests/test_engine_node_parity.cpp
+# Train's whole path in one process: launcher, dispatch, recipes, TrainingManager
+# and the pipeline operators the launcher prepares data with.
+set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/gui/engine_graph_training_dispatch.cpp
     src/core/training_manager.cpp
     src/core/training_recipe.cpp
@@ -8226,26 +8228,20 @@ add_executable(test_engine_node_parity
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
 )
-target_link_libraries(test_engine_node_parity PRIVATE duckdb Parquet::parquet_shared)
-
-target_include_directories(test_engine_node_parity PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${Stb_INCLUDE_DIR}
-)
-target_link_libraries(test_engine_node_parity PRIVATE
-    cyxwiz-implot3d
-    cyxwiz-training-core
-    imgui::imgui
-    implot::implot
-)
-target_compile_definitions(test_engine_node_parity PRIVATE
-    CYXWIZ_DASHBOARD_WITHOUT_TRAINING
-    CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
-    CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(test_engine_node_parity PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+function(configure_train_path_test target_name)
+    target_link_libraries(${target_name} PRIVATE duckdb Parquet::parquet_shared)
+    target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${Stb_INCLUDE_DIR})
+    target_link_libraries(${target_name} PRIVATE cyxwiz-implot3d cyxwiz-training-core imgui::imgui implot::implot)
+    target_compile_definitions(${target_name} PRIVATE CYXWIZ_DASHBOARD_WITHOUT_TRAINING
+        CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+    set_target_properties(${target_name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endfunction()
+add_executable(test_engine_node_parity tests/test_engine_node_parity.cpp ${CYXWIZ_TRAIN_PATH_TEST_SOURCES})
+configure_train_path_test(test_engine_node_parity)
+# A search trial trains from Train's recipe like Train (TOFIX178 trial runner).
+add_executable(test_trial_runner tests/test_trial_runner.cpp src/core/trial_runner.cpp
+    ${CYXWIZ_TRAIN_PATH_TEST_SOURCES})
+configure_train_path_test(test_trial_runner)
 
 # ===== Tool: training throughput profile (TOFIX118 P8) =====
 add_executable(cyxwiz-training-profile tests/tool_training_profile.cpp)
@@ -8309,3 +8305,4 @@ cyxwiz_enable_pch(test_conv3d_training)
 cyxwiz_enable_pch(test_cnn_image_training_smoke)
 cyxwiz_enable_pch(test_prepared_data_cache)
 cyxwiz_enable_pch(test_engine_node_parity)
+cyxwiz_enable_pch(test_trial_runner)
