@@ -494,7 +494,12 @@ public:
     void ResolveDynamicPins(int node_id);
 
     // Pattern insertion - add multiple nodes and links from a pattern template
+    // (fresh ids, so a pattern never shares an id with the canvas).
     void InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    // Replace the graph with an edited copy of it (Neural Architecture
+    // Search): unchanged nodes keep their id, place and group; new or retyped
+    // nodes are built for their type and placed between their neighbours.
+    void ReplaceWithEditedGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
 
     // ID getters for pattern library to generate unique IDs
     int GetNextNodeId() const { return next_node_id_; }
@@ -1209,6 +1214,11 @@ private:
     ClipboardData clipboard_;
     std::vector<int> selected_node_ids_;  // Multi-selection support
     ImVec2 paste_offset_ = ImVec2(50.0f, 50.0f);  // Offset for pasted nodes
+
+    // Adds nodes and the links between them under new node, pin and link ids
+    // (positions keyed by the old node id); returns old id -> new id.
+    std::map<int, int> AddWithFreshIds(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
+                                       const std::map<int, ImVec2>& positions);
 
     // Deferred position setting (for nodes created outside render context)
     std::map<int, ImVec2> pending_positions_;  // node_id -> position

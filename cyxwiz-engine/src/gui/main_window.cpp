@@ -844,11 +844,12 @@ MainWindow::MainWindow()
         return {{}, {}};
     });
 
-    nas_panel_->SetApplyArchitectureCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-        if (node_editor_) {
-            node_editor_->InsertPattern(nodes, links);
-        }
-    });
+    nas_panel_->SetApplyArchitectureCallback(
+        [this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links, bool edits_canvas) {
+            if (!node_editor_) return;
+            if (edits_canvas) node_editor_->ReplaceWithEditedGraph(nodes, links);
+            else node_editor_->InsertPattern(nodes, links);
+        });
 
     // Set pattern browser callback to insert patterns into node editor
     pattern_browser_->SetInsertCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {

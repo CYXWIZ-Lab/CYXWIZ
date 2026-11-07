@@ -375,11 +375,6 @@ void NodeEditor::PasteClipboard() {
 
     SaveUndoState();
 
-    // Map from old node IDs to new node IDs
-    std::map<int, int> node_id_map;
-    // Map from old pin IDs to new pin IDs
-    std::map<int, int> pin_id_map;
-
     // Clear selection before pasting
     ImNodes::ClearNodeSelection();
 
@@ -403,46 +398,19 @@ void NodeEditor::PasteClipboard() {
         frames_.push_back(frame);
     }
 
-    // Create new nodes with new IDs
-    for (const auto& old_node : clipboard_.nodes) {
-        MLNode new_node = old_node;
-        int old_id = new_node.id;
-        new_node.id = next_node_id_++;
-
-        // Assign new pin IDs
-        for (auto& pin : new_node.inputs) {
-            int old_pin_id = pin.id;
-            pin.id = next_pin_id_++;
-            pin_id_map[old_pin_id] = pin.id;
-        }
-        for (auto& pin : new_node.outputs) {
-            int old_pin_id = pin.id;
-            pin.id = next_pin_id_++;
-            pin_id_map[old_pin_id] = pin.id;
-        }
-
-        node_id_map[old_id] = new_node.id;
-        nodes_.push_back(new_node);
-
+    // New ids for the nodes, their pins and the links between them.
+    std::map<int, ImVec2> positions;
+    for (size_t i = 0; i < clipboard_.nodes.size(); ++i) {
+        const int old_id = clipboard_.nodes[i].id;
         const auto copied_at = clipboard_.positions.find(old_id);
-        const ImVec2 new_pos = copied_at != clipboard_.positions.end()
+        const float step = static_cast<float>(nodes_.size() + i) * 10.0f;
+        positions[old_id] = copied_at != clipboard_.positions.end()
             ? ImVec2(paste_offset_.x + copied_at->second.x - origin.x, paste_offset_.y + copied_at->second.y - origin.y)
-            : ImVec2(paste_offset_.x + nodes_.size() * 10.0f, paste_offset_.y + nodes_.size() * 10.0f);
-
-        ImNodes::SetNodeGridSpacePos(new_node.id, new_pos);
-        ImNodes::SelectNode(new_node.id);
+            : ImVec2(paste_offset_.x + step, paste_offset_.y + step);
     }
-
-    // Recreate internal links with new IDs
-    for (const auto& old_link : clipboard_.links) {
-        NodeLink new_link;
-        new_link.id = next_link_id_++;
-        new_link.from_node = node_id_map[old_link.from_node];
-        new_link.to_node = node_id_map[old_link.to_node];
-        new_link.from_pin = pin_id_map[old_link.from_pin];
-        new_link.to_pin = pin_id_map[old_link.to_pin];
-
-        links_.push_back(new_link);
+    for (const auto& [old_id, new_id] : AddWithFreshIds(clipboard_.nodes, clipboard_.links, positions)) {
+        ImNodes::SetNodeGridSpacePos(new_id, positions[old_id]);
+        ImNodes::SelectNode(new_id);
     }
 
     // Increase paste offset for next paste
@@ -453,9 +421,6 @@ void NodeEditor::PasteClipboard() {
     if (paste_offset_.x > 300.0f) {
         paste_offset_ = ImVec2(50.0f, 50.0f);
     }
-
-    // Rebuild pin lookup after pasting nodes
-    RebuildPinLookup();
 
     spdlog::info("Pasted {} nodes and {} links",
                  clipboard_.nodes.size(), clipboard_.links.size());

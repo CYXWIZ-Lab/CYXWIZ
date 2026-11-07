@@ -41,9 +41,11 @@ public:
     void SetGetArchitectureCallback(
         std::function<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>()> cb);
 
-    // Set callback to apply architecture to node editor
+    // Set callback to apply architecture to node editor: `edits_canvas` when
+    // it is the canvas graph edited (mutations, search), which replaces it;
+    // otherwise a new model (a suggestion) added beside it.
     void SetApplyArchitectureCallback(
-        std::function<void(const std::vector<gui::MLNode>&, const std::vector<gui::NodeLink>&)> cb);
+        std::function<void(const std::vector<gui::MLNode>&, const std::vector<gui::NodeLink>&, bool edits_canvas)> cb);
 
 private:
     void RenderToolbar();
@@ -66,7 +68,7 @@ private:
     // Callbacks
     std::function<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>()>
         get_architecture_callback_;
-    std::function<void(const std::vector<gui::MLNode>&, const std::vector<gui::NodeLink>&)>
+    std::function<void(const std::vector<gui::MLNode>&, const std::vector<gui::NodeLink>&, bool edits_canvas)>
         apply_architecture_callback_;
 
     // Input configuration

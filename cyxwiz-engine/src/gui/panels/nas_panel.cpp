@@ -280,7 +280,7 @@ void NASPanel::RenderMutationControls() {
     if (!current_nodes_.empty() && apply_architecture_callback_) {
         ImGui::Spacing();
         if (ImGui::Button(ICON_FA_UPLOAD " Apply to CyxWiz Studio", ImVec2(200, 0))) {
-            apply_architecture_callback_(current_nodes_, current_links_);
+            apply_architecture_callback_(current_nodes_, current_links_, true);
         }
     }
 }
@@ -328,7 +328,7 @@ void NASPanel::RenderSuggestions() {
         if (ImGui::Button(ICON_FA_CHECK " Apply Selected", ImVec2(150, 0))) {
             apply_architecture_callback_(
                 suggestions_[selected_suggestion_].first,
-                suggestions_[selected_suggestion_].second);
+                suggestions_[selected_suggestion_].second, false);
         }
     }
 }
@@ -464,7 +464,7 @@ void NASPanel::RenderSearchResults() {
         if (ImGui::Button(ICON_FA_CROWN " Apply Best Architecture", ImVec2(220, 0))) {
             apply_architecture_callback_(
                 search_result_.best_architecture,
-                search_result_.best_links);
+                search_result_.best_links, true);
         }
     }
 }
@@ -516,7 +516,7 @@ void NASPanel::SetGetArchitectureCallback(
 }
 
 void NASPanel::SetApplyArchitectureCallback(
-    std::function<void(const std::vector<gui::MLNode>&, const std::vector<gui::NodeLink>&)> cb) {
+    std::function<void(const std::vector<gui::MLNode>&, const std::vector<gui::NodeLink>&, bool edits_canvas)> cb) {
     apply_architecture_callback_ = cb;
 }
 
