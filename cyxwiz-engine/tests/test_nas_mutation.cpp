@@ -103,6 +103,51 @@ int main() {
         Check(removed_links.size() == links.size() - 1, "remove layer leaves one link fewer, seed " + std::to_string(seed));
     }
 
+    // The head (Dense 2, id 4: its units are the class count the loss
+    // expects) is never removed, resized or swapped; a swap changes the type of
+    // the other layer and keeps the graph whole; added layers fit beside Dense.
+    for (unsigned seed = 1; seed <= 40; ++seed) {
+        const std::string at = ", seed " + std::to_string(seed);
+        const auto [removed, removed_links] = NASEvaluator::MutateArchitecture(nodes, links, MutationType::RemoveLayer, seed);
+        bool head_kept = false;
+        for (const auto& n : removed) head_kept = head_kept || n.id == 4;
+        Check(head_kept, "remove layer keeps the head" + at);
+
+        const auto [resized, resized_links] = NASEvaluator::MutateArchitecture(nodes, links, MutationType::ChangeUnits, seed);
+        for (const auto& n : resized)
+            if (n.id == 4) Check(n.parameters.at("units") == "2", "change units leaves the head's units" + at);
+
+        const auto [swapped, swapped_links] = NASEvaluator::MutateArchitecture(nodes, links, MutationType::SwapLayer, seed);
+        const std::string swap_problem = Problem(swapped, swapped_links);
+        Check(swap_problem.empty(), "swap layer" + at + ": " + swap_problem);
+        Check(swapped[1].type != NodeType::Dense, "swap layer changes Dense 1's type" + at);
+        Check(swapped[3].type == NodeType::Dense, "swap layer leaves the head" + at);
+
+        const auto [added, added_links] = NASEvaluator::MutateArchitecture(nodes, links, MutationType::AddLayer, seed);
+        for (const auto& n : added)
+            Check(n.type == NodeType::Dense || n.type == NodeType::BatchNorm || n.type == NodeType::Dropout ||
+                      n.type == NodeType::ReLU || n.type == NodeType::DatasetInput || n.type == NodeType::Output,
+                  "add layer beside Dense adds a feature layer, got " + n.name + at);
+    }
+
+    // The score counts the model's layers, not the data nodes or the output,
+    // and names each type.
+    NASSearchConfig config;
+    const auto score = NASEvaluator::ScoreArchitecture(nodes, links, {1, 784}, config);
+    Check(score.layer_count == 3, "layer count is the 3 model layers, got " + std::to_string(score.layer_count));
+    Check(score.architecture_summary.find("Layers: 2x Dense, 1x ReLU") != std::string::npos,
+          "summary names the layers: " + score.architecture_summary);
+    Check(score.connectivity_score == 0.0, "a plain chain has no skip connections");
+
+    // A residual block built with an Add node that joins two paths counts as a
+    // skip connection.
+    auto [res_nodes, res_links] = Chain();
+    res_nodes.push_back(Node(6, NodeType::Add, "Add"));
+    res_links.push_back({5, 2, 21, 6, 60});  // Dense 1 -> Add
+    res_links.push_back({6, 4, 41, 6, 60});  // Dense 2 -> Add
+    const auto residual = NASEvaluator::ScoreArchitecture(res_nodes, res_links, {1, 784}, config);
+    Check(residual.connectivity_score > 0.0, "an Add joining two paths counts as a skip connection");
+
     if (g_failures) {
         std::printf("%d NAS mutation checks failed\n", g_failures);
         return EXIT_FAILURE;

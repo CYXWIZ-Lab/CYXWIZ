@@ -1,4 +1,5 @@
 #include "nas_evaluator.h"
+#include "node_metadata_registry.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <algorithm>
@@ -7,6 +8,38 @@
 #include <set>
 
 namespace cyxwiz {
+
+namespace {
+
+const NodeMetadata* MetadataFor(gui::NodeType type) {
+    auto& registry = NodeMetadataRegistry::Instance();
+    if (!registry.IsInitialized()) registry.Initialize();
+    return registry.GetMetadata(type);
+}
+
+// A node of the model itself (a layer, activation, merge, ...), not the data
+// pipeline around it (Data Input, Split, DataLoader, Normalize) or the loss.
+bool IsModelNode(gui::NodeType type) {
+    const NodeMetadata* metadata = MetadataFor(type);
+    if (!metadata) return false;
+    switch (metadata->category) {
+        case gui::NodeCategory::Layers:
+        case gui::NodeCategory::Activation:
+        case gui::NodeCategory::Pooling:
+        case gui::NodeCategory::Normalization:
+        case gui::NodeCategory::Attention:
+        case gui::NodeCategory::Recurrent:
+        case gui::NodeCategory::ShapeOps:
+        case gui::NodeCategory::MergeOps:
+        case gui::NodeCategory::Upsampling:
+        case gui::NodeCategory::Regularization:
+            return true;
+        default:
+            return false;
+    }
+}
+
+}  // namespace
 
 // ============================================================================
 // Utility Methods
@@ -84,16 +117,14 @@ bool NASEvaluator::IsActivation(gui::NodeType type) {
     }
 }
 
-gui::NodeType NASEvaluator::GetRandomLayerType(std::mt19937& rng) {
-    std::vector<gui::NodeType> types = {
-        gui::NodeType::Dense,
-        gui::NodeType::Conv2D,
-        gui::NodeType::MaxPool2D,
-        gui::NodeType::AvgPool2D,
-        gui::NodeType::BatchNorm,
-        gui::NodeType::Dropout,
-        gui::NodeType::Flatten
-    };
+gui::NodeType NASEvaluator::GetRandomLayerType(std::mt19937& rng, gui::NodeType neighbour, gui::NodeType except) {
+    // Shape-keeping choices only: a convolution stays a convolution of the
+    // same kind (no Flatten or pooling that would change what follows).
+    const bool spatial = neighbour == gui::NodeType::Conv1D || neighbour == gui::NodeType::Conv2D ||
+                         neighbour == gui::NodeType::Conv3D || neighbour == gui::NodeType::DepthwiseConv2D;
+    std::vector<gui::NodeType> types = {spatial ? neighbour : gui::NodeType::Dense, gui::NodeType::BatchNorm,
+                                        gui::NodeType::Dropout};
+    std::erase(types, except);
     std::uniform_int_distribution<int> dist(0, static_cast<int>(types.size()) - 1);
     return types[dist(rng)];
 }
@@ -259,7 +290,7 @@ ArchitectureScore NASEvaluator::ScoreArchitecture(
             score.trainable_params += EstimateLayerParams(node.type, node.parameters, input_shape);
             score.total_flops += EstimateLayerFLOPs(node.type, node.parameters, input_shape);
         }
-        score.layer_count++;
+        if (IsModelNode(node.type)) score.layer_count++;
     }
 
     score.total_params = score.trainable_params;
@@ -290,12 +321,21 @@ ArchitectureScore NASEvaluator::ScoreArchitecture(
     int unique_types = static_cast<int>(score.layer_type_counts.size());
     score.diversity_score = std::min(1.0, unique_types / 5.0);
 
-    // Connectivity score (skip connections are good)
-    // Count links that skip layers
+    // Connectivity score (skip connections are good): links drawn as skips,
+    // and merge nodes (Add, Concatenate, ...) that join two or more paths,
+    // the way the canvas builds residual and dense blocks.
     int skip_connections = 0;
+    std::map<int, int> incoming;
     for (const auto& link : links) {
         if (link.type == gui::LinkType::ResidualSkip ||
             link.type == gui::LinkType::DenseSkip) {
+            skip_connections++;
+        }
+        incoming[link.to_node]++;
+    }
+    for (const auto& node : nodes) {
+        const NodeMetadata* metadata = MetadataFor(node.type);
+        if (metadata && metadata->category == gui::NodeCategory::MergeOps && incoming[node.id] >= 2) {
             skip_connections++;
         }
     }
@@ -322,32 +362,24 @@ std::string NASEvaluator::DescribeArchitecture(
 {
     std::stringstream ss;
 
-    // Count layer types
-    std::map<gui::NodeType, int> counts;
+    // Model layers by type, in the order they first appear; the data pipeline
+    // and the loss are counted in the node total only.
+    std::vector<std::pair<std::string, int>> counts;
     for (const auto& node : nodes) {
-        counts[node.type]++;
+        if (!IsModelNode(node.type)) continue;
+        const NodeMetadata* metadata = MetadataFor(node.type);
+        const std::string name = metadata ? metadata->name : node.name;
+        auto it = std::find_if(counts.begin(), counts.end(), [&](const auto& c) { return c.first == name; });
+        if (it == counts.end()) counts.emplace_back(name, 1);
+        else ++it->second;
     }
 
     ss << nodes.size() << " nodes, " << links.size() << " links\n";
     ss << "Layers: ";
-
-    bool first = true;
-    for (const auto& [type, count] : counts) {
-        if (!first) ss << ", ";
-        first = false;
-
-        // Get type name
-        switch (type) {
-            case gui::NodeType::Dense: ss << count << "x Dense"; break;
-            case gui::NodeType::Conv2D: ss << count << "x Conv2D"; break;
-            case gui::NodeType::MaxPool2D: ss << count << "x MaxPool"; break;
-            case gui::NodeType::BatchNorm: ss << count << "x BatchNorm"; break;
-            case gui::NodeType::Dropout: ss << count << "x Dropout"; break;
-            case gui::NodeType::ReLU: ss << count << "x ReLU"; break;
-            case gui::NodeType::LSTM: ss << count << "x LSTM"; break;
-            case gui::NodeType::Flatten: ss << count << "x Flatten"; break;
-            default: ss << count << "x Other"; break;
-        }
+    if (counts.empty()) ss << "none";
+    for (size_t i = 0; i < counts.size(); ++i) {
+        if (i) ss << ", ";
+        ss << counts[i].second << "x " << counts[i].first;
     }
 
     return ss.str();
@@ -485,6 +517,35 @@ std::vector<int> NASEvaluator::FindTrainableLayers(const std::vector<gui::MLNode
     return indices;
 }
 
+std::vector<int> NASEvaluator::FindBodyLayers(const std::vector<gui::MLNode>& nodes,
+                                              const std::vector<gui::NodeLink>& links) {
+    std::map<int, const gui::MLNode*> by_id;
+    for (const auto& node : nodes) by_id[node.id] = &node;
+    std::vector<int> body;
+    for (const int index : FindTrainableLayers(nodes)) {
+        // Walk downstream; a trainable layer met on the way makes it body.
+        std::set<int> seen;
+        std::vector<int> frontier = {nodes[index].id};
+        bool feeds_trainable = false;
+        while (!frontier.empty() && !feeds_trainable) {
+            const int id = frontier.back();
+            frontier.pop_back();
+            for (const auto& link : links) {
+                if (link.from_node != id || !seen.insert(link.to_node).second) continue;
+                const auto next = by_id.find(link.to_node);
+                if (next == by_id.end()) continue;
+                if (IsTrainableLayer(next->second->type)) {
+                    feeds_trainable = true;
+                    break;
+                }
+                frontier.push_back(link.to_node);
+            }
+        }
+        if (feeds_trainable) body.push_back(index);
+    }
+    return body;
+}
+
 std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::MutateArchitecture(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
@@ -504,6 +565,7 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
         std::vector<MutationType> types = {
             MutationType::AddLayer,
             MutationType::RemoveLayer,
+            MutationType::SwapLayer,
             MutationType::ChangeUnits,
             MutationType::ChangeActivation
         };
@@ -512,6 +574,8 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
     }
 
     std::vector<int> trainable = FindTrainableLayers(mutated_nodes);
+    // Remove, resize and swap leave the head alone: it sets the output size.
+    const std::vector<int> body = FindBodyLayers(mutated_nodes, mutated_links);
 
     switch (mutation) {
         case MutationType::AddLayer: {
@@ -523,7 +587,7 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
                 int new_node_id = GetNextNodeId(mutated_nodes);
                 int pin_id = GetNextPinId(mutated_nodes);
 
-                gui::NodeType new_type = GetRandomLayerType(rng);
+                gui::NodeType new_type = GetRandomLayerType(rng, mutated_nodes[target_idx].type);
                 std::uniform_int_distribution<int> units_dist(32, 256);
                 gui::MLNode new_node = CreateLayerNode(new_type, new_node_id, pin_id, units_dist(rng));
                 const int target_id = mutated_nodes[target_idx].id;
@@ -547,10 +611,10 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
         }
 
         case MutationType::RemoveLayer: {
-            // Remove a random trainable layer (if more than 1)
-            if (trainable.size() > 1) {
-                std::uniform_int_distribution<int> dist(0, static_cast<int>(trainable.size()) - 1);
-                int remove_idx = trainable[dist(rng)];
+            // Remove a random trainable layer other than the head
+            if (!body.empty()) {
+                std::uniform_int_distribution<int> dist(0, static_cast<int>(body.size()) - 1);
+                int remove_idx = body[dist(rng)];
 
                 int node_id = mutated_nodes[remove_idx].id;
 
@@ -581,10 +645,10 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
         }
 
         case MutationType::ChangeUnits: {
-            // Change units/filters of a random trainable layer
-            if (!trainable.empty()) {
-                std::uniform_int_distribution<int> dist(0, static_cast<int>(trainable.size()) - 1);
-                int target_idx = trainable[dist(rng)];
+            // Change units/filters of a random trainable layer other than the head
+            if (!body.empty()) {
+                std::uniform_int_distribution<int> dist(0, static_cast<int>(body.size()) - 1);
+                int target_idx = body[dist(rng)];
 
                 auto& node = mutated_nodes[target_idx];
 
@@ -602,6 +666,25 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
                     new_filters = std::max(8, std::min(512, new_filters));
                     node.parameters["filters"] = std::to_string(new_filters);
                 }
+            }
+            break;
+        }
+
+        case MutationType::SwapLayer: {
+            // Replace a layer other than the head with another type that fits
+            // there; it keeps its id and its pins, so its links stay.
+            if (!body.empty()) {
+                std::uniform_int_distribution<int> dist(0, static_cast<int>(body.size()) - 1);
+                auto& node = mutated_nodes[body[dist(rng)]];
+                const gui::NodeType new_type = GetRandomLayerType(rng, node.type, node.type);
+                int units = 64;
+                const auto units_it = node.parameters.find("units");
+                if (units_it != node.parameters.end()) units = std::max(1, std::atoi(units_it->second.c_str()));
+                int unused_pin = 0;
+                const gui::MLNode swapped = CreateLayerNode(new_type, node.id, unused_pin, units);
+                node.type = swapped.type;
+                node.name = swapped.name;
+                node.parameters = swapped.parameters;
             }
             break;
         }
@@ -857,7 +940,8 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Cr
     const std::vector<gui::NodeLink>& parent2_links,
     unsigned int seed)
 {
-    // Simple crossover: take first half from parent1, second half from parent2
+    // Keeps one parent whole, chosen at random: splicing halves of two graphs
+    // would need their links rewired, which this does not do.
     std::mt19937 rng(seed);
     std::uniform_real_distribution<double> prob(0, 1);
 

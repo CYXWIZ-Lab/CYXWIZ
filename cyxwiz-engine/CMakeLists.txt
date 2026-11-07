@@ -5906,6 +5906,8 @@ set_target_properties(test_layer_view_presentation PROPERTIES
 add_executable(test_nas_mutation
     tests/test_nas_mutation.cpp
     src/core/nas_evaluator.cpp
+    src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
+    src/core/extension_node_registry.cpp
 )
 target_include_directories(test_nas_mutation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_nas_mutation PRIVATE imgui::imgui nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt

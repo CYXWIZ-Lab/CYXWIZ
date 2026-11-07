@@ -223,8 +223,10 @@ private:
     // Check if a node type is an activation
     static bool IsActivation(gui::NodeType type);
 
-    // Get random layer type for mutation
-    static gui::NodeType GetRandomLayerType(std::mt19937& rng);
+    // A random layer type that fits where `neighbour` is (feature layers
+    // beside a Dense, the same convolution beside a Conv), other than `except`.
+    static gui::NodeType GetRandomLayerType(std::mt19937& rng, gui::NodeType neighbour,
+                                            gui::NodeType except = gui::NodeType::Output);
 
     // Get random activation type
     static gui::NodeType GetRandomActivation(std::mt19937& rng);
@@ -242,6 +244,11 @@ private:
 
     // Find trainable layers
     static std::vector<int> FindTrainableLayers(const std::vector<gui::MLNode>& nodes);
+    // Indices of the trainable layers a mutation may remove, resize or swap:
+    // all but the heads (a trainable layer with no trainable layer after it
+    // sets the model's output size the loss expects).
+    static std::vector<int> FindBodyLayers(const std::vector<gui::MLNode>& nodes,
+                                           const std::vector<gui::NodeLink>& links);
 
     // Crossover two architectures (for evolutionary search)
     static std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> Crossover(
