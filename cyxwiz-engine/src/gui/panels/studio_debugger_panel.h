@@ -105,6 +105,10 @@ public:
     core::StudioDebuggerConfig CaptureSettings() const;
     // The canvas compile, for the capture control's size estimate.
     void SetLiveCompile(const LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
+    // Full size (TOFIX178 D1): the main window hides the side panels while
+    // `on` and brings back the ones it hid when it turns off (the toolbar
+    // button again, leaving the debugger's tab or closing it).
+    void SetFullSizeCallback(std::function<void(bool on)> callback) { full_size_callback_ = std::move(callback); }
     // True once after the user asked the next run to rebuild prepared data.
     bool ConsumeRebuildPreparedDataRequest() {
         const bool requested = rebuild_prepared_data_next_run_;
@@ -258,6 +262,9 @@ private:
     // defaults. Save as my default writes them and empties it.
     std::optional<core::StudioDebuggerConfig> capture_session_;
     const LiveGraphCompile* live_compile_ = nullptr;
+    bool full_size_ = false;
+    std::function<void(bool)> full_size_callback_;
+    void SetFullSize(bool on);
 
     StudioDebuggerSnapshot session_;
     // The latest run, held here (moved, not copied) only while an older saved

@@ -408,6 +408,9 @@ private:
     std::unique_ptr<gui::WalletPanel> wallet_panel_;
     std::unique_ptr<cyxwiz::TaskProgressPanel> task_progress_panel_;
     std::unique_ptr<cyxwiz::PatternBrowserPanel> pattern_browser_;
+    // The side panels the Studio Debugger's Full size hid, shown again when
+    // it turns off (TOFIX178 D1).
+    std::vector<bool*> debugger_hidden_panels_;
     std::unique_ptr<cyxwiz::QueryConsolePanel> query_console_;
     std::unique_ptr<gui::CustomNodeEditorPanel> custom_node_editor_;
     std::unique_ptr<gui::ThemeEditorPanel> theme_editor_;

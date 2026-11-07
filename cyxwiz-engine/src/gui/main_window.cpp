@@ -1019,6 +1019,27 @@ MainWindow::MainWindow()
     });
     properties_->SetLiveCompile(live_compile_.get());
     studio_debugger_panel_->SetLiveCompile(live_compile_.get());
+    studio_debugger_panel_->SetFullSizeCallback([this](bool on) {
+        if (!on) {
+            for (bool* visible : debugger_hidden_panels_) *visible = true;
+            debugger_hidden_panels_.clear();
+            return;
+        }
+        // The panels the default layout docks left and right of the centre.
+        const std::vector<bool*> side = {
+            asset_browser_ ? asset_browser_->GetVisiblePtr() : nullptr,
+            node_browser_panel_ ? node_browser_panel_->GetVisiblePtr() : nullptr,
+            pattern_browser_ ? pattern_browser_->GetVisiblePtr() : nullptr,
+            properties_ ? properties_->GetVisiblePtr() : nullptr,
+            node_info_panel_ ? node_info_panel_->GetVisiblePtr() : nullptr,
+            wallet_panel_ ? wallet_panel_->GetVisiblePtr() : nullptr};
+        for (bool* visible : side) {
+            if (visible && *visible) {
+                *visible = false;
+                debugger_hidden_panels_.push_back(visible);
+            }
+        }
+    });
     node_editor_->SetLiveCompile(live_compile_.get());
 
     // Connect Pattern Browser to Node Editor for proper node creation

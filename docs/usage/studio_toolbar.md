@@ -215,6 +215,12 @@ debugger hides, F6 or View > Studio Debugger brings it back with its run),
 now, **Train** (F5), with the result: "Local Debug: Passed at 16:52, graph
 unchanged".
 
+**Full size** (the expand button beside Saved runs) gives the debugger the
+whole width. It hides the side panels (Asset Browser, Nodes, Patterns,
+Properties, Info, Wallet) while the debugger is shown. Press it again,
+switch to another tab or close the debugger, and the panels it hid come
+back.
+
 ### Which sample Local Debug runs
 
 Local Debug runs one item of your data through the model, forward and

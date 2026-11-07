@@ -95,6 +95,8 @@ private Data Studio tickets (`tofix*/track*`).
   capture in the debugger's toolbar changes them for the session, shows one
   snapshot's size for the model on the canvas and saves them as your
   defaults. Guide: `docs/usage/studio_toolbar.md`, "Layer capture".
+- **Studio Debugger Full size**: a toolbar button hides the side panels
+  while the debugger is shown and brings them back afterwards.
 - **Studio Debugger > Model > Layers**: every captured layer with the views
   its tensors support. Feature maps (strongest channels first, Heat or
   Grayscale), each unit's value, a histogram of the values, and weights and

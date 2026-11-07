@@ -227,7 +227,10 @@ void StudioDebuggerPanel::RenderToolbar() {
     // Saved runs and options, right-aligned when they fit.
     const float saved_width = 230.0f;
     const float gear_width = ui::ButtonWidth(ICON_FA_GEAR, ui::ButtonSize::Small);
-    RightAlignOnLine(saved_width + gear_width + ImGui::GetStyle().ItemSpacing.x);
+    const char* const full_label = full_size_ ? ICON_FA_COMPRESS "##StudioDebuggerFullSize"
+                                              : ICON_FA_EXPAND "##StudioDebuggerFullSize";
+    const float full_width = ui::ButtonWidth(full_label, ui::ButtonSize::Small);
+    RightAlignOnLine(saved_width + full_width + gear_width + 2.0f * ImGui::GetStyle().ItemSpacing.x);
     const std::string saved_preview = session_.run_id.empty()
         ? std::string("Saved runs")
         : "Saved: " + CompactRunLabel(session_.run_id);
@@ -266,6 +269,12 @@ void StudioDebuggerPanel::RenderToolbar() {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !session_.run_id.empty()) {
         ImGui::SetTooltip("Showing run %s", session_.run_id.c_str());
     }
+    ImGui::SameLine();
+    if (ui::GhostButton(full_label, true, nullptr, full_size_)) SetFullSize(!full_size_);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(full_size_ ? "Bring back the side panels"
+                                     : "Full size: hide the side panels (Asset Browser, Nodes, Properties, Info) "
+                                       "while the debugger is shown");
     ImGui::SameLine();
     if (ui::SecondaryButton(ICON_FA_GEAR "##StudioDebuggerOptions")) {
         open_options_popup = true;
@@ -924,8 +933,15 @@ void StudioDebuggerPanel::RenderLensContent() {
     RenderTraceDrawer(drawer_height);
 }
 
+void StudioDebuggerPanel::SetFullSize(bool on) {
+    if (full_size_ == on) return;
+    full_size_ = on;
+    if (full_size_callback_) full_size_callback_(on);
+}
+
 void StudioDebuggerPanel::Render() {
     if (!visible_) {
+        SetFullSize(false);
         return;
     }
 
@@ -935,13 +951,16 @@ void StudioDebuggerPanel::Render() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(640.0f, 420.0f), ImVec2(FLT_MAX, FLT_MAX));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
     const std::string title = std::string(ICON_FA_BUG) + " Studio Debugger###StudioDebuggerPanel";
-    if (ImGui::Begin(title.c_str(), &visible_)) {
+    const bool shown = ImGui::Begin(title.c_str(), &visible_);
+    if (shown) {
         RenderToolbar();
         RenderSessionStatusStrip();
         ImGui::Separator();
         RenderLensContent();
     }
     ImGui::End();
+    // Full size lasts while the debugger's tab is the one shown.
+    if (!shown || !visible_) SetFullSize(false);
     ImGui::PopStyleVar();
 }
 
