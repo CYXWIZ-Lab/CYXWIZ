@@ -1,11 +1,13 @@
 #include "hyperparam_search_panel.h"
 #include "gui/icons.h"
 #include "../ui_tokens.h"
+#include "../../core/file_dialogs.h"
 #include <imgui.h>
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstring>
+#include <fstream>
 
 namespace cyxwiz {
 
@@ -462,8 +464,14 @@ void HyperparamSearchPanel::RenderResults() {
     // Export button
     ImGui::Spacing();
     if (ImGui::Button(ICON_FA_FILE_EXPORT " Export Results")) {
-        // TODO: Export to CSV
-        spdlog::info("Export results not yet implemented");
+        const auto path = FileDialogs::SaveFile("Export Search Results", {{"CSV Files", "csv"}, {"All Files", "*"}},
+                                                nullptr, "hyperparameter_search.csv");
+        if (path) {
+            std::ofstream out(*path, std::ios::binary);
+            out << SearchResultsCsv(config_, search_engine_->GetResults(), search_engine_->GetBestTrialId());
+            if (out) spdlog::info("Search results saved to {}", *path);
+            else spdlog::error("Could not write {}", *path);
+        }
     }
 }
 

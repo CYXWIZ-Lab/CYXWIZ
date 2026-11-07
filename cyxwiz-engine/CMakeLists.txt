@@ -8242,6 +8242,11 @@ configure_train_path_test(test_engine_node_parity)
 add_executable(test_trial_runner tests/test_trial_runner.cpp src/core/trial_runner.cpp
     ${CYXWIZ_TRAIN_PATH_TEST_SOURCES})
 configure_train_path_test(test_trial_runner)
+# Hyperparameter search logic: strategies, failures, Bayesian, CSV (TOFIX178 T3).
+add_executable(test_hyperparam_search tests/test_hyperparam_search.cpp src/core/hyperparam_search.cpp)
+configure_training_executor_harness(test_hyperparam_search)
+set_target_properties(test_hyperparam_search PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME hyperparam_search COMMAND test_hyperparam_search)
 
 # ===== Tool: training throughput profile (TOFIX118 P8) =====
 add_executable(cyxwiz-training-profile tests/tool_training_profile.cpp)

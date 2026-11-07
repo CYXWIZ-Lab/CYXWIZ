@@ -10,12 +10,11 @@
 #include <thread>
 #include <limits>
 #include <random>
+#include <chrono>
+
+#include "trial_runner.h"
 
 namespace cyxwiz {
-
-// Forward declarations
-class TrainingExecutor;
-class DatasetHandle;
 
 // Parameter types for search space
 enum class ParamType {
@@ -29,6 +28,12 @@ enum class ParamType {
 struct SearchParameter {
     std::string name;
     ParamType type = ParamType::Continuous;
+
+    // The node property a trial sets to the sampled value (trial_runner.h:
+    // a layer's, the optimizer's, the scheduler's, the DataLoader's batch
+    // size / epochs). Every parameter of a search names one.
+    int node_id = -1;
+    std::string property;
 
     // For continuous/discrete/logscale
     float min_value = 0.0f;
@@ -73,7 +78,7 @@ struct SearchSpace {
 enum class SearchStrategy {
     Grid,      // Exhaustive grid search (all combinations)
     Random,    // Random sampling from parameter space
-    Bayesian   // Gaussian Process-based optimization (future)
+    Bayesian   // Gaussian process + expected improvement after a few random trials
 };
 
 // Result of a single trial
@@ -84,6 +89,9 @@ struct TrialResult {
 
     float val_loss = std::numeric_limits<float>::max();
     float val_accuracy = 0.0f;
+    float val_mae = 0.0f;   // numbers (regression)
+    float val_rmse = 0.0f;
+    bool regression = false;
     float train_loss = 0.0f;
     float train_accuracy = 0.0f;
 
@@ -104,8 +112,8 @@ struct SearchConfig {
     int epochs_per_trial = 10;
     int early_stopping_patience = 3;
 
-    std::string objective = "val_loss";  // "val_loss" or "val_accuracy"
-    bool minimize = true;  // true for loss, false for accuracy
+    std::string objective = "val_loss";  // "val_loss", "val_accuracy" or "val_mae"
+    bool minimize = true;  // true for loss and MAE, false for accuracy
 
     // Resource limits
     float max_time_seconds = 3600.0f;  // 1 hour default
@@ -116,11 +124,27 @@ struct SearchConfig {
 
     // Seed for reproducibility (0 = random)
     unsigned int random_seed = 0;
+
+    // Bayesian: random trials before the Gaussian process guides (0 = the
+    // number of parameters + 1, at least 3).
+    int initial_random_trials = 0;
 };
+
+// The objective's value for a finished trial.
+float ObjectiveValue(const SearchConfig& config, const TrialResult& result);
+
+// The node property changes a trial makes for sampled values.
+std::vector<TrialChange> TrialChangesFor(const SearchSpace& space, const std::map<std::string, float>& params,
+                                         const std::map<std::string, std::string>& categorical_params);
+
+// The results as CSV: one row per trial (id, each parameter, the scores,
+// seconds, the error of a failed trial), the best trial marked.
+std::string SearchResultsCsv(const SearchConfig& config, const std::vector<TrialResult>& results, int best_trial_id);
 
 /**
  * Hyperparameter Search Engine
- * Coordinates search strategy with TrainingExecutor
+ * Samples values for the parameters and trains each trial through the trial
+ * function (the Engine's: RunTrial on Train's recipe for the graph).
  */
 class HyperparamSearch {
 public:
@@ -131,8 +155,13 @@ public:
     void SetConfig(const SearchConfig& config);
     const SearchConfig& GetConfig() const { return config_; }
 
-    // Search control
-    void Start();
+    // Trains one trial: the node property changes, cancel and epoch callbacks.
+    using TrialFunction = std::function<TrialOutcome(const std::vector<TrialChange>&, const TrialCallbacks&)>;
+    void SetTrialFunction(TrialFunction trial_function) { trial_function_ = std::move(trial_function); }
+
+    // Search control. False (with the reason logged) when the space is
+    // invalid or no trial function is set.
+    bool Start();
     void Stop();
     void Pause();
     void Resume();
@@ -196,6 +225,8 @@ private:
     TrialProgressCallback on_trial_progress_;
     TrialCompleteCallback on_trial_complete_;
     SearchCompleteCallback on_search_complete_;
+
+    TrialFunction trial_function_;
 
     // Random number generator
     std::mt19937 rng_;
