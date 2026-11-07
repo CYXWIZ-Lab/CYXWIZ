@@ -232,6 +232,11 @@ public:
     // The Data Split part an item falls in; nullopt when it is in none (left
     // out, e.g. by a Quality node) or the batcher cannot tell.
     virtual std::optional<BatcherPhase> SourceSamplePart(size_t /*index*/) const { return std::nullopt; }
+    // What the item is called in its source ("cat.10599.jpg"); empty when
+    // items have no name (table rows) or the batcher cannot tell.
+    virtual std::string SourceSampleName(size_t /*index*/) const { return {}; }
+    // The classes in label order, when the batcher knows them.
+    virtual std::vector<std::string> ClassNames() const { return {}; }
 };
 
 // Items index .. index + count - 1 by number as one batch (GetSourceSamples),

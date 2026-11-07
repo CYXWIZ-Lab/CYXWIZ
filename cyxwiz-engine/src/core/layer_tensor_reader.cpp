@@ -99,8 +99,9 @@ Histogram ReadHistogram(const Tensor& tensor, float low, float high, size_t bins
     return histogram;
 }
 
-std::vector<float> ReadMatrixRows(const TensorInfo& info, const Tensor& tensor, size_t row_begin, size_t row_count) {
-    const MatrixLayout layout = LayoutAsMatrix(info);
+std::vector<float> ReadMatrixRows(const TensorInfo& info, const Tensor& tensor, size_t row_begin, size_t row_count,
+                                  std::optional<size_t> kernel_position) {
+    const MatrixLayout layout = LayoutAsMatrix(info, kernel_position);
     if (layout.rows == 0 || layout.columns == 0 || row_begin >= layout.rows) return {};
     row_count = std::min(row_count, layout.rows - row_begin);
     const af::array flat = tensor.GetRowMajorFlatArray();
@@ -109,9 +110,14 @@ std::vector<float> ReadMatrixRows(const TensorInfo& info, const Tensor& tensor, 
     const bool conv_weights = s.size() == 4 && (info.role == CapturedTensorRole::Parameter ||
                                                 info.role == CapturedTensorRole::Gradient);
     if (conv_weights) {
-        // Flat index = column * cout + row: ArrayFire (cout, columns); the
-        // page's rows transposed so each row is contiguous.
-        const af::array m = af::moddims(flat, D(layout.rows), D(layout.columns));
+        // Flat index = column * cout + row: ArrayFire (cout, kh * kw * cin);
+        // a kernel position's slice is cin of those columns. The page's rows
+        // are transposed so each row is contiguous.
+        const af::array m = af::moddims(flat, D(s[3]), D(s[0] * s[1] * s[2]));
+        if (kernel_position && *kernel_position < KernelPositions(info)) {
+            const af::seq columns(S(*kernel_position * s[2]), S(*kernel_position * s[2] + s[2] - 1));
+            return ToHost(af::transpose(m(rows, columns)), "shown heatmap rows");
+        }
         return ToHost(af::transpose(m(rows, af::span)), "shown heatmap rows");
     }
     // Flat index = row * columns + column: ArrayFire (columns, rows).

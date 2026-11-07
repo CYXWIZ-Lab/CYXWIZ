@@ -418,6 +418,10 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.feature_map_colour = sd.value("feature_map_colour", std::string("heat")) == "grayscale"
                                             ? FeatureMapColour::Grayscale
                                             : FeatureMapColour::Heat;
+            const std::string sort = sd.value("channel_sort", std::string("strongest"));
+            loaded.channel_sort = sort == "peak"     ? ChannelSort::Peak
+                                : sort == "number"   ? ChannelSort::Number
+                                                     : ChannelSort::Strongest;
             loaded.keep_capture_runs = std::clamp(sd.value("keep_capture_runs", 10), 1, 1000);
             studio_debugger_ = loaded;
         }
@@ -571,6 +575,9 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"capture_batch", studio_debugger_.capture_batch},
             {"feature_map_colour",
              studio_debugger_.feature_map_colour == FeatureMapColour::Grayscale ? "grayscale" : "heat"},
+            {"channel_sort", studio_debugger_.channel_sort == ChannelSort::Peak     ? "peak"
+                             : studio_debugger_.channel_sort == ChannelSort::Number ? "number"
+                                                                                    : "strongest"},
             {"keep_capture_runs", studio_debugger_.keep_capture_runs}
         };
 

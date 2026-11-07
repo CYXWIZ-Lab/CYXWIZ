@@ -6,6 +6,7 @@
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <utility>
@@ -150,6 +151,13 @@ std::optional<BatcherPhase> AudioDatasetBatcher::SourceSamplePart(size_t index) 
     }
     return std::nullopt;
 }
+
+std::string AudioDatasetBatcher::SourceSampleName(size_t index) const {
+    return index < dataset_->Size() ? std::filesystem::path(dataset_->GetFilePath(index)).filename().string()
+                                     : std::string();
+}
+
+std::vector<std::string> AudioDatasetBatcher::ClassNames() const { return dataset_->GetClassNames(); }
 
 Batch AudioDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_size, bool augment) {
     Batch batch;

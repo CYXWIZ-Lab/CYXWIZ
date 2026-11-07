@@ -36,6 +36,8 @@ struct AppearanceConfig {
 // them. Values are clamped when read.
 enum class LayerCaptureWhen { Off, LocalDebug, Training };  // Training: also Local Debug runs
 enum class FeatureMapColour { Heat, Grayscale };
+// Feature maps' order: largest mean first, highest peak first, or by number.
+enum class ChannelSort { Strongest, Peak, Number };
 
 inline constexpr int kLayerCaptureBatchSamples = 8;
 
@@ -47,6 +49,7 @@ struct StudioDebuggerConfig {
     bool capture_gradients = true;
     bool capture_batch = false;  // a batch of kLayerCaptureBatchSamples from the picked sample on
     FeatureMapColour feature_map_colour = FeatureMapColour::Heat;
+    ChannelSort channel_sort = ChannelSort::Strongest;
     int keep_capture_runs = 10;  // runs whose captures stay on disk
 
     bool operator==(const StudioDebuggerConfig&) const = default;

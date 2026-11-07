@@ -179,6 +179,8 @@ private:
     void RenderLayersView();
     // False when the Layers view has nothing for the Inspector.
     bool RenderLayersInspector();
+    // The picked item's input picture and model output, read once per item.
+    void ReadLayerSample();
     // The capture of the shown run: the live one, else read from the run
     // store in the background.
     void RefreshLayerCaptureSource();
@@ -250,6 +252,7 @@ private:
     size_t selected_channel_rank_ = 0;   // in strongest-first order
     bool layer_all_channels_ = false;
     size_t heatmap_row_begin_ = 0;
+    int heatmap_kernel_position_ = -1;   // conv weights: one kernel position, -1 = all
     std::shared_ptr<LayerViewCache> layer_view_cache_;
     // This session's capture settings once changed here; empty = the user's
     // defaults. Save as my default writes them and empties it.

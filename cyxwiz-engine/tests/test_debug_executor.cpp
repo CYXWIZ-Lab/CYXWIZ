@@ -2360,6 +2360,14 @@ void TestLayerTensorReader() {
         for (size_t col = 0; col < columns; ++col)
             conv_rows = conv_rows && page[r * columns + col] == conv[MatrixFlatIndex(conv_info, 1 + r, col)];
     ExpectTrue(conv_rows, "conv heatmap rows are output channels over (ky, kx, cin)");
+    for (size_t position = 0; position < kh * kw; ++position) {
+        const auto slice = ReadMatrixRows(conv_info, conv_weights, 0, cout, position);
+        bool slice_ok = slice.size() == cout * cin;
+        for (size_t r = 0; slice_ok && r < cout; ++r)
+            for (size_t c = 0; c < cin; ++c)
+                slice_ok = slice_ok && slice[r * cin + c] == conv[MatrixFlatIndex(conv_info, r, c, position)];
+        ExpectTrue(slice_ok, "a kernel position's slice is output channels over input channels");
+    }
 
     std::vector<float> dense(3 * 5);
     for (size_t i = 0; i < dense.size(); ++i) dense[i] = static_cast<float>(i) - 4.0f;

@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -100,7 +101,17 @@ void TestRowsAndShapes() {
     Check(PerSampleShape({8, 8192}) == std::vector<size_t>({8192}), "flat per-sample shape");
     const auto row = BuildLayerRow(Conv32());
     CheckText(row.name, "Conv 32", "row name");
-    CheckText(row.kind, "Conv2D", "row kind");
+    CheckText(row.kind, "Conv2D 3 \xC3\x97 3", "row kind with the kernel");
+    CheckText(BuildLayerRow(Dense2()).kind, "Dense, 16,386 parameters", "Dense row with its parameters");
+    CheckText(BuildLayerRow(BatchNorm1()).kind, "BatchNorm", "no detail without a kernel, stride or matrix");
+    LayerInfo pool{3, 9, "Pool 1", "MaxPool2D",
+                   {{R::Input, "input", {64, 64, 32, 1}}, {R::Output, "output", {32, 32, 32, 1}}}};
+    CheckText(BuildLayerRow(pool).kind, "MaxPool2D, stride 2", "stride from the sizes");
+    LayerInfo strided = Conv64();
+    strided.tensors[0].shape = {64, 64, 32, 1};
+    CheckText(BuildLayerRow(strided).kind, "Conv2D 3 \xC3\x97 3, stride 2", "kernel and stride");
+    strided.kind.clear();
+    CheckText(BuildLayerRow(strided).kind, "3 \xC3\x97 3, stride 2", "no kind: the detail alone");
     CheckText(row.output, "64 \xC3\x97 64 \xC3\x97 32", "row output per sample");
     CheckText(BuildLayerRow(Dense2()).output, "2", "Dense row output");
     LayerInfo unnamed;
@@ -183,11 +194,85 @@ void TestMatrixLayout() {
     Check(LayoutAsMatrix(grad).rows == 32 && LayoutAsMatrix(grad).columns == 27, "gradients lay out as weights");
     const TensorInfo act{R::Output, "output", {16, 16, 128, 8}};
     Check(LayoutAsMatrix(act).rows == 16 && LayoutAsMatrix(act).columns == 16 * 128 * 8, "activation rows");
+
+    // One kernel position: output channels by input channels.
+    Check(KernelPositions(conv) == 9 && KernelPositions(dense) == 0 &&
+              KernelPositions({R::Parameter, "weights", {1, 1, 32, 64}}) == 0,
+          "kernel positions only for a kernel above 1 x 1");
+    const auto slice = LayoutAsMatrix(conv, size_t{7});
+    Check(slice.rows == 64 && slice.columns == 32, "a slice is [cout, cin]");
+    CheckText(slice.description,
+              "64 output channels (rows) by 32 input channels at kernel position (2, 1) of the 3 \xC3\x97 3 kernel",
+              "slice words");
+    Check(MatrixFlatIndex(conv, 40, 17, size_t{7}) == flat, "slice cell to the same flat index");
+    Check(LayoutAsMatrix(dense, size_t{0}).columns == 8192, "no slice for Dense weights");
+}
+
+void TestSections() {
+    std::vector<LayerInfo> layers = {Conv32(), BatchNorm1(), Conv64(), Flatten(), Dense2()};
+    const std::map<int, std::string> groups = {{6, "Stem"}, {7, "Stem"}, {10, "Stage 1"}, {20, "Head"}};
+    const auto sections = SectionLayers(layers, groups);
+    Check(sections.size() == 4, "Stem, Stage 1, ungrouped, Head");
+    if (sections.size() == 4) {
+        CheckText(sections[0].name, "Stem", "first section");
+        Check(sections[0].layers == std::vector<size_t>({0, 1}), "Stem layers");
+        Check(sections[2].name.empty() && sections[2].layers == std::vector<size_t>({3}), "ungrouped Flatten");
+        CheckText(sections[3].name, "Head", "last section");
+    }
+    const auto none = SectionLayers(layers, {});
+    Check(none.size() == 1 && none[0].name.empty() && none[0].layers.size() == 5, "no groups: one section");
+}
+
+void TestPrediction() {
+    const std::vector<std::string> catdog = {"cat", "dog"};
+    // BCE with logits: logit -4.556 -> sigmoid 0.0104 -> cat, 99.0 %.
+    const auto p = Predict({-4.556f}, OutputRule::Sigmoid, catdog);
+    Check(p && p->class_index == 0, "sigmoid below 0.5 is class 0");
+    if (p) {
+        CheckText(p->text, "cat, 99.0 %", "sigmoid prediction text");
+        CheckText(p->detail, "logit -4.556 \xE2\x86\x92 sigmoid 0.0104 (dog is 1)", "sigmoid detail");
+    }
+    const auto soft = Predict({0.1f, 2.3f, -1.0f}, OutputRule::Softmax, {"a", "b"});
+    Check(soft && soft->class_index == 1, "softmax argmax");
+    if (soft) CheckText(soft->text, "b, 87.1 %", "softmax share");
+    const auto probs = Predict({0.2f, 0.7f, 0.1f}, OutputRule::Probabilities, {});
+    Check(probs && probs->class_index == 1, "probabilities argmax");
+    if (probs) CheckText(probs->text, "class 1, 70.0 %", "unknown class names");
+    Check(Predict({0.83f}, OutputRule::Probability, catdog)->text == "dog, 83.0 %", "a sigmoid layer's probability");
+    Check(Predict({3.25f}, OutputRule::Value, {})->text == "3.25", "regression value");
+    Check(!Predict({1.0f, 2.0f}, OutputRule::Sigmoid, catdog), "sigmoid needs one output");
+    Check(!Predict({NAN}, OutputRule::Sigmoid, catdog), "no prediction from NaN");
+    Check(!Predict({1.0f}, OutputRule::Unknown, catdog), "unknown rule");
+    CheckText(ClassName(1, {"0", "1"}), "class 1", "a numeric class name");
+    CheckText(ClassName(0, catdog), "cat", "a class name");
+    Check(OutputRuleFromKey(OutputRuleKey(OutputRule::Softmax)) == OutputRule::Softmax &&
+              OutputRuleFromKey("") == OutputRule::Unknown,
+          "rule keys round-trip");
+
+    Check(ItemLabels({0, 1, 1, 0, 0, 1}, {3, 2}) == std::vector<int>({1, 0, 1}), "one-hot labels");
+    Check(ItemLabels({1, 0, 3}, {3}) == std::vector<int>({1, 0, 3}), "scalar labels");
+    Check(ItemLabels({0.5f}, {1, 1}) == std::vector<int>({-1}), "a value is not a class");
+
+    CheckText(SampleHeadline("cat.10599.jpg", "cat", p), "cat.10599.jpg \xC2\xB7 label cat \xC2\xB7 predicted cat, 99.0 %",
+              "headline");
+    CheckText(SampleHeadline("", "", std::nullopt), "", "nothing known");
+    CheckText(SampleHeadline("", "", p), "predicted cat, 99.0 %", "prediction alone");
 }
 
 void TestChannelsAndScales() {
     const std::vector<float> means = {0.2f, 0.9f, NAN, 0.9f, 0.5f};
-    Check(StrongestFirst(means) == std::vector<size_t>({1, 3, 4, 0, 2}), "strongest first, ties by number, NaN last");
+    using core::ChannelSort;
+    const std::vector<float> maxima = {5.0f, 1.0f, 2.0f, 3.0f, 5.0f};
+    Check(OrderChannels(means, maxima, ChannelSort::Strongest) == std::vector<size_t>({1, 3, 4, 0, 2}),
+          "strongest first, ties by number, NaN last");
+    Check(OrderChannels(means, maxima, ChannelSort::Peak) == std::vector<size_t>({0, 4, 3, 2, 1}), "highest peak first");
+    Check(OrderChannels(means, maxima, ChannelSort::Number) == std::vector<size_t>({0, 1, 2, 3, 4}), "by number");
+    CheckText(ChannelsShownText(16, 32, false, ChannelSort::Strongest),
+              "The 16 strongest of 32 channels for this sample, strongest first.", "16 strongest");
+    CheckText(ChannelsShownText(16, 64, false, ChannelSort::Peak),
+              "The first 16 of 64 channels for this sample, highest peak first.", "first 16 by peak");
+    CheckText(ChannelsShownText(32, 32, true, ChannelSort::Number),
+              "All 32 of 32 channels for this sample, in channel order.", "all by number");
     Check(CountDeadChannels({0.0f, 1.2f, 0.0f, 3.0f}) == 2, "dead channels");
     Check(AsSpatial({64, 64, 32, 1}).has_value() && AsSpatial({64, 64, 32, 1})->channels == 32, "spatial shape");
     Check(!AsSpatial({1, 1, 256, 8}).has_value(), "a 1 x 1 map is not a picture");
@@ -293,6 +378,8 @@ int main() {
     TestChannelsAndScales();
     TestHistogramAndNumbers();
     TestCaptureSettings();
+    TestSections();
+    TestPrediction();
     if (g_failures) {
         std::printf("%d layer view checks failed\n", g_failures);
         return EXIT_FAILURE;

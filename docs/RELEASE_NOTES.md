@@ -90,7 +90,12 @@ private Data Studio tickets (`tofix*/track*`).
   gradients as a heatmap whose cells give their index and value. The
   Inspector shows the sample as the model received it and the clicked map
   enlarged. Saved runs show their captures too, and a batch of 8 steps
-  through its items. Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
+  through its items. The view names the picked item, its label and the
+  model's prediction ("predicted cat, 99.0 %", read the way the loss reads
+  the output), groups the layers by the graph's canvas groups, gives each
+  layer's kernel, stride and parameter count, orders feature maps by mean,
+  peak or number (a Preferences default too) and slices conv weights by
+  kernel position. Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in
   `docs/usage/image_classifier_resnet.md`): 92.6 % test accuracy on one

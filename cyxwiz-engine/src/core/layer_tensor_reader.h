@@ -43,6 +43,7 @@ Histogram ReadHistogram(const Tensor& tensor, float low, float high, size_t bins
 
 // Rows [row_begin, row_begin + row_count) of the tensor as LayoutAsMatrix
 // lays it out, row-major (row_count x columns values).
-std::vector<float> ReadMatrixRows(const TensorInfo& info, const Tensor& tensor, size_t row_begin, size_t row_count);
+std::vector<float> ReadMatrixRows(const TensorInfo& info, const Tensor& tensor, size_t row_begin, size_t row_count,
+                                  std::optional<size_t> kernel_position = std::nullopt);
 
 }  // namespace cyxwiz::layer_view

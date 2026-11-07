@@ -44,6 +44,8 @@ DebugSample Take(IBatcher& source, std::initializer_list<const IBatcher*> parts,
         if (batcher && !part) part = batcher->SourceSamplePart(index);
     sample.features = batch->data;
     sample.labels = batch->labels;
+    for (size_t i = 0; i < taken; ++i) sample.item_names.push_back(source.SourceSampleName(index + i));
+    sample.class_names = source.ClassNames();
     sample.description = taken == 1
         ? item + " " + std::to_string(index) + " of " + dataset + ", " + PartName(part)
         : item + "s " + std::to_string(index) + "-" + std::to_string(index + taken - 1) + " of " + dataset +
@@ -131,7 +133,10 @@ DebugSample MakeDebugSample(TrainingConfiguration& config, const DebugSampleRequ
             const DataRegistry::ImageDatasetEntry entry = *found;  // a copy: the registry may reload
             // The batcher training and Run Test make (MakeImageBatcher), one image per batch.
             auto batcher = MakeImageBatcher(entry, config, 1, ImageSplitOf(config), request.stop);
-            return Take(*batcher, {batcher.get()}, request.index, request.count, "image", config.dataset_name);
+            DebugSample taken = Take(*batcher, {batcher.get()}, request.index, request.count, "image",
+                                     config.dataset_name);
+            taken.class_names = entry.ShownClassNames();  // with the names typed on the Data Input
+            return taken;
         }
         if (const auto* found = registry.GetAudioDatasetEntry(config.dataset_name)) {
             const DataRegistry::AudioDatasetEntry entry = *found;  // a copy: the registry may reload

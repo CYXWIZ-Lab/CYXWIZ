@@ -60,6 +60,8 @@ public:
     std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
     // The part (of the three this batcher holds) the clip falls in.
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::string SourceSampleName(size_t index) const override;
+    std::vector<std::string> ClassNames() const override;
 
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;

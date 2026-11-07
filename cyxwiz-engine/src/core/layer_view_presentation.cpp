@@ -95,7 +95,40 @@ LayerRow BuildLayerRow(const LayerInfo& layer) {
     row.kind = layer.kind;
     const TensorInfo* output = Find(layer, CapturedTensorRole::Output);
     row.output = output ? ShapeText(PerSampleShape(output->shape)) : "-";
+
+    // Kernel and parameters from the weights, stride from the sizes.
+    const TensorInfo* weights = nullptr;
+    size_t parameters = 0;
+    for (const auto& t : layer.tensors) {
+        if (t.role != CapturedTensorRole::Parameter) continue;
+        parameters += Elements(t.shape);
+        if (!weights || Elements(t.shape) > Elements(weights->shape)) weights = &t;
+    }
+    std::string detail;
+    if (weights && weights->shape.size() == 4)
+        detail += " " + std::to_string(weights->shape[0]) + kTimes + std::to_string(weights->shape[1]);
+    const TensorInfo* input = Find(layer, CapturedTensorRole::Input);
+    const auto in = input ? AsSpatial(input->shape) : std::nullopt;
+    const auto out = output ? AsSpatial(output->shape) : std::nullopt;
+    if (in && out && out->height < in->height && in->height % out->height == 0 && in->width % out->width == 0 &&
+        in->height / out->height == in->width / out->width)
+        detail += ", stride " + std::to_string(in->height / out->height);
+    if (weights && weights->shape.size() == 2) detail += ", " + CountText(parameters) + " parameters";
+    if (row.kind.empty() && !detail.empty()) detail.erase(0, detail[0] == ',' ? 2 : 1);
+    row.kind += detail;
     return row;
+}
+
+std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
+                                        const std::map<int, std::string>& group_of_node) {
+    std::vector<LayerSection> sections;
+    for (size_t i = 0; i < layers.size(); ++i) {
+        const auto it = group_of_node.find(layers[i].node_id);
+        const std::string name = it == group_of_node.end() ? std::string() : it->second;
+        if (sections.empty() || sections.back().name != name) sections.push_back({name, {}});
+        sections.back().layers.push_back(i);
+    }
+    return sections;
 }
 
 LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummary* output_numerics,
@@ -174,11 +207,18 @@ std::optional<SpatialShape> AsSpatial(const std::vector<size_t>& shape) {
     return SpatialShape{shape[0], shape[1], shape[2], shape[3]};
 }
 
-MatrixLayout LayoutAsMatrix(const TensorInfo& tensor) {
+MatrixLayout LayoutAsMatrix(const TensorInfo& tensor, std::optional<size_t> kernel_position) {
     const auto& s = tensor.shape;
     MatrixLayout layout;
     const bool weight_like = tensor.role == CapturedTensorRole::Parameter ||
                              tensor.role == CapturedTensorRole::Gradient;
+    if (kernel_position && *kernel_position < KernelPositions(tensor)) {
+        layout.rows = s[3];
+        layout.columns = s[2];
+        layout.description = CountText(s[3]) + " output channels (rows) by " + CountText(s[2]) +
+                             " input channels at kernel position " + KernelPositionText(tensor, *kernel_position);
+        return layout;
+    }
     if (s.size() <= 1) {
         layout.rows = 1;
         layout.columns = s.empty() ? 0 : s[0];
@@ -201,14 +241,29 @@ MatrixLayout LayoutAsMatrix(const TensorInfo& tensor) {
     return layout;
 }
 
-size_t MatrixFlatIndex(const TensorInfo& tensor, size_t row, size_t column) {
+size_t MatrixFlatIndex(const TensorInfo& tensor, size_t row, size_t column, std::optional<size_t> kernel_position) {
     const auto& s = tensor.shape;
     const bool weight_like = tensor.role == CapturedTensorRole::Parameter ||
                              tensor.role == CapturedTensorRole::Gradient;
     // Conv weights [kh, kw, cin, cout]: the row is the output channel, the
-    // column runs over (ky, kx, cin) in row-major order.
+    // column runs over (ky, kx, cin) in row-major order; a slice's column is
+    // the input channel at one kernel position.
+    if (kernel_position && *kernel_position < KernelPositions(tensor)) column += *kernel_position * s[2];
     if (s.size() == 4 && weight_like) return column * s[3] + row;
     return row * LayoutAsMatrix(tensor).columns + column;
+}
+
+size_t KernelPositions(const TensorInfo& tensor) {
+    const auto& s = tensor.shape;
+    const bool weight_like = tensor.role == CapturedTensorRole::Parameter ||
+                             tensor.role == CapturedTensorRole::Gradient;
+    return s.size() == 4 && weight_like && s[0] * s[1] > 1 ? s[0] * s[1] : 0;
+}
+
+std::string KernelPositionText(const TensorInfo& tensor, size_t kernel_position) {
+    const size_t kw = tensor.shape.size() == 4 ? std::max<size_t>(1, tensor.shape[1]) : 1;
+    return "(" + std::to_string(kernel_position / kw) + ", " + std::to_string(kernel_position % kw) + ") of the " +
+           std::to_string(tensor.shape.empty() ? 0 : tensor.shape[0]) + kTimes + std::to_string(kw) + " kernel";
 }
 
 std::string ElementText(const TensorInfo& tensor, size_t flat_index, float value) {
@@ -222,12 +277,33 @@ std::string ElementText(const TensorInfo& tensor, size_t flat_index, float value
     return Bracketed(index) + " = " + Number(value);
 }
 
-std::vector<size_t> StrongestFirst(const std::vector<float>& means) {
+std::vector<size_t> OrderChannels(const std::vector<float>& means, const std::vector<float>& maxima,
+                                  core::ChannelSort sort) {
     std::vector<size_t> order(means.size());
     std::iota(order.begin(), order.end(), size_t{0});
-    const auto key = [&means](size_t i) { return std::isfinite(means[i]) ? means[i] : -INFINITY; };
+    if (sort == core::ChannelSort::Number) return order;
+    const std::vector<float>& by = sort == core::ChannelSort::Peak && maxima.size() == means.size() ? maxima : means;
+    const auto key = [&by](size_t i) { return std::isfinite(by[i]) ? by[i] : -INFINITY; };
     std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return key(a) > key(b); });
     return order;
+}
+
+const char* ChannelSortText(core::ChannelSort sort) {
+    switch (sort) {
+        case core::ChannelSort::Peak: return "highest peak first";
+        case core::ChannelSort::Number: return "in channel order";
+        case core::ChannelSort::Strongest: break;
+    }
+    return "strongest first";
+}
+
+std::string ChannelsShownText(size_t shown, size_t count, bool all, core::ChannelSort sort) {
+    std::string text = all || shown >= count
+        ? "All " + CountText(shown) + " of " + CountText(count)
+        : (sort == core::ChannelSort::Strongest ? "The " + CountText(shown) + " strongest of "
+                                                : "The first " + CountText(shown) + " of ") +
+              CountText(count);
+    return text + " channels for this sample, " + ChannelSortText(sort) + ".";
 }
 
 size_t CountDeadChannels(const std::vector<float>& maxima) {
@@ -296,6 +372,108 @@ std::vector<std::string> NumbersLines(const DebugTensorNumericSummary& n, bool s
     }
     lines.push_back(count);
     return lines;
+}
+
+const char* OutputRuleKey(OutputRule rule) {
+    switch (rule) {
+        case OutputRule::Sigmoid: return "sigmoid";
+        case OutputRule::Softmax: return "softmax";
+        case OutputRule::Probability: return "probability";
+        case OutputRule::Probabilities: return "probabilities";
+        case OutputRule::Value: return "value";
+        case OutputRule::Unknown: break;
+    }
+    return "";
+}
+
+OutputRule OutputRuleFromKey(std::string_view key) {
+    for (OutputRule rule : {OutputRule::Sigmoid, OutputRule::Softmax, OutputRule::Probability,
+                            OutputRule::Probabilities, OutputRule::Value})
+        if (key == OutputRuleKey(rule)) return rule;
+    return OutputRule::Unknown;
+}
+
+std::string ClassName(int index, const std::vector<std::string>& class_names) {
+    // A name that is only a number (labels 0 / 1) reads as "class 1".
+    if (index >= 0 && static_cast<size_t>(index) < class_names.size() && !class_names[index].empty() &&
+        !std::all_of(class_names[index].begin(), class_names[index].end(),
+                     [](char c) { return c >= '0' && c <= '9'; }))
+        return class_names[index];
+    return "class " + std::to_string(index);
+}
+
+std::optional<Prediction> Predict(const std::vector<float>& output, OutputRule rule,
+                                  const std::vector<std::string>& class_names) {
+    if (output.empty() || rule == OutputRule::Unknown) return std::nullopt;
+    for (float v : output)
+        if (!std::isfinite(v)) return std::nullopt;
+    Prediction p;
+    const auto percent = [](double share) {
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%.1f %%", share * 100.0);
+        return std::string(buffer);
+    };
+    if (rule == OutputRule::Value) {
+        p.text = output.size() == 1 ? Number(output[0]) : CountText(output.size()) + " values";
+        return p;
+    }
+    if (rule == OutputRule::Sigmoid || rule == OutputRule::Probability) {
+        if (output.size() != 1) return std::nullopt;
+        const double z = output[0];
+        const double one = rule == OutputRule::Sigmoid ? 1.0 / (1.0 + std::exp(-z)) : std::clamp(z, 0.0, 1.0);
+        p.class_index = one >= 0.5 ? 1 : 0;
+        p.confidence = p.class_index == 1 ? one : 1.0 - one;
+        char buffer[96];
+        if (rule == OutputRule::Sigmoid)
+            std::snprintf(buffer, sizeof(buffer), "logit %s \xE2\x86\x92 sigmoid %.4f", Number(output[0]).c_str(), one);
+        else
+            std::snprintf(buffer, sizeof(buffer), "output %.4f", one);
+        p.detail = std::string(buffer) + " (" + ClassName(1, class_names) + " is 1)";
+    } else {
+        if (output.size() < 2) return std::nullopt;
+        const size_t best = static_cast<size_t>(std::max_element(output.begin(), output.end()) - output.begin());
+        double share = output[best];
+        if (rule == OutputRule::Softmax) {
+            double sum = 0.0;
+            for (float v : output) sum += std::exp(static_cast<double>(v) - output[best]);
+            share = 1.0 / sum;
+            p.detail = "softmax over " + CountText(output.size()) + " classes, logit " + Number(output[best]);
+        } else {
+            p.detail = "the largest of " + CountText(output.size()) + " outputs";
+        }
+        p.class_index = static_cast<int>(best);
+        p.confidence = share;
+    }
+    p.text = ClassName(p.class_index, class_names) + ", " + percent(p.confidence);
+    return p;
+}
+
+std::vector<int> ItemLabels(const std::vector<float>& values, const std::vector<size_t>& shape) {
+    if (shape.empty() || values.empty()) return {};
+    const size_t items = shape[0];
+    const size_t width = values.size() / std::max<size_t>(1, items);
+    std::vector<int> labels(items, -1);
+    for (size_t i = 0; i < items && (i + 1) * width <= values.size(); ++i) {
+        const float* row = values.data() + i * width;
+        if (width > 1) {
+            labels[i] = static_cast<int>(std::max_element(row, row + width) - row);
+        } else if (std::isfinite(row[0]) && row[0] >= 0.0f && std::abs(row[0] - std::round(row[0])) < 1e-4f) {
+            labels[i] = static_cast<int>(std::lround(row[0]));
+        }
+    }
+    return labels;
+}
+
+std::string SampleHeadline(const std::string& item_name, const std::string& label,
+                           const std::optional<Prediction>& prediction) {
+    std::string line = item_name;
+    const auto add = [&line](const std::string& part) {
+        if (part.empty()) return;
+        line += (line.empty() ? "" : " \xC2\xB7 ") + part;
+    };
+    if (!label.empty()) add("label " + label);
+    if (prediction) add("predicted " + prediction->text);
+    return line;
 }
 
 }  // namespace cyxwiz::layer_view

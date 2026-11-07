@@ -56,6 +56,7 @@ public:
 
     std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::string SourceSampleName(size_t index) const override;
 
     // The images in a part (Train, Val or Test), whatever the current phase.
     size_t SamplesIn(BatcherPhase phase) const { return Part(phase).size(); }

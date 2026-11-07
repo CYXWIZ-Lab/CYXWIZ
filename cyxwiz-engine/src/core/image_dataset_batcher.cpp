@@ -7,6 +7,7 @@
 #include <limits>
 #include <numeric>
 #include <stdexcept>
+#include <filesystem>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -175,6 +176,11 @@ std::optional<BatcherPhase> ImageDatasetBatcher::SourceSamplePart(size_t index) 
         if (std::find(part.begin(), part.end(), index) != part.end()) return phase;
     }
     return std::nullopt;
+}
+
+std::string ImageDatasetBatcher::SourceSampleName(size_t index) const {
+    const auto& files = Files();
+    return index < files.size() ? std::filesystem::path(files[index]).filename().string() : std::string();
 }
 
 // The images with these numbers as one batch: labels, the transforms (random

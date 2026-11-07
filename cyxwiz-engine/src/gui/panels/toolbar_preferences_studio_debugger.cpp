@@ -58,6 +58,15 @@ void ToolbarPanel::RenderStudioDebuggerPreferences() {
                         "switch it.");
     ImGui::PopTextWrapPos();
 
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Feature-map order");
+    static const char* const kSort[] = {"Strongest first", "Highest peak first", "Channel order"};
+    int sort = static_cast<int>(settings.channel_sort);
+    if (ui::SegmentedControl("##channel_sort", kSort, 3, &sort)) settings.channel_sort = static_cast<core::ChannelSort>(sort);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Strongest: the largest mean activation; peak: the largest single value.");
+    ImGui::PopTextWrapPos();
+
     if (!(settings == saved)) {
         engine_config.SetStudioDebugger(settings);
         engine_config.Save();

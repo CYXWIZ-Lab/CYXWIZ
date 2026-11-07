@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <map>
 #include <optional>
 
 namespace cyxwiz {
@@ -124,6 +125,16 @@ std::string SampleText(const StudioDebuggerSnapshot& session) {
     return bar == std::string::npos ? std::string() : session.sample_summary.substr(bar + 3);
 }
 
+// "cat.10599.jpg · label cat · predicted cat, 99.0 %" for item `item` of the
+// capture; the prediction only when `output` (the model's, for that item) is given.
+std::string ItemHeadline(const StudioDebuggerSampleFacts& facts, size_t item, const std::vector<float>& output) {
+    const std::string name = item < facts.item_names.size() ? facts.item_names[item] : std::string();
+    const int label = item < facts.labels.size() ? facts.labels[item] : -1;
+    std::optional<lv::Prediction> prediction;
+    if (!output.empty()) prediction = lv::Predict(output, lv::OutputRuleFromKey(facts.output_rule), facts.class_names);
+    return lv::SampleHeadline(name, label >= 0 ? lv::ClassName(label, facts.class_names) : std::string(), prediction);
+}
+
 void WrappedMuted(const std::string& text) {
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(DebuggerMuted(), "%s", text.c_str());
@@ -162,6 +173,7 @@ struct StudioDebuggerPanel::LayerViewCache {
 
     // Weights and gradients.
     lv::TensorInfo matrix_info;
+    std::optional<size_t> kernel_position;  // the shown slice of conv weights
     lv::MatrixLayout layout;
     size_t row_begin = 0;
     size_t row_count = 0;
@@ -176,6 +188,7 @@ struct StudioDebuggerPanel::LayerViewCache {
     int sample_width = 0;
     int sample_height = 0;
     std::vector<float> model_output;
+    std::vector<lv::LayerSection> sections;  // the list's canvas-group sections
 
     void DropViewTextures() {
         auto& textures = TextureManager::Instance();
@@ -308,6 +321,10 @@ void StudioDebuggerPanel::RenderLayersView() {
                 if (cache.layers.size() == 1) cache.samples = s.size() == 4 ? s[3] : (s.empty() ? 1 : s[0]);
             }
         }
+        std::map<int, std::string> group_of_node;
+        for (const auto& group : session_.node_groups)
+            for (int id : group.node_ids) group_of_node.emplace(id, group.name);
+        cache.sections = lv::SectionLayers(cache.layers, group_of_node);
         selected_layer_ = std::min(selected_layer_, cache.layers.empty() ? 0 : cache.layers.size() - 1);
         selected_layer_sample_ = std::min(selected_layer_sample_, cache.samples - 1);
     }
@@ -316,9 +333,12 @@ void StudioDebuggerPanel::RenderLayersView() {
         return;
     }
 
-    // Source line: what was captured, from which step, and the batch item.
+    // Source line: the picked item and the model's answer, what was
+    // captured, from which step, and the batch item.
+    ReadLayerSample();
     {
-        std::string line = std::to_string(cache.layers.size()) + " layers captured";
+        std::string line = ItemHeadline(session_.sample_facts, selected_layer_sample_, cache.model_output);
+        line += (line.empty() ? "" : " \xC2\xB7 ") + std::to_string(cache.layers.size()) + " layers captured";
         if (const std::string sample = SampleText(session_); !sample.empty()) line += " \xC2\xB7 " + sample;
         if (layer_capture_->Truncated())
             line += " \xC2\xB7 " + std::to_string(layer_capture_->SkippedTensors()) +
@@ -364,33 +384,42 @@ void StudioDebuggerPanel::RenderLayersView() {
     RightAlignOnLine(ImGui::CalcTextSize("Output per sample").x);
     ImGui::TextColored(DebuggerMuted(), "Output per sample");
     const float line = ImGui::GetTextLineHeight();
-    for (size_t i = 0; i < cache.rows.size(); ++i) {
-        const auto& row = cache.rows[i];
-        ImGui::PushID(static_cast<int>(i));
-        ui::PushListRowColours();
-        if (ImGui::Selectable("##layer", selected_layer_ == i, 0,
-                              ImVec2(0.0f, row.kind.empty() ? line + 4.0f : line * 2.0f + 4.0f))) {
-            if (selected_layer_ != i) {
-                selected_layer_ = i;
-                selected_layer_tab_ = 0;
-                selected_channel_rank_ = 0;
-                heatmap_row_begin_ = 0;
-            }
+    for (const auto& section : cache.sections) {
+        if (!section.name.empty()) {
+            ImGui::Spacing();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(DebuggerFaint(), "%s", section.name.c_str());
+            ImGui::PopTextWrapPos();
         }
-        ui::PopListRowColours();
-        // The row's words over the Selectable, drawn (not laid out) so the
-        // cursor stays where the Selectable left it.
-        const ImVec2 min = ImGui::GetItemRectMin();
-        const ImVec2 max = ImGui::GetItemRectMax();
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const float output_width = ImGui::CalcTextSize(row.output.c_str()).x;
-        dl->PushClipRect(min, max, true);
-        dl->AddText(ImVec2(min.x + 4.0f, min.y + 2.0f), DebuggerU32(DebuggerText()), row.name.c_str());
-        dl->AddText(ImVec2(max.x - output_width - 4.0f, min.y + 2.0f), DebuggerU32(DebuggerText()), row.output.c_str());
-        if (!row.kind.empty())
-            dl->AddText(ImVec2(min.x + 4.0f, min.y + 2.0f + line), DebuggerU32(DebuggerFaint()), row.kind.c_str());
-        dl->PopClipRect();
-        ImGui::PopID();
+        for (size_t i : section.layers) {
+            const auto& row = cache.rows[i];
+            ImGui::PushID(static_cast<int>(i));
+            ui::PushListRowColours();
+            if (ImGui::Selectable("##layer", selected_layer_ == i, 0,
+                                  ImVec2(0.0f, row.kind.empty() ? line + 4.0f : line * 2.0f + 4.0f))) {
+                if (selected_layer_ != i) {
+                    selected_layer_ = i;
+                    selected_layer_tab_ = 0;
+                    selected_channel_rank_ = 0;
+                    heatmap_row_begin_ = 0;
+                    heatmap_kernel_position_ = -1;
+                }
+            }
+            ui::PopListRowColours();
+            // The row's words over the Selectable, drawn (not laid out) so the
+            // cursor stays where the Selectable left it.
+            const ImVec2 min = ImGui::GetItemRectMin();
+            const ImVec2 max = ImGui::GetItemRectMax();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float output_width = ImGui::CalcTextSize(row.output.c_str()).x;
+            dl->PushClipRect(min, max, true);
+            dl->AddText(ImVec2(min.x + 4.0f, min.y + 2.0f), DebuggerU32(DebuggerText()), row.name.c_str());
+            dl->AddText(ImVec2(max.x - output_width - 4.0f, min.y + 2.0f), DebuggerU32(DebuggerText()), row.output.c_str());
+            if (!row.kind.empty())
+                dl->AddText(ImVec2(min.x + 4.0f, min.y + 2.0f + line), DebuggerU32(DebuggerFaint()), row.kind.c_str());
+            dl->PopClipRect();
+            ImGui::PopID();
+        }
     }
     ImGui::EndChild();
     ImGui::PopStyleVar();
@@ -406,7 +435,8 @@ void StudioDebuggerPanel::RenderLayersView() {
     const lv::LayerInfo& info = cache.layers[selected_layer_];
     const CapturedTensor* output = FindTensor(layer, CapturedTensorRole::Output);
 
-    const int colour = CaptureSettings().feature_map_colour == core::FeatureMapColour::Grayscale ? 1 : 0;
+    const core::StudioDebuggerConfig settings = CaptureSettings();
+    const int colour = settings.feature_map_colour == core::FeatureMapColour::Grayscale ? 1 : 0;
     const Scale map_scale = colour == 1 ? Scale::Gray : Scale::Heat;
 
     // The tabs need the output's zeros for the facts: plan with the sample's
@@ -471,8 +501,9 @@ void StudioDebuggerPanel::RenderLayersView() {
     const bool weight_view = tab.view == lv::View::Weights || tab.view == lv::View::Gradients;
     const size_t channel_cap = layer_all_channels_ ? kAllChannelsCap : kStrongestShown;
     const std::string view_key = layer_key + "|" + std::to_string(selected_layer_tab_) + "/" +
-                                 std::to_string(colour) + "/" + std::to_string(channel_cap) + "/" +
-                                 std::to_string(heatmap_row_begin_);
+                                 std::to_string(colour) + "/" + std::to_string(static_cast<int>(settings.channel_sort)) +
+                                 "/" + std::to_string(channel_cap) + "/" +
+                                 std::to_string(heatmap_row_begin_) + "/" + std::to_string(heatmap_kernel_position_);
 
     if (cache.key != view_key) {
         cache.DropViewTextures();
@@ -508,7 +539,7 @@ void StudioDebuggerPanel::RenderLayersView() {
             if (tab.view == lv::View::FeatureMaps) {
                 cache.spatial = lv::AsSpatial(output->tensor.Shape());
                 cache.channels = lv::ReadChannelSummary(shown);
-                cache.order = lv::StrongestFirst(cache.channels.means);
+                cache.order = lv::OrderChannels(cache.channels.means, cache.channels.maxima, settings.channel_sort);
                 cache.dead = lv::CountDeadChannels(cache.channels.maxima);
                 // The scale's top: the 99.5th percentile, so one bright pixel
                 // does not darken every map.
@@ -530,14 +561,20 @@ void StudioDebuggerPanel::RenderLayersView() {
                 cache.units = lv::ReadValues(shown);
             } else if (weight_view) {
                 cache.matrix_info = {source->role, source->name, source->tensor.Shape()};
-                cache.layout = lv::LayoutAsMatrix(cache.matrix_info);
+                if (heatmap_kernel_position_ >= static_cast<int>(lv::KernelPositions(cache.matrix_info)))
+                    heatmap_kernel_position_ = -1;
+                cache.kernel_position = heatmap_kernel_position_ >= 0
+                                            ? std::optional<size_t>(static_cast<size_t>(heatmap_kernel_position_))
+                                            : std::nullopt;
+                cache.layout = lv::LayoutAsMatrix(cache.matrix_info, cache.kernel_position);
                 const int max_texture = std::max(1, TextureManager::Instance().MaxTextureSize());
                 cache.shown_columns = std::min(cache.layout.columns, static_cast<size_t>(max_texture));
                 const size_t rows_fit = std::max<size_t>(1, kHeatmapCells / std::max<size_t>(1, cache.layout.columns));
                 cache.row_count = std::min({cache.layout.rows, kHeatmapRowsCap, rows_fit});
                 heatmap_row_begin_ = std::min(heatmap_row_begin_, cache.layout.rows - std::min(cache.layout.rows, cache.row_count));
                 cache.row_begin = heatmap_row_begin_;
-                cache.matrix = lv::ReadMatrixRows(cache.matrix_info, source->tensor, cache.row_begin, cache.row_count);
+                cache.matrix = lv::ReadMatrixRows(cache.matrix_info, source->tensor, cache.row_begin, cache.row_count,
+                                                  cache.kernel_position);
                 cache.row_count = cache.layout.columns ? cache.matrix.size() / cache.layout.columns : 0;
                 cache.limit = static_cast<float>(cache.numerics.maximum_absolute);
                 std::vector<float> visible;
@@ -557,12 +594,9 @@ void StudioDebuggerPanel::RenderLayersView() {
         WrappedMuted("This view could not be read: " + cache.error);
     } else if (tab.view == lv::View::FeatureMaps && cache.spatial) {
         const size_t count = cache.spatial->channels;
-        WrappedMuted(layer_all_channels_
-                         ? "All " + std::to_string(std::min(count, kAllChannelsCap)) + " of " + std::to_string(count) +
-                               " channels for this sample, strongest first. Click one to inspect it."
-                         : "The " + std::to_string(std::min(count, kStrongestShown)) + " strongest of " +
-                               std::to_string(count) + " channels for this sample, strongest first. Click one to "
-                               "inspect it.");
+        WrappedMuted(lv::ChannelsShownText(std::min(count, layer_all_channels_ ? kAllChannelsCap : kStrongestShown),
+                                           count, layer_all_channels_, settings.channel_sort) +
+                     " Click one to inspect it.");
         static const char* const kScales[] = {"Heat", "Grayscale"};
         int pick = colour;
         ImGui::TextColored(DebuggerMuted(), "Colour");
@@ -572,6 +606,17 @@ void StudioDebuggerPanel::RenderLayersView() {
             capture_session_->feature_map_colour = static_cast<core::FeatureMapColour>(pick);
         }
         ImGui::SameLine(0.0f, 16.0f);
+        ImGui::TextColored(DebuggerMuted(), "Order");
+        ImGui::SameLine();
+        static const char* const kSorts[] = {"Strongest first", "Highest peak first", "Channel order"};
+        int sort = static_cast<int>(settings.channel_sort);
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize(kSorts[1]).x + ImGui::GetFrameHeight() * 2.0f);
+        if (ImGui::Combo("##StudioDebuggerChannelSort", &sort, kSorts, 3) &&
+            sort != static_cast<int>(settings.channel_sort)) {
+            if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
+            capture_session_->channel_sort = static_cast<core::ChannelSort>(sort);
+            selected_channel_rank_ = 0;
+        }
         DrawLegend(map_scale, "0", "99.5th percentile (max " + Number(cache.numerics.maximum) + ")");
         ImGui::Spacing();
 
@@ -606,7 +651,9 @@ void StudioDebuggerPanel::RenderLayersView() {
         }
         ImGui::Spacing();
         if (count > kStrongestShown) {
-            const std::string toggle = layer_all_channels_ ? "The 16 strongest" : "All " + std::to_string(count) + " channels";
+            const std::string toggle = layer_all_channels_
+                ? (settings.channel_sort == core::ChannelSort::Strongest ? "The 16 strongest" : "The first 16")
+                : "All " + std::to_string(count) + " channels";
             if (ui::SecondaryButton(toggle.c_str())) {
                 layer_all_channels_ = !layer_all_channels_;
                 selected_channel_rank_ = 0;
@@ -657,6 +704,31 @@ void StudioDebuggerPanel::RenderLayersView() {
                            lv::ShapeText(cache.matrix_info.shape) + " shown as " + cache.layout.description +
                            ". Hover gives the value and its index.";
         WrappedMuted(what);
+        // Conv weights: all kernel positions side by side, or one position's
+        // output-by-input slice.
+        if (const size_t positions = lv::KernelPositions(cache.matrix_info)) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(DebuggerMuted(), "Slice");
+            ImGui::SameLine();
+            const std::string preview = heatmap_kernel_position_ < 0
+                ? std::string("All kernel positions")
+                : lv::KernelPositionText(cache.matrix_info, static_cast<size_t>(heatmap_kernel_position_));
+            ImGui::SetNextItemWidth(ImGui::CalcTextSize(preview.c_str()).x + ImGui::GetFrameHeight() * 2.0f);
+            if (ImGui::BeginCombo("##StudioDebuggerKernelSlice", preview.c_str())) {
+                if (ImGui::Selectable("All kernel positions", heatmap_kernel_position_ < 0)) {
+                    heatmap_kernel_position_ = -1;
+                    heatmap_row_begin_ = 0;
+                }
+                for (size_t k = 0; k < positions; ++k) {
+                    const std::string text = lv::KernelPositionText(cache.matrix_info, k);
+                    if (ImGui::Selectable(text.c_str(), heatmap_kernel_position_ == static_cast<int>(k))) {
+                        heatmap_kernel_position_ = static_cast<int>(k);
+                        heatmap_row_begin_ = 0;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
         if (cache.shown_columns < cache.layout.columns) {
             WrappedMuted("The first " + std::to_string(cache.shown_columns) + " columns (this device's largest "
                          "picture).");
@@ -678,7 +750,7 @@ void StudioDebuggerPanel::RenderLayersView() {
             const size_t row = std::min(cache.row_count - 1,
                                         static_cast<size_t>(std::max(0.0f, (m.y - at.y) / height) * cache.row_count));
             const float value = cache.matrix[row * cache.layout.columns + col];
-            const size_t flat = lv::MatrixFlatIndex(cache.matrix_info, cache.row_begin + row, col);
+            const size_t flat = lv::MatrixFlatIndex(cache.matrix_info, cache.row_begin + row, col, cache.kernel_position);
             ImGui::SetTooltip("%s", lv::ElementText(cache.matrix_info, flat, value).c_str());
         }
         DrawLegend(Scale::Diverging, "-" + Number(cache.limit), "+" + Number(cache.limit));
@@ -702,8 +774,8 @@ void StudioDebuggerPanel::RenderLayersView() {
     ImGui::PopStyleColor();
 }
 
-bool StudioDebuggerPanel::RenderLayersInspector() {
-    if (!layer_capture_ || !layer_view_cache_ || layer_view_cache_->layers.empty()) return false;
+void StudioDebuggerPanel::ReadLayerSample() {
+    if (!layer_capture_ || !layer_view_cache_ || layer_capture_->Layers().empty()) return;
     LayerViewCache& cache = *layer_view_cache_;
     const auto& layers = layer_capture_->Layers();
 
@@ -747,6 +819,12 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
             spdlog::debug("Studio Debugger: layer inspector sample not read: {}", e.what());
         }
     }
+}
+
+bool StudioDebuggerPanel::RenderLayersInspector() {
+    if (!layer_capture_ || !layer_view_cache_ || layer_view_cache_->layers.empty()) return false;
+    LayerViewCache& cache = *layer_view_cache_;
+    ReadLayerSample();
 
     ImGui::BeginChild("StudioDebuggerLayerInspector", ImVec2(0.0f, 0.0f), false);
     if (BeginCard("StudioDebuggerLayerSample")) {
@@ -758,10 +836,19 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
             const float h = side * static_cast<float>(cache.sample_height) / static_cast<float>(std::max(1, cache.sample_width));
             ImGui::Image(Texture(cache.sample_texture), ImVec2(side, h));
         }
-        if (const std::string sample = SampleText(session_); !sample.empty()) ImGui::TextUnformatted(sample.c_str());
+        const auto& facts = session_.sample_facts;
+        const std::string item = ItemHeadline(facts, selected_layer_sample_, {});
+        if (!item.empty()) ImGui::TextUnformatted(item.c_str());
+        if (const std::string sample = SampleText(session_); !sample.empty())
+            ImGui::TextColored(DebuggerMuted(), "%s", sample.c_str());
         if (cache.samples > 1) ImGui::TextColored(DebuggerMuted(), "Item %zu of %zu in the captured batch",
                                                   selected_layer_sample_ + 1, cache.samples);
-        if (!cache.model_output.empty() && cache.model_output.size() <= 16) {
+        const auto prediction = lv::Predict(cache.model_output, lv::OutputRuleFromKey(facts.output_rule),
+                                            facts.class_names);
+        if (prediction) {
+            ImGui::TextColored(DebuggerBright(), "Prediction %s", prediction->text.c_str());
+            if (!prediction->detail.empty()) ImGui::TextColored(DebuggerMuted(), "%s", prediction->detail.c_str());
+        } else if (!cache.model_output.empty() && cache.model_output.size() <= 16) {
             std::string out = "Model output";
             for (size_t i = 0; i < cache.model_output.size(); ++i) out += (i ? ", " : " ") + Number(cache.model_output[i]);
             ImGui::TextColored(DebuggerText(), "%s", out.c_str());

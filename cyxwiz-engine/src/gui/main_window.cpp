@@ -169,6 +169,8 @@
 #include "../core/debug_run_store.h"
 #include "../core/layer_capture_settings.h"
 #include "../core/layer_capture_store.h"
+#include "../core/layer_tensor_reader.h"
+#include "../core/layer_view_presentation.h"
 #include "../core/runtime_log_store.h"
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
@@ -1066,6 +1068,8 @@ MainWindow::MainWindow()
                 studio_debugger_panel_->ConsumeRebuildPreparedDataRequest();
             inputs.capture_settings = studio_debugger_panel_->CaptureSettings();
             if (node_editor_) {
+                for (const auto& group : node_editor_->GetGroups())
+                    inputs.node_groups.push_back({group.name, group.node_ids});
                 nodes = node_editor_->GetNodes();
                 links = node_editor_->GetLinks();
                 for (const auto& [id, position] : node_editor_->GetCachedNodePositions()) {
@@ -3971,6 +3975,24 @@ std::string CanvasPreparedTrainingInput(NodeEditor* editor, const std::vector<ML
     return result;
 }
 
+// How the model's output turns into an answer, for the layer views'
+// prediction (TOFIX178 6.2e): a Sigmoid or Softmax last layer already gives
+// probabilities; otherwise the loss says whether the output is logits.
+cyxwiz::layer_view::OutputRule OutputRuleFor(const cyxwiz::TrainingConfiguration& config) {
+    using Rule = cyxwiz::layer_view::OutputRule;
+    using T = gui::NodeType;
+    if (cyxwiz::UsesContinuousTargetMetrics(config)) return Rule::Value;
+    const T last = config.layers.empty() ? T::Dense : config.layers.back().type;
+    if (last == T::Softmax) return Rule::Probabilities;
+    if (last == T::Sigmoid) return Rule::Probability;
+    switch (config.loss_type) {
+        case T::BCEWithLogits: return Rule::Sigmoid;
+        case T::CrossEntropyLoss: return Rule::Softmax;
+        case T::BCELoss: return Rule::Probability;
+        default: return Rule::Unknown;
+    }
+}
+
 // What the Studio Debugger's capture settings keep (TOFIX178 6.1c, 6.2d);
 // nullopt when nothing is captured `for_training` or for Local Debug.
 std::optional<cyxwiz::LayerCaptureOptions> LayerCaptureFor(const cyxwiz::core::StudioDebuggerConfig& settings,
@@ -4539,6 +4561,7 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
 
     session.node_count = nodes.size();
     session.link_count = links.size();
+    if (inputs) session.node_groups = inputs->node_groups;
     session.graph_hash = HashGraphStructure(nodes, links);
     session.run_id = MakeDebuggerRunId(session.graph_hash);
     const bool run_full = mode == cyxwiz::StudioDebuggerRunMode::FullWorkflow;
@@ -5144,6 +5167,18 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         cyxwiz::DebugExecutor exe(sample.ok() ? debug_config : config);
         if (sample.ok()) {
             exe.SetInputSample(sample.features, sample.labels, sample.description);
+            // The items' names, labels and classes, and how the output reads,
+            // for the layer views (a few labels: one small read).
+            auto& facts = session.sample_facts;
+            facts.item_names = sample.item_names;
+            facts.class_names = sample.class_names;
+            facts.output_rule = cyxwiz::layer_view::OutputRuleKey(OutputRuleFor(debug_config));
+            try {
+                facts.labels = cyxwiz::layer_view::ItemLabels(cyxwiz::layer_view::ReadValues(sample.labels),
+                                                              sample.labels.Shape());
+            } catch (const std::exception& e) {
+                spdlog::debug("Local Debug: the sample's labels were not read: {}", e.what());
+            }
         }
         if (capture) exe.SetLayerCapture(*capture);
         session.debug_result = exe.Run();

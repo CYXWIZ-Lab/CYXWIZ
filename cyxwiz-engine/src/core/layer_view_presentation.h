@@ -11,11 +11,14 @@
 //   Dense weights [out, in]; flat activations [N, features].
 
 #include "debug_numerics.h"
+#include "engine_config.h"
 #include "layer_capture.h"
 
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cyxwiz::layer_view {
@@ -48,7 +51,20 @@ struct LayerRow {
     std::string kind;
     std::string output;  // per sample, "64 × 64 × 32"
 };
+// The row's kind says what the tensors show: "Conv2D 3 × 3, stride 2"
+// (kernel from the weights, stride from the input and output sizes),
+// "Dense, 257 parameters".
 LayerRow BuildLayerRow(const LayerInfo& layer);
+
+// The layer list's sections (6.2e): consecutive layers whose nodes share a
+// canvas group, named by it; layers in no group form unnamed sections. No
+// groups at all: one unnamed section.
+struct LayerSection {
+    std::string name;
+    std::vector<size_t> layers;  // indices into the layer list
+};
+std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
+                                        const std::map<int, std::string>& group_of_node);
 
 enum class View { FeatureMaps, Values, Units, Weights, Gradients };
 
@@ -88,14 +104,28 @@ struct MatrixLayout {
     size_t columns = 0;
     std::string description;  // "64 output channels (rows) by 288 inputs (3 × 3 kernel × 32 input channels)"
 };
-MatrixLayout LayoutAsMatrix(const TensorInfo& tensor);
+// `kernel_position` (conv weights only, ky * kw + kx): one kernel position's
+// slice, output channels by input channels, instead of all positions.
+MatrixLayout LayoutAsMatrix(const TensorInfo& tensor, std::optional<size_t> kernel_position = std::nullopt);
 // The element a heatmap cell shows, in the tensor's own index:
 // "[2, 1, 17, 40] = -0.0312". Row-major flat index = MatrixFlatIndex.
-size_t MatrixFlatIndex(const TensorInfo& tensor, size_t row, size_t column);
+size_t MatrixFlatIndex(const TensorInfo& tensor, size_t row, size_t column,
+                       std::optional<size_t> kernel_position = std::nullopt);
+// Conv weights' kernel positions (kh * kw) when there are several, else 0.
+size_t KernelPositions(const TensorInfo& tensor);
+// "(1, 2) of the 3 × 3 kernel".
+std::string KernelPositionText(const TensorInfo& tensor, size_t kernel_position);
 std::string ElementText(const TensorInfo& tensor, size_t flat_index, float value);
 
-// Channel numbers ordered strongest (largest mean) first; ties by number.
-std::vector<size_t> StrongestFirst(const std::vector<float>& channel_means);
+// Channel numbers in the chosen order: largest mean first (Strongest),
+// largest maximum first (Peak) or by number; ties by number, NaN last.
+std::vector<size_t> OrderChannels(const std::vector<float>& channel_means, const std::vector<float>& channel_maxima,
+                                  core::ChannelSort sort);
+// "strongest first", "highest peak first", "in channel order".
+const char* ChannelSortText(core::ChannelSort sort);
+// "The 16 strongest of 32 channels for this sample, strongest first.",
+// "All 32 of 32 ...", "The first 16 of 64 channels ..., highest peak first."
+std::string ChannelsShownText(size_t shown, size_t count, bool all, core::ChannelSort sort);
 // Channels whose maximum is 0 everywhere (a dead ReLU channel).
 size_t CountDeadChannels(const std::vector<float>& channel_maxima);
 
@@ -113,5 +143,36 @@ std::vector<float> HistogramBars(const std::vector<unsigned>& counts, bool log_s
 // "min 0 · max 6.81 · mean 0.286", "42.6 % zeros" (when there are zeros and
 // `show_zeros`), "131,072 values, no NaN or Inf".
 std::vector<std::string> NumbersLines(const DebugTensorNumericSummary& numerics, bool show_zeros);
+
+// How the model's output turns into an answer (6.2e), from the loss and the
+// last layer: one logit through a sigmoid (BCE with logits), logits through a
+// softmax (cross-entropy), outputs that already are probabilities (a Sigmoid
+// or Softmax last layer), or values (regression).
+enum class OutputRule { Unknown, Sigmoid, Softmax, Probability, Probabilities, Value };
+const char* OutputRuleKey(OutputRule rule);  // "sigmoid", ... (saved with the run)
+OutputRule OutputRuleFromKey(std::string_view key);
+
+// "cat" for class 0 of {"cat", "dog"}; "class 3" when the name is unknown
+// or only a number.
+std::string ClassName(int index, const std::vector<std::string>& class_names);
+
+struct Prediction {
+    int class_index = -1;     // -1 for a value
+    double confidence = 0.0;  // of the class, 0..1
+    std::string text;         // "cat, 99.0 %", or the value "3.142"
+    std::string detail;       // "logit -4.556 → sigmoid 0.0104 (dog is 1)"
+};
+// nullopt when the rule is Unknown or the output does not fit it.
+std::optional<Prediction> Predict(const std::vector<float>& output, OutputRule rule,
+                                  const std::vector<std::string>& class_names);
+
+// Each item's label from a batch's labels ([N, classes] one-hot rows ->
+// the hot class; [N] or [N, 1] -> the rounded value); -1 when not a class.
+std::vector<int> ItemLabels(const std::vector<float>& values, const std::vector<size_t>& shape);
+
+// The status line's sample: "cat.10599.jpg · label cat · predicted cat, 99.0 %",
+// leaving out what is unknown.
+std::string SampleHeadline(const std::string& item_name, const std::string& label,
+                           const std::optional<Prediction>& prediction);
 
 }  // namespace cyxwiz::layer_view

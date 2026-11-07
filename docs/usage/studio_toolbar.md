@@ -255,6 +255,8 @@ Debugger** (your defaults):
   their report; their captures are deleted.
 - **Feature-map colour**: **Heat** (black through red to yellow) or
   **Grayscale**, for every activation layer; each view can switch it.
+- **Feature-map order**: **Strongest first** (largest mean), **Highest peak
+  first** (largest value) or **Channel order**.
 
 Preferences applies and saves at once, for every project (the
 `studio_debugger` section of the Engine's settings file).
@@ -292,14 +294,25 @@ layer capture. A live Local Debug run shows its own capture; a run picked in
 **Saved runs** reads its capture from the run store. Without a capture the view
 says how to get one.
 
+- The line above the list names the picked item and the model's answer
+  ("dog.11289.jpg · label class 1 · predicted class 0, 63.3 % · 36 layers
+  captured · image 0 of cat_dog, train"), then, for a batch of 8, an **Item**
+  stepper over the batch. The prediction follows the loss and the last layer:
+  one logit through a sigmoid (BCE with logits), logits through a softmax
+  (cross-entropy), probabilities from a Sigmoid or Softmax layer, or the value
+  for regression. Class names come from the data (as typed on the Data Input);
+  names that are only numbers read as "class 1". When the run has more than
+  one capture (training snapshots), a list picks it.
 - The **layer list** names every captured layer, its kind and its output for
-  one sample ("64 × 64 × 32"). Above it: how many layers were captured, the
-  sample, and, for a batch of 8, an **Item** stepper over the batch. When the
-  run has more than one capture (training snapshots), a list picks it.
+  one sample ("64 × 64 × 32"), in sections named by the graph's canvas groups
+  (as they were when the run started). The kind adds what the tensors show:
+  the kernel ("Conv2D 3 × 3"), a stride from the input and output sizes
+  (", stride 2") and a Dense layer's parameters ("Dense, 257 parameters").
 - The **views** follow the layer's tensors, not its kind, so every layer gets
   the views its data supports:
-  - **Feature maps** (an output of height × width × channels): the 16 channels
-    with the largest mean for the sample, strongest first; **All N channels**
+  - **Feature maps** (an output of height × width × channels): 16 channels for
+    the sample in the chosen **Order**: strongest first (largest mean),
+    highest peak first (largest value) or channel order; **All N channels**
     shows every channel (up to 256). **Colour** switches Heat and Grayscale;
     the scale runs from 0 to the 99.5th percentile, so one bright pixel does
     not darken the rest. The count of dead channels (zero everywhere) is
@@ -311,15 +324,22 @@ says how to get one.
   - **Weights** and **Gradients**: the layer's main parameter as a heatmap in
     the blue (negative) to red (positive) scale. Conv weights [kh, kw, cin,
     cout] show one row per output channel over kernel × input channels; Dense
-    weights [out, in] one row per output. Hover a cell for its index in the
-    tensor and its value; − and + page through the rows of a large matrix.
+    weights [out, in] one row per output. **Slice** shows one kernel position
+    instead: output channels by input channels at, say, (1, 2) of the 3 × 3
+    kernel. Hover a cell for its index in the tensor and its value; − and +
+    page through the rows of a large matrix.
     The histogram and numbers are under it.
   - Greyed views are next: **Where it looks** (occlusion) and **Filters** on
     the first convolution, **Contributions** on a Dense layer and **Embedding**
     on flat outputs. Hover one for what it will show.
 - The **Inspector** shows the sample as the first layer received it (after
-  the data steps), the model's output for it, and the clicked feature map
-  enlarged with its mean, maximum and rank.
+  the data steps), its name and label, the prediction with how it was read
+  ("logit -0.5472 → sigmoid 0.3665"; the raw output when the loss gives no
+  rule), and the clicked feature map enlarged with its mean, maximum and rank.
+
+The colour and the order are part of the session's settings (Layer capture in
+the toolbar): **Save as my default** keeps them, and Preferences > Studio
+Debugger > Layer views sets them too.
 
 Everything is computed on the compute device; only what a view draws (the
 shown maps, a page of heatmap rows, a histogram) is copied to the host.

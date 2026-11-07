@@ -24,6 +24,10 @@ struct DebugSample {
     Tensor labels;
     // "row 120 of reviews, validation"; empty when unavailable.
     std::string description;
+    // Each item's name in its source ("cat.10599.jpg"; empty when it has
+    // none) and the classes in label order (empty when unknown).
+    std::vector<std::string> item_names;
+    std::vector<std::string> class_names;
     // Why the picked item cannot run (Local Debug then runs a synthetic sample
     // and says so); empty when it can.
     std::string unavailable;

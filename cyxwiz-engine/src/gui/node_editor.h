@@ -328,6 +328,8 @@ public:
     void SetWordVectorFeed(WordVectorFeed feed) { word_vector_feed_ = std::move(feed); }
     const WordVectorFeed& GetWordVectorFeed() const { return word_vector_feed_; }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
+    // The canvas groups (the Studio Debugger names layer sections by them).
+    const std::vector<NodeGroup>& GetGroups() const { return groups_; }
     // Grid-space node positions from the last frame the canvas drew (empty
     // until it has drawn once).
     const std::map<int, ImVec2>& GetCachedNodePositions() const { return cached_node_positions_; }
