@@ -117,6 +117,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- Training with NAdam no longer stops with "NAdam has invalid continuation
+  state" after about a thousand steps: the product of its momentum terms
+  reaches 0 in float32 there, which is a valid state (PyTorch carries on
+  the same way).
 - Language Model Generation: a Generate from IDs run started with Details
   open now finishes when Details is closed (the panel stayed "Generating");
   Regenerate, Generate again and Continue further are off while another run

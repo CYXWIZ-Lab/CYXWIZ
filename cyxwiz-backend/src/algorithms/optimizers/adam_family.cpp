@@ -510,7 +510,7 @@ void NAdamOptimizer::Step(std::map<std::string, Tensor>& parameters,
             if (parameter_step->second < 0 ||
                 parameter_step->second == (std::numeric_limits<int>::max)() ||
                 !std::isfinite(mu_product->second) ||
-                mu_product->second <= 0.0f || mu_product->second > 1.0f) {
+                mu_product->second < 0.0f || mu_product->second > 1.0f) {
                 throw std::invalid_argument(
                     "NAdam has invalid continuation state for parameter '" +
                     name + "'.");
