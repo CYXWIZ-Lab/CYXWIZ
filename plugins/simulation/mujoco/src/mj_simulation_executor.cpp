@@ -74,12 +74,19 @@ SimMetrics MjSimulationExecutor::GetMetrics() const {
 }
 
 void MjSimulationExecutor::ManualControlLoop() {
-    using clock = std::chrono::high_resolution_clock;
-    auto wall_start = clock::now();
+    using clock = std::chrono::steady_clock;
+    const auto wall_start = clock::now();
 
     const mjModel* m = env_->GetModel();
-    double timestep = m->opt.timestep;
-    int frame_skip = env_->GetFrameSkip();
+    const double step_seconds = m->opt.timestep * env_->GetFrameSkip();
+
+    // Pace against a wall-clock schedule: step while the simulation is behind the clock and
+    // sleep only when it is ahead. A sleep per step is rounded up to the OS timer tick
+    // (~15.6 ms on Windows), which ran small timesteps far below real time.
+    constexpr auto kMaxLag = std::chrono::milliseconds(250);
+    auto schedule_start = clock::now();
+    long long scheduled_steps = 0;
+    float schedule_rtf = realtime_factor_.load();
 
     while (!should_stop_) {
         // Paused — wait for resume or single-step
@@ -89,21 +96,33 @@ void MjSimulationExecutor::ManualControlLoop() {
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
+            // Resuming starts a new schedule rather than catching up on the paused time
+            schedule_start = clock::now();
+            scheduled_steps = 0;
             continue;
         }
 
-        auto step_start = clock::now();
+        const float rtf = realtime_factor_.load();
+        if (rtf != schedule_rtf) {
+            schedule_rtf = rtf;
+            schedule_start = clock::now();
+            scheduled_steps = 0;
+        }
 
         ExecuteOneStep();
+        ++scheduled_steps;
 
-        // Real-time pacing
-        float rtf = realtime_factor_.load();
         if (rtf > 0.0f) {
-            double target_dt = (timestep * frame_skip) / rtf;
-            auto elapsed = std::chrono::duration<double>(clock::now() - step_start).count();
-            if (elapsed < target_dt) {
-                auto sleep_us = static_cast<int64_t>((target_dt - elapsed) * 1e6);
-                std::this_thread::sleep_for(std::chrono::microseconds(sleep_us));
+            const auto due = schedule_start + std::chrono::duration_cast<clock::duration>(
+                std::chrono::duration<double>(static_cast<double>(scheduled_steps) * step_seconds / rtf));
+            const auto now = clock::now();
+            if (due > now) {
+                std::this_thread::sleep_until(due);
+            } else if (now - due > kMaxLag) {
+                // The model steps slower than the requested speed: run at full speed from
+                // here instead of bursting to repay the backlog.
+                schedule_start = now;
+                scheduled_steps = 0;
             }
         }
 
