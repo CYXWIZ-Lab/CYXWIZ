@@ -52,6 +52,7 @@ To write your own nodes in Python or C++, see
 | [Dimensionality reduction](dimensionality_reduction.md) | Explore > Projection, PCA, t-SNE, UMAP |
 | [Linear algebra tools](linear_algebra.md) | Matrix calculator, SVD, QR, Cholesky, Eigen |
 | [Feature Importance](feature_importance.md) | Which columns matter to a model |
+| [Neural Architecture Search](neural_architecture_search.md) | Score the model, change its layers, put a version back on the canvas |
 | [Analysis demo graph](analysis_demo_graph.md) | Analysis nodes working together on one dataset |
 | [Plotting](plotting.md) | Plots, the Plot node and Python plotting |
 | [Dashboard node](dashboard.md) | A summary and grid of the data at a point in the graph |

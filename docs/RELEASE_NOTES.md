@@ -7,6 +7,20 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Neural Architecture Search changes the model, not a copy of it.**
+  - **Apply to CyxWiz Studio** (and **Apply Best Architecture**) now
+    replace the canvas graph: unchanged nodes keep their place and group,
+    new ones are placed between their neighbours, and Ctrl+Z undoes it.
+    Before, a second copy of the whole graph was pasted on the canvas with
+    the same node ids, which broke the canvas and the compile.
+  - Add / Remove Layer keep the graph linked; Remove Layer and Change
+    Units no longer touch the head (the layer that sets the class count).
+  - **Swap Layer** now works (it did nothing).
+  - Added and swapped layers fit their place (no Conv2D in a Dense model).
+  - The score counts model layers only, names every layer type, and counts
+    Add / Concatenate joins as skip connections.
+  - Patterns and suggestions added to the canvas get fresh node ids.
+  - Guide: `docs/usage/neural_architecture_search.md`.
 - **Canvas: groups can be named, frames copied, nodes renamed.**
   - Double-click a group's name band (or right-click it > **Rename...**) to
     name the group. Its right-click menu also has **Ungroup**.
