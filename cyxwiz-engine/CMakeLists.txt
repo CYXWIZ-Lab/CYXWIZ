@@ -1151,6 +1151,10 @@ target_link_libraries(cyxwiz-engine PRIVATE
     Parquet::parquet_shared
     duckdb
 )
+# cpp-httplib is header-only: every file that includes it must agree on TLS
+# support, or the program holds two layouts of the same class (as the
+# server node, TOFIX136)
+target_compile_definitions(cyxwiz-engine PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
 
 # Optional: Link HDF5 if found
 if(HighFive_FOUND)

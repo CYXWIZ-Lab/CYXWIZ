@@ -2,7 +2,6 @@
 #include "auth/auth_client.h"
 #include "core/jwt_expiry.h"
 
-#define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
 #include <openssl/x509.h>
 #include "common/server_http_trust.h"
