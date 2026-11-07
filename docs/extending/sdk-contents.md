@@ -59,7 +59,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/model_evaluation.h` |  | `CrossValidationResult`, `ConfusionMatrixData`, `ROCCurveData`, `PRCurveData`, `LearningCurveData`, `ClassificationReport`, `RegressionMetrics`, `BinaryMetrics`, `ModelEvaluation` |
 | `cyxwiz/model_interpretability.h` |  | `GradCAMResult`, `SaliencyMap`, `LayerActivations`, `ModelInterpretability` |
 | `cyxwiz/neural_provider.h` |  | `NeuralDeviceTarget`, `NeuralOpRequest`, `NeuralOpBuffers`, `NeuralDeviceQueue`, `NeuralDeviceBuffer`, `NeuralDeviceOpBuffers`, `NeuralCapability`, `NeuralResourceEstimate`, `NeuralOpStatus`, `INeuralNetworkProvider`, `NeuralProviderRegistry`, `NeuralOp`, `NeuralActivation`, `NeuralFfnType`, `NeuralGateActivation`, `NeuralPositionStrategy` |
-| `cyxwiz/optimization.h` |  | `GradientDescentResult`, `ConvexityResult`, `LPResult`, `QPResult`, `DerivativeResult`, `IntegralResult`, `Optimization` |
+| `cyxwiz/optimization.h` |  | `GradientDescentResult`, `ConvexityResult`, `LPResult`, `QPResult`, `DerivativeResult`, `IntegralResult`, `LinearConstraint`, `VariableBound`, `LinearProgram`, `QuadraticProgram`, `ProgramResult`, `OptimizerSetting`, `OptimizerPath`, `Optimization`, `ConstraintSense`, `ProgramStatus` |
 | `cyxwiz/optimizer.h` |  |  |
 | `cyxwiz/recurrent_cuda_placement.h` |  |  |
 | `cyxwiz/rl_interface.h` |  | `RLTransition`, `RLBatch`, `StepResult`, `EnvInfo`, `ReplayBuffer`, `EpsilonSchedule` |

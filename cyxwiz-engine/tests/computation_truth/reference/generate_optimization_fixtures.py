@@ -12,8 +12,23 @@ derivative  exact f' and f'' (sympy) and the forward / central differences at
             the steps the error curve uses.
 curvature   Rosenbrock's Hessian eigenvalues (numpy eigvalsh) at points, and
             the count of grid points with a negative one.
+lp          scipy.optimize.linprog (HiGHS): x, the objective, each row's room,
+            and shadow prices as d(objective)/d(rhs) by re-solving with the
+            rhs raised by 1e-6 (no sign convention to get wrong); statuses
+            of infeasible and unbounded problems.
+qp          scipy.optimize.minimize SLSQP at tol 1e-14, shadow prices the same
+            way.
+paths       torch.optim in float32 (as training runs): the point after every
+            100 steps, and the step at which a diverging run stops being
+            finite. The gradient is the one FollowOptimizer uses: exact (sympy),
+            in float64 at the float32 point, rounded to float32; float32
+            autograd differs in the last bits, which Rosenbrock's valley grows
+            to 0.4 % by step 800 (RMSprop), whatever the optimizer. Each
+            checkpoint also holds the path's own sensitivity: how far torch
+            moves when the start's y is one float32 ulp higher (RMSprop's path
+            is chaotic past step 600: 5e-4 at 800, 9e-3 at 1000).
 
-Run with sympy 1.14, numpy 2.3, scipy 1.17:
+Run with sympy 1.14, numpy 2.3, scipy 1.17, torch 2.10:
   python generate_optimization_fixtures.py
 Writes ../fixtures/optimization_truth.json.
 """
@@ -23,7 +38,8 @@ import os
 
 import numpy as np
 import sympy as sp
-from scipy import integrate
+import torch
+from scipy import integrate, optimize
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "fixtures", "optimization_truth.json")
@@ -168,9 +184,164 @@ def curvature_cases():
             "range": {"x": [-2, 2], "y": [-1, 3], "per_side": side, "negative": negative}}
 
 
+# (label, maximize, objective, rows [(name, coefficients, sense, rhs)], bounds or None)
+LPS = [
+    ("two products", True, [3, 2], [("C1", [1, 1], "<=", 4), ("C2", [1, 2], "<=", 6)], None),
+    ("diet", False, [0.6, 0.35], [("protein", [5, 7], ">=", 8), ("fat", [4, 2], ">=", 15),
+                                  ("fibre", [2, 1], ">=", 3)], None),
+    ("production plan", True, [20, 30, 25, 15], [("Labour", [1, 2, 1, 1], "<=", 40),
+                                                 ("Machine", [3, 1, 2, 1], "<=", 60),
+                                                 ("Order", [1, 1, 1, 0], "=", 25)], None),
+    ("bounds and a free variable", False, [1, -2, 1],
+     [("R1", [1, 1, 1], "<=", 12), ("R2", [1, -1, 0], ">=", -4), ("R3", [0, 1, -1], "=", 1)],
+     [[1, 3], [None, None], [-5, None]]),
+    ("transport", False, [8, 6, 10, 9, 12, 13],
+     [("S1", [1, 1, 1, 0, 0, 0], "<=", 50), ("S2", [0, 0, 0, 1, 1, 1], "<=", 60),
+      ("D1", [1, 0, 0, 1, 0, 0], ">=", 30), ("D2", [0, 1, 0, 0, 1, 0], ">=", 40),
+      ("D3", [0, 0, 1, 0, 0, 1], ">=", 35)], None),
+    ("infeasible", False, [1, 1], [("C1", [1, 1], "<=", 1), ("C2", [1, 1], ">=", 3)], None),
+    ("unbounded", True, [1, 1], [("C1", [1, -1], "<=", 1)], None),
+]
+
+
+def solve_lp(maximize, c, rows, bounds):
+    a_ub, b_ub, a_eq, b_eq = [], [], [], []
+    for _, a, sense, rhs in rows:
+        if sense == "<=":
+            a_ub.append(a); b_ub.append(rhs)
+        elif sense == ">=":
+            a_ub.append([-v for v in a]); b_ub.append(-rhs)
+        else:
+            a_eq.append(a); b_eq.append(rhs)
+    sign = -1 if maximize else 1
+    return optimize.linprog([sign * v for v in c], A_ub=a_ub or None, b_ub=b_ub or None, A_eq=a_eq or None,
+                            b_eq=b_eq or None, bounds=bounds if bounds else (0, None), method="highs")
+
+
+def lp_cases():
+    cases = []
+    for label, maximize, c, rows, bounds in LPS:
+        r = solve_lp(maximize, c, rows, bounds)
+        case = {"label": label, "maximize": maximize, "objective": c, "bounds": bounds,
+                "rows": [{"name": n, "coefficients": a, "sense": s_, "rhs": b} for n, a, s_, b in rows],
+                "status": {0: "optimal", 2: "infeasible", 3: "unbounded"}[r.status]}
+        if r.status == 0:
+            value = -r.fun if maximize else r.fun
+            prices = []
+            for i in range(len(rows)):
+                bumped = [list(row) for row in rows]
+                bumped[i][3] += 1e-6
+                rb = solve_lp(maximize, c, bumped, bounds)
+                prices.append(((-rb.fun if maximize else rb.fun) - value) / 1e-6)
+            activity = [sum(ai * xi for ai, xi in zip(a, r.x)) for _, a, _, _ in rows]
+            room = [max(0.0, (b - act) if s_ == "<=" else ((act - b) if s_ == ">=" else abs(act - b)))
+                    for (_, _, s_, b), act in zip(rows, activity)]
+            case.update({"x": r.x.tolist(), "value": value, "shadow_prices": prices, "slack": room})
+        cases.append(case)
+    return cases
+
+
+# (label, Q, c, rows, bounds or None = free)
+QPS = [
+    ("two variables", [[2, 0], [0, 2]], [-2, -5], [("C1", [1, 1], "<=", 3)], None),
+    ("portfolio", [[0.04, 0.006, 0.002], [0.006, 0.09, 0.009], [0.002, 0.009, 0.0225]], [0, 0, 0],
+     [("budget", [1, 1, 1], "=", 1), ("return", [0.06, 0.12, 0.08], ">=", 0.08)], [[0, None]] * 3),
+    ("box", [[4, 1], [1, 2]], [1, 1], [("R1", [1, 1], ">=", 1)], [[0, None], [0, None]]),
+    ("no constraints", [[2, 1], [1, 2]], [-1, -1], [], None),
+]
+
+
+def solve_qp(Q, c, rows, bounds):
+    Q = np.array(Q, dtype=float); c = np.array(c, dtype=float)
+    cons = []
+    for _, a, sense, rhs in rows:
+        a = np.array(a, dtype=float)
+        if sense == "<=":
+            cons.append({"type": "ineq", "fun": lambda x, a=a, b=rhs: b - a @ x, "jac": lambda x, a=a: -a})
+        elif sense == ">=":
+            cons.append({"type": "ineq", "fun": lambda x, a=a, b=rhs: a @ x - b, "jac": lambda x, a=a: a})
+        else:
+            cons.append({"type": "eq", "fun": lambda x, a=a, b=rhs: a @ x - b, "jac": lambda x, a=a: a})
+    x0 = np.full(len(c), 1.0 / len(c))
+    r = optimize.minimize(lambda x: 0.5 * x @ Q @ x + c @ x, x0, jac=lambda x: Q @ x + c, constraints=cons,
+                          bounds=bounds, method="SLSQP", options={"ftol": 1e-15, "maxiter": 1000})
+    assert r.success, r.message
+    return r
+
+
+def qp_cases():
+    cases = []
+    for label, Q, c, rows, bounds in QPS:
+        r = solve_qp(Q, c, rows, bounds)
+        prices = []
+        for i in range(len(rows)):
+            bumped = [list(row) for row in rows]
+            bumped[i][3] += 1e-5
+            prices.append((solve_qp(Q, c, bumped, bounds).fun - r.fun) / 1e-5)
+        cases.append({"label": label, "Q": Q, "c": c, "bounds": bounds,
+                      "rows": [{"name": n, "coefficients": a, "sense": s_, "rhs": b} for n, a, s_, b in rows],
+                      "x": r.x.tolist(), "value": float(r.fun), "shadow_prices": prices})
+    return cases
+
+
+ROSENBROCK = ("(1 - x)^2 + 100*(y - x^2)^2", "(1 - x)**2 + 100*(y - x**2)**2")
+HIMMELBLAU = ("(x^2 + y - 11)^2 + (x + y^2 - 7)^2", "(x**2 + y - 11)**2 + (x + y**2 - 7)**2")
+
+PATHS = [  # label, (C++ text, sympy text), start, optimizer, settings, steps
+    ("sgd", ROSENBROCK, [-2.0, 2.0], "SGD", {"lr": 0.001}, 1000),
+    ("momentum", ROSENBROCK, [-2.0, 2.0], "SGD", {"lr": 0.001, "momentum": 0.9}, 1000),
+    ("adam", ROSENBROCK, [-2.0, 2.0], "Adam", {"lr": 0.01}, 1000),
+    ("adamw", ROSENBROCK, [-2.0, 2.0], "AdamW", {"lr": 0.01}, 1000),
+    ("nadam", ROSENBROCK, [-2.0, 2.0], "NAdam", {"lr": 0.01}, 1000),
+    ("rmsprop", ROSENBROCK, [-2.0, 2.0], "RMSprop", {"lr": 0.01}, 1000),
+    ("adagrad", ROSENBROCK, [-2.0, 2.0], "Adagrad", {"lr": 0.1}, 1000),
+    ("himmelblau adam", HIMMELBLAU, [0.0, 0.0], "Adam", {"lr": 0.05}, 500),
+    ("diverging sgd", ROSENBROCK, [-2.0, 2.0], "SGD", {"lr": 0.01}, 1000),
+]
+
+
+def follow(gradient, start, name, settings, steps):
+    """torch's path: checkpoints every 100 steps and where it stops being finite."""
+    p = torch.tensor(start, dtype=torch.float32)
+    opt = getattr(torch.optim, name)([p], **settings)
+    every, diverged = [], None
+    for step in range(steps + 1):
+        point = p.detach().tolist()
+        if not all(np.isfinite(point)):
+            diverged = step
+            break
+        if step % 100 == 0 or step == steps:
+            every.append({"step": step, "point": point})
+        if step == steps:
+            break
+        try:
+            g = gradient(*[float(v) for v in point])
+        except OverflowError:
+            g = [float("inf"), float("inf")]
+        p.grad = torch.tensor(g, dtype=torch.float32)
+        opt.step()
+    return every, diverged
+
+
+def path_cases():
+    cases = []
+    for label, (text, sympy_text), start, name, settings, steps in PATHS:
+        f = sp.sympify(sympy_text, locals=SYMBOLS)
+        gradient = sp.lambdify((x, y), [sp.diff(f, x), sp.diff(f, y)], "math")
+        every, diverged = follow(gradient, start, name, settings, steps)
+        nudged = [start[0], float(np.nextafter(np.float32(start[1]), np.float32(np.inf)))]
+        other, _ = follow(gradient, nudged, name, settings, steps)
+        for e, o in zip(every, other):
+            e["sensitivity"] = max(abs(a - b) for a, b in zip(e["point"], o["point"]))
+        cases.append({"label": label, "text": text, "start": start, "optimizer": name, "settings": settings,
+                      "steps": steps, "every": every, "diverged_at": diverged})
+    return cases
+
+
 def main():
     fixture = {"expression": expression_cases(), "quad": quad_cases(), "fixed": fixed_cases(),
-               "derivative": derivative_cases(), "curvature": curvature_cases()}
+               "derivative": derivative_cases(), "curvature": curvature_cases(), "lp": lp_cases(),
+               "qp": qp_cases(), "paths": path_cases()}
     with open(OUT, "w", encoding="utf-8") as handle:
         json.dump(fixture, handle, indent=1)
         handle.write("\n")

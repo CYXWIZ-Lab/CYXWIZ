@@ -12,11 +12,17 @@
 //             Legendre nodes against numpy / scipy.
 // derivative  exact f' and f'', the numerical ones, the error by step.
 // curvature   Rosenbrock's Hessian eigenvalues and the range count.
+// lp, qp      Optimization::SolveLinearProgram / SolveQuadraticProgram (HiGHS)
+//             against scipy linprog / SLSQP: x, the objective, room, shadow
+//             prices (scipy's by re-solving with a raised rhs), statuses.
+// paths       Optimization::FollowOptimizer (the training optimizers) against
+//             torch.optim in float32.
 
 #include "test_device_selection.h"
 
 #include <cyxwiz/calculus.h>
 #include <cyxwiz/expression.h>
+#include <cyxwiz/optimization.h>
 #include <cyxwiz/utilities.h>
 
 #include <nlohmann/json.hpp>
@@ -27,6 +33,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -270,6 +277,142 @@ void CheckCurvature(const json& c) {
           "negative-curvature points: " + std::to_string(r.negative_points));
 }
 
+std::vector<cyxwiz::LinearConstraint> Rows(const json& rows) {
+    std::vector<cyxwiz::LinearConstraint> out;
+    for (const auto& r : rows) {
+        cyxwiz::LinearConstraint row;
+        row.name = r.at("name").get<std::string>();
+        row.coefficients = Doubles(r.at("coefficients"));
+        const std::string sense = r.at("sense").get<std::string>();
+        row.sense = sense == "<=" ? cyxwiz::ConstraintSense::LessEqual
+                  : sense == ">=" ? cyxwiz::ConstraintSense::GreaterEqual : cyxwiz::ConstraintSense::Equal;
+        row.rhs = r.at("rhs").get<double>();
+        out.push_back(row);
+    }
+    return out;
+}
+
+std::vector<cyxwiz::VariableBound> Bounds(const json& bounds) {
+    std::vector<cyxwiz::VariableBound> out;
+    if (bounds.is_null()) return out;
+    const double inf = std::numeric_limits<double>::infinity();
+    for (const auto& b : bounds)
+        out.push_back({b[0].is_null() ? -inf : b[0].get<double>(), b[1].is_null() ? inf : b[1].get<double>()});
+    return out;
+}
+
+void CheckProgramAnswer(const cyxwiz::ProgramResult& r, const json& c, double price_tolerance, const std::string& label) {
+    Check(r.success, label + " solves: " + r.error_message);
+    const auto x = Doubles(c.at("x"));
+    Check(r.x.size() == x.size(), label + ": one value per variable");
+    for (size_t i = 0; i < x.size(); ++i) Near(r.x[i], x[i], 1e-7, label + " x" + std::to_string(i + 1));
+    Near(r.objective, c.at("value").get<double>(), 1e-9, label + " objective");
+    const auto prices = Doubles(c.at("shadow_prices"));
+    Check(r.shadow_prices.size() == prices.size(), label + ": one shadow price per row");
+    for (size_t i = 0; i < prices.size(); ++i)
+        Near(r.shadow_prices[i], prices[i], price_tolerance, label + " shadow price of row " + std::to_string(i + 1));
+}
+
+void CheckLinearPrograms(const json& cases) {
+    for (const auto& c : cases) {
+        const std::string label = "LP " + c.at("label").get<std::string>();
+        cyxwiz::LinearProgram lp;
+        lp.maximize = c.at("maximize").get<bool>();
+        lp.objective = Doubles(c.at("objective"));
+        lp.constraints = Rows(c.at("rows"));
+        lp.bounds = Bounds(c.at("bounds"));
+        const auto r = cyxwiz::Optimization::SolveLinearProgram(lp);
+        const std::string status = c.at("status").get<std::string>();
+        if (status == "infeasible") {
+            Check(!r.success && r.status == cyxwiz::ProgramStatus::Infeasible && r.error_message.find("No point") != std::string::npos,
+                  label + ": infeasible, in words: " + r.error_message);
+            continue;
+        }
+        if (status == "unbounded") {
+            Check(!r.success && r.status == cyxwiz::ProgramStatus::Unbounded && r.error_message.find("grows without limit") != std::string::npos,
+                  label + ": unbounded, in words: " + r.error_message);
+            continue;
+        }
+        CheckProgramAnswer(r, c, 1e-6, label);
+        const auto slack = Doubles(c.at("slack"));
+        for (size_t i = 0; i < slack.size(); ++i) {
+            Near(r.slack[i], slack[i], 1e-7, label + " room in row " + std::to_string(i + 1));
+            Check(r.binding[i] == (slack[i] < 1e-9), label + " binding row " + std::to_string(i + 1));
+        }
+    }
+    cyxwiz::LinearProgram bad;
+    bad.objective = {1, 2};
+    bad.constraints = {{"Wide", {1, 2, 3}, cyxwiz::ConstraintSense::LessEqual, 1}};
+    const auto r = cyxwiz::Optimization::SolveLinearProgram(bad);
+    Check(!r.success && r.error_message == "Wide has 3 coefficients; the problem has 2 variables", "row size named: " + r.error_message);
+}
+
+void CheckQuadraticPrograms(const json& cases) {
+    for (const auto& c : cases) {
+        const std::string label = "QP " + c.at("label").get<std::string>();
+        cyxwiz::QuadraticProgram qp;
+        for (const auto& row : c.at("Q")) qp.Q.push_back(Doubles(row));
+        qp.c = Doubles(c.at("c"));
+        qp.constraints = Rows(c.at("rows"));
+        qp.bounds = Bounds(c.at("bounds"));
+        // scipy's prices are finite differences of SLSQP answers.
+        CheckProgramAnswer(cyxwiz::Optimization::SolveQuadraticProgram(qp), c, 2e-4, label);
+    }
+    cyxwiz::QuadraticProgram saddle;
+    saddle.Q = {{1, 0}, {0, -2}};
+    saddle.c = {0, 0};
+    const auto r = cyxwiz::Optimization::SolveQuadraticProgram(saddle);
+    Check(!r.success && r.status == cyxwiz::ProgramStatus::NotConvex && r.error_message.find("smallest eigenvalue is -2") != std::string::npos,
+          "a saddle is refused: " + r.error_message);
+    cyxwiz::QuadraticProgram lopsided;
+    lopsided.Q = {{1, 0.5}, {0, 1}};
+    lopsided.c = {0, 0};
+    const auto l = cyxwiz::Optimization::SolveQuadraticProgram(lopsided);
+    Check(!l.success && l.error_message.find("symmetric") != std::string::npos, "Q must be symmetric: " + l.error_message);
+}
+
+void CheckPaths(const json& cases) {
+    const std::map<std::string, cyxwiz::OptimizerType> types = {
+        {"SGD", cyxwiz::OptimizerType::SGD}, {"Adam", cyxwiz::OptimizerType::Adam}, {"AdamW", cyxwiz::OptimizerType::AdamW},
+        {"NAdam", cyxwiz::OptimizerType::NAdam}, {"RMSprop", cyxwiz::OptimizerType::RMSprop}, {"Adagrad", cyxwiz::OptimizerType::AdaGrad}};
+    for (const auto& c : cases) {
+        const std::string label = "path " + c.at("label").get<std::string>();
+        cyxwiz::OptimizerSetting setting;
+        setting.type = types.at(c.at("optimizer").get<std::string>());
+        setting.learning_rate = c.at("settings").at("lr").get<double>();
+        setting.momentum = c.at("settings").value("momentum", 0.0);
+        const int steps = c.at("steps").get<int>();
+        const auto path = cyxwiz::Optimization::FollowOptimizer(Expression::Parse(c.at("text").get<std::string>(), {"x", "y"}),
+                                                                Doubles(c.at("start")), setting, steps, 0.0);
+        Check(path.success, label + ": " + path.error_message);
+        if (!c.at("diverged_at").is_null()) {
+            Check(path.diverged && path.diverged_at == c.at("diverged_at").get<int>(),
+                  label + " diverges at torch's step " + std::to_string(c.at("diverged_at").get<int>()) + ": " +
+                      (path.diverged ? std::to_string(path.diverged_at) : std::string("did not")));
+            continue;
+        }
+        Check(!path.diverged && static_cast<int>(path.points.size()) == steps + 1, label + ": every step taken");
+        for (const auto& e : c.at("every")) {
+            const int step = e.at("step").get<int>();
+            const auto expected = Doubles(e.at("point"));
+            // A chaotic stretch is held to the path's own sensitivity (torch
+            // against torch from a start one ulp away), the rest to 2e-4.
+            const double sensitivity = 4.0 * e.at("sensitivity").get<double>();
+            for (size_t i = 0; i < 2; ++i)
+                Check(std::fabs(path.points[step][i] - expected[i]) <= (std::max)(2e-4 * (1.0 + std::fabs(expected[i])), sensitivity),
+                      label + " step " + std::to_string(step) + " coordinate " + std::to_string(i) + ": " +
+                          std::to_string(path.points[step][i]) + " vs torch " + std::to_string(expected[i]));
+        }
+    }
+    int asked = 0;
+    const auto stopped = cyxwiz::Optimization::FollowOptimizer(Expression::Parse("x^2", {"x"}), {3.0},
+        {cyxwiz::OptimizerType::SGD, 0.1, 0.0}, 1000, 0.0, [&asked] { return ++asked > 5; });
+    Check(stopped.success && stopped.stopped && stopped.points.size() == 6, "Stop ends the path");
+    const auto flat = cyxwiz::Optimization::FollowOptimizer(Expression::Parse("x^2", {"x"}), {3.0},
+        {cyxwiz::OptimizerType::SGD, 0.1, 0.0}, 1000, 1e-6);
+    Check(flat.converged && flat.points.size() < 100, "a small gradient ends the path");
+}
+
 }  // namespace
 
 int main() {
@@ -285,6 +428,9 @@ int main() {
     CheckFixed(fixture.at("fixed"));
     CheckDerivatives(fixture.at("derivative"));
     CheckCurvature(fixture.at("curvature"));
+    CheckLinearPrograms(fixture.at("lp"));
+    CheckQuadraticPrograms(fixture.at("qp"));
+    CheckPaths(fixture.at("paths"));
     std::cout << "Optimization truth test passed: " << checks << " checks\n";
     return 0;
 }

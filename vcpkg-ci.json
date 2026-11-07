@@ -39,6 +39,7 @@
       "default-features": true
     },
     "duckdb",
+    "highs",
     {
       "name": "arrow",
       "features": ["parquet", "csv", "json"]

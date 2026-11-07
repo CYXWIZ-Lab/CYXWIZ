@@ -19,6 +19,8 @@ message(STATUS "ArrayFire found: ${ArrayFire_DIR}")
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+# Linear and convex quadratic programs (TOFIX129 D10), the solver scipy uses.
+find_package(highs CONFIG REQUIRED)
 
 set(CYXWIZ_HAS_SENTENCEPIECE FALSE)
 set(CYXWIZ_SENTENCEPIECE_TARGET "")
@@ -245,6 +247,8 @@ set(BACKEND_SOURCES
     src/algorithms/calculus.cpp
     src/algorithms/expression.cpp
     src/algorithms/optimization.cpp
+    src/algorithms/optimization_paths.cpp
+    src/algorithms/optimization_programs.cpp
     src/algorithms/time_series.cpp
     src/algorithms/time_series/statistics.cpp
     src/algorithms/time_series/decomposition.cpp
@@ -413,6 +417,7 @@ if(WIN32)
 endif()
 
 target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::af)
+target_link_libraries(cyxwiz-backend PRIVATE highs::highs)
 # Marks code that links ArrayFire; only sources shared with the ArrayFire-free
 # installer (route qualification) still test it.
 target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_ARRAYFIRE)
