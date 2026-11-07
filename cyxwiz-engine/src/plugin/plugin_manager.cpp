@@ -6,6 +6,7 @@
 #include "security/permission_store.h"
 #include "../core/extension_node_registry.h"
 #include "registries/plugin_panel_registry.h"
+#include "registries/plugin_command_registry.h"
 #include "registries/plugin_data_loader_registry.h"
 #include "registries/plugin_training_hook_manager.h"
 #include "registries/plugin_analytics_registry.h"
@@ -374,6 +375,22 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             }
         }
 
+        // Register menu commands (plugin API 1.4, with crash isolation)
+        auto* command_provider = static_cast<ICommandProvider*>(instance->QueryInterface("ICommandProvider"));
+        if (command_provider && !permitted(PluginPermission::UIModify, "ICommandProvider")) command_provider = nullptr;
+        if (auto* p = command_provider) {
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterCommands", [&]() {
+                const auto commands = p->GetCommands();
+                for (const auto& command : commands) PluginCommandRegistry::Instance().Register(plugin_id, command, p);
+                spdlog::info("PluginManager: Registered {} menu commands for '{}'", commands.size(), plugin_id);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
+            }
+        }
+
         // Register nodes (with crash isolation)
         auto* node_provider = static_cast<INodeProvider*>(instance->QueryInterface("INodeProvider"));
         if (node_provider && !permitted(PluginPermission::UIModify, "INodeProvider")) node_provider = nullptr;
@@ -653,6 +670,7 @@ void PluginManager::InitializeAll() {
 void PluginManager::RemoveRegistrations(const std::string& plugin_id) {
     ExtensionNodeRegistry::Instance().RemoveByProvider(plugin_id);
     PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginCommandRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginTrainingHookManager::Instance().RemoveByPlugin(plugin_id);
     PluginAnalyticsRegistry::Instance().RemoveByPlugin(plugin_id);

@@ -39,6 +39,14 @@ MenuInputs SampleInputs() {
     in.icon_packs = {{"0", "FontAwesome (Default)", true, ""}, {"1", "Tabler Icons", false, ""}};
     in.tutorials = {{"getting_started", "Getting Started", true, ""}, {"first_model", "Your First Model", false, ""}};
     in.plugin_panels = {{"mujoco_viewport", "MuJoCo Viewport", false, "Simulation"}};
+    // Commands a simulation plugin adds (plugin API 1.4), and one for a menu
+    // the Engine does not have
+    in.plugin_commands = {
+        {"sim.plugin:run", "Simulation", "run", "Run Simulation", "Runs the loaded model.", false,
+         "Load a model first.", false, false},
+        {"sim.plugin:stop", "Simulation", "run", "Stop", "Stops the run.", false, "Nothing is running.", false, false},
+        {"sim.plugin:load", "Simulation", "model", "Load MJCF Model...", "Opens a model file.", true, "", false, false},
+        {"other.plugin:sync", "Robots", "", "Sync Robots", "Syncs the robots.", true, "", false, false}};
     in.loaded_plugins = {{"com.cyxwiz.examples.activation-nodes", "Example Activation Nodes", "2 nodes", true},
                          {"com.cyxwiz.simulation.mujoco", "MuJoCo Simulation", "2 windows, 5 nodes", true},
                          {"com.example.viewer", "Viewer", "1 window", false}};
@@ -97,7 +105,8 @@ int main() {
         Check(!item.hint.empty() && EndsWith(item.hint, "."), "hint sentence for " + item.id);
         if (!item.enabled) Check(!item.disabled_reason.empty(), "disabled reason for " + item.id);
         if (item.planned) Check(!item.enabled, "planned item is disabled: " + item.id);
-        if (item.kind == MenuItem::Kind::Action && EndsWith(item.label, "...")) dialog_labels.insert(item.id);
+        if (item.kind == MenuItem::Kind::Action && EndsWith(item.label, "...") && item.id != "plugin.command")
+            dialog_labels.insert(item.id);
         if (item.kind == MenuItem::Kind::Action && item.argument.empty()) {
             auto it = label_by_id.find(item.id);
             if (it == label_by_id.end()) label_by_id[item.id] = item.label;
@@ -112,7 +121,7 @@ int main() {
         "edit.go_to_line", "view.command_palette", "view.theme_editor", "nodes.custom_node_editor",
         "train.optimizer_settings", "train.compare_test_results", "train.export_test_report",
         "train.load_checkpoint", "data.import", "data.create_custom", "deploy.connect", "deploy.deploy",
-        "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin", "deploy.marketplace", "sim.load_mjcf",
+        "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin", "deploy.marketplace",
         "help.browse_tutorials", "help.shortcuts", "help.report_issue", "help.check_updates", "help.about",
         "account.settings"};
     for (const auto& id : dialog_openers) Check(dialog_labels.count(id) == 1, "dialog opener has ...: " + id);
@@ -138,7 +147,8 @@ int main() {
         "nodes.custom_node_editor",
         "train.compile", "train.local_debug", "train.start", "train.pause", "train.stop", "train.dashboard",
         "train.optimizer_settings",
-        "sim.run", "sim.pause", "sim.stop", "sim.step", "sim.viewport", "sim.env_library", "sim.load_mjcf",
+        // The Simulation actions come from simulation plugins (plugin API 1.4)
+        "plugin.command",
         "train.hyperparam_search", "deploy.serving", "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin",
         "train.load_checkpoint", "train.run_test", "train.quick_test", "train.view_test_results",
         "train.compare_test_results", "train.export_test_report", "tools.clear_cache", "tools.gc",
@@ -172,7 +182,7 @@ int main() {
     WalkModel(model, [&](const MenuItem& item, int, const std::string&) { if (item.planned) planned.insert(item.id); });
     const std::set<std::string> expected_planned = {
         "view.fullscreen", "export.gguf", "deploy.quantize_int8", "deploy.quantize_int4", "deploy.quantize_fp16",
-        "deploy.marketplace", "sim.run", "sim.pause", "sim.stop", "sim.step", "sim.load_mjcf", "help.documentation",
+        "deploy.marketplace", "help.documentation",
         "help.api_reference", "help.check_updates", "data.augment"};
     Check(planned == expected_planned, "planned set");
 
@@ -324,6 +334,36 @@ int main() {
         MenuInputs no_recent = in;
         no_recent.recent_projects.clear();
         Check(!Find(BuildMenuModel(no_recent), "file.recent")->enabled, "empty recent list is disabled with a reason");
+    }
+
+    // The Simulation menu is what simulation plugins add: their commands in
+    // groups, then their windows; without one it says so.
+    {
+        const Menu* sim = nullptr;
+        for (const auto& menu : model.menus) if (menu.label == "Simulation") sim = &menu;
+        Check(sim && sim->items.size() == 6, "Simulation: 3 commands, 2 separators, 1 window");
+        Check(sim->items[0].id == "plugin.command" && sim->items[0].argument == "sim.plugin:run" &&
+                  !sim->items[0].enabled && sim->items[0].disabled_reason == "Load a model first.",
+              "a disabled command keeps the plugin's reason");
+        Check(sim->items[1].argument == "sim.plugin:stop" && sim->items[2].kind == MenuItem::Kind::Separator &&
+                  sim->items[3].label == "Load MJCF Model..." && sim->items[3].enabled,
+              "a separator between command groups");
+        Check(sim->items[4].kind == MenuItem::Kind::Separator && sim->items[5].id == "apps.panel" &&
+                  sim->items[5].argument == "mujoco_viewport" && sim->items[5].checkable,
+              "the plugin's Simulation windows follow as toggles");
+        const MenuItem* sync = Find(model, "plugin.command", "other.plugin:sync");
+        bool robots_heading = false;
+        for (const auto& menu : model.menus)
+            if (menu.label == "Apps")
+                for (const auto& item : menu.items) robots_heading = robots_heading || item.label == "Robots";
+        Check(sync && robots_heading, "a command for an unknown menu sits in Apps under its title");
+        MenuInputs bare = in;
+        bare.plugin_commands.clear();
+        bare.plugin_panels.clear();
+        for (const auto& menu : BuildMenuModel(bare).menus)
+            if (menu.label == "Simulation")
+                Check(menu.items.size() == 1 && menu.items[0].kind == MenuItem::Kind::Header,
+                      "no simulation plugin: the menu says so");
     }
 
     // ONNX export follows the build.

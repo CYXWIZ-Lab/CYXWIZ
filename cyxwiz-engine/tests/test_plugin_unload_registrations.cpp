@@ -7,6 +7,7 @@
 #include "../src/core/extension_node_registry.h"
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_panel_registry.h"
+#include "../src/plugin/registries/plugin_command_registry.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -62,9 +63,42 @@ void LoadAndInitialize(cyxwiz::plugin::PluginManager& manager, const std::filesy
           "a plugin opens its own panel");
 }
 
+// A plugin's menu commands (plugin API 1.4): one enabled, one disabled with a reason
+class FakeCommands final : public cyxwiz::plugin::ICommandProvider {
+public:
+    int runs = 0;
+    std::vector<cyxwiz::plugin::PluginCommandInfo> GetCommands() override {
+        return {{"go", "Simulation", "run", "Go", "Goes.", false}, {"halt", "Simulation", "run", "Halt", "Halts.", false}};
+    }
+    cyxwiz::plugin::PluginCommandState GetCommandState(const std::string& id) override {
+        if (id == "halt") return {false, "Nothing is running.", false};
+        return {};
+    }
+    void RunCommand(const std::string& id) override {
+        if (id == "go") ++runs;
+    }
+};
+
+void CheckCommandRegistry() {
+    auto& commands = cyxwiz::plugin::PluginCommandRegistry::Instance();
+    FakeCommands fake;
+    for (const auto& info : fake.GetCommands()) commands.Register("com.example.sim", info, &fake);
+    commands.Register("com.example.sim", fake.GetCommands()[0], &fake);  // a duplicate is skipped
+    const auto snapshot = commands.Snapshot();
+    Check(snapshot.size() == 2 && snapshot[0].key == "com.example.sim:go" && snapshot[0].state.enabled,
+          "commands are listed in order with their state");
+    Check(!snapshot[1].state.enabled && snapshot[1].state.disabled_reason == "Nothing is running.",
+          "a disabled command keeps its reason");
+    Check(commands.Run("com.example.sim:go") && fake.runs == 1, "a command runs");
+    Check(!commands.Run("com.example.sim:missing"), "an unknown command does not run");
+    commands.RemoveByPlugin("com.example.sim");
+    Check(commands.GetCount() == 0 && !commands.Run("com.example.sim:go"), "removing the plugin removes its commands");
+}
+
 }  // namespace
 
 int main() {
+    CheckCommandRegistry();
     const auto dir = PluginDir();
     Check(!dir.empty(), "plugins/examples/image_nodes not found; run from the repository root");
     auto& manager = cyxwiz::plugin::PluginManager::Instance();

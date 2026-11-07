@@ -98,6 +98,7 @@ set(CYXWIZ_PLUGIN_SDK_HEADERS
     plugin/plugin_ui.h
     plugin/interfaces/arrow_c_stream.h
     plugin/interfaces/i_analytics_provider.h
+    plugin/interfaces/i_command_provider.h
     plugin/interfaces/i_assistant_provider.h
     plugin/interfaces/i_data_provider.h
     plugin/interfaces/i_node_provider.h
@@ -126,6 +127,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/CyxWizPluginSDK.cmake)
 # and its tests, never by a plugin.
 add_library(cyxwiz-plugin-host STATIC
     src/plugin/registries/plugin_panel_registry.cpp
+    src/plugin/registries/plugin_command_registry.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
     src/plugin/security/permission_store.cpp

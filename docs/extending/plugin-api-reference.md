@@ -25,6 +25,7 @@ SDK installs, with the types it declares, is listed in
 | `plugin/interfaces/i_tensor_node_provider.h` | `ITensorNodeProvider`, `TensorNodeInfo` (trainable nodes) |
 | `plugin/interfaces/i_node_provider.h` | `INodeProvider`, `PluginNodeTypeInfo` (signal nodes) |
 | `plugin/interfaces/i_panel_provider.h` | `IPanelProvider`, `PluginPanelInfo` |
+| `plugin/interfaces/i_command_provider.h` | `ICommandProvider`, `PluginCommandInfo`, `PluginCommandState` (menu commands, API 1.4) |
 | `plugin/interfaces/i_training_hook.h` | `ITrainingHook`, `TrainingContext` |
 | `plugin/interfaces/arrow_c_stream.h` | `ArrowSchema`, `ArrowArray`, `ArrowArrayStream` (the Arrow C data and C stream interfaces) |
 | `plugin/interfaces/i_data_provider.h` | `IDataProvider`, `PluginDataLoaderInfo` |
@@ -98,7 +99,7 @@ the library. Unknown fields, capabilities and permissions are ignored.
 | Permission | Granted | Checked by |
 |---|---|---|
 | `Training` | Without asking | `ITensorNodeProvider` (trainable nodes), `ITrainingHook`, `RegisterTrainingHook` |
-| `UIModify` | Without asking | `INodeProvider`, `IPanelProvider`, `RegisterNodeProvider`, `RegisterPanelProvider` |
+| `UIModify` | Without asking | `INodeProvider`, `IPanelProvider`, `ICommandProvider`, `RegisterNodeProvider`, `RegisterPanelProvider` |
 | `DataRegistry` | Without asking | `IDataProvider`, `IAnalyticsProvider`, `RegisterDataProvider`, `RegisterAnalyticsProvider` |
 | `GPU` | Without asking | Nothing |
 | `FileSystem`, `Network`, `SystemCommands`, `Python` | The user is asked to allow or deny each before the plugin starts; the answer is stored per plugin id and version (`%APPDATA%\cyxwiz\plugin_permissions.json`, `~/.cyxwiz/plugin_permissions.json`), so a new version asks again. A denied permission does not stop the plugin | Nothing in the Engine today |
@@ -169,6 +170,7 @@ return, inside the crash guard. Unloading removes all of it.
 | `"ITensorNodeProvider"` | `ITensorNodeProvider` | Lists, compiles and trains your nodes (section 7) |
 | `"INodeProvider"` | `INodeProvider` | Lists your signal nodes; calls `EvaluateNode` in live graph execution, and `GenerateCode` in code export, where the text is written as a comment (a simulation node is not part of a trained model) |
 | `"IPanelProvider"` | `IPanelProvider` | Adds your panels to the menus and draws them every frame they are open |
+| `"ICommandProvider"` | `ICommandProvider` | Adds your commands to the menu they name and to the Command Palette (plugin API 1.4, section 9) |
 | `"ITrainingHook"` | `ITrainingHook` | Calls it at training start and end, each epoch's and each training batch's start and end, and asks `ShouldStopEarly` (section 8) |
 | `"IDataProvider"` | `IDataProvider` | Registers the dataset formats (plugin API 1.3 or newer): Data Input lists and opens them |
 | `"IAnalyticsProvider"` | `IAnalyticsProvider` | Registers the analytics (plugin API 1.3 or newer); Data Studio's Explore > Plugins tab runs them |
@@ -346,6 +348,38 @@ void MyPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
 
 The MuJoCo plugin (`plugins/simulation/mujoco`, `mj_viewport_panel.cpp`)
 draws its whole viewport this way.
+
+### `ICommandProvider` (menu commands, API 1.4)
+
+A plugin adds actions to the Engine's menus: the MuJoCo plugin fills the
+**Simulation** menu this way (Run Simulation, Pause, Stop, Step Once, Load
+MJCF Model...). Needs `UIModify`.
+
+| Member | Contract |
+|---|---|
+| `std::vector<PluginCommandInfo> GetCommands()` | Asked once when the plugin starts. Each: `command_id` (unique in your plugin), `menu` (a top menu by its title, such as `"Simulation"` or `"Tools"`; a title the Engine has no menu for puts the command in **Apps** under that title), `group` (a separator between groups), `label` (end it with `...` when it opens a dialog), `hint` (one sentence for the status bar and the Command Palette), `checkable` |
+| `PluginCommandState GetCommandState(const std::string& command_id)` | Asked every frame a menu or the palette shows the command, so keep it cheap: `enabled`, `disabled_reason` (shown on hover and in the status bar; say what to do), `checked` |
+| `void RunCommand(const std::string& command_id)` | The user chose it. Runs on the UI thread, between frames: open a panel with `PluginContext::ShowPanel` to show the result |
+
+The **Simulation** menu lists the commands that name it, then the panels
+whose `category` is `"Simulation"` as show/hide entries. Without a
+simulation plugin it says so. Everything is called on the UI thread; a
+command that throws is logged and the Engine goes on.
+
+<!-- not compiled: a sketch; the full provider is plugins/simulation/mujoco/src/mujoco_plugin.cpp -->
+```cpp
+std::vector<PluginCommandInfo> GetCommands() override {
+    return {{"run", "Simulation", "run", "Run Simulation", "Runs the loaded model.", false}};
+}
+PluginCommandState GetCommandState(const std::string& id) override {
+    if (!model_loaded_) return {false, "Load a model first.", false};
+    return {};
+}
+void RunCommand(const std::string& id) override {
+    if (id == "run") StartRun();
+    ctx_->ShowPanel("my_viewport");
+}
+```
 
 ### `IDataProvider`, `IAnalyticsProvider`
 

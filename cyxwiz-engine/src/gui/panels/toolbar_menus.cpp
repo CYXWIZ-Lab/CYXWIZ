@@ -19,6 +19,7 @@
 #include "../../plugin/plugin_manager.h"
 #include "../../plugin/plugin_session.h"
 #include "../../plugin/registries/plugin_panel_registry.h"
+#include "../../plugin/registries/plugin_command_registry.h"
 #include "../separate_windows.h"
 #include "../python_bundle_ui.h"
 
@@ -81,9 +82,6 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"deploy.connect", ICON_FA_PLUG}, {"deploy.deploy", ICON_FA_CLOUD_ARROW_UP}, {"deploy.serving", ICON_FA_SERVER},
         {"deploy.convert", ICON_FA_RIGHT_LEFT}, {"deploy.quantize", ICON_FA_COMPRESS},
         {"deploy.marketplace", ICON_FA_TAG},
-        {"sim.run", ICON_FA_PLAY}, {"sim.pause", ICON_FA_PAUSE}, {"sim.stop", ICON_FA_STOP},
-        {"sim.step", ICON_FA_FORWARD_STEP}, {"sim.viewport", ICON_FA_DESKTOP}, {"sim.env_library", ICON_FA_MICROCHIP},
-        {"sim.load_mjcf", ICON_FA_FILE_IMPORT},
         {"apps.plugin_manager", ICON_FA_PLUG},
         {"apps.plugin", ICON_FA_PLUG},
         {"help.tutorials", ICON_FA_LIGHTBULB}, {"help.shortcuts", ICON_FA_KEYBOARD},
@@ -131,9 +129,6 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
     in.onnx_export_available = true;
 #endif
     auto& panel_reg = plugin::PluginPanelRegistry::Instance();
-    in.mujoco_loaded = panel_reg.HasPanel("mujoco_viewport");
-    in.mujoco_viewport_visible = in.mujoco_loaded && panel_reg.IsPanelVisible("mujoco_viewport");
-    in.mujoco_env_visible = in.mujoco_loaded && panel_reg.IsPanelVisible("mujoco_env_browser");
     in.auto_save = auto_save_enabled_;
     in.focused_window = ::gui::FocusedWindowName();
     in.focused_window_may_leave = ::gui::WindowMayLeave(in.focused_window.c_str());
@@ -177,6 +172,10 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
         for (const auto& [category, panels] : by_category)
             for (const auto& p : panels)
                 in.plugin_panels.push_back({p.panel_id, p.title, panel_reg.IsPanelVisible(p.panel_id), category});
+    }
+    for (const auto& c : plugin::PluginCommandRegistry::Instance().Snapshot()) {
+        in.plugin_commands.push_back({c.key, c.info.menu, c.info.group, c.info.label, c.info.hint, c.state.enabled,
+                                      c.state.disabled_reason, c.info.checkable, c.state.checked});
     }
     for (const auto* p : plugin::PluginManager::Instance().GetAllPlugins()) {
         if (!p) continue;
@@ -575,12 +574,9 @@ void ToolbarPanel::BuildActionHandlers() {
     call("deploy.convert_bin_to_dir", convert_binary_to_dir_callback_);
     call("deploy.convert_dir_to_bin", convert_dir_to_binary_callback_);
 
-    // Simulation
-    h["sim.viewport"] = [](const std::string&) {
-        plugin::PluginPanelRegistry::Instance().TogglePanelVisible("mujoco_viewport");
-    };
-    h["sim.env_library"] = [](const std::string&) {
-        plugin::PluginPanelRegistry::Instance().TogglePanelVisible("mujoco_env_browser");
+    // Commands plugins add to the menus (Simulation and others)
+    h["plugin.command"] = [](const std::string& key) {
+        if (!plugin::PluginCommandRegistry::Instance().Run(key)) spdlog::warn("Menu: plugin command {} did not run", key);
     };
 
     // Apps

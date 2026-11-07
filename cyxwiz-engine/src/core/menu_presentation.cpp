@@ -1,5 +1,7 @@
 #include "menu_presentation.h"
 
+#include <algorithm>
+#include <iterator>
 #include <utility>
 
 namespace cyxwiz::menu {
@@ -68,6 +70,33 @@ MenuItem Head(const std::string& label) {
     item.kind = Kind::Header;
     item.label = label;
     return item;
+}
+
+// The Engine's top menus a plugin command can name
+bool IsMenuTitle(const std::string& title) {
+    static const char* const kTitles[] = {"File", "Edit", "View", "Nodes", "Train", "Data", "Tools",
+                                          "Script", "Deploy", "Simulation", "Help"};
+    return std::find(std::begin(kTitles), std::end(kTitles), title) != std::end(kTitles);
+}
+
+// The plugin commands of one menu, in registration order, a separator
+// between groups
+void AppendPluginCommands(Context focus, const std::vector<PluginCommandEntry>& commands, const std::string& menu,
+                          std::vector<MenuItem>& items) {
+    bool first = true;
+    std::string group;
+    for (const auto& c : commands) {
+        if (c.menu != menu) continue;
+        if (!first && c.group != group) items.push_back(Sep());
+        first = false;
+        group = c.group;
+        Opts opts;
+        opts.argument = c.key;
+        opts.checkable = c.checkable;
+        opts.checked = c.checked;
+        if (!c.enabled) opts.why = c.disabled_reason.empty() ? "Not available now." : c.disabled_reason;
+        items.push_back(Action(focus, "plugin.command", c.label, c.hint, opts));
+    }
 }
 
 MenuItem Sub(const std::string& id, const std::string& label, const std::string& hint,
@@ -745,20 +774,22 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
 
     // ---------------------------------------------------------- Simulation
     {
+        // Filled by simulation plugins: their commands, then their windows
         Menu m{"simulation", "Simulation", {}};
         auto& i = m.items;
-        const std::string need_mujoco = in.mujoco_loaded ? "" : "The MuJoCo plugin is not loaded.";
-        i.push_back(Planned(f, "sim.run", "Run Simulation", "Runs the simulation."));
-        i.push_back(Planned(f, "sim.pause", "Pause", "Pauses the simulation."));
-        i.push_back(Planned(f, "sim.stop", "Stop", "Stops the simulation."));
-        i.push_back(Planned(f, "sim.step", "Step Once", "Advances one step."));
-        i.push_back(Sep());
-        i.push_back(Toggle(f, "sim.viewport", "Open Viewport", "Shows the MuJoCo viewport.",
-                           in.mujoco_viewport_visible, need_mujoco));
-        i.push_back(Toggle(f, "sim.env_library", "Environment Library", "Shows the environment list.",
-                           in.mujoco_env_visible, need_mujoco));
-        i.push_back(Sep());
-        i.push_back(Planned(f, "sim.load_mjcf", "Load MJCF Model...", "Loads a MuJoCo model file."));
+        AppendPluginCommands(f, in.plugin_commands, "Simulation", i);
+        bool first_panel = true;
+        for (const auto& p : in.plugin_panels) {
+            if (p.group != "Simulation") continue;
+            if (first_panel && !i.empty()) i.push_back(Sep());
+            first_panel = false;
+            Opts opts;
+            opts.checkable = true;
+            opts.checked = p.checked;
+            opts.argument = p.id;
+            i.push_back(Action(f, "apps.panel", p.label, "Shows or hides this window.", opts));
+        }
+        if (i.empty()) i.push_back(Head("No simulation plugin loaded. Add one in the Plugin Manager."));
         model.menus.push_back(std::move(m));
     }
 
@@ -808,6 +839,17 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                 item.detail = b.detail;
                 i.push_back(std::move(item));
             }
+        }
+        // Plugin commands for a menu the Engine does not have, under its title
+        std::vector<std::string> other_menus;
+        for (const auto& c : in.plugin_commands)
+            if (!IsMenuTitle(c.menu) &&
+                std::find(other_menus.begin(), other_menus.end(), c.menu) == other_menus.end())
+                other_menus.push_back(c.menu);
+        for (const auto& title : other_menus) {
+            i.push_back(Sep());
+            i.push_back(Head(title));
+            AppendPluginCommands(f, in.plugin_commands, title, i);
         }
         i.push_back(Sep());
         i.push_back(Action(f, "apps.plugin_manager", "Plugin Manager", "Install, enable or remove plugins."));
