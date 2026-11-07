@@ -239,7 +239,7 @@ CrossValidationOutcome RunCrossValidation(const TrainingConfiguration& config, c
                 }
             };
             const EpochCallback on_epoch = [&](int epoch, float, float, float, float, float) {
-                progress.epoch = epoch + 1;
+                progress.epoch = epoch;  // the executor numbers epochs from 1
                 if (callbacks.on_progress) callbacks.on_progress(progress);
             };
             try {
