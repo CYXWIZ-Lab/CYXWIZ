@@ -7,6 +7,29 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Tools > Optimization and Calculus is one window** (guide in
+  `docs/usage/optimization_calculus.md`). Its six menu items open it on
+  Optimizers, Curvature, Linear, Quadratic, Derivative or Integral. It takes
+  typed formulas with exact derivatives, follows the training optimizers on
+  a formula's contour map, solves linear and quadratic programs of any size
+  with HiGHS (shadow prices, infeasible and unbounded in words), and gives
+  adaptive integrals with an error estimate. The six separate windows are
+  gone.
+- The Template nodes Gradient Descent Visualizer, Convexity Analyzer, LP
+  Solver, QP Solver, Numerical Differentiation and Numerical Integration are
+  no longer in the node list. They had no executor; the window does that
+  work, and the Portfolio Weights node brings a program into a graph.
+- **Plugin SDK (`cyxwiz/optimization.h`) is rewritten**: `LinearProgram`,
+  `QuadraticProgram`, `ProgramResult`, `Optimization::SolveLinearProgram`,
+  `SolveQuadraticProgram`, `PortfolioProgram` and `FollowOptimizer`.
+  Removed: `GradientDescent`, `MomentumGD`, `Adam`, `RMSprop`,
+  `AnalyzeConvexity`, `ComputeHessian`, `SolveLP`, `SolveLPWithBounds`,
+  `SolveQP`, `SolveUnconstrainedQP`, the numerical derivative and integral
+  functions, the test functions (Rosenbrock, Sphere, ...), `VectorNorm` and
+  their result structs. Their replacements are in `cyxwiz/calculus.h` (`Calculus::
+  Integrate`, `Differentiate`, `ErrorByStep`, `CurvatureAt`,
+  `CurvatureOverRange`) and `cyxwiz/expression.h` (`Expression`).
+
 - **Tools > Text opens Data Studio's Explore > Text** (Tokenization: Tokens,
   Word Frequency: Words, TF-IDF Analysis: Terms, Word Embeddings: Embeddings,
   Sentiment Analysis: Sentiment; Data > Tokenization: Tokens). The five
@@ -70,6 +93,17 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **The Portfolio Weights node** (Analytics): the least risky mix of assets
+  from a table of returns, with an optional target return and long only,
+  fitted on the Train rows; one row per asset with its weight, mean, sd and
+  share of the risk. Quadratic > From a returns table in the window reads
+  the same problem and adds this node (example:
+  `examples/cyxgraph/portfolio/`).
+- **Python: `pycyxwiz.calculus`** (`Expression`, `integrate`, `derivative`,
+  `step_errors`, `curvature`, `curvature_over_range`, `gauss_legendre`) and
+  **`pycyxwiz.optimize`** (`linprog`, `qp`, `portfolio`, `follow`), checked
+  against scipy and torch (example: `examples/python/optimization_calculus.py`).
+
 - SDK: `cyxwiz::TimeSeriesStop` (time_series.h): while one lives, the time
   series fits of the thread (exponential smoothing, ARIMA, STL, the ADF
   test) ask its stop query between passes and end with "Cancelled.".
@@ -117,6 +151,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- The Calculator bound a leading minus tighter than `^`, so `-2^2` gave 4 and
+  `exp(-x^2)` gave exp(x^2). It now reads formulas through the same parser
+  as the Optimization and Calculus window: `-2^2` is -4.
 - Training with NAdam no longer stops with "NAdam has invalid continuation
   state" after about a thousand steps: the product of its momentum terms
   reaches 0 in float32 there, which is a valid state (PyTorch carries on
