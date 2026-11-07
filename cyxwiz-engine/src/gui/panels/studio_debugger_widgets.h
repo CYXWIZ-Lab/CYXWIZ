@@ -51,6 +51,13 @@ inline void RightAlignOnLine(float width) {
     }
 }
 
+// Continues the line with an item group of `width` when it fits, else
+// starts a new line: nothing is clipped at the panel's edge.
+inline void SameLineIfFits(float width, float spacing = -1.0f) {
+    ImGui::SameLine(0.0f, spacing);
+    if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
+}
+
 inline bool BeginCard(const char* id) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, DebuggerPanelBg());
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);

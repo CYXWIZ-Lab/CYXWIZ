@@ -113,7 +113,7 @@ void DrawLegend(Scale scale, const std::string& low, const std::string& high) {
         const float x0 = at.x + width * i / kSteps, x1 = at.x + width * (i + 1) / kSteps;
         dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + height), ui::ToU32(c));
     }
-    ImGui::SameLine();
+    SameLineIfFits(ImGui::CalcTextSize(high.c_str()).x);
     ImGui::TextColored(DebuggerMuted(), "%s", high.c_str());
 }
 
@@ -343,10 +343,11 @@ void StudioDebuggerPanel::RenderLayersView() {
         if (layer_capture_->Truncated())
             line += " \xC2\xB7 " + std::to_string(layer_capture_->SkippedTensors()) +
                     " tensors past the capture budget were left out";
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(DebuggerMuted(), "%s", line.c_str());
+        // The line wraps; the snapshot list and Item stepper go under it.
+        WrappedMuted(line);
+        bool controls = false;
         if (layer_capture_labels_.size() > 1) {
-            ImGui::SameLine();
+            controls = true;
             ImGui::SetNextItemWidth(160.0f);
             if (ImGui::BeginCombo("##LayerCaptureLabel", layer_capture_label_.c_str())) {
                 for (const auto& label : layer_capture_labels_) {
@@ -362,7 +363,8 @@ void StudioDebuggerPanel::RenderLayersView() {
             if (!layer_capture_) return;
         }
         if (cache.samples > 1) {
-            ImGui::SameLine();
+            if (controls) ImGui::SameLine(0.0f, 16.0f);
+            ImGui::AlignTextToFramePadding();
             ImGui::TextColored(DebuggerMuted(), "Item");
             ImGui::SameLine();
             if (ui::SecondaryButton(ICON_FA_MINUS "##LayerItemDown", selected_layer_sample_ > 0))
@@ -490,8 +492,12 @@ void StudioDebuggerPanel::RenderLayersView() {
         SubViewSelector("StudioDebuggerLayerTabs", labels.data(), static_cast<int>(labels.size()),
                         &selected_layer_tab_);
         if (before != selected_layer_tab_) heatmap_row_begin_ = 0;
-        for (const auto& later : views.later) {
-            ImGui::SameLine();
+        for (size_t i = 0; i < views.later.size(); ++i) {
+            const auto& later = views.later[i];
+            // The tabs draw nothing for a single view: the first later
+            // button then starts the line.
+            if (labels.size() > 1 || i > 0)
+                SameLineIfFits(ui::ButtonWidth(later.label.c_str(), ui::ButtonSize::Small));
             ui::SecondaryButton(later.label.c_str(), false, later.why.c_str());
         }
     }
@@ -605,12 +611,13 @@ void StudioDebuggerPanel::RenderLayersView() {
             if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
             capture_session_->feature_map_colour = static_cast<core::FeatureMapColour>(pick);
         }
-        ImGui::SameLine(0.0f, 16.0f);
+        static const char* const kSorts[] = {"Strongest first", "Highest peak first", "Channel order"};
+        const float sort_width = ImGui::CalcTextSize(kSorts[1]).x + ImGui::GetFrameHeight() * 2.0f;
+        SameLineIfFits(ImGui::CalcTextSize("Order").x + ImGui::GetStyle().ItemSpacing.x + sort_width, 16.0f);
         ImGui::TextColored(DebuggerMuted(), "Order");
         ImGui::SameLine();
-        static const char* const kSorts[] = {"Strongest first", "Highest peak first", "Channel order"};
         int sort = static_cast<int>(settings.channel_sort);
-        ImGui::SetNextItemWidth(ImGui::CalcTextSize(kSorts[1]).x + ImGui::GetFrameHeight() * 2.0f);
+        ImGui::SetNextItemWidth(sort_width);
         if (ImGui::Combo("##StudioDebuggerChannelSort", &sort, kSorts, 3) &&
             sort != static_cast<int>(settings.channel_sort)) {
             if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
