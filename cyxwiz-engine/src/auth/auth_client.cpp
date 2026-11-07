@@ -4,6 +4,7 @@
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
+#include <openssl/x509.h>
 #include "common/server_http_trust.h"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -462,12 +463,14 @@ int AuthClient::HttpGet(const std::string& url, std::string* body) {
         const auto parsed = ParseUrl(url);
         const std::string path = parsed.base_path.empty() ? "/" : parsed.base_path;
         httplib::Result res;
+        long verify_result = X509_V_OK;
         if (url.rfind("https://", 0) == 0) {
             httplib::SSLClient client(parsed.host, parsed.port);
             cyxwiz::protocol::TrustServer(client);
             client.set_connection_timeout(3);
             client.set_read_timeout(3);
             res = client.Get(path);
+            verify_result = client.get_openssl_verify_result();
         } else {
             httplib::Client client(parsed.host, parsed.port);
             client.set_connection_timeout(3);
@@ -475,6 +478,10 @@ int AuthClient::HttpGet(const std::string& url, std::string* body) {
             res = client.Get(path);
         }
         if (!res) {
+            spdlog::debug("GET {} failed: {}{}", url, httplib::to_string(res.error()),
+                          verify_result == X509_V_OK
+                              ? std::string()
+                              : std::string(" (certificate: ") + X509_verify_cert_error_string(verify_result) + ")");
             return 0;
         }
         if (body) {
