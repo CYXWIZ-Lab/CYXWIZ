@@ -3079,8 +3079,11 @@ void MainWindow::Render() {
     // Data Studio panel (Phase 1 Week 1)
     TimedRender("data studio", data_studio_panel_);
 
-    // Render plugin-provided panels
-    cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();
+    // Render plugin-provided panels (one line in the frame overlay)
+    {
+        PanelTimer timer("plugin panels");
+        cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();
+    }
 
     // Render permission approval dialogs
     cyxwiz::plugin::PluginManager::Instance().RenderPermissionDialogs();

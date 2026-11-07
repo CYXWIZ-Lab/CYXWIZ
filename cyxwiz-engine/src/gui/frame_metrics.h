@@ -43,6 +43,7 @@ private:
 
     bool enabled_ = false;
     std::chrono::steady_clock::time_point frame_start_{};
+    bool frame_started_ = false;  // BeginFrame ran: turned on mid-frame, the first frame has no start
     std::vector<float> frame_history_;  // last 180 frame times, ms
     size_t history_pos_ = 0;
     std::vector<PanelCost> panels_;     // this frame, then smoothed

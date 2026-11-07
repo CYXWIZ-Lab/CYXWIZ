@@ -23,12 +23,14 @@ FrameMetrics& FrameMetrics::Instance() {
 void FrameMetrics::BeginFrame() {
     if (!enabled_) return;
     frame_start_ = std::chrono::steady_clock::now();
+    frame_started_ = true;
     for (auto& p : panels_) p.milliseconds *= (1.0 - kSmoothing);
     panels_total_ms_ = 0.0;
 }
 
 void FrameMetrics::EndFrame() {
-    if (!enabled_) return;
+    if (!enabled_ || !frame_started_) return;
+    frame_started_ = false;
     if (frame_history_.size() < kHistory) frame_history_.resize(kHistory, 0.0f);
     const auto now = std::chrono::steady_clock::now();
     const float ms = std::chrono::duration<float, std::milli>(now - frame_start_).count();
