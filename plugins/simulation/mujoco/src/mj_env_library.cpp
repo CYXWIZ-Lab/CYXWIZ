@@ -1,6 +1,7 @@
 #include "mj_env_library.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <spdlog/spdlog.h>
 
@@ -189,13 +190,6 @@ void MjEnvLibrary::PopulateMenagerie() {
         "Biomechanical", 80, 120);
 }
 
-const EnvInfo* MjEnvLibrary::FindById(const std::string& id) const {
-    for (const auto& e : envs_) {
-        if (e.id == id) return &e;
-    }
-    return nullptr;
-}
-
 std::string MjEnvLibrary::GetAssetPath(const EnvInfo& info) const {
     // Custom imported models: use absolute path directly
     if (!info.custom_asset_path.empty()) {
@@ -218,26 +212,32 @@ std::string MjEnvLibrary::GetAssetPath(const EnvInfo& info) const {
 
 bool MjEnvLibrary::IsModelAvailable(const EnvInfo& info) const {
     if (info.source == EnvSource::Builtin) return true;
+    if (info.source == EnvSource::Imported) return fs::exists(info.custom_asset_path);
 
     std::string model_dir = GetMenagerieModelDir(info);
     fs::path scene = fs::path(model_dir) / info.scene_file;
     return fs::exists(scene);
 }
 
-std::string MjEnvLibrary::GetMenagerieModelDir(const EnvInfo& info) const {
-    if (menagerie_dir_.empty()) {
-        // Default: ~/.cyxwiz/menagerie/
+namespace {
+
+fs::path CyxWizHome() {
 #ifdef _WIN32
-        const char* home = std::getenv("USERPROFILE");
+    const char* home = std::getenv("USERPROFILE");
 #else
-        const char* home = std::getenv("HOME");
+    const char* home = std::getenv("HOME");
 #endif
-        if (home) {
-            return (fs::path(home) / ".cyxwiz" / "menagerie" / info.repo_path).string();
-        }
-        return (fs::path("menagerie") / info.repo_path).string();
-    }
-    return (fs::path(menagerie_dir_) / info.repo_path).string();
+    return home ? fs::path(home) / ".cyxwiz" : fs::path(".cyxwiz");
+}
+
+}  // namespace
+
+std::string MjEnvLibrary::GetMenagerieRoot() { return (CyxWizHome() / "menagerie").string(); }
+
+std::string MjEnvLibrary::GetImportedRoot() { return (CyxWizHome() / "imported").string(); }
+
+std::string MjEnvLibrary::GetMenagerieModelDir(const EnvInfo& info) const {
+    return (fs::path(GetMenagerieRoot()) / info.repo_path).string();
 }
 
 void MjEnvLibrary::MarkDownloaded(const std::string& id) {
@@ -264,23 +264,43 @@ void MjEnvLibrary::ScanDownloadedModels() {
     }
 }
 
-std::vector<std::string> MjEnvLibrary::GetCategories() const {
-    std::vector<std::string> cats;
+bool MjEnvLibrary::AddImportedModel(const std::string& dir, const std::string& name,
+                                    const std::string& description) {
+    const std::string id = "imported_" + name;
     for (const auto& e : envs_) {
-        if (std::find(cats.begin(), cats.end(), e.category) == cats.end()) {
-            cats.push_back(e.category);
-        }
+        if (e.id == id) return true;
     }
-    return cats;
+    std::error_code ec;
+    fs::path model;
+    for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().extension() != ".xml") continue;
+        if (it->path().filename() == "scene.xml") {
+            model = it->path();
+            break;
+        }
+        if (model.empty()) model = it->path();
+    }
+    if (model.empty()) return false;
+
+    EnvInfo info;
+    info.id = id;
+    info.name = name;
+    info.filename = model.filename().string();
+    info.description = description;
+    info.category = "Imported";
+    info.source = EnvSource::Imported;
+    info.custom_asset_path = model.string();
+    envs_.push_back(std::move(info));
+    spdlog::info("MjEnvLibrary: Added imported environment '{}'", name);
+    return true;
 }
 
-void MjEnvLibrary::AddEnv(EnvInfo info) {
-    // Don't add duplicates
-    for (const auto& e : envs_) {
-        if (e.id == info.id) return;
+void MjEnvLibrary::ScanImportedModels() {
+    std::error_code ec;
+    for (fs::directory_iterator it(GetImportedRoot(), ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->is_directory(ec))
+            AddImportedModel(it->path().string(), it->path().filename().string(), "Saved in " + it->path().string());
     }
-    spdlog::info("MjEnvLibrary: Added imported environment '{}'", info.name);
-    envs_.push_back(std::move(info));
 }
 
 } // namespace cyxwiz::plugin::mujoco

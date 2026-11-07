@@ -1,5 +1,6 @@
 #include "mj_viewport_panel.h"
 #include "mj_simulation_executor.h"
+#include "mj_ui_helpers.h"
 
 #include "plugin/plugin_context.h"
 #include "plugin/plugin_ui.h"
@@ -17,18 +18,6 @@ namespace {
 constexpr const char* kLibraryPanelId = "mujoco_env_browser";
 constexpr const char* kGraphReason =
     "The graph run is stepping this model. Stop the graph run to control it here.";
-
-ImVec4 ToImVec4(const UiColor& c) { return ImVec4(c.r, c.g, c.b, c.a); }
-ImU32 ToU32(const UiColor& c, float alpha = 1.0f) {
-    return ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, c.a * alpha));
-}
-
-// Moves to the same line when `width` still fits, else starts a new line, so
-// nothing hides off the right edge of a narrow panel.
-void SameLineIfFits(float width) {
-    ImGui::SameLine();
-    if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
-}
 
 // What the panel shows of the model, read in one physics transaction.
 struct SceneSnapshot {

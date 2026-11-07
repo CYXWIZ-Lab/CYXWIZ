@@ -66,14 +66,15 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     // The built-in environments ship in the plugin's own folder (next to plugin.json).
     env_library_.SetAssetsDir((ctx.GetPluginDir() / "assets").string());
 
-    // Scan for previously downloaded Menagerie models
+    // Scan for previously downloaded Menagerie models and earlier imports
     env_library_.ScanDownloadedModels();
+    env_library_.ScanImportedModels();
 
     // Wire browser panel load callback and downloader; the viewport shows the
     // loaded model's name and where it comes from.
     browser_panel_.SetLoadCallback([this](const std::string& path, const EnvInfo& info) {
         if (!LoadEnvironment(path)) return false;
-        if (info.category == "Imported") {
+        if (info.source == EnvSource::Imported) {
             viewport_panel_.SetModelLabel(info.name, "Imported from URL");
         } else {
             const char* source = info.source == EnvSource::Menagerie ? "Menagerie" : "Built-in";
@@ -82,6 +83,7 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
         return true;
     });
     browser_panel_.SetDownloader(&menagerie_downloader_);
+    browser_panel_.SetContext(&ctx);
 
     // The viewport draws the Engine's widgets and opens the library; a model
     // file it opens is named after the file.
@@ -89,6 +91,7 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     viewport_panel_.SetOpenModel([this](const std::string& path) {
         if (!LoadEnvironment(path)) return false;
         viewport_panel_.SetModelLabel(std::filesystem::path(path).stem().string(), "Your file");
+        browser_panel_.ClearLoaded();
         return true;
     });
 
@@ -110,6 +113,8 @@ bool MuJoCoPlugin::OnInitialize(PluginContext& ctx) {
 void MuJoCoPlugin::OnShutdown(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnShutdown");
     sim_executor_.Stop();  // Must stop before freeing model/renderer
+    // A running download reports to the library panel: finish it while the panel exists
+    menagerie_downloader_.CancelDownload();
     renderer_.Shutdown();
     {
         std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
