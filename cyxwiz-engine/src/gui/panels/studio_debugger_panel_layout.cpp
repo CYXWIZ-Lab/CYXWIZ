@@ -222,6 +222,7 @@ void StudioDebuggerPanel::RenderToolbar() {
     }
     ImGui::SameLine(0.0f, 16.0f);
     RenderSampleStepper();
+    RenderCaptureControl();
 
     // Saved runs and options, right-aligned when they fit.
     const float saved_width = 230.0f;

@@ -32,13 +32,13 @@ ModelMemoryEstimate EstimateTrainingMemory(BuiltExecutableModel& built,
     out.optimizer_tensors_per_parameter = built.optimizer ? built.optimizer->StateTensorsPerParameter() : 0;
 
     // A layer that makes several modules lists each; its output is kept once.
-    uint64_t activations = ElementCount(sample_input_shape);
-    uint64_t largest = 0, second = 0, working = 0;
+    uint64_t outputs = ElementCount(sample_input_shape);
+    uint64_t largest = 0, second = 0, working = 0, caches = 0;
     std::set<size_t> layers_seen;
     for (const auto& entry : built.module_provenance) {
         if (layers_seen.insert(entry.compiled_layer_index).second) {
             const uint64_t output = ElementCount(entry.output_shape);
-            activations += output;
+            outputs += output;
             if (output > largest) {
                 second = largest;
                 largest = output;
@@ -48,11 +48,13 @@ ModelMemoryEstimate EstimateTrainingMemory(BuiltExecutableModel& built,
         }
         if (entry.created()) {
             if (const Module* module = built.model->LayerModule(*entry.module_index)) {
-                activations += module->CachedElementsPerSample(entry.input_shape);
+                caches += module->CachedElementsPerSample(entry.input_shape);
                 working = std::max<uint64_t>(working, module->BackwardWorkingElementsPerSample(entry.input_shape));
             }
         }
     }
+    const uint64_t activations = outputs + caches;
+    out.output_elements_per_sample = outputs;
     out.activation_elements_per_sample = activations;
     out.backward_elements_per_sample = largest + second + working;
 

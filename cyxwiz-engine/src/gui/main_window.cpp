@@ -167,6 +167,7 @@
 #include "../core/debug_node_inspector.h"
 #include "../core/training_trace_collector.h"
 #include "../core/debug_run_store.h"
+#include "../core/layer_capture_settings.h"
 #include "../core/layer_capture_store.h"
 #include "../core/runtime_log_store.h"
 #include "../core/training_executor.h"
@@ -1015,6 +1016,7 @@ MainWindow::MainWindow()
         if (live_compile_) live_compile_->Invalidate();
     });
     properties_->SetLiveCompile(live_compile_.get());
+    studio_debugger_panel_->SetLiveCompile(live_compile_.get());
     node_editor_->SetLiveCompile(live_compile_.get());
 
     // Connect Pattern Browser to Node Editor for proper node creation
@@ -1062,6 +1064,7 @@ MainWindow::MainWindow()
             inputs.project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
             inputs.rebuild_prepared_data =
                 studio_debugger_panel_->ConsumeRebuildPreparedDataRequest();
+            inputs.capture_settings = studio_debugger_panel_->CaptureSettings();
             if (node_editor_) {
                 nodes = node_editor_->GetNodes();
                 links = node_editor_->GetLinks();
@@ -3968,24 +3971,16 @@ std::string CanvasPreparedTrainingInput(NodeEditor* editor, const std::vector<ML
     return result;
 }
 
-// What the user's Studio Debugger defaults capture (Preferences > Studio
-// Debugger, TOFIX178 6.1c); nullopt when nothing is captured `for_training`
-// or for Local Debug.
+// What the Studio Debugger's capture settings keep (TOFIX178 6.1c, 6.2d);
+// nullopt when nothing is captured `for_training` or for Local Debug.
 std::optional<cyxwiz::LayerCaptureOptions> LayerCaptureFor(const cyxwiz::core::StudioDebuggerConfig& settings,
                                                            bool for_training) {
-    using When = cyxwiz::core::LayerCaptureWhen;
-    if (settings.capture_when == When::Off || (for_training && settings.capture_when != When::Training))
-        return std::nullopt;
+    if (!cyxwiz::layer_capture::CapturesAnything(settings, for_training)) return std::nullopt;
     cyxwiz::LayerCaptureOptions options;
     options.activations = settings.capture_activations;
     options.parameters = settings.capture_parameters;
     options.gradients = settings.capture_gradients;
-    if (!options.activations && !options.parameters && !options.gradients) return std::nullopt;
     return options;
-}
-
-size_t LayerCaptureSamples(const cyxwiz::core::StudioDebuggerConfig& settings) {
-    return settings.capture_batch ? cyxwiz::core::kLayerCaptureBatchSamples : 1;
 }
 
 }  // namespace
@@ -4123,7 +4118,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         // Layer snapshots every N epochs on the debugger's picked sample (not
         // for a cross-validation).
         {
-            const auto studio_debugger = cyxwiz::core::EngineConfig::Instance().GetStudioDebugger();
+            const auto studio_debugger = studio_debugger_panel_ ? studio_debugger_panel_->CaptureSettings()
+                                                                : cyxwiz::core::EngineConfig::Instance().GetStudioDebugger();
             const auto capture = folds ? std::nullopt : LayerCaptureFor(studio_debugger, true);
             std::optional<cyxwiz::TrainingExecutor::LayerSnapshotSchedule> snapshots;
             if (capture) {
@@ -4133,7 +4129,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 snapshots->source_index = studio_debugger_panel_
                     ? static_cast<size_t>(std::max(0, studio_debugger_panel_->SelectedSampleIndex()))
                     : 0;
-                snapshots->source_count = LayerCaptureSamples(studio_debugger);
+                snapshots->source_count = cyxwiz::layer_capture::CaptureSamples(studio_debugger);
                 snapshots->keep_runs = static_cast<size_t>(studio_debugger.keep_capture_runs);
             }
             tm.SetNextLayerSnapshots(std::move(snapshots));
@@ -5132,11 +5128,13 @@ bool MainWindow::BuildStudioDebuggerSessionFromSnapshot(
         // a synthetic one when its data kind cannot hand an item over yet.
         // The model is built from the configuration reconciled to that data.
         cyxwiz::TrainingConfiguration debug_config = config;
-        const auto studio_debugger = cyxwiz::core::EngineConfig::Instance().GetStudioDebugger();
+        const auto studio_debugger = inputs && inputs->capture_settings
+                                         ? *inputs->capture_settings
+                                         : cyxwiz::core::EngineConfig::Instance().GetStudioDebugger();
         const auto capture = LayerCaptureFor(studio_debugger, false);
         cyxwiz::DebugSampleRequest sample_request;
         sample_request.index = selected_sample_index;
-        if (capture) sample_request.count = LayerCaptureSamples(studio_debugger);
+        if (capture) sample_request.count = cyxwiz::layer_capture::CaptureSamples(studio_debugger);
         sample_request.nodes = &nodes;
         sample_request.links = &links;
         sample_request.roots = step_roots;

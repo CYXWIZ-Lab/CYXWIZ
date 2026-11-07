@@ -80,8 +80,10 @@ private Data Studio tickets (`tofix*/track*`).
   training comes out exactly the same with it on or off. Captures are saved
   with their run, and only the last 10 runs keep theirs; Model > Layers shows
   them (below). Your defaults for when, what, which input and the
-  feature-map colour (Heat or Grayscale) are kept in Preferences. Guide:
-  `docs/usage/studio_toolbar.md`, "Layer capture".
+  feature-map colour (Heat or Grayscale) are kept in Preferences; Layer
+  capture in the debugger's toolbar changes them for the session, shows one
+  snapshot's size for the model on the canvas and saves them as your
+  defaults. Guide: `docs/usage/studio_toolbar.md`, "Layer capture".
 - **Studio Debugger > Model > Layers**: every captured layer with the views
   its tensors support. Feature maps (strongest channels first, Heat or
   Grayscale), each unit's value, a histogram of the values, and weights and

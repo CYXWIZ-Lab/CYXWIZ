@@ -238,8 +238,9 @@ loads first, as for Train.
 Local Debug and training can keep what every layer held: its input and
 output, its weights (with BatchNorm's running statistics as kept state) and
 the gradients of the weights. The layer views of the Studio Debugger read
-them. Capture is off until you turn it on in **Preferences > Studio
-Debugger**:
+them. Capture is off until you turn it on, with **Layer capture** in the
+Studio Debugger's toolbar (for this session) or in **Preferences > Studio
+Debugger** (your defaults):
 
 - **When**: **Off** (Local Debug and training run exactly as without it),
   **Local Debug runs**, or **Training, every N epochs** (N = 5 to start).
@@ -255,8 +256,20 @@ Debugger**:
 - **Feature-map colour**: **Heat** (black through red to yellow) or
   **Grayscale**, for every activation layer; each view can switch it.
 
-The settings apply and save at once, for every project (the
+Preferences applies and saves at once, for every project (the
 `studio_debugger` section of the Engine's settings file).
+
+**Layer capture** in the toolbar names what the next runs keep ("Layer
+capture: every 5 epochs") and opens the same When / What / On choices,
+starting from your defaults. Changes there apply to this session's next Local
+Debug and training runs (a run in progress keeps what it started with); the
+Heat / Grayscale switch in Model > Layers belongs to the same settings. The
+panel also gives the size of one snapshot from the compiled model on the
+canvas: the input and every layer's output for the captured samples, the
+parameters with their kept state, and the gradients, plus the total for a
+training run of the graph's epochs. **Save as my default** writes the
+session's settings, the colour included, to Preferences; **Use my defaults**
+drops the session's changes.
 
 A training snapshot runs the sample once, forward and backward, with no
 weight update and with the model in evaluation mode (BatchNorm on its running

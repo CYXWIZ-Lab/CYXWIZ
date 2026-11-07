@@ -8,6 +8,7 @@
 #include "debug_recommendation_engine.h"
 #include "debug_run_store.h"
 #include "debug_session.h"
+#include "engine_config.h"
 #include "smoke_run_executor.h"
 #include "training_trace_collector.h"
 
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <utility>
 #include <functional>
 #include <string>
@@ -81,6 +83,9 @@ struct StudioDebuggerRunInputs {
     std::filesystem::path project_root;
     // Re-prepare the data instead of reusing the cache (one run).
     bool rebuild_prepared_data = false;
+    // The debugger's layer capture settings when the run started (TOFIX178
+    // 6.2d); empty = the user's defaults.
+    std::optional<core::StudioDebuggerConfig> capture_settings;
 };
 
 struct StudioDebuggerSnapshot {

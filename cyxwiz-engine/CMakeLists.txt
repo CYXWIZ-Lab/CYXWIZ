@@ -308,6 +308,7 @@ set(ENGINE_SOURCES
     src/core/debug_run_store.cpp
     src/core/studio_debugger_presentation.cpp
     src/core/layer_view_presentation.cpp
+    src/core/layer_capture_settings.cpp
     src/core/layer_tensor_reader.cpp
     src/core/training_manager.cpp
     src/core/cross_validation_runner.cpp
@@ -675,6 +676,8 @@ set(ENGINE_SOURCES
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
     src/gui/panels/studio_debugger_layers.cpp
+    src/gui/panels/studio_debugger_capture.cpp
+    src/gui/panels/layer_capture_controls.cpp
     src/gui/panels/gradcam_panel.cpp
     src/gui/panels/feature_importance_panel.cpp
     src/gui/panels/nas_panel.cpp
@@ -5873,6 +5876,7 @@ set_target_properties(test_studio_debugger_presentation PROPERTIES
 add_executable(test_layer_view_presentation
     tests/test_layer_view_presentation.cpp
     src/core/layer_view_presentation.cpp
+    src/core/layer_capture_settings.cpp
 )
 
 target_include_directories(test_layer_view_presentation PRIVATE

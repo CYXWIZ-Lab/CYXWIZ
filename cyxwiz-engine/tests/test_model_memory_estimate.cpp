@@ -21,6 +21,7 @@
 #include <iterator>
 #include <optional>
 #include <sstream>
+#include <set>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -145,6 +146,22 @@ void RunChecked(const std::string& name, const std::string& relative, const std:
     Check(estimate.optimizer_tensors_per_parameter == built.optimizer->StateTensorsPerParameter() &&
               estimate.optimizer_bytes == estimate.trained_elements * estimate.optimizer_tensors_per_parameter * 4,
           "optimizer state: " + std::to_string(estimate.optimizer_tensors_per_parameter) + " per parameter");
+
+    // What a layer capture keeps: the input and each compiled layer's output
+    // once, without the modules' caches.
+    uint64_t outputs = 1;
+    for (size_t d : config.input_shape) outputs *= d;
+    std::set<size_t> layers;
+    for (const auto& entry : built.module_provenance) {
+        if (!layers.insert(entry.compiled_layer_index).second) continue;
+        uint64_t n = entry.output_shape.empty() ? 0 : 1;
+        for (size_t d : entry.output_shape) n *= d;
+        outputs += n;
+    }
+    Check(estimate.output_elements_per_sample == outputs &&
+              estimate.output_elements_per_sample <= estimate.activation_elements_per_sample,
+          "outputs per sample " + std::to_string(estimate.output_elements_per_sample) + " = input + layer outputs " +
+              std::to_string(outputs));
 
     // Against the device: the step's growth over the weights already held.
     const uint64_t step_estimate = estimate.total_bytes - estimate.parameter_bytes - estimate.state_bytes;

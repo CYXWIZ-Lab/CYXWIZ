@@ -1,8 +1,10 @@
 // The Studio Debugger's layer view model (TOFIX178 6.2): views picked by the
 // tensors' roles and shapes. Main scenario: the catdog CNN's capture (Conv 32
 // on a 64 x 64 RGB image, BatchNorm, ReLU, Flatten, Dense 2), as Local Debug
-// saved it on 2026-11-06.
+// saved it on 2026-11-06. The capture control's settings (6.2d) use the
+// ResNet example's compiled sizes from the approved Capture mockup.
 
+#include "core/layer_capture_settings.h"
 #include "core/layer_view_presentation.h"
 
 #include <cmath>
@@ -236,6 +238,52 @@ void TestHistogramAndNumbers() {
     CheckText(NumbersLines(none, true).front(), "No summary: the tensor is not Float32.", "no summary");
 }
 
+void TestCaptureSettings() {
+    namespace lc = cyxwiz::layer_capture;
+    using core::LayerCaptureWhen;
+    core::StudioDebuggerConfig s;
+    Check(!lc::CapturesAnything(s, false) && !lc::CapturesAnything(s, true), "off captures nothing");
+    CheckText(lc::Summary(s), "off", "summary off");
+    s.capture_when = LayerCaptureWhen::LocalDebug;
+    Check(lc::CapturesAnything(s, false) && !lc::CapturesAnything(s, true), "Local Debug only");
+    CheckText(lc::Summary(s), "Local Debug runs", "summary Local Debug");
+    s.capture_when = LayerCaptureWhen::Training;
+    Check(lc::CapturesAnything(s, false) && lc::CapturesAnything(s, true), "training covers Local Debug too");
+    CheckText(lc::Summary(s), "every 5 epochs", "summary training");
+    s.capture_every_epochs = 1;
+    CheckText(lc::Summary(s), "every epoch", "summary every epoch");
+    s.capture_activations = s.capture_parameters = s.capture_gradients = false;
+    Check(!lc::CapturesAnything(s, false) && !lc::CapturesAnything(s, true), "nothing ticked captures nothing");
+    CheckText(lc::Summary(s), "off", "summary nothing ticked");
+
+    Check(lc::SnapshotEpochs(5, 20) == std::vector<int>{5, 10, 15, 20}, "every 5 of 20");
+    Check(lc::SnapshotEpochs(3, 20) == std::vector<int>{3, 6, 9, 12, 15, 18, 20}, "every 3 of 20 and the last");
+    Check(lc::SnapshotEpochs(30, 20) == std::vector<int>{20}, "longer than the run: the last");
+    Check(lc::SnapshotEpochs(0, 2) == std::vector<int>{1, 2}, "every 0 reads as 1");
+    Check(lc::SnapshotEpochs(5, 0).empty(), "no epochs");
+
+    ModelMemoryEstimate model;
+    Check(!lc::EstimateSize(model, core::StudioDebuggerConfig{}, 1u << 28).available, "no model, no size");
+    model.available = true;
+    model.output_elements_per_sample = 2355713;  // the input and all 41 layers' outputs
+    model.activation_elements_per_sample = 9999999;  // with the caches: not what a capture keeps
+    model.trained_elements = 1228097;
+    model.state_elements = 2880;
+    core::StudioDebuggerConfig all;
+    all.capture_when = LayerCaptureWhen::Training;
+    auto size = lc::EstimateSize(model, all, uint64_t{256} << 20);
+    Check(size.activation_values == 2355713 && size.activation_bytes == 9422852, "one sample's activations");
+    Check(size.parameter_bytes == 4923908 && size.gradient_bytes == 4912388, "parameters with kept state, gradients");
+    Check(size.snapshot_bytes == 19259148 && !size.over_budget, "one snapshot");
+    all.capture_batch = true;
+    size = lc::EstimateSize(model, all, uint64_t{256} << 20);
+    Check(size.activation_values == 2355713ull * 8 && size.snapshot_bytes == 85219112, "a batch of 8");
+    Check(lc::CaptureSamples(all) == 8, "batch samples");
+    all.capture_activations = false;
+    size = lc::EstimateSize(model, all, uint64_t{8} << 20);
+    Check(size.snapshot_bytes == 9836296 && size.over_budget, "unticked activations; over a small budget");
+}
+
 }  // namespace
 
 int main() {
@@ -244,6 +292,7 @@ int main() {
     TestMatrixLayout();
     TestChannelsAndScales();
     TestHistogramAndNumbers();
+    TestCaptureSettings();
     if (g_failures) {
         std::printf("%d layer view checks failed\n", g_failures);
         return EXIT_FAILURE;

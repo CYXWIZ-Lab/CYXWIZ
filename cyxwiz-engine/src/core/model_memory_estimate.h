@@ -28,6 +28,9 @@ struct ModelMemoryEstimate {
     size_t optimizer_tensors_per_parameter = 0;
     // Per sample: the input, every layer's output and the modules' caches.
     uint64_t activation_elements_per_sample = 0;
+    // Per sample: the input and every layer's output only (what a layer
+    // capture keeps; a layer's output is the next one's input).
+    uint64_t output_elements_per_sample = 0;
     // Per sample, during backward: the two largest gradients alive at once
     // plus the largest module working set.
     uint64_t backward_elements_per_sample = 0;

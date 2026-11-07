@@ -11,6 +11,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/debug_numerics.h"
 #include "../../core/engine_config.h"
+#include "../../core/layer_capture_settings.h"
 #include "../../core/layer_capture_store.h"
 #include "../../core/layer_tensor_reader.h"
 #include "../../core/layer_view_presentation.h"
@@ -266,14 +267,13 @@ void StudioDebuggerPanel::RenderLayersView() {
             ImGui::TextColored(DebuggerMuted(), ICON_FA_SPINNER "  Reading this run's layer capture...");
         } else {
             ImGui::TextColored(DebuggerBright(), "No layer capture for this run.");
-            const bool capture_on =
-                core::EngineConfig::Instance().GetStudioDebugger().capture_when != core::LayerCaptureWhen::Off;
+            const bool capture_on = layer_capture::CapturesAnything(CaptureSettings(), false);
             ImGui::TextColored(DebuggerMuted(), "%s",
                                capture_on
                                    ? "Capture is on: this run did not reach Local Debug's forward and backward "
                                      "step (see Overview), or it ran before capture was turned on."
-                                   : "Turn capture on in Preferences \xE2\x80\xBA Studio Debugger (Local Debug runs, "
-                                     "or Training every N epochs), then run Local Debug: every layer's input, "
+                                   : "Turn capture on with Layer capture in the toolbar (Local Debug runs, or "
+                                     "Training every N epochs), then run Local Debug: every layer's input, "
                                      "output, weights and gradients for the picked sample show here.");
         }
         ImGui::PopTextWrapPos();
@@ -406,9 +406,7 @@ void StudioDebuggerPanel::RenderLayersView() {
     const lv::LayerInfo& info = cache.layers[selected_layer_];
     const CapturedTensor* output = FindTensor(layer, CapturedTensorRole::Output);
 
-    const auto& settings = core::EngineConfig::Instance().GetStudioDebugger();
-    const int colour = layer_colour_ >= 0 ? layer_colour_
-                                          : (settings.feature_map_colour == core::FeatureMapColour::Grayscale ? 1 : 0);
+    const int colour = CaptureSettings().feature_map_colour == core::FeatureMapColour::Grayscale ? 1 : 0;
     const Scale map_scale = colour == 1 ? Scale::Gray : Scale::Heat;
 
     // The tabs need the output's zeros for the facts: plan with the sample's
@@ -569,7 +567,10 @@ void StudioDebuggerPanel::RenderLayersView() {
         int pick = colour;
         ImGui::TextColored(DebuggerMuted(), "Colour");
         ImGui::SameLine();
-        if (ui::SegmentedControl("StudioDebuggerMapColour", kScales, 2, &pick) && pick != colour) layer_colour_ = pick;
+        if (ui::SegmentedControl("StudioDebuggerMapColour", kScales, 2, &pick) && pick != colour) {
+            if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
+            capture_session_->feature_map_colour = static_cast<core::FeatureMapColour>(pick);
+        }
         ImGui::SameLine(0.0f, 16.0f);
         DrawLegend(map_scale, "0", "99.5th percentile (max " + Number(cache.numerics.maximum) + ")");
         ImGui::Spacing();

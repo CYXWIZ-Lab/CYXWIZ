@@ -11,6 +11,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/studio_debugger_presentation.h"
 #include "../../core/layer_capture.h"
+#include "../../core/engine_config.h"
 #include "../icons.h"
 #include <atomic>
 #include <cstddef>
@@ -26,6 +27,8 @@
 #include <vector>
 
 namespace cyxwiz {
+
+class LiveGraphCompile;
 
 enum class StudioDebuggerLens {
     Overview = 0,
@@ -97,6 +100,12 @@ public:
     bool IsRunning() const { return run_in_progress_; }
     // The sample the debugger runs on (Local Debug, training layer snapshots).
     int SelectedSampleIndex() const { return selected_sample_index_; }
+    // What the next Local Debug or training run captures and how the layer
+    // views colour maps: the user's defaults (Preferences > Studio Debugger)
+    // until this session's capture control changes them.
+    core::StudioDebuggerConfig CaptureSettings() const;
+    // The canvas compile, for the capture control's size estimate.
+    void SetLiveCompile(const LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
     // True once after the user asked the next run to rebuild prepared data.
     bool ConsumeRebuildPreparedDataRequest() {
         const bool requested = rebuild_prepared_data_next_run_;
@@ -130,6 +139,7 @@ private:
     };
 
     void RenderToolbar();
+    void RenderCaptureControl();
     void RenderTraceSettings();
     void RenderSectionRail();
     void RenderStepChecklist(const std::vector<StudioDebuggerStep>& steps);
@@ -240,9 +250,12 @@ private:
     size_t selected_layer_sample_ = 0;   // item within a captured batch
     size_t selected_channel_rank_ = 0;   // in strongest-first order
     bool layer_all_channels_ = false;
-    int layer_colour_ = -1;              // 0 Heat, 1 Grayscale; -1 = Preferences
     size_t heatmap_row_begin_ = 0;
     std::shared_ptr<LayerViewCache> layer_view_cache_;
+    // This session's capture settings once changed here; empty = the user's
+    // defaults. Save as my default writes them and empties it.
+    std::optional<core::StudioDebuggerConfig> capture_session_;
+    const LiveGraphCompile* live_compile_ = nullptr;
 
     StudioDebuggerSnapshot session_;
     // The latest run, held here (moved, not copied) only while an older saved
