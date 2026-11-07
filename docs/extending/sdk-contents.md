@@ -44,6 +44,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/dimensionality_reduction.h` |  | `PCAResult`, `tSNEResult`, `UMAPResult`, `DimensionalityReduction` |
 | `cyxwiz/engine.h` | Compatibility header for backend lifecycle internals. Public lifecycle functions are declared in cyxwiz.h: - cyxwiz::Initialize() - cyxwiz::Shutdown() - cyxwiz::GetVersionString() Keep this header intentionally small until there is a real engine subsystem contract to expose. |  |
 | `cyxwiz/error_codes.h` |  | `DiagnosticCodeDescriptor` |
+| `cyxwiz/expression.h` | A typed formula such as "(1 - x)^2 + 100*(y - x^2)^2": parsed once into a tree, evaluated at one point on the host or at many points on the device, and differentiated exactly. The Calculator, the optimization window and the calculus functions all read formulas through it. Grammar, loosest first:... | `Expression`, `AngleUnit` |
 | `cyxwiz/feature_importance.h` |  | `FeatureImportanceResult`, `FeatureImportanceAnalyzer` |
 | `cyxwiz/gpu_execution_modes.h` |  | `GpuExecutionMode`, `GpuOperationFamily` |
 | `cyxwiz/gradient_check.h` | Numerical gradient check for a module's hand-written Backward (TOFIX125 P2 step 2.4, decision D1: extension authors write the gradient and the engine checks it). Central differences of L = sum(Forward(x) * r) for a fixed random r, compared with Backward(r) for the input and GetGradients() for... | `GradientCheckOptions`, `GradientCheckResult`, `LossCheckTargets` |
@@ -70,7 +71,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/text_processing.h` |  | `TokenizationResult`, `WordFrequencyResult`, `TFIDFResult`, `EmbeddingResult`, `VaderScores`, `TextProcessing` |
 | `cyxwiz/time_series.h` |  | `DecompositionResult`, `AutocorrelationResult`, `StationarityResult`, `Differenced`, `SeasonalityResult`, `ForecastResult`, `TimeSeriesStop`, `TimeSeries`, `WindowConfig`, `WindowResult` |
 | `cyxwiz/tokenizer.h` |  | `TokenizedText`, `Vocabulary`, `Tokenizer`, `TokenizerType`, `ByteBPEPiecePolicy`, `BPEInitialUnit` |
-| `cyxwiz/utilities.h` |  | `CalculatorResult`, `UnitConversionResult`, `RandomNumberResult`, `HashResult`, `JSONResult`, `RegexMatch`, `RegexResult`, `Utilities`, `ParserState` |
+| `cyxwiz/utilities.h` |  | `CalculatorResult`, `UnitConversionResult`, `RandomNumberResult`, `HashResult`, `JSONResult`, `RegexMatch`, `RegexResult`, `Utilities` |
 | `cyxwiz/version.h` |  |  |
 | `cyxwiz/word_embeddings.h` | Word vectors (TOFIX152): pretrained files read as gensim reads them (KeyedVectors.load_word2vec_format), and a table lined up with a token vocabulary for the Embedding layer. Files are read on the host; the matrix work runs on the selected ArrayFire device. | `WordVectors`, `WordAlignmentOptions`, `WordAlignment`, `Word2VecOptions`, `Word2VecBatch`, `Word2VecModel`, `GloVeOptions`, `GloVeCounts`, `GloVeState`, `GloVeBatch`, `GloVeModel`, `FastTextOptions`, `FastTextModel`, `FastTextFileInfo`, `WordEmbeddings`, `FastTextSource` |
 | `cyxwiz/activations/relu.h` |  | `ReLU` |

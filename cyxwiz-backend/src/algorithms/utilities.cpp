@@ -1,4 +1,5 @@
 #include <cyxwiz/utilities.h>
+#include <cyxwiz/expression.h>
 #include <cmath>
 #include <algorithm>
 #include <numeric>
@@ -148,256 +149,6 @@ static double ConvertTemperature(double value, const std::string& from, const st
 // Calculator Implementation
 // ============================================================================
 
-void Utilities::SkipWhitespace(ParserState& state) {
-    while (state.pos < state.expression.size() && std::isspace(state.expression[state.pos])) {
-        state.pos++;
-    }
-}
-
-char Utilities::Peek(ParserState& state) {
-    SkipWhitespace(state);
-    if (state.pos >= state.expression.size()) return '\0';
-    return state.expression[state.pos];
-}
-
-char Utilities::Get(ParserState& state) {
-    SkipWhitespace(state);
-    if (state.pos >= state.expression.size()) return '\0';
-    return state.expression[state.pos++];
-}
-
-bool Utilities::Match(ParserState& state, char c) {
-    if (Peek(state) == c) {
-        Get(state);
-        return true;
-    }
-    return false;
-}
-
-double Utilities::ParseNumber(ParserState& state) {
-    SkipWhitespace(state);
-    std::string num;
-    bool has_dot = false;
-    bool has_exp = false;
-
-    while (state.pos < state.expression.size()) {
-        char c = state.expression[state.pos];
-        if (std::isdigit(c)) {
-            num += c;
-            state.pos++;
-        } else if (c == '.' && !has_dot) {
-            num += c;
-            has_dot = true;
-            state.pos++;
-        } else if ((c == 'e' || c == 'E') && !has_exp) {
-            num += c;
-            has_exp = true;
-            state.pos++;
-            if (state.pos < state.expression.size() &&
-                (state.expression[state.pos] == '+' || state.expression[state.pos] == '-')) {
-                num += state.expression[state.pos++];
-            }
-        } else {
-            break;
-        }
-    }
-
-    if (num.empty()) {
-        state.error = "Expected number";
-        return 0.0;
-    }
-
-    return std::stod(num);
-}
-
-double Utilities::ParseFunction(ParserState& state, const std::string& name) {
-    if (!Match(state, '(')) {
-        state.error = "Expected '(' after function name";
-        return 0.0;
-    }
-
-    double arg1 = ParseExpression(state);
-    double arg2 = 0.0;
-    bool has_arg2 = false;
-
-    if (Match(state, ',')) {
-        arg2 = ParseExpression(state);
-        has_arg2 = true;
-    }
-
-    if (!Match(state, ')')) {
-        state.error = "Expected ')'";
-        return 0.0;
-    }
-
-    // Angle conversion for trig functions
-    double angle_factor = (state.angle_mode == "degrees") ? (PI / 180.0) : 1.0;
-
-    // Single argument functions
-    if (name == "sin") return std::sin(arg1 * angle_factor);
-    if (name == "cos") return std::cos(arg1 * angle_factor);
-    if (name == "tan") return std::tan(arg1 * angle_factor);
-    if (name == "asin") return std::asin(arg1) / angle_factor;
-    if (name == "acos") return std::acos(arg1) / angle_factor;
-    if (name == "atan") return std::atan(arg1) / angle_factor;
-    if (name == "sinh") return std::sinh(arg1);
-    if (name == "cosh") return std::cosh(arg1);
-    if (name == "tanh") return std::tanh(arg1);
-    if (name == "sqrt") return std::sqrt(arg1);
-    if (name == "cbrt") return std::cbrt(arg1);
-    if (name == "exp") return std::exp(arg1);
-    if (name == "log" || name == "ln") return std::log(arg1);
-    if (name == "log10") return std::log10(arg1);
-    if (name == "log2") return std::log2(arg1);
-    if (name == "abs") return std::abs(arg1);
-    if (name == "floor") return std::floor(arg1);
-    if (name == "ceil") return std::ceil(arg1);
-    if (name == "round") return std::round(arg1);
-    if (name == "sign") return (arg1 > 0) ? 1.0 : ((arg1 < 0) ? -1.0 : 0.0);
-
-    // Factorial
-    if (name == "factorial" || name == "fact") {
-        int n = static_cast<int>(arg1);
-        if (n < 0) {
-            state.error = "Factorial undefined for negative numbers";
-            return 0.0;
-        }
-        double result = 1.0;
-        for (int i = 2; i <= n; i++) result *= i;
-        return result;
-    }
-
-    // Two argument functions
-    if (has_arg2) {
-        if (name == "pow") return std::pow(arg1, arg2);
-        if (name == "mod" || name == "fmod") return std::fmod(arg1, arg2);
-        if (name == "min") return std::min(arg1, arg2);
-        if (name == "max") return std::max(arg1, arg2);
-        if (name == "atan2") return std::atan2(arg1, arg2) / angle_factor;
-    }
-
-    state.error = "Unknown function: " + name;
-    return 0.0;
-}
-
-double Utilities::ParsePrimary(ParserState& state) {
-    SkipWhitespace(state);
-
-    // Parentheses
-    if (Match(state, '(')) {
-        double result = ParseExpression(state);
-        if (!Match(state, ')')) {
-            state.error = "Expected ')'";
-        }
-        return result;
-    }
-
-    // Negative sign
-    if (Match(state, '-')) {
-        return -ParsePrimary(state);
-    }
-
-    // Positive sign (optional)
-    if (Match(state, '+')) {
-        return ParsePrimary(state);
-    }
-
-    // Number
-    if (std::isdigit(Peek(state)) || Peek(state) == '.') {
-        return ParseNumber(state);
-    }
-
-    // Identifier (function or variable or constant)
-    if (std::isalpha(Peek(state)) || Peek(state) == '_') {
-        std::string name;
-        while (state.pos < state.expression.size() &&
-               (std::isalnum(state.expression[state.pos]) || state.expression[state.pos] == '_')) {
-            name += state.expression[state.pos++];
-        }
-
-        // Check for constants
-        std::string lower_name = name;
-        std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
-
-        if (lower_name == "pi") return PI;
-        if (lower_name == "e") return E;
-        if (lower_name == "phi") return PHI;
-
-        // Check for variables
-        auto it = state.variables.find(name);
-        if (it != state.variables.end()) {
-            return it->second;
-        }
-
-        // Must be a function
-        if (Peek(state) == '(') {
-            return ParseFunction(state, lower_name);
-        }
-
-        state.error = "Unknown identifier: " + name;
-        return 0.0;
-    }
-
-    state.error = "Unexpected character";
-    return 0.0;
-}
-
-double Utilities::ParseFactor(ParserState& state) {
-    double left = ParsePrimary(state);
-
-    // Handle exponentiation (right-associative)
-    if (Match(state, '^')) {
-        double right = ParseFactor(state);  // Right-associative
-        return std::pow(left, right);
-    }
-
-    return left;
-}
-
-double Utilities::ParseTerm(ParserState& state) {
-    double left = ParseFactor(state);
-
-    while (true) {
-        if (Match(state, '*')) {
-            left *= ParseFactor(state);
-        } else if (Match(state, '/')) {
-            double right = ParseFactor(state);
-            if (right == 0.0) {
-                state.error = "Division by zero";
-                return 0.0;
-            }
-            left /= right;
-        } else if (Match(state, '%')) {
-            double right = ParseFactor(state);
-            if (right == 0.0) {
-                state.error = "Modulo by zero";
-                return 0.0;
-            }
-            left = std::fmod(left, right);
-        } else {
-            break;
-        }
-    }
-
-    return left;
-}
-
-double Utilities::ParseExpression(ParserState& state) {
-    double left = ParseTerm(state);
-
-    while (true) {
-        if (Match(state, '+')) {
-            left += ParseTerm(state);
-        } else if (Match(state, '-')) {
-            left -= ParseTerm(state);
-        } else {
-            break;
-        }
-    }
-
-    return left;
-}
-
 CalculatorResult Utilities::Evaluate(
     const std::string& expression,
     const std::map<std::string, double>& variables,
@@ -411,24 +162,24 @@ CalculatorResult Utilities::Evaluate(
         return result;
     }
 
-    ParserState state;
-    state.expression = expression;
-    state.pos = 0;
-    state.variables = variables;
-    state.angle_mode = angle_mode;
+    std::vector<std::string> names;
+    std::vector<double> values;
+    for (const auto& [name, value] : variables) {
+        names.push_back(name);
+        values.push_back(value);
+    }
+    const Expression parsed = Expression::Parse(
+        expression, names, angle_mode == "degrees" ? Expression::AngleUnit::Degrees : Expression::AngleUnit::Radians);
+    if (!parsed.Valid()) {
+        result.error_message = parsed.Error();
+        return result;
+    }
 
     try {
-        result.result = ParseExpression(state);
-
-        // Check for trailing characters
-        SkipWhitespace(state);
-        if (state.pos < state.expression.size()) {
-            result.error_message = "Unexpected characters after expression";
-            return result;
-        }
-
-        if (!state.error.empty()) {
-            result.error_message = state.error;
+        std::string problem;
+        result.result = parsed.Evaluate(values, &problem);
+        if (!problem.empty()) {
+            result.error_message = problem;
             return result;
         }
 

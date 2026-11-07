@@ -384,27 +384,6 @@ public:
     static std::map<std::string, std::string> GetCommonPatterns();
 
 private:
-    // Expression parser state
-    struct ParserState {
-        std::string expression;
-        size_t pos = 0;
-        std::map<std::string, double> variables;
-        std::string angle_mode;
-        std::string error;
-    };
-
-    // Expression parser helpers (recursive descent)
-    static double ParseExpression(ParserState& state);
-    static double ParseTerm(ParserState& state);
-    static double ParseFactor(ParserState& state);
-    static double ParsePrimary(ParserState& state);
-    static double ParseNumber(ParserState& state);
-    static double ParseFunction(ParserState& state, const std::string& name);
-    static void SkipWhitespace(ParserState& state);
-    static char Peek(ParserState& state);
-    static char Get(ParserState& state);
-    static bool Match(ParserState& state, char c);
-
     // Unit conversion helpers
     static std::string GetCategoryForUnit(const std::string& unit);
     static double ConvertToBase(double value, const std::string& unit);

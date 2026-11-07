@@ -242,6 +242,7 @@ set(BACKEND_SOURCES
     src/algorithms/signal_processing_filters.cpp
     src/algorithms/signal_processing_fft.cpp
     src/algorithms/signal_processing_spectrum.cpp
+    src/algorithms/expression.cpp
     src/algorithms/optimization.cpp
     src/algorithms/time_series.cpp
     src/algorithms/time_series/statistics.cpp
@@ -340,6 +341,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/model_interpretability.h
     include/cyxwiz/linear_algebra.h
     include/cyxwiz/signal_processing.h
+    include/cyxwiz/expression.h
     include/cyxwiz/optimization.h
     include/cyxwiz/time_series.h
     include/cyxwiz/text_processing.h
