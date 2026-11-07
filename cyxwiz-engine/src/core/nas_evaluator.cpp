@@ -526,10 +526,22 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
                 gui::NodeType new_type = GetRandomLayerType(rng);
                 std::uniform_int_distribution<int> units_dist(32, 256);
                 gui::MLNode new_node = CreateLayerNode(new_type, new_node_id, pin_id, units_dist(rng));
+                const int target_id = mutated_nodes[target_idx].id;
 
+                // Splice the new layer into the links that fed the target:
+                // they feed the new layer, which feeds the target's input.
+                int next_link_id = GetNextLinkId(mutated_links);
+                std::vector<gui::NodeLink> added;
+                for (auto& link : mutated_links) {
+                    if (link.to_node != target_id) continue;
+                    added.push_back({next_link_id++, new_node_id, new_node.outputs[0].id, target_id, link.to_pin,
+                                     link.type});
+                    link.to_node = new_node_id;
+                    link.to_pin = new_node.inputs[0].id;
+                }
+                if (added.empty()) break;  // nothing feeds the target: leave the graph as it was
+                mutated_links.insert(mutated_links.end(), added.begin(), added.end());
                 mutated_nodes.insert(mutated_nodes.begin() + target_idx, new_node);
-
-                // TODO: Update links to include new node
             }
             break;
         }
@@ -545,10 +557,21 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
                 // Remove the node
                 mutated_nodes.erase(mutated_nodes.begin() + remove_idx);
 
-                // Remove links to/from this node and reconnect
+                // Remove links to/from this node and reconnect: what fed it
+                // feeds what it fed (the first feeder, for each consumer).
+                const gui::NodeLink* feeder = nullptr;
+                for (const auto& link : mutated_links)
+                    if (link.to_node == node_id) {
+                        feeder = &link;
+                        break;
+                    }
                 std::vector<gui::NodeLink> new_links;
+                int next_link_id = GetNextLinkId(mutated_links);
                 for (const auto& link : mutated_links) {
-                    if (link.from_node != node_id && link.to_node != node_id) {
+                    if (link.from_node == node_id && feeder) {
+                        new_links.push_back({next_link_id++, feeder->from_node, feeder->from_pin, link.to_node,
+                                             link.to_pin, link.type});
+                    } else if (link.from_node != node_id && link.to_node != node_id) {
                         new_links.push_back(link);
                     }
                 }

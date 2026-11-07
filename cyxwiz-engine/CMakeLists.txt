@@ -5902,6 +5902,19 @@ set_target_properties(test_layer_view_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: NAS mutations keep the graph connected =====
+add_executable(test_nas_mutation
+    tests/test_nas_mutation.cpp
+    src/core/nas_evaluator.cpp
+)
+target_include_directories(test_nas_mutation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_nas_mutation PRIVATE imgui::imgui nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt
+                      cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_nas_mutation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_nas_mutation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 # ===== Test: Saved Text Smoke Graph Patterns =====
 add_executable(test_text_smoke_graph_patterns
     tests/test_text_smoke_graph_patterns.cpp
