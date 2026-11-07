@@ -9,9 +9,11 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 ## Contents
 
 - [pycyxwiz](#pycyxwiz)
+- [pycyxwiz.calculus](#pycyxwizcalculus)
 - [pycyxwiz.distributed](#pycyxwizdistributed)
 - [pycyxwiz.linalg](#pycyxwizlinalg)
 - [pycyxwiz.nodes](#pycyxwiznodes)
+- [pycyxwiz.optimize](#pycyxwizoptimize)
 - [pycyxwiz.signal](#pycyxwizsignal)
 - [pycyxwiz.stats](#pycyxwizstats)
 - [pycyxwiz.text](#pycyxwiztext)
@@ -1320,6 +1322,36 @@ Derives from `Layer`.
 | `unk_index` (property) |  |
 | `word_to_index(self: Vocabulary, word: str) -> int` | Get index for a word ([UNK] if not found) |
 
+## pycyxwiz.calculus
+
+Integrals, derivatives and curvature of a typed formula
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `curvature(formula: object, point: Sequence[float], variables: Sequence[str] \| None = None) -> dict` | The gradient, the Hessian and its eigenvalues (ascending) at a point, all exact: every eigenvalue above 0 curves up in every direction at this point |
+| `curvature_over_range(formula: object, x_range: tuple[float, float], y_range: tuple[float, float], per_side: int = 40, variables: Sequence[str] = ['x', 'y']) -> dict` | The Hessian's smallest eigenvalue on per_side x per_side points of a two-variable formula: how many points curve down in some direction (not convex there), and the first of them |
+| `derivative(formula: object, x: float, rule: str = 'central', h: float = 0.0, variable: str = 'x') -> dict` | f'(x) and f''(x): exact from the formula (None when it has no exact derivative, as with max or mod) and by differences with step h (0: the step that suits float64 for the rule) |
+| `gauss_legendre(n: int) -> tuple` | The n Gauss-Legendre nodes and weights on [-1, 1] (numpy.polynomial.legendre.leggauss) |
+| `integrate(formula: object, a: float, b: float, rule: str = 'adaptive', n: int = 100, epsabs: float = 1.49e-08, epsrel: float = 1.49e-08, limit: int = 50, variable: str = 'x') -> dict` | The integral of a formula of one variable from a to b (either may be +-inf with the adaptive rule). adaptive: Gauss-Kronrod 21 on bisected intervals, as scipy.integrate.quad, with its error estimate; trapezoid, midpoint, simpson: n equal intervals; gauss: n Gauss-Legendre points |
+| `step_errors(formula: object, x: float, h_from: float = 0.1, h_to: float = 1e-12, count: int = 45, variable: str = 'x') -> dict` | \|numerical f' - exact f'\| for the forward and central differences at `count` steps from h_from down to h_to, evenly spaced in log10 |
+
+### Classes
+
+### `Expression`
+
+A typed formula, such as '(1 - x)^2 + 100*(y - x^2)^2': + - * / % ^ (right associative; -x^2 is -(x^2)), pi e phi, sin cos tan asin acos atan sinh cosh tanh sqrt cbrt exp log ln log10 log2 abs floor ceil round sign factorial, and pow mod fmod min max atan2. Its variables are named in order; any other name is refused.
+
+| Member | What it does |
+|---|---|
+| `Expression(self: calculus.Expression, text: str, variables: Sequence[str] = ['x'], degrees: bool = False) -> None` |  |
+| `__repr__(self: calculus.Expression) -> str` | `repr(a)`. |
+| `derivative(self: calculus.Expression, variable: object = None) -> calculus.Expression` | The exact partial derivative by a variable (its name or index), simplified |
+| `evaluate_many(self: calculus.Expression, columns: Sequence[Sequence[float]]) -> list[float]` | The values at many points, a list of values per variable; on the device (float64 where it has it). Points without a value give nan or inf |
+| `text` (property) |  |
+| `variables` (property) |  |
+
 ## pycyxwiz.distributed
 
 Distributed training support for data parallel training
@@ -1570,6 +1602,19 @@ A node setting: Param(float, default=1.0, min=0.01, description="..."). type is 
 | `convert(self, value, check=True)` | A graph value (text, or already typed) as this Param's type. |
 | `describe(self)` | The setting's entry in node.json: name, type, default, validation, description, choices. |
 | `validation(self)` | The rule as ParameterDefinition writes it: "0.01-", "0-1", "a\|b". |
+
+## pycyxwiz.optimize
+
+Linear and quadratic programs (HiGHS) and the training optimizers' paths
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `follow(formula: object, start: Sequence[float], optimizer: str = 'adam', lr: float = 0.001, momentum: float = 0.0, steps: int = 1000, tolerance: float = 1e-08, variables: Sequence[str] \| None = None) -> dict` | The path of a training optimizer (the update rules training uses, in float32 as training) minimizing a formula from `start`, the gradient exact from the formula. Ends early when \|grad f\| < tolerance or a value stops being finite (diverged, with the step). Returns points (the start, then one per step), values, gradient_norms, converged, diverged, diverged_at |
+| `linprog(c: Sequence[float], constraints: object = None, bounds: object = None, maximize: bool = False) -> dict` | Minimize (or maximize) c . x subject to the constraints, each (coefficients, '<=' / '>=' / '=', rhs[, name]), and the bounds (None: every x >= 0). Returns a dict: success, status ('optimal', 'infeasible', 'unbounded', 'failed'), message, x, fun, slack, binding and shadow_prices (per row: how much the best value changes when its rhs grows by 1), iterations |
+| `portfolio(means: Sequence[float], covariance: Sequence[Sequence[float]], target_return: float \| None = None, long_only: bool = True) -> dict` | The least risky mix of assets (Markowitz), as the Portfolio Weights node: minimize 0.5 w' C w with the weights summing to 1 (row 'Budget'), earning at least target_return a period (row 'Return'; None: the minimum-variance mix), and with long_only no weight below 0. means and covariance per period |
+| `qp(Q: Sequence[Sequence[float]], c: Sequence[float], constraints: object = None, bounds: object = None) -> dict` | Minimize 0.5 x' Q x + c . x subject to the constraints and the bounds (None: every x free). Q must be symmetric positive semidefinite, else status 'not convex' names its most negative eigenvalue. Returns the same dict as linprog |
 
 ## pycyxwiz.signal
 

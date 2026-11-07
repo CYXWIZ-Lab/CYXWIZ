@@ -21,6 +21,7 @@
 #include "cyxwiz/data_loader.h"
 #include "bindings_tensor.h"
 #include "bindings_module.h"
+#include "bindings_optimize.h"
 // Distributed training
 #include "cyxwiz/distributed/process_group.h"
 #include "cyxwiz/distributed/cpu_backend.h"
@@ -2017,6 +2018,13 @@ PYBIND11_MODULE(pycyxwiz, m) {
         );
     }, "VADER sentiment as vaderSentiment 3.3.2's polarity_scores, unrounded, with each word's valence after the rules",
        py::arg("text"));
+
+    // ============================================================================
+    // CALCULUS AND OPTIMIZE SUBMODULES
+    // ============================================================================
+    // Tools > Optimization and Calculus from Python (TOFIX129 D10).
+    pycyxwiz_bindings::BindCalculus(m);
+    pycyxwiz_bindings::BindOptimize(m);
 
     // ============================================================================
     // TIME SERIES SUBMODULE

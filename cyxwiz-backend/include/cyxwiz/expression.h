@@ -30,7 +30,7 @@ public:
     Expression();
 
     // Parses `text`. The names in `variables` are its inputs, in that order;
-    // any other name is refused ("Unknown name: z"). With Degrees, trig
+    // any other name is refused ("Unknown name 'z' at 5"). With Degrees, trig
     // functions take degrees and the inverse ones give degrees.
     static Expression Parse(const std::string& text,
                             const std::vector<std::string>& variables = {},

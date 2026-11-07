@@ -6,6 +6,7 @@ PyCyxWiz is the Python binding for the CyxWiz backend (ArrayFire-accelerated mat
 - Tensors with CPU/GPU acceleration
 - Neural network layers, losses, optimizers, and sequential models
 - MATLAB-style numerical submodules (linear algebra, signal processing, statistics, time series)
+- Integrals, derivatives and curvature of typed formulas; linear and quadratic programs; optimizer paths
 - Audio preprocessing
 - Tokenization utilities
 - Reinforcement learning helpers
@@ -1010,6 +1011,76 @@ data = [
 res = st.kmeans(data, k=2)
 print(res["labels"])
 print(res["centroids"])
+```
+
+---
+
+### 6.4 `pycyxwiz.calculus` and `pycyxwiz.optimize`
+
+What Tools > Optimization and Calculus works out, from Python. Formulas are
+typed text, read once into a `calculus.Expression`; derivatives are exact
+(differentiated from the formula). Every number below is checked against
+sympy, scipy, numpy and torch by `cyxwiz-backend/python/tests/test_python_optimize.py`.
+
+`pycyxwiz.calculus`:
+- `Expression(text, variables=["x"], degrees=False)`: `f(*values)`, `f.evaluate_many(columns)` (on the device), `f.derivative(variable=None)` -> `Expression`, `str(f)`, `.variables`, `.text`. A bad formula, an unknown name ("Unknown name 'z' at 5") or a division by zero at a point raises `ValueError`.
+- `integrate(formula, a, b, rule="adaptive", n=100, epsabs=1.49e-8, epsrel=1.49e-8, limit=50, variable="x")` -> dict `value`, `error` (the adaptive estimate; `None` for the fixed rules), `converged`, `evaluations`, `intervals`. `adaptive` is Gauss-Kronrod 21 on bisected intervals as `scipy.integrate.quad` (infinite bounds allowed); `trapezoid`, `midpoint`, `simpson` (even `n`) and `gauss` (n Gauss-Legendre points) take finite bounds.
+- `derivative(formula, x, rule="central", h=0.0, variable="x")` -> dict `first`, `second` (exact; `None` when the formula uses max, mod, ...), `first_formula`, `second_formula`, `numerical_first`, `numerical_second`, `step`, `second_step`. `h=0` picks the step that suits float64 for the rule.
+- `step_errors(formula, x, h_from=0.1, h_to=1e-12, count=45)` -> dict `steps`, `forward_error`, `central_error`: how the difference error falls, then rises, as h shrinks.
+- `curvature(formula, point, variables=None)` -> dict `gradient`, `hessian`, `eigenvalues` (ascending), at that point.
+- `curvature_over_range(formula, x_range, y_range, per_side=40)` -> dict `points`, `negative_points`, `positive_points`, `first_negative`.
+- `gauss_legendre(n)` -> `(nodes, weights)` on [-1, 1].
+
+`pycyxwiz.optimize` (programs solved by HiGHS, the solver scipy's `linprog` uses):
+- `linprog(c, constraints=None, bounds=None, maximize=False)`: each constraint is `(coefficients, "<=" | ">=" | "=", rhs)` or with a name as a fourth item; bounds `None` means every x >= 0, one `(low, high)` pair applies to every variable, else one pair per variable (`None` for no limit).
+- `qp(Q, c, constraints=None, bounds=None)`: minimize 0.5 x'Qx + c.x (bounds `None`: every x free). A Q that is not positive semidefinite comes back as `"not convex"` naming its most negative eigenvalue.
+- `portfolio(means, covariance, target_return=None, long_only=True)`: the least risky mix of assets, as the Portfolio Weights node (rows `Budget` and `Return`).
+- All three return a dict: `success`, `status` (`"optimal"`, `"infeasible"`, `"unbounded"`, `"not convex"`, `"failed"`), `message` (why not, in words), `x`, `fun` (`None` unless optimal), `slack`, `binding`, `shadow_prices` (per row: how much the best value changes when that row's rhs grows by 1), `iterations`.
+- `follow(formula, start, optimizer="adam", lr=0.001, momentum=0.0, steps=1000, tolerance=1e-8, variables=None)`: the path of a training optimizer (`sgd`, `adam`, `adamw`, `nadam`, `rmsprop`, `adagrad`; float32 as in training) with the exact gradient -> dict `points`, `values`, `gradient_norms`, `converged`, `diverged`, `diverged_at`. Ctrl+C stops it.
+
+**Use case: integrals and derivatives**
+```python
+import math
+import pycyxwiz.calculus as calc
+
+print(calc.integrate("sin(x)", 0, math.pi))
+# {'value': 1.9999999999999998, 'error': 2.22e-14, 'converged': True, 'evaluations': 21, 'intervals': 1}
+print(calc.integrate("exp(-x^2)", -math.inf, math.inf)["value"])        # 1.7724538509055163 (sqrt(pi))
+print(calc.integrate("sin(x)", 0, math.pi, rule="simpson", n=10)["value"])  # 2.0001095173150043
+
+d = calc.derivative("x^3 - 2*x", -1.5)
+print(d["first"], d["second"], d["first_formula"])   # 4.75 -9.0 3*x^2 - 2
+print(d["numerical_first"], d["step"])               # 4.750000000067225 9.08e-06
+
+rosenbrock = "(1 - x)^2 + 100*(y - x^2)^2"
+print(calc.curvature(rosenbrock, [0, 1])["eigenvalues"])   # [-398.0, 200.0]: a saddle here
+print(calc.curvature_over_range(rosenbrock, (-2, 2), (-1, 3))["negative_points"])  # 672 of 1600: not convex
+```
+
+**Use case: a linear program with its shadow prices**
+```python
+import pycyxwiz.optimize as opt
+
+# Two products earn 3 and 2 a unit; machine hours x + y <= 4, labour x + 2y <= 6.
+r = opt.linprog([3, 2], [([1, 1], "<=", 4, "Machine"), ([1, 2], "<=", 6, "Labour")], maximize=True)
+print(r["x"], r["fun"])               # [4.0, 0.0] 12.0
+print(r["shadow_prices"], r["binding"])   # [3.0, 0.0] [True, False]: one more machine hour earns 3
+
+print(opt.linprog([1, 1], [([1, 1], "<=", -1)])["message"])
+# No point satisfies every constraint and bound together
+```
+
+**Use case: a portfolio and an optimizer path**
+```python
+import pycyxwiz.optimize as opt
+
+covariance = [[0.04, 0.006, 0.002], [0.006, 0.09, 0.009], [0.002, 0.009, 0.0225]]
+r = opt.portfolio([0.06, 0.12, 0.08], covariance, target_return=0.08)
+print([round(w, 4) for w in r["x"]])   # [0.2735, 0.1368, 0.5897]
+
+path = opt.follow("(1 - x)^2 + 100*(y - x^2)^2", [-2, 2], "adam", lr=0.01, steps=1000)
+print(path["points"][-1], path["values"][-1])   # [-1.5059, 2.2735] 6.2829: still in the valley
+print(opt.follow("(1 - x)^2 + 100*(y - x^2)^2", [-2, 2], "sgd", lr=0.01)["diverged_at"])  # 4
 ```
 
 ---
