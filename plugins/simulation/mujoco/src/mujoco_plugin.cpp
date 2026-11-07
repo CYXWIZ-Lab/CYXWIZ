@@ -92,6 +92,7 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
                    : std::string();
     });
 
+    ctx_ = &ctx;
     // The viewport draws the Engine's widgets and opens the library; a model
     // file it opens is named after the file.
     viewport_panel_.SetContext(&ctx);
@@ -133,6 +134,7 @@ void MuJoCoPlugin::OnShutdown(PluginContext& ctx) {
 
 void MuJoCoPlugin::OnUnload(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnUnload");
+    ctx_ = nullptr;
     state_ = PluginState::Unloaded;
 }
 
@@ -215,6 +217,54 @@ void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
     } else if (panel_id == "mujoco_env_browser") {
         browser_panel_.Render(env_library_, env_manager_, visible);
     }
+}
+
+// =============================================================================
+// ICommandProvider: the Simulation menu
+// =============================================================================
+
+namespace {
+constexpr const char* kViewportPanelId = "mujoco_viewport";
+}  // namespace
+
+std::vector<PluginCommandInfo> MuJoCoPlugin::GetCommands() {
+    return {
+        {"run", "Simulation", "run", "Run Simulation", "Runs the loaded model in the viewport, or resumes it.", false},
+        {"pause", "Simulation", "run", "Pause", "Pauses the running model.", false},
+        {"stop", "Simulation", "run", "Stop", "Stops the run.", false},
+        {"step", "Simulation", "run", "Step Once", "Pauses the model and advances it one step.", false},
+        {"load", "Simulation", "model", "Load MJCF Model...", "Opens a MuJoCo model file in the viewport.", false},
+    };
+}
+
+PluginCommandState MuJoCoPlugin::GetCommandState(const std::string& command_id) {
+    const auto run = viewport_panel_.GetRunState();
+    auto disabled = [](const char* reason) { return PluginCommandState{false, reason, false}; };
+    if (command_id == "load") {
+        return run.graph ? disabled("A graph run is stepping the loaded model. Stop the graph run to load another.")
+                         : PluginCommandState{};
+    }
+    if (run.graph) return disabled(MjViewportPanel::kGraphReason);
+    if (!env_manager_.IsLoaded()) return disabled("Load a model first: Environment Library or Load MJCF Model...");
+    if (command_id == "run") return run.running ? disabled("The model is running.") : PluginCommandState{};
+    if (command_id == "pause") return run.running ? PluginCommandState{} : disabled("Nothing is running.");
+    if (command_id == "stop") return run.active ? PluginCommandState{} : disabled("Nothing is running.");
+    return PluginCommandState{};  // step
+}
+
+void MuJoCoPlugin::RunCommand(const std::string& command_id) {
+    if (command_id == "run") viewport_panel_.RunOrResume();
+    else if (command_id == "pause") viewport_panel_.PauseRun();
+    else if (command_id == "stop") viewport_panel_.StopRun();
+    else if (command_id == "step") viewport_panel_.StepOnce();
+    else if (command_id == "load" && ctx_ && ctx_->GetUi()) {
+        const std::string path = ctx_->GetUi()->OpenFileDialog("Open MJCF model", "MJCF model", "xml");
+        if (path.empty()) return;
+        // The viewport opens it before its next frame: show it
+        viewport_panel_.RequestOpenModel(path);
+    }
+    // The run and the model are shown in the viewport
+    if (ctx_) ctx_->ShowPanel(kViewportPanelId);
 }
 
 // =============================================================================

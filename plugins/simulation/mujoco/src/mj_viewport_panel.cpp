@@ -16,8 +16,6 @@ namespace cyxwiz::plugin::mujoco {
 namespace {
 
 constexpr const char* kLibraryPanelId = "mujoco_env_browser";
-constexpr const char* kGraphReason =
-    "The graph run is stepping this model. Stop the graph run to control it here.";
 
 // What the panel shows of the model, read in one physics transaction.
 struct SceneSnapshot {
@@ -86,6 +84,43 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
 }
 
 // =============================================================================
+// Run controls (the control row and the Simulation menu)
+// =============================================================================
+
+MjViewportPanel::RunState MjViewportPanel::GetRunState() const {
+    RunState s;
+    s.graph = graph_sim_active_;
+    s.can_drive = sim_executor_ && !s.graph;
+    s.active = s.can_drive && sim_executor_->GetMode() != SimMode::Stopped;
+    const SimState state = sim_executor_ ? sim_executor_->GetState() : SimState::Idle;
+    s.running = s.active && state == SimState::Running;
+    s.paused = s.active && state == SimState::Paused;
+    return s;
+}
+
+void MjViewportPanel::RunOrResume() {
+    const RunState s = GetRunState();
+    if (!s.can_drive || s.running) return;
+    if (s.paused) sim_executor_->Resume();
+    else sim_executor_->StartManualControl();
+}
+
+void MjViewportPanel::PauseRun() {
+    if (GetRunState().running) sim_executor_->Pause();
+}
+
+void MjViewportPanel::StepOnce() {
+    const RunState s = GetRunState();
+    if (!s.can_drive) return;
+    if (s.running) sim_executor_->Pause();
+    sim_executor_->SingleStep();
+}
+
+void MjViewportPanel::StopRun() {
+    if (GetRunState().active) sim_executor_->Stop();
+}
+
+// =============================================================================
 // No model loaded
 // =============================================================================
 
@@ -113,13 +148,12 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     PluginUi* ui = ctx_->GetUi();
     const UiColors colors = ui->Colors();
     MjSimulationExecutor* exec = sim_executor_;
-
-    const bool graph = graph_sim_active_;
-    const bool active = exec && !graph && exec->GetMode() != SimMode::Stopped;
-    const SimState state = exec ? exec->GetState() : SimState::Idle;
-    const bool running = active && state == SimState::Running;
-    const bool paused = active && state == SimState::Paused;
-    const bool can_drive = exec && !graph;
+    const RunState rs = GetRunState();
+    const bool graph = rs.graph;
+    const bool active = rs.active;
+    const bool running = rs.running;
+    const bool paused = rs.paused;
+    const bool can_drive = rs.can_drive;
     const char* busy = graph ? kGraphReason : nullptr;
 
     // The model's name and source, then the controls centred on its two lines
@@ -141,20 +175,14 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
 
     if (running) {
         next(ui->ButtonWidth("Pause", UiButtonSize::Regular) + spacing * 2, button_h);
-        if (ui->PrimaryButton("Pause")) exec->Pause();
+        if (ui->PrimaryButton("Pause")) PauseRun();
     } else {
         const char* run = paused ? "Resume" : "Run";
         next(ui->ButtonWidth(run, UiButtonSize::Regular) + spacing * 2, button_h);
-        if (ui->PrimaryButton(run, can_drive, busy)) {
-            if (paused) exec->Resume();
-            else exec->StartManualControl();
-        }
+        if (ui->PrimaryButton(run, can_drive, busy)) RunOrResume();
     }
     next(ui->ButtonWidth("Step", UiButtonSize::Regular), button_h);
-    if (ui->SecondaryButton("Step", can_drive, busy)) {
-        if (running) exec->Pause();
-        exec->SingleStep();
-    }
+    if (ui->SecondaryButton("Step", can_drive, busy)) StepOnce();
     next(ui->ButtonWidth("Reset", UiButtonSize::Regular), button_h);
     if (ui->SecondaryButton("Reset", can_drive, busy)) {
         std::lock_guard phys_lock(env.GetPhysicsMutex());
@@ -162,7 +190,7 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     }
     if (active) {
         next(ui->ButtonWidth("Stop", UiButtonSize::Regular), button_h);
-        if (ui->SecondaryButton("Stop")) exec->Stop();
+        if (ui->SecondaryButton("Stop")) StopRun();
     }
 
     // Speed: a typed real-time factor, or as fast as the model steps
@@ -316,9 +344,10 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
     // Overlays: time, steps and achieved speed at the bottom left, the camera
     // hint at the bottom right
     const SceneSnapshot snap = Snapshot(env);
-    const bool graph = graph_sim_active_;
-    const bool active = sim_executor_ && !graph && sim_executor_->GetMode() != SimMode::Stopped;
-    const bool running = active && sim_executor_->GetState() == SimState::Running;
+    const RunState rs = GetRunState();
+    const bool graph = rs.graph;
+    const bool active = rs.active;
+    const bool running = rs.running;
     // Simulated time that only moves forward: an episode's reset sends the
     // model's clock back, so a session counts its steps instead
     const double stepped = active ? sim_executor_->GetMetrics().step_count * snap.model_step : snap.time;

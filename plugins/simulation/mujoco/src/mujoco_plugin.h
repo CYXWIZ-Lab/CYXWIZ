@@ -13,6 +13,8 @@
 #include "plugin/plugin_context.h"
 #include "plugin/interfaces/i_panel_provider.h"
 #include "plugin/interfaces/i_node_provider.h"
+#include "plugin/interfaces/i_command_provider.h"
+#include "plugin/plugin_ui.h"
 
 #include "mj_env_manager.h"
 #include "mj_env_library.h"
@@ -30,7 +32,8 @@ namespace cyxwiz::plugin::mujoco {
 
 class MuJoCoPlugin : public IPlugin,
                      public IPanelProvider,
-                     public INodeProvider {
+                     public INodeProvider,
+                     public ICommandProvider {
 public:
     MuJoCoPlugin() = default;
     ~MuJoCoPlugin() override = default;
@@ -50,12 +53,18 @@ public:
     void* QueryInterface(const char* name) override {
         if (std::string(name) == "IPanelProvider") return static_cast<IPanelProvider*>(this);
         if (std::string(name) == "INodeProvider") return static_cast<INodeProvider*>(this);
+        if (std::string(name) == "ICommandProvider") return static_cast<ICommandProvider*>(this);
         return nullptr;
     }
 
     // ===== IPanelProvider =====
     std::vector<PluginPanelInfo> GetPanels() override;
     void RenderPanel(const std::string& panel_id, bool* visible) override;
+
+    // ===== ICommandProvider: the Simulation menu =====
+    std::vector<PluginCommandInfo> GetCommands() override;
+    PluginCommandState GetCommandState(const std::string& command_id) override;
+    void RunCommand(const std::string& command_id) override;
 
     // ===== INodeProvider =====
     std::vector<PluginNodeTypeInfo> GetNodeTypes() override;
@@ -94,6 +103,7 @@ private:
     MjEnvBrowserPanel browser_panel_;
 
     GLFWwindow* main_window_ = nullptr;
+    PluginContext* ctx_ = nullptr;  // from OnLoad until OnUnload
 
     std::string loaded_mjcf_path_;  // Path of the currently loaded MJCF model
 

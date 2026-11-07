@@ -53,6 +53,25 @@ public:
     void SetGraphSimActive(bool active) { graph_sim_active_ = active; graph_sim_frames_ = 0; }
     bool IsGraphSimActive() const { return graph_sim_active_; }
 
+    // The run controls, shared by the control row and the Simulation menu
+    static constexpr const char* kGraphReason =
+        "The graph run is stepping this model. Stop the graph run to control it here.";
+    struct RunState {
+        bool graph = false;      // a graph run steps the model
+        bool active = false;     // a viewport run exists (running or paused)
+        bool running = false;
+        bool paused = false;
+        bool can_drive = false;  // a model is loaded and no graph run holds it
+    };
+    RunState GetRunState() const;
+    void RunOrResume();  // starts a run, or resumes a paused one
+    void PauseRun();
+    void StepOnce();     // pauses a running model, then advances one step
+    void StopRun();
+    // A model file to open before the next frame's ImGui calls (the panel
+    // must be shown for it to load)
+    void RequestOpenModel(const std::string& path) { pending_open_path_ = path; }
+
 private:
     void RenderEmpty();
     void RenderControls(MjEnvManager& env, MjRenderer& renderer);
