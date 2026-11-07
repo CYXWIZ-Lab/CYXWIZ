@@ -12,8 +12,9 @@ namespace cyxwiz::plugin::mujoco {
 // Forward declaration
 class MjMenagerieDownloader;
 
-// Callback invoked when user loads an environment from the browser.
-using EnvLoadCallback = std::function<bool(const std::string& mjcf_path)>;
+// Callback invoked when user loads an environment from the browser: the model
+// file and the library entry it belongs to.
+using EnvLoadCallback = std::function<bool(const std::string& mjcf_path, const EnvInfo& info)>;
 
 class MjEnvBrowserPanel {
 public:
@@ -35,7 +36,7 @@ private:
     std::string selected_category_;  // Empty = "All"
     std::string loaded_env_id_;
     std::string pending_load_path_;  // Deferred load — processed next frame
-    std::string pending_load_id_;
+    EnvInfo pending_load_info_;
     std::string downloading_env_id_; // Currently downloading model ID
     char search_buf_[128] = {};
 

@@ -69,11 +69,28 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     // Scan for previously downloaded Menagerie models
     env_library_.ScanDownloadedModels();
 
-    // Wire browser panel load callback and downloader
-    browser_panel_.SetLoadCallback([this](const std::string& path) {
-        return LoadEnvironment(path);
+    // Wire browser panel load callback and downloader; the viewport shows the
+    // loaded model's name and where it comes from.
+    browser_panel_.SetLoadCallback([this](const std::string& path, const EnvInfo& info) {
+        if (!LoadEnvironment(path)) return false;
+        if (info.category == "Imported") {
+            viewport_panel_.SetModelLabel(info.name, "Imported from URL");
+        } else {
+            const char* source = info.source == EnvSource::Menagerie ? "Menagerie" : "Built-in";
+            viewport_panel_.SetModelLabel(info.name, std::string(source) + " \xC2\xB7 " + info.category);
+        }
+        return true;
     });
     browser_panel_.SetDownloader(&menagerie_downloader_);
+
+    // The viewport draws the Engine's widgets and opens the library; a model
+    // file it opens is named after the file.
+    viewport_panel_.SetContext(&ctx);
+    viewport_panel_.SetOpenModel([this](const std::string& path) {
+        if (!LoadEnvironment(path)) return false;
+        viewport_panel_.SetModelLabel(std::filesystem::path(path).stem().string(), "Your file");
+        return true;
+    });
 
     state_ = PluginState::Loaded;
     return true;

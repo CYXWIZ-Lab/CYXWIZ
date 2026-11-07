@@ -232,7 +232,7 @@ void MjRenderer::RotateCamera(float dx, float dy) {
 }
 
 void MjRenderer::ZoomCamera(float dz) {
-    cam_.distance *= (1.0f - dz * 0.05f);
+    cam_.distance *= (1.0f - dz * 0.12f);
     if (cam_.distance < 0.01f) cam_.distance = 0.01f;
     if (cam_.distance > 100.0f) cam_.distance = 100.0f;
 }

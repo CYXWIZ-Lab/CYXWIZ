@@ -60,12 +60,12 @@ public:
     int GetWidth() const { return width_; }
     int GetHeight() const { return height_; }
 
-    // Visualization options
-    void ToggleContactPoints() { opt_.flags[mjVIS_CONTACTPOINT] ^= 1; }
-    void ToggleContactForces() { opt_.flags[mjVIS_CONTACTFORCE] ^= 1; }
-    void ToggleWireframe() { scn_.flags[mjRND_WIREFRAME] ^= 1; }
-    void ToggleJoints() { opt_.flags[mjVIS_JOINT] ^= 1; }
-    void ToggleActuators() { opt_.flags[mjVIS_ACTUATOR] ^= 1; }
+    // Visualization options: an mjtVisFlag (contact points, forces, joints,
+    // actuators) and the wireframe render flag
+    bool VisFlag(int flag) const { return opt_.flags[flag] != 0; }
+    void SetVisFlag(int flag, bool on) { opt_.flags[flag] = on ? 1 : 0; }
+    bool Wireframe() const { return scn_.flags[mjRND_WIREFRAME] != 0; }
+    void SetWireframe(bool on) { scn_.flags[mjRND_WIREFRAME] = on ? 1 : 0; }
 
     const mjvCamera& GetCamera() const { return cam_; }
     const mjvOption& GetOption() const { return opt_; }

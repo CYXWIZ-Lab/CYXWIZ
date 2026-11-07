@@ -17,11 +17,9 @@ void MjEnvBrowserPanel::Render(MjEnvLibrary& library,
     // LoadEnvironment switches GL contexts which corrupts ImGui's GL state mid-frame.
     if (!pending_load_path_.empty()) {
         std::string path = std::move(pending_load_path_);
-        std::string id = std::move(pending_load_id_);
         pending_load_path_.clear();
-        pending_load_id_.clear();
-        if (load_callback_ && load_callback_(path)) {
-            loaded_env_id_ = id;
+        if (load_callback_ && load_callback_(path, pending_load_info_)) {
+            loaded_env_id_ = pending_load_info_.id;
         }
     }
 
@@ -195,7 +193,7 @@ void MjEnvBrowserPanel::RenderEnvCard(const EnvInfo& info,
         // Load button (builtin or already downloaded)
         if (ImGui::Button("Load", ImVec2(card_w - 20, 22))) {
             pending_load_path_ = library.GetAssetPath(info);
-            pending_load_id_ = info.id;
+            pending_load_info_ = info;
         }
     }
 

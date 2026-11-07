@@ -141,18 +141,16 @@ void MjSimulationExecutor::ManualControlLoop() {
 void MjSimulationExecutor::ExecuteOneStep() {
     if (!env_ || !env_->IsLoaded()) return;
 
-    mjData* d = env_->GetMutableData();
-    const mjModel* m = env_->GetModel();
-    if (!d || !m) return;
-
-    // Step and read the time as one physics transaction
-    const int frame_skip = env_->GetFrameSkip();
+    // Step through the environment (frame skip, episode step, reward) and read
+    // the time as one physics transaction; an ended episode starts the next one.
     double sim_time = 0.0;
     {
         std::lock_guard phys_lock(env_->GetPhysicsMutex());
-        for (int i = 0; i < frame_skip; i++) {
-            mj_step(m, d);
-        }
+        const mjData* d = env_->GetData();
+        if (!d) return;
+        const std::vector<float> no_action(static_cast<size_t>(env_->GetActionDim()), 0.0f);
+        const StepResult result = env_->Step(no_action);
+        if (result.terminated || result.truncated) env_->Reset();
         sim_time = d->time;
     }
 

@@ -2,7 +2,7 @@
     "id": "com.cyxwiz.simulation.mujoco",
     "name": "MuJoCo Simulation",
     "version": "1.0.0",
-    "api_version": "1.0.0",
+    "api_version": "1.4.0",
     "description": "Physics simulation for robotics and RL training (powered by Google DeepMind MuJoCo)",
     "author": "CyxWiz Lab",
     "license": "Apache-2.0",
