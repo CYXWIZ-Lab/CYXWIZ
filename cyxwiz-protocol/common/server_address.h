@@ -50,14 +50,12 @@ ServerEndpoints ResolveServerAddress(const std::string& address);
 // fe80::/10), and LAN names (one label, or .local .lan .internal .home.arpa).
 bool PlainHttpAllowed(const std::string& host);
 
-// Whether `host` is this machine.
-bool IsLoopbackHost(const std::string& host);
-
 // The server's private CA, a PEM file (a test server's ca.crt, cyx_cloud
 // docs/usage/tls.md), for a server whose certificate no public authority
 // signed. Process-wide: the Engine and the server node set it from their
-// settings. Empty means the system's trusted roots; when nothing was set,
-// the environment variable CYXWIZ_CA_FILE is used.
+// settings. When the setting is empty the environment variable
+// CYXWIZ_CA_FILE is used (scripts, CI); when both are empty, the system's
+// trusted roots.
 void SetServerCaFile(const std::string& path);
 std::string ServerCaFile();
 

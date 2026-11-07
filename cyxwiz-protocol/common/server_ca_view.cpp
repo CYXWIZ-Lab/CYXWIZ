@@ -1,5 +1,6 @@
 #include "server_ca_view.h"
 
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
@@ -34,6 +35,7 @@ std::string CertificateFingerprint(const std::string& pem_path, std::string* err
     X509* cert = bio ? PEM_read_bio_X509(bio, nullptr, nullptr, nullptr) : nullptr;
     if (bio) BIO_free(bio);
     if (!cert) {
+        ERR_clear_error();  // the parse failure stays queued on this thread otherwise
         *error = pem_path + " holds no PEM certificate (a CA file is the server's ca.crt)";
         return {};
     }
@@ -71,6 +73,27 @@ ServerCaView DescribeServerCa(const std::string& address, const std::string& ca_
                               : v.fingerprint;
     v.compare = "compare with `new-certs.sh show`";
     return v;
+}
+
+const ServerCaView& ServerCaViewCache::Get(const std::string& address, const std::string& ca_path) {
+    const auto now = std::chrono::steady_clock::now();
+    std::error_code ec;
+    if (!valid_ || address != address_ || ca_path != path_) {
+        address_ = address;
+        path_ = ca_path;
+        stamp_ = std::filesystem::last_write_time(Trim(ca_path), ec);
+        view_ = DescribeServerCa(address, ca_path);
+        valid_ = true;
+        checked_ = now;
+    } else if (now - checked_ >= recheck_) {
+        checked_ = now;
+        const auto stamp = std::filesystem::last_write_time(Trim(ca_path), ec);
+        if (stamp != stamp_) {
+            stamp_ = stamp;
+            view_ = DescribeServerCa(address, ca_path);
+        }
+    }
+    return view_;
 }
 
 }  // namespace cyxwiz::protocol

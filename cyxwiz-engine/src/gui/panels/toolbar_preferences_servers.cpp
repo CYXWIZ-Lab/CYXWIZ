@@ -130,12 +130,15 @@ void ToolbarPanel::ApplyServerCaFile(const std::string& path) {
     config.SetServerCaFile(path);
     config.Save();
     server_probed_.clear();  // check the server again with the new trust
+    // Open channels keep the trust they were made with: make them again
+    // (the sign-in stays: the server is the same)
+    if (server_changed_callback_) server_changed_callback_();
     spdlog::info("Server CA set to {}", path.empty() ? "none (the system's trusted roots)" : path);
 }
 
 void ToolbarPanel::RenderServerCaRow(const std::string& address) {
     const ui::Tokens& t = ui::CurrentTokens();
-    const auto ca = proto::DescribeServerCa(address, server_ca_buf_);
+    const auto& ca = server_ca_view_.Get(address, server_ca_buf_);
     if (!ca.shown) return;
 
     ImGui::Spacing();

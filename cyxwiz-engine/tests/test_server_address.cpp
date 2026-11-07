@@ -54,7 +54,6 @@ int main() {
 
     // Plain text only to this machine or a private network (the cyxcloud
     // CLI's rule): a public server must be https
-    using cyxwiz::protocol::IsLoopbackHost;
     using cyxwiz::protocol::PlainHttpAllowed;
     for (const char* host : {"localhost", "127.0.0.1", "::1", "[::1]", "10.1.2.3", "172.16.0.9", "172.31.255.1",
                              "192.168.1.180", "169.254.10.1", "100.100.1.2", "fd12:3456::1", "fe80::1",
@@ -63,7 +62,10 @@ int main() {
         Check(PlainHttpAllowed(host), host);
     }
     for (const char* host : {"8.8.8.8", "203.0.113.9", "172.32.0.1", "100.128.0.1", "2001:db8::1", "::ffff:8.8.8.8",
-                             "cloud.cyxwiz.ai", "example.com", ""}) {
+                             "cloud.cyxwiz.ai", "example.com", "",
+                             // look private or one-label, but the host dialled is public
+                             "134744072", "0x8080808", "010.0.0.1", "fd00::1]evil.com", "evil.com#.local",
+                             "user@x.local", "evil.com\\@192.168.1.1"}) {
         Check(!PlainHttpAllowed(host), host);
     }
     e = ResolveServerAddress("http://cloud.cyxwiz.ai:8000");
@@ -72,8 +74,6 @@ int main() {
     Check(!ResolveServerAddress("203.0.113.9").error.empty(), "a bare public host is plain too");
     Check(ResolveServerAddress("http://192.168.1.180:8000").error.empty(), "a LAN front door may be plain");
     Check(ResolveServerAddress("https://203.0.113.9").error.empty(), "https to anywhere");
-    Check(IsLoopbackHost("localhost") && IsLoopbackHost("127.0.0.1") && IsLoopbackHost("[::1]"), "loopback");
-    Check(!IsLoopbackHost("192.168.1.180") && !IsLoopbackHost("hp-linux"), "the LAN is not this machine");
 
     // The server's CA: set by the app, else CYXWIZ_CA_FILE; a bad file is named
     using cyxwiz::protocol::ServerCaError;

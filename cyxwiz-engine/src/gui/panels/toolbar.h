@@ -5,6 +5,7 @@
 #include "python_settings_panel.h"
 #include "auth/auth_client.h"
 #include "common/server_address_view.h"
+#include "common/server_ca_view.h"
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/menu_presentation.h"
 #include "../dialogs/create_project_dialog.h"
@@ -552,6 +553,7 @@ private:
     bool servers_loaded_ = false;  // buffers filled from the config when the tab opens
     char server_address_buf_[256] = {};
     char server_ca_buf_[1024] = {};
+    cyxwiz::protocol::ServerCaViewCache server_ca_view_;
     char separate_central_buf_[256] = {};
     char separate_gateway_buf_[256] = {};
     char separate_api_buf_[256] = {};

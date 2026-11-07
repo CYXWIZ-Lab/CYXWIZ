@@ -72,7 +72,9 @@ bool ParseIpv4(const std::string& s, unsigned out[4]) {
     std::string part;
     int n = 0;
     while (std::getline(in, part, '.')) {
-        if (n == 4 || part.empty() || part.size() > 3 ||
+        // a leading zero is octal to the system resolver ("010" is 8): not
+        // the number it looks like, so not an address we judge
+        if (n == 4 || part.empty() || part.size() > 3 || (part.size() > 1 && part[0] == '0') ||
             !std::all_of(part.begin(), part.end(), [](unsigned char c) { return std::isdigit(c); })) {
             return false;
         }
@@ -131,10 +133,6 @@ std::string& CaPath() {
     static std::string path;
     return path;
 }
-bool& CaSet() {
-    static bool set = false;
-    return set;
-}
 
 // The CA's PEM text; "" with `error` set when the file cannot be used.
 std::string ReadCaPem(const std::string& path, std::string* error) {
@@ -159,34 +157,38 @@ std::string ReadCaPem(const std::string& path, std::string* error) {
 bool PlainHttpAllowed(const std::string& host_in) {
     const std::string host = StripBrackets(host_in);
     if (host.empty()) return false;
+    // Only what a host name or an IP literal holds: "]", "#", "@", "\" and
+    // the like are URL tricks that move the real host, not a LAN host
+    if (!std::all_of(host.begin(), host.end(),
+                     [](unsigned char c) { return std::isalnum(c) || c == '.' || c == '-' || c == ':'; })) {
+        return false;
+    }
     unsigned o[4];
     if (ParseIpv4(host, o)) return PrivateIpv4(o);
     if (host.find(':') != std::string::npos) return PrivateIpv6(host);
     if (host == "localhost" || EndsWith(host, ".localhost")) return true;
-    if (host.find('.') == std::string::npos) return true;
+    if (host.find('.') == std::string::npos) {
+        // One label is a LAN name, unless it is a number the resolver reads
+        // as an IPv4 address ("134744072" and "0x8080808" are 8.8.8.8)
+        const bool number = std::all_of(host.begin(), host.end(), [](unsigned char c) { return std::isdigit(c); }) ||
+                            StartsWith(host, "0x");
+        return !number;
+    }
     for (const char* suffix : {".local", ".lan", ".internal", ".home.arpa"}) {
         if (EndsWith(host, suffix)) return true;
     }
     return false;
 }
 
-bool IsLoopbackHost(const std::string& host_in) {
-    const std::string host = StripBrackets(host_in);
-    unsigned o[4];
-    return host == "localhost" || EndsWith(host, ".localhost") || host == "::1" ||
-           (ParseIpv4(host, o) && o[0] == 127);
-}
-
 void SetServerCaFile(const std::string& path) {
     std::lock_guard<std::mutex> lock(CaMutex());
     CaPath() = Trim(path);
-    CaSet() = true;
 }
 
 std::string ServerCaFile() {
     {
         std::lock_guard<std::mutex> lock(CaMutex());
-        if (CaSet() && !CaPath().empty()) return CaPath();
+        if (!CaPath().empty()) return CaPath();
     }
     const char* env = std::getenv("CYXWIZ_CA_FILE");
     return env ? Trim(env) : std::string();

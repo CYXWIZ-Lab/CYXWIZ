@@ -79,8 +79,9 @@ A test or LAN server whose door certificate comes from the CyxWiz test CA
 
 - **Engine: Preferences > Servers > Certificate authority (optional)**, under
   the address, shown for an `https://` address. Type the path or
-  **Browse...**; it applies when you leave the field, and **Clear** goes back
-  to the system's roots. Under it: what it trusts, and the CA's SHA-256
+  **Browse...**; it applies when you leave the field (open connections are
+  made again with it; you stay signed in), and **Clear** goes back to the
+  system's roots (or to `CYXWIZ_CA_FILE` when that is set). Under it: what it trusts, and the CA's SHA-256
   fingerprint (hover for the full one) to compare with `new-certs.sh show` on
   the server. Saved as `servers.ca_file` in `engine_config.json`; env
   `CYXWIZ_CA_FILE` is used when it is empty.

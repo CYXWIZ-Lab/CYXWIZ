@@ -6,6 +6,8 @@
 // Both render this, so they word it the same way. No ImGui; it reads the
 // CA file to show its fingerprint.
 
+#include <chrono>
+#include <filesystem>
 #include <string>
 
 namespace cyxwiz::protocol {
@@ -28,5 +30,24 @@ ServerCaView DescribeServerCa(const std::string& address, const std::string& ca_
 // `openssl x509 -noout -fingerprint -sha256` and new-certs.sh show print it;
 // "" with `error` set when the file holds no readable certificate.
 std::string CertificateFingerprint(const std::string& pem_path, std::string* error);
+
+// The row kept between frames: DescribeServerCa reads and parses the file,
+// too much for every frame (a file on a network share stalls the screen).
+// Described again when the address or the path changes, or when the file's
+// modification time changed, looked at once per `recheck`.
+class ServerCaViewCache {
+public:
+    explicit ServerCaViewCache(std::chrono::milliseconds recheck = std::chrono::seconds(2)) : recheck_(recheck) {}
+    const ServerCaView& Get(const std::string& address, const std::string& ca_path);
+
+private:
+    std::chrono::milliseconds recheck_;
+    bool valid_ = false;
+    std::string address_;
+    std::string path_;
+    std::filesystem::file_time_type stamp_{};
+    std::chrono::steady_clock::time_point checked_{};
+    ServerCaView view_;
+};
 
 }  // namespace cyxwiz::protocol

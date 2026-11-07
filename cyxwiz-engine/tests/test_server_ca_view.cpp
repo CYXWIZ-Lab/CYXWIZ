@@ -76,6 +76,30 @@ int main() {
     v = DescribeServerCa("https://192.168.1.180", (dir / "missing.crt").string());
     Check(!v.problem.empty(), "a missing file is named");
 
+    // The screens' cache: the same view until the path or the file changes
+    {
+        using namespace std::chrono_literals;
+        const std::string swapped = (dir / "swapped.crt").string();
+        std::ofstream(swapped) << "not a certificate";
+        cyxwiz::protocol::ServerCaViewCache slow(1h);
+        Check(!slow.Get("https://192.168.1.180", swapped).problem.empty(), "cache: first look reads the file");
+        std::ofstream(swapped, std::ios::binary) << kFixtureCa;
+        std::filesystem::last_write_time(swapped, std::filesystem::last_write_time(swapped) + 1h);
+        Check(!slow.Get("https://192.168.1.180", swapped).problem.empty(),
+              "cache: not read again before the recheck time");
+        Check(slow.Get("https://192.168.1.180", ca).fingerprint == kFixtureFingerprint,
+              "cache: a new path is read at once");
+
+        cyxwiz::protocol::ServerCaViewCache now(0ms);
+        std::ofstream(swapped) << "not a certificate";
+        std::filesystem::last_write_time(swapped, std::filesystem::last_write_time(swapped) + 2h);
+        Check(!now.Get("https://192.168.1.180", swapped).problem.empty(), "cache: reads the file");
+        std::ofstream(swapped, std::ios::binary) << kFixtureCa;
+        std::filesystem::last_write_time(swapped, std::filesystem::last_write_time(swapped) + 3h);
+        Check(now.Get("https://192.168.1.180", swapped).fingerprint == kFixtureFingerprint,
+              "cache: a changed file is read again");
+    }
+
     std::filesystem::remove_all(dir);
     if (failures == 0) std::printf("test_server_ca_view: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

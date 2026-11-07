@@ -40,8 +40,7 @@ bool StringField(const char* id, std::string& value, const char* hint, bool enab
 
 // The native file dialog, for the server's CA; "" when cancelled.
 std::string PickCaFile() {
-    static const bool ready = NFD_Init() == NFD_OKAY;
-    if (!ready) return {};
+    if (NFD_Init() != NFD_OKAY) return {};
     nfdu8char_t* out = nullptr;
     const nfdu8filteritem_t filters[] = {{"Certificates", "crt,pem,cer"}};
     std::string picked;
@@ -49,6 +48,7 @@ std::string PickCaFile() {
         picked = out;
         NFD_FreePathU8(out);
     }
+    NFD_Quit();
     return picked;
 }
 
@@ -70,7 +70,7 @@ bool SettingsPanel::ServerSettingsChanged() const {
 void SettingsPanel::RenderServerCaRow(const std::string& address) {
     const auto& semantic = ::gui::GetTheme().Semantic();
     const ImVec4 muted = ui::Muted();
-    const auto ca = proto::DescribeServerCa(address, config_.server_ca_file);
+    const auto& ca = server_ca_view_.Get(address, config_.server_ca_file);
     if (!ca.shown) return;
 
     ImGui::Spacing();
@@ -84,8 +84,9 @@ void SettingsPanel::RenderServerCaRow(const std::string& address) {
     std::strncpy(buffer, config_.server_ca_file.c_str(), sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
     const float field_width = ImGui::GetContentRegionAvail().x - browse_width - clear_width - style.ItemSpacing.x;
+    // Only an edit writes back: a path longer than the field is never cut
     ui::TextField("##ServerCa", buffer, sizeof(buffer), "the server's ca.crt", 0, true, field_width);
-    if (config_.server_ca_file != buffer) {
+    if (ImGui::IsItemEdited() && config_.server_ca_file != buffer) {
         config_.server_ca_file = buffer;
         config_changed_ = true;
         save_note_.clear();
