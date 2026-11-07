@@ -557,6 +557,8 @@ if(CYXWIZ_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
     )
 
+    # The shared sources include cpp-httplib with TLS (token_refresh.cpp)
+    target_compile_definitions(standalone_p2p_server PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(standalone_p2p_server PRIVATE
         cyxwiz-training-core
         cyxwiz-backend
@@ -566,6 +568,9 @@ if(CYXWIZ_BUILD_TESTS)
         spdlog::spdlog
         fmt::fmt
         Threads::Threads
+        httplib::httplib
+        OpenSSL::SSL
+        OpenSSL::Crypto
         yaml-cpp::yaml-cpp
         unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
