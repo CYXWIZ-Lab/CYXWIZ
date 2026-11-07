@@ -393,7 +393,8 @@ void MjEnvBrowserPanel::RenderCard(MjEnvLibrary& library, const EnvInfo& info, b
         }
     } else {
         right_button_x(ui->ButtonWidth("Load", UiButtonSize::Regular));
-        if (ui->SecondaryButton("Load")) {
+        const std::string blocked = load_blocker_ ? load_blocker_() : std::string();
+        if (ui->SecondaryButton("Load", blocked.empty(), blocked.c_str())) {
             pending_load_path_ = library.GetAssetPath(info);
             pending_load_info_ = info;
         }

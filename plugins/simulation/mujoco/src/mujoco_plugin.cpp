@@ -84,6 +84,13 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     });
     browser_panel_.SetDownloader(&menagerie_downloader_);
     browser_panel_.SetContext(&ctx);
+    // One model at a time: while a graph run steps it, the library loads no other
+    // (loading stops a viewport run, which the user started here)
+    browser_panel_.SetLoadBlocker([this]() -> std::string {
+        return viewport_panel_.IsGraphSimActive()
+                   ? "A graph run is stepping the loaded model. Stop the graph run to load another."
+                   : std::string();
+    });
 
     // The viewport draws the Engine's widgets and opens the library; a model
     // file it opens is named after the file.

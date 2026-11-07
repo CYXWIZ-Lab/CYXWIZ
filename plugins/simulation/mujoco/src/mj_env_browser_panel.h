@@ -32,6 +32,9 @@ public:
     void SetContext(PluginContext* ctx) { ctx_ = ctx; }
     void SetLoadCallback(EnvLoadCallback cb) { load_callback_ = std::move(cb); }
     void SetDownloader(MjMenagerieDownloader* dl) { downloader_ = dl; }
+    // Why another model cannot be loaded now (a graph run steps the loaded one),
+    // or empty when it can
+    void SetLoadBlocker(std::function<std::string()> fn) { load_blocker_ = std::move(fn); }
     // A model loaded from elsewhere (a file the viewport opened): no card is Loaded
     void ClearLoaded() { loaded_env_id_.clear(); }
 
@@ -61,6 +64,7 @@ private:
 
     PluginContext* ctx_ = nullptr;
     EnvLoadCallback load_callback_;
+    std::function<std::string()> load_blocker_;
     MjMenagerieDownloader* downloader_ = nullptr;
 
     char search_buf_[128] = {};

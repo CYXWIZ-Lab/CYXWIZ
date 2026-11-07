@@ -51,6 +51,7 @@ public:
 
     // Graph simulation driving physics (disables local sim controls)
     void SetGraphSimActive(bool active) { graph_sim_active_ = active; graph_sim_frames_ = 0; }
+    bool IsGraphSimActive() const { return graph_sim_active_; }
 
 private:
     void RenderEmpty();
