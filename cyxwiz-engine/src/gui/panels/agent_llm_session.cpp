@@ -32,8 +32,10 @@ const char *EntryLabel(AgentLlmSession::ContextMode mode) {
 
 AgentLlmSession::~AgentLlmSession() { JoinRequestWorker(); }
 
-void AgentLlmSession::SetCommandHandler(CommandHandler handler) {
+void AgentLlmSession::SetCommandHandler(CommandHandler handler,
+                                        std::function<void()> refresh_context) {
   command_handler_ = std::move(handler);
+  refresh_context_ = std::move(refresh_context);
 }
 
 void AgentLlmSession::ResetProjectState() {
@@ -242,6 +244,8 @@ void AgentLlmSession::SubmitRequest() {
   AppendEntry(EntryKind::User, displayed_request);
   std::fill(input_buffer_.begin(), input_buffer_.end(), '\0');
 
+  if (refresh_context_)
+    refresh_context_();
   const auto handler = command_handler_;
   const std::uint64_t request_generation = project_generation_;
   request_finished_.store(false, std::memory_order_release);

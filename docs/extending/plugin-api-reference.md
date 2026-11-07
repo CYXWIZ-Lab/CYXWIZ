@@ -152,7 +152,7 @@ only until `OnUnload` returns.
 | `bool RegisterDataProvider(IDataProvider*)` | Needs `DataRegistry` |
 | `bool RegisterTrainingHook(ITrainingHook*)` | Needs `Training` |
 | `bool RegisterAnalyticsProvider(IAnalyticsProvider*)` | Needs `DataRegistry` |
-| `AssistantContextSnapshot GetAssistantContextSnapshot() const` | What the user is looking at (workspace, graph, selection); for the assistant plugin |
+| `AssistantContextSnapshot GetAssistantContextSnapshot() const` | What the user is looking at (workspace, graph, selection); for the assistant plugin. The Engine fills it in when the user sends an assistant command, just before your `RunAssistantCommand`, so read it there |
 | `PluginUi* GetUi()` | The Engine's buttons, fields and theme colours for your panels (API 1.4, section 9). Null only in hosts without windows (`cyxwiz-plugin-check`) |
 | `bool ShowPanel(const std::string& panel_id)` | Opens one of your own panels and brings it to the front, for a button in one panel that leads to another (API 1.4). `false` when you have no panel with that id |
 

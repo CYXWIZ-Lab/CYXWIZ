@@ -552,10 +552,17 @@ MainWindow::MainWindow()
     // Initialize scripting engine (shared resource)
     scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
     console_->SetScriptingEngine(scripting_engine_);
+    // The assistant's view of the workspace is built when a command is sent,
+    // on the UI thread: building it reads the training trace and the last run
+    // from disk, far too slow for every frame.
     console_->SetAssistantCommandHandler(
         [](const cyxwiz::plugin::AssistantCommandRequest& request) {
             return cyxwiz::plugin::PluginManager::Instance()
                 .RunAssistantCommand(request);
+        },
+        [this]() {
+            cyxwiz::plugin::PluginManager::Instance().SetAssistantContextSnapshotForAll(
+                BuildAssistantContextSnapshot(node_editor_.get(), studio_debugger_panel_.get()));
         });
 
     // New panel system
@@ -2971,13 +2978,6 @@ void MainWindow::Render() {
     UpdatePythonNodes();
     UpdateLiveCompile();
     UpdateLocalDebugStatus();
-
-    auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
-    if (plugin_manager.GetPluginCount() > 0) {
-        plugin_manager.SetAssistantContextSnapshotForAll(
-            BuildAssistantContextSnapshot(
-                node_editor_.get(), studio_debugger_panel_.get()));
-    }
 
     // Check if we need to connect P2PClient to monitoring panel
     if (!monitoring_job_id_.empty() && job_manager_ && p2p_training_panel_) {
