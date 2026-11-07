@@ -5,7 +5,7 @@ today. For a walk-through read the [quickstart](plugin-quickstart.md) and the
 [developer guide](plugin-developer-guide.md); for the rules a trainable
 module must keep, the [node contract](node-contract.md).
 
-> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 > The CyxWiz SDK is version 0.2.
 
 ## 1. Headers
@@ -20,6 +20,7 @@ SDK installs, with the types it declares, is listed in
 |---|---|
 | `plugin/plugin_types.h` | `IPlugin`, `PluginManifest`, versions, permissions, capabilities, states, `CYXWIZ_PLUGIN_ENTRY` |
 | `plugin/plugin_context.h` | `PluginContext`, `AssistantContextSnapshot` |
+| `plugin/plugin_ui.h` | `PluginUi`, `UiColors`, `UiColor`, `UiButtonSize` (the Engine's widgets for panels, API 1.4) |
 | `plugin/plugin_fingerprint.h` | `CurrentBuildFingerprint()` (used by `CYXWIZ_PLUGIN_ENTRY`) |
 | `plugin/interfaces/i_tensor_node_provider.h` | `ITensorNodeProvider`, `TensorNodeInfo` (trainable nodes) |
 | `plugin/interfaces/i_node_provider.h` | `INodeProvider`, `PluginNodeTypeInfo` (signal nodes) |
@@ -75,7 +76,7 @@ the library. Unknown fields, capabilities and permissions are ignored.
 | `id` | string | Required. `a-z`, `0-9`, `.`, `-`, `_`; a plugin whose id has other characters loads, but all its nodes are refused. Part of every node's saved type id (`<id>:<TypeName>`), so do not change it once graphs use it. A plugin whose id is already loaded is not loaded again: **Refresh** skips it, **Install...** says it is already loaded |
 | `name` | string | Shown in the Plugin Manager (default: `id`) |
 | `version` | `"major.minor.patch"` | Your plugin's version (default `0.0.0`). Permission answers are stored per version |
-| `api_version` | `"major.minor.patch"` | The plugin API you built against (default `1.0.0`). Loads when the major equals the Engine's and the minor is not higher (1.3 today) |
+| `api_version` | `"major.minor.patch"` | The plugin API you built against (default `1.0.0`). Loads when the major equals the Engine's and the minor is not higher (1.4 today) |
 | `description`, `author`, `license`, `homepage`, `repository` | string | Stored; the Plugin Manager card shows `description` and `author` |
 | `capabilities` | array of strings | What the plugin says it provides (table below). Informational: the Engine finds interfaces through `QueryInterface` whatever this says |
 | `permissions` | array of strings | What it may do (table below) |
@@ -151,6 +152,8 @@ only until `OnUnload` returns.
 | `bool RegisterTrainingHook(ITrainingHook*)` | Needs `Training` |
 | `bool RegisterAnalyticsProvider(IAnalyticsProvider*)` | Needs `DataRegistry` |
 | `AssistantContextSnapshot GetAssistantContextSnapshot() const` | What the user is looking at (workspace, graph, selection); for the assistant plugin |
+| `PluginUi* GetUi()` | The Engine's buttons, fields and theme colours for your panels (API 1.4, section 9). Null only in hosts without windows (`cyxwiz-plugin-check`) |
+| `bool ShowPanel(const std::string& panel_id)` | Opens one of your own panels and brings it to the front, for a button in one panel that leads to another (API 1.4). `false` when you have no panel with that id |
 
 Each `Register*` returns `false` when the permission is missing (section 3)
 and logs why. Use either `QueryInterface` (section 6) or `Register*` for an
@@ -308,6 +311,42 @@ A panel draws with ImGui inside the Engine's ImGui context
 exactly the ImGui version and configuration the Engine uses. The SDK has no
 ImGui: panels can only be built inside the CyxWiz source tree.
 
+#### Drawing with the Engine's widgets: `PluginUi` (API 1.4)
+
+Plain ImGui calls in a panel follow the theme's ImGui colours, but not the
+Engine's button styles, its brand colour or its status colours. Get those
+from `PluginContext::GetUi()` (keep the context pointer from `OnLoad`; call
+the kit only inside `RenderPanel`, on the UI thread). Declare
+`"api_version": "1.4.0"` or newer to use it.
+
+| Member | Draws |
+|---|---|
+| `UiColors Colors() const` | The theme's colours: `text`, `text_dim`, `text_bright`, `bg_window`, `bg_panel`, `bg_raised`, `bg_input`, `accent`, `accent_text`, `success`, `warning`, `caution`, `error`, `pending`, `running`. Read them every frame: the user can switch themes |
+| `bool PrimaryButton(label, enabled, disabled_reason, size, width)` | The filled brand button: one per area, for its main action |
+| `bool SecondaryButton(...)`, `bool LinkButton(label, enabled)`, `bool DangerButton(...)` | Supporting actions, navigation, removal. A disabled button stays visible and shows `disabled_reason` on hover |
+| `float ButtonWidth(label, size) const`, `float ButtonHeight(size) const` | To right-align buttons or centre a row |
+| `bool SegmentedControl(id, labels, count, &selected)`, `float SegmentedControlWidth(...)` | One of several options side by side |
+| `bool StatusPill(id, text, dot)`, `float StatusPillWidth(text)` | A state with a coloured dot (Running, Paused) |
+| `bool NumberField(id, &value, min, max, step, format, width, hint)` | A typed number with - / + buttons when `step` > 0. CyxWiz uses no sliders or drag fields: a typed value is exact |
+| `bool SearchField(id, buffer, size, hint, width)` | A search box with its icon |
+| `void EmptyState(title, hint)` | The centred message of an empty panel; put its actions after it |
+| `std::string OpenFileDialog(title, filter_name, extensions)` | The system's open-file dialog; empty when cancelled |
+
+<!-- not compiled: a sketch; the full panel is plugins/simulation/mujoco/src/mj_viewport_panel.cpp -->
+```cpp
+void MyPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
+    if (!ImGui::Begin("My Panel", visible)) { ImGui::End(); return; }
+    PluginUi* ui = ctx_->GetUi();
+    if (ui->PrimaryButton("Run", can_run, "Load a model first")) Run();
+    ImGui::SameLine();
+    if (ui->SecondaryButton("Open library")) ctx_->ShowPanel("my_library_panel");
+    ImGui::End();
+}
+```
+
+The MuJoCo plugin (`plugins/simulation/mujoco`, `mj_viewport_panel.cpp`)
+draws its whole viewport this way.
+
 ### `IDataProvider`, `IAnalyticsProvider`
 
 A dataset format and a dataset analytic. Data crosses in both directions as
@@ -385,7 +424,7 @@ returned, then frees its library. Data already read stays readable.
 | `CyxWiz::Backend` | The backend's import library alone |
 | `cyxwiz_plugin_folder(<target> [FOLDER <dir>])` | Puts the library in `<dir>/bin` for every configuration and copies `plugin.json` from the current source folder to `<dir>` (default `<build>/<target>`). With MSVC every configuration uses the release C++ runtime (`MultiThreadedDLL`), so Debug builds load. Needs policy CMP0091, which `cmake_minimum_required(VERSION 3.15)` or later turns on |
 | `CyxWizSDK_VERSION` | The SDK version (0.2.0) |
-| `CyxWizSDK_PLUGIN_API_VERSION` | The plugin API version (1.3) |
+| `CyxWizSDK_PLUGIN_API_VERSION` | The plugin API version (1.4) |
 | `CyxWizSDK_TEMPLATE_DIR` | The template plugin's folder |
 
 <!-- excerpt: cmake/sdk/CyxWizPluginHelpers.cmake -->

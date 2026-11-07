@@ -5,6 +5,8 @@
 #include "plugin/plugin_manager.h"
 #include "plugin/plugin_data_formats.h"
 #include "plugin/plugin_session.h"
+#include "plugin/engine_plugin_context.h"
+#include "gui/plugin_ui_kit.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -488,6 +490,8 @@ int main(int argc, char** argv) {
             // (TOFIX125 step 2.9); others load from the Plugin Manager.
             // Plugin dataset formats reach Data Input through the core's hook (TOFIX181).
             cyxwiz::plugin::InstallPluginDataFormats();
+            // Plugin panels draw the Engine's widgets (plugin API 1.4).
+            cyxwiz::plugin::EnginePluginContext::SetUi(&cyxwiz::ui::PluginUiKit());
             cyxwiz::plugin::LoadStartupPlugins(pm);
         }
 

@@ -51,6 +51,15 @@ void LoadAndInitialize(cyxwiz::plugin::PluginManager& manager, const std::filesy
     Check(cyxwiz::plugin::PluginPanelRegistry::Instance().HasPanel(
               "com.cyxwiz.examples.image-nodes.settings"),
           "its settings panel is registered");
+    auto& panels = cyxwiz::plugin::PluginPanelRegistry::Instance();
+    Check(!panels.ShowPanel("com.example.other", "com.cyxwiz.examples.image-nodes.settings"),
+          "a plugin cannot open another plugin's panel");
+    Check(!panels.ShowPanel(kPluginId, "com.cyxwiz.examples.image-nodes.missing"),
+          "showing a panel the plugin does not have fails");
+    panels.SetPanelVisible("com.cyxwiz.examples.image-nodes.settings", false);
+    Check(panels.ShowPanel(kPluginId, "com.cyxwiz.examples.image-nodes.settings") &&
+              panels.IsPanelVisible("com.cyxwiz.examples.image-nodes.settings"),
+          "a plugin opens its own panel");
 }
 
 }  // namespace

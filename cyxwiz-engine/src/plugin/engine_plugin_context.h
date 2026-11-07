@@ -37,6 +37,12 @@ public:
     bool RegisterTrainingHook(ITrainingHook* hook) override;
     bool RegisterAnalyticsProvider(IAnalyticsProvider* provider) override;
 
+    PluginUi* GetUi() override { return ui_; }
+    bool ShowPanel(const std::string& panel_id) override;
+    // Engine side: the GUI hands its PluginUi to every plugin context before
+    // plugins load; hosts without windows leave it null.
+    static void SetUi(PluginUi* ui) { ui_ = ui; }
+
     // Whether the plugin may do `action` (declared in plugin.json, and
     // approved when the permission is dangerous); logs the refusal.
     bool CheckPermission(PluginPermission required, const char* action) const;
@@ -55,6 +61,7 @@ private:
     std::filesystem::path plugin_dir_;
     AssistantContextSnapshot assistant_context_;
     mutable std::mutex assistant_context_mutex_;
+    static inline PluginUi* ui_ = nullptr;
 };
 
 } // namespace cyxwiz::plugin

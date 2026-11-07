@@ -95,6 +95,7 @@ set(CYXWIZ_PLUGIN_SDK_HEADERS
     plugin/plugin_types.h
     plugin/plugin_context.h
     plugin/plugin_fingerprint.h
+    plugin/plugin_ui.h
     plugin/interfaces/arrow_c_stream.h
     plugin/interfaces/i_analytics_provider.h
     plugin/interfaces/i_assistant_provider.h
@@ -564,6 +565,7 @@ set(ENGINE_SOURCES
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/gui/ui_widgets.cpp
+    src/gui/plugin_ui_kit.cpp
     src/gui/frame_metrics.cpp
     src/gui/panel_memory.cpp
     src/gui/separate_windows.cpp

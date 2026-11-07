@@ -2,7 +2,7 @@
 
 # What the plugin SDK contains
 
-Every header the plugin SDK installs under `<sdk>/include`, with the summary at the top of the header and the types it declares. Plugin API 1.3.0. The SDK also installs `cyxwiz-backend`'s import library, the CMake package `CyxWizSDK`, the template plugin, the data plugin example (source and built) and the Python example nodes; see [plugin-quickstart.md](plugin-quickstart.md). The SDK ships no ArrayFire, ImGui or spdlog headers: anything below that needs them (an `af::array` in a signature, a panel's ImGui calls) builds only inside the CyxWiz source tree.
+Every header the plugin SDK installs under `<sdk>/include`, with the summary at the top of the header and the types it declares. Plugin API 1.4.0. The SDK also installs `cyxwiz-backend`'s import library, the CMake package `CyxWizSDK`, the template plugin, the data plugin example (source and built) and the Python example nodes; see [plugin-quickstart.md](plugin-quickstart.md). The SDK ships no ArrayFire, ImGui or spdlog headers: anything below that needs them (an `af::array` in a signature, a panel's ImGui calls) builds only inside the CyxWiz source tree.
 
 ## Plugin interface
 
@@ -11,6 +11,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `plugin/plugin_types.h` |  | `PluginVersion`, `PluginDependency`, `PluginManifest`, `IPlugin`, `PluginPermission`, `PluginCapability`, `PluginState` |
 | `plugin/plugin_context.h` |  | `AssistantContextSnapshot`, `PluginContext` |
 | `plugin/plugin_fingerprint.h` | Build fingerprint of a plugin (TOFIX125 P5 step 5.1, Part D6, decision D4). A trainable plugin node is a real cyxwiz::Module: the plugin shares C++ objects with the Engine, so it must be built the way the Engine was (compiler family, standard library, build type, pointer size, SDK and ArrayFire... | `FingerprintDifference` |
+| `plugin/plugin_ui.h` |  | `UiColor`, `UiColors`, `PluginUi`, `UiButtonSize` |
 | `plugin/interfaces/arrow_c_stream.h` | The Arrow C data interface and C stream interface: the structs of the Apache Arrow specification (https://arrow.apache.org/docs/format/CDataInterface.html, CStreamInterface.html), unchanged. They are the stable C ABI through which a plugin's data reaches the Engine (IDataProvider) and the... | `ArrowSchema`, `ArrowArray`, `ArrowArrayStream` |
 | `plugin/interfaces/i_analytics_provider.h` | A plugin's dataset analytics (plugin API 1.3): Data Studio's Explore > Plugins tab lists them, the user picks a dataset and columns, and the Engine calls Compute on a worker thread with those columns as an Arrow C stream. | `AnalyticsResult`, `PluginAnalyticsInfo`, `IAnalyticsProvider`, `AnalyticsColumns` |
 | `plugin/interfaces/i_assistant_provider.h` |  | `AssistantCommandRequest`, `AssistantCommandSection`, `AssistantCommandSource`, `AssistantCommandResponse`, `IAssistantProvider` |

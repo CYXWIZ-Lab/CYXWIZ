@@ -98,6 +98,10 @@ bool EnginePluginContext::RegisterPanelProvider(IPanelProvider* provider) {
     return true;
 }
 
+bool EnginePluginContext::ShowPanel(const std::string& panel_id) {
+    return PluginPanelRegistry::Instance().ShowPanel(plugin_id_, panel_id);
+}
+
 bool EnginePluginContext::CheckDataInterfaces(const char* interface_name) const {
     if (plugin_api_ >= kDataInterfacesApi) return true;
     spdlog::warn("[Plugin:{}] {} not used: it changed in plugin API {} and the plugin is built for {}; "
