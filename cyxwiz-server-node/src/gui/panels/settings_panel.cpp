@@ -117,19 +117,31 @@ void SettingsPanel::SaveChanges() {
     config_.cyxwiz_server = first == std::string::npos
                                 ? std::string()
                                 : config_.cyxwiz_server.substr(first, config_.cyxwiz_server.find_last_not_of(" \t") - first + 1);
+    const auto ca_first = config_.server_ca_file.find_first_not_of(" \t");
+    config_.server_ca_file = ca_first == std::string::npos
+                                 ? std::string()
+                                 : config_.server_ca_file.substr(
+                                       ca_first, config_.server_ca_file.find_last_not_of(" \t") - ca_first + 1);
     const bool server_changed = ServerSettingsChanged();
+    // The CA only changes how the same server is checked: no sign-out.
+    const bool ca_changed = config_.server_ca_file != GetBackend().GetConfig().server_ca_file;
     auto& auth = auth::AuthManager::Instance();
     // A sign-in belongs to the server that issued it.
     if (server_changed && auth.IsAuthenticated()) auth.Logout();
     const std::string path = core::ConfigManager::FindConfigFile();
     if (GetBackend().UpdateConfig(config_)) {
         save_note_ = "Saved to " + path + ".";
+        if (ca_changed) {
+            cyxwiz::protocol::SetServerCaFile(config_.server_ca_file);
+            spdlog::info("Server CA set to {}", config_.server_ca_file.empty() ? "none (the system's trusted roots)"
+                                                                               : config_.server_ca_file);
+        }
         if (server_changed) {
             auth.SetApiBaseUrl(config_.AuthApiUrl());
-            save_note_ += " The daemon uses the new server after it restarts.";
             spdlog::info("CyxWiz server set to {}", config_.cyxwiz_server.empty() ? "none (separate addresses)"
                                                                                   : config_.cyxwiz_server);
         }
+        if (server_changed || ca_changed) save_note_ += " The daemon uses the new server settings after it restarts.";
     } else {
         save_note_ = "Not saved: " + path + " could not be written.";
     }

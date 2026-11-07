@@ -356,6 +356,10 @@ private:
     void StartServerProbe(const std::string& key);
     void PollServerProbe();
     void ApplyServerAddress(const std::string& address);
+    // The server's private CA under the address (TOFIX192 T1c): shown for an
+    // https:// address, applied when chosen, cleared or the field is left.
+    void RenderServerCaRow(const std::string& address);
+    void ApplyServerCaFile(const std::string& path);
     void SignOut();
     void RenderAppearancePreferences();  // Preferences > Appearance
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
@@ -547,6 +551,7 @@ private:
     // Preferences > Servers
     bool servers_loaded_ = false;  // buffers filled from the config when the tab opens
     char server_address_buf_[256] = {};
+    char server_ca_buf_[1024] = {};
     char separate_central_buf_[256] = {};
     char separate_gateway_buf_[256] = {};
     char separate_api_buf_[256] = {};

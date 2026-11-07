@@ -6,11 +6,13 @@
 
 #include "auth/auth_manager.h"
 #include "common/server_address_view.h"
+#include "common/server_ca_view.h"
 #include "gui/server_address_widgets.h"
 #include "gui/theme.h"
 #include "gui/ui_widgets.h"
 
 #include <imgui.h>
+#include <nfd.h>
 
 #include <cstring>
 
@@ -36,6 +38,20 @@ bool StringField(const char* id, std::string& value, const char* hint, bool enab
     return true;
 }
 
+// The native file dialog, for the server's CA; "" when cancelled.
+std::string PickCaFile() {
+    static const bool ready = NFD_Init() == NFD_OKAY;
+    if (!ready) return {};
+    nfdu8char_t* out = nullptr;
+    const nfdu8filteritem_t filters[] = {{"Certificates", "crt,pem,cer"}};
+    std::string picked;
+    if (NFD_OpenDialogU8(&out, filters, 1, nullptr) == NFD_OKAY && out) {
+        picked = out;
+        NFD_FreePathU8(out);
+    }
+    return picked;
+}
+
 void Heading(const char* title) {
     ImGui::Spacing();
     ImGui::TextUnformatted(title);
@@ -49,6 +65,57 @@ bool SettingsPanel::ServerSettingsChanged() const {
     const auto& saved = core::BackendManager::Instance().GetConfig();
     return Trimmed(config_.cyxwiz_server) != saved.cyxwiz_server || config_.central_server != saved.central_server ||
            config_.auth_api_url != saved.auth_api_url;
+}
+
+void SettingsPanel::RenderServerCaRow(const std::string& address) {
+    const auto& semantic = ::gui::GetTheme().Semantic();
+    const ImVec4 muted = ui::Muted();
+    const auto ca = proto::DescribeServerCa(address, config_.server_ca_file);
+    if (!ca.shown) return;
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Certificate authority (optional)");
+    const char* browse_label = "Browse...";
+    const char* clear_label = "Clear";
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float browse_width = ImGui::CalcTextSize(browse_label).x + style.FramePadding.x * 4;
+    const float clear_width = ca.empty ? 0.0f : ImGui::CalcTextSize(clear_label).x + style.ItemSpacing.x;
+    char buffer[1024];
+    std::strncpy(buffer, config_.server_ca_file.c_str(), sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
+    const float field_width = ImGui::GetContentRegionAvail().x - browse_width - clear_width - style.ItemSpacing.x;
+    ui::TextField("##ServerCa", buffer, sizeof(buffer), "the server's ca.crt", 0, true, field_width);
+    if (config_.server_ca_file != buffer) {
+        config_.server_ca_file = buffer;
+        config_changed_ = true;
+        save_note_.clear();
+    }
+    ImGui::SameLine();
+    if (ui::SecondaryButton(browse_label, browse_width)) {
+        const std::string picked = PickCaFile();
+        if (!picked.empty()) {
+            config_.server_ca_file = picked;
+            config_changed_ = true;
+            save_note_.clear();
+        }
+    }
+    if (!ca.empty) {
+        ImGui::SameLine();
+        if (ui::LinkButton(clear_label)) {
+            config_.server_ca_file.clear();
+            config_changed_ = true;
+            save_note_.clear();
+        }
+    }
+
+    if (!ca.problem.empty()) {
+        ImGui::TextColored(semantic.warning, "%s", ca.problem.c_str());
+    } else if (!ca.empty) {
+        ImGui::TextColored(muted, "%s", ca.trusts.c_str());
+        ImGui::TextColored(muted, "SHA-256 %s  -  %s", ca.fingerprint_short.c_str(), ca.compare.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("SHA-256 %s", ca.fingerprint.c_str());
+    }
+    ImGui::TextColored(muted, "%s", ca.leave_empty.c_str());
 }
 
 void SettingsPanel::RenderNetworkTab() {
@@ -96,6 +163,7 @@ void SettingsPanel::RenderNetworkTab() {
         RenderServerRows(view);
         if (ui::LinkButton("Check again")) server_probe_.Forget();
     }
+    RenderServerCaRow(typed);
     ImGui::TextColored(muted, "Datasets come from the gateway address in each job; nothing to set here.");
     if (ServerSettingsChanged() && auth::AuthManager::Instance().IsAuthenticated()) {
         ImGui::TextColored(semantic.warning,

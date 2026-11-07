@@ -16,6 +16,9 @@ public:
 private:
     void RenderRemoteConnectionTab();
     void RenderNetworkTab();  // settings_network.cpp (TOFIX168 step 3b)
+    // The server's private CA under the address (TOFIX192 T1c), saved with
+    // the other settings.
+    void RenderServerCaRow(const std::string& address);
     bool ServerSettingsChanged() const;
     void SaveChanges();
     void RenderPricingTab();

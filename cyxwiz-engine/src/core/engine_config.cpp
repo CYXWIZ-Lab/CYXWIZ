@@ -135,6 +135,7 @@ EngineConfig::EngineConfig() {
 
 void EngineConfig::SetDefaults() {
     server_address_.clear();
+    server_ca_file_.clear();
     central_server_address_ = "localhost:50051";
     cloud_gateway_address_.clear();  // derived from the central address
     auth_api_url_ = "http://127.0.0.1:3002/api";
@@ -223,6 +224,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             json defaults;
             defaults["servers"] = {
                 {"cyxwiz", server_address_},
+                {"ca_file", server_ca_file_},
                 {"central", central_server_address_},
                 {"cloud_gateway", cloud_gateway_address_},
                 {"deployment", default_deployment_address_},
@@ -287,6 +289,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                 json template_config;
                 template_config["servers"] = {
                     {"cyxwiz", server_address_},
+                    {"ca_file", server_ca_file_},
                     {"central", central_server_address_},
                     {"cloud_gateway", cloud_gateway_address_},
                     {"deployment", default_deployment_address_},
@@ -337,6 +340,9 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             const auto& servers = config["servers"];
             if (servers.contains("cyxwiz")) {
                 server_address_ = servers["cyxwiz"].get<std::string>();
+            }
+            if (servers.contains("ca_file")) {
+                server_ca_file_ = servers["ca_file"].get<std::string>();
             }
             if (servers.contains("central")) {
                 central_server_address_ = servers["central"].get<std::string>();
@@ -448,6 +454,13 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         config_path_ = config_path;
         modified_ = false;
 
+        // Every connection to the server verifies it with this CA from now on
+        cyxwiz::protocol::SetServerCaFile(server_ca_file_);
+        if (const std::string ca_error = cyxwiz::protocol::ServerCaError(); !ca_error.empty()) {
+            spdlog::warn("servers.ca_file: {}; connections to an https:// server will fail until it is fixed",
+                         ca_error);
+        }
+
         spdlog::debug("Loaded config from: {}", config_path.string());
         if (!server_address_.empty()) {
             const auto endpoints = cyxwiz::protocol::ResolveServerAddress(server_address_);
@@ -498,6 +511,7 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
         // Server addresses
         config["servers"] = {
             {"cyxwiz", server_address_},
+            {"ca_file", server_ca_file_},
             {"central", central_server_address_},
             {"cloud_gateway", cloud_gateway_address_},
             {"deployment", default_deployment_address_},
@@ -629,6 +643,20 @@ void EngineConfig::SetServerAddress(const std::string& address) {
         server_address_ = address;
         modified_ = true;
     }
+}
+
+std::string EngineConfig::GetServerCaFile() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return server_ca_file_;
+}
+
+void EngineConfig::SetServerCaFile(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (server_ca_file_ != path) {
+        server_ca_file_ = path;
+        modified_ = true;
+    }
+    cyxwiz::protocol::SetServerCaFile(server_ca_file_);
 }
 
 std::string EngineConfig::GetCentralServerAddress() const {

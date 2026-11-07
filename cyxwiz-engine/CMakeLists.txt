@@ -3596,6 +3596,15 @@ set_target_properties(test_server_address PROPERTIES
 )
 add_test(NAME test_server_address COMMAND test_server_address)
 
+add_executable(test_server_ca_view
+    tests/test_server_ca_view.cpp
+)
+target_link_libraries(test_server_ca_view PRIVATE cyxwiz-protocol)
+set_target_properties(test_server_ca_view PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_server_ca_view COMMAND test_server_ca_view)
+
 # HTTP clients fall back to the next address (cmake/CyxWizHttplib.cmake)
 add_executable(test_http_address_fallback
     tests/test_http_address_fallback.cpp

@@ -31,6 +31,8 @@ if(CYXWIZ_BUILD_GUI)
     find_package(glad CONFIG REQUIRED)
     find_package(Stb REQUIRED)
     find_package(OpenGL REQUIRED)
+    # Settings > Network: Browse for the server's CA
+    find_package(nfd CONFIG REQUIRED)
     message(STATUS "GUI mode enabled - ImGui dependencies found")
 endif()
 
@@ -312,6 +314,7 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
             glfw
             glad::glad
             OpenGL::GL
+            nfd::nfd
         )
         target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_GUI)
     endif()

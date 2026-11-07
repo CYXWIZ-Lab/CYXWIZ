@@ -36,6 +36,10 @@ struct NodeConfig {
     // decides central and sign-in, and the two keys below apply only when it
     // is empty. Read them through CentralAddress() and AuthApiUrl().
     std::string cyxwiz_server;
+    // The server's private CA (a PEM file, a test server's ca.crt) for an
+    // https:// server whose certificate no public authority signed; empty =
+    // the system's trusted roots (TOFIX192 T1c).
+    std::string server_ca_file;
     std::string central_server = "localhost:50051";
     std::string auth_api_url = "http://127.0.0.1:3002/api";
     std::string CentralAddress() const;

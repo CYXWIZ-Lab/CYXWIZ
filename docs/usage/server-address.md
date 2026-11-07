@@ -66,8 +66,38 @@ The words and rows come from `cyxwiz-protocol/common/server_address_view`
 
 An `https://` address is dialled over TLS for every service (gRPC with SSL
 credentials, sign-in over HTTPS), checked against the system's trusted
-certificates. The old `connection.use_tls` switch is gone: the scheme
-decides. The gateway address the Engine puts into a training job keeps its
+certificates, or against the server's own CA when one is set (below). The
+old `connection.use_tls` switch is gone: the scheme decides, and nothing
+turns certificate checks off. Plain `http://` is refused to anything but
+this machine or a private network (TOFIX192 D3).
+
+### A server with a private CA (TOFIX192 T1c)
+
+A test or LAN server whose door certificate comes from the CyxWiz test CA
+(`deploy/server/new-certs.sh`) is trusted by giving the client that CA's
+`ca.crt`. The client then trusts **only** that CA for the server.
+
+- **Engine: Preferences > Servers > Certificate authority (optional)**, under
+  the address, shown for an `https://` address. Type the path or
+  **Browse...**; it applies when you leave the field, and **Clear** goes back
+  to the system's roots. Under it: what it trusts, and the CA's SHA-256
+  fingerprint (hover for the full one) to compare with `new-certs.sh show` on
+  the server. Saved as `servers.ca_file` in `engine_config.json`; env
+  `CYXWIZ_CA_FILE` is used when it is empty.
+- **Server node: Settings > Network**, the same row under the address,
+  saved with **Save changes** as `network.server_ca_file` in
+  `server_config.yaml`.
+- Leave it empty for a server with a public certificate
+  (`https://cloud.cyxwiz.ai`).
+
+A file that is not a certificate is named under the field, and connections
+to the `https://` server fail until it is fixed (the Engine and node logs say
+so at start). The view comes from `cyxwiz-protocol/common/server_ca_view`
+(tested by `test_server_ca_view`).
+
+When a check says **Not reachable**, the Engine log has the reason at
+Debug level (`GET ... failed: ...`, with the certificate problem when there
+is one). The gateway address the Engine puts into a training job keeps its
 scheme, so the node dials it the same way.
 
 ## Fixed along the way
