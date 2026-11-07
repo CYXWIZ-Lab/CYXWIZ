@@ -1,5 +1,9 @@
 #include "optimization_presentation.h"
 
+#include "linear_algebra_presentation.h"
+
+#include <cyxwiz/linear_algebra.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -628,6 +632,64 @@ ProgramAnswer RunProgram(const ProgramRequest& request) {
     answer.sentence = s;
     answer.plot = PlotOf(request, r);
     return answer;
+}
+
+PortfolioRead PortfolioFromTable(const PortfolioChoice& choice, const QueryRunner& run) {
+    PortfolioRead read;
+    if (choice.table.empty()) {
+        read.error = "Pick a table of returns";
+        return read;
+    }
+    if (choice.assets.size() < 2) {
+        read.error = "Tick at least two asset columns";
+        return read;
+    }
+    double target = std::numeric_limits<double>::quiet_NaN();
+    if (!choice.target.empty() && !ReadValue(choice.target, target, read.error)) return read;
+    const linalg::TableMatrix rows = linalg::ReadMatrix({choice.table, choice.assets, linalg::FromTable::Rows}, run);
+    if (!rows.ok()) {
+        read.error = rows.error;
+        return read;
+    }
+    if (rows.m.size() < 2) {
+        read.error = "At least two periods (rows) with every return are needed";
+        return read;
+    }
+    const ColumnSummaryResult summary = LinearAlgebra::ColumnSummary(rows.m);
+    if (!summary.success) {
+        read.error = summary.error_message;
+        return read;
+    }
+    const double n = static_cast<double>(rows.m.size());
+    std::vector<std::vector<double>> covariance = summary.cross;
+    for (auto& row : covariance)
+        for (double& v : row) v /= n - 1.0;
+    const QuadraticProgram qp = Optimization::PortfolioProgram(summary.mean, covariance, target, choice.long_only);
+    ProgramRequest& r = read.request;
+    r.quadratic = true;
+    r.maximize = false;
+    r.variables = choice.assets;
+    r.Q = qp.Q;
+    r.objective = qp.c;
+    for (const auto& row : qp.constraints) r.rows.push_back({row.name, row.coefficients, row.sense, row.rhs});
+    r.bounds = qp.bounds;
+    const std::string left_out = rows.dropped == 0 ? "none left out" : Count(static_cast<long long>(rows.dropped)) + " with a missing value left out";
+    read.note = Count(static_cast<long long>(rows.m.size())) + " periods of " + choice.table + " (" + left_out + "); " +
+                (std::isnan(target) ? "no target: the least risky mix." : "a target of " + Number(target) + " a period.");
+    return read;
+}
+
+GraphHandOff PortfolioHandOff(const PortfolioChoice& choice) {
+    GraphHandOff h;
+    h.label = "Keep as a node: Portfolio weights";
+    h.hint = "A branch reading " + choice.table + ": on every run it finds the weights again, from the Train rows when a "
+             "Data Split marks them. Its output is one row per asset.";
+    h.type = "PortfolioWeights";
+    h.name = "Portfolio weights";
+    std::string assets;
+    for (size_t i = 0; i < choice.assets.size(); ++i) assets += (i ? "," : "") + choice.assets[i];
+    h.parameters = {{"asset_cols", assets}, {"target_return", choice.target}, {"long_only", choice.long_only ? "true" : "false"}};
+    return h;
 }
 
 // ---------------------------------------------------------------------------

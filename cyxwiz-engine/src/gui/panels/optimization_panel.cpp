@@ -3,6 +3,8 @@
 #include "optimization_plots.h"
 
 #include "../../core/file_dialogs.h"
+#include "../../core/linear_algebra_presentation.h"
+#include "../../core/session_query_service.h"
 #include "../data_studio/explore_plots.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
@@ -126,6 +128,7 @@ void OptimizationPanel::SetOp(Op op) {
 void OptimizationPanel::Changed() {
     dirty_ = true;
     message_.clear();
+    graph_message_.clear();
 }
 
 optcalc::ProgramRequest& OptimizationPanel::Program() { return op_ == Op::Quadratic ? quadratic_ : linear_; }
@@ -162,6 +165,12 @@ std::string OptimizationPanel::Key() const {
             break;
         case Op::Linear:
         case Op::Quadratic: {
+            if (op_ == Op::Quadratic && qp_source_ == 1) {
+                k += "table|" + portfolio_.table + "|" + portfolio_.target + (portfolio_.long_only ? "|long" : "|short") + "|" +
+                     std::to_string(refresh_);
+                for (const auto& a : portfolio_.assets) k += "|" + a;
+                break;
+            }
             const auto& p = op_ == Op::Quadratic ? quadratic_ : linear_;
             k += p.maximize ? "max" : "min";
             for (const auto& v : p.variables) k += "|" + v;
@@ -206,6 +215,10 @@ void OptimizationPanel::Render() {
             request.minimize_request.optimizers = optimizers_;
         }
         if (op_ == Op::Linear || op_ == Op::Quadratic) request.program_request = Program();
+        if (op_ == Op::Quadratic && qp_source_ == 1) {
+            request.from_table = true;
+            request.portfolio = portfolio_;
+        }
         optcalc::IntegralRequest integral{line_, a_, b_, static_cast<QuadratureRule>(rule_), n_};
         optcalc::DerivativeRequest derivative{line_, at_, static_cast<DifferenceRule>(difference_), 0.0};
         if (!step_text_.empty()) {
@@ -228,6 +241,16 @@ void OptimizationPanel::Render() {
                 }
                 case Op::Linear:
                 case Op::Quadratic:
+                    if (job.from_table) {
+                        const QueryRunner run = [](const QueryRequest& q) { return SessionQueryService::Instance().RunNow(q); };
+                        const optcalc::PortfolioRead read = optcalc::PortfolioFromTable(job.portfolio, run);
+                        if (!read.ok()) {
+                            job.program.error = read.error;
+                            break;
+                        }
+                        job.program_request = read.request;
+                        job.portfolio_note = read.note;
+                    }
                     job.program = optcalc::RunProgram(job.program_request);
                     if (job.program_request.quadratic && job.program_request.variables.size() == 2 && job.program.plot.drawn) {
                         const auto& plot = job.program.plot;
@@ -432,8 +455,97 @@ void OptimizationPanel::ResizeProgram(int variables) {
     Changed();
 }
 
+void OptimizationPanel::RenderPortfolioInputs() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ui::FieldLabel("Table of returns (one column per asset, one row per period)");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##table", portfolio_.table.empty() ? "Pick a table" : portfolio_.table.c_str())) {
+        tables_ = SessionQueryService::Instance().QueryableNames();
+        if (tables_.empty()) ImGui::TextColored(t.text_dim, "No table yet: load a Data Input, or run a node's result.");
+        for (const auto& name : tables_)
+            if (ImGui::Selectable(name.c_str(), name == portfolio_.table) && name != portfolio_.table) {
+                portfolio_.table = name;
+                portfolio_.assets.clear();
+                Changed();
+            }
+        ImGui::EndCombo();
+    }
+    if (!portfolio_.table.empty() && columns_for_ != portfolio_.table && columns_task_ == 0) {
+        // The number columns, from the table's schema (a background query).
+        columns_for_ = portfolio_.table;
+        table_columns_.clear();
+        picked_.clear();
+        columns_error_.clear();
+        QueryRequest q;
+        q.sql = "SELECT * FROM " + SessionQueryEngine::QuoteIdentifier(portfolio_.table) + " LIMIT 0";
+        q.label = "Optimization and Calculus: " + portfolio_.table;
+        const std::string table = portfolio_.table;
+        columns_task_ = SessionQueryService::Instance().Submit(
+            q,
+            [this, table](const QueryResult& r) {
+                columns_task_ = 0;
+                if (table != portfolio_.table) return;
+                if (!r.ok || !r.table) {
+                    columns_error_ = r.error.empty() ? "Cannot read " + table + "." : r.error;
+                    return;
+                }
+                std::string error;
+                const QueryRunner schema = [&r](const QueryRequest&) { return r; };
+                table_columns_ = linalg::NumberColumns(table, schema, error);
+                picked_.assign(table_columns_.size(), 1);
+                if (table_columns_.size() < 2) columns_error_ = table + " needs at least two number columns (assets).";
+                portfolio_.assets = table_columns_;
+                Changed();
+            },
+            alive_);
+    }
+    if (columns_task_ != 0) ImGui::TextColored(t.text_dim, "Reading the columns...");
+    if (!columns_error_.empty()) Paragraph(columns_error_, &t.warning);
+    if (!table_columns_.empty()) {
+        ui::FieldLabel("Assets");
+        ui::BeginInsetList("##assets", (std::min)(170.0f, ImGui::GetFrameHeightWithSpacing() * (static_cast<float>(table_columns_.size()) + 0.4f)));
+        for (size_t j = 0; j < table_columns_.size(); ++j) {
+            bool on = picked_[j] != 0;
+            ImGui::PushID(static_cast<int>(j));
+            if (ImGui::Checkbox(table_columns_[j].c_str(), &on)) {
+                picked_[j] = on ? 1 : 0;
+                portfolio_.assets.clear();
+                for (size_t c = 0; c < table_columns_.size(); ++c)
+                    if (picked_[c]) portfolio_.assets.push_back(table_columns_[c]);
+                Changed();
+            }
+            ImGui::PopID();
+        }
+        ui::EndInsetList();
+    }
+    ui::FieldLabel("Target return a period");
+    ImGui::SetNextItemWidth(120.0f);
+    if (ImGui::InputTextWithHint("##target", "none", &portfolio_.target)) Changed();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The least mean return the mix must earn a period; empty: the least risky mix");
+    if (ImGui::Checkbox("Long only (no weight below 0)", &portfolio_.long_only)) Changed();
+    if (!portfolio_.table.empty()) {
+        if (ui::LinkButton("Read again")) {
+            ++refresh_;
+            if (!columns_error_.empty() || table_columns_.empty()) columns_for_.clear();
+            Changed();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Read the table again (its data changed)");
+    }
+    Paragraph("minimize \xC2\xBD w'C w (C: the covariance of the returns) with the weights summing to 1 and earning the target.",
+              &t.text_dim);
+}
+
 void OptimizationPanel::RenderProgramInputs() {
     const ui::Tokens& t = ui::CurrentTokens();
+    if (op_ == Op::Quadratic) {
+        static const char* const kSources[] = {"Typed", "From a returns table"};
+        if (ui::SegmentedControl("##qp_source", kSources, 2, &qp_source_)) Changed();
+        ImGui::Spacing();
+        if (qp_source_ == 1) {
+            RenderPortfolioInputs();
+            return;
+        }
+    }
     auto& p = Program();
     ImGui::TextColored(t.text_dim, "Examples");
     for (const auto& e : op_ == Op::Quadratic ? optcalc::QuadraticExamples() : optcalc::LinearExamples()) {
@@ -818,6 +930,17 @@ void OptimizationPanel::RenderProgram(const Job& job) {
     const ImVec4 tone = ToneColour(a.tone);
     ImGui::TextColored(tone, "%s", a.status.c_str());
     Paragraph(a.sentence);
+    if (job.from_table) {
+        Paragraph(job.portfolio_note, &t.text_dim);
+        if (a.result.success) {
+            const optcalc::GraphHandOff hand = optcalc::PortfolioHandOff(job.portfolio);
+            if (ui::PrimaryButton(hand.label.c_str(), static_cast<bool>(add_to_graph_), "No graph to add to")) {
+                graph_message_ = add_to_graph_(job.portfolio.table, hand);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", hand.hint.c_str());
+            if (!graph_message_.empty()) Paragraph(graph_message_, &t.text_dim);
+        }
+    }
     ImGui::Spacing();
     if (!a.variables.empty()) {
         std::vector<std::vector<std::string>> vars = {{"Variable", "Value"}};
@@ -951,11 +1074,7 @@ void OptimizationPanel::RenderActions(const Job& job) {
             message_error_ = !out;
         }
     }
-    if (!message_.empty()) {
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(message_error_ ? t.warning : t.text_dim, "%s", message_.c_str());
-    }
+    if (!message_.empty()) Paragraph(message_, message_error_ ? &t.warning : &t.text_dim);
     ImGui::TextColored(t.text_faint, "Worked out in %.0f ms.", job.milliseconds);
 }
 

@@ -108,6 +108,14 @@ public:
     // most negative eigenvalue).
     static ProgramResult SolveQuadraticProgram(const QuadraticProgram& problem);
 
+    // The least risky mix of assets (Markowitz): minimize 0.5 w' C w with the
+    // weights summing to 1, earning at least `target_return` (NaN: no target,
+    // the minimum-variance mix), and with `long_only` no weight below 0.
+    // `means` and `covariance` are per period, as the returns are.
+    static QuadraticProgram PortfolioProgram(const std::vector<double>& means,
+                                             const std::vector<std::vector<double>>& covariance,
+                                             double target_return, bool long_only);
+
     // ==================== Optimizer paths ====================
 
     // `steps` updates of f's variables from `start` by the training

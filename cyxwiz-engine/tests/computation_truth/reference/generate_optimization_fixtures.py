@@ -27,12 +27,18 @@ paths       torch.optim in float32 (as training runs): the point after every
             checkpoint also holds the path's own sensitivity: how far torch
             moves when the start's y is one float32 ulp higher (RMSprop's path
             is chaotic past step 600: 5e-4 at 800, 9e-3 at 1000).
+portfolio   the Portfolio Weights step: 120 periods of 4 assets' returns
+            (seed 11, mock), the first 90 marked Train; the weights on the means and covariance (n - 1) of the Train rows and of all
+            rows, with and without a target, long only and not: exact, by
+            solving the KKT system of every active set (SLSQP's line search
+            fails on these small variances).
 
 Run with sympy 1.14, numpy 2.3, scipy 1.17, torch 2.10:
   python generate_optimization_fixtures.py
 Writes ../fixtures/optimization_truth.json.
 """
 
+import itertools
 import json
 import os
 
@@ -338,10 +344,77 @@ def path_cases():
     return cases
 
 
+def portfolio_case():
+    rng = np.random.default_rng(11)
+    mean = np.array([0.006, 0.012, 0.008, 0.004])
+    vol = np.array([0.04, 0.09, 0.05, 0.02])
+    corr = np.array([[1.0, 0.3, 0.2, 0.1], [0.3, 1.0, 0.4, 0.0], [0.2, 0.4, 1.0, 0.2], [0.1, 0.0, 0.2, 1.0]])
+    cov = np.outer(vol, vol) * corr
+    returns = rng.multivariate_normal(mean, cov, size=120)
+    names = ["equity", "growth", "credit", "bonds"]
+    partition = [0] * 90 + [1] * 15 + [2] * 15
+
+    def weights(rows, target, long_only):
+        """Exact: every active set of the convex QP (assets held at 0, the
+        target met with equality or not) solved as a KKT system; the feasible
+        solution with the least variance is the optimum."""
+        mu = rows.mean(axis=0)
+        sigma = np.cov(rows, rowvar=False)
+        best = None
+        n = len(mu)
+        for held in itertools.product([False, True], repeat=n) if long_only else [(False,) * n]:
+            free = [i for i in range(n) if not held[i]]
+            if not free:
+                continue
+            for target_active in ([False, True] if target is not None else [False]):
+                a = [np.ones(len(free))]
+                b = [1.0]
+                if target_active:
+                    a.append(mu[free])
+                    b.append(target)
+                a = np.array(a)
+                k = len(free)
+                kkt = np.zeros((k + len(b), k + len(b)))
+                kkt[:k, :k] = sigma[np.ix_(free, free)]
+                kkt[:k, k:] = a.T
+                kkt[k:, :k] = a
+                try:
+                    sol = np.linalg.solve(kkt, np.concatenate([np.zeros(k), b]))
+                except np.linalg.LinAlgError:
+                    continue
+                w = np.zeros(n)
+                w[free] = sol[:k]
+                if long_only and (w < -1e-12).any():
+                    continue
+                if target is not None and mu @ w < target - 1e-12:
+                    continue
+                value = 0.5 * w @ sigma @ w
+                if best is None or value < best[0] - 1e-18:
+                    best = (value, w)
+        w = best[1]
+        share = w * (sigma @ w) / (w @ sigma @ w)
+        return {"weight": w.tolist(), "mean_return": mu.tolist(), "sd": np.sqrt(np.diag(sigma)).tolist(),
+                "risk_share": share.tolist()}
+
+    train = returns[:90]
+    # A target between the Train means' median and their best: reachable,
+    # and binding (above the minimum-variance mix's return).
+    means = train.mean(axis=0)
+    reach = float(np.round(0.5 * (np.median(means) + means.max()), 5))
+    cases = []
+    for target in (None, reach):
+        for long_only in (True, False):
+            cases.append({"target_return": target, "long_only": long_only, "split": True,
+                          **weights(train, target, long_only)})
+    cases.append({"target_return": reach, "long_only": True, "split": False, **weights(returns, reach, True)})
+    return {"assets": names, "returns": returns.tolist(), "partition": partition, "cases": cases,
+            "unreachable": float(train.mean(axis=0).max() + 0.01)}
+
+
 def main():
     fixture = {"expression": expression_cases(), "quad": quad_cases(), "fixed": fixed_cases(),
                "derivative": derivative_cases(), "curvature": curvature_cases(), "lp": lp_cases(),
-               "qp": qp_cases(), "paths": path_cases()}
+               "qp": qp_cases(), "paths": path_cases(), "portfolio": portfolio_case()}
     with open(OUT, "w", encoding="utf-8") as handle:
         json.dump(fixture, handle, indent=1)
         handle.write("\n")

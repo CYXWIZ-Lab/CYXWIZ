@@ -659,7 +659,7 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                                 "Opens the Optimization and Calculus window on Optimizers: the training optimizers' paths on a formula's map."),
                          Action(f, "tools.convexity", "Convexity Analyzer", "Opens the window on Curvature: how a formula curves at a point and over a range."),
                          Action(f, "tools.lp", "Linear Programming (LP)", "Opens the window on Linear: the best c . x under linear constraints, any number of variables."),
-                         Action(f, "tools.qp", "Quadratic Programming (QP)", "Opens the window on Quadratic: the smallest 0.5 x' Q x + c' x under linear constraints."),
+                         Action(f, "tools.qp", "Quadratic Programming (QP)", "Opens the window on Quadratic: the smallest 0.5 x' Q x + c' x under linear constraints, or a portfolio from a table of returns."),
                          Action(f, "tools.differentiation", "Numerical Differentiation", "Opens the window on Derivative: f' and f'' exactly and by differences."),
                          Action(f, "tools.integration", "Numerical Integration", "Opens the window on Integral: adaptive with an error estimate, and the fixed rules.")}));
         i.push_back(Sub("tools.time_series", "Time Series", "A column over time: its parts, its season, its forecast.",

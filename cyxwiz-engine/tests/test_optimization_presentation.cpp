@@ -4,9 +4,15 @@
 // test checks the words, rows and shapes the window shows for them.
 
 #include "core/optimization_presentation.h"
+#include "core/session_query_engine.h"
+
+#include <arrow/api.h>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -198,6 +204,50 @@ void CheckCalculus() {
     Check(Has(RunCurvature(bowl).range_sentence, "no point curves down"), "a convex bowl over the range");
 }
 
+void CheckPortfolioFromTable() {
+    std::ifstream in(CYXWIZ_OPTIMIZATION_FIXTURE);
+    Check(in.good(), "the optimization fixture");
+    const auto p = nlohmann::json::parse(in).at("portfolio");
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    std::vector<std::string> assets;
+    for (size_t a = 0; a < p.at("assets").size(); ++a) {
+        arrow::DoubleBuilder b;
+        for (const auto& row : p.at("returns")) (void)b.Append(row[a].get<double>());
+        std::shared_ptr<arrow::Array> column;
+        (void)b.Finish(&column);
+        assets.push_back(p.at("assets")[a].get<std::string>());
+        fields.push_back(arrow::field(assets.back(), arrow::float64()));
+        arrays.push_back(column);
+    }
+    const auto root = std::filesystem::temp_directory_path() / "cyxwiz_test_optimization_presentation";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    SessionQueryEngine engine(root.string());
+    std::string error;
+    Check(engine.AttachArrow("returns", 1, arrow::Table::Make(arrow::schema(fields), arrays), &error), "attach: " + error);
+    const QueryRunner run = [&](const QueryRequest& q) { return engine.Run(q); };
+    // The every-row case: long only, with a target.
+    const auto& c = p.at("cases").back();
+    char target[32];
+    std::snprintf(target, sizeof target, "%.17g", c.at("target_return").get<double>());
+    PortfolioChoice choice{"returns", assets, target, true};
+    const auto read = PortfolioFromTable(choice, run);
+    Check(read.ok() && Has(read.note, "120 periods of returns (none left out); a target of"), "read the returns: " + read.error + read.note);
+    const auto answer = RunProgram(read.request);
+    Check(answer.ok() && answer.result.success, "the portfolio solves: " + answer.sentence);
+    for (size_t i = 0; i < assets.size(); ++i)
+        Check(std::abs(answer.result.x[i] - c.at("weight")[i].get<double>()) < 1e-7, "weight of " + assets[i]);
+    Check(Has(answer.sentence, "Budget holds exactly"), "the budget row in words: " + answer.sentence);
+    const auto hand = PortfolioHandOff(choice);
+    Check(hand.type == "PortfolioWeights" && hand.parameters.at("asset_cols") == "equity,growth,credit,bonds" &&
+              hand.parameters.at("long_only") == "true" && hand.parameters.at("target_return") == target,
+          "the hand-off carries the choice");
+    Check(PortfolioFromTable({"", assets, "", true}, run).error == "Pick a table of returns", "no table picked");
+    Check(PortfolioFromTable({"returns", {"bonds"}, "", true}, run).error == "Tick at least two asset columns", "one asset refused");
+    Check(Has(PortfolioFromTable({"returns", assets, "lots", true}, run).error, "is not a number"), "a target that is not a number");
+}
+
 }  // namespace
 
 int main() {
@@ -206,6 +256,7 @@ int main() {
     CheckMinimize();
     CheckPrograms();
     CheckCalculus();
+    CheckPortfolioFromTable();
     std::cout << "Optimization presentation test passed: " << checks << " checks\n";
     return 0;
 }

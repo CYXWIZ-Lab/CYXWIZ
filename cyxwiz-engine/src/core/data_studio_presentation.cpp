@@ -74,7 +74,7 @@ bool JobOf(NodeType type, Job& job) {
             job = Job::Publish; return true;
         case NodeType::ConfusionMatrixNode: case NodeType::ROCCurveNode: case NodeType::PRCurveNode:
         case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode:
-        case NodeType::HypothesisTest: case NodeType::TestEvaluationNode:
+        case NodeType::HypothesisTest: case NodeType::TestEvaluationNode: case NodeType::PortfolioWeights:
         case NodeType::LearningCurvesNode: case NodeType::FeatureImportanceNode: case NodeType::CrossValidationNode:
             job = Job::Results; return true;
         default:

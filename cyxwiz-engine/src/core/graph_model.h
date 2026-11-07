@@ -492,13 +492,18 @@ enum class NodeType {
     GradCAMNode,        // Grad-CAM visualization
     SaliencyMapNode,    // Gradient saliency maps
 
-    // ===== Optimization Nodes (Phase 5) =====
-    GradientDescentViz, // Visualize optimization paths
-    ConvexityAnalyzer,  // Analyze function convexity
-    LPSolver,           // Linear programming solver
-    QPSolver,           // Quadratic programming solver
-    NumericalDifferentiation, // Numerical derivatives
-    NumericalIntegration,     // Numerical integration
+    // ===== Retired optimization templates (TOFIX129 D10) =====
+    // Never implemented (no executor); Tools > Optimization and Calculus
+    // minimizes, integrates and differentiates typed formulas and solves
+    // programs, and the Portfolio Weights step (appended below) brings a
+    // program into a graph. The slots stay so the numeric ids of the types
+    // after them do not move; nothing registers or creates these.
+    GradientDescentViz,
+    ConvexityAnalyzer,
+    LPSolver,
+    QPSolver,
+    NumericalDifferentiation,
+    NumericalIntegration,
 
     // ===== Retired text templates (TOFIX129 D8) =====
     // Never implemented (no executor, not addable); Data Studio's Explore >
@@ -641,6 +646,9 @@ enum class NodeType {
     Whitening,          // PCA or ZCA whitening: decorrelated, unit variance
     LinearSolve,        // A x = b from table columns (b from a second table or the same)
     LinearProjection,   // every row times a matrix from a second table
+
+    // ===== Appended optimization step (TOFIX129 D10) =====
+    PortfolioWeights,   // the least risky mix of assets from a returns table (a convex QP)
 
     // Special sentinel value
     Unknown

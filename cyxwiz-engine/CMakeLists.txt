@@ -340,6 +340,7 @@ set(ENGINE_SOURCES
     src/core/node_executors/pca_operator.cpp                 # Tool-to-Node Band 1
     src/core/node_executors/linear_map.cpp
     src/core/node_executors/linear_algebra_operators.cpp
+    src/core/node_executors/portfolio_operator.cpp
     src/core/node_executors/sentiment_analyzer_operator.cpp  # Tool-to-Node Band 1
     src/core/node_executors/clustering_operators.cpp         # Tool-to-Node Band 1
     src/core/node_executors/feature_rows.cpp
@@ -2452,6 +2453,7 @@ add_executable(test_operator_configure_resets
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/linear_map.cpp
     src/core/node_executors/linear_algebra_operators.cpp
+    src/core/node_executors/portfolio_operator.cpp
     src/core/node_executors/time_series_features_operator.cpp
     src/core/node_executors/time_series_split_operator.cpp
     src/core/node_executors/time_series_window_operator.cpp
@@ -2811,6 +2813,7 @@ add_executable(test_pipeline_operator_metadata
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/linear_map.cpp
     src/core/node_executors/linear_algebra_operators.cpp
+    src/core/node_executors/portfolio_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
@@ -3207,6 +3210,7 @@ set(CYXWIZ_PIPELINE_EXECUTOR_SOURCES
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/linear_map.cpp
     src/core/node_executors/linear_algebra_operators.cpp
+    src/core/node_executors/portfolio_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
@@ -3353,6 +3357,22 @@ if(WIN32)
 endif()
 set_target_properties(test_fit_on_train_rows PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME fit_on_train_rows COMMAND test_fit_on_train_rows)
+
+# The Portfolio Weights step (TOFIX129 D10) against exact KKT solutions.
+add_executable(test_portfolio_weights
+    tests/test_portfolio_weights.cpp
+    ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES}
+)
+target_include_directories(test_portfolio_weights PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_portfolio_weights PRIVATE cyxwiz-training-core cyxwiz-backend Arrow::arrow_shared
+    Parquet::parquet_shared duckdb nlohmann_json::nlohmann_json ${OpenCV_LIBS} spdlog::spdlog fmt::fmt)
+target_compile_definitions(test_portfolio_weights PRIVATE
+    CYXWIZ_OPTIMIZATION_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/optimization_truth.json")
+if(WIN32)
+    target_compile_definitions(test_portfolio_weights PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_portfolio_weights PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME portfolio_weights COMMAND test_portfolio_weights)
 
 # How long the linear-algebra steps take on large tables (TOFIX129 D9): not a check, it prints.
 add_executable(bench_linear_steps tests/bench_linear_steps.cpp ${CYXWIZ_PIPELINE_EXECUTOR_SOURCES})
@@ -4062,6 +4082,7 @@ add_executable(test_graph_training_sequence_preflight
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/linear_map.cpp
     src/core/node_executors/linear_algebra_operators.cpp
+    src/core/node_executors/portfolio_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp
@@ -7630,7 +7651,7 @@ set_target_properties(test_large_text_file PROPERTIES
 foreach(data_convert_target IN ITEMS cyxwiz-engine test_data_convert_service
         test_excel_table_adapter test_data_convert_reload
         test_data_convert_pipeline_input test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins
-        test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows bench_linear_steps cyxwiz-bench-out-of-core test_pipeline_run_release
+        test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_portfolio_weights bench_linear_steps cyxwiz-bench-out-of-core test_pipeline_run_release
         test_text_arrow_materializer test_text_arrow_training_launch test_text_gui_training_launch)
     cyxwiz_target_data_convert(${data_convert_target})
 endforeach()
@@ -7687,7 +7708,7 @@ target_compile_features(test_archive_text_source PRIVATE cxx_std_20)
 target_include_directories(test_archive_text_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_archive_text_source PRIVATE Arrow::arrow_shared LibArchive::LibArchive cyxwiz-backend)
 foreach(archive_input_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows bench_linear_steps
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_portfolio_weights bench_linear_steps
         cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
         test_text_gui_training_launch)
     target_sources(${archive_input_target} PRIVATE src/core/archive_text_source.cpp)
@@ -7697,7 +7718,7 @@ set_target_properties(test_archive_text_source PROPERTIES RUNTIME_OUTPUT_DIRECTO
 
 # Optional HTML provider is shared by all executables owning pipeline execution.
 foreach(html_target IN ITEMS cyxwiz-engine test_data_convert_pipeline_input test_pipeline_run_release
-        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows bench_linear_steps
+        test_pipeline_executor_operator_routing test_plugin_data_formats_input test_explore_plugins test_pipeline_operator_materializer_parity test_column_transform_operators test_fit_on_train_rows test_portfolio_weights bench_linear_steps
         cyxwiz-bench-out-of-core test_text_arrow_materializer test_text_arrow_training_launch
         test_text_gui_training_launch)
     cyxwiz_target_html_parser(${html_target})
@@ -7876,9 +7897,16 @@ set_target_properties(test_linear_algebra_presentation PROPERTIES RUNTIME_OUTPUT
 add_test(NAME LinearAlgebraPresentation COMMAND test_linear_algebra_presentation)
 
 # Tools > Optimization and Calculus: the window's model (TOFIX129 D10).
-add_executable(test_optimization_presentation tests/test_optimization_presentation.cpp src/core/optimization_presentation.cpp)
+add_executable(test_optimization_presentation tests/test_optimization_presentation.cpp src/core/optimization_presentation.cpp
+    src/core/linear_algebra_presentation.cpp src/core/explore_read.cpp src/core/explore_presentation.cpp
+    src/core/data_explore.cpp src/core/data_analyzer.cpp src/data/data_table.cpp src/core/csv_records.cpp
+    src/core/dataset_profiler.cpp src/core/dataset_contract.cpp src/core/session_query_engine.cpp
+    src/core/duckdb_connector.cpp src/core/guided_sql.cpp src/core/sql_step_presentation.cpp)
 target_include_directories(test_optimization_presentation PRIVATE src)
-target_link_libraries(test_optimization_presentation PRIVATE cyxwiz-backend)
+target_link_libraries(test_optimization_presentation PRIVATE cyxwiz-backend Arrow::arrow_shared Parquet::parquet_shared duckdb
+    spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
+target_compile_definitions(test_optimization_presentation PRIVATE
+    CYXWIZ_OPTIMIZATION_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/optimization_truth.json")
 if(MSVC)
     target_compile_definitions(test_optimization_presentation PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
@@ -8210,6 +8238,7 @@ add_executable(test_engine_node_parity
     src/core/node_executors/pca_operator.cpp
     src/core/node_executors/linear_map.cpp
     src/core/node_executors/linear_algebra_operators.cpp
+    src/core/node_executors/portfolio_operator.cpp
     src/core/node_executors/preprocessing_operators.cpp
     src/core/node_executors/regression_operators.cpp
     src/core/node_executors/hypothesis_test_operator.cpp

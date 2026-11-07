@@ -7,11 +7,14 @@
 // a sentence in words, its figures, the rows of its tables and the shapes
 // its plots draw, or the reason it cannot run.
 
+#include "explore_read.h"
+
 #include <cyxwiz/calculus.h>
 #include <cyxwiz/expression.h>
 #include <cyxwiz/optimization.h>
 
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -191,6 +194,35 @@ struct ProgramAnswer {
     ProgramPlot plot;
 };
 ProgramAnswer RunProgram(const ProgramRequest& request);
+
+// A portfolio from a table of returns (one column per asset, one row per
+// period): the rows read (a row with a missing value left out), their means
+// and covariance (n - 1, on the device), and the quadratic program
+// Optimization::PortfolioProgram poses. `target` as typed (empty: none).
+struct PortfolioChoice {
+    std::string table;
+    std::vector<std::string> assets;
+    std::string target;
+    bool long_only = true;
+};
+struct PortfolioRead {
+    std::string error;
+    bool ok() const { return error.empty(); }
+    ProgramRequest request;
+    std::string note;           // "120 periods of returns (none left out)."
+};
+PortfolioRead PortfolioFromTable(const PortfolioChoice& choice, const QueryRunner& run);
+
+// The same as a node of the graph, run on every run and fitted on the Train
+// rows: a branch reading the table (Keep as a node: Portfolio weights).
+struct GraphHandOff {
+    std::string label;          // the button
+    std::string hint;           // what the node does
+    std::string type;           // its import name
+    std::string name;
+    std::map<std::string, std::string> parameters;
+};
+GraphHandOff PortfolioHandOff(const PortfolioChoice& choice);
 
 // ---------------------------------------------------------------------------
 // Calculus

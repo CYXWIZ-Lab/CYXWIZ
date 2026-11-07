@@ -6,11 +6,14 @@
 // Programs: linear and quadratic programs of any size (two variables drawn).
 // Calculus: integral, derivative and curvature of a typed formula. Each
 // answer is worked out in the background as the inputs change (Stop ends
-// it): a sentence, its tables and plots; Copy and Export CSV.
+// it): a sentence, its tables and plots; Copy and Export CSV. A portfolio
+// read from a table of returns can be kept as a node of the graph.
 
 #include "../../core/optimization_presentation.h"
 #include "../data_studio/explore_tab.h"
 
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,6 +30,9 @@ public:
     void SetVisible(bool v) { visible_ = v; }
     // Opens the window on the operation `id` ("optimizers", "linear", ...).
     void Open(const std::string& id);
+    // Keep as a node: (the table it reads, the node) -> what happened.
+    using AddToGraph = std::function<std::string(const std::string&, const optcalc::GraphHandOff&)>;
+    void SetAddToGraph(AddToGraph add) { add_to_graph_ = std::move(add); }
 
 private:
     struct Job {
@@ -36,6 +42,9 @@ private:
         optcalc::SurfaceMap map;                 // Minimize, Curvature, a QP of 2 variables
         optcalc::ProgramRequest program_request;
         optcalc::ProgramAnswer program;
+        bool from_table = false;                 // a portfolio read from a returns table
+        optcalc::PortfolioChoice portfolio;
+        std::string portfolio_note;
         optcalc::IntegralAnswer integral;
         optcalc::DerivativeAnswer derivative;
         optcalc::CurvatureAnswer curvature;
@@ -48,6 +57,7 @@ private:
     void RenderInputs();
     void RenderMinimizeInputs();
     void RenderProgramInputs();
+    void RenderPortfolioInputs();
     void RenderLineInputs();
     void RenderCurvatureInputs();
     void RenderAnswer();
@@ -88,6 +98,17 @@ private:
     bool paste_open_ = false;
     std::string paste_;
     std::string paste_error_;
+    int qp_source_ = 0;                          // 0 typed, 1 a returns table
+    optcalc::PortfolioChoice portfolio_;
+    std::vector<std::string> tables_;            // the session's tables, read when the list opens
+    std::vector<std::string> table_columns_;     // the chosen table's number columns
+    std::vector<char> picked_;
+    std::string columns_for_, columns_error_;
+    uint64_t columns_task_ = 0;
+    int refresh_ = 0;                            // Read again
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);
+    AddToGraph add_to_graph_;
+    std::string graph_message_;                  // what Keep as a node did
 
     // Integral and Derivative: a formula of x.
     std::string line_ = "sin(x)";

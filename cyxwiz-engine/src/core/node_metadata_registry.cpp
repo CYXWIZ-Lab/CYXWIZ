@@ -5131,53 +5131,16 @@ void NodeMetadataRegistry::InitializeVisualizationNodes() {
 // Optimization Nodes (Tool-to-Node Migration)
 // =============================================================================
 void NodeMetadataRegistry::InitializeOptimizationNodes() {
-    RegisterNode({NodeType::GradientDescentViz, NodeCategory::Visualization, "GD Visualizer", ICON_FA_CHART_LINE,
-        {"gradient", "descent", "optimizer", "visualize", "adam", "sgd"}, 0, false,
-        "Gradient Descent Visualizer", "", "",
-        {{"Function", PinType::Dataset, true, "Function"}},
-        {{"Path", PinType::Dataset, false, "Path"}},
-        {{"optimizer", "dropdown", "sgd", "Optimizer", {"sgd", "momentum", "adam", "rmsprop"}, ""}},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::ConvexityAnalyzer, NodeCategory::Analytics, "Convexity Analyzer", ICON_FA_MOUNTAIN,
-        {"convex", "hessian", "eigenvalue", "analysis"}, 0, false,
-        "Analyze Function Convexity", "", "",
-        {{"Function", PinType::Dataset, true, "Function"}},
-        {{"Analysis", PinType::Dataset, false, "Analysis"}},
-        {},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::LPSolver, NodeCategory::Analytics, "LP Solver", ICON_FA_CHART_PIE,
-        {"linear", "programming", "optimization", "simplex"}, 0, false,
-        "Linear Programming Solver", "", "",
-        {{"Objective", PinType::Dataset, true, "Objective"}, {"Constraints", PinType::Dataset, true, "Constraints"}},
-        {{"Solution", PinType::Dataset, false, "Solution"}},
-        {},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::QPSolver, NodeCategory::Analytics, "QP Solver", ICON_FA_SQUARE_POLL_VERTICAL,
-        {"quadratic", "programming", "optimization"}, 0, false,
-        "Quadratic Programming Solver", "", "",
-        {{"Objective", PinType::Dataset, true, "Objective"}, {"Constraints", PinType::Dataset, true, "Constraints"}},
-        {{"Solution", PinType::Dataset, false, "Solution"}},
-        {},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::NumericalDifferentiation, NodeCategory::Analytics, "Differentiation", ICON_FA_SUPERSCRIPT,
-        {"differentiation", "derivative", "gradient", "numerical"}, 0, false,
-        "Numerical Differentiation", "", "",
-        {{"Data", PinType::Dataset, true, "Data"}},
-        {{"Derivative", PinType::Dataset, false, "Derivative"}},
-        {{"method", "dropdown", "central", "Method", {"forward", "backward", "central"}, ""}},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::NumericalIntegration, NodeCategory::Analytics, "Integration", ICON_FA_CHART_AREA,
-        {"integration", "integral", "trapezoid", "simpson", "numerical"}, 0, false,
-        "Numerical Integration", "", "",
-        {{"Data", PinType::Dataset, true, "Data"}},
-        {{"Integral", PinType::Dataset, false, "Integral"}},
-        {{"method", "dropdown", "trapezoid", "Method", {"trapezoid", "simpson", "romberg", "gaussian"}, ""}},
-        NodeImplementationStatus::Template, 0});
+    RegisterNode({NodeType::PortfolioWeights, NodeCategory::Analytics, "Portfolio Weights", ICON_FA_SQUARE_ROOT_VARIABLE,
+        {"portfolio", "markowitz", "weights", "allocation", "risk", "returns", "quadratic", "qp", "optimization"}, 0, false,
+        "The least risky mix of assets from a table of their returns",
+        "One column per asset, one row per period (returns). The means and the covariance come from the Train rows when a Data Split marks them, else every row; the weights minimize the variance of the mix with the weights summing to 1, earning at least Target return a period (empty: the minimum-variance mix), with no weight below 0 when Long only (a convex quadratic program, solved by HiGHS). Output: one row per asset: asset, weight, mean_return, sd, risk_share (its share of the mix's variance). Tools > Optimization and Calculus > Quadratic shows the same with its sentence.", "",
+        {{"Data", PinType::Dataset, true, "Returns: one column per asset, one row per period"}},
+        {{"Weights", PinType::Dataset, true, "One row per asset: asset, weight, mean_return, sd, risk_share"}},
+        {{"asset_cols", "string", "", "Comma-separated asset columns; empty: every number column", {}, "", "Asset columns", "Columns"},
+         {"target_return", "string", "", "The least mean return a period the mix must earn; empty: none (the minimum-variance mix)", {}, "", "Target return"},
+         {"long_only", "bool", "true", "No weight below 0 (no short positions)", {}, "", "Long only"}},
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

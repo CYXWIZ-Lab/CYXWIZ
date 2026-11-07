@@ -759,6 +759,10 @@ MainWindow::MainWindow()
     linear_algebra_panel_->SetAddToGraph([this](const std::string& a, const std::string& b, const cyxwiz::linalg::HandOff& h) {
         return data_studio_panel_->AddNodeReading(a, h.type, h.name, h.parameters, h.step, b);
     });
+    // Optimization and Calculus: a portfolio from a returns table, kept as a node (a branch).
+    optimization_panel_->SetAddToGraph([this](const std::string& table, const cyxwiz::optcalc::GraphHandOff& h) {
+        return data_studio_panel_->AddNodeReading(table, h.type, h.name, h.parameters, false, "");
+    });
     data_studio_panel_->SetOpenNodeEditorCallback([this]() {
         if (node_editor_) {
             node_editor_->Raise();

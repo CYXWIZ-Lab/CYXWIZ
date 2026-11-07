@@ -159,6 +159,19 @@ ProgramResult Optimization::SolveLinearProgram(const LinearProgram& problem) {
     }
 }
 
+QuadraticProgram Optimization::PortfolioProgram(const std::vector<double>& means,
+                                                const std::vector<std::vector<double>>& covariance,
+                                                double target_return, bool long_only) {
+    QuadraticProgram p;
+    p.Q = covariance;
+    p.c.assign(means.size(), 0.0);
+    p.constraints.push_back({"Budget", std::vector<double>(means.size(), 1.0), ConstraintSense::Equal, 1.0});
+    if (!std::isnan(target_return))
+        p.constraints.push_back({"Return", means, ConstraintSense::GreaterEqual, target_return});
+    p.bounds.assign(means.size(), long_only ? VariableBound{0.0, kHighsInf} : VariableBound{-kHighsInf, kHighsInf});
+    return p;
+}
+
 ProgramResult Optimization::SolveQuadraticProgram(const QuadraticProgram& problem) {
     ProgramResult r;
     const size_t n = problem.c.size();
