@@ -108,6 +108,10 @@ ProgramResult Read(Highs& highs, HighsModelStatus status, const std::vector<Line
                 ? "The objective falls without limit: no constraint stops some direction"
                 : "The objective grows without limit: no constraint stops some direction";
             return r;
+        case HighsModelStatus::kIterationLimit:
+            r.status = ProgramStatus::Failed;
+            r.error_message = "The solver did not settle within " + std::to_string(r.iterations) + " steps";
+            return r;
         default:
             r.status = ProgramStatus::Failed;
             r.error_message = "The solver stopped: " + highs.modelStatusToString(status);
@@ -196,10 +200,23 @@ ProgramResult Optimization::SolveQuadraticProgram(const QuadraticProgram& proble
         return r;
     }
 
+    // HiGHS's tolerances are absolute: an objective of entries near 1e-4 (a
+    // covariance of returns) never meets them and its QP solver runs without
+    // end. The objective is solved scaled to entries of size 1 (the minimizer
+    // is the same), its value and the row duals scaled back.
+    double largest = 0.0;
+    for (size_t i = 0; i < n; ++i) {
+        largest = std::max(largest, std::abs(problem.c[i]));
+        for (size_t j = 0; j < n; ++j) largest = std::max(largest, std::abs(problem.Q[i][j]));
+    }
+    const double scale = largest > 0.0 ? 1.0 / largest : 1.0;
+    std::vector<double> c = problem.c;
+    for (double& v : c) v *= scale;
+
     try {
         Highs highs;
         HighsModel model;
-        model.lp_ = BuildLp(problem.c, false, problem.constraints, problem.bounds, -kHighsInf);
+        model.lp_ = BuildLp(c, false, problem.constraints, problem.bounds, -kHighsInf);
         HighsHessian& h = model.hessian_;
         h.dim_ = static_cast<HighsInt>(n);
         h.format_ = HessianFormat::kTriangular;  // the lower triangle, column by column
@@ -208,7 +225,7 @@ ProgramResult Optimization::SolveQuadraticProgram(const QuadraticProgram& proble
             for (size_t i = j; i < n; ++i) {
                 if (problem.Q[i][j] == 0.0) continue;
                 h.index_.push_back(static_cast<HighsInt>(i));
-                h.value_.push_back(problem.Q[i][j]);
+                h.value_.push_back(problem.Q[i][j] * scale);
             }
             h.start_.push_back(static_cast<HighsInt>(h.index_.size()));
         }
@@ -219,8 +236,13 @@ ProgramResult Optimization::SolveQuadraticProgram(const QuadraticProgram& proble
         highs.setOptionValue("qp_regularization_value", 1e-12);
         for (const char* option : {"primal_feasibility_tolerance", "dual_feasibility_tolerance", "optimality_tolerance"})
             highs.setOptionValue(option, 1e-10);
+        // A guard: an active-set QP of this size settles in far fewer steps.
+        highs.setOptionValue("qp_iteration_limit", static_cast<HighsInt>(std::max<size_t>(10000, 100 * (n + problem.constraints.size()))));
         const HighsModelStatus status = Run(highs, model);
-        return Read(highs, status, problem.constraints, false, true);
+        ProgramResult solved = Read(highs, status, problem.constraints, false, true);
+        solved.objective /= scale;
+        for (double& price : solved.shadow_prices) price /= scale;
+        return solved;
     } catch (const std::exception& e) {
         r.error_message = std::string("The solver failed: ") + e.what();
         return r;
