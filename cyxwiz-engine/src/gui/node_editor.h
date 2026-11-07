@@ -84,13 +84,6 @@ struct GraphSnapshot {
     int next_link_id;
 };
 
-// Clipboard data for copy/paste
-struct ClipboardData {
-    std::vector<MLNode> nodes;
-    std::vector<NodeLink> links;  // Internal links only
-    bool valid = false;
-};
-
 // Supported code generation frameworks
 enum class CodeFramework {
     PyTorch,
@@ -221,6 +214,17 @@ struct CanvasFrame {
         , position(0, 0)
         , size(300, 200)
         , color(0.3f, 0.5f, 0.7f, 0.8f) {}  // Default blue
+};
+
+// Clipboard data for copy/paste: the nodes, the links between them, where
+// they sat (pasted with the same layout) and, for a frame's Copy / Cut, the
+// frame around them.
+struct ClipboardData {
+    std::vector<MLNode> nodes;
+    std::vector<NodeLink> links;  // Internal links only
+    std::map<int, ImVec2> positions;  // grid positions by node id
+    std::optional<CanvasFrame> frame;
+    bool valid = false;
 };
 
 // Validation warning severity levels
@@ -816,6 +820,11 @@ private:
     void ConfigureNode(int node_id);
     void ShowSingleNodeContextMenu();  // Node-specific context menu
     void ShowNodeDescriptionEditPopup();  // KNIME-style node description editor
+    // Names a node or a canvas group (the node menu's Rename..., a group
+    // header's double-click or Rename...).
+    void ShowRenamePopup();
+    // Why Generate or Export made no code (cleared when closed).
+    void ShowCodegenErrorPopup();
 
     // Helper functions
     unsigned int GetNodeColor(NodeType type);
@@ -859,7 +868,6 @@ private:
                        const std::string& source_description);
     void ShowSaveDialog();
     void ShowLoadDialog();
-    void ExportCodeToFile();
     void ShowExportDialog();
 
     // Code generation
@@ -895,6 +903,13 @@ private:
     void CopySelection();
     void CutSelection();
     void PasteClipboard();
+    // These nodes (and the links between them) to the clipboard; false when
+    // they cannot be copied (a subgraph).
+    bool CopyNodes(const std::vector<int>& node_ids);
+    // A frame with the nodes inside it; Cut also removes them.
+    void CopyFrame(int frame_id);
+    void CutFrame(int frame_id);
+    std::vector<int> NodesInsideFrame(const CanvasFrame& frame) const;
     void DuplicateSelection();
 
     // Helper for finding empty position
@@ -913,7 +928,6 @@ private:
     void ShowSearchBar();
     void UpdateSearchResults();
     void NavigateToMatch(int direction);  // +1 = next, -1 = previous
-    void HighlightMatchingNodes();
 
     // Node add search (top-right search box for quick node creation)
     void ShowNodeAddSearch();
@@ -937,6 +951,10 @@ private:
     // Frame management
     void AddFrameAt(const ImVec2& canvas_position);
     void DeleteFrame(int frame_id);
+    // The mouse is over a node (ImNodes' hover at the end of the previous
+    // frame): frames and group headers drawn under the nodes leave its
+    // clicks to the node.
+    bool MouseOverNode() const { return node_hovered_last_frame_; }
     const std::vector<CanvasFrame>& GetFrames() const { return frames_; }
 
     // Annotation rendering and interaction
@@ -1266,10 +1284,17 @@ private:
     std::vector<NodeGroup> groups_;
     int next_group_id_ = 1;
 
-    // Create group dialog state
-    bool show_create_group_dialog_ = false;
-    char create_group_name_[256] = "";
     float create_group_color_[4] = {0.2f, 0.5f, 0.8f, 0.3f};
+    bool group_right_clicked_ = false;  // Prevents canvas menu when a group header is right-clicked
+    bool node_hovered_last_frame_ = false;
+
+    // Rename popup: a node or a group, by id
+    enum class RenameTarget { None, Node, Group };
+    RenameTarget rename_target_ = RenameTarget::None;
+    int rename_id_ = -1;
+    char rename_buffer_[256] = "";
+    std::string codegen_error_;
+    void BeginRename(RenameTarget target, int id, const std::string& current);
 
     // Canvas annotations (KNIME-style sticky notes)
     std::vector<CanvasAnnotation> annotations_;

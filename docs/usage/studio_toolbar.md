@@ -308,6 +308,13 @@ says how to get one.
   (as they were when the run started). The kind adds what the tensors show:
   the kernel ("Conv2D 3 × 3"), a stride from the input and output sizes
   (", stride 2") and a Dense layer's parameters ("Dense, 257 parameters").
+  To get headings, group the nodes on the canvas and name the groups:
+  - select the nodes and press **Ctrl+G** (or right-click the canvas >
+    **Create Group**);
+  - double-click the group's name band to rename it ("Stem", "Stage 1",
+    "Head").
+  The next run shows the names. Layers in no group are listed without a
+  heading. Details: [Groups, frames and names on the canvas](canvas_groups_frames.md).
 - The **views** follow the layer's tensors, not its kind, so every layer gets
   the views its data supports:
   - **Feature maps** (an output of height × width × channels): 16 channels for

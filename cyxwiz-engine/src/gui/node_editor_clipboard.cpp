@@ -5,6 +5,7 @@
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <set>
 
@@ -267,26 +268,34 @@ void NodeEditor::CopySelection() {
 
     std::vector<int> selected_ids(num_selected);
     ImNodes::GetSelectedNodes(selected_ids.data());
+    CopyNodes(selected_ids);
+}
 
+bool NodeEditor::CopyNodes(const std::vector<int>& selected_ids) {
+    clipboard_.valid = false;
     for (int id : selected_ids) {
         if (IsSubgraphNode(id) || IsSubgraphMember(id)) {
             spdlog::warn("Subgraph copy/cut/duplicate is not supported yet; save and load the complete graph instead.");
-            return;
+            return false;
         }
     }
 
     // Build set for quick lookup
     std::set<int> selected_set(selected_ids.begin(), selected_ids.end());
 
-    // Copy selected nodes
+    // Copy the nodes and where they sit
     clipboard_.nodes.clear();
     clipboard_.links.clear();
+    clipboard_.positions.clear();
+    clipboard_.frame.reset();
 
     for (int node_id : selected_ids) {
         auto it = std::find_if(nodes_.begin(), nodes_.end(),
             [node_id](const MLNode& node) { return node.id == node_id; });
         if (it != nodes_.end()) {
             clipboard_.nodes.push_back(*it);
+            const auto pos = cached_node_positions_.find(node_id);
+            if (pos != cached_node_positions_.end()) clipboard_.positions[node_id] = pos->second;
         }
     }
 
@@ -300,6 +309,38 @@ void NodeEditor::CopySelection() {
     clipboard_.valid = true;
     spdlog::info("Copied {} nodes and {} internal links to clipboard",
                  clipboard_.nodes.size(), clipboard_.links.size());
+    return true;
+}
+
+std::vector<int> NodeEditor::NodesInsideFrame(const CanvasFrame& frame) const {
+    std::vector<int> inside;
+    for (const auto& node : nodes_) {
+        const auto pos = cached_node_positions_.find(node.id);
+        if (pos == cached_node_positions_.end()) continue;
+        if (pos->second.x >= frame.position.x && pos->second.x <= frame.position.x + frame.size.x &&
+            pos->second.y >= frame.position.y && pos->second.y <= frame.position.y + frame.size.y)
+            inside.push_back(node.id);
+    }
+    return inside;
+}
+
+void NodeEditor::CopyFrame(int frame_id) {
+    const auto frame = std::find_if(frames_.begin(), frames_.end(),
+                                    [frame_id](const CanvasFrame& f) { return f.id == frame_id; });
+    if (frame == frames_.end()) return;
+    if (!CopyNodes(NodesInsideFrame(*frame))) return;
+    clipboard_.frame = *frame;
+    clipboard_.frame->is_selected = false;
+    spdlog::info("Copied frame '{}' with {} nodes", frame->title, clipboard_.nodes.size());
+}
+
+void NodeEditor::CutFrame(int frame_id) {
+    CopyFrame(frame_id);
+    if (!clipboard_.valid || !clipboard_.frame) return;
+    SaveUndoState();
+    for (const auto& node : clipboard_.nodes) DeleteNode(node.id);
+    DeleteFrame(frame_id);
+    ClearSelection();
 }
 
 void NodeEditor::CutSelection() {
@@ -327,7 +368,7 @@ void NodeEditor::CutSelection() {
 }
 
 void NodeEditor::PasteClipboard() {
-    if (!clipboard_.valid || clipboard_.nodes.empty()) {
+    if (!clipboard_.valid || (clipboard_.nodes.empty() && !clipboard_.frame)) {
         spdlog::debug("Nothing to paste");
         return;
     }
@@ -341,6 +382,26 @@ void NodeEditor::PasteClipboard() {
 
     // Clear selection before pasting
     ImNodes::ClearNodeSelection();
+
+    // The copied layout's top-left (the frame's, when one was copied) lands
+    // at the paste offset; everything keeps its place relative to it.
+    ImVec2 origin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+    for (const auto& [id, pos] : clipboard_.positions) {
+        origin.x = std::min(origin.x, pos.x);
+        origin.y = std::min(origin.y, pos.y);
+    }
+    if (clipboard_.frame) {
+        origin.x = std::min(origin.x, clipboard_.frame->position.x);
+        origin.y = std::min(origin.y, clipboard_.frame->position.y);
+    }
+    if (origin.x == std::numeric_limits<float>::max()) origin = ImVec2(0.0f, 0.0f);
+    if (clipboard_.frame) {
+        CanvasFrame frame = *clipboard_.frame;
+        frame.id = next_frame_id_++;
+        frame.position = ImVec2(paste_offset_.x + frame.position.x - origin.x,
+                                paste_offset_.y + frame.position.y - origin.y);
+        frames_.push_back(frame);
+    }
 
     // Create new nodes with new IDs
     for (const auto& old_node : clipboard_.nodes) {
@@ -363,11 +424,10 @@ void NodeEditor::PasteClipboard() {
         node_id_map[old_id] = new_node.id;
         nodes_.push_back(new_node);
 
-        // For pasted nodes, we need to set position after they're added
-        // ImNodes requires the node to exist first, so we'll set it in the next frame
-        // For now, use a simple offset from screen center
-        const ImVec2 new_pos(paste_offset_.x + nodes_.size() * 10.0f,
-                             paste_offset_.y + nodes_.size() * 10.0f);
+        const auto copied_at = clipboard_.positions.find(old_id);
+        const ImVec2 new_pos = copied_at != clipboard_.positions.end()
+            ? ImVec2(paste_offset_.x + copied_at->second.x - origin.x, paste_offset_.y + copied_at->second.y - origin.y)
+            : ImVec2(paste_offset_.x + nodes_.size() * 10.0f, paste_offset_.y + nodes_.size() * 10.0f);
 
         ImNodes::SetNodeGridSpacePos(new_node.id, new_pos);
         ImNodes::SelectNode(new_node.id);

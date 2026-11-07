@@ -448,6 +448,7 @@ void NodeEditor::Render() {
         int hovered_node_id = -1;
         const bool is_node_hovered =
             ImNodes::IsNodeHovered(&hovered_node_id);
+        node_hovered_last_frame_ = is_node_hovered;
 
         // Pin hover tooltip for all nodes (after EndNodeEditor)
         int hovered_pin_id = -1;
@@ -537,7 +538,7 @@ void NodeEditor::Render() {
         // === Handle right-click context menu AFTER EndNodeEditor ===
         // IsNodeHovered() only works after EndNodeEditor() is called
         // Skip if right-click was on a frame (frame menu already shown)
-        if (right_click_detected && !frame_right_clicked_) {
+        if (right_click_detected && !frame_right_clicked_ && !group_right_clicked_) {
             if (is_node_hovered && hovered_node_id >= 0) {
                 // Right-click on node - show node-specific menu
                 right_clicked_node_id_ = hovered_node_id;
@@ -562,6 +563,8 @@ void NodeEditor::Render() {
 
         // Node description edit popup
         ShowNodeDescriptionEditPopup();
+        ShowRenamePopup();
+        ShowCodegenErrorPopup();
 
         // === Handle drag-drop from Node Browser ===
         // Check if a NODE_TYPE payload is being dropped on the canvas
@@ -3118,12 +3121,6 @@ void NodeEditor::NavigateToMatch(int direction) {
                   node_id);
 }
 
-void NodeEditor::HighlightMatchingNodes() {
-    // This function can be called from RenderNodes to add visual highlighting
-    // For now, selection highlighting is handled by ImNodes automatically
-    // TODO: Add custom overlay drawing for matching but not selected nodes
-}
-
 // ===== Alignment and Distribution Tools =====
 
 void NodeEditor::AlignSelectedNodes(AlignmentType type) {
@@ -3653,6 +3650,9 @@ void NodeEditor::RenderAnnotationEditPopup() {
 
 void NodeEditor::RenderGroups() {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    group_right_clicked_ = false;
+    int deleted_group = -1;
+    const bool over_node = MouseOverNode();
 
     for (auto& group : groups_) {
         if (group.node_ids.empty()) continue;
@@ -3712,7 +3712,28 @@ void NodeEditor::RenderGroups() {
         draw_list->AddText(label_pos,
             ui::ToU32(ui::WithAlpha(ui::ReadableOn(ui::CurrentTokens(), group.color), 220.0f / 255.0f)),
             group.name.c_str());
+
+        // The name band: double-click renames, right-click opens the group's menu.
+        const float band = ImGui::GetTextLineHeight() + 8.0f;
+        ImGui::SetCursorScreenPos(screen_min);
+        ImGui::PushID(group.id);
+        ImGui::InvisibleButton("##group_header", ImVec2(std::max(1.0f, screen_max.x - screen_min.x), band));
+        if (ImGui::IsItemHovered() && !over_node) {
+            ImGui::SetTooltip("%s \xC2\xB7 double-click to rename", group.name.c_str());
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) BeginRename(RenameTarget::Group, group.id, group.name);
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && !over_node) {
+            group_right_clicked_ = true;
+            ImGui::OpenPopup("GroupMenu");
+        }
+        if (ImGui::BeginPopup("GroupMenu")) {
+            if (ImGui::MenuItem(ICON_FA_PEN " Rename...")) BeginRename(RenameTarget::Group, group.id, group.name);
+            if (ImGui::MenuItem(ICON_FA_OBJECT_UNGROUP " Ungroup")) deleted_group = group.id;
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
     }
+    if (deleted_group >= 0) DeleteGroup(deleted_group);
 }
 
 // ===== Canvas Frames (Visual Organization Boxes) =====
@@ -3723,6 +3744,7 @@ void NodeEditor::RenderFrames() {
 
     // Reset frame right-click flag each frame
     frame_right_clicked_ = false;
+    const bool over_node = MouseOverNode();
 
     const float HEADER_HEIGHT = 28.0f * zoom_;
     const float CORNER_RADIUS = 8.0f * zoom_;
@@ -3804,9 +3826,10 @@ void NodeEditor::RenderFrames() {
         std::string header_id = "##frame_header_" + std::to_string(frame.id);
         ImGui::InvisibleButton(header_id.c_str(), ImVec2(screen_max.x - screen_min.x, HEADER_HEIGHT));
 
-        bool header_hovered = ImGui::IsItemHovered();
-        bool header_clicked = ImGui::IsItemClicked(0);
-        bool header_right_clicked = ImGui::IsItemClicked(1);
+        // A node over the frame keeps its own clicks and menu.
+        bool header_hovered = ImGui::IsItemHovered() && !over_node;
+        bool header_clicked = ImGui::IsItemClicked(0) && !over_node;
+        bool header_right_clicked = ImGui::IsItemClicked(1) && !over_node;
 
         // Resize handle button
         ImVec2 resize_pos(screen_max.x - RESIZE_HANDLE, screen_max.y - RESIZE_HANDLE);
@@ -3826,7 +3849,7 @@ void NodeEditor::RenderFrames() {
         ImVec2 mouse_pos = ImGui::GetMousePos();
         bool in_body = (mouse_pos.x >= screen_min.x && mouse_pos.x <= screen_max.x &&
                         mouse_pos.y > screen_min.y + HEADER_HEIGHT && mouse_pos.y <= screen_max.y);
-        bool body_right_clicked = in_body && ImGui::IsMouseClicked(1);
+        bool body_right_clicked = in_body && !over_node && ImGui::IsMouseClicked(1);
 
         // Selection
         if (header_clicked || resize_clicked) {
@@ -3869,12 +3892,12 @@ void NodeEditor::RenderFrames() {
             }
             ImGui::Separator();
             if (ImGui::MenuItem(ICON_FA_COPY " Copy", "Ctrl+C")) {
-                // TODO: Copy frame to clipboard
-                spdlog::info("Copy frame {} (not yet implemented)", frame.id);
+                CopyFrame(frame.id);  // with the nodes inside; Ctrl+V pastes them laid out
             }
             if (ImGui::MenuItem(ICON_FA_SCISSORS " Cut", "Ctrl+X")) {
-                // TODO: Cut frame to clipboard
-                spdlog::info("Cut frame {} (not yet implemented)", frame.id);
+                CutFrame(frame.id);
+                ImGui::EndPopup();
+                break;  // List modified, exit loop
             }
             if (ImGui::MenuItem(ICON_FA_TRASH " Delete", "Del")) {
                 DeleteFrame(frame.id);
@@ -3884,19 +3907,7 @@ void NodeEditor::RenderFrames() {
             ImGui::Separator();
             if (ImGui::MenuItem(ICON_FA_OBJECT_GROUP " Group Nodes Inside")) {
                 // Find all nodes inside this frame's bounds and group them
-                std::vector<int> nodes_inside;
-                for (const auto& node : nodes_) {
-                    auto pos_it = cached_node_positions_.find(node.id);
-                    if (pos_it != cached_node_positions_.end()) {
-                        ImVec2 node_pos = pos_it->second;
-                        if (node_pos.x >= frame.position.x &&
-                            node_pos.x <= frame.position.x + frame.size.x &&
-                            node_pos.y >= frame.position.y &&
-                            node_pos.y <= frame.position.y + frame.size.y) {
-                            nodes_inside.push_back(node.id);
-                        }
-                    }
-                }
+                const std::vector<int> nodes_inside = NodesInsideFrame(frame);
                 if (nodes_inside.size() >= 2) {
                     // Select these nodes and create group
                     selected_node_ids_.clear();

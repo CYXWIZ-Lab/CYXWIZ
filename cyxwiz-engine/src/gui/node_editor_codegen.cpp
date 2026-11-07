@@ -115,7 +115,7 @@ void NodeEditor::GeneratePythonCode() {
     std::string error_message;
     if (!ValidateGraph(error_message)) {
         spdlog::error("Graph validation failed: {}", error_message);
-        // TODO: Show error dialog to user
+        codegen_error_ = "No code was generated: " + error_message;
         return;
     }
 
@@ -143,6 +143,7 @@ void NodeEditor::GenerateCodeForFramework(CodeFramework framework) {
 
     if (nodes_.empty()) {
         spdlog::warn("No nodes in graph - cannot generate code");
+        codegen_error_ = "No code was generated: the canvas has no nodes.";
         return;
     }
 
@@ -150,6 +151,7 @@ void NodeEditor::GenerateCodeForFramework(CodeFramework framework) {
     std::vector<int> sorted_ids = TopologicalSort();
     if (sorted_ids.empty()) {
         spdlog::error("Failed to perform topological sort - graph may have cycles");
+        codegen_error_ = "No code was generated: the graph has a cycle or no connected layers to order.";
         return;
     }
 

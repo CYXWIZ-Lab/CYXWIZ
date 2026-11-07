@@ -7,6 +7,17 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Canvas: groups can be named, frames copied, nodes renamed.**
+  - Double-click a group's name band (or right-click it > **Rename...**) to
+    name the group. Its right-click menu also has **Ungroup**.
+  - A node's **Rename...** now renames it (it did nothing before).
+  - A frame's **Copy** and **Cut** take the frame and the nodes inside it,
+    and **Ctrl+V** pastes them in the same layout. Pasted nodes now keep
+    their layout relative to each other.
+  - A node inside a frame keeps its own clicks and right-click menu.
+  - **Generate** says why when the graph cannot be turned into code,
+    instead of only writing it to the log.
+  - Guide: `docs/usage/canvas_groups_frames.md`.
 - **Studio Debugger Local Debug runs the sample you pick**, item N of your
   data prepared the way validation sees it (fixed steps and Normalize, no
   random augmentation), for images, tables in memory or on disk, sparse
