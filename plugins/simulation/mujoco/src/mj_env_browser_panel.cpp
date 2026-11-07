@@ -208,7 +208,7 @@ void MjEnvBrowserPanel::RenderUrlImport() {
     ImGui::SameLine();
     const float buttons_w =
         ui->ButtonWidth("Import", UiButtonSize::Regular) + ui->ButtonWidth("Cancel", UiButtonSize::Regular) + 2.0f * spacing;
-    ImGui::SetNextItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - buttons_w));
+    ImGui::SetNextItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - buttons_w - spacing));
     ImGui::InputTextWithHint("##url", "A GitHub folder (github.com/<owner>/<repo>/tree/<branch>/<folder>) or an .xml file",
                              url_buf_, sizeof(url_buf_));
     SameLineIfFits(buttons_w);
@@ -299,7 +299,7 @@ void MjEnvBrowserPanel::RenderCards(MjEnvLibrary& library, const MjEnvManager& e
     if (shown.empty()) {
         if (search_buf_[0] != '\0') {
             const std::string title = std::string("No environments match \"") + search_buf_ + "\"";
-            ui->EmptyState(title.c_str(), "Search looks in names and descriptions within the chosen category and source.");
+            ui->EmptyState(title.c_str(), "Search looks in names and descriptions.");
             const float width = ui->ButtonWidth("Clear search", UiButtonSize::Regular);
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - width) * 0.5f));
             if (ui->LinkButton("Clear search")) search_buf_[0] = '\0';
