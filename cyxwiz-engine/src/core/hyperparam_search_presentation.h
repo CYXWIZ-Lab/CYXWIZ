@@ -58,7 +58,7 @@ const std::vector<Objective>& Objectives();
 // "Validation loss", "Validation accuracy", "Validation MAE".
 std::string ObjectiveName(const std::string& key);
 
-// The saved defaults (Preferences > Hyperparameter Search) set on a search's
+// The saved defaults (Preferences > Search) set on a search's
 // strategy, trials, time limit and score; and read back from one.
 void ApplyDefaults(SearchConfig& config, const core::HyperparamSearchDefaults& defaults);
 core::HyperparamSearchDefaults DefaultsOf(const SearchConfig& config);

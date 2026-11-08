@@ -54,6 +54,9 @@ public:
     // The latest finished compile is of the graph as it is now (false while
     // an edit waits for the pause or compiles).
     bool UpToDate() const { return result_ && result_->revision == seen_revision_; }
+    // The latest compile when it is of the graph as it is now and found no
+    // error; nullptr otherwise.
+    const TrainingConfiguration* CleanConfig() const;
 
     // Error-level issues of the latest compile on this node.
     bool NodeHasError(int node_id) const;

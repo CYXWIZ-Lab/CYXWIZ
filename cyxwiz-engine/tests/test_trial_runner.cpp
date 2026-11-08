@@ -199,6 +199,33 @@ int main() {
     const auto shorter = cyxwiz::RunTrial(setup, {{loader, "epochs", "1"}});
     Check(shorter.ok && shorter.epochs == 1, "the DataLoader's epochs set the trial's length " + shorter.error);
 
+    std::cout << "Another architecture\n";
+    {
+        // A layer before the head twice as wide: an architecture search's
+        // version, trained only when marked as another architecture.
+        cyxwiz::TrialSetup other = setup;
+        bool resized = false;
+        for (size_t li = 0; li + 1 < other.launched.layers.size() && !resized; ++li) {
+            for (auto& node : other.nodes) {
+                if (node.id != other.launched.layers[li].node_id) continue;
+                for (const char* key : {"units", "hidden_size", "ff_dim", "dim_feedforward"}) {
+                    const auto it = node.parameters.find(key);
+                    if (it == node.parameters.end()) continue;
+                    it->second = std::to_string(std::stoi(it->second) * 2);
+                    resized = true;
+                }
+            }
+        }
+        Check(resized, "a layer before the head to widen");
+        const auto unmarked = cyxwiz::RunTrial(other, {});
+        Check(unmarked.ok && Close(unmarked.score.val_loss, same.score.val_loss),
+              "unmarked, the launched model trains " + unmarked.error);
+        other.other_architecture = true;
+        const auto rebuilt = cyxwiz::RunTrial(other, {});
+        Check(rebuilt.ok && !Close(rebuilt.score.val_loss, same.score.val_loss),
+              "marked, the wider model trains to another loss " + rebuilt.error);
+    }
+
     std::cout << "Refusals\n";
     const auto file = cyxwiz::RunTrial(setup, {{data_input, "file_path", "elsewhere.parquet"}});
     Check(!file.ok && file.error.find("not a layer") != std::string::npos, "a data property is refused: " + file.error);

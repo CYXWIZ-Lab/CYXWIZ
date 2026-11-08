@@ -228,6 +228,7 @@ ArchitectureScore NASEvaluator::ScoreArchitecture(
             skip_connections++;
         }
     }
+    score.skip_connections = skip_connections;
     score.connectivity_score = std::min(1.0, skip_connections / 3.0);
 
     // Overall score (weighted combination)
@@ -243,6 +244,60 @@ ArchitectureScore NASEvaluator::ScoreArchitecture(
     score.success = true;
 
     return score;
+}
+
+std::vector<int> NASEvaluator::ModelChain(const std::vector<gui::MLNode>& nodes,
+                                          const std::vector<gui::NodeLink>& links) {
+    // Kahn's order over the links, ties in the nodes' order.
+    std::map<int, int> index_of;
+    for (size_t i = 0; i < nodes.size(); ++i) index_of[nodes[i].id] = static_cast<int>(i);
+    std::vector<int> waiting(nodes.size(), 0);
+    std::vector<std::vector<int>> next(nodes.size());
+    for (const auto& link : links) {
+        const auto from = index_of.find(link.from_node);
+        const auto to = index_of.find(link.to_node);
+        if (from == index_of.end() || to == index_of.end() || from->second == to->second) continue;
+        next[from->second].push_back(to->second);
+        ++waiting[to->second];
+    }
+    std::set<int> ready;
+    for (size_t i = 0; i < nodes.size(); ++i)
+        if (waiting[i] == 0) ready.insert(static_cast<int>(i));
+    std::vector<int> order;
+    std::vector<bool> placed(nodes.size(), false);
+    while (order.size() < nodes.size()) {
+        int index = -1;
+        if (!ready.empty()) {
+            index = *ready.begin();
+            ready.erase(ready.begin());
+        } else {
+            // A cycle: take the first node not placed yet.
+            for (size_t i = 0; i < nodes.size() && index < 0; ++i)
+                if (!placed[i]) index = static_cast<int>(i);
+        }
+        placed[index] = true;
+        order.push_back(index);
+        for (int to : next[index])
+            if (!placed[to] && --waiting[to] == 0) ready.insert(to);
+    }
+    std::vector<int> chain;
+    for (int index : order)
+        if (IsModelNode(nodes[index].type)) chain.push_back(index);
+    return chain;
+}
+
+std::string NASEvaluator::LayerKind(const gui::MLNode& node) {
+    const NodeMetadata* metadata = MetadataFor(node.type);
+    return metadata ? metadata->name : node.name;
+}
+
+std::string NASEvaluator::LayerText(const gui::MLNode& node) {
+    const std::string text = LayerKind(node);
+    for (const char* size : {"units", "filters", "out_channels", "hidden_size"}) {
+        const auto it = node.parameters.find(size);
+        if (it != node.parameters.end() && !it->second.empty()) return text + " " + it->second;
+    }
+    return text;
 }
 
 std::string NASEvaluator::DescribeArchitecture(
@@ -380,7 +435,7 @@ gui::MLNode NASEvaluator::CreateLayerNode(
             node.name = "GELU";
             break;
         default:
-            node.name = "Layer";
+            node.name = LayerKind(node);  // its name in the Nodes panel ("Mish")
             break;
     }
 
@@ -846,7 +901,7 @@ NASSearchResult NASEvaluator::EvolveArchitecture(
     const std::vector<gui::NodeLink>& initial_links,
     const std::vector<size_t>& input_shape,
     const NASSearchConfig& config,
-    std::function<void(int, const ArchitectureScore&)> progress_callback)
+    std::function<bool(int, const ArchitectureScore&)> progress_callback)
 {
     NASSearchResult result;
 
@@ -872,9 +927,16 @@ NASSearchResult NASEvaluator::EvolveArchitecture(
         population.push_back({mutated_nodes, mutated_links});
     }
 
-    // Evolutionary loop
-    ArchitectureScore best_score;
-    best_score.overall_score = -1;
+    // The best different architectures seen, keyed by their layers in order.
+    std::map<std::string, NASCandidate> seen;
+    const auto keep = [&](const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links,
+                          const ArchitectureScore& score) {
+        std::string key;
+        for (int index : ModelChain(nodes, links)) key += LayerText(nodes[index]) + ";";
+        auto it = seen.find(key);
+        if (it == seen.end() || it->second.score.overall_score < score.overall_score)
+            seen[key] = NASCandidate{nodes, links, score};
+    };
 
     for (int gen = 0; gen < config.generations; gen++) {
         // Evaluate population
@@ -883,8 +945,8 @@ NASSearchResult NASEvaluator::EvolveArchitecture(
         for (size_t i = 0; i < population.size(); i++) {
             ArchitectureScore score = ScoreArchitecture(
                 population[i].first, population[i].second, input_shape, config);
+            if (score.success) keep(population[i].first, population[i].second, score);
             scores.push_back({score, static_cast<int>(i)});
-            result.all_scores.push_back(score);
             result.total_evaluations++;
         }
 
@@ -893,21 +955,13 @@ NASSearchResult NASEvaluator::EvolveArchitecture(
                   [](const auto& a, const auto& b) {
                       return a.first.overall_score > b.first.overall_score;
                   });
-
-        // Track best
-        if (scores[0].first.overall_score > best_score.overall_score) {
-            best_score = scores[0].first;
-            result.best_architecture = population[scores[0].second].first;
-            result.best_links = population[scores[0].second].second;
-        }
-
-        result.generation_best.push_back(scores[0].first);
-
-        if (progress_callback) {
-            progress_callback(gen, scores[0].first);
-        }
+        result.total_generations = gen + 1;
 
         spdlog::debug("Generation {}: best score = {:.4f}", gen, scores[0].first.overall_score);
+        if (progress_callback && !progress_callback(gen, scores[0].first)) {
+            result.stopped = true;
+            break;
+        }
 
         // Create next generation
         std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>> new_population;
@@ -948,12 +1002,17 @@ NASSearchResult NASEvaluator::EvolveArchitecture(
         population = new_population;
     }
 
-    result.best_score = best_score;
-    result.total_generations = config.generations;
-    result.success = true;
+    for (auto& [key, candidate] : seen) result.ranked.push_back(std::move(candidate));
+    std::stable_sort(result.ranked.begin(), result.ranked.end(), [](const NASCandidate& a, const NASCandidate& b) {
+        return a.score.overall_score > b.score.overall_score;
+    });
+    if (result.ranked.size() > static_cast<size_t>(kNASRanked)) result.ranked.resize(kNASRanked);
+    result.success = !result.ranked.empty();
+    if (!result.success) result.error_message = "no version of the architecture could be scored";
 
-    spdlog::info("NAS complete: best score = {:.4f}, params = {}",
-                 best_score.overall_score, best_score.total_params);
+    if (result.success)
+        spdlog::info("NAS complete: best score = {:.4f}, params = {}", result.ranked.front().score.overall_score,
+                     result.ranked.front().score.total_params);
 
     return result;
 }

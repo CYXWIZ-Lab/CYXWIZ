@@ -32,11 +32,7 @@ const gui::MLNode* FindNode(const std::vector<gui::MLNode>& nodes, int id) {
 // no error; nullptr otherwise.
 const TrainingConfiguration* CurrentCompile(const gui::NodeEditor* editor) {
     const LiveGraphCompile* live = editor ? editor->GetLiveCompile() : nullptr;
-    const TrainingConfiguration* config = live ? live->Config() : nullptr;
-    if (!config || !live->UpToDate()) return nullptr;
-    const bool error = std::any_of(config->issues.begin(), config->issues.end(),
-                                   [](const ValidationIssue& i) { return i.level == IssueLevel::Error; });
-    return error ? nullptr : config;
+    return live ? live->CleanConfig() : nullptr;
 }
 
 void Heading(const char* text) {
@@ -344,7 +340,7 @@ void HyperparamSearchPanel::RenderHowToSearch() {
     ui::BeginCard("##search_defaults_note");
     Wrapped("Not listed above, the DataLoader's own settings apply to every trial: its epochs, batch size and early "
             "stopping. The trials split the data as the graph's Data Split does. New searches start from the "
-            "defaults in Preferences > Hyperparameter Search.",
+            "defaults in Preferences > Search.",
             t.text);
     ui::EndCard();
 }

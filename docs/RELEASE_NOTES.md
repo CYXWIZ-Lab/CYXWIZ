@@ -109,6 +109,17 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Neural Architecture Search trains its best versions.** Tools > Model >
+  Neural Architecture Search reads the input and output sizes from the
+  graph (no typed Input Configuration). It shows the quick score as a card
+  with its parts. Each change (add, remove, swap a layer, units, activation)
+  is a step with its score; Apply puts the version on the canvas (Ctrl+Z
+  undoes) and "Back to the graph's version" drops the steps. The search
+  keeps the 10 best different versions; **Train the best N** trains them
+  the way Train does (data prepared once, the model in use untouched) and
+  gives each one's validation loss and accuracy, with Apply per row. Search
+  defaults are in Preferences > Search. Guide:
+  `docs/usage/neural_architecture_search.md`.
 - **Hyperparameter Search trains the graph.** Train > Hyperparameter
   Search picks what to vary from the compiled graph (layer sizes, the
   optimizer's rates, the DataLoader's batch size and epochs; not the output
@@ -117,8 +128,8 @@ private Data Studio tickets (`tofix*/track*`).
   prepared once; the Trials view shows progress, the best trial (Apply best
   to the graph, Ctrl+Z undoes; Export CSV), the score per trial and every
   trial's values, scores and failures. Before, the panel took free-text
-  parameter names and never trained. Preferences > Hyperparameter Search
-  sets how a new search starts (method, trials, time limit, score). Guide:
+  parameter names and never trained. Preferences > Search sets how a new
+  search starts (method, trials, time limit, score). Guide:
   `docs/usage/hyperparameter_search.md`.
 - **Favourites and Recent in the Nodes panel.** Star a card (or right-click
   it) to keep the node under Favourites at the top of the panel; Recent

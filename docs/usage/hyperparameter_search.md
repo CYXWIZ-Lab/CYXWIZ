@@ -47,8 +47,8 @@ it in the **Range** column:
 kept) and **Score by** (validation loss, validation accuracy, or validation
 MAE for numbers).
 
-These four start from your defaults in **Preferences > Hyperparameter
-Search** (out of the box: Random, 20 trials, 1 hour, validation loss). They
+These four start from your defaults in **Preferences > Search** (out of
+the box: Random, 20 trials, 1 hour, validation loss). They
 are saved with your Engine settings, apply to every project, and the panel
 takes them again when you change them there (not while a search runs).
 **Reset** puts the Engine defaults back.

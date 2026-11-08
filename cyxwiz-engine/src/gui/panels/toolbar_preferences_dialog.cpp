@@ -1327,7 +1327,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem(ICON_FA_SLIDERS " Hyperparameter Search")) {
+                if (ImGui::BeginTabItem(ICON_FA_SLIDERS " Search")) {
                     RenderSearchPreferences();
                     ImGui::EndTabItem();
                 }

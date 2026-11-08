@@ -127,6 +127,16 @@ HyperparamSearchDefaults ClampedSearchDefaults(HyperparamSearchDefaults value) {
     return value;
 }
 
+ArchitectureSearchDefaults ClampedArchitectureSearchDefaults(ArchitectureSearchDefaults value) {
+    value.versions = std::clamp(value.versions, 2, kArchitectureSearchMaxVersions);
+    value.rounds = std::clamp(value.rounds, 1, kArchitectureSearchMaxRounds);
+    value.kept = std::clamp(value.kept, 0, value.versions - 1);
+    value.changed_percent = std::clamp(value.changed_percent, 0, 100);
+    value.mixed_percent = std::clamp(value.mixed_percent, 0, 100);
+    value.train_best = std::clamp(value.train_best, 1, kArchitectureSearchMaxTrain);
+    return value;
+}
+
 }  // namespace
 
 std::filesystem::path ExecutableDirectory() { return GetExecutableDir(); }
@@ -475,6 +485,19 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             search_defaults_ = ClampedSearchDefaults(loaded);
         }
 
+        architecture_search_defaults_ = ArchitectureSearchDefaults{};
+        if (config.contains("architecture_search") && config["architecture_search"].is_object()) {
+            const auto& search = config["architecture_search"];
+            ArchitectureSearchDefaults loaded;
+            loaded.versions = search.value("versions", loaded.versions);
+            loaded.rounds = search.value("rounds", loaded.rounds);
+            loaded.kept = search.value("kept", loaded.kept);
+            loaded.changed_percent = search.value("changed_percent", loaded.changed_percent);
+            loaded.mixed_percent = search.value("mixed_percent", loaded.mixed_percent);
+            loaded.train_best = search.value("train_best", loaded.train_best);
+            architecture_search_defaults_ = ClampedArchitectureSearchDefaults(loaded);
+        }
+
         data_budget_bytes_ = 0;
         if (config.contains("data") && config["data"].is_object())
             data_budget_bytes_ = config["data"].value("budget_bytes", uint64_t{0});
@@ -639,6 +662,15 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"trials", search_defaults_.trials},
             {"hours", search_defaults_.hours},
             {"objective", search_defaults_.objective}
+        };
+
+        config["architecture_search"] = {
+            {"versions", architecture_search_defaults_.versions},
+            {"rounds", architecture_search_defaults_.rounds},
+            {"kept", architecture_search_defaults_.kept},
+            {"changed_percent", architecture_search_defaults_.changed_percent},
+            {"mixed_percent", architecture_search_defaults_.mixed_percent},
+            {"train_best", architecture_search_defaults_.train_best}
         };
 
         // Recent projects
@@ -1006,6 +1038,20 @@ void EngineConfig::SetSearchDefaults(const HyperparamSearchDefaults& defaults) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(search_defaults_ == value)) {
         search_defaults_ = value;
+        modified_ = true;
+    }
+}
+
+ArchitectureSearchDefaults EngineConfig::GetArchitectureSearchDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return architecture_search_defaults_;
+}
+
+void EngineConfig::SetArchitectureSearchDefaults(const ArchitectureSearchDefaults& defaults) {
+    const ArchitectureSearchDefaults value = ClampedArchitectureSearchDefaults(defaults);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(architecture_search_defaults_ == value)) {
+        architecture_search_defaults_ = value;
         modified_ = true;
     }
 }

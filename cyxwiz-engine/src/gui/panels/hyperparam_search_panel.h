@@ -17,7 +17,7 @@ class NodeEditor;
 namespace cyxwiz {
 
 // How to search: the strategy, trials, time limit and score of `config`
-// (the panel's Setup and Preferences > Hyperparameter Search). Grid shows its
+// (the panel's Setup and Preferences > Search). Grid shows its
 // number of combinations when `show_combinations`. True when one changed.
 bool SearchSettingsFields(SearchConfig& config, bool show_combinations);
 

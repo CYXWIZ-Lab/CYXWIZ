@@ -71,6 +71,7 @@ class GradCAMPanel;
 class FeatureImportancePanel;
 class NASPanel;
 class HyperparamSearchPanel;
+struct TrialSetup;
 class ServingPanel;
 class DNNInferencePanel;
 // Model Evaluation panels (Phase 6B)
@@ -225,7 +226,8 @@ private:
     std::shared_ptr<cyxwiz::AsyncTask> test_preparation_task_;
     std::shared_ptr<int> test_callback_lifetime_ = std::make_shared<int>(0);
     // A launch marked for another runner: Results > Cross-validation / Learning
-    // curve (TOFIX129 D4) and Hyperparameter Search (TOFIX178 T4) mark the next
+    // curve (TOFIX129 D4), Hyperparameter Search and Neural Architecture
+    // Search's Train the best N (TOFIX178 T4) mark the next
     // Train launch as theirs; it goes through Train's checks, data loads,
     // memory question and preparation, and only the dispatch differs.
     struct MarkedLaunch {
@@ -235,9 +237,11 @@ private:
     };
     std::optional<MarkedLaunch> marked_launch_;
     void EndMarkedLaunch(const std::string& why);
-    // Why another run cannot start now ("" when it can); `count_search` false
-    // for the search's own start.
-    std::string LaunchBlocker(bool count_search = true) const;
+    // The searches that train through a marked launch.
+    enum class SearchRunner { None, Parameters, Architecture };
+    // Why another run cannot start now ("" when it can); `starting` is not
+    // counted (it is already preparing its own launch).
+    std::string LaunchBlocker(SearchRunner starting = SearchRunner::None) const;
     // Cross-validation / learning curve: the prepared table goes to
     // core/cross_validation_runner on a task.
     struct FoldsLaunch {
@@ -259,9 +263,12 @@ private:
     uint64_t folds_task_ = 0;  // the running cross-validation / learning curve task
     void StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings);
     ::gui::GraphTrainingDispatch MakeFoldsDispatch(const FoldsLaunch& launch);
-    // Hyperparameter Search: the prepared data becomes the trials' setup.
-    void StartSearchFromGraph();
-    ::gui::GraphTrainingDispatch MakeSearchDispatch(std::vector<MLNode> nodes, std::vector<NodeLink> links);
+    // Hyperparameter Search's trials and Architecture Search's versions: the
+    // prepared data becomes a TrialSetup for the runner's panel.
+    void StartTrialsFromGraph(SearchRunner runner, std::vector<MLNode> nodes, std::vector<NodeLink> links);
+    ::gui::GraphTrainingDispatch MakeTrialsDispatch(std::vector<MLNode> nodes, std::vector<NodeLink> links,
+                                                    std::function<void(cyxwiz::TrialSetup)> begin,
+                                                    std::function<void(const std::string&)> not_started);
 
 
     // Compile the current graph as a dry-run (no training) and show results in a popup

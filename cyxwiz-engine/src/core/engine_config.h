@@ -43,7 +43,7 @@ struct NodesPanelConfig {
 };
 inline constexpr int kNodesPanelMaxRecent = 20;
 
-// Preferences > Hyperparameter Search (TOFIX178 T4): how a new search starts.
+// Preferences > Search, Hyperparameter Search (TOFIX178 T4): how a new search starts.
 // The panel follows them; values are clamped when set.
 struct HyperparamSearchDefaults {
     std::string strategy = "random";     // "grid", "random" or "bayesian"
@@ -56,6 +56,22 @@ struct HyperparamSearchDefaults {
 inline constexpr int kSearchMaxTrials = 1000;
 inline constexpr double kSearchMinHours = 0.05;
 inline constexpr double kSearchMaxHours = 168.0;
+
+// Preferences > Search, Neural Architecture Search (TOFIX178 T4): how its
+// search starts and how many of the best it trains. Clamped when set.
+struct ArchitectureSearchDefaults {
+    int versions = 20;          // per round, 2..kArchitectureSearchMaxVersions
+    int rounds = 10;            // 1..kArchitectureSearchMaxRounds
+    int kept = 2;               // kept unchanged each round, 0..versions - 1
+    int changed_percent = 30;   // changed each round, 0..100
+    int mixed_percent = 50;     // made from two each round, 0..100
+    int train_best = 3;         // 1..kArchitectureSearchMaxTrain
+
+    bool operator==(const ArchitectureSearchDefaults&) const = default;
+};
+inline constexpr int kArchitectureSearchMaxVersions = 200;
+inline constexpr int kArchitectureSearchMaxRounds = 200;
+inline constexpr int kArchitectureSearchMaxTrain = 10;
 
 // Preferences > Studio Debugger (TOFIX178 6.1c): the user's defaults for
 // layer capture and the layer views. Each run's capture control starts from
@@ -250,6 +266,8 @@ public:
 
     HyperparamSearchDefaults GetSearchDefaults() const;
     void SetSearchDefaults(const HyperparamSearchDefaults& defaults);
+    ArchitectureSearchDefaults GetArchitectureSearchDefaults() const;
+    void SetArchitectureSearchDefaults(const ArchitectureSearchDefaults& defaults);
 
     // ===== Recent Projects =====
 
@@ -315,6 +333,7 @@ private:
     AppearanceConfig appearance_;
     NodesPanelConfig nodes_panel_;
     HyperparamSearchDefaults search_defaults_;
+    ArchitectureSearchDefaults architecture_search_defaults_;
 
     // Recent projects
     std::vector<std::string> recent_projects_;  // Recent project paths (max 10)

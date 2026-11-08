@@ -166,6 +166,14 @@ const ModelMemoryEstimate& LiveGraphCompile::Memory() const {
     return result_ ? result_->memory : none;
 }
 
+const TrainingConfiguration* LiveGraphCompile::CleanConfig() const {
+    if (!UpToDate()) return nullptr;
+    const auto& issues = result_->config.issues;
+    const bool error = std::any_of(issues.begin(), issues.end(),
+                                   [](const ValidationIssue& i) { return i.level == IssueLevel::Error; });
+    return error ? nullptr : &result_->config;
+}
+
 bool LiveGraphCompile::NodeHasError(int node_id) const {
     return !NodeErrorMessage(node_id).empty();
 }

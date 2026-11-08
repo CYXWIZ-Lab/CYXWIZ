@@ -9,6 +9,8 @@
 
 namespace cyxwiz {
 
+inline constexpr int kNASRanked = 10;
+
 /**
  * ArchitectureScore - Metrics for evaluating a neural network architecture
  */
@@ -27,6 +29,7 @@ struct ArchitectureScore {
     int64_t total_flops = 0;
     int layer_count = 0;
     int trainable_layer_count = 0;
+    int skip_connections = 0;  // skip links and merges of two or more paths
 
     // Layer type distribution
     std::map<gui::NodeType, int> layer_type_counts;
@@ -78,19 +81,24 @@ struct NASSearchConfig {
     double weight_connectivity = 0.15;
 };
 
+// An architecture the search scored.
+struct NASCandidate {
+    std::vector<gui::MLNode> nodes;
+    std::vector<gui::NodeLink> links;
+    ArchitectureScore score;
+};
+
 /**
  * NASSearchResult - Result of architecture search
  */
 struct NASSearchResult {
-    std::vector<gui::MLNode> best_architecture;
-    std::vector<gui::NodeLink> best_links;
-    ArchitectureScore best_score;
+    // The best different architectures seen in every round, best first (up
+    // to kNASRanked): what "Train the best N" trains.
+    std::vector<NASCandidate> ranked;
 
-    std::vector<ArchitectureScore> generation_best;  // Best score per generation
-    std::vector<ArchitectureScore> all_scores;       // All evaluated architectures
-
-    int total_generations = 0;
+    int total_generations = 0;  // rounds run (fewer when stopped)
     int total_evaluations = 0;
+    bool stopped = false;
 
     bool success = false;
     std::string error_message;
@@ -168,15 +176,16 @@ public:
      * @param initial_links Starting links
      * @param input_shape Input shape
      * @param config Search configuration
-     * @param progress_callback Optional callback (generation, best_score)
-     * @return NASSearchResult with best architecture found
+     * @param progress_callback Optional callback (round just scored, its
+     *        best); returning false stops the search after that round
+     * @return NASSearchResult with the best architectures found
      */
     static NASSearchResult EvolveArchitecture(
         const std::vector<gui::MLNode>& initial_nodes,
         const std::vector<gui::NodeLink>& initial_links,
         const std::vector<size_t>& input_shape,
         const NASSearchConfig& config = NASSearchConfig(),
-        std::function<void(int, const ArchitectureScore&)> progress_callback = nullptr
+        std::function<bool(int, const ArchitectureScore&)> progress_callback = nullptr
     );
 
     /**
@@ -204,6 +213,15 @@ public:
     // leaves the heads out the same way.
     static std::vector<int> FindBodyLayers(const std::vector<gui::MLNode>& nodes,
                                            const std::vector<gui::NodeLink>& links);
+    // The model's nodes (layers, activations, merges, ...; not the data
+    // pipeline or the loss) in the order data flows through them (indices
+    // into `nodes`).
+    static std::vector<int> ModelChain(const std::vector<gui::MLNode>& nodes,
+                                       const std::vector<gui::NodeLink>& links);
+    // A model node as a list shows it: "Dense 192", "Conv2D 32", "BatchNorm";
+    // its kind alone: "Dense".
+    static std::string LayerText(const gui::MLNode& node);
+    static std::string LayerKind(const gui::MLNode& node);
 
 private:
     // Helper methods

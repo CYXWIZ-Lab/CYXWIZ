@@ -676,7 +676,11 @@ MainWindow::MainWindow()
     nas_panel_ = std::make_unique<cyxwiz::NASPanel>();
     hyperparam_search_panel_ = std::make_unique<cyxwiz::HyperparamSearchPanel>();
     hyperparam_search_panel_->SetNodeEditor(node_editor_.get());
-    hyperparam_search_panel_->SetStartCallback([this]() { StartSearchFromGraph(); },
+    hyperparam_search_panel_->SetStartCallback(
+        [this]() {
+            if (node_editor_)
+                StartTrialsFromGraph(SearchRunner::Parameters, node_editor_->GetNodes(), node_editor_->GetLinks());
+        },
                                                [this]() { return marked_launch_.has_value(); });
     serving_panel_ = std::make_unique<cyxwiz::ServingPanel>();
     dnn_inference_panel_ = std::make_unique<cyxwiz::DNNInferencePanel>();
@@ -839,20 +843,14 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set NAS panel callbacks for node editor integration
-    nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
-        if (node_editor_) {
-            return {node_editor_->GetNodes(), node_editor_->GetLinks()};
-        }
-        return {{}, {}};
-    });
-
-    nas_panel_->SetApplyArchitectureCallback(
-        [this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links, bool edits_canvas) {
-            if (!node_editor_) return;
-            if (edits_canvas) node_editor_->ReplaceWithEditedGraph(nodes, links);
-            else node_editor_->InsertPattern(nodes, links);
-        });
+    // Neural Architecture Search reads and edits the canvas; Train the best N
+    // goes through Train's launch.
+    nas_panel_->SetNodeEditor(node_editor_.get());
+    nas_panel_->SetTrainCallback(
+        [this](std::vector<MLNode> nodes, std::vector<NodeLink> links) {
+            StartTrialsFromGraph(SearchRunner::Architecture, std::move(nodes), std::move(links));
+        },
+        [this]() { return marked_launch_.has_value(); });
 
     // Set pattern browser callback to insert patterns into node editor
     pattern_browser_->SetInsertCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
@@ -3922,12 +3920,14 @@ void MainWindow::EndMarkedLaunch(const std::string& why) {
     if (not_started) not_started(why);
 }
 
-std::string MainWindow::LaunchBlocker(bool count_search) const {
+std::string MainWindow::LaunchBlocker(SearchRunner starting) const {
     if (!node_editor_) return "No graph is open";
     if (folds_task_) return "A cross-validation or learning curve is running";
     if (marked_launch_) return "A cross-validation, learning curve or search is being prepared";
-    if (count_search && hyperparam_search_panel_ && hyperparam_search_panel_->IsSearching())
+    if (starting != SearchRunner::Parameters && hyperparam_search_panel_ && hyperparam_search_panel_->IsSearching())
         return "A hyperparameter search is running";
+    if (starting != SearchRunner::Architecture && nas_panel_ && nas_panel_->IsTraining())
+        return "Architecture search versions are training";
     if (cyxwiz::TrainingManager::Instance().IsTrainingActive()) return "Train is running; run this when it has finished";
     if (HasActiveGraphTrainingPreparation()) return "A training is being prepared";
     if (test_preparation_task_ || cyxwiz::TestManager::Instance().IsTestingActive()) return "A test is running";
@@ -3986,30 +3986,44 @@ std::string MainWindow::LaunchBlocker(bool count_search) const {
     };
 }
 
-void MainWindow::StartSearchFromGraph() {
-    if (!node_editor_ || !hyperparam_search_panel_) return;
-    if (const std::string why = LaunchBlocker(false); !why.empty()) {
-        hyperparam_search_panel_->NotStarted("Not started: " + why + ".");
+void MainWindow::StartTrialsFromGraph(SearchRunner runner, std::vector<MLNode> nodes, std::vector<NodeLink> links) {
+    std::string what;
+    std::function<void(cyxwiz::TrialSetup)> begin;
+    std::function<void(const std::string&)> not_started;
+    if (runner == SearchRunner::Parameters && hyperparam_search_panel_) {
+        cyxwiz::HyperparamSearchPanel* panel = hyperparam_search_panel_.get();
+        what = "Hyperparameter search";
+        begin = [panel](cyxwiz::TrialSetup setup) { panel->BeginTrials(std::move(setup)); };
+        not_started = [panel](const std::string& why) { panel->NotStarted(why); };
+    } else if (runner == SearchRunner::Architecture && nas_panel_) {
+        cyxwiz::NASPanel* panel = nas_panel_.get();
+        what = "Architecture search training";
+        begin = [panel](cyxwiz::TrialSetup setup) { panel->BeginTraining(std::move(setup)); };
+        not_started = [panel](const std::string& why) { panel->NotStarted(why); };
+    } else {
         return;
     }
-    auto nodes = node_editor_->GetNodes();
-    auto links = node_editor_->GetLinks();
-    cyxwiz::HyperparamSearchPanel* panel = hyperparam_search_panel_.get();
-    marked_launch_ = MarkedLaunch{"Hyperparameter search", MakeSearchDispatch(nodes, links),
-                                  [panel](const std::string& why) { panel->NotStarted(why); }};
+    if (const std::string why = LaunchBlocker(runner); !why.empty()) {
+        not_started("Not started: " + why + ".");
+        return;
+    }
+    marked_launch_ = MarkedLaunch{what, MakeTrialsDispatch(nodes, links, begin, not_started), not_started};
     StartTrainingFromGraph(nodes, links);
 }
 
-// The last step of the search's launch: what Train would train (the launched
-// configuration and the recipe for its prepared data) becomes the trials'
-// setup; each trial trains a fresh copy with its values set.
-::gui::GraphTrainingDispatch MainWindow::MakeSearchDispatch(std::vector<MLNode> nodes, std::vector<NodeLink> links) {
-    return [this, nodes = std::move(nodes), links = std::move(links)](
+// The last step of a search's launch: what Train would train (the launched
+// configuration and the recipe for its prepared data) becomes the setup
+// each trial or version trains a fresh copy from.
+::gui::GraphTrainingDispatch MainWindow::MakeTrialsDispatch(std::vector<MLNode> nodes, std::vector<NodeLink> links,
+                                                            std::function<void(cyxwiz::TrialSetup)> begin,
+                                                            std::function<void(const std::string&)> not_started) {
+    return [nodes = std::move(nodes), links = std::move(links), begin = std::move(begin),
+            not_started = std::move(not_started)](
                cyxwiz::TrainingConfiguration config, const std::string& dataset_name, const std::string& label_column,
                int epochs, int batch_size, std::weak_ptr<cyxwiz::TrainingPlotPanel>, std::function<void(bool)>) -> bool {
         if (cyxwiz::TrainingManager::Instance().IsTrainingActive()) {
-            hyperparam_search_panel_->NotStarted("Not started: Train is running; start the search when it has finished.");
-            throw std::runtime_error("Train is running; start the search again when it has finished.");
+            not_started("Not started: Train is running; start again when it has finished.");
+            throw std::runtime_error("Train is running; start again when it has finished.");
         }
         config.epochs = epochs;
         config.batch_size = batch_size;
@@ -4017,13 +4031,13 @@ void MainWindow::StartSearchFromGraph() {
         setup.recipe = ::gui::GraphTrainingRecipe(cyxwiz::DataRegistry::Instance(), config, dataset_name, label_column);
         if (!setup.recipe) {
             const std::string why = setup.recipe.error.empty() ? "the prepared data cannot train" : setup.recipe.error;
-            hyperparam_search_panel_->NotStarted("Not started: " + why + ".");
+            not_started("Not started: " + why + ".");
             throw std::runtime_error(why);
         }
         setup.nodes = nodes;
         setup.links = links;
         setup.launched = std::move(config);
-        hyperparam_search_panel_->BeginTrials(std::move(setup));
+        begin(std::move(setup));
         return true;
     };
 }
@@ -4094,7 +4108,8 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         }
     } marked_end{this, marked_waiting};
     if (!marked && (folds_task_ || marked_launch_ ||
-                    (hyperparam_search_panel_ && hyperparam_search_panel_->IsSearching()))) {
+                    (hyperparam_search_panel_ && hyperparam_search_panel_->IsSearching()) ||
+                    (nas_panel_ && nas_panel_->IsTraining()))) {
         spdlog::warn("Train: {}; cancel or stop it first", LaunchBlocker());
         return;
     }

@@ -362,7 +362,7 @@ private:
     void RenderStudioDebuggerPreferences();
     // Preferences > Nodes panel (toolbar_preferences_nodes_panel.cpp)
     void RenderNodesPanelPreferences();
-    // Preferences > Hyperparameter Search (toolbar_preferences_search.cpp)
+    // Preferences > Search (toolbar_preferences_search.cpp)
     void RenderSearchPreferences();
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
     bool RenderBackendManagerSection(bool training_active);

@@ -1,29 +1,39 @@
 #pragma once
 
+#include "../../core/engine_config.h"
 #include "../../core/nas_evaluator.h"
-#include "../node_editor.h"
-#include <imgui.h>
-#include <memory>
-#include <string>
-#include <vector>
+#include "../../core/nas_presentation.h"
+#include "../../core/trial_runner.h"
+
 #include <atomic>
-#include <thread>
-#include <mutex>
 #include <functional>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace gui {
+class NodeEditor;
+}
 
 namespace cyxwiz {
 
+// The architecture search's settings (the panel and Preferences > Search):
+// versions per round, rounds, kept, changed and made-from-two shares; with
+// `train_best`, also how many of the best to train. True when one changed.
+bool ArchitectureSearchFields(NASSearchConfig& config, int* train_best);
+
 /**
- * NASPanel - Neural Architecture Search Tool
+ * Neural Architecture Search (Tools > Model; TOFIX178 T4 H2, approved mockup)
  *
- * Features:
- * - Architecture scoring (complexity, efficiency, depth)
- * - Architecture mutation controls
- * - Architecture suggestions by task type
- * - Evolutionary search with visualization
- * - Generation progress tracking
- * - Best architecture preview
- * - Apply architecture to node editor
+ * Reads the canvas graph and its compile (input and output come from the
+ * graph). The quick score card (no training); changes to the model, each a
+ * step with its score, applied to the canvas (Ctrl+Z undoes) or dropped;
+ * an evolutionary search on the quick score whose best versions can be
+ * trained the way Train does (Train's checks and data preparation, then
+ * core/trial_runner) and applied; suggestions added beside the graph.
  */
 class NASPanel {
 public:
@@ -37,78 +47,104 @@ public:
     void Toggle() { visible_ = !visible_; }
     bool* GetVisiblePtr() { return &visible_; }
 
-    // Set callback to get current architecture from node editor
-    void SetGetArchitectureCallback(
-        std::function<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>()> cb);
+    void SetNodeEditor(gui::NodeEditor* editor) { node_editor_ = editor; }
+    // Train the best N: Train's checks and preparation for `nodes` / `links`
+    // (the graph as read), ending in BeginTraining or NotStarted.
+    // `launch_pending` is true while that launch waits (data loads, the
+    // memory question).
+    void SetTrainCallback(std::function<void(std::vector<gui::MLNode>, std::vector<gui::NodeLink>)> start,
+                          std::function<bool()> launch_pending) {
+        start_training_ = std::move(start);
+        launch_pending_ = std::move(launch_pending);
+    }
+    // What Train would train, prepared: the versions train (main thread).
+    void BeginTraining(TrialSetup setup);
+    // The launch stopped before the training ("Not started: ...").
+    void NotStarted(const std::string& why);
 
-    // Set callback to apply architecture to node editor: `edits_canvas` when
-    // it is the canvas graph edited (mutations, search), which replaces it;
-    // otherwise a new model (a suggestion) added beside it.
-    void SetApplyArchitectureCallback(
-        std::function<void(const std::vector<gui::MLNode>&, const std::vector<gui::NodeLink>&, bool edits_canvas)> cb);
+    // Preparing or training versions.
+    bool IsTraining() const { return train_stage_ != TrainStage::Idle; }
 
 private:
-    void RenderToolbar();
-    void RenderInputConfig();
-    void RenderCurrentScore();
-    void RenderMutationControls();
-    void RenderSuggestions();
-    void RenderEvolutionarySearch();
-    void RenderSearchProgress();
-    void RenderSearchResults();
-    void RenderExportOptions();
+    enum class TrainStage { Idle, Preparing, Training };
 
-    void ScoreCurrentArchitecture();
-    void MutateArchitecture(MutationType type);
-    void GenerateSuggestions();
-    void RunEvolutionarySearch();
+    // A trained version's row.
+    struct Trained {
+        bool done = false;
+        bool ok = false;
+        TrialScore score;
+        std::string error;
+        int epoch = 0;
+        int epochs = 0;
+    };
+    struct Step {
+        std::string text;
+        double score = 0.0;
+    };
+
+    void ReadGraph();
+    void Rescore();
+    void Mutate(MutationType type);
+    void ReplaceCanvas(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links);
+    void StartSearch();
+    void StopSearch();
+    void PollWork();
+    void StartTraining();
+
+    void RenderHeader();
+    void RenderScoreCard();
+    void RenderChange();
+    void RenderSearch();
+    void RenderVersions();
+    void RenderSuggestions();
 
     bool visible_ = false;
+    gui::NodeEditor* node_editor_ = nullptr;
+    std::function<void(std::vector<gui::MLNode>, std::vector<gui::NodeLink>)> start_training_;
+    std::function<bool()> launch_pending_;
 
-    // Callbacks
-    std::function<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>()>
-        get_architecture_callback_;
-    std::function<void(const std::vector<gui::MLNode>&, const std::vector<gui::NodeLink>&, bool edits_canvas)>
-        apply_architecture_callback_;
+    // The graph as read, and the version being changed.
+    bool read_ = false;
+    std::string read_problem_;  // why nothing can be scored
+    uint64_t read_serial_ = 0;  // the compile read (LiveGraphCompile::ResultSerial)
+    uint64_t read_revision_ = 0;  // the canvas read (LiveGraphCompile::GraphRevision)
+    int rebase_frames_ = 0;       // after Apply: the replaced canvas becomes the graph read
+    bool canvas_changed_ = false;
+    std::string graph_name_;
+    nas_presentation::GraphShape shape_;
+    std::vector<gui::MLNode> graph_nodes_;
+    std::vector<gui::NodeLink> graph_links_;
+    std::vector<gui::MLNode> nodes_;
+    std::vector<gui::NodeLink> links_;
+    ArchitectureScore score_;
+    std::vector<Step> steps_;
+    std::string change_note_;
 
-    // Input configuration
-    int input_type_ = 0;  // 0=Tabular, 1=Image
-    int input_features_ = 784;
-    int input_channels_ = 1;
-    int input_height_ = 28;
-    int input_width_ = 28;
-    int output_size_ = 10;
-    int task_type_ = 0;  // 0=Classification, 1=Regression, 2=Image Classification
-
-    // Current architecture
-    std::vector<gui::MLNode> current_nodes_;
-    std::vector<gui::NodeLink> current_links_;
-    ArchitectureScore current_score_;
-    bool has_score_ = false;
-
-    // Suggestions
-    std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>> suggestions_;
-    std::vector<ArchitectureScore> suggestion_scores_;
-    int selected_suggestion_ = -1;
-
-    // Evolutionary search config
+    // Search automatically (the saved defaults are followed while idle).
     NASSearchConfig search_config_;
-    bool show_search_config_ = false;
+    int train_best_ = 3;
+    std::optional<core::ArchitectureSearchDefaults> followed_defaults_;
+    std::unique_ptr<std::thread> search_thread_;
+    std::atomic<bool> searching_{false};
+    std::atomic<bool> stop_search_{false};
+    std::atomic<int> search_round_{0};
+    std::atomic<double> search_best_{0.0};
+    std::mutex mutex_;  // result_, trained_
+    NASSearchResult result_;
+    bool has_result_ = false;
 
-    // Search results
-    NASSearchResult search_result_;
-    bool has_search_result_ = false;
+    // Train the best N.
+    TrainStage train_stage_ = TrainStage::Idle;
+    std::vector<NASCandidate> to_train_;
+    std::vector<Trained> trained_;
+    std::unique_ptr<std::thread> train_thread_;
+    std::atomic<bool> stop_training_{false};
+    std::atomic<bool> training_finished_{false};
+    std::string not_started_;
+    std::string versions_note_;
 
-    // Async computation
-    std::atomic<bool> is_computing_{false};
-    std::atomic<bool> is_searching_{false};
-    std::atomic<int> search_generation_{0};
-    std::atomic<double> search_best_score_{0.0};
-    std::unique_ptr<std::thread> compute_thread_;
-    std::mutex result_mutex_;
-
-    // Export
-    char export_path_[256] = "";
+    // Start from a suggestion.
+    std::vector<NASCandidate> suggestions_;
 };
 
 } // namespace cyxwiz

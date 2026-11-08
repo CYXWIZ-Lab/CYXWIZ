@@ -36,6 +36,9 @@ struct TrialSetup {
     std::vector<gui::NodeLink> links;
     TrainingConfiguration launched;  // as Train's launcher handed it to the dispatch
     TrainingRecipe recipe;           // how that prepared data trains
+    // `nodes` / `links` are another architecture than the launched graph's
+    // (an architecture search's version, same data nodes): always compiled.
+    bool other_architecture = false;
 };
 
 struct TrialScore {

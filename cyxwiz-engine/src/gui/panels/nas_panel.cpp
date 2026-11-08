@@ -1,639 +1,669 @@
 #include "nas_panel.h"
+
+#include "../graph_training_launcher.h"
 #include "../icons.h"
+#include "../node_editor.h"
+#include "../ui_buttons.h"
+#include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
+#include "../../core/live_graph_compile.h"
+
 #include <imgui.h>
-#include <implot.h>
 #include <spdlog/spdlog.h>
+
 #include <algorithm>
-#include <fstream>
 #include <cmath>
+#include <filesystem>
 
 namespace cyxwiz {
 
-NASPanel::NASPanel() {
-    std::memset(export_path_, 0, sizeof(export_path_));
+namespace np = nas_presentation;
 
-    // Default search config
-    search_config_.population_size = 20;
-    search_config_.generations = 10;
-    search_config_.elite_count = 2;
-    search_config_.mutation_rate = 0.3;
-    search_config_.crossover_rate = 0.5;
+namespace {
+
+void Heading(const char* text) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::CurrentTokens().text_bright);
+    ImGui::TextUnformatted(text);
+    ImGui::PopStyleColor();
 }
 
-NASPanel::~NASPanel() {
-    if (compute_thread_ && compute_thread_->joinable()) {
-        is_computing_ = false;
-        is_searching_ = false;
-        compute_thread_->join();
+void Wrapped(const std::string& text, const ImVec4& colour) {
+    ImGui::PushStyleColor(ImGuiCol_Text, colour);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+}
+
+// A thin bar of `fraction` (0..1) across `width`.
+void Bar(float fraction, float width) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const float height = 6.0f;
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float y = at.y + (ImGui::GetTextLineHeight() - height) * 0.5f;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(ImVec2(at.x, y), ImVec2(at.x + width, y + height), ui::ToU32(t.bg_input), 3.0f);
+    if (fraction > 0.0f)
+        draw->AddRectFilled(ImVec2(at.x, y), ImVec2(at.x + width * std::clamp(fraction, 0.0f, 1.0f), y + height),
+                            ui::ToU32(t.accent), 3.0f);
+    ImGui::Dummy(ImVec2(width, ImGui::GetTextLineHeight()));
+}
+
+// A label and a typed whole-number field on one grid row.
+bool IntField(const char* label, const char* id, int* value, int min, int max, const char* unit = nullptr) {
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::TableNextColumn();
+    const bool changed = ui::NumberField(id, value, min, max, 1, 60.0f);
+    if (unit) {
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ui::CurrentTokens().text_dim, "%s", unit);
     }
+    return changed;
+}
+
+}  // namespace
+
+bool ArchitectureSearchFields(NASSearchConfig& config, int* train_best) {
+    bool changed = false;
+    if (!ImGui::BeginTable("##nas_search_fields", 4, ImGuiTableFlags_SizingFixedFit)) return false;
+    ImGui::TableSetupColumn("a", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+    ImGui::TableSetupColumn("b", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+    ImGui::TableSetupColumn("c", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+    ImGui::TableSetupColumn("d", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+    ImGui::TableNextRow();
+    changed |= IntField("Versions per round", "##versions", &config.population_size, 2,
+                        core::kArchitectureSearchMaxVersions);
+    changed |= IntField("Rounds", "##rounds", &config.generations, 1, core::kArchitectureSearchMaxRounds);
+    ImGui::TableNextRow();
+    changed |= IntField("Kept unchanged", "##kept", &config.elite_count, 0, std::max(0, config.population_size - 1));
+    int changed_share = static_cast<int>(std::lround(config.mutation_rate * 100.0));
+    if (IntField("Changed per round", "##changed", &changed_share, 0, 100, "%")) {
+        config.mutation_rate = changed_share / 100.0;
+        changed = true;
+    }
+    ImGui::TableNextRow();
+    int mixed = static_cast<int>(std::lround(config.crossover_rate * 100.0));
+    if (IntField("Made from two", "##mixed", &mixed, 0, 100, "%")) {
+        config.crossover_rate = mixed / 100.0;
+        changed = true;
+    }
+    if (train_best)
+        changed |= IntField("Train the best", "##train_best_default", train_best, 1, core::kArchitectureSearchMaxTrain);
+    ImGui::EndTable();
+    config.elite_count = std::clamp(config.elite_count, 0, std::max(0, config.population_size - 1));
+    return changed;
+}
+
+NASPanel::NASPanel() = default;
+
+NASPanel::~NASPanel() {
+    stop_search_ = true;
+    stop_training_ = true;
+    if (search_thread_ && search_thread_->joinable()) search_thread_->join();
+    if (train_thread_ && train_thread_->joinable()) train_thread_->join();
 }
 
 void NASPanel::Render() {
+    PollWork();
     if (!visible_) return;
-
-    ImGui::SetNextWindowSize(ImVec2(700, 800), ImGuiCond_FirstUseEver);
-
-    if (ImGui::Begin(ICON_FA_NETWORK_WIRED " Neural Architecture Search###NAS", &visible_)) {
-        RenderToolbar();
-        ImGui::Separator();
-
-        if (is_computing_.load() || is_searching_.load()) {
-            if (is_searching_.load()) {
-                RenderSearchProgress();
-            } else {
-                ImGui::Text("%s Computing...", ICON_FA_SPINNER);
-            }
-        } else {
-            RenderInputConfig();
-            ImGui::Spacing();
-
-            if (ImGui::CollapsingHeader(ICON_FA_CHART_PIE " Current Architecture Score", ImGuiTreeNodeFlags_DefaultOpen)) {
-                RenderCurrentScore();
-            }
-
-            ImGui::Spacing();
-
-            if (ImGui::CollapsingHeader(ICON_FA_WAND_MAGIC_SPARKLES " Mutation Controls")) {
-                RenderMutationControls();
-            }
-
-            ImGui::Spacing();
-
-            if (ImGui::CollapsingHeader(ICON_FA_LIGHTBULB " Architecture Suggestions")) {
-                RenderSuggestions();
-            }
-
-            ImGui::Spacing();
-
-            if (ImGui::CollapsingHeader(ICON_FA_DNA " Evolutionary Search")) {
-                RenderEvolutionarySearch();
-            }
-
-            if (has_search_result_) {
-                ImGui::Spacing();
-                RenderSearchResults();
-            }
+    // Nothing could be read: read again when a compile finishes (the data
+    // loaded, an error fixed).
+    if (read_ && !read_problem_.empty() && node_editor_ && node_editor_->GetLiveCompile() &&
+        node_editor_->GetLiveCompile()->ResultSerial() != read_serial_)
+        read_ = false;
+    if (!read_) ReadGraph();
+    if (const LiveGraphCompile* live = node_editor_ ? node_editor_->GetLiveCompile() : nullptr) {
+        if (rebase_frames_ > 0) {
+            --rebase_frames_;
+            read_revision_ = live->GraphRevision();
         }
+        canvas_changed_ = read_problem_.empty() && live->GraphRevision() != read_revision_;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(760, 1000), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin(ICON_FA_NETWORK_WIRED " Neural Architecture Search###NAS", &visible_)) {
+        RenderHeader();
+        ImGui::Spacing();
+        ImGui::BeginChild("##nas_body", ImVec2(0, 0), ImGuiChildFlags_None);
+        if (!read_problem_.empty()) {
+            ui::EmptyState(ICON_FA_NETWORK_WIRED, "Nothing to score yet", read_problem_.c_str());
+        } else {
+            RenderScoreCard();
+            ImGui::Spacing();
+            ImGui::Spacing();
+            RenderChange();
+            ImGui::Spacing();
+            ImGui::Spacing();
+            RenderSearch();
+            ImGui::Spacing();
+            ImGui::Spacing();
+            RenderSuggestions();
+        }
+        ImGui::EndChild();
     }
     ImGui::End();
 }
 
-void NASPanel::RenderToolbar() {
-    if (!has_score_ && !has_search_result_) ImGui::BeginDisabled();
+// ===== The graph =====
 
-    if (ImGui::Button(ICON_FA_FILE_EXPORT " Export")) {
-        ImGui::OpenPopup("ExportNAS");
+void NASPanel::ReadGraph() {
+    read_ = true;
+    read_problem_.clear();
+    steps_.clear();
+    change_note_.clear();
+    suggestions_.clear();
+    if (!IsTraining() && !searching_) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        result_ = {};
+        has_result_ = false;
+        trained_.clear();
+        to_train_.clear();
+        versions_note_.clear();
+        not_started_.clear();
     }
-
-    if (!has_score_ && !has_search_result_) ImGui::EndDisabled();
-
-    RenderExportOptions();
-}
-
-void NASPanel::RenderInputConfig() {
-    ImGui::Text("%s Input Configuration", ICON_FA_GEAR);
-    ImGui::Spacing();
-
-    // Input type
-    const char* input_types[] = {"Tabular Data", "Image Data"};
-    ImGui::Text("Input Type:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::Combo("##InputType", &input_type_, input_types, IM_ARRAYSIZE(input_types))) {
-        has_score_ = false;
-    }
-
-    if (input_type_ == 0) {
-        // Tabular
-        ImGui::Text("Features:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(100);
-        if (ImGui::InputInt("##Features", &input_features_)) {
-            input_features_ = std::max(1, input_features_);
-            has_score_ = false;
-        }
-    } else {
-        // Image
-        ImGui::Text("Channels:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        if (ImGui::InputInt("##Channels", &input_channels_)) {
-            input_channels_ = std::max(1, input_channels_);
-            has_score_ = false;
-        }
-
-        ImGui::SameLine();
-        ImGui::Text("Height:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        if (ImGui::InputInt("##Height", &input_height_)) {
-            input_height_ = std::max(1, input_height_);
-            has_score_ = false;
-        }
-
-        ImGui::SameLine();
-        ImGui::Text("Width:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        if (ImGui::InputInt("##Width", &input_width_)) {
-            input_width_ = std::max(1, input_width_);
-            has_score_ = false;
-        }
-    }
-
-    // Output size
-    ImGui::Text("Output Size:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
-    if (ImGui::InputInt("##OutputSize", &output_size_)) {
-        output_size_ = std::max(1, output_size_);
-        has_score_ = false;
-    }
-
-    // Task type
-    const char* task_types[] = {"Classification", "Regression", "Image Classification"};
-    ImGui::Text("Task Type:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(150);
-    if (ImGui::Combo("##TaskType", &task_type_, task_types, IM_ARRAYSIZE(task_types))) {
-        has_score_ = false;
-    }
-}
-
-void NASPanel::RenderCurrentScore() {
-    // Get current architecture button
-    if (ImGui::Button(ICON_FA_DOWNLOAD " Load from CyxWiz Studio")) {
-        if (get_architecture_callback_) {
-            auto [nodes, links] = get_architecture_callback_();
-            current_nodes_ = nodes;
-            current_links_ = links;
-            ScoreCurrentArchitecture();
-        } else {
-            ImGui::TextDisabled("Node editor callback not set");
-        }
-    }
-
-    if (!has_score_) {
-        ImGui::TextDisabled("Click above to score the current architecture");
+    if (!node_editor_) {
+        read_problem_ = "No graph is open.";
         return;
     }
+    const LiveGraphCompile* live = node_editor_->GetLiveCompile();
+    read_serial_ = live ? live->ResultSerial() : 0;
+    read_revision_ = live ? live->GraphRevision() : 0;
+    const std::string& path = node_editor_->GetCurrentFilePath();
+    graph_name_ = path.empty() ? "Untitled graph" : std::filesystem::path(path).stem().string();
+    const TrainingConfiguration* compiled = live ? live->CleanConfig() : nullptr;
+    if (!compiled) {
+        read_problem_ = "Compile the graph first (it has errors or is compiling): the input and output sizes come "
+                        "from the compile. Then press Read the graph again.";
+        return;
+    }
+    shape_ = np::ReadShape(*compiled);
+    if (!shape_.ok) {
+        read_problem_ = shape_.why;
+        return;
+    }
+    graph_nodes_ = node_editor_->GetNodes();
+    graph_links_ = node_editor_->GetLinks();
+    nodes_ = graph_nodes_;
+    links_ = graph_links_;
+    Rescore();
+}
 
-    ImGui::Spacing();
+void NASPanel::Rescore() {
+    score_ = NASEvaluator::ScoreArchitecture(nodes_, links_, shape_.input_shape, search_config_);
+}
 
-    // Score display
-    if (ImGui::BeginTable("ScoreTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 200);
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableHeadersRow();
+void NASPanel::Mutate(MutationType type) {
+    auto [nodes, links] = NASEvaluator::MutateArchitecture(nodes_, links_, type);
+    const std::string change = np::DescribeChange(nodes_, links_, nodes, links);
+    if (change.empty()) {
+        change_note_ = "Nothing changed: no layer fitted that change. Try another.";
+        return;
+    }
+    nodes_ = std::move(nodes);
+    links_ = std::move(links);
+    Rescore();
+    change_note_.clear();
+    steps_.push_back({change, score_.overall_score});
+}
 
-        auto AddScoreRow = [](const char* name, double value, double max_good = 1.0) {
+void NASPanel::ReplaceCanvas(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links) {
+    if (!node_editor_) return;
+    node_editor_->ReplaceWithEditedGraph(nodes, links);
+    rebase_frames_ = 3;  // the canvas as replaced is the graph read, once the compile sees it
+    graph_nodes_ = nodes;
+    graph_links_ = links;
+    nodes_ = nodes;
+    links_ = links;
+    steps_.clear();
+    Rescore();
+}
+
+// ===== Work on threads =====
+
+void NASPanel::PollWork() {
+    if (!searching_ && search_thread_ && search_thread_->joinable()) search_thread_->join();
+    if (training_finished_) {
+        if (train_thread_ && train_thread_->joinable()) train_thread_->join();
+        training_finished_ = false;
+        train_stage_ = TrainStage::Idle;
+    }
+    // The launch can stop after it started (the data preparation failed):
+    // nothing is preparing or waiting any more and no version began.
+    if (train_stage_ == TrainStage::Preparing && !(launch_pending_ && launch_pending_()) &&
+        !::gui::HasActiveGraphTrainingPreparation()) {
+        NotStarted("Not started: the data preparation stopped before the training (the Tasks panel says why).");
+    }
+    // The saved defaults, while nothing runs.
+    if (!searching_ && !IsTraining()) {
+        const auto saved = core::EngineConfig::Instance().GetArchitectureSearchDefaults();
+        if (followed_defaults_ != saved) {
+            np::ApplyDefaults(search_config_, train_best_, saved);
+            followed_defaults_ = saved;
+        }
+    }
+}
+
+void NASPanel::StartSearch() {
+    if (searching_ || IsTraining() || nodes_.empty()) return;
+    if (search_thread_ && search_thread_->joinable()) search_thread_->join();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        result_ = {};
+        has_result_ = false;
+        trained_.clear();
+        to_train_.clear();
+    }
+    versions_note_.clear();
+    not_started_.clear();
+    searching_ = true;
+    stop_search_ = false;
+    search_round_ = 0;
+    search_best_ = 0.0;
+    search_thread_ = std::make_unique<std::thread>(
+        [this, nodes = nodes_, links = links_, input_shape = shape_.input_shape, config = search_config_]() {
+            NASSearchResult result;
+            try {
+                result = NASEvaluator::EvolveArchitecture(nodes, links, input_shape, config,
+                                                          [this](int round, const ArchitectureScore& best) {
+                                                              search_round_ = round + 1;
+                                                              search_best_ = best.overall_score;
+                                                              return !stop_search_.load();
+                                                          });
+            } catch (const std::exception& e) {
+                result.success = false;
+                result.error_message = e.what();
+            }
+            if (!result.success) spdlog::warn("Architecture search: {}", result.error_message);
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                result_ = std::move(result);
+                has_result_ = true;
+            }
+            searching_ = false;
+        });
+}
+
+void NASPanel::StartTraining() {
+    if (IsTraining() || searching_ || !start_training_) return;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!has_result_ || !result_.success) return;
+        const size_t count = std::min(result_.ranked.size(), static_cast<size_t>(train_best_));
+        to_train_.assign(result_.ranked.begin(), result_.ranked.begin() + static_cast<std::ptrdiff_t>(count));
+        trained_.assign(count, Trained{});
+    }
+    not_started_.clear();
+    versions_note_.clear();
+    train_stage_ = TrainStage::Preparing;
+    spdlog::info("Architecture search: preparing the data as Train does to train the best {}", to_train_.size());
+    start_training_(graph_nodes_, graph_links_);
+}
+
+void NASPanel::BeginTraining(TrialSetup setup) {
+    if (train_stage_ != TrainStage::Preparing) return;
+    if (train_thread_ && train_thread_->joinable()) train_thread_->join();
+    train_stage_ = TrainStage::Training;
+    stop_training_ = false;
+    training_finished_ = false;
+    train_thread_ = std::make_unique<std::thread>([this, setup = std::move(setup), versions = to_train_]() {
+        for (size_t i = 0; i < versions.size() && !stop_training_; ++i) {
+            TrialSetup version = setup;
+            version.nodes = versions[i].nodes;
+            version.links = versions[i].links;
+            version.other_architecture = true;
+            TrialCallbacks callbacks;
+            callbacks.should_cancel = [this] { return stop_training_.load(); };
+            callbacks.on_epoch = [this, i](const TrialProgress& p) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (i < trained_.size()) {
+                    trained_[i].epoch = p.epoch;
+                    trained_[i].epochs = p.epochs;
+                }
+            };
+            TrialOutcome outcome = RunTrial(version, {}, callbacks);
+            if (outcome.ok)
+                spdlog::info("Architecture search: version {} trained, validation loss {:.4g}", i + 1,
+                             outcome.score.val_loss);
+            else
+                spdlog::warn("Architecture search: version {} {}", i + 1,
+                             outcome.cancelled ? "stopped" : "failed: " + outcome.error);
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (i < trained_.size()) {
+                trained_[i].done = true;
+                trained_[i].ok = outcome.ok;
+                trained_[i].score = outcome.score;
+                trained_[i].error = outcome.cancelled ? "Stopped" : outcome.error;
+            }
+        }
+        training_finished_ = true;
+    });
+}
+
+void NASPanel::NotStarted(const std::string& why) {
+    if (train_stage_ != TrainStage::Preparing) return;
+    train_stage_ = TrainStage::Idle;
+    not_started_ = why;
+    std::lock_guard<std::mutex> lock(mutex_);
+    trained_.clear();
+    to_train_.clear();
+    spdlog::warn("Architecture search: {}", why);
+}
+
+// ===== Drawing =====
+
+void NASPanel::RenderHeader() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.accent_text, ICON_FA_NETWORK_WIRED);
+    ImGui::SameLine();
+    Heading("Neural Architecture Search");
+    if (read_problem_.empty() && shape_.ok) {
+        ImGui::SameLine();
+        ImGui::TextColored(t.text_dim, "%s \xC2\xB7 %s (from the graph)", graph_name_.c_str(), shape_.text.c_str());
+    }
+    const char* label = "Read the graph again";
+    ui::SameLineRight(ImGui::CalcTextSize(label).x + 8.0f);
+    const bool busy = searching_ || IsTraining();
+    if (ui::LinkButton(label, !busy)) ReadGraph();
+    if (busy && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Wait for the search or the training to finish");
+    if (canvas_changed_)
+        ui::NoticeLine("The canvas changed since the panel read it (an edit, an undo): Read the graph again to work "
+                       "on it as it is now.",
+                       t.caution);
+}
+
+void NASPanel::RenderScoreCard() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ui::BeginCard("##nas_score");
+    {
+        ui::FontScope big(ui::Font::Heading);
+        ImGui::TextUnformatted(np::ScoreText(score_.overall_score).c_str());
+    }
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "quick score from the graph's shape, no training");
+    if (ImGui::BeginTable("##score_parts", 3, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("part", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+        ImGui::TableSetupColumn("bar", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0.000").x);
+        for (const auto& part : np::ScoreParts(score_)) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::Text("%s", name);
+            ImGui::TextColored(t.text_dim, "%s", part.label.c_str());
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", part.tip.c_str());
             ImGui::TableNextColumn();
-
-            float normalized = static_cast<float>(value / max_good);
-            ImVec4 color;
-            const ui::Tokens& tokens = ui::CurrentTokens();
-            if (normalized >= 0.7f) color = tokens.success;
-            else if (normalized >= 0.4f) color = tokens.warning;
-            else color = tokens.caution;
-
-            ImGui::TextColored(color, "%.3f", value);
-            ImGui::SameLine();
-            ImGui::ProgressBar(static_cast<float>(value), ImVec2(100, 0));
-        };
-
-        AddScoreRow("Overall Score", current_score_.overall_score);
-        AddScoreRow("Complexity Score", current_score_.complexity_score);
-        AddScoreRow("Efficiency Score", current_score_.efficiency_score);
-        AddScoreRow("Depth Score", current_score_.depth_score);
-        AddScoreRow("Diversity Score", current_score_.diversity_score);
-        AddScoreRow("Connectivity Score", current_score_.connectivity_score);
-
+            Bar(static_cast<float>(part.value), ImGui::GetContentRegionAvail().x);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(np::ScoreText(part.value).c_str());
+        }
         ImGui::EndTable();
     }
+    Wrapped(np::ScoreSummary(score_, nodes_, links_), t.text_dim);
+    ui::EndCard();
+}
 
-    // Raw metrics
+void NASPanel::RenderChange() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    Heading("Change the model");
     ImGui::Spacing();
-    ImGui::Text("Raw Metrics:");
+    // The change buttons wrap to the panel's width.
+    const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    bool first = true;
+    for (const auto& mutation : np::Mutations()) {
+        const float width = ui::ButtonWidth(mutation.label, ui::ButtonSize::Regular);
+        if (!first) {
+            ImGui::SameLine();
+            if (ImGui::GetCursorScreenPos().x + width > right) ImGui::NewLine();
+        }
+        first = false;
+        if (ui::SecondaryButton(mutation.label, true, nullptr, ui::ButtonSize::Regular)) Mutate(mutation.type);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", mutation.tip);
+    }
 
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(current_score_.total_params));
-    ImGui::BulletText("Total Parameters: %s", buf);
+    if (!steps_.empty() && ImGui::BeginTable("##nas_steps", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("n", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("00").x);
+        ImGui::TableSetupColumn("change", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("score", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0.000").x);
+        for (size_t i = 0; i < steps_.size(); ++i) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.text_dim, "%zu", i + 1);
+            ImGui::TableNextColumn();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(steps_[i].text.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.text_dim, "%s", np::ScoreText(steps_[i].score).c_str());
+        }
+        ImGui::EndTable();
+    }
+    if (!change_note_.empty()) ui::NoticeLine(change_note_, t.text_dim);
 
-    snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(current_score_.trainable_params));
-    ImGui::BulletText("Trainable Parameters: %s", buf);
+    ImGui::Spacing();
+    const bool changed = !steps_.empty();
+    if (ui::PrimaryButton("Apply to the graph", changed && node_editor_, "Change the model first")) {
+        ReplaceCanvas(nodes_, links_);
+        change_note_ = "Applied to the canvas; Ctrl+Z takes it back.";
+        spdlog::info("Architecture search: the changed model applied to the graph");
+    }
+    ImGui::SameLine();
+    if (ui::LinkButton("Back to the graph's version", changed)) {
+        nodes_ = graph_nodes_;
+        links_ = graph_links_;
+        steps_.clear();
+        change_note_.clear();
+        Rescore();
+    }
+    Wrapped("Apply replaces the graph on the canvas; Ctrl+Z takes it back. " +
+                np::HeadNote(graph_nodes_, graph_links_, shape_),
+            t.text_dim);
+}
 
-    snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(current_score_.total_flops));
-    ImGui::BulletText("Estimated FLOPs: %s", buf);
+void NASPanel::RenderSearch() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    Heading("Search automatically");
+    ImGui::Spacing();
+    const bool searching = searching_;
+    ImGui::BeginDisabled(searching || IsTraining());
+    ArchitectureSearchFields(search_config_, nullptr);
+    ImGui::EndDisabled();
 
-    ImGui::BulletText("Layer Count: %d", current_score_.layer_count);
-    ImGui::BulletText("Trainable Layers: %d", current_score_.trainable_layer_count);
+    ImGui::Spacing();
+    if (searching) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.running, "Searching");
+        ImGui::SameLine();
+        ImGui::Text("round %d of %d \xC2\xB7 best quick score %s", search_round_.load(), search_config_.generations,
+                    np::ScoreText(search_best_.load()).c_str());
+        ImGui::SameLine();
+        if (ui::DangerButton("Stop")) stop_search_ = true;
+    } else {
+        if (ui::SecondaryButton("Start the search", !IsTraining(), "Versions are training", ui::ButtonSize::Regular))
+            StartSearch();
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_dim, "Rounds use the quick score; then train the best for a real one.");
+    }
 
-    // Architecture summary
-    if (!current_score_.architecture_summary.empty()) {
+    bool has_result = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        has_result = has_result_;
+    }
+    if (has_result && !searching) {
         ImGui::Spacing();
-        ImGui::TextWrapped("Summary: %s", current_score_.architecture_summary.c_str());
+        RenderVersions();
     }
 }
 
-void NASPanel::RenderMutationControls() {
-    if (current_nodes_.empty()) {
-        ImGui::TextDisabled("Load an architecture first to apply mutations");
-        return;
-    }
-
-    ImGui::Text("Apply a mutation to the current architecture:");
-    ImGui::Spacing();
-
-    // Mutation buttons in a grid
-    if (ImGui::Button(ICON_FA_PLUS " Add Layer", ImVec2(140, 0))) {
-        MutateArchitecture(MutationType::AddLayer);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_MINUS " Remove Layer", ImVec2(140, 0))) {
-        MutateArchitecture(MutationType::RemoveLayer);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_ARROWS_ROTATE " Swap Layer", ImVec2(140, 0))) {
-        MutateArchitecture(MutationType::SwapLayer);
-    }
-
-    if (ImGui::Button(ICON_FA_EXPAND " Change Units", ImVec2(140, 0))) {
-        MutateArchitecture(MutationType::ChangeUnits);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_BOLT " Change Activation", ImVec2(140, 0))) {
-        MutateArchitecture(MutationType::ChangeActivation);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(ICON_FA_SHUFFLE " Random", ImVec2(140, 0))) {
-        MutateArchitecture(MutationType::Random);
-    }
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("Mutations are applied to the current architecture in memory.");
-    ImGui::TextDisabled("Use 'Apply to CyxWiz Studio' to see the changes.");
-
-    if (!current_nodes_.empty() && apply_architecture_callback_) {
-        ImGui::Spacing();
-        if (ImGui::Button(ICON_FA_UPLOAD " Apply to CyxWiz Studio", ImVec2(200, 0))) {
-            apply_architecture_callback_(current_nodes_, current_links_, true);
+void NASPanel::RenderVersions() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    std::vector<NASCandidate> rows;
+    std::vector<Trained> trained;
+    NASSearchResult summary;
+    size_t kept = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!result_.success) {
+            ui::NoticeLine("The search found nothing to score: " + result_.error_message, t.caution);
+            return;
         }
+        trained = trained_;
+        if (IsTraining() || !to_train_.empty()) {
+            rows = to_train_;
+        } else {
+            const size_t count = std::min(result_.ranked.size(), static_cast<size_t>(train_best_));
+            rows.assign(result_.ranked.begin(), result_.ranked.begin() + static_cast<std::ptrdiff_t>(count));
+        }
+        summary.total_generations = result_.total_generations;
+        summary.total_evaluations = result_.total_evaluations;
+        summary.stopped = result_.stopped;
+        kept = result_.ranked.size();
     }
+
+    ui::BeginCard("##nas_versions");
+    ImGui::TextColored(t.text_dim, "%d rounds%s, %d versions scored, %zu different kept", summary.total_generations,
+                       summary.stopped ? " (stopped)" : "", summary.total_evaluations, kept);
+    ImGui::Spacing();
+    if (train_stage_ == TrainStage::Idle) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Train the best");
+        ImGui::SameLine();
+        if (ui::NumberField("##train_best", &train_best_, 1, core::kArchitectureSearchMaxTrain, 1, 50.0f)) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            to_train_.clear();
+            trained_.clear();
+        }
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("for the DataLoader's epochs, the way Train does");
+        ImGui::SameLine();
+        if (ui::SecondaryButton("Train them", node_editor_ != nullptr, "No graph is open", ui::ButtonSize::Regular))
+            StartTraining();
+    } else {
+        size_t index = 0;
+        while (index < trained.size() && trained[index].done) ++index;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.running, train_stage_ == TrainStage::Preparing ? "Preparing" : "Training");
+        ImGui::SameLine();
+        if (train_stage_ == TrainStage::Preparing) {
+            ImGui::TextUnformatted("the data, as Train does; the versions train when it is ready.");
+        } else if (index < trained.size()) {
+            ImGui::Text("version %zu of %zu \xC2\xB7 epoch %d of %d", index + 1, trained.size(), trained[index].epoch,
+                        trained[index].epochs);
+        }
+        ImGui::SameLine();
+        if (ui::DangerButton("Stop", train_stage_ == TrainStage::Training, "Starts when the data is ready"))
+            stop_training_ = true;
+    }
+    if (!not_started_.empty()) ui::NoticeLine(not_started_, t.caution);
+
+    ImGui::Spacing();
+    if (ImGui::BeginTable("##nas_versions_table", 6, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("00").x);
+        ImGui::TableSetupColumn("layers", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("quick", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("quick 0").x);
+        ImGui::TableSetupColumn("val loss", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("epoch 00 of 00").x);
+        ImGui::TableSetupColumn(shape_.task == "regression" ? "MAE" : "accuracy", ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::CalcTextSize("accuracy 0").x);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("Apply").x + 4.0f);
+        ImGui::TableHeadersRow();
+        for (size_t i = 0; i < rows.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.text_dim, "%zu", i + 1);
+            ImGui::TableNextColumn();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(np::LayersText(rows[i].nodes, rows[i].links).c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(np::ScoreText(rows[i].score.overall_score).c_str());
+            const Trained* row = i < trained.size() ? &trained[i] : nullptr;
+            ImGui::TableNextColumn();
+            if (row && row->done && row->ok) {
+                ImGui::TextUnformatted(np::LossText(row->score).c_str());
+            } else if (row && row->done) {
+                ImGui::TextColored(t.caution, row->error == "Stopped" ? "Stopped" : "Failed");
+                if (ImGui::IsItemHovered() && !row->error.empty()) ImGui::SetTooltip("%s", row->error.c_str());
+            } else if (row && train_stage_ == TrainStage::Training && row->epochs > 0) {
+                ImGui::TextColored(t.running, "epoch %d of %d", row->epoch, row->epochs);
+            } else {
+                ImGui::TextColored(t.text_faint, row ? "..." : "-");
+            }
+            ImGui::TableNextColumn();
+            if (row && row->done && row->ok) ImGui::TextUnformatted(np::AccuracyText(row->score).c_str());
+            else ImGui::TextColored(t.text_faint, row ? "..." : "-");
+            ImGui::TableNextColumn();
+            if (ui::InlineLink("Apply") && node_editor_) {
+                ReplaceCanvas(rows[i].nodes, rows[i].links);
+                versions_note_ = "Version " + std::to_string(i + 1) + " applied to the canvas; Ctrl+Z takes it back.";
+                spdlog::info("Architecture search: version {} applied to the graph", i + 1);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    Wrapped(versions_note_.empty() ? "Trained versions are scored on the graph's validation part; the model in use is "
+                                     "not touched. Apply replaces the graph on the canvas."
+                                   : versions_note_,
+            t.text_dim);
+    ui::EndCard();
 }
 
 void NASPanel::RenderSuggestions() {
-    ImGui::Text("Generate architecture suggestions for your task:");
+    const ui::Tokens& t = ui::CurrentTokens();
+    Heading("Start from a suggestion");
+    Wrapped(np::SuggestionsIntro(shape_, 5) +
+                " A suggestion is added beside the graph; link it to your data, or delete the old model, before "
+                "training.",
+            t.text_dim);
     ImGui::Spacing();
-
-    if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES " Generate Suggestions", ImVec2(200, 0))) {
-        GenerateSuggestions();
-    }
-
     if (suggestions_.empty()) {
-        ImGui::TextDisabled("Click above to generate suggestions");
+        if (ui::SecondaryButton("Show suggestions", true, nullptr, ui::ButtonSize::Regular)) {
+            for (auto& [nodes, links] :
+                 NASEvaluator::SuggestArchitectures(shape_.task, shape_.input_shape, shape_.outputs, 5)) {
+                ArchitectureScore score = NASEvaluator::ScoreArchitecture(nodes, links, shape_.input_shape, search_config_);
+                suggestions_.push_back({std::move(nodes), std::move(links), std::move(score)});
+            }
+        }
         return;
     }
-
-    ImGui::Spacing();
-
-    // List suggestions
-    for (size_t i = 0; i < suggestions_.size(); i++) {
-        char label[64];
-        snprintf(label, sizeof(label), "Architecture %zu (Score: %.3f)", i + 1,
-                suggestion_scores_[i].overall_score);
-
-        bool is_selected = (selected_suggestion_ == static_cast<int>(i));
-
-        if (ImGui::Selectable(label, is_selected)) {
-            selected_suggestion_ = static_cast<int>(i);
+    if (!ImGui::BeginTable("##nas_suggestions", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) return;
+    const char* add = "Add beside the graph";
+    ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("00").x);
+    ImGui::TableSetupColumn("layers", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableSetupColumn("quick", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("quick 0").x);
+    ImGui::TableSetupColumn("parameters", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("parameters").x);
+    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize(add).x + 4.0f);
+    ImGui::TableHeadersRow();
+    for (size_t i = 0; i < suggestions_.size(); ++i) {
+        const NASCandidate& suggestion = suggestions_[i];
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextColored(t.text_dim, "%zu", i + 1);
+        ImGui::TableNextColumn();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(np::LayersText(suggestion.nodes, suggestion.links).c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(np::ScoreText(suggestion.score.overall_score).c_str());
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(np::Grouped(suggestion.score.total_params).c_str());
+        ImGui::TableNextColumn();
+        if (ui::InlineLink(add) && node_editor_) {
+            node_editor_->InsertPattern(suggestion.nodes, suggestion.links);
+            spdlog::info("Architecture search: suggestion {} added beside the graph", i + 1);
         }
-
-        if (is_selected) {
-            // Show details
-            ImGui::Indent();
-            ImGui::Text("Layers: %d, Params: %lld",
-                       suggestion_scores_[i].layer_count,
-                       static_cast<long long>(suggestion_scores_[i].total_params));
-            ImGui::TextWrapped("%s", suggestion_scores_[i].architecture_summary.c_str());
-            ImGui::Unindent();
-        }
+        ImGui::PopID();
     }
-
-    if (selected_suggestion_ >= 0 && apply_architecture_callback_) {
-        ImGui::Spacing();
-        if (ImGui::Button(ICON_FA_CHECK " Apply Selected", ImVec2(150, 0))) {
-            apply_architecture_callback_(
-                suggestions_[selected_suggestion_].first,
-                suggestions_[selected_suggestion_].second, false);
-        }
-    }
-}
-
-void NASPanel::RenderEvolutionarySearch() {
-    ImGui::Text("Evolutionary Architecture Search");
-    ImGui::TextDisabled("Automatically evolve architectures using genetic algorithms");
-    ImGui::Spacing();
-
-    // Config toggle
-    if (ImGui::Button(show_search_config_ ? "Hide Config" : "Show Config")) {
-        show_search_config_ = !show_search_config_;
-    }
-
-    if (show_search_config_) {
-        ImGui::Indent();
-
-        ImGui::Text("Population Size:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        ImGui::InputInt("##PopSize", &search_config_.population_size);
-
-        ImGui::Text("Generations:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        ImGui::InputInt("##Generations", &search_config_.generations);
-
-        ImGui::Text("Elite Count:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        ImGui::InputInt("##EliteCount", &search_config_.elite_count);
-
-        ImGui::Text("Mutation Rate:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        float mut_rate = static_cast<float>(search_config_.mutation_rate);
-        if (ImGui::SliderFloat("##MutRate", &mut_rate, 0.1f, 0.9f)) {
-            search_config_.mutation_rate = mut_rate;
-        }
-
-        ImGui::Text("Crossover Rate:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80);
-        float cross_rate = static_cast<float>(search_config_.crossover_rate);
-        if (ImGui::SliderFloat("##CrossRate", &cross_rate, 0.1f, 0.9f)) {
-            search_config_.crossover_rate = cross_rate;
-        }
-
-        ImGui::Unindent();
-    }
-
-    ImGui::Spacing();
-
-    // Start search button
-    bool can_search = !current_nodes_.empty();
-    if (!can_search) ImGui::BeginDisabled();
-
-    if (ImGui::Button(ICON_FA_PLAY " Start Evolutionary Search", ImVec2(220, 0))) {
-        RunEvolutionarySearch();
-    }
-
-    if (!can_search) ImGui::EndDisabled();
-
-    if (!can_search) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("Load an architecture first");
-    }
-}
-
-void NASPanel::RenderSearchProgress() {
-    ImGui::Text("%s Evolutionary Search in Progress...", ICON_FA_DNA);
-    ImGui::Spacing();
-
-    int gen = search_generation_.load();
-    double best = search_best_score_.load();
-
-    ImGui::Text("Generation: %d / %d", gen, search_config_.generations);
-    ImGui::Text("Best Score: %.4f", best);
-
-    float progress = static_cast<float>(gen) / search_config_.generations;
-    ImGui::ProgressBar(progress, ImVec2(-1, 0));
-
-    ImGui::Spacing();
-    if (ImGui::Button(ICON_FA_STOP " Stop Search")) {
-        is_searching_ = false;
-    }
-}
-
-void NASPanel::RenderSearchResults() {
-    if (!search_result_.success) {
-        ImGui::TextColored(ui::CurrentTokens().error, "Search failed: %s",
-                          search_result_.error_message.c_str());
-        return;
-    }
-
-    ImGui::Text(ICON_FA_TROPHY " Search Results");
-    ImGui::Separator();
-
-    ImGui::Text("Generations: %d", search_result_.total_generations);
-    ImGui::Text("Evaluations: %d", search_result_.total_evaluations);
-    ImGui::Text("Best Score: %.4f", search_result_.best_score.overall_score);
-
-    ImGui::Spacing();
-
-    // Generation progress chart
-    if (!search_result_.generation_best.empty()) {
-        std::vector<double> gen_indices(search_result_.generation_best.size());
-        std::vector<double> gen_scores(search_result_.generation_best.size());
-
-        for (size_t i = 0; i < search_result_.generation_best.size(); i++) {
-            gen_indices[i] = static_cast<double>(i + 1);
-            gen_scores[i] = search_result_.generation_best[i].overall_score;
-        }
-
-        if (ImPlot::BeginPlot("Score Evolution", ImVec2(-1, 200))) {
-            ImPlot::SetupAxes("Generation", "Best Score");
-            ImPlot::PlotLine("Best", gen_indices.data(), gen_scores.data(),
-                            static_cast<int>(gen_indices.size()));
-            ImPlot::EndPlot();
-        }
-    }
-
-    // Best architecture details
-    ImGui::Text("Best Architecture:");
-    ImGui::BulletText("Layers: %d", search_result_.best_score.layer_count);
-    ImGui::BulletText("Parameters: %lld",
-                     static_cast<long long>(search_result_.best_score.total_params));
-    ImGui::TextWrapped("Summary: %s", search_result_.best_score.architecture_summary.c_str());
-
-    // Apply best
-    if (apply_architecture_callback_) {
-        ImGui::Spacing();
-        if (ImGui::Button(ICON_FA_CROWN " Apply Best Architecture", ImVec2(220, 0))) {
-            apply_architecture_callback_(
-                search_result_.best_architecture,
-                search_result_.best_links, true);
-        }
-    }
-}
-
-void NASPanel::RenderExportOptions() {
-    if (ImGui::BeginPopup("ExportNAS")) {
-        ImGui::Text("Export NAS Results");
-        ImGui::Separator();
-
-        ImGui::InputText("File Path", export_path_, sizeof(export_path_));
-
-        if (ImGui::Button("Save CSV")) {
-            std::lock_guard<std::mutex> lock(result_mutex_);
-
-            std::ofstream file(export_path_);
-            if (file) {
-                file << "Metric,Value\n";
-
-                if (has_score_) {
-                    file << "Overall Score," << current_score_.overall_score << "\n";
-                    file << "Complexity Score," << current_score_.complexity_score << "\n";
-                    file << "Efficiency Score," << current_score_.efficiency_score << "\n";
-                    file << "Depth Score," << current_score_.depth_score << "\n";
-                    file << "Total Params," << current_score_.total_params << "\n";
-                    file << "Total FLOPs," << current_score_.total_flops << "\n";
-                    file << "Layer Count," << current_score_.layer_count << "\n";
-                }
-
-                if (has_search_result_) {
-                    file << "\nEvolutionary Search Results\n";
-                    file << "Generations," << search_result_.total_generations << "\n";
-                    file << "Evaluations," << search_result_.total_evaluations << "\n";
-                    file << "Best Score," << search_result_.best_score.overall_score << "\n";
-                }
-
-                spdlog::info("Exported NAS results to: {}", export_path_);
-            }
-
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
-}
-
-void NASPanel::SetGetArchitectureCallback(
-    std::function<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>()> cb) {
-    get_architecture_callback_ = cb;
-}
-
-void NASPanel::SetApplyArchitectureCallback(
-    std::function<void(const std::vector<gui::MLNode>&, const std::vector<gui::NodeLink>&, bool edits_canvas)> cb) {
-    apply_architecture_callback_ = cb;
-}
-
-void NASPanel::ScoreCurrentArchitecture() {
-    if (current_nodes_.empty()) return;
-
-    std::vector<size_t> input_shape;
-    if (input_type_ == 0) {
-        input_shape = {1, static_cast<size_t>(input_features_)};
-    } else {
-        input_shape = {1, static_cast<size_t>(input_channels_),
-                       static_cast<size_t>(input_height_),
-                       static_cast<size_t>(input_width_)};
-    }
-
-    current_score_ = NASEvaluator::ScoreArchitecture(
-        current_nodes_, current_links_, input_shape, search_config_);
-
-    has_score_ = current_score_.success;
-
-    if (has_score_) {
-        spdlog::info("Architecture scored: overall = {:.3f}", current_score_.overall_score);
-    }
-}
-
-void NASPanel::MutateArchitecture(MutationType type) {
-    if (current_nodes_.empty()) return;
-
-    auto [new_nodes, new_links] = NASEvaluator::MutateArchitecture(
-        current_nodes_, current_links_, type);
-
-    current_nodes_ = std::move(new_nodes);
-    current_links_ = std::move(new_links);
-
-    // Re-score
-    ScoreCurrentArchitecture();
-
-    spdlog::info("Applied mutation, new score: {:.3f}", current_score_.overall_score);
-}
-
-void NASPanel::GenerateSuggestions() {
-    const char* task_names[] = {"classification", "regression", "image_classification"};
-    std::string task = task_names[task_type_];
-
-    std::vector<size_t> input_shape;
-    if (input_type_ == 0) {
-        input_shape = {1, static_cast<size_t>(input_features_)};
-    } else {
-        input_shape = {1, static_cast<size_t>(input_channels_),
-                       static_cast<size_t>(input_height_),
-                       static_cast<size_t>(input_width_)};
-    }
-
-    suggestions_ = NASEvaluator::SuggestArchitectures(task, input_shape, output_size_, 5);
-
-    // Score each suggestion
-    suggestion_scores_.clear();
-    for (const auto& [nodes, links] : suggestions_) {
-        auto score = NASEvaluator::ScoreArchitecture(nodes, links, input_shape, search_config_);
-        suggestion_scores_.push_back(score);
-    }
-
-    selected_suggestion_ = -1;
-
-    spdlog::info("Generated {} architecture suggestions", suggestions_.size());
-}
-
-void NASPanel::RunEvolutionarySearch() {
-    if (is_searching_.load() || current_nodes_.empty()) return;
-
-    if (compute_thread_ && compute_thread_->joinable()) {
-        compute_thread_->join();
-    }
-
-    is_searching_ = true;
-    search_generation_ = 0;
-    search_best_score_ = 0.0;
-
-    auto initial_nodes = current_nodes_;
-    auto initial_links = current_links_;
-    auto config = search_config_;
-
-    std::vector<size_t> input_shape;
-    if (input_type_ == 0) {
-        input_shape = {1, static_cast<size_t>(input_features_)};
-    } else {
-        input_shape = {1, static_cast<size_t>(input_channels_),
-                       static_cast<size_t>(input_height_),
-                       static_cast<size_t>(input_width_)};
-    }
-
-    compute_thread_ = std::make_unique<std::thread>([this, initial_nodes, initial_links, input_shape, config]() {
-        try {
-            auto result = NASEvaluator::EvolveArchitecture(
-                initial_nodes, initial_links, input_shape, config,
-                [this](int gen, const ArchitectureScore& best) {
-                    search_generation_ = gen;
-                    search_best_score_ = best.overall_score;
-                });
-
-            {
-                std::lock_guard<std::mutex> lock(result_mutex_);
-                search_result_ = std::move(result);
-                has_search_result_ = search_result_.success;
-            }
-
-            if (has_search_result_) {
-                spdlog::info("Evolutionary search complete. Best score: {:.4f}",
-                            search_result_.best_score.overall_score);
-            }
-
-        } catch (const std::exception& e) {
-            spdlog::error("Evolutionary search error: {}", e.what());
-        }
-
-        is_searching_ = false;
-    });
+    ImGui::EndTable();
 }
 
 } // namespace cyxwiz

@@ -78,7 +78,7 @@ bool IsTrialTarget(const TrainingConfiguration& launched, const gui::MLNode& nod
 bool TrialConfiguration(const TrialSetup& setup, const std::vector<TrialChange>& changes, TrainingConfiguration& out,
                         std::string& error) {
     out = setup.launched;
-    if (changes.empty()) return true;
+    if (changes.empty() && !setup.other_architecture) return true;
 
     std::vector<gui::MLNode> nodes = setup.nodes;
     for (const auto& change : changes) {
