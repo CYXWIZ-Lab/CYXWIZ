@@ -39,6 +39,7 @@ add_executable(cyxwiz-tests
     unit/test_loss.cpp
     unit/test_model_evaluation.cpp
     unit/test_device.cpp
+    unit/test_loaded_library.cpp
     unit/test_optimizer.cpp
     unit/test_optimization.cpp
     unit/test_scheduler.cpp

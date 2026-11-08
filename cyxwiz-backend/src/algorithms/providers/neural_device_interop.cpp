@@ -17,16 +17,9 @@
 #include "cyxwiz/neural_provider.h"
 #include "../arrayfire_backend_utils.h"
 #include "../arrayfire_host_materialization.h"
+#include "../../core/loaded_library.h"
 
 #include <arrayfire.h>
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
 
 #include <memory>
 #include <string>
@@ -35,20 +28,6 @@
 namespace cyxwiz {
 
 namespace {
-
-void* FindLoadedSymbol(const char* windows_library, const char* posix_library, const char* symbol) {
-#ifdef _WIN32
-    (void)posix_library;
-    HMODULE module = GetModuleHandleA(windows_library);
-    return module ? reinterpret_cast<void*>(GetProcAddress(module, symbol)) : nullptr;
-#else
-    (void)windows_library;
-    void* handle = dlopen(posix_library, RTLD_LAZY | RTLD_NOLOAD);
-    void* found = handle ? dlsym(handle, symbol) : nullptr;
-    if (handle) dlclose(handle);
-    return found;
-#endif
-}
 
 // Parses the active device's line of af_info_string: the active device is
 // marked "[N]" (others "-N-"), formatted "<platform>: <name>, <memory> MB (...)".
@@ -86,9 +65,9 @@ bool CaptureArrayFireQueue(NeuralDeviceQueue& queue, std::string& error) {
         using GetStream = af_err (*)(void**, int);
         using GetNativeId = af_err (*)(int*, int);
         const auto get_stream = reinterpret_cast<GetStream>(
-            FindLoadedSymbol("afcuda.dll", "libafcuda.so", "afcu_get_stream"));
+            detail::FindLoadedSymbol("afcuda", "afcu_get_stream"));
         const auto get_native = reinterpret_cast<GetNativeId>(
-            FindLoadedSymbol("afcuda.dll", "libafcuda.so", "afcu_get_native_id"));
+            detail::FindLoadedSymbol("afcuda", "afcu_get_native_id"));
         if (!get_stream || !get_native) {
             error = "ArrayFire CUDA queue accessors (afcu_get_stream/afcu_get_native_id) are unavailable";
             return false;
@@ -105,11 +84,11 @@ bool CaptureArrayFireQueue(NeuralDeviceQueue& queue, std::string& error) {
         using GetHandle = af_err (*)(void**, bool);
         using GetDevice = af_err (*)(void**);
         const auto get_context = reinterpret_cast<GetHandle>(
-            FindLoadedSymbol("afopencl.dll", "libafopencl.so", "afcl_get_context"));
+            detail::FindLoadedSymbol("afopencl", "afcl_get_context"));
         const auto get_queue = reinterpret_cast<GetHandle>(
-            FindLoadedSymbol("afopencl.dll", "libafopencl.so", "afcl_get_queue"));
+            detail::FindLoadedSymbol("afopencl", "afcl_get_queue"));
         const auto get_device = reinterpret_cast<GetDevice>(
-            FindLoadedSymbol("afopencl.dll", "libafopencl.so", "afcl_get_device_id"));
+            detail::FindLoadedSymbol("afopencl", "afcl_get_device_id"));
         if (!get_context || !get_queue || !get_device) {
             error = "ArrayFire OpenCL queue accessors (afcl_get_context/queue/device_id) are unavailable";
             return false;

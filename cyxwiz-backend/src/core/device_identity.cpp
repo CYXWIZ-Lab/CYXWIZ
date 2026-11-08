@@ -1,4 +1,5 @@
 #include "device_identity.h"
+#include "loaded_library.h"
 
 #include <algorithm>
 #include <array>
@@ -52,12 +53,10 @@ std::string PciFingerprint(const DeviceInfo& info) {
 class DynamicLibrary {
 public:
 #ifdef _WIN32
-    explicit DynamicLibrary(const wchar_t* name, bool already_loaded = false)
-        : handle_(already_loaded ? GetModuleHandleW(name) : LoadLibraryW(name)),
-          owns_(!already_loaded && handle_ != nullptr) {}
+    explicit DynamicLibrary(const wchar_t* name) : handle_(LoadLibraryW(name)) {}
 
     ~DynamicLibrary() {
-        if (owns_) FreeLibrary(handle_);
+        if (handle_ != nullptr) FreeLibrary(handle_);
     }
 
     void* Find(const char* symbol) const {
@@ -68,12 +67,8 @@ public:
 
 private:
     HMODULE handle_ = nullptr;
-    bool owns_ = false;
 #else
-    explicit DynamicLibrary(const char* name, bool already_loaded = false)
-        : handle_(dlopen(name,
-                         RTLD_LAZY |
-                             (already_loaded ? RTLD_NOLOAD : RTLD_LOCAL))) {}
+    explicit DynamicLibrary(const char* name) : handle_(dlopen(name, RTLD_LAZY | RTLD_LOCAL)) {}
 
     ~DynamicLibrary() {
         if (handle_ != nullptr) dlclose(handle_);
@@ -197,19 +192,16 @@ bool HasOpenClExtension(const std::string& extensions,
 
 void EnrichOpenClIdentity(DeviceInfo& info) {
 #ifdef _WIN32
-    DynamicLibrary arrayfire_opencl(L"afopencl.dll", true);
     DynamicLibrary opencl(L"OpenCL.dll");
 #elif defined(__APPLE__)
-    DynamicLibrary arrayfire_opencl("libafopencl.dylib", true);
     DynamicLibrary opencl("/System/Library/Frameworks/OpenCL.framework/OpenCL");
 #else
-    DynamicLibrary arrayfire_opencl("libafopencl.so", true);
     DynamicLibrary opencl("libOpenCL.so.1");
 #endif
 
     using AfGetDeviceId = af_err (*)(ClDeviceId*);
-    const auto af_get_device_id =
-        FindFunction<AfGetDeviceId>(arrayfire_opencl, "afcl_get_device_id");
+    const auto af_get_device_id = reinterpret_cast<AfGetDeviceId>(
+        FindLoadedSymbol("afopencl", "afcl_get_device_id"));
     OpenClIdentityApi api;
     api.get_device_info = FindFunction<OpenClIdentityApi::GetDeviceInfo>(
         opencl, "clGetDeviceInfo");
@@ -310,10 +302,8 @@ struct CudaUuid {
 
 void EnrichCudaIdentity(DeviceInfo& info) {
 #ifdef _WIN32
-    DynamicLibrary arrayfire_cuda(L"afcuda.dll", true);
     DynamicLibrary cuda_driver(L"nvcuda.dll");
 #else
-    DynamicLibrary arrayfire_cuda("libafcuda.so", true);
     DynamicLibrary cuda_driver("libcuda.so.1");
 #endif
 
@@ -324,8 +314,8 @@ void EnrichCudaIdentity(DeviceInfo& info) {
     using CuDeviceGetAttribute = int (*)(int*, int, int);
     using CuDeviceTotalMem = int (*)(size_t*, int);
 
-    const auto af_get_native_id =
-        FindFunction<AfGetNativeId>(arrayfire_cuda, "afcu_get_native_id");
+    const auto af_get_native_id = reinterpret_cast<AfGetNativeId>(
+        FindLoadedSymbol("afcuda", "afcu_get_native_id"));
     const auto cu_init = FindFunction<CuInit>(cuda_driver, "cuInit");
     const auto cu_device_get =
         FindFunction<CuDeviceGet>(cuda_driver, "cuDeviceGet");
