@@ -5909,6 +5909,7 @@ set_target_properties(test_layer_view_presentation PROPERTIES
 add_executable(test_nas_mutation
     tests/test_nas_mutation.cpp
     src/core/nas_evaluator.cpp
+    src/core/model_analyzer.cpp
     src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
     src/core/extension_node_registry.cpp
 )

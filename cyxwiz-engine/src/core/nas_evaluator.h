@@ -203,20 +203,6 @@ private:
     static int GetNextPinId(const std::vector<gui::MLNode>& nodes);
     static int GetNextLinkId(const std::vector<gui::NodeLink>& links);
 
-    // Estimate parameters for a layer
-    static int64_t EstimateLayerParams(
-        gui::NodeType type,
-        const std::map<std::string, std::string>& params,
-        const std::vector<size_t>& input_shape
-    );
-
-    // Estimate FLOPs for a layer
-    static int64_t EstimateLayerFLOPs(
-        gui::NodeType type,
-        const std::map<std::string, std::string>& params,
-        const std::vector<size_t>& input_shape
-    );
-
     // Check if a node type is a trainable layer
     static bool IsTrainableLayer(gui::NodeType type);
 

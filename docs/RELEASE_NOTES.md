@@ -7,6 +7,17 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Model Summary and NAS count parameters from the real shapes.**
+  - Model Summary (and Architecture Diagram) start from the input shape the
+    compile reads from the data. Before, any graph without a Dataset Input
+    node was analysed as 28 x 28 x 1 images.
+  - A Conv2D or pooling layer with padding `same` keeps its height and
+    width; before, `same` was read as no padding, so every later shape and
+    Dense size was wrong.
+  - Neural Architecture Search sizes each layer by what reaches it. Before,
+    every layer was counted as if it saw the input: 158,570 parameters for
+    an MLP that has 109,386.
+  - Guide: `docs/usage/model_summary.md`.
 - **Neural Architecture Search changes the model, not a copy of it.**
   - **Apply to CyxWiz Studio** (and **Apply Best Architecture**) now
     replace the canvas graph: unchanged nodes keep their place and group,

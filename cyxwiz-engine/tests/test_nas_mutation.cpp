@@ -148,6 +148,35 @@ int main() {
     const auto residual = NASEvaluator::ScoreArchitecture(res_nodes, res_links, {1, 784}, config);
     Check(residual.connectivity_score > 0.0, "an Add joining two paths counts as a skip connection");
 
+    // Parameters: each layer sized by what reaches it, not by the input.
+    // 784 -> 128 -> 64 -> 10: 100,480 + 8,256 + 650 (what the compiled model
+    // holds). Before, every Dense counted 784 inputs: 158,570.
+    {
+        std::vector<MLNode> mlp = {Node(1, NodeType::DatasetInput, "Input"), Node(2, NodeType::Dense, "Dense 1"),
+                                   Node(3, NodeType::ReLU, "ReLU 1"), Node(4, NodeType::Dense, "Dense 2"),
+                                   Node(5, NodeType::ReLU, "ReLU 2"), Node(6, NodeType::Dense, "Dense 3"),
+                                   Node(7, NodeType::Output, "Output")};
+        mlp[1].parameters["units"] = "128";
+        mlp[3].parameters["units"] = "64";
+        mlp[5].parameters["units"] = "10";
+        std::vector<NodeLink> mlp_links;
+        for (int i = 1; i < 7; ++i) mlp_links.push_back({i, i, i * 10 + 1, i + 1, (i + 1) * 10});
+        const auto counted = NASEvaluator::ScoreArchitecture(mlp, mlp_links, {1, 784}, config);
+        Check(counted.total_params == 109386, "MLP parameters 109,386, got " + std::to_string(counted.total_params));
+
+        // A 'same' convolution keeps 28 x 28: Conv2D 1 -> 32 (320), BatchNorm
+        // (64 learnable), Flatten 25,088 -> Dense 10 (250,890).
+        std::vector<MLNode> cnn = {Node(1, NodeType::DatasetInput, "Input"), Node(2, NodeType::Conv2D, "Conv"),
+                                   Node(3, NodeType::BatchNorm, "BN"), Node(4, NodeType::Flatten, "Flatten"),
+                                   Node(5, NodeType::Dense, "Dense"), Node(6, NodeType::Output, "Output")};
+        cnn[1].parameters = {{"filters", "32"}, {"kernel_size", "3"}, {"padding", "same"}};
+        cnn[4].parameters["units"] = "10";
+        std::vector<NodeLink> cnn_links;
+        for (int i = 1; i < 6; ++i) cnn_links.push_back({i, i, i * 10 + 1, i + 1, (i + 1) * 10});
+        const auto conv = NASEvaluator::ScoreArchitecture(cnn, cnn_links, {1, 1, 28, 28}, config);
+        Check(conv.total_params == 320 + 64 + 250890, "CNN parameters 251,274, got " + std::to_string(conv.total_params));
+    }
+
     if (g_failures) {
         std::printf("%d NAS mutation checks failed\n", g_failures);
         return EXIT_FAILURE;

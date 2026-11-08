@@ -1,5 +1,6 @@
 #include "nas_evaluator.h"
 #include "node_metadata_registry.h"
+#include "model_analyzer.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <algorithm>
@@ -37,6 +38,14 @@ bool IsModelNode(gui::NodeType type) {
         default:
             return false;
     }
+}
+
+// NAS shapes carry the batch first ([1, features], [1, C, H, W]); the
+// analysis takes one sample as the model receives it ([features], [H, W, C]).
+std::vector<size_t> SampleShape(const std::vector<size_t>& input_shape) {
+    if (input_shape.size() == 4) return {input_shape[2], input_shape[3], input_shape[1]};
+    if (input_shape.size() >= 2) return {input_shape.begin() + 1, input_shape.end()};
+    return input_shape;
 }
 
 }  // namespace
@@ -141,127 +150,6 @@ gui::NodeType NASEvaluator::GetRandomActivation(std::mt19937& rng) {
     return types[dist(rng)];
 }
 
-int64_t NASEvaluator::EstimateLayerParams(
-    gui::NodeType type,
-    const std::map<std::string, std::string>& params,
-    const std::vector<size_t>& input_shape)
-{
-    auto GetParam = [&params](const std::string& key, int default_val) -> int {
-        auto it = params.find(key);
-        if (it != params.end()) {
-            try {
-                return std::stoi(it->second);
-            } catch (...) {}
-        }
-        return default_val;
-    };
-
-    int64_t param_count = 0;
-    size_t in_features = input_shape.empty() ? 64 : input_shape.back();
-
-    switch (type) {
-        case gui::NodeType::Dense: {
-            int units = GetParam("units", 64);
-            param_count = static_cast<int64_t>(in_features) * units + units;  // W + b
-            break;
-        }
-        case gui::NodeType::Conv2D: {
-            int filters = GetParam("filters", 32);
-            int kernel_size = GetParam("kernel_size", 3);
-            size_t in_channels = input_shape.size() > 1 ? input_shape[1] : 3;
-            param_count = static_cast<int64_t>(in_channels) * filters * kernel_size * kernel_size + filters;
-            break;
-        }
-        case gui::NodeType::BatchNorm:
-        case gui::NodeType::LayerNorm: {
-            param_count = static_cast<int64_t>(in_features) * 4;  // gamma, beta, running_mean, running_var
-            break;
-        }
-        case gui::NodeType::LSTM: {
-            int units = GetParam("units", 64);
-            param_count = 4 * ((static_cast<int64_t>(in_features) + units + 1) * units);  // 4 gates
-            break;
-        }
-        case gui::NodeType::GRU: {
-            int units = GetParam("units", 64);
-            param_count = 3 * ((static_cast<int64_t>(in_features) + units + 1) * units);  // 3 gates
-            break;
-        }
-        case gui::NodeType::Embedding: {
-            int vocab_size = GetParam("num_embeddings", 10000);
-            int embed_dim = GetParam("embedding_dim", 256);
-            param_count = static_cast<int64_t>(vocab_size) * embed_dim;
-            break;
-        }
-        case gui::NodeType::MultiHeadAttention: {
-            int dim = GetParam("embed_dim", 64);
-            param_count = 4 * static_cast<int64_t>(dim) * dim;  // Q, K, V, O projections
-            break;
-        }
-        default:
-            param_count = 0;
-            break;
-    }
-
-    return param_count;
-}
-
-int64_t NASEvaluator::EstimateLayerFLOPs(
-    gui::NodeType type,
-    const std::map<std::string, std::string>& params,
-    const std::vector<size_t>& input_shape)
-{
-    auto GetParam = [&params](const std::string& key, int default_val) -> int {
-        auto it = params.find(key);
-        if (it != params.end()) {
-            try {
-                return std::stoi(it->second);
-            } catch (...) {}
-        }
-        return default_val;
-    };
-
-    int64_t flops = 0;
-    size_t batch = input_shape.empty() ? 1 : input_shape[0];
-    size_t in_features = input_shape.size() > 1 ? input_shape.back() : 64;
-
-    switch (type) {
-        case gui::NodeType::Dense: {
-            int units = GetParam("units", 64);
-            flops = 2 * batch * static_cast<int64_t>(in_features) * units;  // multiply-add
-            break;
-        }
-        case gui::NodeType::Conv2D: {
-            int filters = GetParam("filters", 32);
-            int kernel_size = GetParam("kernel_size", 3);
-            size_t in_channels = input_shape.size() > 1 ? input_shape[1] : 3;
-            size_t height = input_shape.size() > 2 ? input_shape[2] : 28;
-            size_t width = input_shape.size() > 3 ? input_shape[3] : 28;
-            flops = 2 * batch * static_cast<int64_t>(filters) * height * width *
-                    in_channels * kernel_size * kernel_size;
-            break;
-        }
-        case gui::NodeType::ReLU:
-        case gui::NodeType::LeakyReLU:
-        case gui::NodeType::Sigmoid:
-        case gui::NodeType::Tanh: {
-            flops = batch * static_cast<int64_t>(in_features);
-            break;
-        }
-        case gui::NodeType::GELU:
-        case gui::NodeType::Swish:
-        case gui::NodeType::Mish: {
-            flops = batch * static_cast<int64_t>(in_features) * 5;  // More complex activation
-            break;
-        }
-        default:
-            flops = 0;
-            break;
-    }
-
-    return flops;
-}
-
 // ============================================================================
 // Architecture Scoring
 // ============================================================================
@@ -285,14 +173,15 @@ ArchitectureScore NASEvaluator::ScoreArchitecture(
         if (IsTrainableLayer(node.type)) {
             score.trainable_layer_count++;
             score.layer_type_counts[node.type]++;
-
-            // Estimate parameters
-            score.trainable_params += EstimateLayerParams(node.type, node.parameters, input_shape);
-            score.total_flops += EstimateLayerFLOPs(node.type, node.parameters, input_shape);
         }
         if (IsModelNode(node.type)) score.layer_count++;
     }
 
+    // Parameters and FLOPs layer by layer, each layer sized by what reaches
+    // it (Model Summary's analysis).
+    const ModelAnalysis analysis = ModelAnalyzer{}.AnalyzeGraph(nodes, links, 1, SampleShape(input_shape));
+    score.trainable_params = analysis.trainable_parameters;
+    score.total_flops = analysis.total_flops;
     score.total_params = score.trainable_params;
 
     // Calculate complexity score (prefer smaller models)

@@ -24,13 +24,15 @@ how well a model will learn. To compare versions for real, train them
 | Diversity | several kinds of layer |
 | Connectivity | skip connections: links drawn as skips, and merge nodes (Add, Concatenate, ...) that join two paths |
 
-Below it: the parameter and FLOP estimates, the number of model layers
+Below it: the parameter and FLOP counts, the number of model layers
 (layers, activations, merges; not the data nodes, the loss or the output)
 and a summary such as "Layers: 3x Dense, 2x ReLU".
 
-The parameter estimate assumes every layer sees the input size set under
-**Input Configuration** (Features, or Channels x Height x Width). For a deep
-model it is rough.
+The counts come from the same analysis as **Model Summary**
+([model_summary.md](model_summary.md)): the first layer sees the input size
+set under **Input Configuration** (Features, or Channels x Height x Width),
+and every later layer is sized by what reaches it. A 784 -> 128 -> 64 -> 10
+MLP shows 109,386 parameters, the number the compiled model holds.
 
 ## Change the model
 
