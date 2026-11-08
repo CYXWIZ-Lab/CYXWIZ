@@ -5513,6 +5513,7 @@ TrainingConfiguration GraphCompiler::Compile(
                 pin_shapes[node->outputs[0].id] = first;
                 pin_shapes[node->outputs[1].id] = second;
             }
+            config.graph_op_output_shapes[node->id] = {first, second};
             continue;
         }
 
@@ -5601,6 +5602,7 @@ TrainingConfiguration GraphCompiler::Compile(
                              errors::Compiler::TensorShapeMismatch);
                 }
                 record_outputs(*node, merged);
+                config.graph_op_output_shapes[node->id] = {merged};
             }
             continue;
         }

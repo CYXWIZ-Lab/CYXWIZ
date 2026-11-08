@@ -465,6 +465,7 @@ set(ENGINE_SOURCES
     src/gui/properties_truth.cpp
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
+    src/core/model_summary_presentation.cpp
     src/core/compile_report_presentation.cpp
     src/core/studio_toolbar_presentation.cpp
     src/core/data_input_presentation.cpp
@@ -4692,6 +4693,41 @@ set_target_properties(test_compiled_node_presentation PROPERTIES
 # Reads examples/cyxgraph/NER from the repository.
 add_test(NAME compiled_node_presentation COMMAND test_compiled_node_presentation
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# ===== Test: the Model window's Summary against PyTorch (TOFIX129 D11) =====
+add_executable(test_model_summary_presentation
+    tests/test_model_summary_presentation.cpp
+    src/core/model_summary_presentation.cpp
+    src/core/compiled_node_presentation.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+)
+target_include_directories(test_model_summary_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_model_summary_presentation PRIVATE
+    cyxwiz-training-core
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_model_summary_presentation PRIVATE
+    CYXWIZ_MODEL_SUMMARY_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/model_summary_pytorch.json"
+)
+if(WIN32)
+    target_compile_definitions(test_model_summary_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_model_summary_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME model_summary_pytorch_parity COMMAND test_model_summary_presentation)
 
 # ===== Test: ML readiness for image datasets (TOFIX178 1.5) =====
 add_executable(test_image_split_presentation

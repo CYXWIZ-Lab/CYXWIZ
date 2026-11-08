@@ -416,6 +416,9 @@ struct TrainingConfiguration {
     // The compiler leaves this empty until a node group is deliberately
     // exposed. Focused backend tests may populate it directly.
     std::vector<int> graph_op_node_ids;
+    // Each graph op's output sample shapes by node id (one per output pin),
+    // from the compiler's shape walk; the Model window's Summary lists them.
+    std::map<int, std::vector<std::vector<size_t>>> graph_op_output_shapes;
     // Layers with several inputs (Cross Attention): the graph runtime runs
     // them, so the model is built as a graph even without graph ops.
     std::vector<int> multi_input_layer_node_ids;

@@ -1,0 +1,327 @@
+{
+ "torch": "2.10.0+cpu",
+ "mnist_cnn": {
+  "layers": [
+   {
+    "name": "Conv2D 32",
+    "output": [
+     26,
+     26,
+     32
+    ],
+    "parameters": 320,
+    "multiply_adds": 194688
+   },
+   {
+    "name": "ReLU 1",
+    "output": [
+     26,
+     26,
+     32
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "MaxPool 1",
+    "output": [
+     13,
+     13,
+     32
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Conv2D 64",
+    "output": [
+     11,
+     11,
+     64
+    ],
+    "parameters": 18496,
+    "multiply_adds": 2230272
+   },
+   {
+    "name": "ReLU 2",
+    "output": [
+     11,
+     11,
+     64
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "MaxPool 2",
+    "output": [
+     5,
+     5,
+     64
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Flatten",
+    "output": [
+     1600
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Dense 128",
+    "output": [
+     128
+    ],
+    "parameters": 204928,
+    "multiply_adds": 204800
+   },
+   {
+    "name": "ReLU 3",
+    "output": [
+     128
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Dropout",
+    "output": [
+     128
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Dense 10",
+    "output": [
+     10
+    ],
+    "parameters": 1290,
+    "multiply_adds": 1280
+   }
+  ],
+  "parameters": 225034,
+  "multiply_adds": 2631040
+ },
+ "image_mix": {
+  "layers": [
+   {
+    "name": "Conv same",
+    "output": [
+     32,
+     32,
+     16
+    ],
+    "parameters": 448,
+    "multiply_adds": 442368
+   },
+   {
+    "name": "BatchNorm",
+    "output": [
+     32,
+     32,
+     16
+    ],
+    "parameters": 32,
+    "multiply_adds": 0
+   },
+   {
+    "name": "ReLU",
+    "output": [
+     32,
+     32,
+     16
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Depthwise s2",
+    "output": [
+     16,
+     16,
+     32
+    ],
+    "parameters": 320,
+    "multiply_adds": 73728
+   },
+   {
+    "name": "Pointwise",
+    "output": [
+     16,
+     16,
+     8
+    ],
+    "parameters": 264,
+    "multiply_adds": 65536
+   },
+   {
+    "name": "Up",
+    "output": [
+     32,
+     32,
+     4
+    ],
+    "parameters": 132,
+    "multiply_adds": 32768
+   },
+   {
+    "name": "Global pool",
+    "output": [
+     4
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Head",
+    "output": [
+     3
+    ],
+    "parameters": 15,
+    "multiply_adds": 12
+   }
+  ],
+  "parameters": 1211,
+  "multiply_adds": 614412
+ },
+ "residual": {
+  "layers": [
+   {
+    "name": "Dense a",
+    "output": [
+     6
+    ],
+    "parameters": 54,
+    "multiply_adds": 48
+   },
+   {
+    "name": "Dense b",
+    "output": [
+     6
+    ],
+    "parameters": 54,
+    "multiply_adds": 48
+   },
+   {
+    "name": "Add",
+    "output": [
+     6
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Head",
+    "output": [
+     3
+    ],
+    "parameters": 21,
+    "multiply_adds": 18
+   }
+  ],
+  "parameters": 129,
+  "multiply_adds": 114
+ },
+ "recurrent": {
+  "layers": [
+   {
+    "name": "Embedding",
+    "output": [
+     20,
+     32
+    ],
+    "parameters": 32000,
+    "multiply_adds": 0
+   },
+   {
+    "name": "LSTM",
+    "output": [
+     20,
+     48
+    ],
+    "parameters": 25344,
+    "multiply_adds": 491520
+   },
+   {
+    "name": "GRU",
+    "output": [
+     20,
+     16
+    ],
+    "parameters": 3168,
+    "multiply_adds": 61440
+   },
+   {
+    "name": "RNN",
+    "output": [
+     12
+    ],
+    "parameters": 360,
+    "multiply_adds": 6720
+   },
+   {
+    "name": "Head",
+    "output": [
+     5
+    ],
+    "parameters": 65,
+    "multiply_adds": 60
+   }
+  ],
+  "parameters": 60937,
+  "multiply_adds": 559740
+ },
+ "attention": {
+  "layers": [
+   {
+    "name": "Embedding",
+    "output": [
+     16,
+     32
+    ],
+    "parameters": 16000,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Attention",
+    "output": [
+     16,
+     32
+    ],
+    "parameters": 4224,
+    "multiply_adds": 81920
+   },
+   {
+    "name": "Encoder",
+    "output": [
+     16,
+     32
+    ],
+    "parameters": 8544,
+    "multiply_adds": 147456
+   },
+   {
+    "name": "Flatten",
+    "output": [
+     512
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Head",
+    "output": [
+     2
+    ],
+    "parameters": 1026,
+    "multiply_adds": 1024
+   }
+  ],
+  "parameters": 29794,
+  "multiply_adds": 230400
+ }
+}
