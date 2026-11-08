@@ -15,6 +15,10 @@
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
+#include "../model_images.h"
+#include "../../core/test_predictions_metrics.h"
+
+#include <arrow/compute/api.h>
 
 #include <cyxwiz/data_transform.h>
 
@@ -27,6 +31,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 
 namespace cyxwiz {
 
@@ -257,6 +262,7 @@ void TestView::Render() {
         if (classification) {
             section("Confusion matrix###matrix", [&] { RenderMatrix(); });
             section("Classes###classes", [&] { RenderClasses(); });
+            if (!m->metric_learning_mode) section("Errors###errors", [&] { RenderErrors(*m); });
             if (!m->metric_learning_mode) section("Curves###curves", [&] { RenderCurves(*m); });
             if (curves) section("Threshold###threshold", [&] { RenderThreshold(*m); });
             section("Predictions###predictions", [&] { RenderPredictions(*m); });
@@ -995,6 +1001,129 @@ void TestView::Export(bool json) {
     std::string error;
     note_failed_ = !(json ? WriteTestResultsJson(*m, *path, &error) : WriteTestResultsCsv(*m, *path, &error));
     note_ = note_failed_ ? "Could not export: " + error : "Saved " + *path;
+}
+
+// ---- Errors (TOFIX129 D11) ----------------------------------------------------
+
+TestView::~TestView() { ReleaseThumbnails(); }
+
+void TestView::ReleaseThumbnails() {
+    for (auto& [sample, texture] : thumbnails_) model_images::ReleaseTexture(texture);
+    thumbnails_.clear();
+}
+
+void TestView::RenderErrors(const TestingMetrics& m) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (thumbnails_version_ != shown_version_) {
+        ReleaseThumbnails();
+        thumbnails_version_ = shown_version_;
+        errors_pair_ = -1;
+        errors_message_.clear();
+    }
+    Wrapped(t.text, test_report::ErrorsHeadline(m, view_));
+    if (view_.mistakes.empty()) return;
+
+    std::map<int, const TestingMetrics::KeptInput*> kept;
+    for (const auto& input : m.kept_inputs) kept[input.sample] = &input;
+    const int first = view_.mistakes.front();
+    const bool can_explain = explain_sample && kept.count(first) && source_ == Source::Latest;
+    if (ui::SecondaryButton("Explain the first in the Model window", can_explain,
+                            source_ != Source::Latest ? "Explain shows the latest test's rows with the model in use."
+                                                      : "The test did not keep this row's input."))
+        explain_sample(first);
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Save the wrong rows as a table")) {
+        std::shared_ptr<arrow::Table> rows = PredictionsTableFromMetrics(m);
+        if (rows) {
+            arrow::Int64Builder indices;
+            for (int i : view_.mistakes) (void)indices.Append(i);
+            std::shared_ptr<arrow::Array> take;
+            (void)indices.Finish(&take);
+            auto taken = arrow::compute::Take(rows, take);
+            if (taken.ok()) {
+                const auto table = taken->table();
+                DataRegistry::Instance().RegisterArrowTable(table, "test_wrong_rows");
+                errors_message_ = "Saved " + FormatCompiledCount(table->num_rows()) +
+                                  " wrong rows as the session table 'test_wrong_rows' (Data Studio lists it).";
+            } else {
+                errors_message_ = "Could not take the wrong rows: " + taken.status().ToString();
+            }
+        } else {
+            errors_message_ = "This run kept no rows to save.";
+        }
+    }
+    if (!errors_message_.empty()) Wrapped(t.text_dim, errors_message_);
+
+    // Mistakes by pair.
+    ImGui::Spacing();
+    ImGui::TextColored(t.text_dim, "Mistakes by pair");
+    const auto pairs = test_report::MistakePairs(m);
+    const std::string all = std::to_string(view_.mistakes.size());
+    if (ui::FilterChip("##pair_all", "All", all.c_str(), errors_pair_ < 0)) errors_pair_ = -1;
+    for (size_t p = 0; p < pairs.size() && p < 12; ++p) {
+        const std::string label = test_report::ClassName(m, pairs[p].truth) + " \xE2\x86\x92 " +
+                                  test_report::ClassName(m, pairs[p].predicted);
+        const std::string count = std::to_string(pairs[p].count);
+        const float width = ui::FilterChipWidth(label.c_str(), count.c_str());
+        ImGui::SameLine();
+        if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
+        ImGui::PushID(static_cast<int>(p));
+        if (ui::FilterChip("##pair", label.c_str(), count.c_str(), errors_pair_ == static_cast<int>(p)))
+            errors_pair_ = errors_pair_ == static_cast<int>(p) ? -1 : static_cast<int>(p);
+        ImGui::PopID();
+    }
+
+    // The most confident mistakes (of the pair), with their inputs.
+    ImGui::Spacing();
+    const std::vector<size_t>& shape = m.kept_input_shape;
+    const bool images = shape.size() == 3;
+    const float card = images ? 150.0f : 220.0f;
+    const int columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / (card + 12.0f)));
+    int shown = 0;
+    if (ImGui::BeginTable("##worst_errors", columns, ImGuiTableFlags_SizingFixedFit)) {
+        for (int i : view_.mistakes) {
+            if (shown >= 24) break;
+            const size_t s = static_cast<size_t>(i);
+            if (errors_pair_ >= 0 && static_cast<size_t>(errors_pair_) < pairs.size() &&
+                (m.ground_truth[s] != pairs[errors_pair_].truth || m.predictions[s] != pairs[errors_pair_].predicted))
+                continue;
+            ++shown;
+            ImGui::TableNextColumn();
+            ImGui::PushID(i);
+            const auto input = kept.find(i);
+            if (images && input != kept.end()) {
+                unsigned int& texture = thumbnails_[i];
+                if (!texture)
+                    texture = model_images::Upload(model_images::InputPicture(input->second->values, shape[0], shape[1],
+                                                                              shape[2], static_cast<int>(card)));
+                if (texture) ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(texture)), ImVec2(card, card));
+            } else if (input != kept.end()) {
+                std::string values;
+                for (size_t v = 0; v < input->second->values.size() && v < 6; ++v) {
+                    char text[24];
+                    std::snprintf(text, sizeof(text), "%s%.3g", v ? ", " : "", input->second->values[v]);
+                    values += text;
+                }
+                if (input->second->values.size() > 6) values += ", ...";
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + card);
+                ImGui::TextColored(t.text_dim, "%s", values.c_str());
+                ImGui::PopTextWrapPos();
+            }
+            const std::string row = s < m.row_ids.size() ? "row " + std::to_string(m.row_ids[s]) : "sample " + std::to_string(i);
+            ImGui::TextUnformatted(row.c_str());
+            ImGui::TextColored(t.caution, "%s, read as %s",
+                               WithArticle(test_report::ClassName(m, m.ground_truth[s])).c_str(),
+                               test_report::ClassName(m, m.predictions[s]).c_str());
+            ImGui::TextColored(t.text_dim, "%.1f %% sure", (s < m.confidences.size() ? m.confidences[s] : 0.0f) * 100.0f);
+            if (explain_sample && input != kept.end() && source_ == Source::Latest && ui::LinkButton("Explain"))
+                explain_sample(i);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    Wrapped(t.text_faint, "The most confident mistakes" +
+                              std::string(view_.mistakes.size() > 24 ? " (24 shown; Predictions lists them all)" : "") +
+                              ". A table model shows a row's first values instead of an image.");
 }
 
 }  // namespace cyxwiz

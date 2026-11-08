@@ -9,8 +9,10 @@
 // FinishClassifierMetrics, the device ROC / PR) through
 // core/test_results_presentation; this file only draws them.
 //
-// Sections: Overview, Confusion matrix, Classes, Curves, Threshold (the
-// positive class by name, a typed threshold, Best F1), Predictions, Plots
+// Sections: Overview, Confusion matrix, Classes, Errors (the mistakes by pair,
+// the most confident ones with their inputs, TOFIX129 D11), Curves,
+// Threshold (the positive class by name, a typed threshold, Best F1),
+// Predictions, Plots
 // (regression), By column value, Comparison. Export CSV / JSON, Keep as node,
 // Clear (asks first), Run test again.
 
@@ -24,6 +26,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -41,6 +44,7 @@ ImVec4 TestToneColour(test_report::Tone tone);
 
 class TestView {
 public:
+    ~TestView();
     // A finished test (any thread). A failed run shows its message and keeps
     // the last successful results; it never becomes the run compared against.
     void SetResults(const TestingMetrics& results);
@@ -68,6 +72,7 @@ public:
     std::function<void()> run_test;             // "Run test again"
     std::function<void()> keep;                 // "Keep as node..." (Results' dialog)
     std::function<std::string()> keep_blocker;  // why the latest test cannot be kept ("" when it can)
+    std::function<void(int)> explain_sample;    // opens a test sample in the Model window's Explain
 
 private:
     enum class Source { Latest, Kept, Table };
@@ -92,6 +97,8 @@ private:
     void RenderCurves(const TestingMetrics& m);
     void RenderThreshold(const TestingMetrics& m);
     void RenderPredictions(const TestingMetrics& m);
+    void RenderErrors(const TestingMetrics& m);
+    void ReleaseThumbnails();
     void RenderRegressionRows(const TestingMetrics& m);
     void RenderRegressionPlots(const TestingMetrics& m);
     void RenderComparison();
@@ -148,6 +155,12 @@ private:
 
     std::string note_;
     bool note_failed_ = false;
+
+    // Errors.
+    int errors_pair_ = -1;                  // a (true, predicted) pair picked, or -1 for all
+    std::string errors_message_;
+    std::map<int, unsigned int> thumbnails_;  // sample -> texture of its kept input
+    uint64_t thumbnails_version_ = 0;
 };
 
 }  // namespace cyxwiz

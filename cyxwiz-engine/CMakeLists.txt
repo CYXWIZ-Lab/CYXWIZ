@@ -680,6 +680,7 @@ set(ENGINE_SOURCES
     # DNN inference (Phase 3)
     src/inference/dnn_preprocessor.cpp
     src/gui/panels/model_panel.cpp
+    src/gui/model_images.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
     src/gui/panels/feature_importance_panel.cpp
@@ -957,6 +958,7 @@ set(ENGINE_HEADERS
     # DNN inference (Phase 3)
     src/inference/dnn_preprocessor.h
     src/gui/panels/model_panel.h
+    src/gui/model_images.h
     src/gui/panels/feature_importance_panel.h
     src/gui/panels/hyperparam_search_panel.h
     src/core/hyperparam_search.h

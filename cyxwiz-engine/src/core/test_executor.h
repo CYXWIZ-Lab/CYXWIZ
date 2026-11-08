@@ -138,6 +138,8 @@ struct TestingMetrics {
     static constexpr size_t kKeptInputBytes = 64ull * 1024 * 1024;
     std::vector<KeptInput> kept_inputs;
     size_t kept_input_bytes = 0;
+    // [H, W, C] of a kept input when the model reads images; empty for rows.
+    std::vector<size_t> kept_input_shape;
 
     // Each weight layer's features of every test sample, for the Model
     // window's Projector (TOFIX129 D11; layer stacks): the output of the

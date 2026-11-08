@@ -47,6 +47,8 @@ public:
     void SetStartRangeTest(StartRangeTest start) { start_range_test_ = std::move(start); }
     // The launch stopped before training (Train's checks): why.
     void RangeLaunchEnded(const std::string& why);
+    // Opens Explain on a sample of the last test (Results > Test > Errors).
+    void ExplainSample(int sample);
     // The health of the training running now, else of the last one, with
     // the graph's layer names (also the Training Dashboard's notice).
     HealthView CurrentHealth() const;

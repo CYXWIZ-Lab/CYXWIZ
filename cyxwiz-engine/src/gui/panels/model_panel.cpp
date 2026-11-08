@@ -6,13 +6,14 @@
 #include "../../core/training_manager.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/test_manager.h"
+#include "../../core/test_results_presentation.h"
 #include "../icons.h"
 #include "../node_editor.h"
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
-#include "output_renderer.h"
+#include "../model_images.h"
 
 #include <cyxwiz/device.h>
 #include <stb_image_write.h>
@@ -352,6 +353,13 @@ void ModelPanel::RenderSide() {
     if (!message_.empty()) Paragraph(message_, message_error_ ? &t.warning : &t.text_dim);
 }
 
+void ModelPanel::ExplainSample(int sample) {
+    explain_sample_ = sample;
+    explain_target_mode_ = 0;
+    explain_wrong_only_ = false;
+    Open("explain");
+}
+
 void ModelPanel::RangeLaunchEnded(const std::string& why) {
     range_running_ = false;
     range_message_ = why;
@@ -549,61 +557,17 @@ namespace {
 
 constexpr int kExplainSide = 168;  // px of each map on screen
 
-ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t) {
-    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, 1.0f);
-}
-
-// The theme's sequential scale at 0..1.
-ImVec4 Sequential(float v) {
-    const auto& stops = ui::CurrentTokens().scale_sequential;
-    const float x = std::clamp(v, 0.0f, 1.0f) * 3.0f;
-    const int i = std::min(2, static_cast<int>(x));
-    return Mix(stops[i], stops[i + 1], x - static_cast<float>(i));
-}
-
-// The theme's diverging scale at -1..1.
-ImVec4 Diverging(float v) {
-    const auto& stops = ui::CurrentTokens().scale_diverging;
-    const float x = std::clamp(v, -1.0f, 1.0f);
-    return x < 0.0f ? Mix(stops[1], stops[0], -x) : Mix(stops[1], stops[2], x);
-}
-
-struct Rgba {
-    int width = 0, height = 0;
-    std::vector<unsigned char> pixels;
-};
-
-// height x width colours, each pixel `scale` times (nearest), RGBA.
-Rgba Picture(size_t height, size_t width, int scale, const std::function<ImVec4(size_t)>& colour) {
-    Rgba out;
-    out.width = static_cast<int>(width) * scale;
-    out.height = static_cast<int>(height) * scale;
-    out.pixels.resize(static_cast<size_t>(out.width) * out.height * 4);
-    for (int y = 0; y < out.height; ++y) {
-        for (int x = 0; x < out.width; ++x) {
-            const ImVec4 c = colour(static_cast<size_t>(y / scale) * width + static_cast<size_t>(x / scale));
-            unsigned char* p = &out.pixels[(static_cast<size_t>(y) * out.width + x) * 4];
-            p[0] = static_cast<unsigned char>(std::clamp(c.x, 0.0f, 1.0f) * 255.0f + 0.5f);
-            p[1] = static_cast<unsigned char>(std::clamp(c.y, 0.0f, 1.0f) * 255.0f + 0.5f);
-            p[2] = static_cast<unsigned char>(std::clamp(c.z, 0.0f, 1.0f) * 255.0f + 0.5f);
-            p[3] = 255;
-        }
-    }
-    return out;
-}
+using model_images::Diverging;
+using model_images::Mix;
+using model_images::Picture;
+using model_images::Rgba;
+using model_images::Sequential;
 
 // The four pictures of an outcome: input, Grad-CAM over it, saliency, IG.
 std::vector<Rgba> ExplainPictures(const ExplainOutcome& out) {
-    const size_t h = out.height, w = out.width, c = std::max<size_t>(1, out.channels);
+    const size_t h = out.height, w = out.width;
     const int scale = std::max(1, kExplainSide / static_cast<int>(std::max<size_t>(1, std::max(h, w))));
-    const auto [lo_it, hi_it] = std::minmax_element(out.input.begin(), out.input.end());
-    const float lo = *lo_it, span = std::max(1e-12f, *hi_it - *lo_it);
-    const auto pixel = [&](size_t i) {
-        if (c >= 3)
-            return ImVec4((out.input[i * c] - lo) / span, (out.input[i * c + 1] - lo) / span, (out.input[i * c + 2] - lo) / span, 1.0f);
-        const float g = (out.input[i * c] - lo) / span;
-        return ImVec4(g, g, g, 1.0f);
-    };
+    const auto pixel = model_images::InputPixels(out.input, out.channels);
     const auto peak = [](const std::vector<float>& v, bool absolute) {
         float m = 0.0f;
         for (float x : v) m = std::max(m, absolute ? std::fabs(x) : x);
@@ -627,21 +591,14 @@ std::vector<Rgba> ExplainPictures(const ExplainOutcome& out) {
 }  // namespace
 
 void ModelPanel::ReleaseExplainImages() {
-    for (auto& id : explain_images_) {
-        if (id) OutputRenderer::DeleteTexture(id);
-        id = 0;
-    }
+    for (auto& id : explain_images_) model_images::ReleaseTexture(id);
 }
 
 void ModelPanel::UploadExplainImages() {
     ReleaseExplainImages();
     if (!explain_.ok || explain_.height <= 1) return;
     const auto pictures = ExplainPictures(explain_);
-    for (size_t i = 0; i < pictures.size() && i < 4; ++i) {
-        if (!pictures[i].pixels.empty())
-            explain_images_[i] = OutputRenderer::CreateTextureFromRGBA(pictures[i].pixels.data(), pictures[i].width,
-                                                                        pictures[i].height);
-    }
+    for (size_t i = 0; i < pictures.size() && i < 4; ++i) explain_images_[i] = model_images::Upload(pictures[i]);
     explain_image_size_[0] = pictures.front().width;
     explain_image_size_[1] = pictures.front().height;
 }
@@ -817,7 +774,7 @@ void ModelPanel::StartExplain(const std::vector<ExplainRowChoice>& all) {
                 const auto activation = Device(device->type, device->device_id).ActivateExact(false);
                 if (!activation.success) outcome.error = "Could not switch to the device that holds the model: " + activation.message;
             }
-            if (outcome.error.empty()) outcome = ExplainSample(*model, config, request);
+            if (outcome.error.empty()) outcome = cyxwiz::ExplainSample(*model, config, request);
             std::lock_guard<std::mutex> lock(job->mutex);
             job->outcome = std::move(outcome);
             job->done = true;
@@ -1235,7 +1192,7 @@ void ModelPanel::RenderProjectorPlot(const std::vector<std::string>& class_names
             const bool kept = std::any_of(test.kept_inputs.begin(), test.kept_inputs.end(),
                                           [&](const TestingMetrics::KeptInput& k) { return k.sample == nearest->sample; });
             ImGui::BeginTooltip();
-            ImGui::Text("row %lld: a %s, read as %s (%.1f %%)", nearest->row, name_of(nearest->truth).c_str(),
+            ImGui::Text("row %lld: %s, read as %s (%.1f %%)", nearest->row, WithArticle(name_of(nearest->truth)).c_str(),
                         name_of(nearest->predicted).c_str(), nearest->confidence * 100.0f);
             ImGui::TextColored(t.text_dim, "%s", kept ? "Click to open it in Explain." : "Its input was not kept by the test.");
             ImGui::EndTooltip();

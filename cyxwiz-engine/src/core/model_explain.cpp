@@ -2,6 +2,7 @@
 
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
+#include "class_words.h"
 
 #include <cyxwiz/model_interpretability.h>
 #include <cyxwiz/sequential.h>
@@ -181,10 +182,10 @@ ExplainWords DescribeExplanation(const ExplainOutcome& outcome, long long row, i
     const std::string subject = row >= 0 ? "Row " + std::to_string(row) : std::string("This sample");
     if (truth >= 0 && truth != outcome.predicted) {
         words.wrong = true;
-        words.headline = subject + " is a " + ClassName(truth, class_names) + ", but the model says " + said + " with " +
+        words.headline = subject + " is " + WithArticle(ClassName(truth, class_names)) + ", but the model says " + said + " with " +
                          Percent(outcome.predicted_probability) + ".";
     } else if (truth >= 0) {
-        words.headline = subject + " is a " + ClassName(truth, class_names) + ", and the model says " + said + " (" +
+        words.headline = subject + " is " + WithArticle(ClassName(truth, class_names)) + ", and the model says " + said + " (" +
                          Percent(outcome.predicted_probability) + ").";
     } else {
         words.headline = "The model says " + said + " (" + Percent(outcome.predicted_probability) + ").";
@@ -217,7 +218,7 @@ std::vector<ExplainRowChoice> ExplainRowChoices(const TestingMetrics& test, bool
         choice.wrong = choice.truth >= 0 && choice.truth != choice.predicted;
         if (wrong_only && !choice.wrong) continue;
         choice.label = "row " + std::to_string(choice.row) + " \xC2\xB7 " +
-                       (choice.truth >= 0 ? "a " + ClassName(choice.truth, class_names) + ", " : std::string()) +
+                       (choice.truth >= 0 ? WithArticle(ClassName(choice.truth, class_names)) + ", " : std::string()) +
                        "read as " + ClassName(choice.predicted, class_names) + " (" + Percent(choice.confidence) + ")";
         choices.push_back(std::move(choice));
     }

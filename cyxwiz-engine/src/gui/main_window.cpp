@@ -1281,6 +1281,9 @@ MainWindow::MainWindow()
         test->run_test = [this]() {
             if (node_editor_) StartTestingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
         };
+        test->explain_sample = [this](int sample) {
+            if (model_panel_) model_panel_->ExplainSample(sample);
+        };
     }
     // Results > Cross-validation / Learning curve train the open graph again (TOFIX129 D4).
     // Their nodes' second pin reads the last run's table from the registry.

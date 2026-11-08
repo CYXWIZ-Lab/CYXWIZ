@@ -278,7 +278,8 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
     const std::string source_dataset = use_arrow_dataset_ && arrow_dataset_       ? arrow_dataset_->GetName()
                                        : use_parquet_dataset_ && parquet_dataset_ ? parquet_dataset_->GetName()
                                                                                   : external_source_.source_dataset;
-    UpdateMetrics([regression_mode, &source_dataset](TestingMetrics& m) {
+    const std::vector<size_t> kept_shape = UsesSpatialSequentialInput(config_) ? config_.input_shape : std::vector<size_t>{};
+    UpdateMetrics([regression_mode, &source_dataset, &kept_shape](TestingMetrics& m) {
         m.current_batch = 0;
         m.total_batches = 0;
         m.total_samples = 0;
@@ -309,6 +310,7 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
         m.curves_note.clear();
         m.kept_inputs.clear();
         m.kept_input_bytes = 0;
+        m.kept_input_shape = kept_shape;
         m.layer_features.clear();
         m.layer_features_note.clear();
     });
