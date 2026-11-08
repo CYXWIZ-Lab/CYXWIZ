@@ -675,6 +675,9 @@ MainWindow::MainWindow()
     feature_importance_panel_->SetLoadCheckpointCallback([this]() { LoadCheckpointForTesting(); });
     nas_panel_ = std::make_unique<cyxwiz::NASPanel>();
     hyperparam_search_panel_ = std::make_unique<cyxwiz::HyperparamSearchPanel>();
+    hyperparam_search_panel_->SetNodeEditor(node_editor_.get());
+    hyperparam_search_panel_->SetStartCallback([this]() { StartSearchFromGraph(); },
+                                               [this]() { return marked_launch_.has_value(); });
     serving_panel_ = std::make_unique<cyxwiz::ServingPanel>();
     dnn_inference_panel_ = std::make_unique<cyxwiz::DNNInferencePanel>();
 
@@ -1396,7 +1399,7 @@ MainWindow::MainWindow()
             view->cancel = [this]() {
                 if (folds_task_) cyxwiz::AsyncTaskManager::Instance().Cancel(folds_task_);
             };
-            view->run_blocker = [this]() { return FoldsBlocker(); };
+            view->run_blocker = [this]() { return LaunchBlocker(); };
             const bool curve = view_kind == cyxwiz::ResultsView::View::LearningCurve;
             view->graph_node = [this, curve]() -> std::optional<cyxwiz::FoldsView::GraphNode> {
                 const auto node = FindFoldsNode(curve);
@@ -3772,7 +3775,7 @@ void MainWindow::PollTrainingPipelineRun() {
     training_pipeline_run_.reset();
     if (cyxwiz::ProjectManager::Instance().GetProjectRoot() != run.project) {
         spdlog::info("Train: the project changed while the data steps ran; not training");
-        EndFoldsLaunch("Not started: the project changed while the data steps ran.");
+        EndMarkedLaunch("Not started: the project changed while the data steps ran.");
         return;
     }
     std::optional<std::string> result;
@@ -3789,7 +3792,7 @@ void MainWindow::PollTrainingPipelineRun() {
                                           cyxwiz::errors::Training::InvalidTrainingSetup});
         ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, "the data steps failed");
         if (training_plot_panel_) training_plot_panel_->SetPreparationFailed("The data steps failed: " + why);
-        EndFoldsLaunch("Not started: the data steps before the Data Split failed.");
+        EndMarkedLaunch("Not started: the data steps before the Data Split failed.");
         return;
     }
     spdlog::info("Train: the data steps ended; training reads '{}'", *result);
@@ -3828,7 +3831,7 @@ void MainWindow::PollDataInputLoads() {
     };
     if (!node_editor_ || cyxwiz::ProjectManager::Instance().GetProjectRoot() != data_input_loads_project_) {
         spdlog::info("The project changed while its data loaded; not starting");
-        if (train) EndFoldsLaunch("Not started: the project changed while its data loaded.");
+        if (train) EndMarkedLaunch("Not started: the project changed while its data loaded.");
         debugger_not_started("the project changed while its data loaded.");
         return;
     }
@@ -3850,7 +3853,7 @@ void MainWindow::PollDataInputLoads() {
                           "the data could not be loaded");
         if (train) {
             if (training_plot_panel_) training_plot_panel_->SetPreparationFailed("Could not load " + failed_names);
-            EndFoldsLaunch("Not started: could not load " + failed_names + " (the compile report says why).");
+            EndMarkedLaunch("Not started: could not load " + failed_names + " (the compile report says why).");
         }
         debugger_not_started("could not load " + failed_names + " (the compile report says why).");
         return;
@@ -3862,16 +3865,20 @@ void MainWindow::PollDataInputLoads() {
 
 void MainWindow::StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings) {
     if (!node_editor_ || !view) return;
-    if (const std::string why = FoldsBlocker(); !why.empty()) {
-        cyxwiz::CrossValidationOutcome refused;
-        refused.error = why;
-        view->Finished(std::move(refused));
+    const auto stop_view = [view](const std::string& why) {
+        cyxwiz::CrossValidationOutcome stopped;
+        stopped.error = why;
+        view->Finished(std::move(stopped));
+    };
+    if (const std::string why = LaunchBlocker(); !why.empty()) {
+        stop_view(why);
         return;
     }
     const auto node = FindFoldsNode(view->IsLearningCurve());
     const std::string results_table = node ? node->results_table
                                            : cyxwiz::TrainingEvaluationOperator::DefaultResultsTable(view->IsLearningCurve());
-    folds_launch_ = FoldsLaunch{view, settings, results_table};
+    marked_launch_ = MarkedLaunch{view->IsLearningCurve() ? "Learning curve" : "Cross-validation",
+                                  MakeFoldsDispatch(FoldsLaunch{view, settings, results_table}), stop_view};
     view->Started();
     StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
 }
@@ -3908,18 +3915,19 @@ std::string MainWindow::AddFoldsNode(bool learning_curve, const cyxwiz::CrossVal
            "\": the graph keeps these settings, and Run uses them from now on.";
 }
 
-void MainWindow::EndFoldsLaunch(const std::string& why) {
-    if (!folds_launch_) return;
-    const auto view = folds_launch_->view;
-    folds_launch_.reset();
-    cyxwiz::CrossValidationOutcome stopped;
-    stopped.error = why;
-    if (view) view->Finished(std::move(stopped));
+void MainWindow::EndMarkedLaunch(const std::string& why) {
+    if (!marked_launch_) return;
+    const auto not_started = std::move(marked_launch_->not_started);
+    marked_launch_.reset();
+    if (not_started) not_started(why);
 }
 
-std::string MainWindow::FoldsBlocker() const {
+std::string MainWindow::LaunchBlocker(bool count_search) const {
     if (!node_editor_) return "No graph is open";
-    if (folds_task_ || folds_launch_) return "A cross-validation or learning curve is running";
+    if (folds_task_) return "A cross-validation or learning curve is running";
+    if (marked_launch_) return "A cross-validation, learning curve or search is being prepared";
+    if (count_search && hyperparam_search_panel_ && hyperparam_search_panel_->IsSearching())
+        return "A hyperparameter search is running";
     if (cyxwiz::TrainingManager::Instance().IsTrainingActive()) return "Train is running; run this when it has finished";
     if (HasActiveGraphTrainingPreparation()) return "A training is being prepared";
     if (test_preparation_task_ || cyxwiz::TestManager::Instance().IsTestingActive()) return "A test is running";
@@ -3974,6 +3982,48 @@ std::string MainWindow::FoldsBlocker() const {
                 if (!lifetime.expired()) folds_task_ = 0;
             },
             lifetime);
+        return true;
+    };
+}
+
+void MainWindow::StartSearchFromGraph() {
+    if (!node_editor_ || !hyperparam_search_panel_) return;
+    if (const std::string why = LaunchBlocker(false); !why.empty()) {
+        hyperparam_search_panel_->NotStarted("Not started: " + why + ".");
+        return;
+    }
+    auto nodes = node_editor_->GetNodes();
+    auto links = node_editor_->GetLinks();
+    cyxwiz::HyperparamSearchPanel* panel = hyperparam_search_panel_.get();
+    marked_launch_ = MarkedLaunch{"Hyperparameter search", MakeSearchDispatch(nodes, links),
+                                  [panel](const std::string& why) { panel->NotStarted(why); }};
+    StartTrainingFromGraph(nodes, links);
+}
+
+// The last step of the search's launch: what Train would train (the launched
+// configuration and the recipe for its prepared data) becomes the trials'
+// setup; each trial trains a fresh copy with its values set.
+::gui::GraphTrainingDispatch MainWindow::MakeSearchDispatch(std::vector<MLNode> nodes, std::vector<NodeLink> links) {
+    return [this, nodes = std::move(nodes), links = std::move(links)](
+               cyxwiz::TrainingConfiguration config, const std::string& dataset_name, const std::string& label_column,
+               int epochs, int batch_size, std::weak_ptr<cyxwiz::TrainingPlotPanel>, std::function<void(bool)>) -> bool {
+        if (cyxwiz::TrainingManager::Instance().IsTrainingActive()) {
+            hyperparam_search_panel_->NotStarted("Not started: Train is running; start the search when it has finished.");
+            throw std::runtime_error("Train is running; start the search again when it has finished.");
+        }
+        config.epochs = epochs;
+        config.batch_size = batch_size;
+        cyxwiz::TrialSetup setup;
+        setup.recipe = ::gui::GraphTrainingRecipe(cyxwiz::DataRegistry::Instance(), config, dataset_name, label_column);
+        if (!setup.recipe) {
+            const std::string why = setup.recipe.error.empty() ? "the prepared data cannot train" : setup.recipe.error;
+            hyperparam_search_panel_->NotStarted("Not started: " + why + ".");
+            throw std::runtime_error(why);
+        }
+        setup.nodes = nodes;
+        setup.links = links;
+        setup.launched = std::move(config);
+        hyperparam_search_panel_->BeginTrials(std::move(setup));
         return true;
     };
 }
@@ -4034,17 +4084,18 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     // checks and preparation, then its own dispatch. A stop on the way ends it
     // with a word in the view, except while the data loads or the memory
     // question is open (both come back here).
-    const std::optional<FoldsLaunch> folds = folds_launch_;
-    bool folds_waiting = false;
-    struct FoldsLaunchEnd {
+    const std::optional<MarkedLaunch> marked = marked_launch_;
+    bool marked_waiting = false;
+    struct MarkedLaunchEnd {
         MainWindow* window;
         const bool& waiting;
-        ~FoldsLaunchEnd() {
-            if (!waiting) window->EndFoldsLaunch("Not started: Train's checks stopped it (the compile report says why).");
+        ~MarkedLaunchEnd() {
+            if (!waiting) window->EndMarkedLaunch("Not started: Train's checks stopped it (the compile report says why).");
         }
-    } folds_end{this, folds_waiting};
-    if (!folds && (folds_task_ || folds_launch_)) {
-        spdlog::warn("Train: a cross-validation or learning curve is running; cancel it in Data Studio > Results first");
+    } marked_end{this, marked_waiting};
+    if (!marked && (folds_task_ || marked_launch_ ||
+                    (hyperparam_search_panel_ && hyperparam_search_panel_->IsSearching()))) {
+        spdlog::warn("Train: {}; cancel or stop it first", LaunchBlocker());
         return;
     }
     if (test_preparation_task_ || cyxwiz::TestManager::Instance().IsTestingActive()) {
@@ -4060,7 +4111,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             training_plot_panel_->SetPreparationState(true, "Loading " + loading + " before training...", 0.01f);
             training_plot_panel_->SetVisible(true);
         }
-        folds_waiting = true;
+        marked_waiting = true;
         return;
     }
 
@@ -4164,7 +4215,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         {
             const auto studio_debugger = studio_debugger_panel_ ? studio_debugger_panel_->CaptureSettings()
                                                                 : cyxwiz::core::EngineConfig::Instance().GetStudioDebugger();
-            const auto capture = folds ? std::nullopt : LayerCaptureFor(studio_debugger, true);
+            const auto capture = marked ? std::nullopt : LayerCaptureFor(studio_debugger, true);
             std::optional<cyxwiz::TrainingExecutor::LayerSnapshotSchedule> snapshots;
             if (capture) {
                 snapshots.emplace();
@@ -4259,7 +4310,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             materialization_memory_confirmation_node_ =
                 memory_preflight.evidence.node_name;
             show_materialization_memory_confirmation_popup_ = true;
-            folds_waiting = true;
+            marked_waiting = true;
             spdlog::warn(
                 "StartTrainingFromGraph: awaiting main-thread confirmation "
                 "for {} materialization estimate at node '{}'",
@@ -4283,7 +4334,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                                (prepared_key.table_path && prepared_key.steps > 0);
         if (canvas_dataset.empty() && !prepared_on_disk && run_steps) {
             if (StartTrainingPipelineRun(nodes, links)) {
-                folds_waiting = true;
+                marked_waiting = true;
                 return;
             }
             compile_result_success_ = false;
@@ -4302,7 +4353,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         // (Not for a cross-validation: it leaves the trained state and the
         // Training Dashboard alone.)
         std::function<void(bool)> node_editor_callback;
-        if (!folds) {
+        if (!marked) {
             node_editor_callback = [this](bool is_training) {
                 if (!node_editor_) return;
                 node_editor_->SetTrainingActive(is_training);
@@ -4312,9 +4363,9 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             };
         }
 
-        auto dispatch_training = folds ? MakeFoldsDispatch(*folds) : MakeEngineGraphTrainingDispatch(registry, tm);
+        auto dispatch_training = marked ? marked->dispatch : MakeEngineGraphTrainingDispatch(registry, tm);
         const std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel =
-            folds ? std::weak_ptr<cyxwiz::TrainingPlotPanel>() : std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_);
+            marked ? std::weak_ptr<cyxwiz::TrainingPlotPanel>() : std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_);
 
         auto launch_result = StartGraphTrainingFromCompiledConfig(
             nodes, links, std::move(config), registry, plot_panel,
@@ -4327,9 +4378,9 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             canvas_dataset,
             prepared_key);
 
-        if (launch_result.started && folds) {
-            folds_launch_.reset();  // the preparation runs; its task reports into the view
-            spdlog::info("{} started", folds->settings.train_shares.empty() ? "Cross-validation" : "Learning curve");
+        if (launch_result.started && marked) {
+            marked_launch_.reset();  // the preparation runs, then its dispatch
+            spdlog::info("{} started", marked->what);
         } else if (launch_result.started) {
             spdlog::info("Training started successfully");
             if (training_plot_panel_) {

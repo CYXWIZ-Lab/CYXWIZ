@@ -51,22 +51,6 @@ SearchParameter SearchParameter::Categorical(const std::string& name, const std:
 
 // ===== SearchSpace Methods =====
 
-void SearchSpace::AddContinuous(const std::string& name, float min, float max) {
-    parameters.push_back(SearchParameter::Continuous(name, min, max));
-}
-
-void SearchSpace::AddDiscrete(const std::string& name, int min, int max, int step) {
-    parameters.push_back(SearchParameter::Discrete(name, min, max, step));
-}
-
-void SearchSpace::AddLogScale(const std::string& name, float min, float max) {
-    parameters.push_back(SearchParameter::LogScale(name, min, max));
-}
-
-void SearchSpace::AddCategorical(const std::string& name, const std::vector<std::string>& options) {
-    parameters.push_back(SearchParameter::Categorical(name, options));
-}
-
 size_t SearchSpace::GetTotalCombinations() const {
     if (parameters.empty()) return 0;
 
@@ -376,9 +360,13 @@ TrialResult HyperparamSearch::RunTrial(
     }
     spdlog::info("Trial {} params: {}", trial_id, param_str);
 
+    trial_epoch_ = 0;
+    trial_epochs_ = 0;
     TrialCallbacks callbacks;
     callbacks.should_cancel = [this] { return stop_requested_.load(); };
     callbacks.on_epoch = [this, trial_id](const TrialProgress& progress) {
+        trial_epoch_ = progress.epoch;
+        trial_epochs_ = progress.epochs;
         if (on_trial_progress_) on_trial_progress_(trial_id, progress.epoch, progress.val_loss, progress.val_accuracy);
     };
     TrialOutcome outcome;

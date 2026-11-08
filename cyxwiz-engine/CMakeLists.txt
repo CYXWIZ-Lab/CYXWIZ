@@ -686,6 +686,7 @@ set(ENGINE_SOURCES
     src/gui/panels/nas_panel.cpp
     src/gui/panels/hyperparam_search_panel.cpp
     src/core/hyperparam_search.cpp
+    src/core/hyperparam_search_presentation.cpp
     src/gui/panels/serving_panel.cpp
     src/gui/panels/dnn_inference_panel.cpp
     src/serving/inference_server.cpp
@@ -986,6 +987,7 @@ set(ENGINE_HEADERS
     src/gui/panels/nas_panel.h
     src/gui/panels/hyperparam_search_panel.h
     src/core/hyperparam_search.h
+    src/core/hyperparam_search_presentation.h
     src/gui/panels/serving_panel.h
     src/serving/inference_server.h
     src/gui/panels/matrix_calculator_panel.h
@@ -8265,6 +8267,13 @@ add_executable(test_hyperparam_search tests/test_hyperparam_search.cpp src/core/
 configure_training_executor_harness(test_hyperparam_search)
 set_target_properties(test_hyperparam_search PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME hyperparam_search COMMAND test_hyperparam_search)
+
+add_executable(test_hyperparam_search_presentation tests/test_hyperparam_search_presentation.cpp
+    src/core/hyperparam_search_presentation.cpp src/core/hyperparam_search.cpp src/core/nas_evaluator.cpp
+    src/core/model_analyzer.cpp)
+configure_training_executor_harness(test_hyperparam_search_presentation)
+set_target_properties(test_hyperparam_search_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME hyperparam_search_presentation COMMAND test_hyperparam_search_presentation)
 
 # ===== Tool: training throughput profile (TOFIX118 P8) =====
 add_executable(cyxwiz-training-profile tests/tool_training_profile.cpp)

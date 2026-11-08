@@ -196,6 +196,15 @@ public:
         const std::vector<gui::NodeLink>& links
     );
 
+    // Find trainable layers (indices into `nodes`)
+    static std::vector<int> FindTrainableLayers(const std::vector<gui::MLNode>& nodes);
+    // Indices of the trainable layers a mutation may remove, resize or swap:
+    // all but the heads (a trainable layer with no trainable layer after it
+    // sets the model's output size the loss expects). Hyperparameter Search
+    // leaves the heads out the same way.
+    static std::vector<int> FindBodyLayers(const std::vector<gui::MLNode>& nodes,
+                                           const std::vector<gui::NodeLink>& links);
+
 private:
     // Helper methods
 
@@ -228,13 +237,6 @@ private:
     // Find the output layer in a graph
     static int FindOutputNode(const std::vector<gui::MLNode>& nodes);
 
-    // Find trainable layers
-    static std::vector<int> FindTrainableLayers(const std::vector<gui::MLNode>& nodes);
-    // Indices of the trainable layers a mutation may remove, resize or swap:
-    // all but the heads (a trainable layer with no trainable layer after it
-    // sets the model's output size the loss expects).
-    static std::vector<int> FindBodyLayers(const std::vector<gui::MLNode>& nodes,
-                                           const std::vector<gui::NodeLink>& links);
 
     // Crossover two architectures (for evolutionary search)
     static std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> Crossover(

@@ -224,10 +224,22 @@ private:
         const std::vector<NodeLink>& links, cyxwiz::TrainingConfiguration config);
     std::shared_ptr<cyxwiz::AsyncTask> test_preparation_task_;
     std::shared_ptr<int> test_callback_lifetime_ = std::make_shared<int>(0);
-    // Results > Cross-validation / Learning curve (TOFIX129 D4): Run marks the
-    // next Train launch as theirs; it goes through Train's checks, data loads,
-    // memory question and preparation, and only the dispatch differs: the
-    // prepared table goes to core/cross_validation_runner on a task.
+    // A launch marked for another runner: Results > Cross-validation / Learning
+    // curve (TOFIX129 D4) and Hyperparameter Search (TOFIX178 T4) mark the next
+    // Train launch as theirs; it goes through Train's checks, data loads,
+    // memory question and preparation, and only the dispatch differs.
+    struct MarkedLaunch {
+        std::string what;  // "Cross-validation", for the log
+        ::gui::GraphTrainingDispatch dispatch;
+        std::function<void(const std::string&)> not_started;  // it stopped before its dispatch: why
+    };
+    std::optional<MarkedLaunch> marked_launch_;
+    void EndMarkedLaunch(const std::string& why);
+    // Why another run cannot start now ("" when it can); `count_search` false
+    // for the search's own start.
+    std::string LaunchBlocker(bool count_search = true) const;
+    // Cross-validation / learning curve: the prepared table goes to
+    // core/cross_validation_runner on a task.
     struct FoldsLaunch {
         std::shared_ptr<cyxwiz::FoldsView> view;
         cyxwiz::CrossValidationSettings settings;
@@ -244,13 +256,12 @@ private:
     std::optional<FoldsNode> FindFoldsNode(bool learning_curve) const;
     // Results' Add to the graph: the node after the graph's Data Input.
     std::string AddFoldsNode(bool learning_curve, const cyxwiz::CrossValidationSettings& settings);
-    std::optional<FoldsLaunch> folds_launch_;
     uint64_t folds_task_ = 0;  // the running cross-validation / learning curve task
     void StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings);
-    // A marked launch that stopped before its task: the view says why.
-    void EndFoldsLaunch(const std::string& why);
-    std::string FoldsBlocker() const;
     ::gui::GraphTrainingDispatch MakeFoldsDispatch(const FoldsLaunch& launch);
+    // Hyperparameter Search: the prepared data becomes the trials' setup.
+    void StartSearchFromGraph();
+    ::gui::GraphTrainingDispatch MakeSearchDispatch(std::vector<MLNode> nodes, std::vector<NodeLink> links);
 
 
     // Compile the current graph as a dry-run (no training) and show results in a popup

@@ -109,6 +109,16 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Hyperparameter Search trains the graph.** Train > Hyperparameter
+  Search picks what to vary from the compiled graph (layer sizes, the
+  optimizer's rates, the DataLoader's batch size and epochs; not the output
+  layer) with a starting range around each value, and searches by Grid,
+  Random or Bayesian. Each trial trains the way Train does, on data
+  prepared once; the Trials view shows progress, the best trial (Apply best
+  to the graph, Ctrl+Z undoes; Export CSV), the score per trial and every
+  trial's values, scores and failures. Before, the panel took free-text
+  parameter names and never trained. Guide:
+  `docs/usage/hyperparameter_search.md`.
 - **Favourites and Recent in the Nodes panel.** Star a card (or right-click
   it) to keep the node under Favourites at the top of the panel; Recent
   lists the last nodes you added, newest first, as chips to click or drag.

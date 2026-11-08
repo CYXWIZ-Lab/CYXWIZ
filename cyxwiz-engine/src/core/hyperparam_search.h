@@ -58,12 +58,6 @@ struct SearchParameter {
 struct SearchSpace {
     std::vector<SearchParameter> parameters;
 
-    // Convenience methods to add parameters
-    void AddContinuous(const std::string& name, float min, float max);
-    void AddDiscrete(const std::string& name, int min, int max, int step = 1);
-    void AddLogScale(const std::string& name, float min, float max);
-    void AddCategorical(const std::string& name, const std::vector<std::string>& options);
-
     // Calculate total combinations for grid search
     size_t GetTotalCombinations() const;
 
@@ -108,19 +102,15 @@ struct SearchConfig {
     SearchStrategy strategy = SearchStrategy::Random;
     SearchSpace space;
 
+    // Each trial trains as Train does: the DataLoader's epochs, batch size
+    // and early stopping and the graph's Data Split apply unless varied.
     int max_trials = 20;
-    int epochs_per_trial = 10;
-    int early_stopping_patience = 3;
 
     std::string objective = "val_loss";  // "val_loss", "val_accuracy" or "val_mae"
     bool minimize = true;  // true for loss and MAE, false for accuracy
 
     // Resource limits
     float max_time_seconds = 3600.0f;  // 1 hour default
-
-    // Dataset configuration
-    float validation_split = 0.2f;
-    int batch_size = 32;
 
     // Seed for reproducibility (0 = random)
     unsigned int random_seed = 0;
@@ -175,6 +165,10 @@ public:
     int GetTotalTrials() const;
     float GetProgress() const;
     float GetElapsedSeconds() const;
+    // The running trial's last finished epoch and its epoch count (0 before
+    // its first epoch).
+    int GetTrialEpoch() const { return trial_epoch_.load(); }
+    int GetTrialEpochs() const { return trial_epochs_.load(); }
 
     // Results
     std::vector<TrialResult> GetResults() const;
@@ -212,6 +206,8 @@ private:
     std::atomic<bool> stop_requested_{false};
     std::atomic<bool> is_complete_{false};
     std::atomic<int> current_trial_{0};
+    std::atomic<int> trial_epoch_{0};
+    std::atomic<int> trial_epochs_{0};
 
     mutable std::mutex results_mutex_;
     std::vector<TrialResult> results_;
