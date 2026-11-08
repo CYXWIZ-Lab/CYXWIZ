@@ -538,8 +538,10 @@ void TestExecutor::WatchLayerFeatures(bool on) {
             return;
         }
         const size_t samples = static_cast<size_t>(rows.dims(0)), width = static_cast<size_t>(rows.dims(1));
-        std::vector<float> host(samples * width);
-        af::flat(rows.T()).as(f32).host(host.data());  // row-major [samples, width]
+        // Row-major [samples, width], read through the Tensor's attributed host copy.
+        const Tensor features = Tensor::FromRowMajorFlatArray(af::flat(rows.T()).as(f32), {samples, width});
+        const float* read = features.ReadData<float>();
+        const std::vector<float> host(read, read + samples * width);
         const size_t layer = found->second;
         UpdateMetrics([&](TestingMetrics& m) {
             auto it = std::find_if(m.layer_features.begin(), m.layer_features.end(),
@@ -665,7 +667,7 @@ Tensor TestExecutor::ProcessBatch(const Batch& batch) {
             const int sample = m.total_samples;
             if (keep_inputs && (pred_class != true_class || sample < TestingMetrics::kKeptFirstSamples) &&
                 m.kept_input_bytes + sample_width * sizeof(float) <= TestingMetrics::kKeptInputBytes) {
-                if (!input_data) input_data = batch.data.Data<float>();
+                if (!input_data) input_data = batch.data.ReadData<float>();
                 if (input_data) {
                     const float* row = input_data + b * sample_width;
                     m.kept_inputs.push_back({sample, std::vector<float>(row, row + sample_width)});

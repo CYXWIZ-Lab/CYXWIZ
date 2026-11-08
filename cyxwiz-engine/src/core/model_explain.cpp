@@ -97,7 +97,7 @@ ExplainOutcome ExplainSample(IExecutableModel& model, const TrainingConfiguratio
 
         // Scores and probabilities.
         const Tensor scores = functions.forward(row);
-        const float* s = scores.Data<float>();
+        const float* s = scores.ReadData<float>();
         const size_t classes = scores.NumElements();
         if (classes == 0) throw std::runtime_error("The model gave no scores.");
         const float top = *std::max_element(s, s + classes);

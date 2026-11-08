@@ -82,13 +82,16 @@ EpochHealth TrainingHealthRecorder::EndEpoch(int epoch, const std::map<std::stri
         w.norm = std::sqrt(af::sum<double>(values * values));
         w.low = af::min<double>(values);
         w.high = af::max<double>(values);
-        std::vector<unsigned> counts(kHealthHistogramBins, 0);
+        w.histogram.assign(kHealthHistogramBins, 0);
         if (w.high > w.low) {
-            af::histogram(values, kHealthHistogramBins, w.low, w.high).as(u32).host(counts.data());
+            const Tensor counts = Tensor::FromRowMajorFlatArray(
+                af::histogram(values, kHealthHistogramBins, w.low, w.high).as(f32),
+                {static_cast<size_t>(kHealthHistogramBins)});
+            const float* read = counts.ReadData<float>();
+            for (int b = 0; b < kHealthHistogramBins; ++b) w.histogram[b] = static_cast<long long>(std::llround(read[b]));
         } else {
-            counts[0] = static_cast<unsigned>(w.count);
+            w.histogram[0] = static_cast<long long>(w.count);
         }
-        w.histogram.assign(counts.begin(), counts.end());
         const auto sum = state_->gradient_norm_sums.find(name);
         if (sum != state_->gradient_norm_sums.end() && state_->steps > 0)
             w.mean_gradient_norm = sum->second.scalar<float>() / static_cast<double>(state_->steps);

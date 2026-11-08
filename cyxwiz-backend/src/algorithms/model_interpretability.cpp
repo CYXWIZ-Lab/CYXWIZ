@@ -7,6 +7,9 @@
 
 #include "cyxwiz/model_interpretability.h"
 
+#include "arrayfire_host_materialization.h"
+#include "arrayfire_indexed.h"
+
 #include <arrayfire.h>
 
 #include <algorithm>
@@ -39,7 +42,9 @@ size_t SampleSize(const std::vector<size_t>& shape) {
 
 std::vector<float> Host(const af::array& a) {
     std::vector<float> values(a.elements());
-    if (!values.empty()) a.as(f32).host(values.data());
+    if (!values.empty())
+        MaterializeArrayFireToHost(a.as(f32), values.data(), ArrayFireHostSyncCategory::OutputMaterialization,
+                                   "ModelInterpretability", "flat f32", "explanation_map_to_host");
     return values;
 }
 
@@ -62,7 +67,7 @@ Tensor OneHot(const Tensor& output, int target) {
 int Predicted(const Tensor& output) {
     const af::array scores = Scores(output);
     af::array values, indices;
-    af::max(values, indices, scores(0, af::span), 1);
+    MaxWithIndex(values, indices, scores(0, af::span), 1);
     return static_cast<int>(indices.scalar<unsigned>());
 }
 
