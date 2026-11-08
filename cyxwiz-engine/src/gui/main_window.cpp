@@ -81,7 +81,6 @@
 #include "panels/import_dialog.h"
 #include "panels/deployment_dialog.h"
 #include "panels/model_panel.h"
-#include "panels/lr_finder_panel.h"
 #include "panels/studio_debugger_panel.h"
 #include "../core/studio_debugger_presentation.h"
 #include "panels/gradcam_panel.h"
@@ -635,9 +634,9 @@ MainWindow::MainWindow()
     // Tools > Model (TOFIX129 D11)
     model_panel_ = std::make_unique<cyxwiz::ModelPanel>();
     model_panel_->SetNodeEditor(node_editor_.get());
-
-    lr_finder_panel_ = std::make_unique<cyxwiz::LRFinderPanel>();
-    lr_finder_panel_->SetNodeEditor(node_editor_.get());
+    model_panel_->SetStartRangeTest([this](const cyxwiz::LearningRateRangeSettings& settings) {
+        return StartLearningRateRangeTest(settings);
+    });
 
     // Statistics panels (Phase 4)
 
@@ -1748,13 +1747,6 @@ MainWindow::MainWindow()
         if (model_panel_) model_panel_->Open(tab);
     });
 
-    toolbar_->SetOpenLRFinderCallback([this]() {
-        if (lr_finder_panel_) {
-            lr_finder_panel_->Toggle();
-            spdlog::info("Toggled Learning Rate Finder panel");
-        }
-    });
-
     // Data > Explore and Tools > Statistics > Summary Statistics / Distribution
     // Fitter: Data Studio's Explore tabs (TOFIX129 D1; the old windows are gone).
     toolbar_->SetOpenCorrelationMatrixCallback([this]() {
@@ -2473,8 +2465,6 @@ MainWindow::~MainWindow() {
     feature_importance_panel_.reset();
     spdlog::info("~MainWindow: gradcam_panel_");
     gradcam_panel_.reset();
-    spdlog::info("~MainWindow: lr_finder_panel_");
-    lr_finder_panel_.reset();
     spdlog::info("~MainWindow: model_panel_");
     model_panel_.reset();
     spdlog::info("~MainWindow: deployment_dialog_");
@@ -2876,7 +2866,6 @@ void MainWindow::Render() {
 
     // Render Model Analysis panels (Phase 2)
     TimedRender("model", model_panel_);
-    TimedRender("lr finder", lr_finder_panel_);
 
     // Render Statistics panels (Phase 4)
 
@@ -3341,7 +3330,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
 
     // Model Analysis panels (Phase 2)
     if (model_panel_) model_panel_->SetVisible(false);
-    if (lr_finder_panel_) lr_finder_panel_->SetVisible(false);
 
     // Statistics panels (Phase 4)
 
@@ -3574,6 +3562,21 @@ void MainWindow::EndFoldsLaunch(const std::string& why) {
     if (view) view->Finished(std::move(stopped));
 }
 
+std::string MainWindow::StartLearningRateRangeTest(const cyxwiz::LearningRateRangeSettings& settings) {
+    if (!node_editor_) return "No graph is open.";
+    if (range_launch_) return "A range test is being prepared.";
+    if (const std::string blocked = FoldsBlocker(); !blocked.empty()) return blocked + ".";
+    range_launch_ = settings;
+    StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+    return "";
+}
+
+void MainWindow::EndRangeLaunch(const std::string& why) {
+    if (!range_launch_) return;
+    range_launch_.reset();
+    if (model_panel_) model_panel_->RangeLaunchEnded(why);
+}
+
 std::string MainWindow::FoldsBlocker() const {
     if (!node_editor_) return "No graph is open";
     if (folds_task_ || folds_launch_) return "A cross-validation or learning curve is running";
@@ -3662,12 +3665,15 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
     // with a word in the view, except while the data loads or the memory
     // question is open (both come back here).
     const std::optional<FoldsLaunch> folds = folds_launch_;
+    const std::optional<cyxwiz::LearningRateRangeSettings> range = range_launch_;
     bool folds_waiting = false;
     struct FoldsLaunchEnd {
         MainWindow* window;
         const bool& waiting;
         ~FoldsLaunchEnd() {
-            if (!waiting) window->EndFoldsLaunch("Not started: Train's checks stopped it (the compile report says why).");
+            if (waiting) return;
+            window->EndFoldsLaunch("Not started: Train's checks stopped it (the compile report says why).");
+            window->EndRangeLaunch("Not started: Train's checks stopped it (the compile report says why).");
         }
     } folds_end{this, folds_waiting};
     if (!folds && (folds_task_ || folds_launch_)) {
@@ -3903,7 +3909,7 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         // (Not for a cross-validation: it leaves the trained state and the
         // Training Dashboard alone.)
         std::function<void(bool)> node_editor_callback;
-        if (!folds) {
+        if (!folds && !range) {
             node_editor_callback = [this](bool is_training) {
                 if (!node_editor_) return;
                 node_editor_->SetTrainingActive(is_training);
@@ -3914,8 +3920,22 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         }
 
         auto dispatch_training = folds ? MakeFoldsDispatch(*folds) : MakeEngineGraphTrainingDispatch(registry, tm);
+        if (range) {
+            // A range test: the graph's own training path with the rate rising
+            // every step; one epoch at least per step, the test ends itself.
+            dispatch_training = [engine = dispatch_training, settings = *range](
+                                    cyxwiz::TrainingConfiguration config, const std::string& dataset_name,
+                                    const std::string& label_column, int, int batch_size,
+                                    std::weak_ptr<cyxwiz::TrainingPlotPanel>, std::function<void(bool)> done) {
+                config.learning_rate_range = settings;
+                config.learning_rate_range.enabled = true;
+                return engine(std::move(config), dataset_name, label_column, std::max(1, settings.steps), batch_size,
+                              {}, std::move(done));
+            };
+        }
         const std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel =
-            folds ? std::weak_ptr<cyxwiz::TrainingPlotPanel>() : std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_);
+            folds || range ? std::weak_ptr<cyxwiz::TrainingPlotPanel>()
+                           : std::weak_ptr<cyxwiz::TrainingPlotPanel>(training_plot_panel_);
 
         auto launch_result = StartGraphTrainingFromCompiledConfig(
             nodes, links, std::move(config), registry, plot_panel,
@@ -3928,7 +3948,10 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             canvas_dataset,
             prepared_key);
 
-        if (launch_result.started && folds) {
+        if (launch_result.started && range) {
+            range_launch_.reset();  // the Model window follows the run in TrainingManager
+            spdlog::info("Learning rate range test started");
+        } else if (launch_result.started && folds) {
             folds_launch_.reset();  // the preparation runs; its task reports into the view
             spdlog::info("{} started", folds->settings.train_shares.empty() ? "Cross-validation" : "Learning curve");
         } else if (launch_result.started) {

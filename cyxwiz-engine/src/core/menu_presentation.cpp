@@ -608,7 +608,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                                 "Opens the Model window on Summary: every layer as compiled, its parameters and multiply-adds."),
                          Action(f, "tools.flops", "FLOPs Calculator",
                                 "Opens the Model window on Summary: multiply-adds and FLOPs a sample, per layer and in all."),
-                         Tool(f, "tools.lr_finder", "Learning Rate Finder"),
+                         Action(f, "tools.lr_finder", "Learning Rate Finder",
+                                "Opens the Model window on Learning rate: a range test on the Train rows and the rate it suggests."),
                          Sep(),
                          Tool(f, "tools.gradcam", "Grad-CAM Visualization"),
                          Tool(f, "tools.saliency", "Saliency Maps")}));

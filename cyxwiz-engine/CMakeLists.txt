@@ -677,7 +677,6 @@ set(ENGINE_SOURCES
     # DNN inference (Phase 3)
     src/inference/dnn_preprocessor.cpp
     src/gui/panels/model_panel.cpp
-    src/gui/panels/lr_finder_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
     src/gui/panels/gradcam_panel.cpp
@@ -956,7 +955,6 @@ set(ENGINE_HEADERS
     # DNN inference (Phase 3)
     src/inference/dnn_preprocessor.h
     src/gui/panels/model_panel.h
-    src/gui/panels/lr_finder_panel.h
     src/gui/panels/gradcam_panel.h
     src/gui/panels/feature_importance_panel.h
     src/gui/panels/hyperparam_search_panel.h
@@ -7292,6 +7290,28 @@ add_custom_target(copy_test_scheduler_node_training_fixture
 )
 add_dependencies(test_scheduler_node_training copy_test_scheduler_node_training_fixture)
 add_test(NAME scheduler_node_pytorch_parity COMMAND test_scheduler_node_training)
+
+# ===== Test: the learning rate range test vs PyTorch (TOFIX129 D11) =====
+set(CYXWIZ_LEARNING_RATE_RANGE_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/learning_rate_range_pytorch.json")
+add_executable(test_learning_rate_range
+    tests/test_learning_rate_range.cpp
+)
+configure_training_executor_harness(test_learning_rate_range)
+target_compile_definitions(test_learning_rate_range PRIVATE
+    CYXWIZ_LEARNING_RATE_RANGE_FIXTURE="${CYXWIZ_LEARNING_RATE_RANGE_PYTORCH_FIXTURE}"
+)
+add_custom_target(copy_test_learning_rate_range_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_learning_rate_range>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_LEARNING_RATE_RANGE_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_learning_rate_range>/computation_truth_fixtures/learning_rate_range_pytorch.json"
+    SOURCES "${CYXWIZ_LEARNING_RATE_RANGE_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_learning_rate_range copy_test_learning_rate_range_fixture)
+add_test(NAME learning_rate_range_pytorch_parity COMMAND test_learning_rate_range)
 
 # ===== Test: regularization nodes vs PyTorch (TOFIX140 A4) =====
 set(CYXWIZ_REGULARIZATION_NODE_PYTORCH_FIXTURE

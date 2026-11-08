@@ -487,11 +487,10 @@ void ToolbarPanel::BuildActionHandlers() {
 
     // Tools
     for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.model_summary", "summary"},
-                                  {"tools.flops", "summary"}})
+                                  {"tools.flops", "summary"}, {"tools.lr_finder", "learning_rate"}})
         h[id] = [this, tab = std::string(tab)](const std::string&) {
             if (open_model_callback_) open_model_callback_(tab);
         };
-    call("tools.lr_finder", open_lr_finder_callback_);
     call("tools.gradcam", open_gradcam_callback_);
     call("tools.saliency", open_gradcam_callback_);
     call("tools.cross_validation", open_cross_validation_callback_);

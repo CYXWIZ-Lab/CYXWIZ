@@ -1332,8 +1332,11 @@ void TrainingManager::TrainingThreadFunc(
         cached_metrics_ = final_metrics;
     }
 
+    // A range test leaves the Dashboard's runs and the trained model alone.
+    const bool range_test = exec && exec->GetConfig().learning_rate_range.enabled;
+
     // Update plot panel with completion status
-    if (auto panel = plot_panel.lock()) {
+    if (auto panel = range_test ? nullptr : plot_panel.lock()) {
         std::string run_id =
             "training-task-" + std::to_string(current_task_id_.load());
         TrainingConfiguration completed_config;
@@ -1383,7 +1386,20 @@ void TrainingManager::TrainingThreadFunc(
     // Preserve trained model for export before clearing executor
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (current_executor_ && (success || cancelled)) {
+        if (range_test) {
+            RangeTestOutcome outcome;
+            outcome.serial = last_range_test_.serial + 1;
+            outcome.points = final_metrics.range_points.empty() ? executor_metrics.range_points
+                                                                : final_metrics.range_points;
+            outcome.stop_reason = final_metrics.range_stop_reason.empty() ? executor_metrics.range_stop_reason
+                                                                          : final_metrics.range_stop_reason;
+            if (failed) outcome.failure = final_metrics.terminal_reason;
+            outcome.cancelled = !failed && outcome.stop_reason.empty();
+            last_range_test_ = std::move(outcome);
+            spdlog::info("TrainingManager: learning rate range test finished with {} steps ({})",
+                         last_range_test_.points.size(),
+                         last_range_test_.stop_reason.empty() ? "stopped" : last_range_test_.stop_reason);
+        } else if (current_executor_ && (success || cancelled)) {
             // Transfer ownership of model and optimizer for later export
             last_trained_model_ = current_executor_->ReleaseModel();
             last_optimizer_ = current_executor_->ReleaseOptimizer();
@@ -1422,6 +1438,11 @@ void TrainingManager::TrainingThreadFunc(
     // The next start may join us while holding mutex_. No callbacks, manager
     // access or cleanup requiring that mutex may follow this publication.
     is_training_.store(false);
+}
+
+TrainingManager::RangeTestOutcome TrainingManager::GetLastRangeTest() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_range_test_;
 }
 
 void TrainingManager::ClearTrainedModel() {

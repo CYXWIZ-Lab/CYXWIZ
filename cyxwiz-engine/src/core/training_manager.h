@@ -231,6 +231,18 @@ public:
 
     ActiveModelInfo GetActiveModelInfo() const;
 
+    // The last learning rate range test (a run with
+    // config.learning_rate_range): its points and why it stopped. A range
+    // test keeps the trained model in use; `serial` grows with each one.
+    struct RangeTestOutcome {
+        uint64_t serial = 0;
+        std::vector<LearningRateRangePoint> points;
+        std::string stop_reason;
+        std::string failure;  // why the run failed, when it did
+        bool cancelled = false;  // stopped by the user before the test ended
+    };
+    RangeTestOutcome GetLastRangeTest() const;
+
     /**
      * Get the last optimizer (preserved after training completes)
      */
@@ -335,6 +347,7 @@ private:
     std::shared_ptr<IExecutableModel> last_trained_model_;
     std::unique_ptr<Optimizer> last_optimizer_;
     TrainingMetrics last_metrics_;
+    RangeTestOutcome last_range_test_;  // guarded by mutex_
     ActiveModelInfo active_model_info_;
 };
 

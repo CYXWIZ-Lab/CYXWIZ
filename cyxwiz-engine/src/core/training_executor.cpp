@@ -703,6 +703,19 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
     scheduler_controller_.reset();
     ConfigureWeightDecayExclusions();
     graph_schedule_pending_ = false;
+    range_test_.reset();
+    if (config_.learning_rate_range.enabled) {
+        // The range test sets the rate of every step: no schedule.
+        range_test_ = std::make_unique<LearningRateRangeTest>(config_.learning_rate_range);
+        const double rate = range_test_->CurrentLearningRate();
+        optimizer_->SetLearningRate(rate);
+        UpdateMetrics([rate](TrainingMetrics& m) {
+            m.learning_rate = rate;
+            m.range_points.clear();
+            m.range_stop_reason.clear();
+        });
+        return true;
+    }
     // A scheduler configured on the executor wins over the graph's scheduler
     // node (config_.scheduler, TOFIX140 A3).
     const std::optional<TrainingSchedulerSpec> scheduler_specification =
@@ -756,6 +769,12 @@ void TrainingExecutor::Train(
 
     is_training_.store(true);
     training_epochs_ = std::max(1, epochs);
+    if (config_.learning_rate_range.enabled) {
+        // A range test: no validation, early stop, best checkpoint or previews.
+        config_.save_best_checkpoint = false;
+        config_.early_stopping_patience = 0;
+        config_.generation_preview.enabled = false;
+    }
     stop_requested_.store(false);
     is_paused_.store(false);
 
@@ -1494,7 +1513,7 @@ void TrainingExecutor::Train(
         // For Arrow/Parquet/legacy paths these are separate instances so
         // SetPhase is a no-op on the default IBatcher impl.
         const bool should_validate_this_epoch =
-            ShouldRunValidationEpoch(config_, epoch, epochs);
+            !range_test_ && ShouldRunValidationEpoch(config_, epoch, epochs);
         bool validation_ran_this_epoch = false;
         if (should_validate_this_epoch) {
             model_->SetTraining(false);
@@ -2308,6 +2327,17 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
         ApplySchedulerAdvance(
             scheduler_controller_->OnOptimizerStep());
     }
+    if (range_test_) {
+        const bool done = range_test_->Record(range_batch_loss_);
+        const double next = range_test_->CurrentLearningRate();
+        UpdateMetrics([this, next](TrainingMetrics& m) {
+            m.range_points = range_test_->Points();
+            m.range_stop_reason = range_test_->StopReason();
+            m.learning_rate = next;
+        });
+        if (done) Stop();
+        else optimizer_->SetLearningRate(next);
+    }
 
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
@@ -2705,6 +2735,7 @@ void TrainingExecutor::RunTrainingEpochSequence(
             static_cast<int>(total_batches));
         const auto loss_start = std::chrono::steady_clock::now();
         const float batch_loss = ComputeLoss(predictions, targets);
+        range_batch_loss_ = batch_loss;
         const std::string loss_status =
             std::isfinite(batch_loss) ? "ok" : "failed";
         TrainingTraceCollector::Instance().RecordStage(
@@ -3182,12 +3213,20 @@ void TrainingExecutor::RunTrainingEpochArrow(
         LossAggregationWeightValue loss_weight;
         if (regression_metrics) {
             batch_loss = ComputeLoss(predictions, batch.labels);
+            range_batch_loss_ = batch_loss;
             loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
             loss_weight_sum += loss_weight.host;
             epoch_loss += batch_loss * loss_weight.host;
             loss_status = std::isfinite(batch_loss) ? "ok" : "failed";
         } else {
             Tensor loss_tensor = ComputeLossTensor(predictions, batch.labels);
+            if (range_test_) {
+                // The range test reads every batch's loss (the run is short).
+                const ScopedArrayFireHostSyncAttribution range_sync_attribution(
+                    ArrayFireHostSyncCategory::LossScalarReadback,
+                    "TrainingExecutor::RangeTestBatchLoss");
+                range_batch_loss_ = loss_tensor.ReadData<float>()[0];
+            }
             loss_weight = ResolveLossAggregationWeight(*loss_, batch.size);
             Tensor weighted_loss = loss_weight.device != nullptr
                 ? ApplyDeviceScalar(loss_tensor, *loss_weight.device, false)

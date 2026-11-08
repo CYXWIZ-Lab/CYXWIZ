@@ -201,9 +201,8 @@ public:
     void SetConvertDirToBinaryCallback(std::function<void()> cb) { convert_dir_to_binary_callback_ = cb; }
 
     // Model Analysis callbacks (Phase 2)
-    // Tools > Model: the Model window on a tab ("summary").
+    // Tools > Model: the Model window on a tab ("summary", "learning_rate").
     void SetOpenModelCallback(std::function<void(const std::string&)> cb) { open_model_callback_ = std::move(cb); }
-    void SetOpenLRFinderCallback(std::function<void()> cb) { open_lr_finder_callback_ = cb; }
 
     // Data Science callbacks (Phase 3)
     void SetOpenCorrelationMatrixCallback(std::function<void()> cb) { open_correlation_matrix_callback_ = cb; }
@@ -681,7 +680,6 @@ private:
 
     // Model Analysis callbacks (Phase 2)
     std::function<void(const std::string&)> open_model_callback_;
-    std::function<void()> open_lr_finder_callback_;
 
     // Data Science callbacks (Phase 3)
     std::function<void()> open_correlation_matrix_callback_;

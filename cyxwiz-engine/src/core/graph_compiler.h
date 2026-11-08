@@ -6,6 +6,7 @@
 #include "metric_learning_graph_contract.h"
 #include "metric_learning_batch.h"
 #include "training_parameter_contract.h"
+#include "learning_rate_range_test.h"
 #include "training_scheduler_controller.h"
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
@@ -583,6 +584,10 @@ struct TrainingConfiguration {
     // attaches it unless a scheduler is configured on the executor directly.
     std::optional<TrainingSchedulerSpec> scheduler;
     int scheduler_node_id = -1;
+    // A learning rate range test instead of a training (the Model window,
+    // TOFIX129 D11): the rate rises every optimizer step, no validation, no
+    // checkpoints, and the trained model in use is kept.
+    LearningRateRangeSettings learning_rate_range;
     // Regularization node between the loss and the optimizer (TOFIX140 A4):
     // penalty = l1 x sum(|w|) + l2 x sum(w^2) over every trainable parameter.
     float regularization_l1 = 0.0f;

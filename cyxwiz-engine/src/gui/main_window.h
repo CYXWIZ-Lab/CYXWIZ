@@ -64,7 +64,6 @@ class ExportDialog;
 class ImportDialog;
 class DeploymentDialog;
 class ModelPanel;
-class LRFinderPanel;
 class StudioDebuggerPanel;
 class GradCAMPanel;
 class FeatureImportancePanel;
@@ -228,6 +227,13 @@ private:
     void EndFoldsLaunch(const std::string& why);
     std::string FoldsBlocker() const;
     ::gui::GraphTrainingDispatch MakeFoldsDispatch(const FoldsLaunch& launch);
+    // The Model window's learning rate range test (TOFIX129 D11): marks the
+    // next Train launch as a range test, like a cross-validation; the
+    // dispatch then trains with config.learning_rate_range and the trained
+    // model in use is kept. "" when it starts (or waits for the data), else why not.
+    std::string StartLearningRateRangeTest(const cyxwiz::LearningRateRangeSettings& settings);
+    std::optional<cyxwiz::LearningRateRangeSettings> range_launch_;
+    void EndRangeLaunch(const std::string& why);
 
 
     // Compile the current graph as a dry-run (no training) and show results in a popup
@@ -389,7 +395,6 @@ private:
 
     // Model Analysis panels (Phase 2)
     std::unique_ptr<cyxwiz::ModelPanel> model_panel_;
-    std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
 
     // Statistics panels (Phase 4)
 

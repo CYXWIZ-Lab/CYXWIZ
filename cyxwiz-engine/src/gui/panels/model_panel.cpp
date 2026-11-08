@@ -3,6 +3,7 @@
 #include "../../core/extension_node_metadata.h"
 #include "../../core/file_dialogs.h"
 #include "../../core/live_graph_compile.h"
+#include "../../core/training_manager.h"
 #include "../icons.h"
 #include "../node_editor.h"
 #include "../ui_buttons.h"
@@ -11,8 +12,10 @@
 #include "../ui_widgets.h"
 
 #include <imgui.h>
+#include <implot.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 
@@ -142,6 +145,10 @@ void ModelPanel::Render() {
         };
         if (ImGui::BeginTabItem("Summary", nullptr, flags("summary"))) {
             RenderSummary();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Learning rate", nullptr, flags("learning_rate"))) {
+            RenderLearningRate();
             ImGui::EndTabItem();
         }
         open_tab_.clear();
@@ -319,6 +326,197 @@ void ModelPanel::RenderSide() {
         }
     }
     if (!message_.empty()) Paragraph(message_, message_error_ ? &t.warning : &t.text_dim);
+}
+
+void ModelPanel::RangeLaunchEnded(const std::string& why) {
+    range_running_ = false;
+    range_message_ = why;
+    range_message_error_ = true;
+}
+
+void ModelPanel::RenderLearningRate() {
+    auto& manager = TrainingManager::Instance();
+    // A finished test: take its curve in once.
+    const auto outcome = manager.GetLastRangeTest();
+    if (outcome.serial != range_seen_serial_) {
+        range_seen_serial_ = outcome.serial;
+        range_running_ = false;
+        range_points_ = outcome.points;
+        range_stop_reason_ = outcome.stop_reason;
+        range_message_error_ = !outcome.failure.empty();
+        range_message_ = !outcome.failure.empty() ? "The test failed: " + outcome.failure
+                         : outcome.cancelled     ? "Stopped before the test ended; the curve so far is shown."
+                                                 : std::string();
+    } else if (range_running_ && manager.IsTrainingActive()) {
+        const auto live = manager.GetCurrentMetrics();
+        range_points_ = live.range_points;
+        range_stop_reason_.clear();
+    }
+
+    const float side = 320.0f;
+    const bool wide = ImGui::GetContentRegionAvail().x >= 760.0f;
+    if (wide && ImGui::BeginTable("##lr_layout", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("##settings", ImGuiTableColumnFlags_WidthFixed, side);
+        ImGui::TableSetupColumn("##result", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        RenderRangeSettings();
+        ImGui::TableNextColumn();
+        RenderRangeResult();
+        ImGui::EndTable();
+    } else if (!wide) {
+        ImGui::BeginChild("##lr_narrow", ImVec2(0.0f, 0.0f));
+        RenderRangeSettings();
+        RenderRangeResult();
+        ImGui::EndChild();
+    }
+}
+
+void ModelPanel::RenderRangeSettings() {
+    const auto& t = ui::CurrentTokens();
+    const LiveGraphCompile* live = node_editor_ ? node_editor_->GetLiveCompile() : nullptr;
+    const TrainingConfiguration* config = live ? live->Config() : nullptr;
+    ui::BeginCard("range_settings");
+    Paragraph("Trains a copy of the graph's model on its Train rows, raising the learning rate every step, and "
+              "records the loss. The trained model in use, its checkpoints and the Dashboard's runs are not changed.",
+              &t.text_dim);
+    ImGui::Spacing();
+    ui::FieldLabel("From");
+    ui::NumberFieldOptions rate;
+    rate.min = 1e-12;
+    rate.max = 1e6;
+    rate.format = "%g";
+    rate.width = 110.0f;
+    rate.hint = "The first step's learning rate.";
+    ui::NumberField("##range_from", &range_.start, rate);
+    ui::FieldLabel("To");
+    rate.hint = "The last step's learning rate.";
+    ui::NumberField("##range_to", &range_.end, rate);
+    ui::FieldLabel("Steps");
+    ui::NumberField("##range_steps", &range_.steps, 10, 2000, 10, 80.0f, "Optimizer steps from the first rate to the last.");
+    if (config) {
+        ImGui::Spacing();
+        const gui::MLNode* optimizer = node_editor_ ? node_editor_->FindStep(config->optimizer_node_id) : nullptr;
+        ImGui::TextColored(t.text_dim, "Batch size");
+        ImGui::SameLine(110.0f);
+        ImGui::Text("%d, the graph's", config->batch_size);
+        ImGui::TextColored(t.text_dim, "Optimizer");
+        ImGui::SameLine(110.0f);
+        ImGui::Text("%s, from the graph", optimizer ? optimizer->name.c_str() : "-");
+        ImGui::TextColored(t.text_dim, "Rows");
+        ImGui::SameLine(110.0f);
+        ImGui::TextUnformatted("the Train rows of the Data Split");
+    }
+    ImGui::Spacing();
+    char rule[120];
+    std::snprintf(rule, sizeof(rule), "Stops early once the smoothed loss (%g) passes %g x its lowest: the rate is then far too high.",
+                  range_.smoothing, range_.stop_factor);
+    Paragraph(rule, &t.text_faint);
+    ImGui::Spacing();
+
+    std::string blocked;
+    if (!config) blocked = "Open a training graph first.";
+    else if (!config->is_valid) blocked = "The graph does not compile; the Compile popup (F7) says why.";
+    else if (TrainingManager::Instance().IsTrainingActive()) blocked = range_running_ ? "The test is running." : "Train is running.";
+    else if (!(range_.start > 0.0 && range_.end > range_.start)) blocked = "To must be above From, both above 0.";
+    if (ui::PrimaryButton("Run", blocked.empty(), blocked.c_str())) {
+        range_message_.clear();
+        range_points_.clear();
+        range_stop_reason_.clear();
+        const std::string refused = start_range_test_ ? start_range_test_(range_) : "The Engine cannot start a test here.";
+        range_running_ = refused.empty();
+        range_message_ = refused;
+        range_message_error_ = !refused.empty();
+    }
+    ImGui::SameLine();
+    const bool running = range_running_ && TrainingManager::Instance().IsTrainingActive();
+    if (ui::SecondaryButton("Stop", running, "No test is running.")) TrainingManager::Instance().StopTraining();
+    if (range_running_) {
+        const int done = static_cast<int>(range_points_.size());
+        ImGui::TextColored(t.running, "%s", done == 0 ? "Preparing the data..." : ("Step " + std::to_string(done) + " of " + std::to_string(range_.steps)).c_str());
+    }
+    if (!range_message_.empty()) Paragraph(range_message_, range_message_error_ ? &t.warning : &t.text_dim);
+    ui::EndCard();
+}
+
+void ModelPanel::RenderRangeResult() {
+    const auto& t = ui::CurrentTokens();
+    if (range_points_.empty()) {
+        ui::EmptyState(ICON_FA_CHART_LINE, range_running_ ? "Waiting for the first step" : "No range test yet",
+                       "Run trains for a few dozen steps; the curve shows where the loss falls fastest.");
+        return;
+    }
+    const auto analysis = AnalyseLearningRateRange(range_points_);
+    const bool finished = !range_running_;
+
+    static const char* const kRules[] = {"Steepest fall", "Lowest / 10"};
+    int rule = steepest_rule_ ? 0 : 1;
+    ImGui::TextColored(t.text_dim, "Suggest by");
+    ImGui::SameLine();
+    if (ui::SegmentedControl("##range_rule", kRules, 2, &rule)) steepest_rule_ = rule == 0;
+    ImGui::SameLine();
+    std::string status = "smoothed loss (" + FormatLearningRate(range_.smoothing) + ") · log scale · " +
+                         std::to_string(range_points_.size()) + " of " + std::to_string(range_.steps) + " steps";
+    if (finished && !range_stop_reason_.empty()) status += " · " + range_stop_reason_;
+    ImGui::TextColored(t.text_dim, "%s", status.c_str());
+
+    std::vector<double> x, y;
+    for (const auto& point : range_points_) {
+        if (!std::isfinite(point.smoothed)) break;
+        x.push_back(point.learning_rate);
+        y.push_back(point.smoothed);
+    }
+    const float plot_h = std::max(220.0f, ImGui::GetContentRegionAvail().y - 150.0f);
+    if (!x.empty() && ImPlot::BeginPlot("##range_curve", ImVec2(-1, plot_h), ImPlotFlags_NoMenus | ImPlotFlags_NoLegend)) {
+        ImPlot::SetupAxes("learning rate", "smoothed loss", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
+        ImPlot::SetNextLineStyle(t.series[0], 2.0f);
+        ImPlot::PlotLine("smoothed", x.data(), y.data(), static_cast<int>(x.size()));
+        if (analysis.ok) {
+            ImPlot::SetNextLineStyle(t.text_faint, 1.0f);
+            ImPlot::PlotInfLines("lowest", &analysis.lowest_rate, 1);
+            ImPlot::Annotation(analysis.lowest_rate, analysis.lowest_loss, t.text_dim, ImVec2(8, -12), true,
+                               "lowest %s at %s", FormatLearningRate(analysis.lowest_loss).c_str(),
+                               FormatLearningRate(analysis.lowest_rate).c_str());
+            const double suggested = steepest_rule_ ? analysis.steepest_rate : analysis.lowest_over_ten;
+            ImPlot::SetNextLineStyle(t.success, 1.5f);
+            ImPlot::PlotInfLines("suggested", &suggested, 1);
+            if (steepest_rule_) {
+                const double sy = y[analysis.steepest];
+                ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5.0f, t.success, 0.0f);
+                ImPlot::PlotScatter("steepest", &suggested, &sy, 1);
+            }
+        }
+        ImPlot::EndPlot();
+    }
+
+    if (!finished) return;
+    const LiveGraphCompile* live = node_editor_ ? node_editor_->GetLiveCompile() : nullptr;
+    const TrainingConfiguration* config = live ? live->Config() : nullptr;
+    const gui::MLNode* optimizer =
+        config && node_editor_ ? node_editor_->FindStep(config->optimizer_node_id) : nullptr;
+    const auto words = DescribeLearningRateRange(analysis, steepest_rule_, optimizer ? optimizer->name : std::string(),
+                                                 config ? config->learning_rate : 0.0);
+    ui::BeginCard("range_words");
+    ImGui::TextColored(t.text_bright, "%s", words.headline.c_str());
+    Paragraph(words.why, &t.text_dim);
+    ImGui::Spacing();
+    if (analysis.ok) {
+        const bool can_use = optimizer != nullptr;
+        if (ui::PrimaryButton(words.use_label.c_str(), can_use, "The graph has no optimizer node.")) {
+            if (node_editor_->SetStepParameters(optimizer->id, {{"learning_rate", words.suggested_text}})) {
+                range_message_ = optimizer->name + "'s learning rate is now " + words.suggested_text + " (Undo puts it back).";
+                range_message_error_ = false;
+            }
+        }
+        ImGui::SameLine();
+    }
+    if (ui::SecondaryButton(ICON_FA_COPY " Copy the curve")) {
+        ImGui::SetClipboardText(LearningRateRangeText(range_points_, '\t').c_str());
+        range_message_ = "Copied the curve as tab-separated rows.";
+        range_message_error_ = false;
+    }
+    ui::EndCard();
 }
 
 }  // namespace cyxwiz
