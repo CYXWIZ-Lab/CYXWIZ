@@ -617,7 +617,9 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                                 "Opens the Model window on Explain: saliency and Integrated Gradients of a test row's score."),
                          Sep(),
                          Action(f, "tools.model_health", "Training Health",
-                                "Opens the Model window on Health: weights, gradients and dead units of each layer, epoch by epoch.")}));
+                                "Opens the Model window on Health: weights, gradients and dead units of each layer, epoch by epoch."),
+                         Action(f, "tools.projector", "Embedding Projector",
+                                "Opens the Model window on Projector: what a layer makes of the test rows, in two dimensions.")}));
         i.push_back(Sub("tools.evaluation", "Evaluation", "Measure how well a model performs.",
                         {Action(f, "tools.cross_validation", "Cross-Validation",
                                 "Opens Data Studio > Results > Cross-validation: the graph trained once per fold, each fold scored once."),

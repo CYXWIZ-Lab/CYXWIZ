@@ -636,6 +636,10 @@ MainWindow::MainWindow()
     model_panel_->SetStartRangeTest([this](const cyxwiz::LearningRateRangeSettings& settings) {
         return StartLearningRateRangeTest(settings);
     });
+    model_panel_->SetSendToProjection([this](std::shared_ptr<arrow::Table> table, const std::string& name) {
+        cyxwiz::DataRegistry::Instance().RegisterArrowTable(std::move(table), name);
+        if (data_studio_panel_) data_studio_panel_->ShowExplore(name, cyxwiz::DataStudioPanel::ExploreTab::Projection);
+    });
     training_plot_panel_->SetHealthNotice(
         [this]() {
             const cyxwiz::HealthView view = model_panel_->CurrentHealth();

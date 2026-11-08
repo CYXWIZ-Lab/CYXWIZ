@@ -9,6 +9,9 @@
 #include <cyxwiz/tensor.h>
 #include <cyxwiz/device.h>
 #include <cyxwiz/sequential.h>
+
+#include <map>
+#include <set>
 #include <cyxwiz/loss.h>
 #include <cyxwiz/model_evaluation.h>
 #include <functional>
@@ -135,6 +138,21 @@ struct TestingMetrics {
     static constexpr size_t kKeptInputBytes = 64ull * 1024 * 1024;
     std::vector<KeptInput> kept_inputs;
     size_t kept_input_bytes = 0;
+
+    // Each weight layer's features of every test sample, for the Model
+    // window's Projector (TOFIX129 D11; layer stacks): the output of the
+    // layer's activation (the layer itself when none follows), an image
+    // layer averaged over its height and width (one value per channel);
+    // row-major [samples, width]. A layer is dropped whole when it would
+    // pass kLayerFeatureBytes.
+    struct LayerFeatures {
+        size_t layer = 0;  // the weight layer's index (the N of "layerN")
+        size_t width = 0;
+        std::vector<float> values;
+    };
+    static constexpr size_t kLayerFeatureBytes = 64ull * 1024 * 1024;
+    std::vector<LayerFeatures> layer_features;
+    std::string layer_features_note;
 
     // Timing
     float total_time_seconds = 0.0f;
@@ -309,6 +327,11 @@ private:
      * one forward pass a batch).
      */
     Tensor ProcessBatch(const Batch& batch);
+    // Records the Projector's layer features during ProcessBatch's forward
+    // pass (classifiers on a layer stack).
+    void WatchLayerFeatures(bool on);
+    std::map<size_t, size_t> feature_layer_of_module_;  // module whose output is recorded -> its weight layer
+    std::set<size_t> dropped_feature_layers_;            // layers too large to keep this test
     // Metric-learning models: the loss over the builder's pairs / triplets and
     // the 1-NN / Pair / Retrieval evaluation of the test rows.
     void TestMetricLearning(IBatcher& rows, int batch_size);

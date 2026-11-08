@@ -8,6 +8,10 @@
 #include "model_builder.h"
 #include "training_batcher_setup.h"
 
+#include <arrayfire.h>
+
+#include <algorithm>
+#include <iterator>
 #include <cstdint>
 #include <spdlog/spdlog.h>
 #include <cmath>
@@ -305,7 +309,11 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
         m.curves_note.clear();
         m.kept_inputs.clear();
         m.kept_input_bytes = 0;
+        m.layer_features.clear();
+        m.layer_features_note.clear();
     });
+    dropped_feature_layers_.clear();
+    feature_layer_of_module_.clear();
 
     // Create the test batcher using the dataset type that was trained.
     std::unique_ptr<IBatcher> external_test_batcher;
@@ -416,7 +424,9 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
         batch_num++;
 
         // Process batch
+        WatchLayerFeatures(true);
         const Tensor predictions = ProcessBatch(batch);
+        WatchLayerFeatures(false);
 
         // Compute current loss for this batch
         float batch_loss = ComputeLoss(predictions, batch.labels);
@@ -482,6 +492,74 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
     if (complete_cb) {
         complete_cb(final_metrics);
     }
+}
+
+void TestExecutor::WatchLayerFeatures(bool on) {
+    SequentialModel* stack = model_ ? model_->AsSequentialModel() : nullptr;
+    if (!stack || UsesContinuousTargetMetrics(config_)) return;
+    if (!on) {
+        stack->SetForwardObserver({});
+        return;
+    }
+    if (feature_layer_of_module_.empty()) {
+        // Each weight layer, and the activation right after it when there is one.
+        static const char* const kActivations[] = {"ReLU", "LeakyReLU", "GELU", "Tanh", "Sigmoid", "ELU",
+                                                   "SELU", "Swish", "Mish", "Softmax"};
+        for (size_t i = 0; i < stack->Size(); ++i) {
+            bool weights = false;
+            for (const auto& [name, tensor] : stack->GetModule(i)->GetParameters())
+                weights = weights || tensor.Shape().size() >= 2;
+            if (!weights) continue;
+            size_t recorded = i;
+            if (i + 1 < stack->Size()) {
+                const std::string next = stack->GetModule(i + 1)->GetName();
+                for (const char* activation : kActivations)
+                    if (next.rfind(activation, 0) == 0) recorded = i + 1;
+            }
+            feature_layer_of_module_[recorded] = i;
+        }
+    }
+    stack->SetForwardObserver([this](size_t index, const Module&, const Tensor& output) {
+        const auto found = feature_layer_of_module_.find(index);
+        if (found == feature_layer_of_module_.end()) return;
+        const auto& shape = output.Shape();
+        af::array rows;  // [samples, width]
+        if (shape.size() == 4) {
+            rows = af::moddims(af::mean(af::mean(output.GetArrayRowMajor4D(), 0), 1),
+                               static_cast<dim_t>(shape[2]), static_cast<dim_t>(shape[3])).T();
+        } else if (shape.size() == 3) {
+            rows = af::mean(output.GetArrayRowMajor3D(), 1);
+            rows = af::moddims(rows, static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[2]));
+        } else if (shape.size() == 2) {
+            rows = output.GetSemanticArray();
+        } else {
+            return;
+        }
+        const size_t samples = static_cast<size_t>(rows.dims(0)), width = static_cast<size_t>(rows.dims(1));
+        std::vector<float> host(samples * width);
+        af::flat(rows.T()).as(f32).host(host.data());  // row-major [samples, width]
+        const size_t layer = found->second;
+        UpdateMetrics([&](TestingMetrics& m) {
+            auto it = std::find_if(m.layer_features.begin(), m.layer_features.end(),
+                                   [layer](const TestingMetrics::LayerFeatures& f) { return f.layer == layer; });
+            if (it == m.layer_features.end()) {
+                if (dropped_feature_layers_.count(layer)) return;
+                m.layer_features.push_back({layer, width, {}});
+                it = std::prev(m.layer_features.end());
+            }
+            if (it->width != width) return;
+            size_t bytes = 0;
+            for (const auto& f : m.layer_features) bytes += f.values.size() * sizeof(float);
+            if (bytes + host.size() * sizeof(float) > TestingMetrics::kLayerFeatureBytes) {
+                m.layer_features_note += (m.layer_features_note.empty() ? "Too large to keep for the Projector: layer " : ", layer ") +
+                                         std::to_string(layer);
+                dropped_feature_layers_.insert(layer);
+                m.layer_features.erase(it);
+                return;
+            }
+            it->values.insert(it->values.end(), host.begin(), host.end());
+        });
+    });
 }
 
 Tensor TestExecutor::ProcessBatch(const Batch& batch) {

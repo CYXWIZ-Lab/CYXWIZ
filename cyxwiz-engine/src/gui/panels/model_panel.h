@@ -14,6 +14,7 @@
 
 #include "../../core/learning_rate_range_test.h"
 #include "../../core/model_explain.h"
+#include "../../core/model_projector.h"
 #include "../../core/model_summary_presentation.h"
 #include "../../core/training_health_presentation.h"
 
@@ -37,7 +38,7 @@ public:
 
     bool IsVisible() const { return visible_; }
     void SetVisible(bool v) { visible_ = v; }
-    // Opens the window on a tab ("summary", "learning_rate", "explain", "health").
+    // Opens the window on a tab ("summary", "learning_rate", "explain", "health", "projector").
     void Open(const std::string& tab);
     void SetNodeEditor(gui::NodeEditor* editor) { node_editor_ = editor; }
     // Starts a range test through Train's launcher: "" when it starts (or
@@ -49,6 +50,9 @@ public:
     // The health of the training running now, else of the last one, with
     // the graph's layer names (also the Training Dashboard's notice).
     HealthView CurrentHealth() const;
+    // Projector's Send to Projection tab: a table of the layer's features, by name.
+    using SendTable = std::function<void(std::shared_ptr<arrow::Table>, const std::string&)>;
+    void SetSendToProjection(SendTable send) { send_to_projection_ = std::move(send); }
 
 private:
     void RenderSummary();
@@ -66,6 +70,8 @@ private:
     void UploadExplainImages();
     void ReleaseExplainImages();
     void RenderHealth();
+    void RenderProjector();
+    void RenderProjectorPlot(const std::vector<std::string>& class_names);
 
     bool visible_ = false;
     std::string open_tab_;      // the tab to select on the next frame
@@ -118,6 +124,22 @@ private:
 
     // Health.
     size_t health_selected_ = 0;  // the selected row's layer
+
+    // Projector.
+    struct ProjectorJob {
+        std::mutex mutex;
+        bool done = false;
+        ProjectorOutcome outcome;
+    };
+    std::shared_ptr<ProjectorJob> projector_job_;
+    size_t projector_layer_ = static_cast<size_t>(-1);
+    int projector_method_ = 0;        // ProjectorMethod
+    int projector_colour_ = 0;        // 0 true class, 1 predicted, 2 right / wrong
+    int projector_only_ = -1;         // a class picked in the legend
+    std::string projector_asked_, projector_shown_;
+    ProjectorOutcome projector_;
+    std::string projector_message_;
+    SendTable send_to_projection_;
 };
 
 }  // namespace cyxwiz

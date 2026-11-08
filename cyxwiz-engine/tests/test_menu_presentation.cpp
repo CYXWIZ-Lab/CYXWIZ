@@ -142,7 +142,7 @@ int main() {
         "train.hyperparam_search", "deploy.serving", "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin",
         "train.load_checkpoint", "train.run_test", "train.quick_test", "train.view_test_results",
         "train.compare_test_results", "train.export_test_report", "tools.clear_cache", "tools.gc",
-        "tools.model_summary", "tools.flops", "tools.lr_finder", "tools.model_health",
+        "tools.model_summary", "tools.flops", "tools.lr_finder", "tools.model_health", "tools.projector",
         "data.missing_values", "data.outliers", "data.correlation",
         "data.normalization", "data.standardization", "data.log_transform", "data.boxcox", "data.feature_scaling",
         "tools.descriptive_stats", "tools.hypothesis_test", "tools.regression", "tools.distribution_fitter",

@@ -21,6 +21,8 @@
 #include <implot.h>
 
 #include <algorithm>
+#include <cctype>
+#include <map>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -167,6 +169,10 @@ void ModelPanel::Render() {
         }
         if (ImGui::BeginTabItem("Health", nullptr, flags("health"))) {
             RenderHealth();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Projector", nullptr, flags("projector"))) {
+            RenderProjector();
             ImGui::EndTabItem();
         }
         open_tab_.clear();
@@ -1022,6 +1028,225 @@ void ModelPanel::RenderHealth() {
         side_column();
         ImGui::EndChild();
     }
+}
+
+// ---- Projector ----------------------------------------------------------------
+
+namespace {
+
+ImVec4 ClassColour(int k) {
+    const auto& t = ui::CurrentTokens();
+    if (k < 0) return t.text_faint;
+    if (k < ui::Tokens::kSeriesCount) return t.series[k];
+    return t.node[(k * 7) % ui::Tokens::kNodeHueCount];
+}
+
+}  // namespace
+
+void ModelPanel::RenderProjector() {
+    const auto& t = ui::CurrentTokens();
+    auto& tests = TestManager::Instance();
+    if (!tests.HasResults() || tests.IsTestingActive()) {
+        ui::EmptyState(ICON_FA_LAYER_GROUP, tests.IsTestingActive() ? "Testing..." : "No test yet",
+                       "Run Test (F8): it records what each layer makes of every test row, and Projector draws it in "
+                       "two dimensions.");
+        return;
+    }
+    const TestingMetrics& test = tests.GetLastResults();
+    const auto layers = ProjectorLayers(test);
+    if (layers.empty()) {
+        ui::EmptyState(ICON_FA_LAYER_GROUP, "No layer features in the last test",
+                       test.layer_features_note.empty()
+                           ? "Projector reads a classifier's layers on a layer stack; run a full Test (not a quick test)."
+                           : test.layer_features_note.c_str());
+        return;
+    }
+    if (std::none_of(layers.begin(), layers.end(), [this](const ProjectorLayer& l) { return l.layer == projector_layer_; })) {
+        // The last hidden layer: the features the head reads.
+        projector_layer_ = layers.size() >= 2 ? layers[layers.size() - 2].layer : layers.back().layer;
+    }
+    std::vector<std::string> names;
+    if (const auto info = TrainingManager::Instance().GetActiveModelInfo(); info.evaluation_config)
+        for (const auto& layer : info.evaluation_config->layers) names.push_back(layer.name);
+    const auto layer_name = [&](size_t index) {
+        return index < names.size() && !names[index].empty() ? names[index] : "layer " + std::to_string(index);
+    };
+
+    // A finished job; else start one for the choices.
+    if (projector_job_) {
+        std::lock_guard<std::mutex> lock(projector_job_->mutex);
+        if (projector_job_->done) {
+            projector_ = projector_job_->outcome;
+            projector_shown_ = projector_asked_;
+            projector_job_.reset();
+        }
+    }
+    const std::string key = std::to_string(test.total_samples) + "/" + std::to_string(test.total_time_seconds) + "/" +
+                            std::to_string(projector_layer_) + "/" + std::to_string(projector_method_);
+    if (!projector_job_ && key != projector_asked_) {
+        projector_asked_ = key;
+        auto job = std::make_shared<ProjectorJob>();
+        projector_job_ = job;
+        ProjectorRequest request;
+        request.layer = projector_layer_;
+        request.method = static_cast<ProjectorMethod>(projector_method_);
+        const TestingMetrics copy = test;
+        AsyncTaskManager::Instance().RunAsync(
+            "Projector: " + layer_name(projector_layer_),
+            [job, copy, request](LambdaTask& task) {
+                ProjectorOutcome outcome = ProjectTestRows(copy, request, [&task] { return task.ShouldStop(); });
+                std::lock_guard<std::mutex> lock(job->mutex);
+                job->outcome = std::move(outcome);
+                job->done = true;
+            },
+            nullptr, nullptr, alive_);
+    }
+
+    const float side = 300.0f;
+    const bool wide = ImGui::GetContentRegionAvail().x >= 820.0f;
+    const auto controls = [&]() {
+        ui::BeginCard("projector_controls");
+        Paragraph("What a layer makes of the test rows: its output for each row, brought down to two dimensions as in "
+                  "Data Studio's Projection tab.",
+                  &t.text_dim);
+        ImGui::Spacing();
+        ui::FieldLabel("Layer");
+        const std::string current = layer_name(projector_layer_);
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::BeginCombo("##projector_layer", current.c_str())) {
+            for (const auto& l : layers) {
+                const std::string label = layer_name(l.layer) + "  (" + std::to_string(l.width) + " values a row)";
+                if (ImGui::Selectable(label.c_str(), l.layer == projector_layer_)) projector_layer_ = l.layer;
+            }
+            ImGui::EndCombo();
+        }
+        ui::FieldLabel("Method");
+        static const char* const kMethods[] = {"PCA", "t-SNE", "UMAP"};
+        ui::SegmentedControl("##projector_method", kMethods, 3, &projector_method_);
+        ui::FieldLabel("Colour by");
+        static const char* const kColours[] = {"True class", "Predicted", "Right / wrong"};
+        ui::SegmentedControl("##projector_colour", kColours, 3, &projector_colour_);
+        ImGui::Spacing();
+        if (projector_colour_ != 2) {
+            ImGui::TextColored(t.text_dim, "Classes (click to show one)");
+            const int classes = std::max(test.probability_classes, static_cast<int>(test.confusion_matrix.class_names.size()));
+            for (int k = 0; k < classes; ++k) {
+                ImGui::PushID(k);
+                const ImVec4 colour = ClassColour(k);
+                const std::string label = k < static_cast<int>(test.confusion_matrix.class_names.size())
+                                              ? test.confusion_matrix.class_names[k]
+                                              : std::to_string(k);
+                ImGui::ColorButton("##swatch", colour, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder,
+                                   ImVec2(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight()));
+                ImGui::SameLine();
+                if (ImGui::Selectable(label.c_str(), projector_only_ == k, 0, ImVec2(120.0f, 0.0f)))
+                    projector_only_ = projector_only_ == k ? -1 : k;
+                ImGui::PopID();
+            }
+        }
+        ImGui::Spacing();
+        if (ui::SecondaryButton("Send to Projection tab", static_cast<bool>(send_to_projection_),
+                                "Data Studio is not open.")) {
+            if (auto table = ProjectorFeaturesTable(test, projector_layer_)) {
+                std::string name = "model_features_" + layer_name(projector_layer_);
+                for (auto& c : name)
+                    if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
+                send_to_projection_(table, name);
+                projector_message_ = "Sent " + std::to_string(table->num_rows()) + " rows as '" + name + "'.";
+            }
+        }
+        if (!projector_message_.empty()) Paragraph(projector_message_, &t.text_dim);
+        ui::EndCard();
+    };
+    if (wide && ImGui::BeginTable("##projector_layout", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("##controls", ImGuiTableColumnFlags_WidthFixed, side);
+        ImGui::TableSetupColumn("##plot", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        controls();
+        ImGui::TableNextColumn();
+        RenderProjectorPlot(test.confusion_matrix.class_names);
+        ImGui::EndTable();
+    } else if (!wide) {
+        ImGui::BeginChild("##projector_narrow", ImVec2(0.0f, 0.0f));
+        controls();
+        RenderProjectorPlot(test.confusion_matrix.class_names);
+        ImGui::EndChild();
+    }
+}
+
+void ModelPanel::RenderProjectorPlot(const std::vector<std::string>& class_names) {
+    const auto& t = ui::CurrentTokens();
+    if (projector_shown_.empty()) {
+        ImGui::TextColored(t.running, "Projecting the test rows...");
+        return;
+    }
+    if (!projector_.ok) {
+        Paragraph(projector_.error, &t.warning);
+        return;
+    }
+    if (projector_job_) ImGui::TextColored(t.running, "Working out the next projection...");
+    ImGui::TextColored(t.text_dim, "%s", projector_.note.c_str());
+    const auto name_of = [&](int k) {
+        return k >= 0 && static_cast<size_t>(k) < class_names.size() ? class_names[k] : std::to_string(k);
+    };
+    const float height = std::max(260.0f, ImGui::GetContentRegionAvail().y - 8.0f);
+    if (!ImPlot::BeginPlot("##projector", ImVec2(-1, height), ImPlotFlags_NoMenus | ImPlotFlags_NoLegend)) return;
+    ImPlot::SetupAxes(projector_.x_label.c_str(), projector_.y_label.c_str(), ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+    // One series a colour; mistakes on top, ringed.
+    std::map<int, std::pair<std::vector<double>, std::vector<double>>> groups, mistakes;
+    for (const auto& p : projector_.points) {
+        if (projector_only_ >= 0 && p.truth != projector_only_ && projector_colour_ != 2) continue;
+        const int key = projector_colour_ == 0 ? p.truth : projector_colour_ == 1 ? p.predicted : (p.wrong ? 1 : 0);
+        auto& target = p.wrong ? mistakes[key] : groups[key];
+        target.first.push_back(p.x);
+        target.second.push_back(p.y);
+    }
+    const auto colour_of = [&](int key) {
+        if (projector_colour_ == 2) return key == 1 ? t.caution : t.text_faint;
+        return ClassColour(key);
+    };
+    for (auto& [key, xy] : groups) {
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3.0f, ui::WithAlpha(colour_of(key), 0.8f), 0.0f);
+        ImPlot::PlotScatter(("##g" + std::to_string(key)).c_str(), xy.first.data(), xy.second.data(),
+                            static_cast<int>(xy.first.size()));
+    }
+    for (auto& [key, xy] : mistakes) {
+        ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 5.0f, colour_of(key), 1.5f, t.text_bright);
+        ImPlot::PlotScatter(("##m" + std::to_string(key)).c_str(), xy.first.data(), xy.second.data(),
+                            static_cast<int>(xy.first.size()));
+    }
+    // The point under the mouse: its row, and a click opens it in Explain.
+    if (ImPlot::IsPlotHovered()) {
+        const ImPlotPoint mouse = ImPlot::GetPlotMousePos();
+        const ImPlotRect limits = ImPlot::GetPlotLimits();
+        const double sx = limits.X.Size() > 0 ? limits.X.Size() : 1.0, sy = limits.Y.Size() > 0 ? limits.Y.Size() : 1.0;
+        const ProjectorPoint* nearest = nullptr;
+        double best = 0.0004;  // within about 2 % of the plot
+        for (const auto& p : projector_.points) {
+            const double dx = (p.x - mouse.x) / sx, dy = (p.y - mouse.y) / sy, d = dx * dx + dy * dy;
+            if (d < best) {
+                best = d;
+                nearest = &p;
+            }
+        }
+        if (nearest) {
+            const TestingMetrics& test = TestManager::Instance().GetLastResults();
+            const bool kept = std::any_of(test.kept_inputs.begin(), test.kept_inputs.end(),
+                                          [&](const TestingMetrics::KeptInput& k) { return k.sample == nearest->sample; });
+            ImGui::BeginTooltip();
+            ImGui::Text("row %lld: a %s, read as %s (%.1f %%)", nearest->row, name_of(nearest->truth).c_str(),
+                        name_of(nearest->predicted).c_str(), nearest->confidence * 100.0f);
+            ImGui::TextColored(t.text_dim, "%s", kept ? "Click to open it in Explain." : "Its input was not kept by the test.");
+            ImGui::EndTooltip();
+            if (kept && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                explain_sample_ = nearest->sample;
+                explain_target_mode_ = 0;
+                open_tab_ = "explain";
+            }
+        }
+    }
+    ImPlot::EndPlot();
 }
 
 }  // namespace cyxwiz

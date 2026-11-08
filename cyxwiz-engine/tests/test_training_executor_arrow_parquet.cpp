@@ -948,6 +948,20 @@ void TestBatchRowIds(
             Check(!arrow_metrics.kept_inputs.empty() && widths && all_wrong_kept,
                   "a test keeps the inputs of its wrong and first samples for Explain");
         }
+        // Projector's layer features: the one Linear layer's output (its
+        // logits, no activation after it) for every sample.
+        {
+            const auto& features = arrow_metrics.layer_features;
+            Check(features.size() == 1 && features[0].layer == 0 && features[0].width == 2 &&
+                      features[0].values.size() == 2 * arrow_metrics.predictions.size(),
+                  "a test records each layer's features of every sample for the Projector");
+            bool argmax_matches = !features.empty();
+            for (size_t i = 0; argmax_matches && i < arrow_metrics.predictions.size(); ++i) {
+                const float a = features[0].values[2 * i], b = features[0].values[2 * i + 1];
+                argmax_matches = (b > a ? 1 : 0) == arrow_metrics.predictions[i] || a == b;
+            }
+            Check(argmax_matches, "the recorded logits give the test's predictions");
+        }
         cyxwiz::TestExecutor parquet_test(config, parquet_dataset, "label",
                                           cyxwiz::TestDatasetScope::ConfiguredTestSplit);
         const auto parquet_metrics = run_test(parquet_test);

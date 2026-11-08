@@ -466,6 +466,7 @@ set(ENGINE_SOURCES
     src/core/compiled_node_presentation.cpp
     src/core/model_summary_presentation.cpp
     src/core/model_explain.cpp
+    src/core/model_projector.cpp
     src/core/training_health_presentation.cpp
     src/core/compile_report_presentation.cpp
     src/core/studio_toolbar_presentation.cpp
@@ -4722,6 +4723,7 @@ add_test(NAME model_summary_pytorch_parity COMMAND test_model_summary_presentati
 add_executable(test_model_explain
     tests/test_model_explain.cpp
     src/core/model_explain.cpp
+    src/core/model_projector.cpp
     src/core/compiled_node_presentation.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp

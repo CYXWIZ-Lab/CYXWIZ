@@ -11,11 +11,13 @@
 #include "../src/core/graph_node_factory.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/model_explain.h"
+#include "../src/core/model_projector.h"
 #include "../src/core/spatial_batch_layout.h"
 #include "../src/gui/loaders/data_loader.h"
 #include "computation_truth/test_device_selection.h"
 
 #include <cyxwiz/model_interpretability.h>
+#include <arrow/api.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -286,6 +288,51 @@ void CheckBaseline() {
     Check(cyxwiz::ExplainBaseline(config, 4) == std::vector<float>(4, 0.0f), "without Normalize the baseline is 0");
 }
 
+// Projector on a test with two clear groups in a layer's 3 features.
+void CheckProjector() {
+    cyxwiz::TestingMetrics test;
+    cyxwiz::TestingMetrics::LayerFeatures features;
+    features.layer = 4;
+    features.width = 3;
+    for (int i = 0; i < 40; ++i) {
+        const int group = i % 2;
+        const float spread = 0.05f * static_cast<float>(i % 5);
+        features.values.insert(features.values.end(), {group ? 5.0f + spread : -5.0f - spread, spread, -spread});
+        test.ground_truth.push_back(group);
+        test.predictions.push_back(i == 7 ? 0 : group);  // one mistake
+        test.confidences.push_back(0.9f);
+        test.row_ids.push_back(100 + i);
+    }
+    test.layer_features.push_back(features);
+    const auto layers = cyxwiz::ProjectorLayers(test);
+    Check(layers.size() == 1 && layers[0].layer == 4 && layers[0].width == 3, "projector: the layer recorded for every row");
+    cyxwiz::ProjectorRequest request;
+    request.layer = 4;
+    const auto pca = cyxwiz::ProjectTestRows(test, request);
+    Check(pca.ok && pca.points.size() == 40 && pca.x_label.rfind("PC 1 ", 0) == 0, "projector: PCA of 40 rows: " + pca.error);
+    bool apart = true;
+    for (const auto& p : pca.points) apart = apart && (p.truth == 1 ? p.x : -p.x) * (pca.points[1].x > 0 ? 1 : -1) > 0;
+    Check(apart, "projector: the two groups fall on either side of PC 1");
+    const auto wrong = std::count_if(pca.points.begin(), pca.points.end(), [](const cyxwiz::ProjectorPoint& p) { return p.wrong; });
+    Check(wrong == 1 && pca.points[7].row == 107, "projector: the mistake is marked, rows named");
+    request.max_rows = 10;
+    const auto thinned = cyxwiz::ProjectTestRows(test, request);
+    Check(thinned.ok && thinned.points.size() == 10 && thinned.note.find("every 4th") != std::string::npos,
+          "projector: more rows than drawn are thinned evenly: " + thinned.note);
+    request.max_rows = 2000;
+    request.method = cyxwiz::ProjectorMethod::UMAP;
+    const auto umap = cyxwiz::ProjectTestRows(test, request);
+    Check(umap.ok && umap.points.size() == 40 && umap.x_label == "UMAP 1", "projector: UMAP: " + umap.error);
+    const auto table = cyxwiz::ProjectorFeaturesTable(test, 4);
+    Check(table && table->num_rows() == 40 && table->num_columns() == 6 &&
+              table->schema()->field(0)->name() == "feature_1" && table->schema()->field(5)->name() == "row",
+          "projector: the features table for the Projection tab");
+    request.layer = 9;
+    Check(!cyxwiz::ProjectTestRows(test, request).ok, "projector: a layer without features is refused");
+    test.predictions.push_back(0);  // a sample without features: the layer is not complete
+    Check(cyxwiz::ProjectorLayers(test).empty(), "projector: a layer short of rows is not offered");
+}
+
 }  // namespace
 
 int main(int, char** argv) {
@@ -302,6 +349,7 @@ int main(int, char** argv) {
         CheckResidual(fixture.at("cases").at("residual"));
     }
     CheckBaseline();
+    CheckProjector();
     if (failures > 0) {
         std::cerr << failures << " of " << checks << " checks failed\n";
         return 1;
