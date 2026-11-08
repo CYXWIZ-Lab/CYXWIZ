@@ -78,7 +78,8 @@ To write your own nodes in Python or C++, see
 
 | Page | What it covers |
 | --- | --- |
-| [Testing a trained model](testing.md) | Running a test on the test split |
+| [Testing a trained model](testing.md) | Running a test on the test split; Results > Test: errors, threshold, calibration, a decision kept with the model |
+| [The Model window](model_tools.md) | Tools > Model: summary (parameters, multiply-adds, memory), learning-rate range test, Grad-CAM / saliency / Integrated Gradients, training health, projector |
 | [Generation previews](generation_previews.md) | Prompting a language model while it trains |
 | [Language model generation](lm_generation.md) | Using a trained language model in the Engine |
 | [Fine-tuning language models](fine_tuning_language_models.md) | Fine-tuning on prompt/answer examples |

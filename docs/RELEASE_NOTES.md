@@ -7,6 +7,33 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Tools > Model is one window** (guide in `docs/usage/model_tools.md`,
+  example `examples/cyxgraph/model_tools`) with tabs Summary, Learning
+  rate, Explain, Health and Projector; its menu items open it on a tab.
+  - Summary counts parameters and multiply-adds the way PyTorch does
+    (checked on five models), with the memory of a batch's activations.
+  - Learning rate runs a real range test on a copy of the model and
+    suggests a rate (steepest fall or lowest / 10); **Use** writes it into
+    the optimizer node.
+  - Explain shows Grad-CAM, saliency and Integrated Gradients for any kept
+    test row, as Captum computes them, on the model's own device.
+  - Health is recorded during every training: weight and gradient size by
+    epoch, a weight histogram and dead ReLU units; the Training Dashboard
+    warns and links to it.
+  - Projector maps a layer's features of the test rows (PCA, t-SNE, UMAP).
+  - The Model Summary, Architecture Diagram, Learning Rate Finder, Grad-CAM,
+    NAS and DNN Inference windows are gone (the diagram is the canvas; NAS
+    had no search; DNN Inference ran fixed demo networks). The Grad-CAM and
+    Saliency Map nodes are no longer in the node list.
+- **Results > Test has Errors, Threshold and Calibration**: the mistakes by
+  pair with their images, thresholds by F1, recall or cost, a confidence
+  floor for several classes, and temperature / Platt / isotonic calibration
+  (checked against scikit-learn). A threshold and a calibration can be kept
+  with the model: the next test applies it, checkpoints and exports carry
+  it, and the local inference server returns calibrated probabilities.
+- A graph that reads a CSV of pixel columns into a CNN through a leading
+  Reshape (784 -> 28,28,1) trains, and compiles before its data is loaded.
+
 - **Tools > Optimization and Calculus is one window** (guide in
   `docs/usage/optimization_calculus.md`). Its six menu items open it on
   Optimizers, Curvature, Linear, Quadratic, Derivative or Integral. It takes
