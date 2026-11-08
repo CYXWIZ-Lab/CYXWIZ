@@ -43,6 +43,11 @@ MuJoCo Viewport, still shows its model.
   second, 60 by default) of the next run, and whether the Monitor opens
   when a run starts (on by default). If you close the Monitor during a run
   it stays closed until the next Run.
+- The tick rate does not change how fast a physics model moves: a model
+  keeps to the run's time. A MuJoCo Plant takes as many model steps as fit
+  in each tick (several on a short model step, or one every few ticks when
+  the model step is longer than a tick), so 4 s of graph time is 4 s of
+  physics.
 - A Scope's **Window size** (how many samples it keeps, 10 to 100000, 500
   by default) and **Auto scale** are set on the Scope node, in Properties.
 

@@ -64,3 +64,11 @@ add_custom_command(TARGET mujoco_plugin POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_SDK_DIR}/LICENSE" "${CMAKE_CURRENT_SOURCE_DIR}/bin/MUJOCO_LICENSE.txt"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_SDK_DIR}/THIRD_PARTY_NOTICES.txt" "${CMAKE_CURRENT_SOURCE_DIR}/bin/MUJOCO_THIRD_PARTY_NOTICES.txt"
     COMMENT "Copying MuJoCo ${CYXWIZ_MUJOCO_VERSION} runtime and licence")
+
+# =============================================================================
+# Tests
+# =============================================================================
+
+add_executable(test_mujoco_graph_clock tests/test_mujoco_graph_clock.cpp)
+target_include_directories(test_mujoco_graph_clock PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+add_test(NAME mujoco_graph_clock COMMAND test_mujoco_graph_clock)

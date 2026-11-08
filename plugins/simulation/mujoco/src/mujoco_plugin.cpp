@@ -576,6 +576,10 @@ PluginSimulationBeginResult MuJoCoPlugin::BeginGraphRun(const std::vector<Plugin
     // One driver at a time: the viewport's own run is not stopped behind the user's back.
     if (sim_executor_.GetMode() != SimMode::Stopped)
         return refuse("The MuJoCo Viewport is running the model. Stop it there, then run the graph.");
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        graph_clock_.Begin(env_manager_.GetData()->time);
+    }
     viewport_panel_.SetGraphSimActive(true);
     return {};
 }
@@ -632,11 +636,10 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
             }
         }
 
-        const int frame_skip = env_manager_.GetFrameSkip();
+        // The physics follows the graph's clock (mj_graph_clock.h)
         for (const auto& [id, v] : controls) d->ctrl[id] = v;
-        for (int i = 0; i < frame_skip; i++) {
-            mj_step(m, d);
-        }
+        const int steps = graph_clock_.StepsForTick(d->time, m->opt.timestep, ctx.sim_time, ctx.dt);
+        for (int i = 0; i < steps; ++i) mj_step(m, d);
 
         for (int i = 0; i < m->nsensor; i++) {
             const char* name = mj_id2name(m, mjOBJ_SENSOR, i);

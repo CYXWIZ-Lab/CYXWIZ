@@ -18,6 +18,7 @@
 #include "plugin/plugin_ui.h"
 
 #include "mj_env_manager.h"
+#include "mj_graph_clock.h"
 #include "mj_env_library.h"
 #include "mj_renderer.h"
 #include "mj_viewport_panel.h"
@@ -119,6 +120,8 @@ private:
 
     // Observation Filter running normalisation, one per settings (see EvaluateNode)
     std::map<std::string, rl::ObservationFilter> obs_filters_;
+    // The graph run's clock: the Plant keeps the physics on it
+    MjGraphClock graph_clock_;
     bool viewport_visible_ = true;
     bool renderer_needs_init_ = false;
 };
