@@ -186,6 +186,19 @@ void CheckCalibration(const nlohmann::json& source, const nlohmann::json& f) {
     Check(temperature.detail.find("One temperature (") != std::string::npos &&
               temperature.detail.find("without changing a single prediction.") != std::string::npos,
           "temperature words: " + temperature.detail);
+    // A test that already used the kept temperature: a new fit comes out at
+    // about 1, and the words say no fix is needed.
+    TestingMetrics kept = species;
+    const size_t classes = static_cast<size_t>(species.probability_classes);
+    for (size_t r = 0; r * classes < kept.class_probabilities.size(); ++r) {
+        const auto q = WithTemperature(&species.class_probabilities[r * classes], species.probability_classes, temperature.temperature);
+        for (size_t c = 0; c < classes; ++c) kept.class_probabilities[r * classes + c] = static_cast<float>(q[c]);
+    }
+    kept.decision_calibrated = true;
+    const auto again = Calibrate(kept, CalibrationMethod::Temperature);
+    Check(again.ok && Near(again.temperature, 1.0, 0.01) && again.detail.find("need no fix") != std::string::npos &&
+              again.detail.find("already include the model's kept calibration") != std::string::npos,
+          "a kept temperature fits again at " + Num(again.temperature) + ": " + again.detail);
     // Platt / isotonic on several classes fall back to the temperature.
     Check(Calibrate(species, CalibrationMethod::Isotonic).method == CalibrationMethod::Temperature,
           "several classes: temperature scaling");

@@ -125,7 +125,8 @@ private:
     std::string explain_message_;
 
     // Health.
-    size_t health_selected_ = 0;  // the selected row's layer
+    // The selected row's layer; none picked yet shows the worst layer.
+    size_t health_selected_ = static_cast<size_t>(-1);
 
     // Projector.
     struct ProjectorJob {

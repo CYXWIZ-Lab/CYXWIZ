@@ -133,7 +133,12 @@ void ModelPanel::Refresh() {
 
 void ModelPanel::Render() {
     if (!visible_) return;
-    ImGui::SetNextWindowSize(ImVec2(1180, 760), ImGuiCond_FirstUseEver);
+    // 1180 x 760, or 90 % of a smaller screen, centred (it covered the menu
+    // bar on a 1280 x 720 window).
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowSize(ImVec2(std::min(1180.0f, viewport->WorkSize.x * 0.9f), std::min(760.0f, viewport->WorkSize.y * 0.9f)),
+                             ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(viewport->GetWorkCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     if (!ImGui::Begin(ICON_FA_LAYER_GROUP " Model###ModelTools", &visible_)) {
         ImGui::End();
         return;
@@ -487,10 +492,10 @@ void ModelPanel::RenderRangeResult() {
     ImGui::SameLine();
     if (ui::SegmentedControl("##range_rule", kRules, 2, &rule)) steepest_rule_ = rule == 0;
     ImGui::SameLine();
-    std::string status = "smoothed loss (" + FormatLearningRate(range_.smoothing) + ") · log scale · " +
-                         std::to_string(range_points_.size()) + " of " + std::to_string(range_.steps) + " steps";
-    if (finished && !range_stop_reason_.empty()) status += " · " + range_stop_reason_;
+    const std::string status = "smoothed loss (" + FormatLearningRate(range_.smoothing) + ") · log scale · " +
+                               std::to_string(range_points_.size()) + " of " + std::to_string(range_.steps) + " steps";
     ImGui::TextColored(t.text_dim, "%s", status.c_str());
+    if (finished && !range_stop_reason_.empty()) Paragraph(range_stop_reason_, &t.text_dim);
 
     std::vector<double> x, y;
     for (const auto& point : range_points_) {
@@ -500,8 +505,15 @@ void ModelPanel::RenderRangeResult() {
     }
     const float plot_h = std::max(220.0f, ImGui::GetContentRegionAvail().y - 150.0f);
     if (!x.empty() && ImPlot::BeginPlot("##range_curve", ImVec2(-1, plot_h), ImPlotFlags_NoMenus | ImPlotFlags_NoLegend)) {
-        ImPlot::SetupAxes("learning rate", "smoothed loss", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupAxes("learning rate", "smoothed loss");
         ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
+        // The rates tested; the loss from its lowest up to the start's plateau
+        // (the blown-up tail of a stopped test is cut, as fastai draws it).
+        const size_t lowest = static_cast<size_t>(std::min_element(y.begin(), y.end()) - y.begin());
+        const double y_lo = y[lowest], y_hi = *std::max_element(y.begin(), y.begin() + lowest + 1);
+        const double pad = std::max(1e-6, (y_hi - y_lo) * 0.08);
+        ImPlot::SetupAxisLimits(ImAxis_X1, x.front(), x.back(), ImPlotCond_Always);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, y_lo - pad, y_hi + pad, ImPlotCond_Always);
         ImPlot::SetNextLineStyle(t.series[0], 2.0f);
         ImPlot::PlotLine("smoothed", x.data(), y.data(), static_cast<int>(x.size()));
         if (analysis.ok) {
@@ -581,10 +593,22 @@ std::vector<Rgba> ExplainPictures(const ExplainOutcome& out) {
                                                   const float a = out.grad_cam[i] / cam_peak;
                                                   return Mix(pixel(i), Sequential(a), 0.35f + 0.5f * a);
                                               }));
-    const float sal_peak = peak(out.saliency, false);
-    pictures.push_back(Picture(h, w, scale, [&](size_t i) { return Sequential(out.saliency[i] / sal_peak); }));
-    const float ig_peak = peak(out.integrated, true);
-    pictures.push_back(Picture(h, w, scale, [&](size_t i) { return Diverging(out.integrated[i] / ig_peak); }));
+    // Saliency and IG: a few pixels carry most of the weight, so the colour
+    // scale tops out at the 99th percentile of |v| (as Captum draws them);
+    // the rest clip to the end colour.
+    const auto percentile99 = [](const std::vector<float>& v) {
+        std::vector<float> a(v.size());
+        for (size_t i = 0; i < v.size(); ++i) a[i] = std::fabs(v[i]);
+        if (a.empty()) return 1.0f;
+        const size_t k = std::min(a.size() - 1, static_cast<size_t>(0.99 * static_cast<double>(a.size() - 1) + 0.5));
+        std::nth_element(a.begin(), a.begin() + static_cast<std::ptrdiff_t>(k), a.end());
+        return a[k] > 0.0f ? a[k] : 1.0f;
+    };
+    const float sal_top = percentile99(out.saliency);
+    pictures.push_back(Picture(h, w, scale, [&](size_t i) { return Sequential(std::min(1.0f, out.saliency[i] / sal_top)); }));
+    const float ig_top = percentile99(out.integrated);
+    pictures.push_back(
+        Picture(h, w, scale, [&](size_t i) { return Diverging(std::clamp(out.integrated[i] / ig_top, -1.0f, 1.0f)); }));
     return pictures;
 }
 
@@ -711,9 +735,10 @@ void ModelPanel::RenderExplainControls(const std::vector<ExplainRowChoice>& choi
     ui::FieldLabel("Integrated Gradients steps");
     ui::NumberField("##ig_steps", &ig_steps_, 8, 512, 8, 70.0f, "Points on the path from the baseline; all in one batch.");
     if (!explain_.grad_cam_layer.empty()) {
-        ImGui::TextColored(t.text_dim, "Grad-CAM layer");
-        ImGui::SameLine();
+        ui::FieldLabel("Grad-CAM layer");
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::Text("%s (the last convolution)", explain_.grad_cam_layer.c_str());
+        ImGui::PopTextWrapPos();
     }
     ImGui::Spacing();
     const bool can_save = explain_.ok && explain_images_[0] != 0;

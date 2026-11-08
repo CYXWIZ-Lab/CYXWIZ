@@ -339,7 +339,15 @@ CalibrationReport Calibrate(const TestingMetrics& m, CalibrationMethod method, i
                                ? ": close to its word."
                                : worst->accuracy > worst->confidence ? ": it undersells itself." : ": it oversells itself.");
     }
-    report.detail = "Calibration error " + Fixed(report.before.ece, 4) + ". " + fixed_by + ", fitted on half the test rows (" +
+    const std::string already = m.decision_calibrated ? "These probabilities already include the model's kept calibration. " : "";
+    if (report.method == CalibrationMethod::Temperature && std::fabs(report.temperature - 1.0) < 0.02) {
+        report.detail = already + "Calibration error " + Fixed(report.before.ece, 4) + ". A temperature fitted on half the test rows (" +
+                        std::to_string(report.fit_rows) + ") comes out at " + Fixed(report.temperature, 3) +
+                        ": the probabilities need no fix.";
+        report.ok = true;
+        return report;
+    }
+    report.detail = already + "Calibration error " + Fixed(report.before.ece, 4) + ". " + fixed_by + ", fitted on half the test rows (" +
                     std::to_string(report.fit_rows) + "), brings it to " + Fixed(report.after.ece, 4) +
                     " on the other half (" + std::to_string(report.check_rows) + ")" +
                     (report.method == CalibrationMethod::Temperature ? " without changing a single prediction."

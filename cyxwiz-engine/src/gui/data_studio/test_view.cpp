@@ -204,6 +204,7 @@ void TestView::Rebuild() {
     dirty_ = false;
     ++shown_version_;
     curves_key_.clear();
+    keep_message_.clear();  // it spoke of the results before these
     if (!m) {
         view_ = test_report::View{};
         rows_ = nullptr;
@@ -720,7 +721,7 @@ void TestView::RenderThreshold(const TestingMetrics& m) {
         threshold_ = best;
     // Pick by a recall target, or by the cost of each error.
     ImGui::SameLine();
-    Label("Recall â¥");
+    Label("Recall at least");
     ui::NumberFieldOptions target;
     target.min = 0.0;
     target.max = 1.0;
@@ -852,6 +853,7 @@ void TestView::RenderConfidenceFloor(const TestingMetrics& m) {
     if (ImPlot::BeginPlot("##floor_curve", ImVec2(-1, 180.0f), ImPlotFlags_NoMenus)) {
         ImPlot::SetupAxes("floor", "", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
         ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.05, ImPlotCond_Always);
+        ImPlot::SetupLegend(ImPlotLocation_SouthWest);  // both lines sit near the top
         ImPlot::SetNextLineStyle(t.series[0], 2.0f);
         ImPlot::PlotLine("rows answered", floors.data(), answered.data(), static_cast<int>(floors.size()));
         ImPlot::SetNextLineStyle(t.series[2], 2.0f);
