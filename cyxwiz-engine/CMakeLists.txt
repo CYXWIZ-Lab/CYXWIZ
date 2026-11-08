@@ -8008,6 +8008,24 @@ target_link_libraries(test_plugin_tensor_nodes PRIVATE cyxwiz-training-core cyxw
 target_compile_definitions(test_plugin_tensor_nodes PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 add_dependencies(test_plugin_tensor_nodes activation_nodes)
 
+# ===== _cyxwiz_envs: plugin environments in a Python process (TOFIX195 S3.4) =====
+# The Engine's plugin host as a Python module, next to pycyxwiz; pycyxwiz.rl
+# builds gymnasium environments on it.
+if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
+    pybind11_add_module(_cyxwiz_envs
+        src/plugin/environment_host_module.cpp
+        src/plugin/plugin_manager.cpp
+        src/plugin/engine_plugin_context.cpp
+        src/plugin/plugin_loader.cpp
+    )
+    target_link_libraries(_cyxwiz_envs PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+    # Beside pycyxwiz and the backend DLLs it loads
+    set_target_properties(_cyxwiz_envs PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    if(WIN32)
+        target_compile_definitions(_cyxwiz_envs PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    endif()
+endif()
+
 # ===== Tool: load plugin folders and check their nodes (TOFIX125 P5 step 5.3) =====
 add_executable(cyxwiz-plugin-check
     tests/tool_plugin_check.cpp

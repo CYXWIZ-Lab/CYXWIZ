@@ -12,6 +12,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 - [pycyxwiz.distributed](#pycyxwizdistributed)
 - [pycyxwiz.linalg](#pycyxwizlinalg)
 - [pycyxwiz.nodes](#pycyxwiznodes)
+- [pycyxwiz.rl](#pycyxwizrl)
 - [pycyxwiz.signal](#pycyxwizsignal)
 - [pycyxwiz.stats](#pycyxwizstats)
 - [pycyxwiz.text](#pycyxwiztext)
@@ -1570,6 +1571,17 @@ A node setting: Param(float, default=1.0, min=0.01, description="..."). type is 
 | `convert(self, value, check=True)` | A graph value (text, or already typed) as this Param's type. |
 | `describe(self)` | The setting's entry in node.json: name, type, default, validation, description, choices. |
 | `validation(self)` | The rule as ParameterDefinition writes it: "0.01-", "0-1", "a\|b". |
+
+## pycyxwiz.rl
+
+Plugin environments for reinforcement learning as Gymnasium environments: load_plugin(folder), environments(), Env(id, **settings) (a gymnasium.Env) and VectorEnv(id, num_envs, **settings) (a gymnasium VectorEnv with same-step autoreset). Stable-Baselines3, CleanRL or your own code then train on exactly the physics the Engine trains on. Needs numpy, gymnasium and the _cyxwiz_envs module built with the Engine; see docs/usage/rl_environments.md.
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `environments()` | The environments the loaded plugins offer: one dict each (key, id, sizes, action range, settings). |
+| `load_plugin(folder)` | Loads and starts the plugin in `folder` (the one holding plugin.json); returns its id. |
 
 ## pycyxwiz.signal
 

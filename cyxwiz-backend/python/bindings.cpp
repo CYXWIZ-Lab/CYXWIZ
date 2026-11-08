@@ -3273,4 +3273,5 @@ Example queries:
 
     // pycyxwiz.nodes: last, so the classes it uses are bound (TOFIX125 P3).
     pycyxwiz_bindings::InstallNodesSubmodule(m);
+    pycyxwiz_bindings::InstallRlSubmodule(m);
 }

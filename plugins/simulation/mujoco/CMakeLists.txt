@@ -99,3 +99,9 @@ if(CYXWIZ_MUJOCO_ORACLE_PYTHON)
              COMMAND ${CYXWIZ_MUJOCO_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/mujoco_gymnasium_parity.py
                      $<TARGET_FILE:test_mujoco_environments> ${CMAKE_CURRENT_BINARY_DIR}/parity)
 endif()
+# pycyxwiz.rl over _cyxwiz_envs (the Engine's module) with the same Python
+if(CYXWIZ_MUJOCO_ORACLE_PYTHON AND TARGET _cyxwiz_envs)
+    add_test(NAME mujoco_python_envs
+             COMMAND ${CYXWIZ_MUJOCO_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mujoco_python_envs.py
+                     $<TARGET_FILE_DIR:_cyxwiz_envs> ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
