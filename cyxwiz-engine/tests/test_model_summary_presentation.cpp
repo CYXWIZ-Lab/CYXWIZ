@@ -140,6 +140,22 @@ Graph MnistCnn() {
     return g;
 }
 
+// MNIST as a CSV: 784 pixel columns reshaped to 28 x 28 x 1 before the CNN.
+Graph MnistRows() {
+    Graph g;
+    const int loader = g.Data("tabular", "[784]");
+    const int last = g.Chain(loader, {
+        g.Add(gui::NodeType::Reshape, "Image 28 x 28", {{"shape", "28,28,1"}}),
+        g.Add(gui::NodeType::Conv2D, "Conv2D 32", {{"filters", "32"}, {"kernel_size", "3"}, {"padding", "valid"}}),
+        g.Add(gui::NodeType::ReLU, "ReLU 1"),
+        g.Add(gui::NodeType::MaxPool2D, "MaxPool 1", {{"pool_size", "2"}, {"stride", "2"}}),
+        g.Add(gui::NodeType::Flatten, "Flatten"),
+        g.Add(gui::NodeType::Dense, "Dense 10", {{"units", "10"}}),
+    });
+    g.Finish(loader, last);
+    return g;
+}
+
 Graph ImageMix() {
     Graph g;
     const int loader = g.Data("tabular", "[32, 32, 3]");
@@ -351,6 +367,35 @@ int main(int argc, char** argv) {
     const std::vector<std::pair<std::string, Builder>> cases = {
         {"mnist_cnn", MnistCnn}, {"image_mix", ImageMix}, {"residual", Residual},
         {"recurrent", Recurrent}, {"attention", Attention}};
+    // MNIST from a CSV: the leading Reshape reads each row as a 28 x 28 x 1
+    // image (it is the data's shape), so the CNN builds.
+    {
+        const Compiled rows = CompileAndCount("mnist_rows", MnistRows());
+        const auto summary = Summarize(rows);
+        Check(rows.built && rows.config.input_shape == std::vector<size_t>({28, 28, 1}) &&
+                  !summary.rows.empty() && summary.rows[0].output == "[28, 28, 1]" && summary.rows[1].name == "Conv2D 32" &&
+                  summary.rows[1].parameters == 320,
+              "a Reshape of 784 columns to 28 x 28 x 1 opens the CNN");
+        bool said = false;
+        for (const auto& issue : rows.config.issues)
+            said = said || issue.message.find("reads each row of 784 values as a [28, 28, 1] image") != std::string::npos;
+        Check(said, "the compile says how it reads the rows");
+    }
+    // A convolution after a Dense is refused at compile, not at Train.
+    {
+        Graph g;
+        const int loader = g.Data("tabular", "[784]");
+        const int last = g.Chain(loader, {g.Add(gui::NodeType::Dense, "Dense 784", {{"units", "784"}}),
+                                          g.Add(gui::NodeType::Reshape, "Image", {{"shape", "28,28,1"}}),
+                                          g.Add(gui::NodeType::Conv2D, "Late conv", {{"filters", "4"}, {"kernel_size", "3"}}),
+                                          g.Add(gui::NodeType::Flatten, "Flatten"), g.Add(gui::NodeType::Dense, "Head", {{"units", "10"}})});
+        g.Finish(loader, last);
+        const auto config = cyxwiz::GraphCompiler{}.Compile(g.nodes, g.links, true);
+        bool refused = false;
+        for (const auto& issue : config.issues)
+            refused = refused || (issue.level == cyxwiz::IssueLevel::Error && issue.message.find("Late conv needs image-shaped rows") == 0);
+        Check(!config.is_valid && refused, "a convolution after a Dense is refused with the reason");
+    }
     for (const auto& [name, build] : cases) {
         const json truth = fixture.contains(name) ? fixture.at(name) : json();
         Check(!truth.is_null() || print, name + ": PyTorch truth present");

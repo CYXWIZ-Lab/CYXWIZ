@@ -6581,6 +6581,45 @@ TrainingConfiguration GraphCompiler::Compile(
                      errors::Compiler::TensorShapeMismatch);
         }
     }
+    // A layer stack that opens with a Reshape / View of the rows to [H, W, C]
+    // before a convolution or pooling reads each row as an image (a CSV of
+    // pixel columns: MNIST's 784 as 28 x 28 x 1). Rows are already in
+    // height, width, channel order, so the Reshape is the data's shape.
+    const bool layer_stack = config.graph_op_node_ids.empty() && config.multi_input_layer_node_ids.empty();
+    if (!config.HasErrors() && layer_stack && config.layers.size() >= 2) {
+        const CompiledLayer first = config.layers.front();
+        const gui::NodeType next = config.layers[1].type;
+        const auto elements = [](const std::vector<size_t>& shape) {
+            size_t n = shape.empty() ? 0 : 1;
+            for (size_t d : shape) n *= d;
+            return n;
+        };
+        if ((first.type == gui::NodeType::Reshape || first.type == gui::NodeType::View) && first.input_shape.size() == 1 &&
+            first.output_shape.size() == 3 && elements(first.input_shape) == elements(first.output_shape) &&
+            (spatial::IsSpatialLayer(next) || spatial::IsGlobalPoolLayer(next))) {
+            config.input_shape = first.output_shape;
+            config.layers.erase(config.layers.begin());
+            AddIssue(config, IssueLevel::Info,
+                     first.name + " reads each row of " + std::to_string(elements(first.output_shape)) + " values as a [" +
+                         ShapeListText(first.output_shape) + "] image (height, width, channel order)",
+                     first.node_id, first.name);
+        }
+    }
+    // A layer stack runs convolutions only in its opening image section: one
+    // further in (after a Dense, a Flatten) is refused here, not at Train.
+    if (!config.HasErrors() && layer_stack && !UsesSpatialSequentialInput(config)) {
+        for (const auto& layer : config.layers) {
+            const bool image_layer = layer.type == gui::NodeType::Conv2D || layer.type == gui::NodeType::DepthwiseConv2D ||
+                                     layer.type == gui::NodeType::ConvTranspose2D || layer.type == gui::NodeType::MaxPool2D ||
+                                     layer.type == gui::NodeType::AvgPool2D;
+            if (!image_layer) continue;
+            AddIssue(config, IssueLevel::Error,
+                     layer.name + " needs image-shaped rows from the start of the model: read an image dataset, or "
+                     "put a Reshape to [H, W, C] first (784 pixel columns: 28,28,1)",
+                     layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
+            break;
+        }
+    }
     if (!config.HasErrors()) {
         // A global pool only ends a spatial ([H,W,C]) or sequence ([L,C]) section.
         for (size_t i = 0; i < config.layers.size(); ++i) {
