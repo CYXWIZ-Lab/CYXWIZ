@@ -106,6 +106,9 @@ void CheckBoundedWindows() {
     Check(Samples(session, 3) == 50, "each Scope keeps its own history");
     Check(session.GetScopeCapacity(2) == 10 && session.GetScopeCapacity(3) == 500 && session.GetScopeCapacity(1) == 0,
           "each Scope reports its window; a source has none");
+    Check(cyxwiz::GraphSimulationSession::ScopeWindow(small) == 10 &&
+              cyxwiz::GraphSimulationSession::ScopeWindow(other) == 500,
+          "a Scope node's window before any run");
 
     session.SetNodeParameter(2, "window_size", "12");
     for (int i = 0; i < 5; ++i) Check(session.TickForTest(0.01f), session.GetError());
@@ -137,6 +140,9 @@ void CheckFailureState() {
     gui::NodeLink dangling{1, 9, 900, 2, 102};
     Check(!session.Start({Scope(2, 102)}, {dangling}, nullptr), "a graph that does not build does not start");
     Check(session.GetState() == cyxwiz::SimulationState::Failed && !session.IsActive(), "no worker after a failed build");
+    Check(session.FailedBeforeRunning(), "a graph that does not build is a run that did not start");
+    session.FailToStart("A plugin said no.");
+    Check(session.FailedBeforeRunning() && session.GetError() == "A plugin said no.", "a refused run did not start");
     Check(!session.Start({Scope(2, 102)}, {}, nullptr, 0.0f), "a zero rate does not start");
 }
 
@@ -146,6 +152,7 @@ void CheckWorkerCommands() {
     Check(session.Start({constant, Scope(2, 102)}, {{1, 1, 101, 2, 102}}, nullptr, 1000.0f), session.GetError());
     const auto first_run = session.GetRunId();
     Check(session.GetRateHz() == 1000.0f, "the session reports the run's rate");
+    Check(!session.FailedBeforeRunning(), "a started run is not one that did not start");
     Check(session.GetState() == cyxwiz::SimulationState::Running, "Start runs");
     Check(WaitFor([&]() { return Samples(session, 2) >= 20; }), "the worker fills the Scope by itself");
 

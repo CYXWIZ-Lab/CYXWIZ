@@ -135,7 +135,9 @@ void SimulationMonitorPanel::RenderBody() {
         if (ImGui::BeginChild("##failed", ImVec2(0, 0),
                               ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding)) {
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION " The graph run failed.");
+            ImGui::TextColored(t.warning, session.FailedBeforeRunning()
+                                              ? ICON_FA_TRIANGLE_EXCLAMATION " The graph run did not start."
+                                              : ICON_FA_TRIANGLE_EXCLAMATION " The graph run failed.");
             ImGui::SameLine();
             ImGui::TextUnformatted(session.GetError().c_str());
             ImGui::PopTextWrapPos();
@@ -179,8 +181,9 @@ void SimulationMonitorPanel::RenderScopes() {
         times.clear();
         values.clear();
         session.CopyScope(scope.id, times, values);
+        // Before its first run a Scope has no history: its own window then
         std::size_t capacity = session.GetScopeCapacity(scope.id);
-        if (capacity == 0) capacity = GraphSimulationSession::kDefaultScopeWindow;
+        if (capacity == 0) capacity = GraphSimulationSession::ScopeWindow(scope);
 
         ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
         if (ImGui::BeginChild("##card", ImVec2(0, row_height), ImGuiChildFlags_AlwaysUseWindowPadding)) {
@@ -197,7 +200,9 @@ void SimulationMonitorPanel::RenderScopes() {
             }
             if (times.empty()) {
                 ImGui::Dummy(ImVec2(0.0f, std::max(0.0f, plot_height * 0.5f - line)));
+                ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextColored(t.text_dim, "No samples yet. Run the graph to plot what reaches this Scope.");
+                ImGui::PopTextWrapPos();
                 ImGui::Dummy(ImVec2(0.0f, std::max(0.0f, plot_height * 0.5f - line)));
             } else {
                 const bool auto_scale = [&]() {

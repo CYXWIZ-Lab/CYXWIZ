@@ -404,6 +404,14 @@ int main() {
         Check(none && none->items.size() == 3 && none->items[0].kind == MenuItem::Kind::Header &&
                   none->items[2].id == "simulation.monitor",
               "no simulation plugin: the menu says so and keeps the Monitor");
+        MenuInputs signal_only = graph;
+        signal_only.plugin_commands.clear();
+        signal_only.plugin_panels.clear();
+        const MenuModel signal_model = BuildMenuModel(signal_only);
+        const Menu* signal = simulation_menu(signal_model);
+        Check(signal && signal->items.size() == 10 && signal->items[6].kind == MenuItem::Kind::Separator &&
+                  signal->items[7].kind == MenuItem::Kind::Header && signal->items[9].id == "simulation.monitor",
+              "a signal graph without a plugin: its run, a separator, the note, the Monitor");
     }
 
     // ONNX export follows the build.

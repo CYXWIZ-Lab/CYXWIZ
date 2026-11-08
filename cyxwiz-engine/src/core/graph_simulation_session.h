@@ -26,6 +26,9 @@ enum class SimulationState { Stopped, Running, Paused, Failed };
 class GraphSimulationSession {
 public:
     static constexpr int kDefaultScopeWindow = 500;
+    // How many samples a Scope node keeps: its window_size within 10..100000,
+    // or the default when it has none or it is no number.
+    static std::size_t ScopeWindow(const ::gui::MLNode& scope);
 
     GraphSimulationSession() = default;
     ~GraphSimulationSession();
@@ -57,6 +60,9 @@ public:
     void Poll();
 
     SimulationState GetState() const { return state_.load(); }
+    // Failed before the first tick (refused, or the graph did not build), not
+    // during the run.
+    bool FailedBeforeRunning() const { return failed_before_running_.load(); }
     // Running or paused: the worker exists and holds the graph.
     bool IsActive() const;
     std::string GetError() const;
@@ -112,6 +118,7 @@ private:
     std::atomic<SimulationState> state_{SimulationState::Stopped};
     std::atomic<std::uint64_t> run_id_{0};
     std::atomic<float> rate_hz_{0.0f};
+    std::atomic<bool> failed_before_running_{false};
 
     // Guards the worker's commands and the error.
     mutable std::mutex control_mutex_;

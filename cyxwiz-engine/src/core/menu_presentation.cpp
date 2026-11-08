@@ -803,7 +803,10 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         const bool from_plugins = !plugin_commands.empty() ||
             std::any_of(in.plugin_panels.begin(), in.plugin_panels.end(),
                         [](const NamedEntry& p) { return p.group == "Simulation"; });
-        if (!from_plugins) i.push_back(Head("No simulation plugin loaded. Add one in the Plugin Manager."));
+        if (!from_plugins) {
+            if (!i.empty()) i.push_back(Sep());
+            i.push_back(Head("No simulation plugin loaded. Add one in the Plugin Manager."));
+        }
         if (!i.empty()) i.push_back(Sep());
         {
             Opts opts;

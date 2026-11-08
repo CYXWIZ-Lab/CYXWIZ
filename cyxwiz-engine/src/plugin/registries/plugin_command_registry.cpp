@@ -29,6 +29,7 @@ void PluginCommandRegistry::Register(const std::string& plugin_id, const PluginC
     entry.info.label = std::string(info.label.c_str());
     entry.info.hint = std::string(info.hint.c_str());
     entry.info.checkable = info.checkable;
+    entry.info.replaced_by_graph_run = info.replaced_by_graph_run;
     entry.provider = provider;
     commands_[key] = std::move(entry);
     order_.push_back(key);

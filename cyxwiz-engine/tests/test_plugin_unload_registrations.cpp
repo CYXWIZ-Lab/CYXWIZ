@@ -70,7 +70,8 @@ class FakeCommands final : public cyxwiz::plugin::ICommandProvider {
 public:
     int runs = 0;
     std::vector<cyxwiz::plugin::PluginCommandInfo> GetCommands() override {
-        return {{"go", "Simulation", "run", "Go", "Goes.", false}, {"halt", "Simulation", "run", "Halt", "Halts.", false}};
+        return {{"go", "Simulation", "run", "Go", "Goes.", false, true},
+                {"halt", "Simulation", "run", "Halt", "Halts.", false}};
     }
     cyxwiz::plugin::PluginCommandState GetCommandState(const std::string& id) override {
         if (id == "halt") return {false, "Nothing is running.", false};
@@ -91,6 +92,8 @@ void CheckCommandRegistry() {
           "commands are listed in order with their state");
     Check(!snapshot[1].state.enabled && snapshot[1].state.disabled_reason == "Nothing is running.",
           "a disabled command keeps its reason");
+    Check(snapshot[0].info.replaced_by_graph_run && !snapshot[1].info.replaced_by_graph_run,
+          "a command keeps whether a graph run replaces it");
     Check(commands.Run("com.example.sim:go") && fake.runs == 1, "a command runs");
     Check(!commands.Run("com.example.sim:missing"), "an unknown command does not run");
     commands.RemoveByPlugin("com.example.sim");

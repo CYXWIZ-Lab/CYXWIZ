@@ -214,13 +214,16 @@ void NodeEditor::ShowToolbar() {
     float actions_full = 0.0f, actions_icons = 0.0f;
     if (sim_graph) {
         // Simulation and RL graphs: their run group in place of the mode.
-        if (has_sim) {
-            // The widest form: a run with Pause, Step, Stop Sim, the time and "Paused"
+        if (has_sim && simulation_session_.IsActive()) {
+            // A run: Pause or Resume, Step, Stop Sim, the time and "Paused"
             const float clock = W("t = 0000.00 s") + W("Paused") + sp;
-            actions_full += W(ICON_FA_PAUSE " Pause") + W(ICON_FA_FORWARD_STEP " Step") + W(ICON_FA_STOP " Stop Sim") +
-                            clock + W(ICON_FA_TRIANGLE_EXCLAMATION) + 4.0f * sp;
-            actions_icons += W(ICON_FA_PAUSE) + W(ICON_FA_FORWARD_STEP) + W(ICON_FA_STOP) + clock +
-                             W(ICON_FA_TRIANGLE_EXCLAMATION) + 4.0f * sp;
+            actions_full += W(ICON_FA_PLAY " Resume") + W(ICON_FA_FORWARD_STEP " Step") + W(ICON_FA_STOP " Stop Sim") +
+                            clock + 4.0f * sp;
+            actions_icons += W(ICON_FA_PLAY) + W(ICON_FA_FORWARD_STEP) + W(ICON_FA_STOP) + clock + 4.0f * sp;
+        } else if (has_sim) {
+            // Run Sim, and the warning of a failed run
+            actions_full += W(ICON_FA_PLAY " Run Sim") + W(ICON_FA_TRIANGLE_EXCLAMATION) + 2.0f * sp;
+            actions_icons += W(ICON_FA_PLAY) + W(ICON_FA_TRIANGLE_EXCLAMATION) + 2.0f * sp;
         }
         if (has_rl) {
             actions_full += W(ICON_FA_PLAY " Train RL") + 110.0f + sp;

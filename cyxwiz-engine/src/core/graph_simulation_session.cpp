@@ -13,7 +13,7 @@ namespace {
 constexpr int kMinScopeWindow = 10;
 constexpr int kMaxScopeWindow = 100000;
 
-std::size_t ScopeWindow(const std::string& text) {
+std::size_t ParseScopeWindow(const std::string& text) {
     try {
         std::size_t used = 0;
         const int value = std::stoi(text, &used);
@@ -24,6 +24,12 @@ std::size_t ScopeWindow(const std::string& text) {
 }
 
 } // namespace
+
+std::size_t GraphSimulationSession::ScopeWindow(const ::gui::MLNode& scope) {
+    const auto window = scope.parameters.find("window_size");
+    return window == scope.parameters.end() ? static_cast<std::size_t>(kDefaultScopeWindow)
+                                            : ParseScopeWindow(window->second);
+}
 
 GraphSimulationSession::~GraphSimulationSession() {
     Stop();
@@ -70,8 +76,7 @@ bool GraphSimulationSession::Build(const std::vector<::gui::MLNode>& nodes,
         ScopeChannel channel;
         channel.node_id = node.id;
         channel.input_pin = node.inputs[0].id;
-        const auto window = node.parameters.find("window_size");
-        if (window != node.parameters.end()) channel.capacity = ScopeWindow(window->second);
+        channel.capacity = ScopeWindow(node);
         scopes.push_back(std::move(channel));
     }
     std::lock_guard lock(scopes_mutex_);
@@ -85,6 +90,8 @@ bool GraphSimulationSession::Start(const std::vector<::gui::MLNode>& nodes,
                                    float rate_hz,
                                    std::shared_ptr<void> held_for_run) {
     Stop();
+    // A failure from here to the worker's start is a run that did not start
+    failed_before_running_ = true;
     if (!std::isfinite(rate_hz) || rate_hz <= 0.0f) {
         Fail("The simulation rate must be a positive number of ticks a second");
         return false;
@@ -95,6 +102,7 @@ bool GraphSimulationSession::Start(const std::vector<::gui::MLNode>& nodes,
     }
     held_for_run_ = std::move(held_for_run);
     rate_hz_ = rate_hz;
+    failed_before_running_ = false;
     state_ = SimulationState::Running;
     spdlog::info("Graph simulation started at {:.0f} ticks a second", rate_hz);
     worker_ = std::thread([this, rate_hz]() { WorkerLoop(rate_hz); });
@@ -146,6 +154,7 @@ void GraphSimulationSession::Poll() {
 
 void GraphSimulationSession::FailToStart(const std::string& reason) {
     Stop();
+    failed_before_running_ = true;
     Fail(reason);
     spdlog::error("Graph simulation not started: {}", reason);
 }
@@ -236,7 +245,7 @@ bool GraphSimulationSession::SetNodeParameter(int node_id, const std::string& ke
         std::lock_guard lock(scopes_mutex_);
         for (auto& scope : scopes_) {
             if (scope.node_id != node_id) continue;
-            scope.capacity = ScopeWindow(value);
+            scope.capacity = ParseScopeWindow(value);
             while (scope.times.size() > scope.capacity) {
                 scope.times.pop_front();
                 scope.values.pop_front();
