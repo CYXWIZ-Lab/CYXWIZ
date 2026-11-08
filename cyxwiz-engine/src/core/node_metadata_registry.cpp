@@ -340,7 +340,6 @@ void NodeMetadataRegistry::Initialize() {
     // the registry so generated inventory covers both sources consistently.
     ApplyRuntimeCapabilityStatus();
 
-    LoadUserPreferences();
     initialized_ = true;
     spdlog::debug("NodeMetadataRegistry: Registered {} nodes", metadata_.size());
 }
@@ -1110,11 +1109,32 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
 
     spdlog::debug("NodeMetadataRegistry: Loaded {} template nodes from {}", loaded_count, directory);
 }
-void NodeMetadataRegistry::SaveUserPreferences() {
-    spdlog::debug("NodeMetadataRegistry: SaveUserPreferences not yet implemented");
+std::vector<NodeType> NodeMetadataRegistry::FavoriteTypes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {favorites_.begin(), favorites_.end()};
 }
-void NodeMetadataRegistry::LoadUserPreferences() {
-    spdlog::debug("NodeMetadataRegistry: LoadUserPreferences not yet implemented");
+
+std::vector<NodeType> NodeMetadataRegistry::RecentTypes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return recent_nodes_;
+}
+
+void NodeMetadataRegistry::SetUserNodes(const std::vector<NodeType>& favorites, const std::vector<NodeType>& recent) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    favorites_.clear();
+    for (auto& [type, meta] : metadata_) meta.is_favorite = false;
+    for (NodeType type : favorites) {
+        auto it = metadata_.find(type);
+        if (it == metadata_.end()) continue;  // a type this build does not have
+        favorites_.insert(type);
+        it->second.is_favorite = true;
+    }
+    recent_nodes_.clear();
+    for (NodeType type : recent) {
+        if (metadata_.count(type) && std::find(recent_nodes_.begin(), recent_nodes_.end(), type) == recent_nodes_.end())
+            recent_nodes_.push_back(type);
+        if (recent_nodes_.size() == MAX_RECENT) break;
+    }
 }
 
 bool NodeMetadataRegistry::MatchesQuery(const NodeMetadata& metadata, const std::string& query) const {

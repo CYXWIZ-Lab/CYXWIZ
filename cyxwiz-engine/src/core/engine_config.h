@@ -34,6 +34,18 @@ struct AppearanceConfig {
 // Preferences > Studio Debugger (TOFIX178 6.1c): the user's defaults for
 // layer capture and the layer views. Each run's capture control starts from
 // them. Values are clamped when read.
+// The Nodes panel's Favourites and Recent (Engine-wide, every project). Node
+// types are saved as their NodeType numbers, as graphs save them.
+struct NodesPanelConfig {
+    std::vector<int> favourites;
+    std::vector<int> recent;  // newest first
+    bool show_recent = true;
+    int recent_count = 8;     // 1..kNodesPanelMaxRecent
+
+    bool operator==(const NodesPanelConfig&) const = default;
+};
+inline constexpr int kNodesPanelMaxRecent = 20;
+
 enum class LayerCaptureWhen { Off, LocalDebug, Training };  // Training: also Local Debug runs
 enum class FeatureMapColour { Heat, Grayscale };
 // Feature maps' order: largest mean first, highest peak first, or by number.
@@ -215,6 +227,11 @@ public:
     AppearanceConfig GetAppearance() const;
     void SetAppearance(const AppearanceConfig& appearance);
 
+    // ===== Nodes panel (Engine-wide) =====
+
+    NodesPanelConfig GetNodesPanel() const;
+    void SetNodesPanel(const NodesPanelConfig& nodes_panel);
+
     // ===== Recent Projects =====
 
     // Get list of recent projects (up to 10)
@@ -277,6 +294,7 @@ private:
     bool record_debug_logs_ = true;
     uint64_t data_budget_bytes_ = 0;
     AppearanceConfig appearance_;
+    NodesPanelConfig nodes_panel_;
 
     // Recent projects
     std::vector<std::string> recent_projects_;  // Recent project paths (max 10)

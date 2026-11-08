@@ -109,6 +109,12 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Favourites and Recent in the Nodes panel.** Star a card (or right-click
+  it) to keep the node under Favourites at the top of the panel; Recent
+  lists the last nodes you added, newest first, as chips to click or drag.
+  The filter gains *Favourites*. Both are saved with your Engine settings
+  (every project); **Preferences > Nodes panel** turns Recent off, sets how
+  many it shows and clears it. Guide: `docs/usage/node_palette.md`.
 - **Layer capture for the Studio Debugger** (Preferences > Studio Debugger,
   off to start). Local Debug and training can keep every layer's input and
   output, weights and gradients. Training takes a snapshot every N epochs and

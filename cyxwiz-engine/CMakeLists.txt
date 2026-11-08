@@ -558,6 +558,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_preferences_dialog.cpp
     src/gui/panels/toolbar_preferences_storage.cpp
     src/gui/panels/toolbar_preferences_studio_debugger.cpp
+    src/gui/panels/toolbar_preferences_nodes_panel.cpp
     src/gui/panels/toolbar_preferences_servers.cpp
     src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_compute_devices.cpp
@@ -5920,6 +5921,22 @@ if(WIN32)
     target_compile_definitions(test_nas_mutation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 set_target_properties(test_nas_mutation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Test: Nodes panel Favourites and Recent (Engine settings, registry) =====
+add_executable(test_nodes_panel_user_nodes
+    tests/test_nodes_panel_user_nodes.cpp
+    src/core/engine_config.cpp
+    src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
+    src/core/extension_node_registry.cpp
+)
+target_include_directories(test_nodes_panel_user_nodes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_nodes_panel_user_nodes PRIVATE cyxwiz-protocol imgui::imgui nlohmann_json::nlohmann_json
+                      spdlog::spdlog fmt::fmt cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_nodes_panel_user_nodes PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_nodes_panel_user_nodes PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_nodes_panel_user_nodes COMMAND test_nodes_panel_user_nodes)
 
 # ===== Test: Saved Text Smoke Graph Patterns =====
 add_executable(test_text_smoke_graph_patterns

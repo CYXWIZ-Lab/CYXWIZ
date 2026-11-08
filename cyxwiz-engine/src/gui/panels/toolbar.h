@@ -360,6 +360,8 @@ private:
     void RenderAppearancePreferences();  // Preferences > Appearance
     // Preferences > Studio Debugger (toolbar_preferences_studio_debugger.cpp)
     void RenderStudioDebuggerPreferences();
+    // Preferences > Nodes panel (toolbar_preferences_nodes_panel.cpp)
+    void RenderNodesPanelPreferences();
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
     bool RenderBackendManagerSection(bool training_active);
     // Compute devices: one card per physical device (tofix119 C).

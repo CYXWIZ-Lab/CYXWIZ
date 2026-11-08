@@ -437,6 +437,25 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             appearance_ = loaded;
         }
 
+        nodes_panel_ = NodesPanelConfig{};
+        if (config.contains("nodes_panel") && config["nodes_panel"].is_object()) {
+            const auto& panel = config["nodes_panel"];
+            NodesPanelConfig loaded;
+            const auto types = [&panel](const char* key) {
+                std::vector<int> out;
+                if (panel.contains(key) && panel[key].is_array())
+                    for (const auto& v : panel[key])
+                        if (v.is_number_integer()) out.push_back(v.get<int>());
+                return out;
+            };
+            loaded.favourites = types("favourites");
+            loaded.recent = types("recent");
+            loaded.show_recent = panel.value("show_recent", loaded.show_recent);
+            loaded.recent_count = std::clamp(panel.value("recent_count", loaded.recent_count), 1, kNodesPanelMaxRecent);
+            if (loaded.recent.size() > static_cast<size_t>(kNodesPanelMaxRecent)) loaded.recent.resize(kNodesPanelMaxRecent);
+            nodes_panel_ = loaded;
+        }
+
         data_budget_bytes_ = 0;
         if (config.contains("data") && config["data"].is_object())
             data_budget_bytes_ = config["data"].value("budget_bytes", uint64_t{0});
@@ -587,6 +606,13 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"code_font_scale", appearance_.code_font_scale},
             {"sidebar_left", appearance_.sidebar_left},
             {"custom_theme_file", appearance_.custom_theme_file}
+        };
+
+        config["nodes_panel"] = {
+            {"favourites", nodes_panel_.favourites},
+            {"recent", nodes_panel_.recent},
+            {"show_recent", nodes_panel_.show_recent},
+            {"recent_count", nodes_panel_.recent_count}
         };
 
         // Recent projects
@@ -924,6 +950,22 @@ void EngineConfig::SetAppearance(const AppearanceConfig& appearance) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(appearance_ == appearance)) {
         appearance_ = appearance;
+        modified_ = true;
+    }
+}
+
+NodesPanelConfig EngineConfig::GetNodesPanel() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return nodes_panel_;
+}
+
+void EngineConfig::SetNodesPanel(const NodesPanelConfig& nodes_panel) {
+    NodesPanelConfig value = nodes_panel;
+    value.recent_count = std::clamp(value.recent_count, 1, kNodesPanelMaxRecent);
+    if (value.recent.size() > static_cast<size_t>(kNodesPanelMaxRecent)) value.recent.resize(kNodesPanelMaxRecent);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(nodes_panel_ == value)) {
+        nodes_panel_ = value;
         modified_ = true;
     }
 }

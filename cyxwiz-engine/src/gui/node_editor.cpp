@@ -665,6 +665,8 @@ void NodeEditor::Render() {
         }
         std::vector<int> configure_ids;
         for (const auto& pending : pending_nodes_) {
+            // The Nodes panel's Recent; extension nodes share one type.
+            if (pending.type != NodeType::PluginCustom) cyxwiz::NodeMetadataRegistry::Instance().RecordUsage(pending.type);
             MLNode node = CreateNode(pending.type, pending.name);
             for (const auto& [key, value] : pending.initial_parameters) node.parameters[key] = value;
 
