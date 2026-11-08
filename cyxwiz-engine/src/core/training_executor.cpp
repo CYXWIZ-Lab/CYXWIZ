@@ -2,7 +2,7 @@
 #include "training_report_window.h"
 #include <set>
 #include <cyxwiz/optimizers/adam.h>
-#include <cyxwiz/optimizers/gradient_clipping.h>
+#include "optimizer_step.h"
 #include "training_generation_preview.h"
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
@@ -2267,32 +2267,13 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
         TrainingTraceStage::UpdateParameters, epoch, batch_num,
         total_batches, batch_loss, current_acc);
 
-    auto params = model_->GetParameters();
-    // Regularization node (TOFIX140 A4): the gradient of
-    // l1 x sum(|w|) + l2 x sum(w^2), once per step and before clipping, as
-    // torch's backward of loss + penalty gives it.
-    const float l1 = config_.regularization_l1;
-    const float l2 = config_.regularization_l2;
-    if (l1 > 0.0f || l2 > 0.0f) {
-        for (auto& [name, grad] : averaged_grads) {
-            const auto found = params.find(name);
-            if (found == params.end()) continue;
-            const Tensor weight = found->second.Shape() == grad.Shape()
-                ? found->second
-                : found->second.Reshape(grad.Shape());
-            if (l1 > 0.0f) grad = grad + weight.Sign() * l1;
-            if (l2 > 0.0f) grad = grad + weight * (2.0f * l2);
-        }
-    }
-
-    if (config_.grad_clip_norm > 0.0f) {
-        const float norm = ClipGradientsByGlobalNorm(averaged_grads, config_.grad_clip_norm);
-        UpdateMetrics([norm](TrainingMetrics& m) { m.grad_norm = norm; });
-    }
-
     const auto optimizer_start = std::chrono::steady_clock::now();
-    optimizer_->Step(params, averaged_grads);
-    model_->SetParameters(params);
+    OptimizerStepSettings step_settings;
+    step_settings.regularization_l1 = config_.regularization_l1;
+    step_settings.regularization_l2 = config_.regularization_l2;
+    step_settings.grad_clip_norm = config_.grad_clip_norm;
+    const float norm = ApplyOptimizerStep(*model_, *optimizer_, averaged_grads, step_settings);
+    if (norm >= 0.0f) UpdateMetrics([norm](TrainingMetrics& m) { m.grad_norm = norm; });
     TrainingProfileStageFence();
     const auto optimizer_ms = std::chrono::duration<float, std::milli>(
         std::chrono::steady_clock::now() - optimizer_start).count();
