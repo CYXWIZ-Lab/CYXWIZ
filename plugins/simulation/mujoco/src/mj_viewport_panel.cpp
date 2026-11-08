@@ -52,11 +52,6 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
         if (open_model_) open_model_(path);
     }
 
-    // Auto-clear graph_sim_active if EvaluateNode hasn't been called recently
-    if (graph_sim_active_ && ++graph_sim_frames_ > 30) {  // ~0.5s at 60fps without EvaluateNode call
-        graph_sim_active_ = false;
-    }
-
     ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("MuJoCo Viewport", visible,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {

@@ -50,7 +50,7 @@ public:
     }
 
     // Graph simulation driving physics (disables local sim controls)
-    void SetGraphSimActive(bool active) { graph_sim_active_ = active; graph_sim_frames_ = 0; }
+    void SetGraphSimActive(bool active) { graph_sim_active_ = active; }
     bool IsGraphSimActive() const { return graph_sim_active_; }
 
     // The run controls, shared by the control row and the Simulation menu
@@ -87,8 +87,7 @@ private:
     std::string model_title_;
     std::string model_subtitle_;
     std::string pending_open_path_;  // Opened before the next frame's ImGui calls
-    std::atomic<bool> graph_sim_active_{false};  // set from the graph simulation thread
-    std::atomic<int> graph_sim_frames_{0};       // frames since last SetGraphSimActive(true)
+    std::atomic<bool> graph_sim_active_{false};  // from BeginGraphRun to EndGraphRun
 
     // Speed: real-time factor the user asks for, or as fast as possible
     double speed_ = 1.0;

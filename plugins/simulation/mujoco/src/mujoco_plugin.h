@@ -14,6 +14,7 @@
 #include "plugin/interfaces/i_panel_provider.h"
 #include "plugin/interfaces/i_node_provider.h"
 #include "plugin/interfaces/i_command_provider.h"
+#include "plugin/interfaces/i_simulation_provider.h"
 #include "plugin/plugin_ui.h"
 
 #include "mj_env_manager.h"
@@ -33,7 +34,8 @@ namespace cyxwiz::plugin::mujoco {
 class MuJoCoPlugin : public IPlugin,
                      public IPanelProvider,
                      public INodeProvider,
-                     public ICommandProvider {
+                     public ICommandProvider,
+                     public ISimulationProvider {
 public:
     MuJoCoPlugin() = default;
     ~MuJoCoPlugin() override = default;
@@ -54,8 +56,16 @@ public:
         if (std::string(name) == "IPanelProvider") return static_cast<IPanelProvider*>(this);
         if (std::string(name) == "INodeProvider") return static_cast<INodeProvider*>(this);
         if (std::string(name) == "ICommandProvider") return static_cast<ICommandProvider*>(this);
+        if (std::string(name) == "ISimulationProvider") return static_cast<ISimulationProvider*>(this);
         return nullptr;
     }
+
+    // ===== ISimulationProvider: graph runs =====
+    // A graph run with a MuJoCo Plant holds the physics: the viewport's own
+    // run cannot start meanwhile, and the graph run is refused while it goes.
+    std::vector<PluginSimulationNodeInfo> GetSimulationNodes() override;
+    PluginSimulationBeginResult BeginGraphRun(const std::vector<PluginSimulationGraphNode>& nodes) override;
+    void EndGraphRun() override;
 
     // ===== IPanelProvider =====
     std::vector<PluginPanelInfo> GetPanels() override;

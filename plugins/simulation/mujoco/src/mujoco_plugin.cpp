@@ -541,48 +541,66 @@ std::string MuJoCoPlugin::GenerateCode(
     return "# Unknown MuJoCo node type: " + node_type_name + "\n";
 }
 
+std::vector<PluginSimulationNodeInfo> MuJoCoPlugin::GetSimulationNodes() {
+    return {{"MuJoCoPlant", kViewportPanelId}, {"RewardFunction", ""}, {"ObservationFilter", ""}};
+}
+
+PluginSimulationBeginResult MuJoCoPlugin::BeginGraphRun(const std::vector<PluginSimulationGraphNode>& nodes) {
+    obs_filters_.clear();  // each run starts its running normalisation again
+    const auto refuse = [](std::string reason) { return PluginSimulationBeginResult{false, std::move(reason)}; };
+    bool steps_physics = false;
+    for (const auto& node : nodes) {
+        if (node.node_type != "MuJoCoPlant") continue;
+        steps_physics = true;
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        if (!env_manager_.IsLoaded())
+            return refuse("No MuJoCo model is loaded. Load the MuJoCo Plant's model from the Environment Library, "
+                          "then run the graph.");
+        // The node's model is the model it steps: never another one silently.
+        // Its own mjcf_path, or else the model its pins were synced from.
+        const auto param = [&](const char* key) {
+            const auto it = node.parameters.find(key);
+            return it == node.parameters.end() ? std::string() : it->second;
+        };
+        const std::string node_model = param("mjcf_path");
+        const std::string synced_model = param("_meta_loaded_path");
+        if (!node_model.empty() && !SameModelFile(node_model, loaded_mjcf_path_))
+            return refuse("The MuJoCo Plant's model '" + node_model + "' is not the model loaded in the viewport ('" +
+                          loaded_mjcf_path_ + "'). Load it from the Environment Library.");
+        if (node_model.empty() && !synced_model.empty() && !SameModelFile(synced_model, loaded_mjcf_path_))
+            return refuse("The MuJoCo Plant's pins were made for '" + synced_model + "' but the viewport has '" +
+                          loaded_mjcf_path_ + "' loaded. Sync the node again or load that model.");
+    }
+    if (!steps_physics) return {};
+    // One driver at a time: the viewport's own run is not stopped behind the user's back.
+    if (sim_executor_.GetMode() != SimMode::Stopped)
+        return refuse("The MuJoCo Viewport is running the model. Stop it there, then run the graph.");
+    viewport_panel_.SetGraphSimActive(true);
+    return {};
+}
+
+void MuJoCoPlugin::EndGraphRun() {
+    viewport_panel_.SetGraphSimActive(false);
+}
+
 PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx) {
     PluginNodeEvalResult result;
 
     if (ctx.node_type_name == "MuJoCoPlant") {
-        // If sim_executor is already running (manual control),
-        // don't step physics here — would cause concurrent access crash
-        if (sim_executor_.GetMode() != SimMode::Stopped) {
-            sim_executor_.Stop();  // Request stop and wait for thread to finish
+        // Only a graph run that BeginGraphRun accepted steps the physics.
+        if (!viewport_panel_.IsGraphSimActive()) {
+            result.success = false;
+            result.error_message = "The MuJoCo Plant steps the physics only inside a graph run";
+            return result;
         }
 
-        // Signal viewport that graph sim is driving physics
-        viewport_panel_.SetGraphSimActive(true);
-
         // One physics transaction: the model cannot be replaced (LoadEnvironment)
-        // or rendered while this tick checks, applies, steps and reads it.
+        // or rendered while this tick applies, steps and reads it. Loading
+        // another model is refused while the graph run holds this one.
         std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         if (!env_manager_.IsLoaded()) {
             result.success = false;
             result.error_message = "No MuJoCo model loaded";
-            return result;
-        }
-
-        // The node's model is the model it steps: never another one silently.
-        // Its own mjcf_path, or else the model its pins were synced from.
-        const auto param = [&](const char* key) {
-            const auto it = ctx.parameters.find(key);
-            return it == ctx.parameters.end() ? std::string() : it->second;
-        };
-        const std::string node_model = param("mjcf_path");
-        const std::string synced_model = param("_meta_loaded_path");
-        if (!node_model.empty() && !SameModelFile(node_model, loaded_mjcf_path_)) {
-            result.success = false;
-            result.error_message = "The MuJoCo Plant's model '" + node_model +
-                                   "' is not the model loaded in the viewport ('" + loaded_mjcf_path_ +
-                                   "'); load it from the Environment Library";
-            return result;
-        }
-        if (node_model.empty() && !synced_model.empty() && !SameModelFile(synced_model, loaded_mjcf_path_)) {
-            result.success = false;
-            result.error_message = "The MuJoCo Plant's pins were made for '" + synced_model +
-                                   "' but the viewport has '" + loaded_mjcf_path_ +
-                                   "' loaded; sync the node again or load that model";
             return result;
         }
 
@@ -710,13 +728,12 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
         }
 
         // Keep the running normalisation across the ticks of a run, one filter
-        // per settings; the first tick of a run (time 0) starts it again.
+        // per settings; BeginGraphRun starts them again for each run.
         // Nodes with the same settings share one filter: the evaluation
         // context does not say which node is evaluated.
         const std::string key = std::string(cfg.include_qpos ? "p" : "-") + (cfg.include_qvel ? "v" : "-") +
                                 (cfg.include_sensors ? "s" : "-") + (cfg.normalize ? "n" : "-");
-        auto [filter, inserted] = obs_filters_.try_emplace(key, cfg);
-        if (!inserted && ctx.sim_time <= 0.0) filter->second.Reset();
+        auto filter = obs_filters_.try_emplace(key, cfg).first;
         std::vector<float> obs = filter->second.Filter(qpos, qvel, sensors);
         result.output_values["obs"] = std::move(obs);
         return result;
