@@ -374,6 +374,26 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
     endif()
 
     install(TARGETS cyxwiz-server-gui RUNTIME DESTINATION bin)
+
+    # The GUI's logo and fonts beside it, where FindResourceFile looks first:
+    # a node-only build has no Engine resources folder to borrow from. The
+    # files are the same as the Engine's, so a shared bin folder is fine.
+    set(_node_gui_images "${CMAKE_CURRENT_SOURCE_DIR}/resources/cyxwiz.png")
+    set(_node_gui_fonts
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/Inter-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/JetBrainsMono-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/fa-solid-900.ttf")
+    add_custom_command(TARGET cyxwiz-server-gui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:cyxwiz-server-gui>/resources/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_node_gui_images}
+                "$<TARGET_FILE_DIR:cyxwiz-server-gui>/resources"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_node_gui_fonts}
+                "$<TARGET_FILE_DIR:cyxwiz-server-gui>/resources/fonts"
+        COMMENT "Staging the server node GUI's logo and fonts"
+        VERBATIM)
+    install(FILES ${_node_gui_images} DESTINATION bin/resources)
+    install(FILES ${_node_gui_fonts} DESTINATION bin/resources/fonts)
+
     message(STATUS "Building cyxwiz-server-gui (GUI/TUI client)")
 endif()
 
