@@ -9,6 +9,16 @@ simulates. Plugin authors: see `IEnvironmentProvider` in the
 Training a policy from the graph comes with the RL training node; this page
 covers the environments themselves and how to use them from Python.
 
+## Built in: CartPole-v1
+
+The Engine itself offers Gymnasium's classic-control **CartPole-v1**, with no
+plugin installed (key `cyxwiz.builtin:CartPole-v1`): observes 4 values (cart
+position and speed, pole angle and speed), takes one of 2 actions (0 pushes
+left, 1 pushes right), +1 each step, ends when the pole leans past 12 degrees
+or the cart leaves [-2.4, 2.4], cut at 500 steps; one step is 0.02 s. Its one
+setting is `max_episode_steps` (0 keeps 500). Each step replayed in Gymnasium
+gives the same observation, reward and ending to 1e-6.
+
 ## The MuJoCo plugin's environments
 
 | Environment | Observes | Actions | Episode | One step |
@@ -85,5 +95,7 @@ model.learn(total_timesteps=100_000)
   4 threads, steps a second); `plugins/simulation/mujoco/tests/mujoco_gymnasium_parity.py`
   replays its trajectories in Gymnasium; `test_mujoco_python_envs.py` checks
   `pycyxwiz.rl` with Gymnasium's environment checker and runs SB3 PPO.
-  Configure with `-DCYXWIZ_MUJOCO_ORACLE_PYTHON=<python with gymnasium>` to
-  register the two Python checks in ctest.
+  `cyxwiz-engine/tests/test_classic_control_gymnasium.py` replays CartPole
+  steps in Gymnasium. Configure with
+  `-DCYXWIZ_RL_ORACLE_PYTHON=<python with gymnasium>` to register the Python
+  checks in ctest.

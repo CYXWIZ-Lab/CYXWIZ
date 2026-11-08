@@ -37,8 +37,9 @@ def main():
 
     plugin_id = rl.load_plugin(plugin)
     check(plugin_id == "com.cyxwiz.simulation.mujoco", "the MuJoCo plugin loads: " + plugin_id)
-    ids = sorted(e["id"] for e in rl.environments())
+    ids = sorted(e["id"] for e in rl.environments() if e["plugin_id"] == plugin_id)
     check(ids == ["HalfCheetah-v5", "InvertedPendulum-v5"], f"its environments are listed: {ids}")
+    check(any(e["id"] == "CartPole-v1" for e in rl.environments()), "the Engine's own CartPole is listed too")
 
     env = rl.Env("InvertedPendulum-v5")
     check(isinstance(env, gym.Env) and env.observation_space.shape == (4,) and env.action_space.shape == (1,),

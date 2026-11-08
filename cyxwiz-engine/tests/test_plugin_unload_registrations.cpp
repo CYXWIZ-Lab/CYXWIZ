@@ -10,6 +10,7 @@
 #include "../src/plugin/registries/plugin_command_registry.h"
 #include "../src/plugin/registries/plugin_simulation_registry.h"
 #include "../src/plugin/registries/plugin_environment_registry.h"
+#include "../src/plugin/builtin/classic_control_environments.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -272,7 +273,7 @@ void CheckEnvironmentRegistry() {
     std::weak_ptr<int> library_alive = library;
     for (const auto& info : fake.GetEnvironments()) environments.Register("com.example.env", info, &fake, library);
     environments.Register("com.example.env", fake.GetEnvironments()[0], &fake, library);  // a duplicate is skipped
-    Check(environments.GetCount() == 2, "the two usable environments are registered once");
+    Check(environments.GetCount() == 3, "the two usable environments are registered once, beside the built-in one");
     cyxwiz::plugin::PluginEnvironmentRegistry::Environment found;
     Check(environments.Find("com.example.env:Line-v0", found) && found.info.max_episode_steps == 3 &&
               found.info.settings.size() == 1 && found.info.settings[0].default_value == "0.5",
@@ -315,11 +316,48 @@ void CheckEnvironmentRegistry() {
           "a failed step says why");
 
     environments.RemoveByPlugin("com.example.env");
-    Check(environments.GetCount() == 0, "removing the plugin removes its environments");
+    Check(environments.GetCount() == 1, "removing the plugin removes its environments, not the built-in one");
     library.reset();
     Check(!library_alive.expired(), "a live batch keeps the plugin's library loaded");
     batch.reset();
     Check(fake.releases == 2 && library_alive.expired(), "dropping the batch releases it, then the library");
+}
+
+// The Engine's own CartPole-v1 (Gymnasium's classic control), with no plugin
+void CheckBuiltinCartPole() {
+    using cyxwiz::plugin::PluginEnvironmentStepBuffers;
+    auto& environments = cyxwiz::plugin::PluginEnvironmentRegistry::Instance();
+    const std::string key = std::string(cyxwiz::plugin::kBuiltinEnvironmentProviderId) + ":CartPole-v1";
+    cyxwiz::plugin::PluginEnvironmentRegistry::Environment cartpole;
+    Check(environments.Find(key, cartpole), "CartPole-v1 is offered without any plugin");
+    Check(cartpole.info.discrete_actions && cartpole.info.action_count == 2 && cartpole.info.observation_size == 4 &&
+              cartpole.info.max_episode_steps == 500,
+          "CartPole observes 4 values and takes one of 2 actions, 500 steps an episode");
+    std::string error;
+    Check(!environments.Create(key, {{"speed", "1"}}, 1, error) && error == "Cart Pole has no setting 'speed'.",
+          "an unknown CartPole setting is refused");
+    Check(!environments.Create(key, {{"max_episode_steps", "-1"}}, 1, error), "a negative step limit is refused");
+    auto batch = environments.Create(key, {{"max_episode_steps", "4"}}, 2, error);
+    Check(batch != nullptr, "two CartPole copies: " + error);
+    std::vector<float> obs(8), final_obs(8), rewards(2);
+    std::vector<uint8_t> terminated(2), truncated(2);
+    const PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(), truncated.data(),
+                                           final_obs.data()};
+    Check(batch->Reset(9, obs.data(), error), "reset: " + error);
+    bool in_range = true;
+    for (const float v : obs) in_range = in_range && v >= -0.05f && v <= 0.05f;
+    Check(in_range, "every start value is within 0.05 of rest");
+    const auto first = obs;
+    Check(batch->Reset(9, obs.data(), error) && obs == first, "the same seed starts the same");
+    const float push[2] = {1.0f, 0.0f};
+    for (int s = 0; s < 4; ++s) {
+        Check(batch->Step(push, out, error), "step: " + error);
+        Check(rewards[0] == 1.0f && rewards[1] == 1.0f, "+1 a step");
+    }
+    Check(truncated[0] == 1 && truncated[1] == 1, "both copies are cut at the four-step limit");
+    const float half[2] = {0.5f, 0.0f};
+    Check(!batch->Step(half, out, error) && error.find("takes 0 (push left) or 1 (push right)") != std::string::npos,
+          "an action that is neither 0 nor 1 is refused");
 }
 
 }  // namespace
@@ -328,6 +366,7 @@ int main() {
     CheckCommandRegistry();
     CheckSimulationRegistry();
     CheckEnvironmentRegistry();
+    CheckBuiltinCartPole();
     const auto dir = PluginDir();
     Check(!dir.empty(), "plugins/examples/image_nodes not found; run from the repository root");
     auto& manager = cyxwiz::plugin::PluginManager::Instance();

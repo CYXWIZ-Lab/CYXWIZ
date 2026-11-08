@@ -91,17 +91,16 @@ add_custom_command(TARGET test_mujoco_environments POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_RUNTIME}" "$<TARGET_FILE_DIR:test_mujoco_environments>/"
     COMMENT "Copying the MuJoCo runtime next to test_mujoco_environments")
 add_test(NAME mujoco_environments COMMAND test_mujoco_environments)
-# The Gymnasium replay needs a Python with gymnasium and mujoco of the
-# plugin's version (the Engine's python-embed): pass it to register the test.
-set(CYXWIZ_MUJOCO_ORACLE_PYTHON "" CACHE FILEPATH "Python with gymnasium + mujoco for the MuJoCo parity test")
-if(CYXWIZ_MUJOCO_ORACLE_PYTHON)
+# The Gymnasium replay needs CYXWIZ_RL_ORACLE_PYTHON (cyxwiz-engine) to have
+# mujoco of the plugin's version too (the Engine's python-embed does).
+if(CYXWIZ_RL_ORACLE_PYTHON)
     add_test(NAME mujoco_gymnasium_parity
-             COMMAND ${CYXWIZ_MUJOCO_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/mujoco_gymnasium_parity.py
+             COMMAND ${CYXWIZ_RL_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/mujoco_gymnasium_parity.py
                      $<TARGET_FILE:test_mujoco_environments> ${CMAKE_CURRENT_BINARY_DIR}/parity)
 endif()
 # pycyxwiz.rl over _cyxwiz_envs (the Engine's module) with the same Python
-if(CYXWIZ_MUJOCO_ORACLE_PYTHON AND TARGET _cyxwiz_envs)
+if(CYXWIZ_RL_ORACLE_PYTHON AND TARGET _cyxwiz_envs)
     add_test(NAME mujoco_python_envs
-             COMMAND ${CYXWIZ_MUJOCO_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mujoco_python_envs.py
+             COMMAND ${CYXWIZ_RL_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mujoco_python_envs.py
                      $<TARGET_FILE_DIR:_cyxwiz_envs> ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

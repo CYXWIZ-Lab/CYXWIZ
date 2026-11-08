@@ -1,7 +1,9 @@
 #pragma once
 
 // Plugin environments for reinforcement learning (IEnvironmentProvider,
-// plugin API 1.4). Keyed by "<plugin id>:<environment id>". A batch the
+// plugin API 1.4), and the Engine's own (builtin/classic_control_environments,
+// provider id "cyxwiz.builtin", registered when the registry is first used).
+// Keyed by "<plugin id>:<environment id>". A batch the
 // Engine creates keeps its plugin's library loaded until the batch goes, so a
 // training run survives the plugin being disabled under it.
 
@@ -76,7 +78,7 @@ public:
                                              int count, std::string& error);
 
 private:
-    PluginEnvironmentRegistry() = default;
+    PluginEnvironmentRegistry();
 
     struct Registered {
         Environment environment;

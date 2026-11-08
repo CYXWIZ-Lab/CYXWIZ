@@ -1,6 +1,7 @@
 #include "plugin_environment_registry.h"
 
 #include "../../core/extension_node_contract.h"
+#include "../builtin/classic_control_environments.h"
 #include "../security/safe_execute.h"
 
 #include <spdlog/spdlog.h>
@@ -79,6 +80,11 @@ bool EnvironmentBatch::Step(const float* actions, const PluginEnvironmentStepBuf
     }
     if (!ok) error = std::string(batch_->LastError().c_str());
     return ok;
+}
+
+PluginEnvironmentRegistry::PluginEnvironmentRegistry() {
+    auto& builtin = ClassicControlEnvironments();
+    for (const auto& info : builtin.GetEnvironments()) Register(kBuiltinEnvironmentProviderId, info, &builtin, nullptr);
 }
 
 PluginEnvironmentRegistry& PluginEnvironmentRegistry::Instance() {

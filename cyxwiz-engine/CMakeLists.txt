@@ -132,6 +132,7 @@ add_library(cyxwiz-plugin-host STATIC
     src/plugin/registries/plugin_command_registry.cpp
     src/plugin/registries/plugin_simulation_registry.cpp
     src/plugin/registries/plugin_environment_registry.cpp
+    src/plugin/builtin/classic_control_environments.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
     src/plugin/security/permission_store.cpp
@@ -8023,6 +8024,14 @@ if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
     set_target_properties(_cyxwiz_envs PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
     if(WIN32)
         target_compile_definitions(_cyxwiz_envs PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    endif()
+    # The oracle checks need a Python with numpy and gymnasium (the Engine's
+    # python-embed, which also has mujoco and stable_baselines3).
+    set(CYXWIZ_RL_ORACLE_PYTHON "" CACHE FILEPATH "Python with gymnasium for the reinforcement learning oracle checks")
+    if(CYXWIZ_RL_ORACLE_PYTHON)
+        add_test(NAME classic_control_gymnasium
+                 COMMAND ${CYXWIZ_RL_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_classic_control_gymnasium.py
+                         $<TARGET_FILE_DIR:_cyxwiz_envs>)
     endif()
 endif()
 
