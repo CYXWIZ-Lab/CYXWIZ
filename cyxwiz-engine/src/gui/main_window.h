@@ -65,7 +65,6 @@ class ImportDialog;
 class DeploymentDialog;
 class ModelPanel;
 class StudioDebuggerPanel;
-class GradCAMPanel;
 class FeatureImportancePanel;
 class HyperparamSearchPanel;
 class ServingPanel;
@@ -399,7 +398,6 @@ private:
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    std::unique_ptr<cyxwiz::GradCAMPanel> gradcam_panel_;
     std::unique_ptr<cyxwiz::FeatureImportancePanel> feature_importance_panel_;
     std::unique_ptr<cyxwiz::HyperparamSearchPanel> hyperparam_search_panel_;
     std::unique_ptr<cyxwiz::ServingPanel> serving_panel_;

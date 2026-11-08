@@ -83,7 +83,6 @@
 #include "panels/model_panel.h"
 #include "panels/studio_debugger_panel.h"
 #include "../core/studio_debugger_presentation.h"
-#include "panels/gradcam_panel.h"
 #include "panels/feature_importance_panel.h"
 #include "panels/hyperparam_search_panel.h"
 #include "panels/serving_panel.h"
@@ -641,7 +640,6 @@ MainWindow::MainWindow()
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();
     feature_importance_panel_ = std::make_unique<cyxwiz::FeatureImportancePanel>();
     feature_importance_panel_->SetLoadCheckpointCallback([this]() { LoadCheckpointForTesting(); });
     hyperparam_search_panel_ = std::make_unique<cyxwiz::HyperparamSearchPanel>();
@@ -1787,13 +1785,6 @@ MainWindow::MainWindow()
 
     // Advanced Tools callbacks (Phase 5)
 
-    toolbar_->SetOpenGradCAMCallback([this]() {
-        if (gradcam_panel_) {
-            gradcam_panel_->Toggle();
-            spdlog::info("Toggled Grad-CAM panel");
-        }
-    });
-
     toolbar_->SetOpenFeatureImportanceCallback([this]() {
         if (feature_importance_panel_) {
             feature_importance_panel_->Toggle();
@@ -2463,8 +2454,6 @@ MainWindow::~MainWindow() {
     hyperparam_search_panel_.reset();
     spdlog::info("~MainWindow: feature_importance_panel_");
     feature_importance_panel_.reset();
-    spdlog::info("~MainWindow: gradcam_panel_");
-    gradcam_panel_.reset();
     spdlog::info("~MainWindow: model_panel_");
     model_panel_.reset();
     spdlog::info("~MainWindow: deployment_dialog_");
@@ -2870,7 +2859,6 @@ void MainWindow::Render() {
     // Render Statistics panels (Phase 4)
 
     // Render Advanced Tools panels (Phase 5)
-    TimedRender("gradcam", gradcam_panel_);
     TimedRender("feature importance", feature_importance_panel_);
     TimedRender("hyperparam search", hyperparam_search_panel_);
     TimedRender("serving", serving_panel_);
@@ -3334,7 +3322,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    if (gradcam_panel_) gradcam_panel_->SetVisible(false);
     if (feature_importance_panel_) feature_importance_panel_->SetVisible(false);
 
     // Clustering panels (Phase 6A)

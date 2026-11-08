@@ -488,9 +488,13 @@ enum class NodeType {
     HypothesisTest,     // t-test, ANOVA, Chi-Square
     DistributionFitter, // Fit probability distributions
 
-    // ===== Deep Learning Interpretation Nodes (Phase 5) =====
-    GradCAMNode,        // Grad-CAM visualization
-    SaliencyMapNode,    // Gradient saliency maps
+    // ===== Retired interpretation templates (TOFIX129 D11) =====
+    // Never implemented (no executor); the Model window's Explain tab shows
+    // Grad-CAM, saliency and Integrated Gradients of the trained model. The
+    // slots stay so the numeric ids of the types after them do not move;
+    // nothing registers or creates these.
+    GradCAMNode,
+    SaliencyMapNode,
 
     // ===== Retired optimization templates (TOFIX129 D10) =====
     // Never implemented (no executor); Tools > Optimization and Calculus

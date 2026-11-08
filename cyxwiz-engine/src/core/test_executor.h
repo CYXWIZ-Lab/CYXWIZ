@@ -123,6 +123,19 @@ struct TestingMetrics {
     std::optional<PRCurveData> pr;
     std::string curves_note;
 
+    // Model inputs of some test samples, for the Model window's Explain
+    // (TOFIX129 D11): every wrong prediction and the first kKeptFirstSamples,
+    // while they fit in kKeptInputBytes. Each is one row as the model reads
+    // it (an image model's [H, W, C] row, before the batch wrap).
+    struct KeptInput {
+        int sample = 0;  // index into predictions / ground_truth
+        std::vector<float> values;
+    };
+    static constexpr int kKeptFirstSamples = 64;
+    static constexpr size_t kKeptInputBytes = 64ull * 1024 * 1024;
+    std::vector<KeptInput> kept_inputs;
+    size_t kept_input_bytes = 0;
+
     // Timing
     float total_time_seconds = 0.0f;
     float samples_per_second = 0.0f;

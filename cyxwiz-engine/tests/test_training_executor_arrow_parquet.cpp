@@ -41,6 +41,7 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -928,6 +929,25 @@ void TestBatchRowIds(
               "an Arrow test run keeps the test rows");
         Check(arrow_metrics.source_dataset == arrow_dataset->GetName(),
               "an Arrow test run names its table");
+        // Explain's inputs (TOFIX129 D11): every wrong sample and the first
+        // ones, one model-input row each.
+        {
+            std::set<int> kept;
+            bool widths = true;
+            for (const auto& input : arrow_metrics.kept_inputs) {
+                kept.insert(input.sample);
+                widths = widths && input.values.size() == 2;
+            }
+            bool all_wrong_kept = true;
+            for (size_t i = 0; i < arrow_metrics.predictions.size(); ++i) {
+                const bool wrong = arrow_metrics.predictions[i] != arrow_metrics.ground_truth[i];
+                const bool first = static_cast<int>(i) < cyxwiz::TestingMetrics::kKeptFirstSamples;
+                if ((wrong || first) && kept.count(static_cast<int>(i)) == 0) all_wrong_kept = false;
+                if (!wrong && !first && kept.count(static_cast<int>(i)) == 1) all_wrong_kept = false;
+            }
+            Check(!arrow_metrics.kept_inputs.empty() && widths && all_wrong_kept,
+                  "a test keeps the inputs of its wrong and first samples for Explain");
+        }
         cyxwiz::TestExecutor parquet_test(config, parquet_dataset, "label",
                                           cyxwiz::TestDatasetScope::ConfiguredTestSplit);
         const auto parquet_metrics = run_test(parquet_test);

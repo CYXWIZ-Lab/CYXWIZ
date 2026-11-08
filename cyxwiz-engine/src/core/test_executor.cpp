@@ -303,6 +303,8 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
         m.roc.reset();
         m.pr.reset();
         m.curves_note.clear();
+        m.kept_inputs.clear();
+        m.kept_input_bytes = 0;
     });
 
     // Create the test batcher using the dataset type that was trained.
@@ -540,6 +542,13 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
     const auto decision_mode =
         ClassificationDecisionModeForLoss(config_.loss_type);
 
+    // Inputs Explain can use: not token ids (an Embedding's input).
+    const bool token_ids = !config_.layers.empty() && (config_.layers.front().type == gui::NodeType::Embedding ||
+                                                       config_.layers.front().type == gui::NodeType::Concatenate);
+    const bool keep_inputs = !token_ids && batch.size > 0 && batch.data.NumElements() % batch.size == 0;
+    const size_t sample_width = batch.size > 0 ? batch.data.NumElements() / batch.size : 0;
+    const float* input_data = nullptr;  // read from the device once, when a sample is kept
+
     for (size_t b = 0; b < batch.size; ++b) {
         const float* sample_pred = pred_data + b * output_width;
         int pred_class = ClassificationPredictedClass(
@@ -560,7 +569,7 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
             sample_pred, output_width, decision_mode, probabilities);
 
         // Update metrics
-        UpdateMetrics([pred_class, true_class, confidence, classes, &probabilities](TestingMetrics& m) {
+        UpdateMetrics([&, pred_class, true_class, confidence, classes](TestingMetrics& m) {
             // Kept up to kMaxCurveValues (about 80 MB); past that the curves
             // are skipped rather than the test running out of memory.
             constexpr size_t kMaxCurveValues = 20'000'000;
@@ -572,6 +581,16 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
                     m.probability_classes = static_cast<int>(classes);
                     m.class_probabilities.insert(m.class_probabilities.end(), probabilities.begin(),
                                                  probabilities.end());
+                }
+            }
+            const int sample = m.total_samples;
+            if (keep_inputs && (pred_class != true_class || sample < TestingMetrics::kKeptFirstSamples) &&
+                m.kept_input_bytes + sample_width * sizeof(float) <= TestingMetrics::kKeptInputBytes) {
+                if (!input_data) input_data = batch.data.Data<float>();
+                if (input_data) {
+                    const float* row = input_data + b * sample_width;
+                    m.kept_inputs.push_back({sample, std::vector<float>(row, row + sample_width)});
+                    m.kept_input_bytes += sample_width * sizeof(float);
                 }
             }
             m.total_samples++;

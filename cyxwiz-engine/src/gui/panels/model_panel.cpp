@@ -4,12 +4,18 @@
 #include "../../core/file_dialogs.h"
 #include "../../core/live_graph_compile.h"
 #include "../../core/training_manager.h"
+#include "../../core/async_task_manager.h"
+#include "../../core/test_manager.h"
 #include "../icons.h"
 #include "../node_editor.h"
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
+#include "output_renderer.h"
+
+#include <cyxwiz/device.h>
+#include <stb_image_write.h>
 
 #include <imgui.h>
 #include <implot.h>
@@ -17,7 +23,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
+#include <functional>
 
 namespace cyxwiz {
 
@@ -67,6 +75,8 @@ std::string Percent(double share) {
 }
 
 }  // namespace
+
+ModelPanel::~ModelPanel() { ReleaseExplainImages(); }
 
 void ModelPanel::Open(const std::string& tab) {
     visible_ = true;
@@ -149,6 +159,10 @@ void ModelPanel::Render() {
         }
         if (ImGui::BeginTabItem("Learning rate", nullptr, flags("learning_rate"))) {
             RenderLearningRate();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Explain", nullptr, flags("explain"))) {
+            RenderExplain();
             ImGui::EndTabItem();
         }
         open_tab_.clear();
@@ -517,6 +531,359 @@ void ModelPanel::RenderRangeResult() {
         range_message_error_ = false;
     }
     ui::EndCard();
+}
+
+// ---- Explain -----------------------------------------------------------------
+
+namespace {
+
+constexpr int kExplainSide = 168;  // px of each map on screen
+
+ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t) {
+    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, 1.0f);
+}
+
+// The theme's sequential scale at 0..1.
+ImVec4 Sequential(float v) {
+    const auto& stops = ui::CurrentTokens().scale_sequential;
+    const float x = std::clamp(v, 0.0f, 1.0f) * 3.0f;
+    const int i = std::min(2, static_cast<int>(x));
+    return Mix(stops[i], stops[i + 1], x - static_cast<float>(i));
+}
+
+// The theme's diverging scale at -1..1.
+ImVec4 Diverging(float v) {
+    const auto& stops = ui::CurrentTokens().scale_diverging;
+    const float x = std::clamp(v, -1.0f, 1.0f);
+    return x < 0.0f ? Mix(stops[1], stops[0], -x) : Mix(stops[1], stops[2], x);
+}
+
+struct Rgba {
+    int width = 0, height = 0;
+    std::vector<unsigned char> pixels;
+};
+
+// height x width colours, each pixel `scale` times (nearest), RGBA.
+Rgba Picture(size_t height, size_t width, int scale, const std::function<ImVec4(size_t)>& colour) {
+    Rgba out;
+    out.width = static_cast<int>(width) * scale;
+    out.height = static_cast<int>(height) * scale;
+    out.pixels.resize(static_cast<size_t>(out.width) * out.height * 4);
+    for (int y = 0; y < out.height; ++y) {
+        for (int x = 0; x < out.width; ++x) {
+            const ImVec4 c = colour(static_cast<size_t>(y / scale) * width + static_cast<size_t>(x / scale));
+            unsigned char* p = &out.pixels[(static_cast<size_t>(y) * out.width + x) * 4];
+            p[0] = static_cast<unsigned char>(std::clamp(c.x, 0.0f, 1.0f) * 255.0f + 0.5f);
+            p[1] = static_cast<unsigned char>(std::clamp(c.y, 0.0f, 1.0f) * 255.0f + 0.5f);
+            p[2] = static_cast<unsigned char>(std::clamp(c.z, 0.0f, 1.0f) * 255.0f + 0.5f);
+            p[3] = 255;
+        }
+    }
+    return out;
+}
+
+// The four pictures of an outcome: input, Grad-CAM over it, saliency, IG.
+std::vector<Rgba> ExplainPictures(const ExplainOutcome& out) {
+    const size_t h = out.height, w = out.width, c = std::max<size_t>(1, out.channels);
+    const int scale = std::max(1, kExplainSide / static_cast<int>(std::max<size_t>(1, std::max(h, w))));
+    const auto [lo_it, hi_it] = std::minmax_element(out.input.begin(), out.input.end());
+    const float lo = *lo_it, span = std::max(1e-12f, *hi_it - *lo_it);
+    const auto pixel = [&](size_t i) {
+        if (c >= 3)
+            return ImVec4((out.input[i * c] - lo) / span, (out.input[i * c + 1] - lo) / span, (out.input[i * c + 2] - lo) / span, 1.0f);
+        const float g = (out.input[i * c] - lo) / span;
+        return ImVec4(g, g, g, 1.0f);
+    };
+    const auto peak = [](const std::vector<float>& v, bool absolute) {
+        float m = 0.0f;
+        for (float x : v) m = std::max(m, absolute ? std::fabs(x) : x);
+        return m > 0.0f ? m : 1.0f;
+    };
+    std::vector<Rgba> pictures;
+    pictures.push_back(Picture(h, w, scale, pixel));
+    const float cam_peak = out.grad_cam.empty() ? 1.0f : peak(out.grad_cam, false);
+    pictures.push_back(out.grad_cam.empty() ? Rgba{}
+                                            : Picture(h, w, scale, [&](size_t i) {
+                                                  const float a = out.grad_cam[i] / cam_peak;
+                                                  return Mix(pixel(i), Sequential(a), 0.35f + 0.5f * a);
+                                              }));
+    const float sal_peak = peak(out.saliency, false);
+    pictures.push_back(Picture(h, w, scale, [&](size_t i) { return Sequential(out.saliency[i] / sal_peak); }));
+    const float ig_peak = peak(out.integrated, true);
+    pictures.push_back(Picture(h, w, scale, [&](size_t i) { return Diverging(out.integrated[i] / ig_peak); }));
+    return pictures;
+}
+
+}  // namespace
+
+void ModelPanel::ReleaseExplainImages() {
+    for (auto& id : explain_images_) {
+        if (id) OutputRenderer::DeleteTexture(id);
+        id = 0;
+    }
+}
+
+void ModelPanel::UploadExplainImages() {
+    ReleaseExplainImages();
+    if (!explain_.ok || explain_.height <= 1) return;
+    const auto pictures = ExplainPictures(explain_);
+    for (size_t i = 0; i < pictures.size() && i < 4; ++i) {
+        if (!pictures[i].pixels.empty())
+            explain_images_[i] = OutputRenderer::CreateTextureFromRGBA(pictures[i].pixels.data(), pictures[i].width,
+                                                                        pictures[i].height);
+    }
+    explain_image_size_[0] = pictures.front().width;
+    explain_image_size_[1] = pictures.front().height;
+}
+
+void ModelPanel::RenderExplain() {
+    const auto& t = ui::CurrentTokens();
+    auto& tests = TestManager::Instance();
+    const std::shared_ptr<IExecutableModel> model = TrainingManager::Instance().GetActiveModel();
+    if (!model) {
+        ui::EmptyState(ICON_FA_LAYER_GROUP, "No trained model",
+                       "Train the graph, or load a checkpoint (Train > Load Checkpoint): Explain looks inside the model "
+                       "Test and Inference use.");
+        return;
+    }
+    if (!tests.HasResults() || tests.IsTestingActive() || tests.GetLastResults().kept_inputs.empty()) {
+        ui::EmptyState(ICON_FA_LAYER_GROUP, tests.IsTestingActive() ? "Testing..." : "No test rows yet",
+                       "Run Test (F8): it keeps the inputs of the rows it got wrong and of the first rows, and "
+                       "Explain shows them here.");
+        return;
+    }
+    const TestingMetrics& test = tests.GetLastResults();
+    const double identity = static_cast<double>(test.total_samples) * 1e6 + test.total_time_seconds;
+    if (identity != test_seen_) {
+        test_seen_ = identity;
+        explain_sample_ = -1;
+        explain_asked_.clear();
+        explain_shown_.clear();
+        explain_ = ExplainOutcome{};
+        ReleaseExplainImages();
+    }
+    const std::vector<std::string>& names = test.confusion_matrix.class_names;
+    const auto choices = ExplainRowChoices(test, explain_wrong_only_, names);
+    if (explain_sample_ < 0 && !choices.empty()) explain_sample_ = choices.front().sample;
+
+    // A finished job.
+    if (explain_job_) {
+        std::lock_guard<std::mutex> lock(explain_job_->mutex);
+        if (explain_job_->done) {
+            explain_ = explain_job_->outcome;
+            explain_shown_ = explain_asked_;
+            explain_job_.reset();
+            UploadExplainImages();
+        }
+    }
+    StartExplain(ExplainRowChoices(test, false, names));
+
+    const float side = 300.0f;
+    const bool wide = ImGui::GetContentRegionAvail().x >= 820.0f;
+    if (wide && ImGui::BeginTable("##explain_layout", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("##rows", ImGuiTableColumnFlags_WidthFixed, side);
+        ImGui::TableSetupColumn("##maps", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        RenderExplainControls(choices, names);
+        ImGui::TableNextColumn();
+        RenderExplainResult(names);
+        ImGui::EndTable();
+    } else if (!wide) {
+        ImGui::BeginChild("##explain_narrow", ImVec2(0.0f, 0.0f));
+        RenderExplainControls(choices, names);
+        RenderExplainResult(names);
+        ImGui::EndChild();
+    }
+    (void)t;
+}
+
+void ModelPanel::RenderExplainControls(const std::vector<ExplainRowChoice>& choices,
+                                       const std::vector<std::string>& class_names) {
+    const auto& t = ui::CurrentTokens();
+    const TestingMetrics& test = TestManager::Instance().GetLastResults();
+    ui::BeginCard("explain_rows");
+    ImGui::TextColored(t.text_dim, "Rows the last test kept");
+    int wrong_count = 0;
+    for (const auto& kept : test.kept_inputs)
+        if (static_cast<size_t>(kept.sample) < test.predictions.size() &&
+            static_cast<size_t>(kept.sample) < test.ground_truth.size() &&
+            test.predictions[kept.sample] != test.ground_truth[kept.sample])
+            ++wrong_count;
+    const std::string all = "All " + std::to_string(test.kept_inputs.size());
+    const std::string wrong = "Wrong only (" + std::to_string(wrong_count) + ")";
+    const char* const filters[] = {all.c_str(), wrong.c_str()};
+    int filter = explain_wrong_only_ ? 1 : 0;
+    if (ui::SegmentedControl("##explain_filter", filters, 2, &filter)) explain_wrong_only_ = filter == 1;
+    ImGui::BeginChild("##explain_list", ImVec2(0.0f, 220.0f));
+    for (const auto& choice : choices) {
+        ImGui::PushID(choice.sample);
+        if (choice.wrong) ImGui::PushStyleColor(ImGuiCol_Text, t.caution);
+        if (ImGui::Selectable(choice.label.c_str(), choice.sample == explain_sample_)) explain_sample_ = choice.sample;
+        if (choice.wrong) ImGui::PopStyleColor();
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    Paragraph("Test keeps the inputs of every row it got wrong and of its first " +
+                  std::to_string(TestingMetrics::kKeptFirstSamples) + " rows (up to 64 MB).",
+              &t.text_faint);
+
+    ImGui::Spacing();
+    ImGui::TextColored(t.text_dim, "Explain the score of");
+    static const char* const kTargets[] = {"Predicted", "True", "Class"};
+    ui::SegmentedControl("##explain_target", kTargets, 3, &explain_target_mode_);
+    if (explain_target_mode_ == 2) {
+        const int classes = std::max(1, test.probability_classes > 0 ? test.probability_classes
+                                                                      : static_cast<int>(class_names.size()));
+        ui::NumberField("##explain_class", &explain_class_, 0, classes - 1, 1, 60.0f, "The class number.");
+        if (explain_class_ < static_cast<int>(class_names.size())) {
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "%s", class_names[explain_class_].c_str());
+        }
+    }
+    ui::FieldLabel("Integrated Gradients steps");
+    ui::NumberField("##ig_steps", &ig_steps_, 8, 512, 8, 70.0f, "Points on the path from the baseline; all in one batch.");
+    if (!explain_.grad_cam_layer.empty()) {
+        ImGui::TextColored(t.text_dim, "Grad-CAM layer");
+        ImGui::SameLine();
+        ImGui::Text("%s (the last convolution)", explain_.grad_cam_layer.c_str());
+    }
+    ImGui::Spacing();
+    const bool can_save = explain_.ok && explain_images_[0] != 0;
+    if (ui::SecondaryButton("Save the images...", can_save, "Pick a row with an image input.")) {
+        const std::string name = "explain_row_" + std::to_string(explain_row_.row) + ".png";
+        if (const auto path = FileDialogs::SaveFile("Save the maps (four PNG files)", {{"PNG", "png"}}, nullptr, name.c_str())) {
+            const auto pictures = ExplainPictures(explain_);
+            const std::filesystem::path base(*path);
+            const char* const parts[] = {"input", "gradcam", "saliency", "integrated_gradients"};
+            int written = 0;
+            for (size_t i = 0; i < pictures.size() && i < 4; ++i) {
+                if (pictures[i].pixels.empty()) continue;
+                const auto file = base.parent_path() / (base.stem().string() + "_" + parts[i] + ".png");
+                written += stbi_write_png(file.string().c_str(), pictures[i].width, pictures[i].height, 4,
+                                          pictures[i].pixels.data(), pictures[i].width * 4) != 0;
+            }
+            explain_message_ = "Saved " + std::to_string(written) + " images beside " + base.string();
+        }
+    }
+    if (!explain_message_.empty()) Paragraph(explain_message_, &t.text_dim);
+    ui::EndCard();
+}
+
+void ModelPanel::StartExplain(const std::vector<ExplainRowChoice>& all) {
+    if (explain_job_ || explain_sample_ < 0) return;
+    const auto found = std::find_if(all.begin(), all.end(), [this](const ExplainRowChoice& c) { return c.sample == explain_sample_; });
+    if (found == all.end()) return;
+    int target = -1;
+    if (explain_target_mode_ == 1) target = found->truth;
+    if (explain_target_mode_ == 2) target = explain_class_;
+    const std::string key = std::to_string(found->sample) + "/" + std::to_string(target) + "/" + std::to_string(ig_steps_);
+    if (key == explain_asked_) return;
+    auto& training = TrainingManager::Instance();
+    const std::shared_ptr<IExecutableModel> model = training.GetActiveModel();
+    const ActiveModelInfo info = training.GetActiveModelInfo();
+    if (!model || !info.evaluation_config) return;
+    if (training.IsTrainingActive()) {
+        explain_message_ = "Training is running; Explain waits for it to finish.";
+        return;
+    }
+    const TestingMetrics& test = TestManager::Instance().GetLastResults();
+    ExplainRequest request;
+    request.sample = test.kept_inputs[found->kept].values;
+    request.target_class = target;
+    request.ig_steps = ig_steps_;
+    explain_asked_ = key;
+    explain_row_ = *found;
+    explain_message_.clear();
+    auto job = std::make_shared<ExplainJob>();
+    explain_job_ = job;
+    const TrainingConfiguration config = *info.evaluation_config;
+    const auto device = info.model_device;
+    AsyncTaskManager::Instance().RunAsync(
+        "Explain row " + std::to_string(found->row),
+        [job, model, config, request, device](LambdaTask&) {
+            ExplainOutcome outcome;
+            if (device) {
+                const auto activation = Device(device->type, device->device_id).ActivateExact(false);
+                if (!activation.success) outcome.error = "Could not switch to the device that holds the model: " + activation.message;
+            }
+            if (outcome.error.empty()) outcome = ExplainSample(*model, config, request);
+            std::lock_guard<std::mutex> lock(job->mutex);
+            job->outcome = std::move(outcome);
+            job->done = true;
+        },
+        nullptr, nullptr, alive_);
+}
+
+void ModelPanel::RenderExplainResult(const std::vector<std::string>& class_names) {
+    const auto& t = ui::CurrentTokens();
+    if (explain_job_ && explain_shown_.empty()) {
+        ImGui::TextColored(t.running, "Working out the maps...");
+        return;
+    }
+    if (explain_shown_.empty()) return;
+    if (!explain_.ok) {
+        ui::BeginCard("explain_error");
+        Paragraph(explain_.error, &t.warning);
+        ui::EndCard();
+        return;
+    }
+    const auto words = DescribeExplanation(explain_, explain_row_.row, explain_row_.truth, class_names);
+    ui::BeginCard("explain_words");
+    ImGui::PushStyleColor(ImGuiCol_Text, words.wrong ? t.caution : t.success);
+    Paragraph(words.headline);
+    ImGui::PopStyleColor();
+    if (explain_job_) ImGui::TextColored(t.running, "Working out the next maps...");
+    ui::EndCard();
+
+    if (explain_.height > 1 && explain_images_[0]) {
+        const float side = static_cast<float>(kExplainSide);
+        const char* const titles[] = {"Input", "Grad-CAM", "Saliency", "Integrated Gradients"};
+        const std::string captions[] = {
+            std::to_string(explain_.height) + " x " + std::to_string(explain_.width) + " x " +
+                std::to_string(explain_.channels) + ", as the model sees it after the graph's steps.",
+            explain_.grad_cam.empty() ? explain_.grad_cam_note
+                                      : "Where " + explain_.grad_cam_layer + " found what raised the score: its channels "
+                                        "weighted by their mean gradient, ReLU, resized to the input.",
+            "|d score / d pixel|: the pixels whose change moves the score most. Noisy by nature.",
+            "Each pixel's share of the score, summed along the path from the baseline. " + words.completeness};
+        if (ImGui::BeginTable("##explain_maps", 4, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextRow();
+            for (int i = 0; i < 4; ++i) {
+                ImGui::TableNextColumn();
+                if (explain_images_[i]) {
+                    ImGui::Image(static_cast<ImTextureID>(static_cast<intptr_t>(explain_images_[i])), ImVec2(side, side));
+                } else {
+                    ImGui::Dummy(ImVec2(side, side));
+                }
+                ImGui::TextColored(t.text_bright, "%s", titles[i]);
+                Paragraph(captions[i], &t.text_dim);
+            }
+            ImGui::EndTable();
+        }
+    } else {
+        // A table row: one bar per feature.
+        std::vector<double> left, right, saliency, integrated;
+        for (size_t i = 0; i < explain_.saliency.size(); ++i) {
+            left.push_back(static_cast<double>(i) - 0.2);
+            right.push_back(static_cast<double>(i) + 0.2);
+            saliency.push_back(explain_.saliency[i]);
+            integrated.push_back(i < explain_.integrated.size() ? explain_.integrated[i] : 0.0);
+        }
+        if (ImPlot::BeginPlot("##explain_features", ImVec2(-1, 260.0f), ImPlotFlags_NoMenus)) {
+            ImPlot::SetupAxes("feature", "attribution", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+            ImPlot::SetNextFillStyle(t.series[0], 0.8f);
+            ImPlot::PlotBars("Integrated Gradients", left.data(), integrated.data(), static_cast<int>(left.size()), 0.4);
+            ImPlot::SetNextFillStyle(t.series[2], 0.8f);
+            ImPlot::PlotBars("|saliency|", right.data(), saliency.data(), static_cast<int>(right.size()), 0.4);
+            ImPlot::EndPlot();
+        }
+        Paragraph(words.completeness + " " + explain_.grad_cam_note, &t.text_dim);
+    }
+    ImGui::Spacing();
+    Paragraph("Grad-CAM, saliency and Integrated Gradients as Captum (PyTorch) computes them, on the trained model's "
+              "own device; the baseline is the value 0 before the graph's Normalize (a black image).",
+              &t.text_faint);
 }
 
 }  // namespace cyxwiz

@@ -465,6 +465,7 @@ set(ENGINE_SOURCES
     src/gui/properties_compiled_card.cpp
     src/core/compiled_node_presentation.cpp
     src/core/model_summary_presentation.cpp
+    src/core/model_explain.cpp
     src/core/compile_report_presentation.cpp
     src/core/studio_toolbar_presentation.cpp
     src/core/data_input_presentation.cpp
@@ -679,7 +680,6 @@ set(ENGINE_SOURCES
     src/gui/panels/model_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
-    src/gui/panels/gradcam_panel.cpp
     src/gui/panels/feature_importance_panel.cpp
     src/gui/panels/hyperparam_search_panel.cpp
     src/core/hyperparam_search.cpp
@@ -955,7 +955,6 @@ set(ENGINE_HEADERS
     # DNN inference (Phase 3)
     src/inference/dnn_preprocessor.h
     src/gui/panels/model_panel.h
-    src/gui/panels/gradcam_panel.h
     src/gui/panels/feature_importance_panel.h
     src/gui/panels/hyperparam_search_panel.h
     src/core/hyperparam_search.h
@@ -4717,6 +4716,41 @@ set_target_properties(test_model_summary_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME model_summary_pytorch_parity COMMAND test_model_summary_presentation)
+
+# ===== Test: the Model window's Explain against PyTorch (TOFIX129 D11) =====
+add_executable(test_model_explain
+    tests/test_model_explain.cpp
+    src/core/model_explain.cpp
+    src/core/compiled_node_presentation.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+)
+target_include_directories(test_model_explain PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_model_explain PRIVATE
+    cyxwiz-training-core
+    OpenSSL::Crypto
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    spdlog::spdlog
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_model_explain PRIVATE
+    CYXWIZ_MODEL_EXPLAIN_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/model_explain_pytorch.json"
+)
+if(WIN32)
+    target_compile_definitions(test_model_explain PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_model_explain PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME model_explain_pytorch_parity COMMAND test_model_explain)
 
 # ===== Test: ML readiness for image datasets (TOFIX178 1.5) =====
 add_executable(test_image_split_presentation

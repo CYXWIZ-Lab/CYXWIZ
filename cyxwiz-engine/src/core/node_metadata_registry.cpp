@@ -361,7 +361,6 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
     InitializeLinearAlgebraNodes();
     InitializeTimeSeriesAnalysisNodes();
     InitializeStatisticsNodes();
-    InitializeInterpretationNodes();
     InitializeOptimizationNodes();
     InitializeAdditionalTextNodes();
     InitializeVisualizationNodes();
@@ -5055,27 +5054,6 @@ void NodeMetadataRegistry::InitializeStatisticsNodes() {
         {{"Data", PinType::Dataset, true, "Data"}},
         {{"Parameters", PinType::Dataset, false, "Parameters"}},
         {{"distribution", "dropdown", "normal", "Distribution", {"normal", "uniform", "exponential", "lognormal", "poisson", "gamma"}, ""}},
-        NodeImplementationStatus::Template, 0});
-}
-
-// =============================================================================
-// Deep Learning Interpretation Nodes (Tool-to-Node Migration)
-// =============================================================================
-void NodeMetadataRegistry::InitializeInterpretationNodes() {
-    RegisterNode({NodeType::GradCAMNode, NodeCategory::Visualization, "Grad-CAM", ICON_FA_FIRE,
-        {"gradcam", "visualization", "cnn", "attention", "heatmap"}, 0, false,
-        "Grad-CAM Visualization", "", "",
-        {{"Model", PinType::Parameters, true, "Model"}, {"Image", PinType::Tensor, true, "Image"}},
-        {{"Heatmap", PinType::Tensor, false, "Heatmap"}},
-        {{"layer", "string", "", "Target layer", {}, ""}},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::SaliencyMapNode, NodeCategory::Visualization, "Saliency Map", ICON_FA_EYE,
-        {"saliency", "gradient", "visualization", "attention"}, 0, false,
-        "Gradient Saliency Maps", "", "",
-        {{"Model", PinType::Parameters, true, "Model"}, {"Image", PinType::Tensor, true, "Image"}},
-        {{"Saliency", PinType::Tensor, false, "Saliency"}},
-        {{"method", "dropdown", "vanilla", "Method", {"vanilla", "smoothgrad", "integrated"}, ""}},
         NodeImplementationStatus::Template, 0});
 }
 

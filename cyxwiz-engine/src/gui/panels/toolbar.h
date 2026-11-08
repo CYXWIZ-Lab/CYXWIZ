@@ -201,7 +201,7 @@ public:
     void SetConvertDirToBinaryCallback(std::function<void()> cb) { convert_dir_to_binary_callback_ = cb; }
 
     // Model Analysis callbacks (Phase 2)
-    // Tools > Model: the Model window on a tab ("summary", "learning_rate").
+    // Tools > Model: the Model window on a tab ("summary", "learning_rate", "explain").
     void SetOpenModelCallback(std::function<void(const std::string&)> cb) { open_model_callback_ = std::move(cb); }
 
     // Data Science callbacks (Phase 3)
@@ -217,7 +217,6 @@ public:
 
     // Advanced Tools callbacks (Phase 5)
     void SetOpenDimReductionCallback(std::function<void()> cb) { open_dim_reduction_callback_ = cb; }
-    void SetOpenGradCAMCallback(std::function<void()> cb) { open_gradcam_callback_ = cb; }
     void SetOpenFeatureImportanceCallback(std::function<void()> cb) { open_feature_importance_callback_ = cb; }
     void SetOpenHyperparamSearchCallback(std::function<void()> cb) { open_hyperparam_search_callback_ = cb; }
     void SetOpenServingCallback(std::function<void()> cb) { open_serving_callback_ = cb; }
@@ -694,7 +693,6 @@ private:
 
     // Advanced Tools callbacks (Phase 5)
     std::function<void()> open_dim_reduction_callback_;
-    std::function<void()> open_gradcam_callback_;
     std::function<void()> open_feature_importance_callback_;
     std::function<void()> open_hyperparam_search_callback_;
     std::function<void()> open_serving_callback_;

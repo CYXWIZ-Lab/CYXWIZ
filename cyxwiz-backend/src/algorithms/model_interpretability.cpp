@@ -6,12 +6,12 @@
 #endif
 
 #include "cyxwiz/model_interpretability.h"
-#include <spdlog/spdlog.h>
-#include <cmath>
+
+#include <arrayfire.h>
+
 #include <algorithm>
-#include <numeric>
-#include <random>
-#include <limits>
+#include <cmath>
+#include <stdexcept>
 
 // Undef Windows min/max macros if they leaked through
 #ifdef _WIN32
@@ -25,130 +25,123 @@
 
 namespace cyxwiz {
 
-// ============================================================================
-// Utility Methods
-// ============================================================================
+namespace {
 
-std::vector<float> ModelInterpretability::NormalizeHeatmap(const std::vector<float>& heatmap) {
-    if (heatmap.empty()) return {};
+// The batch axis of an input: the last of a spatial [H, W, C, N] tensor, else the first.
+size_t BatchAxis(const std::vector<size_t>& shape) { return shape.size() == 4 ? 3 : 0; }
 
-    float min_val = *std::min_element(heatmap.begin(), heatmap.end());
-    float max_val = *std::max_element(heatmap.begin(), heatmap.end());
-
-    std::vector<float> normalized(heatmap.size());
-
-    if (max_val - min_val < 1e-10f) {
-        std::fill(normalized.begin(), normalized.end(), 0.5f);
-    } else {
-        for (size_t i = 0; i < heatmap.size(); i++) {
-            normalized[i] = (heatmap[i] - min_val) / (max_val - min_val);
-        }
-    }
-
-    return normalized;
+size_t SampleSize(const std::vector<size_t>& shape) {
+    size_t size = 1;
+    for (size_t d = 0; d < shape.size(); ++d)
+        if (d != BatchAxis(shape)) size *= shape[d];
+    return size;
 }
 
-std::vector<float> ModelInterpretability::ResizeHeatmap(
-    const std::vector<float>& heatmap,
-    size_t src_height, size_t src_width,
-    size_t dst_height, size_t dst_width)
-{
-    std::vector<float> resized(dst_height * dst_width);
-
-    float y_ratio = static_cast<float>(src_height) / dst_height;
-    float x_ratio = static_cast<float>(src_width) / dst_width;
-
-    for (size_t y = 0; y < dst_height; y++) {
-        for (size_t x = 0; x < dst_width; x++) {
-            float src_y = y * y_ratio;
-            float src_x = x * x_ratio;
-
-            // Bilinear interpolation
-            size_t y0 = static_cast<size_t>(src_y);
-            size_t x0 = static_cast<size_t>(src_x);
-            size_t y1 = std::min(y0 + 1, src_height - 1);
-            size_t x1 = std::min(x0 + 1, src_width - 1);
-
-            float fy = src_y - y0;
-            float fx = src_x - x0;
-
-            float v00 = heatmap[y0 * src_width + x0];
-            float v01 = heatmap[y0 * src_width + x1];
-            float v10 = heatmap[y1 * src_width + x0];
-            float v11 = heatmap[y1 * src_width + x1];
-
-            float v0 = v00 * (1 - fx) + v01 * fx;
-            float v1 = v10 * (1 - fx) + v11 * fx;
-
-            resized[y * dst_width + x] = v0 * (1 - fy) + v1 * fy;
-        }
-    }
-
-    return resized;
+std::vector<float> Host(const af::array& a) {
+    std::vector<float> values(a.elements());
+    if (!values.empty()) a.as(f32).host(values.data());
+    return values;
 }
 
-void ModelInterpretability::ApplyReLU(std::vector<float>& data) {
-    for (auto& v : data) {
-        if (v < 0) v = 0;
-    }
-}
-
-std::vector<float> ModelInterpretability::GlobalAveragePool(
-    const std::vector<float>& data,
-    size_t channels, size_t height, size_t width)
-{
-    std::vector<float> pooled(channels);
-    size_t spatial_size = height * width;
-
-    for (size_t c = 0; c < channels; c++) {
-        float sum = 0.0f;
-        for (size_t s = 0; s < spatial_size; s++) {
-            sum += data[c * spatial_size + s];
-        }
-        pooled[c] = sum / spatial_size;
-    }
-
-    return pooled;
-}
-
-int ModelInterpretability::FindPredictedClass(const Tensor& output) {
+// The scores of a batch as an af array [N, classes].
+af::array Scores(const Tensor& output) {
     const auto& shape = output.Shape();
-    size_t num_classes = shape.empty() ? 1 : shape.back();
-
-    // Get output data
-    std::vector<float> output_data(output.NumElements());
-    const float* data_ptr = output.Data<float>();
-    if (data_ptr) {
-        std::copy(data_ptr, data_ptr + output.NumElements(), output_data.begin());
-    }
-
-    // Find argmax
-    int max_idx = 0;
-    float max_val = -std::numeric_limits<float>::infinity();
-
-    for (size_t i = 0; i < num_classes; i++) {
-        if (output_data[i] > max_val) {
-            max_val = output_data[i];
-            max_idx = static_cast<int>(i);
-        }
-    }
-
-    return max_idx;
+    if (shape.size() == 1) return af::moddims(output.GetRowMajorFlatArray(), 1, static_cast<dim_t>(shape[0]));
+    if (shape.size() != 2) throw std::invalid_argument("the model's scores must be [N, classes]");
+    return output.GetSemanticArray();
 }
 
-Tensor ModelInterpretability::CreateOneHotGradient(int num_classes, int target_class) {
-    std::vector<float> grad(num_classes, 0.0f);
-    if (target_class >= 0 && target_class < num_classes) {
-        grad[target_class] = 1.0f;
-    }
+// d score_target / d scores for every sample of the batch.
+Tensor OneHot(const Tensor& output, int target) {
+    const af::array scores = Scores(output);
+    af::array grad = af::constant(0.0f, scores.dims(0), scores.dims(1));
+    grad(af::span, target) = 1.0f;
+    return Tensor::FromSemanticArray(grad, {static_cast<size_t>(scores.dims(0)), static_cast<size_t>(scores.dims(1))});
+}
 
-    Tensor tensor({static_cast<size_t>(num_classes)}, DataType::Float32);
-    float* data = tensor.Data<float>();
-    if (data) {
-        std::copy(grad.begin(), grad.end(), data);
-    }
+int Predicted(const Tensor& output) {
+    const af::array scores = Scores(output);
+    af::array values, indices;
+    af::max(values, indices, scores(0, af::span), 1);
+    return static_cast<int>(indices.scalar<unsigned>());
+}
 
-    return tensor;
+float ScoreOf(const Tensor& output, int target, int sample = 0) {
+    return Scores(output)(sample, target).scalar<float>();
+}
+
+int CheckTarget(const Tensor& output, int target) {
+    const af::array scores = Scores(output);
+    if (target < 0) return Predicted(output);
+    if (target >= scores.dims(1))
+        throw std::invalid_argument("target class " + std::to_string(target) + " is outside the model's " +
+                                    std::to_string(scores.dims(1)) + " classes");
+    return target;
+}
+
+// `count` samples, the input's values per sample in the rows of `samples`
+// (af [count, sample size]), laid out as the input's batch.
+Tensor Batch(const af::array& samples, std::vector<size_t> shape) {
+    const size_t count = static_cast<size_t>(samples.dims(0));
+    shape[BatchAxis(shape)] = count;
+    // Row-major storage: the batch axis last varies fastest ([count, F]
+    // column-major); first, each sample is contiguous ([F, count]).
+    const af::array flat = BatchAxis(shape) == 3 ? af::flat(samples) : af::flat(samples.T());
+    return Tensor::FromRowMajorFlatArray(flat, shape);
+}
+
+// The rows of a batch tensor as af [count, sample size].
+af::array Samples(const Tensor& batch) {
+    const auto& shape = batch.Shape();
+    const dim_t count = static_cast<dim_t>(shape[BatchAxis(shape)]);
+    const dim_t size = static_cast<dim_t>(SampleSize(shape));
+    const af::array flat = batch.GetRowMajorFlatArray();
+    return BatchAxis(shape) == 3 ? af::moddims(flat, count, size) : af::moddims(flat, size, count).T();
+}
+
+void CheckOneSample(const Tensor& input) {
+    const auto& shape = input.Shape();
+    if (shape.empty() || shape[BatchAxis(shape)] != 1)
+        throw std::invalid_argument("explain one sample at a time (a batch of 1)");
+}
+
+}  // namespace
+
+// ============================================================================
+// Utilities
+// ============================================================================
+
+std::vector<float> ModelInterpretability::ResizeBilinear(const std::vector<float>& map, size_t src_height,
+                                                         size_t src_width, size_t dst_height, size_t dst_width) {
+    if (map.size() != src_height * src_width || src_height == 0 || src_width == 0) return {};
+    // Row-major [H, W] host data is column-major [W, H].
+    const af::array source = af::array(static_cast<dim_t>(src_width), static_cast<dim_t>(src_height), map.data()).T();
+    const auto axis = [](size_t in, size_t out, af::array& low, af::array& high, af::array& weight) {
+        const float scale = static_cast<float>(in) / static_cast<float>(out);
+        af::array position = (af::range(af::dim4(static_cast<dim_t>(out))).as(f32) + 0.5f) * scale - 0.5f;
+        position = af::max(position, 0.0f);
+        low = af::min(af::floor(position), static_cast<double>(in - 1)).as(u32);
+        high = af::min(low.as(f32) + 1.0f, static_cast<double>(in - 1)).as(u32);
+        weight = position - low.as(f32);
+    };
+    af::array y0, y1, wy, x0, x1, wx;
+    axis(src_height, dst_height, y0, y1, wy);
+    axis(src_width, dst_width, x0, x1, wx);
+    const af::array top = af::lookup(source, y0, 0), bottom = af::lookup(source, y1, 0);
+    const af::array rows = af::tile(1.0f - wy, 1, static_cast<unsigned>(dst_width)) *
+                               (af::lookup(top, x0, 1) * af::tile((1.0f - wx).T(), static_cast<unsigned>(dst_height)) +
+                                af::lookup(top, x1, 1) * af::tile(wx.T(), static_cast<unsigned>(dst_height))) +
+                           af::tile(wy, 1, static_cast<unsigned>(dst_width)) *
+                               (af::lookup(bottom, x0, 1) * af::tile((1.0f - wx).T(), static_cast<unsigned>(dst_height)) +
+                                af::lookup(bottom, x1, 1) * af::tile(wx.T(), static_cast<unsigned>(dst_height)));
+    return Host(rows.T());  // [W, H] column-major = [H, W] row-major
+}
+
+ExplainFunctions ModelInterpretability::FunctionsOf(SequentialModel& model) {
+    ExplainFunctions functions;
+    functions.forward = [&model](const Tensor& input) { return model.Forward(input); };
+    functions.backward = [&model](const Tensor& grad) { return model.Backward(grad); };
+    return functions;
 }
 
 // ============================================================================
@@ -159,9 +152,7 @@ std::vector<std::string> ModelInterpretability::GetLayerNames(const SequentialMo
     std::vector<std::string> names;
     for (size_t i = 0; i < model.Size(); i++) {
         const Module* module = model.GetModule(i);
-        if (module) {
-            names.push_back(module->GetName());
-        }
+        if (module) names.push_back(module->GetName());
     }
     return names;
 }
@@ -169,71 +160,33 @@ std::vector<std::string> ModelInterpretability::GetLayerNames(const SequentialMo
 int ModelInterpretability::FindLayerIndex(const SequentialModel& model, const std::string& name) {
     for (size_t i = 0; i < model.Size(); i++) {
         const Module* module = model.GetModule(i);
-        if (module && module->GetName() == name) {
-            return static_cast<int>(i);
-        }
+        if (module && module->GetName() == name) return static_cast<int>(i);
     }
     return -1;
 }
 
-// ============================================================================
-// Layer Activations
-// ============================================================================
-
-LayerActivations ModelInterpretability::ExtractLayerActivations(
-    SequentialModel& model,
-    const Tensor& input,
-    int layer_index)
-{
+LayerActivations ModelInterpretability::ExtractLayerActivations(SequentialModel& model, const Tensor& input,
+                                                                int layer_index) {
     LayerActivations result;
-
+    result.layer_index = layer_index;
     if (layer_index < 0 || layer_index >= static_cast<int>(model.Size())) {
-        result.success = false;
         result.error_message = "Invalid layer index";
         return result;
     }
-
-    const Module* target_module = model.GetModule(layer_index);
-    if (!target_module) {
-        result.success = false;
-        result.error_message = "Layer not found";
-        return result;
-    }
-
-    result.layer_name = target_module->GetName();
-    result.layer_index = layer_index;
-
-    // Forward pass up to target layer
+    result.layer_name = model.GetModule(static_cast<size_t>(layer_index))->GetName();
     Tensor current = input;
-    for (int i = 0; i <= layer_index; i++) {
-        Module* module = model.GetModule(i);
-        if (module) {
-            current = module->Forward(current);
-        }
-    }
-
-    // Copy activations
+    for (int i = 0; i <= layer_index; i++) current = model.GetModule(static_cast<size_t>(i))->Forward(current);
     result.shape = current.Shape();
-    result.activations.resize(current.NumElements());
-
-    const float* data_ptr = current.Data<float>();
-    if (data_ptr) {
-        std::copy(data_ptr, data_ptr + current.NumElements(), result.activations.begin());
-    }
-
+    result.activations = Host(current.GetRowMajorFlatArray());
     result.success = true;
     return result;
 }
 
-LayerActivations ModelInterpretability::ExtractLayerActivations(
-    SequentialModel& model,
-    const Tensor& input,
-    const std::string& layer_name)
-{
-    int idx = FindLayerIndex(model, layer_name);
+LayerActivations ModelInterpretability::ExtractLayerActivations(SequentialModel& model, const Tensor& input,
+                                                                const std::string& layer_name) {
+    const int idx = FindLayerIndex(model, layer_name);
     if (idx < 0) {
         LayerActivations result;
-        result.success = false;
         result.error_message = "Layer '" + layer_name + "' not found";
         return result;
     }
@@ -241,298 +194,157 @@ LayerActivations ModelInterpretability::ExtractLayerActivations(
 }
 
 // ============================================================================
-// Grad-CAM Implementation
+// Grad-CAM
 // ============================================================================
 
-GradCAMResult ModelInterpretability::ComputeGradCAM(
-    SequentialModel& model,
-    const Tensor& input,
-    const std::string& target_layer,
-    int target_class)
-{
-    int idx = FindLayerIndex(model, target_layer);
+GradCAMResult ModelInterpretability::ComputeGradCAM(SequentialModel& model, const Tensor& input,
+                                                    const std::string& target_layer, int target_class) {
+    const int idx = FindLayerIndex(model, target_layer);
     if (idx < 0) {
         GradCAMResult result;
-        result.success = false;
         result.error_message = "Target layer '" + target_layer + "' not found";
         return result;
     }
     return ComputeGradCAM(model, input, idx, target_class);
 }
 
-GradCAMResult ModelInterpretability::ComputeGradCAM(
-    SequentialModel& model,
-    const Tensor& input,
-    int layer_index,
-    int target_class)
-{
+GradCAMResult ModelInterpretability::ComputeGradCAM(SequentialModel& model, const Tensor& input, int layer_index,
+                                                    int target_class) {
     GradCAMResult result;
-
-    if (layer_index < 0 || layer_index >= static_cast<int>(model.Size())) {
-        result.success = false;
-        result.error_message = "Invalid layer index";
-        return result;
-    }
-
-    const Module* target_module = model.GetModule(layer_index);
-    if (!target_module) {
-        result.success = false;
-        result.error_message = "Layer not found";
-        return result;
-    }
-
-    result.layer_name = target_module->GetName();
-
-    spdlog::info("Computing Grad-CAM for layer '{}' (index {})", result.layer_name, layer_index);
-
-    // Forward pass - store intermediate activations
-    std::vector<Tensor> intermediate_outputs;
-    Tensor current = input;
-
-    for (size_t i = 0; i < model.Size(); i++) {
-        Module* module = model.GetModule(i);
-        if (module) {
-            current = module->Forward(current);
-            intermediate_outputs.push_back(current);
+    try {
+        if (layer_index < 0 || layer_index >= static_cast<int>(model.Size()))
+            throw std::invalid_argument("Invalid layer index");
+        CheckOneSample(input);
+        result.layer_name = model.GetModule(static_cast<size_t>(layer_index))->GetName();
+        // Forward module by module, keeping the target layer's output A.
+        Tensor current = input, activation;
+        for (size_t i = 0; i < model.Size(); ++i) {
+            current = model.GetModule(i)->Forward(current);
+            if (static_cast<int>(i) == layer_index) activation = current;
         }
-    }
+        const auto& a_shape = activation.Shape();
+        if (a_shape.size() != 4 || a_shape[3] != 1)
+            throw std::invalid_argument("layer '" + result.layer_name + "' does not give an image-shaped output [H, W, C]");
+        result.target_class = CheckTarget(current, target_class);
+        result.class_score = ScoreOf(current, result.target_class);
+        // d score / d A: back through the modules after the layer.
+        Tensor grad = OneHot(current, result.target_class);
+        for (size_t i = model.Size(); i-- > static_cast<size_t>(layer_index) + 1;) grad = model.GetModule(i)->Backward(grad);
+        if (grad.Shape() != a_shape) throw std::runtime_error("the gradient at the layer has another shape than its output");
 
-    Tensor output = current;
+        const af::array a = activation.GetArrayRowMajor4D();  // (h, w, c, 1)
+        const af::array g = grad.GetArrayRowMajor4D();
+        const af::array weights = af::mean(af::mean(g, 0), 1);  // (1, 1, c, 1)
+        af::array cam = af::sum(a * af::tile(weights, static_cast<unsigned>(a.dims(0)), static_cast<unsigned>(a.dims(1))), 2);
+        cam = af::max(cam, 0.0f);  // (h, w)
+        const size_t h = a_shape[0], w = a_shape[1];
+        result.layer_shape = {h, w};
+        result.layer_heatmap = Host(cam.T());  // row-major [h, w]
 
-    // Determine target class
-    if (target_class < 0) {
-        target_class = FindPredictedClass(output);
-    }
-
-    result.target_class = target_class;
-
-    // Get class score
-    const float* output_data = output.Data<float>();
-    if (output_data && target_class < static_cast<int>(output.NumElements())) {
-        result.class_score = output_data[target_class];
-    }
-
-    // Create one-hot gradient for target class
-    int num_classes = static_cast<int>(output.NumElements());
-    Tensor grad_output = CreateOneHotGradient(num_classes, target_class);
-
-    // Backward pass to get gradients
-    Tensor grad = grad_output;
-    std::vector<Tensor> gradients;
-
-    for (int i = static_cast<int>(model.Size()) - 1; i >= 0; i--) {
-        Module* module = model.GetModule(i);
-        if (module) {
-            grad = module->Backward(grad);
-            gradients.insert(gradients.begin(), grad);
-        }
-    }
-
-    // Get target layer activations and gradients
-    if (layer_index >= static_cast<int>(intermediate_outputs.size())) {
-        result.success = false;
-        result.error_message = "Could not get layer activations";
-        return result;
-    }
-
-    Tensor& activations = intermediate_outputs[layer_index];
-    const auto& act_shape = activations.Shape();
-
-    // For Grad-CAM, we need [C, H, W] or [N, C, H, W] shaped activations
-    if (act_shape.size() < 3) {
-        // Not a convolutional layer - return simple gradient
-        result.heatmap_shape = act_shape;
-        result.heatmap.resize(activations.NumElements());
-
-        const float* act_ptr = activations.Data<float>();
-        if (act_ptr) {
-            std::copy(act_ptr, act_ptr + activations.NumElements(), result.heatmap.begin());
-        }
-
-        result.heatmap = NormalizeHeatmap(result.heatmap);
+        const auto& in_shape = input.Shape();
+        const size_t in_h = in_shape.size() == 4 ? in_shape[0] : h, in_w = in_shape.size() == 4 ? in_shape[1] : w;
+        result.heatmap_shape = {in_h, in_w};
+        result.raw_heatmap = ResizeBilinear(result.layer_heatmap, h, w, in_h, in_w);
+        const auto [low, high] = std::minmax_element(result.raw_heatmap.begin(), result.raw_heatmap.end());
+        const float span = *high - *low;
+        result.heatmap.resize(result.raw_heatmap.size());
+        for (size_t i = 0; i < result.raw_heatmap.size(); ++i)
+            result.heatmap[i] = span > 0.0f ? (result.raw_heatmap[i] - *low) / span : 0.0f;
         result.success = true;
-        return result;
-    }
-
-    // Extract dimensions (assume NCHW or CHW)
-    size_t channels, height, width;
-    if (act_shape.size() == 4) {
-        channels = act_shape[1];
-        height = act_shape[2];
-        width = act_shape[3];
-    } else {
-        channels = act_shape[0];
-        height = act_shape[1];
-        width = act_shape[2];
-    }
-
-    // Get gradients for target layer
-    Tensor& layer_grad = gradients[layer_index];
-    const float* grad_ptr = layer_grad.Data<float>();
-    const float* act_ptr = activations.Data<float>();
-
-    if (!grad_ptr || !act_ptr) {
+    } catch (const std::exception& error) {
         result.success = false;
-        result.error_message = "Could not access layer data";
-        return result;
+        result.error_message = error.what();
     }
-
-    // Global average pooling of gradients to get importance weights
-    std::vector<float> grad_data(layer_grad.NumElements());
-    std::copy(grad_ptr, grad_ptr + layer_grad.NumElements(), grad_data.begin());
-
-    std::vector<float> weights = GlobalAveragePool(grad_data, channels, height, width);
-
-    // Weighted combination of activation maps
-    std::vector<float> heatmap(height * width, 0.0f);
-
-    for (size_t c = 0; c < channels; c++) {
-        for (size_t y = 0; y < height; y++) {
-            for (size_t x = 0; x < width; x++) {
-                size_t idx = c * height * width + y * width + x;
-                heatmap[y * width + x] += weights[c] * act_ptr[idx];
-            }
-        }
-    }
-
-    // Apply ReLU
-    ApplyReLU(heatmap);
-
-    // Normalize
-    heatmap = NormalizeHeatmap(heatmap);
-
-    result.heatmap_shape = {height, width};
-    result.heatmap = std::move(heatmap);
-    result.success = true;
-
-    spdlog::info("Grad-CAM complete: class={}, score={:.4f}, heatmap={}x{}",
-                 target_class, result.class_score, height, width);
-
     return result;
 }
 
 // ============================================================================
-// Saliency Map Implementation
+// Saliency and SmoothGrad
 // ============================================================================
 
-SaliencyMap ModelInterpretability::ComputeSaliencyMap(
-    SequentialModel& model,
-    const Tensor& input,
-    int target_class)
-{
+SaliencyMap ModelInterpretability::ComputeSaliencyMap(SequentialModel& model, const Tensor& input, int target_class) {
+    return ComputeSaliencyMap(FunctionsOf(model), input, target_class);
+}
+
+SaliencyMap ModelInterpretability::ComputeSaliencyMap(const ExplainFunctions& model, const Tensor& input,
+                                                      int target_class) {
     SaliencyMap result;
-    result.shape = input.Shape();
-
-    spdlog::info("Computing saliency map for input shape: {}",
-                 input.Shape().empty() ? 0 : input.Shape()[0]);
-
-    // Forward pass
-    Tensor output = model.Forward(input);
-
-    // Determine target class
-    if (target_class < 0) {
-        target_class = FindPredictedClass(output);
+    try {
+        CheckOneSample(input);
+        const Tensor output = model.forward(input);
+        result.target_class = CheckTarget(output, target_class);
+        const Tensor grad = model.backward(OneHot(output, result.target_class));
+        result.shape = input.Shape();
+        const af::array flat = grad.GetRowMajorFlatArray();
+        result.gradients = Host(flat);
+        result.absolute_gradients = Host(af::abs(flat));
+        result.success = true;
+    } catch (const std::exception& error) {
+        result.error_message = error.what();
     }
-    result.target_class = target_class;
-
-    // Create one-hot gradient
-    int num_classes = static_cast<int>(output.NumElements());
-    Tensor grad_output = CreateOneHotGradient(num_classes, target_class);
-
-    // Backward pass to get input gradients
-    Tensor grad = model.Backward(grad_output);
-
-    // Extract gradient values
-    result.gradients.resize(grad.NumElements());
-    const float* grad_ptr = grad.Data<float>();
-    if (grad_ptr) {
-        std::copy(grad_ptr, grad_ptr + grad.NumElements(), result.gradients.begin());
-    }
-
-    // Compute absolute gradients
-    result.absolute_gradients.resize(result.gradients.size());
-    for (size_t i = 0; i < result.gradients.size(); i++) {
-        result.absolute_gradients[i] = std::abs(result.gradients[i]);
-    }
-
-    // Normalize
-    result.absolute_gradients = NormalizeHeatmap(result.absolute_gradients);
-
-    result.success = true;
-
-    spdlog::info("Saliency map complete for class {}", target_class);
-
     return result;
 }
 
-SaliencyMap ModelInterpretability::ComputeSmoothGrad(
-    SequentialModel& model,
-    const Tensor& input,
-    int target_class,
-    int num_samples,
-    float noise_std)
-{
-    SaliencyMap result;
-    result.shape = input.Shape();
+SaliencyMap ModelInterpretability::ComputeSmoothGrad(SequentialModel& model, const Tensor& input, int target_class,
+                                                     int num_samples, float noise_std) {
+    return ComputeSmoothGrad(FunctionsOf(model), input, target_class, num_samples, noise_std, 0);
+}
 
-    spdlog::info("Computing SmoothGrad with {} samples, noise_std={}",
-                 num_samples, noise_std);
-
-    // Accumulate gradients
-    std::vector<float> accumulated_grads(input.NumElements(), 0.0f);
-
-    std::mt19937 rng(42);
-    std::normal_distribution<float> noise_dist(0.0f, noise_std);
-
-    // Get input data
-    const float* input_ptr = input.Data<float>();
-    if (!input_ptr) {
+SaliencyMap ModelInterpretability::ComputeSmoothGrad(const ExplainFunctions& model, const Tensor& input,
+                                                     int target_class, int num_samples, float noise_std,
+                                                     unsigned long long seed) {
+    SaliencyMap result = ComputeSaliencyMap(model, input, target_class);
+    if (!result.success) return result;
+    try {
+        const int count = std::max(1, num_samples);
+        const af::array x = Samples(input);  // [1, F]
+        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, seed);
+        const af::array noisy = af::tile(x, count) + noise_std * af::randn(af::dim4(count, x.dims(1)), f32, engine);
+        const Tensor batch = Batch(noisy, input.Shape());
+        const Tensor output = model.forward(batch);
+        const Tensor grad = model.backward(OneHot(output, result.target_class));
+        result.smoothgrad = Host(af::mean(Samples(grad), 0));
+    } catch (const std::exception& error) {
         result.success = false;
-        result.error_message = "Could not access input data";
-        return result;
+        result.error_message = error.what();
     }
-
-    std::vector<float> input_data(input_ptr, input_ptr + input.NumElements());
-
-    for (int sample = 0; sample < num_samples; sample++) {
-        // Create noisy input
-        Tensor noisy_input(input.Shape(), DataType::Float32);
-        float* noisy_ptr = noisy_input.Data<float>();
-
-        for (size_t i = 0; i < input_data.size(); i++) {
-            noisy_ptr[i] = input_data[i] + noise_dist(rng);
-        }
-
-        // Compute saliency for noisy input
-        SaliencyMap noisy_saliency = ComputeSaliencyMap(model, noisy_input, target_class);
-
-        if (sample == 0) {
-            result.target_class = noisy_saliency.target_class;
-        }
-
-        // Accumulate
-        for (size_t i = 0; i < accumulated_grads.size(); i++) {
-            accumulated_grads[i] += noisy_saliency.absolute_gradients[i];
-        }
-    }
-
-    // Average
-    for (auto& g : accumulated_grads) {
-        g /= num_samples;
-    }
-
-    result.smoothgrad = NormalizeHeatmap(accumulated_grads);
-
-    // Also compute regular saliency
-    SaliencyMap regular = ComputeSaliencyMap(model, input, target_class);
-    result.gradients = std::move(regular.gradients);
-    result.absolute_gradients = std::move(regular.absolute_gradients);
-
-    result.success = true;
-
-    spdlog::info("SmoothGrad complete");
-
     return result;
 }
 
-} // namespace cyxwiz
+// ============================================================================
+// Integrated Gradients
+// ============================================================================
+
+IntegratedGradientsResult ModelInterpretability::ComputeIntegratedGradients(const ExplainFunctions& model,
+                                                                             const Tensor& input,
+                                                                             const Tensor& baseline,
+                                                                             int target_class, int steps) {
+    IntegratedGradientsResult result;
+    try {
+        CheckOneSample(input);
+        if (baseline.Shape() != input.Shape()) throw std::invalid_argument("the baseline must have the input's shape");
+        result.steps = std::max(1, steps);
+        result.shape = input.Shape();
+        const Tensor output = model.forward(input);
+        result.target_class = CheckTarget(output, target_class);
+        result.score = ScoreOf(output, result.target_class);
+        result.baseline_score = ScoreOf(model.forward(baseline), result.target_class);
+
+        const af::array x = Samples(input), x0 = Samples(baseline);  // [1, F]
+        const af::array alphas = (af::range(af::dim4(result.steps)).as(f32) + 0.5f) / static_cast<float>(result.steps);
+        const af::array path = af::tile(x0, result.steps) +
+                               af::tile(alphas, 1, static_cast<unsigned>(x.dims(1))) * af::tile(x - x0, result.steps);
+        const Tensor batch = Batch(path, input.Shape());
+        const Tensor path_output = model.forward(batch);
+        const Tensor grad = model.backward(OneHot(path_output, result.target_class));
+        const af::array attributions = (x - x0) * af::mean(Samples(grad), 0);
+        result.attributions = Host(attributions);
+        result.attribution_sum = af::sum<float>(attributions);
+        result.success = true;
+    } catch (const std::exception& error) {
+        result.error_message = error.what();
+    }
+    return result;
+}
+
+}  // namespace cyxwiz

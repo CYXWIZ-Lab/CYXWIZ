@@ -8,13 +8,18 @@
 // text and Export CSV. Learning rate: a range test (Smith) on the graph's
 // Train rows through Train's own path - the rate rises every step, the
 // trained model in use is kept - its curve, the suggested rate and Use,
-// which sets it on the optimizer node.
+// which sets it on the optimizer node. Explain: Grad-CAM, saliency and
+// Integrated Gradients of the trained model for a row the last test kept
+// (core/model_explain), worked out in the background on the model's device.
 
 #include "../../core/learning_rate_range_test.h"
+#include "../../core/model_explain.h"
 #include "../../core/model_summary_presentation.h"
 
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -26,11 +31,12 @@ namespace cyxwiz {
 
 class ModelPanel {
 public:
+    ~ModelPanel();
     void Render();
 
     bool IsVisible() const { return visible_; }
     void SetVisible(bool v) { visible_ = v; }
-    // Opens the window on a tab ("summary", "learning_rate").
+    // Opens the window on a tab ("summary", "learning_rate", "explain").
     void Open(const std::string& tab);
     void SetNodeEditor(gui::NodeEditor* editor) { node_editor_ = editor; }
     // Starts a range test through Train's launcher: "" when it starts (or
@@ -49,6 +55,12 @@ private:
     void RenderLearningRate();
     void RenderRangeSettings();
     void RenderRangeResult();
+    void RenderExplain();
+    void RenderExplainControls(const std::vector<ExplainRowChoice>& choices, const std::vector<std::string>& class_names);
+    void RenderExplainResult(const std::vector<std::string>& class_names);
+    void StartExplain(const std::vector<ExplainRowChoice>& choices);
+    void UploadExplainImages();
+    void ReleaseExplainImages();
 
     bool visible_ = false;
     std::string open_tab_;      // the tab to select on the next frame
@@ -76,6 +88,28 @@ private:
     std::string range_message_;
     bool range_message_error_ = false;
     bool steepest_rule_ = true;
+
+    // Explain.
+    struct ExplainJob {
+        std::mutex mutex;
+        bool done = false;
+        ExplainOutcome outcome;
+    };
+    std::shared_ptr<ExplainJob> explain_job_;
+    std::shared_ptr<int> alive_ = std::make_shared<int>(0);
+    bool explain_wrong_only_ = false;
+    int explain_sample_ = -1;        // the chosen test sample
+    int explain_target_mode_ = 0;    // 0 predicted, 1 true class, 2 a class typed
+    int explain_class_ = 0;
+    int ig_steps_ = 64;
+    std::string explain_asked_;      // the request in flight or shown (sample, target, steps)
+    std::string explain_shown_;
+    double test_seen_ = -1.0;        // identity of the test whose rows are listed
+    ExplainOutcome explain_;
+    ExplainRowChoice explain_row_;
+    unsigned int explain_images_[4] = {0, 0, 0, 0};  // input, Grad-CAM, saliency, Integrated Gradients
+    int explain_image_size_[2] = {0, 0};
+    std::string explain_message_;
 };
 
 }  // namespace cyxwiz
