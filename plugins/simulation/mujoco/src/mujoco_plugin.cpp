@@ -229,11 +229,12 @@ constexpr const char* kViewportPanelId = "mujoco_viewport";
 
 std::vector<PluginCommandInfo> MuJoCoPlugin::GetCommands() {
     return {
-        {"run", "Simulation", "run", "Run Simulation", "Runs the loaded model in the viewport, or resumes it.", false},
-        {"pause", "Simulation", "run", "Pause", "Pauses the running model.", false},
-        {"stop", "Simulation", "run", "Stop", "Stops the run.", false},
-        {"step", "Simulation", "run", "Step Once", "Pauses the model and advances it one step.", false},
-        {"load", "Simulation", "model", "Load MJCF Model...", "Opens a MuJoCo model file in the viewport.", false},
+        // The viewport's own run gives way to a graph run in the menu
+        {"run", "Simulation", "run", "Run Simulation", "Runs the loaded model in the viewport, or resumes it.", false, true},
+        {"pause", "Simulation", "run", "Pause", "Pauses the running model.", false, true},
+        {"stop", "Simulation", "run", "Stop", "Stops the run.", false, true},
+        {"step", "Simulation", "run", "Step Once", "Pauses the model and advances it one step.", false, true},
+        {"load", "Simulation", "model", "Load MJCF Model...", "Opens a MuJoCo model file in the viewport.", false, false},
     };
 }
 
