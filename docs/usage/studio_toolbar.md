@@ -38,8 +38,10 @@ click each (hover for what each does). Next to it the mode's action: Code
 Gen, the framework (PyTorch, TensorFlow, Keras, PyCyxWiz) and **Generate**;
 Data Pipeline, **Execute Pipeline**, then its progress, the step it is on
 (hover) and **Cancel** while it runs; then **Export**. A graph with
-simulation or RL nodes shows **Run Sim** / **Train RL** here instead, with
-the sim time and its speed, or that RL training is running.
+simulation or RL nodes shows **Run Sim** / **Train RL** here instead: during
+a run **Pause** (or **Resume**), **Step**, **Stop Sim** and the sim time
+(see [Graph simulation](graph_simulation.md)), or that RL training is
+running.
 
 ## Compile, Local Debug, Train (right)
 

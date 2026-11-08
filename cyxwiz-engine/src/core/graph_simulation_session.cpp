@@ -94,6 +94,7 @@ bool GraphSimulationSession::Start(const std::vector<::gui::MLNode>& nodes,
         return false;
     }
     held_for_run_ = std::move(held_for_run);
+    rate_hz_ = rate_hz;
     state_ = SimulationState::Running;
     spdlog::info("Graph simulation started at {:.0f} ticks a second", rate_hz);
     worker_ = std::thread([this, rate_hz]() { WorkerLoop(rate_hz); });
@@ -111,6 +112,9 @@ void GraphSimulationSession::Resume() {
 }
 
 void GraphSimulationSession::Step() {
+    // A running graph pauses first
+    auto running = SimulationState::Running;
+    state_.compare_exchange_strong(running, SimulationState::Paused);
     if (state_.load() != SimulationState::Paused) return;
     {
         std::lock_guard lock(control_mutex_);
@@ -257,6 +261,21 @@ void GraphSimulationSession::ClearScope(int node_id) {
     std::lock_guard lock(scopes_mutex_);
     for (auto& scope : scopes_) {
         if (scope.node_id != node_id) continue;
+        scope.times.clear();
+        scope.values.clear();
+    }
+}
+
+std::size_t GraphSimulationSession::GetScopeCapacity(int node_id) const {
+    std::lock_guard lock(scopes_mutex_);
+    for (const auto& scope : scopes_)
+        if (scope.node_id == node_id) return scope.capacity;
+    return 0;
+}
+
+void GraphSimulationSession::ClearScopes() {
+    std::lock_guard lock(scopes_mutex_);
+    for (auto& scope : scopes_) {
         scope.times.clear();
         scope.values.clear();
     }

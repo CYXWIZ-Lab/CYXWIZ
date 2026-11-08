@@ -3,6 +3,7 @@
 #include "toolbar.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
 #include "../../core/engine_config.h"
@@ -359,6 +360,49 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::EndPopup();
                     }
 
+                    ImGui::EndTabItem();
+                }
+
+                // ========== Simulation Tab (graph runs) ==========
+                if (ImGui::BeginTabItem(ICON_FA_WAVE_SQUARE " Simulation")) {
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Defaults for graph runs (Run Sim). They apply to the next run.");
+                    ImGui::Spacing();
+                    // Engine-wide, applied and saved at once
+                    auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                    if (ImGui::BeginTable("##simulation_prefs", 2, ImGuiTableFlags_SizingStretchProp)) {
+                        ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+                        ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Tick rate");
+                        ImGui::TableNextColumn();
+                        int rate_hz = engine_config.SimulationRateHz();
+                        if (ui::NumberField("##simulation_rate", &rate_hz,
+                                            cyxwiz::core::EngineConfig::kMinSimulationRateHz,
+                                            cyxwiz::core::EngineConfig::kMaxSimulationRateHz, 10, 70.0f,
+                                            "Ticks a second of a graph run")) {
+                            engine_config.SetSimulationRateHz(rate_hz);
+                            engine_config.Save();
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("ticks a second (1 to 1000; 60 by default)");
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Simulation Monitor");
+                        ImGui::TableNextColumn();
+                        bool open_monitor = engine_config.OpenSimulationMonitorOnRun();
+                        if (ImGui::Checkbox("Open it when a run starts (on by default)", &open_monitor)) {
+                            engine_config.SetOpenSimulationMonitorOnRun(open_monitor);
+                            engine_config.Save();
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::Spacing();
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("If you close the Monitor during a run it stays closed until the next Run. "
+                                        "A Scope's window size and scale are set on the Scope node, in Properties.");
+                    ImGui::PopTextWrapPos();
                     ImGui::EndTabItem();
                 }
 

@@ -7,10 +7,10 @@
 #include "properties_node_editors.h"
 #include "node_editor.h"
 #include "properties_rows.h"
+#include "simulation_scope_plot.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
 #include <imgui.h>
-#include <implot.h>
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -170,22 +170,7 @@ void RenderSignalScope(MLNode& node, RenderNodePropertiesContext& context) {
     if (context.node_editor) context.node_editor->GetSimulationSession().CopyScope(node.id, t_arr, v_arr);
     if (t_arr.empty()) Note("Connect one scalar signal and run the simulation to view data.");
 
-    if (!t_arr.empty()) {
-        if (ImPlot::BeginPlot("##scope_plot", ImVec2(-1, 200), ImPlotFlags_NoTitle)) {
-            ImPlotAxisFlags x_flags = ImPlotAxisFlags_NoLabel;
-            ImPlotAxisFlags y_flags = auto_scale ? (ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoLabel) : ImPlotAxisFlags_NoLabel;
-            ImPlot::SetupAxes("Time (s)", "Value", x_flags, y_flags);
-            // Auto-scroll X axis to follow latest data
-            const float t_max = t_arr.back();
-            float t_window = t_arr.size() > 1 ? t_arr.back() - t_arr.front() : 2.0f;
-            if (t_window < 2.0f) t_window = 2.0f;
-            ImPlot::SetupAxisLimits(ImAxis_X1, t_max - t_window, t_max, ImGuiCond_Always);
-            ImPlot::PushStyleColor(ImPlotCol_Line, t.series[0]);
-            ImPlot::PlotLine("Signal", t_arr.data(), v_arr.data(), static_cast<int>(t_arr.size()));
-            ImPlot::PopStyleColor();
-            ImPlot::EndPlot();
-        }
-    }
+    DrawScopeTrace("##scope_plot", "Signal", t_arr, v_arr, ImVec2(-1, 200), auto_scale, t.series[0]);
     if (cyxwiz::ui::SecondaryButton("Clear") && context.node_editor)
         context.node_editor->GetSimulationSession().ClearScope(node.id);
     ImGui::SameLine();

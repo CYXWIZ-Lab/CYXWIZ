@@ -104,6 +104,8 @@ void CheckBoundedWindows() {
     for (int i = 0; i < 50; ++i) Check(session.TickForTest(0.01f), session.GetError());
     Check(Samples(session, 2) == 10, "window_size bounds the history");
     Check(Samples(session, 3) == 50, "each Scope keeps its own history");
+    Check(session.GetScopeCapacity(2) == 10 && session.GetScopeCapacity(3) == 500 && session.GetScopeCapacity(1) == 0,
+          "each Scope reports its window; a source has none");
 
     session.SetNodeParameter(2, "window_size", "12");
     for (int i = 0; i < 5; ++i) Check(session.TickForTest(0.01f), session.GetError());
@@ -115,6 +117,10 @@ void CheckBoundedWindows() {
 
     session.ClearScope(2);
     Check(Samples(session, 2) == 0 && Samples(session, 3) == 55, "Clear empties one Scope only");
+    session.ClearScopes();
+    Check(Samples(session, 3) == 0, "ClearScopes empties every Scope");
+    Check(session.TickForTest(0.01f), session.GetError());
+    Check(Samples(session, 2) == 1 && Samples(session, 3) == 1, "the Scopes go on sampling after ClearScopes");
     session.ClearHistory();
     std::vector<float> times;
     std::vector<float> values;
@@ -139,6 +145,7 @@ void CheckWorkerCommands() {
     cyxwiz::GraphSimulationSession session;
     Check(session.Start({constant, Scope(2, 102)}, {{1, 1, 101, 2, 102}}, nullptr, 1000.0f), session.GetError());
     const auto first_run = session.GetRunId();
+    Check(session.GetRateHz() == 1000.0f, "the session reports the run's rate");
     Check(session.GetState() == cyxwiz::SimulationState::Running, "Start runs");
     Check(WaitFor([&]() { return Samples(session, 2) >= 20; }), "the worker fills the Scope by itself");
 

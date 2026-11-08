@@ -19,6 +19,7 @@
 #include "../core/async_task_manager.h"
 #include "../core/project_manager.h"
 #include "../core/graph_executor.h"
+#include "../core/engine_config.h"
 #include "../core/simulation_runtime_capabilities.h"
 #include "separate_windows.h"
 #include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
@@ -53,6 +54,7 @@
 #include <cmath>
 #include <cstring>
 #include <nlohmann/json.hpp>
+#include <filesystem>
 #include <fstream>
 #ifdef _WIN32
 #include <windows.h>
@@ -4202,17 +4204,64 @@ void NodeEditor::OnRunSimulation() {
             }
             return result;
         },
-        sim_rate_hz_, std::move(lease));
+        static_cast<float>(cyxwiz::core::EngineConfig::Instance().SimulationRateHz()), std::move(lease));
     if (!started) return;
     simulation_plugins_ = std::move(plugins);
     for (const auto& [plugin_id, panel_id] : panels) {
         cyxwiz::plugin::PluginPanelRegistry::Instance().ShowPanel(plugin_id, panel_id);
     }
+    if (simulation_started_callback_) simulation_started_callback_();
 }
 
 void NodeEditor::OnStopSimulation() {
     simulation_session_.Stop();
     simulation_plugins_.clear();
+}
+
+std::vector<const MLNode*> NodeEditor::GetSignalScopes() const {
+    std::vector<const MLNode*> scopes;
+    for (const auto& node : nodes_)
+        if (node.type == NodeType::SignalScope) scopes.push_back(&node);
+    return scopes;
+}
+
+std::string NodeEditor::GetGraphStem() const {
+    return current_file_path_.empty() ? std::string("Untitled")
+                                      : std::filesystem::path(current_file_path_).stem().string();
+}
+
+cyxwiz::simulation::Commands NodeEditor::GetSimulationCommands() const {
+    cyxwiz::simulation::CommandInputs in;
+    in.simulation_graph = HasSimulationNodes();
+    in.has_scopes = in.simulation_graph && !GetSignalScopes().empty();
+    in.state = simulation_session_.GetState();
+    in.rl_running = rl_script_running_;
+    return cyxwiz::simulation::BuildCommands(in);
+}
+
+void NodeEditor::RunSimulationCommand(cyxwiz::simulation::Command command) {
+    using cyxwiz::simulation::Command;
+    // The same checks as the buttons: a stale menu click does nothing
+    const auto commands = GetSimulationCommands();
+    switch (command) {
+        case Command::Run:
+            if (!commands.run.enabled) return;
+            if (simulation_session_.GetState() == cyxwiz::SimulationState::Paused) simulation_session_.Resume();
+            else OnRunSimulation();
+            break;
+        case Command::Pause:
+            if (commands.pause.enabled) simulation_session_.Pause();
+            break;
+        case Command::Step:
+            if (commands.step.enabled) simulation_session_.Step();
+            break;
+        case Command::Stop:
+            if (commands.stop.enabled) OnStopSimulation();
+            break;
+        case Command::Clear:
+            if (commands.clear.enabled) simulation_session_.ClearScopes();
+            break;
+    }
 }
 
 // ===== RL Training =====

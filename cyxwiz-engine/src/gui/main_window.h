@@ -103,6 +103,7 @@ class DataStudioPanel;
 class FoldsView;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
+class SimulationMonitorPanel;
 struct StudioDebuggerSnapshot;
 struct StudioDebuggerRunControl;
 struct StudioDebuggerRunInputs;
@@ -448,6 +449,7 @@ private:
     std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;
     std::unique_ptr<gui::NodeBrowserPanel> node_browser_panel_;
     std::unique_ptr<cyxwiz::NodeInfoPanel> node_info_panel_;
+    std::unique_ptr<cyxwiz::SimulationMonitorPanel> simulation_monitor_panel_;
     std::unique_ptr<gui::CloudDatasetManagerPanel> cloud_dataset_manager_panel_;
 
     // Plugin Manager

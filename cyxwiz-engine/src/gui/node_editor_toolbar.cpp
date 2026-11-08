@@ -182,8 +182,7 @@ void NodeEditor::ShowToolbar() {
     // ---- Every group's width in each of its forms (approved mockup).
     const std::string name = current_file_path_.empty() ? std::string("Untitled graph")
                                                        : std::filesystem::path(current_file_path_).filename().string();
-    const std::string stem = current_file_path_.empty() ? std::string("Untitled")
-                                                       : std::filesystem::path(current_file_path_).stem().string();
+    const std::string stem = GetGraphStem();
     const auto chip_label = [&](const std::string& shown) {
         return std::string(ICON_FA_DIAGRAM_PROJECT "  ") + shown + (unsaved_ ? "    " : "  ") + ICON_FA_CHEVRON_DOWN +
                "##graph_chip";
@@ -216,8 +215,12 @@ void NodeEditor::ShowToolbar() {
     if (sim_graph) {
         // Simulation and RL graphs: their run group in place of the mode.
         if (has_sim) {
-            actions_full += W(ICON_FA_PLAY " Run Sim") + 160.0f + sp;
-            actions_icons += W(ICON_FA_PLAY) + 70.0f + sp;
+            // The widest form: a run with Pause, Step, Stop Sim, the time and "Paused"
+            const float clock = W("t = 0000.00 s") + W("Paused") + sp;
+            actions_full += W(ICON_FA_PAUSE " Pause") + W(ICON_FA_FORWARD_STEP " Step") + W(ICON_FA_STOP " Stop Sim") +
+                            clock + W(ICON_FA_TRIANGLE_EXCLAMATION) + 4.0f * sp;
+            actions_icons += W(ICON_FA_PAUSE) + W(ICON_FA_FORWARD_STEP) + W(ICON_FA_STOP) + clock +
+                             W(ICON_FA_TRIANGLE_EXCLAMATION) + 4.0f * sp;
         }
         if (has_rl) {
             actions_full += W(ICON_FA_PLAY " Train RL") + 110.0f + sp;
@@ -416,17 +419,45 @@ void NodeEditor::ShowToolbar() {
         ImGui::SameLine();
     } else {
         if (has_sim) {
-            if (simulation_session_.IsActive()) {
-                if (ui::DangerButton(short_labels ? ICON_FA_STOP "##stop_sim" : ICON_FA_STOP " Stop Sim")) OnStopSimulation();
+            // The graph run's commands, as the Simulation menu and the
+            // Simulation Monitor offer them
+            using cyxwiz::simulation::Command;
+            const auto sim = GetSimulationCommands();
+            const auto sim_state = simulation_session_.GetState();
+            const bool sim_running = sim_state == cyxwiz::SimulationState::Running;
+            const auto button_label = [short_labels](const char* icon, const std::string& text, const char* id) {
+                return short_labels ? std::string(icon) + "##" + id : std::string(icon) + " " + text + "##" + id;
+            };
+            const auto hint = [](const cyxwiz::simulation::CommandView& view) {
+                if (view.enabled && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", view.hint.c_str());
                 ImGui::SameLine();
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(t.success, "t = %.2f s", simulation_session_.GetSimTime());
-            } else if (ui::GhostButton(short_labels ? ICON_FA_PLAY "##run_sim" : ICON_FA_PLAY " Run Sim", !rl_running,
-                                       "Stop RL training first", true)) {
-                OnRunSimulation();
+            };
+            if (sim_running) {
+                if (ui::GhostButton(button_label(ICON_FA_PAUSE, sim.pause.label, "pause_sim").c_str()))
+                    RunSimulationCommand(Command::Pause);
+                hint(sim.pause);
+            } else {
+                const ImVec4 run_colour = t.success;
+                if (ui::GhostButton(button_label(ICON_FA_PLAY, sim.run.label, "run_sim").c_str(), sim.run.enabled,
+                                    sim.run.disabled_reason.c_str(), true, ui::ButtonSize::Small, &run_colour))
+                    RunSimulationCommand(Command::Run);
+                hint(sim.run);
             }
-            if (ImGui::IsItemHovered() && !rl_running) ImGui::SetTooltip("Run the graph simulation");
-            ImGui::SameLine();
+            if (simulation_session_.IsActive()) {
+                if (ui::GhostButton(button_label(ICON_FA_FORWARD_STEP, "Step", "step_sim").c_str()))
+                    RunSimulationCommand(Command::Step);
+                hint(sim.step);
+                if (ui::DangerButton(short_labels ? ICON_FA_STOP "##stop_sim" : ICON_FA_STOP " Stop Sim"))
+                    RunSimulationCommand(Command::Stop);
+                hint(sim.stop);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(sim_running ? t.running : t.pending, "t = %.2f s", simulation_session_.GetSimTime());
+                ImGui::SameLine();
+                if (!sim_running) {
+                    ImGui::TextColored(t.pending, "Paused");
+                    ImGui::SameLine();
+                }
+            }
             // The last run failed or was refused: the reason on hover.
             if (simulation_session_.GetState() == cyxwiz::SimulationState::Failed) {
                 ImGui::AlignTextToFramePadding();

@@ -22,6 +22,7 @@ struct ImNodesEditorContext;
 // Forward declare ScriptingEngine in global scripting namespace
 #include "../core/graph_model.h"
 #include "../core/graph_simulation_session.h"
+#include "../core/simulation_commands.h"
 #include "../core/studio_toolbar_presentation.h"
 #include "../core/operator_figures.h"
 #include "../core/pipeline_node_run_facts.h"
@@ -348,6 +349,20 @@ public:
     // live edits through it.
     cyxwiz::GraphSimulationSession& GetSimulationSession() { return simulation_session_; }
     bool IsGraphSimulationRunning() const { return simulation_session_.IsActive(); }
+    // The graph has nodes a graph run steps (built-in signal nodes, or plugin
+    // nodes their plugin runs in a simulation).
+    bool HasSimulationNodes() const;
+    // The graph's Signal Scopes, in canvas order.
+    std::vector<const MLNode*> GetSignalScopes() const;
+    // The open graph's name: its file name without the extension, or "Untitled".
+    std::string GetGraphStem() const;
+    // The run's commands for the toolbar, the Simulation menu and the
+    // Simulation Monitor, and the one place they are carried out.
+    cyxwiz::simulation::Commands GetSimulationCommands() const;
+    void RunSimulationCommand(cyxwiz::simulation::Command command);
+    // Called when a graph run has started (MainWindow shows the Simulation
+    // Monitor when Preferences says so).
+    void SetSimulationStartedCallback(std::function<void()> callback) { simulation_started_callback_ = std::move(callback); }
 
     // Training callback - set by MainWindow to trigger training from node graph
     using TrainCallback = std::function<void(const std::vector<MLNode>&, const std::vector<NodeLink>&)>;
@@ -1312,14 +1327,13 @@ private:
 
     // ===== Graph Simulation State =====
     cyxwiz::GraphSimulationSession simulation_session_;
-    float sim_rate_hz_ = 60.0f;  // Simulation tick rate
     // The plugins whose nodes the current run evaluates: stopping one of
     // them stops the run first.
     std::set<std::string> simulation_plugins_;
+    std::function<void()> simulation_started_callback_;
 
     void OnRunSimulation();
     void OnStopSimulation();
-    bool HasSimulationNodes() const;  // Check if graph contains signal/plant nodes
 
     // ===== RL Training State =====
     std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;

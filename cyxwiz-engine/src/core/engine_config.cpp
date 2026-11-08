@@ -417,6 +417,15 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         if (config.contains("data") && config["data"].is_object())
             data_budget_bytes_ = config["data"].value("budget_bytes", uint64_t{0});
 
+        simulation_rate_hz_ = kDefaultSimulationRateHz;
+        open_simulation_monitor_on_run_ = true;
+        if (config.contains("simulation") && config["simulation"].is_object()) {
+            const auto& simulation = config["simulation"];
+            simulation_rate_hz_ = std::clamp(simulation.value("rate_hz", kDefaultSimulationRateHz),
+                                             kMinSimulationRateHz, kMaxSimulationRateHz);
+            open_simulation_monitor_on_run_ = simulation.value("open_monitor_on_run", true);
+        }
+
         runtime_log_saved_filters_.clear();
         if (config.contains("observability") &&
             config["observability"].is_object()) {
@@ -534,6 +543,8 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
                 {"name", filter.name}, {"expression", filter.expression}});
         }
         config["data"] = {{"budget_bytes", data_budget_bytes_}};
+        config["simulation"] = {{"rate_hz", simulation_rate_hz_},
+                                {"open_monitor_on_run", open_simulation_monitor_on_run_}};
         config["observability"] = {
             {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
@@ -893,6 +904,33 @@ void EngineConfig::SetDataBudgetBytes(uint64_t bytes) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (data_budget_bytes_ != bytes) {
         data_budget_bytes_ = bytes;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::SimulationRateHz() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return simulation_rate_hz_;
+}
+
+void EngineConfig::SetSimulationRateHz(int hz) {
+    hz = std::clamp(hz, kMinSimulationRateHz, kMaxSimulationRateHz);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (simulation_rate_hz_ != hz) {
+        simulation_rate_hz_ = hz;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::OpenSimulationMonitorOnRun() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return open_simulation_monitor_on_run_;
+}
+
+void EngineConfig::SetOpenSimulationMonitorOnRun(bool open) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (open_simulation_monitor_on_run_ != open) {
+        open_simulation_monitor_on_run_ = open;
         modified_ = true;
     }
 }

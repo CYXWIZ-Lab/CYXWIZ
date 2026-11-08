@@ -183,6 +183,18 @@ public:
     uint64_t DataBudgetBytes() const;
     void SetDataBudgetBytes(uint64_t bytes);
 
+    // ===== Simulation (graph runs, Preferences > Simulation) =====
+
+    static constexpr int kMinSimulationRateHz = 1;
+    static constexpr int kMaxSimulationRateHz = 1000;
+    static constexpr int kDefaultSimulationRateHz = 60;
+    // Ticks a second of the next graph run, kept within 1..1000.
+    int SimulationRateHz() const;
+    void SetSimulationRateHz(int hz);
+    // Show the Simulation Monitor when a graph run starts. On by default.
+    bool OpenSimulationMonitorOnRun() const;
+    void SetOpenSimulationMonitorOnRun(bool open);
+
     // ===== Appearance (Engine-wide) =====
 
     AppearanceConfig GetAppearance() const;
@@ -248,6 +260,8 @@ private:
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;
     uint64_t data_budget_bytes_ = 0;
+    int simulation_rate_hz_ = kDefaultSimulationRateHz;
+    bool open_simulation_monitor_on_run_ = true;
     AppearanceConfig appearance_;
 
     // Recent projects

@@ -360,13 +360,17 @@ MJCF Model...). Needs `UIModify`.
 
 | Member | Contract |
 |---|---|
-| `std::vector<PluginCommandInfo> GetCommands()` | Asked once when the plugin starts. Each: `command_id` (unique in your plugin), `menu` (a top menu by its title, such as `"Simulation"` or `"Tools"`; a title the Engine has no menu for puts the command in **Apps** under that title), `group` (a separator between groups), `label` (end it with `...` when it opens a dialog), `hint` (one sentence for the status bar and the Command Palette), `checkable` |
+| `std::vector<PluginCommandInfo> GetCommands()` | Asked once when the plugin starts. Each: `command_id` (unique in your plugin), `menu` (a top menu by its title, such as `"Simulation"` or `"Tools"`; a title the Engine has no menu for puts the command in **Apps** under that title), `group` (a separator between groups), `label` (end it with `...` when it opens a dialog), `hint` (one sentence for the status bar and the Command Palette), `checkable`, `replaced_by_graph_run` (your own run control, such as Run or Stop of your viewport: hidden while the open graph is a simulation graph, whose run commands take its place) |
 | `PluginCommandState GetCommandState(const std::string& command_id)` | Asked every frame a menu or the palette shows the command, so keep it cheap: `enabled`, `disabled_reason` (shown on hover and in the status bar; say what to do), `checked` |
 | `void RunCommand(const std::string& command_id)` | The user chose it. Runs on the UI thread, between frames: open a panel with `PluginContext::ShowPanel` to show the result |
 
-The **Simulation** menu lists the commands that name it, then the panels
-whose `category` is `"Simulation"` as show/hide entries. Without a
-simulation plugin it says so. Everything is called on the UI thread; a
+The **Simulation** menu starts with the open graph's run (Run Sim or
+Resume, Pause, Step Once, Stop, Clear Traces) when the graph has simulation
+nodes. Then come the commands that name the menu, under each plugin's name,
+leaving out those marked `replaced_by_graph_run` while such a graph is open.
+Then **Simulation Monitor** and the panels whose `category` is
+`"Simulation"`, as show/hide entries. Without a simulation plugin it says
+so. Everything is called on the UI thread; a
 command that throws is logged and the Engine goes on.
 
 <!-- not compiled: a sketch; the full provider is plugins/simulation/mujoco/src/mujoco_plugin.cpp -->

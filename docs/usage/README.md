@@ -24,6 +24,7 @@ To write your own nodes in Python or C++, see
 | [Node dialogs](node_dialogs.md) | Configuring a node in its dialog |
 | [Branched graphs](branched_graphs.md) | Split and merge inside a model |
 | [Your own nodes](extension_nodes.md) | Python node bundles and C++ plugins in the Engine: install, approve, use |
+| [Graph simulation](graph_simulation.md) | Run Sim, the Simulation menu and the Simulation Monitor |
 
 ## Data
 

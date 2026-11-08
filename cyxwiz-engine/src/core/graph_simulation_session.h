@@ -46,7 +46,8 @@ public:
     void FailToStart(const std::string& reason);
     void Pause();
     void Resume();
-    // One tick while paused. Returns at once; the worker runs the tick.
+    // Pauses a running graph, then runs one tick. Returns at once; the
+    // worker runs the tick.
     void Step();
     // Ends the run and joins the worker. History stays until the next Start
     // or ClearHistory.
@@ -61,6 +62,8 @@ public:
     std::string GetError() const;
     float GetSimTime() const;
     std::uint64_t GetRunId() const { return run_id_.load(); }
+    // Ticks a second of the last run started; 0 before the first.
+    float GetRateHz() const { return rate_hz_.load(); }
 
     bool TryGetScalar(int pin_id, float& value) const;
     // A live edit from Properties. A Scope's window_size also resizes its history.
@@ -70,6 +73,11 @@ public:
     // node is no Scope of the last run.
     bool CopyScope(int node_id, std::vector<float>& times, std::vector<float>& values) const;
     void ClearScope(int node_id);
+    // How many samples a Scope keeps (its window size); 0 when the node is no
+    // Scope of the last run.
+    std::size_t GetScopeCapacity(int node_id) const;
+    // Empty every Scope; a run goes on sampling into them.
+    void ClearScopes();
     // Forget every Scope (a different graph was opened).
     void ClearHistory();
 
@@ -103,6 +111,7 @@ private:
 
     std::atomic<SimulationState> state_{SimulationState::Stopped};
     std::atomic<std::uint64_t> run_id_{0};
+    std::atomic<float> rate_hz_{0.0f};
 
     // Guards the worker's commands and the error.
     mutable std::mutex control_mutex_;

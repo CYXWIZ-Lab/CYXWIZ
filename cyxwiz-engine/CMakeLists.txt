@@ -290,6 +290,7 @@ set(ENGINE_SOURCES
     src/core/dataset_audit.cpp
     src/core/graph_executor.cpp
     src/core/graph_simulation_session.cpp
+    src/core/simulation_commands.cpp
     src/core/rl_script_generator.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
@@ -417,6 +418,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor.cpp
     src/gui/node_editor_plot.cpp
     src/gui/node_editor_toolbar.cpp
+    src/gui/simulation_scope_plot.cpp
     src/gui/plot/plot_node_lane.cpp
     src/core/pipeline_type_names.cpp
     src/gui/node_editor_clipboard.cpp
@@ -753,6 +755,7 @@ set(ENGINE_SOURCES
     src/gui/panels/cloud_browser.cpp
     src/gui/panels/node_browser_panel.cpp  # Node Browser: KNIME-style node palette
     src/gui/panels/node_info_panel.cpp     # Node Info: Context-sensitive documentation
+    src/gui/panels/simulation_monitor_panel.cpp  # Simulation Monitor: the graph run and its Scopes
     src/gui/panels/cloud_dataset_manager.cpp
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/p2p_training_panel_recovery.cpp
@@ -2990,6 +2993,31 @@ if(WIN32)
 endif()
 
 set_target_properties(test_graph_simulation_session PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Graph run commands (toolbar, Simulation menu, Simulation Monitor) =====
+add_executable(test_simulation_commands
+    tests/test_simulation_commands.cpp
+    src/core/simulation_commands.cpp
+)
+
+target_include_directories(test_simulation_commands PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_simulation_commands PRIVATE
+    imgui::imgui
+)
+
+if(WIN32)
+    target_compile_definitions(test_simulation_commands PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_simulation_commands PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

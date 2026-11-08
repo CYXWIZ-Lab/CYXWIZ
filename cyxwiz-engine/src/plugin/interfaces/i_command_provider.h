@@ -22,6 +22,10 @@ struct PluginCommandInfo {
     std::string label;  // "Run Simulation"; end it with "..." when it opens a dialog
     std::string hint;   // one sentence for the status bar and the Command Palette
     bool checkable = false;
+    // The plugin's own run control (Run, Pause, Step, Stop of its viewport):
+    // the Simulation menu hides it while the open graph is a simulation
+    // graph, whose run commands take its place.
+    bool replaced_by_graph_run = false;
 };
 
 struct PluginCommandState {

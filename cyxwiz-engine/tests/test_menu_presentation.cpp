@@ -43,9 +43,11 @@ MenuInputs SampleInputs() {
     // the Engine does not have
     in.plugin_commands = {
         {"sim.plugin:run", "Simulation", "run", "Run Simulation", "Runs the loaded model.", false,
-         "Load a model first.", false, false},
-        {"sim.plugin:stop", "Simulation", "run", "Stop", "Stops the run.", false, "Nothing is running.", false, false},
-        {"sim.plugin:load", "Simulation", "model", "Load MJCF Model...", "Opens a model file.", true, "", false, false},
+         "Load a model first.", false, false, "MuJoCo Simulation", true},
+        {"sim.plugin:stop", "Simulation", "run", "Stop", "Stops the run.", false, "Nothing is running.", false, false,
+         "MuJoCo Simulation", true},
+        {"sim.plugin:load", "Simulation", "model", "Load MJCF Model...", "Opens a model file.", true, "", false, false,
+         "MuJoCo Simulation", false},
         {"other.plugin:sync", "Robots", "", "Sync Robots", "Syncs the robots.", true, "", false, false}};
     in.loaded_plugins = {{"com.cyxwiz.examples.activation-nodes", "Example Activation Nodes", "2 nodes", true},
                          {"com.cyxwiz.simulation.mujoco", "MuJoCo Simulation", "2 windows, 5 nodes", true},
@@ -336,21 +338,58 @@ int main() {
         Check(!Find(BuildMenuModel(no_recent), "file.recent")->enabled, "empty recent list is disabled with a reason");
     }
 
-    // The Simulation menu is what simulation plugins add: their commands in
-    // groups, then their windows; without one it says so.
-    {
+    // The Simulation menu: with no simulation graph open, what simulation
+    // plugins add (their commands in groups under their name), then the
+    // Simulation Monitor and their windows; without a plugin it says so.
+    const auto simulation_menu = [](const MenuModel& built) {
         const Menu* sim = nullptr;
-        for (const auto& menu : model.menus) if (menu.label == "Simulation") sim = &menu;
-        Check(sim && sim->items.size() == 6, "Simulation: 3 commands, 2 separators, 1 window");
-        Check(sim->items[0].id == "plugin.command" && sim->items[0].argument == "sim.plugin:run" &&
-                  !sim->items[0].enabled && sim->items[0].disabled_reason == "Load a model first.",
+        for (const auto& menu : built.menus) if (menu.label == "Simulation") sim = &menu;
+        return sim;
+    };
+    {
+        const Menu* sim = simulation_menu(model);
+        Check(sim && sim->items.size() == 8, "Simulation: a heading, 3 commands, 2 separators, 2 windows");
+        Check(sim->items[0].kind == MenuItem::Kind::Header && sim->items[0].label == "MuJoCo Simulation",
+              "the plugin's commands sit under its name");
+        Check(sim->items[1].id == "plugin.command" && sim->items[1].argument == "sim.plugin:run" &&
+                  !sim->items[1].enabled && sim->items[1].disabled_reason == "Load a model first.",
               "a disabled command keeps the plugin's reason");
-        Check(sim->items[1].argument == "sim.plugin:stop" && sim->items[2].kind == MenuItem::Kind::Separator &&
-                  sim->items[3].label == "Load MJCF Model..." && sim->items[3].enabled,
+        Check(sim->items[2].argument == "sim.plugin:stop" && sim->items[3].kind == MenuItem::Kind::Separator &&
+                  sim->items[4].label == "Load MJCF Model..." && sim->items[4].enabled,
               "a separator between command groups");
-        Check(sim->items[4].kind == MenuItem::Kind::Separator && sim->items[5].id == "apps.panel" &&
-                  sim->items[5].argument == "mujoco_viewport" && sim->items[5].checkable,
+        Check(sim->items[5].kind == MenuItem::Kind::Separator && sim->items[6].id == "simulation.monitor" &&
+                  sim->items[6].checkable && !sim->items[6].checked,
+              "the Simulation Monitor follows as a toggle");
+        Check(sim->items[7].id == "apps.panel" && sim->items[7].argument == "mujoco_viewport" &&
+                  sim->items[7].checkable,
               "the plugin's Simulation windows follow as toggles");
+
+        // A simulation graph open: its run comes first and the plugin's own
+        // run commands give way to it
+        MenuInputs graph = in;
+        graph.simulation_graph = true;
+        graph.simulation_graph_name = "cartpole";
+        graph.simulation_monitor_visible = true;
+        graph.simulation_commands = {
+            {"simulation.run", "Run Sim", "Runs the open graph's simulation.", true, ""},
+            {"simulation.pause", "Pause", "Pauses the graph run.", false, "Nothing is running."},
+            {"simulation.step", "Step Once", "Pauses the graph run and advances it one tick.", false,
+             "Run the graph first."},
+            {"simulation.stop", "Stop", "Stops the graph run.", false, "Nothing is running."},
+            {"simulation.clear", "Clear Traces", "Empties every Signal Scope's trace; a run goes on.", true, ""}};
+        const MenuModel graph_model = BuildMenuModel(graph);
+        const Menu* run = simulation_menu(graph_model);
+        Check(run && run->items.size() == 12, "graph run: heading, 5 commands, plugin heading, 1 command, 2 windows");
+        Check(run->items[0].kind == MenuItem::Kind::Header && run->items[0].label == "Graph run: cartpole",
+              "the graph run is headed by the graph's name");
+        Check(run->items[1].id == "simulation.run" && run->items[1].enabled && run->items[2].id == "simulation.pause" &&
+                  !run->items[2].enabled && run->items[2].disabled_reason == "Nothing is running." &&
+                  run->items[5].id == "simulation.clear",
+              "the graph run's commands with their reasons");
+        Check(run->items[6].kind == MenuItem::Kind::Separator && run->items[7].label == "MuJoCo Simulation" &&
+                  run->items[8].argument == "sim.plugin:load",
+              "the plugin's run commands give way; its other commands stay");
+        Check(run->items[10].id == "simulation.monitor" && run->items[10].checked, "the Monitor shows as open");
         const MenuItem* sync = Find(model, "plugin.command", "other.plugin:sync");
         bool robots_heading = false;
         for (const auto& menu : model.menus)
@@ -360,10 +399,11 @@ int main() {
         MenuInputs bare = in;
         bare.plugin_commands.clear();
         bare.plugin_panels.clear();
-        for (const auto& menu : BuildMenuModel(bare).menus)
-            if (menu.label == "Simulation")
-                Check(menu.items.size() == 1 && menu.items[0].kind == MenuItem::Kind::Header,
-                      "no simulation plugin: the menu says so");
+        const MenuModel bare_model = BuildMenuModel(bare);
+        const Menu* none = simulation_menu(bare_model);
+        Check(none && none->items.size() == 3 && none->items[0].kind == MenuItem::Kind::Header &&
+                  none->items[2].id == "simulation.monitor",
+              "no simulation plugin: the menu says so and keeps the Monitor");
     }
 
     // ONNX export follows the build.

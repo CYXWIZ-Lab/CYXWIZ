@@ -118,6 +118,7 @@
 #include "panels/cloud_browser.h"
 #include "panels/node_browser_panel.h"
 #include "panels/node_info_panel.h"
+#include "panels/simulation_monitor_panel.h"
 #include "../core/node_metadata.h"
 #include "panels/cloud_dataset_manager.h"
 #include "panels/plugin_manager_panel.h"
@@ -738,6 +739,15 @@ MainWindow::MainWindow()
     node_browser_panel_ = std::make_unique<gui::NodeBrowserPanel>();
     node_browser_panel_->SetNodeEditor(node_editor_.get());
     node_info_panel_ = std::make_unique<cyxwiz::NodeInfoPanel>();
+    // The graph run's window; a run shows it when Preferences > Simulation says so.
+    simulation_monitor_panel_ = std::make_unique<cyxwiz::SimulationMonitorPanel>();
+    simulation_monitor_panel_->SetNodeEditor(node_editor_.get());
+    if (node_editor_) {
+        node_editor_->SetSimulationStartedCallback([this]() {
+            if (cyxwiz::core::EngineConfig::Instance().OpenSimulationMonitorOnRun())
+                simulation_monitor_panel_->ShowAndFocus();
+        });
+    }
     // Connect Node Browser hover to Info Panel
     if (node_browser_panel_ && node_info_panel_) {
         // Hover previews a node; a click keeps it in the Info panel.
@@ -2177,7 +2187,20 @@ MainWindow::MainWindow()
             s.script_open = script_editor_->HasEditableScript();
             s.script_running = script_editor_->IsScriptRunning();
         }
+        if (node_editor_ && node_editor_->HasSimulationNodes()) {
+            s.simulation_graph = true;
+            s.simulation_graph_name = node_editor_->GetGraphStem();
+            const auto c = node_editor_->GetSimulationCommands();
+            for (const auto* view : {&c.run, &c.pause, &c.step, &c.stop, &c.clear})
+                s.simulation_commands.push_back({cyxwiz::simulation::ActionId(view->command), view->label, view->hint,
+                                                 view->enabled, view->disabled_reason});
+        }
         return s;
+    });
+    toolbar_->SetSimulationCommandCallback([this](const std::string& action_id) {
+        cyxwiz::simulation::Command command;
+        if (node_editor_ && cyxwiz::simulation::CommandFromActionId(action_id, command))
+            node_editor_->RunSimulationCommand(command);
     });
 
     // Set up Open Python Console callback
@@ -3071,6 +3094,7 @@ void MainWindow::Render() {
     TimedRender("cloud browser", cloud_browser_panel_);
     TimedRender("node browser", node_browser_panel_);
     TimedRender("node info", node_info_panel_);
+    TimedRender("simulation monitor", simulation_monitor_panel_);
     TimedRender("cloud dataset manager", cloud_dataset_manager_panel_);
 
     // Plugin Manager panel
@@ -3398,6 +3422,7 @@ void MainWindow::BuildInitialDockLayout() {
                              "P2P Training Progress"})
         ImGui::DockBuilderDockWindow(name, dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("###StudioDebuggerPanel", dock_id_bottom_right);
+    ImGui::DockBuilderDockWindow("Simulation Monitor", dock_id_bottom_right);
 
     // Finish the docking layout
     ImGui::DockBuilderFinish(dockspace_id);
@@ -3437,6 +3462,7 @@ void MainWindow::RegisterPanelsWithSidebar() {
     add("Script Editor", ICON_FA_CODE, script_editor_, "Workspace");
     add("Console", ICON_FA_TERMINAL, console_, "Workspace");
     add("Viewport", ICON_FA_CUBE, viewport_, "Workspace");
+    add("Simulation Monitor", ICON_FA_WAVE_SQUARE, simulation_monitor_panel_, "Workspace");
 
     // Data
     add("Data Studio", ICON_FA_WAND_MAGIC_SPARKLES, data_studio_panel_, "Data");

@@ -774,22 +774,52 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
 
     // ---------------------------------------------------------- Simulation
     {
-        // Filled by simulation plugins: their commands, then their windows
+        // The open graph's run when it has simulation nodes; then each
+        // simulation plugin's commands under its name (its own run controls
+        // give way to the graph run); then the windows.
         Menu m{"simulation", "Simulation", {}};
         auto& i = m.items;
-        AppendPluginCommands(f, in.plugin_commands, "Simulation", i);
-        bool first_panel = true;
+        if (in.simulation_graph) {
+            i.push_back(Head("Graph run: " + in.simulation_graph_name));
+            for (const auto& c : in.simulation_commands) {
+                Opts opts;
+                if (!c.enabled) opts.why = c.disabled_reason.empty() ? "Not available now." : c.disabled_reason;
+                i.push_back(Action(f, c.action_id, c.label, c.hint, opts));
+            }
+        }
+        std::vector<PluginCommandEntry> plugin_commands;
+        for (const auto& c : in.plugin_commands)
+            if (c.menu == "Simulation" && !(in.simulation_graph && c.replaced_by_graph_run)) plugin_commands.push_back(c);
+        std::string plugin;
+        for (std::size_t k = 0; k < plugin_commands.size();) {
+            plugin = plugin_commands[k].plugin_name;
+            std::vector<PluginCommandEntry> own;
+            for (; k < plugin_commands.size() && plugin_commands[k].plugin_name == plugin; ++k)
+                own.push_back(plugin_commands[k]);
+            if (!i.empty()) i.push_back(Sep());
+            if (!plugin.empty()) i.push_back(Head(plugin));
+            AppendPluginCommands(f, own, "Simulation", i);
+        }
+        const bool from_plugins = !plugin_commands.empty() ||
+            std::any_of(in.plugin_panels.begin(), in.plugin_panels.end(),
+                        [](const NamedEntry& p) { return p.group == "Simulation"; });
+        if (!from_plugins) i.push_back(Head("No simulation plugin loaded. Add one in the Plugin Manager."));
+        if (!i.empty()) i.push_back(Sep());
+        {
+            Opts opts;
+            opts.checkable = true;
+            opts.checked = in.simulation_monitor_visible;
+            i.push_back(Action(f, "simulation.monitor", "Simulation Monitor",
+                               "Shows or hides the Simulation Monitor: the graph run and its Scopes.", opts));
+        }
         for (const auto& p : in.plugin_panels) {
             if (p.group != "Simulation") continue;
-            if (first_panel && !i.empty()) i.push_back(Sep());
-            first_panel = false;
             Opts opts;
             opts.checkable = true;
             opts.checked = p.checked;
             opts.argument = p.id;
             i.push_back(Action(f, "apps.panel", p.label, "Shows or hides this window.", opts));
         }
-        if (i.empty()) i.push_back(Head("No simulation plugin loaded. Add one in the Plugin Manager."));
         model.menus.push_back(std::move(m));
     }
 

@@ -120,6 +120,9 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
         in.training = s.training;
         in.script_open = s.script_open;
         in.script_running = s.script_running;
+        in.simulation_graph = s.simulation_graph;
+        in.simulation_graph_name = s.simulation_graph_name;
+        in.simulation_commands = s.simulation_commands;
     }
     auto& pm = ProjectManager::Instance();
     in.has_project = pm.HasActiveProject();
@@ -143,6 +146,7 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
     for (const auto& p : gui::GetDockStyle().GetPanels()) {
         if (!p.visible_ptr) continue;  // actions such as the Command Palette
         in.panels.push_back({p.name, p.group.empty() ? "Other" : p.group, *p.visible_ptr, p.shortcut});
+        if (p.name == "Simulation Monitor") in.simulation_monitor_visible = *p.visible_ptr;
     }
 
     for (const auto& rp : pm.GetRecentProjects()) in.recent_projects.push_back({rp.path, rp.name, false, ""});
@@ -174,8 +178,11 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
                 in.plugin_panels.push_back({p.panel_id, p.title, panel_reg.IsPanelVisible(p.panel_id), category});
     }
     for (const auto& c : plugin::PluginCommandRegistry::Instance().Snapshot()) {
+        // The key is "<plugin id>:<command id>"
+        const auto* owner = plugin::PluginManager::Instance().GetLoadedPlugin(c.key.substr(0, c.key.rfind(':')));
         in.plugin_commands.push_back({c.key, c.info.menu, c.info.group, c.info.label, c.info.hint, c.state.enabled,
-                                      c.state.disabled_reason, c.info.checkable, c.state.checked});
+                                      c.state.disabled_reason, c.info.checkable, c.state.checked,
+                                      owner ? owner->manifest.name : std::string(), c.info.replaced_by_graph_run});
     }
     for (const auto* p : plugin::PluginManager::Instance().GetAllPlugins()) {
         if (!p) continue;
@@ -573,6 +580,15 @@ void ToolbarPanel::BuildActionHandlers() {
     call("deploy.serving", open_serving_callback_);
     call("deploy.convert_bin_to_dir", convert_binary_to_dir_callback_);
     call("deploy.convert_dir_to_bin", convert_dir_to_binary_callback_);
+
+    // Simulation: the open graph's run, then the Monitor window
+    for (const char* id : {"simulation.run", "simulation.pause", "simulation.step", "simulation.stop",
+                           "simulation.clear"}) {
+        h[id] = [this, id](const std::string&) {
+            if (simulation_command_callback_) simulation_command_callback_(id);
+        };
+    }
+    h["simulation.monitor"] = [](const std::string&) { ShowSidebarPanel("Simulation Monitor", true); };
 
     // Commands plugins add to the menus (Simulation and others)
     h["plugin.command"] = [](const std::string& key) {
