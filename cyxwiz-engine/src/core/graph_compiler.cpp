@@ -3361,11 +3361,6 @@ bool ResolveReshapeTargetShape(const std::map<std::string, std::string>& params,
         error = "Reshape/View requires a non-empty shape parameter";
         return false;
     }
-    if (input_shape.empty()) {
-        error = "Reshape/View requires a known input shape";
-        return false;
-    }
-
     std::string shape_str = it->second;
     shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
     shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
@@ -3414,6 +3409,18 @@ bool ResolveReshapeTargetShape(const std::map<std::string, std::string>& params,
             return false;
         }
         known_product = next;
+    }
+
+    // Before the data is loaded the input is unknown: a full target shape is
+    // still the output (the element count is checked once the data comes);
+    // a -1 needs the input.
+    if (input_shape.empty()) {
+        if (infer_index >= 0) {
+            error = "Reshape/View with a -1 dimension needs a known input shape (load the data)";
+            return false;
+        }
+        target_shape.assign(dims.begin(), dims.end());
+        return true;
     }
 
     size_t input_elements = 0;
@@ -6594,10 +6601,14 @@ TrainingConfiguration GraphCompiler::Compile(
             for (size_t d : shape) n *= d;
             return n;
         };
-        if ((first.type == gui::NodeType::Reshape || first.type == gui::NodeType::View) && first.input_shape.size() == 1 &&
-            first.output_shape.size() == 3 && elements(first.input_shape) == elements(first.output_shape) &&
+        // Before the data is loaded the rows' width is unknown; the data's
+        // compile checks it.
+        const bool rows_fit = first.input_shape.empty() ||
+                              (first.input_shape.size() == 1 && elements(first.input_shape) == elements(first.output_shape));
+        if ((first.type == gui::NodeType::Reshape || first.type == gui::NodeType::View) && rows_fit && first.output_shape.size() == 3 &&
             (spatial::IsSpatialLayer(next) || spatial::IsGlobalPoolLayer(next))) {
             config.input_shape = first.output_shape;
+            config.input_size = elements(first.output_shape);
             config.layers.erase(config.layers.begin());
             AddIssue(config, IssueLevel::Info,
                      first.name + " reads each row of " + std::to_string(elements(first.output_shape)) + " values as a [" +

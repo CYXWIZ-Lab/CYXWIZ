@@ -141,9 +141,9 @@ Graph MnistCnn() {
 }
 
 // MNIST as a CSV: 784 pixel columns reshaped to 28 x 28 x 1 before the CNN.
-Graph MnistRows() {
+Graph MnistRows(const std::string& width = "[784]") {
     Graph g;
-    const int loader = g.Data("tabular", "[784]");
+    const int loader = g.Data("tabular", width);
     const int last = g.Chain(loader, {
         g.Add(gui::NodeType::Reshape, "Image 28 x 28", {{"shape", "28,28,1"}}),
         g.Add(gui::NodeType::Conv2D, "Conv2D 32", {{"filters", "32"}, {"kernel_size", "3"}, {"padding", "valid"}}),
@@ -380,6 +380,13 @@ int main(int argc, char** argv) {
         for (const auto& issue : rows.config.issues)
             said = said || issue.message.find("reads each row of 784 values as a [28, 28, 1] image") != std::string::npos;
         Check(said, "the compile says how it reads the rows");
+        // Before the data is loaded (no width yet) the graph still compiles,
+        // as a Dense-first one does; a width that is not 28 x 28 is refused.
+        const auto unloaded = cyxwiz::GraphCompiler{}.Compile(MnistRows("").nodes, MnistRows("").links, true);
+        Check(unloaded.is_valid && unloaded.input_shape == std::vector<size_t>({28, 28, 1}) && unloaded.input_size == 784,
+              "the CNN compiles before its rows are loaded");
+        const auto narrow = cyxwiz::GraphCompiler{}.Compile(MnistRows("[700]").nodes, MnistRows("[700]").links, true);
+        Check(!narrow.is_valid, "700 columns cannot be read as 28 x 28 x 1");
     }
     // A convolution after a Dense is refused at compile, not at Train.
     {
