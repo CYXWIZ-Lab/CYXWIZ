@@ -185,6 +185,7 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::Average: return "Average";
         case gui::NodeType::Output: return "Output";
         case gui::NodeType::DatasetInput: return "DatasetInput";
+        case gui::NodeType::DataInput: return "DataInput";
         case gui::NodeType::DataLoader: return "DataLoader";
         case gui::NodeType::DataSplit: return "DataSplit";
         case gui::NodeType::Normalize: return "Normalize";
@@ -203,7 +204,8 @@ std::string GetNodeTypeName(gui::NodeType type) {
 ModelAnalysis ModelAnalyzer::AnalyzeGraph(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
-    int batch_size
+    int batch_size,
+    const std::vector<size_t>& input_shape
 ) {
     ModelAnalysis result;
 
@@ -220,10 +222,12 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
     }
 
     // Find input shape from DatasetInput or first layer
-    std::vector<size_t> current_shape;
-    bool found_input = false;
+    std::vector<size_t> current_shape = input_shape;
+    bool found_input = !input_shape.empty();
+    if (found_input) result.input_shape = current_shape;
 
     for (int node_id : sorted_ids) {
+        if (found_input) break;
         const gui::MLNode* node = FindNodeById(node_id, nodes);
         if (!node) continue;
 
@@ -833,31 +837,15 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
                 return {};
             }
         }
-        case gui::NodeType::Conv2D: {
-            int filters = GetIntParam(node, "filters", 32);
-            int kernel_size = GetIntParam(node, "kernel_size", 3);
-            int stride = GetIntParam(node, "stride", 1);
-            int padding = GetIntParam(node, "padding", 0);
-
-            size_t h = input_shape.size() >= 1 ? input_shape[0] : 1;
-            size_t w = input_shape.size() >= 2 ? input_shape[1] : 1;
-
-            size_t out_h = (h + 2 * padding - kernel_size) / stride + 1;
-            size_t out_w = (w + 2 * padding - kernel_size) / stride + 1;
-            return {out_h, out_w, static_cast<size_t>(filters)};
-        }
+        // The compiler's geometry: padding "same" / "valid" / a number.
+        case gui::NodeType::Conv2D:
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D: {
-            int pool_size = GetIntParam(node, "pool_size", 2);
-            int stride = GetIntParam(node, "stride", pool_size);
-
-            size_t h = input_shape.size() >= 1 ? input_shape[0] : 1;
-            size_t w = input_shape.size() >= 2 ? input_shape[1] : 1;
-            size_t c = input_shape.size() >= 3 ? input_shape[2] : 1;
-
-            size_t out_h = (h - pool_size) / stride + 1;
-            size_t out_w = (w - pool_size) / stride + 1;
-            return {out_h, out_w, c};
+            try {
+                return spatial::SampleShapeAfter(node.type, node.parameters, input_shape);
+            } catch (const std::invalid_argument&) {
+                return {};
+            }
         }
         case gui::NodeType::GlobalMaxPool:
         case gui::NodeType::GlobalAvgPool: {

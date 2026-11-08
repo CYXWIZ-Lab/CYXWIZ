@@ -58,12 +58,15 @@ public:
      * @param nodes List of nodes from NodeEditor
      * @param links List of links from NodeEditor
      * @param batch_size Batch size for FLOPs/memory calculation (default 1)
+     * @param input_shape One sample as the model receives it ([H, W, C] or
+     *        [features]); empty: read from the graph's Dataset Input node
      * @return ModelAnalysis with layer-wise and total statistics
      */
     ModelAnalysis AnalyzeGraph(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
-        int batch_size = 1
+        int batch_size = 1,
+        const std::vector<size_t>& input_shape = {}
     );
 
     /**

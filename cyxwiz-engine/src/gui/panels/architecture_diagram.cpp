@@ -1,5 +1,6 @@
 #include "architecture_diagram.h"
 #include "../node_editor.h"
+#include "../../core/live_graph_compile.h"
 #include "../icons.h"
 #include "../ui_tokens.h"
 #include <imgui.h>
@@ -565,7 +566,11 @@ void ArchitectureDiagram::RefreshDiagram() {
         return;
     }
 
-    analysis_ = analyzer_.AnalyzeGraph(nodes, links, 1);
+    // One sample as the compile read it from the data; without a compile,
+    // the analysis reads the graph's Dataset Input.
+    const auto* live = node_editor_->GetLiveCompile();
+    const auto* compiled = live ? live->Config() : nullptr;
+    analysis_ = analyzer_.AnalyzeGraph(nodes, links, 1, compiled ? compiled->input_shape : std::vector<size_t>{});
     ComputeLayout();
 
     if (analysis_.is_valid) {

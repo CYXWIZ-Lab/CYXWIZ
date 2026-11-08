@@ -1,5 +1,6 @@
 #include "model_summary_panel.h"
 #include "../node_editor.h"
+#include "../../core/live_graph_compile.h"
 #include "../icons.h"
 #include "../ui_tokens.h"
 #include <imgui.h>
@@ -424,7 +425,12 @@ void ModelSummaryPanel::RefreshAnalysis() {
         return;
     }
 
-    analysis_ = analyzer_.AnalyzeGraph(nodes, links, batch_size_);
+    // One sample as the compile read it from the data; without a compile,
+    // the analysis reads the graph's Dataset Input.
+    const auto* live = node_editor_->GetLiveCompile();
+    const auto* compiled = live ? live->Config() : nullptr;
+    analysis_ = analyzer_.AnalyzeGraph(nodes, links, batch_size_,
+                                       compiled ? compiled->input_shape : std::vector<size_t>{});
     selected_layer_ = -1;
 
     if (analysis_.is_valid) {
