@@ -11,7 +11,10 @@
 //
 // Sections: Overview, Confusion matrix, Classes, Errors (the mistakes by pair,
 // the most confident ones with their inputs, TOFIX129 D11), Curves,
-// Threshold (the positive class by name, a typed threshold, Best F1),
+// Threshold (the positive class by name, a typed threshold, picked by Best
+// F1, a recall target or the cost of each error, precision / recall / F1 by
+// threshold; a confidence floor for several classes), Calibration
+// (reliability before and after a temperature, Platt or isotonic fit),
 // Predictions, Plots
 // (regression), By column value, Comparison. Export CSV / JSON, Keep as node,
 // Clear (asks first), Run test again.
@@ -21,6 +24,7 @@
 #include "../../core/test_executor.h"
 #include "../../core/test_predictions_metrics.h"
 #include "../../core/test_results_presentation.h"
+#include "../../core/threshold_calibration.h"
 
 #include <imgui.h>
 
@@ -98,6 +102,8 @@ private:
     void RenderThreshold(const TestingMetrics& m);
     void RenderPredictions(const TestingMetrics& m);
     void RenderErrors(const TestingMetrics& m);
+    void RenderConfidenceFloor(const TestingMetrics& m);
+    void RenderCalibration(const TestingMetrics& m);
     void ReleaseThumbnails();
     void RenderRegressionRows(const TestingMetrics& m);
     void RenderRegressionPlots(const TestingMetrics& m);
@@ -143,6 +149,14 @@ private:
     // The positive class's curves and threshold.
     int positive_ = -1;  // -1: class 1 of two, class 0 of more
     double threshold_ = 0.5;
+    double recall_target_ = 0.9;
+    double cost_fp_ = 1.0, cost_fn_ = 1.0;
+    double floor_ = 0.9;
+    // Calibration of the shown run.
+    int calibration_method_ = 0;  // yes / no: 0 Platt, 1 isotonic, 2 temperature
+    int calibration_view_ = 1;    // 0 before, 1 after
+    test_report::CalibrationReport calibration_;
+    std::string calibration_key_;
     std::string curves_key_;
     ClassCurves curves_;
     std::string curves_error_;

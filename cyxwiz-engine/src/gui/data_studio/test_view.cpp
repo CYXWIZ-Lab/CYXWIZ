@@ -265,6 +265,8 @@ void TestView::Render() {
             if (!m->metric_learning_mode) section("Errors###errors", [&] { RenderErrors(*m); });
             if (!m->metric_learning_mode) section("Curves###curves", [&] { RenderCurves(*m); });
             if (curves) section("Threshold###threshold", [&] { RenderThreshold(*m); });
+            if (!m->metric_learning_mode && m->probability_classes >= 2)
+                section("Calibration###calibration", [&] { RenderCalibration(*m); });
             section("Predictions###predictions", [&] { RenderPredictions(*m); });
         } else if (m->regression_mode) {
             section("Plots###plots", [&] { RenderRegressionPlots(*m); });
@@ -691,6 +693,10 @@ void TestView::RenderCurves(const TestingMetrics& m) {
 // The figures at a threshold, read off the class's ROC (no pass over the rows).
 void TestView::RenderThreshold(const TestingMetrics& m) {
     const ui::Tokens& t = ui::CurrentTokens();
+    if (m.per_class_metrics.size() > 2) RenderConfidenceFloor(m);
+    Wrapped(t.text_dim, m.per_class_metrics.size() > 2
+                            ? "One class against the rest: that class is predicted when its score reaches the threshold."
+                            : "A yes / no model says yes when its probability reaches the threshold. 0.5 is a habit, not a rule.");
     RenderPositiveClass(m);
     if (!EnsureCurves(m)) {
         Wrapped(t.caution, curves_error_);
@@ -712,6 +718,40 @@ void TestView::RenderThreshold(const TestingMetrics& m) {
     const double best = test_report::BestF1Threshold(curves_.roc, curves_.positives, curves_.negatives);
     if (ui::SecondaryButton("Best F1", std::isfinite(best), "No threshold gives a positive", ui::ButtonSize::Small))
         threshold_ = best;
+    // Pick by a recall target, or by the cost of each error.
+    ImGui::SameLine();
+    Label("Recall â¥");
+    ui::NumberFieldOptions target;
+    target.min = 0.0;
+    target.max = 1.0;
+    target.step = 0.05;
+    target.format = "%.2f";
+    target.width = 60.0f;
+    target.hint = "The share of the positives to find";
+    ui::NumberField("##recall_target", &recall_target_, target);
+    ImGui::SameLine();
+    const double for_recall = test_report::ThresholdForRecall(curves_.roc, curves_.positives, curves_.negatives, recall_target_);
+    if (ui::SecondaryButton("Use##recall", std::isfinite(for_recall), "No threshold reaches that recall", ui::ButtonSize::Small))
+        threshold_ = for_recall;
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Cost of each error...", true, nullptr, ui::ButtonSize::Small)) ImGui::OpenPopup("##threshold_cost");
+    if (ImGui::BeginPopup("##threshold_cost")) {
+        ui::NumberFieldOptions cost;
+        cost.min = 0.0;
+        cost.max = 1e9;
+        cost.format = "%g";
+        cost.width = 90.0f;
+        ui::FieldLabel(("A false alarm (" + rest + " called " + positive + ")").c_str());
+        ui::NumberField("##cost_fp", &cost_fp_, cost);
+        ui::FieldLabel(("A miss (" + positive + " not found)").c_str());
+        ui::NumberField("##cost_fn", &cost_fn_, cost);
+        const double cheapest = test_report::LowestCostThreshold(curves_.roc, curves_.positives, curves_.negatives, cost_fp_, cost_fn_);
+        if (ui::PrimaryButton("Use the lowest cost", std::isfinite(cheapest), "No threshold")) {
+            threshold_ = cheapest;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
     const test_report::ThresholdFigures f = test_report::AtThreshold(curves_.roc, curves_.positives, curves_.negatives, threshold_);
     if (!f.ok) {
         Wrapped(t.text_dim, "The test needs samples of " + positive + " and of " + rest + ".");
@@ -752,6 +792,116 @@ void TestView::RenderThreshold(const TestingMetrics& m) {
                                 positive + " missed, of " + FormatCompiledCount(f.tp + f.fp + f.tn + f.fn) + ".");
         ImGui::EndTable();
     }
+    // Precision, recall and F1 by threshold, the threshold in use marked.
+    const auto sweep = test_report::SweepThresholds(curves_.roc, curves_.positives, curves_.negatives);
+    if (sweep.thresholds.size() >= 2 &&
+        ImPlot::BeginPlot("##threshold_sweep", ImVec2(-1, 240.0f), ImPlotFlags_NoMenus)) {
+        ImPlot::SetupAxes("threshold", "", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.05, ImPlotCond_Always);
+        const int n = static_cast<int>(sweep.thresholds.size());
+        ImPlot::SetNextLineStyle(t.series[0], 2.0f);
+        ImPlot::PlotStairs("precision", sweep.thresholds.data(), sweep.precision.data(), n);
+        ImPlot::SetNextLineStyle(t.series[1], 2.0f);
+        ImPlot::PlotStairs("recall", sweep.thresholds.data(), sweep.recall.data(), n);
+        ImPlot::SetNextLineStyle(t.series[2], 2.0f);
+        ImPlot::PlotStairs("F1", sweep.thresholds.data(), sweep.f1.data(), n);
+        ImPlot::SetNextLineStyle(t.text_dim, 1.0f);
+        ImPlot::PlotInfLines("threshold", &threshold_, 1);
+        ImPlot::EndPlot();
+    }
+}
+
+void TestView::RenderConfidenceFloor(const TestingMetrics& m) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ui::BeginCard("confidence_floor");
+    ImGui::TextColored(t.text_bright, "Confidence floor");
+    Wrapped(t.text_dim, "A model with several classes gets a confidence floor: below it a row is left for a person.");
+    ui::NumberFieldOptions options;
+    options.min = 0.0;
+    options.max = 0.99;
+    options.step = 0.05;
+    options.format = "%.2f";
+    options.width = 60.0f;
+    options.hint = "Answer only when the top probability is at least this";
+    Label("Floor");
+    ui::NumberField("##floor", &floor_, options);
+    const auto at = test_report::AtConfidenceFloor(m, floor_);
+    char line[200];
+    std::snprintf(line, sizeof(line), "At %.2f: %.1f %% of the rows answered (%d of %d), %.2f %% of those right.", floor_,
+                  at.answered_share * 100.0, at.answered, at.total, at.accuracy * 100.0);
+    Wrapped(t.text, line);
+    const auto curve = test_report::ConfidenceFloorCurve(m);
+    std::vector<double> floors, answered, accuracy;
+    for (const auto& c : curve) {
+        floors.push_back(c.floor);
+        answered.push_back(c.answered_share);
+        accuracy.push_back(c.answered ? c.accuracy : NAN);
+    }
+    if (ImPlot::BeginPlot("##floor_curve", ImVec2(-1, 180.0f), ImPlotFlags_NoMenus)) {
+        ImPlot::SetupAxes("floor", "", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_None);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.05, ImPlotCond_Always);
+        ImPlot::SetNextLineStyle(t.series[0], 2.0f);
+        ImPlot::PlotLine("rows answered", floors.data(), answered.data(), static_cast<int>(floors.size()));
+        ImPlot::SetNextLineStyle(t.series[2], 2.0f);
+        ImPlot::PlotLine("right among them", floors.data(), accuracy.data(), static_cast<int>(floors.size()));
+        ImPlot::SetNextLineStyle(t.text_dim, 1.0f);
+        ImPlot::PlotInfLines("floor", &floor_, 1);
+        ImPlot::EndPlot();
+    }
+    ui::EndCard();
+}
+
+void TestView::RenderCalibration(const TestingMetrics& m) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const bool yes_no = m.probability_classes == 2;
+    if (yes_no) {
+        static const char* const kMethods[] = {"Platt", "Isotonic", "Temperature"};
+        Label("Method");
+        ui::SegmentedControl("##calibration_method", kMethods, 3, &calibration_method_);
+    }
+    const auto method = !yes_no || calibration_method_ == 2 ? test_report::CalibrationMethod::Temperature
+                        : calibration_method_ == 0          ? test_report::CalibrationMethod::Platt
+                                                            : test_report::CalibrationMethod::Isotonic;
+    const int positive = positive_ >= 0 ? positive_ : 1;
+    const std::string key = std::to_string(shown_version_) + "/" + std::to_string(static_cast<int>(method)) + "/" +
+                            std::to_string(positive);
+    if (key != calibration_key_) {
+        calibration_key_ = key;
+        calibration_ = test_report::Calibrate(m, method, positive);
+    }
+    if (!calibration_.ok) {
+        Wrapped(t.text_dim, calibration_.error);
+        return;
+    }
+    if (!calibration_.headline.empty()) Wrapped(t.text, calibration_.headline);
+    Wrapped(t.text_dim, calibration_.detail);
+    ImGui::Spacing();
+    static const char* const kViews[] = {"Before", "After"};
+    ui::SegmentedControl("##calibration_view", kViews, 2, &calibration_view_);
+    const test_report::Reliability& r = calibration_view_ == 0 ? calibration_.before : calibration_.after;
+    std::vector<double> centres, accuracy, diagonal = {0.0, 1.0};
+    for (const auto& bin : r.bins) {
+        centres.push_back((bin.low + bin.high) / 2.0);
+        accuracy.push_back(bin.count ? bin.accuracy : 0.0);
+    }
+    if (ImPlot::BeginPlot("##reliability", ImVec2(-1, 260.0f), ImPlotFlags_NoMenus | ImPlotFlags_NoLegend)) {
+        ImPlot::SetupAxes(yes_no ? "the model's probability" : "the model's confidence",
+                          yes_no ? "share that is it" : "share right", ImPlotAxisFlags_None, ImPlotAxisFlags_None);
+        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, 1.0, ImPlotCond_Always);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.05, ImPlotCond_Always);
+        ImPlot::SetNextFillStyle(ui::WithAlpha(t.series[0], 0.75f));
+        ImPlot::PlotBars("accuracy", centres.data(), accuracy.data(), static_cast<int>(centres.size()), 0.08);
+        ImPlot::SetNextLineStyle(t.text_dim, 1.0f);
+        ImPlot::PlotLine("perfect", diagonal.data(), diagonal.data(), 2);
+        for (const auto& bin : r.bins) {
+            if (bin.count == 0) continue;
+            ImPlot::Annotation((bin.low + bin.high) / 2.0, bin.accuracy, t.text_dim, ImVec2(0, -8), true, "%d", bin.count);
+        }
+        ImPlot::EndPlot();
+    }
+    Wrapped(t.text_faint, "Bars: the share right of the rows in each probability band (their counts above); the "
+                          "line is perfect calibration. Several classes: temperature scaling. Yes / no: Platt (a "
+                          "logistic fit) or isotonic. Fitted on the even test rows and shown on the odd ones.");
 }
 
 void TestView::RenderPredictions(const TestingMetrics& m) {

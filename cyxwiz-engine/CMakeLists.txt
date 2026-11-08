@@ -467,6 +467,7 @@ set(ENGINE_SOURCES
     src/core/model_summary_presentation.cpp
     src/core/model_explain.cpp
     src/core/model_projector.cpp
+    src/core/threshold_calibration.cpp
     src/core/training_health_presentation.cpp
     src/core/compile_report_presentation.cpp
     src/core/studio_toolbar_presentation.cpp
@@ -4921,6 +4922,26 @@ add_test(NAME test_results_presentation COMMAND test_test_results_presentation)
 set_target_properties(test_saved_ner_sequence_smoke PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: Results > Test threshold and calibration vs scikit-learn (TOFIX129 D11) =====
+add_executable(test_threshold_calibration
+    tests/test_threshold_calibration.cpp
+    src/core/threshold_calibration.cpp
+    src/core/test_results_presentation.cpp
+    src/core/test_metrics.cpp
+    src/core/one_vs_rest_curves.cpp
+    src/core/compiled_node_presentation.cpp
+)
+target_include_directories(test_threshold_calibration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_threshold_calibration PRIVATE cyxwiz-training-core nlohmann_json::nlohmann_json cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_threshold_calibration PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+target_compile_definitions(test_threshold_calibration PRIVATE
+    CYXWIZ_EVALUATION_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/evaluation_sklearn.json"
+    CYXWIZ_THRESHOLD_CALIBRATION_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/threshold_calibration_sklearn.json")
+set_target_properties(test_threshold_calibration PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME threshold_calibration_sklearn_parity COMMAND test_threshold_calibration)
 
 # ===== Test: Training Batcher Setup Helper =====
 add_executable(test_training_batcher_setup
