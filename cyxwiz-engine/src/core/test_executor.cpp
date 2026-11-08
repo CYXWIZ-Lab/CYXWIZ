@@ -416,10 +416,9 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
         batch_num++;
 
         // Process batch
-        ProcessBatch(batch);
+        const Tensor predictions = ProcessBatch(batch);
 
         // Compute current loss for this batch
-        Tensor predictions = Forward(batch.data);
         float batch_loss = ComputeLoss(predictions, batch.labels);
         total_loss += batch_loss;
 
@@ -485,7 +484,7 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
     }
 }
 
-void TestExecutor::ProcessBatch(const Batch& batch) {
+Tensor TestExecutor::ProcessBatch(const Batch& batch) {
     // Forward pass
     Tensor predictions = Forward(batch.data);
 
@@ -536,7 +535,7 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
                     static_cast<float>(transform.InverseValue(pred_data[i], i % output_width)));
             }
         });
-        return;
+        return predictions;
     }
 
     const auto decision_mode =
@@ -603,6 +602,7 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
             m.confusion_matrix.Add(true_class, pred_class);
         });
     }
+    return predictions;
 }
 
 void TestExecutor::TestMetricLearning(IBatcher& rows, int batch_size) {

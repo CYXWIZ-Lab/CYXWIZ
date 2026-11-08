@@ -305,9 +305,10 @@ private:
     bool BuildModelFromConfig();
 
     /**
-     * Process a single batch
+     * Process a single batch; returns its predictions (the loss reads them:
+     * one forward pass a batch).
      */
-    void ProcessBatch(const Batch& batch);
+    Tensor ProcessBatch(const Batch& batch);
     // Metric-learning models: the loss over the builder's pairs / triplets and
     // the 1-NN / Pair / Retrieval evaluation of the test rows.
     void TestMetricLearning(IBatcher& rows, int batch_size);
