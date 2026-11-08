@@ -27,6 +27,7 @@ SDK installs, with the types it declares, is listed in
 | `plugin/interfaces/i_panel_provider.h` | `IPanelProvider`, `PluginPanelInfo` |
 | `plugin/interfaces/i_command_provider.h` | `ICommandProvider`, `PluginCommandInfo`, `PluginCommandState` (menu commands, API 1.4) |
 | `plugin/interfaces/i_simulation_provider.h` | `ISimulationProvider`, `PluginSimulationNodeInfo`, `PluginSimulationGraphNode`, `PluginSimulationBeginResult` (graph simulation runs, API 1.4) |
+| `plugin/interfaces/i_environment_provider.h` | `IEnvironmentProvider`, `IEnvironmentBatch`, `PluginEnvironmentInfo`, `PluginEnvironmentSetting`, `PluginEnvironmentStepBuffers`, `PluginEnvironmentCreateResult` (environments for reinforcement learning, API 1.4) |
 | `plugin/interfaces/i_training_hook.h` | `ITrainingHook`, `TrainingContext` |
 | `plugin/interfaces/arrow_c_stream.h` | `ArrowSchema`, `ArrowArray`, `ArrowArrayStream` (the Arrow C data and C stream interfaces) |
 | `plugin/interfaces/i_data_provider.h` | `IDataProvider`, `PluginDataLoaderInfo` |
@@ -99,7 +100,7 @@ the library. Unknown fields, capabilities and permissions are ignored.
 
 | Permission | Granted | Checked by |
 |---|---|---|
-| `Training` | Without asking | `ITensorNodeProvider` (trainable nodes), `ITrainingHook`, `RegisterTrainingHook` |
+| `Training` | Without asking | `ITensorNodeProvider` (trainable nodes), `IEnvironmentProvider`, `ITrainingHook`, `RegisterTrainingHook` |
 | `UIModify` | Without asking | `INodeProvider`, `IPanelProvider`, `ICommandProvider`, `ISimulationProvider`, `RegisterNodeProvider`, `RegisterPanelProvider` |
 | `DataRegistry` | Without asking | `IDataProvider`, `IAnalyticsProvider`, `RegisterDataProvider`, `RegisterAnalyticsProvider` |
 | `GPU` | Without asking | Nothing |
@@ -174,6 +175,7 @@ return, inside the crash guard. Unloading removes all of it.
 | `"IPanelProvider"` | `IPanelProvider` | Adds your panels to the menus and draws them every frame they are open |
 | `"ICommandProvider"` | `ICommandProvider` | Adds your commands to the menu they name and to the Command Palette (plugin API 1.4, section 9) |
 | `"ISimulationProvider"` | `ISimulationProvider` | Names your nodes that run in a graph simulation and starts and ends each run (plugin API 1.4, section 9) |
+| `"IEnvironmentProvider"` | `IEnvironmentProvider` | Lists your environments; creates copies of one for reinforcement learning, resets and steps them (plugin API 1.4, section 9) |
 | `"ITrainingHook"` | `ITrainingHook` | Calls it at training start and end, each epoch's and each training batch's start and end, and asks `ShouldStopEarly` (section 8) |
 | `"IDataProvider"` | `IDataProvider` | Registers the dataset formats (plugin API 1.3 or newer): Data Input lists and opens them |
 | `"IAnalyticsProvider"` | `IAnalyticsProvider` | Registers the analytics (plugin API 1.3 or newer); Data Studio's Explore > Plugins tab runs them |
@@ -419,6 +421,57 @@ PluginSimulationBeginResult BeginGraphRun(const std::vector<PluginSimulationGrap
     return {};
 }
 void EndGraphRun() override { graph_owns_model_ = false; }
+```
+
+### `IEnvironmentProvider` (environments for reinforcement learning, API 1.4)
+
+An environment the Engine can train a policy in. The Engine is the learner:
+it asks for many copies of one environment, sends one action per copy and
+reads back what each copy observed and earned; your plugin only simulates.
+The MuJoCo plugin offers its tasks this way. Needs `Training`.
+
+| Member | Contract |
+|---|---|
+| `std::vector<PluginEnvironmentInfo> GetEnvironments()` | Asked once when the plugin starts. Each: `id` (unique in your plugin), `name`, `description`, `category`, `observation_size`, the action space (continuous: `action_size` with `action_low` / `action_high` per value; discrete: `discrete_actions`, `action_size` 1 and `action_count` choices), `max_episode_steps` (0 = no limit), `step_seconds` (simulated time of one step) and `settings` (key, label, default, description). An environment that observes nothing, takes no action, has bounds that do not match its action size, or one discrete choice, is not added (the log says why) |
+| `PluginEnvironmentCreateResult CreateEnvironments(const std::string& id, const std::map<std::string, std::string>& settings, int count)` | `count` copies of environment `id`. Settings you are not given keep their defaults; a value you cannot use is an error (`{nullptr, "why and what to do"}`), never a silent default. The batch must report the count and sizes you described, or the Engine releases it and refuses it |
+
+The `IEnvironmentBatch` you return:
+
+| Member | Contract |
+|---|---|
+| `int Count()`, `int ObservationSize()`, `int ActionSize()` | What the batch holds |
+| `bool Reset(uint64_t seed, float* observations)` | Starts every copy and writes `[count x observation_size]`. Copy `i`'s randomness comes from `(seed, i)` alone, so one seed gives the same runs on any number of threads |
+| `bool Step(const float* actions, const PluginEnvironmentStepBuffers& out)` | `actions` is `[count x action_size]` (discrete: the choice's index as a float). Advance every copy one step and write `observations`, `rewards`, `terminated` (a terminal state) and `truncated` (the step limit). A copy whose episode ends starts its next episode in the same call: its row of `final_observations` gets the observation it ended on, and its row of `observations` the first one of the next episode. Rows of copies that did not end are left alone in `final_observations`. Return false with `LastError()` when a step fails |
+| `std::string LastError()` | Why the last `Reset` or `Step` failed |
+| `void Release()` | Free the batch in your own module (`delete this`) |
+
+Every buffer is flat, row-major, one row per copy, so the Engine moves all
+copies' data in one piece per step. A batch stands alone: it must not use
+your plugin object, because it may outlive your `OnShutdown` (the Engine keeps
+your library loaded until the last batch is released). One thread at a time
+calls a batch; step the copies on your own threads if you like. Every call
+is crash-isolated: a crash comes back as an error instead of ending the Engine.
+`cyxwiz-plugin-check` creates two copies of each environment, resets them and
+steps them 20 times with the middle of each action range.
+
+<!-- not compiled: a sketch; the full provider is plugins/simulation/mujoco -->
+```cpp
+std::vector<PluginEnvironmentInfo> GetEnvironments() override {
+    PluginEnvironmentInfo pendulum;
+    pendulum.id = "Pendulum-v0";
+    pendulum.name = "Pendulum";
+    pendulum.observation_size = 3;
+    pendulum.action_size = 1;
+    pendulum.action_low = {-2.0f};
+    pendulum.action_high = {2.0f};
+    pendulum.max_episode_steps = 200;
+    return {pendulum};
+}
+PluginEnvironmentCreateResult CreateEnvironments(const std::string& id,
+                                                 const std::map<std::string, std::string>& settings,
+                                                 int count) override {
+    return {new PendulumBatch(count), {}};  // PendulumBatch : IEnvironmentBatch
+}
 ```
 
 ### `IDataProvider`, `IAnalyticsProvider`

@@ -21,7 +21,8 @@ constexpr uint16_t PLUGIN_API_VERSION_MAJOR = 1;
 // Tensor accessors check the type (Tensor::DataTypeName), data and analytics
 // providers on the Arrow C stream (TOFIX181); 1.4: PluginContext::GetUi, the
 // Engine's widgets and theme colours for plugin panels, ShowPanel,
-// RequestFullFrameRate, ICommandProvider and ISimulationProvider (TOFIX195).
+// RequestFullFrameRate, ICommandProvider, ISimulationProvider and
+// IEnvironmentProvider (TOFIX195).
 constexpr uint16_t PLUGIN_API_VERSION_MINOR = 4;
 constexpr uint16_t PLUGIN_API_VERSION_PATCH = 0;
 

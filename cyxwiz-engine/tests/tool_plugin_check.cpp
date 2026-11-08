@@ -9,25 +9,29 @@
 // for this run, initialise the plugin, list the
 // nodes it registers, and for each trainable node check its output shape and
 // its gradients with the node's default settings, as the Plugin Manager's
-// "Check gradient" does; list its dataset formats and analytics (TOFIX181).
+// "Check gradient" does; list its dataset formats and analytics (TOFIX181);
+// create two copies of each environment it offers, reset them and step them
+// with mid-range actions, every value finite (TOFIX195).
 // With --open, read each file through the plugin's dataset format as Data
 // Input's Apply does (the format its extension and CanLoad pick, every batch,
 // the data validated), and run each of its analytics on the columns that
 // analytic reads, as Explore > Plugins does.
-// Exit code 0 when every folder loads, registers something, every node
-// passes, and every file opens and every analytic answers.
+// Exit code 0 when every folder loads, registers something, every node and
+// environment passes, and every file opens and every analytic answers.
 #include <cyxwiz/gradient_check.h>
 #include "../src/core/extension_node_registry.h"
 #include "../src/plugin/plugin_loader.h"
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_analytics_registry.h"
 #include "../src/plugin/registries/plugin_data_loader_registry.h"
+#include "../src/plugin/registries/plugin_environment_registry.h"
 #include "../src/plugin/security/permission_store.h"
 
 #include <arrow/api.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
@@ -193,6 +197,47 @@ bool OpenThrough(const std::string& plugin_id, const fs::path& file) {
     return RunAnalytics(plugin_id, file_name, *table);
 }
 
+// Two copies of the environment, reset and stepped 20 times with the middle
+// of each action's range (the first choice when discrete).
+bool CheckEnvironment(const cyxwiz::plugin::PluginEnvironmentRegistry::Environment& environment) {
+    const auto& info = environment.info;
+    const auto fail = [&](const std::string& why) {
+        std::cout << "  FAIL environment " << info.id << ": " << why << "\n";
+        return false;
+    };
+    constexpr int kCopies = 2;
+    std::string error;
+    auto batch = cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Create(environment.key, {}, kCopies, error);
+    if (!batch) return fail(error);
+    const size_t obs_size = static_cast<size_t>(info.observation_size);
+    const size_t act_size = static_cast<size_t>(info.action_size);
+    std::vector<float> obs(kCopies * obs_size), final_obs(kCopies * obs_size), rewards(kCopies);
+    std::vector<uint8_t> terminated(kCopies), truncated(kCopies);
+    std::vector<float> actions(kCopies * act_size, 0.0f);
+    if (!info.discrete_actions) {
+        for (size_t i = 0; i < actions.size(); ++i)
+            actions[i] = 0.5f * (info.action_low[i % act_size] + info.action_high[i % act_size]);
+    }
+    const auto finite = [](const std::vector<float>& values) {
+        return std::all_of(values.begin(), values.end(), [](float v) { return std::isfinite(v); });
+    };
+    if (!batch->Reset(7, obs.data(), error)) return fail("reset: " + error);
+    if (!finite(obs)) return fail("reset gave an observation that is not a number");
+    const cyxwiz::plugin::PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(),
+                                                           truncated.data(), final_obs.data()};
+    int episodes = 0;
+    for (int step = 0; step < 20; ++step) {
+        if (!batch->Step(actions.data(), out, error)) return fail("step " + std::to_string(step) + ": " + error);
+        if (!finite(obs) || !finite(rewards)) return fail("step " + std::to_string(step) + " gave a value that is not a number");
+        for (int i = 0; i < kCopies; ++i) episodes += (terminated[i] || truncated[i]) ? 1 : 0;
+    }
+    std::cout << "  ok   environment " << info.id << " (observes " << info.observation_size << ", "
+              << (info.discrete_actions ? std::to_string(info.action_count) + " choices"
+                                        : std::to_string(info.action_size) + " actions")
+              << ", 2 copies x 20 steps, " << episodes << " episodes ended)\n";
+    return true;
+}
+
 bool CheckFolder(const fs::path& folder, const std::vector<fs::path>& files) {
     std::cout << folder.string() << "\n";
     cyxwiz::plugin::PluginManifest manifest;
@@ -293,14 +338,20 @@ bool CheckFolder(const fs::path& folder, const std::vector<fs::path>& files) {
         std::cout << "  ok   analytic " << analytic.info.name
                   << (analytic.info.category.empty() ? std::string() : " (" + analytic.info.category + ")") << "\n";
     }
+    size_t environments = 0;
+    for (const auto& environment : cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Environments()) {
+        if (environment.plugin_id != manifest.id) continue;
+        ++environments;
+        ok = CheckEnvironment(environment) && ok;
+    }
     if (const auto* loaded = manager.GetLoadedPlugin(manifest.id)) {
         for (const auto& reason : loaded->skipped_nodes) {
             std::cout << "  FAIL not added: " << reason << "\n";
             ok = false;
         }
     }
-    if (nodes + formats + analytics == 0) {
-        std::cout << "  FAIL the plugin registered no nodes, dataset formats or analytics\n";
+    if (nodes + formats + analytics + environments == 0) {
+        std::cout << "  FAIL the plugin registered no nodes, dataset formats, analytics or environments\n";
         ok = false;
     }
     for (const auto& file : files) ok = OpenThrough(manifest.id, file) && ok;

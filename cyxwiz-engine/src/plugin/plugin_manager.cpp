@@ -8,12 +8,14 @@
 #include "registries/plugin_panel_registry.h"
 #include "registries/plugin_command_registry.h"
 #include "registries/plugin_simulation_registry.h"
+#include "registries/plugin_environment_registry.h"
 #include "registries/plugin_data_loader_registry.h"
 #include "registries/plugin_training_hook_manager.h"
 #include "registries/plugin_analytics_registry.h"
 #include "interfaces/i_panel_provider.h"
 #include "interfaces/i_node_provider.h"
 #include "interfaces/i_simulation_provider.h"
+#include "interfaces/i_environment_provider.h"
 #include "interfaces/i_tensor_node_provider.h"
 #include <cyxwiz/sequential.h>
 #include "interfaces/i_training_hook.h"
@@ -409,6 +411,25 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             }
         }
 
+        // Register the environments for reinforcement learning (plugin API 1.4, with crash isolation)
+        auto* environment_provider = static_cast<IEnvironmentProvider*>(instance->QueryInterface("IEnvironmentProvider"));
+        if (environment_provider && !permitted(PluginPermission::Training, "IEnvironmentProvider")) environment_provider = nullptr;
+        if (auto* p = environment_provider) {
+            auto& lease = extension_leases_[plugin_id];
+            if (!lease) lease = std::make_shared<ExtensionLease>();
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterEnvironments", [&]() {
+                const auto environments = p->GetEnvironments();
+                for (const auto& environment : environments)
+                    PluginEnvironmentRegistry::Instance().Register(plugin_id, environment, p, lease);
+                spdlog::info("PluginManager: Registered {} environments for '{}'", environments.size(), plugin_id);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
+            }
+        }
+
         // Register nodes (with crash isolation)
         auto* node_provider = static_cast<INodeProvider*>(instance->QueryInterface("INodeProvider"));
         if (node_provider && !permitted(PluginPermission::UIModify, "INodeProvider")) node_provider = nullptr;
@@ -690,6 +711,7 @@ void PluginManager::RemoveRegistrations(const std::string& plugin_id) {
     PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginCommandRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginSimulationRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginEnvironmentRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginTrainingHookManager::Instance().RemoveByPlugin(plugin_id);
     PluginAnalyticsRegistry::Instance().RemoveByPlugin(plugin_id);

@@ -103,6 +103,7 @@ set(CYXWIZ_PLUGIN_SDK_HEADERS
     plugin/interfaces/i_data_provider.h
     plugin/interfaces/i_node_provider.h
     plugin/interfaces/i_simulation_provider.h
+    plugin/interfaces/i_environment_provider.h
     plugin/interfaces/i_panel_provider.h
     plugin/interfaces/i_tensor_node_provider.h
     plugin/interfaces/i_training_hook.h
@@ -130,6 +131,7 @@ add_library(cyxwiz-plugin-host STATIC
     src/plugin/registries/plugin_panel_registry.cpp
     src/plugin/registries/plugin_command_registry.cpp
     src/plugin/registries/plugin_simulation_registry.cpp
+    src/plugin/registries/plugin_environment_registry.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
     src/plugin/security/permission_store.cpp

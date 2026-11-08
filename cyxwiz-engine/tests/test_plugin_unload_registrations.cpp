@@ -9,8 +9,12 @@
 #include "../src/plugin/registries/plugin_panel_registry.h"
 #include "../src/plugin/registries/plugin_command_registry.h"
 #include "../src/plugin/registries/plugin_simulation_registry.h"
+#include "../src/plugin/registries/plugin_environment_registry.h"
 
+#include <cmath>
 #include <cstdlib>
+#include <map>
+#include <memory>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -169,11 +173,161 @@ void CheckSimulationRegistry() {
     Check(simulation.GetCount() == 0, "removing the plugin removes its simulation nodes");
 }
 
+// A plugin's environments (plugin API 1.4): copies of a point on a line.
+// The action moves it by half the action; it ends at |x| >= 1 or after
+// three steps. Copy i of seed s starts at 0.1 * ((s + i) % 3).
+class FakeLine final : public cyxwiz::plugin::IEnvironmentBatch {
+public:
+    FakeLine(int count, int observation_size, int* releases)
+        : count_(count), observation_size_(observation_size), releases_(releases), x_(count), steps_(count) {}
+    int Count() const override { return count_; }
+    int ObservationSize() const override { return observation_size_; }
+    int ActionSize() const override { return 1; }
+    bool Reset(uint64_t seed, float* observations) override {
+        seed_ = seed;
+        for (int i = 0; i < count_; ++i) Start(i, observations);
+        return true;
+    }
+    bool Step(const float* actions, const cyxwiz::plugin::PluginEnvironmentStepBuffers& out) override {
+        for (int i = 0; i < count_; ++i) {
+            if (!std::isfinite(actions[i])) {
+                error_ = "copy " + std::to_string(i) + " got an action that is not a number";
+                return false;
+            }
+            x_[i] += 0.5f * actions[i];
+            ++steps_[i];
+            out.rewards[i] = -std::abs(x_[i]);
+            out.terminated[i] = std::abs(x_[i]) >= 1.0f ? 1 : 0;
+            out.truncated[i] = !out.terminated[i] && steps_[i] >= 3 ? 1 : 0;
+            out.observations[i] = x_[i];
+            if (out.terminated[i] || out.truncated[i]) {
+                out.final_observations[i] = x_[i];
+                Start(i, out.observations);
+            }
+        }
+        return true;
+    }
+    std::string LastError() const override { return error_; }
+    void Release() override {
+        ++*releases_;
+        delete this;
+    }
+
+private:
+    void Start(int i, float* observations) {
+        x_[i] = 0.1f * static_cast<float>((seed_ + static_cast<uint64_t>(i)) % 3);
+        steps_[i] = 0;
+        observations[i] = x_[i];
+    }
+    int count_;
+    int observation_size_;
+    int* releases_;
+    uint64_t seed_ = 0;
+    std::vector<float> x_;
+    std::vector<int> steps_;
+    std::string error_;
+};
+
+class FakeEnvironments final : public cyxwiz::plugin::IEnvironmentProvider {
+public:
+    int releases = 0;
+    std::map<std::string, std::string> last_settings;
+    std::vector<cyxwiz::plugin::PluginEnvironmentInfo> GetEnvironments() override {
+        cyxwiz::plugin::PluginEnvironmentInfo line;
+        line.id = "Line-v0";
+        line.name = "Line";
+        line.observation_size = 1;
+        line.action_size = 1;
+        line.action_low = {-1.0f};
+        line.action_high = {1.0f};
+        line.max_episode_steps = 3;
+        line.settings = {{"speed", "Speed", "0.5", "How far one action moves the point"}};
+        auto liar = line;  // its copies report another observation size
+        liar.id = "Liar-v0";
+        auto blind = line;  // observes nothing: not added
+        blind.id = "Blind-v0";
+        blind.observation_size = 0;
+        cyxwiz::plugin::PluginEnvironmentInfo coin;  // one choice is no choice: not added
+        coin.id = "Coin-v0";
+        coin.observation_size = 1;
+        coin.discrete_actions = true;
+        coin.action_size = 1;
+        coin.action_count = 1;
+        return {line, liar, blind, coin};
+    }
+    cyxwiz::plugin::PluginEnvironmentCreateResult CreateEnvironments(
+        const std::string& id, const std::map<std::string, std::string>& settings, int count) override {
+        last_settings = settings;
+        const auto speed = settings.find("speed");
+        if (speed != settings.end() && speed->second == "fast") return {nullptr, "Speed must be a number."};
+        return {new FakeLine(count, id == "Liar-v0" ? 2 : 1, &releases), {}};
+    }
+};
+
+void CheckEnvironmentRegistry() {
+    using cyxwiz::plugin::PluginEnvironmentStepBuffers;
+    auto& environments = cyxwiz::plugin::PluginEnvironmentRegistry::Instance();
+    FakeEnvironments fake;
+    auto library = std::make_shared<int>(0);
+    std::weak_ptr<int> library_alive = library;
+    for (const auto& info : fake.GetEnvironments()) environments.Register("com.example.env", info, &fake, library);
+    environments.Register("com.example.env", fake.GetEnvironments()[0], &fake, library);  // a duplicate is skipped
+    Check(environments.GetCount() == 2, "the two usable environments are registered once");
+    cyxwiz::plugin::PluginEnvironmentRegistry::Environment found;
+    Check(environments.Find("com.example.env:Line-v0", found) && found.info.max_episode_steps == 3 &&
+              found.info.settings.size() == 1 && found.info.settings[0].default_value == "0.5",
+          "the environment's info and settings are kept");
+    Check(!environments.Find("com.example.env:Blind-v0", found) && !environments.Find("com.example.env:Coin-v0", found),
+          "an environment that observes nothing or has one choice is not added");
+
+    std::string error;
+    Check(!environments.Create("com.example.env:Nope", {}, 2, error) && error.find("not available") != std::string::npos,
+          "an unknown environment is an error");
+    Check(!environments.Create("com.example.env:Line-v0", {}, 0, error), "zero copies is an error");
+    Check(!environments.Create("com.example.env:Line-v0", {{"speed", "fast"}}, 2, error) &&
+              error == "Speed must be a number.",
+          "the plugin's refusal is the error");
+    Check(!environments.Create("com.example.env:Liar-v0", {}, 2, error) && fake.releases == 1 &&
+              error.find("do not match") != std::string::npos,
+          "copies that do not match their description are refused and released");
+
+    auto batch = environments.Create("com.example.env:Line-v0", {{"speed", "0.5"}}, 3, error);
+    Check(batch != nullptr, "three copies are created: " + error);
+    Check(fake.last_settings.at("speed") == "0.5", "the settings reach the plugin");
+    Check(batch->Count() == 3 && batch->ObservationSize() == 1 && batch->ActionSize() == 1, "the batch's sizes");
+    std::vector<float> obs(3), rewards(3), final_obs(3, -9.0f);
+    std::vector<uint8_t> terminated(3), truncated(3);
+    const PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(), truncated.data(),
+                                           final_obs.data()};
+    Check(batch->Reset(1, obs.data(), error), "reset: " + error);
+    Check(obs[0] == 0.1f && obs[1] == 0.2f && obs[2] == 0.0f, "each copy starts from the seed and its index");
+    const float push[3] = {2.0f, 0.0f, -2.0f};
+    Check(batch->Step(push, out, error), "step: " + error);
+    Check(terminated[0] == 1 && terminated[1] == 0 && terminated[2] == 1, "copies 0 and 2 leave the line");
+    Check(final_obs[0] == 1.1f && final_obs[2] == -1.0f && final_obs[1] == -9.0f,
+          "a copy that ended gives its last observation; the others are left alone");
+    Check(obs[0] == 0.1f && obs[2] == 0.0f && obs[1] == 0.2f, "an ended copy starts again in the same step");
+    const float still[3] = {0.0f, 0.0f, 0.0f};
+    Check(batch->Step(still, out, error) && batch->Step(still, out, error), "two more steps");
+    Check(truncated[1] == 1 && terminated[1] == 0, "copy 1 is cut at the step limit");
+    const float bad[3] = {0.0f, std::nanf(""), 0.0f};
+    Check(!batch->Step(bad, out, error) && error == "copy 1 got an action that is not a number",
+          "a failed step says why");
+
+    environments.RemoveByPlugin("com.example.env");
+    Check(environments.GetCount() == 0, "removing the plugin removes its environments");
+    library.reset();
+    Check(!library_alive.expired(), "a live batch keeps the plugin's library loaded");
+    batch.reset();
+    Check(fake.releases == 2 && library_alive.expired(), "dropping the batch releases it, then the library");
+}
+
 }  // namespace
 
 int main() {
     CheckCommandRegistry();
     CheckSimulationRegistry();
+    CheckEnvironmentRegistry();
     const auto dir = PluginDir();
     Check(!dir.empty(), "plugins/examples/image_nodes not found; run from the repository root");
     auto& manager = cyxwiz::plugin::PluginManager::Instance();
