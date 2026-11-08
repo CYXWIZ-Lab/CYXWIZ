@@ -12,6 +12,8 @@
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
+#include <optional>
 
 namespace gui {
 
@@ -287,6 +289,23 @@ void NodeEditor::InsertPattern(const std::vector<MLNode>& nodes, const std::vect
     std::map<int, ImVec2> positions;
     for (const auto& node : nodes)
         if (node.has_initial_position) positions[node.id] = ImVec2(node.initial_pos_x, node.initial_pos_y);
+    // Nodes with no place of their own (a NAS suggestion) go in a row, in
+    // their order, below what is on the canvas.
+    float left = 0.0f, bottom = 0.0f;
+    bool placed = false;
+    for (const auto& node : nodes_) {
+        const auto at = cached_node_positions_.find(node.id);
+        if (at == cached_node_positions_.end()) continue;
+        left = placed ? std::min(left, at->second.x) : at->second.x;
+        bottom = placed ? std::max(bottom, at->second.y) : at->second.y;
+        placed = true;
+    }
+    float x = left;
+    for (const auto& node : nodes) {
+        if (node.has_initial_position) continue;
+        positions[node.id] = ImVec2(x, placed ? bottom + 220.0f : 0.0f);
+        x += 220.0f;
+    }
     AddWithFreshIds(nodes, links, positions);
 
     spdlog::info("Inserted pattern with {} nodes and {} links", nodes.size(), links.size());
@@ -393,20 +412,50 @@ void NodeEditor::ReplaceWithEditedGraph(const std::vector<MLNode>& nodes, const 
         next_links.push_back(link);
     }
 
-    // A new node goes midway between the nodes it links to.
-    for (const int id : built) {
-        if (pending_positions_.count(id)) continue;
-        ImVec2 sum(0.0f, 0.0f);
-        int count = 0;
-        for (const auto& link : next_links) {
-            const int other = link.to_node == id ? link.from_node : link.from_node == id ? link.to_node : 0;
-            const auto at = cached_node_positions_.find(other);
-            if (!other || at == cached_node_positions_.end()) continue;
-            sum.x += at->second.x;
-            sum.y += at->second.y;
-            ++count;
+    // A new node goes midway between the nodes it links to, placed ones
+    // first: two new nodes in a row take their places one after the other.
+    // A place too near another node moves down until it is free.
+    const auto place_of = [this](int id) -> std::optional<ImVec2> {
+        if (const auto at = pending_positions_.find(id); at != pending_positions_.end()) return at->second;
+        if (const auto at = cached_node_positions_.find(id); at != cached_node_positions_.end()) return at->second;
+        return std::nullopt;
+    };
+    const auto taken = [&](const ImVec2& at) {
+        const auto close_to = [&at](const ImVec2& other) {
+            return std::abs(other.x - at.x) < 120.0f && std::abs(other.y - at.y) < 80.0f;
+        };
+        for (const auto& node : next) {
+            const auto other = place_of(node.id);
+            if (other && close_to(*other)) return true;
         }
-        if (count) pending_positions_[id] = ImVec2(sum.x / count, sum.y / count + 40.0f);
+        return false;
+    };
+    std::vector<int> waiting;
+    for (const int id : built)
+        if (!pending_positions_.count(id)) waiting.push_back(id);
+    for (size_t pass = 0; pass < built.size() && !waiting.empty(); ++pass) {
+        std::vector<int> still;
+        for (const int id : waiting) {
+            ImVec2 sum(0.0f, 0.0f);
+            int count = 0;
+            for (const auto& link : next_links) {
+                const int other = link.to_node == id ? link.from_node : link.from_node == id ? link.to_node : 0;
+                const auto at = other ? place_of(other) : std::nullopt;
+                if (!at) continue;
+                sum.x += at->x;
+                sum.y += at->y;
+                ++count;
+            }
+            if (!count) {
+                still.push_back(id);
+                continue;
+            }
+            ImVec2 at(sum.x / count, sum.y / count + 40.0f);
+            for (int step = 0; step < 20 && taken(at); ++step) at.y += 90.0f;
+            pending_positions_[id] = at;
+        }
+        if (still.size() == waiting.size()) break;  // linked to nothing placed
+        waiting = std::move(still);
     }
     if (!pending_positions_.empty()) pending_positions_frames_ = 3;
 
