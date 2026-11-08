@@ -299,8 +299,14 @@ std::map<int, int> NodeEditor::AddWithFreshIds(const std::vector<MLNode>& nodes,
     for (const auto& source : nodes) {
         MLNode node = source;
         node.id = next_node_id_++;
-        for (auto& pin : node.inputs) pin_ids[pin.id] = pin.id = next_pin_id_++;
-        for (auto& pin : node.outputs) pin_ids[pin.id] = pin.id = next_pin_id_++;
+        // Keyed by the source pin's id: the links below name those.
+        for (auto* pins : {&node.inputs, &node.outputs}) {
+            for (auto& pin : *pins) {
+                const int fresh = next_pin_id_++;
+                pin_ids[pin.id] = fresh;
+                pin.id = fresh;
+            }
+        }
         node_ids[source.id] = node.id;
         const auto at = positions.find(source.id);
         if (at != positions.end()) pending_positions_[node.id] = at->second;
