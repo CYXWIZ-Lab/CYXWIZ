@@ -7323,6 +7323,24 @@ add_custom_target(copy_test_regularization_node_training_fixture
 add_dependencies(test_regularization_node_training copy_test_regularization_node_training_fixture)
 add_test(NAME regularization_node_pytorch_parity COMMAND test_regularization_node_training)
 
+# ===== Test: PPO math (cyxwiz/rl/ppo.h) vs PyTorch / Stable-Baselines3 (TOFIX195 S4.1) =====
+set(CYXWIZ_PPO_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/ppo_pytorch.json")
+add_executable(test_computation_truth_ppo tests/test_computation_truth_ppo.cpp)
+target_link_libraries(test_computation_truth_ppo PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_compile_definitions(test_computation_truth_ppo PRIVATE CYXWIZ_PPO_FIXTURE="${CYXWIZ_PPO_PYTORCH_FIXTURE}")
+add_custom_target(copy_test_computation_truth_ppo_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_ppo>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_PPO_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_ppo>/computation_truth_fixtures/ppo_pytorch.json"
+    SOURCES "${CYXWIZ_PPO_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_ppo copy_test_computation_truth_ppo_fixture)
+add_test(NAME ppo_pytorch_parity COMMAND test_computation_truth_ppo)
+
 # ===== Test: metric learning (pairs, triplets) vs PyTorch (TOFIX140 A5) =====
 set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/metric_graph_pytorch.json")

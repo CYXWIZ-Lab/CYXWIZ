@@ -267,6 +267,7 @@ set(BACKEND_SOURCES
     src/algorithms/audio_processing.cpp
     src/algorithms/utilities.cpp
     src/algorithms/rl_interface.cpp
+    src/algorithms/rl/ppo.cpp
     src/algorithms/dataloader.cpp
     src/algorithms/data/synthetic_dataset.cpp
     src/algorithms/data/mnist_dataset.cpp

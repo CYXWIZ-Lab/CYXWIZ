@@ -422,6 +422,18 @@ model_seed 52 initialisation is the fixture's start, then trains a compiled
 graph per node and matches torch's parameters after
 `(mse + penalty).backward()` and SGD steps.
 
+PPO (cyxwiz/rl/ppo.h; TOFIX195 S4.1) has no autograd either: the loss of
+Stable-Baselines3 2.7 (normalised advantages, clipped surrogate, optional
+clipped value, entropy bonus) writes its gradients with respect to the
+policy's means or logits, the log standard deviation and the values by
+hand. `ppo_pytorch_parity` (test_computation_truth_ppo.cpp, fixture from
+generate_ppo_fixtures.py, which copies SB3's PPO.train on
+torch.distributions) matches the losses, approximate KL, clip fraction and
+every gradient for Gaussian and categorical policies under three settings
+(ties at ratio 1, ratios clipped on both sides), GAE against SB3's
+RolloutBuffer, and checks the samplers' seeds and distributions. Run the
+generator with torch 2.10 (the Engine's python-embed has it).
+
 Each `LRScheduler` also exports/imports a typed, transactional state envelope.
 The scheduler tests resume every PyTorch LR sequence from a midpoint and reject
 schema, type, configuration, and non-finite state drift without mutating the
