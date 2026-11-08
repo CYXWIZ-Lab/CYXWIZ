@@ -7341,6 +7341,20 @@ add_custom_target(copy_test_computation_truth_ppo_fixture
 add_dependencies(test_computation_truth_ppo copy_test_computation_truth_ppo_fixture)
 add_test(NAME ppo_pytorch_parity COMMAND test_computation_truth_ppo)
 
+# ===== Test: the PPO trainer learns CartPole (and InvertedPendulum with the MuJoCo plugin) (TOFIX195 S4.2) =====
+add_executable(test_ppo_trainer
+    tests/test_ppo_trainer.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(test_ppo_trainer PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+target_include_directories(test_ppo_trainer PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+if(WIN32)
+    target_compile_definitions(test_ppo_trainer PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME ppo_trainer_cartpole COMMAND test_ppo_trainer)
+
 # ===== Test: metric learning (pairs, triplets) vs PyTorch (TOFIX140 A5) =====
 set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/metric_graph_pytorch.json")
