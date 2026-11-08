@@ -231,10 +231,13 @@ bool CheckEnvironment(const cyxwiz::plugin::PluginEnvironmentRegistry::Environme
         if (!finite(obs) || !finite(rewards)) return fail("step " + std::to_string(step) + " gave a value that is not a number");
         for (int i = 0; i < kCopies; ++i) episodes += (terminated[i] || truncated[i]) ? 1 : 0;
     }
+    const auto count = [](int n, const char* one, const char* many) {
+        return std::to_string(n) + " " + (n == 1 ? one : many);
+    };
     std::cout << "  ok   environment " << info.id << " (observes " << info.observation_size << ", "
-              << (info.discrete_actions ? std::to_string(info.action_count) + " choices"
-                                        : std::to_string(info.action_size) + " actions")
-              << ", 2 copies x 20 steps, " << episodes << " episodes ended)\n";
+              << (info.discrete_actions ? count(info.action_count, "choice", "choices")
+                                        : count(info.action_size, "action", "actions"))
+              << ", 2 copies x 20 steps, " << count(episodes, "episode", "episodes") << " ended)\n";
     return true;
 }
 
