@@ -142,14 +142,14 @@ int main() {
         "train.hyperparam_search", "deploy.serving", "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin",
         "train.load_checkpoint", "train.run_test", "train.quick_test", "train.view_test_results",
         "train.compare_test_results", "train.export_test_report", "tools.clear_cache", "tools.gc",
-        "tools.model_summary", "tools.flops", "tools.architecture_diagram", "tools.lr_finder",
+        "tools.model_summary", "tools.flops", "tools.lr_finder",
         "data.missing_values", "data.outliers", "data.correlation",
         "data.normalization", "data.standardization", "data.log_transform", "data.boxcox", "data.feature_scaling",
         "tools.descriptive_stats", "tools.hypothesis_test", "tools.regression", "tools.distribution_fitter",
         "tools.cross_validation", "tools.confusion_matrix", "tools.roc_auc", "tools.pr_curve",
         "tools.learning_curves", "tools.kmeans", "tools.dbscan", "tools.hierarchical", "tools.gmm",
         "tools.cluster_eval", "tools.dim_reduction", "tools.feature_importance", "tools.gradcam", "tools.saliency",
-        "tools.nas", "tools.architecture_suggestions", "tools.matrix_calculator", "tools.eigen", "tools.svd",
+        "tools.matrix_calculator", "tools.eigen", "tools.svd",
         "tools.qr", "tools.cholesky", "tools.fft", "tools.spectrogram", "tools.filter_designer",
         "tools.convolution", "tools.wavelet", "tools.gradient_descent", "tools.convexity", "tools.lp", "tools.qp",
         "tools.differentiation", "tools.integration", "tools.decomposition", "tools.acf_pacf",
@@ -164,7 +164,7 @@ int main() {
         "help.tutorial", "help.browse_tutorials", "help.documentation", "help.shortcuts", "help.api_reference",
         "help.report_issue", "help.check_updates", "help.about", "account.sign_out",
         // not in any menu today
-        "view.command_palette", "tools.dnn_inference", "script.stop", "account.wallet"};
+        "view.command_palette", "script.stop", "account.wallet"};
     for (const auto& id : inventory) Check(Find(model, id) != nullptr, "inventory action present: " + id);
 
     // Rule: the Planned set is exactly this (kept visible, never enabled).
@@ -336,9 +336,12 @@ int main() {
     const auto palette = BuildPaletteEntries(model);
     Check(palette.size() > 150, "palette has every action");
     for (const auto& e : palette) Check(!e.menu_path.empty() && !e.label.empty(), "palette entry complete: " + e.id);
-    bool has_dnn = false;
-    for (const auto& e : palette) if (e.id == "tools.dnn_inference") has_dnn = e.menu_path == "Tools > Model";
-    Check(has_dnn, "DNN Inference path");
+    bool has_summary = false;
+    for (const auto& e : palette) if (e.id == "tools.model_summary") has_summary = e.menu_path == "Tools > Model";
+    Check(has_summary, "Model Summary path");
+    // The Model window replaced Architecture Diagram, NAS and DNN Inference (TOFIX129 D11).
+    for (const char* gone : {"tools.architecture_diagram", "tools.nas", "tools.architecture_suggestions", "tools.dnn_inference"})
+        Check(Find(model, gone) == nullptr, std::string("removed from the menu: ") + gone);
 
     std::cout << "menu presentation: " << palette.size() << " palette entries, " << table.size()
               << " shortcut entries, " << planned.size() << " planned items. OK\n";

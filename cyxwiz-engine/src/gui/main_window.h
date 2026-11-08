@@ -63,16 +63,13 @@ class PlotOutputPanel;
 class ExportDialog;
 class ImportDialog;
 class DeploymentDialog;
-class ModelSummaryPanel;
-class ArchitectureDiagram;
+class ModelPanel;
 class LRFinderPanel;
 class StudioDebuggerPanel;
 class GradCAMPanel;
 class FeatureImportancePanel;
-class NASPanel;
 class HyperparamSearchPanel;
 class ServingPanel;
-class DNNInferencePanel;
 // Model Evaluation panels (Phase 6B)
 // Linear Algebra panels (Phase 7)
 class LinearAlgebraPanel;
@@ -391,8 +388,7 @@ private:
     std::unique_ptr<cyxwiz::StudioDebuggerPanel> studio_debugger_panel_;
 
     // Model Analysis panels (Phase 2)
-    std::unique_ptr<cyxwiz::ModelSummaryPanel> model_summary_panel_;
-    std::unique_ptr<cyxwiz::ArchitectureDiagram> architecture_diagram_;
+    std::unique_ptr<cyxwiz::ModelPanel> model_panel_;
     std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
 
     // Statistics panels (Phase 4)
@@ -400,10 +396,8 @@ private:
     // Advanced Tools panels (Phase 5)
     std::unique_ptr<cyxwiz::GradCAMPanel> gradcam_panel_;
     std::unique_ptr<cyxwiz::FeatureImportancePanel> feature_importance_panel_;
-    std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
     std::unique_ptr<cyxwiz::HyperparamSearchPanel> hyperparam_search_panel_;
     std::unique_ptr<cyxwiz::ServingPanel> serving_panel_;
-    std::unique_ptr<cyxwiz::DNNInferencePanel> dnn_inference_panel_;
 
     // Clustering panels (Phase 6A)
 

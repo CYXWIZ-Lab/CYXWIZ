@@ -80,17 +80,14 @@
 #include "panels/export_dialog.h"
 #include "panels/import_dialog.h"
 #include "panels/deployment_dialog.h"
-#include "panels/model_summary_panel.h"
-#include "panels/architecture_diagram.h"
+#include "panels/model_panel.h"
 #include "panels/lr_finder_panel.h"
 #include "panels/studio_debugger_panel.h"
 #include "../core/studio_debugger_presentation.h"
 #include "panels/gradcam_panel.h"
 #include "panels/feature_importance_panel.h"
-#include "panels/nas_panel.h"
 #include "panels/hyperparam_search_panel.h"
 #include "panels/serving_panel.h"
-#include "panels/dnn_inference_panel.h"
 #include "panels/linear_algebra_panel.h"
 #include "panels/optimization_panel.h"
 #include "data_studio/folds_view.h"
@@ -635,12 +632,9 @@ MainWindow::MainWindow()
     deployment_dialog_ = std::make_unique<cyxwiz::DeploymentDialog>();
     studio_debugger_panel_ = std::make_unique<cyxwiz::StudioDebuggerPanel>();
 
-    // Model Analysis panels (Phase 2)
-    model_summary_panel_ = std::make_unique<cyxwiz::ModelSummaryPanel>();
-    model_summary_panel_->SetNodeEditor(node_editor_.get());
-
-    architecture_diagram_ = std::make_unique<cyxwiz::ArchitectureDiagram>();
-    architecture_diagram_->SetNodeEditor(node_editor_.get());
+    // Tools > Model (TOFIX129 D11)
+    model_panel_ = std::make_unique<cyxwiz::ModelPanel>();
+    model_panel_->SetNodeEditor(node_editor_.get());
 
     lr_finder_panel_ = std::make_unique<cyxwiz::LRFinderPanel>();
     lr_finder_panel_->SetNodeEditor(node_editor_.get());
@@ -651,10 +645,8 @@ MainWindow::MainWindow()
     gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();
     feature_importance_panel_ = std::make_unique<cyxwiz::FeatureImportancePanel>();
     feature_importance_panel_->SetLoadCheckpointCallback([this]() { LoadCheckpointForTesting(); });
-    nas_panel_ = std::make_unique<cyxwiz::NASPanel>();
     hyperparam_search_panel_ = std::make_unique<cyxwiz::HyperparamSearchPanel>();
     serving_panel_ = std::make_unique<cyxwiz::ServingPanel>();
-    dnn_inference_panel_ = std::make_unique<cyxwiz::DNNInferencePanel>();
 
     // Clustering panels (Phase 6A)
 
@@ -797,20 +789,6 @@ MainWindow::MainWindow()
             table_viewer_->OpenArrow(std::move(table), name);
             table_viewer_->Show();
             ::gui::BringToFront(table_viewer_->GetName());  // in front, as from the other routes
-        }
-    });
-
-    // Set NAS panel callbacks for node editor integration
-    nas_panel_->SetGetArchitectureCallback([this]() -> std::pair<std::vector<MLNode>, std::vector<NodeLink>> {
-        if (node_editor_) {
-            return {node_editor_->GetNodes(), node_editor_->GetLinks()};
-        }
-        return {{}, {}};
-    });
-
-    nas_panel_->SetApplyArchitectureCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-        if (node_editor_) {
-            node_editor_->InsertPattern(nodes, links);
         }
     });
 
@@ -1765,25 +1743,9 @@ MainWindow::MainWindow()
         });
     }
 
-    // Set up Model Analysis callbacks (Tools menu - Phase 2)
-    toolbar_->SetOpenModelSummaryCallback([this]() {
-        if (model_summary_panel_) {
-            model_summary_panel_->Toggle();
-            if (model_summary_panel_->IsVisible()) {
-                model_summary_panel_->RefreshAnalysis();
-            }
-            spdlog::info("Toggled Model Summary panel");
-        }
-    });
-
-    toolbar_->SetOpenArchitectureDiagramCallback([this]() {
-        if (architecture_diagram_) {
-            architecture_diagram_->Toggle();
-            if (architecture_diagram_->IsVisible()) {
-                architecture_diagram_->RefreshDiagram();
-            }
-            spdlog::info("Toggled Architecture Diagram panel");
-        }
+    // Tools > Model opens the Model window on a tab (TOFIX129 D11).
+    toolbar_->SetOpenModelCallback([this](const std::string& tab) {
+        if (model_panel_) model_panel_->Open(tab);
     });
 
     toolbar_->SetOpenLRFinderCallback([this]() {
@@ -1847,13 +1809,6 @@ MainWindow::MainWindow()
         }
     });
 
-    toolbar_->SetOpenNASCallback([this]() {
-        if (nas_panel_) {
-            nas_panel_->Toggle();
-            spdlog::info("Toggled Neural Architecture Search panel");
-        }
-    });
-
     toolbar_->SetOpenHyperparamSearchCallback([this]() {
         if (hyperparam_search_panel_) {
             hyperparam_search_panel_->Toggle();
@@ -1868,13 +1823,6 @@ MainWindow::MainWindow()
         if (serving_panel_) {
             serving_panel_->Toggle();
             spdlog::info("Toggled Model Serving panel");
-        }
-    });
-
-    toolbar_->SetOpenDNNInferenceCallback([this]() {
-        if (dnn_inference_panel_) {
-            dnn_inference_panel_->Toggle();
-            spdlog::info("Toggled DNN Inference panel");
         }
     });
 
@@ -2521,18 +2469,14 @@ MainWindow::~MainWindow() {
     serving_panel_.reset();
     spdlog::info("~MainWindow: hyperparam_search_panel_");
     hyperparam_search_panel_.reset();
-    spdlog::info("~MainWindow: nas_panel_");
-    nas_panel_.reset();
     spdlog::info("~MainWindow: feature_importance_panel_");
     feature_importance_panel_.reset();
     spdlog::info("~MainWindow: gradcam_panel_");
     gradcam_panel_.reset();
     spdlog::info("~MainWindow: lr_finder_panel_");
     lr_finder_panel_.reset();
-    spdlog::info("~MainWindow: architecture_diagram_");
-    architecture_diagram_.reset();
-    spdlog::info("~MainWindow: model_summary_panel_");
-    model_summary_panel_.reset();
+    spdlog::info("~MainWindow: model_panel_");
+    model_panel_.reset();
     spdlog::info("~MainWindow: deployment_dialog_");
     deployment_dialog_.reset();
     spdlog::info("~MainWindow: import_dialog_");
@@ -2931,8 +2875,7 @@ void MainWindow::Render() {
     TimedRender("studio debugger", studio_debugger_panel_);
 
     // Render Model Analysis panels (Phase 2)
-    TimedRender("model summary", model_summary_panel_);
-    TimedRender("architecture diagram", architecture_diagram_);
+    TimedRender("model", model_panel_);
     TimedRender("lr finder", lr_finder_panel_);
 
     // Render Statistics panels (Phase 4)
@@ -2940,10 +2883,8 @@ void MainWindow::Render() {
     // Render Advanced Tools panels (Phase 5)
     TimedRender("gradcam", gradcam_panel_);
     TimedRender("feature importance", feature_importance_panel_);
-    TimedRender("nas", nas_panel_);
     TimedRender("hyperparam search", hyperparam_search_panel_);
     TimedRender("serving", serving_panel_);
-    TimedRender("dnn inference", dnn_inference_panel_);
 
     TimedRender("linear algebra", linear_algebra_panel_);
 
@@ -3399,8 +3340,7 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (plot_output_panel_) plot_output_panel_->SetVisible(false);
 
     // Model Analysis panels (Phase 2)
-    if (model_summary_panel_) model_summary_panel_->SetVisible(false);
-    if (architecture_diagram_) architecture_diagram_->SetVisible(false);
+    if (model_panel_) model_panel_->SetVisible(false);
     if (lr_finder_panel_) lr_finder_panel_->SetVisible(false);
 
     // Statistics panels (Phase 4)
@@ -3408,7 +3348,6 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     // Advanced Tools panels (Phase 5)
     if (gradcam_panel_) gradcam_panel_->SetVisible(false);
     if (feature_importance_panel_) feature_importance_panel_->SetVisible(false);
-    if (nas_panel_) nas_panel_->SetVisible(false);
 
     // Clustering panels (Phase 6A)
 

@@ -604,18 +604,14 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         Menu m{"tools", "Tools", {}};
         auto& i = m.items;
         i.push_back(Sub("tools.model", "Model", "Inspect and explain a model.",
-                        {Tool(f, "tools.model_summary", "Model Summary"),
-                         Tool(f, "tools.flops", "FLOPs Calculator"),
-                         Tool(f, "tools.architecture_diagram", "Architecture Diagram"),
+                        {Action(f, "tools.model_summary", "Model Summary",
+                                "Opens the Model window on Summary: every layer as compiled, its parameters and multiply-adds."),
+                         Action(f, "tools.flops", "FLOPs Calculator",
+                                "Opens the Model window on Summary: multiply-adds and FLOPs a sample, per layer and in all."),
                          Tool(f, "tools.lr_finder", "Learning Rate Finder"),
                          Sep(),
                          Tool(f, "tools.gradcam", "Grad-CAM Visualization"),
-                         Tool(f, "tools.saliency", "Saliency Maps"),
-                         Sep(),
-                         Tool(f, "tools.nas", "Neural Architecture Search"),
-                         Tool(f, "tools.architecture_suggestions", "Architecture Suggestions"),
-                         Sep(),
-                         Tool(f, "tools.dnn_inference", "DNN Inference")}));
+                         Tool(f, "tools.saliency", "Saliency Maps")}));
         i.push_back(Sub("tools.evaluation", "Evaluation", "Measure how well a model performs.",
                         {Action(f, "tools.cross_validation", "Cross-Validation",
                                 "Opens Data Studio > Results > Cross-validation: the graph trained once per fold, each fold scored once."),

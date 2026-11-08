@@ -201,8 +201,8 @@ public:
     void SetConvertDirToBinaryCallback(std::function<void()> cb) { convert_dir_to_binary_callback_ = cb; }
 
     // Model Analysis callbacks (Phase 2)
-    void SetOpenModelSummaryCallback(std::function<void()> cb) { open_model_summary_callback_ = cb; }
-    void SetOpenArchitectureDiagramCallback(std::function<void()> cb) { open_architecture_diagram_callback_ = cb; }
+    // Tools > Model: the Model window on a tab ("summary").
+    void SetOpenModelCallback(std::function<void(const std::string&)> cb) { open_model_callback_ = std::move(cb); }
     void SetOpenLRFinderCallback(std::function<void()> cb) { open_lr_finder_callback_ = cb; }
 
     // Data Science callbacks (Phase 3)
@@ -220,12 +220,10 @@ public:
     void SetOpenDimReductionCallback(std::function<void()> cb) { open_dim_reduction_callback_ = cb; }
     void SetOpenGradCAMCallback(std::function<void()> cb) { open_gradcam_callback_ = cb; }
     void SetOpenFeatureImportanceCallback(std::function<void()> cb) { open_feature_importance_callback_ = cb; }
-    void SetOpenNASCallback(std::function<void()> cb) { open_nas_callback_ = cb; }
     void SetOpenHyperparamSearchCallback(std::function<void()> cb) { open_hyperparam_search_callback_ = cb; }
     void SetOpenServingCallback(std::function<void()> cb) { open_serving_callback_ = cb; }
     // Apps > a loaded plugin: show its nodes in the Node Browser (TOFIX125).
     void SetShowPluginNodesCallback(std::function<void(const std::string&)> cb) { show_plugin_nodes_callback_ = std::move(cb); }
-    void SetOpenDNNInferenceCallback(std::function<void()> cb) { open_dnn_inference_callback_ = cb; }
 
     // Clustering callbacks (Phase 6A)
     void SetOpenKMeansCallback(std::function<void()> cb) { open_kmeans_callback_ = cb; }
@@ -682,8 +680,7 @@ private:
     std::function<void()> convert_dir_to_binary_callback_;
 
     // Model Analysis callbacks (Phase 2)
-    std::function<void()> open_model_summary_callback_;
-    std::function<void()> open_architecture_diagram_callback_;
+    std::function<void(const std::string&)> open_model_callback_;
     std::function<void()> open_lr_finder_callback_;
 
     // Data Science callbacks (Phase 3)
@@ -701,11 +698,9 @@ private:
     std::function<void()> open_dim_reduction_callback_;
     std::function<void()> open_gradcam_callback_;
     std::function<void()> open_feature_importance_callback_;
-    std::function<void()> open_nas_callback_;
     std::function<void()> open_hyperparam_search_callback_;
     std::function<void()> open_serving_callback_;
     std::function<void(const std::string&)> show_plugin_nodes_callback_;
-    std::function<void()> open_dnn_inference_callback_;
 
     // Clustering callbacks (Phase 6A)
     std::function<void()> open_kmeans_callback_;

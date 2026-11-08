@@ -486,15 +486,14 @@ void ToolbarPanel::BuildActionHandlers() {
     call("data.feature_scaling", open_feature_scaling_callback_);
 
     // Tools
-    call("tools.model_summary", open_model_summary_callback_);
-    call("tools.flops", open_model_summary_callback_);
-    call("tools.architecture_diagram", open_architecture_diagram_callback_);
+    for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.model_summary", "summary"},
+                                  {"tools.flops", "summary"}})
+        h[id] = [this, tab = std::string(tab)](const std::string&) {
+            if (open_model_callback_) open_model_callback_(tab);
+        };
     call("tools.lr_finder", open_lr_finder_callback_);
     call("tools.gradcam", open_gradcam_callback_);
     call("tools.saliency", open_gradcam_callback_);
-    call("tools.nas", open_nas_callback_);
-    call("tools.architecture_suggestions", open_nas_callback_);
-    call("tools.dnn_inference", open_dnn_inference_callback_);
     call("tools.cross_validation", open_cross_validation_callback_);
     call("tools.confusion_matrix", open_confusion_matrix_callback_);
     call("tools.roc_auc", open_roc_auc_callback_);

@@ -400,7 +400,6 @@ set(ENGINE_SOURCES
     src/core/graph_compile_task.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
-    src/core/model_analyzer.cpp
     src/core/language_model_training.cpp
     src/core/model_converter.cpp
     src/core/file_dialogs.cpp
@@ -676,20 +675,16 @@ set(ENGINE_SOURCES
     src/core/language_model_checkpoints.cpp
     src/core/language_model_loader.cpp
     # DNN inference (Phase 3)
-    src/inference/dnn_models.cpp
     src/inference/dnn_preprocessor.cpp
-    src/gui/panels/model_summary_panel.cpp
-    src/gui/panels/architecture_diagram.cpp
+    src/gui/panels/model_panel.cpp
     src/gui/panels/lr_finder_panel.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
     src/gui/panels/gradcam_panel.cpp
     src/gui/panels/feature_importance_panel.cpp
-    src/gui/panels/nas_panel.cpp
     src/gui/panels/hyperparam_search_panel.cpp
     src/core/hyperparam_search.cpp
     src/gui/panels/serving_panel.cpp
-    src/gui/panels/dnn_inference_panel.cpp
     src/serving/inference_server.cpp
     src/gui/panels/linear_algebra_panel.cpp
     src/gui/panels/optimization_panel.cpp
@@ -702,7 +697,6 @@ set(ENGINE_SOURCES
     src/gui/panels/hash_generator_panel.cpp
     src/gui/panels/json_viewer_panel.cpp
     src/gui/panels/regex_tester_panel.cpp
-    src/core/nas_evaluator.cpp
     src/core/data_analyzer.cpp
     src/gui/tutorial/tutorial_system.cpp
     src/gui/panels/query_console.cpp
@@ -913,7 +907,6 @@ set(ENGINE_HEADERS
     src/core/model_format.h
     src/core/model_exporter.h
     src/core/model_importer.h
-    src/core/model_analyzer.h
     src/core/model_converter.h
     src/core/file_dialogs.h
     src/core/formats/cyxmodel_format.h
@@ -961,14 +954,11 @@ set(ENGINE_HEADERS
     src/inference/metric_learning_inference_input.h
     src/inference/text_inference_input.h
     # DNN inference (Phase 3)
-    src/inference/dnn_models.h
     src/inference/dnn_preprocessor.h
-    src/gui/panels/model_summary_panel.h
-    src/gui/panels/architecture_diagram.h
+    src/gui/panels/model_panel.h
     src/gui/panels/lr_finder_panel.h
     src/gui/panels/gradcam_panel.h
     src/gui/panels/feature_importance_panel.h
-    src/gui/panels/nas_panel.h
     src/gui/panels/hyperparam_search_panel.h
     src/core/hyperparam_search.h
     src/gui/panels/serving_panel.h
@@ -3028,7 +3018,8 @@ set_target_properties(test_extension_node_presentation PROPERTIES
 # ===== Test: model files, code generation and export with extension nodes (TOFIX125 P6) =====
 add_executable(test_extension_model_files
     tests/test_extension_model_files.cpp
-    src/core/model_analyzer.cpp
+    src/core/model_summary_presentation.cpp
+    src/core/compiled_node_presentation.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/tree_classification_utils.cpp
     src/core/node_executors/decision_tree_model.cpp
