@@ -1,10 +1,12 @@
 #pragma once
 
 #include "gui/panel.h"
+#include "core/engine_config.h"
 #include "core/hyperparam_search.h"
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,6 +15,11 @@ class NodeEditor;
 }
 
 namespace cyxwiz {
+
+// How to search: the strategy, trials, time limit and score of `config`
+// (the panel's Setup and Preferences > Hyperparameter Search). Grid shows its
+// number of combinations when `show_combinations`. True when one changed.
+bool SearchSettingsFields(SearchConfig& config, bool show_combinations);
 
 /**
  * Hyperparameter Search (TOFIX178 T4 H1, approved mockup)
@@ -80,6 +87,9 @@ private:
     bool show_trials_ = false;   // the Trials view, else Setup
     bool picker_open_ = false;
     std::string not_started_;    // why the last Start search did not start
+    // The saved defaults last set on config_: when Preferences changes them,
+    // the setup follows (not while a search runs).
+    std::optional<core::HyperparamSearchDefaults> followed_defaults_;
     std::string applied_note_;   // after Apply best
 };
 

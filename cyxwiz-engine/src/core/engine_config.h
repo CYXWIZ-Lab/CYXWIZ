@@ -31,9 +31,6 @@ struct AppearanceConfig {
     bool operator==(const AppearanceConfig&) const = default;
 };
 
-// Preferences > Studio Debugger (TOFIX178 6.1c): the user's defaults for
-// layer capture and the layer views. Each run's capture control starts from
-// them. Values are clamped when read.
 // The Nodes panel's Favourites and Recent (Engine-wide, every project). Node
 // types are saved as their NodeType numbers, as graphs save them.
 struct NodesPanelConfig {
@@ -46,6 +43,23 @@ struct NodesPanelConfig {
 };
 inline constexpr int kNodesPanelMaxRecent = 20;
 
+// Preferences > Hyperparameter Search (TOFIX178 T4): how a new search starts.
+// The panel follows them; values are clamped when set.
+struct HyperparamSearchDefaults {
+    std::string strategy = "random";     // "grid", "random" or "bayesian"
+    int trials = 20;                     // 1..kSearchMaxTrials (Random, Bayesian)
+    double hours = 1.0;                  // kSearchMinHours..kSearchMaxHours
+    std::string objective = "val_loss";  // "val_loss", "val_accuracy" or "val_mae"
+
+    bool operator==(const HyperparamSearchDefaults&) const = default;
+};
+inline constexpr int kSearchMaxTrials = 1000;
+inline constexpr double kSearchMinHours = 0.05;
+inline constexpr double kSearchMaxHours = 168.0;
+
+// Preferences > Studio Debugger (TOFIX178 6.1c): the user's defaults for
+// layer capture and the layer views. Each run's capture control starts from
+// them. Values are clamped when read.
 enum class LayerCaptureWhen { Off, LocalDebug, Training };  // Training: also Local Debug runs
 enum class FeatureMapColour { Heat, Grayscale };
 // Feature maps' order: largest mean first, highest peak first, or by number.
@@ -232,6 +246,11 @@ public:
     NodesPanelConfig GetNodesPanel() const;
     void SetNodesPanel(const NodesPanelConfig& nodes_panel);
 
+    // ===== Hyperparameter Search (Engine-wide) =====
+
+    HyperparamSearchDefaults GetSearchDefaults() const;
+    void SetSearchDefaults(const HyperparamSearchDefaults& defaults);
+
     // ===== Recent Projects =====
 
     // Get list of recent projects (up to 10)
@@ -295,6 +314,7 @@ private:
     uint64_t data_budget_bytes_ = 0;
     AppearanceConfig appearance_;
     NodesPanelConfig nodes_panel_;
+    HyperparamSearchDefaults search_defaults_;
 
     // Recent projects
     std::vector<std::string> recent_projects_;  // Recent project paths (max 10)

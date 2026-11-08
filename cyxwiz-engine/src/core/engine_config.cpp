@@ -119,6 +119,14 @@ std::filesystem::path GetExecutableDir() {
 #endif
 }
 
+HyperparamSearchDefaults ClampedSearchDefaults(HyperparamSearchDefaults value) {
+    if (value.strategy != "grid" && value.strategy != "bayesian") value.strategy = "random";
+    if (value.objective != "val_accuracy" && value.objective != "val_mae") value.objective = "val_loss";
+    value.trials = std::clamp(value.trials, 1, kSearchMaxTrials);
+    value.hours = std::clamp(value.hours, kSearchMinHours, kSearchMaxHours);
+    return value;
+}
+
 }  // namespace
 
 std::filesystem::path ExecutableDirectory() { return GetExecutableDir(); }
@@ -456,6 +464,17 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             nodes_panel_ = loaded;
         }
 
+        search_defaults_ = HyperparamSearchDefaults{};
+        if (config.contains("hyperparam_search") && config["hyperparam_search"].is_object()) {
+            const auto& search = config["hyperparam_search"];
+            HyperparamSearchDefaults loaded;
+            loaded.strategy = search.value("strategy", loaded.strategy);
+            loaded.trials = search.value("trials", loaded.trials);
+            loaded.hours = search.value("hours", loaded.hours);
+            loaded.objective = search.value("objective", loaded.objective);
+            search_defaults_ = ClampedSearchDefaults(loaded);
+        }
+
         data_budget_bytes_ = 0;
         if (config.contains("data") && config["data"].is_object())
             data_budget_bytes_ = config["data"].value("budget_bytes", uint64_t{0});
@@ -613,6 +632,13 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"recent", nodes_panel_.recent},
             {"show_recent", nodes_panel_.show_recent},
             {"recent_count", nodes_panel_.recent_count}
+        };
+
+        config["hyperparam_search"] = {
+            {"strategy", search_defaults_.strategy},
+            {"trials", search_defaults_.trials},
+            {"hours", search_defaults_.hours},
+            {"objective", search_defaults_.objective}
         };
 
         // Recent projects
@@ -966,6 +992,20 @@ void EngineConfig::SetNodesPanel(const NodesPanelConfig& nodes_panel) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(nodes_panel_ == value)) {
         nodes_panel_ = value;
+        modified_ = true;
+    }
+}
+
+HyperparamSearchDefaults EngineConfig::GetSearchDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return search_defaults_;
+}
+
+void EngineConfig::SetSearchDefaults(const HyperparamSearchDefaults& defaults) {
+    const HyperparamSearchDefaults value = ClampedSearchDefaults(defaults);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(search_defaults_ == value)) {
+        search_defaults_ = value;
         modified_ = true;
     }
 }

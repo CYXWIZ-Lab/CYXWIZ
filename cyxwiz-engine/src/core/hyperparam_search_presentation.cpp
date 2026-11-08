@@ -186,6 +186,31 @@ std::string ObjectiveName(const std::string& key) {
     return "Validation loss";
 }
 
+void ApplyDefaults(SearchConfig& config, const core::HyperparamSearchDefaults& defaults) {
+    config.strategy = defaults.strategy == "grid"       ? SearchStrategy::Grid
+                      : defaults.strategy == "bayesian" ? SearchStrategy::Bayesian
+                                                        : SearchStrategy::Random;
+    config.max_trials = defaults.trials;
+    config.max_time_seconds = static_cast<float>(defaults.hours * 3600.0);
+    const auto& objectives = Objectives();
+    const auto it = std::find_if(objectives.begin(), objectives.end(),
+                                 [&defaults](const Objective& o) { return defaults.objective == o.key; });
+    const Objective& objective = it != objectives.end() ? *it : objectives.front();
+    config.objective = objective.key;
+    config.minimize = objective.minimize;
+}
+
+core::HyperparamSearchDefaults DefaultsOf(const SearchConfig& config) {
+    core::HyperparamSearchDefaults defaults;
+    defaults.strategy = config.strategy == SearchStrategy::Grid       ? "grid"
+                        : config.strategy == SearchStrategy::Bayesian ? "bayesian"
+                                                                      : "random";
+    defaults.trials = config.max_trials;
+    defaults.hours = config.max_time_seconds / 3600.0;
+    defaults.objective = config.objective;
+    return defaults;
+}
+
 RunStatus Status(bool running, int trial, int total, int epoch, int epochs, const std::vector<TrialResult>& results) {
     RunStatus status;
     total = std::max(total, 1);

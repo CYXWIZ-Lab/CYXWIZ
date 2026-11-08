@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -149,6 +150,43 @@ int main() {
     Check(first.timing == "The time per trial shows after the first one.", "before the first trial ends");
     const auto finished = sp::Status(false, 0, 20, 0, 0, done);
     Check(finished.headline == "6 trials, 1 failed", "finished " + finished.headline);
+
+    // The saved defaults (Preferences): set on a search, read back, saved and
+    // reloaded; values out of range are clamped.
+    {
+        core::HyperparamSearchDefaults defaults;
+        defaults.strategy = "bayesian";
+        defaults.trials = 40;
+        defaults.hours = 2.5;
+        defaults.objective = "val_accuracy";
+        SearchConfig search;
+        sp::ApplyDefaults(search, defaults);
+        Check(search.strategy == SearchStrategy::Bayesian && search.max_trials == 40 &&
+                  search.max_time_seconds == 9000.0f && search.objective == "val_accuracy" && !search.minimize,
+              "the defaults set the strategy, trials, hours and score");
+        Check(sp::DefaultsOf(search) == defaults, "and read back the same");
+
+        auto& engine_config = core::EngineConfig::Instance();
+        const auto path = std::filesystem::temp_directory_path() / "cyxwiz_search_defaults_test.json";
+        engine_config.SetSearchDefaults(defaults);
+        Check(engine_config.Save(path), "the settings save");
+        engine_config.SetSearchDefaults({});
+        Check(engine_config.Load(path), "the settings load");
+        Check(engine_config.GetSearchDefaults() == defaults, "the defaults survive a save and load");
+        std::error_code error;
+        std::filesystem::remove(path, error);
+
+        core::HyperparamSearchDefaults wrong;
+        wrong.strategy = "anneal";
+        wrong.trials = 5000;
+        wrong.hours = 0.0;
+        wrong.objective = "f1";
+        engine_config.SetSearchDefaults(wrong);
+        const auto clamped = engine_config.GetSearchDefaults();
+        Check(clamped.strategy == "random" && clamped.trials == core::kSearchMaxTrials &&
+                  clamped.hours == core::kSearchMinHours && clamped.objective == "val_loss",
+              "unknown or out-of-range defaults are clamped");
+    }
 
     if (g_failures) {
         std::printf("%d search presentation checks failed\n", g_failures);

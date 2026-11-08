@@ -5,6 +5,7 @@
 // property's starting range; the words for the kinds, the strategies and the
 // trials; the best trial's changes applied to the graph. No ImGui.
 
+#include "engine_config.h"
 #include "hyperparam_search.h"
 
 #include <string>
@@ -56,6 +57,11 @@ struct Objective {
 const std::vector<Objective>& Objectives();
 // "Validation loss", "Validation accuracy", "Validation MAE".
 std::string ObjectiveName(const std::string& key);
+
+// The saved defaults (Preferences > Hyperparameter Search) set on a search's
+// strategy, trials, time limit and score; and read back from one.
+void ApplyDefaults(SearchConfig& config, const core::HyperparamSearchDefaults& defaults);
+core::HyperparamSearchDefaults DefaultsOf(const SearchConfig& config);
 
 // The Trials view's status line.
 struct RunStatus {

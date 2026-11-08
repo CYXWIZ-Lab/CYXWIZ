@@ -71,6 +71,13 @@ void HyperparamSearchPanel::Render() {
         NotStarted("Not started: the data preparation stopped before the trials (the Tasks panel says why).");
     }
     if (stage_ == Stage::Running && !search_engine_->IsRunning()) stage_ = Stage::Finished;
+    if (!IsSearching()) {
+        const auto saved = core::EngineConfig::Instance().GetSearchDefaults();
+        if (followed_defaults_ != saved) {
+            sp::ApplyDefaults(config_, saved);
+            followed_defaults_ = saved;
+        }
+    }
 
     if (!visible_) return;
     ImGui::SetNextWindowSize(ImVec2(760, 820), ImGuiCond_FirstUseEver);
@@ -263,39 +270,45 @@ void HyperparamSearchPanel::RenderPicker() {
     ui::EndInsetList();
 }
 
-void HyperparamSearchPanel::RenderHowToSearch() {
+bool SearchSettingsFields(SearchConfig& config, bool show_combinations) {
     const ui::Tokens& t = ui::CurrentTokens();
-    Heading("How to search");
-    ImGui::BeginDisabled(IsSearching());
+    bool changed = false;
     static const char* const kStrategies[] = {"Grid", "Random", "Bayesian"};
-    int strategy = static_cast<int>(config_.strategy);
-    if (ui::SegmentedControl("##strategy", kStrategies, 3, &strategy))
-        config_.strategy = static_cast<SearchStrategy>(strategy);
-    Wrapped(sp::StrategyText(config_.strategy), t.text_dim);
+    int strategy = static_cast<int>(config.strategy);
+    if (ui::SegmentedControl("##strategy", kStrategies, 3, &strategy)) {
+        config.strategy = static_cast<SearchStrategy>(strategy);
+        changed = true;
+    }
+    Wrapped(sp::StrategyText(config.strategy), t.text_dim);
     ImGui::Spacing();
 
     const float label_width = 150.0f;
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Trials");
     ImGui::SameLine(label_width);
-    if (config_.strategy == SearchStrategy::Grid) {
+    if (config.strategy == SearchStrategy::Grid) {
         ImGui::AlignTextToFramePadding();
-        const size_t combinations = config_.space.GetTotalCombinations();
-        ImGui::TextColored(t.text_dim, "every combination: %zu", combinations);
+        if (show_combinations)
+            ImGui::TextColored(t.text_dim, "every combination: %zu", config.space.GetTotalCombinations());
+        else
+            ImGui::TextColored(t.text_dim, "every combination");
     } else {
-        ui::NumberField("##trials", &config_.max_trials, 1, 1000, 1, 70.0f);
+        changed |= ui::NumberField("##trials", &config.max_trials, 1, core::kSearchMaxTrials, 1, 70.0f);
     }
 
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Stop after");
     ImGui::SameLine(label_width);
-    float hours = config_.max_time_seconds / 3600.0f;
+    float hours = config.max_time_seconds / 3600.0f;
     ui::NumberFieldOptions hours_options;
-    hours_options.min = 0.05;
-    hours_options.max = 168.0;
+    hours_options.min = core::kSearchMinHours;
+    hours_options.max = core::kSearchMaxHours;
     hours_options.format = "%.2g";
     hours_options.width = 70.0f;
-    if (ui::NumberField("##hours", &hours, hours_options)) config_.max_time_seconds = hours * 3600.0f;
+    if (ui::NumberField("##hours", &hours, hours_options)) {
+        config.max_time_seconds = hours * 3600.0f;
+        changed = true;
+    }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(t.text_dim, "hours, then keep the best so far");
@@ -305,23 +318,33 @@ void HyperparamSearchPanel::RenderHowToSearch() {
     ImGui::SameLine(label_width);
     const auto& objectives = sp::Objectives();
     const auto current = std::find_if(objectives.begin(), objectives.end(),
-                                      [this](const sp::Objective& o) { return config_.objective == o.key; });
+                                      [&config](const sp::Objective& o) { return config.objective == o.key; });
     ImGui::SetNextItemWidth(240.0f);
     if (ImGui::BeginCombo("##objective", current != objectives.end() ? current->label : objectives.front().label)) {
         for (const auto& objective : objectives) {
-            if (ImGui::Selectable(objective.label, config_.objective == objective.key)) {
-                config_.objective = objective.key;
-                config_.minimize = objective.minimize;
+            if (ImGui::Selectable(objective.label, config.objective == objective.key)) {
+                config.objective = objective.key;
+                config.minimize = objective.minimize;
+                changed = true;
             }
         }
         ImGui::EndCombo();
     }
+    return changed;
+}
+
+void HyperparamSearchPanel::RenderHowToSearch() {
+    const ui::Tokens& t = ui::CurrentTokens();
+    Heading("How to search");
+    ImGui::BeginDisabled(IsSearching());
+    SearchSettingsFields(config_, true);
     ImGui::EndDisabled();
 
     ImGui::Spacing();
     ui::BeginCard("##search_defaults_note");
     Wrapped("Not listed above, the DataLoader's own settings apply to every trial: its epochs, batch size and early "
-            "stopping. The trials split the data as the graph's Data Split does.",
+            "stopping. The trials split the data as the graph's Data Split does. New searches start from the "
+            "defaults in Preferences > Hyperparameter Search.",
             t.text);
     ui::EndCard();
 }

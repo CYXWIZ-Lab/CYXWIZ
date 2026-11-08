@@ -559,6 +559,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_preferences_storage.cpp
     src/gui/panels/toolbar_preferences_studio_debugger.cpp
     src/gui/panels/toolbar_preferences_nodes_panel.cpp
+    src/gui/panels/toolbar_preferences_search.cpp
     src/gui/panels/toolbar_preferences_servers.cpp
     src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_compute_devices.cpp
@@ -8270,7 +8271,7 @@ add_test(NAME hyperparam_search COMMAND test_hyperparam_search)
 
 add_executable(test_hyperparam_search_presentation tests/test_hyperparam_search_presentation.cpp
     src/core/hyperparam_search_presentation.cpp src/core/hyperparam_search.cpp src/core/nas_evaluator.cpp
-    src/core/model_analyzer.cpp)
+    src/core/model_analyzer.cpp src/core/engine_config.cpp)
 configure_training_executor_harness(test_hyperparam_search_presentation)
 set_target_properties(test_hyperparam_search_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME hyperparam_search_presentation COMMAND test_hyperparam_search_presentation)

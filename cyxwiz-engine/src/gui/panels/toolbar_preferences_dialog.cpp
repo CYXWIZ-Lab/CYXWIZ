@@ -1327,6 +1327,11 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::EndTabItem();
                 }
 
+                if (ImGui::BeginTabItem(ICON_FA_SLIDERS " Hyperparameter Search")) {
+                    RenderSearchPreferences();
+                    ImGui::EndTabItem();
+                }
+
                 if (ImGui::BeginTabItem(ICON_FA_HARD_DRIVE " Storage")) {
                     RenderStorageTab();
                     ImGui::EndTabItem();

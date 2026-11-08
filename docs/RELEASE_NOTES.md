@@ -117,7 +117,8 @@ private Data Studio tickets (`tofix*/track*`).
   prepared once; the Trials view shows progress, the best trial (Apply best
   to the graph, Ctrl+Z undoes; Export CSV), the score per trial and every
   trial's values, scores and failures. Before, the panel took free-text
-  parameter names and never trained. Guide:
+  parameter names and never trained. Preferences > Hyperparameter Search
+  sets how a new search starts (method, trials, time limit, score). Guide:
   `docs/usage/hyperparameter_search.md`.
 - **Favourites and Recent in the Nodes panel.** Star a card (or right-click
   it) to keep the node under Favourites at the top of the panel; Recent
