@@ -636,6 +636,12 @@ MainWindow::MainWindow()
     model_panel_->SetStartRangeTest([this](const cyxwiz::LearningRateRangeSettings& settings) {
         return StartLearningRateRangeTest(settings);
     });
+    training_plot_panel_->SetHealthNotice(
+        [this]() {
+            const cyxwiz::HealthView view = model_panel_->CurrentHealth();
+            return cyxwiz::TrainingPlotPanel::HealthNotice{view.has_health && view.warning, "Health: " + view.headline};
+        },
+        [this]() { model_panel_->Open("health"); });
 
     // Statistics panels (Phase 4)
 

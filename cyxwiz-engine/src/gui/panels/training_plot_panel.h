@@ -309,6 +309,18 @@ private:
     bool materialization_clear_confirm_ = false;
 
 public:
+    // The training's health under the cards (TOFIX129 D11): a line when
+    // something stands out (dead units, gradients out of range), and a link
+    // to the Model window's Health tab.
+    struct HealthNotice {
+        bool show = false;
+        std::string text;
+    };
+    void SetHealthNotice(std::function<HealthNotice()> source, std::function<void()> open_health) {
+        health_notice_ = std::move(source);
+        open_health_ = std::move(open_health);
+    }
+
     // Tools > Monitoring > Clear Cache: shows the panel and asks the same
     // question as the dashboard card (TOFIX129 G3).
     void RequestClearPreparedDataCache() {
@@ -317,6 +329,8 @@ public:
     }
 
 private:
+    std::function<HealthNotice()> health_notice_;
+    std::function<void()> open_health_;
     std::function<void(const std::string&)> materialization_action_callback_;
     SavePathCallback save_path_callback_;
 

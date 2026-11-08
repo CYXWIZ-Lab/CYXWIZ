@@ -165,6 +165,10 @@ void ModelPanel::Render() {
             RenderExplain();
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Health", nullptr, flags("health"))) {
+            RenderHealth();
+            ImGui::EndTabItem();
+        }
         open_tab_.clear();
         ImGui::EndTabBar();
     }
@@ -884,6 +888,140 @@ void ModelPanel::RenderExplainResult(const std::vector<std::string>& class_names
     Paragraph("Grad-CAM, saliency and Integrated Gradients as Captum (PyTorch) computes them, on the trained model's "
               "own device; the baseline is the value 0 before the graph's Normalize (a black image).",
               &t.text_faint);
+}
+
+// ---- Health ------------------------------------------------------------------
+
+HealthView ModelPanel::CurrentHealth() const {
+    auto& training = TrainingManager::Instance();
+    const TrainingHealth health =
+        training.IsTrainingActive() ? training.GetCurrentMetrics().health : training.GetLastMetrics().health;
+    std::vector<std::string> names;
+    const LiveGraphCompile* live = node_editor_ ? node_editor_->GetLiveCompile() : nullptr;
+    const ActiveModelInfo info = training.GetActiveModelInfo();
+    const TrainingConfiguration* config =
+        info.evaluation_config ? &*info.evaluation_config : (live ? live->Config() : nullptr);
+    if (config)
+        for (const auto& layer : config->layers) names.push_back(layer.name);
+    return BuildHealthView(health, names);
+}
+
+namespace {
+
+// Bars of a histogram in a box at the cursor.
+void Histogram(const std::vector<long long>& counts, ImVec2 size, const ImVec4& colour, const ImVec4* background) {
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    if (background) draw->AddRectFilled(at, ImVec2(at.x + size.x, at.y + size.y), ImGui::GetColorU32(*background), 4.0f);
+    const long long peak = counts.empty() ? 0 : *std::max_element(counts.begin(), counts.end());
+    if (peak > 0) {
+        const float pad = background ? 6.0f : 1.0f;
+        const float width = (size.x - 2 * pad) / static_cast<float>(counts.size());
+        for (size_t i = 0; i < counts.size(); ++i) {
+            const float h = std::max(1.0f, (size.y - 2 * pad) * static_cast<float>(counts[i]) / static_cast<float>(peak));
+            const float x = at.x + pad + width * static_cast<float>(i);
+            draw->AddRectFilled(ImVec2(x, at.y + size.y - pad - h), ImVec2(x + std::max(1.0f, width - 1.0f), at.y + size.y - pad),
+                                ImGui::GetColorU32(colour));
+        }
+    }
+    ImGui::Dummy(size);
+}
+
+}  // namespace
+
+void ModelPanel::RenderHealth() {
+    const auto& t = ui::CurrentTokens();
+    const HealthView view = CurrentHealth();
+    if (!view.has_health) {
+        ui::EmptyState(ICON_FA_LAYER_GROUP, "No health record yet", view.empty_text.c_str());
+        return;
+    }
+    const bool live = TrainingManager::Instance().IsTrainingActive();
+    const HealthRow* selected = nullptr;
+    for (const auto& row : view.rows)
+        if (row.layer == health_selected_) selected = &row;
+    if (!selected && !view.rows.empty()) {
+        // The worst layer first.
+        selected = &view.rows.front();
+        for (const auto& row : view.rows)
+            if (row.dead_warning) selected = &row;
+        health_selected_ = selected->layer;
+    }
+
+    const float side = 360.0f;
+    const bool wide = ImGui::GetContentRegionAvail().x >= 860.0f;
+    const auto main_column = [&]() {
+        ui::BeginCard("health_headline");
+        ImGui::PushStyleColor(ImGuiCol_Text, view.warning ? t.caution : t.success);
+        Paragraph(view.headline);
+        ImGui::PopStyleColor();
+        Paragraph(view.detail, &t.text_dim);
+        ui::EndCard();
+        const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX;
+        if (ImGui::BeginTable("##health_rows", 5, flags)) {
+            ImGui::TableSetupColumn("Layer", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+            ImGui::TableSetupColumn("Weight size by epoch (||W||)", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+            ImGui::TableSetupColumn("Mean gradient by epoch", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+            ImGui::TableSetupColumn("Weights, last epoch", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+            ImGui::TableSetupColumn("Dead after its ReLU", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+            ImGui::TableHeadersRow();
+            for (const auto& row : view.rows) {
+                ImGui::PushID(static_cast<int>(row.layer));
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                if (ImGui::Selectable(row.name.c_str(), row.layer == health_selected_, ImGuiSelectableFlags_SpanAllColumns))
+                    health_selected_ = row.layer;
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(row.weight_norms.c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(row.gradient_norms.c_str());
+                ImGui::TableNextColumn();
+                Histogram(row.histogram, ImVec2(120.0f, ImGui::GetTextLineHeight()), t.series[0], nullptr);
+                ImGui::TableNextColumn();
+                ImGui::TextColored(row.dead_warning ? t.caution : (row.dead == "no ReLU" ? t.text_dim : t.success), "%s",
+                                   row.dead.c_str());
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        Paragraph(std::string(live ? "Live: the training running now, " : "The last training, ") + view.epochs +
+                      ". Recorded once an epoch: the steps' mean gradient size (no extra pass), the weights at the "
+                      "epoch's end, dead units on the validation pass.",
+                  &t.text_faint);
+    };
+    const auto side_column = [&]() {
+        if (selected) {
+            ui::BeginCard("health_selected");
+            ImGui::TextColored(t.text_bright, "%s: weights at the last epoch", selected->name.c_str());
+            const float width = ImGui::GetContentRegionAvail().x;
+            Histogram(selected->histogram, ImVec2(width, 150.0f), t.series[0], &t.bg_input);
+            ImGui::TextColored(t.text_dim, "%s", selected->low.c_str());
+            const float high_width = ImGui::CalcTextSize(selected->high.c_str()).x;
+            ImGui::SameLine(std::max(0.0f, width - high_width));
+            ImGui::TextColored(t.text_dim, "%s", selected->high.c_str());
+            Paragraph(selected->words, &t.text_dim);
+            ui::EndCard();
+        }
+        ui::BeginCard("health_advice");
+        ImGui::TextColored(t.text_bright, "%s", "What to try");
+        Paragraph(view.advice, &t.text_dim);
+        ui::EndCard();
+    };
+    if (wide && ImGui::BeginTable("##health_layout", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("##main", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("##side", ImGuiTableColumnFlags_WidthFixed, side);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        main_column();
+        ImGui::TableNextColumn();
+        side_column();
+        ImGui::EndTable();
+    } else if (!wide) {
+        ImGui::BeginChild("##health_narrow", ImVec2(0.0f, 0.0f));
+        main_column();
+        side_column();
+        ImGui::EndChild();
+    }
 }
 
 }  // namespace cyxwiz

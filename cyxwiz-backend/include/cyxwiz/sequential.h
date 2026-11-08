@@ -1623,6 +1623,14 @@ public:
     void SetTraining(bool training);
 
     /**
+     * @brief Called after each module's forward pass with its index, the
+     * module and its output (training-health statistics, interpretability).
+     * Pass an empty function to stop.
+     */
+    using ForwardObserver = std::function<void(size_t, const Module&, const Tensor&)>;
+    void SetForwardObserver(ForwardObserver observer) { forward_observer_ = std::move(observer); }
+
+    /**
      * @brief Get number of modules
      */
     size_t Size() const { return modules_.size(); }
@@ -1718,6 +1726,7 @@ public:
 private:
     std::vector<std::unique_ptr<Module>> modules_;
     std::vector<Tensor> intermediate_outputs_;  // Cached for backward pass
+    ForwardObserver forward_observer_;
     std::string model_name_;
     std::string model_description_;
 };

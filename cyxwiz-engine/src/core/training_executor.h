@@ -2,6 +2,7 @@
 
 #include "executable_model.h"
 #include "graph_compiler.h"
+#include "training_health.h"
 #include "metric_learning_metrics.h"
 #include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
 #include "parquet_arrow_batcher.h"
@@ -53,6 +54,8 @@ struct TrainingMetrics {
     // rate, loss and smoothed loss so far, and why it stopped once it has.
     std::vector<LearningRateRangePoint> range_points;
     std::string range_stop_reason;
+    // Weights, gradients and dead units once an epoch (the Model window's Health).
+    TrainingHealth health;
     float grad_norm = 0.0f;  // global gradient norm before clipping (grad_clip_norm > 0)
     size_t train_sample_count = 0;
     size_t val_sample_count = 0;
@@ -423,6 +426,7 @@ private:
     // The range test of a learning_rate_range run; the loss of the batch
     // just computed, which it records after the optimizer step.
     std::unique_ptr<LearningRateRangeTest> range_test_;
+    std::unique_ptr<TrainingHealthRecorder> health_;
     double range_batch_loss_ = 0.0;
     std::filesystem::path generation_preview_dir_;
     std::string generation_preview_run_id_;

@@ -15,6 +15,8 @@
 #include "../../core/training_run_comparison.h"
 #include "../../core/route_qualification_snapshot.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
@@ -436,6 +438,13 @@ void TrainingPlotPanel::Render() {
 
     // Metric cards: latest values, change and timing.
     RenderKpiCards();
+    if (health_notice_) {
+        const HealthNotice notice = health_notice_();
+        if (notice.show) {
+            ui::NoticeLine(notice.text, ui::CurrentTokens().caution);
+            if (open_health_ && ui::LinkButton("Open Model > Health")) open_health_();
+        }
+    }
 
     // Check if we have any training data
     bool has_data = !train_loss_.values.empty() || !train_accuracy_.values.empty() || !custom_metrics_.empty();

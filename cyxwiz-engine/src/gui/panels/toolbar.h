@@ -201,7 +201,7 @@ public:
     void SetConvertDirToBinaryCallback(std::function<void()> cb) { convert_dir_to_binary_callback_ = cb; }
 
     // Model Analysis callbacks (Phase 2)
-    // Tools > Model: the Model window on a tab ("summary", "learning_rate", "explain").
+    // Tools > Model: the Model window on a tab ("summary", "learning_rate", "explain", "health").
     void SetOpenModelCallback(std::function<void(const std::string&)> cb) { open_model_callback_ = std::move(cb); }
 
     // Data Science callbacks (Phase 3)

@@ -15,6 +15,7 @@
 #include "../../core/learning_rate_range_test.h"
 #include "../../core/model_explain.h"
 #include "../../core/model_summary_presentation.h"
+#include "../../core/training_health_presentation.h"
 
 #include <cstdint>
 #include <functional>
@@ -36,7 +37,7 @@ public:
 
     bool IsVisible() const { return visible_; }
     void SetVisible(bool v) { visible_ = v; }
-    // Opens the window on a tab ("summary", "learning_rate", "explain").
+    // Opens the window on a tab ("summary", "learning_rate", "explain", "health").
     void Open(const std::string& tab);
     void SetNodeEditor(gui::NodeEditor* editor) { node_editor_ = editor; }
     // Starts a range test through Train's launcher: "" when it starts (or
@@ -45,6 +46,9 @@ public:
     void SetStartRangeTest(StartRangeTest start) { start_range_test_ = std::move(start); }
     // The launch stopped before training (Train's checks): why.
     void RangeLaunchEnded(const std::string& why);
+    // The health of the training running now, else of the last one, with
+    // the graph's layer names (also the Training Dashboard's notice).
+    HealthView CurrentHealth() const;
 
 private:
     void RenderSummary();
@@ -61,6 +65,7 @@ private:
     void StartExplain(const std::vector<ExplainRowChoice>& choices);
     void UploadExplainImages();
     void ReleaseExplainImages();
+    void RenderHealth();
 
     bool visible_ = false;
     std::string open_tab_;      // the tab to select on the next frame
@@ -110,6 +115,9 @@ private:
     unsigned int explain_images_[4] = {0, 0, 0, 0};  // input, Grad-CAM, saliency, Integrated Gradients
     int explain_image_size_[2] = {0, 0};
     std::string explain_message_;
+
+    // Health.
+    size_t health_selected_ = 0;  // the selected row's layer
 };
 
 }  // namespace cyxwiz

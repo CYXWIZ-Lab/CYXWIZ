@@ -466,6 +466,7 @@ set(ENGINE_SOURCES
     src/core/compiled_node_presentation.cpp
     src/core/model_summary_presentation.cpp
     src/core/model_explain.cpp
+    src/core/training_health_presentation.cpp
     src/core/compile_report_presentation.cpp
     src/core/studio_toolbar_presentation.cpp
     src/core/data_input_presentation.cpp
@@ -7346,6 +7347,18 @@ add_custom_target(copy_test_learning_rate_range_fixture
 )
 add_dependencies(test_learning_rate_range copy_test_learning_rate_range_fixture)
 add_test(NAME learning_rate_range_pytorch_parity COMMAND test_learning_rate_range)
+
+# ===== Test: training health statistics vs numpy / PyTorch (TOFIX129 D11) =====
+add_executable(test_training_health
+    tests/test_training_health.cpp
+    src/core/training_health_presentation.cpp
+    src/core/compiled_node_presentation.cpp
+)
+configure_training_executor_harness(test_training_health)
+target_compile_definitions(test_training_health PRIVATE
+    CYXWIZ_TRAINING_HEALTH_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/training_health_pytorch.json"
+)
+add_test(NAME training_health_parity COMMAND test_training_health)
 
 # ===== Test: regularization nodes vs PyTorch (TOFIX140 A4) =====
 set(CYXWIZ_REGULARIZATION_NODE_PYTORCH_FIXTURE

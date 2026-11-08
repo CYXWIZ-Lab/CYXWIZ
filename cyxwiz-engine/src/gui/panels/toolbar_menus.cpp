@@ -488,7 +488,8 @@ void ToolbarPanel::BuildActionHandlers() {
     // Tools
     for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.model_summary", "summary"},
                                   {"tools.flops", "summary"}, {"tools.lr_finder", "learning_rate"},
-                                  {"tools.gradcam", "explain"}, {"tools.saliency", "explain"}})
+                                  {"tools.gradcam", "explain"}, {"tools.saliency", "explain"},
+                                  {"tools.model_health", "health"}})
         h[id] = [this, tab = std::string(tab)](const std::string&) {
             if (open_model_callback_) open_model_callback_(tab);
         };

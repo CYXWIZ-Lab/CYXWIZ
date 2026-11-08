@@ -614,7 +614,10 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Action(f, "tools.gradcam", "Grad-CAM Visualization",
                                 "Opens the Model window on Explain: where a convolution found what raised a test row's score."),
                          Action(f, "tools.saliency", "Saliency Maps",
-                                "Opens the Model window on Explain: saliency and Integrated Gradients of a test row's score.")}));
+                                "Opens the Model window on Explain: saliency and Integrated Gradients of a test row's score."),
+                         Sep(),
+                         Action(f, "tools.model_health", "Training Health",
+                                "Opens the Model window on Health: weights, gradients and dead units of each layer, epoch by epoch.")}));
         i.push_back(Sub("tools.evaluation", "Evaluation", "Measure how well a model performs.",
                         {Action(f, "tools.cross_validation", "Cross-Validation",
                                 "Opens Data Studio > Results > Cross-validation: the graph trained once per fold, each fold scored once."),

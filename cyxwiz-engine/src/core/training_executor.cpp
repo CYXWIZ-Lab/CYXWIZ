@@ -704,6 +704,7 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
     ConfigureWeightDecayExclusions();
     graph_schedule_pending_ = false;
     range_test_.reset();
+    health_.reset();
     if (config_.learning_rate_range.enabled) {
         // The range test sets the rate of every step: no schedule.
         range_test_ = std::make_unique<LearningRateRangeTest>(config_.learning_rate_range);
@@ -716,6 +717,8 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
         });
         return true;
     }
+    health_ = std::make_unique<TrainingHealthRecorder>();
+    UpdateMetrics([](TrainingMetrics& m) { m.health = TrainingHealth{}; });
     // A scheduler configured on the executor wins over the graph's scheduler
     // node (config_.scheduler, TOFIX140 A3).
     const std::optional<TrainingSchedulerSpec> scheduler_specification =
@@ -1518,6 +1521,14 @@ void TrainingExecutor::Train(
         if (should_validate_this_epoch) {
             model_->SetTraining(false);
         }
+        // Dead units: the ReLUs' outputs on the validation pass (layer stacks).
+        SequentialModel* observed = health_ && should_validate_this_epoch ? model_->AsSequentialModel() : nullptr;
+        if (observed) {
+            TrainingHealthRecorder* recorder = health_.get();
+            observed->SetForwardObserver([recorder](size_t index, const Module& module, const Tensor& output) {
+                recorder->OnValidationOutput(index, module, output);
+            });
+        }
         if (should_validate_this_epoch &&
                    mode_ == DatasetMode::SequenceExternal &&
                    active_sequence_batcher) {
@@ -1553,6 +1564,13 @@ void TrainingExecutor::Train(
 
         auto epoch_end = std::chrono::steady_clock::now();
         float epoch_time = std::chrono::duration<float>(epoch_end - epoch_start).count();
+
+        if (observed) observed->SetForwardObserver({});
+        if (health_) {
+            EpochHealth epoch_health = health_->EndEpoch(epoch, model_->GetParameters());
+            if (!validation_ran_this_epoch) epoch_health.relus.clear();
+            UpdateMetrics([&epoch_health](TrainingMetrics& m) { m.health.epochs.push_back(std::move(epoch_health)); });
+        }
 
         // Get current metrics for callback
         TrainingMetrics current = GetMetrics();
@@ -2303,6 +2321,8 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
             if (l2 > 0.0f) grad = grad + weight * (2.0f * l2);
         }
     }
+
+    if (health_) health_->OnStep(averaged_grads);  // before clipping, as torch's .grad
 
     if (config_.grad_clip_norm > 0.0f) {
         const float norm = ClipGradientsByGlobalNorm(averaged_grads, config_.grad_clip_norm);
