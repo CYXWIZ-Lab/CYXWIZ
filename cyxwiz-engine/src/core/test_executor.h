@@ -155,6 +155,10 @@ struct TestingMetrics {
     static constexpr size_t kLayerFeatureBytes = 64ull * 1024 * 1024;
     std::vector<LayerFeatures> layer_features;
     std::string layer_features_note;
+    // The model's kept decision this test applied (threshold, calibration),
+    // in words; empty when none.
+    std::string decision_applied;
+    bool decision_calibrated = false;  // the probabilities above are calibrated
 
     // Timing
     float total_time_seconds = 0.0f;

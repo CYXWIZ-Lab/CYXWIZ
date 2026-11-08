@@ -243,6 +243,12 @@ public:
     };
     RangeTestOutcome GetLastRangeTest() const;
 
+    // Keeps a threshold / calibration with the trained model in use (Results
+    // > Test, TOFIX129 D11): Test applies it, its checkpoint's metadata.json
+    // and an export carry it. An empty decision forgets it. "" when kept,
+    // else why not.
+    std::string SetActiveModelDecision(const ModelDecision& decision);
+
     /**
      * Get the last optimizer (preserved after training completes)
      */

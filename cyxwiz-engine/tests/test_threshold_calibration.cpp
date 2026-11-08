@@ -6,6 +6,8 @@
 // isotonic regression, and the Calibration section's words.
 #include "../src/core/test_results_presentation.h"
 #include "../src/core/threshold_calibration.h"
+#include "../src/core/model_decision.h"
+#include "../src/core/training_export_metadata.h"
 
 #include <cyxwiz/model_evaluation.h>
 #include <nlohmann/json.hpp>
@@ -193,6 +195,86 @@ void CheckCalibration(const nlohmann::json& source, const nlohmann::json& f) {
     Check(!Calibrate(bare, CalibrationMethod::Temperature).ok, "no probabilities: no calibration, with a reason");
 }
 
+// The kept decision (TOFIX129 D11): what Test, a package and the server apply.
+void CheckModelDecision() {
+    ModelDecision d;
+    Check(d.Empty() && DescribeModelDecision(d, {}).empty(), "an empty decision");
+    d.has_threshold = true;
+    d.positive = 1;
+    d.threshold = 0.3;
+    d.calibration = ModelDecision::Calibration::Temperature;
+    d.temperature = 0.776;
+    d.scores = "softmax";
+    ModelDecision back;
+    Check(ModelDecisionFromJson(ModelDecisionToJson(d), back) && back.has_threshold && back.threshold == 0.3 &&
+              back.positive == 1 && back.calibration == ModelDecision::Calibration::Temperature && back.temperature == 0.776,
+          "threshold + temperature round-trip through JSON");
+    Check(DescribeModelDecision(d, {"FEMALE", "MALE"}) == "threshold 0.3 for MALE; temperature 0.776",
+          "words: " + DescribeModelDecision(d, {"FEMALE", "MALE"}));
+    Check(!ModelDecisionFromJson(R"({"calibration": {"method": "magic"}})", back) && !ModelDecisionFromJson("nope", back),
+          "an unknown calibration or bad JSON is refused");
+
+    // Applying: the same numbers as the fits Results shows.
+    const float raw[2] = {0.7f, 0.3f};
+    std::vector<float> p(raw, raw + 2);
+    ModelDecision temperature;
+    temperature.calibration = ModelDecision::Calibration::Temperature;
+    temperature.temperature = 2.0;
+    const int top = ApplyModelDecision(temperature, p);
+    const auto expected = WithTemperature(raw, 2, 2.0);
+    Check(top == 0 && Near(p[0], expected[0], 1e-6) && Near(p[1], expected[1], 1e-6), "temperature as WithTemperature");
+    ModelDecision platt;
+    platt.calibration = ModelDecision::Calibration::Platt;
+    platt.positive = 1;
+    platt.platt_a = -7.9;
+    platt.platt_b = 2.96;
+    p.assign(raw, raw + 2);
+    ApplyModelDecision(platt, p);
+    Check(Near(p[1], ApplyPlatt({-7.9, 2.96}, 0.3f), 1e-6) && Near(p[0] + p[1], 1.0, 1e-6), "Platt as ApplyPlatt");
+    ModelDecision iso;
+    iso.calibration = ModelDecision::Calibration::Isotonic;
+    iso.positive = 1;
+    iso.isotonic_x = {0.1, 0.5, 0.9};
+    iso.isotonic_y = {0.0, 0.4, 1.0};
+    p.assign(raw, raw + 2);
+    ApplyModelDecision(iso, p);
+    Check(Near(p[1], ApplyIsotonic({{0.1, 0.5, 0.9}, {0.0, 0.4, 1.0}}, 0.3f), 1e-6), "isotonic as ApplyIsotonic");
+    ModelDecision threshold;
+    threshold.has_threshold = true;
+    threshold.positive = 1;
+    threshold.threshold = 0.25;
+    p.assign(raw, raw + 2);
+    Check(ApplyModelDecision(threshold, p) == 1, "a low threshold calls the positive class at 30 %");
+    threshold.threshold = 0.35;
+    p.assign(raw, raw + 2);
+    Check(ApplyModelDecision(threshold, p) == 0, "and not at 35 %");
+
+    // Raw outputs to probabilities, by the model's loss.
+    ModelDecision scores;
+    const float logits[3] = {2.0f, 0.0f, -1.0f};
+    const auto soft = DecisionProbabilities(scores, logits, 3);
+    Check(soft.size() == 3 && soft[0] > soft[1] && Near(soft[0] + soft[1] + soft[2], 1.0, 1e-6), "softmax of logits");
+    const float distribution[3] = {0.2f, 0.5f, 0.3f};
+    Check(DecisionProbabilities(scores, distribution, 3) == std::vector<float>({0.2f, 0.5f, 0.3f}),
+          "a distribution is used as it is");
+    scores.scores = "sigmoid";
+    const float logit = 0.0f;
+    Check(DecisionProbabilities(scores, &logit, 1) == std::vector<float>({0.5f, 0.5f}), "one logit: {1 - p, p}");
+    Check(DecisionScoresForLoss(gui::NodeType::BCEWithLogits) == "sigmoid" &&
+              DecisionScoresForLoss(gui::NodeType::BCELoss) == "probabilities" &&
+              DecisionScoresForLoss(gui::NodeType::CrossEntropyLoss) == "softmax",
+          "the scores word follows the loss");
+
+    // An export carries it; a package without one carries nothing.
+    TrainingConfiguration config;
+    config.decision = d;
+    const auto metadata = TrainingExportMetadata(config).custom_metadata;
+    ModelDecision exported;
+    Check(metadata.count("decision") && ModelDecisionFromJson(metadata.at("decision"), exported) && exported.threshold == 0.3,
+          "an export's manifest carries the kept decision");
+    Check(TrainingExportMetadata(TrainingConfiguration{}).custom_metadata.count("decision") == 0, "no decision: no entry");
+}
+
 }  // namespace
 
 int main() {
@@ -204,6 +286,7 @@ int main() {
     CheckThreshold(source, truth);
     CheckFloor(truth);
     CheckCalibration(source, truth);
+    CheckModelDecision();
     if (failures > 0) {
         std::cerr << failures << " of " << checks << " checks failed\n";
         return 1;

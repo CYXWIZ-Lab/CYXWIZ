@@ -1284,6 +1284,38 @@ MainWindow::MainWindow()
         test->explain_sample = [this](int sample) {
             if (model_panel_) model_panel_->ExplainSample(sample);
         };
+        // Results > Test's Keep: merges a threshold or a calibration into the
+        // model's kept decision; an empty part with neither forgets it.
+        test->kept_decision = []() -> std::optional<cyxwiz::ModelDecision> {
+            const auto info = cyxwiz::TrainingManager::Instance().GetActiveModelInfo();
+            if (!info.evaluation_config) return std::nullopt;
+            return info.evaluation_config->decision;
+        };
+        test->keep_decision = [](const cyxwiz::ModelDecision& part, bool threshold, bool calibration) -> std::string {
+            auto& training = cyxwiz::TrainingManager::Instance();
+            const auto info = training.GetActiveModelInfo();
+            if (!info.evaluation_config) return "There is no trained model in use.";
+            cyxwiz::ModelDecision decision = info.evaluation_config->decision;
+            decision.scores = cyxwiz::DecisionScoresForLoss(info.evaluation_config->loss_type);
+            if (!threshold && !calibration) decision = cyxwiz::ModelDecision{};
+            if (threshold) {
+                decision.has_threshold = part.has_threshold;
+                decision.threshold = part.threshold;
+                decision.positive = part.positive;
+            }
+            if (calibration) {
+                decision.calibration = part.calibration;
+                decision.temperature = part.temperature;
+                decision.platt_a = part.platt_a;
+                decision.platt_b = part.platt_b;
+                decision.isotonic_x = part.isotonic_x;
+                decision.isotonic_y = part.isotonic_y;
+                if (part.calibration != cyxwiz::ModelDecision::Calibration::None &&
+                    part.calibration != cyxwiz::ModelDecision::Calibration::Temperature)
+                    decision.positive = part.positive;
+            }
+            return training.SetActiveModelDecision(decision);
+        };
     }
     // Results > Cross-validation / Learning curve train the open graph again (TOFIX129 D4).
     // Their nodes' second pin reads the last run's table from the registry.
@@ -5615,6 +5647,9 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         config.split_seed = trained.split_seed;
         config.image_excluded_files = trained.image_excluded_files;
     }
+    // The threshold / calibration kept with the model (Results > Test).
+    config.decision = active_model_info.evaluation_config ? active_model_info.evaluation_config->decision
+                                                          : cyxwiz::ModelDecision{};
 
     const int test_batch_size = config.batch_size;
     auto& registry = cyxwiz::DataRegistry::Instance();

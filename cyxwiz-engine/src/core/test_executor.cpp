@@ -279,7 +279,10 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
                                        : use_parquet_dataset_ && parquet_dataset_ ? parquet_dataset_->GetName()
                                                                                   : external_source_.source_dataset;
     const std::vector<size_t> kept_shape = UsesSpatialSequentialInput(config_) ? config_.input_shape : std::vector<size_t>{};
-    UpdateMetrics([regression_mode, &source_dataset, &kept_shape](TestingMetrics& m) {
+    const bool classifier_decision = !config_.decision.Empty() && !regression_mode && config_.metric_sampling == MetricSampling::None;
+    const std::string applied = classifier_decision ? DescribeModelDecision(config_.decision, {}) : std::string();
+    const bool calibrated = classifier_decision && config_.decision.calibration != ModelDecision::Calibration::None;
+    UpdateMetrics([regression_mode, &source_dataset, &kept_shape, &applied, calibrated](TestingMetrics& m) {
         m.current_batch = 0;
         m.total_batches = 0;
         m.total_samples = 0;
@@ -313,6 +316,8 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
         m.kept_input_shape = kept_shape;
         m.layer_features.clear();
         m.layer_features_note.clear();
+        m.decision_applied = applied;
+        m.decision_calibrated = calibrated;
     });
     dropped_feature_layers_.clear();
     feature_layer_of_module_.clear();
@@ -648,6 +653,11 @@ Tensor TestExecutor::ProcessBatch(const Batch& batch) {
         std::vector<float> probabilities;
         const size_t classes = ClassificationClassProbabilities(
             sample_pred, output_width, decision_mode, probabilities);
+        // The model's kept threshold and calibration (Results > Test).
+        if (!config_.decision.Empty() && classes >= 2) {
+            pred_class = ApplyModelDecision(config_.decision, probabilities);
+            confidence = probabilities[static_cast<size_t>(pred_class)];
+        }
 
         // Update metrics
         UpdateMetrics([&, pred_class, true_class, confidence, classes](TestingMetrics& m) {

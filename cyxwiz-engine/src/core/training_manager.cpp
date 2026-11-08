@@ -525,6 +525,11 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
                 : config.dataset_roles.train.label_column;
         active_model_info_.checkpoint_metadata = *metadata;
         active_model_info_.evaluation_config = prepared;
+        // The threshold / calibration kept with this checkpoint (TOFIX129 D11).
+        active_model_info_.evaluation_config->decision = ModelDecision{};
+        if (!metadata->decision_json.empty() &&
+            !ModelDecisionFromJson(metadata->decision_json, active_model_info_.evaluation_config->decision))
+            spdlog::warn("TrainingManager: the checkpoint's kept decision could not be read; testing without it");
         // The Data Split the checkpoint trained with, when it recorded one:
         // Run Test reads the test part from it, not from today's graph.
         if (metadata->split.known) {
@@ -1438,6 +1443,16 @@ void TrainingManager::TrainingThreadFunc(
     // The next start may join us while holding mutex_. No callbacks, manager
     // access or cleanup requiring that mutex may follow this publication.
     is_training_.store(false);
+}
+
+std::string TrainingManager::SetActiveModelDecision(const ModelDecision& decision) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!last_trained_model_ || !active_model_info_.evaluation_config) return "There is no trained model in use.";
+    active_model_info_.evaluation_config->decision = decision;
+    if (active_model_info_.checkpoint_path.empty()) return "";
+    const std::string written = WriteCheckpointDecision(active_model_info_.checkpoint_path,
+                                                        decision.Empty() ? std::string() : ModelDecisionToJson(decision));
+    return written.empty() ? "" : "Kept for this session; the checkpoint could not be updated: " + written;
 }
 
 TrainingManager::RangeTestOutcome TrainingManager::GetLastRangeTest() const {

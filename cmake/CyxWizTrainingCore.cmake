@@ -24,6 +24,7 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/training_scheduler_controller.cpp
     ${_cyxwiz_engine_src}/core/learning_rate_range_test.cpp
     ${_cyxwiz_engine_src}/core/training_health.cpp
+    ${_cyxwiz_engine_src}/core/model_decision.cpp
     ${_cyxwiz_engine_src}/core/regression_target_transform.cpp
     ${_cyxwiz_engine_src}/core/preprocessing_state.cpp
     ${_cyxwiz_engine_src}/core/training_batcher_setup.cpp

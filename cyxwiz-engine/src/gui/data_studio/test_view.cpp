@@ -792,6 +792,18 @@ void TestView::RenderThreshold(const TestingMetrics& m) {
                                 positive + " missed, of " + FormatCompiledCount(f.tp + f.fp + f.tn + f.fn) + ".");
         ImGui::EndTable();
     }
+    if (two && keep_decision && source_ == Source::Latest) {
+        if (ui::SecondaryButton(("Keep " + Fixed(threshold_, 3) + " with the model").c_str())) {
+            ModelDecision part;
+            part.has_threshold = true;
+            part.threshold = threshold_;
+            part.positive = positive_ >= 0 ? positive_ : 1;
+            keep_message_ = keep_decision(part, true, false);
+            keep_failed_ = !keep_message_.empty();
+            if (keep_message_.empty()) keep_message_ = "Kept: Test, a checkpoint and an export now use " + Fixed(threshold_, 3) + ".";
+        }
+    }
+    RenderKeptDecision(m);
     // Precision, recall and F1 by threshold, the threshold in use marked.
     const auto sweep = test_report::SweepThresholds(curves_.roc, curves_.positives, curves_.negatives);
     if (sweep.thresholds.size() >= 2 &&
@@ -902,6 +914,35 @@ void TestView::RenderCalibration(const TestingMetrics& m) {
     Wrapped(t.text_faint, "Bars: the share right of the rows in each probability band (their counts above); the "
                           "line is perfect calibration. Several classes: temperature scaling. Yes / no: Platt (a "
                           "logistic fit) or isotonic. Fitted on the even test rows and shown on the odd ones.");
+    if (keep_decision && source_ == Source::Latest) {
+        const char* label = calibration_.method == test_report::CalibrationMethod::Temperature ? "Keep the temperature with the model"
+                            : calibration_.method == test_report::CalibrationMethod::Platt    ? "Keep Platt's sigmoid with the model"
+                                                                                               : "Keep the isotonic fit with the model";
+        // A test that already used a kept calibration measured calibrated
+        // probabilities: fitting on them again would stack two fits.
+        const bool can_keep = !m.decision_calibrated;
+        if (ui::SecondaryButton(label, can_keep,
+                                "This test already used the kept calibration: Forget it and run Test again to fit a new one.")) {
+            ModelDecision part;
+            part.positive = positive;
+            if (calibration_.method == test_report::CalibrationMethod::Temperature) {
+                part.calibration = ModelDecision::Calibration::Temperature;
+                part.temperature = calibration_.temperature;
+            } else if (calibration_.method == test_report::CalibrationMethod::Platt) {
+                part.calibration = ModelDecision::Calibration::Platt;
+                part.platt_a = calibration_.platt.a;
+                part.platt_b = calibration_.platt.b;
+            } else {
+                part.calibration = ModelDecision::Calibration::Isotonic;
+                part.isotonic_x = calibration_.isotonic.x;
+                part.isotonic_y = calibration_.isotonic.y;
+            }
+            keep_message_ = keep_decision(part, false, true);
+            keep_failed_ = !keep_message_.empty();
+            if (keep_message_.empty()) keep_message_ = "Kept: the next Test, a checkpoint and an export use it.";
+        }
+    }
+    RenderKeptDecision(m);
 }
 
 void TestView::RenderPredictions(const TestingMetrics& m) {
@@ -1274,6 +1315,26 @@ void TestView::RenderErrors(const TestingMetrics& m) {
     Wrapped(t.text_faint, "The most confident mistakes" +
                               std::string(view_.mistakes.size() > 24 ? " (24 shown; Predictions lists them all)" : "") +
                               ". A table model shows a row's first values instead of an image.");
+}
+
+void TestView::RenderKeptDecision(const TestingMetrics& m) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (!m.decision_applied.empty()) Wrapped(t.text_dim, "This test used the model's kept " + m.decision_applied + ".");
+    if (kept_decision && source_ == Source::Latest) {
+        const auto kept = kept_decision();
+        if (kept && !kept->Empty()) {
+            std::vector<std::string> names;
+            for (size_t c = 0; c < m.per_class_metrics.size(); ++c) names.push_back(test_report::ClassName(m, static_cast<int>(c)));
+            Wrapped(t.text, "Kept with the model: " + DescribeModelDecision(*kept, names) + ".");
+            ImGui::SameLine();
+            if (keep_decision && ui::LinkButton("Forget")) {
+                keep_message_ = keep_decision(ModelDecision{}, false, false);
+                keep_failed_ = !keep_message_.empty();
+                if (keep_message_.empty()) keep_message_ = "Forgotten: the next Test uses the model's own scores.";
+            }
+        }
+    }
+    if (!keep_message_.empty()) Wrapped(keep_failed_ ? t.warning : t.text_dim, keep_message_);
 }
 
 }  // namespace cyxwiz

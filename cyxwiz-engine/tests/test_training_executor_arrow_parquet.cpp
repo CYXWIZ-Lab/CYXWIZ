@@ -948,6 +948,21 @@ void TestBatchRowIds(
             Check(!arrow_metrics.kept_inputs.empty() && widths && all_wrong_kept,
                   "a test keeps the inputs of its wrong and first samples for Explain");
         }
+        // A kept decision (TOFIX129 D11): a threshold of 0 for class 1 calls
+        // every row class 1, and the test says it used it.
+        {
+            auto decided = config;
+            decided.decision.has_threshold = true;
+            decided.decision.positive = 1;
+            decided.decision.threshold = 0.0;
+            cyxwiz::TestExecutor kept_test(decided, arrow_dataset, "label", cyxwiz::TestDatasetScope::ConfiguredTestSplit);
+            const auto kept_metrics = run_test(kept_test);
+            const bool all_positive = std::all_of(kept_metrics.predictions.begin(), kept_metrics.predictions.end(),
+                                                  [](int p) { return p == 1; });
+            Check(!kept_metrics.predictions.empty() && all_positive &&
+                      kept_metrics.decision_applied == "threshold 0 for class 1" && !kept_metrics.decision_calibrated,
+                  "a kept threshold decides the test's predictions: " + kept_metrics.decision_applied);
+        }
         // Projector's layer features: the one Linear layer's output (its
         // logits, no activation after it) for every sample.
         {

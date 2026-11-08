@@ -543,6 +543,22 @@ int main(int argc, char** argv) {
               reloaded.model_device->device_id == owner.device_id,
           "checkpoint load publishes the actual weight owner for later testing");
     cyxwiz::Device::RecordProcessDevice(selected.type, selected.device_id);
+    // A kept decision (TOFIX129 D11) goes into the checkpoint and comes back with it.
+    {
+        cyxwiz::ModelDecision decision;
+        decision.calibration = cyxwiz::ModelDecision::Calibration::Temperature;
+        decision.temperature = 0.776;
+        Check(manager.SetActiveModelDecision(decision).empty(), "a decision is kept with the loaded model");
+        const auto again = manager.LoadCheckpointForEvaluation(early_stop_config, MakeDataset(), early_stop_metrics.checkpoint_used);
+        const auto info = manager.GetActiveModelInfo();
+        Check(again.success && info.evaluation_config && info.evaluation_config->decision.temperature == 0.776 &&
+                  info.evaluation_config->decision.calibration == cyxwiz::ModelDecision::Calibration::Temperature,
+              "the checkpoint brings the kept temperature back");
+        Check(manager.SetActiveModelDecision(cyxwiz::ModelDecision{}).empty(), "the decision is forgotten");
+        const auto forgotten = manager.LoadCheckpointForEvaluation(early_stop_config, MakeDataset(), early_stop_metrics.checkpoint_used);
+        Check(forgotten.success && manager.GetActiveModelInfo().evaluation_config->decision.Empty(),
+              "a forgotten decision stays forgotten after a reload");
+    }
     std::cout << "PASS: checkpoint device rejection preserves model; worker reload publishes owner\n";
 
     // A learning rate range test (the Model window, TOFIX129 D11) runs through

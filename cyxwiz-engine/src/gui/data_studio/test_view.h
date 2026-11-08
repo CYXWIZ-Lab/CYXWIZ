@@ -77,6 +77,11 @@ public:
     std::function<void()> keep;                 // "Keep as node..." (Results' dialog)
     std::function<std::string()> keep_blocker;  // why the latest test cannot be kept ("" when it can)
     std::function<void(int)> explain_sample;    // opens a test sample in the Model window's Explain
+    // The model's kept threshold / calibration (TOFIX129 D11): what it is now
+    // (nullopt without a trained model), and keep a part of it ("" when kept,
+    // else why not; neither part: forget it).
+    std::function<std::optional<ModelDecision>()> kept_decision;
+    std::function<std::string(const ModelDecision&, bool threshold, bool calibration)> keep_decision;
 
 private:
     enum class Source { Latest, Kept, Table };
@@ -104,6 +109,8 @@ private:
     void RenderErrors(const TestingMetrics& m);
     void RenderConfidenceFloor(const TestingMetrics& m);
     void RenderCalibration(const TestingMetrics& m);
+    // The kept decision's line and Forget, under Threshold and Calibration.
+    void RenderKeptDecision(const TestingMetrics& m);
     void ReleaseThumbnails();
     void RenderRegressionRows(const TestingMetrics& m);
     void RenderRegressionPlots(const TestingMetrics& m);
@@ -157,6 +164,8 @@ private:
     int calibration_view_ = 1;    // 0 before, 1 after
     test_report::CalibrationReport calibration_;
     std::string calibration_key_;
+    std::string keep_message_;
+    bool keep_failed_ = false;
     std::string curves_key_;
     ClassCurves curves_;
     std::string curves_error_;

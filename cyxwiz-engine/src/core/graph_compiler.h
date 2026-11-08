@@ -7,6 +7,7 @@
 #include "metric_learning_batch.h"
 #include "training_parameter_contract.h"
 #include "learning_rate_range_test.h"
+#include "model_decision.h"
 #include "training_scheduler_controller.h"
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
@@ -588,6 +589,9 @@ struct TrainingConfiguration {
     // TOFIX129 D11): the rate rises every optimizer step, no validation, no
     // checkpoints, and the trained model in use is kept.
     LearningRateRangeSettings learning_rate_range;
+    // The trained model's threshold and calibration, kept from Results >
+    // Test (TOFIX129 D11): Test applies it; checkpoints and packages carry it.
+    ModelDecision decision;
     // Regularization node between the loss and the optimizer (TOFIX140 A4):
     // penalty = l1 x sum(|w|) + l2 x sum(w^2) over every trainable parameter.
     float regularization_l1 = 0.0f;
