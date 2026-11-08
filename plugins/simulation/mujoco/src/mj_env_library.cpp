@@ -22,7 +22,7 @@ void MjEnvLibrary::PopulateBuiltins() {
 
         {"reacher", "Reacher 2D", "reacher.xml",
          "Move a 2-joint arm to reach a target position in 2D space.",
-         "Classic Control", 11, 2, 200, -3.75f},
+         "Classic Control", 10, 2, 50, -3.75f},
 
         // ===== Locomotion =====
         {"hopper", "Hopper", "hopper.xml",
@@ -31,7 +31,7 @@ void MjEnvLibrary::PopulateBuiltins() {
 
         {"walker2d", "Walker 2D", "walker2d.xml",
          "Make a planar bipedal robot walk forward without falling.",
-         "Locomotion", 17, 6, 1000, 4800.0f},
+         "Locomotion", 17, 6, 1000, 0.0f},
 
         {"half_cheetah", "Half Cheetah", "half_cheetah.xml",
          "Make a 2D cheetah-like robot run forward as fast as possible.",
@@ -40,7 +40,7 @@ void MjEnvLibrary::PopulateBuiltins() {
         // ===== Manipulation =====
         {"pusher", "Pusher", "pusher.xml",
          "Use a 3-joint arm to push an object to a target location.",
-         "Manipulation", 23, 7, 200, 0.0f},
+         "Manipulation", 23, 7, 100, 0.0f},
     };
 }
 

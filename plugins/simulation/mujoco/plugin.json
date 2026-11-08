@@ -7,8 +7,8 @@
     "author": "CyxWiz Lab",
     "license": "Apache-2.0",
     "homepage": "https://github.com/CYXWIZ-Lab/CYXWIZ",
-    "capabilities": ["ProvidesPanels", "ProvidesNodes"],
-    "permissions": ["UIModify"],
+    "capabilities": ["ProvidesPanels", "ProvidesNodes", "ProvidesTraining"],
+    "permissions": ["UIModify", "Training"],
     "platforms": {
         "windows": { "library": "bin/mujoco_plugin.dll" },
         "linux": { "library": "bin/libmujoco_plugin.so" },

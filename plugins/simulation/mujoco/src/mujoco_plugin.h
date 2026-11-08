@@ -15,6 +15,7 @@
 #include "plugin/interfaces/i_node_provider.h"
 #include "plugin/interfaces/i_command_provider.h"
 #include "plugin/interfaces/i_simulation_provider.h"
+#include "plugin/interfaces/i_environment_provider.h"
 #include "plugin/plugin_ui.h"
 
 #include "mj_env_manager.h"
@@ -36,7 +37,8 @@ class MuJoCoPlugin : public IPlugin,
                      public IPanelProvider,
                      public INodeProvider,
                      public ICommandProvider,
-                     public ISimulationProvider {
+                     public ISimulationProvider,
+                     public IEnvironmentProvider {
 public:
     MuJoCoPlugin() = default;
     ~MuJoCoPlugin() override = default;
@@ -49,7 +51,7 @@ public:
 
     const PluginManifest& GetManifest() const override { return manifest_; }
     PluginPermissionFlags GetRequiredPermissions() const override {
-        return static_cast<uint32_t>(PluginPermission::UIModify);
+        return PluginPermission::UIModify | PluginPermission::Training;
     }
     PluginState GetState() const override { return state_; }
     void SetImGuiContext(void* ctx) override { ImGui::SetCurrentContext(static_cast<ImGuiContext*>(ctx)); }
@@ -58,6 +60,7 @@ public:
         if (std::string(name) == "INodeProvider") return static_cast<INodeProvider*>(this);
         if (std::string(name) == "ICommandProvider") return static_cast<ICommandProvider*>(this);
         if (std::string(name) == "ISimulationProvider") return static_cast<ISimulationProvider*>(this);
+        if (std::string(name) == "IEnvironmentProvider") return static_cast<IEnvironmentProvider*>(this);
         return nullptr;
     }
 
@@ -67,6 +70,14 @@ public:
     std::vector<PluginSimulationNodeInfo> GetSimulationNodes() override;
     PluginSimulationBeginResult BeginGraphRun(const std::vector<PluginSimulationGraphNode>& nodes) override;
     void EndGraphRun() override;
+
+    // ===== IEnvironmentProvider: tasks for reinforcement learning =====
+    // Gymnasium's MuJoCo tasks (env/mj_task.h); each batch has its own
+    // model and copies, apart from the viewport's model.
+    std::vector<PluginEnvironmentInfo> GetEnvironments() override;
+    PluginEnvironmentCreateResult CreateEnvironments(const std::string& id,
+                                                     const std::map<std::string, std::string>& settings,
+                                                     int count) override;
 
     // ===== IPanelProvider =====
     std::vector<PluginPanelInfo> GetPanels() override;
@@ -117,6 +128,7 @@ private:
     PluginContext* ctx_ = nullptr;  // from OnLoad until OnUnload
 
     std::string loaded_mjcf_path_;  // Path of the currently loaded MJCF model
+    std::string assets_dir_;        // the plugin's assets folder (task models)
 
     // Observation Filter running normalisation, one per settings (see EvaluateNode)
     std::map<std::string, rl::ObservationFilter> obs_filters_;

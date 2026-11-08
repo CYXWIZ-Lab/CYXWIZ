@@ -23,6 +23,8 @@ add_library(mujoco_plugin SHARED
     src/mj_menagerie_downloader.cpp
     src/rl/reward_shaper.cpp
     src/rl/observation_filter.cpp
+    src/env/mj_task.cpp
+    src/env/mj_env_batch.cpp
 )
 
 target_include_directories(mujoco_plugin PRIVATE
@@ -72,3 +74,28 @@ add_custom_command(TARGET mujoco_plugin POST_BUILD
 add_executable(test_mujoco_graph_clock tests/test_mujoco_graph_clock.cpp)
 target_include_directories(test_mujoco_graph_clock PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 add_test(NAME mujoco_graph_clock COMMAND test_mujoco_graph_clock)
+
+# The environments for training: settings, autoreset, the same runs on any
+# number of threads, steps a second. tests/mujoco_gymnasium_parity.py replays
+# its --trajectory output in Gymnasium.
+add_executable(test_mujoco_environments
+    tests/test_mujoco_environments.cpp
+    src/env/mj_task.cpp
+    src/env/mj_env_batch.cpp
+)
+target_include_directories(test_mujoco_environments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_mujoco_environments PRIVATE cyxwiz-plugin-sdk mujoco::mujoco)
+target_compile_definitions(test_mujoco_environments PRIVATE
+    CYXWIZ_MUJOCO_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
+add_custom_command(TARGET test_mujoco_environments POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_RUNTIME}" "$<TARGET_FILE_DIR:test_mujoco_environments>/"
+    COMMENT "Copying the MuJoCo runtime next to test_mujoco_environments")
+add_test(NAME mujoco_environments COMMAND test_mujoco_environments)
+# The Gymnasium replay needs a Python with gymnasium and mujoco of the
+# plugin's version (the Engine's python-embed): pass it to register the test.
+set(CYXWIZ_MUJOCO_ORACLE_PYTHON "" CACHE FILEPATH "Python with gymnasium + mujoco for the MuJoCo parity test")
+if(CYXWIZ_MUJOCO_ORACLE_PYTHON)
+    add_test(NAME mujoco_gymnasium_parity
+             COMMAND ${CYXWIZ_MUJOCO_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/mujoco_gymnasium_parity.py
+                     $<TARGET_FILE:test_mujoco_environments> ${CMAKE_CURRENT_BINARY_DIR}/parity)
+endif()

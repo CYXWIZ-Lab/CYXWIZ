@@ -2,6 +2,7 @@
 #include "mj_mjcf_parser.h"
 #include "rl/reward_shaper.h"
 #include "rl/observation_filter.h"
+#include "env/mj_env_batch.h"
 
 #include <spdlog/spdlog.h>
 #include <mujoco/mujoco.h>
@@ -64,7 +65,8 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     main_window_ = glfwGetCurrentContext();
 
     // The built-in environments ship in the plugin's own folder (next to plugin.json).
-    env_library_.SetAssetsDir((ctx.GetPluginDir() / "assets").string());
+    assets_dir_ = (ctx.GetPluginDir() / "assets").string();
+    env_library_.SetAssetsDir(assets_dir_);
 
     // Scan for previously downloaded Menagerie models and earlier imports
     env_library_.ScanDownloadedModels();
@@ -586,6 +588,30 @@ PluginSimulationBeginResult MuJoCoPlugin::BeginGraphRun(const std::vector<Plugin
 
 void MuJoCoPlugin::EndGraphRun() {
     viewport_panel_.SetGraphSimActive(false);
+}
+
+std::vector<PluginEnvironmentInfo> MuJoCoPlugin::GetEnvironments() {
+    std::vector<PluginEnvironmentInfo> environments;
+    for (const auto& task : MjTasks()) {
+        PluginEnvironmentInfo info;
+        std::string error;
+        if (DescribeMjTask(task, (std::filesystem::path(assets_dir_) / task.model_file).string(), info, error))
+            environments.push_back(std::move(info));
+        else if (ctx_)
+            ctx_->LogWarn("MuJoCo Simulation: " + task.id + " is not offered: " + error);
+    }
+    return environments;
+}
+
+PluginEnvironmentCreateResult MuJoCoPlugin::CreateEnvironments(const std::string& id,
+                                                               const std::map<std::string, std::string>& settings,
+                                                               int count) {
+    const MjTaskSpec* task = FindMjTask(id);
+    if (!task) return {nullptr, "The MuJoCo plugin has no environment '" + id + "'."};
+    std::string error;
+    IEnvironmentBatch* batch = MjEnvBatch::Create(
+        *task, (std::filesystem::path(assets_dir_) / task->model_file).string(), settings, count, error);
+    return {batch, error};
 }
 
 PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx) {
