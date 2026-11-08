@@ -21,6 +21,7 @@ struct ImNodesEditorContext;
 // Forward declarations
 // Forward declare ScriptingEngine in global scripting namespace
 #include "../core/graph_model.h"
+#include "../core/graph_simulation_session.h"
 #include "../core/studio_toolbar_presentation.h"
 #include "../core/operator_figures.h"
 #include "../core/pipeline_node_run_facts.h"
@@ -29,7 +30,6 @@ namespace scripting { class ScriptingEngine; }
 
 namespace cyxwiz {
 class ScriptEditorPanel;
-class GraphExecutor;
 class TrainingDashboardPanel;
 class PipelineExecutor;
 class PipelineExecutionTracker;
@@ -344,13 +344,10 @@ public:
     bool SaveCurrentGraph();
     std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
 
-    // Thread-safe scalar simulation bridge used by Properties.
-    bool IsGraphSimulationRunning() const { return is_simulating_.load(); }
-    bool TryGetSimulationScalar(int pin_id, float& value) const;
-    float GetSimulationTime() const;
-    bool SetSimulationNodeParameter(int node_id,
-                                    const std::string& key,
-                                    const std::string& value);
+    // The graph simulation run: Properties reads Scope history and sends
+    // live edits through it.
+    cyxwiz::GraphSimulationSession& GetSimulationSession() { return simulation_session_; }
+    bool IsGraphSimulationRunning() const { return simulation_session_.IsActive(); }
 
     // Training callback - set by MainWindow to trigger training from node graph
     using TrainCallback = std::function<void(const std::vector<MLNode>&, const std::vector<NodeLink>&)>;
@@ -1314,11 +1311,11 @@ private:
     std::vector<SubgraphData> subgraphs_;
 
     // ===== Graph Simulation State =====
-    std::unique_ptr<cyxwiz::GraphExecutor> graph_executor_;
-    std::thread sim_thread_;
-    std::atomic<bool> is_simulating_{false};
-    std::atomic<bool> sim_stop_requested_{false};
+    cyxwiz::GraphSimulationSession simulation_session_;
     float sim_rate_hz_ = 60.0f;  // Simulation tick rate
+    // The plugins whose nodes the current run evaluates: stopping one of
+    // them stops the run first.
+    std::set<std::string> simulation_plugins_;
 
     void OnRunSimulation();
     void OnStopSimulation();
@@ -1415,9 +1412,6 @@ private:
     bool HasRLNodes() const;
     void OnStartRLTraining();
     void OnStopRLTraining();
-
-    // Phase 4.7: Performance metrics
-    float last_eval_time_ms_ = 0.0f;
 };
 
 } // namespace gui

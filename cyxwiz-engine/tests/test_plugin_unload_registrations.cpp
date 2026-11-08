@@ -8,11 +8,13 @@
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_panel_registry.h"
 #include "../src/plugin/registries/plugin_command_registry.h"
+#include "../src/plugin/registries/plugin_simulation_registry.h"
 
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -95,18 +97,92 @@ void CheckCommandRegistry() {
     Check(commands.GetCount() == 0 && !commands.Run("com.example.sim:go"), "removing the plugin removes its commands");
 }
 
+// A plugin whose nodes run in graph simulations (plugin API 1.4)
+class FakeSimulation final : public cyxwiz::plugin::ISimulationProvider {
+public:
+    bool refuse = false;
+    int begins = 0;
+    int ends = 0;
+    std::vector<cyxwiz::plugin::PluginSimulationGraphNode> nodes;
+    std::vector<cyxwiz::plugin::PluginSimulationNodeInfo> GetSimulationNodes() override {
+        return {{"Plant", "sim.view"}, {"Probe", ""}};
+    }
+    cyxwiz::plugin::PluginSimulationBeginResult BeginGraphRun(
+        const std::vector<cyxwiz::plugin::PluginSimulationGraphNode>& graph_nodes) override {
+        ++begins;
+        nodes = graph_nodes;
+        if (refuse) return {false, "The viewport is running the model."};
+        return {};
+    }
+    void EndGraphRun() override { ++ends; }
+};
+
+gui::MLNode PluginNode(int id, const char* type_id, const char* name) {
+    gui::MLNode node{};
+    node.id = id;
+    node.type = gui::NodeType::PluginCustom;
+    node.name = name;
+    node.extension_type_id = type_id;
+    node.parameters["mjcf_path"] = "robot.xml";
+    return node;
+}
+
+void CheckSimulationRegistry() {
+    auto& simulation = cyxwiz::plugin::PluginSimulationRegistry::Instance();
+    FakeSimulation fake;
+    for (const auto& info : fake.GetSimulationNodes()) simulation.Register("com.example.sim", info, &fake);
+    simulation.Register("com.example.sim", fake.GetSimulationNodes()[0], &fake);  // a duplicate is skipped
+    Check(simulation.GetCount() == 2, "both simulation nodes are registered once");
+    Check(simulation.IsSimulationNode("com.example.sim:Plant") && !simulation.IsSimulationNode("com.example.sim:Other"),
+          "only the named node types run in a simulation");
+
+    std::string reason;
+    auto lease = simulation.BeginGraphRun(
+        {PluginNode(1, "com.example.sim:Plant", "Plant"), PluginNode(2, "com.example.sim:Probe", "Probe")}, reason);
+    Check(lease != nullptr, "a graph of simulation nodes begins: " + reason);
+    Check(fake.begins == 1 && fake.nodes.size() == 2 && fake.nodes[0].node_type == "Plant" &&
+              fake.nodes[0].node_id == 1 && fake.nodes[0].parameters.at("mjcf_path") == "robot.xml",
+          "the plugin begins once, with its nodes and their settings");
+    Check(lease->Panels().size() == 1 && lease->Panels()[0].second == "sim.view" &&
+              lease->PluginIds().count("com.example.sim") == 1,
+          "the run names the plugin and its one panel");
+    Check(fake.ends == 0, "the plugin is not ended while the lease is held");
+    lease.reset();
+    Check(fake.ends == 1, "dropping the lease ends the plugin's run");
+
+    lease = simulation.BeginGraphRun({PluginNode(3, "com.example.other:Thing", "Thing")}, reason);
+    Check(lease == nullptr && reason.find("'Thing'") != std::string::npos && fake.begins == 1,
+          "a plugin node no plugin runs in a simulation refuses the run, naming it");
+
+    fake.refuse = true;
+    lease = simulation.BeginGraphRun({PluginNode(1, "com.example.sim:Plant", "Plant")}, reason);
+    Check(lease == nullptr && reason == "The viewport is running the model." && fake.ends == 1,
+          "a plugin's refusal is the reason, and a refused plugin is not ended");
+
+    lease = simulation.BeginGraphRun({}, reason);
+    Check(lease != nullptr && lease->PluginIds().empty(), "a graph without plugin nodes needs no plugin");
+
+    simulation.RemoveByPlugin("com.example.sim");
+    Check(simulation.GetCount() == 0, "removing the plugin removes its simulation nodes");
+}
+
 }  // namespace
 
 int main() {
     CheckCommandRegistry();
+    CheckSimulationRegistry();
     const auto dir = PluginDir();
     Check(!dir.empty(), "plugins/examples/image_nodes not found; run from the repository root");
     auto& manager = cyxwiz::plugin::PluginManager::Instance();
 
     // Unload from the running state: the Plugin Manager's Unload button.
+    // Whatever runs the plugin's code (a graph run) hears of it first.
     LoadAndInitialize(manager, dir);
     const uint64_t generation = cyxwiz::ExtensionNodeRegistry::Instance().Generation();
+    std::vector<std::string> stopping;
+    manager.SetPluginStoppingHandler([&stopping](const std::string& id) { stopping.push_back(id); });
     manager.UnloadPlugin(kPluginId);
+    Check(stopping.size() == 1 && stopping[0] == kPluginId, "unloading tells the stopping handler first");
     Check(manager.GetLoadedPlugin(kPluginId) == nullptr, "the plugin is unloaded");
     Check(NodesOfPlugin() == 0, "unloading removes its nodes, " + std::to_string(NodesOfPlugin()) + " left");
     Check(!cyxwiz::plugin::PluginPanelRegistry::Instance().HasPanel(
@@ -118,9 +194,11 @@ int main() {
     // Load again: nothing left over blocks the second registration.
     LoadAndInitialize(manager, dir);
 
-    // Disable still cleans up as before.
+    // Disable still cleans up as before, and tells the stopping handler too.
     manager.DisablePlugin(kPluginId);
     Check(NodesOfPlugin() == 0, "disabling removes its nodes");
+    Check(stopping.size() == 2, "disabling tells the stopping handler");
+    manager.SetPluginStoppingHandler(nullptr);
     manager.UnloadPlugin(kPluginId);
     Check(NodesOfPlugin() == 0, "unloading a disabled plugin leaves nothing");
 

@@ -416,19 +416,24 @@ void NodeEditor::ShowToolbar() {
         ImGui::SameLine();
     } else {
         if (has_sim) {
-            if (is_simulating_) {
+            if (simulation_session_.IsActive()) {
                 if (ui::DangerButton(short_labels ? ICON_FA_STOP "##stop_sim" : ICON_FA_STOP " Stop Sim")) OnStopSimulation();
-                if (graph_executor_) {
-                    ImGui::SameLine();
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextColored(t.success, "t = %.2f s", graph_executor_->GetSimTime());
-                }
+                ImGui::SameLine();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(t.success, "t = %.2f s", simulation_session_.GetSimTime());
             } else if (ui::GhostButton(short_labels ? ICON_FA_PLAY "##run_sim" : ICON_FA_PLAY " Run Sim", !rl_running,
                                        "Stop RL training first", true)) {
                 OnRunSimulation();
             }
             if (ImGui::IsItemHovered() && !rl_running) ImGui::SetTooltip("Run the graph simulation");
             ImGui::SameLine();
+            // The last run failed or was refused: the reason on hover.
+            if (simulation_session_.GetState() == cyxwiz::SimulationState::Failed) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", simulation_session_.GetError().c_str());
+                ImGui::SameLine();
+            }
         }
         if (has_rl) {
             if (rl_running) {
@@ -436,18 +441,10 @@ void NodeEditor::ShowToolbar() {
                 ImGui::SameLine();
                 ImGui::AlignTextToFramePadding();
                 ImGui::TextColored(t.success, "Training via Python...");
-            } else if (ui::GhostButton(short_labels ? ICON_FA_PLAY "##train_rl" : ICON_FA_PLAY " Train RL", !is_simulating_,
+            } else if (ui::GhostButton(short_labels ? ICON_FA_PLAY "##train_rl" : ICON_FA_PLAY " Train RL", !simulation_session_.IsActive(),
                                        "Stop graph simulation first", true)) {
                 OnStartRLTraining();
             }
-            ImGui::SameLine();
-        }
-        // Simulation speed while simulating.
-        if (is_simulating_ && last_eval_time_ms_ > 0.0f) {
-            const float fps = last_eval_time_ms_ > 0.001f ? 1000.0f / last_eval_time_ms_ : 0.0f;
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(last_eval_time_ms_ < 16.0f ? t.success : t.warning, "%.1f ms (%.0f FPS)", last_eval_time_ms_,
-                               fps);
             ImGui::SameLine();
         }
     }

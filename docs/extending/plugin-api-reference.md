@@ -26,6 +26,7 @@ SDK installs, with the types it declares, is listed in
 | `plugin/interfaces/i_node_provider.h` | `INodeProvider`, `PluginNodeTypeInfo` (signal nodes) |
 | `plugin/interfaces/i_panel_provider.h` | `IPanelProvider`, `PluginPanelInfo` |
 | `plugin/interfaces/i_command_provider.h` | `ICommandProvider`, `PluginCommandInfo`, `PluginCommandState` (menu commands, API 1.4) |
+| `plugin/interfaces/i_simulation_provider.h` | `ISimulationProvider`, `PluginSimulationNodeInfo`, `PluginSimulationGraphNode`, `PluginSimulationBeginResult` (graph simulation runs, API 1.4) |
 | `plugin/interfaces/i_training_hook.h` | `ITrainingHook`, `TrainingContext` |
 | `plugin/interfaces/arrow_c_stream.h` | `ArrowSchema`, `ArrowArray`, `ArrowArrayStream` (the Arrow C data and C stream interfaces) |
 | `plugin/interfaces/i_data_provider.h` | `IDataProvider`, `PluginDataLoaderInfo` |
@@ -99,7 +100,7 @@ the library. Unknown fields, capabilities and permissions are ignored.
 | Permission | Granted | Checked by |
 |---|---|---|
 | `Training` | Without asking | `ITensorNodeProvider` (trainable nodes), `ITrainingHook`, `RegisterTrainingHook` |
-| `UIModify` | Without asking | `INodeProvider`, `IPanelProvider`, `ICommandProvider`, `RegisterNodeProvider`, `RegisterPanelProvider` |
+| `UIModify` | Without asking | `INodeProvider`, `IPanelProvider`, `ICommandProvider`, `ISimulationProvider`, `RegisterNodeProvider`, `RegisterPanelProvider` |
 | `DataRegistry` | Without asking | `IDataProvider`, `IAnalyticsProvider`, `RegisterDataProvider`, `RegisterAnalyticsProvider` |
 | `GPU` | Without asking | Nothing |
 | `FileSystem`, `Network`, `SystemCommands`, `Python` | The user is asked to allow or deny each before the plugin starts; the answer is stored per plugin id and version (`%APPDATA%\cyxwiz\plugin_permissions.json`, `~/.cyxwiz/plugin_permissions.json`), so a new version asks again. A denied permission does not stop the plugin | Nothing in the Engine today |
@@ -172,6 +173,7 @@ return, inside the crash guard. Unloading removes all of it.
 | `"INodeProvider"` | `INodeProvider` | Lists your signal nodes; calls `EvaluateNode` in live graph execution, and `GenerateCode` in code export, where the text is written as a comment (a simulation node is not part of a trained model) |
 | `"IPanelProvider"` | `IPanelProvider` | Adds your panels to the menus and draws them every frame they are open |
 | `"ICommandProvider"` | `ICommandProvider` | Adds your commands to the menu they name and to the Command Palette (plugin API 1.4, section 9) |
+| `"ISimulationProvider"` | `ISimulationProvider` | Names your nodes that run in a graph simulation and starts and ends each run (plugin API 1.4, section 9) |
 | `"ITrainingHook"` | `ITrainingHook` | Calls it at training start and end, each epoch's and each training batch's start and end, and asks `ShouldStopEarly` (section 8) |
 | `"IDataProvider"` | `IDataProvider` | Registers the dataset formats (plugin API 1.3 or newer): Data Input lists and opens them |
 | `"IAnalyticsProvider"` | `IAnalyticsProvider` | Registers the analytics (plugin API 1.3 or newer); Data Studio's Explore > Plugins tab runs them |
@@ -380,6 +382,39 @@ void RunCommand(const std::string& id) override {
     if (id == "run") StartRun();
     ctx_->ShowPanel("my_viewport");
 }
+```
+
+### `ISimulationProvider` (graph simulation runs, API 1.4)
+
+A plugin node runs in a graph simulation (**Run Sim** on the canvas) only
+when its plugin names it here; without this interface its nodes are not
+offered for a simulation run, even with `EvaluateNode`. The MuJoCo plugin
+uses it so that a run with a **MuJoCo Plant** holds the physics and shows the
+**MuJoCo Viewport**. Needs `UIModify`.
+
+| Member | Contract |
+|---|---|
+| `std::vector<PluginSimulationNodeInfo> GetSimulationNodes()` | Asked once when the plugin starts. Each: `node_type` (one of your `INodeProvider` node types), `panel_id` (one of your panels the Engine shows when a run with this node starts, or empty) |
+| `PluginSimulationBeginResult BeginGraphRun(const std::vector<PluginSimulationGraphNode>& nodes)` | The user runs a graph holding your nodes; `nodes` are yours, each with `node_id`, `node_type` and its `parameters`. Check them and take what the run needs (the right to step a model, which nothing else may hold meanwhile). Return `{false, reason}` to refuse: the run does not start, the toolbar shows the reason, and `EndGraphRun` is not called. Say what to do in the reason |
+| `void EndGraphRun()` | The run ended (Stop, a failed tick, the graph closed, your plugin stopping) and its worker has finished: release what `BeginGraphRun` took |
+
+Both are called on the UI thread, before the first tick and after the last
+one; between them `EvaluateNode` is called from the run's worker thread. A
+graph with a plugin node that no loaded plugin runs in a simulation does not
+start, and the reason names the node. Disabling or unloading your plugin
+stops a run that uses it before `OnShutdown`.
+
+<!-- not compiled: a sketch; the full provider is plugins/simulation/mujoco/src/mujoco_plugin.cpp -->
+```cpp
+std::vector<PluginSimulationNodeInfo> GetSimulationNodes() override {
+    return {{"Plant", "my_viewport"}};
+}
+PluginSimulationBeginResult BeginGraphRun(const std::vector<PluginSimulationGraphNode>& nodes) override {
+    if (viewport_running_) return {false, "The viewport is running the model. Stop it, then run the graph."};
+    graph_owns_model_ = true;
+    return {};
+}
+void EndGraphRun() override { graph_owns_model_ = false; }
 ```
 
 ### `IDataProvider`, `IAnalyticsProvider`

@@ -7,11 +7,13 @@
 #include "../core/extension_node_registry.h"
 #include "registries/plugin_panel_registry.h"
 #include "registries/plugin_command_registry.h"
+#include "registries/plugin_simulation_registry.h"
 #include "registries/plugin_data_loader_registry.h"
 #include "registries/plugin_training_hook_manager.h"
 #include "registries/plugin_analytics_registry.h"
 #include "interfaces/i_panel_provider.h"
 #include "interfaces/i_node_provider.h"
+#include "interfaces/i_simulation_provider.h"
 #include "interfaces/i_tensor_node_provider.h"
 #include <cyxwiz/sequential.h>
 #include "interfaces/i_training_hook.h"
@@ -391,6 +393,22 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             }
         }
 
+        // Register the nodes that run in a graph simulation (plugin API 1.4, with crash isolation)
+        auto* simulation_provider = static_cast<ISimulationProvider*>(instance->QueryInterface("ISimulationProvider"));
+        if (simulation_provider && !permitted(PluginPermission::UIModify, "ISimulationProvider")) simulation_provider = nullptr;
+        if (auto* p = simulation_provider) {
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterSimulationNodes", [&]() {
+                const auto nodes = p->GetSimulationNodes();
+                for (const auto& node : nodes) PluginSimulationRegistry::Instance().Register(plugin_id, node, p);
+                spdlog::info("PluginManager: Registered {} simulation nodes for '{}'", nodes.size(), plugin_id);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
+            }
+        }
+
         // Register nodes (with crash isolation)
         auto* node_provider = static_cast<INodeProvider*>(instance->QueryInterface("INodeProvider"));
         if (node_provider && !permitted(PluginPermission::UIModify, "INodeProvider")) node_provider = nullptr;
@@ -671,12 +689,18 @@ void PluginManager::RemoveRegistrations(const std::string& plugin_id) {
     ExtensionNodeRegistry::Instance().RemoveByProvider(plugin_id);
     PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginCommandRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginSimulationRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginTrainingHookManager::Instance().RemoveByPlugin(plugin_id);
     PluginAnalyticsRegistry::Instance().RemoveByPlugin(plugin_id);
 }
 
+void PluginManager::SetPluginStoppingHandler(std::function<void(const std::string& plugin_id)> handler) {
+    plugin_stopping_handler_ = std::move(handler);
+}
+
 void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
+    if (plugin_stopping_handler_) plugin_stopping_handler_(plugin_id);
     std::lock_guard assistant_lock(assistant_command_mutex_);
     std::lock_guard lock(mutex_);
 
@@ -713,6 +737,7 @@ void PluginManager::ShutdownAll() {
 }
 
 void PluginManager::UnloadPlugin(const std::string& plugin_id) {
+    if (plugin_stopping_handler_) plugin_stopping_handler_(plugin_id);
     std::lock_guard assistant_lock(assistant_command_mutex_);
     std::lock_guard lock(mutex_);
 

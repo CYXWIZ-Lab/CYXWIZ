@@ -61,8 +61,8 @@ public:
     GraphExecutor() = default;
 
     // Build execution plan from current node graph
-    bool Build(const std::vector<gui::MLNode>& nodes,
-               const std::vector<gui::NodeLink>& links);
+    bool Build(const std::vector<::gui::MLNode>& nodes,
+               const std::vector<::gui::NodeLink>& links);
 
     // Set callback for evaluating plugin nodes
     void SetPluginEvalCallback(PluginEvalCallback callback) {
@@ -94,29 +94,29 @@ public:
 
 private:
     bool BuildExecutionOrder();
-    bool EvaluateNode(const gui::MLNode& node, float dt);
-    bool EvaluateSignalNode(const gui::MLNode& node, float dt);
-    bool EvaluatePluginNode(const gui::MLNode& node, float dt);
-    bool ReadFloatParameter(const gui::MLNode& node,
+    bool EvaluateNode(const ::gui::MLNode& node, float dt);
+    bool EvaluateSignalNode(const ::gui::MLNode& node, float dt);
+    bool EvaluatePluginNode(const ::gui::MLNode& node, float dt);
+    bool ReadFloatParameter(const ::gui::MLNode& node,
                             const char* key,
                             float fallback,
                             float& value,
                             const char* legacy_key = nullptr);
-    std::string GetParameterValue(const gui::MLNode& node,
+    std::string GetParameterValue(const ::gui::MLNode& node,
                                   const char* key,
                                   const char* legacy_key,
                                   const std::string& fallback) const;
-    bool StoreScalarOutput(const gui::MLNode& node, float value);
+    bool StoreScalarOutput(const ::gui::MLNode& node, float value);
 
     // Gather input pin values for a node by following links
-    std::map<std::string, NodeValue> GatherInputs(const gui::MLNode& node) const;
+    std::map<std::string, NodeValue> GatherInputs(const ::gui::MLNode& node) const;
 
     // Find node by ID
-    const gui::MLNode* FindNode(int node_id) const;
+    const ::gui::MLNode* FindNode(int node_id) const;
 
     // Graph data (copies)
-    std::vector<gui::MLNode> nodes_;
-    std::vector<gui::NodeLink> links_;
+    std::vector<::gui::MLNode> nodes_;
+    std::vector<::gui::NodeLink> links_;
 
     // Execution order (node IDs in topological order)
     std::vector<int> execution_order_;

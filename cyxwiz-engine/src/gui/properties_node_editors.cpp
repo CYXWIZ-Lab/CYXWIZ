@@ -152,6 +152,9 @@ void RenderSignalScope(MLNode& node, RenderNodePropertiesContext& context) {
             if (ImGui::InputInt("##scope_win", &win)) {
                 win = std::clamp(win, 10, 100000);
                 node.parameters["window_size"] = std::to_string(win);
+                if (context.node_editor)
+                    context.node_editor->GetSimulationSession().SetNodeParameter(node.id, "window_size",
+                                                                                 node.parameters["window_size"]);
             }
             properties_rows::Status("window_size");
             properties_rows::Label("Auto scale");
@@ -160,27 +163,14 @@ void RenderSignalScope(MLNode& node, RenderNodePropertiesContext& context) {
         }
     }
 
-    // Real-time signal plot
-    auto& buf = context.scope_buffers[node.id];
-    buf.max_samples = win;
+    // The run's history of this Scope, collected by the simulation session
+    // whether or not this panel is drawn.
+    std::vector<float> t_arr;
+    std::vector<float> v_arr;
+    if (context.node_editor) context.node_editor->GetSimulationSession().CopyScope(node.id, t_arr, v_arr);
+    if (t_arr.empty()) Note("Connect one scalar signal and run the simulation to view data.");
 
-    float live_value = 0.0f;
-    const bool has_live_value =
-        context.node_editor &&
-        context.node_editor->IsGraphSimulationRunning() &&
-        node.inputs.size() == 1 &&
-        context.node_editor->TryGetSimulationScalar(node.inputs[0].id, live_value);
-    if (has_live_value) {
-        const float sample_time = context.node_editor->GetSimulationTime();
-        if (buf.times.empty() || sample_time > buf.times.back()) buf.Push(sample_time, live_value);
-    } else if (buf.times.empty()) {
-        Note("Connect one scalar signal and run the simulation to view data.");
-    }
-
-    if (!buf.times.empty()) {
-        // Copy deque to contiguous arrays for ImPlot
-        std::vector<float> t_arr(buf.times.begin(), buf.times.end());
-        std::vector<float> v_arr(buf.values.begin(), buf.values.end());
+    if (!t_arr.empty()) {
         if (ImPlot::BeginPlot("##scope_plot", ImVec2(-1, 200), ImPlotFlags_NoTitle)) {
             ImPlotAxisFlags x_flags = ImPlotAxisFlags_NoLabel;
             ImPlotAxisFlags y_flags = auto_scale ? (ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoLabel) : ImPlotAxisFlags_NoLabel;
@@ -196,26 +186,13 @@ void RenderSignalScope(MLNode& node, RenderNodePropertiesContext& context) {
             ImPlot::EndPlot();
         }
     }
-    if (cyxwiz::ui::SecondaryButton("Clear")) buf.Clear();
+    if (cyxwiz::ui::SecondaryButton("Clear") && context.node_editor)
+        context.node_editor->GetSimulationSession().ClearScope(node.id);
     ImGui::SameLine();
-    ImGui::TextColored(t.text_dim, "Samples: %d", static_cast<int>(buf.times.size()));
+    ImGui::TextColored(t.text_dim, "Samples: %d", static_cast<int>(t_arr.size()));
 }
 
 }  // namespace
-
-void ScopeBuffer::Push(float t, float v) {
-    times.push_back(t);
-    values.push_back(v);
-    while (static_cast<int>(times.size()) > max_samples) {
-        times.pop_front();
-        values.pop_front();
-    }
-}
-
-void ScopeBuffer::Clear() {
-    times.clear();
-    values.clear();
-}
 
 void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
     const auto publish_simulation_parameter =
@@ -223,7 +200,7 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             if (!context.node_editor) return;
             const auto value = node.parameters.find(key);
             if (value != node.parameters.end()) {
-                context.node_editor->SetSimulationNodeParameter(
+                context.node_editor->GetSimulationSession().SetNodeParameter(
                     node.id, key, value->second);
             }
         };

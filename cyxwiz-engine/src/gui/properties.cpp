@@ -1005,7 +1005,6 @@ void Properties::RenderNodeProperties(MLNode& node) {
         node,
         properties_node_editors::RenderNodePropertiesContext{
             node_editor_,
-            scope_buffers_,
             [this]() { NotifyEdited(); }
         });
 }

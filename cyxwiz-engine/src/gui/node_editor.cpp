@@ -32,6 +32,9 @@
 #include "../core/rl_script_generator.h"
 #include "../scripting/scripting_engine.h"
 #include "../core/extension_node_registry.h"
+#include "../plugin/plugin_manager.h"
+#include "../plugin/registries/plugin_panel_registry.h"
+#include "../plugin/registries/plugin_simulation_registry.h"
 #include "../core/extension_node_presentation.h"
 #include "../core/node_metadata_registry.h"
 #include "graph_training_launcher.h"
@@ -177,9 +180,18 @@ NodeEditor::NodeEditor()
 
     // The canvas starts empty (owner 2026-10-02); ready-made graphs are
     // under Examples in the Nodes panel.
+
+    // A plugin is never shut down under a graph run that evaluates its nodes.
+    cyxwiz::plugin::PluginManager::Instance().SetPluginStoppingHandler([this](const std::string& plugin_id) {
+        if (simulation_plugins_.count(plugin_id)) {
+            spdlog::info("Graph simulation stopped: its plugin {} is stopping", plugin_id);
+            OnStopSimulation();
+        }
+    });
 }
 
 NodeEditor::~NodeEditor() {
+    cyxwiz::plugin::PluginManager::Instance().SetPluginStoppingHandler(nullptr);
     OnStopSimulation();
     // Owned background work must not outlive the editor: the pipeline task is
     // asked to stop and its queued UI delivery is dropped before any editor
@@ -235,7 +247,7 @@ std::string NodeEditor::GetGraphReplacementBlockReason() const {
         graph_preparation_busy_callback_ && graph_preparation_busy_callback_(),
         training_data_loading_callback_ && training_data_loading_callback_(),
         properties_panel_ && properties_panel_->IsDialogBusy(),
-        is_simulating_.load(), pipeline_execution_active_,
+        simulation_session_.IsActive(), pipeline_execution_active_,
         rl_script_running_.load()}));
 }
 
@@ -251,6 +263,8 @@ bool NodeEditor::CanReplaceGraph(const char* operation) {
 }
 
 void NodeEditor::Render() {
+    simulation_session_.Poll();
+    if (!simulation_session_.IsActive()) simulation_plugins_.clear();
     ApplySubgraphRequest();
     ApplyStepAfterInsert();
     if (!show_window_) return;
@@ -4117,52 +4131,31 @@ bool NodeEditor::HasSimulationNodes() const {
         if (cyxwiz::IsBuiltInSimulationRuntimeNode(node.type)) {
             return true;
         }
-        // Check for MuJoCo Plant or other simulation plugin nodes
-        if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant") ||
-            cyxwiz::IsExtensionTypeName(node, "MuJoCoEnv")) {
+        // A plugin node its plugin runs in a graph simulation (ISimulationProvider).
+        if (node.type == NodeType::PluginCustom &&
+            cyxwiz::plugin::PluginSimulationRegistry::Instance().IsSimulationNode(node.extension_type_id)) {
             return true;
         }
     }
     return false;
 }
 
-bool NodeEditor::TryGetSimulationScalar(int pin_id, float& value) const {
-    if (!graph_executor_) return false;
-    cyxwiz::NodeValue node_value;
-    if (!graph_executor_->TryGetPinValue(pin_id, node_value)) return false;
-    const auto* scalar = std::get_if<float>(&node_value);
-    if (!scalar) return false;
-    value = *scalar;
-    return true;
-}
-
-float NodeEditor::GetSimulationTime() const {
-    return graph_executor_ ? graph_executor_->GetSimTime() : 0.0f;
-}
-
-bool NodeEditor::SetSimulationNodeParameter(int node_id,
-                                            const std::string& key,
-                                            const std::string& value) {
-    return graph_executor_ &&
-           graph_executor_->SetNodeParameter(node_id, key, value);
-}
-
 void NodeEditor::OnRunSimulation() {
-    if (is_simulating_) return;
+    if (simulation_session_.IsActive()) return;
 
-    // A previous failed simulation may have ended its worker before the UI
-    // observed the terminal state. Reclaim it before assigning a new thread.
-    if (sim_thread_.joinable()) {
-        sim_thread_.join();
+    // The plugins with nodes in the graph check them and take what the run
+    // needs (a physics model to step) before the first tick.
+    std::string refused;
+    auto lease = cyxwiz::plugin::PluginSimulationRegistry::Instance().BeginGraphRun(nodes_, refused);
+    if (!lease) {
+        simulation_session_.FailToStart(refused);
+        return;
     }
+    const auto panels = lease->Panels();
+    auto plugins = lease->PluginIds();
 
-    spdlog::info("NodeEditor: Starting graph simulation");
-
-    // Create and build executor
-    graph_executor_ = std::make_unique<cyxwiz::GraphExecutor>();
-
-    // Set plugin eval callback: routes to ExtensionNodeRegistry → plugin DLL
-    graph_executor_->SetPluginEvalCallback(
+    // Plugin nodes are evaluated by their plugin, found through ExtensionNodeRegistry.
+    const bool started = simulation_session_.Start(nodes_, links_,
         [](const std::string& plugin_qualified_name,
            const cyxwiz::NodeEvalContext& ctx) -> cyxwiz::NodeEvalResult {
 
@@ -4208,55 +4201,18 @@ void NodeEditor::OnRunSimulation() {
                 }
             }
             return result;
-        }
-    );
-
-    if (!graph_executor_->Build(nodes_, links_)) {
-        spdlog::error("NodeEditor: Graph build failed: {}", graph_executor_->GetError());
-        graph_executor_.reset();
-        return;
+        },
+        sim_rate_hz_, std::move(lease));
+    if (!started) return;
+    simulation_plugins_ = std::move(plugins);
+    for (const auto& [plugin_id, panel_id] : panels) {
+        cyxwiz::plugin::PluginPanelRegistry::Instance().ShowPanel(plugin_id, panel_id);
     }
-
-    // Launch simulation thread
-    sim_stop_requested_ = false;
-    is_simulating_ = true;
-
-    sim_thread_ = std::thread([this]() {
-        float dt = 1.0f / sim_rate_hz_;
-        auto tick_duration = std::chrono::microseconds(static_cast<int>(1000000.0f / sim_rate_hz_));
-
-        while (!sim_stop_requested_) {
-            auto start = std::chrono::steady_clock::now();
-
-            if (!graph_executor_->Tick(dt)) {
-                spdlog::warn("NodeEditor: Simulation tick failed: {}", graph_executor_->GetError());
-                break;
-            }
-
-            // Sleep to maintain target rate
-            auto elapsed = std::chrono::steady_clock::now() - start;
-            auto remaining = tick_duration - elapsed;
-            if (remaining > std::chrono::microseconds(0)) {
-                std::this_thread::sleep_for(remaining);
-            }
-        }
-
-        is_simulating_ = false;
-        spdlog::info("NodeEditor: Simulation stopped at t={:.2f}s", graph_executor_->GetSimTime());
-    });
 }
 
 void NodeEditor::OnStopSimulation() {
-    if (!is_simulating_ && !sim_thread_.joinable()) return;
-
-    spdlog::info("NodeEditor: Stopping graph simulation");
-    sim_stop_requested_ = true;
-
-    if (sim_thread_.joinable()) {
-        sim_thread_.join();
-    }
-
-    is_simulating_ = false;
+    simulation_session_.Stop();
+    simulation_plugins_.clear();
 }
 
 // ===== RL Training =====

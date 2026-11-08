@@ -102,6 +102,7 @@ set(CYXWIZ_PLUGIN_SDK_HEADERS
     plugin/interfaces/i_assistant_provider.h
     plugin/interfaces/i_data_provider.h
     plugin/interfaces/i_node_provider.h
+    plugin/interfaces/i_simulation_provider.h
     plugin/interfaces/i_panel_provider.h
     plugin/interfaces/i_tensor_node_provider.h
     plugin/interfaces/i_training_hook.h
@@ -128,6 +129,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/CyxWizPluginSDK.cmake)
 add_library(cyxwiz-plugin-host STATIC
     src/plugin/registries/plugin_panel_registry.cpp
     src/plugin/registries/plugin_command_registry.cpp
+    src/plugin/registries/plugin_simulation_registry.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
     src/plugin/security/permission_store.cpp
@@ -287,6 +289,7 @@ set(ENGINE_SOURCES
     src/core/large_text_file.cpp
     src/core/dataset_audit.cpp
     src/core/graph_executor.cpp
+    src/core/graph_simulation_session.cpp
     src/core/rl_script_generator.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
@@ -2960,6 +2963,33 @@ if(WIN32)
 endif()
 
 set_target_properties(test_graph_executor_simulation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Graph simulation session (Scope history, run / pause / step / stop) =====
+add_executable(test_graph_simulation_session
+    tests/test_graph_simulation_session.cpp
+    src/core/graph_executor.cpp
+    src/core/graph_simulation_session.cpp
+)
+
+target_include_directories(test_graph_simulation_session PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_graph_simulation_session PRIVATE
+    imgui::imgui
+    spdlog::spdlog
+)
+
+if(WIN32)
+    target_compile_definitions(test_graph_simulation_session PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_graph_simulation_session PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

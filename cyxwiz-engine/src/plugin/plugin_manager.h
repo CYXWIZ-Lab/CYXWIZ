@@ -12,6 +12,7 @@
 #include <mutex>
 #include <set>
 #include <filesystem>
+#include <functional>
 #include <string>
 
 namespace cyxwiz::plugin {
@@ -85,6 +86,11 @@ public:
     // Disable a running plugin
     void DisablePlugin(const std::string& plugin_id);
 
+    // Called on the UI thread before a plugin is shut down or unloaded, outside
+    // the manager's locks: whatever runs the plugin's code (a graph simulation
+    // run) stops there first.
+    void SetPluginStoppingHandler(std::function<void(const std::string& plugin_id)> handler);
+
     // ===== Querying =====
 
     // Get plugin by ID (returns nullptr if not found)
@@ -140,6 +146,8 @@ private:
     // it is freed only when the last module made by it is destroyed.
     struct ExtensionLease;
     std::unordered_map<std::string, std::shared_ptr<ExtensionLease>> extension_leases_;
+
+    std::function<void(const std::string& plugin_id)> plugin_stopping_handler_;
 
     // Plugin storage: id -> LoadedPlugin
     std::unordered_map<std::string, std::unique_ptr<LoadedPlugin>> plugins_;
