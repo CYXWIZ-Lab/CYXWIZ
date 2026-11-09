@@ -78,7 +78,11 @@ void CheckMinimize() {
     Check(answer.rows[1].ended_at == "(\xE2\x88\x92" "1.5059, 2.2735)", "Adam's end: " + answer.rows[1].ended_at);
     const auto& sgd = answer.rows[3];
     Check(sgd.word == "Diverged at step 4" && sgd.tone == Tone::Warning && sgd.value == "overflow", "SGD 0.01 diverges: " + sgd.word);
-    Check(Has(answer.sentence, "SGD + momentum 0.9 ends lowest: f = 3.2866e-5 at (0.99427, 0.98855)") && Has(answer.sentence, ", a minimum.") &&
+    // f is float32 beside the minimum, where its last digit differs between compilers.
+    const std::string lowest = "SGD + momentum 0.9 ends lowest: f = ";
+    const size_t f_at = answer.sentence.find(lowest);
+    const double f = f_at == std::string::npos ? 0.0 : std::atof(answer.sentence.c_str() + f_at + lowest.size());
+    Check(std::abs(f - 3.2865e-5) < 1e-8 && Has(answer.sentence, "e-5 at (0.99427, 0.98855), a minimum.") &&
               Has(answer.sentence, "SGD at learning rate 0.01 diverged: its steps grew without limit"),
           "sentence: " + answer.sentence);
     Check(answer.paths[0].points.size() == 1001, "a path holds every step");
