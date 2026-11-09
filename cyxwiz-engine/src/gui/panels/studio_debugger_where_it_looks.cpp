@@ -2,9 +2,11 @@
 // mockup board WhereItLooks): the run's model rebuilt from its capture
 // (DebugModelSession, TOFIX202) in eval mode, its prediction for the picked
 // item (owner decision 2026-11-09: the shown prediction and occlusion use
-// the same evaluation pass), and occlusion of the input: image patches,
-// tokens or features, each covered in turn, the picked output's score
-// change drawn over the input. All model work runs off the UI thread.
+// the same evaluation pass), and two methods: occlusion of the input (image
+// patches, tokens or features, each covered in turn, the picked output's
+// score change drawn over the input) and saliency (6.3c, approved board
+// Saliency: the gradient of the picked score with respect to the input,
+// its size or gradient x input). All model work runs off the UI thread.
 
 #include "studio_debugger_panel.h"
 #include "studio_debugger_colors.h"
@@ -16,6 +18,7 @@
 #include "../../core/layer_view_presentation.h"
 #include "../../core/live_graph_compile.h"
 #include "../../core/occlusion.h"
+#include "../../core/saliency.h"
 #include "../../core/where_it_looks_presentation.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
@@ -92,6 +95,25 @@ void DrawDivergingLegend(const std::string& low, const std::string& high) {
     ImGui::TextColored(DebuggerMuted(), "%s", high.c_str());
 }
 
+// The Heat scale (the feature maps': black through red to yellow) between its labels.
+void DrawHeatLegend(const std::string& low, const std::string& high) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::TextColored(DebuggerMuted(), "%s", low.c_str());
+    ImGui::SameLine();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float width = 160.0f, height = 10.0f;
+    const float y = at.y + (ImGui::GetTextLineHeight() - height) * 0.5f;
+    ImGui::Dummy(ImVec2(width, ImGui::GetTextLineHeight()));
+    constexpr int kSteps = 48;
+    for (int i = 0; i < kSteps; ++i) {
+        const float v = static_cast<float>(i) / (kSteps - 1);
+        const float x0 = at.x + width * i / kSteps, x1 = at.x + width * (i + 1) / kSteps;
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + height), ui::ToU32(ui::HeatAt(t, v)));
+    }
+    ImGui::SameLine();
+    ImGui::TextColored(DebuggerMuted(), "%s", high.c_str());
+}
+
 }  // namespace
 
 struct StudioDebuggerPanel::WhereItLooksState {
@@ -120,6 +142,10 @@ struct StudioDebuggerPanel::WhereItLooksState {
     std::string fill_source;
     std::string headline;
     std::string error;
+
+    // The saliency of one item and target (6.3c).
+    std::string saliency_key;  // capture / item / target the result is for
+    saliency::Result saliency;
 
     bool Busy() const { return building || evaluating || computing; }
 };
@@ -301,12 +327,61 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
     ImGui::Indent(110.0f);
     WrappedFaint("Later: a box or a mask region, and the next token, once the model has those heads.");
     ImGui::Unindent(110.0f);
+
+    // Method and, for saliency, what it shows: this session's choice, from
+    // the user's defaults (Preferences > Studio Debugger).
+    const core::StudioDebuggerConfig settings = CaptureSettings();
+    const bool use_saliency = settings.where_it_looks_method == core::WhereItLooksMethod::Saliency;
+    const auto set_session = [&](const std::function<void(core::StudioDebuggerConfig&)>& change) {
+        if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
+        change(*capture_session_);
+    };
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(DebuggerMuted(), "Method");
     ImGui::SameLine(110.0f);
-    ImGui::TextUnformatted("Occlusion");
-    ImGui::SameLine();
-    ImGui::TextColored(DebuggerMuted(), "(forward passes only, on the device). Saliency comes next.");
+    {
+        static const char* const kMethods[] = {"Occlusion", "Saliency"};
+        int method = use_saliency ? 1 : 0;
+        if (ui::SegmentedControl("WhereItLooksMethod", kMethods, 2, &method) && !s.computing)
+            set_session([&](core::StudioDebuggerConfig& c) {
+                c.where_it_looks_method = method == 1 ? core::WhereItLooksMethod::Saliency : core::WhereItLooksMethod::Occlusion;
+            });
+        ImGui::SameLine(0.0f, 12.0f);
+        WrappedMuted(use_saliency ? (*kind == occlusion::InputKind::Tokens
+                                         ? "Token ids have no gradient: it is taken at the Embedding's output, one "
+                                           "vector per token."
+                                         : "One forward and one backward pass, on the device.")
+                                  : "Forward passes only: works for any model on the device.");
+    }
+    if (use_saliency) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(DebuggerMuted(), "Show");
+        ImGui::SameLine(110.0f);
+        static const char* const kShows[] = {"Gradient size", "Gradient \xC3\x97 input"};
+        int show = settings.saliency_show == core::SaliencyShow::TimesInput ? 1 : 0;
+        if (ui::SegmentedControl("WhereItLooksShow", kShows, 2, &show))
+            set_session([&](core::StudioDebuggerConfig& c) {
+                c.saliency_show = show == 1 ? core::SaliencyShow::TimesInput : core::SaliencyShow::Size;
+            });
+        ImGui::SameLine(0.0f, 12.0f);
+        const core::StudioDebuggerConfig saved = core::EngineConfig::Instance().GetStudioDebugger();
+        const bool differs = saved.where_it_looks_method != settings.where_it_looks_method ||
+                             saved.saliency_show != settings.saliency_show;
+        if (ui::LinkButton("Save as my default", differs)) {
+            core::StudioDebuggerConfig defaults = saved;
+            defaults.where_it_looks_method = settings.where_it_looks_method;
+            defaults.saliency_show = settings.saliency_show;
+            auto& engine_config = core::EngineConfig::Instance();
+            engine_config.SetStudioDebugger(defaults);
+            engine_config.Save();
+        }
+        if (!differs && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Saliency and this Show are your defaults");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(DebuggerMuted(), "Of");
+        ImGui::SameLine(110.0f);
+        WrappedText(wl::SaliencyOfText(rule, eval->size(), s.target, names[static_cast<size_t>(s.target)]));
+    }
 
     // The plan for this item.
     occlusion::Plan plan;
@@ -328,6 +403,11 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
         }
     }
     const float pad_id = plan.fill.empty() ? 0.0f : plan.fill[0];
+    if (use_saliency) {
+        RenderSaliency(*kind, item_values, pad_id, names[static_cast<size_t>(s.target)], sample_texture, sample_width,
+                       sample_height);
+        return;
+    }
     const auto pieces = occlusion::PiecesOf(plan, item_values, pad_id);
     size_t elements = 1;
     for (size_t d : item_shape) elements *= d;
@@ -526,6 +606,174 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
     DrawDivergingLegend("lowers " + target_name, "raises");
     WrappedMuted("Blue: covering it lowers the score, so the model relies on it. Red: covering it raises the score. "
                  "Scores come from the evaluation pass (dropout off, BatchNorm on its running statistics).");
+}
+
+void StudioDebuggerPanel::RenderSaliency(occlusion::InputKind kind, const std::vector<float>& item_values,
+                                         float pad_id, const std::string& target_name, uint32_t sample_texture,
+                                         int sample_width, int sample_height) {
+    WhereItLooksState& s = *where_it_looks_;
+    const CapturedLayer& first = layer_capture_->Layers().front();
+    const CapturedTensor* input = first.Find(CapturedTensorRole::Input);
+    const lv::OutputRule rule = lv::OutputRuleFromKey(session_.sample_facts.output_rule);
+    const bool times_input = CaptureSettings().saliency_show == core::SaliencyShow::TimesInput;
+    const std::string key = std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" +
+                            std::to_string(selected_layer_sample_) + "/" + std::to_string(s.target);
+
+    ImGui::Spacing();
+    if (s.computing) {
+        ImGui::TextColored(DebuggerAccentText(), "Computing");
+    } else {
+        if (ui::PrimaryButton(s.saliency_key == key ? "Compute again" : "Compute")) {
+            s.computing = true;
+            s.error.clear();
+            auto state = where_it_looks_;
+            auto result = std::make_shared<saliency::Result>();
+            auto error = std::make_shared<std::string>();
+            const Tensor input_tensor = input->tensor;
+            const size_t item = selected_layer_sample_;
+            const int target = s.target;
+            const size_t embedding_layer = first.module_index;
+            AsyncTaskManager::Instance().RunAsync(
+                "Studio Debugger: saliency",
+                [state, result, error, input_tensor, item, target, rule, kind, embedding_layer](LambdaTask&) {
+                    try {
+                        *result = saliency::Run(*state->session, ItemInput(input_tensor, item, kind), kind, rule,
+                                                target, embedding_layer);
+                    } catch (const std::exception& e) {
+                        *error = e.what();
+                    }
+                },
+                nullptr,
+                [state, result, error, key](bool, const std::string&) {
+                    state->computing = false;
+                    if (!error->empty()) {
+                        state->error = *error;
+                        return;
+                    }
+                    state->saliency_key = key;
+                    state->saliency = std::move(*result);
+                });
+        }
+        ImGui::SameLine(0.0f, 12.0f);
+        WrappedMuted(wl::SaliencyPassesText());
+    }
+    if (!s.error.empty()) WrappedMuted("Not computed: " + s.error + ".");
+    if (s.saliency_key != key) return;
+
+    // The result: one value per pixel, token or feature.
+    const saliency::Result& r = s.saliency;
+    const auto& values = times_input ? r.times_input : r.size;
+    std::vector<std::string> piece_names;
+    std::vector<size_t> considered;
+    if (kind == occlusion::InputKind::Tokens) {
+        for (size_t p = 0; p < item_values.size(); ++p) {
+            piece_names.push_back("#" + std::to_string(static_cast<long long>(item_values[p])));
+            if (item_values[p] != pad_id) considered.push_back(p);
+        }
+    } else if (kind == occlusion::InputKind::Features) {
+        for (size_t i = 0; i < item_values.size(); ++i) piece_names.push_back("feature " + std::to_string(i));
+    }
+    ImGui::Spacing();
+    WrappedText(wl::SaliencyHeadline(kind, r, times_input, considered, target_name, piece_names));
+    const auto scaled = times_input ? wl::Scaled(values) : wl::ScaledSize(values);
+    const ui::Tokens& t = ui::CurrentTokens();
+    const auto colour = [&](float v, float alpha) {
+        ImVec4 c = times_input ? ui::DivergingAt(t, v >= 0.0f ? 1.0f : -1.0f) : ui::HeatAt(t, v);
+        c.w = alpha * std::min(1.0f, times_input ? std::fabs(v) : std::sqrt(v));
+        return ui::ToU32(c);
+    };
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    if (kind == occlusion::InputKind::Image && r.rows > 0 && r.columns > 0 && scaled.size() == r.rows * r.columns) {
+        const float side = std::min(280.0f, ImGui::GetContentRegionAvail().x * 0.45f);
+        const float h = sample_width > 0 ? side * static_cast<float>(sample_height) / static_cast<float>(sample_width) : side;
+        if (sample_texture) {
+            ImGui::Image(static_cast<ImTextureID>(sample_texture), ImVec2(side, h));
+            ImGui::SameLine(0.0f, 24.0f);
+        }
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##SaliencyHeat", ImVec2(side, h));
+        if (sample_texture) dl->AddImage(static_cast<ImTextureID>(sample_texture), at, ImVec2(at.x + side, at.y + h));
+        dl->AddRectFilled(at, ImVec2(at.x + side, at.y + h), DebuggerU32(DebuggerPanelBg(), 0.65f));
+        const float cw = side / static_cast<float>(r.columns), ch = h / static_cast<float>(r.rows);
+        for (size_t i = 0; i < scaled.size(); ++i) {
+            const float x = at.x + cw * static_cast<float>(i % r.columns);
+            const float y = at.y + ch * static_cast<float>(i / r.columns);
+            dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw, y + ch), colour(scaled[i], 0.95f));
+        }
+        if (ImGui::IsItemHovered()) {
+            const ImVec2 m = ImGui::GetIO().MousePos;
+            const size_t col = std::min(r.columns - 1, static_cast<size_t>(std::max(0.0f, (m.x - at.x) / cw)));
+            const size_t row = std::min(r.rows - 1, static_cast<size_t>(std::max(0.0f, (m.y - at.y) / ch)));
+            const size_t i = row * r.columns + col;
+            ImGui::SetTooltip("Row %zu, column %zu: %s", row, col, wl::SaliencyValueText(values[i], times_input).c_str());
+        }
+        WrappedMuted(times_input ? "Gradient \xC3\x97 input per pixel, summed over the channels."
+                                 : "Gradient size per pixel: the largest over its channels.");
+    } else if (kind == occlusion::InputKind::Tokens && values.size() == item_values.size()) {
+        const float pad_x = 8.0f, pad_y = 4.0f;
+        for (size_t p : considered) {
+            const std::string& text = piece_names[p];
+            const ImVec2 size(ImGui::CalcTextSize(text.c_str()).x + pad_x * 2, ImGui::GetTextLineHeight() + pad_y * 2);
+            SameLineIfFits(size.x, 6.0f);
+            ImGui::PushID(static_cast<int>(p));
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##token", size);
+            dl->AddRectFilled(at, ImVec2(at.x + size.x, at.y + size.y), DebuggerU32(DebuggerFaint(), 0.25f), 4.0f);
+            dl->AddRectFilled(at, ImVec2(at.x + size.x, at.y + size.y), colour(scaled[p], 0.9f), 4.0f);
+            dl->AddText(ImVec2(at.x + pad_x, at.y + pad_y), DebuggerU32(DebuggerBright()), text.c_str());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Token %zu (id %s): %s", p, text.c_str() + 1,
+                                  wl::SaliencyValueText(values[p], times_input).c_str());
+            ImGui::PopID();
+        }
+        ImGui::NewLine();
+        WrappedMuted(times_input ? "Each chip: the gradient \xC2\xB7 the token's embedding. Tokens by their id; padding left out."
+                                 : "Each chip: the length of the gradient at the token's embedding. Tokens by their id; "
+                                   "padding left out.");
+    } else if (kind == occlusion::InputKind::Features && values.size() == item_values.size()) {
+        if (ImGui::BeginTable("##SaliencyFeatures", 4, ImGuiTableFlags_SizingFixedFit)) {
+            ImGui::TableSetupColumn("Feature");
+            ImGui::TableSetupColumn("Value");
+            ImGui::TableSetupColumn(times_input ? "Gradient \xC3\x97 value" : "Gradient size",
+                                    ImGuiTableColumnFlags_WidthFixed, 420.0f);
+            ImGui::TableSetupColumn("");
+            ImGui::TableHeadersRow();
+            for (size_t i = 0; i < values.size(); ++i) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(piece_names[i].c_str());
+                ImGui::TableNextColumn();
+                ImGui::Text("%.4g", item_values[i]);
+                ImGui::TableNextColumn();
+                const ImVec2 at = ImGui::GetCursorScreenPos();
+                const float width = 420.0f, hh = ImGui::GetTextLineHeight();
+                ImGui::Dummy(ImVec2(width, hh));
+                dl->AddRectFilled(at, ImVec2(at.x + width, at.y + hh), DebuggerU32(DebuggerFaint(), 0.2f), 3.0f);
+                if (times_input) {
+                    const float mid = at.x + width * 0.5f, len = width * 0.5f * std::fabs(scaled[i]);
+                    const float x0 = scaled[i] < 0.0f ? mid - len : mid, x1 = scaled[i] < 0.0f ? mid : mid + len;
+                    dl->AddRectFilled(ImVec2(x0, at.y), ImVec2(x1, at.y + hh), colour(scaled[i] < 0 ? -1.0f : 1.0f, 1.0f), 3.0f);
+                    dl->AddLine(ImVec2(mid, at.y - 2), ImVec2(mid, at.y + hh + 2), DebuggerU32(DebuggerMuted(), 0.8f));
+                } else {
+                    dl->AddRectFilled(at, ImVec2(at.x + width * scaled[i], at.y + hh), colour(scaled[i], 1.0f), 3.0f);
+                }
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(wl::SaliencyValueText(values[i], times_input).c_str());
+            }
+            ImGui::EndTable();
+        }
+    }
+    ImGui::Spacing();
+    if (times_input) {
+        DrawDivergingLegend("lowers " + target_name, "raises");
+        WrappedMuted("Blue: this element pulls the score down. Red: it pushes the score up. From the evaluation pass "
+                     "(dropout off, BatchNorm on its running statistics).");
+    } else {
+        DrawHeatLegend("no effect", "strongest");
+        WrappedMuted("Bright: a small change here moves the score most. The size says nothing about the direction; "
+                     "Gradient \xC3\x97 input does.");
+    }
 }
 
 }  // namespace cyxwiz

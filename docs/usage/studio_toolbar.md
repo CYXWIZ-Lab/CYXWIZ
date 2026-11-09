@@ -263,6 +263,9 @@ Debugger** (your defaults):
   **Grayscale**, for every activation layer; each view can switch it.
 - **Feature-map order**: **Strongest first** (largest mean), **Highest peak
   first** (largest value) or **Channel order**.
+- **Where it looks: method**: **Occlusion** (the default) or **Saliency**.
+- **Saliency shows**: **Gradient size** (the default) or **Gradient ×
+  input**.
 
 Preferences applies and saves at once, for every project (the
 `studio_debugger` section of the Engine's settings file).
@@ -354,9 +357,11 @@ says how to get one.
     Training, every N epochs). Only the first layer sees the image's
     colours, so deeper convolutions have no Filters view.
   - **Where it looks** (the layer the model's input enters): which parts of
-    the input the model relies on, by occlusion. Each piece of the input is
-    covered in turn and the model runs again; the view shows how the picked
-    output's score moved:
+    the input the model relies on. **Method** picks how: **Occlusion** or
+    **Saliency**.
+
+    **Occlusion** covers each piece of the input in turn and runs the model
+    again; the view shows how the picked output's score moved:
     - an image: a 12 × 12 px patch every 4 px (196 positions on 64 × 64),
       filled with the image's mean per channel; the change is drawn over the
       picture;
@@ -379,7 +384,32 @@ says how to get one.
     changed since says so; run Local Debug again). A Local Debug run's
     model has its starting weights, so its map shows where an untrained model
     looks; a capture from a training run (Layer capture: Training, every N
-    epochs) shows the trained model. Saliency comes next.
+    epochs) shows the trained model.
+
+    **Saliency** is the gradient of the picked score with respect to the
+    input: how much the score moves for a tiny change of each pixel, token
+    or feature. It takes one forward and one backward pass on the device,
+    so it is instant. **Of** says what is differentiated: the class's logit
+    (the score before the softmax, which does not saturate near 100 %); for
+    one sigmoid output, the logit, or minus it for the other class.
+    **Show** picks what is drawn:
+    - **Gradient size** (the default): where a small change moves the score
+      most, in the Heat scale. An image: per pixel, the largest of its
+      channels' gradients. Tokens: the length of the gradient at each
+      token's embedding (token ids have no gradient, so it is taken at the
+      Embedding's output); padding is left out. Table features: the
+      gradient's size.
+    - **Gradient × input**: signed, in occlusion's blue and red. Does this
+      element push the score up or pull it down, given its value? An image:
+      summed over the channels. Tokens: the gradient · the embedding.
+      Features: the gradient × the value.
+    The headline names the most sensitive element (or the one that pushes
+    the score most); hover the map or a chip for its value. Occlusion and
+    saliency answer different questions (removing a whole piece versus a
+    tiny change), so they often agree but need not. **Save as my default**
+    keeps the method and Show; both are also in **Preferences > Studio
+    Debugger**. Saliency is checked against PyTorch
+    (`cyxwiz-engine/tests/computation_truth/reference/generate_saliency_fixtures.py`).
   - Greyed views are next: **Contributions** on a Dense layer and
     **Embedding** on flat outputs. Hover one for what it will show.
 - The **Inspector** shows the sample as the first layer received it (after

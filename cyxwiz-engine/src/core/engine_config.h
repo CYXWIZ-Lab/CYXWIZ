@@ -80,6 +80,9 @@ enum class LayerCaptureWhen { Off, LocalDebug, Training };  // Training: also Lo
 enum class FeatureMapColour { Heat, Grayscale };
 // Feature maps' order: largest mean first, highest peak first, or by number.
 enum class ChannelSort { Strongest, Peak, Number };
+// Where it looks (TOFIX178 6.3b-c): the method, and what saliency shows.
+enum class WhereItLooksMethod { Occlusion, Saliency };
+enum class SaliencyShow { Size, TimesInput };  // gradient size, gradient x input
 
 inline constexpr int kLayerCaptureBatchSamples = 8;
 
@@ -92,6 +95,8 @@ struct StudioDebuggerConfig {
     bool capture_batch = false;  // a batch of kLayerCaptureBatchSamples from the picked sample on
     FeatureMapColour feature_map_colour = FeatureMapColour::Heat;
     ChannelSort channel_sort = ChannelSort::Strongest;
+    WhereItLooksMethod where_it_looks_method = WhereItLooksMethod::Occlusion;
+    SaliencyShow saliency_show = SaliencyShow::Size;
     int keep_capture_runs = 10;  // runs whose captures stay on disk
 
     bool operator==(const StudioDebuggerConfig&) const = default;

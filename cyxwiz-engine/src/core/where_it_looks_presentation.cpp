@@ -120,6 +120,94 @@ const std::string& InspectorHint() {
     return hint;
 }
 
+std::string SaliencyOfText(layer_view::OutputRule rule, size_t outputs, int target, const std::string& target_name) {
+    using layer_view::OutputRule;
+    if (outputs == 1 && rule == OutputRule::Sigmoid)
+        return target == 0 ? "minus the logit: " + target_name + " rises as the logit falls"
+                           : "the logit (the output before the sigmoid)";
+    if (outputs == 1 && rule == OutputRule::Probability)
+        return target == 0 ? "minus the output: " + target_name + " rises as it falls" : "the output probability";
+    switch (rule) {
+        case OutputRule::Softmax:
+            return "the " + target_name + " logit (the score before the softmax, which does not saturate)";
+        case OutputRule::Sigmoid:
+            return "the " + target_name + " logit (the output before its sigmoid)";
+        case OutputRule::Probability:
+        case OutputRule::Probabilities:
+            return "the " + target_name + " probability";
+        default:
+            return target_name;
+    }
+}
+
+const std::string& SaliencyPassesText() {
+    static const std::string text = "One forward and one backward pass on the device.";
+    return text;
+}
+
+std::vector<float> ScaledSize(const std::vector<double>& size) {
+    double top = 0.0;
+    for (double v : size)
+        if (std::isfinite(v)) top = std::max(top, std::fabs(v));
+    std::vector<float> scaled;
+    scaled.reserve(size.size());
+    for (double v : size) scaled.push_back(top > 0.0 && std::isfinite(v) ? static_cast<float>(std::fabs(v) / top) : 0.0f);
+    return scaled;
+}
+
+std::string SaliencyValueText(double value, bool times_input) {
+    if (!times_input) return Fixed(value, 3);
+    if (std::fabs(value) < 0.0005) return "0.000";
+    return (value > 0 ? "+" : "") + Fixed(value, 3);
+}
+
+std::string SaliencyHeadline(occlusion::InputKind kind, const saliency::Result& result, bool times_input,
+                             const std::vector<size_t>& considered, const std::string& target_name,
+                             const std::vector<std::string>& piece_names) {
+    const auto& values = times_input ? result.times_input : result.size;
+    std::vector<size_t> order;
+    if (considered.empty()) {
+        for (size_t i = 0; i < values.size(); ++i) order.push_back(i);
+    } else {
+        for (size_t i : considered)
+            if (i < values.size()) order.push_back(i);
+    }
+    const auto strength = [&](size_t i) { return std::isfinite(values[i]) ? std::fabs(values[i]) : 0.0; };
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return strength(a) > strength(b); });
+    if (order.empty() || strength(order[0]) == 0.0) return "No element moves the " + target_name + " score.";
+    const auto name = [&](size_t i) {
+        if (kind == occlusion::InputKind::Image && result.columns > 0)
+            return "the pixel at row " + std::to_string(i / result.columns) + ", column " +
+                   std::to_string(i % result.columns);
+        occlusion::Plan plan;
+        plan.kind = kind;
+        occlusion::Piece piece;
+        piece.position = i;
+        return PieceText(plan, piece, piece_names);
+    };
+    if (times_input) {
+        const double v = values[order[0]];
+        const std::string what = name(order[0]);
+        return (kind == occlusion::InputKind::Image ? "T" + what.substr(1) : what) +
+               (v > 0 ? " pushes the " + target_name + " score up most (" : " pulls the " + target_name +
+                                                                              " score down most (") +
+               SaliencyValueText(v, true) + ").";
+    }
+    if (kind == occlusion::InputKind::Image) return "Most sensitive: " + name(order[0]) + ".";
+    std::string text = "Most sensitive: " + name(order[0]);
+    if (order.size() > 1 && strength(order[1]) > 0.0) text += ", then " + name(order[1]);
+    return text + ".";
+}
+
+const std::string& SaliencyInspectorHint() {
+    static const std::string hint =
+        "Saliency is the gradient of the picked score with respect to the input: how much the score moves for a "
+        "tiny change of each pixel, token or feature, from one forward and one backward pass. Occlusion answers a "
+        "different question (what happens when a whole piece is removed); the two often agree but need not. A "
+        "Local Debug run's model has its starting weights; capture a training run to see a trained model.";
+    return hint;
+}
+
 std::string ChangeText(double change) {
     if (std::fabs(change) < 0.0005) return "0.000";
     return (change > 0 ? "+" : "") + Fixed(change, 3);

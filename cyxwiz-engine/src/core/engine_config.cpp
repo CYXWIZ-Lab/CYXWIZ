@@ -440,6 +440,12 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.channel_sort = sort == "peak"     ? ChannelSort::Peak
                                 : sort == "number"   ? ChannelSort::Number
                                                      : ChannelSort::Strongest;
+            loaded.where_it_looks_method = sd.value("where_it_looks_method", std::string("occlusion")) == "saliency"
+                                               ? WhereItLooksMethod::Saliency
+                                               : WhereItLooksMethod::Occlusion;
+            loaded.saliency_show = sd.value("saliency_show", std::string("size")) == "times_input"
+                                       ? SaliencyShow::TimesInput
+                                       : SaliencyShow::Size;
             loaded.keep_capture_runs = std::clamp(sd.value("keep_capture_runs", 10), 1, 1000);
             studio_debugger_ = loaded;
         }
@@ -639,6 +645,9 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"channel_sort", studio_debugger_.channel_sort == ChannelSort::Peak     ? "peak"
                              : studio_debugger_.channel_sort == ChannelSort::Number ? "number"
                                                                                     : "strongest"},
+            {"where_it_looks_method",
+             studio_debugger_.where_it_looks_method == WhereItLooksMethod::Saliency ? "saliency" : "occlusion"},
+            {"saliency_show", studio_debugger_.saliency_show == SaliencyShow::TimesInput ? "times_input" : "size"},
             {"keep_capture_runs", studio_debugger_.keep_capture_runs}
         };
 

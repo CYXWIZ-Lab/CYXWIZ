@@ -29,6 +29,9 @@
 namespace cyxwiz {
 
 class LiveGraphCompile;
+namespace occlusion {
+enum class InputKind;
+}
 
 enum class StudioDebuggerLens {
     Overview = 0,
@@ -197,6 +200,10 @@ private:
     // prediction for the picked item, and occlusion.
     void UpdateLayerModelSession();
     void RenderWhereItLooks(uint32_t sample_texture, int sample_width, int sample_height);
+    // Where it looks with Method Saliency (6.3c): Compute and the result for
+    // the picked item and target. `item_values`: token ids or feature values.
+    void RenderSaliency(occlusion::InputKind kind, const std::vector<float>& item_values, float pad_id,
+                        const std::string& target_name, uint32_t sample_texture, int sample_width, int sample_height);
     // The model's output for the picked item from the evaluation pass; null
     // until read (or when the model cannot be rebuilt).
     const std::vector<float>* EvalModelOutput() const;

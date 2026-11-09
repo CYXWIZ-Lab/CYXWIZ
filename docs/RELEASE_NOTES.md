@@ -169,7 +169,11 @@ private Data Studio tickets (`tofix*/track*`).
   each image patch, token or table feature is covered in turn and the
   model runs again on the GPU; the change in the picked class's score is
   drawn over the input. The prediction shown now comes from the evaluation
-  pass (dropout off), the same one Where it looks scores.
+  pass (dropout off), the same one Where it looks scores. **Saliency** is
+  the second method: the gradient of the picked class's logit with respect
+  to the input, as its size or gradient × input, from one forward and one
+  backward pass (for text, at each token's embedding); checked against
+  PyTorch. The method and what saliency shows are Preferences defaults.
   Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in

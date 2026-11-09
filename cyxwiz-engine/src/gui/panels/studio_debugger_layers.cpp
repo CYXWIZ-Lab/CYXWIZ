@@ -952,7 +952,10 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
                                           .view;
     const bool feature_maps = !views.tabs.empty() && shown_view == lv::View::FeatureMaps;
     const std::string& hint = shown_view == lv::View::Filters        ? lv::FiltersHint()
-                              : shown_view == lv::View::WhereItLooks ? where_it_looks::InspectorHint()
+                              : shown_view == lv::View::WhereItLooks
+                                  ? (CaptureSettings().where_it_looks_method == core::WhereItLooksMethod::Saliency
+                                         ? where_it_looks::SaliencyInspectorHint()
+                                         : where_it_looks::InspectorHint())
                                                                      : views.hint;
     if (feature_maps && cache.spatial && selected_channel_rank_ < cache.tiles.size()) {
         if (BeginCard("StudioDebuggerLayerChannel")) {

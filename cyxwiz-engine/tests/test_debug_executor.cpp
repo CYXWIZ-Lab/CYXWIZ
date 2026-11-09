@@ -3364,6 +3364,49 @@ void TestWhereItLooksPresentation() {
                "a feature by its name");
     ExpectTrue(wl::ChangeText(-0.4091) == "-0.409" && wl::ChangeText(0.0001) == "0.000", "change text");
     ExpectTrue(!wl::InspectorHint().empty(), "the view has its Inspector note");
+
+    // Saliency (6.3c).
+    using layer_view::OutputRule;
+    ExpectTrue(wl::SaliencyOfText(OutputRule::Softmax, 2, 1, "dog") ==
+                   "the dog logit (the score before the softmax, which does not saturate)",
+               "softmax: the class's logit");
+    ExpectTrue(wl::SaliencyOfText(OutputRule::Sigmoid, 1, 1, "positive") == "the logit (the output before the sigmoid)",
+               "one sigmoid logit, class 1: the logit");
+    ExpectTrue(wl::SaliencyOfText(OutputRule::Sigmoid, 1, 0, "negative") ==
+                   "minus the logit: negative rises as the logit falls",
+               "one sigmoid logit, class 0: minus the logit");
+    ExpectTrue(wl::ScaledSize({0.5, -2.0, 0.0}) == std::vector<float>({0.25f, 1.0f, 0.0f}), "sizes scale by the largest");
+    ExpectTrue(wl::ScaledSize({0.0, 0.0}) == std::vector<float>({0.0f, 0.0f}), "no gradient: all zero");
+    saliency::Result sal_image;
+    sal_image.rows = 2;
+    sal_image.columns = 3;
+    sal_image.size = {0.1, 0.2, 0.9, 0.0, 0.3, 0.1};
+    sal_image.times_input = {0.1, -0.5, 0.2, 0.0, 0.3, 0.1};
+    ExpectTrue(wl::SaliencyHeadline(oc::InputKind::Image, sal_image, false, {}, "dog", {}) ==
+                   "Most sensitive: the pixel at row 0, column 2.",
+               "image size headline: " + wl::SaliencyHeadline(oc::InputKind::Image, sal_image, false, {}, "dog", {}));
+    ExpectTrue(wl::SaliencyHeadline(oc::InputKind::Image, sal_image, true, {}, "dog", {}) ==
+                   "The pixel at row 0, column 1 pulls the dog score down most (-0.500).",
+               "image gradient x input headline");
+    saliency::Result sal_tokens;
+    sal_tokens.size = {0.9, 0.4, 0.6, 0.0};
+    sal_tokens.times_input = {0.2, 0.1, 0.3, 0.0};
+    ExpectTrue(wl::SaliencyHeadline(oc::InputKind::Tokens, sal_tokens, false, {1, 2}, "Anxiety", {"#3", "#7", "#12", "#0"}) ==
+                   "Most sensitive: \"#12\", then \"#7\".",
+               "token headline skips what is not considered (padding)");
+    ExpectTrue(wl::SaliencyHeadline(oc::InputKind::Features, sal_tokens, true, {}, "positive", {"preg", "plas", "pres", "skin"}) ==
+                   "pres pushes the positive score up most (+0.300).",
+               "feature gradient x input headline");
+    saliency::Result sal_none;
+    sal_none.size = {0.0, 0.0};
+    sal_none.times_input = {0.0, 0.0};
+    ExpectTrue(wl::SaliencyHeadline(oc::InputKind::Features, sal_none, false, {}, "positive", {}) ==
+                   "No element moves the positive score.",
+               "no gradient: said so");
+    ExpectTrue(wl::SaliencyValueText(0.2141, false) == "0.214" && wl::SaliencyValueText(0.2141, true) == "+0.214" &&
+                   wl::SaliencyValueText(-0.0001, true) == "0.000",
+               "saliency value text");
+    ExpectTrue(!wl::SaliencyInspectorHint().empty() && !wl::SaliencyPassesText().empty(), "saliency's notes");
     spdlog::info("  OK: where it looks presentation");
 }
 

@@ -67,6 +67,28 @@ void ToolbarPanel::RenderStudioDebuggerPreferences() {
     ImGui::TextDisabled("Strongest: the largest mean activation; peak: the largest single value.");
     ImGui::PopTextWrapPos();
 
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Where it looks: method");
+    static const char* const kMethod[] = {"Occlusion", "Saliency"};
+    int method = static_cast<int>(settings.where_it_looks_method);
+    if (ui::SegmentedControl("##where_it_looks_method", kMethod, 2, &method))
+        settings.where_it_looks_method = static_cast<core::WhereItLooksMethod>(method);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Occlusion covers one piece of the input at a time; saliency is the gradient of the score "
+                        "with respect to the input.");
+    ImGui::PopTextWrapPos();
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Saliency shows");
+    static const char* const kShow[] = {"Gradient size", "Gradient Ã input"};
+    int show = static_cast<int>(settings.saliency_show);
+    if (ui::SegmentedControl("##saliency_show", kShow, 2, &show))
+        settings.saliency_show = static_cast<core::SaliencyShow>(show);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Size: where a small change moves the score most. Gradient Ã input: signed, which "
+                        "elements push the score up or down.");
+    ImGui::PopTextWrapPos();
+
     if (!(settings == saved)) {
         engine_config.SetStudioDebugger(settings);
         engine_config.Save();

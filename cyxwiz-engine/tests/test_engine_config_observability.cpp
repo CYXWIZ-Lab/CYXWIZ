@@ -36,6 +36,17 @@ int main() {
     Check(config.GetRuntimeLogSavedFilters() == expected,
           "valid and invalid saved expressions should survive round trip");
 
+    // Studio Debugger defaults (TOFIX178 6.3c): Where it looks' method and
+    // what saliency shows survive a save and load.
+    cyxwiz::core::StudioDebuggerConfig debugger = config.GetStudioDebugger();
+    debugger.where_it_looks_method = cyxwiz::core::WhereItLooksMethod::Saliency;
+    debugger.saliency_show = cyxwiz::core::SaliencyShow::TimesInput;
+    config.SetStudioDebugger(debugger);
+    Check(config.Save(path), "the Studio Debugger defaults save");
+    config.SetStudioDebugger({});
+    Check(config.Load(path), "the Studio Debugger defaults reload");
+    Check(config.GetStudioDebugger() == debugger, "Where it looks' method and saliency's Show survive a round trip");
+
     std::error_code error;
     std::filesystem::remove(path, error);
     Check(!error, "temporary test config should be removable");

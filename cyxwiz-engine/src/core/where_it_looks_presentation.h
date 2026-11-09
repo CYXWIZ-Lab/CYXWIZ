@@ -7,6 +7,7 @@
 
 #include "layer_view_presentation.h"
 #include "occlusion.h"
+#include "saliency.h"
 
 #include <string>
 #include <vector>
@@ -51,5 +52,25 @@ std::string ChangeText(double change);
 
 // The Inspector's note for the view.
 const std::string& InspectorHint();
+
+// Saliency (6.3c, approved mockup board Saliency).
+// What is differentiated: "the class 1 logit (the score before the softmax,
+// which does not saturate)"; one sigmoid logit's class 0: "minus the logit".
+std::string SaliencyOfText(layer_view::OutputRule rule, size_t outputs, int target, const std::string& target_name);
+// "One forward and one backward pass on the device."
+const std::string& SaliencyPassesText();
+// Sizes scaled to [0, 1] by the largest (0 when all are 0).
+std::vector<float> ScaledSize(const std::vector<double>& size);
+// The headline over the values shown (`times_input`: gradient x input, else
+// size). `considered`: the positions that count (tokens without padding);
+// empty = all. "Most sensitive: the pixel at row 14, column 30.",
+// "\"#41\" pushes the class 1 score up most (+0.214)."
+std::string SaliencyHeadline(occlusion::InputKind kind, const saliency::Result& result, bool times_input,
+                             const std::vector<size_t>& considered, const std::string& target_name,
+                             const std::vector<std::string>& piece_names);
+// "0.214" for a size, "+0.214" for gradient x input.
+std::string SaliencyValueText(double value, bool times_input);
+// The Inspector's note for saliency.
+const std::string& SaliencyInspectorHint();
 
 }  // namespace cyxwiz::where_it_looks
