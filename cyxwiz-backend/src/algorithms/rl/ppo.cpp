@@ -8,6 +8,7 @@
 #include <arrayfire.h>
 
 #include "../arrayfire_host_materialization.h"
+#include "../arrayfire_indexed.h"
 
 // Windows headers define these; ArrayFire's min/max must win.
 #ifdef max
@@ -243,7 +244,7 @@ Tensor SampleCategorical(const Tensor& logits, uint64_t seed) {
     // Gumbel-max: argmax(log p - log(-log u)) is a draw from p
     const af::array u = af::clamp(af::randu(af::dim4(rows, classes), f32, engine), 1e-20, 1.0 - 1e-7);
     af::array best_value, best_index;
-    af::max(best_value, best_index, LogSoftmaxRows(Array(logits)) - af::log(-af::log(u)), 1);
+    MaxWithIndex(best_value, best_index, LogSoftmaxRows(Array(logits)) - af::log(-af::log(u)), 1);
     return Make(af::moddims(best_index.as(f32), rows), {static_cast<size_t>(rows)});
 }
 
