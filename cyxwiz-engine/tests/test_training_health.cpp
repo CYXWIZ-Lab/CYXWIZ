@@ -6,8 +6,8 @@
 // 2. Through TrainingExecutor: Dense 16 -> ReLU -> Dense 3 -> cross entropy
 //    trains three epochs; health has one entry an epoch, ||W|| of each
 //    weight at the end is the trained model's, gradients were recorded,
-//    the ReLU's dead units are counted on the validation pass, and a range
-//    test records none.
+//    the ReLU's dead units are counted on the validation pass and equal a
+//    count by hand from the final weights, and a range test records none.
 #include "../src/core/arrow_dataset.h"
 #include "../src/core/execution_device_context.h"
 #include "../src/core/execution_device_preferences.h"
@@ -24,6 +24,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -126,16 +127,24 @@ std::shared_ptr<arrow::Array> Ints(const std::vector<int32_t>& values) {
     return array;
 }
 
+// Row i's four features (its label is i % 3).
+std::array<float, 4> HealthRow(int i) {
+    const int c = i % 3;
+    return {static_cast<float>(c) + 0.3f * std::sin(0.7f * static_cast<float>(i)),
+            static_cast<float>(2 - c) + 0.3f * std::cos(0.5f * static_cast<float>(i)),
+            0.1f * static_cast<float>(i % 7), 0.2f * std::sin(static_cast<float>(i))};
+}
+
 std::shared_ptr<cyxwiz::ArrowDataset> MakeDataset() {
     std::vector<float> x0, x1, x2, x3;
     std::vector<int32_t> label;
     for (int i = 0; i < 90; ++i) {
-        const int c = i % 3;
-        x0.push_back(static_cast<float>(c) + 0.3f * std::sin(0.7f * static_cast<float>(i)));
-        x1.push_back(static_cast<float>(2 - c) + 0.3f * std::cos(0.5f * static_cast<float>(i)));
-        x2.push_back(0.1f * static_cast<float>(i % 7));
-        x3.push_back(0.2f * std::sin(static_cast<float>(i)));
-        label.push_back(c);
+        const auto x = HealthRow(i);
+        x0.push_back(x[0]);
+        x1.push_back(x[1]);
+        x2.push_back(x[2]);
+        x3.push_back(x[3]);
+        label.push_back(i % 3);
     }
     auto schema = arrow::schema({arrow::field("x0", arrow::float32()), arrow::field("x1", arrow::float32()),
                                  arrow::field("x2", arrow::float32()), arrow::field("x3", arrow::float32()),
@@ -262,6 +271,37 @@ void CheckExecutor() {
               "epoch " + std::to_string(epoch.epoch) + ": the ReLU's 16 units checked on the validation pass");
     }
     Check(health.epochs[0].weights[0].norm != health.epochs[2].weights[0].norm, "the weights change from epoch to epoch");
+
+    // End to end, by hand: the last validation pass ran with the final
+    // weights, so the hidden units whose ReLU(x W + b) is 0 on every
+    // validation row (the last 27 of 90, unshuffled) are the ones it counted.
+    const auto weight = parameters.find("layer0.weight");
+    const auto bias = parameters.find("layer0.bias");
+    const bool hidden_found = weight != parameters.end() && bias != parameters.end() &&
+                              weight->second.NumElements() == 64 && bias->second.NumElements() == 16;
+    std::string names;
+    for (const auto& [name, value] : parameters) names += " " + name + "(" + std::to_string(value.NumElements()) + ")";
+    Check(hidden_found, "the hidden layer's weights and bias:" + names);
+    if (hidden_found) {
+        const bool out_first = weight->second.Shape().size() == 2 && weight->second.Shape()[0] == 16;  // [16, 4] or [4, 16]
+        const float* w = weight->second.Data<float>();
+        const float* b = bias->second.Data<float>();
+        long long dead = 0;
+        for (int unit = 0; unit < 16; ++unit) {
+            bool fired = false;
+            for (int row = 63; row < 90 && !fired; ++row) {
+                const auto x = HealthRow(row);
+                double z = b[unit];
+                for (int in = 0; in < 4; ++in)
+                    z += static_cast<double>(x[in]) * (out_first ? w[unit * 4 + in] : w[in * 16 + unit]);
+                fired = z > 0.0;
+            }
+            dead += fired ? 0 : 1;
+        }
+        Check(last.relus.size() == 1 && last.relus[0].dead == dead,
+              "epoch 3 dead units " + std::to_string(last.relus.empty() ? -1 : last.relus[0].dead) +
+                  " = by hand from the final weights " + std::to_string(dead));
+    }
 
     // A range test records no health.
     auto range = CompileGraph();
