@@ -163,7 +163,9 @@ private Data Studio tickets (`tofix*/track*`).
   the output), groups the layers by the graph's canvas groups, gives each
   layer's kernel, stride and parameter count, orders feature maps by mean,
   peak or number (a Preferences default too) and slices conv weights by
-  kernel position. Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
+  kernel position. The first convolution's **Filters** view draws each
+  learned filter as a small RGB (or grey) picture with its weight norm.
+  Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in
   `docs/usage/image_classifier_resnet.md`): 92.6 % test accuracy on one

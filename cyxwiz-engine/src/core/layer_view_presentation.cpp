@@ -150,14 +150,14 @@ LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummar
             views.tabs.push_back({View::Gradients, "Gradients", weights->name});
     }
 
+    if (first_spatial_layer && weights && weights->shape.size() == 4 &&
+        (weights->shape[2] == 1 || weights->shape[2] == 3)) {
+        views.tabs.push_back({View::Filters, "Filters", weights->name});
+    }
+
     if (first_spatial_layer && input && IsSpatial(input->shape)) {
         views.later.push_back({"Where it looks", "Occlusion: a grey patch slides over the image and maps the drop in "
                                                  "the true class's score (next step)"});
-    }
-    if (first_spatial_layer && weights && weights->shape.size() == 4 &&
-        (weights->shape[2] == 1 || weights->shape[2] == 3)) {
-        views.later.push_back({"Filters", "The first layer's filters drawn as small images: only it sees the "
-                                          "colours (next step)"});
     }
     if (weights && weights->shape.size() == 2 && input && input->shape.size() == 2) {
         views.later.push_back({"Contributions", "How this sample's output was computed: w \xC3\x97 x per input, "
@@ -275,6 +275,54 @@ std::string ElementText(const TensorInfo& tensor, size_t flat_index, float value
         rest /= extent;
     }
     return Bracketed(index) + " = " + Number(value);
+}
+
+std::optional<FilterPictures> BuildFilterPictures(const std::vector<float>& weights, const std::vector<size_t>& shape) {
+    if (shape.size() != 4 || (shape[2] != 1 && shape[2] != 3) || shape[3] == 0 || Elements(shape) != weights.size())
+        return std::nullopt;
+    FilterPictures pictures;
+    pictures.height = shape[0];
+    pictures.width = shape[1];
+    pictures.channels = shape[2];
+    const size_t outputs = shape[3];
+    const size_t per_filter = shape[0] * shape[1] * shape[2];
+    pictures.filters.resize(outputs);
+    for (size_t o = 0; o < outputs; ++o) {
+        FilterPicture& picture = pictures.filters[o];
+        picture.pixels.resize(per_filter);
+        // Weights [kh, kw, cin, cout] row-major: filter o's value at
+        // (y, x, c) sits at ((y * kw + x) * cin + c) * cout + o.
+        for (size_t k = 0; k < per_filter; ++k) {
+            const float v = weights[k * outputs + o];
+            picture.pixels[k] = std::isfinite(v) ? v : 0.0f;
+        }
+        const auto [low, high] = std::minmax_element(picture.pixels.begin(), picture.pixels.end());
+        const float lo = *low, span = *high - *low;
+        double squares = 0.0;
+        for (float& v : picture.pixels) {
+            squares += static_cast<double>(v) * v;
+            v = span > 0.0f ? (v - lo) / span : 0.5f;
+        }
+        picture.norm = static_cast<float>(std::sqrt(squares));
+    }
+    return pictures;
+}
+
+std::string FiltersText(const FilterPictures& pictures) {
+    const size_t count = pictures.filters.size();
+    return "The " + std::to_string(count) + " learned " + std::to_string(pictures.height) + kTimes +
+           std::to_string(pictures.width) + (pictures.channels == 3 ? " RGB" : " grey") + " filter" +
+           (count == 1 ? "" : "s") + " of the first layer, each scaled to its own range. " +
+           (pictures.channels == 3 ? "Colour edges and blobs are what the first layer looks for."
+                                   : "Edges and blobs are what the first layer looks for.");
+}
+
+const std::string& FiltersHint() {
+    static const std::string hint =
+        "A filter is drawn as the pattern it responds to: bright where its weights are high, dark where they are "
+        "low, for each colour. The first layer slides it over the image; where a patch looks like the filter, that "
+        "channel's feature map is bright. A larger weight norm means a stronger response.";
+    return hint;
 }
 
 std::vector<size_t> OrderChannels(const std::vector<float>& means, const std::vector<float>& maxima,

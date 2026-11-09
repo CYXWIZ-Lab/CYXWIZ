@@ -342,13 +342,25 @@ says how to get one.
     kernel. Hover a cell for its index in the tensor and its value; − and +
     page through the rows of a large matrix.
     The histogram and numbers are under it.
-  - Greyed views are next: **Where it looks** (occlusion) and **Filters** on
-    the first convolution, **Contributions** on a Dense layer and **Embedding**
-    on flat outputs. Hover one for what it will show.
+  - **Filters** (the first convolution on an image, 1 or 3 input channels):
+    each output channel's kernel drawn as a small picture, RGB for a colour
+    image, grey for one channel. Each filter is scaled to its own range over
+    all its colours, so its colour balance shows; the number under it is its
+    weight norm (hover for the filter's number). This is the pattern the
+    channel responds to: where the image looks like it, that channel's
+    feature map is bright. A Local Debug run uses a fresh model, so its
+    filters are the starting weights (noise); trained filters (colour edges
+    and blobs) show in a capture from a training run (Layer capture:
+    Training, every N epochs). Only the first layer sees the image's
+    colours, so deeper convolutions have no Filters view.
+  - Greyed views are next: **Where it looks** (occlusion) on the first
+    convolution, **Contributions** on a Dense layer and **Embedding** on flat
+    outputs. Hover one for what it will show.
 - The **Inspector** shows the sample as the first layer received it (after
   the data steps), its name and label, the prediction with how it was read
   ("logit -0.5472 → sigmoid 0.3665"; the raw output when the loss gives no
-  rule), and the clicked feature map enlarged with its mean, maximum and rank.
+  rule), and the clicked feature map enlarged with its mean, maximum and rank
+  (with Filters: how to read a filter).
 
 The colour and the order are part of the session's settings (Layer capture in
 the toolbar): **Save as my default** keeps them, and Preferences > Studio

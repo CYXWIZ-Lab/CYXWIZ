@@ -127,11 +127,11 @@ void TestViewsFollowShapes() {
     relu.finite_count = 131072;
     relu.zero_count = 55837;  // 42.6 %
     const auto first = PlanLayerViews(Conv32(), &relu, true);
-    Check(Labels(first) == std::vector<std::string>({"Feature maps", "Values", "Weights", "Gradients"}),
+    Check(Labels(first) == std::vector<std::string>({"Feature maps", "Values", "Weights", "Gradients", "Filters"}),
           "first conv tabs");
-    Check(first.tabs[2].tensor == "weights" && first.tabs[3].tensor == "weights",
-          "weights and gradients read the conv weights, not the bias");
-    Check(Later(first) == std::vector<std::string>({"Where it looks", "Filters"}), "first conv later tabs");
+    Check(first.tabs[2].tensor == "weights" && first.tabs[3].tensor == "weights" && first.tabs[4].tensor == "weights",
+          "weights, gradients and filters read the conv weights, not the bias");
+    Check(Later(first) == std::vector<std::string>({"Where it looks"}), "first conv later tabs");
     CheckText(first.facts,
               "weights [3, 3, 3, 32] + bias [32], 896 parameters \xC2\xB7 output 64 \xC3\x97 64 \xC3\x97 32, "
               "42.6 % zeros",
@@ -144,7 +144,7 @@ void TestViewsFollowShapes() {
               "no zeros in the facts when nothing is zero");
 
     const auto deeper = PlanLayerViews(Conv64(), nullptr, false);
-    Check(Later(deeper).empty(), "a deeper conv has no Filters or occlusion");
+    Check(Later(deeper).empty() && Labels(deeper).size() == 4, "a deeper conv has no Filters or occlusion");
     CheckText(deeper.facts,
               "weights [3, 3, 32, 64] + bias [64], 18,496 parameters \xC2\xB7 output 32 \xC3\x97 32 \xC3\x97 64",
               "deeper conv facts (no numerics, no zeros)");
@@ -168,6 +168,42 @@ void TestViewsFollowShapes() {
 
     const LayerInfo empty;
     Check(PlanLayerViews(empty, nullptr, false).tabs.empty(), "nothing captured, no tabs");
+}
+
+// 6.3a: two 2 x 2 RGB filters from weights [2, 2, 3, 2] in row-major order.
+void TestFilterPictures() {
+    std::vector<float> w(2 * 2 * 3 * 2);
+    // Filter 0: red rises with x (0 then 1), green and blue 0; filter 1: all 0.25.
+    for (size_t y = 0; y < 2; ++y)
+        for (size_t x = 0; x < 2; ++x)
+            for (size_t c = 0; c < 3; ++c) {
+                const size_t k = (y * 2 + x) * 3 + c;
+                w[k * 2 + 0] = c == 0 ? static_cast<float>(x) : 0.0f;
+                w[k * 2 + 1] = 0.25f;
+            }
+    const auto pictures = BuildFilterPictures(w, {2, 2, 3, 2});
+    Check(pictures && pictures->height == 2 && pictures->width == 2 && pictures->channels == 3 &&
+              pictures->filters.size() == 2,
+          "two 2 x 2 RGB pictures");
+    if (pictures) {
+        const auto& red = pictures->filters[0].pixels;
+        Check(red[0] == 0.0f && red[3] == 1.0f && red[1] == 0.0f && red[9] == 1.0f,
+              "filter 0: red 0 on the left, 1 on the right; green 0");
+        Check(std::fabs(pictures->filters[0].norm - std::sqrt(2.0f)) < 1e-6f, "filter 0 norm sqrt(2)");
+        Check(pictures->filters[1].pixels[5] == 0.5f && std::fabs(pictures->filters[1].norm - 0.25f * std::sqrt(12.0f)) < 1e-6f,
+              "a constant filter is mid grey, with its norm");
+        CheckText(FiltersText(*pictures),
+                  "The 2 learned 2 \xC3\x97 2 RGB filters of the first layer, each scaled to its own range. Colour edges "
+                  "and blobs are what the first layer looks for.",
+                  "filters text");
+    }
+    Check(!FiltersHint().empty(), "the Filters view has its own Inspector note");
+    Check(!BuildFilterPictures(w, {2, 2, 2, 3}), "2 input channels are not a picture");
+    Check(!BuildFilterPictures({1.0f, 2.0f}, {2, 2, 3, 2}), "values that do not fill the shape");
+    const auto grey = BuildFilterPictures(std::vector<float>(9 * 4, 1.0f), {3, 3, 1, 4});
+    Check(grey && grey->channels == 1 && grey->filters.size() == 4 &&
+              FiltersText(*grey).find("4 learned 3 \xC3\x97 3 grey filters") != std::string::npos,
+          "grey filters");
 }
 
 void TestMatrixLayout() {
@@ -375,6 +411,7 @@ int main() {
     TestRowsAndShapes();
     TestViewsFollowShapes();
     TestMatrixLayout();
+    TestFilterPictures();
     TestChannelsAndScales();
     TestHistogramAndNumbers();
     TestCaptureSettings();

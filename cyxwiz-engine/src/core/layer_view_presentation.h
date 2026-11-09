@@ -66,7 +66,7 @@ struct LayerSection {
 std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
                                         const std::map<int, std::string>& group_of_node);
 
-enum class View { FeatureMaps, Values, Units, Weights, Gradients };
+enum class View { FeatureMaps, Values, Units, Weights, Gradients, Filters };
 
 struct ViewTab {
     View view = View::Values;
@@ -85,7 +85,7 @@ struct LayerViews {
 };
 // `output_numerics` (optional) adds the share of zeros to the facts.
 // `first_spatial_layer`: the first layer that takes the image, whose filters
-// see colours (the later Filters view).
+// see colours (its Filters view).
 LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummary* output_numerics,
                           bool first_spatial_layer);
 
@@ -116,6 +116,29 @@ size_t KernelPositions(const TensorInfo& tensor);
 // "(1, 2) of the 3 × 3 kernel".
 std::string KernelPositionText(const TensorInfo& tensor, size_t kernel_position);
 std::string ElementText(const TensorInfo& tensor, size_t flat_index, float value);
+
+// The first layer's filters as pictures (6.3a), from conv weights
+// [kh, kw, cin, cout] with 1 (grey) or 3 (RGB) input channels, read row-major.
+// One picture per output channel: kh x kw pixels of cin values in [0, 1],
+// each filter scaled to its own range over all its channels (so its colours
+// keep their balance; a constant filter is mid grey), and its weight norm.
+struct FilterPicture {
+    std::vector<float> pixels;  // row-major [kh, kw, cin]
+    float norm = 0.0f;          // the filter's L2 norm
+};
+struct FilterPictures {
+    size_t height = 0;
+    size_t width = 0;
+    size_t channels = 0;  // 1 or 3
+    std::vector<FilterPicture> filters;
+};
+// nullopt when the shape is not such weights or the values do not fill it.
+std::optional<FilterPictures> BuildFilterPictures(const std::vector<float>& weights, const std::vector<size_t>& shape);
+// "The 32 learned 3 × 3 RGB filters of the first layer, each scaled to its
+// own range. ..."
+std::string FiltersText(const FilterPictures& pictures);
+// The Inspector's note for the Filters view.
+const std::string& FiltersHint();
 
 // Channel numbers in the chosen order: largest mean first (Strongest),
 // largest maximum first (Peak) or by number; ties by number, NaN last.

@@ -171,6 +171,9 @@ struct StudioDebuggerPanel::LayerViewCache {
     // Units.
     std::vector<float> units;
 
+    // The first layer's filters as pictures (their textures are `tiles`).
+    lv::FilterPictures filters;
+
     // Weights and gradients.
     lv::TensorInfo matrix_info;
     std::optional<size_t> kernel_position;  // the shown slice of conv weights
@@ -505,6 +508,7 @@ void StudioDebuggerPanel::RenderLayersView() {
 
     const lv::ViewTab& tab = views.tabs[static_cast<size_t>(selected_layer_tab_)];
     const bool weight_view = tab.view == lv::View::Weights || tab.view == lv::View::Gradients;
+    const bool parameter_view = weight_view || tab.view == lv::View::Filters;
     const size_t channel_cap = layer_all_channels_ ? kAllChannelsCap : kStrongestShown;
     const std::string view_key = layer_key + "|" + std::to_string(selected_layer_tab_) + "/" +
                                  std::to_string(colour) + "/" + std::to_string(static_cast<int>(settings.channel_sort)) +
@@ -519,13 +523,14 @@ void StudioDebuggerPanel::RenderLayersView() {
         cache.spatial.reset();
         cache.units.clear();
         cache.matrix.clear();
+        cache.filters = {};
         cache.key = view_key;
         try {
             const CapturedTensor* source = nullptr;
             Tensor shown;
-            if (weight_view) {
-                source = FindTensor(layer, tab.view == lv::View::Weights ? CapturedTensorRole::Parameter
-                                                                         : CapturedTensorRole::Gradient,
+            if (parameter_view) {
+                source = FindTensor(layer, tab.view == lv::View::Gradients ? CapturedTensorRole::Gradient
+                                                                           : CapturedTensorRole::Parameter,
                                     tab.tensor);
                 if (source) shown = source->tensor;
             } else if (output) {
@@ -534,8 +539,8 @@ void StudioDebuggerPanel::RenderLayersView() {
             }
             if (!source) throw std::runtime_error("the tensor for this view was not captured");
             cache.numerics = ScanDebugTensorNumerics(shown, gui::NodeType::Dense);
-            cache.log_bars = !weight_view;
-            cache.numbers = lv::NumbersLines(cache.numerics, !weight_view);
+            cache.log_bars = !parameter_view;
+            cache.numbers = lv::NumbersLines(cache.numerics, !parameter_view);
             if (cache.numerics.finite_count > 0) {
                 const auto histogram = lv::ReadHistogram(shown, static_cast<float>(cache.numerics.minimum),
                                                          static_cast<float>(cache.numerics.maximum), kHistogramBins);
@@ -565,6 +570,26 @@ void StudioDebuggerPanel::RenderLayersView() {
                 }
             } else if (tab.view == lv::View::Units) {
                 cache.units = lv::ReadValues(shown);
+            } else if (tab.view == lv::View::Filters) {
+                auto pictures = lv::BuildFilterPictures(lv::ReadValues(shown), shown.Shape());
+                if (!pictures) throw std::runtime_error("these weights are not first-layer filters");
+                cache.filters = std::move(*pictures);
+                const auto& f = cache.filters;
+                const size_t pixels = f.height * f.width;
+                for (const auto& filter : f.filters) {
+                    std::vector<unsigned char> rgba;
+                    if (f.channels == 3) {
+                        rgba.resize(pixels * 4);
+                        for (size_t p = 0; p < pixels; ++p) {
+                            for (size_t c = 0; c < 3; ++c)
+                                rgba[p * 4 + c] = static_cast<unsigned char>(std::lround(filter.pixels[p * 3 + c] * 255.0f));
+                            rgba[p * 4 + 3] = 255;
+                        }
+                    } else {
+                        rgba = Paint(filter.pixels, Scale::Gray);
+                    }
+                    cache.tiles.push_back(Upload(rgba, static_cast<int>(f.width), static_cast<int>(f.height)));
+                }
             } else if (weight_view) {
                 cache.matrix_info = {source->role, source->name, source->tensor.Shape()};
                 if (heatmap_kernel_position_ >= static_cast<int>(lv::KernelPositions(cache.matrix_info)))
@@ -669,6 +694,34 @@ void StudioDebuggerPanel::RenderLayersView() {
         }
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(DebuggerMuted(), "%zu dead channels (zero everywhere)", cache.dead);
+    } else if (tab.view == lv::View::Filters && !cache.filters.filters.empty()) {
+        WrappedMuted(lv::FiltersText(cache.filters));
+        ImGui::Spacing();
+        const float avail = ImGui::GetContentRegionAvail().x;
+        const float tile = 56.0f;
+        const float gap = 10.0f;
+        // Eight to a row (the mockup), fewer when the view is narrow.
+        const int columns = std::clamp(static_cast<int>((avail + gap) / (tile + gap)), 1, 8);
+        const float label_h = ImGui::GetTextLineHeight();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        for (size_t k = 0; k < cache.tiles.size(); ++k) {
+            if (k % static_cast<size_t>(columns) != 0) ImGui::SameLine(0.0f, gap);
+            ImGui::PushID(static_cast<int>(k));
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##filter", ImVec2(tile, tile + label_h + 3.0f));
+            dl->AddImageRounded(Texture(cache.tiles[k]), at, ImVec2(at.x + tile, at.y + tile), ImVec2(0, 0),
+                                ImVec2(1, 1), IM_COL32_WHITE, 3.0f);
+            const std::string norm = Number(cache.filters.filters[k].norm);
+            const float w = ImGui::CalcTextSize(norm.c_str()).x;
+            dl->AddText(ImVec2(at.x + (tile - w) * 0.5f, at.y + tile + 3.0f), DebuggerU32(DebuggerMuted(), 1.0f),
+                        norm.c_str());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Filter %zu \xC2\xB7 weight norm %s", k, norm.c_str());
+            ImGui::PopID();
+        }
+        ImGui::Spacing();
+        WrappedMuted("The number under each filter is its weight norm (the size of its weights).");
+        for (const auto& l : cache.numbers) ImGui::TextColored(DebuggerText(), "%s", l.c_str());
     } else if (tab.view == lv::View::Units) {
         WrappedMuted("Each unit's value for this sample (" + std::to_string(cache.units.size()) + " units).");
         const ImVec2 size(std::min(ImGui::GetContentRegionAvail().x, 720.0f), 150.0f);
@@ -867,10 +920,13 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
     ImGui::Spacing();
 
     const auto& views = cache.views;
-    const bool feature_maps = !views.tabs.empty() &&
-                              views.tabs[static_cast<size_t>(std::clamp(selected_layer_tab_, 0,
-                                                                        static_cast<int>(views.tabs.size()) - 1))]
-                                      .view == lv::View::FeatureMaps;
+    const lv::View shown_view = views.tabs.empty()
+                                    ? lv::View::Values
+                                    : views.tabs[static_cast<size_t>(std::clamp(selected_layer_tab_, 0,
+                                                                                static_cast<int>(views.tabs.size()) - 1))]
+                                          .view;
+    const bool feature_maps = !views.tabs.empty() && shown_view == lv::View::FeatureMaps;
+    const std::string& hint = shown_view == lv::View::Filters ? lv::FiltersHint() : views.hint;
     if (feature_maps && cache.spatial && selected_channel_rank_ < cache.tiles.size()) {
         if (BeginCard("StudioDebuggerLayerChannel")) {
             ImGui::PushTextWrapPos(0.0f);
@@ -886,10 +942,10 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
             ImGui::PopTextWrapPos();
         }
         EndCard();
-    } else if (!views.hint.empty()) {
+    } else if (!hint.empty()) {
         if (BeginCard("StudioDebuggerLayerHint")) {
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(DebuggerText(), "%s", views.hint.c_str());
+            ImGui::TextColored(DebuggerText(), "%s", hint.c_str());
             ImGui::PopTextWrapPos();
         }
         EndCard();
