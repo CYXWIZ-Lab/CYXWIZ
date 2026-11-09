@@ -10,6 +10,7 @@
 #include "../src/core/debug_model_session.h"
 #include "../src/core/occlusion.h"
 #include "../src/core/saliency.h"
+#include "../src/core/training_snapshots_presentation.h"
 #include "../src/core/where_it_looks_presentation.h"
 #include "../src/core/debug_numerics.h"
 #include "../src/core/debug_loss_metric_explainer.h"
@@ -3075,6 +3076,74 @@ void TestSaliencyAgainstPyTorch() {
     spdlog::info("  OK: saliency matches PyTorch ({} cases), Run == Reduce", fixture.at("cases").size());
 }
 
+// TOFIX178 6.3d: training snapshots in words (approved mockup board Snapshots).
+void TestTrainingSnapshotsPresentation() {
+    spdlog::info("--- TestTrainingSnapshotsPresentation ---");
+    namespace ts = training_snapshots;
+    const std::string dot = " \xC2\xB7 ";
+    ExpectTrue(ts::WhenFromRunId("train-1793417384228").size() == 16, "a run id's time: " + ts::WhenFromRunId("train-1793417384228"));
+    ExpectTrue(ts::WhenFromRunId("run-a").empty() && ts::WhenFromRunId("train-12").empty(), "no time in the id: none");
+    ExpectTrue(ts::SizeText(19293798) == "18.4 MB" && ts::SizeText(2048) == "2.0 KB", "sizes");
+    ExpectTrue(ts::SnapshotName("epoch_0020") == "epoch 20" && ts::SnapshotName("local_debug") == "local_debug",
+               "snapshot names");
+
+    // The approved board's run: 20 epochs, snapshots every 5.
+    const float val[] = {0.6425f, 0.6258f, 0.7501f, 0.8003f, 0.8259f, 0.8259f, 0.8292f, 0.8623f, 0.8828f, 0.8949f,
+                         0.8912f, 0.9108f, 0.9083f, 0.9117f, 0.9234f, 0.9217f, 0.928f, 0.9297f, 0.923f, 0.9296f};
+    TrainingRunRecord record;
+    record.run_id = "train-1793417384228";
+    record.graph_name = "cats_dogs_resnet_scratch";
+    record.total_epochs = 20;
+    for (int e = 1; e <= 20; ++e) record.epochs.push_back({e, 1.0f / e, 0.5f, 0.9f / e, val[e - 1]});
+    std::vector<LayerCaptureInfo> captures;
+    for (int e : {5, 10, 15, 20}) captures.push_back({EpochCaptureLabel(e), e, 19293798});
+    const auto row = ts::TrainingRunRow(record.run_id, record, captures);
+    ExpectTrue(row.training && row.kind == "Training" &&
+                   row.title == "train-1793417384228" + dot + "cats_dogs_resnet_scratch",
+               "a training run's title names its graph: " + row.title);
+    ExpectTrue(row.detail == "20 epochs" + dot + "best validation 92.97 % (epoch 18)" + dot +
+                                 "4 layer snapshots (epochs 5, 10, 15, 20)",
+               "a training run's line: " + row.detail);
+    const auto bare = ts::TrainingRunRow("train-1793427851890", std::nullopt, {{EpochCaptureLabel(2), 2, 10}});
+    ExpectTrue(bare.detail == "1 layer snapshot (epoch 2)" + dot + "epochs not recorded",
+               "snapshots saved before the epochs were kept: " + bare.detail);
+
+    const auto table = ts::SnapshotTableFor(record.run_id, record, captures);
+    ExpectTrue(table.heading == "Snapshots of train-1793417384228" + dot + "cats_dogs_resnet_scratch (20 epochs)",
+               "table heading: " + table.heading);
+    ExpectTrue(table.metric_header == "Validation accuracy" && table.rows.size() == 4, "four snapshot rows");
+    ExpectTrue(table.rows[3].epoch == 20 && table.rows[3].label == "epoch_0020" && table.rows[3].val_metric == "92.96 %" &&
+                   table.rows[3].train_loss == "0.050" && table.rows[3].val_loss == "0.045" && table.rows[3].size == "18.4 MB",
+               "the epoch 20 row");
+    const auto old = ts::SnapshotTableFor("train-1", std::nullopt, captures);
+    ExpectTrue(old.rows[0].val_metric == "not recorded" && old.heading == "Snapshots of train-1", "not recorded");
+    TrainingRunRecord mae = record;
+    mae.regression = true;
+    for (auto& e : mae.epochs) e.val_metric = 1.0f - *e.val_metric;
+    ExpectTrue(ts::SnapshotTableFor(mae.run_id, mae, captures).metric_header == "Validation MAE" &&
+                   ts::TrainingRunRow(mae.run_id, mae, captures).detail.find("best validation MAE 0.070 (epoch 18)") !=
+                       std::string::npos,
+               "a regression run: the lowest MAE is the best");
+    ExpectTrue(ts::StepperText(3, 4, 20, record) == "4 of 4 snapshots" + dot + "validation 92.96 %", "stepper text");
+    ExpectTrue(ts::StepperText(0, 1, 2, std::nullopt) == "1 of 1 snapshot", "stepper without a record");
+
+    DebugRunStoreSummary debug;
+    debug.run_id = "local-debug-a2c705e68029f801-1794247562482";
+    debug.timestamp = "2026-11-09 22:06";
+    debug.success = true;
+    debug.trace_count = 72;
+    debug.file_path = "C:/runs/session.json";
+    const auto d = ts::DebugRunRow(debug);
+    ExpectTrue(!d.training && d.kind == "Local Debug" && d.detail == "Passed", "a debug run's line: " + d.detail);
+    bool traces = false, saved = false;
+    for (const auto& [k, v] : d.details) {
+        traces |= k == "Traces" && v == "72";
+        saved |= k == "Saved at" && v == "C:/runs/session.json";
+    }
+    ExpectTrue(traces && saved, "a debug run keeps its facts under Details");
+    spdlog::info("  OK: training snapshots presentation");
+}
+
 void TestDebugModelSession() {
     spdlog::info("--- TestDebugModelSession ---");
     // An MLP (no dropout or BatchNorm: the run's training forward equals
@@ -3520,6 +3589,29 @@ void TestLayerCaptureStore() {
                "the oldest run's captures are gone, its folder stays");
     ExpectEq(ListLayerCaptures("run-b").size() + ListLayerCaptures("run-c").size(), 2, "the last two keep theirs");
     ExpectEq(PruneLayerCaptures(2), 0, "nothing more to clear");
+
+    // 6.3d: runs newest first; a capture's epoch and size; a training run's
+    // epochs round trip, and a run without them has none.
+    ExpectTrue(ListRunsWithLayerCaptures() == std::vector<std::string>({"run-c", "run-b"}),
+               "runs with captures, newest first; a pruned run is not listed");
+    ExpectTrue(SaveLayerCapture(kept, "run-c", EpochCaptureLabel(5), &error), "a snapshot saves");
+    const auto infos = ListLayerCaptureInfo("run-c");
+    ExpectTrue(infos.size() == 2 && infos[0].label == "epoch_0005" && infos[0].epoch == 5 && infos[0].bytes > 0 &&
+                   infos[1].label == kLocalDebugCaptureLabel && infos[1].epoch == 0,
+               "captures listed with their epoch and size");
+    TrainingRunRecord record;
+    record.run_id = "run-c";
+    record.graph_name = "cats_dogs";
+    record.total_epochs = 3;
+    record.epochs = {{1, 0.9f, 0.5f, 0.8f, 0.55f}, {2, 0.7f, 0.6f, std::nullopt, std::nullopt}};
+    ExpectTrue(SaveTrainingRunRecord(record, &error), "a training record saves: " + error);
+    const auto back = LoadTrainingRunRecord("run-c");
+    ExpectTrue(back && back->graph_name == "cats_dogs" && back->total_epochs == 3 && !back->regression &&
+                   back->epochs.size() == 2 && back->epochs[0].val_metric == 0.55f && !back->epochs[1].val_loss &&
+                   back->epochs[1].train_loss == 0.7f,
+               "a training record reads back, an epoch without validation stays without");
+    ExpectTrue(!LoadTrainingRunRecord("run-b") && !LoadTrainingRunRecord("../run-c"),
+               "no record for a Local Debug run or a path outside the store");
     fs::remove_all(root);
     spdlog::info("  OK: {} layers saved and read back, damaged files refused, old runs pruned",
                  kept.Layers().size());
@@ -4035,6 +4127,7 @@ int main(int argc, char** argv) {
         TestDebugModelSession();
         TestOcclusion();
         TestSaliencyAgainstPyTorch();
+        TestTrainingSnapshotsPresentation();
         TestWhereItLooksPresentation();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();

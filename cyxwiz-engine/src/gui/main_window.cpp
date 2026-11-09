@@ -4284,6 +4284,10 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                     : 0;
                 snapshots->source_count = cyxwiz::layer_capture::CaptureSamples(studio_debugger);
                 snapshots->keep_runs = static_cast<size_t>(studio_debugger.keep_capture_runs);
+                snapshots->output_rule = cyxwiz::layer_view::OutputRuleKey(OutputRuleFor(config));
+                if (node_editor_ && !node_editor_->GetCurrentFilePath().empty())
+                    snapshots->graph_name =
+                        std::filesystem::path(node_editor_->GetCurrentFilePath()).stem().string();
             }
             tm.SetNextLayerSnapshots(std::move(snapshots));
         }

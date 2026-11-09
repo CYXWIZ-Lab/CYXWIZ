@@ -22,6 +22,8 @@ namespace {
 
 constexpr const char* kSchema = "cyxwiz.debug.layer_capture.v1";
 constexpr const char* kIndexFile = "capture.json";
+constexpr const char* kTrainingSchema = "cyxwiz.debug.training_run.v1";
+constexpr const char* kTrainingFile = "training.json";
 
 // Run ids and labels name folders: letters, digits, '.', '_' and '-' only.
 bool SafeFolderName(const std::string& name) {
@@ -163,6 +165,109 @@ std::vector<std::string> ListLayerCaptures(const std::string& run_id) {
             labels.push_back(entry.path().filename().string());
     std::sort(labels.begin(), labels.end());
     return labels;
+}
+
+std::vector<LayerCaptureInfo> ListLayerCaptureInfo(const std::string& run_id) {
+    std::vector<LayerCaptureInfo> infos;
+    for (const auto& label : ListLayerCaptures(run_id)) {
+        LayerCaptureInfo info;
+        info.label = label;
+        int epoch = 0;
+        if (std::sscanf(label.c_str(), "epoch_%d", &epoch) == 1) info.epoch = epoch;
+        std::error_code ec;
+        for (const auto& entry : fs::directory_iterator(LayerCaptureDir(run_id, label), ec))
+            if (entry.is_regular_file(ec)) info.bytes += entry.file_size(ec);
+        infos.push_back(std::move(info));
+    }
+    return infos;
+}
+
+std::vector<std::string> ListRunsWithLayerCaptures() {
+    std::vector<std::pair<fs::file_time_type, std::string>> runs;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(GetDebugRunStoreRoot(), ec)) {
+        const std::string run_id = entry.path().filename().string();
+        if (!entry.is_directory(ec) || !SafeFolderName(run_id) || ListLayerCaptures(run_id).empty()) continue;
+        const auto stamp = fs::last_write_time(entry.path() / "layers", ec);
+        runs.emplace_back(ec ? fs::file_time_type{} : stamp, run_id);
+    }
+    std::sort(runs.begin(), runs.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::vector<std::string> ids;
+    for (auto& run : runs) ids.push_back(std::move(run.second));
+    return ids;
+}
+
+bool SaveTrainingRunRecord(const TrainingRunRecord& record, std::string* error) {
+    if (!SafeFolderName(record.run_id)) return Fail(error, "the run id is not a folder name", false);
+    try {
+        const fs::path dir = GetDebugRunStoreRoot() / record.run_id / "layers";
+        fs::create_directories(dir);
+        nlohmann::json epochs = nlohmann::json::array();
+        for (const auto& e : record.epochs) {
+            nlohmann::json row = {{"epoch", e.epoch}, {"train_loss", e.train_loss}, {"train_metric", e.train_metric}};
+            if (e.val_loss) row["val_loss"] = *e.val_loss;
+            if (e.val_metric) row["val_metric"] = *e.val_metric;
+            epochs.push_back(std::move(row));
+        }
+        const nlohmann::json json = {{"schema", kTrainingSchema},
+                                     {"graph_name", record.graph_name},
+                                     {"total_epochs", record.total_epochs},
+                                     {"regression", record.regression},
+                                     {"epochs", std::move(epochs)},
+                                     {"sample",
+                                      {{"item_names", record.item_names},
+                                       {"class_names", record.class_names},
+                                       {"label_values", record.label_values},
+                                       {"label_shape", record.label_shape},
+                                       {"output_rule", record.output_rule}}}};
+        // Written beside, then moved over the old one: a reader never sees half a file.
+        const fs::path next = dir / (std::string(kTrainingFile) + ".next");
+        {
+            std::ofstream file(next, std::ios::trunc);
+            file << json.dump(1) << '\n';
+            if (!file.good()) return Fail(error, "writing " + next.string() + " failed", false);
+        }
+        fs::rename(next, dir / kTrainingFile);
+        return true;
+    } catch (const std::exception& e) {
+        return Fail(error, std::string("saving the training record failed: ") + e.what(), false);
+    }
+}
+
+std::optional<TrainingRunRecord> LoadTrainingRunRecord(const std::string& run_id) {
+    if (!SafeFolderName(run_id)) return std::nullopt;
+    try {
+        std::ifstream file(GetDebugRunStoreRoot() / run_id / "layers" / kTrainingFile);
+        if (!file.is_open()) return std::nullopt;
+        nlohmann::json json;
+        file >> json;
+        if (json.value("schema", std::string{}) != kTrainingSchema) return std::nullopt;
+        TrainingRunRecord record;
+        record.run_id = run_id;
+        record.graph_name = json.value("graph_name", std::string{});
+        record.total_epochs = json.value("total_epochs", 0);
+        record.regression = json.value("regression", false);
+        for (const auto& row : json.at("epochs")) {
+            TrainingEpochRecord e;
+            e.epoch = row.at("epoch").get<int>();
+            e.train_loss = row.value("train_loss", 0.0f);
+            e.train_metric = row.value("train_metric", 0.0f);
+            if (row.contains("val_loss")) e.val_loss = row.at("val_loss").get<float>();
+            if (row.contains("val_metric")) e.val_metric = row.at("val_metric").get<float>();
+            record.epochs.push_back(e);
+        }
+        if (json.contains("sample")) {
+            const auto& s = json.at("sample");
+            record.item_names = s.value("item_names", std::vector<std::string>{});
+            record.class_names = s.value("class_names", std::vector<std::string>{});
+            record.label_values = s.value("label_values", std::vector<float>{});
+            record.label_shape = s.value("label_shape", std::vector<size_t>{});
+            record.output_rule = s.value("output_rule", std::string{});
+        }
+        return record;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
 }
 
 size_t PruneLayerCaptures(size_t keep_runs) {

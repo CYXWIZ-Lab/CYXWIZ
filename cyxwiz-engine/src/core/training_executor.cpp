@@ -1069,6 +1069,7 @@ void TrainingExecutor::Train(
 
     // Layer snapshots on items by number (6.1c): from the batchers built
     // here, before any metric sampler wraps them.
+    if (layer_snapshot_schedule_) snapshot_run_record_ = {};
     if (layer_snapshot_schedule_ && layer_snapshot_schedule_->source_count > 0) {
         auto& schedule = *layer_snapshot_schedule_;
         std::optional<Batch> items;
@@ -1086,10 +1087,33 @@ void TrainingExecutor::Train(
         if (off.empty()) {
             schedule.features = items->data;
             schedule.labels = items->labels;
+            // The items' names and classes, saved with the run's epochs.
+            for (IBatcher* source : {active_val_ibatcher, active_train_ibatcher, active_test_ibatcher}) {
+                if (!source || !snapshot_run_record_.class_names.empty() || !snapshot_run_record_.item_names.empty())
+                    continue;
+                for (size_t i = 0; i < schedule.source_count; ++i)
+                    snapshot_run_record_.item_names.push_back(source->SourceSampleName(schedule.source_index + i));
+                if (std::all_of(snapshot_run_record_.item_names.begin(), snapshot_run_record_.item_names.end(),
+                                [](const std::string& n) { return n.empty(); }))
+                    snapshot_run_record_.item_names.clear();
+                snapshot_run_record_.class_names = source->ClassNames();
+            }
         } else {
             spdlog::warn("TrainingExecutor: layer snapshots are off: {}", off);
             layer_snapshot_schedule_.reset();
         }
+    }
+    // The snapshot items' labels (a few values: one small read) and how the
+    // output reads, saved with the run's epochs too.
+    if (layer_snapshot_schedule_) {
+        const Tensor& labels = layer_snapshot_schedule_->labels;
+        if (labels.NumElements() > 0 && labels.NumElements() <= 4096) {
+            const af::array flat = labels.GetRowMajorFlatArray();
+            snapshot_run_record_.label_values.resize(static_cast<size_t>(flat.elements()));
+            flat.as(f32).host(snapshot_run_record_.label_values.data());
+            snapshot_run_record_.label_shape = labels.Shape();
+        }
+        snapshot_run_record_.output_rule = layer_snapshot_schedule_->output_rule;
     }
 
     if (config_.metric_sampling != MetricSampling::None) {
@@ -1250,6 +1274,7 @@ void TrainingExecutor::Train(
         std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
         layer_snapshots_.clear();
     }
+    snapshot_run_record_.epochs.clear();
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
     gradient_accumulation_weight_ = 0.0f;
@@ -1727,10 +1752,24 @@ void TrainingExecutor::Train(
             if (!RunGenerationPreview(point)) break;
         }
 
-        if (layer_snapshot_schedule_ &&
-            (epoch % std::max(1, layer_snapshot_schedule_->every_epochs) == 0 || epoch == epochs ||
-             stop_after_epoch)) {
-            TakeLayerSnapshot(epoch, training_run_id);
+        if (layer_snapshot_schedule_) {
+            const TrainingMetrics m = GetMetrics();
+            TrainingEpochRecord record;
+            record.epoch = epoch;
+            record.train_loss = m.train_loss;
+            record.train_metric = regression_metrics ? m.train_mae : m.train_accuracy;
+            if (validation_ran_this_epoch) {
+                record.val_loss = m.val_loss;
+                record.val_metric = regression_metrics ? m.val_mae : m.val_accuracy;
+            }
+            snapshot_run_record_.run_id = training_run_id;
+            snapshot_run_record_.graph_name = layer_snapshot_schedule_->graph_name;
+            snapshot_run_record_.total_epochs = epochs;
+            snapshot_run_record_.regression = regression_metrics;
+            snapshot_run_record_.epochs.push_back(record);
+            if (epoch % std::max(1, layer_snapshot_schedule_->every_epochs) == 0 || epoch == epochs ||
+                stop_after_epoch)
+                TakeLayerSnapshot(epoch, training_run_id);
         }
 
         // Notify plugin hooks: epoch end
@@ -2380,6 +2419,8 @@ void TrainingExecutor::TakeLayerSnapshot(int epoch, const std::string& run_id) {
             if (SaveLayerCapture(*snapshot.capture, run_id, label, &error)) {
                 snapshot.run_id = run_id;
                 snapshot.label = label;
+                if (!SaveTrainingRunRecord(snapshot_run_record_, &error))
+                    spdlog::warn("TrainingExecutor: the run's epochs were not saved with the snapshot: {}", error);
                 PruneLayerCaptures(schedule.keep_runs);
             } else {
                 spdlog::warn("TrainingExecutor: the layer snapshot after epoch {} was not saved: {}", epoch, error);

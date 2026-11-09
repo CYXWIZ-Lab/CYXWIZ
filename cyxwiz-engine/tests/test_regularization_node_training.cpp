@@ -386,6 +386,24 @@ void CheckLayerSnapshots(const json& fixture, const std::shared_ptr<cyxwiz::Arro
         labels.push_back(snapshot.label);
     }
     Check(cyxwiz::ListLayerCaptures(run_id) == labels, "the run lists its saved snapshots");
+    // Each epoch's metrics are saved with the snapshots (6.3d), the last
+    // snapshot's save holding every epoch.
+    const auto record = cyxwiz::LoadTrainingRunRecord(run_id);
+    Check(record.has_value(), "the run's epochs are saved with its snapshots");
+    Check(record->total_epochs == epochs && static_cast<int>(record->epochs.size()) == epochs,
+          "every epoch is in the saved record");
+    for (int e = 0; e < epochs; ++e) {
+        Check(record->epochs[static_cast<size_t>(e)].epoch == e + 1, "the record is in epoch order");
+        Check(std::isfinite(record->epochs[static_cast<size_t>(e)].train_loss) &&
+                  record->epochs[static_cast<size_t>(e)].train_loss > 0.0f,
+              "each epoch's training loss is recorded");
+    }
+    Check(!record->label_values.empty() && !record->label_shape.empty(),
+          "the snapshot items' labels are saved with the run");
+    Check(cyxwiz::ListRunsWithLayerCaptures().front() == run_id, "the training run is listed first, newest");
+    const auto infos = cyxwiz::ListLayerCaptureInfo(run_id);
+    Check(infos.size() == labels.size() && infos.back().epoch == taken.back().epoch && infos.back().bytes > 0,
+          "each snapshot is listed with its epoch and its size on disk");
     std::string error;
     const auto loaded = cyxwiz::LoadLayerCapture(run_id, taken.back().label, &error);
     Check(loaded != nullptr, "the last snapshot reads back: " + error);

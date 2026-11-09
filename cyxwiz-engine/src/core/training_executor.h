@@ -3,6 +3,7 @@
 #include "executable_model.h"
 #include "graph_compiler.h"
 #include "layer_capture.h"
+#include "layer_capture_store.h"
 #include "metric_learning_metrics.h"
 #include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
 #include "parquet_arrow_batcher.h"
@@ -294,6 +295,8 @@ public:
         size_t source_count = 0;
         bool save = true;
         size_t keep_runs = 10;
+        std::string graph_name;   // saved with the run's epochs (training.json)
+        std::string output_rule;  // how the output reads (layer_view::OutputRuleKey), saved there too
     };
     void EnableLayerSnapshots(LayerSnapshotSchedule schedule);
     struct LayerSnapshot {
@@ -450,6 +453,8 @@ private:
     std::vector<BuiltModuleProvenance> module_provenance_;
     mutable std::mutex layer_snapshots_mutex_;
     std::vector<LayerSnapshot> layer_snapshots_;
+    // Every epoch's metrics while snapshots are on, saved with each snapshot.
+    TrainingRunRecord snapshot_run_record_;
     void TakeLayerSnapshot(int epoch, const std::string& run_id);
     // Generation previews (TOFIX159): bound for the duration of Train.
     std::unique_ptr<TrainingGenerationPreview> generation_preview_;
