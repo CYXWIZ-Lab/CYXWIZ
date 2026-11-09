@@ -100,6 +100,10 @@ The example: row 1014 is a 6 that the model reads as 5 with 98.8 %.
 Results > Test > Errors has **Explain the first in the Model window**, and
 an **Explain** link under each mistake it shows.
 
+Explain runs the model, so it takes turns with Train, Test, Feature
+Importance and generation from this session's model: whichever starts
+second says which one is running and waits.
+
 ## Health
 
 Recorded during every training, once an epoch, at no extra pass:

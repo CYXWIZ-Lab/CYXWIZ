@@ -314,6 +314,7 @@ set(ENGINE_SOURCES
     src/core/debug_run_store.cpp
     src/core/studio_debugger_presentation.cpp
     src/core/training_manager.cpp
+    src/core/active_model_use.cpp
     src/core/cross_validation_runner.cpp
     src/core/cross_validation_presentation.cpp
     src/core/test_executor.cpp
@@ -4824,6 +4825,18 @@ if(WIN32)
 endif()
 set_target_properties(test_cloud_source_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME cloud_source_presentation COMMAND test_cloud_source_presentation)
+
+# ===== Test: jobs on the active model take turns (Explain, Feature Importance, generation) =====
+add_executable(test_active_model_use
+    tests/test_active_model_use.cpp
+    src/core/active_model_use.cpp
+)
+target_include_directories(test_active_model_use PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(WIN32)
+    target_compile_definitions(test_active_model_use PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_active_model_use PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME active_model_use COMMAND test_active_model_use)
 
 # ===== Test: the Row Filter's condition as dialog rows (TOFIX129 B-5) =====
 add_executable(test_filter_condition

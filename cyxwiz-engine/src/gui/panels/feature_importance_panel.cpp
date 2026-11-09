@@ -8,6 +8,8 @@
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
 #include "../../core/training_manager.h"
+#include "../../core/test_manager.h"
+#include "../../core/active_model_use.h"
 #include "../../core/executable_model.h"
 #include <cyxwiz/device.h>
 #include <imgui.h>
@@ -498,6 +500,16 @@ void FeatureImportancePanel::RunImportanceAnalysis() {
         spdlog::error("No data for importance analysis");
         return;
     }
+    std::string busy;
+    auto use = ActiveModelUse::TryClaim("Feature Importance", training.IsTrainingActive(),
+                                        TestManager::Instance().IsTestingActive(), &busy);
+    if (!use) {
+        std::lock_guard<std::mutex> lock(result_mutex_);
+        result_ = FeatureImportanceResult{};
+        result_.error_message = busy + "; compute importance when it has finished.";
+        has_result_ = true;
+        return;
+    }
 
     is_computing_ = true;
     progress_feature_ = 0;
@@ -512,7 +524,7 @@ void FeatureImportancePanel::RunImportanceAnalysis() {
     std::string scoring = scoring_method_ == 0 ? "accuracy" : "mse";
 
     compute_thread_ = std::make_unique<std::thread>([this, model, model_device, X, y, names, method, repeats,
-                                                     scoring]() {
+                                                     scoring, use]() mutable {
         try {
             // A new thread starts on ArrayFire's default backend, which can differ
             // from the one holding the weights (as in the export dialog).
@@ -524,6 +536,7 @@ void FeatureImportancePanel::RunImportanceAnalysis() {
                     result_.error_message = "Could not switch to the device that holds the model: " +
                                             activation.message;
                     has_result_ = true;
+                    use.reset();
                     is_computing_ = false;
                     return;
                 }
@@ -590,6 +603,7 @@ void FeatureImportancePanel::RunImportanceAnalysis() {
             spdlog::error("Feature importance error: {}", e.what());
         }
 
+        use.reset();
         is_computing_ = false;
     });
 }

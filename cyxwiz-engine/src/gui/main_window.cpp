@@ -148,6 +148,7 @@
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
+#include "../core/active_model_use.h"
 #include "../core/test_predictions_metrics.h"
 #include "../core/test_predictions_table.h"
 #include "../core/graph_compile_task.h"
@@ -5497,8 +5498,8 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
             "Another test preparation, training run or test is active. Wait for it to finish.");
         return;
     }
-    if (model_panel_ && model_panel_->ExplainRunning()) {
-        ShowOperationError("Cannot run test", "Model > Explain is still working on the model. Wait for it to finish.");
+    if (const auto busy = cyxwiz::ActiveModelBusy(false, false); !busy.empty()) {
+        ShowOperationError("Cannot run test", busy + ". Wait for it to finish.");
         return;
     }
     auto model = training.GetActiveModel();
@@ -5523,6 +5524,10 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
                 HashGraphStructure(node_editor_->GetNodes(), node_editor_->GetLinks()) != fingerprint) {
                 ShowOperationError("Cannot run test",
                     "The graph or model changed while the test was being prepared. Run Test again.");
+                return;
+            }
+            if (const auto busy = cyxwiz::ActiveModelBusy(false, false); !busy.empty()) {
+                ShowOperationError("Cannot run test", busy + ". Run Test again when it has finished.");
                 return;
             }
             try { StartTestingWithConfig(nodes, links, std::move(config)); }

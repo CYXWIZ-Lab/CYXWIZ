@@ -17,7 +17,7 @@ With no model loaded, the panel offers three sources (the same three are in
 
 | Source | What it loads |
 | --- | --- |
-| **This session's model** | The model trained in this session, or the one opened with Train > Test > Load Checkpoint. Off while training runs. |
+| **This session's model** | The model trained in this session, or the one opened with Train > Test > Load Checkpoint. Off while training runs; a reply waits while a test, Model > Explain or Feature Importance runs on it. |
 | **A training checkpoint** | A saved run of a graph in the project. Pick the **graph** it was trained from and a **run** (newest first, with its weights, epoch, validation loss and date). **Choose a folder...** lists the runs of another checkpoint folder. |
 | **A model package (.cyxmodel)** | An exported model. It carries its tokenizer. |
 

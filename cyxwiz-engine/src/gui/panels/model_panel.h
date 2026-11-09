@@ -13,6 +13,7 @@
 // (core/model_explain), worked out in the background on the model's device.
 
 #include "../../core/learning_rate_range_test.h"
+#include "../../core/active_model_use.h"
 #include "../../core/model_explain.h"
 #include "../../core/model_projector.h"
 #include "../../core/model_summary_presentation.h"
@@ -49,9 +50,6 @@ public:
     void RangeLaunchEnded(const std::string& why);
     // Opens Explain on a sample of the last test (Results > Test > Errors).
     void ExplainSample(int sample);
-    // An Explain still computing on the trained model: Test waits for it
-    // (both run the model's forward pass).
-    bool ExplainRunning() const;
     // The health of the training running now, else of the last one, with
     // the graph's layer names (also the Training Dashboard's notice).
     HealthView CurrentHealth() const;
@@ -110,6 +108,7 @@ private:
         std::mutex mutex;
         bool done = false;
         ExplainOutcome outcome;
+        std::shared_ptr<ActiveModelUse> use;  // Released when the maps are done.
     };
     std::shared_ptr<ExplainJob> explain_job_;
     std::shared_ptr<int> alive_ = std::make_shared<int>(0);
