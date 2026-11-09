@@ -285,6 +285,7 @@ set(ENGINE_SOURCES
     src/core/image_utils.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
+    src/core/debug_model_session.cpp
     src/core/debug_sample_source.cpp
     src/core/debug_numerics.cpp
     src/core/debug_batch_inspector.cpp
@@ -874,6 +875,7 @@ set(ENGINE_HEADERS
     src/core/sequence_training_step.h
     src/core/model_builder.h
     src/core/debug_executor.h
+    src/core/debug_model_session.h
     src/core/synthetic_batch.h
     src/core/training_executor.h
     src/core/training_manager.h
@@ -1906,6 +1908,7 @@ add_executable(test_debug_executor
     tests/test_debug_executor.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
+    src/core/debug_model_session.cpp
     src/core/debug_numerics.cpp
     src/core/layer_view_presentation.cpp
     src/core/layer_tensor_reader.cpp

@@ -7,6 +7,7 @@
 // dead-subgraph warning path.
 
 #include "../src/core/debug_executor.h"
+#include "../src/core/debug_model_session.h"
 #include "../src/core/debug_numerics.h"
 #include "../src/core/debug_loss_metric_explainer.h"
 #include "../src/core/model_builder.h"
@@ -2766,6 +2767,107 @@ void TestLayerCaptureResNetExample() {
     spdlog::info("  OK: ResNet capture {} layers, {} MB", capture.Layers().size(), capture.BytesHeld() >> 20);
 }
 
+// TOFIX202: a debug run's model rebuilt from its capture answers again with
+// the weights the run used; its input gradient matches central differences.
+std::vector<float> RowMajor(const Tensor& t) {
+    const af::array flat = t.GetRowMajorFlatArray();
+    std::vector<float> values(static_cast<size_t>(flat.elements()));
+    if (!values.empty()) flat.as(f32).host(values.data());
+    return values;
+}
+
+Tensor FromRowMajor(const std::vector<float>& values, const std::vector<size_t>& shape) {
+    return Tensor::FromRowMajorFlatArray(af::array(static_cast<dim_t>(values.size()), values.data()), shape);
+}
+
+// sum(output x target) for an input.
+double Score(DebugModelSession& session, const Tensor& input, const std::vector<float>& target) {
+    const auto out = RowMajor(session.Forward(input));
+    double s = 0.0;
+    for (size_t i = 0; i < out.size(); ++i) s += double(out[i]) * target[i];
+    return s;
+}
+
+// The input gradient at `indices` against central differences.
+void CheckInputGradient(DebugModelSession& session, const Tensor& input, const std::vector<size_t>& indices,
+                        float eps, const std::string& what) {
+    const Tensor output = session.Forward(input);
+    std::vector<float> target(output.NumElements(), 0.0f);
+    target[target.size() - 1] = 1.0f;  // the last output of the last sample
+    const auto grad = RowMajor(session.InputGradient(input, FromRowMajor(target, output.Shape())));
+    ExpectEq(grad.size(), input.NumElements(), what + ": the gradient has the input's size");
+    const auto x = RowMajor(input);
+    for (size_t k : indices) {
+        auto up = x, down = x;
+        up[k] += eps;
+        down[k] -= eps;
+        const double numeric = (Score(session, FromRowMajor(up, input.Shape()), target) -
+                                Score(session, FromRowMajor(down, input.Shape()), target)) / (2.0 * eps);
+        const double analytic = grad[k];
+        const double tolerance = 0.05 * std::max(std::fabs(numeric), std::fabs(analytic)) + 2e-3;
+        ExpectTrue(std::fabs(numeric - analytic) <= tolerance,
+                   what + ": input " + std::to_string(k) + " gradient " + std::to_string(analytic) +
+                       " vs central difference " + std::to_string(numeric));
+    }
+}
+
+void TestDebugModelSession() {
+    spdlog::info("--- TestDebugModelSession ---");
+    // An MLP (no dropout or BatchNorm: the run's training forward equals
+    // eval): the rebuilt model gives the run's output for the run's input.
+    const auto cfg = MakeTabularConfig();
+    DebugExecutor exe(cfg);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "the MLP runs with capture: " + res.failure_summary);
+    const LayerCapture& capture = *res.layer_capture;
+    std::string error;
+    auto session = DebugModelSession::FromCapture(cfg, capture, &error);
+    ExpectTrue(session != nullptr, "the MLP's model is rebuilt from its capture: " + error);
+    const Tensor& input = CapturedTensorOf(capture.Layers().front(), CapturedTensorRole::Input);
+    const Tensor& output = CapturedTensorOf(capture.Layers().back(), CapturedTensorRole::Output);
+    const float worst = MaxAbsDifference(RowMajor(session->Forward(input)), RowMajor(output));
+    ExpectTrue(worst < 1e-5f, "the rebuilt MLP gives the run's output, worst " + std::to_string(worst));
+    CheckInputGradient(*session, input, {0, 3, 7, 9}, 1e-2f, "MLP");
+
+    // A capture without the weights cannot rebuild the model, and says why.
+    DebugExecutor activations_only(cfg);
+    activations_only.SetLayerCapture({/*activations=*/true, /*parameters=*/false, /*gradients=*/false});
+    const auto a_res = activations_only.Run();
+    error.clear();
+    ExpectTrue(!DebugModelSession::FromCapture(cfg, *a_res.layer_capture, &error) &&
+                   error.find("did not keep") != std::string::npos,
+               "a capture without weights is refused: " + error);
+
+    // A target of the wrong shape is refused.
+    bool refused = false;
+    try {
+        session->InputGradient(input, FromRowMajor({1.0f}, {1}));
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    ExpectTrue(refused, "a target that is not the output's shape is refused");
+
+    // The ResNet example (branches into Add, BatchNorm kept state): rebuilt
+    // in eval mode, its input gradient matches central differences.
+    const auto resnet = CompileResNetExample();
+    DebugExecutor r_exe(resnet);
+    r_exe.SetLayerCapture({});
+    const auto r_res = r_exe.Run();
+    ExpectTrue(r_res.success && r_res.layer_capture, "the ResNet runs with capture: " + r_res.failure_summary);
+    error.clear();
+    auto r_session = DebugModelSession::FromCapture(resnet, *r_res.layer_capture, &error);
+    ExpectTrue(r_session != nullptr, "the ResNet's model is rebuilt from its capture: " + error);
+    const Tensor& image = CapturedTensorOf(r_res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    const Tensor r_out = r_session->Forward(image);
+    ExpectTrue(r_out.Shape() == CapturedTensorOf(r_res.layer_capture->Layers().back(), CapturedTensorRole::Output).Shape(),
+               "the rebuilt ResNet's output has the run's output shape");
+    for (float v : RowMajor(r_out)) ExpectTrue(std::isfinite(v), "the rebuilt ResNet's output is finite");
+    const size_t pixels = image.NumElements();
+    CheckInputGradient(*r_session, image, {pixels / 7, pixels / 2 + 13, pixels - 5}, 1e-2f, "ResNet");
+    spdlog::info("  OK: MLP rebuilt output worst {}", worst);
+}
+
 // TOFIX178 6.1b: a training snapshot runs in eval mode, so BatchNorm's
 // running statistics and every weight are left exactly as they were.
 void TestCaptureStepLeavesTheModel() {
@@ -3387,6 +3489,7 @@ int main(int argc, char** argv) {
         TestLayerCaptureResNetExample();
         TestCaptureStepLeavesTheModel();
         TestLayerCaptureStore();
+        TestDebugModelSession();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();
         TestDebugExecutorSkippedLayerMapping();
