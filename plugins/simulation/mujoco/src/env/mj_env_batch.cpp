@@ -183,6 +183,7 @@ bool DescribeMjTask(const MjTaskSpec& spec, const std::string& model_path, Plugi
     }
     info.max_episode_steps = spec.max_episode_steps;
     info.step_seconds = model->opt.timestep * task->FrameSkip();
+    info.view_panel_id = "mujoco_viewport";  // ShowCopy's view
     for (const auto& setting : spec.settings)
         info.settings.push_back({setting.key, setting.label, FormatSetting(setting.default_value, setting.integer),
                                  setting.description});

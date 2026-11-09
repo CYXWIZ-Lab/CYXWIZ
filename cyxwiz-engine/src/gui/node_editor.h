@@ -32,6 +32,7 @@ namespace scripting { class ScriptingEngine; }
 namespace cyxwiz {
 class ScriptEditorPanel;
 class TrainingDashboardPanel;
+class PolicyPlaybackPanel;
 class PipelineExecutor;
 class PipelineExecutionTracker;
 struct TaskInfo;
@@ -44,6 +45,7 @@ struct RLTrainingConfiguration;
 }  // namespace cyxwiz
 namespace cyxwiz::rl {
 class RLTrainingRun;
+struct TrainedPolicy;
 }
 
 namespace cyxwiz::dashboard {
@@ -1383,6 +1385,12 @@ private:
     bool rl_run_reported_ = true;  // its end is on the dashboard
     std::string rl_status_ = "PPO starting";  // the toolbar's line while it runs
     void PollRLTraining();
+    // The trained policy (TOFIX195 S5): of the last run, or loaded from a
+    // .cyxmodel (rl_policy_file_: its file name; empty for the run's)
+    std::shared_ptr<cyxwiz::rl::TrainedPolicy> rl_policy_;
+    std::string rl_policy_file_;
+    std::string rl_policy_message_;  // the last Save / Load outcome, for Properties
+    std::unique_ptr<cyxwiz::PolicyPlaybackPanel> rl_playback_;
 
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
     uint64_t pipeline_task_id_ = 0;
@@ -1435,6 +1443,19 @@ public:
     bool StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfiguration> config, std::string& error);
     bool IsRLTrainingActive() const;
     void StopRLTraining();
+
+    // The trained RL policy (TOFIX195 S5): play it, save it, load one.
+    bool HasRLPolicy() const { return rl_policy_ != nullptr; }
+    std::string RLPolicyLine() const;
+    const std::string& RLPolicyMessage() const { return rl_policy_message_; }
+    bool PlayRLPolicy(std::string& error);
+    // Asks where (a file dialog). False with an empty error when cancelled.
+    bool SaveRLPolicy(std::string& error);
+    // Loads a saved policy to play (Open Model File).
+    bool LoadRLPolicy(const std::string& path, std::string& error);
+    // A file dialog, then the policy, which must fit the open graph
+    // (the PPO node's Load policy...).
+    bool ChooseRLPolicyForGraph(std::string& error);
 };
 
 } // namespace gui

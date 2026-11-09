@@ -1507,6 +1507,16 @@ MainWindow::MainWindow()
         if (import_dialog_) import_dialog_->Open();
     });
 
+    // A trained RL policy plays without touching the open graph (TOFIX195 S5)
+    import_dialog_->SetPlayPolicyCallback([this](const std::string& input_path, std::string& error) {
+        if (!node_editor_) {
+            error = "Studio is not ready.";
+            return false;
+        }
+        if (!node_editor_->LoadRLPolicy(input_path, error)) return false;
+        return node_editor_->PlayRLPolicy(error);
+    });
+
     import_dialog_->SetOpenGraphCallback(
         [this](const cyxwiz::ProbeResult& probe,
                const std::string& graph_json,

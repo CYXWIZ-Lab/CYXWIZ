@@ -52,6 +52,10 @@ std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& 
 std::vector<float> PolicyActions(TrainedPolicy& policy, std::vector<float> observations, size_t rows, bool best,
                                  uint64_t seed);
 
+// Why `policy` does not fit the compiled graph `graph` (another environment,
+// or other layers), or empty when it fits.
+std::string PolicyMismatch(const TrainedPolicy& policy, const RLTrainingConfiguration& graph);
+
 bool SaveTrainedPolicy(const TrainedPolicy& policy, const std::filesystem::path& path, std::string& error);
 // Null with the reason: not an RL policy, the environment is not available,
 // or the graph's networks differ from the saved weights.

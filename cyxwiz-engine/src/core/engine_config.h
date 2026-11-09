@@ -195,6 +195,18 @@ public:
     bool OpenSimulationMonitorOnRun() const;
     void SetOpenSimulationMonitorOnRun(bool open);
 
+    // Policy playback of a trained RL policy (Preferences > Simulation): the
+    // Policy Playback panel starts from these.
+    // Best actions (true, the default) or sampled as in training.
+    bool PolicyPlaybackBestActions() const;
+    void SetPolicyPlaybackBestActions(bool best);
+    // 0 real time (the default), 1 four times faster, 2 as fast as possible
+    int PolicyPlaybackSpeed() const;
+    void SetPolicyPlaybackSpeed(int speed);
+    // Play the policy when a PPO run finishes. Off by default.
+    bool PlayPolicyAfterTraining() const;
+    void SetPlayPolicyAfterTraining(bool play);
+
     // ===== Appearance (Engine-wide) =====
 
     AppearanceConfig GetAppearance() const;
@@ -261,6 +273,9 @@ private:
     bool record_debug_logs_ = true;
     uint64_t data_budget_bytes_ = 0;
     int simulation_rate_hz_ = kDefaultSimulationRateHz;
+    bool policy_playback_best_ = true;
+    int policy_playback_speed_ = 0;
+    bool play_policy_after_training_ = false;
     bool open_simulation_monitor_on_run_ = true;
     AppearanceConfig appearance_;
 

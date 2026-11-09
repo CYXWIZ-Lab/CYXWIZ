@@ -403,6 +403,49 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::TextDisabled("If you close the Monitor during a run it stays closed until the next Run. "
                                         "A Scope's window size and scale are set on the Scope node, in Properties.");
                     ImGui::PopTextWrapPos();
+
+                    // Playing a trained RL policy (TOFIX195 S5): the Policy Playback panel starts from these
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::TextUnformatted("Policy playback");
+                    ImGui::TextDisabled("How the Policy Playback panel starts. Changing it in the panel does not change these.");
+                    ImGui::Spacing();
+                    if (ImGui::BeginTable("##policy_playback_prefs", 2, ImGuiTableFlags_SizingStretchProp)) {
+                        ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+                        ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+                        static const char* const kActions[] = {"Best", "Sampled"};
+                        static const char* const kSpeeds[] = {"Real time", "x4", "As fast as possible"};
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Actions");
+                        ImGui::TableNextColumn();
+                        int actions = engine_config.PolicyPlaybackBestActions() ? 0 : 1;
+                        if (ui::SegmentedControl("##pref_playback_actions", kActions, 2, &actions)) {
+                            engine_config.SetPolicyPlaybackBestActions(actions == 0);
+                            engine_config.Save();
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("Best: the most likely action; Sampled: as in training");
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Speed");
+                        ImGui::TableNextColumn();
+                        int speed = engine_config.PolicyPlaybackSpeed();
+                        if (ui::SegmentedControl("##pref_playback_speed", kSpeeds, 3, &speed)) {
+                            engine_config.SetPolicyPlaybackSpeed(speed);
+                            engine_config.Save();
+                        }
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("After training");
+                        ImGui::TableNextColumn();
+                        bool play_after = engine_config.PlayPolicyAfterTraining();
+                        if (ImGui::Checkbox("Play the policy when a PPO run finishes (off by default)", &play_after)) {
+                            engine_config.SetPlayPolicyAfterTraining(play_after);
+                            engine_config.Save();
+                        }
+                        ImGui::EndTable();
+                    }
                     ImGui::EndTabItem();
                 }
 

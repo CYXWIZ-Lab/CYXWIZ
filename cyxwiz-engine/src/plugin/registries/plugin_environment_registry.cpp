@@ -25,6 +25,7 @@ PluginEnvironmentInfo CopyInfo(const PluginEnvironmentInfo& in) {
     out.action_high.assign(in.action_high.begin(), in.action_high.end());
     out.max_episode_steps = in.max_episode_steps;
     out.step_seconds = in.step_seconds;
+    out.view_panel_id = std::string(in.view_panel_id.c_str());
     for (const auto& setting : in.settings) {
         out.settings.push_back({std::string(setting.key.c_str()), std::string(setting.label.c_str()),
                                 std::string(setting.default_value.c_str()), std::string(setting.description.c_str())});

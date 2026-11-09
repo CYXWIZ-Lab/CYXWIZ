@@ -85,6 +85,49 @@ Debug does not apply to an RL graph (it runs one supervised batch).
 A script can report to the same window with `pycyxwiz.rl_update_metric`
 (see [Plotting](plotting.md#rl-training-dashboard)).
 
+## Play, save and load the trained policy
+
+When a run finishes, or you stop it after at least one update, the Engine
+keeps its trained policy until the next Train.
+
+- **Play policy** (on the dashboard after the run, or **Play** under
+  **Trained policy** in the PPO node's Properties) opens the **Policy
+  Playback** panel and plays one copy of the environment with the policy:
+  - **Actions:** *Best* takes the policy's most likely action (the most
+    likely choice, or the Gaussian mean); *Sampled* draws them as training does.
+  - **Speed:** *Real time* steps at the environment's own step time, *x4*
+    four times faster, or *As fast as possible*.
+  - The panel shows the episode, its step and return, the last returns and
+    the action, with Pause / Resume, New episode and Stop.
+- **Where you see it:**
+  - **MuJoCo task:** the **MuJoCo Viewport** opens and shows the copy being
+    played. Its own Run / Step / Reset are off while it does ("Policy playback
+    is showing this scene"); Stop gives it back the model it had.
+  - **The built-in CartPole:** the panel draws the cart and pole.
+  - **An environment without a picture:** the panel shows the numbers and a
+    return-per-episode line.
+- **Save policy...** (dashboard, or **Save...** in Properties) writes one
+  `.cyxmodel`. By default it goes in `<project>/exports/<graph name>.cyxmodel`.
+  It holds:
+  - the RL graph;
+  - the policy and value networks with the log standard deviation;
+  - the three Adam states;
+  - `rl/policy.json`: the environment and its settings, the observation
+    normalisation statistics and the PPO updates.
+- **Load policy...** in the PPO node's Properties loads a saved policy for
+  this graph. It is refused, saying what differs, when it was trained on
+  another environment or other layer widths.
+- **File > Open Model File...** on a policy file shows "PPO on
+  <environment>" and offers **Play policy**, which plays it without
+  changing the open graph, and **Open its graph**.
+- **Loading needs the environment:** the saved graph is compiled as Train
+  compiles it, so a MuJoCo task needs the MuJoCo plugin loaded.
+
+Preferences > Simulation > Policy playback sets how the panel starts:
+- Actions (default Best).
+- Speed (default Real time).
+- Whether to play the policy as soon as a PPO run finishes (default off).
+
 ## Code Gen
 
 With **Code Gen** selected, **Generate** writes the same run as a Python
@@ -104,7 +147,8 @@ On 2026-11-09 with the tuned settings:
 
 ## Not yet
 
-- Saving the trained policy and playing it in the MuJoCo viewport.
+- Exporting the policy to ONNX (TOFIX188), and continuing training from a
+  saved policy (its optimizer states are already in the file).
 - Algorithms other than PPO; learning-rate schedules (RL Zoo's CartPole
   settings use linear ones, the preset uses them as constants).
 - Training on a MuJoCo Plant model with a reward graph (the environments are

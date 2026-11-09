@@ -382,6 +382,8 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
             std::snprintf(buf, sizeof(buf), "%.1fx real time", achieved_speed_);
             parts.push_back({buf, ToU32(colors.success)});
         }
+    } else if (playback_) {  // the Engine's playback moves the scene, at its own pace
+        parts.push_back({"Policy playback", ToU32(colors.accent_text)});
     } else {
         parts.push_back({active ? "Paused" : "Stopped", ToU32(colors.text_dim)});
     }

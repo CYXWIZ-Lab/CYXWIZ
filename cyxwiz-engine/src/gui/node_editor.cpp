@@ -31,6 +31,12 @@
 #include "../core/pipeline_runtime_capabilities.h"
 #include "panels/training_dashboard.h"
 #include "../core/rl/rl_training_run.h"
+#include "../core/rl/trained_policy.h"
+#include "../core/rl_playback_presentation.h"
+#include "../core/model_export_presentation.h"
+#include "../core/file_dialogs.h"
+#include "../plugin/engine_plugin_context.h"
+#include "panels/policy_playback_panel.h"
 #include "../plugin/registries/plugin_environment_registry.h"
 #include "../core/plot/plot_model.h"
 #include "../scripting/scripting_engine.h"
@@ -934,6 +940,7 @@ void NodeEditor::Render() {
     if (rl_dashboard_) {
         rl_dashboard_->Render();
     }
+    if (rl_playback_) rl_playback_->Render();
 
     // ===== Save as Pattern Dialog =====
     if (show_save_pattern_dialog_) {
@@ -4281,8 +4288,21 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     info.continuous = !c.environment.discrete_actions;
     info.reference = cyxwiz::rl::FindPpoReference(cyxwiz::rl::ReadPpoReferenceFile(), c.environment.id, c.copies, c.ppo);
     auto* run = rl_run_.get();
-    rl_dashboard_->BeginPpoRun(std::move(info), {[run]() { run->Pause(); }, [run]() { run->Resume(); },
-                                                 [run]() { run->Stop(); }, [run]() { return run->Paused(); }});
+    cyxwiz::TrainingDashboardPanel::PpoRunControls controls;
+    controls.pause = [run]() { run->Pause(); };
+    controls.resume = [run]() { run->Resume(); };
+    controls.stop = [run]() { run->Stop(); };
+    controls.paused = [run]() { return run->Paused(); };
+    controls.has_policy = [this]() { return rl_policy_ != nullptr && rl_policy_file_.empty(); };
+    controls.play = [this]() {
+        std::string why;
+        if (!PlayRLPolicy(why)) spdlog::error("Play policy: {}", why);
+    };
+    controls.save = [this]() {
+        std::string why;
+        if (!SaveRLPolicy(why) && !why.empty()) spdlog::error("Save policy: {}", why);
+    };
+    rl_dashboard_->BeginPpoRun(std::move(info), std::move(controls));
     spdlog::info("Train: PPO on {} x {} started", c.environment.id, c.copies);
     return true;
 }
@@ -4301,10 +4321,100 @@ void NodeEditor::PollRLTraining() {
         rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
                      cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps";
     }
+    if (rl_run_->Active()) cyxwiz::plugin::EnginePluginContext::KeepFullFrameRate();  // the dashboard moves
     if (rl_run_reported_ || rl_run_->Active()) return;
     const auto state = rl_run_->GetState();
     rl_dashboard_->EndPpoRun(rl_run_->Message(), state == cyxwiz::rl::RLTrainingRun::State::Failed);
     rl_run_reported_ = true;
+    // The run's policy replaces the one kept (TOFIX195 S5)
+    if (auto trained = rl_run_->Trained()) {
+        rl_policy_ = std::move(trained);
+        rl_policy_file_.clear();
+        rl_policy_message_.clear();
+        if (cyxwiz::core::EngineConfig::Instance().PlayPolicyAfterTraining()) {
+            std::string why;
+            if (!PlayRLPolicy(why)) spdlog::error("Play policy: {}", why);
+        }
+    }
+}
+
+std::string NodeEditor::RLPolicyLine() const {
+    return cyxwiz::rl_playback::PolicyLine(rl_policy_ != nullptr, rl_policy_file_, rl_policy_ ? rl_policy_->steps : 0,
+                                           rl_policy_ ? rl_policy_->mean_return : 0.0f);
+}
+
+bool NodeEditor::PlayRLPolicy(std::string& error) {
+    if (!rl_policy_) {
+        error = "There is no trained policy yet: Train the RL graph, or load a saved policy.";
+        return false;
+    }
+    if (!rl_playback_) rl_playback_ = std::make_unique<cyxwiz::PolicyPlaybackPanel>();
+    if (!rl_playback_->Play(rl_policy_, rl_policy_file_, error)) return false;
+    spdlog::info("Policy playback: {} started", rl_policy_->config.environment.id);
+    return true;
+}
+
+bool NodeEditor::SaveRLPolicy(std::string& error) {
+    error.clear();
+    if (!rl_policy_) {
+        error = "There is no trained policy to save.";
+        rl_policy_message_ = error;
+        return false;
+    }
+    const std::string suggested = cyxwiz::model_export::DefaultPath(cyxwiz::ProjectManager::Instance().GetProjectRoot(),
+                                                                    current_file_path_, cyxwiz::ModelFormat::CyxModel);
+    const auto path = cyxwiz::FileDialogs::SaveFile("Save policy", {{"CyxWiz Models", "cyxmodel"}},
+                                                    suggested.empty() ? nullptr : suggested.c_str(),
+                                                    "policy.cyxmodel");
+    if (!path) return false;  // cancelled
+    if (!cyxwiz::rl::SaveTrainedPolicy(*rl_policy_, *path, error)) {
+        rl_policy_message_ = error;
+        return false;
+    }
+    rl_policy_message_ = "Saved to " + *path;
+    spdlog::info("Saved the PPO policy to {}", *path);
+    return true;
+}
+
+bool NodeEditor::LoadRLPolicy(const std::string& path, std::string& error) {
+    auto loaded = cyxwiz::rl::LoadTrainedPolicy(path, error);
+    if (!loaded) {
+        rl_policy_message_ = error;
+        return false;
+    }
+    rl_policy_ = std::shared_ptr<cyxwiz::rl::TrainedPolicy>(std::move(loaded));
+    rl_policy_file_ = std::filesystem::path(path).filename().string();
+    rl_policy_message_ = "Loaded " + rl_policy_file_;
+    spdlog::info("Loaded the PPO policy {} ({})", path, rl_policy_->config.environment.id);
+    return true;
+}
+
+bool NodeEditor::ChooseRLPolicyForGraph(std::string& error) {
+    error.clear();
+    const auto path = cyxwiz::FileDialogs::OpenFile("Load policy", {{"CyxWiz Models", "cyxmodel"}});
+    if (!path) return false;  // cancelled
+    auto loaded = cyxwiz::rl::LoadTrainedPolicy(*path, error);
+    if (!loaded) {
+        rl_policy_message_ = error;
+        return false;
+    }
+    // It must fit the open graph (its environment and layers)
+    cyxwiz::GraphCompiler compiler;
+    const auto compiled = compiler.Compile(nodes_, links_, true);
+    if (!compiled.rl) {
+        error = "The open graph does not compile, so the policy cannot be checked against it: " + compiled.error_message;
+        rl_policy_message_ = error;
+        return false;
+    }
+    error = cyxwiz::rl::PolicyMismatch(*loaded, *compiled.rl);
+    if (!error.empty()) {
+        rl_policy_message_ = error;
+        return false;
+    }
+    rl_policy_ = std::shared_ptr<cyxwiz::rl::TrainedPolicy>(std::move(loaded));
+    rl_policy_file_ = std::filesystem::path(*path).filename().string();
+    rl_policy_message_ = "Loaded " + rl_policy_file_;
+    return true;
 }
 
 // ============================================================================

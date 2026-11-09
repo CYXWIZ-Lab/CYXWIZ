@@ -43,6 +43,9 @@ public:
     void RequestFullFrameRate() override;
     // Engine side: whether a plugin asked for full frame rate in the last second.
     static bool FullFrameRateRequested();
+    // Engine side: the Engine's own moving work asks for it too (a PPO run,
+    // policy playback), for the next second.
+    static void KeepFullFrameRate();
     // Engine side: the GUI hands its PluginUi to every plugin context before
     // plugins load; hosts without windows leave it null.
     static void SetUi(PluginUi* ui) { ui_ = ui; }

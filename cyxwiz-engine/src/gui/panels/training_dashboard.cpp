@@ -1,6 +1,7 @@
 #include "training_dashboard.h"
 
 #include "../../core/plot/plot_prepare.h"
+#include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
@@ -136,7 +137,11 @@ void TrainingDashboardPanel::EndPpoRun(const std::string& outcome, bool failed) 
     training_ = false;
     outcome_ = outcome;
     failed_ = failed;
-    controls_ = {};
+    // The run's own controls go with it; Play and Save of its policy stay
+    controls_.pause = nullptr;
+    controls_.resume = nullptr;
+    controls_.stop = nullptr;
+    controls_.paused = nullptr;
 }
 
 void TrainingDashboardPanel::Render() {
@@ -216,17 +221,30 @@ void TrainingDashboardPanel::RenderRunHeader() {
     ImGui::SameLine();
     ImGui::TextColored(t.text_dim, "%s", run_->title.c_str());
 
-    // Pause / Resume, Stop, Reset at the right
+    // Pause / Resume and Stop while it runs; after it, Play policy and Save
+    // policy... when it left one; Reset at the right
     const char* pause = paused ? "Resume" : "Pause";
     const char* stop = "Stop";
+    const char* play = ICON_FA_PLAY " Play policy";
+    const char* save = "Save policy...";
     const char* reset = "Reset metrics";
+    const bool has_policy = !running && controls_.has_policy && controls_.has_policy();
     const float gap = ImGui::GetStyle().ItemSpacing.x;
     const float w = (running ? ui::ButtonWidth(pause, ui::ButtonSize::Small) + ui::ButtonWidth(stop, ui::ButtonSize::Small) +
                                    2 * gap
                              : 0.0f) +
+                    (has_policy ? ui::ButtonWidth(play, ui::ButtonSize::Small) +
+                                      ui::ButtonWidth(save, ui::ButtonSize::Small) + 2 * gap
+                                : 0.0f) +
                     ui::ButtonWidth(reset, ui::ButtonSize::Small);
     ImGui::SameLine();
     ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - w));
+    if (has_policy) {
+        if (ui::PrimaryButton(play, true, nullptr, ui::ButtonSize::Small) && controls_.play) controls_.play();
+        ImGui::SameLine();
+        if (ui::SecondaryButton(save) && controls_.save) controls_.save();
+        ImGui::SameLine();
+    }
     if (running) {
         if (ui::SecondaryButton(pause)) {
             if (paused && controls_.resume) controls_.resume();

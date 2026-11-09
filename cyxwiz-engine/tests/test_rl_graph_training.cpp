@@ -181,6 +181,11 @@ void CheckCartPole() {
               load_error.find("the graph builds") != std::string::npos,
           "a graph with other layer widths is refused with the shapes: " + load_error);
     std::filesystem::remove(path);
+    Check(cyxwiz::rl::PolicyMismatch(*trained, *config).empty(), "the policy fits the graph it was trained from");
+    const auto narrow_config = Compile(narrower);
+    const std::string mismatch = narrow_config ? cyxwiz::rl::PolicyMismatch(*trained, *narrow_config) : "";
+    Check(mismatch == "The policy was trained on 64-64 policy and 64-64 value layers; this graph has 32-64 and 64-64.",
+          "a narrower graph is named: " + mismatch);
     Check(cyxwiz::rl::LoadTrainedPolicy(std::filesystem::temp_directory_path() / "cyxwiz_no_such_policy.cyxmodel",
                                         load_error) == nullptr && !load_error.empty(),
           "a missing file is refused with the reason: " + load_error);

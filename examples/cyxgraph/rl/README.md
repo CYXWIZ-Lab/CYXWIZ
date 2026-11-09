@@ -13,5 +13,11 @@ Dashboard shows the episode return by environment step, with the
 Stable-Baselines3 reference of the same settings under it, and the policy
 diagnostics.
 
+When the run finishes:
+- **Play policy** on the dashboard plays the trained policy. CartPole is drawn
+  in the Policy Playback panel; InvertedPendulum shows in the MuJoCo Viewport.
+- **Save policy...** writes it as a `.cyxmodel`.
+- **File > Open Model File...** on that file plays it again later.
+
 The same graphs as a Python script (Stable-Baselines3 on the Engine's own
 environments through pycyxwiz.rl): Code Gen mode, Generate.

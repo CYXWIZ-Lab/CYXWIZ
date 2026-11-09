@@ -250,6 +250,8 @@ void MuJoCoPlugin::SyncPlayback() {
         viewport_panel_.SetPlayback(false);
         if (!restore_path_.empty() && restore_path_ != loaded_mjcf_path_ && LoadEnvironment(restore_path_))
             viewport_panel_.SetModelLabel(restore_title_, restore_subtitle_);
+        else if (restore_path_.empty())  // nothing before it: the played model stays
+            viewport_panel_.SetModelLabel(viewport_panel_.ModelTitle(), "From the last policy playback");
     }
 }
 

@@ -185,11 +185,26 @@ void ImportDialog::RenderButtons() {
     const char* reason = job_ ? "The file is being read"
                          : probed_path_.empty() ? "Choose a model file"
                                                 : v.open_disabled_reason.c_str();
-    const float right = ui::ButtonWidth("Cancel", ui::ButtonSize::Regular) + ImGui::GetStyle().ItemSpacing.x +
-                        ui::ButtonWidth("Open its graph", ui::ButtonSize::Regular);
+    // A trained RL policy plays first; its graph opens second
+    const bool policy = ready && v.can_play_policy && play_policy_callback_;
+    const char* play = ICON_FA_PLAY " Play policy";
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float right = ui::ButtonWidth("Cancel", ui::ButtonSize::Regular) + gap +
+                        ui::ButtonWidth("Open its graph", ui::ButtonSize::Regular) +
+                        (policy ? gap + ui::ButtonWidth(play, ui::ButtonSize::Regular) : 0.0f);
     ImGui::SetCursorPosX((std::max)(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - right));
     if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular)) Close();
     ImGui::SameLine();
+    if (policy) {
+        if (ui::SecondaryButton("Open its graph", can_open, reason)) StartJob(probed_path_, true);
+        ImGui::SameLine();
+        if (ui::PrimaryButton(play)) {
+            std::string why;
+            if (play_policy_callback_(probed_path_, why)) Close();
+            else error_ = why;
+        }
+        return;
+    }
     if (ui::PrimaryButton("Open its graph", can_open, reason)) StartJob(probed_path_, true);
 }
 

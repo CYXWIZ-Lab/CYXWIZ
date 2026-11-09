@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace cyxwiz::rl {
@@ -267,6 +268,32 @@ std::vector<float> PolicyActions(TrainedPolicy& p, std::vector<float> observatio
     return actions;
 }
 
+std::string PolicyMismatch(const TrainedPolicy& p, const RLTrainingConfiguration& graph) {
+    if (p.config.environment_key != graph.environment_key)
+        return "This policy plays " + p.config.environment.id + "; this graph's Environment is " +
+               graph.environment.id + ".";
+    const auto widths = [](const std::vector<CompiledLayer>& layers) {
+        std::string text;
+        for (const auto& l : layers)
+            if (l.units > 0) text += (text.empty() ? "" : "-") + std::to_string(l.units);
+        return text.empty() ? std::string("no") : text;
+    };
+    const auto kinds = [](const std::vector<CompiledLayer>& layers) {
+        std::vector<int> out;
+        for (const auto& l : layers) out.push_back(static_cast<int>(l.type));
+        return out;
+    };
+    const bool same = widths(p.config.policy_layers) == widths(graph.policy_layers) &&
+                      widths(p.config.value_layers) == widths(graph.value_layers) &&
+                      kinds(p.config.policy_layers) == kinds(graph.policy_layers) &&
+                      kinds(p.config.value_layers) == kinds(graph.value_layers);
+    if (!same)
+        return "The policy was trained on " + widths(p.config.policy_layers) + " policy and " +
+               widths(p.config.value_layers) + " value layers; this graph has " + widths(graph.policy_layers) +
+               " and " + widths(graph.value_layers) + ".";
+    return {};
+}
+
 bool SaveTrainedPolicy(const TrainedPolicy& p, const std::filesystem::path& path, std::string& error) {
     error.clear();
     if (!p.policy || !p.value) {
@@ -343,6 +370,12 @@ bool SaveTrainedPolicy(const TrainedPolicy& p, const std::filesystem::path& path
         manifest.has_optimizer_state = !p.optimizers.empty();
         manifest.custom_metadata["rl_environment"] = info.id;
         manifest.custom_metadata["rl_environment_key"] = p.config.environment_key;
+        manifest.custom_metadata["rl_steps"] = std::to_string(p.steps);
+        if (std::isfinite(p.mean_return)) {
+            char text[32];
+            std::snprintf(text, sizeof(text), "%.1f", p.mean_return);
+            manifest.custom_metadata["rl_mean_return"] = text;
+        }
         ExportOptions options;
         options.include_graph = true;
         options.include_optimizer_state = true;

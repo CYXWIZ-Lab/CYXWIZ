@@ -103,7 +103,9 @@ bool EnginePluginContext::ShowPanel(const std::string& panel_id) {
     return PluginPanelRegistry::Instance().ShowPanel(plugin_id_, panel_id);
 }
 
-void EnginePluginContext::RequestFullFrameRate() {
+void EnginePluginContext::RequestFullFrameRate() { KeepFullFrameRate(); }
+
+void EnginePluginContext::KeepFullFrameRate() {
     full_rate_requested_at_.store(std::chrono::steady_clock::now().time_since_epoch().count());
 }
 

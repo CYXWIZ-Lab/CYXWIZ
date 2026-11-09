@@ -523,6 +523,37 @@ void CheckOpenModel() {
     bad.error_message = "Not a model file";
     const model_open::View b = model_open::BuildView(bad);
     Check(!b.readable && b.error == "Not a model file" && !b.can_open_graph, "an unreadable file says why");
+
+    // A trained PPO policy (TOFIX195 S5)
+    cyxwiz::ProbeResult policy;
+    policy.valid = true;
+    policy.format = cyxwiz::ModelFormat::CyxModel;
+    policy.format_version = "CYXW v3";
+    policy.model_name = "ppo_cartpole";
+    policy.num_parameters = 9283;
+    policy.num_layers = 6;
+    policy.file_size = 120000;
+    policy.has_graph = true;
+    policy.has_optimizer_state = true;
+    policy.has_rl_policy = true;
+    policy.custom_metadata["rl_environment"] = "CartPole-v1";
+    policy.custom_metadata["rl_steps"] = "88320";
+    policy.custom_metadata["rl_mean_return"] = "475.1";
+    policy.epochs_trained = 0;  // the package's supervised fields are empty for a policy
+    const model_open::View p = model_open::BuildView(policy);
+    bool policy_row = false;
+    for (const auto& [k, value] : p.rows) policy_row = policy_row || (k == "Policy" && value == "PPO on CartPole-v1");
+    Check(p.can_play_policy && p.can_open_graph && policy_row && Contains(p.note, "Play policy loads it"),
+          "an RL policy offers Play policy and names its environment");
+    bool contains = false;
+    for (const auto& [k, value] : p.rows)
+        contains = contains || (k == "Contains" && value == "graph, weights, optimizer state and RL policy settings");
+    Check(contains, "it says it holds the RL policy settings");
+    bool trained = false;
+    for (const auto& [k, value] : p.rows)
+        trained = trained || (k == "Trained" && value == "88,320 environment steps, mean return 475.1");
+    Check(trained, "a policy's training is in environment steps, not epochs");
+    Check(!v.can_play_policy, "a supervised model has no Play policy");
 }
 
 }  // namespace

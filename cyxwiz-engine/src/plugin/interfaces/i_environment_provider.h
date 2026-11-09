@@ -48,6 +48,9 @@ struct PluginEnvironmentInfo {
 
     int max_episode_steps = 0;  // an episode is truncated after this many steps; 0 = never
     double step_seconds = 0.0;  // simulated time one Step covers (for playback at real speed)
+    // The plugin panel that shows a copy (IEnvironmentBatch::ShowCopy): the
+    // Engine opens it when it plays a policy. Empty: no picture.
+    std::string view_panel_id;
     std::vector<PluginEnvironmentSetting> settings;
 };
 
