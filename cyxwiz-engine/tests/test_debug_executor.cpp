@@ -9,6 +9,7 @@
 #include "../src/core/debug_executor.h"
 #include "../src/core/debug_model_session.h"
 #include "../src/core/occlusion.h"
+#include "../src/core/saliency.h"
 #include "../src/core/where_it_looks_presentation.h"
 #include "../src/core/debug_numerics.h"
 #include "../src/core/debug_loss_metric_explainer.h"
@@ -2915,6 +2916,165 @@ void TestLayerBackwardObserver() {
     spdlog::info("  OK: layer backward observer (MLP, Embedding table worst {}, ResNet stem worst {})", worst, r_worst);
 }
 
+// TOFIX178 6.3c: saliency against PyTorch (computation_truth/fixtures/
+// saliency_pytorch.json, generate_saliency_fixtures.py): the output weighting,
+// the gradient (at the input, or at the Embedding's output for tokens) and
+// the per-element size and gradient x input, for an image CNN, a one-logit
+// table MLP (both classes) and an Embedding text model, in eval mode.
+Tensor FixtureTensor(const nlohmann::json& value) {
+    return FromRowMajor(value.at("values").get<std::vector<float>>(), value.at("shape").get<std::vector<size_t>>());
+}
+
+void ExpectCloseTo(const std::vector<float>& actual, const nlohmann::json& expected, float atol, float rtol,
+                   const std::string& what) {
+    const auto values = expected.at("values").get<std::vector<float>>();
+    ExpectEq(actual.size(), values.size(), what + ": size");
+    for (size_t i = 0; i < values.size(); ++i)
+        ExpectTrue(std::fabs(actual[i] - values[i]) <= atol + rtol * std::fabs(values[i]),
+                   what + ": element " + std::to_string(i) + " " + std::to_string(actual[i]) + ", PyTorch " +
+                       std::to_string(values[i]));
+}
+
+std::vector<float> AsFloats(const std::vector<double>& v) {
+    std::vector<float> out;
+    out.reserve(v.size());
+    for (double x : v) out.push_back(static_cast<float>(x));
+    return out;
+}
+
+TrainingConfiguration SaliencyFixtureConfig(const std::string& kind) {
+    TrainingConfiguration cfg;
+    cfg.loss_type = gui::NodeType::CrossEntropyLoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+    const auto layer = [](gui::NodeType type, std::vector<size_t> in, std::vector<size_t> out) {
+        CompiledLayer l;
+        l.type = type;
+        l.input_shape = std::move(in);
+        l.output_shape = std::move(out);
+        return l;
+    };
+    if (kind == "image") {
+        cfg.preprocessing_domain = PreprocessingDomain::Image;
+        cfg.input_size = 75;
+        cfg.input_shape = {5, 5, 3};
+        cfg.output_size = 3;
+        CompiledLayer conv = layer(gui::NodeType::Conv2D, {5, 5, 3}, {5, 5, 4});
+        conv.parameters = {{"filters", "4"}, {"kernel_size", "3"}, {"stride", "1"}, {"padding", "1"}};
+        cfg.layers = {conv, layer(gui::NodeType::ReLU, {5, 5, 4}, {5, 5, 4}),
+                      layer(gui::NodeType::Flatten, {5, 5, 4}, {100}), layer(gui::NodeType::Dense, {100}, {3})};
+        cfg.layers.back().units = 3;
+    } else if (kind == "features") {
+        cfg.preprocessing_domain = PreprocessingDomain::Tabular;
+        cfg.input_size = 4;
+        cfg.output_size = 1;
+        cfg.loss_type = gui::NodeType::BCEWithLogits;
+        cfg.layers = {layer(gui::NodeType::Dense, {4}, {5}), layer(gui::NodeType::ReLU, {5}, {5}),
+                      layer(gui::NodeType::Dense, {5}, {1})};
+        cfg.layers[0].units = 5;
+        cfg.layers[2].units = 1;
+    } else {
+        cfg.preprocessing_domain = PreprocessingDomain::Text;
+        cfg.input_size = 5;
+        cfg.output_size = 3;
+        CompiledLayer emb;
+        emb.type = gui::NodeType::Embedding;
+        emb.parameters["num_embeddings"] = "20";
+        emb.parameters["embedding_dim"] = "4";
+        CompiledLayer flatten;
+        flatten.type = gui::NodeType::Flatten;
+        CompiledLayer dense;
+        dense.type = gui::NodeType::Dense;
+        dense.units = 3;
+        cfg.layers = {emb, flatten, dense};
+    }
+    return cfg;
+}
+
+void TestSaliencyAgainstPyTorch() {
+    spdlog::info("--- TestSaliencyAgainstPyTorch ---");
+    namespace sal = saliency;
+    const auto path = std::filesystem::path(CYXWIZ_SOURCE_ROOT) / "cyxwiz-engine" / "tests" / "computation_truth" /
+                      "fixtures" / "saliency_pytorch.json";
+    std::ifstream in(path);
+    ExpectTrue(in.good(), "the saliency fixture opens: " + path.string());
+    const auto fixture = nlohmann::json::parse(in);
+    const float atol = fixture.at("tolerance").at("atol").get<float>();
+    const float rtol = fixture.at("tolerance").at("rtol").get<float>();
+    for (const auto& c : fixture.at("cases")) {
+        const std::string name = c.at("name").get<std::string>();
+        const std::string kind_key = c.at("kind").get<std::string>();
+        const auto kind = kind_key == "image"      ? occlusion::InputKind::Image
+                          : kind_key == "features" ? occlusion::InputKind::Features
+                                                   : occlusion::InputKind::Tokens;
+        auto built = BuildExecutableFromConfig(SaliencyFixtureConfig(kind_key));
+        ExpectTrue(built.ok(), name + ": the model builds: " + built.error_message);
+        std::map<std::string, Tensor> parameters;
+        for (const auto& [key, value] : c.at("layers").items()) parameters[key] = FixtureTensor(value);
+        built.model->SetParameters(parameters);
+        built.model->SetTraining(false);
+
+        const Tensor input = FixtureTensor(c.at("input"));
+        const Tensor output = built.model->Forward(input);
+        ExpectCloseTo(RowMajor(output), c.at("output"), atol, rtol, name + " output");
+        const auto rule = layer_view::OutputRuleFromKey(c.at("rule").get<std::string>());
+        const auto weights = sal::TargetWeights(output.NumElements(), rule, c.at("target").get<int>());
+        ExpectCloseTo(weights, c.at("weights"), 0.0f, 0.0f, name + " output weighting");
+
+        Tensor gradient, values = input;
+        if (kind == occlusion::InputKind::Tokens) {
+            built.model->SetLayerForwardObserver([&](size_t i, const Tensor&, const Tensor& out, float) {
+                if (i == 0) values = out.Clone();
+            });
+            built.model->SetLayerBackwardObserver([&](size_t i, const Tensor& g) {
+                if (i == 0) gradient = g.Clone();
+            });
+            built.model->Forward(input);
+            built.model->Backward(FromRowMajor(weights, output.Shape()));
+            ExpectCloseTo(RowMajor(values), c.at("embedded"), atol, rtol, name + " embedding output");
+        } else {
+            built.model->Forward(input);
+            gradient = built.model->Backward(FromRowMajor(weights, output.Shape()));
+        }
+        ExpectCloseTo(RowMajor(gradient), c.at("gradient"), atol, rtol, name + " gradient");
+        const auto reduced = sal::Reduce(kind, gradient, values);
+        ExpectCloseTo(AsFloats(reduced.size), c.at("size"), atol, rtol, name + " size");
+        ExpectCloseTo(AsFloats(reduced.times_input), c.at("times_input"), atol, rtol, name + " gradient x input");
+    }
+
+    // Run on a rebuilt model gives Reduce of the session's own gradient.
+    const auto cfg = MakeTabularConfig();
+    DebugExecutor exe(cfg);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    std::string error;
+    auto session = DebugModelSession::FromCapture(cfg, *res.layer_capture, &error);
+    ExpectTrue(session != nullptr, "the MLP is rebuilt: " + error);
+    const Tensor all = CapturedTensorOf(res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    const auto row = RowMajor(all);
+    const std::vector<float> first(row.begin(), row.begin() + 10);
+    const Tensor one = FromRowMajor(first, {1, 10});
+    const auto run = sal::Run(*session, one, occlusion::InputKind::Features, layer_view::OutputRule::Softmax, 1);
+    std::vector<float> w(4, 0.0f);
+    w[1] = 1.0f;
+    const auto direct = sal::Reduce(occlusion::InputKind::Features, session->InputGradient(one, FromRowMajor(w, {1, 4})), one);
+    ExpectTrue(run.size == direct.size && run.times_input == direct.times_input,
+               "Run is Reduce of the session's input gradient");
+
+    // Tokens through Run: one value per token position.
+    const auto text_cfg = MakeTextConfig();
+    DebugExecutor text_exe(text_cfg);
+    text_exe.SetLayerCapture({});
+    const auto text_res = text_exe.Run();
+    auto text_session = DebugModelSession::FromCapture(text_cfg, *text_res.layer_capture, &error);
+    ExpectTrue(text_session != nullptr, "the text model is rebuilt: " + error);
+    const auto ids = RowMajor(CapturedTensorOf(text_res.layer_capture->Layers().front(), CapturedTensorRole::Input));
+    const Tensor sentence = FromRowMajor(std::vector<float>(ids.begin(), ids.begin() + 16), {1, 16});
+    const auto tokens = sal::Run(*text_session, sentence, occlusion::InputKind::Tokens, layer_view::OutputRule::Softmax, 0, 0);
+    ExpectEq(tokens.size.size(), 16, "one saliency value per token");
+    ExpectEq(tokens.times_input.size(), 16, "one gradient x embedding per token");
+    spdlog::info("  OK: saliency matches PyTorch ({} cases), Run == Reduce", fixture.at("cases").size());
+}
+
 void TestDebugModelSession() {
     spdlog::info("--- TestDebugModelSession ---");
     // An MLP (no dropout or BatchNorm: the run's training forward equals
@@ -3831,6 +3991,7 @@ int main(int argc, char** argv) {
         TestLayerBackwardObserver();
         TestDebugModelSession();
         TestOcclusion();
+        TestSaliencyAgainstPyTorch();
         TestWhereItLooksPresentation();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();

@@ -287,6 +287,7 @@ set(ENGINE_SOURCES
     src/core/debug_executor.cpp
     src/core/debug_model_session.cpp
     src/core/occlusion.cpp
+    src/core/saliency.cpp
     src/core/debug_sample_source.cpp
     src/core/debug_numerics.cpp
     src/core/debug_batch_inspector.cpp
@@ -880,6 +881,7 @@ set(ENGINE_HEADERS
     src/core/debug_executor.h
     src/core/debug_model_session.h
     src/core/occlusion.h
+    src/core/saliency.h
     src/core/where_it_looks_presentation.h
     src/core/synthetic_batch.h
     src/core/training_executor.h
@@ -1915,6 +1917,7 @@ add_executable(test_debug_executor
     src/core/debug_executor.cpp
     src/core/debug_model_session.cpp
     src/core/occlusion.cpp
+    src/core/saliency.cpp
     src/core/where_it_looks_presentation.cpp
     src/core/debug_numerics.cpp
     src/core/layer_view_presentation.cpp
