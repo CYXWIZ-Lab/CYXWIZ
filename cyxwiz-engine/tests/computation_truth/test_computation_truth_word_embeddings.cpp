@@ -720,14 +720,16 @@ int main(int, char** argv) {
         cyxwiz::Word2VecOptions lone;
         lone.cbow = cbow;
         lone.min_count = 1;
+        lone.sample = 0.0;  // keep every word, so each epoch has words but no pairs
         const auto lone_model = WordEmbeddings::TrainWord2Vec(lone_words, lone);
         Check(!lone_model.success && lone_model.error_message.find("no training examples") != std::string::npos,
               "word2vec " + how + ": one-word sentences: " + lone_model.error_message);
         cyxwiz::FastTextOptions lone_ft;
         lone_ft.cbow = cbow;
         lone_ft.min_count = 1;
+        lone_ft.sample = 0.0;
         const auto lone_ft_model = WordEmbeddings::TrainFastText(lone_words, lone_ft);
-        Check(!lone_ft_model.success && lone_ft_model.error_message.find("ArrayFire") == std::string::npos,
+        Check(!lone_ft_model.success && lone_ft_model.error_message.find("no training examples") != std::string::npos,
               "fastText " + how + ": one-word sentences: " + lone_ft_model.error_message);
     }
     Check(!WordEmbeddings::CountCooccurrences({0, 7}, {0, 0}, 3, 2, &error).success,
