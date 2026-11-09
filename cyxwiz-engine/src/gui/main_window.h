@@ -222,7 +222,8 @@ private:
     std::optional<FoldsLaunch> folds_launch_;
     uint64_t folds_task_ = 0;  // the running cross-validation / learning curve task
     void StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings);
-    // A marked launch that stopped before its task: the view says why.
+    // A marked launch that stopped before its task (folds, or a range test):
+    // the view or the Model window says why.
     void EndFoldsLaunch(const std::string& why);
     std::string FoldsBlocker() const;
     ::gui::GraphTrainingDispatch MakeFoldsDispatch(const FoldsLaunch& launch);

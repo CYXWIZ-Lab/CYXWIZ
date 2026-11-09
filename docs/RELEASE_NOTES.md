@@ -42,6 +42,11 @@ private Data Studio tickets (`tofix*/track*`).
   `cyxwiz/learning_rate_range.h` and `cyxwiz/model_cost.h`
   (`CountMultiplyAdds`, `ModuleCostInput`); the convolution, dense,
   recurrent and attention modules gain a non-virtual `CostInput`.
+  Layout changes: `SequentialModel` gains a member (`SetForwardObserver`),
+  and `GradCAMResult` is rewritten (the `overlay` field is gone; maps are
+  the gradient at the layer's output, as pytorch-grad-cam). A plugin that
+  subclasses or holds a `SequentialModel` by value, or reads
+  `GradCAMResult`, must be rebuilt against these headers.
 
 - **Tools > Optimization and Calculus is one window** (guide in
   `docs/usage/optimization_calculus.md`). Its six menu items open it on

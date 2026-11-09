@@ -939,9 +939,15 @@ void TestView::RenderCalibration(const TestingMetrics& m) {
                 part.isotonic_x = calibration_.isotonic.x;
                 part.isotonic_y = calibration_.isotonic.y;
             }
+            const auto before = kept_decision ? kept_decision() : std::nullopt;
+            const bool had_threshold = before && before->has_threshold;
             keep_message_ = keep_decision(part, false, true);
             keep_failed_ = !keep_message_.empty();
-            if (keep_message_.empty()) keep_message_ = "Kept: the next Test, a checkpoint and an export use it.";
+            if (keep_message_.empty())
+                keep_message_ = std::string("Kept: the next Test, a checkpoint and an export use it.") +
+                                (had_threshold ? " The threshold kept before was picked on the uncalibrated scores, so it "
+                                                 "is forgotten: pick it again after the next Test."
+                                               : "");
         }
     }
     RenderKeptDecision(m);

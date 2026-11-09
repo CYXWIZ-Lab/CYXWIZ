@@ -430,10 +430,14 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
 
         batch_num++;
 
-        // Process batch
+        // Process batch; the observer comes off the shared model even when
+        // the forward pass throws.
         WatchLayerFeatures(true);
+        struct StopWatching {
+            TestExecutor* executor;
+            ~StopWatching() { executor->WatchLayerFeatures(false); }
+        } stop_watching{this};
         const Tensor predictions = ProcessBatch(batch);
-        WatchLayerFeatures(false);
 
         // Compute current loss for this batch
         float batch_loss = ComputeLoss(predictions, batch.labels);
@@ -528,7 +532,7 @@ void TestExecutor::WatchLayerFeatures(bool on) {
     }
     stack->SetForwardObserver([this](size_t index, const Module&, const Tensor& output) {
         const auto found = feature_layer_of_module_.find(index);
-        if (found == feature_layer_of_module_.end()) return;
+        if (found == feature_layer_of_module_.end() || dropped_feature_layers_.count(found->second)) return;
         const auto& shape = output.Shape();
         af::array rows;  // [samples, width]
         if (shape.size() == 4) {

@@ -762,6 +762,12 @@ void ModelPanel::RenderExplainControls(const std::vector<ExplainRowChoice>& choi
     ui::EndCard();
 }
 
+bool ModelPanel::ExplainRunning() const {
+    if (!explain_job_) return false;
+    std::lock_guard<std::mutex> lock(explain_job_->mutex);
+    return !explain_job_->done;
+}
+
 void ModelPanel::StartExplain(const std::vector<ExplainRowChoice>& all) {
     if (explain_job_ || explain_sample_ < 0) return;
     const auto found = std::find_if(all.begin(), all.end(), [this](const ExplainRowChoice& c) { return c.sample == explain_sample_; });
@@ -777,6 +783,10 @@ void ModelPanel::StartExplain(const std::vector<ExplainRowChoice>& all) {
     if (!model || !info.evaluation_config) return;
     if (training.IsTrainingActive()) {
         explain_message_ = "Training is running; Explain waits for it to finish.";
+        return;
+    }
+    if (TestManager::Instance().IsTestingActive()) {
+        explain_message_ = "A test is running; Explain waits for it to finish.";
         return;
     }
     const TestingMetrics& test = TestManager::Instance().GetLastResults();

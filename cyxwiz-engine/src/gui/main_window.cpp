@@ -1299,11 +1299,22 @@ MainWindow::MainWindow()
             decision.scores = cyxwiz::DecisionScoresForLoss(info.evaluation_config->loss_type);
             if (!threshold && !calibration) decision = cyxwiz::ModelDecision{};
             if (threshold) {
+                // Platt and isotonic calibrate one class's score: a threshold
+                // for another class would re-target them.
+                const bool one_class_fit = decision.calibration == cyxwiz::ModelDecision::Calibration::Platt ||
+                                           decision.calibration == cyxwiz::ModelDecision::Calibration::Isotonic;
+                if (one_class_fit && part.has_threshold && part.positive != decision.positive)
+                    return "The kept calibration is for class " + std::to_string(decision.positive) +
+                           ": keep a threshold for that class, or Forget the calibration first.";
                 decision.has_threshold = part.has_threshold;
                 decision.threshold = part.threshold;
                 decision.positive = part.positive;
             }
             if (calibration) {
+                // A threshold kept before was picked on the uncalibrated scores
+                // (perhaps for another class): it no longer fits; pick it again
+                // after the next Test.
+                if (part.calibration != cyxwiz::ModelDecision::Calibration::None) decision.has_threshold = false;
                 decision.calibration = part.calibration;
                 decision.temperature = part.temperature;
                 decision.platt_a = part.platt_a;
@@ -3585,7 +3596,10 @@ std::string MainWindow::AddFoldsNode(bool learning_curve, const cyxwiz::CrossVal
            "\": the graph keeps these settings, and Run uses them from now on.";
 }
 
+// Ends whichever launch is waiting (cross-validation / learning curve, or a
+// learning rate range test): every path that stops a launch calls this.
 void MainWindow::EndFoldsLaunch(const std::string& why) {
+    EndRangeLaunch(why);
     if (!folds_launch_) return;
     const auto view = folds_launch_->view;
     folds_launch_.reset();
@@ -3705,7 +3719,6 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         ~FoldsLaunchEnd() {
             if (waiting) return;
             window->EndFoldsLaunch("Not started: Train's checks stopped it (the compile report says why).");
-            window->EndRangeLaunch("Not started: Train's checks stopped it (the compile report says why).");
         }
     } folds_end{this, folds_waiting};
     if (!folds && (folds_task_ || folds_launch_)) {
@@ -5482,6 +5495,10 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
         cyxwiz::TestManager::Instance().IsTestingActive()) {
         ShowOperationError("Cannot run test",
             "Another test preparation, training run or test is active. Wait for it to finish.");
+        return;
+    }
+    if (model_panel_ && model_panel_->ExplainRunning()) {
+        ShowOperationError("Cannot run test", "Model > Explain is still working on the model. Wait for it to finish.");
         return;
     }
     auto model = training.GetActiveModel();

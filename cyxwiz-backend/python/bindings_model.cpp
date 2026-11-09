@@ -73,16 +73,23 @@ Values ValuesOf(const py::handle& obj) {
         for (py::ssize_t d : info.shape) v.shape.push_back(static_cast<size_t>(d));
         const std::string& f = info.format;
         const char code = f.empty() ? '?' : f.back();
+        // Native byte order only ('<' or '>' that differs, and '!', would be misread).
+        const char order = f.size() > 1 ? f.front() : '@';
+        const bool little = [] {
+            const uint16_t probe = 1;
+            return *reinterpret_cast<const uint8_t*>(&probe) == 1;
+        }();
+        if (order == '!' || (order == '>' && little) || (order == '<' && !little))
+            throw py::value_error("numbers in a foreign byte order: convert them first (numpy: .astype('=f4'))");
         v.integral = code != 'f' && code != 'd';
-        switch (code) {
-            case 'f': ReadStrided<float>(info, v.data); break;
-            case 'd': ReadStrided<double>(info, v.data); break;
-            case 'i': ReadStrided<int32_t>(info, v.data); break;
-            case 'l': ReadStrided<long>(info, v.data); break;
-            case 'q': ReadStrided<long long>(info, v.data); break;
-            case 'B': ReadStrided<uint8_t>(info, v.data); break;
-            default: throw py::value_error("unsupported number format '" + f + "'");
-        }
+        // By the item's size, so a standard-size '<l' (4 bytes) reads right on every platform.
+        const auto size = info.itemsize;
+        if (code == 'f' && size == 4) ReadStrided<float>(info, v.data);
+        else if (code == 'd' && size == 8) ReadStrided<double>(info, v.data);
+        else if ((code == 'i' || code == 'l' || code == 'q') && size == 4) ReadStrided<int32_t>(info, v.data);
+        else if ((code == 'i' || code == 'l' || code == 'q') && size == 8) ReadStrided<int64_t>(info, v.data);
+        else if (code == 'B' && size == 1) ReadStrided<uint8_t>(info, v.data);
+        else throw py::value_error("unsupported number format '" + f + "'");
         return v;
     }
     ReadNested(obj, 0, v);
@@ -132,13 +139,13 @@ double ScalarOf(const cyxwiz::Tensor& t) {
     return static_cast<double>(t.ReadData<float>()[0]);
 }
 
-// Puts the model in eval mode for an inspection and back afterwards.
+// Puts the model in eval (or training) mode for a while and back afterwards.
 class EvalMode {
 public:
-    explicit EvalMode(cyxwiz::SequentialModel& model) : model_(model) {
+    explicit EvalMode(cyxwiz::SequentialModel& model, bool training = false) : model_(model) {
         const cyxwiz::Module* first = model.GetModule(0);
         training_ = first && first->IsTraining();
-        model_.SetTraining(false);
+        model_.SetTraining(training);
     }
     ~EvalMode() { model_.SetTraining(training_); }
 
@@ -246,7 +253,7 @@ py::dict RangeTest(cyxwiz::SequentialModel& model, cyxwiz::Loss& loss, cyxwiz::O
     const double rate_before = optimizer.GetLearningRate();
     const size_t x_row = Elements(x_shape) / x_shape[0], y_row = Elements(y_shape) / y_shape[0];
     const size_t rows = x_shape[0];
-    model.SetTraining(true);
+    EvalMode training_mode(model, true);  // and back to the mode it had
     std::string error;
     try {
         size_t at = 0;
@@ -401,7 +408,14 @@ void BindModelTools(py::module_& m) {
                const size_t n = p.shape[0];
                const int classes = static_cast<int>(p.shape[1]);
                if (truth.size() != n) throw py::value_error("truth needs one class per row");
-               const auto fit = cyxwiz::FitTemperature(p.data, classes, truth, RowsOrAll(rows, n));
+               for (int t : truth)
+                   if (t < 0 || t >= classes)
+                       throw py::value_error("truth holds class " + std::to_string(t) + "; the probabilities have " +
+                                             std::to_string(classes) + " classes");
+               const auto chosen = RowsOrAll(rows, n);
+               for (size_t r : chosen)
+                   if (r >= n) throw py::value_error("rows holds " + std::to_string(r) + "; there are " + std::to_string(n) + " rows");
+               const auto fit = cyxwiz::FitTemperature(p.data, classes, truth, chosen);
                return py::dict("temperature"_a = fit.temperature, "nll_before"_a = fit.nll_before,
                                "nll_after"_a = fit.nll_after);
            },

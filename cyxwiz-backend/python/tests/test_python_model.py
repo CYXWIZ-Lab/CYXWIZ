@@ -182,6 +182,16 @@ check(out["analysis"]["ok"] and 0 <= out["analysis"]["steepest"] <= out["analysi
 check(raises(lambda: mt.lr_range_test(model, cyx.MSELoss(), cyx.SGD(learning_rate=0.1), [[0.0] * 6] * 4,
                                       [[0.0] * 3] * 3), "same number of rows"), "x and y must match")
 check(raises(lambda: mt.LearningRateRange(1.0, 0.5), "start > 0"), "a falling range is refused")
+# A model in eval mode comes back in eval mode: its Dropout stays off.
+dropped = cyx.Sequential()
+dropped.add_linear(6, 16)
+dropped.add_dropout(0.5)
+dropped.add_linear(16, 3)
+dropped.eval()
+probe = tensor(c["input"], [1, 6])
+mt.lr_range_test(dropped, cyx.MSELoss(), cyx.SGD(learning_rate=0.1), rows(r["x"]["values"], r["x"]["shape"]),
+                 rows(r["y"]["values"], r["y"]["shape"]), start=1e-3, end=1e-2, steps=3, batch_size=8)
+check(values_of(dropped.forward(probe)) == values_of(dropped.forward(probe)), "a model passed in eval mode comes back in eval mode")
 
 # ---- Calibration (scikit-learn / scipy) -------------------------------------------
 f = calibration_truth
@@ -213,5 +223,7 @@ def top(row):
 check(len(scaled) == len(probabilities) and all(abs(sum(row) - 1.0) < 1e-5 for row in scaled)
       and all(top(a) == top(b) for a, b in zip(scaled, probabilities)), "a temperature keeps every prediction")
 check(raises(lambda: mt.fit_temperature(probabilities, truth[:-1]), "one class per row"), "truth must match the rows")
+check(raises(lambda: mt.fit_temperature(probabilities, [7] * len(truth)), "holds class 7"), "a class outside the probabilities is refused")
+check(raises(lambda: mt.fit_temperature(probabilities, truth, rows=[10 ** 6]), "rows holds"), "a row past the end is refused")
 
 check.finish("pycyxwiz.model")

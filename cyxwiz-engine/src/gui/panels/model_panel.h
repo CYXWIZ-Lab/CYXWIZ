@@ -49,6 +49,9 @@ public:
     void RangeLaunchEnded(const std::string& why);
     // Opens Explain on a sample of the last test (Results > Test > Errors).
     void ExplainSample(int sample);
+    // An Explain still computing on the trained model: Test waits for it
+    // (both run the model's forward pass).
+    bool ExplainRunning() const;
     // The health of the training running now, else of the last one, with
     // the graph's layer names (also the Training Dashboard's notice).
     HealthView CurrentHealth() const;

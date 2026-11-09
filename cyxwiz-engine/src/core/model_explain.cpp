@@ -3,6 +3,7 @@
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
 #include "class_words.h"
+#include "model_decision.h"
 
 #include <cyxwiz/model_interpretability.h>
 #include <cyxwiz/sequential.h>
@@ -95,30 +96,34 @@ ExplainOutcome ExplainSample(IExecutableModel& model, const TrainingConfiguratio
         const std::vector<float> baseline_values = ExplainBaseline(config, features);
         const Tensor baseline({1, features}, baseline_values.data());
 
-        // Scores and probabilities.
+        // Scores and probabilities, as Test reads them: by the model's loss
+        // (softmax of logits, a sigmoid of one logit, probabilities as they
+        // are), then the kept threshold and calibration.
         const Tensor scores = functions.forward(row);
         const float* s = scores.ReadData<float>();
-        const size_t classes = scores.NumElements();
-        if (classes == 0) throw std::runtime_error("The model gave no scores.");
-        const float top = *std::max_element(s, s + classes);
-        double total = 0.0;
-        out.probabilities.resize(classes);
-        for (size_t c = 0; c < classes; ++c) total += std::exp(static_cast<double>(s[c] - top));
-        for (size_t c = 0; c < classes; ++c)
-            out.probabilities[c] = static_cast<float>(std::exp(static_cast<double>(s[c] - top)) / total);
-        out.predicted = static_cast<int>(std::max_element(s, s + classes) - s);
+        const size_t outputs = scores.NumElements();
+        if (outputs == 0) throw std::runtime_error("The model gave no scores.");
+        ModelDecision decision = config.decision;
+        decision.scores = DecisionScoresForLoss(config.loss_type);
+        out.probabilities = DecisionProbabilities(decision, s, outputs);
+        const size_t classes = out.probabilities.size();
+        out.predicted = ApplyModelDecision(decision, out.probabilities);
         out.target = request.target_class >= 0 ? request.target_class : out.predicted;
-        if (out.target >= static_cast<int>(classes))
+        if (out.target < 0 || out.target >= static_cast<int>(classes))
             throw std::invalid_argument("Class " + std::to_string(out.target) + " is outside the model's " +
                                         std::to_string(classes) + " classes.");
         out.predicted_probability = out.probabilities[out.predicted];
         out.target_probability = out.probabilities[out.target];
+        // The score explained: the target's output. A yes / no model with one
+        // output scores the yes class; its no class is explained by the same
+        // score (a higher yes score is a lower no probability).
+        const int score_index = outputs == 1 ? 0 : out.target;
 
-        const SaliencyMap saliency = ModelInterpretability::ComputeSaliencyMap(functions, row, out.target);
+        const SaliencyMap saliency = ModelInterpretability::ComputeSaliencyMap(functions, row, score_index);
         if (!saliency.success) throw std::runtime_error("Saliency: " + saliency.error_message);
         out.saliency = PerPixel(saliency.gradients, out.channels, true);
 
-        const auto ig = ModelInterpretability::ComputeIntegratedGradients(functions, row, baseline, out.target,
+        const auto ig = ModelInterpretability::ComputeIntegratedGradients(functions, row, baseline, score_index,
                                                                           std::max(1, request.ig_steps));
         if (!ig.success) throw std::runtime_error("Integrated Gradients: " + ig.error_message);
         out.integrated = PerPixel(ig.attributions, out.channels, false);
@@ -148,7 +153,7 @@ ExplainOutcome ExplainSample(IExecutableModel& model, const TrainingConfiguratio
             if (layer < 0) {
                 out.grad_cam_note = "Grad-CAM needs a convolution; this model has none.";
             } else {
-                const auto cam = ModelInterpretability::ComputeGradCAM(stack, spatial_row, layer, out.target);
+                const auto cam = ModelInterpretability::ComputeGradCAM(stack, spatial_row, layer, score_index);
                 if (!cam.success) {
                     out.grad_cam_note = "Grad-CAM: " + cam.error_message;
                 } else {
