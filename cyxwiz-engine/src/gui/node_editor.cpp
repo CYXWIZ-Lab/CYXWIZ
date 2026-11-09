@@ -4269,7 +4269,7 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     }
     if (!rl_run_) rl_run_ = std::make_unique<cyxwiz::rl::RLTrainingRun>();
     const auto& c = *config;
-    if (!rl_run_->Start(config, error)) return false;
+    if (!rl_run_->Start(config, GetGraphJson(), error)) return false;
     rl_run_reported_ = false;
     rl_status_ = "PPO starting";
 

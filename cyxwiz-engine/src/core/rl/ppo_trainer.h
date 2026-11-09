@@ -11,6 +11,7 @@
 #include "../../plugin/interfaces/i_environment_provider.h"
 #include "vec_normalize.h"
 
+#include <cyxwiz/optimizers/optimizer_base.h>
 #include <cyxwiz/rl/ppo.h>
 #include <cyxwiz/tensor.h>
 
@@ -18,13 +19,11 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <string>
 
 namespace cyxwiz {
-
-class Optimizer;
-
 namespace rl {
 
 // What the trainer needs from N copies of an environment. The host adapts
@@ -85,6 +84,17 @@ struct PpoUpdateMetrics {
 // from the current ArrayFire random engine.
 void InitializeLikeStableBaselines3(IExecutableModel& model, float output_gain);
 
+// What a run of PpoTrainer leaves to play or save: the networks, the log
+// standard deviation, the observation statistics and the optimizers' states
+// ("policy", "value", and "log_std" for a continuous policy).
+struct PpoTrainedState {
+    std::unique_ptr<IExecutableModel> policy;
+    std::unique_ptr<IExecutableModel> value;
+    Tensor log_std;
+    std::unique_ptr<VecNormalize> normalizer;
+    std::map<std::string, OptimizerState> optimizers;
+};
+
 class PpoTrainer {
 public:
     // policy: observations [B, obs] -> means [B, A] (continuous) or logits [B, K] (discrete);
@@ -101,12 +111,9 @@ public:
     void Pause() { paused_ = true; }
     void Resume() { paused_ = false; }
 
-    IExecutableModel& Policy() { return *policy_; }
-    IExecutableModel& Value() { return *value_; }
-    const Tensor& LogStd() const { return log_std_; }
-    bool Discrete() const { return environment_.info.discrete_actions; }
-    // The observation statistics a trained policy needs (null before Train)
-    const VecNormalize* Normalizer() const { return normalizer_.get(); }
+    // Moves out what Train left (once, after Train). False with the reason
+    // when Train never started or an optimizer's state cannot be exported.
+    bool TakeTrained(PpoTrainedState& out, std::string& error);
 
 private:
     bool CheckSetup(std::string& error) const;

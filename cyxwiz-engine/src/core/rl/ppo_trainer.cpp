@@ -100,6 +100,26 @@ PpoTrainer::PpoTrainer(PpoEnvironment environment, std::unique_ptr<IExecutableMo
 
 PpoTrainer::~PpoTrainer() = default;
 
+bool PpoTrainer::TakeTrained(PpoTrainedState& out, std::string& error) {
+    if (!policy_ || !value_ || !normalizer_) {
+        error = "PPO has not trained a policy.";
+        return false;
+    }
+    const auto state = [&error](const Optimizer& optimizer, OptimizerState& s) {
+        return optimizer.ExportState(s, error);
+    };
+    std::map<std::string, OptimizerState> optimizers;
+    if (!state(*policy_optimizer_, optimizers["policy"]) || !state(*value_optimizer_, optimizers["value"]) ||
+        (!environment_.info.discrete_actions && !state(*log_std_optimizer_, optimizers["log_std"])))
+        return false;
+    out.optimizers = std::move(optimizers);
+    out.policy = std::move(policy_);
+    out.value = std::move(value_);
+    out.log_std = log_std_;
+    out.normalizer = std::move(normalizer_);
+    return true;
+}
+
 bool PpoTrainer::CheckSetup(std::string& error) const {
     const auto& info = environment_.info;
     if (!policy_ || !value_) error = "PPO needs a policy network and a value network.";

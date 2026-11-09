@@ -126,6 +126,10 @@ struct ExportOptions {
     std::string tree_model_artifact_json;
     std::string tree_model_artifact_path;
 
+    // A trained reinforcement-learning policy's rl/policy.json (environment,
+    // observation normalisation, PPO history). Written when not empty.
+    std::string rl_policy_json;
+
     // Quantization
     Quantization quantization = Quantization::None;
 
@@ -247,6 +251,7 @@ struct ProbeResult {
     bool has_tree_model_artifact = false;
     std::string tree_model_type;
     std::string tree_model_artifact_path;
+    bool has_rl_policy = false;  // rl/policy.json: a trained RL policy
     bool sequence_batch_first = true;
     bool sequence_create_attention_mask = true;
     bool sequence_create_causal_lm_targets = false;
@@ -362,6 +367,7 @@ struct ModelManifest {
     bool has_tree_model_artifact = false;
     std::string tree_model_type;
     std::string tree_model_artifact_path;
+    bool has_rl_policy = false;  // rl/policy.json
     bool sequence_batch_first = true;
     bool sequence_create_attention_mask = true;
     bool sequence_create_causal_lm_targets = false;

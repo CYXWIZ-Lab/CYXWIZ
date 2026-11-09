@@ -5,10 +5,12 @@
 // builds the policy and value networks from the graph's layers plus the
 // heads' output layers (Stable-Baselines3's initialisation), and trains them
 // with PpoTrainer. The UI thread starts, pauses and stops it and drains its
-// per-update metrics. Engine side: it links the plugin host.
+// per-update metrics. A finished or stopped run keeps its trained policy
+// (TOFIX195 S5) until the next Start. Engine side: it links the plugin host.
 
 #include "../rl_graph_compile.h"
 #include "ppo_trainer.h"
+#include "trained_policy.h"
 
 #include <atomic>
 #include <memory>
@@ -28,8 +30,9 @@ public:
     RLTrainingRun(const RLTrainingRun&) = delete;
     RLTrainingRun& operator=(const RLTrainingRun&) = delete;
 
-    // False with the reason while a run is active
-    bool Start(std::shared_ptr<const RLTrainingConfiguration> config, std::string& error);
+    // False with the reason while a run is active. graph_json: the graph as
+    // saved, kept with the trained policy.
+    bool Start(std::shared_ptr<const RLTrainingConfiguration> config, std::string graph_json, std::string& error);
     void Stop();
     void Pause();
     void Resume();
@@ -43,10 +46,14 @@ public:
     // The updates since the last call (UI thread)
     std::vector<PpoUpdateMetrics> TakeUpdates();
 
+    // The policy of the last finished or stopped run (null otherwise)
+    std::shared_ptr<TrainedPolicy> Trained() const;
+
 private:
     void Run();
 
     std::shared_ptr<const RLTrainingConfiguration> config_;
+    std::string graph_json_;
     std::thread worker_;
     std::atomic<State> state_{State::Idle};
     std::atomic<bool> paused_{false};
@@ -55,6 +62,7 @@ private:
     std::vector<PpoUpdateMetrics> updates_;
     std::string message_;
     PpoTrainer* trainer_ = nullptr;  // while Run trains
+    std::shared_ptr<TrainedPolicy> trained_;
 };
 
 }  // namespace cyxwiz::rl

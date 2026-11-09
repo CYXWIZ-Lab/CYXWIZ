@@ -295,6 +295,7 @@ set(ENGINE_SOURCES
     src/core/graph_simulation_session.cpp
     src/core/simulation_commands.cpp
     src/core/rl/rl_training_run.cpp
+    src/core/rl/trained_policy.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
     src/core/synthetic_batch.cpp
@@ -7380,6 +7381,9 @@ add_test(NAME rl_graph_compile COMMAND test_rl_graph_compile)
 add_executable(test_rl_graph_training
     tests/test_rl_graph_training.cpp
     src/core/rl/rl_training_run.cpp
+    src/core/rl/trained_policy.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
     src/plugin/plugin_manager.cpp
     src/plugin/engine_plugin_context.cpp
     src/plugin/plugin_loader.cpp

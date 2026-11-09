@@ -31,6 +31,12 @@ VecNormalize::VecNormalize(size_t copies, size_t observation_size, VecNormalizeS
     : copies_(copies), observation_size_(observation_size), settings_(settings),
       observation_stats_(observation_size), return_stats_(1), returns_(copies, 0.0) {}
 
+bool VecNormalize::RestoreObservationStats(const RunningMeanStd& stats) {
+    if (stats.mean.size() != observation_size_ || stats.var.size() != observation_size_) return false;
+    observation_stats_ = stats;
+    return true;
+}
+
 void VecNormalize::LearnObservations(const float* observations) {
     if (!settings_.observations) return;
     const std::vector<double> rows(observations, observations + copies_ * observation_size_);

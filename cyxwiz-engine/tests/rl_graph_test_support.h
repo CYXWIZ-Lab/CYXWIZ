@@ -5,6 +5,8 @@
 
 #include "../src/core/graph_node_factory.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cstdlib>
 #include <string>
@@ -68,6 +70,33 @@ inline Graph Pattern(Ids& id) {
     g.Link(id.env, id.ppo, 1, 1);
     g.Link(id.vhead, id.ppo, 0, 2);
     return g;
+}
+
+// The graph as the editor saves it (nodes, links by pin index), for a trained
+// policy's package
+inline std::string Json(const Graph& g) {
+    nlohmann::json nodes = nlohmann::json::array(), links = nlohmann::json::array();
+    const auto index = [](const std::vector<gui::NodePin>& pins, int id) {
+        for (size_t i = 0; i < pins.size(); ++i)
+            if (pins[i].id == id) return static_cast<int>(i);
+        return -1;
+    };
+    for (const auto& n : g.nodes)
+        nodes.push_back({{"id", n.id}, {"type", static_cast<int>(n.type)}, {"name", n.name}, {"parameters", n.parameters}});
+    for (const auto& l : g.links) {
+        const gui::MLNode* from = nullptr;
+        const gui::MLNode* to = nullptr;
+        for (const auto& n : g.nodes) {
+            if (n.id == l.from_node) from = &n;
+            if (n.id == l.to_node) to = &n;
+        }
+        links.push_back({{"id", l.id},
+                         {"from_node", l.from_node},
+                         {"to_node", l.to_node},
+                         {"from_pin_index", index(from->outputs, l.from_pin)},
+                         {"to_pin_index", index(to->inputs, l.to_pin)}});
+    }
+    return nlohmann::json{{"nodes", nodes}, {"links", links}}.dump();
 }
 
 }  // namespace rl_graph_test

@@ -47,6 +47,8 @@ public:
     const VecNormalizeSettings& Settings() const { return settings_; }
     const RunningMeanStd& ObservationStats() const { return observation_stats_; }
     const RunningMeanStd& ReturnStats() const { return return_stats_; }
+    // A saved policy's observation statistics (false when the width differs)
+    bool RestoreObservationStats(const RunningMeanStd& stats);
 
 private:
     void LearnObservations(const float* observations);
