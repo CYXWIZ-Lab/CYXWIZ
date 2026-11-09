@@ -2813,6 +2813,108 @@ void CheckInputGradient(DebugModelSession& session, const Tensor& input, const s
     }
 }
 
+// TOFIX204: the layer backward observer reports the gradient that reached
+// each layer's output, summed over its consumers, and changes nothing.
+std::map<size_t, Tensor> BackwardThroughModel(IExecutableModel& model, const Tensor& input, Tensor* input_grad) {
+    std::map<size_t, Tensor> grads;
+    model.SetLayerBackwardObserver([&](size_t module_index, const Tensor& grad) {
+        ExpectTrue(grads.find(module_index) == grads.end(), "each layer's output gradient is reported once");
+        grads.emplace(module_index, grad.Clone());
+    });
+    const Tensor output = model.Forward(input);
+    std::vector<float> target(output.NumElements(), 0.0f);
+    target[target.size() - 1] = 1.0f;
+    *input_grad = model.Backward(FromRowMajor(target, output.Shape()));
+    model.SetLayerBackwardObserver(nullptr);
+    return grads;
+}
+
+void TestLayerBackwardObserver() {
+    spdlog::info("--- TestLayerBackwardObserver ---");
+    // An MLP: each layer's backward of its output gradient is the gradient
+    // at the layer before it, and the first gives the input gradient.
+    auto mlp = BuildExecutableFromConfig(MakeTabularConfig());
+    ExpectTrue(mlp.ok(), "the MLP builds: " + mlp.error_message);
+    mlp.model->SetTraining(false);
+    std::vector<float> x(3 * 10);
+    for (size_t i = 0; i < x.size(); ++i) x[i] = std::sin(0.7f * float(i)) * 2.0f;
+    const Tensor input = FromRowMajor(x, {3, 10});
+    Tensor input_grad;
+    auto grads = BackwardThroughModel(*mlp.model, input, &input_grad);
+    ExpectEq(grads.size(), 3, "one output gradient per MLP layer");
+    const Tensor plain_grad = mlp.model->Backward(grads.at(2));
+    ExpectTrue(MaxAbsDifference(RowMajor(plain_grad), RowMajor(input_grad)) == 0.0f,
+               "without the observer the backward is unchanged");
+    std::vector<float> last(12, 0.0f);
+    last.back() = 1.0f;
+    ExpectTrue(RowMajor(grads.at(2)) == last, "the last layer's output gradient is the target");
+    for (size_t i = 2; i > 0; --i) {
+        const float worst = MaxAbsDifference(RowMajor(mlp.model->LayerModule(i)->Backward(grads.at(i))),
+                                             RowMajor(grads.at(i - 1)));
+        ExpectTrue(worst < 1e-6f, "MLP layer " + std::to_string(i) + " backward gives layer " +
+                                      std::to_string(i - 1) + "'s output gradient, worst " + std::to_string(worst));
+    }
+    ExpectTrue(MaxAbsDifference(RowMajor(mlp.model->LayerModule(0)->Backward(grads.at(0))), RowMajor(input_grad)) <
+                   1e-6f,
+               "the first MLP layer's backward gives the input gradient");
+
+    // Embedding, Flatten, Dense: the gradient at each token position is what
+    // the Embedding table's gradient sums over the positions of that id.
+    auto text = BuildExecutableFromConfig(MakeTextConfig());
+    ExpectTrue(text.ok(), "the text model builds: " + text.error_message);
+    text.model->SetTraining(false);
+    std::vector<float> ids(2 * 16);
+    for (size_t i = 0; i < ids.size(); ++i) ids[i] = float((i * 7) % 11 + 1);  // ids repeat
+    Tensor ids_grad;
+    grads = BackwardThroughModel(*text.model, FromRowMajor(ids, {2, 16}), &ids_grad);
+    const Tensor& at_embedding = grads.at(0);
+    ExpectTrue(at_embedding.Shape() == std::vector<size_t>({2, 16, 8}),
+               "the gradient at the Embedding output is [N, T, D]");
+    const auto per_position = RowMajor(at_embedding);
+    std::vector<double> summed(500 * 8, 0.0);
+    for (size_t p = 0; p < ids.size(); ++p)
+        for (size_t d = 0; d < 8; ++d) summed[size_t(ids[p]) * 8 + d] += per_position[p * 8 + d];
+    const auto table_grads = text.model->GetGradients();
+    const Tensor* table = nullptr;
+    for (const auto& [key, g] : table_grads)
+        if (g.Shape() == std::vector<size_t>({500, 8})) table = &g;
+    ExpectTrue(table != nullptr, "the Embedding table has a [500, 8] gradient");
+    const auto table_values = RowMajor(*table);
+    double worst = 0.0;
+    for (size_t i = 0; i < summed.size(); ++i) worst = std::max(worst, std::fabs(summed[i] - table_values[i]));
+    ExpectTrue(worst < 1e-5, "per-position gradients sum to the Embedding table's gradient, worst " +
+                                 std::to_string(worst));
+
+    // The ResNet: "ReLU stem" feeds the first block and its identity skip,
+    // so its output gradient is the sum of both; back through the stem it
+    // gives the model's input gradient.
+    const auto resnet = CompileResNetExample();
+    auto r = BuildExecutableFromConfig(resnet);
+    ExpectTrue(r.ok(), "the ResNet builds: " + r.error_message);
+    r.model->SetTraining(false);
+    std::map<std::string, size_t> module_of;
+    for (const auto& p : r.module_provenance)
+        if (p.module_index) module_of[p.node_name] = *p.module_index;
+    ExpectTrue(module_of.count("Conv 32 stem") && module_of.count("BN stem") && module_of.count("ReLU stem"),
+               "the ResNet's stem layers are modules");
+    DebugExecutor r_exe(resnet);
+    r_exe.SetLayerCapture({});
+    const auto r_res = r_exe.Run();
+    ExpectTrue(r_res.success && r_res.layer_capture, "the ResNet runs with capture: " + r_res.failure_summary);
+    const Tensor& image = CapturedTensorOf(r_res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    Tensor image_grad;
+    grads = BackwardThroughModel(*r.model, image, &image_grad);
+    Tensor back = grads.at(module_of.at("ReLU stem"));
+    for (const char* name : {"ReLU stem", "BN stem", "Conv 32 stem"})
+        back = r.model->LayerModule(module_of.at(name))->Backward(back);
+    const float r_worst = MaxAbsDifference(RowMajor(back), RowMajor(image_grad));
+    ExpectTrue(MaxAbsDifference(RowMajor(image_grad), std::vector<float>(image_grad.NumElements(), 0.0f)) > 0.0f,
+               "the ResNet's input gradient is not all zero");
+    ExpectTrue(r_worst < 1e-4f, "the stem's summed output gradient leads to the input gradient, worst " +
+                                    std::to_string(r_worst));
+    spdlog::info("  OK: layer backward observer (MLP, Embedding table worst {}, ResNet stem worst {})", worst, r_worst);
+}
+
 void TestDebugModelSession() {
     spdlog::info("--- TestDebugModelSession ---");
     // An MLP (no dropout or BatchNorm: the run's training forward equals
@@ -3671,6 +3773,7 @@ int main(int argc, char** argv) {
         TestLayerCaptureResNetExample();
         TestCaptureStepLeavesTheModel();
         TestLayerCaptureStore();
+        TestLayerBackwardObserver();
         TestDebugModelSession();
         TestOcclusion();
         TestWhereItLooksPresentation();

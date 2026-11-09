@@ -793,6 +793,7 @@ Tensor GraphExecutableModel::Backward(const Tensor& grad_output) {
                 throw std::runtime_error("GraphExecutableModel missing module for node " +
                                          std::to_string(node.node_id));
             }
+            if (layer_backward_observer_) layer_backward_observer_(module_index, grad);
             if (module->InputCount() > 1) {
                 // One gradient per input pin; inputs fed from the same output
                 // (Key = Value) sum in the pin gradients.

@@ -29,7 +29,13 @@ Tensor SequentialExecutableModel::Forward(const Tensor& input) {
 }
 
 Tensor SequentialExecutableModel::Backward(const Tensor& grad_output) {
-    return model_->Backward(grad_output);
+    if (!layer_backward_observer_) return model_->Backward(grad_output);
+    Tensor grad = grad_output.Clone();
+    for (size_t i = model_->Size(); i-- > 0;) {
+        layer_backward_observer_(i, grad);
+        grad = model_->GetModule(i)->Backward(grad);
+    }
+    return grad;
 }
 
 bool SequentialExecutableModel::SupportsSparseCsrInput() const {

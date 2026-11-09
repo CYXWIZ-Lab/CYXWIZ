@@ -28,6 +28,11 @@ public:
     // called and the forward runs as usual.
     using LayerForwardObserver = std::function<void(
         size_t module_index, const Tensor& input, const Tensor& output, float forward_ms)>;
+    // Called in Backward with the gradient that reached each layer module's
+    // output (summed over its consumers), before the module's own backward
+    // (the Studio Debugger's gradient at a layer, TOFIX204). While unset
+    // nothing is called and the backward runs as usual.
+    using LayerBackwardObserver = std::function<void(size_t module_index, const Tensor& grad_output)>;
 
     virtual ~IExecutableModel() = default;
 
@@ -62,6 +67,9 @@ public:
     void SetLayerForwardObserver(LayerForwardObserver observer) {
         layer_forward_observer_ = std::move(observer);
     }
+    void SetLayerBackwardObserver(LayerBackwardObserver observer) {
+        layer_backward_observer_ = std::move(observer);
+    }
 
     // For checkpoint / export / save paths that still need a real
     // SequentialModel; a graph model (GraphExecutableModel) returns nullptr.
@@ -70,6 +78,7 @@ public:
 
 protected:
     LayerForwardObserver layer_forward_observer_;
+    LayerBackwardObserver layer_backward_observer_;
 };
 
 class SequentialExecutableModel final : public IExecutableModel {
