@@ -245,6 +245,9 @@ set(BACKEND_SOURCES
     src/algorithms/signal_processing_fft.cpp
     src/algorithms/signal_processing_spectrum.cpp
     src/algorithms/calculus.cpp
+    src/algorithms/calibration.cpp
+    src/algorithms/learning_rate_range.cpp
+    src/algorithms/model_cost.cpp
     src/algorithms/expression.cpp
     src/algorithms/optimization_paths.cpp
     src/algorithms/optimization_programs.cpp
@@ -346,6 +349,9 @@ set(BACKEND_HEADERS
     include/cyxwiz/linear_algebra.h
     include/cyxwiz/signal_processing.h
     include/cyxwiz/calculus.h
+    include/cyxwiz/calibration.h
+    include/cyxwiz/learning_rate_range.h
+    include/cyxwiz/model_cost.h
     include/cyxwiz/expression.h
     include/cyxwiz/optimization.h
     include/cyxwiz/time_series.h

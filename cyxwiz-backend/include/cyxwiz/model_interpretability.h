@@ -2,6 +2,12 @@
 // Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
+// Why a model gave its score (TOFIX129 D11): Grad-CAM of a convolution,
+// saliency and SmoothGrad, Integrated Gradients and layer activations, on the
+// model's own device, as Captum and pytorch-grad-cam compute them. Any model
+// works through ExplainFunctions (forward and backward to the input); a
+// SequentialModel has FunctionsOf.
+
 #include "cyxwiz/api_export.h"
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>

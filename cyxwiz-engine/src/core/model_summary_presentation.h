@@ -10,6 +10,8 @@
 #include "compiled_node_presentation.h"
 #include "graph_compiler.h"
 
+#include <cyxwiz/model_cost.h>
+
 #include <cstddef>
 #include <map>
 #include <string>
@@ -30,16 +32,11 @@ struct ModelSummaryInputs {
     size_t batch = 0;
 };
 
-// Multiply-adds of one compiled layer for one sample, as PyTorch's counters
-// count them (torch.utils.flop_counter: matrix products, convolutions and
-// attention; element-wise layers 0).
-struct LayerMultiplyAdds {
-    bool counted = false;
-    long long value = 0;
-    std::string formula;  // "26·26·32 · 3·3·1 = 194,688"; why not counted when !counted
-};
-
-LayerMultiplyAdds CountLayerMultiplyAdds(const CompiledLayer& layer);
+// Multiply-adds of one compiled layer for one sample: the node's settings
+// as the SDK counter's numbers (cyxwiz/model_cost.h, as PyTorch's
+// torch.utils.flop_counter counts, halved); element-wise layers 0 with
+// words. `formula` says why not when !counted.
+LayerCost CountLayerMultiplyAdds(const CompiledLayer& layer);
 
 struct ModelSummaryRow {
     int node_id = -1;
@@ -49,7 +46,7 @@ struct ModelSummaryRow {
     std::vector<size_t> output_shape;
     bool parameters_known = false;
     long long parameters = 0;
-    LayerMultiplyAdds multiply_adds;
+    LayerCost multiply_adds;
     double share = 0.0;        // of the model's multiply-adds, 0..1
     unsigned long long activation_bytes = 0;  // its output, one sample, float32
     std::string how;           // how its numbers follow from the shapes

@@ -892,7 +892,7 @@ void TestView::RenderCalibration(const TestingMetrics& m) {
     ImGui::Spacing();
     static const char* const kViews[] = {"Before", "After"};
     ui::SegmentedControl("##calibration_view", kViews, 2, &calibration_view_);
-    const test_report::Reliability& r = calibration_view_ == 0 ? calibration_.before : calibration_.after;
+    const Reliability& r = calibration_view_ == 0 ? calibration_.before : calibration_.after;
     std::vector<double> centres, accuracy, diagonal = {0.0, 1.0};
     for (const auto& bin : r.bins) {
         centres.push_back((bin.low + bin.high) / 2.0);
