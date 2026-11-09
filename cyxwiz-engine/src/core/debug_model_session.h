@@ -20,9 +20,10 @@ namespace cyxwiz {
 
 class DebugModelSession {
 public:
-    // nullptr with `error` set when the model cannot be built or the capture
-    // lacks a layer's weights (capture "What" without parameters, or tensors
-    // past the capture budget).
+    // nullptr with `error` set when the model cannot be built, is not the
+    // run's (a captured layer is another node in it), or the capture lacks a
+    // layer's weights (capture "What" without parameters, or tensors past the
+    // capture budget).
     static std::unique_ptr<DebugModelSession> FromCapture(const TrainingConfiguration& config,
                                                           const LayerCapture& capture, std::string* error);
 

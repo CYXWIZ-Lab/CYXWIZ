@@ -66,7 +66,7 @@ struct LayerSection {
 std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
                                         const std::map<int, std::string>& group_of_node);
 
-enum class View { FeatureMaps, Values, Units, Weights, Gradients, Filters };
+enum class View { FeatureMaps, Values, Units, Weights, Gradients, Filters, WhereItLooks };
 
 struct ViewTab {
     View view = View::Values;
@@ -85,9 +85,11 @@ struct LayerViews {
 };
 // `output_numerics` (optional) adds the share of zeros to the facts.
 // `first_spatial_layer`: the first layer that takes the image, whose filters
-// see colours (its Filters view).
+// see colours (its Filters view). `takes_model_input`: the layer the model's
+// input enters, which gets Where it looks (6.3b) for an image, tokens or
+// features.
 LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummary* output_numerics,
-                          bool first_spatial_layer);
+                          bool first_spatial_layer, bool takes_model_input = false);
 
 struct SpatialShape {
     size_t height = 0;

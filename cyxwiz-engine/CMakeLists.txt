@@ -286,6 +286,7 @@ set(ENGINE_SOURCES
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
     src/core/debug_model_session.cpp
+    src/core/occlusion.cpp
     src/core/debug_sample_source.cpp
     src/core/debug_numerics.cpp
     src/core/debug_batch_inspector.cpp
@@ -309,6 +310,7 @@ set(ENGINE_SOURCES
     src/core/debug_run_store.cpp
     src/core/studio_debugger_presentation.cpp
     src/core/layer_view_presentation.cpp
+    src/core/where_it_looks_presentation.cpp
     src/core/layer_capture_settings.cpp
     src/core/layer_tensor_reader.cpp
     src/core/training_manager.cpp
@@ -681,6 +683,7 @@ set(ENGINE_SOURCES
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
     src/gui/panels/studio_debugger_layers.cpp
+    src/gui/panels/studio_debugger_where_it_looks.cpp
     src/gui/panels/studio_debugger_capture.cpp
     src/gui/panels/layer_capture_controls.cpp
     src/gui/panels/gradcam_panel.cpp
@@ -876,6 +879,8 @@ set(ENGINE_HEADERS
     src/core/model_builder.h
     src/core/debug_executor.h
     src/core/debug_model_session.h
+    src/core/occlusion.h
+    src/core/where_it_looks_presentation.h
     src/core/synthetic_batch.h
     src/core/training_executor.h
     src/core/training_manager.h
@@ -1909,6 +1914,8 @@ add_executable(test_debug_executor
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
     src/core/debug_model_session.cpp
+    src/core/occlusion.cpp
+    src/core/where_it_looks_presentation.cpp
     src/core/debug_numerics.cpp
     src/core/layer_view_presentation.cpp
     src/core/layer_tensor_reader.cpp

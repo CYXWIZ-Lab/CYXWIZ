@@ -353,11 +353,40 @@ says how to get one.
     and blobs) show in a capture from a training run (Layer capture:
     Training, every N epochs). Only the first layer sees the image's
     colours, so deeper convolutions have no Filters view.
-  - Greyed views are next: **Where it looks** (occlusion) on the first
-    convolution, **Contributions** on a Dense layer and **Embedding** on flat
-    outputs. Hover one for what it will show.
+  - **Where it looks** (the layer the model's input enters): which parts of
+    the input the model relies on, by occlusion. Each piece of the input is
+    covered in turn and the model runs again; the view shows how the picked
+    output's score moved:
+    - an image: a 12 × 12 px patch every 4 px (196 positions on 64 × 64),
+      filled with the image's mean per channel; the change is drawn over the
+      picture;
+    - tokens (a text graph): each token replaced by the pad id, padding left
+      out; one chip per token, by its id in the vocabulary;
+    - table features: each feature replaced by its mean over up to 512 of the
+      graph's prepared rows (the data steps as Local Debug runs them); a bar
+      per feature.
+    **Explain** picks the output: the predicted class, the true class, or
+    any other class from the list. **Compute** runs the forward passes on the
+    device, 64 at a time, off the UI thread; **Stop** ends it. Blue means
+    covering that piece lowers the score, so the model relies on it; red
+    means it raises it. The headline names the piece that lowers the score
+    most, with the score before and after. A box, a mask region and the next
+    token are explained once those heads exist.
+
+    Where it looks runs the run's model again: it is rebuilt from the
+    capture's weights (keep **Parameters** in Layer capture) and the
+    canvas's graph, which must be the run's (a saved run of a graph you
+    changed since says so; run Local Debug again). A Local Debug run's
+    model has its starting weights, so its map shows where an untrained model
+    looks; a capture from a training run (Layer capture: Training, every N
+    epochs) shows the trained model. Saliency comes next.
+  - Greyed views are next: **Contributions** on a Dense layer and
+    **Embedding** on flat outputs. Hover one for what it will show.
 - The **Inspector** shows the sample as the first layer received it (after
   the data steps), its name and label, the prediction with how it was read
+  (from the evaluation pass, with dropout off and BatchNorm on its running
+  statistics, the same pass Where it looks scores; the run's own training
+  step only when the model cannot be rebuilt, and then it says so)
   ("logit -0.5472 → sigmoid 0.3665"; the raw output when the loss gives no
   rule), and the clicked feature map enlarged with its mean, maximum and rank
   (with Filters: how to read a filter).

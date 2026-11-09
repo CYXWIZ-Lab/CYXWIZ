@@ -16,6 +16,7 @@
 #include "../../core/layer_tensor_reader.h"
 #include "../../core/layer_view_presentation.h"
 #include "../../core/texture_manager.h"
+#include "../../core/where_it_looks_presentation.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
 
@@ -339,8 +340,15 @@ void StudioDebuggerPanel::RenderLayersView() {
     // Source line: the picked item and the model's answer, what was
     // captured, from which step, and the batch item.
     ReadLayerSample();
+    UpdateLayerModelSession();
+    // The prediction comes from the evaluation pass (owner decision
+    // 2026-11-09), the run's own forward only when the model cannot be rebuilt.
+    const std::vector<float>* eval_output = EvalModelOutput();
+    const bool eval_unavailable = !EvalModelUnavailable().empty();
+    const std::vector<float> no_output;
+    const std::vector<float>& shown_output = eval_output ? *eval_output : eval_unavailable ? cache.model_output : no_output;
     {
-        std::string line = ItemHeadline(session_.sample_facts, selected_layer_sample_, cache.model_output);
+        std::string line = ItemHeadline(session_.sample_facts, selected_layer_sample_, shown_output);
         line += (line.empty() ? "" : " \xC2\xB7 ") + std::to_string(cache.layers.size()) + " layers captured";
         if (const std::string sample = SampleText(session_); !sample.empty()) line += " \xC2\xB7 " + sample;
         if (layer_capture_->Truncated())
@@ -458,7 +466,8 @@ void StudioDebuggerPanel::RenderLayersView() {
                                                           gui::NodeType::Dense);
             }
             cache.views = lv::PlanLayerViews(info, output ? &output_numerics : nullptr,
-                                             selected_layer_ == cache.first_spatial);
+                                             selected_layer_ == cache.first_spatial,
+                                             selected_layer_ == 0 && layer.module_index == 0);
         } catch (const std::exception& e) {
             cache.error = e.what();
         }
@@ -722,6 +731,8 @@ void StudioDebuggerPanel::RenderLayersView() {
         ImGui::Spacing();
         WrappedMuted("The number under each filter is its weight norm (the size of its weights).");
         for (const auto& l : cache.numbers) ImGui::TextColored(DebuggerText(), "%s", l.c_str());
+    } else if (tab.view == lv::View::WhereItLooks) {
+        RenderWhereItLooks(cache.sample_texture, cache.sample_width, cache.sample_height);
     } else if (tab.view == lv::View::Units) {
         WrappedMuted("Each unit's value for this sample (" + std::to_string(cache.units.size()) + " units).");
         const ImVec2 size(std::min(ImGui::GetContentRegionAvail().x, 720.0f), 150.0f);
@@ -903,15 +914,29 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
             ImGui::TextColored(DebuggerMuted(), "%s", sample.c_str());
         if (cache.samples > 1) ImGui::TextColored(DebuggerMuted(), "Item %zu of %zu in the captured batch",
                                                   selected_layer_sample_ + 1, cache.samples);
-        const auto prediction = lv::Predict(cache.model_output, lv::OutputRuleFromKey(facts.output_rule),
-                                            facts.class_names);
-        if (prediction) {
+        // The evaluation pass (dropout off, BatchNorm on its running
+        // statistics), as Where it looks scores it; the run's own forward
+        // only when the model cannot be rebuilt, and then it says so.
+        const std::vector<float>* eval_output = EvalModelOutput();
+        const std::string eval_unavailable = EvalModelUnavailable();
+        const std::vector<float>& output = eval_output ? *eval_output : cache.model_output;
+        const bool shown = eval_output || !eval_unavailable.empty();
+        const auto prediction = shown ? lv::Predict(output, lv::OutputRuleFromKey(facts.output_rule), facts.class_names)
+                                      : std::nullopt;
+        if (!shown) {
+            ImGui::TextColored(DebuggerMuted(), "Reading the prediction (evaluation pass)...");
+        } else if (prediction) {
             ImGui::TextColored(DebuggerBright(), "Prediction %s", prediction->text.c_str());
             if (!prediction->detail.empty()) ImGui::TextColored(DebuggerMuted(), "%s", prediction->detail.c_str());
-        } else if (!cache.model_output.empty() && cache.model_output.size() <= 16) {
+        } else if (!output.empty() && output.size() <= 16) {
             std::string out = "Model output";
-            for (size_t i = 0; i < cache.model_output.size(); ++i) out += (i ? ", " : " ") + Number(cache.model_output[i]);
+            for (size_t i = 0; i < output.size(); ++i) out += (i ? ", " : " ") + Number(output[i]);
             ImGui::TextColored(DebuggerText(), "%s", out.c_str());
+        }
+        if (shown) {
+            ImGui::TextColored(DebuggerFaint(), "%s",
+                               eval_output ? "From the evaluation pass (dropout off, BatchNorm on its running statistics)."
+                                           : ("From the run's training step: " + eval_unavailable + ".").c_str());
         }
         ImGui::TextColored(DebuggerFaint(), "After the data steps, as the first layer received it.");
         ImGui::PopTextWrapPos();
@@ -926,7 +951,9 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
                                                                                 static_cast<int>(views.tabs.size()) - 1))]
                                           .view;
     const bool feature_maps = !views.tabs.empty() && shown_view == lv::View::FeatureMaps;
-    const std::string& hint = shown_view == lv::View::Filters ? lv::FiltersHint() : views.hint;
+    const std::string& hint = shown_view == lv::View::Filters        ? lv::FiltersHint()
+                              : shown_view == lv::View::WhereItLooks ? where_it_looks::InspectorHint()
+                                                                     : views.hint;
     if (feature_maps && cache.spatial && selected_channel_rank_ < cache.tiles.size()) {
         if (BeginCard("StudioDebuggerLayerChannel")) {
             ImGui::PushTextWrapPos(0.0f);

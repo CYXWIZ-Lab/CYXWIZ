@@ -165,6 +165,11 @@ private Data Studio tickets (`tofix*/track*`).
   peak or number (a Preferences default too) and slices conv weights by
   kernel position. The first convolution's **Filters** view draws each
   learned filter as a small RGB (or grey) picture with its weight norm.
+  **Where it looks** shows which parts of the input the model relies on:
+  each image patch, token or table feature is covered in turn and the
+  model runs again on the GPU; the change in the picked class's score is
+  drawn over the input. The prediction shown now comes from the evaluation
+  pass (dropout off), the same one Where it looks scores.
   Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in

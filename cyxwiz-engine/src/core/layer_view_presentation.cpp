@@ -132,7 +132,7 @@ std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
 }
 
 LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummary* output_numerics,
-                          bool first_spatial_layer) {
+                          bool first_spatial_layer, bool takes_model_input) {
     LayerViews views;
     const TensorInfo* output = Find(layer, CapturedTensorRole::Output);
     const TensorInfo* input = Find(layer, CapturedTensorRole::Input);
@@ -155,10 +155,8 @@ LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummar
         views.tabs.push_back({View::Filters, "Filters", weights->name});
     }
 
-    if (first_spatial_layer && input && IsSpatial(input->shape)) {
-        views.later.push_back({"Where it looks", "Occlusion: a grey patch slides over the image and maps the drop in "
-                                                 "the true class's score (next step)"});
-    }
+    if (takes_model_input && input && (IsSpatial(input->shape) || input->shape.size() == 2))
+        views.tabs.push_back({View::WhereItLooks, "Where it looks", {}});
     if (weights && weights->shape.size() == 2 && input && input->shape.size() == 2) {
         views.later.push_back({"Contributions", "How this sample's output was computed: w \xC3\x97 x per input, "
                                                 "the largest first, then the bias and the activation"});

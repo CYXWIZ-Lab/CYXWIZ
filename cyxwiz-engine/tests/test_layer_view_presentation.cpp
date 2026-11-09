@@ -126,12 +126,17 @@ void TestViewsFollowShapes() {
     relu.element_count = 131072;
     relu.finite_count = 131072;
     relu.zero_count = 55837;  // 42.6 %
-    const auto first = PlanLayerViews(Conv32(), &relu, true);
-    Check(Labels(first) == std::vector<std::string>({"Feature maps", "Values", "Weights", "Gradients", "Filters"}),
+    const auto first = PlanLayerViews(Conv32(), &relu, true, true);
+    Check(Labels(first) == std::vector<std::string>({"Feature maps", "Values", "Weights", "Gradients", "Filters",
+                                                     "Where it looks"}),
           "first conv tabs");
     Check(first.tabs[2].tensor == "weights" && first.tabs[3].tensor == "weights" && first.tabs[4].tensor == "weights",
           "weights, gradients and filters read the conv weights, not the bias");
-    Check(Later(first) == std::vector<std::string>({"Where it looks"}), "first conv later tabs");
+    Check(Later(first).empty(), "first conv: nothing left for later");
+    Check(Labels(PlanLayerViews(Dense2(), nullptr, false, true)).back() == "Where it looks",
+          "a Dense layer taking the model's features explains them too");
+    Check(Labels(PlanLayerViews(Conv64(), nullptr, false, false)).back() != "Where it looks",
+          "only the layer the input enters explains it");
     CheckText(first.facts,
               "weights [3, 3, 3, 32] + bias [32], 896 parameters \xC2\xB7 output 64 \xC3\x97 64 \xC3\x97 32, "
               "42.6 % zeros",

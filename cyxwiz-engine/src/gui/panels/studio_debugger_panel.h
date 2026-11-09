@@ -73,6 +73,13 @@ public:
         std::function<std::optional<std::string>(StudioDebuggerRunMode, int sample_index, int explain_node_id)>;
 
     void SetRunDebugCallback(RunDebugCallback callback) { run_debug_callback_ = std::move(callback); }
+    // Where it looks on a table (TOFIX178 6.3b): each feature's mean over the
+    // graph's prepared rows. Called on the UI thread with the graph frozen;
+    // the job runs on a worker (empty with `why` when the means cannot be
+    // read). An empty job: the canvas does not compile cleanly.
+    using FeatureMeansJob = std::function<std::vector<float>(const std::function<bool()>& stop, std::string* why)>;
+    using FeatureMeansCallback = std::function<FeatureMeansJob()>;
+    void SetFeatureMeansCallback(FeatureMeansCallback callback) { feature_means_callback_ = std::move(callback); }
     void SetRunWaitCallback(RunWaitCallback callback) { run_wait_callback_ = std::move(callback); }
     // The line under the run controls: a wait, or why a waiting run did not
     // start.
@@ -185,6 +192,16 @@ private:
     bool RenderLayersInspector();
     // The picked item's input picture and model output, read once per item.
     void ReadLayerSample();
+    // Model > Layers > Where it looks (studio_debugger_where_it_looks.cpp):
+    // the shown capture's model rebuilt in eval mode off the UI thread, its
+    // prediction for the picked item, and occlusion.
+    void UpdateLayerModelSession();
+    void RenderWhereItLooks(uint32_t sample_texture, int sample_width, int sample_height);
+    // The model's output for the picked item from the evaluation pass; null
+    // until read (or when the model cannot be rebuilt).
+    const std::vector<float>* EvalModelOutput() const;
+    // Why the evaluation pass is not available ("" while it is being read).
+    std::string EvalModelUnavailable() const;
     // The capture of the shown run: the live one, else read from the run
     // store in the background.
     void RefreshLayerCaptureSource();
@@ -209,6 +226,7 @@ private:
     static std::string FormatShape(const std::vector<size_t>& shape);
 
     RunDebugCallback run_debug_callback_;
+    FeatureMeansCallback feature_means_callback_;
     RunWaitCallback run_wait_callback_;
     RunCompletedCallback run_completed_callback_;
     FocusNodeCallback focus_node_callback_;
@@ -258,6 +276,8 @@ private:
     size_t heatmap_row_begin_ = 0;
     int heatmap_kernel_position_ = -1;   // conv weights: one kernel position, -1 = all
     std::shared_ptr<LayerViewCache> layer_view_cache_;
+    struct WhereItLooksState;
+    std::shared_ptr<WhereItLooksState> where_it_looks_;
     // This session's capture settings once changed here; empty = the user's
     // defaults. Save as my default writes them and empties it.
     std::optional<core::StudioDebuggerConfig> capture_session_;

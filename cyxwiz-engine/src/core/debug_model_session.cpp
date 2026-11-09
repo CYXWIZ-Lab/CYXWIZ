@@ -33,6 +33,17 @@ std::unique_ptr<DebugModelSession> DebugModelSession::FromCapture(const Training
         return fail(built.error_message.empty() ? "the model could not be built" : built.error_message);
 
     IExecutableModel& model = *built.model;
+    // The graph must be the run's: each captured layer is the same node in
+    // the rebuilt model (a saved run is rebuilt from the canvas as it is now).
+    for (const auto& provenance : built.module_provenance) {
+        if (!provenance.module_index) continue;
+        for (const auto& l : capture.Layers()) {
+            if (l.module_index != *provenance.module_index || l.node_id < 0 || l.node_id == provenance.node_id)
+                continue;
+            return fail("the graph is not the one this run used: layer " + std::to_string(l.module_index) +
+                        " was " + l.node_name + ", it is " + provenance.node_name + " now");
+        }
+    }
     for (size_t i = 0; i < model.LayerCount(); ++i) {
         Module* module = model.LayerModule(i);
         if (!module) continue;

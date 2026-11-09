@@ -8,6 +8,8 @@
 
 #include "../src/core/debug_executor.h"
 #include "../src/core/debug_model_session.h"
+#include "../src/core/occlusion.h"
+#include "../src/core/where_it_looks_presentation.h"
 #include "../src/core/debug_numerics.h"
 #include "../src/core/debug_loss_metric_explainer.h"
 #include "../src/core/model_builder.h"
@@ -2868,6 +2870,186 @@ void TestDebugModelSession() {
     spdlog::info("  OK: MLP rebuilt output worst {}", worst);
 }
 
+// TOFIX178 6.3b: occlusion covers the right elements in every layout, and a
+// batch scores each piece exactly as covering it alone does.
+void TestOcclusion() {
+    spdlog::info("--- TestOcclusion ---");
+    namespace oc = cyxwiz::occlusion;
+    using layer_view::OutputRule;
+
+    // Kinds from the input shape.
+    ExpectTrue(oc::KindOf({64, 64, 3, 1}, false) == oc::InputKind::Image, "an image");
+    ExpectTrue(oc::KindOf({1, 40}, true) == oc::InputKind::Tokens, "token ids into an Embedding");
+    ExpectTrue(oc::KindOf({1, 8}, false) == oc::InputKind::Features, "features");
+    ExpectTrue(!oc::KindOf({1, 10, 4}, false), "a sequence of vectors is none of the three");
+
+    // An image [4, 5, 2, 1], patch 2, step 2: rows 0, 2; columns 0, 2, 3 (flush).
+    oc::Plan image;
+    image.kind = oc::InputKind::Image;
+    image.sample_shape = {4, 5, 2, 1};
+    image.patch = 2;
+    image.step = 2;
+    image.fill = {-1.0f, -2.0f};
+    const auto patches = oc::PiecesOf(image);
+    ExpectEq(patches.size(), 6, "2 x 3 patch positions");
+    ExpectTrue(oc::PatchGrid(image) == std::make_pair<size_t, size_t>(2, 3), "the patch grid");
+    ExpectTrue(patches.back().row == 2 && patches.back().column == 3, "the last patch is flush with the edges");
+    std::vector<float> pixels(40);
+    for (size_t i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<float>(i);
+    const Tensor sample = FromRowMajor(pixels, {4, 5, 2, 1});
+    const Tensor batch = oc::CoveredBatch(sample, image, patches);
+    ExpectTrue(batch.Shape() == std::vector<size_t>({4, 5, 2, 6}), "one image per patch, batch last");
+    const auto got = RowMajor(batch);
+    size_t wrong = 0;
+    for (size_t h = 0; h < 4; ++h)
+        for (size_t w = 0; w < 5; ++w)
+            for (size_t c = 0; c < 2; ++c)
+                for (size_t k = 0; k < patches.size(); ++k) {
+                    const auto& p = patches[k];
+                    const bool covered = h >= p.row && h < p.row + p.rows && w >= p.column && w < p.column + p.columns;
+                    const float want = covered ? image.fill[c] : pixels[(h * 5 + w) * 2 + c];
+                    if (got[((h * 5 + w) * 2 + c) * patches.size() + k] != want) ++wrong;
+                }
+    ExpectEq(wrong, 0, "each image has exactly its patch filled with its channel's value");
+
+    // Tokens [1, 6] with two pads (0): four pieces; each copy has one token padded.
+    oc::Plan tokens;
+    tokens.kind = oc::InputKind::Tokens;
+    tokens.sample_shape = {1, 6};
+    tokens.fill = {0.0f};
+    const std::vector<float> ids = {5, 9, 2, 7, 0, 0};
+    const auto positions = oc::PiecesOf(tokens, ids, 0.0f);
+    ExpectEq(positions.size(), 4, "padding is not covered");
+    const auto token_batch = RowMajor(oc::CoveredBatch(FromRowMajor(ids, {1, 6}), tokens, positions));
+    wrong = 0;
+    for (size_t k = 0; k < positions.size(); ++k)
+        for (size_t t = 0; t < 6; ++t)
+            if (token_batch[k * 6 + t] != (t == positions[k].position ? 0.0f : ids[t])) ++wrong;
+    ExpectEq(wrong, 0, "each copy has one token replaced by the pad id, batch first");
+
+    // Scores through the output rule.
+    ExpectNear(static_cast<float>(oc::TargetScore({0.0f, std::log(3.0f)}, OutputRule::Softmax, 1)), 0.75f, 1e-6f,
+               "softmax probability of class 1");
+    ExpectNear(static_cast<float>(oc::TargetScore({0.0f}, OutputRule::Sigmoid, 0)), 0.5f, 1e-6f, "sigmoid class 0");
+    ExpectNear(static_cast<float>(oc::TargetScore({std::log(3.0f)}, OutputRule::Sigmoid, 0)), 0.25f, 1e-6f,
+               "one logit: class 0 is 1 - sigmoid");
+    ExpectNear(static_cast<float>(oc::TargetScore({2.5f, -1.0f}, OutputRule::Value, 1)), -1.0f, 0.0f, "a value");
+
+    // The MLP: features replaced by a fill; a batch of 4 scores each feature
+    // exactly as covering it alone does.
+    const auto cfg = MakeTabularConfig();
+    DebugExecutor exe(cfg);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    std::string error;
+    auto session = DebugModelSession::FromCapture(cfg, *res.layer_capture, &error);
+    ExpectTrue(session != nullptr, "the MLP session: " + error);
+    const Tensor& rows = CapturedTensorOf(res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    const auto row_values = RowMajor(rows);
+    const Tensor one_row = FromRowMajor(std::vector<float>(row_values.begin(), row_values.begin() + 10), {1, 10});
+    oc::Plan features;
+    features.kind = oc::InputKind::Features;
+    features.sample_shape = {1, 10};
+    features.fill = std::vector<float>(10, 0.25f);
+    const auto all = oc::PiecesOf(features);
+    const auto batched = oc::Run(*session, one_row, features, all, OutputRule::Softmax, 2, 4);
+    const auto alone = oc::Run(*session, one_row, features, all, OutputRule::Softmax, 2, 1);
+    ExpectEq(batched.change.size(), 10, "one score per feature");
+    double worst = 0.0;
+    for (size_t i = 0; i < all.size(); ++i) worst = std::max(worst, std::fabs(batched.change[i] - alone.change[i]));
+    ExpectTrue(worst < 1e-6, "MLP: batched scores equal one at a time, worst " + std::to_string(worst));
+    auto covered = RowMajor(one_row);
+    covered[3] = 0.25f;
+    const double by_hand = oc::TargetScore(RowMajor(session->Forward(FromRowMajor(covered, {1, 10}))), OutputRule::Softmax, 2) -
+                           batched.baseline;
+    ExpectTrue(std::fabs(by_hand - batched.change[3]) < 1e-6, "MLP: feature 3's change is covering it by hand");
+
+    // The ResNet (batch-last images, BatchNorm in eval): 16 patches a forward
+    // score each patch as one at a time does; a cancel stops between forwards.
+    const auto resnet = CompileResNetExample();
+    DebugExecutor r_exe(resnet);
+    r_exe.SetLayerCapture({});
+    const auto r_res = r_exe.Run();
+    auto r_session = DebugModelSession::FromCapture(resnet, *r_res.layer_capture, &error);
+    ExpectTrue(r_session != nullptr, "the ResNet session: " + error);
+    const Tensor& img = CapturedTensorOf(r_res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    oc::Plan picture;
+    picture.kind = oc::InputKind::Image;
+    picture.sample_shape = img.Shape();
+    picture.fill = std::vector<float>(picture.sample_shape[2], 0.0f);
+    auto some = oc::PiecesOf(picture);
+    ExpectEq(some.size(), 196, "a 64 x 64 image: 14 x 14 patches of 12, step 4");
+    some.resize(20);
+    const auto r_batched = oc::Run(*r_session, img, picture, some, OutputRule::Sigmoid, 0, 16);
+    const auto r_alone = oc::Run(*r_session, img, picture, some, OutputRule::Sigmoid, 0, 1);
+    worst = 0.0;
+    double moved = 0.0;
+    for (size_t i = 0; i < some.size(); ++i) {
+        worst = std::max(worst, std::fabs(r_batched.change[i] - r_alone.change[i]));
+        moved = std::max(moved, std::fabs(r_alone.change[i]));
+    }
+    ExpectTrue(worst < 1e-5, "ResNet: batched patches equal one at a time, worst " + std::to_string(worst));
+    ExpectTrue(moved > 0.0, "ResNet: covering patches moves the score");
+    size_t forwards = 0;
+    const auto stopped = oc::Run(*r_session, img, picture, some, OutputRule::Sigmoid, 0, 4, {},
+                                 [&] { return ++forwards > 2; });
+    ExpectTrue(stopped.cancelled && stopped.change.size() == 8, "a cancel stops between forwards");
+    spdlog::info("  OK: occlusion, ResNet batched vs alone worst {}, largest change {}", worst, moved);
+}
+
+// TOFIX178 6.3b: the Where it looks view's words.
+void TestWhereItLooksPresentation() {
+    spdlog::info("--- TestWhereItLooksPresentation ---");
+    namespace wl = cyxwiz::where_it_looks;
+    namespace oc = cyxwiz::occlusion;
+    using layer_view::OutputRule;
+    // One logit through a sigmoid: two classes.
+    const auto two = wl::OutputNames(OutputRule::Sigmoid, 1, {"cat", "dog"});
+    ExpectTrue(two == std::vector<std::string>({"cat", "dog"}), "one logit explains two classes");
+    const auto targets = wl::Targets(two, 0, 1);
+    ExpectTrue(targets.size() == 2 && targets[0].label == "Predicted: cat" && targets[1].label == "True: dog",
+               "predicted, then true");
+    ExpectTrue(wl::Targets(two, 0, 0).size() == 2 && wl::Targets(two, 0, 0)[1].label == "dog",
+               "true left out when it is the predicted class; the other class follows");
+    ExpectTrue(wl::OutputNames(OutputRule::Value, 2, {})[1] == "output 1", "values are outputs");
+
+    oc::Plan image;
+    image.kind = oc::InputKind::Image;
+    image.sample_shape = {64, 64, 3, 1};
+    ExpectTrue(wl::CoverText(image, "the image's mean per channel") ==
+                   "Patch 12 \xC3\x97 12 px, every 4 px, filled with the image's mean per channel",
+               "cover text: " + wl::CoverText(image, "the image's mean per channel"));
+    ExpectTrue(wl::PassesText(image, 196, 64) ==
+                   "196 forward passes (14 \xC3\x97 14 patch positions), 64 at a time on the device, and one on the "
+                   "unchanged input.",
+               "passes text: " + wl::PassesText(image, 196, 64));
+    const auto pieces = oc::PiecesOf(image);
+    oc::Result result;
+    result.baseline = 0.94;
+    result.change.assign(pieces.size(), 0.0);
+    result.change[45] = -0.409;
+    result.change[3] = 0.12;
+    const std::string headline = wl::Headline(image, pieces, result, "cat", {});
+    ExpectTrue(headline == "Covering rows 12-23, columns 12-23 lowers the cat score most: 0.940 to 0.531.",
+               "headline: " + headline);
+    const auto scaled = wl::Scaled(result.change);
+    ExpectNear(scaled[45], -1.0f, 1e-6f, "the largest change scales to -1");
+    ExpectNear(scaled[3], static_cast<float>(0.12 / 0.409), 1e-6f, "others in proportion");
+    oc::Result flat;
+    flat.baseline = 0.5;
+    flat.change = {0.0, 0.01};
+    ExpectTrue(wl::Headline(image, pieces, flat, "cat", {}).rfind("No covered piece lowers", 0) == 0,
+               "nothing lowers the score: said so");
+    oc::Plan features;
+    features.kind = oc::InputKind::Features;
+    features.sample_shape = {1, 3};
+    ExpectTrue(wl::PieceText(features, oc::PiecesOf(features)[1], {"preg", "plas", "pres"}) == "plas",
+               "a feature by its name");
+    ExpectTrue(wl::ChangeText(-0.4091) == "-0.409" && wl::ChangeText(0.0001) == "0.000", "change text");
+    ExpectTrue(!wl::InspectorHint().empty(), "the view has its Inspector note");
+    spdlog::info("  OK: where it looks presentation");
+}
+
 // TOFIX178 6.1b: a training snapshot runs in eval mode, so BatchNorm's
 // running statistics and every weight are left exactly as they were.
 void TestCaptureStepLeavesTheModel() {
@@ -3490,6 +3672,8 @@ int main(int argc, char** argv) {
         TestCaptureStepLeavesTheModel();
         TestLayerCaptureStore();
         TestDebugModelSession();
+        TestOcclusion();
+        TestWhereItLooksPresentation();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();
         TestDebugExecutorSkippedLayerMapping();

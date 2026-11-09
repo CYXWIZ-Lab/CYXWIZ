@@ -1111,6 +1111,49 @@ MainWindow::MainWindow()
                 return session;
             };
         });
+        // Where it looks on a table: each feature's mean over up to 512 of the
+        // graph's prepared rows (the data steps as Local Debug runs them).
+        studio_debugger_panel_->SetFeatureMeansCallback([this]() -> cyxwiz::StudioDebuggerPanel::FeatureMeansJob {
+            const cyxwiz::TrainingConfiguration* clean = live_compile_ ? live_compile_->CleanConfig() : nullptr;
+            if (!clean || !node_editor_) return {};
+            auto& project = cyxwiz::ProjectManager::Instance();
+            const std::filesystem::path root = project.GetProjectRoot();
+            cyxwiz::StepRunRoots roots{root.string(), project.GetArtifactsPath(), project.GetExportsPath(),
+                                       project.GetIngestionCachePath()};
+            return [config = *clean, nodes = node_editor_->GetNodes(), links = node_editor_->GetLinks(), roots,
+                    cache_config = GraphMaterializationCacheConfig(root)](const std::function<bool()>& stop,
+                                                                          std::string* why) mutable {
+                // The sample source hands back the picked item alone when the
+                // data ends before the block: ask for fewer rows then.
+                for (const size_t rows : {size_t{512}, size_t{128}, size_t{32}, size_t{8}}) {
+                    cyxwiz::DebugSampleRequest request;
+                    request.index = 0;
+                    request.count = rows;
+                    request.nodes = &nodes;
+                    request.links = &links;
+                    request.roots = roots;
+                    request.cache_config = cache_config;
+                    request.stop = stop;
+                    auto reconciled = config;
+                    const auto sample = cyxwiz::MakeDebugSample(reconciled, request);
+                    if (!sample.ok()) {
+                        if (why) *why = sample.unavailable;
+                        return std::vector<float>{};
+                    }
+                    const auto shape = sample.features.Shape();
+                    if (shape.size() != 2 || (shape[0] < 2 && rows > 8)) continue;
+                    // Rows [N, F] row-major: ArrayFire (F, N); the mean over N.
+                    const af::array by_row = af::moddims(sample.features.GetRowMajorFlatArray().as(f32),
+                                                         static_cast<dim_t>(shape[1]), static_cast<dim_t>(shape[0]));
+                    const af::array means = af::mean(by_row, 1);
+                    std::vector<float> host(static_cast<size_t>(means.elements()));
+                    means.host(host.data());
+                    return host;
+                }
+                if (why) *why = "the data has no rows of features";
+                return std::vector<float>{};
+            };
+        });
         studio_debugger_panel_->SetRunCompletedCallback(
             [this](const cyxwiz::StudioDebuggerSnapshot& session) {
                 // The last run, pass or failure, of this exact graph: the
