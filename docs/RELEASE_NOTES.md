@@ -125,7 +125,9 @@ private Data Studio tickets (`tofix*/track*`).
   optimizer's rates, the DataLoader's batch size and epochs; not the output
   layer) with a starting range around each value, and searches by Grid,
   Random or Bayesian. Each trial trains the way Train does, on data
-  prepared once; the Trials view shows progress, the best trial (Apply best
+  prepared once; the Trials view shows progress (Stop keeps the trials
+  done, and the line says whether a search finished, was stopped, reached
+  its time limit or had three trials in a row fail), the best trial (Apply best
   to the graph, Ctrl+Z undoes; Export CSV), the score per trial and every
   trial's values, scores and failures. Before, the panel took free-text
   parameter names and never trained. Preferences > Search sets how a new

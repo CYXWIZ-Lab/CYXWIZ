@@ -65,12 +65,15 @@ core::HyperparamSearchDefaults DefaultsOf(const SearchConfig& config);
 
 // The Trials view's status line.
 struct RunStatus {
-    std::string headline;  // "Trial 7 of 20 · epoch 4 of 10"; when finished "20 trials, 1 failed"
+    std::string label;     // "Running", "Finished", "Stopped", "Time limit reached", "Three trials in a row failed"
+    std::string headline;  // "Trial 7 of 20 · epoch 4 of 10"; when finished "20 trials, 1 failed", ended early "5 of 20 trials"
     std::string timing;    // "about 52 s per trial · 11 min left"
     float fraction = 0.0f; // of all the trials
 };
-// `trial` is the running trial (0-based), `epoch` / `epochs` its progress.
-RunStatus Status(bool running, int trial, int total, int epoch, int epochs, const std::vector<TrialResult>& results);
+// `trial` is the running trial (0-based), `epoch` / `epochs` its progress;
+// `end` says why a search that is not running ended.
+RunStatus Status(bool running, SearchEnd end, int trial, int total, int epoch, int epochs,
+                 const std::vector<TrialResult>& results);
 
 // "Validation loss 0.081 · accuracy 97.6 %" (MAE for numbers).
 std::string ScoreText(const TrialResult& result);

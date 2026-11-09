@@ -409,11 +409,16 @@ void HyperparamSearchPanel::RenderTrials() {
         ImGui::SameLine();
         ImGui::TextUnformatted("the data, as Train does; the trials start when it is ready.");
     } else {
+        const SearchEnd end = search_engine_->GetEnd();
         const sp::RunStatus status =
-            sp::Status(running, search_engine_->GetCurrentTrial(), search_engine_->GetTotalTrials(),
+            sp::Status(running, end, search_engine_->GetCurrentTrial(), search_engine_->GetTotalTrials(),
                        search_engine_->GetTrialEpoch(), search_engine_->GetTrialEpochs(), results);
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(running ? t.running : t.success, running ? "Running" : "Finished");
+        ImGui::TextColored(running                      ? t.running
+                           : end == SearchEnd::AllTrials ? t.success
+                           : end == SearchEnd::Failures  ? t.error
+                                                         : t.warning,
+                           "%s", status.label.c_str());
         ImGui::SameLine();
         ImGui::TextUnformatted(status.headline.c_str());
         if (!status.timing.empty()) {

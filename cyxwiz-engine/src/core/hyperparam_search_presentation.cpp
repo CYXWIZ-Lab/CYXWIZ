@@ -211,7 +211,8 @@ core::HyperparamSearchDefaults DefaultsOf(const SearchConfig& config) {
     return defaults;
 }
 
-RunStatus Status(bool running, int trial, int total, int epoch, int epochs, const std::vector<TrialResult>& results) {
+RunStatus Status(bool running, SearchEnd end, int trial, int total, int epoch, int epochs,
+                 const std::vector<TrialResult>& results) {
     RunStatus status;
     total = std::max(total, 1);
     const int finished = static_cast<int>(results.size());
@@ -222,12 +223,19 @@ RunStatus Status(bool running, int trial, int total, int epoch, int epochs, cons
         seconds += r.duration_seconds;
     }
     if (running) {
+        status.label = "Running";
         status.headline = "Trial " + std::to_string(trial + 1) + " of " + std::to_string(total);
         if (epochs > 0) status.headline += kDot + std::string("epoch ") + std::to_string(epoch) + " of " + std::to_string(epochs);
         const float within = epochs > 0 ? static_cast<float>(epoch) / static_cast<float>(epochs) : 0.0f;
         status.fraction = std::clamp((static_cast<float>(finished) + within) / static_cast<float>(total), 0.0f, 1.0f);
     } else {
-        status.headline = std::to_string(finished) + (finished == 1 ? " trial" : " trials");
+        status.label = end == SearchEnd::Stopped     ? "Stopped"
+                       : end == SearchEnd::TimeLimit ? "Time limit reached"
+                       : end == SearchEnd::Failures  ? "Three trials in a row failed"
+                                                     : "Finished";
+        status.headline = std::to_string(finished);
+        if (end != SearchEnd::AllTrials && finished < total) status.headline += " of " + std::to_string(total);
+        status.headline += finished == 1 && end == SearchEnd::AllTrials ? " trial" : " trials";
         if (failed > 0) status.headline += ", " + std::to_string(failed) + " failed";
         status.fraction = finished > 0 ? 1.0f : 0.0f;
     }

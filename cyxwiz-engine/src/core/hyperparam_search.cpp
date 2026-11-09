@@ -142,6 +142,7 @@ bool HyperparamSearch::Start() {
     is_paused_ = false;
     stop_requested_ = false;
     is_complete_ = false;
+    end_ = SearchEnd::AllTrials;
     current_trial_ = 0;
 
     {
@@ -245,6 +246,7 @@ void HyperparamSearch::RunSearchThread() {
         // Check time limit
         if (GetElapsedSeconds() > config_.max_time_seconds) {
             spdlog::info("Time limit reached, stopping search");
+            end_ = SearchEnd::TimeLimit;
             break;
         }
 
@@ -319,10 +321,12 @@ void HyperparamSearch::RunSearchThread() {
         }
         if (consecutive_failures >= 3) {
             spdlog::error("Hyperparameter search stopped: three trials in a row failed ({})", result.error_message);
+            end_ = SearchEnd::Failures;
             break;
         }
     }
 
+    if (stop_requested_.load() && end_.load() == SearchEnd::AllTrials) end_ = SearchEnd::Stopped;
     is_running_ = false;
     is_complete_ = true;
     current_trial_ = total_trials;

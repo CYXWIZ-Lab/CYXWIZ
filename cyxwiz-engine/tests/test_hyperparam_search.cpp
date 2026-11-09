@@ -4,6 +4,7 @@
 // - each parameter becomes a node property change of the trial;
 // - Grid runs every combination, Random max_trials;
 // - a failed trial is kept and the search goes on; three in a row stop it;
+//   the search says why it ended (all trials, Stop, three failures);
 // - no trial function, or a parameter without a node property: no start;
 // - Bayesian (Gaussian process + expected improvement) beats Random on the
 //   same budget, over several seeds;
@@ -148,6 +149,7 @@ int main() {
         const auto results = RunToEnd(search);
         Check(results.size() == 10 && !results[1].completed && results[1].error_message.find("compile") != std::string::npos,
               "a failed trial is kept with its error and the search goes on");
+        Check(search.GetEnd() == SearchEnd::AllTrials, "it ended with all its trials run");
 
         HyperparamSearch broken;
         broken.SetConfig(BowlConfig(SearchStrategy::Random, 10, 5));
@@ -157,6 +159,18 @@ int main() {
             return o;
         });
         Check(RunToEnd(broken).size() == 3, "three failures in a row stop the search");
+        Check(broken.GetEnd() == SearchEnd::Failures, "and it says so");
+
+        // Stop keeps the trials done and says the search was stopped.
+        HyperparamSearch stopped;
+        stopped.SetConfig(BowlConfig(SearchStrategy::Random, 10, 5));
+        int runs = 0;
+        stopped.SetTrialFunction([&](const std::vector<TrialChange>& c, const TrialCallbacks& cb) {
+            if (++runs == 3) stopped.Stop();
+            return BowlTrial(c, cb);
+        });
+        Check(RunToEnd(stopped).size() == 3 && stopped.GetEnd() == SearchEnd::Stopped,
+              "Stop keeps the trials done and ends as stopped");
     }
 
     // Bayesian beats Random on the same budget (mean best over seeds).

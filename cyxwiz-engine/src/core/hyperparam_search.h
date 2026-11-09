@@ -75,6 +75,10 @@ enum class SearchStrategy {
     Bayesian   // Gaussian process + expected improvement after a few random trials
 };
 
+// Why a search ended: all its trials ran, Stop, its time limit, or three
+// failed trials in a row.
+enum class SearchEnd { AllTrials, Stopped, TimeLimit, Failures };
+
 // Result of a single trial
 struct TrialResult {
     int trial_id = 0;
@@ -159,6 +163,8 @@ public:
     bool IsRunning() const { return is_running_.load(); }
     bool IsPaused() const { return is_paused_.load(); }
     bool IsComplete() const { return is_complete_.load(); }
+    // Why the last search ended (AllTrials while one runs).
+    SearchEnd GetEnd() const { return end_.load(); }
 
     // Progress
     int GetCurrentTrial() const { return current_trial_.load(); }
@@ -205,6 +211,7 @@ private:
     std::atomic<bool> is_paused_{false};
     std::atomic<bool> stop_requested_{false};
     std::atomic<bool> is_complete_{false};
+    std::atomic<SearchEnd> end_{SearchEnd::AllTrials};
     std::atomic<int> current_trial_{0};
     std::atomic<int> trial_epoch_{0};
     std::atomic<int> trial_epochs_{0};

@@ -66,7 +66,11 @@ while Train, a cross-validation or a learning curve runs.
 ## Trials
 
 - The status line: the trial and epoch running, the time per trial and
-  the time left, and **Stop**.
+  the time left, and **Stop**. Stop drops the trial that is running and
+  keeps the ones done. When the search has ended, the line says why:
+  Finished (all the trials ran), Stopped, Time limit reached, or Three
+  trials in a row failed; when it ended early, how many of the trials ran
+  ("5 of 20 trials").
 - **Best so far**: its scores and values. **Apply best to the graph** sets
   those values on the canvas (Ctrl+Z takes them back); train the graph
   afterwards to get the model. **Export CSV** saves a row per trial.

@@ -142,14 +142,21 @@ int main() {
         r.duration_seconds = 52.0f;
     }
     done[3].completed = false;
-    const auto running = sp::Status(true, 6, 20, 4, 10, done);
+    const auto running = sp::Status(true, SearchEnd::AllTrials, 6, 20, 4, 10, done);
     Check(running.headline == "Trial 7 of 20 \xC2\xB7 epoch 4 of 10", "headline " + running.headline);
     Check(running.timing == "about 52 s per trial \xC2\xB7 12 min left", "timing " + running.timing);
     Check(running.fraction > 0.31f && running.fraction < 0.33f, "fraction counts the epochs of the running trial");
-    const auto first = sp::Status(true, 0, 20, 0, 0, {});
+    Check(running.label == "Running", "running label");
+    const auto first = sp::Status(true, SearchEnd::AllTrials, 0, 20, 0, 0, {});
     Check(first.timing == "The time per trial shows after the first one.", "before the first trial ends");
-    const auto finished = sp::Status(false, 0, 20, 0, 0, done);
-    Check(finished.headline == "6 trials, 1 failed", "finished " + finished.headline);
+    const auto finished = sp::Status(false, SearchEnd::AllTrials, 0, 6, 0, 0, done);
+    Check(finished.label == "Finished" && finished.headline == "6 trials, 1 failed", "finished " + finished.headline);
+    // Ended early: the label says why, the headline how far it got.
+    const auto stopped = sp::Status(false, SearchEnd::Stopped, 0, 20, 0, 0, done);
+    Check(stopped.label == "Stopped" && stopped.headline == "6 of 20 trials, 1 failed", "stopped " + stopped.headline);
+    Check(sp::Status(false, SearchEnd::TimeLimit, 0, 20, 0, 0, done).label == "Time limit reached", "time limit");
+    Check(sp::Status(false, SearchEnd::Failures, 0, 20, 0, 0, done).label == "Three trials in a row failed",
+          "three failures");
 
     // The saved defaults (Preferences): set on a search, read back, saved and
     // reloaded; values out of range are clamped.
