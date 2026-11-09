@@ -32,13 +32,22 @@ struct CYXWIZ_API PpoLossSettings {
     bool normalize_advantage = true;
 };
 
-struct CYXWIZ_API PpoLossResult {
+// What a minibatch's loss came to, read from PpoLossResult::statistics.
+struct CYXWIZ_API PpoLossStatistics {
     float loss = 0.0f;
     float policy_loss = 0.0f;
     float value_loss = 0.0f;
     float entropy_loss = 0.0f;
     float approx_kl = 0.0f;       // mean((ratio - 1) - log(ratio))
     float clip_fraction = 0.0f;   // share of rows with |ratio - 1| > clip_range
+};
+
+struct CYXWIZ_API PpoLossResult {
+    // [6] on the device: loss, policy_loss, value_loss, entropy_loss,
+    // approx_kl, clip_fraction. A trainer sums them over minibatches and
+    // reads them once (ReadPpoLossStatistics), so a minibatch never waits
+    // for the device.
+    Tensor statistics;
     Tensor log_prob;              // [B], under the current policy
     // d loss / d the networks' outputs and the log standard deviation
     Tensor grad_policy_output;    // [B, A] means or [B, K] logits
@@ -54,6 +63,9 @@ struct CYXWIZ_API PpoBatch {
     Tensor returns;        // [B]
     Tensor old_values;     // [B]
 };
+
+// The host copy of a statistics tensor, or of a sum of `count` of them as their mean.
+CYXWIZ_API PpoLossStatistics ReadPpoLossStatistics(const Tensor& statistics, float count = 1.0f);
 
 // mean [B, A], log_std [A], value [B, 1]
 CYXWIZ_API PpoLossResult PpoGaussianLoss(const Tensor& mean, const Tensor& log_std, const Tensor& value,

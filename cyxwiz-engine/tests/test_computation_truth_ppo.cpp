@@ -93,7 +93,8 @@ cyxwiz::rl::PpoBatch Batch(const json& in) {
 
 constexpr double kTolerance = 2e-5;
 
-void CheckScalars(const cyxwiz::rl::PpoLossResult& r, const json& expected, const std::string& name) {
+void CheckScalars(const cyxwiz::rl::PpoLossResult& result, const json& expected, const std::string& name) {
+    const auto r = cyxwiz::rl::ReadPpoLossStatistics(result.statistics);
     Close(r.loss, expected.at("loss"), kTolerance, name + " loss");
     Close(r.policy_loss, expected.at("policy_loss"), kTolerance, name + " policy loss");
     Close(r.value_loss, expected.at("value_loss"), kTolerance, name + " value loss");

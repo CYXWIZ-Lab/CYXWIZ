@@ -165,15 +165,20 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                             (discrete ? " (one per choice)." : " (one per action).");
                     return false;
                 }
-                const auto values = Host(value_->Forward(obs_t));
-                if (values.size() != n) {
+                const Tensor value = value_->Forward(obs_t);
+                if (value.NumElements() != n) {
                     error = "The value network must give one value per observation.";
                     return false;
                 }
                 const uint64_t sample_seed = random.Next();
                 const Tensor action = discrete ? SampleCategorical(head, sample_seed) : SampleGaussian(head, log_std_, sample_seed);
-                const auto logp = Host(discrete ? CategoricalLogProb(head, action) : GaussianLogProb(head, log_std_, action));
-                const auto actions = Host(action);
+                const Tensor logp = discrete ? CategoricalLogProb(head, action) : GaussianLogProb(head, log_std_, action);
+                // One read for the step: the values, log-probabilities and actions
+                const auto step_host =
+                    Host(Tensor::Cat({value.Reshape({n}), logp.Reshape({n}), action.Reshape({n * act_size})}, 0));
+                const float* values = step_host.data();
+                const float* logps = values + n;
+                const float* actions = logps + n;
                 for (size_t i = 0; i < n * act_size; ++i) {
                     float a = actions[i];
                     if (!discrete) a = std::clamp(a, info.action_low[i % act_size], info.action_high[i % act_size]);
@@ -181,9 +186,9 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                 }
                 const size_t row = t * n;
                 std::copy(obs.begin(), obs.end(), obs_buf.begin() + row * obs_size);
-                std::copy(actions.begin(), actions.end(), act_buf.begin() + row * act_size);
-                std::copy(logp.begin(), logp.end(), logp_buf.begin() + row);
-                std::copy(values.begin(), values.end(), value_buf.begin() + row);
+                std::copy_n(actions, n * act_size, act_buf.begin() + row * act_size);
+                std::copy_n(logps, n, logp_buf.begin() + row);
+                std::copy_n(values, n, value_buf.begin() + row);
 
                 if (!environment_.step(env_actions.data(), out, error)) return false;
                 for (size_t i = 0; i < n; ++i) {  // what the environment paid, for the episode's return
@@ -224,32 +229,45 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
             ComputeGae(Rows(reward_buf, steps, n), Rows(value_buf, steps, n), Rows(done_buf, steps, n),
                        Tensor({n}, last_values.data()), config_.gamma, config_.gae_lambda, advantages, returns);
             const auto returns_host = Host(returns);
-            const Tensor all_obs = Rows(obs_buf, rollout, obs_size);
-            const Tensor all_actions = discrete ? Tensor({rollout}, act_buf.data()) : Rows(act_buf, rollout, act_size);
-            const Tensor all_logp({rollout}, logp_buf.data());
-            const Tensor all_values({rollout}, value_buf.data());
-            const Tensor all_adv = advantages.Reshape({rollout});
-            const Tensor all_ret = returns.Reshape({rollout});
+            // The rollout as one [rollout, width] table on the device: each
+            // epoch shuffles it with one gather, each minibatch is a run of rows
+            const size_t width = obs_size + act_size + 4;
+            const Tensor table = Tensor::Cat({Rows(obs_buf, rollout, obs_size), Rows(act_buf, rollout, act_size),
+                                              Rows(logp_buf, rollout, 1), Rows(value_buf, rollout, 1),
+                                              advantages.Reshape({rollout, 1}), returns.Reshape({rollout, 1})},
+                                             1);
 
             // ---- K epochs of minibatches
             policy_->SetTraining(true);
             value_->SetTraining(true);
             std::vector<int> order(rollout);
-            double sum_pg = 0.0, sum_v = 0.0, sum_ent = 0.0, sum_kl = 0.0, sum_clip = 0.0;
+            Tensor statistics_sum, last_statistics;  // on the device until the update ends
             int minibatches = 0;
             for (int epoch = 0; epoch < config_.n_epochs && !stop_; ++epoch) {
                 std::iota(order.begin(), order.end(), 0);
                 for (size_t i = rollout; i > 1; --i) std::swap(order[i - 1], order[random.Next() % i]);
+                const Tensor shuffled = table.IndexSelect(0, order);
+                const auto column = [&shuffled](size_t from, size_t count) {
+                    return shuffled.Slice(1, static_cast<int>(from), static_cast<int>(from + count));
+                };
+                const Tensor epoch_obs = column(0, obs_size);
+                const Tensor epoch_actions = column(obs_size, act_size);
+                const Tensor epoch_logp = column(obs_size + act_size, 1);
+                const Tensor epoch_values = column(obs_size + act_size + 1, 1);
+                const Tensor epoch_adv = column(obs_size + act_size + 2, 1);
+                const Tensor epoch_ret = column(width - 1, 1);
                 for (size_t start = 0; start < rollout && !stop_; start += static_cast<size_t>(config_.batch_size)) {
                     const size_t end = std::min(rollout, start + static_cast<size_t>(config_.batch_size));
-                    const std::vector<int> index(order.begin() + start, order.begin() + end);
+                    const auto rows = [start, end](const Tensor& t) {
+                        return t.Slice(0, static_cast<int>(start), static_cast<int>(end));
+                    };
                     PpoBatch batch;
-                    batch.actions = all_actions.IndexSelect(0, index);
-                    batch.old_log_prob = all_logp.IndexSelect(0, index);
-                    batch.advantages = all_adv.IndexSelect(0, index);
-                    batch.returns = all_ret.IndexSelect(0, index);
-                    batch.old_values = all_values.IndexSelect(0, index);
-                    const Tensor mb_obs = all_obs.IndexSelect(0, index);
+                    batch.actions = rows(epoch_actions);
+                    batch.old_log_prob = rows(epoch_logp);
+                    batch.advantages = rows(epoch_adv);
+                    batch.returns = rows(epoch_ret);
+                    batch.old_values = rows(epoch_values);
+                    const Tensor mb_obs = rows(epoch_obs);
                     const Tensor head = policy_->Forward(mb_obs);
                     const Tensor value = value_->Forward(mb_obs);
                     const PpoLossResult r = discrete ? PpoCategoricalLoss(head, value, batch, config_.loss)
@@ -266,7 +284,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                         for (auto& [k, g] : policy_grads) all["p:" + k] = g;
                         for (auto& [k, g] : value_grads) all["v:" + k] = g;
                         for (auto& [k, g] : log_std_grads) all["s:" + k] = g;
-                        ClipGradientsByGlobalNorm(all, config_.max_grad_norm);
+                        ClipGradientsByGlobalNormOnDevice(all, config_.max_grad_norm);
                         for (auto& [k, g] : policy_grads) g = all["p:" + k];
                         for (auto& [k, g] : value_grads) g = all["v:" + k];
                         for (auto& [k, g] : log_std_grads) g = all["s:" + k];
@@ -278,23 +296,22 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                         log_std_optimizer_->Step(params, log_std_grads);
                         log_std_ = params.at("log_std");
                     }
-                    sum_pg += r.policy_loss;
-                    sum_v += r.value_loss;
-                    sum_ent += r.entropy_loss;
-                    sum_kl += r.approx_kl;
-                    sum_clip += r.clip_fraction;
-                    metrics.loss = r.loss;
+                    statistics_sum = minibatches == 0 ? r.statistics : statistics_sum + r.statistics;
+                    last_statistics = r.statistics;
                     ++minibatches;
                 }
             }
 
             ++metrics.update;
-            const double m = std::max(minibatches, 1);
-            metrics.policy_loss = static_cast<float>(sum_pg / m);
-            metrics.value_loss = static_cast<float>(sum_v / m);
-            metrics.entropy_loss = static_cast<float>(sum_ent / m);
-            metrics.approx_kl = static_cast<float>(sum_kl / m);
-            metrics.clip_fraction = static_cast<float>(sum_clip / m);
+            if (minibatches > 0) {  // the minibatches' mean, and the last one's loss
+                const PpoLossStatistics mean = ReadPpoLossStatistics(statistics_sum, static_cast<float>(minibatches));
+                metrics.policy_loss = mean.policy_loss;
+                metrics.value_loss = mean.value_loss;
+                metrics.entropy_loss = mean.entropy_loss;
+                metrics.approx_kl = mean.approx_kl;
+                metrics.clip_fraction = mean.clip_fraction;
+                metrics.loss = ReadPpoLossStatistics(last_statistics).loss;
+            }
             metrics.explained_variance = ExplainedVariance(value_buf, returns_host);
             if (recent.empty()) {
                 metrics.mean_episode_return = metrics.mean_episode_length = std::numeric_limits<float>::quiet_NaN();

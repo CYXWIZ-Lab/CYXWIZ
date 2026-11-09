@@ -6,12 +6,15 @@
 // as the argument it also trains InvertedPendulum-v5 (continuous) to 1000.
 //
 //   test_ppo_trainer [<MuJoCo plugin folder>]
+//
+// CYXWIZ_TEST_ARRAYFIRE_BACKEND=cuda|opencl|cpu picks the device.
 
 #include "../src/core/executable_model.h"
 #include "../src/core/rl/ppo_trainer.h"
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_environment_registry.h"
 #include "algorithms/arrayfire_backend_utils.h"
+#include "computation_truth/test_device_selection.h"
 
 #include <cyxwiz/sequential.h>
 
@@ -198,6 +201,7 @@ void CheckPendulum(const std::filesystem::path& plugin) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return EXIT_FAILURE;
     CheckRefusals();
     CheckCartPole();
     if (argc > 1) CheckPendulum(std::filesystem::absolute(argv[1]));

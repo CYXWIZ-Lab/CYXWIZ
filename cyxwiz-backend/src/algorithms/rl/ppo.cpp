@@ -7,6 +7,8 @@
 
 #include <arrayfire.h>
 
+#include "../arrayfire_host_materialization.h"
+
 // Windows headers define these; ArrayFire's min/max must win.
 #ifdef max
 #undef max
@@ -42,7 +44,8 @@ af::array Column(const Tensor& t, size_t rows, const char* name) {
     return af::moddims(Array(t), static_cast<dim_t>(rows));
 }
 
-float Scalar(const af::array& a) { return af::sum<float>(a); }
+// A sum as a [1] array on the device (no host read)
+af::array Total(const af::array& a) { return af::sum(af::flat(a)); }
 
 af::array LogSoftmaxRows(const af::array& logits) {
     const af::array shifted = logits - af::tile(af::max(logits, 1), 1, static_cast<unsigned>(logits.dims(1)));
@@ -60,11 +63,19 @@ af::array OneHot(const af::array& indices, dim_t rows, dim_t classes) {
 struct Common {
     af::array dloss_dlogp;
     af::array grad_value;
-    float policy_loss = 0.0f;
-    float value_loss = 0.0f;
-    float approx_kl = 0.0f;
-    float clip_fraction = 0.0f;
+    af::array policy_loss;  // [1] each
+    af::array value_loss;
+    af::array approx_kl;
+    af::array clip_fraction;
 };
+
+// [6]: loss, policy_loss, value_loss, entropy_loss, approx_kl, clip_fraction
+Tensor Statistics(const Common& common, const af::array& entropy_loss, const PpoLossSettings& settings) {
+    const af::array loss = common.policy_loss + settings.ent_coef * entropy_loss + settings.vf_coef * common.value_loss;
+    return Make(af::join(0, af::join(0, loss, common.policy_loss, common.value_loss, entropy_loss),
+                         af::join(0, common.approx_kl, common.clip_fraction)),
+                {6});
+}
 
 Common SurrogateAndValue(const af::array& log_prob, const af::array& value, const PpoBatch& batch,
                          const PpoLossSettings& settings, size_t rows) {
@@ -84,7 +95,7 @@ Common SurrogateAndValue(const af::array& log_prob, const af::array& value, cons
     const af::array s1 = adv * ratio;
     const af::array s2 = adv * clipped;
     Common out;
-    out.policy_loss = -Scalar(af::min(s1, s2)) / b;
+    out.policy_loss = -Total(af::min(s1, s2)) / b;
     // torch.minimum sends a tie's gradient half to each side; clamp passes
     // it inside [1 - c, 1 + c], ends included
     const af::array tie = (s1 == s2).as(f32);
@@ -92,8 +103,8 @@ Common SurrogateAndValue(const af::array& log_prob, const af::array& value, cons
     const af::array w2 = (s2 < s1).as(f32) + 0.5f * tie;
     const af::array inside = ((ratio >= 1.0 - c) && (ratio <= 1.0 + c)).as(f32);
     out.dloss_dlogp = -(adv * (w1 + w2 * inside) * ratio) / b;
-    out.approx_kl = Scalar((ratio - 1.0f) - log_ratio) / b;
-    out.clip_fraction = Scalar((af::abs(ratio - 1.0f) > c).as(f32)) / b;
+    out.approx_kl = Total((ratio - 1.0f) - log_ratio) / b;
+    out.clip_fraction = Total((af::abs(ratio - 1.0f) > c).as(f32)) / b;
 
     const af::array returns = Column(batch.returns, rows, "returns");
     af::array predicted = value;
@@ -105,7 +116,7 @@ Common SurrogateAndValue(const af::array& log_prob, const af::array& value, cons
         value_pass = ((delta >= -settings.clip_range_vf) && (delta <= settings.clip_range_vf)).as(f32);
     }
     const af::array error = predicted - returns;
-    out.value_loss = Scalar(error * error) / b;
+    out.value_loss = Total(error * error) / b;
     out.grad_value = settings.vf_coef * 2.0f * error * value_pass / b;
     return out;
 }
@@ -117,6 +128,22 @@ void CheckSettings(const PpoLossSettings& s) {
 }
 
 }  // namespace
+
+PpoLossStatistics ReadPpoLossStatistics(const Tensor& statistics, float count) {
+    Require(statistics.NumElements() == 6, "PPO: the loss statistics are 6 values");
+    std::vector<float> host(6);
+    MaterializeArrayFireToHost(af::moddims(Array(statistics), 6), host.data(),
+                               ArrayFireHostSyncCategory::OutputMaterialization, "ReadPpoLossStatistics", "vector",
+                               "ppo_loss_statistics_readback");
+    PpoLossStatistics out;
+    out.loss = host[0] / count;
+    out.policy_loss = host[1] / count;
+    out.value_loss = host[2] / count;
+    out.entropy_loss = host[3] / count;
+    out.approx_kl = host[4] / count;
+    out.clip_fraction = host[5] / count;
+    return out;
+}
 
 Tensor GaussianLogProb(const Tensor& mean, const Tensor& log_std, const Tensor& actions) {
     Require(mean.Shape().size() == 2 && actions.Shape() == mean.Shape(), "PPO: actions must match the means [B, A]");
@@ -157,14 +184,9 @@ PpoLossResult PpoGaussianLoss(const Tensor& mean, const Tensor& log_std, const T
     const Common common = SurrogateAndValue(lp, v, batch, settings, rows);
 
     // Entropy per row = sum over actions of 0.5 + log(sqrt(2 pi)) + log_std
-    const float entropy = Scalar(0.5f + static_cast<float>(kLogSqrtTwoPi) + ls_row);
+    const af::array entropy = Total(0.5f + static_cast<float>(kLogSqrtTwoPi) + ls_row);
     PpoLossResult out;
-    out.policy_loss = common.policy_loss;
-    out.value_loss = common.value_loss;
-    out.entropy_loss = -entropy;
-    out.loss = out.policy_loss + settings.ent_coef * out.entropy_loss + settings.vf_coef * out.value_loss;
-    out.approx_kl = common.approx_kl;
-    out.clip_fraction = common.clip_fraction;
+    out.statistics = Statistics(common, -entropy, settings);
     out.log_prob = Make(lp, {rows});
     const af::array d = af::tile(common.dloss_dlogp, 1, static_cast<unsigned>(act));
     out.grad_policy_output = Make(d * diff * inv_var, {rows, static_cast<size_t>(act)});
@@ -192,12 +214,7 @@ PpoLossResult PpoCategoricalLoss(const Tensor& logits, const Tensor& value, cons
     const af::array entropy = -af::sum(p * log_p, 1);  // [B, 1]
     const float b = static_cast<float>(rows);
     PpoLossResult out;
-    out.policy_loss = common.policy_loss;
-    out.value_loss = common.value_loss;
-    out.entropy_loss = -Scalar(entropy) / b;
-    out.loss = out.policy_loss + settings.ent_coef * out.entropy_loss + settings.vf_coef * out.value_loss;
-    out.approx_kl = common.approx_kl;
-    out.clip_fraction = common.clip_fraction;
+    out.statistics = Statistics(common, -Total(entropy) / b, settings);
     out.log_prob = Make(lp, {rows});
     // d log_prob / d logits = one_hot - p; d entropy / d logits = -p (log p + H)
     const af::array d_entropy = -p * (log_p + af::tile(entropy, 1, k));

@@ -16,4 +16,10 @@ namespace cyxwiz {
 // clipping. One scalar is read back to the host per call.
 CYXWIZ_API float ClipGradientsByGlobalNorm(std::map<std::string, Tensor>& gradients, float max_norm);
 
+// The same clip without the read-back, as torch does it: every gradient is
+// scaled by min(1, max_norm / (norm + 1e-6)) on the device. Returns the norm
+// before clipping as a [1] tensor on the device. A non-finite norm is not
+// refused (torch's error_if_nonfinite=False).
+CYXWIZ_API Tensor ClipGradientsByGlobalNormOnDevice(std::map<std::string, Tensor>& gradients, float max_norm);
+
 } // namespace cyxwiz

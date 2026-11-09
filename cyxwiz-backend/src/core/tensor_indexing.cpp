@@ -186,6 +186,20 @@ Tensor Tensor::Slice(int dim, int start, int end, int step) const {
         return Tensor(out_shape, dtype_);
     }
 
+    // A run of positions up to rank 4 is a view of the device array: no
+    // index list goes up to the device
+    if (step == 1 && shape_.size() <= 4) {
+        try {
+            af::index view[4] = {af::span, af::span, af::span, af::span};
+            view[axis] = af::seq(begin, finish - 1);
+            af::array output = GetSemanticArray()(view[0], view[1], view[2], view[3]);
+            output.eval();
+            return Tensor::FromSemanticArray(output, out_shape);
+        } catch (const af::exception& e) {
+            throw std::runtime_error(DeviceError("Tensor::Slice", e));
+        }
+    }
+
     std::vector<unsigned> selected_indices;
     selected_indices.reserve(slice_size);
     for (size_t index = 0; index < slice_size; ++index) {

@@ -106,4 +106,4 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/optimizers/lr_warmup.h` |  | `LRWarmupState`, `LRWarmup`, `WarmupType` |
 | `cyxwiz/optimizers/optimizer_base.h` |  | `OptimizerState`, `Optimizer`, `OptimizerType` |
 | `cyxwiz/optimizers/sgd.h` |  | `SGDOptimizer` |
-| `cyxwiz/rl/ppo.h` | Proximal Policy Optimization on the device, with hand-written gradients like every CyxWiz loss. The policy network outputs the mean of a Gaussian (continuous actions, with a learned state-independent log standard deviation) or the logits of a categorical (discrete actions); the value network... | `PpoLossSettings`, `PpoLossResult`, `PpoBatch` |
+| `cyxwiz/rl/ppo.h` | Proximal Policy Optimization on the device, with hand-written gradients like every CyxWiz loss. The policy network outputs the mean of a Gaussian (continuous actions, with a learned state-independent log standard deviation) or the logits of a categorical (discrete actions); the value network... | `PpoLossSettings`, `PpoLossStatistics`, `PpoLossResult`, `PpoBatch` |

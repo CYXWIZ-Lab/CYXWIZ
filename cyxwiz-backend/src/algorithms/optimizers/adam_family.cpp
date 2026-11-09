@@ -248,26 +248,23 @@ void AdamOptimizer::StepImpl(
 
             if (wd > 0.0f) {
                 param_gpu = param_gpu * (1.0f - lr * wd);
-                param_gpu.eval();
             }
 
             // Update biased first moment estimate: m = b1 * m + (1 - b1) * grad
             m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
-            m_gpu.eval();
 
             // Update biased second moment estimate: v = b2 * v + (1 - b2) * grad^2
             v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
-            v_gpu.eval();
 
             // Compute bias-corrected estimates
-            af::array m_hat = m_gpu / bias_correction1;
-            m_hat.eval();
-            af::array v_hat = v_gpu / bias_correction2;
-            v_hat.eval();
+            const af::array m_hat = m_gpu / bias_correction1;
+            const af::array v_hat = v_gpu / bias_correction2;
 
             // Update parameters: param = param - lr * m_hat / (sqrt(v_hat) + eps)
             param_gpu = param_gpu - lr * m_hat / (af::sqrt(v_hat) + eps);
-            param_gpu.eval();
+            // One kernel writes all three: a small network's step is bound by
+            // launches, not arithmetic
+            af::eval(m_gpu, v_gpu, param_gpu);
 
             param.SetFromSemanticArray(param_gpu, param.Shape());
             m_[name].SetFromSemanticArray(m_gpu, m_[name].Shape());
