@@ -247,7 +247,7 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
     WhereItLooksState& s = *where_it_looks_;
     const CapturedLayer& first = layer_capture_->Layers().front();
     const CapturedTensor* input = first.Find(CapturedTensorRole::Input);
-    const StudioDebuggerSampleFacts& facts = session_.sample_facts;
+    const StudioDebuggerSampleFacts& facts = ShownSampleFacts();
     const lv::OutputRule rule = lv::OutputRuleFromKey(facts.output_rule);
 
     if (!s.unavailable.empty()) {
@@ -614,7 +614,7 @@ void StudioDebuggerPanel::RenderSaliency(occlusion::InputKind kind, const std::v
     WhereItLooksState& s = *where_it_looks_;
     const CapturedLayer& first = layer_capture_->Layers().front();
     const CapturedTensor* input = first.Find(CapturedTensorRole::Input);
-    const lv::OutputRule rule = lv::OutputRuleFromKey(session_.sample_facts.output_rule);
+    const lv::OutputRule rule = lv::OutputRuleFromKey(ShownSampleFacts().output_rule);
     const bool times_input = CaptureSettings().saliency_show == core::SaliencyShow::TimesInput;
     const std::string key = std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" +
                             std::to_string(selected_layer_sample_) + "/" + std::to_string(s.target);

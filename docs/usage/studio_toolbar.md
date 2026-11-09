@@ -296,6 +296,27 @@ ResNet example one step takes 25 MB for all 36 layers. Data that cannot hand
 an item over by number (token tagging sequences, sparse features in
 training) has no training snapshots; the log says why.
 
+A training run with snapshots also saves `training.json` beside them, rewritten
+at each snapshot: every epoch so far (training loss and accuracy, or the MAE
+for a regression, and the validation loss and metric when validation ran),
+the graph's name, and the snapshot items' names, labels and classes.
+
+### Training runs and their snapshots
+
+**Overview > Runs** lists the saved runs, newest first: Local Debug runs and
+training runs that kept layer snapshots. A training run's line names its
+graph, its epochs, its best validation (and at which epoch) and its snapshot
+epochs, for example "20 epochs · best validation 92.97 % (epoch 18) · 4 layer
+snapshots (epochs 5, 10, 15, 20)". A Local Debug run's line says whether it
+passed and its issues; **Details** gives its traces, events, graph, device,
+transfers and where it is saved. Click a run to show it.
+
+**Overview > Compare** for a shown training run is its snapshot table: each
+snapshot's epoch, training loss, validation loss, validation accuracy (or
+MAE) and size on disk, with **Open in Model > Layers**. Snapshots saved before
+the epochs were kept say "not recorded". For a Local Debug run, Compare is
+the comparison with the latest run, as before.
+
 ### Model > Layers
 
 **Model > Layers** (the Model section's first view) shows the shown run's
@@ -311,7 +332,14 @@ says how to get one.
   (cross-entropy), probabilities from a Sigmoid or Softmax layer, or the value
   for regression. Class names come from the data (as typed on the Data Input);
   names that are only numbers read as "class 1". When the run has more than
-  one capture (training snapshots), a list picks it.
+  one capture (training snapshots), **Snapshot** steps through them (‹ epoch
+  10 ›, or pick one from the list), with "n of m snapshots" and that epoch's
+  validation; the picked layer, tab and channel stay as you step. **Compare
+  with** picks another snapshot of the run and draws the shown view for both,
+  side by side: feature maps with the same channels in the same order,
+  filters in the same order, weights and gradients with the same rows and
+  kernel slice (each on its own scale), values and units. Where it looks stays
+  one snapshot at a time.
 - The **layer list** names every captured layer, its kind and its output for
   one sample ("64 × 64 × 32"), in sections named by the graph's canvas groups
   (as they were when the run started). The kind adds what the tensors show:

@@ -174,6 +174,11 @@ private Data Studio tickets (`tofix*/track*`).
   to the input, as its size or gradient × input, from one forward and one
   backward pass (for text, at each token's embedding); checked against
   PyTorch. The method and what saliency shows are Preferences defaults.
+  **Training snapshots** can be browsed: Overview > Runs lists training runs
+  that kept layer snapshots beside Local Debug runs; Overview > Compare shows
+  a training run's snapshots with each epoch's loss and validation accuracy;
+  Model > Layers steps through them keeping the layer and channel, and
+  **Compare with** draws the same view for two epochs side by side.
   Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in

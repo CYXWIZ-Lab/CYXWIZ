@@ -3126,6 +3126,10 @@ void TestTrainingSnapshotsPresentation() {
                "a regression run: the lowest MAE is the best");
     ExpectTrue(ts::StepperText(3, 4, 20, record) == "4 of 4 snapshots" + dot + "validation 92.96 %", "stepper text");
     ExpectTrue(ts::StepperText(0, 1, 2, std::nullopt) == "1 of 1 snapshot", "stepper without a record");
+    ExpectTrue(ts::SnapshotTitle("epoch_0020", record) == "Epoch 20" + dot + "validation 92.96 %" &&
+                   ts::SnapshotTitle("epoch_0002", std::nullopt) == "Epoch 2" &&
+                   ts::SnapshotTitle("local_debug", record) == "local_debug",
+               "a compared side's title");
 
     DebugRunStoreSummary debug;
     debug.run_id = "local-debug-a2c705e68029f801-1794247562482";
@@ -3133,14 +3137,17 @@ void TestTrainingSnapshotsPresentation() {
     debug.success = true;
     debug.trace_count = 72;
     debug.file_path = "C:/runs/session.json";
+    debug.summary = "Local Debug: Passed";
     const auto d = ts::DebugRunRow(debug);
     ExpectTrue(!d.training && d.kind == "Local Debug" && d.detail == "Passed", "a debug run's line: " + d.detail);
-    bool traces = false, saved = false;
+    ExpectTrue(d.when == ts::WhenFromRunId(debug.run_id), "a debug run's time from its id, as a training run's");
+    bool traces = false, saved = false, summary = false;
     for (const auto& [k, v] : d.details) {
         traces |= k == "Traces" && v == "72";
         saved |= k == "Saved at" && v == "C:/runs/session.json";
+        summary |= k == "Summary" && v == "Local Debug: Passed";
     }
-    ExpectTrue(traces && saved, "a debug run keeps its facts under Details");
+    ExpectTrue(traces && saved && summary, "a debug run keeps its facts, and its summary, under Details");
     spdlog::info("  OK: training snapshots presentation");
 }
 

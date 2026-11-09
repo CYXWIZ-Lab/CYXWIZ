@@ -16,9 +16,11 @@
 #include "../../core/layer_tensor_reader.h"
 #include "../../core/layer_view_presentation.h"
 #include "../../core/texture_manager.h"
+#include "../../core/training_snapshots_presentation.h"
 #include "../../core/where_it_looks_presentation.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
+#include "../icons.h"
 
 #include <spdlog/spdlog.h>
 
@@ -213,9 +215,10 @@ struct StudioDebuggerPanel::LayerViewCache {
 };
 
 void StudioDebuggerPanel::RefreshLayerCaptureSource() {
-    const std::string& run_id = session_.run_id;
+    // A shown training run (6.3d) is read from the run store like a saved run.
+    const std::string& run_id = shown_training_run_.empty() ? session_.run_id : shown_training_run_;
     const auto& live = session_.debug_result.layer_capture;
-    if (live) {
+    if (live && shown_training_run_.empty()) {
         if (layer_capture_ != live) {
             layer_capture_ = live;
             layer_capture_run_id_ = run_id;
@@ -269,8 +272,23 @@ void StudioDebuggerPanel::RefreshLayerCaptureSource() {
             layer_capture_label_ = loaded->label;
             layer_capture_ = loaded->capture;
             selected_layer_ = 0;
+            if (layer_capture_ && !layer_keep_node_.empty()) {
+                const auto& layers = layer_capture_->Layers();
+                for (size_t i = 0; i < layers.size(); ++i)
+                    if (layers[i].node_name == layer_keep_node_) selected_layer_ = i;
+            }
+            layer_keep_node_.clear();
             if (!loaded->error.empty()) spdlog::warn("Studio Debugger: layer capture not read: {}", loaded->error);
         });
+}
+
+void StudioDebuggerPanel::ShowLayerSnapshot(const std::string& label) {
+    if (label == layer_capture_label_ && layer_capture_) return;
+    if (layer_capture_ && selected_layer_ < layer_capture_->Layers().size())
+        layer_keep_node_ = layer_capture_->Layers()[selected_layer_].node_name;
+    layer_capture_label_ = label;
+    layer_capture_.reset();
+    layer_capture_listed_ = false;
 }
 
 void StudioDebuggerPanel::RenderLayersView() {
@@ -348,9 +366,10 @@ void StudioDebuggerPanel::RenderLayersView() {
     const std::vector<float> no_output;
     const std::vector<float>& shown_output = eval_output ? *eval_output : eval_unavailable ? cache.model_output : no_output;
     {
-        std::string line = ItemHeadline(session_.sample_facts, selected_layer_sample_, shown_output);
+        std::string line = ItemHeadline(ShownSampleFacts(), selected_layer_sample_, shown_output);
         line += (line.empty() ? "" : " \xC2\xB7 ") + std::to_string(cache.layers.size()) + " layers captured";
-        if (const std::string sample = SampleText(session_); !sample.empty()) line += " \xC2\xB7 " + sample;
+        const std::string sample = shown_training_run_.empty() ? SampleText(session_) : shown_training_run_;
+        if (!sample.empty()) line += " \xC2\xB7 " + sample;
         if (layer_capture_->Truncated())
             line += " \xC2\xB7 " + std::to_string(layer_capture_->SkippedTensors()) +
                     " tensors past the capture budget were left out";
@@ -358,20 +377,95 @@ void StudioDebuggerPanel::RenderLayersView() {
         WrappedMuted(line);
         bool controls = false;
         if (layer_capture_labels_.size() > 1) {
+            // Snapshot < epoch 10 >: the layer, tab and channel stay.
             controls = true;
-            ImGui::SetNextItemWidth(160.0f);
-            if (ImGui::BeginCombo("##LayerCaptureLabel", layer_capture_label_.c_str())) {
-                for (const auto& label : layer_capture_labels_) {
-                    if (ImGui::Selectable(label.c_str(), label == layer_capture_label_) &&
-                        label != layer_capture_label_) {
-                        layer_capture_label_ = label;
-                        layer_capture_.reset();
-                        layer_capture_listed_ = false;
-                    }
-                }
+            const auto& labels = layer_capture_labels_;
+            const auto found = std::find(labels.begin(), labels.end(), layer_capture_label_);
+            const size_t index = found == labels.end() ? 0 : static_cast<size_t>(found - labels.begin());
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(DebuggerMuted(), "Snapshot");
+            ImGui::SameLine();
+            if (ui::SecondaryButton(ICON_FA_CHEVRON_LEFT "##LayerSnapshotPrev", index > 0, "The first snapshot"))
+                ShowLayerSnapshot(labels[index - 1]);
+            ImGui::SameLine(0.0f, 4.0f);
+            const std::string shown = training_snapshots::SnapshotName(layer_capture_label_);
+            ImGui::SetNextItemWidth(ImGui::CalcTextSize("epoch 0000").x + ImGui::GetFrameHeight() * 2.0f);
+            if (ImGui::BeginCombo("##LayerCaptureLabel", shown.c_str())) {
+                for (const auto& label : labels)
+                    if (ImGui::Selectable(training_snapshots::SnapshotName(label).c_str(), label == layer_capture_label_))
+                        ShowLayerSnapshot(label);
                 ImGui::EndCombo();
             }
+            ImGui::SameLine(0.0f, 4.0f);
+            if (ui::SecondaryButton(ICON_FA_CHEVRON_RIGHT "##LayerSnapshotNext", index + 1 < labels.size(),
+                                    "The last snapshot"))
+                ShowLayerSnapshot(labels[index + 1]);
+            int epoch = 0;
+            std::sscanf(layer_capture_label_.c_str(), "epoch_%d", &epoch);
+            const std::string note = training_snapshots::StepperText(index, labels.size(), epoch, ShownTrainingRecord());
+            SameLineIfFits(ImGui::CalcTextSize(note.c_str()).x, 12.0f);
+            ImGui::TextColored(DebuggerMuted(), "%s", note.c_str());
+
+            // Compare with: None or another snapshot of the run.
+            if (compare_label_ == layer_capture_label_ ||
+                std::find(labels.begin(), labels.end(), compare_label_) == labels.end())
+                compare_label_.clear();
+            std::vector<std::string> pins = {"None"};
+            std::vector<std::string> pin_labels = {""};
+            for (const auto& label : labels) {
+                if (label == layer_capture_label_) continue;
+                pins.push_back(training_snapshots::SnapshotName(label));
+                pin_labels.push_back(label);
+            }
+            const auto picked_pin = std::find(pin_labels.begin(), pin_labels.end(), compare_label_);
+            int pin = static_cast<int>(picked_pin - pin_labels.begin());
+            float pins_width = ImGui::CalcTextSize("Compare with").x + ImGui::GetStyle().ItemSpacing.x;
+            for (const auto& p : pins) pins_width += ui::ButtonWidth(p.c_str(), ui::ButtonSize::Small);
+            SameLineIfFits(pins.size() <= 6 ? pins_width : 260.0f, 24.0f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(DebuggerMuted(), "Compare with");
+            ImGui::SameLine();
+            if (pins.size() <= 6) {
+                std::vector<const char*> texts;
+                for (const auto& p : pins) texts.push_back(p.c_str());
+                if (ui::SegmentedControl("LayerCompareWith", texts.data(), static_cast<int>(texts.size()), &pin))
+                    compare_label_ = pin_labels[static_cast<size_t>(pin)];
+            } else {
+                ImGui::SetNextItemWidth(ImGui::CalcTextSize("epoch 0000").x + ImGui::GetFrameHeight() * 2.0f);
+                if (ImGui::BeginCombo("##LayerCompareWith", pins[static_cast<size_t>(pin)].c_str())) {
+                    for (size_t i = 0; i < pins.size(); ++i)
+                        if (ImGui::Selectable(pins[i].c_str(), static_cast<int>(i) == pin)) compare_label_ = pin_labels[i];
+                    ImGui::EndCombo();
+                }
+            }
+            // The compared snapshot, read off the UI thread.
+            const std::string want = compare_label_.empty() ? std::string() : layer_capture_run_id_ + "/" + compare_label_;
+            if (want != compare_read_) {
+                compare_read_ = want;
+                compare_capture_.reset();
+                if (!want.empty()) {
+                    struct Read {
+                        std::shared_ptr<const LayerCapture> capture;
+                        std::string error;
+                    };
+                    auto read = std::make_shared<Read>();
+                    AsyncTaskManager::Instance().RunAsync(
+                        "Studio Debugger: read a snapshot to compare",
+                        [read, run = layer_capture_run_id_, label = compare_label_](LambdaTask&) {
+                            read->capture = LoadLayerCapture(run, label, &read->error);
+                        },
+                        nullptr,
+                        [this, read, want](bool, const std::string&) {
+                            if (compare_read_ != want) return;  // another snapshot is compared now
+                            compare_capture_ = read->capture;
+                            if (!read->error.empty())
+                                spdlog::warn("Studio Debugger: the compared snapshot was not read: {}", read->error);
+                        });
+                }
+            }
             if (!layer_capture_) return;
+        } else {
+            compare_label_.clear();
         }
         if (cache.samples > 1) {
             if (controls) ImGui::SameLine(0.0f, 16.0f);
@@ -524,143 +618,159 @@ void StudioDebuggerPanel::RenderLayersView() {
                                  "/" + std::to_string(channel_cap) + "/" +
                                  std::to_string(heatmap_row_begin_) + "/" + std::to_string(heatmap_kernel_position_);
 
-    if (cache.key != view_key) {
-        cache.DropViewTextures();
-        cache.error.clear();
-        cache.bars.clear();
-        cache.numbers.clear();
-        cache.spatial.reset();
-        cache.units.clear();
-        cache.matrix.clear();
-        cache.filters = {};
-        cache.key = view_key;
+    // Reads `tab` of layer `l` into `c`: only what the view draws, from the
+    // device. The compared snapshot (6.3d) reads the same channels in the
+    // same order, the same rows and the same kernel slice as the shown one.
+    struct ViewRead {
+        size_t item = 0;
+        const std::vector<size_t>* channels = nullptr;  // feature maps: these, in this order
+        size_t row_begin = 0;
+        int kernel_position = -1;
+    };
+    const auto read_view = [&](LayerViewCache& c, const CapturedLayer& l, const ViewRead& in) {
+        c.DropViewTextures();
+        c.error.clear();
+        c.bars.clear();
+        c.numbers.clear();
+        c.spatial.reset();
+        c.units.clear();
+        c.matrix.clear();
+        c.filters = {};
+        const CapturedTensor* out = FindTensor(l, CapturedTensorRole::Output);
         try {
             const CapturedTensor* source = nullptr;
             Tensor shown;
             if (parameter_view) {
-                source = FindTensor(layer, tab.view == lv::View::Gradients ? CapturedTensorRole::Gradient
+                source = FindTensor(l, tab.view == lv::View::Gradients ? CapturedTensorRole::Gradient
                                                                            : CapturedTensorRole::Parameter,
                                     tab.tensor);
                 if (source) shown = source->tensor;
-            } else if (output) {
-                source = output;
-                shown = lv::SampleOf(output->tensor, selected_layer_sample_);
+            } else if (out) {
+                source = out;
+                shown = lv::SampleOf(out->tensor, in.item);
             }
             if (!source) throw std::runtime_error("the tensor for this view was not captured");
-            cache.numerics = ScanDebugTensorNumerics(shown, gui::NodeType::Dense);
-            cache.log_bars = !parameter_view;
-            cache.numbers = lv::NumbersLines(cache.numerics, !parameter_view);
-            if (cache.numerics.finite_count > 0) {
-                const auto histogram = lv::ReadHistogram(shown, static_cast<float>(cache.numerics.minimum),
-                                                         static_cast<float>(cache.numerics.maximum), kHistogramBins);
-                cache.bars = lv::HistogramBars(histogram.counts, cache.log_bars);
+            c.numerics = ScanDebugTensorNumerics(shown, gui::NodeType::Dense);
+            c.log_bars = !parameter_view;
+            c.numbers = lv::NumbersLines(c.numerics, !parameter_view);
+            if (c.numerics.finite_count > 0) {
+                const auto histogram = lv::ReadHistogram(shown, static_cast<float>(c.numerics.minimum),
+                                                         static_cast<float>(c.numerics.maximum), kHistogramBins);
+                c.bars = lv::HistogramBars(histogram.counts, c.log_bars);
             }
 
             if (tab.view == lv::View::FeatureMaps) {
-                cache.spatial = lv::AsSpatial(output->tensor.Shape());
-                cache.channels = lv::ReadChannelSummary(shown);
-                cache.order = lv::OrderChannels(cache.channels.means, cache.channels.maxima, settings.channel_sort);
-                cache.dead = lv::CountDeadChannels(cache.channels.maxima);
+                c.spatial = lv::AsSpatial(out->tensor.Shape());
+                c.channels = lv::ReadChannelSummary(shown);
+                c.order = in.channels ? *in.channels
+                                      : lv::OrderChannels(c.channels.means, c.channels.maxima, settings.channel_sort);
+                c.dead = lv::CountDeadChannels(c.channels.maxima);
                 // The scale's top: the 99.5th percentile, so one bright pixel
                 // does not darken every map.
-                const float top = static_cast<float>(cache.numerics.maximum);
+                const float top = static_cast<float>(c.numerics.maximum);
                 const auto fine = lv::ReadHistogram(shown, 0.0f, top > 0.0f ? top : 1.0f, 512);
-                cache.high = std::max(1e-6f, lv::HistogramQuantile(fine.counts, 0.0f, top > 0.0f ? top : 1.0f, 0.995));
-                std::vector<size_t> picked(cache.order.begin(),
-                                           cache.order.begin() + std::min(channel_cap, cache.order.size()));
+                c.high = std::max(1e-6f, lv::HistogramQuantile(fine.counts, 0.0f, top > 0.0f ? top : 1.0f, 0.995));
+                std::vector<size_t> picked(c.order.begin(),
+                                           c.order.begin() + std::min(in.channels ? c.order.size() : channel_cap,
+                                                                      c.order.size()));
                 const auto pictures = lv::ReadChannelImages(shown, picked);
-                const size_t pixels = cache.spatial->height * cache.spatial->width;
+                const size_t pixels = c.spatial->height * c.spatial->width;
                 for (size_t k = 0; k < picked.size(); ++k) {
                     const std::vector<float> one(pictures.begin() + static_cast<std::ptrdiff_t>(k * pixels),
                                                  pictures.begin() + static_cast<std::ptrdiff_t>((k + 1) * pixels));
-                    cache.tiles.push_back(Upload(Paint(lv::ToSequential(one, cache.high), map_scale),
-                                                 static_cast<int>(cache.spatial->width),
-                                                 static_cast<int>(cache.spatial->height)));
+                    c.tiles.push_back(Upload(Paint(lv::ToSequential(one, c.high), map_scale),
+                                                 static_cast<int>(c.spatial->width),
+                                                 static_cast<int>(c.spatial->height)));
                 }
             } else if (tab.view == lv::View::Units) {
-                cache.units = lv::ReadValues(shown);
+                c.units = lv::ReadValues(shown);
             } else if (tab.view == lv::View::Filters) {
                 auto pictures = lv::BuildFilterPictures(lv::ReadValues(shown), shown.Shape());
                 if (!pictures) throw std::runtime_error("these weights are not first-layer filters");
-                cache.filters = std::move(*pictures);
-                const auto& f = cache.filters;
+                c.filters = std::move(*pictures);
+                const auto& f = c.filters;
                 const size_t pixels = f.height * f.width;
                 for (const auto& filter : f.filters) {
                     std::vector<unsigned char> rgba;
                     if (f.channels == 3) {
                         rgba.resize(pixels * 4);
                         for (size_t p = 0; p < pixels; ++p) {
-                            for (size_t c = 0; c < 3; ++c)
-                                rgba[p * 4 + c] = static_cast<unsigned char>(std::lround(filter.pixels[p * 3 + c] * 255.0f));
+                            for (size_t ch = 0; ch < 3; ++ch)
+                                rgba[p * 4 + ch] = static_cast<unsigned char>(std::lround(filter.pixels[p * 3 + ch] * 255.0f));
                             rgba[p * 4 + 3] = 255;
                         }
                     } else {
                         rgba = Paint(filter.pixels, Scale::Gray);
                     }
-                    cache.tiles.push_back(Upload(rgba, static_cast<int>(f.width), static_cast<int>(f.height)));
+                    c.tiles.push_back(Upload(rgba, static_cast<int>(f.width), static_cast<int>(f.height)));
                 }
             } else if (weight_view) {
-                cache.matrix_info = {source->role, source->name, source->tensor.Shape()};
-                if (heatmap_kernel_position_ >= static_cast<int>(lv::KernelPositions(cache.matrix_info)))
-                    heatmap_kernel_position_ = -1;
-                cache.kernel_position = heatmap_kernel_position_ >= 0
-                                            ? std::optional<size_t>(static_cast<size_t>(heatmap_kernel_position_))
-                                            : std::nullopt;
-                cache.layout = lv::LayoutAsMatrix(cache.matrix_info, cache.kernel_position);
+                c.matrix_info = {source->role, source->name, source->tensor.Shape()};
+                const int kernel = in.kernel_position >= static_cast<int>(lv::KernelPositions(c.matrix_info))
+                                       ? -1
+                                       : in.kernel_position;
+                c.kernel_position = kernel >= 0 ? std::optional<size_t>(static_cast<size_t>(kernel)) : std::nullopt;
+                c.layout = lv::LayoutAsMatrix(c.matrix_info, c.kernel_position);
                 const int max_texture = std::max(1, TextureManager::Instance().MaxTextureSize());
-                cache.shown_columns = std::min(cache.layout.columns, static_cast<size_t>(max_texture));
-                const size_t rows_fit = std::max<size_t>(1, kHeatmapCells / std::max<size_t>(1, cache.layout.columns));
-                cache.row_count = std::min({cache.layout.rows, kHeatmapRowsCap, rows_fit});
-                heatmap_row_begin_ = std::min(heatmap_row_begin_, cache.layout.rows - std::min(cache.layout.rows, cache.row_count));
-                cache.row_begin = heatmap_row_begin_;
-                cache.matrix = lv::ReadMatrixRows(cache.matrix_info, source->tensor, cache.row_begin, cache.row_count,
-                                                  cache.kernel_position);
-                cache.row_count = cache.layout.columns ? cache.matrix.size() / cache.layout.columns : 0;
-                cache.limit = static_cast<float>(cache.numerics.maximum_absolute);
+                c.shown_columns = std::min(c.layout.columns, static_cast<size_t>(max_texture));
+                const size_t rows_fit = std::max<size_t>(1, kHeatmapCells / std::max<size_t>(1, c.layout.columns));
+                c.row_count = std::min({c.layout.rows, kHeatmapRowsCap, rows_fit});
+                c.row_begin = std::min(in.row_begin, c.layout.rows - std::min(c.layout.rows, c.row_count));
+                c.matrix = lv::ReadMatrixRows(c.matrix_info, source->tensor, c.row_begin, c.row_count,
+                                                  c.kernel_position);
+                c.row_count = c.layout.columns ? c.matrix.size() / c.layout.columns : 0;
+                c.limit = static_cast<float>(c.numerics.maximum_absolute);
                 std::vector<float> visible;
-                visible.reserve(cache.row_count * cache.shown_columns);
-                for (size_t r = 0; r < cache.row_count; ++r)
-                    visible.insert(visible.end(), cache.matrix.begin() + static_cast<std::ptrdiff_t>(r * cache.layout.columns),
-                                   cache.matrix.begin() + static_cast<std::ptrdiff_t>(r * cache.layout.columns + cache.shown_columns));
-                cache.matrix_texture = Upload(Paint(lv::ToDiverging(visible, cache.limit), Scale::Diverging),
-                                              static_cast<int>(cache.shown_columns), static_cast<int>(cache.row_count));
+                visible.reserve(c.row_count * c.shown_columns);
+                for (size_t r = 0; r < c.row_count; ++r)
+                    visible.insert(visible.end(), c.matrix.begin() + static_cast<std::ptrdiff_t>(r * c.layout.columns),
+                                   c.matrix.begin() + static_cast<std::ptrdiff_t>(r * c.layout.columns + c.shown_columns));
+                c.matrix_texture = Upload(Paint(lv::ToDiverging(visible, c.limit), Scale::Diverging),
+                                              static_cast<int>(c.shown_columns), static_cast<int>(c.row_count));
             }
         } catch (const std::exception& e) {
-            cache.error = e.what();
+            c.error = e.what();
+        }
+    };
+
+    if (cache.key != view_key) {
+        cache.key = view_key;
+        read_view(cache, layer, {selected_layer_sample_, nullptr, heatmap_row_begin_, heatmap_kernel_position_});
+        if (weight_view && cache.error.empty()) {
+            heatmap_row_begin_ = cache.row_begin;
+            heatmap_kernel_position_ = cache.kernel_position ? static_cast<int>(*cache.kernel_position) : -1;
         }
     }
 
-    if (!cache.error.empty()) {
-        WrappedMuted("This view could not be read: " + cache.error);
-    } else if (tab.view == lv::View::FeatureMaps && cache.spatial) {
-        const size_t count = cache.spatial->channels;
-        WrappedMuted(lv::ChannelsShownText(std::min(count, layer_all_channels_ ? kAllChannelsCap : kStrongestShown),
-                                           count, layer_all_channels_, settings.channel_sort) +
-                     " Click one to inspect it.");
-        static const char* const kScales[] = {"Heat", "Grayscale"};
-        int pick = colour;
-        ImGui::TextColored(DebuggerMuted(), "Colour");
-        ImGui::SameLine();
-        if (ui::SegmentedControl("StudioDebuggerMapColour", kScales, 2, &pick) && pick != colour) {
-            if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
-            capture_session_->feature_map_colour = static_cast<core::FeatureMapColour>(pick);
+    // Compare with another snapshot of the run (6.3d): the same view drawn
+    // twice, side by side, the compared one without the controls. Where it
+    // looks stays one snapshot at a time (it runs that snapshot's model).
+    const bool comparing = compare_capture_ && !compare_label_.empty() && tab.view != lv::View::WhereItLooks;
+    const CapturedLayer* compared = nullptr;
+    if (comparing) {
+        for (const auto& l : compare_capture_->Layers())
+            if (l.node_name == layer.node_name) compared = &l;
+    }
+    if (compared && cache.error.empty()) {
+        if (!compare_view_cache_) compare_view_cache_ = std::make_shared<LayerViewCache>();
+        LayerViewCache& other = *compare_view_cache_;
+        const std::string other_key = std::to_string(reinterpret_cast<uintptr_t>(compare_capture_.get())) + "|" +
+                                      cache.key + "|" + std::to_string(cache.tiles.size());
+        if (other.key != other_key) {
+            other.key = other_key;
+            const std::vector<size_t> channels(
+                cache.order.begin(),
+                cache.order.begin() + static_cast<std::ptrdiff_t>(std::min(cache.tiles.size(), cache.order.size())));
+            read_view(other, *compared,
+                      {selected_layer_sample_, &channels, cache.row_begin,
+                       cache.kernel_position ? static_cast<int>(*cache.kernel_position) : -1});
         }
-        static const char* const kSorts[] = {"Strongest first", "Highest peak first", "Channel order"};
-        const float sort_width = ImGui::CalcTextSize(kSorts[1]).x + ImGui::GetFrameHeight() * 2.0f;
-        SameLineIfFits(ImGui::CalcTextSize("Order").x + ImGui::GetStyle().ItemSpacing.x + sort_width, 16.0f);
-        ImGui::TextColored(DebuggerMuted(), "Order");
-        ImGui::SameLine();
-        int sort = static_cast<int>(settings.channel_sort);
-        ImGui::SetNextItemWidth(sort_width);
-        if (ImGui::Combo("##StudioDebuggerChannelSort", &sort, kSorts, 3) &&
-            sort != static_cast<int>(settings.channel_sort)) {
-            if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
-            capture_session_->channel_sort = static_cast<core::ChannelSort>(sort);
-            selected_channel_rank_ = 0;
-        }
-        DrawLegend(map_scale, "0", "99.5th percentile (max " + Number(cache.numerics.maximum) + ")");
-        ImGui::Spacing();
+    }
 
+    // The pictures each view draws, shared by both sides.
+    const auto draw_maps = [&](LayerViewCache& c, bool clickable) {
+        DrawLegend(map_scale, "0", "99.5th percentile (max " + Number(c.numerics.maximum) + ")");
+        ImGui::Spacing();
         const float avail = ImGui::GetContentRegionAvail().x;
         const float gap = 10.0f;
         // A power of two per row that fits, so 16 or 32 maps fill whole rows.
@@ -668,15 +778,15 @@ void StudioDebuggerPanel::RenderLayersView() {
         int columns = 1;
         while (columns * 2 <= fit) columns *= 2;
         const float tile = std::min(120.0f, (avail - gap * (columns - 1)) / columns);
-        const float tile_h = tile * static_cast<float>(cache.spatial->height) /
-                             static_cast<float>(std::max<size_t>(1, cache.spatial->width));
+        const float tile_h = tile * static_cast<float>(c.spatial->height) /
+                             static_cast<float>(std::max<size_t>(1, c.spatial->width));
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        for (size_t k = 0; k < cache.tiles.size(); ++k) {
+        for (size_t k = 0; k < c.tiles.size(); ++k) {
             if (k % static_cast<size_t>(columns) != 0) ImGui::SameLine(0.0f, gap);
             ImGui::PushID(static_cast<int>(k));
             const ImVec2 at = ImGui::GetCursorScreenPos();
-            if (ImGui::InvisibleButton("##tile", ImVec2(tile, tile_h))) selected_channel_rank_ = k;
-            dl->AddImageRounded(Texture(cache.tiles[k]), at, ImVec2(at.x + tile, at.y + tile_h), ImVec2(0, 0),
+            if (ImGui::InvisibleButton("##tile", ImVec2(tile, tile_h)) && clickable) selected_channel_rank_ = k;
+            dl->AddImageRounded(Texture(c.tiles[k]), at, ImVec2(at.x + tile, at.y + tile_h), ImVec2(0, 0),
                                 ImVec2(1, 1), IM_COL32_WHITE, 4.0f);
             if (k == selected_channel_rank_ || ImGui::IsItemHovered()) {
                 dl->AddRect(ImVec2(at.x - 2, at.y - 2), ImVec2(at.x + tile + 2, at.y + tile_h + 2),
@@ -684,28 +794,15 @@ void StudioDebuggerPanel::RenderLayersView() {
                             2.0f);
             }
             if (ImGui::IsItemHovered()) {
-                const size_t c = cache.order[k];
-                ImGui::SetTooltip("Channel %zu \xC2\xB7 mean %s \xC2\xB7 max %s", c,
-                                  Number(cache.channels.means[c]).c_str(), Number(cache.channels.maxima[c]).c_str());
+                const size_t ch = c.order[k];
+                ImGui::SetTooltip("Channel %zu \xC2\xB7 mean %s \xC2\xB7 max %s", ch,
+                                  Number(c.channels.means[ch]).c_str(), Number(c.channels.maxima[ch]).c_str());
             }
             ImGui::PopID();
         }
         ImGui::Spacing();
-        if (count > kStrongestShown) {
-            const std::string toggle = layer_all_channels_
-                ? (settings.channel_sort == core::ChannelSort::Strongest ? "The 16 strongest" : "The first 16")
-                : "All " + std::to_string(count) + " channels";
-            if (ui::SecondaryButton(toggle.c_str())) {
-                layer_all_channels_ = !layer_all_channels_;
-                selected_channel_rank_ = 0;
-            }
-            ImGui::SameLine();
-        }
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(DebuggerMuted(), "%zu dead channels (zero everywhere)", cache.dead);
-    } else if (tab.view == lv::View::Filters && !cache.filters.filters.empty()) {
-        WrappedMuted(lv::FiltersText(cache.filters));
-        ImGui::Spacing();
+    };
+    const auto draw_filters = [&](LayerViewCache& c) {
         const float avail = ImGui::GetContentRegionAvail().x;
         const float tile = 56.0f;
         const float gap = 10.0f;
@@ -713,14 +810,14 @@ void StudioDebuggerPanel::RenderLayersView() {
         const int columns = std::clamp(static_cast<int>((avail + gap) / (tile + gap)), 1, 8);
         const float label_h = ImGui::GetTextLineHeight();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        for (size_t k = 0; k < cache.tiles.size(); ++k) {
+        for (size_t k = 0; k < c.tiles.size(); ++k) {
             if (k % static_cast<size_t>(columns) != 0) ImGui::SameLine(0.0f, gap);
             ImGui::PushID(static_cast<int>(k));
             const ImVec2 at = ImGui::GetCursorScreenPos();
             ImGui::InvisibleButton("##filter", ImVec2(tile, tile + label_h + 3.0f));
-            dl->AddImageRounded(Texture(cache.tiles[k]), at, ImVec2(at.x + tile, at.y + tile), ImVec2(0, 0),
+            dl->AddImageRounded(Texture(c.tiles[k]), at, ImVec2(at.x + tile, at.y + tile), ImVec2(0, 0),
                                 ImVec2(1, 1), IM_COL32_WHITE, 3.0f);
-            const std::string norm = Number(cache.filters.filters[k].norm);
+            const std::string norm = Number(c.filters.filters[k].norm);
             const float w = ImGui::CalcTextSize(norm.c_str()).x;
             dl->AddText(ImVec2(at.x + (tile - w) * 0.5f, at.y + tile + 3.0f), DebuggerU32(DebuggerMuted(), 1.0f),
                         norm.c_str());
@@ -729,25 +826,21 @@ void StudioDebuggerPanel::RenderLayersView() {
             ImGui::PopID();
         }
         ImGui::Spacing();
-        WrappedMuted("The number under each filter is its weight norm (the size of its weights).");
-        for (const auto& l : cache.numbers) ImGui::TextColored(DebuggerText(), "%s", l.c_str());
-    } else if (tab.view == lv::View::WhereItLooks) {
-        RenderWhereItLooks(cache.sample_texture, cache.sample_width, cache.sample_height);
-    } else if (tab.view == lv::View::Units) {
-        WrappedMuted("Each unit's value for this sample (" + std::to_string(cache.units.size()) + " units).");
+    };
+    const auto draw_units = [&](LayerViewCache& c) {
         const ImVec2 size(std::min(ImGui::GetContentRegionAvail().x, 720.0f), 150.0f);
         const ImVec2 at = ImGui::GetCursorScreenPos();
         ImGui::InvisibleButton("##units", size);
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        const float limit = static_cast<float>(std::max(1e-12, cache.numerics.maximum_absolute));
+        const float limit = static_cast<float>(std::max(1e-12, c.numerics.maximum_absolute));
         const float mid = at.y + size.y * 0.5f;
         dl->AddLine(ImVec2(at.x, mid), ImVec2(at.x + size.x, mid), DebuggerU32(DebuggerFaint(), 0.6f));
-        const size_t n = cache.units.size();
+        const size_t n = c.units.size();
         const ui::Tokens& t = ui::CurrentTokens();
         for (size_t i = 0; i < n; ++i) {
             const float x0 = at.x + size.x * static_cast<float>(i) / static_cast<float>(n);
             const float x1 = std::max(x0 + 1.0f, at.x + size.x * static_cast<float>(i + 1) / static_cast<float>(n) - (n < 128 ? 1.0f : 0.0f));
-            const float v = std::isfinite(cache.units[i]) ? cache.units[i] / limit : 0.0f;
+            const float v = std::isfinite(c.units[i]) ? c.units[i] / limit : 0.0f;
             const float h = v * size.y * 0.5f;
             dl->AddRectFilled(ImVec2(x0, std::min(mid, mid - h)), ImVec2(x1, std::max(mid, mid - h)),
                               ui::ToU32(ui::DivergingAt(t, v >= 0.0f ? 1.0f : -1.0f)));
@@ -755,89 +848,192 @@ void StudioDebuggerPanel::RenderLayersView() {
         if (ImGui::IsItemHovered() && n > 0) {
             const float fx = (ImGui::GetIO().MousePos.x - at.x) / size.x;
             const size_t i = std::min(n - 1, static_cast<size_t>(std::max(0.0f, fx) * static_cast<float>(n)));
-            ImGui::SetTooltip("Unit %zu = %s", i, Number(cache.units[i]).c_str());
+            ImGui::SetTooltip("Unit %zu = %s", i, Number(c.units[i]).c_str());
         }
         ImGui::Spacing();
-        for (const auto& l : cache.numbers) ImGui::TextColored(DebuggerText(), "%s", l.c_str());
-    } else if (tab.view == lv::View::Values) {
-        WrappedMuted("Every value of this layer's output for the sample (log scale counts).");
-        DrawBars(cache.bars, ImVec2(std::min(ImGui::GetContentRegionAvail().x, 480.0f), 140.0f), DebuggerAccent());
-        if (cache.numerics.finite_count > 0) {
-            ImGui::TextColored(DebuggerFaint(), "%s", Number(cache.numerics.minimum).c_str());
+    };
+    const auto draw_values = [&](LayerViewCache& c) {
+        DrawBars(c.bars, ImVec2(std::min(ImGui::GetContentRegionAvail().x, 480.0f), 140.0f), DebuggerAccent());
+        if (c.numerics.finite_count > 0) {
+            ImGui::TextColored(DebuggerFaint(), "%s", Number(c.numerics.minimum).c_str());
             ImGui::SameLine(std::min(ImGui::GetContentRegionAvail().x, 480.0f) -
-                            ImGui::CalcTextSize(Number(cache.numerics.maximum).c_str()).x);
-            ImGui::TextColored(DebuggerFaint(), "%s", Number(cache.numerics.maximum).c_str());
+                            ImGui::CalcTextSize(Number(c.numerics.maximum).c_str()).x);
+            ImGui::TextColored(DebuggerFaint(), "%s", Number(c.numerics.maximum).c_str());
         }
         ImGui::Spacing();
-        for (const auto& l : cache.numbers) ImGui::TextColored(DebuggerText(), "%s", l.c_str());
-    } else if (weight_view) {
-        std::string what = (tab.view == lv::View::Gradients ? "Gradients of " : "") + cache.matrix_info.name + " " +
-                           lv::ShapeText(cache.matrix_info.shape) + " shown as " + cache.layout.description +
-                           ". Hover gives the value and its index.";
-        WrappedMuted(what);
-        // Conv weights: all kernel positions side by side, or one position's
-        // output-by-input slice.
-        if (const size_t positions = lv::KernelPositions(cache.matrix_info)) {
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(DebuggerMuted(), "Slice");
-            ImGui::SameLine();
-            const std::string preview = heatmap_kernel_position_ < 0
-                ? std::string("All kernel positions")
-                : lv::KernelPositionText(cache.matrix_info, static_cast<size_t>(heatmap_kernel_position_));
-            ImGui::SetNextItemWidth(ImGui::CalcTextSize(preview.c_str()).x + ImGui::GetFrameHeight() * 2.0f);
-            if (ImGui::BeginCombo("##StudioDebuggerKernelSlice", preview.c_str())) {
-                if (ImGui::Selectable("All kernel positions", heatmap_kernel_position_ < 0)) {
-                    heatmap_kernel_position_ = -1;
-                    heatmap_row_begin_ = 0;
-                }
-                for (size_t k = 0; k < positions; ++k) {
-                    const std::string text = lv::KernelPositionText(cache.matrix_info, k);
-                    if (ImGui::Selectable(text.c_str(), heatmap_kernel_position_ == static_cast<int>(k))) {
-                        heatmap_kernel_position_ = static_cast<int>(k);
-                        heatmap_row_begin_ = 0;
-                    }
-                }
-                ImGui::EndCombo();
-            }
-        }
-        if (cache.shown_columns < cache.layout.columns) {
-            WrappedMuted("The first " + std::to_string(cache.shown_columns) + " columns (this device's largest "
-                         "picture).");
-        }
+    };
+    const auto draw_heatmap = [&](LayerViewCache& c) {
         const float width = std::min(ImGui::GetContentRegionAvail().x, 900.0f);
-        const float cell_h = std::clamp(width / static_cast<float>(std::max<size_t>(1, cache.shown_columns)), 3.0f, 24.0f);
-        const float height = std::clamp(cell_h * static_cast<float>(cache.row_count), 24.0f, 260.0f);
+        const float cell_h = std::clamp(width / static_cast<float>(std::max<size_t>(1, c.shown_columns)), 3.0f, 24.0f);
+        const float height = std::clamp(cell_h * static_cast<float>(c.row_count), 24.0f, 260.0f);
         const ImVec2 at = ImGui::GetCursorScreenPos();
         ImGui::InvisibleButton("##heatmap", ImVec2(width, height));
-        if (cache.matrix_texture) {
-            ImGui::GetWindowDrawList()->AddImageRounded(Texture(cache.matrix_texture), at,
+        if (c.matrix_texture) {
+            ImGui::GetWindowDrawList()->AddImageRounded(Texture(c.matrix_texture), at,
                                                         ImVec2(at.x + width, at.y + height), ImVec2(0, 0),
                                                         ImVec2(1, 1), IM_COL32_WHITE, 4.0f);
         }
-        if (ImGui::IsItemHovered() && cache.row_count > 0 && cache.shown_columns > 0) {
+        if (ImGui::IsItemHovered() && c.row_count > 0 && c.shown_columns > 0) {
             const ImVec2 m = ImGui::GetIO().MousePos;
-            const size_t col = std::min(cache.shown_columns - 1,
-                                        static_cast<size_t>(std::max(0.0f, (m.x - at.x) / width) * cache.shown_columns));
-            const size_t row = std::min(cache.row_count - 1,
-                                        static_cast<size_t>(std::max(0.0f, (m.y - at.y) / height) * cache.row_count));
-            const float value = cache.matrix[row * cache.layout.columns + col];
-            const size_t flat = lv::MatrixFlatIndex(cache.matrix_info, cache.row_begin + row, col, cache.kernel_position);
-            ImGui::SetTooltip("%s", lv::ElementText(cache.matrix_info, flat, value).c_str());
+            const size_t col = std::min(c.shown_columns - 1,
+                                        static_cast<size_t>(std::max(0.0f, (m.x - at.x) / width) * c.shown_columns));
+            const size_t row = std::min(c.row_count - 1,
+                                        static_cast<size_t>(std::max(0.0f, (m.y - at.y) / height) * c.row_count));
+            const float value = c.matrix[row * c.layout.columns + col];
+            const size_t flat = lv::MatrixFlatIndex(c.matrix_info, c.row_begin + row, col, c.kernel_position);
+            ImGui::SetTooltip("%s", lv::ElementText(c.matrix_info, flat, value).c_str());
         }
-        DrawLegend(Scale::Diverging, "-" + Number(cache.limit), "+" + Number(cache.limit));
-        if (cache.layout.rows > cache.row_count) {
-            ImGui::SameLine(0.0f, 16.0f);
-            if (ui::SecondaryButton(ICON_FA_MINUS "##RowsUp", cache.row_begin > 0))
-                heatmap_row_begin_ = cache.row_begin - std::min(cache.row_begin, cache.row_count);
+        DrawLegend(Scale::Diverging, "-" + Number(c.limit), "+" + Number(c.limit));
+    };
+    const auto draw_numbers = [](const LayerViewCache& c) {
+        for (const auto& l : c.numbers) ImGui::TextColored(DebuggerText(), "%s", l.c_str());
+    };
+
+    // A view in three parts: what it shows and its controls (once, above
+    // both sides when comparing), its pictures, and its numbers (per side).
+    const auto header = [&]() {
+        if (tab.view == lv::View::FeatureMaps && cache.spatial) {
+            const size_t count = cache.spatial->channels;
+            WrappedMuted(lv::ChannelsShownText(std::min(count, layer_all_channels_ ? kAllChannelsCap : kStrongestShown),
+                                               count, layer_all_channels_, settings.channel_sort) +
+                         " Click one to inspect it.");
+            static const char* const kScales[] = {"Heat", "Grayscale"};
+            int pick = colour;
+            ImGui::TextColored(DebuggerMuted(), "Colour");
             ImGui::SameLine();
-            ImGui::Text("Rows %zu-%zu of %zu", cache.row_begin + 1, cache.row_begin + cache.row_count, cache.layout.rows);
+            if (ui::SegmentedControl("StudioDebuggerMapColour", kScales, 2, &pick) && pick != colour) {
+                if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
+                capture_session_->feature_map_colour = static_cast<core::FeatureMapColour>(pick);
+            }
+            static const char* const kSorts[] = {"Strongest first", "Highest peak first", "Channel order"};
+            const float sort_width = ImGui::CalcTextSize(kSorts[1]).x + ImGui::GetFrameHeight() * 2.0f;
+            SameLineIfFits(ImGui::CalcTextSize("Order").x + ImGui::GetStyle().ItemSpacing.x + sort_width, 16.0f);
+            ImGui::TextColored(DebuggerMuted(), "Order");
             ImGui::SameLine();
-            if (ui::SecondaryButton(ICON_FA_PLUS "##RowsDown", cache.row_begin + cache.row_count < cache.layout.rows))
-                heatmap_row_begin_ = cache.row_begin + cache.row_count;
+            int sort = static_cast<int>(settings.channel_sort);
+            ImGui::SetNextItemWidth(sort_width);
+            if (ImGui::Combo("##StudioDebuggerChannelSort", &sort, kSorts, 3) &&
+                sort != static_cast<int>(settings.channel_sort)) {
+                if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
+                capture_session_->channel_sort = static_cast<core::ChannelSort>(sort);
+                selected_channel_rank_ = 0;
+            }
+            if (count > kStrongestShown) {
+                const std::string toggle = layer_all_channels_
+                    ? (settings.channel_sort == core::ChannelSort::Strongest ? "The 16 strongest" : "The first 16")
+                    : "All " + std::to_string(count) + " channels";
+                SameLineIfFits(ui::ButtonWidth(toggle.c_str(), ui::ButtonSize::Regular), 16.0f);
+                if (ui::SecondaryButton(toggle.c_str())) {
+                    layer_all_channels_ = !layer_all_channels_;
+                    selected_channel_rank_ = 0;
+                }
+            }
+            if (comparing) WrappedMuted("Both sides show the same channels, in the shown snapshot's order.");
+        } else if (tab.view == lv::View::Filters) {
+            WrappedMuted(lv::FiltersText(cache.filters) +
+                         " The number under each filter is its weight norm (the size of its weights).");
+        } else if (tab.view == lv::View::Units) {
+            WrappedMuted("Each unit's value for this sample (" + std::to_string(cache.units.size()) + " units).");
+        } else if (tab.view == lv::View::Values) {
+            WrappedMuted("Every value of this layer's output for the sample (log scale counts).");
+        } else if (weight_view) {
+            WrappedMuted((tab.view == lv::View::Gradients ? "Gradients of " : "") + cache.matrix_info.name + " " +
+                         lv::ShapeText(cache.matrix_info.shape) + " shown as " + cache.layout.description +
+                         ". Hover gives the value and its index." +
+                         (comparing ? " Both sides show the same rows and slice, each on its own scale." : ""));
+            // Conv weights: all kernel positions side by side, or one
+            // position's output-by-input slice.
+            if (const size_t positions = lv::KernelPositions(cache.matrix_info)) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(DebuggerMuted(), "Slice");
+                ImGui::SameLine();
+                const std::string preview = heatmap_kernel_position_ < 0
+                    ? std::string("All kernel positions")
+                    : lv::KernelPositionText(cache.matrix_info, static_cast<size_t>(heatmap_kernel_position_));
+                ImGui::SetNextItemWidth(ImGui::CalcTextSize(preview.c_str()).x + ImGui::GetFrameHeight() * 2.0f);
+                if (ImGui::BeginCombo("##StudioDebuggerKernelSlice", preview.c_str())) {
+                    if (ImGui::Selectable("All kernel positions", heatmap_kernel_position_ < 0)) {
+                        heatmap_kernel_position_ = -1;
+                        heatmap_row_begin_ = 0;
+                    }
+                    for (size_t k = 0; k < positions; ++k) {
+                        const std::string text = lv::KernelPositionText(cache.matrix_info, k);
+                        if (ImGui::Selectable(text.c_str(), heatmap_kernel_position_ == static_cast<int>(k))) {
+                            heatmap_kernel_position_ = static_cast<int>(k);
+                            heatmap_row_begin_ = 0;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine(0.0f, 16.0f);
+            }
+            if (cache.layout.rows > cache.row_count) {
+                if (ui::SecondaryButton(ICON_FA_MINUS "##RowsUp", cache.row_begin > 0))
+                    heatmap_row_begin_ = cache.row_begin - std::min(cache.row_begin, cache.row_count);
+                ImGui::SameLine();
+                ImGui::AlignTextToFramePadding();
+                ImGui::Text("Rows %zu-%zu of %zu", cache.row_begin + 1, cache.row_begin + cache.row_count,
+                            cache.layout.rows);
+                ImGui::SameLine();
+                if (ui::SecondaryButton(ICON_FA_PLUS "##RowsDown", cache.row_begin + cache.row_count < cache.layout.rows))
+                    heatmap_row_begin_ = cache.row_begin + cache.row_count;
+            } else if (lv::KernelPositions(cache.matrix_info)) {
+                ImGui::NewLine();
+            }
+            if (cache.shown_columns < cache.layout.columns) {
+                WrappedMuted("The first " + std::to_string(cache.shown_columns) + " columns (this device's largest "
+                             "picture).");
+            }
         }
         ImGui::Spacing();
-        DrawBars(cache.bars, ImVec2(std::min(ImGui::GetContentRegionAvail().x, 360.0f), 90.0f), DebuggerAccentText());
-        for (const auto& l : cache.numbers) ImGui::TextColored(DebuggerText(), "%s", l.c_str());
+    };
+    const auto pictures = [&](LayerViewCache& c, bool shown) {
+        if (tab.view == lv::View::FeatureMaps && c.spatial) {
+            draw_maps(c, shown);
+            ImGui::TextColored(DebuggerMuted(), "%zu dead channels (zero everywhere)", c.dead);
+        } else if (tab.view == lv::View::Filters && !c.filters.filters.empty()) {
+            draw_filters(c);
+        } else if (tab.view == lv::View::Units) {
+            draw_units(c);
+        } else if (tab.view == lv::View::Values) {
+            draw_values(c);
+        } else if (weight_view) {
+            draw_heatmap(c);
+            ImGui::Spacing();
+            DrawBars(c.bars, ImVec2(std::min(ImGui::GetContentRegionAvail().x, 360.0f), 90.0f), DebuggerAccentText());
+        }
+        draw_numbers(c);
+    };
+
+    if (!cache.error.empty()) {
+        WrappedMuted("This view could not be read: " + cache.error);
+    } else if (tab.view == lv::View::WhereItLooks) {
+        RenderWhereItLooks(cache.sample_texture, cache.sample_width, cache.sample_height);
+    } else {
+        header();
+        if (comparing && ImGui::BeginTable("##LayerCompare", 2, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextColumn();
+            ImGui::TextColored(DebuggerBright(), "%s",
+                               training_snapshots::SnapshotTitle(layer_capture_label_, ShownTrainingRecord()).c_str());
+            pictures(cache, true);
+            ImGui::TableNextColumn();
+            ImGui::PushID("compared");
+            ImGui::TextColored(DebuggerBright(), "%s",
+                               training_snapshots::SnapshotTitle(compare_label_, ShownTrainingRecord()).c_str());
+            LayerViewCache* other = compare_view_cache_.get();
+            if (!compared)
+                WrappedMuted("This snapshot did not keep " + layer.node_name + ".");
+            else if (!other || other->key.empty())
+                WrappedMuted("Reading the snapshot...");
+            else if (!other->error.empty())
+                WrappedMuted("This view could not be read: " + other->error);
+            else
+                pictures(*other, false);
+            ImGui::PopID();
+            ImGui::EndTable();
+        } else {
+            pictures(cache, true);
+        }
     }
 
     ImGui::EndChild();
@@ -907,11 +1103,13 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
             const float h = side * static_cast<float>(cache.sample_height) / static_cast<float>(std::max(1, cache.sample_width));
             ImGui::Image(Texture(cache.sample_texture), ImVec2(side, h));
         }
-        const auto& facts = session_.sample_facts;
+        const auto& facts = ShownSampleFacts();
         const std::string item = ItemHeadline(facts, selected_layer_sample_, {});
         if (!item.empty()) ImGui::TextUnformatted(item.c_str());
-        if (const std::string sample = SampleText(session_); !sample.empty())
-            ImGui::TextColored(DebuggerMuted(), "%s", sample.c_str());
+        const std::string sample = shown_training_run_.empty()
+                                       ? SampleText(session_)
+                                       : "From " + shown_training_run_ + ", " + training_snapshots::SnapshotName(layer_capture_label_);
+        if (!sample.empty()) ImGui::TextColored(DebuggerMuted(), "%s", sample.c_str());
         if (cache.samples > 1) ImGui::TextColored(DebuggerMuted(), "Item %zu of %zu in the captured batch",
                                                   selected_layer_sample_ + 1, cache.samples);
         // The evaluation pass (dropout off, BatchNorm on its running

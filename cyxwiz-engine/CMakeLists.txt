@@ -686,6 +686,7 @@ set(ENGINE_SOURCES
     src/gui/panels/studio_debugger_panel_layout.cpp
     src/gui/panels/studio_debugger_layers.cpp
     src/gui/panels/studio_debugger_where_it_looks.cpp
+    src/gui/panels/studio_debugger_runs.cpp
     src/gui/panels/studio_debugger_capture.cpp
     src/gui/panels/layer_capture_controls.cpp
     src/gui/panels/gradcam_panel.cpp

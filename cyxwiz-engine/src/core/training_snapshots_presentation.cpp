@@ -110,14 +110,15 @@ RunRow DebugRunRow(const DebugRunStoreSummary& run) {
     row.run_id = run.run_id;
     row.kind = "Local Debug";
     row.title = run.run_id;
-    row.when = run.timestamp;
+    row.when = WhenFromRunId(run.run_id);  // the same clock as training runs, so both sort together
+    if (row.when.empty()) row.when = run.timestamp;
     row.detail = std::string(run.success ? "Passed" : "Needs attention") +
                  (run.issue_count ? kDot + std::to_string(run.issue_count) + (run.issue_count == 1 ? " issue" : " issues")
-                                  : "") +
-                 (run.summary.empty() ? "" : kDot + run.summary);
+                                  : "");
     const auto add = [&row](std::string key, std::string value) {
         if (!value.empty()) row.details.emplace_back(std::move(key), std::move(value));
     };
+    add("Summary", run.summary);
     add("Traces", std::to_string(run.trace_count));
     add("Events", std::to_string(run.event_count));
     add("Recommendations", std::to_string(run.recommendation_count));
@@ -166,6 +167,16 @@ SnapshotTable SnapshotTableFor(const std::string& run_id, const std::optional<Tr
     table.note = record ? "Each snapshot's metrics are its epoch's, saved with the run when the snapshot was taken."
                         : "This run's epochs were not recorded (snapshots saved before metrics were kept with them).";
     return table;
+}
+
+std::string SnapshotTitle(const std::string& label, const std::optional<TrainingRunRecord>& record) {
+    int epoch = 0;
+    if (std::sscanf(label.c_str(), "epoch_%d", &epoch) != 1) return label;
+    std::string title = "Epoch " + std::to_string(epoch);
+    if (const TrainingEpochRecord* e = EpochOf(record, epoch); e && e->val_metric)
+        title += kDot + std::string("validation ") + (record->regression ? "MAE " : "") +
+                 MetricText(*e->val_metric, record->regression);
+    return title;
 }
 
 std::string StepperText(size_t index, size_t count, int epoch, const std::optional<TrainingRunRecord>& record) {

@@ -58,6 +58,9 @@ SnapshotTable SnapshotTableFor(const std::string& run_id, const std::optional<Tr
 std::string StepperText(size_t index, size_t count, int epoch, const std::optional<TrainingRunRecord>& record);
 // "epoch 20" for a snapshot label, the label itself otherwise ("local_debug").
 std::string SnapshotName(const std::string& label);
+// A side of a comparison: "Epoch 20 · validation 92.97 %" ("Epoch 20" when
+// the epoch has no validation or no record).
+std::string SnapshotTitle(const std::string& label, const std::optional<TrainingRunRecord>& record);
 
 // "18.4 MB".
 std::string SizeText(std::uintmax_t bytes);

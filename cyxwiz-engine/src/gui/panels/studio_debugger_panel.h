@@ -11,6 +11,8 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/studio_debugger_presentation.h"
 #include "../../core/layer_capture.h"
+#include "../../core/layer_capture_store.h"
+#include "../../core/training_snapshots_presentation.h"
 #include "../../core/engine_config.h"
 #include "../icons.h"
 #include <atomic>
@@ -23,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -169,8 +172,18 @@ private:
     void RenderInspectorPane();
     void RenderTraceDrawer(float height);
     void RenderLensContent();
+    // Overview > Runs: Local Debug runs and training runs with layer
+    // snapshots (studio_debugger_runs.cpp, TOFIX178 6.3d).
     void RenderRunHistory();
     void RenderRunComparison();
+    // Overview > Compare for a shown training run: its snapshot table.
+    void RenderSnapshotTable();
+    // Shows a training run's snapshots in place of the debug run's capture.
+    void ShowTrainingRun(const std::string& run_id);
+    // The shown run's sample facts: the training run's when one is shown.
+    const StudioDebuggerSampleFacts& ShownSampleFacts() const;
+    // The shown training run's epochs (none for a debug run).
+    const std::optional<TrainingRunRecord>& ShownTrainingRecord() const;
     void LoadStoredRun(const std::string& run_id);
     void RequestRunHistoryRefresh();
     void PollRunProgress();
@@ -273,6 +286,17 @@ private:
     std::string layer_capture_run_id_;   // the run the capture belongs to
     std::string layer_capture_label_;    // "local_debug", "epoch_0005"
     std::vector<std::string> layer_capture_labels_;
+    // Stepping snapshots (6.3d) keeps the picked layer: its node, matched in
+    // the next capture read.
+    std::string layer_keep_node_;
+    // Reads another snapshot of the shown run, keeping the layer, tab and channel.
+    void ShowLayerSnapshot(const std::string& label);
+    // Compare with (6.3d): another snapshot of the same run, read in the
+    // background and drawn beside the shown one.
+    std::string compare_label_;  // empty = none
+    std::string compare_read_;   // "<run>/<label>" read (or being read)
+    std::shared_ptr<const LayerCapture> compare_capture_;
+    std::shared_ptr<LayerViewCache> compare_view_cache_;
     bool layer_capture_loading_ = false;
     bool layer_capture_listed_ = false;  // the run store was asked for this run
     size_t selected_layer_ = 0;
@@ -285,6 +309,13 @@ private:
     std::shared_ptr<LayerViewCache> layer_view_cache_;
     struct WhereItLooksState;
     std::shared_ptr<WhereItLooksState> where_it_looks_;
+    // A training run shown instead of the debug run (6.3d); empty = none.
+    std::string shown_training_run_;
+    std::optional<TrainingRunRecord> shown_training_record_;
+    std::vector<LayerCaptureInfo> shown_training_captures_;
+    StudioDebuggerSampleFacts shown_training_facts_;
+    std::vector<training_snapshots::RunRow> training_run_rows_;  // listed with the saved runs
+    std::set<std::string> open_run_details_;
     // This session's capture settings once changed here; empty = the user's
     // defaults. Save as my default writes them and empties it.
     std::optional<core::StudioDebuggerConfig> capture_session_;
