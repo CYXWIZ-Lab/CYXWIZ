@@ -59,4 +59,13 @@ struct CYXWIZ_API LayerCost {
 
 CYXWIZ_API LayerCost CountMultiplyAdds(const LayerCostInput& layer);
 
+class Module;
+
+// A SequentialModel module's sizes for the counter (CostInput of the
+// convolution, dense, recurrent and attention modules), for one sample's
+// input and output shapes. Other modules (pooling, activations, norms,
+// reshapes, a Python module) give kind None.
+CYXWIZ_API LayerCostInput ModuleCostInput(const Module& module, const std::vector<size_t>& input,
+                                          const std::vector<size_t>& output);
+
 }  // namespace cyxwiz

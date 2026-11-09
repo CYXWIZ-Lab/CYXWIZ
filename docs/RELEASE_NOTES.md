@@ -33,6 +33,15 @@ private Data Studio tickets (`tofix*/track*`).
   it, and the local inference server returns calibrated probabilities.
 - A graph that reads a CSV of pixel columns into a CNN through a leading
   Reshape (784 -> 28,28,1) trains, and compiles before its data is loaded.
+- **pycyxwiz.model**: the Model window from Python on a `Sequential`:
+  `summary` (the same multiply-add counter), `lr_range_test` /
+  `LearningRateRange`, `saliency`, `smooth_grad`, `integrated_gradients`,
+  and the calibration fits (`reliability`, `fit_temperature`, `fit_platt`,
+  `fit_isotonic`); numpy optional. Example `examples/python/model_tools.py`.
+- **Plugin SDK**: new headers `cyxwiz/calibration.h`,
+  `cyxwiz/learning_rate_range.h` and `cyxwiz/model_cost.h`
+  (`CountMultiplyAdds`, `ModuleCostInput`); the convolution, dense,
+  recurrent and attention modules gain a non-virtual `CostInput`.
 
 - **Tools > Optimization and Calculus is one window** (guide in
   `docs/usage/optimization_calculus.md`). Its six menu items open it on

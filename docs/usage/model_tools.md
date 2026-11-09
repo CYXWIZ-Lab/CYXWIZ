@@ -12,7 +12,8 @@
 
 How good the trained model is lives in Data Studio's **Results > Test**:
 its Errors, Threshold and Calibration sections (see
-[Testing a trained model](testing.md)).
+[Testing a trained model](testing.md)). Python has the same work in
+`pycyxwiz.model` (see the end of this page).
 
 The numbers below are from the example graph
 `examples/cyxgraph/model_tools/mnist_cnn.cyxgraph`: a small CNN on the 10,000
@@ -126,3 +127,16 @@ t-SNE, UMAP) and **Colour by** (True class, Predicted, Right / wrong). The
 example's Dense 128 under PCA: the first two components explain 19.6 % and
 17.7 %. **Send to Projection tab** opens the features in Data Studio's
 Explore > Projection for more.
+
+## From Python
+
+`pycyxwiz.model` runs the same code on a `pycyxwiz.Sequential`: `summary`
+(the same multiply-add counter), `lr_range_test` and `LearningRateRange`,
+`saliency`, `smooth_grad`, `integrated_gradients`, and the calibration fits
+(`reliability`, `fit_temperature`, `fit_platt`, `fit_isotonic` and their
+`apply` functions). Grad-CAM needs a convolution, which a Python
+`Sequential` cannot hold yet. `examples/python/model_tools.py` runs all of it
+on a small network; the reference is section 6.5 of
+`python_doc/pycyxwiz.md`, checked against PyTorch and scikit-learn by
+`cyxwiz-backend/python/tests/test_python_model.py` (ctest
+`pycyxwiz_python_model`).

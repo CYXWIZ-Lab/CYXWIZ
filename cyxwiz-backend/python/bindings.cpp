@@ -22,6 +22,7 @@
 #include "bindings_tensor.h"
 #include "bindings_module.h"
 #include "bindings_optimize.h"
+#include "bindings_model.h"
 // Distributed training
 #include "cyxwiz/distributed/process_group.h"
 #include "cyxwiz/distributed/cpu_backend.h"
@@ -3280,5 +3281,6 @@ Example queries:
     }, py::arg("value"), "Set RL training pause flag");
 
     // pycyxwiz.nodes: last, so the classes it uses are bound (TOFIX125 P3).
+    pycyxwiz_bindings::BindModelTools(m);
     pycyxwiz_bindings::InstallNodesSubmodule(m);
 }

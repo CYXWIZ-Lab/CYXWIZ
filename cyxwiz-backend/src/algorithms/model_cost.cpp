@@ -1,5 +1,9 @@
 #include "cyxwiz/model_cost.h"
 
+#include "cyxwiz/layers/recurrent.h"
+#include "cyxwiz/layers/transformer.h"
+#include "cyxwiz/sequential.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -159,6 +163,133 @@ LayerCost CountMultiplyAdds(const LayerCostInput& layer) {
         }
     }
     return {true, 0, ""};
+}
+
+// ---- The modules' sizes ---------------------------------------------------------
+
+namespace {
+
+LayerCostInput Shaped(LayerCostKind kind, const std::vector<size_t>& input, const std::vector<size_t>& output) {
+    LayerCostInput cost;
+    cost.kind = kind;
+    cost.input = input;
+    cost.output = output;
+    return cost;
+}
+
+}  // namespace
+
+LayerCostInput Conv1DModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::Conv1D, input, output);
+    cost.kernel = kernel_size_;
+    return cost;
+}
+
+LayerCostInput Conv2DModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::Conv2D, input, output);
+    cost.kernel = kernel_size_;
+    return cost;
+}
+
+LayerCostInput DepthwiseConv2DModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::DepthwiseConv2D, input, output);
+    cost.kernel = kernel_size_;
+    return cost;
+}
+
+LayerCostInput ConvTranspose2DModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::ConvTranspose2D, input, output);
+    cost.kernel = kernel_size_;
+    return cost;
+}
+
+LayerCostInput Conv3DModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::Conv3D, input, output);
+    cost.kernel = kernel_size_;
+    return cost;
+}
+
+LayerCostInput LinearModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::Dense, input, output);
+    return cost;
+}
+
+LayerCostInput TimeDistributedDenseModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::Dense, input, output);
+    return cost;
+}
+
+LayerCostInput LSTMModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::LSTM, input, output);
+    cost.hidden = static_cast<long long>(hidden_size_);
+    cost.stacked = layer_->GetNumLayers();
+    cost.bidirectional = bidirectional_;
+    return cost;
+}
+
+LayerCostInput GRUModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::GRU, input, output);
+    cost.hidden = static_cast<long long>(hidden_size_);
+    cost.stacked = layer_->GetNumLayers();
+    cost.bidirectional = bidirectional_;
+    return cost;
+}
+
+LayerCostInput RNNModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::RNN, input, output);
+    cost.hidden = static_cast<long long>(hidden_size_);
+    cost.stacked = layer_->GetNumLayers();
+    cost.bidirectional = bidirectional_;
+    return cost;
+}
+
+LayerCostInput TransformerEncoderModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::TransformerBlock, input, output);
+    cost.heads = static_cast<long long>(num_heads_);
+    cost.feedforward = static_cast<long long>(dim_feedforward_);
+    return cost;
+}
+
+LayerCostInput TransformerDecoderModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::TransformerBlock, input, output);
+    const auto& options = layer_->GetBlockOptions();
+    cost.heads = static_cast<long long>(num_heads_);
+    cost.kv_heads = options.num_kv_heads;
+    cost.feedforward = static_cast<long long>(dim_feedforward_);
+    cost.gated = options.ffn_type == TransformerFeedForwardType::Gated;
+    return cost;
+}
+
+LayerCostInput MultiHeadAttentionModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::Attention, input, output);
+    cost.heads = static_cast<long long>(num_heads_);
+    cost.kv_heads = options_.num_kv_heads;
+    return cost;
+}
+
+LayerCostInput LinearAttentionModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::LinearAttention, input, output);
+    cost.heads = static_cast<long long>(num_heads_);
+    return cost;
+}
+
+LayerCostInput ModuleCostInput(const Module& module, const std::vector<size_t>& input,
+                               const std::vector<size_t>& output) {
+    if (const auto* typed = dynamic_cast<const Conv1DModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const Conv2DModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const DepthwiseConv2DModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const ConvTranspose2DModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const Conv3DModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const LinearModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const TimeDistributedDenseModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const LSTMModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const GRUModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const RNNModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const TransformerEncoderModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const TransformerDecoderModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const MultiHeadAttentionModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const LinearAttentionModule*>(&module)) return typed->CostInput(input, output);
+    return Shaped(LayerCostKind::None, input, output);
 }
 
 }  // namespace cyxwiz

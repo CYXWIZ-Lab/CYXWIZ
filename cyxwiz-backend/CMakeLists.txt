@@ -711,6 +711,7 @@ if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
         python/bindings_tensor.cpp
         python/bindings_module.cpp
         python/bindings_optimize.cpp
+        python/bindings_model.cpp
     )
 
     target_link_libraries(pycyxwiz PRIVATE
@@ -735,7 +736,7 @@ if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
     # calculus against the optimization fixture (D10): run with the Python
     # pycyxwiz is built for; the backend DLLs are in the runtime folder.
     if(Python3_EXECUTABLE)
-        foreach(_pycyxwiz_test python_modules python_nodes python_bundle python_text python_optimize)
+        foreach(_pycyxwiz_test python_modules python_nodes python_bundle python_text python_optimize python_model)
             add_test(NAME pycyxwiz_${_pycyxwiz_test}
                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_${_pycyxwiz_test}.py
                         $<TARGET_FILE_DIR:pycyxwiz> ${CMAKE_BINARY_DIR}/bin/$<CONFIG>)

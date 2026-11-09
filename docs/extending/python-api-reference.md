@@ -12,6 +12,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 - [pycyxwiz.calculus](#pycyxwizcalculus)
 - [pycyxwiz.distributed](#pycyxwizdistributed)
 - [pycyxwiz.linalg](#pycyxwizlinalg)
+- [pycyxwiz.model](#pycyxwizmodel)
 - [pycyxwiz.nodes](#pycyxwiznodes)
 - [pycyxwiz.optimize](#pycyxwizoptimize)
 - [pycyxwiz.signal](#pycyxwizsignal)
@@ -1569,6 +1570,44 @@ Linear algebra functions (MATLAB-style)
 | `transpose(arg0: Sequence[Sequence[float]]) -> list[list[float]]` | Matrix transpose |
 | `zeros(n: int) -> list[list[float]]` | Create square zero matrix |
 | `zeros(rows: int, cols: int) -> list[list[float]]` | Create zero matrix |
+
+## pycyxwiz.model
+
+The model's summary, learning rate range test, explanations and calibration (the Engine's Tools > Model and Results > Test > Calibration)
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `apply_isotonic(x: Sequence[float], y: Sequence[float], scores: Sequence[float]) -> list[float]` | The isotonic fit's probabilities of the scores: linear between fit_isotonic's points, clipped outside them. |
+| `apply_platt(a: float, b: float, scores: Sequence[float]) -> list[float]` | Platt's probabilities of the scores, from fit_platt's (a, b). |
+| `fit_isotonic(scores: Sequence[float], labels: Sequence[int]) -> tuple` | Isotonic regression of the label on the score, as scikit-learn's IsotonicRegression(out_of_bounds='clip'): the fitted points (x, y). |
+| `fit_platt(scores: Sequence[float], labels: Sequence[int]) -> tuple` | Platt's sigmoid 1 / (1 + exp(a s + b)) of a yes / no score, as scikit-learn's _sigmoid_calibration: (a, b). |
+| `fit_temperature(probabilities: object, truth: Sequence[int], rows: Sequence[int] \| None = None) -> dict` | One temperature T minimizing the mean negative log-likelihood of softmax(log p / T) over rows (all by default). It changes no prediction. |
+| `integrated_gradients(model: Sequential, x: object, baseline: object = None, target: int = -1, steps: int = 64) -> dict` | Integrated Gradients from baseline (zeros by default) in steps midpoint steps, all in one batch. attribution_sum is about score - baseline_score (the completeness check). |
+| `lr_range_test(model: Sequential, loss: Loss, optimizer: Optimizer, x: object, y: object, start: float = 1e-07, end: float = 10.0, steps: int = 100, batch_size: int = 64, smoothing: float = 0.05, stop_factor: float = 4.0) -> dict` | A learning rate range test (Smith 2017): trains on batches of x, y (in order, round again at the end; integer y, such as class indices for CrossEntropyLoss, stays integer) raising the optimizer's rate every step, then puts the model's weights and the optimizer's rate back (its moments stay changed: pass a new optimizer). Returns points, stop_reason and analysis. |
+| `reliability(confidence: Sequence[float], correct: Sequence[int], bins: int = 10) -> dict` | How often the model is right when it says p: equal bands of [0, 1] and the expected calibration error. |
+| `saliency(model: Sequential, x: object, target: int = -1) -> dict` | d score / d input for one sample (target -1 = the predicted class). Returns gradients, absolute (\|gradients\|, Captum's Saliency) and target, in x's shape with a batch of one. |
+| `smooth_grad(model: Sequential, x: object, target: int = -1, samples: int = 50, noise: float = 0.1, seed: int = 0) -> dict` | Saliency averaged over noisy copies of x (gradients is the average). |
+| `summary(model: Sequential, input_shape: Sequence[int], batch: int = 1) -> dict` | Each module's output shape, parameters and multiply-adds for one sample (as PyTorch's torch.utils.flop_counter counts FLOPs, halved). input_shape is one sample's shape. Returns a dict: rows (index, name, output, parameters, trainable, multiply_adds, counted, formula), parameters, multiply_adds, all_counted, parameter_bytes (float32). |
+| `with_temperature(probabilities: object, temperature: float) -> object` | Probabilities (a row or [rows, classes]) after a temperature. |
+
+### Classes
+
+### `LearningRateRange`
+
+The range test's rules without training: the rate of each step (start x (end / start)^(step / (steps - 1))), the smoothed loss, the stop once it passes stop_factor x its lowest. record() each step's loss.
+
+| Member | What it does |
+|---|---|
+| `LearningRateRange(self: model.LearningRateRange, start: float = 1e-07, end: float = 10.0, steps: int = 100, smoothing: float = 0.05, stop_factor: float = 4.0) -> None` | Rates from start to end over steps steps; smoothing weighs the newest loss in the running average |
+| `analyse(self: model.LearningRateRange) -> dict` | Where to train: lowest (index, rate, loss), steepest (the most negative slope of the smoothed loss against log10(rate) up to the lowest, numpy.gradient), lowest_over_ten, slopes |
+| `current_learning_rate` (property) | The rate for the next step |
+| `finished` (property) | True once the steps ran out or the loss blew up |
+| `learning_rate_at(self: model.LearningRateRange, step: int) -> float` | The rate of a step (0 = start) |
+| `points` (property) | Each step: learning_rate, loss, smoothed |
+| `record(self: model.LearningRateRange, loss: float) -> bool` | The loss of the step just taken at current_learning_rate; True when the test is over |
+| `stop_reason` (property) | Why the test ended, in words |
 
 ## pycyxwiz.nodes
 

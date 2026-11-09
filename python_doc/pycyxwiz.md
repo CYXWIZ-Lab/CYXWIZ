@@ -1083,6 +1083,81 @@ print(path["points"][-1], path["values"][-1])   # [-1.5059, 2.2735] 6.2829: stil
 print(opt.follow("(1 - x)^2 + 100*(y - x^2)^2", [-2, 2], "sgd", lr=0.01)["diverged_at"])  # 4
 ```
 
+### 6.5 `pycyxwiz.model`
+
+What Tools > Model and Results > Test > Calibration work out, from Python, on
+the same SDK code as the Engine. Inputs are numpy arrays (any number type,
+strided views too) or nested lists; arrays come back as nested lists, so
+numpy is not needed. Every number is checked against PyTorch and
+scikit-learn by `cyxwiz-backend/python/tests/test_python_model.py`.
+
+- `summary(model, input_shape, batch=1)`: runs one batch of zeros and
+  returns a dict `rows` (each module: `index`, `name`, `output` shape,
+  `parameters`, `trainable`, `multiply_adds`, `counted`, `formula`),
+  `parameters`, `multiply_adds`, `all_counted`, `parameter_bytes`.
+  Multiply-adds are counted as `torch.utils.flop_counter` counts FLOPs,
+  halved; a module written in Python is not counted (`counted` False).
+- `lr_range_test(model, loss, optimizer, x, y, start=1e-7, end=10, steps=100,
+  batch_size=64, smoothing=0.05, stop_factor=4)`: trains on batches of `x`
+  and `y` (in order; integer `y` stays integer, as CrossEntropyLoss reads
+  class indices) raising the rate every step, stops once the smoothed loss
+  passes `stop_factor` x its lowest, then puts the model's weights and the
+  optimizer's rate back. The optimizer's moments stay changed: pass a new
+  one. Returns `points` (`learning_rate`, `loss`, `smoothed`),
+  `stop_reason` and `analysis` (`lowest`, `lowest_rate`, `lowest_loss`,
+  `steepest`, `steepest_rate`, `lowest_over_ten`, `slopes`).
+- `LearningRateRange(start, end, steps, smoothing, stop_factor)`: the same
+  rules without training, for your own loop: `current_learning_rate`,
+  `record(loss)` (True when over), `finished`, `stop_reason`, `points`,
+  `analyse()`.
+- `saliency(model, x, target=-1)`, `smooth_grad(model, x, target=-1,
+  samples=50, noise=0.1, seed=0)`: d score / d input for one sample
+  (`target` -1: the predicted class) -> `gradients`, `absolute`, `target`.
+- `integrated_gradients(model, x, baseline=None, target=-1, steps=64)`: from
+  `baseline` (zeros) in midpoint steps -> `attributions`, `target`,
+  `steps`, `score`, `baseline_score`, `attribution_sum` (about `score -
+  baseline_score`).
+- `reliability(confidence, correct, bins=10)` -> `bins` (`low`, `high`,
+  `count`, `confidence`, `accuracy`), `ece`, `rows`.
+- `fit_temperature(probabilities, truth, rows=None)` -> `temperature`,
+  `nll_before`, `nll_after`; `with_temperature(probabilities, temperature)`.
+- `fit_platt(scores, labels)` -> `(a, b)`; `apply_platt(a, b, scores)`.
+- `fit_isotonic(scores, labels)` -> `(x, y)`; `apply_isotonic(x, y, scores)`.
+
+Grad-CAM needs a convolution, and a Python `Sequential` cannot hold one yet;
+the Engine's Model > Explain has it.
+
+**Use case: summary, range test, training, explanation and calibration**
+(`examples/python/model_tools.py`, a network of 4 -> 32 -> 3 on three
+made-up classes of 200 points)
+```python
+import numpy as np
+import pycyxwiz as cx
+mt = cx.model
+
+model = cx.Sequential()
+model.add_linear(4, 32)
+model.add_relu()
+model.add_linear(32, 3)
+
+s = mt.summary(model, [4])
+print(s["parameters"], s["multiply_adds"])   # 259 224
+print(s["rows"][0]["formula"])                 # 4 · 32 = 128
+
+test = mt.lr_range_test(model, cx.CrossEntropyLoss(), cx.Adam(learning_rate=1e-3),
+                        x_train, y_train, start=1e-5, end=10.0, batch_size=32)
+print(len(test["points"]), test["analysis"]["steepest_rate"])   # 97 0.0187 (lowest loss 0.626 at 0.534)
+
+# ... 30 epochs of Adam at 0.0187: test accuracy 0.830 on 200 rows
+
+ig = mt.integrated_gradients(model, x_test[2], steps=64)   # row 2: a 0 read as 2
+print([round(v, 3) for v in ig["attributions"]])   # [-1.943, 1.879, 2.272, -0.344]
+print(ig["attribution_sum"], ig["score"] - ig["baseline_score"])   # 1.864 1.872
+
+fit = mt.fit_temperature(probabilities, y_test.tolist(), rows=list(range(0, 200, 2)))
+print(fit["temperature"])   # 1.283: calibration error 0.0724 -> 0.0562 on the odd rows
+```
+
 ---
 
 ## 7. Time Series (`pycyxwiz.timeseries`)
