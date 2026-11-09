@@ -85,6 +85,12 @@ public:
 
     virtual std::string LastError() const = 0;
 
+    // Optional: shows copy `copy` in the plugin's own view (the MuJoCo
+    // plugin's viewport) as later Resets and Steps move it, until
+    // ShowCopy(-1) or Release. False: these environments have no picture
+    // (the Engine then draws what it can, or says there is no view).
+    virtual bool ShowCopy(int /*copy*/) { return false; }
+
     // Frees the batch inside the plugin's own module.
     virtual void Release() = 0;
 

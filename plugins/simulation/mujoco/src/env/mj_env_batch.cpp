@@ -26,7 +26,8 @@ std::string FormatSetting(double value, bool integer) {
 }  // namespace
 
 MjEnvBatch* MjEnvBatch::Create(const MjTaskSpec& spec, const std::string& model_path,
-                               const std::map<std::string, std::string>& settings, int count, std::string& error) {
+                               const std::map<std::string, std::string>& settings, int count,
+                               std::shared_ptr<MjViewSlot> view, std::string& error) {
     if (count < 1) {
         error = "Ask for at least one copy.";
         return nullptr;
@@ -39,6 +40,9 @@ MjEnvBatch* MjEnvBatch::Create(const MjTaskSpec& spec, const std::string& model_
     if (!batch->model_) return nullptr;
     batch->task_ = spec.create(values);
     batch->count_ = count;
+    batch->view_ = std::move(view);
+    batch->model_path_ = model_path;
+    batch->title_ = spec.name;
     batch->observation_size_ = batch->task_->ObservationSize(batch->model_);
     batch->action_size_ = static_cast<int>(batch->model_->nu);
     const int limit = static_cast<int>(values.at("max_episode_steps"));
@@ -61,9 +65,40 @@ MjEnvBatch* MjEnvBatch::Create(const MjTaskSpec& spec, const std::string& model_
 }
 
 MjEnvBatch::~MjEnvBatch() {
+    ShowCopy(-1);
     pool_.reset();  // no worker touches the data below any more
     for (mjData* data : data_) mj_deleteData(data);
     if (model_) mj_deleteModel(model_);
+}
+
+bool MjEnvBatch::ShowCopy(int copy) {
+    if (!view_) return false;
+    std::lock_guard<std::mutex> lock(view_->mutex);
+    if (copy < 0 || copy >= count_) {
+        if (view_->owner == this) view_->owner = nullptr;
+        shown_copy_ = -1;
+        return copy < 0;
+    }
+    view_->owner = this;
+    view_->model_path = model_path_;
+    view_->title = title_;
+    view_->copy = copy;
+    view_->state.clear();
+    ++view_->version;
+    shown_copy_ = copy;
+    return true;
+}
+
+void MjEnvBatch::Publish() {
+    if (shown_copy_ < 0) return;
+    std::lock_guard<std::mutex> lock(view_->mutex);
+    if (view_->owner != this) {  // another batch took the view
+        shown_copy_ = -1;
+        return;
+    }
+    view_->state.resize(static_cast<size_t>(mj_stateSize(model_, mjSTATE_FULLPHYSICS)));
+    mj_getState(model_, data_[shown_copy_], view_->state.data(), mjSTATE_FULLPHYSICS);
+    ++view_->version;
 }
 
 void MjEnvBatch::StartCopy(int copy, float* observation) {
@@ -83,6 +118,7 @@ bool MjEnvBatch::Reset(uint64_t seed, float* observations) {
     else for (int i = 0; i < count_; ++i) start(i);
     started_ = true;
     error_.clear();
+    Publish();
     return true;
 }
 
@@ -119,6 +155,7 @@ bool MjEnvBatch::Step(const float* actions, const PluginEnvironmentStepBuffers& 
     if (pool_) pool_->Run(count_, step);
     else for (int i = 0; i < count_; ++i) step(i);
     error_.clear();
+    Publish();
     return true;
 }
 

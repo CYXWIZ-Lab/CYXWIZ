@@ -85,7 +85,8 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
 MjViewportPanel::RunState MjViewportPanel::GetRunState() const {
     RunState s;
     s.graph = graph_sim_active_;
-    s.can_drive = sim_executor_ && !s.graph;
+    s.playback = playback_;
+    s.can_drive = sim_executor_ && !s.graph && !s.playback;
     s.active = s.can_drive && sim_executor_->GetMode() != SimMode::Stopped;
     const SimState state = sim_executor_ ? sim_executor_->GetState() : SimState::Idle;
     s.running = s.active && state == SimState::Running;
@@ -149,9 +150,10 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     const bool running = rs.running;
     const bool paused = rs.paused;
     const bool can_drive = rs.can_drive;
-    const char* busy = graph ? kGraphReason : nullptr;
+    const bool playback = rs.playback;
+    const char* busy = graph ? kGraphReason : playback ? kPlaybackReason : nullptr;
     // The scene moves: keep the Engine at full frame rate without input
-    if (running || graph) ctx_->RequestFullFrameRate();
+    if (running || graph || playback) ctx_->RequestFullFrameRate();
 
     // The model's name and source, then the controls centred on its two lines
     const float row_y = ImGui::GetCursorPosY();
@@ -213,15 +215,19 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     }
 
     // Status and the View menu, at the right edge
-    const char* status = graph ? "Driven by the graph run" : running ? "Running" : paused ? "Paused" : "Stopped";
-    const UiColor& tone = graph || paused ? colors.accent_text : running ? colors.success : colors.pending;
+    const char* status = graph      ? "Driven by the graph run"
+                         : playback ? "Policy playback"
+                         : running  ? "Running"
+                         : paused   ? "Paused"
+                                    : "Stopped";
+    const UiColor& tone = graph || playback || paused ? colors.accent_text : running ? colors.success : colors.pending;
     const float pill_w = ui->StatusPillWidth(status);
     const float view_w = ui->ButtonWidth("View", UiButtonSize::Regular);
     const float right_w = pill_w + spacing + view_w;
     next(right_w, field_h);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - right_w));
     ui->StatusPill("##status", status, tone);
-    if (graph && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kGraphReason);
+    if (busy && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", busy);
     next(view_w, button_h);
     if (ui->SecondaryButton("View")) ImGui::OpenPopup("mujoco_view_menu");
     RenderViewMenu(env, renderer);
@@ -410,6 +416,12 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
 
 void MjViewportPanel::RenderEpisodeStrip(MjEnvManager& env) {
     const UiColors colors = ctx_->GetUi()->Colors();
+    if (playback_) {  // the Engine's Policy Playback panel has the episode's numbers
+        ImGui::TextColored(ToImVec4(colors.text_dim), "Policy playback");
+        ImGui::SameLine();
+        ImGui::TextColored(ToImVec4(colors.text), "%s", playback_label_.c_str());
+        return;
+    }
     const SceneSnapshot snap = Snapshot(env);
     char value[64];
     bool first = true;

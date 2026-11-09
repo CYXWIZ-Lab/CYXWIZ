@@ -443,6 +443,7 @@ The `IEnvironmentBatch` you return:
 | `bool Reset(uint64_t seed, float* observations)` | Starts every copy and writes `[count x observation_size]`. Copy `i`'s randomness comes from `(seed, i)` alone, so one seed gives the same runs on any number of threads |
 | `bool Step(const float* actions, const PluginEnvironmentStepBuffers& out)` | `actions` is `[count x action_size]` (discrete: the choice's index as a float). Advance every copy one step and write `observations`, `rewards`, `terminated` (a terminal state) and `truncated` (the step limit). A copy whose episode ends starts its next episode in the same call: its row of `final_observations` gets the observation it ended on, and its row of `observations` the first one of the next episode. Rows of copies that did not end are left alone in `final_observations`. Return false with `LastError()` when a step fails |
 | `std::string LastError()` | Why the last `Reset` or `Step` failed |
+| `bool ShowCopy(int copy)` | Optional (default: false, no picture). Show copy `copy` in your own view as later `Reset`s and `Step`s move it, until `ShowCopy(-1)` or `Release`; the Engine calls it to play a trained policy. Return false for a copy out of range. The batch must still not use your plugin object: share a small state object with your view instead (the MuJoCo plugin publishes the copy's `mj_getState` into a slot its viewport reads) |
 | `void Release()` | Free the batch in your own module (`delete this`) |
 
 Every buffer is flat, row-major, one row per copy, so the Engine moves all

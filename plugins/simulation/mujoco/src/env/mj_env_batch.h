@@ -6,6 +6,7 @@
 // the plugin's shutdown safely.
 
 #include "mj_task.h"
+#include "mj_view_slot.h"
 #include "mj_worker_pool.h"
 #include "plugin/interfaces/i_environment_provider.h"
 
@@ -18,9 +19,10 @@ namespace cyxwiz::plugin::mujoco {
 class MjEnvBatch final : public IEnvironmentBatch {
 public:
     // Null with the reason when the model does not load or the settings do
-    // not fit the task.
+    // not fit the task. view: where ShowCopy publishes (null: no picture).
     static MjEnvBatch* Create(const MjTaskSpec& spec, const std::string& model_path,
-                              const std::map<std::string, std::string>& settings, int count, std::string& error);
+                              const std::map<std::string, std::string>& settings, int count,
+                              std::shared_ptr<MjViewSlot> view, std::string& error);
     ~MjEnvBatch();
 
     int Count() const override { return count_; }
@@ -29,6 +31,7 @@ public:
     bool Reset(uint64_t seed, float* observations) override;
     bool Step(const float* actions, const PluginEnvironmentStepBuffers& out) override;
     std::string LastError() const override { return error_; }
+    bool ShowCopy(int copy) override;
     void Release() override { delete this; }
 
     int Threads() const { return pool_ ? pool_->Threads() : 1; }
@@ -38,6 +41,8 @@ private:
     MjEnvBatch() = default;
 
     void StartCopy(int copy, float* observation);
+    // The shown copy's state into the view slot (after Reset and Step)
+    void Publish();
 
     mjModel* model_ = nullptr;
     std::vector<mjData*> data_;
@@ -51,6 +56,10 @@ private:
     int max_episode_steps_ = 0;
     bool started_ = false;
     std::string error_;
+    std::shared_ptr<MjViewSlot> view_;
+    std::string model_path_;
+    std::string title_;
+    int shown_copy_ = -1;
 };
 
 // The environment's description for IEnvironmentProvider::GetEnvironments,

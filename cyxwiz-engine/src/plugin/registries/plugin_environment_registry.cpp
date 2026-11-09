@@ -82,6 +82,18 @@ bool EnvironmentBatch::Step(const float* actions, const PluginEnvironmentStepBuf
     return ok;
 }
 
+bool EnvironmentBatch::ShowCopy(int copy, std::string& error) {
+    bool shown = false;
+    auto* batch = batch_;
+    const auto result =
+        security::SafeExecute(plugin_id_, "ShowEnvironmentCopy", [&shown, batch, copy]() { shown = batch->ShowCopy(copy); });
+    if (!result.success) {
+        error = "The plugin " + plugin_id_ + " failed to show " + info_.name + ": " + result.error_message;
+        return false;
+    }
+    return shown;
+}
+
 PluginEnvironmentRegistry::PluginEnvironmentRegistry() {
     auto& builtin = ClassicControlEnvironments();
     for (const auto& info : builtin.GetEnvironments()) Register(kBuiltinEnvironmentProviderId, info, &builtin, nullptr);

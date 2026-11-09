@@ -200,7 +200,62 @@ std::vector<PluginPanelInfo> MuJoCoPlugin::GetPanels() {
     return { viewport, browser };
 }
 
+void MuJoCoPlugin::SyncPlayback() {
+    std::string path, title;
+    std::vector<mjtNum> state;
+    int copy = 0;
+    bool active = false;
+    {
+        std::lock_guard<std::mutex> lock(view_slot_->mutex);
+        active = view_slot_->owner != nullptr;
+        if (active) {
+            path = view_slot_->model_path;
+            title = view_slot_->title;
+            copy = view_slot_->copy;
+            if (view_slot_->version != shown_version_) {
+                shown_version_ = view_slot_->version;
+                state = view_slot_->state;
+            }
+        }
+    }
+    if (active) {
+        if (viewport_panel_.IsGraphSimActive()) return;  // the graph run keeps its model
+        if (!playback_) {
+            playback_ = true;
+            restore_path_ = loaded_mjcf_path_;
+            restore_title_ = viewport_panel_.ModelTitle();
+            restore_subtitle_ = viewport_panel_.ModelSubtitle();
+        }
+        if (loaded_mjcf_path_ != path) {
+            if (!LoadEnvironment(path)) {
+                spdlog::warn("[MuJoCo] Policy playback: the model {} did not load", path);
+                return;
+            }
+            viewport_panel_.SetModelLabel(title, "Policy playback");
+            state.clear();
+            shown_version_ = 0;  // apply the latest state next frame, after the renderer starts
+        }
+        viewport_panel_.SetPlayback(true, title + " \xC2\xB7 copy " + std::to_string(copy));
+        if (!state.empty()) {
+            std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+            const mjModel* m = env_manager_.GetModel();
+            mjData* d = env_manager_.GetMutableData();
+            if (m && d && static_cast<size_t>(mj_stateSize(m, mjSTATE_FULLPHYSICS)) == state.size()) {
+                mj_setState(m, d, state.data(), mjSTATE_FULLPHYSICS);
+                mj_forward(m, d);
+            }
+        }
+    } else if (playback_) {
+        playback_ = false;
+        viewport_panel_.SetPlayback(false);
+        if (!restore_path_.empty() && restore_path_ != loaded_mjcf_path_ && LoadEnvironment(restore_path_))
+            viewport_panel_.SetModelLabel(restore_title_, restore_subtitle_);
+    }
+}
+
 void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
+    if (panel_id == "mujoco_viewport") SyncPlayback();
+
     // Lazy renderer init — deferred from LoadEnvironment to avoid
     // cross-DLL GL context/glad issues. Init happens here in the
     // engine's render loop where the GL context is guaranteed current.
@@ -244,10 +299,12 @@ PluginCommandState MuJoCoPlugin::GetCommandState(const std::string& command_id) 
     const auto run = viewport_panel_.GetRunState();
     auto disabled = [](const char* reason) { return PluginCommandState{false, reason, false}; };
     if (command_id == "load") {
+        if (run.playback) return disabled(MjViewportPanel::kPlaybackReason);
         return run.graph ? disabled("A graph run is stepping the loaded model. Stop the graph run to load another.")
                          : PluginCommandState{};
     }
     if (run.graph) return disabled(MjViewportPanel::kGraphReason);
+    if (run.playback) return disabled(MjViewportPanel::kPlaybackReason);
     if (!env_manager_.IsLoaded()) return disabled("Load a model first: Environment Library or Load MJCF Model...");
     if (command_id == "run") return run.running ? disabled("The model is running.") : PluginCommandState{};
     if (command_id == "pause") return run.running ? PluginCommandState{} : disabled("Nothing is running.");
@@ -502,7 +559,7 @@ PluginEnvironmentCreateResult MuJoCoPlugin::CreateEnvironments(const std::string
     if (!task) return {nullptr, "The MuJoCo plugin has no environment '" + id + "'."};
     std::string error;
     IEnvironmentBatch* batch = MjEnvBatch::Create(
-        *task, (std::filesystem::path(assets_dir_) / task->model_file).string(), settings, count, error);
+        *task, (std::filesystem::path(assets_dir_) / task->model_file).string(), settings, count, view_slot_, error);
     return {batch, error};
 }
 

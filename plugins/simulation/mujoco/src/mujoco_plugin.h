@@ -24,9 +24,12 @@
 #include "mj_renderer.h"
 #include "mj_viewport_panel.h"
 #include "mj_env_browser_panel.h"
+#include "env/mj_view_slot.h"
 #include "rl/observation_filter.h"
 
+#include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 
 struct GLFWwindow;  // Forward declare
@@ -136,6 +139,17 @@ private:
     MjGraphClock graph_clock_;
     bool viewport_visible_ = true;
     bool renderer_needs_init_ = false;
+
+    // Policy playback (TOFIX195 S5.2): a training copy the Engine shows here.
+    // Batches publish into the slot; each frame the viewport follows it.
+    void SyncPlayback();
+    std::shared_ptr<MjViewSlot> view_slot_ = std::make_shared<MjViewSlot>();
+    uint64_t shown_version_ = 0;
+    bool playback_ = false;
+    // What the viewport showed before playback, given back when it ends
+    std::string restore_path_;
+    std::string restore_title_;
+    std::string restore_subtitle_;
 };
 
 } // namespace cyxwiz::plugin::mujoco

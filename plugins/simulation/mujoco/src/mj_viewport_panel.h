@@ -53,11 +53,25 @@ public:
     void SetGraphSimActive(bool active) { graph_sim_active_ = active; }
     bool IsGraphSimActive() const { return graph_sim_active_; }
 
+    // The Engine plays a trained policy in a copy shown here (ShowCopy):
+    // the scene follows it and the local controls are off. label: what the
+    // episode strip says ("Inverted Pendulum · copy 0").
+    void SetPlayback(bool active, std::string label = {}) {
+        playback_ = active;
+        playback_label_ = std::move(label);
+    }
+    bool IsPlayback() const { return playback_; }
+    const std::string& ModelTitle() const { return model_title_; }
+    const std::string& ModelSubtitle() const { return model_subtitle_; }
+
     // The run controls, shared by the control row and the Simulation menu
     static constexpr const char* kGraphReason =
         "The graph run is stepping this model. Stop the graph run to control it here.";
+    static constexpr const char* kPlaybackReason =
+        "Policy playback is showing this scene. Stop the playback in the Engine to control it here.";
     struct RunState {
         bool graph = false;      // a graph run steps the model
+        bool playback = false;   // policy playback shows a training copy
         bool active = false;     // a viewport run exists (running or paused)
         bool running = false;
         bool paused = false;
@@ -88,6 +102,8 @@ private:
     std::string model_subtitle_;
     std::string pending_open_path_;  // Opened before the next frame's ImGui calls
     std::atomic<bool> graph_sim_active_{false};  // from BeginGraphRun to EndGraphRun
+    bool playback_ = false;
+    std::string playback_label_;
 
     // Speed: real-time factor the user asks for, or as fast as possible
     double speed_ = 1.0;

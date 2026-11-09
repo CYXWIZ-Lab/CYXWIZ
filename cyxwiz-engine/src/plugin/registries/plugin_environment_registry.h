@@ -35,6 +35,9 @@ public:
 
     bool Reset(uint64_t seed, float* observations, std::string& error);
     bool Step(const float* actions, const PluginEnvironmentStepBuffers& out, std::string& error);
+    // Shows one copy in the plugin's own view (-1: stop showing). False when
+    // the environment has no picture, or the plugin failed (error says why).
+    bool ShowCopy(int copy, std::string& error);
 
 private:
     friend class PluginEnvironmentRegistry;

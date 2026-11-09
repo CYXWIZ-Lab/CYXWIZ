@@ -1,6 +1,7 @@
 // The MuJoCo plugin's environments for reinforcement learning (src/env):
 // what they describe, how settings are read, same-step autoreset, the same
-// runs for one seed on any number of threads, and steps a second.
+// runs for one seed on any number of threads, steps a second, and showing one
+// copy in the viewport (ShowCopy publishes its physics state).
 //
 //   test_mujoco_environments [--trajectory <file.json>]
 //
@@ -15,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -53,7 +55,7 @@ Rollout Run(const MjTaskSpec& spec, const PluginEnvironmentInfo& info, std::map<
             int count, uint64_t seed, int steps) {
     Rollout all;
     std::string error;
-    IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), settings, count, error);
+    IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), settings, count, nullptr, error);
     Check(batch != nullptr, spec.id + " batch: " + error);
     if (!batch) return all;
     const size_t obs_values = static_cast<size_t>(count) * info.observation_size;
@@ -111,7 +113,7 @@ void CheckSettings() {
     std::string error;
     const auto refused = [&](std::map<std::string, std::string> settings, const std::string& expected) {
         error.clear();
-        IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), settings, 1, error);
+        IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), settings, 1, nullptr, error);
         if (batch) batch->Release();
         return !batch && error == expected;
     };
@@ -121,7 +123,7 @@ void CheckSettings() {
     Check(refused({{"frame_skip", "1.5"}}, "Frame skip must be a whole number (got '1.5')."), "not whole");
     Check(refused({}, "") == false, "the defaults are fine");
     error.clear();
-    Check(!MjEnvBatch::Create(spec, "missing.xml", {}, 1, error) && error.find("did not load") != std::string::npos,
+    Check(!MjEnvBatch::Create(spec, "missing.xml", {}, 1, nullptr, error) && error.find("did not load") != std::string::npos,
           "a model that does not load is an error");
 }
 
@@ -129,7 +131,7 @@ void CheckAutoreset() {
     const auto& spec = *FindMjTask("InvertedPendulum-v5");
     const auto info = Describe(spec);
     std::string error;
-    IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), {{"max_episode_steps", "5"}}, 2, error);
+    IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), {{"max_episode_steps", "5"}}, 2, nullptr, error);
     Check(batch != nullptr, "pendulum batch: " + error);
     if (!batch) return;
     std::vector<float> obs(8), final_obs(8, 0.0f), rewards(2);
@@ -190,7 +192,7 @@ void ReportSpeed() {
         const auto info = Describe(spec);
         for (const int count : {1, 8, 64}) {
             std::string error;
-            IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), {}, count, error);
+            IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), {}, count, nullptr, error);
             if (!batch) continue;
             const size_t obs_values = static_cast<size_t>(count) * info.observation_size;
             std::vector<float> obs(obs_values), final_obs(obs_values), rewards(count);
@@ -261,6 +263,49 @@ void WriteTrajectories(const std::string& path) {
 
 }  // namespace
 
+// ShowCopy: the shown copy's physics state reaches the view slot after Reset
+// and every Step; out-of-range copies are refused; another batch can take the
+// view; hiding or releasing frees it; a batch without a view has no picture.
+void CheckShowCopy() {
+    const MjTaskSpec& spec = *FindMjTask("InvertedPendulum-v5");
+    std::string error;
+    auto view = std::make_shared<MjViewSlot>();
+    IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), {}, 2, view, error);
+    Check(batch != nullptr, "a batch with a view: " + error);
+    if (!batch) return;
+    Check(!batch->ShowCopy(2), "copy 2 of 2 copies is refused");
+    Check(batch->ShowCopy(1), "copy 1 is shown");
+    Check(view->owner == batch && view->copy == 1 && view->model_path == ModelPath(spec) && !view->title.empty(),
+          "the view names the batch, the copy, the model file and the task");
+    std::vector<float> obs(2 * 4), final_obs(2 * 4), rewards(2), actions(2, 0.5f);
+    std::vector<uint8_t> terminated(2), truncated(2);
+    batch->Reset(3, obs.data());
+    mjModel* model = mj_loadXML(ModelPath(spec).c_str(), nullptr, nullptr, 0);
+    const size_t size = static_cast<size_t>(mj_stateSize(model, mjSTATE_FULLPHYSICS));
+    mj_deleteModel(model);
+    Check(view->state.size() == size, "Reset publishes the copy's full physics state");
+    const uint64_t after_reset = view->version;
+    const auto before = view->state;
+    const PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(), truncated.data(),
+                                           final_obs.data()};
+    for (int s = 0; s < 5; ++s) batch->Step(actions.data(), out);
+    Check(view->version == after_reset + 5 && view->state != before, "every Step publishes the moved state");
+
+    IEnvironmentBatch* other = MjEnvBatch::Create(spec, ModelPath(spec), {}, 1, view, error);
+    Check(other && other->ShowCopy(0) && view->owner == other, "another batch takes the view");
+    const uint64_t taken = view->version;
+    batch->Step(actions.data(), out);
+    Check(view->version == taken && view->owner == other, "the first batch no longer publishes");
+    if (other) other->Release();
+    Check(view->owner == nullptr, "releasing the shown batch frees the view");
+    Check(batch->ShowCopy(0) && batch->ShowCopy(-1) && view->owner == nullptr, "ShowCopy(-1) hides it");
+    batch->Release();
+
+    IEnvironmentBatch* plain = MjEnvBatch::Create(spec, ModelPath(spec), {}, 1, nullptr, error);
+    Check(plain && !plain->ShowCopy(0), "a batch without a view has no picture");
+    if (plain) plain->Release();
+}
+
 int main(int argc, char** argv) {
     std::string trajectory;
     for (int i = 1; i + 1 < argc; ++i) {
@@ -270,6 +315,7 @@ int main(int argc, char** argv) {
     CheckSettings();
     CheckAutoreset();
     CheckDeterminism();
+    CheckShowCopy();
     ReportSpeed();
     if (!trajectory.empty()) WriteTrajectories(trajectory);
     if (failures == 0) std::printf("test_mujoco_environments: all checks passed\n");
