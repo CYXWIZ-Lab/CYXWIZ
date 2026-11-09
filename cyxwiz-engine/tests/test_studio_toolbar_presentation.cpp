@@ -96,6 +96,12 @@ int main() {
           "a project that requires Local Debug disables Train on a stale pass");
     t.debug.graph_changed = false;
     Check(TrainState(t).enabled && TrainState(t).tooltip == "Train (F5)", "a current pass: plain tooltip");
+    TrainInputs rl;  // an RL graph: no Local Debug in the tooltip
+    rl.train_available = rl.graph_valid = rl.rl_graph = true;
+    train = TrainState(rl);
+    Check(train.enabled && train.tooltip.find("Local Debug") == std::string::npos &&
+              train.tooltip.find("PPO trains the policy") != std::string::npos,
+          "an RL graph's Train tooltip says PPO trains it: " + train.tooltip);
 
     // Folding: labels first, then Edit / View menus, then the mode menu.
     BarWidths w;

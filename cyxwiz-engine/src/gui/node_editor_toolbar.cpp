@@ -168,6 +168,7 @@ void NodeEditor::ShowToolbar() {
     // an RL graph has no batch to debug (TOFIX195 S4.3)
     const bool rl_graph = std::any_of(nodes_.begin(), nodes_.end(), [](const MLNode& n) { return cyxwiz::IsRLGraphNode(n.type); });
     train_in.require_debug = require_debug_before_train_ && !rl_graph;
+    train_in.rl_graph = rl_graph;
     train_in.debug = local_debug_status_;
     const st::TrainButton train = st::TrainState(train_in);
     const auto tone = [&t](st::Tone value) {
@@ -203,10 +204,13 @@ void NodeEditor::ShowToolbar() {
     const std::string debug_full = ICON_FA_BUG " Local Debug";
     const float sp = Spacing();
     const float arrow_w = ImGui::CalcTextSize(ICON_FA_CHEVRON_RIGHT).x + 2.0f * sp;
+    // a PPO run's line and Stop in Train's place
+    const float rl_w = ImGui::CalcTextSize((std::string(ICON_FA_SPINNER " ") + rl_status_).c_str()).x + sp +
+                       W(ICON_FA_STOP " Stop##stop_ppo") + sp;
 
     st::BarWidths widths;
     widths.fixed = W(chip_label(name).c_str()) + sp + W(ICON_FA_FLOPPY_DISK " Save") + sp +
-                   (training_active || rl_active ? 230.0f : W(ICON_FA_PLAY " Train")) +
+                   (training_active ? 230.0f : rl_active ? rl_w : W(ICON_FA_PLAY " Train")) +
                    (pipeline_running ? 150.0f + 50.0f + W(ICON_FA_STOP " Cancel") + 3.0f * sp : 0.0f);
     widths.edit_icons = W(ICON_FA_OBJECT_GROUP) + W(ICON_FA_COPY) + W(ICON_FA_TRASH) + 2.0f * sp;
     widths.edit_menu = W(edit_menu_label);
@@ -361,7 +365,7 @@ void NodeEditor::ShowToolbar() {
                                                   ui::StepButtonWidth(debug_label.c_str(), debug_status.c_str()) +
                                                   (dots ? 2.0f * sp : 2.0f * arrow_w)
                                             : 0.0f;
-    const float run_w = training_active || rl_active ? 230.0f : W(ICON_FA_PLAY " Train");
+    const float run_w = training_active ? 230.0f : rl_active ? rl_w : W(ICON_FA_PLAY " Train");
     const float right_w = steps_w + run_w;
 
     // Middle: the mode and its actions (or the simulation / RL group),

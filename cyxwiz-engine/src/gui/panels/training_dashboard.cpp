@@ -296,7 +296,7 @@ void TrainingDashboardPanel::RenderKpis() {
     if (run_) {
         ImGui::SameLine();
         Card("##kpi_speed", "Speed", last_update_ ? Format(last_update_->steps_per_second, "%.0f") : "-",
-             "environment steps per second", w);
+             "steps per second", w);
     }
 }
 

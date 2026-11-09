@@ -8,6 +8,8 @@
 #include "../core/pipeline_runtime_capabilities.h"
 #include "../core/extension_node_metadata.h"
 #include "../core/extension_node_registry.h"
+#include "../core/rl_graph_compile.h"
+#include <algorithm>
 #include <spdlog/spdlog.h>
 #include <set>
 #include <queue>
@@ -28,6 +30,14 @@ bool NodeEditor::ValidateGraph(std::string& error_message) {
     if (nodes_.empty()) {
         error_message = "Graph is empty. Add nodes first.";
         return false;
+    }
+
+    // An RL graph has no data input or output: its own compile checks it (TOFIX195 S4.3)
+    if (std::any_of(nodes_.begin(), nodes_.end(), [](const MLNode& n) { return cyxwiz::IsRLGraphNode(n.type); })) {
+        cyxwiz::GraphCompiler compiler;
+        const auto config = compiler.Compile(nodes_, links_);
+        if (!config.is_valid) error_message = config.error_message;
+        return config.is_valid;
     }
 
     // Check for Input node

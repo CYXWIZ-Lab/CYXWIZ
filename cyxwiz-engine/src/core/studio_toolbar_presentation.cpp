@@ -65,6 +65,10 @@ TrainButton TrainState(const TrainInputs& in) {
     }
     out.enabled = true;
     out.tooltip = "Train (F5)";
+    if (in.rl_graph) {
+        out.tooltip += "\nPPO trains the policy on the environment; the RL Training Dashboard shows each update.";
+        return out;
+    }
     const auto& d = in.debug;
     if (d.running) {
         out.tooltip += "\nLocal Debug is still running.";

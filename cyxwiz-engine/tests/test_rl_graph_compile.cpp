@@ -9,6 +9,7 @@
 
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_node_factory.h"
+#include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/core/rl_graph_compile.h"
 #include "../src/core/rl_graph_presentation.h"
 #include "../src/core/rl/ppo_reference.h"
@@ -82,6 +83,7 @@ cyxwiz::TrainingConfiguration Compile(const Graph& g) {
 void CheckValid() {
     Ids id{};
     Graph g = Pattern(id);
+    Check(cyxwiz::HasTrainingGraphStructure(g.nodes), "the toolbar lets Train start an RL graph");
     const auto config = Compile(g);
     Check(config.is_valid && config.rl, "the PPO pattern compiles:" + Issues(config));
     if (!config.rl) return;

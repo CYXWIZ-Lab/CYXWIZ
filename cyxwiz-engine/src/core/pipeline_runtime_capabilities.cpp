@@ -2063,6 +2063,12 @@ ResolvePipelineTrainingBackendSupport(gui::NodeType node_type) {
 bool HasTrainingGraphStructure(
     const std::vector<gui::MLNode>& nodes,
     const std::function<std::optional<PipelineTrainingSupportRole>(const gui::MLNode&)>& extension_role) {
+    // An RL graph (TOFIX195 S4.3): an Environment and PPO; the compile checks the rest
+    const auto has_type = [&nodes](gui::NodeType type) {
+        return std::any_of(nodes.begin(), nodes.end(), [type](const gui::MLNode& n) { return n.type == type; });
+    };
+    if (has_type(gui::NodeType::RLEnvironment) && has_type(gui::NodeType::PPO)) return true;
+
     bool has_source = false;
     bool has_model = false;
     bool has_loss = false;

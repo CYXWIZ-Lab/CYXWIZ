@@ -244,7 +244,7 @@ namespace {
 
 std::string PyNumber(double v) {
     char buf[40];
-    std::snprintf(buf, sizeof(buf), "%.10g", v);
+    std::snprintf(buf, sizeof(buf), "%.7g", v);  // the settings are floats
     return buf;
 }
 

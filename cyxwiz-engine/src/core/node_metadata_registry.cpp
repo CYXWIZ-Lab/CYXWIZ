@@ -781,6 +781,19 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
             "Training-backend deep learning architecture node.");
     }
 
+    // The RL graph's nodes: compiled by GraphCompiler's RL branch and trained
+    // by the Engine's PPO (TOFIX195 S4.3)
+    const std::string rl_reason =
+        "GraphCompiler compiles the RL graph and the Engine's PPO (core/rl) trains it on the environment's "
+        "copies; PipelineExecutor and the supervised trainer do not run it.";
+    for (NodeType node_type : {NodeType::RLEnvironment, NodeType::PolicyHead, NodeType::ValueHead, NodeType::PPO}) {
+        auto it = metadata_.find(node_type);
+        if (it == metadata_.end()) continue;
+        apply_workflow_lane_guidance(node_type, "reinforcement_learning", rl_reason.c_str());
+        UpsertSupportAxis(it->second, "Implementation Owner", "rl_trainer", true, rl_reason);
+        ApplySupportState(it->second, "real", true, rl_reason);
+    }
+
     const auto has_workflow_lane = [](const NodeMetadata& metadata) {
         return std::any_of(
             metadata.support_axes.begin(),

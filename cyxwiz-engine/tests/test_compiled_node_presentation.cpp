@@ -5,6 +5,8 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_document.h"
 #include "../src/core/model_builder.h"
+#include "../src/core/rl_graph_compile.h"
+#include "rl_graph_test_support.h"
 #include "../src/gui/loaders/data_loader.h"
 
 #include <nlohmann/json.hpp>
@@ -304,7 +306,43 @@ void CheckImageSplitCard() {
 
 }  // namespace
 
+// An RL graph (TOFIX195 S4.3): what each node is in the PPO run, no data or shapes
+void CheckRlGraph() {
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+        if (key != "cyxwiz.builtin:CartPole-v1") return false;
+        info.id = "CartPole-v1";
+        info.observation_size = 4;
+        info.discrete_actions = true;
+        info.action_size = 1;
+        info.action_count = 2;
+        return true;
+    });
+    rl_graph_test::Ids id{};
+    const auto g = rl_graph_test::Pattern(id);
+    cyxwiz::GraphCompiler compiler;
+    const auto config = compiler.Compile(g.nodes, g.links, true);
+    cyxwiz::CompiledNodeInputs in;
+    in.state = cyxwiz::LiveCompileState::Compiled;
+    in.config = &config;
+    const auto head = cyxwiz::BuildCompiledNodeCard(g.nodes, g.links, id.phead, in);
+    Check(head.status == "Compiled" && head.role == "Ends the policy network: 2 logits" &&
+              head.status_note.find("PPO on CartPole-v1 x 8") != std::string::npos,
+          "the Policy Head's card: " + head.role + " / " + head.status_note);
+    const auto layer = cyxwiz::BuildCompiledNodeCard(g.nodes, g.links, id.v2, in);
+    Check(layer.role == "Layer 3 of 4 of the value network", "a value layer's card: " + layer.role);
+    auto broken = g;
+    broken.Unlink(id.pa2, id.phead);
+    const auto failed_config = compiler.Compile(broken.nodes, broken.links, true);
+    in.config = &failed_config;
+    in.state = cyxwiz::LiveCompileState::Failed;
+    const auto failed = cyxwiz::BuildCompiledNodeCard(broken.nodes, broken.links, id.phead, in);
+    Check(failed.status == "Compile failed" && !failed.issues.empty(),
+          "a broken RL graph's card says the compile failed, with the head's issue");
+    cyxwiz::SetRLEnvironmentLookup(nullptr);
+}
+
 int main() {
+    CheckRlGraph();
     CheckFormatting();
     CheckNer();
     CheckBerean();

@@ -58,6 +58,7 @@ struct TrainInputs {
     bool train_available = false;  // a training launcher is wired
     bool graph_valid = false;      // the canvas has a dataset, layers and a loss
     bool require_debug = false;    // EngineConfig require_debug_before_train
+    bool rl_graph = false;         // an RL graph: PPO trains it, Local Debug does not apply
     DebugInputs debug;
 };
 struct TrainButton {

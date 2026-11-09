@@ -31,6 +31,7 @@
 #include "../core/pipeline_runtime_capabilities.h"
 #include "panels/training_dashboard.h"
 #include "../core/rl/rl_training_run.h"
+#include "../plugin/registries/plugin_environment_registry.h"
 #include "../core/plot/plot_model.h"
 #include "../scripting/scripting_engine.h"
 #include "../core/extension_node_registry.h"
@@ -190,6 +191,15 @@ NodeEditor::NodeEditor()
             spdlog::info("Graph simulation stopped: its plugin {} is stopping", plugin_id);
             OnStopSimulation();
         }
+    });
+
+    // An RL graph's Environment names an environment of the plugin
+    // environment registry: the compiler finds it there (TOFIX195 S4.3)
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment;
+        if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(key, environment)) return false;
+        info = environment.info;
+        return true;
     });
 }
 

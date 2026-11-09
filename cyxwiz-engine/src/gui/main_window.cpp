@@ -61,7 +61,6 @@
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
 #include "../core/rl_graph_compile.h"
-#include "../plugin/registries/plugin_environment_registry.h"
 #include "panels/training_plot_panel.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
@@ -1145,15 +1144,6 @@ MainWindow::MainWindow()
                 cyxwiz::StudioDebuggerRunMode::Preflight, 0, node_id)) {
             spdlog::info("Explain Node: a Studio Debugger run is already active");
         }
-    });
-
-    // An RL graph's Environment node names an environment of the plugin
-    // environment registry (TOFIX195 S4.3)
-    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
-        cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment;
-        if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(key, environment)) return false;
-        info = environment.info;
-        return true;
     });
 
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {

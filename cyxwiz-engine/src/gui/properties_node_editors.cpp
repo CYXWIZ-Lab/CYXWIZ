@@ -307,9 +307,8 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
     // PPO: the tuned settings for its environment
     const auto preset = cyxwiz::rl_graph::TunedPpoSettings(env.info.id);
     if (!preset) return;
-    properties_rows::Label("Settings", false, preset->source.c_str());
-    const std::string label = "Tuned for " + env.info.id;
-    if (cyxwiz::ui::SecondaryButton(label.c_str())) {
+    properties_rows::Label("Tuned for", false, "Load tuned settings for this environment");
+    if (cyxwiz::ui::SecondaryButton(env.info.id.c_str())) {
         for (const auto& [k, v] : preset->ppo) node.parameters[k] = v;
         if (MLNode* e = editor.GetNodeForConfiguration(env_node->id))
             for (const auto& [k, v] : preset->environment) e->parameters[k] = v;
