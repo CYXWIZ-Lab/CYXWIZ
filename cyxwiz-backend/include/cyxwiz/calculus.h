@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 // Integrals, derivatives and curvature of a typed formula (TOFIX129 D10). The

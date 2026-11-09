@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
 // A typed formula such as "(1 - x)^2 + 100*(y - x^2)^2": parsed once into a
