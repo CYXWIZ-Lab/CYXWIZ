@@ -5,14 +5,16 @@
 namespace cyxwiz {
 namespace {
 
+// Never destroyed: a job still running at exit may release its claim after
+// static destruction.
 std::mutex& HolderMutex() {
-    static std::mutex mutex;
-    return mutex;
+    static auto* mutex = new std::mutex;
+    return *mutex;
 }
 
 std::string& HolderName() {
-    static std::string name;  // Guarded by HolderMutex.
-    return name;
+    static auto* name = new std::string;  // Guarded by HolderMutex.
+    return *name;
 }
 
 std::string BusyLocked(bool training, bool testing) {

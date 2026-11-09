@@ -508,6 +508,7 @@ void FeatureImportancePanel::RunImportanceAnalysis() {
         result_ = FeatureImportanceResult{};
         result_.error_message = busy + "; compute importance when it has finished.";
         has_result_ = true;
+        result_model_ = model.get();
         return;
     }
 

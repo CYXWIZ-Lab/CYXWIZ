@@ -100,9 +100,11 @@ The example: row 1014 is a 6 that the model reads as 5 with 98.8 %.
 Results > Test > Errors has **Explain the first in the Model window**, and
 an **Explain** link under each mistake it shows.
 
-Explain runs the model, so it takes turns with Train, Test, Feature
-Importance and generation from this session's model: whichever starts
-second says which one is running and waits.
+Explain runs the model, so it does not start while Train, Test, Feature
+Importance or generation from this session's model is running, and Test,
+Feature Importance and that generation wait while Explain runs. Whichever
+is refused says which one is running. Train can start meanwhile: it builds
+a new model.
 
 ## Health
 

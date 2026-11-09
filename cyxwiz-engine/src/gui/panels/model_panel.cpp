@@ -799,11 +799,20 @@ void ModelPanel::StartExplain(const std::vector<ExplainRowChoice>& all) {
         "Explain row " + std::to_string(found->row),
         [job, model, config, request, device](LambdaTask&) {
             ExplainOutcome outcome;
-            if (device) {
-                const auto activation = Device(device->type, device->device_id).ActivateExact(false);
-                if (!activation.success) outcome.error = "Could not switch to the device that holds the model: " + activation.message;
+            try {
+                if (device) {
+                    const auto activation = Device(device->type, device->device_id).ActivateExact(false);
+                    if (!activation.success)
+                        outcome.error = "Could not switch to the device that holds the model: " + activation.message;
+                }
+                if (outcome.error.empty()) outcome = cyxwiz::ExplainSample(*model, config, request);
+            } catch (const std::exception& error) {
+                outcome = ExplainOutcome{};
+                outcome.error = std::string("Explain failed: ") + error.what();
+            } catch (...) {
+                outcome = ExplainOutcome{};
+                outcome.error = "Explain failed.";
             }
-            if (outcome.error.empty()) outcome = cyxwiz::ExplainSample(*model, config, request);
             std::lock_guard<std::mutex> lock(job->mutex);
             job->outcome = std::move(outcome);
             job->use.reset();

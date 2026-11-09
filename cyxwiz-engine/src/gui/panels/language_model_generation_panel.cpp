@@ -363,7 +363,7 @@ void LanguageModelGenerationPanel::RenderRawTokenIds() {
         std::string busy;
         auto use = ClaimModel(busy);
         if (!busy.empty()) {
-            raw_result_ = busy;
+            raw_result_ = busy + "; generate when it ends";
             return;
         }
         auto model = model_;
@@ -921,7 +921,7 @@ void LanguageModelGenerationPanel::StartSpeedMeasurement() {
     std::string busy;
     auto use = ClaimModel(busy);
     if (!busy.empty()) {
-        speed_text_ = busy;
+        speed_text_ = busy + "; generate when it ends";
         speed_failed_ = true;
         return;
     }
@@ -981,7 +981,7 @@ bool LanguageModelGenerationPanel::Start(const std::string& message, bool replac
     std::string busy;
     auto use = ClaimModel(busy);
     if (!busy.empty()) {
-        note_ = busy;
+        note_ = busy + "; generate when it ends";
         note_is_error_ = true;
         return false;
     }
