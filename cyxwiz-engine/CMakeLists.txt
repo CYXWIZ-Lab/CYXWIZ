@@ -4303,6 +4303,7 @@ set_target_properties(test_cyxmodel_generation_metadata PROPERTIES
 add_executable(test_cyxmodel_exporter_generation_metadata
     tests/test_cyxmodel_exporter_generation_metadata.cpp
     src/core/model_exporter.cpp
+    src/core/model_decision.cpp
     src/core/guarded_extension_module.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
