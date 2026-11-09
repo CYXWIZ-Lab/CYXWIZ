@@ -36,6 +36,19 @@ public:
     // logit, a weighting of several outputs. Throws when the shapes differ.
     Tensor InputGradient(const Tensor& input, const Tensor& target_weights);
 
+    // One layer's output for `input` and d(sum of output x target_weights)
+    // / d(that output), in eval mode (TOFIX204): what an input gradient
+    // cannot give, such as a token's gradient at the Embedding output.
+    // `module_index` is the layer's index in the model
+    // (BuiltModuleProvenance::module_index, CapturedLayer::module_index).
+    // Throws when the shapes differ or the layer is not on the path to the
+    // output.
+    struct LayerGradient {
+        Tensor output;
+        Tensor gradient;
+    };
+    LayerGradient LayerOutputGradient(const Tensor& input, const Tensor& target_weights, size_t module_index);
+
 private:
     explicit DebugModelSession(std::unique_ptr<IExecutableModel> model);
 

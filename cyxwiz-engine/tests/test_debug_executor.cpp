@@ -2934,6 +2934,61 @@ void TestDebugModelSession() {
     ExpectTrue(worst < 1e-5f, "the rebuilt MLP gives the run's output, worst " + std::to_string(worst));
     CheckInputGradient(*session, input, {0, 3, 7, 9}, 1e-2f, "MLP");
 
+    // A layer's output and the gradient at it (TOFIX204): the last layer's
+    // gradient is the target; the hidden ReLU's output is the run's; the
+    // first layer's backward of its gradient is the input gradient.
+    {
+        const Tensor out = session->Forward(input);
+        std::vector<float> target(out.NumElements(), 0.0f);
+        target[1] = 1.0f;
+        const Tensor weights = FromRowMajor(target, out.Shape());
+        const auto last = session->LayerOutputGradient(input, weights, 2);
+        ExpectTrue(RowMajor(last.gradient) == target, "the last layer's output gradient is the target");
+        const auto hidden = session->LayerOutputGradient(input, weights, 1);
+        const float hidden_worst = MaxAbsDifference(
+            RowMajor(hidden.output), RowMajor(CapturedTensorOf(CapturedNamed(capture, "Hidden ReLU"),
+                                                               CapturedTensorRole::Output)));
+        ExpectTrue(hidden_worst < 1e-5f, "the hidden layer's output is the run's, worst " + std::to_string(hidden_worst));
+        ExpectTrue(hidden.gradient.Shape() == hidden.output.Shape(), "the gradient has the layer output's shape");
+        const auto first = session->LayerOutputGradient(input, weights, 0);
+        bool not_reached = false;
+        try {
+            session->LayerOutputGradient(input, weights, 7);
+        } catch (const std::exception&) {
+            not_reached = true;
+        }
+        ExpectTrue(not_reached, "a layer that is not in the model is refused");
+        // The observers are cleared: the session answers as before.
+        const float again = MaxAbsDifference(RowMajor(session->Forward(input)), RowMajor(out));
+        ExpectTrue(again == 0.0f, "the session's forward is unchanged after a layer gradient");
+        ExpectTrue(first.gradient.Shape() == std::vector<size_t>({input.Shape()[0], 32}),
+                   "the first Dense's output gradient is [N, 32]");
+    }
+
+    // A text model: the gradient at the Embedding output, one row per token.
+    {
+        const auto text_cfg = MakeTextConfig();
+        DebugExecutor text_exe(text_cfg);
+        text_exe.SetLayerCapture({});
+        const auto text_res = text_exe.Run();
+        ExpectTrue(text_res.success && text_res.layer_capture, "the text model runs with capture: " + text_res.failure_summary);
+        error.clear();
+        auto text_session = DebugModelSession::FromCapture(text_cfg, *text_res.layer_capture, &error);
+        ExpectTrue(text_session != nullptr, "the text model is rebuilt from its capture: " + error);
+        const Tensor& ids = CapturedTensorOf(text_res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+        const Tensor text_out = text_session->Forward(ids);
+        std::vector<float> target(text_out.NumElements(), 0.0f);
+        target[0] = 1.0f;
+        const auto at_embedding = text_session->LayerOutputGradient(ids, FromRowMajor(target, text_out.Shape()), 0);
+        const auto& id_shape = ids.Shape();
+        ExpectTrue(at_embedding.gradient.Shape() == std::vector<size_t>({id_shape[0], id_shape[1], 8}),
+                   "the gradient at the Embedding output is [N, T, D]");
+        ExpectTrue(at_embedding.output.Shape() == at_embedding.gradient.Shape(), "the Embedding output is [N, T, D]");
+        const auto g = RowMajor(at_embedding.gradient);
+        ExpectTrue(std::any_of(g.begin(), g.end(), [](float v) { return v != 0.0f; }),
+                   "the first item's tokens have a gradient");
+    }
+
     // A capture without the weights cannot rebuild the model, and says why.
     DebugExecutor activations_only(cfg);
     activations_only.SetLayerCapture({/*activations=*/true, /*parameters=*/false, /*gradients=*/false});

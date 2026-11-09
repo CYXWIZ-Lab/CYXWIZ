@@ -83,4 +83,36 @@ Tensor DebugModelSession::InputGradient(const Tensor& input, const Tensor& targe
     return model_->Backward(target_weights);
 }
 
+DebugModelSession::LayerGradient DebugModelSession::LayerOutputGradient(const Tensor& input,
+                                                                        const Tensor& target_weights,
+                                                                        size_t module_index) {
+    LayerGradient result;
+    bool reached_forward = false;
+    bool reached_backward = false;
+    model_->SetLayerForwardObserver([&](size_t index, const Tensor&, const Tensor& output, float) {
+        if (index != module_index) return;
+        result.output = output.Clone();
+        reached_forward = true;
+    });
+    model_->SetLayerBackwardObserver([&](size_t index, const Tensor& gradient) {
+        if (index != module_index) return;
+        result.gradient = gradient.Clone();
+        reached_backward = true;
+    });
+    const auto clear = [&] {
+        model_->SetLayerForwardObserver(nullptr);
+        model_->SetLayerBackwardObserver(nullptr);
+    };
+    try {
+        InputGradient(input, target_weights);
+    } catch (...) {
+        clear();
+        throw;
+    }
+    clear();
+    if (!reached_forward || !reached_backward)
+        throw std::runtime_error("layer " + std::to_string(module_index) + " is not on the path to the output");
+    return result;
+}
+
 }  // namespace cyxwiz
