@@ -1,19 +1,25 @@
 #pragma once
 
 // RL Training Dashboard (approved board 3, TOFIX134 P1 step 1.7): episode
-// and policy metrics a run reports (pycyxwiz.rl_update_metric), drawn with
-// the shared PlotView in the theme colours. UI thread only, except
-// SetRLTrainingState (a run's completion callback may call it from the
+// and policy metrics a run reports, drawn with the shared PlotView in the
+// theme colours. Two sources: a script (pycyxwiz.rl_update_metric, one value
+// per report) and the Engine's own PPO run (TOFIX195 S4.3, R9: one row per
+// update by environment step, progress, speed, Pause / Stop, and the
+// Stable-Baselines3 reference of the same settings). UI thread only, except
+// SetRLTrainingState (a script's completion callback may call it from the
 // script worker).
 
 #include "../panel.h"
 #include "../plot/plot_view.h"
+#include "../../core/rl/ppo_reference.h"
 
 #include <imgui.h>
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,16 +39,37 @@ public:
     void SetRLTrainingState(bool is_rl_training);
     void ResetRLMetrics();
 
+    // The Engine's PPO run
+    struct PpoRunInfo {
+        std::string title;  // "PPO on CartPole-v1 x 8"
+        long long total_timesteps = 0;
+        float target_return = 0.0f;  // NaN: no target
+        bool continuous = false;
+        std::optional<rl::PpoReference> reference;
+    };
+    struct PpoRunControls {
+        std::function<void()> pause;
+        std::function<void()> resume;
+        std::function<void()> stop;
+        std::function<bool()> paused;
+    };
+    void BeginPpoRun(PpoRunInfo info, PpoRunControls controls);
+    void AddPpoUpdate(const rl::PpoUpdateMetrics& m);
+    void EndPpoRun(const std::string& outcome, bool failed);
+
 private:
     struct Metric {
         std::string display_name;
         std::vector<double> history;  // one value per report
+        std::vector<double> steps;    // the environment step of each value (a PPO run), else empty
         bool dirty = true;            // the plot needs new data
         std::unique_ptr<plot::PlotView> view;
     };
 
+    void RenderRunHeader();
     void RenderKpis();
     void RenderMetric(const std::string& name, float height);
+    void Push(const std::string& name, double value, double steps);
 
     // Long runs keep every value; the plot draws a reduced copy.
     static constexpr size_t kMaxHistory = 200000;
@@ -50,6 +77,13 @@ private:
     std::atomic<bool> training_{false};
     std::map<std::string, Metric> metrics_;
     std::vector<std::string> order_;  // registration order (series colours)
+
+    // The Engine's PPO run, when one reports here
+    std::optional<PpoRunInfo> run_;
+    PpoRunControls controls_;
+    std::optional<rl::PpoUpdateMetrics> last_update_;
+    std::string outcome_;
+    bool failed_ = false;
 };
 
 }  // namespace cyxwiz

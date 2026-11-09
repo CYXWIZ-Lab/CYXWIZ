@@ -6047,6 +6047,11 @@ int main() {
               metadata.GetMetadata(gui::NodeType::SiameseBranch) == nullptr,
           "retired Shared Encoder / Siamese Branch (metric-learning losses run the model once over the "
           "stacked batch) are not registered");
+    for (const auto retired : {gui::NodeType::GymEnvironment, gui::NodeType::ReplayBufferNode,
+                               gui::NodeType::PolicyNetwork, gui::NodeType::ValueNetwork, gui::NodeType::RLTraining}) {
+        Check(metadata.GetMetadata(retired) == nullptr,
+              "retired RL sketch nodes (the PPO graph replaced them) are not registered: " + TypeId(retired));
+    }
 
     const auto* standard_scaler_meta =
         metadata.GetMetadata(gui::NodeType::StandardScaler);

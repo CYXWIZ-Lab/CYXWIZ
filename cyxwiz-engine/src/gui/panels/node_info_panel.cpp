@@ -563,6 +563,7 @@ const char* NodeInfoPanel::GetPinTypeName(PinType type) const {
         case PinType::Loss:        return "Loss";
         case PinType::Optimizer:   return "Optimizer";
         case PinType::Dataset:     return "Dataset";
+        case PinType::Environment: return "Environment";
         default:                   return "Unknown";
     }
 }

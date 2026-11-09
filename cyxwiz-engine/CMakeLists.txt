@@ -294,7 +294,7 @@ set(ENGINE_SOURCES
     src/core/graph_executor.cpp
     src/core/graph_simulation_session.cpp
     src/core/simulation_commands.cpp
-    src/core/rl_script_generator.cpp
+    src/core/rl/rl_training_run.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
     src/core/synthetic_batch.cpp
@@ -7365,6 +7365,34 @@ if(WIN32)
     target_compile_definitions(test_ppo_trainer PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 add_test(NAME ppo_trainer_cartpole COMMAND test_ppo_trainer)
+
+# ===== Test: RL graphs compile (Environment, layers, heads, PPO) and say what is wrong (TOFIX195 S4.3) =====
+add_executable(test_rl_graph_compile tests/test_rl_graph_compile.cpp)
+target_link_libraries(test_rl_graph_compile PRIVATE cyxwiz-training-core)
+target_compile_definitions(test_rl_graph_compile PRIVATE
+    CYXWIZ_PPO_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/ppo_sb3_curves.json")
+if(MSVC)
+    target_link_options(test_rl_graph_compile PRIVATE /STACK:4194304)
+endif()
+add_test(NAME rl_graph_compile COMMAND test_rl_graph_compile)
+
+# ===== Test: Train on an RL graph: the PPO pattern learns CartPole through RLTrainingRun (TOFIX195 S4.3) =====
+add_executable(test_rl_graph_training
+    tests/test_rl_graph_training.cpp
+    src/core/rl/rl_training_run.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(test_rl_graph_training PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+target_include_directories(test_rl_graph_training PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+if(WIN32)
+    target_compile_definitions(test_rl_graph_training PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+if(MSVC)
+    target_link_options(test_rl_graph_training PRIVATE /STACK:4194304)
+endif()
+add_test(NAME rl_graph_training_cartpole COMMAND test_rl_graph_training)
 
 # ===== Test: metric learning (pairs, triplets) vs PyTorch (TOFIX140 A5) =====
 set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE

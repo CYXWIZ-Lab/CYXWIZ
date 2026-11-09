@@ -16,7 +16,7 @@ struct CommandInputs {
     bool simulation_graph = false;  // the open graph has nodes a graph run steps
     bool has_scopes = false;        // ... and a Signal Scope to plot
     SimulationState state = SimulationState::Stopped;
-    bool rl_running = false;        // Train RL owns the graph meanwhile
+    bool rl_running = false;        // a PPO run (Train on an RL graph) owns the graph meanwhile
 };
 
 struct CommandView {

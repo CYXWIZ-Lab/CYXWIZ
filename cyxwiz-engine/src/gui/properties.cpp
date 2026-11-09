@@ -605,6 +605,8 @@ void Properties::RenderSettings(MLNode& node) {
 
     switch (view_.route) {
         case SettingsRoute::Metadata:
+            if (node.type == NodeType::PolicyHead || node.type == NodeType::PPO)
+                properties_node_editors::RenderRlNodeFacts(node, {node_editor_, [this]() { NotifyEdited(); }});
             RenderMetadataRows(node, view_);
             break;
         case SettingsRoute::Custom:

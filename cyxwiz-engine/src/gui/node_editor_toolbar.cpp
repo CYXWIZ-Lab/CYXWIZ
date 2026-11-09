@@ -15,6 +15,7 @@
 #include "../core/async_task_manager.h"
 #include "../core/graph_executor.h"
 #include "../core/live_graph_compile.h"
+#include "../core/rl_graph_compile.h"
 #include "../core/studio_toolbar_presentation.h"
 #include "../core/training_manager.h"
 
@@ -135,9 +136,8 @@ void NodeEditor::ShowToolbar() {
     const auto pipeline_task = pipeline_task_id_ == 0 ? nullptr : cyxwiz::AsyncTaskManager::Instance().GetTask(pipeline_task_id_);
     const bool pipeline_running = execution_mode_ == ExecutionMode::DuckDBPipeline && pipeline_execution_active_ && pipeline_task;
     const bool has_sim = HasSimulationNodes();
-    const bool has_rl = HasRLNodes();
-    const bool rl_running = rl_script_running_;
-    const bool sim_graph = has_sim || has_rl;
+    const bool rl_active = IsRLTrainingActive();  // the Engine's PPO on an RL graph
+    const bool sim_graph = has_sim;
     const int num_selected = ImNodes::NumSelectedNodes();
 
     // Compile: the live compile's latest result (TOFIX123); Local Debug: the
@@ -165,7 +165,9 @@ void NodeEditor::ShowToolbar() {
     st::TrainInputs train_in;
     train_in.train_available = static_cast<bool>(train_callback_);
     train_in.graph_valid = IsGraphValid();
-    train_in.require_debug = require_debug_before_train_;
+    // an RL graph has no batch to debug (TOFIX195 S4.3)
+    const bool rl_graph = std::any_of(nodes_.begin(), nodes_.end(), [](const MLNode& n) { return cyxwiz::IsRLGraphNode(n.type); });
+    train_in.require_debug = require_debug_before_train_ && !rl_graph;
     train_in.debug = local_debug_status_;
     const st::TrainButton train = st::TrainState(train_in);
     const auto tone = [&t](st::Tone value) {
@@ -204,7 +206,7 @@ void NodeEditor::ShowToolbar() {
 
     st::BarWidths widths;
     widths.fixed = W(chip_label(name).c_str()) + sp + W(ICON_FA_FLOPPY_DISK " Save") + sp +
-                   (training_active ? 230.0f : W(ICON_FA_PLAY " Train")) +
+                   (training_active || rl_active ? 230.0f : W(ICON_FA_PLAY " Train")) +
                    (pipeline_running ? 150.0f + 50.0f + W(ICON_FA_STOP " Cancel") + 3.0f * sp : 0.0f);
     widths.edit_icons = W(ICON_FA_OBJECT_GROUP) + W(ICON_FA_COPY) + W(ICON_FA_TRASH) + 2.0f * sp;
     widths.edit_menu = W(edit_menu_label);
@@ -224,10 +226,6 @@ void NodeEditor::ShowToolbar() {
             // Run Sim, and the warning of a failed run
             actions_full += W(ICON_FA_PLAY " Run Sim") + W(ICON_FA_TRIANGLE_EXCLAMATION) + 2.0f * sp;
             actions_icons += W(ICON_FA_PLAY) + W(ICON_FA_TRIANGLE_EXCLAMATION) + 2.0f * sp;
-        }
-        if (has_rl) {
-            actions_full += W(ICON_FA_PLAY " Train RL") + 110.0f + sp;
-            actions_icons += W(ICON_FA_PLAY) + 90.0f + sp;
         }
     } else {
         widths.mode_full = ui::SegmentedControlWidth(kModeFull, 3);
@@ -363,7 +361,7 @@ void NodeEditor::ShowToolbar() {
                                                   ui::StepButtonWidth(debug_label.c_str(), debug_status.c_str()) +
                                                   (dots ? 2.0f * sp : 2.0f * arrow_w)
                                             : 0.0f;
-    const float run_w = training_active ? 230.0f : W(ICON_FA_PLAY " Train");
+    const float run_w = training_active || rl_active ? 230.0f : W(ICON_FA_PLAY " Train");
     const float right_w = steps_w + run_w;
 
     // Middle: the mode and its actions (or the simulation / RL group),
@@ -469,18 +467,6 @@ void NodeEditor::ShowToolbar() {
                 ImGui::SameLine();
             }
         }
-        if (has_rl) {
-            if (rl_running) {
-                if (ui::DangerButton(short_labels ? ICON_FA_STOP "##stop_rl" : ICON_FA_STOP " Stop RL")) OnStopRLTraining();
-                ImGui::SameLine();
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(t.success, "Training via Python...");
-            } else if (ui::GhostButton(short_labels ? ICON_FA_PLAY "##train_rl" : ICON_FA_PLAY " Train RL", !simulation_session_.IsActive(),
-                                       "Stop graph simulation first", true)) {
-                OnStartRLTraining();
-            }
-            ImGui::SameLine();
-        }
     }
 
     // A running data pipeline: progress, its step and Cancel stay at every width.
@@ -573,6 +559,12 @@ void NodeEditor::ShowToolbar() {
         ImGui::SameLine();
         if (ui::DangerButton(ICON_FA_STOP " Stop")) training_mgr.StopTraining();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop training");
+    } else if (rl_active) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.success, ICON_FA_SPINNER " %s", rl_status_.c_str());
+        ImGui::SameLine();
+        if (ui::DangerButton(ICON_FA_STOP " Stop##stop_ppo")) StopRLTraining();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop PPO training (the RL Training Dashboard has Pause)");
     } else {
         if (ui::PrimaryButton(ICON_FA_PLAY " Train", train.enabled, train.disabled_reason.c_str(), ui::ButtonSize::Small)) {
             spdlog::info("NodeEditor: Starting training from graph");

@@ -4,7 +4,7 @@
 //
 // Two workflows:
 //   1. Manual Control: Signal sources (Slider, SineWave) → MuJoCo Plant → Scope
-//   2. RL Training: Train RL runs a generated Python script — not handled here
+//   2. RL Training: Train on an RL graph runs the Engine's PPO (core/rl) — not handled here
 //
 // Usage:
 //   GraphExecutor executor;

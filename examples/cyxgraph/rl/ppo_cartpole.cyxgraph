@@ -1,0 +1,217 @@
+{
+  "id": "ppo_cartpole",
+  "name": "PPO on CartPole-v1",
+  "description": "PPO on the built-in CartPole-v1 (no plugin), tuned: 8 copies, RL Zoo settings, stops when the last 100 episodes average 475 (about 70,000-90,000 steps, a minute on a GPU). Open it, then Train (F5); the RL Training Dashboard shows the run with the Stable-Baselines3 reference of the same settings.",
+  "category": "Reinforcement Learning",
+  "tags": [
+    "ppo",
+    "reinforcement",
+    "rl",
+    "policy",
+    "cartpole",
+    "mujoco"
+  ],
+  "template": {
+    "nodes": [
+      {
+        "id": "env",
+        "type": "RLEnvironment",
+        "name": "Environment",
+        "pos": [
+          0,
+          300
+        ],
+        "params": {
+          "environment": "cyxwiz.builtin:CartPole-v1",
+          "copies": "8"
+        }
+      },
+      {
+        "id": "p1",
+        "type": "Dense",
+        "name": "Policy Dense 1",
+        "pos": [
+          220,
+          100
+        ],
+        "params": {
+          "units": "64"
+        }
+      },
+      {
+        "id": "pa1",
+        "type": "Tanh",
+        "name": "Policy Activation 1",
+        "pos": [
+          400,
+          100
+        ]
+      },
+      {
+        "id": "p2",
+        "type": "Dense",
+        "name": "Policy Dense 2",
+        "pos": [
+          580,
+          100
+        ],
+        "params": {
+          "units": "64"
+        }
+      },
+      {
+        "id": "pa2",
+        "type": "Tanh",
+        "name": "Policy Activation 2",
+        "pos": [
+          760,
+          100
+        ]
+      },
+      {
+        "id": "phead",
+        "type": "PolicyHead",
+        "name": "Policy Head",
+        "pos": [
+          940,
+          100
+        ]
+      },
+      {
+        "id": "v1",
+        "type": "Dense",
+        "name": "Value Dense 1",
+        "pos": [
+          220,
+          500
+        ],
+        "params": {
+          "units": "64"
+        }
+      },
+      {
+        "id": "va1",
+        "type": "Tanh",
+        "name": "Value Activation 1",
+        "pos": [
+          400,
+          500
+        ]
+      },
+      {
+        "id": "v2",
+        "type": "Dense",
+        "name": "Value Dense 2",
+        "pos": [
+          580,
+          500
+        ],
+        "params": {
+          "units": "64"
+        }
+      },
+      {
+        "id": "va2",
+        "type": "Tanh",
+        "name": "Value Activation 2",
+        "pos": [
+          760,
+          500
+        ]
+      },
+      {
+        "id": "vhead",
+        "type": "ValueHead",
+        "name": "Value Head",
+        "pos": [
+          940,
+          500
+        ]
+      },
+      {
+        "id": "ppo",
+        "type": "PPO",
+        "name": "PPO",
+        "pos": [
+          1160,
+          300
+        ],
+        "params": {
+          "total_timesteps": "100000",
+          "n_steps": "32",
+          "batch_size": "256",
+          "n_epochs": "20",
+          "learning_rate": "0.001",
+          "gamma": "0.98",
+          "gae_lambda": "0.8",
+          "clip_range": "0.2",
+          "ent_coef": "0",
+          "vf_coef": "0.5",
+          "max_grad_norm": "0.5",
+          "stop_at_return": "true",
+          "target_return": "475",
+          "normalize_observations": "false",
+          "normalize_rewards": "false"
+        }
+      }
+    ],
+    "links": [
+      {
+        "from": "env",
+        "to": "p1"
+      },
+      {
+        "from": "p1",
+        "to": "pa1"
+      },
+      {
+        "from": "pa1",
+        "to": "p2"
+      },
+      {
+        "from": "p2",
+        "to": "pa2"
+      },
+      {
+        "from": "pa2",
+        "to": "phead"
+      },
+      {
+        "from": "env",
+        "to": "v1"
+      },
+      {
+        "from": "v1",
+        "to": "va1"
+      },
+      {
+        "from": "va1",
+        "to": "v2"
+      },
+      {
+        "from": "v2",
+        "to": "va2"
+      },
+      {
+        "from": "va2",
+        "to": "vhead"
+      },
+      {
+        "from": "phead",
+        "to": "ppo",
+        "to_pin": 0
+      },
+      {
+        "from": "env",
+        "from_pin": 1,
+        "to": "ppo",
+        "to_pin": 1
+      },
+      {
+        "from": "vhead",
+        "to": "ppo",
+        "to_pin": 2
+      }
+    ]
+  }
+}

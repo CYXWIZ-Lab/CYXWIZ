@@ -942,7 +942,13 @@ int main(int, char** argv) {
           std::tuple{gui::NodeType::GeometricTransform, "Old geometric", "Random Crop, Image Rotate"},
           std::tuple{gui::NodeType::ColorTransform, "Old color", "Color Jitter replaced"},
           std::tuple{gui::NodeType::HDF5Dataset, "Old HDF5 reader", "Data Input replaced"},
-          std::tuple{gui::NodeType::ImagePreprocessor, "Old preprocessor", "Resize and Normalize replaced"}}) {
+          std::tuple{gui::NodeType::ImagePreprocessor, "Old preprocessor", "Resize and Normalize replaced"},
+          // TOFIX195 S4.3: the RL sketch nodes the native PPO graph replaced.
+          std::tuple{gui::NodeType::GymEnvironment, "Old gym", "which Environment replaced"},
+          std::tuple{gui::NodeType::ReplayBufferNode, "Old buffer", "which PPO does not use"},
+          std::tuple{gui::NodeType::PolicyNetwork, "Old policy", "ending in a Policy Head replaced"},
+          std::tuple{gui::NodeType::ValueNetwork, "Old value", "ending in a Value Head replaced"},
+          std::tuple{gui::NodeType::RLTraining, "Old RL training", "which PPO replaced"}}) {
         const json saved = {
             {"nodes", json::array({{{"id", 1}, {"type", static_cast<int>(retired)},
                                     {"name", name}, {"parameters", json::object()}}})},

@@ -632,16 +632,6 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"PretrainedYOLO", "pretrained YOLO execution is not implemented in PipelineExecutor",
          gui::NodeType::PretrainedYOLO, std::nullopt, true,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"GymEnvironment", "RL environment graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::GymEnvironment, std::nullopt, true,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"ReplayBuffer", "RL replay-buffer graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::ReplayBufferNode, std::nullopt, true,
-         PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"PolicyNetwork", "RL policy-network graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::PolicyNetwork},
-        {"ValueNetwork", "RL value-network graph execution is not implemented in PipelineExecutor",
-         gui::NodeType::ValueNetwork},
         {"TableSplitter", "legacy TableSplitter needs pin-aware multi-output routing; PipelineExecutor can only carry one dataset per node",
          gui::NodeType::TableSplitter, std::nullopt, true,
          PipelineBackendPrimitiveEvidence::RelatedHelperOnly},
@@ -1190,14 +1180,9 @@ GetPipelineFloatParameterRuntimeCapabilities() {
 
 const std::vector<PipelineUnsupportedTrainingNodeCapability>&
 GetPipelineUnsupportedSequentialModelLayerCapabilities() {
-    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {
-        {gui::NodeType::PolicyNetwork,
-         "sketches reinforcement-learning policy training but is not supported by ModelBuilder/SequentialModel yet",
-         PipelineBackendPrimitiveEvidence::Missing},
-        {gui::NodeType::ValueNetwork,
-         "sketches reinforcement-learning value training but is not supported by ModelBuilder/SequentialModel yet",
-         PipelineBackendPrimitiveEvidence::Missing},
-    };
+    // Empty since the RL policy/value sketches went (TOFIX195 S4.3); a layer
+    // type the model builder cannot build goes here.
+    static const std::vector<PipelineUnsupportedTrainingNodeCapability> capabilities = {};
     return capabilities;
 }
 

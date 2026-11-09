@@ -30,7 +30,8 @@
 #include "subgraph_document.h"
 #include "../core/pipeline_runtime_capabilities.h"
 #include "panels/training_dashboard.h"
-#include "../core/rl_script_generator.h"
+#include "../core/rl/rl_training_run.h"
+#include "../core/plot/plot_model.h"
 #include "../scripting/scripting_engine.h"
 #include "../core/extension_node_registry.h"
 #include "../plugin/plugin_manager.h"
@@ -250,7 +251,7 @@ std::string NodeEditor::GetGraphReplacementBlockReason() const {
         training_data_loading_callback_ && training_data_loading_callback_(),
         properties_panel_ && properties_panel_->IsDialogBusy(),
         simulation_session_.IsActive(), pipeline_execution_active_,
-        rl_script_running_.load()}));
+        IsRLTrainingActive()}));
 }
 
 bool NodeEditor::CanReplaceGraph(const char* operation) {
@@ -913,6 +914,8 @@ void NodeEditor::Render() {
         }
         for (const auto& sample : samples) rl_dashboard_->UpdateCustomMetric(sample.name, sample.value);
     }
+
+    PollRLTraining();
 
     // Plot nodes: result lane and their Plot windows (TOFIX134 P2).
     RenderPlotNodes();
@@ -2261,38 +2264,21 @@ void NodeEditor::RenderNodes() {
                 break;
             }
 
-            // RL
-            case NodeType::GymEnvironment: {
-                auto env = node.parameters.find("env_name");
+            // RL (TOFIX195 S4.3)
+            case NodeType::RLEnvironment: {
+                const auto env = node.parameters.find("environment");
+                const auto copies = node.parameters.find("copies");
                 if (env != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Env: %s", env->second.c_str());
+                    const size_t colon = env->second.find(':');
+                    const std::string id = colon == std::string::npos ? env->second : env->second.substr(colon + 1);
+                    ImGui::TextColored(t.accent_text, "%s x %s", id.c_str(),
+                                       copies != node.parameters.end() ? copies->second.c_str() : "1");
                 }
                 break;
             }
-            case NodeType::ReplayBufferNode: {
-                auto cap = node.parameters.find("capacity");
-                if (cap != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Cap: %s", cap->second.c_str());
-                }
-                break;
-            }
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork: {
-                auto hs = node.parameters.find("hidden_size");
-                if (hs != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Hidden: %s", hs->second.c_str());
-                }
-                break;
-            }
-            case NodeType::RLTraining: {
-                auto algo = node.parameters.find("algorithm");
-                auto eps = node.parameters.find("episodes");
-                if (algo != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Algo: %s", algo->second.c_str());
-                }
-                if (eps != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Episodes: %s", eps->second.c_str());
-                }
+            case NodeType::PPO: {
+                const auto steps = node.parameters.find("total_timesteps");
+                if (steps != node.parameters.end()) ImGui::TextColored(t.accent_text, "%s steps", steps->second.c_str());
                 break;
             }
 
@@ -4235,7 +4221,7 @@ cyxwiz::simulation::Commands NodeEditor::GetSimulationCommands() const {
     in.simulation_graph = HasSimulationNodes();
     in.has_scopes = in.simulation_graph && !GetSignalScopes().empty();
     in.state = simulation_session_.GetState();
-    in.rl_running = rl_script_running_;
+    in.rl_running = IsRLTrainingActive();
     return cyxwiz::simulation::BuildCommands(in);
 }
 
@@ -4264,175 +4250,51 @@ void NodeEditor::RunSimulationCommand(cyxwiz::simulation::Command command) {
     }
 }
 
-// ===== RL Training =====
+// ===== RL Training (TOFIX195 S4.3) =====
 
-bool NodeEditor::HasRLNodes() const {
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::RLTraining ||
-            node.type == NodeType::PolicyNetwork ||
-            node.type == NodeType::ValueNetwork) {
-            return true;
-        }
+bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfiguration> config, std::string& error) {
+    if (!config) {
+        error = "The graph is not a compiled RL graph.";
+        return false;
     }
-    return false;
+    if (!rl_run_) rl_run_ = std::make_unique<cyxwiz::rl::RLTrainingRun>();
+    const auto& c = *config;
+    if (!rl_run_->Start(config, error)) return false;
+    rl_run_reported_ = false;
+    rl_status_ = "PPO starting";
+
+    if (!rl_dashboard_) rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
+    cyxwiz::TrainingDashboardPanel::PpoRunInfo info;
+    info.title = "PPO on " + c.environment.id + " x " + std::to_string(c.copies);
+    info.total_timesteps = static_cast<long long>(c.ppo.total_timesteps);
+    info.target_return = c.ppo.target_return;
+    info.continuous = !c.environment.discrete_actions;
+    info.reference = cyxwiz::rl::FindPpoReference(cyxwiz::rl::ReadPpoReferenceFile(), c.environment.id, c.copies, c.ppo);
+    auto* run = rl_run_.get();
+    rl_dashboard_->BeginPpoRun(std::move(info), {[run]() { run->Pause(); }, [run]() { run->Resume(); },
+                                                 [run]() { run->Stop(); }, [run]() { return run->Paused(); }});
+    spdlog::info("Train: PPO on {} x {} started", c.environment.id, c.copies);
+    return true;
 }
 
-void NodeEditor::OnStartRLTraining() {
-    if (rl_script_running_) return;
-    if (!scripting_engine_) {
-        spdlog::error("NodeEditor: ScriptingEngine not set, cannot run Python RL training");
-        return;
-    }
-    if (scripting_engine_->IsScriptRunning()) {
-        spdlog::warn("NodeEditor: A script is already running");
-        return;
-    }
+bool NodeEditor::IsRLTrainingActive() const { return rl_run_ && rl_run_->Active(); }
 
-    spdlog::info("NodeEditor: Starting Python-based RL training");
-
-    // Build config from RLTraining node parameters
-    cyxwiz::RLTrainingConfig config;
-
-    for (const auto& node : nodes_) {
-        if (node.type != NodeType::RLTraining) continue;
-        // Train RL runs stable-baselines3 PPO; the other algorithms the node
-        // offers are for Code Gen.
-        const auto algorithm = node.parameters.find("algorithm");
-        if (algorithm != node.parameters.end() && !algorithm->second.empty() && algorithm->second != "PPO") {
-            spdlog::error("Train RL runs PPO only; RL Training is set to {} (use Code Gen for it)", algorithm->second);
-            return;
-        }
-        // A typed value that is not a number stops Train RL with its name
-        // instead of throwing on the UI thread.
-        std::string bad_setting;
-        const auto read_int = [&](const char* key, int& out) {
-            const auto it = node.parameters.find(key);
-            if (it == node.parameters.end()) return;
-            try {
-                size_t used = 0;
-                const int value = std::stoi(it->second, &used);
-                if (used != it->second.size()) throw std::invalid_argument(key);
-                out = value;
-            } catch (const std::exception&) {
-                if (bad_setting.empty()) bad_setting = key;
-            }
-        };
-        const auto read_float = [&](const char* key, float& out) {
-            const auto it = node.parameters.find(key);
-            if (it == node.parameters.end()) return;
-            try {
-                size_t used = 0;
-                const float value = std::stof(it->second, &used);
-                if (used != it->second.size()) throw std::invalid_argument(key);
-                out = value;
-            } catch (const std::exception&) {
-                if (bad_setting.empty()) bad_setting = key;
-            }
-        };
-        read_int("total_timesteps", config.total_timesteps);
-        read_int("max_episode_steps", config.max_episode_steps);
-        read_float("learning_rate", config.learning_rate);
-        read_float("gamma", config.gamma);
-        read_float("gae_lambda", config.gae_lambda);
-        read_float("clip_range", config.clip_range);
-        read_int("n_steps", config.n_steps);
-        read_int("batch_size", config.batch_size);
-        read_int("n_epochs", config.n_epochs);
-        read_float("ent_coef", config.entropy_coeff);
-        read_float("vf_coef", config.value_coeff);
-        read_float("max_grad_norm", config.max_grad_norm);
-        if (!bad_setting.empty()) {
-            spdlog::error("Train RL not started: RL Training's '{}' is not a number", bad_setting);
-            return;
-        }
-        break;
-    }
-
-    // Find MuJoCo Plant node for MJCF path
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::PluginCustom) {
-            if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant")) {
-                auto mp = node.parameters.find("mjcf_path");
-                if (mp != node.parameters.end() && !mp->second.empty()) {
-                    config.env_mjcf_path = mp->second;
-                } else {
-                    auto meta = node.parameters.find("_meta_loaded_path");
-                    if (meta != node.parameters.end()) config.env_mjcf_path = meta->second;
-                }
-                break;
-            }
-        }
-    }
-
-    // Extract RewardFunction and ObservationFilter node params
-    std::map<std::string, std::string> reward_params, obs_filter_params;
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::PluginCustom) {
-            if (cyxwiz::IsExtensionTypeName(node, "RewardFunction")) {
-                reward_params = node.parameters;
-            }
-            if (cyxwiz::IsExtensionTypeName(node, "ObservationFilter")) {
-                obs_filter_params = node.parameters;
-            }
-        }
-    }
-
-    // Determine save path
-    std::string save_path = "models/rl_policy";
-
-    // Generate Python script
-    std::string script = cyxwiz::RLScriptGenerator::Generate(
-        config, reward_params, obs_filter_params, save_path);
-
-    // Create/show dashboard
-    if (!rl_dashboard_) {
-        rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
-    }
-    rl_dashboard_->ResetRLMetrics();
-    rl_dashboard_->SetRLTrainingState(true);
-    rl_dashboard_->SetVisible(true);
-
-    // Set up pycyxwiz flags
-    std::string setup_script = "import pycyxwiz\npycyxwiz.rl_set_stop(False)\npycyxwiz.rl_set_paused(False)\n";
-    scripting_engine_->ExecuteCommand(setup_script);
-
-    // Completion handling for this run only (TOFIX133 P0 item 9).
-    auto dashboard = rl_dashboard_;
-    rl_script_running_ = true;
-    scripting::ScriptingEngine::RunCallbacks callbacks;
-    callbacks.on_complete = [this, dashboard](const scripting::ExecutionResult& result) {
-        rl_script_running_ = false;
-        dashboard->SetRLTrainingState(false);
-        if (!result.success) {
-            spdlog::error("RL training script failed: {}", result.error_message);
-        } else {
-            spdlog::info("RL training script completed successfully");
-        }
-    };
-
-    // Run training script async
-    if (!scripting_engine_->ExecuteScriptAsync(script, std::move(callbacks))) {
-        rl_script_running_ = false;
-        dashboard->SetRLTrainingState(false);
-        spdlog::warn("RL training not started: another script is running");
-    }
+void NodeEditor::StopRLTraining() {
+    if (rl_run_) rl_run_->Stop();
 }
 
-
-void NodeEditor::OnStopRLTraining() {
-    spdlog::info("NodeEditor: Stopping RL training");
-
-    // Stop Python-based training
-    if (rl_script_running_ && scripting_engine_) {
-        // Signal Python to stop via pycyxwiz atomic flag
-        scripting_engine_->ExecuteCommand("import pycyxwiz; pycyxwiz.rl_set_stop(True)");
-        scripting_engine_->StopScript();
-        rl_script_running_ = false;
+// The run's updates onto the dashboard, and its end
+void NodeEditor::PollRLTraining() {
+    if (!rl_run_ || !rl_dashboard_) return;
+    for (const auto& m : rl_run_->TakeUpdates()) {
+        rl_dashboard_->AddPpoUpdate(m);
+        rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
+                     cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps";
     }
-
-    if (rl_dashboard_) {
-        rl_dashboard_->SetRLTrainingState(false);
-    }
+    if (rl_run_reported_ || rl_run_->Active()) return;
+    const auto state = rl_run_->GetState();
+    rl_dashboard_->EndPpoRun(rl_run_->Message(), state == cyxwiz::rl::RLTrainingRun::State::Failed);
+    rl_run_reported_ = true;
 }
 
 // ============================================================================

@@ -289,6 +289,7 @@ private:
     std::string operation_error_message_;
     bool compile_result_success_ = false;
     bool compile_result_has_config_ = false;
+    std::shared_ptr<const cyxwiz::RLTrainingConfiguration> compile_result_rl_;  // an RL graph's compile
     cyxwiz::compile_report::ConfigFacts compile_result_config_;
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;

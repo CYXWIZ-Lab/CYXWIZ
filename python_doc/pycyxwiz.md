@@ -1210,12 +1210,12 @@ if rb.can_sample(32):
 RL dashboard bridge:
 - `rl_set_metric_callback(callback)`
 - `rl_update_metric(name, value)`
-- `rl_should_stop()` / `rl_set_stop(value)`
-- `rl_is_paused()` / `rl_set_paused(value)`
 
 Usage notes:
 - `rl_set_metric_callback` allows Python RL loops to stream metrics into the engine UI.
-- `rl_should_stop()` and `rl_is_paused()` can be polled inside training loops.
+- The Engine registers its own callback when it runs a script, so `rl_update_metric` from a
+  script in the Script Editor reaches the RL Training Dashboard. The Engine's own PPO (Train on
+  an RL graph) reports there directly and has Pause / Stop on the dashboard.
 
 ### 10.1 Callback Call Flow (`rl_set_metric_callback` / `rl_update_metric`)
 
@@ -1234,12 +1234,10 @@ Important behavior:
 - Callback registration is global (latest registration replaces prior one).
 - If no callback is set, `rl_update_metric` is a no-op.
 - Callback exceptions propagate back to the `rl_update_metric` caller.
-- Pause/stop flags are independent atomics: use `rl_should_stop()` and `rl_is_paused()` in your loop.
 
 Recommended usage pattern:
 
 ```python
-import time
 import pycyxwiz as cx
 
 def on_metric(name: str, value: float):
@@ -1249,12 +1247,6 @@ def on_metric(name: str, value: float):
 cx.rl_set_metric_callback(on_metric)
 
 for step in range(100000):
-    if cx.rl_should_stop():
-        break
-
-    while cx.rl_is_paused():
-        time.sleep(0.05)
-
     # ... training step ...
     reward = 1.23
     cx.rl_update_metric("episode_reward", reward)

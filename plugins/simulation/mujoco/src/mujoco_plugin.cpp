@@ -277,24 +277,6 @@ void MuJoCoPlugin::RunCommand(const std::string& command_id) {
 std::vector<PluginNodeTypeInfo> MuJoCoPlugin::GetNodeTypes() {
     std::vector<PluginNodeTypeInfo> nodes;
 
-    // --- MuJoCo Environment node ---
-    // Loads an MJCF model and provides the Gymnasium-compatible env interface
-    {
-        PluginNodeTypeInfo n;
-        n.type_name    = "MuJoCoEnv";
-        n.display_name = "MuJoCo Environment";
-        n.category     = "RL / Simulation";
-        n.description  = "Load a MuJoCo MJCF model as a Gymnasium-compatible environment";
-        n.color        = 0xFF44AA88;  // Teal
-
-        n.pins.push_back({"env", "Environment", false});
-
-        n.default_parameters["mjcf_path"]       = "inverted_pendulum.xml";
-        n.default_parameters["max_steps"]        = "1000";
-        n.default_parameters["frame_skip"]       = "1";
-        nodes.push_back(std::move(n));
-    }
-
     // --- Reward Function node ---
     // Configurable reward shaping for RL training
     {
@@ -338,31 +320,6 @@ std::vector<PluginNodeTypeInfo> MuJoCoPlugin::GetNodeTypes() {
         n.default_parameters["include_qvel"] = "true";
         n.default_parameters["include_sensors"] = "false";
         n.default_parameters["normalize"]    = "true";
-        nodes.push_back(std::move(n));
-    }
-
-    // --- RL Agent node ---
-    // PPO/SAC agent that interacts with the environment
-    {
-        PluginNodeTypeInfo n;
-        n.type_name    = "RLAgent";
-        n.display_name = "RL Agent";
-        n.category     = "RL / Simulation";
-        n.description  = "Reinforcement learning agent (PPO or SAC) for MuJoCo environments";
-        n.color        = 0xFF4488DD;  // Red-orange
-
-        n.pins.push_back({"env", "Environment", true});
-        n.pins.push_back({"policy", "Model", false});
-
-        n.default_parameters["algorithm"]       = "PPO";
-        n.default_parameters["learning_rate"]   = "3e-4";
-        n.default_parameters["gamma"]           = "0.99";
-        n.default_parameters["gae_lambda"]      = "0.95";
-        n.default_parameters["clip_range"]      = "0.2";
-        n.default_parameters["n_steps"]         = "2048";
-        n.default_parameters["batch_size"]      = "64";
-        n.default_parameters["n_epochs"]        = "10";
-        n.default_parameters["hidden_sizes"]    = "64,64";
         nodes.push_back(std::move(n));
     }
 
@@ -414,22 +371,6 @@ std::string MuJoCoPlugin::GenerateCode(
         return "# MuJoCo simulation nodes currently support PyTorch only\n";
     }
 
-    if (node_type_name == "MuJoCoEnv") {
-        std::string mjcf = get("mjcf_path", "inverted_pendulum.xml");
-        std::string max_steps = get("max_steps", "1000");
-        std::string frame_skip = get("frame_skip", "1");
-        return
-            "import gymnasium as gym\n"
-            "import mujoco\n"
-            "\n"
-            "env = gym.make(\n"
-            "    'InvertedPendulum-v5',  # or custom: gym.make('MuJoCoEnv', xml_file='" + mjcf + "')\n"
-            "    max_episode_steps=" + max_steps + ",\n"
-            "    frame_skip=" + frame_skip + ",\n"
-            ")\n"
-            "obs, info = env.reset()\n";
-    }
-
     if (node_type_name == "RewardFunction") {
         std::string alive = get("alive_bonus", "1.0");
         std::string ctrl_w = get("ctrl_cost_weight", "0.1");
@@ -469,55 +410,6 @@ std::string MuJoCoPlugin::GenerateCode(
                   "    filtered = (filtered - obs_mean) / (obs_std + 1e-8)\n"
                 : "") +
             "    return filtered\n";
-    }
-
-    if (node_type_name == "RLAgent") {
-        std::string algo = get("algorithm", "PPO");
-        std::string lr = get("learning_rate", "3e-4");
-        std::string gamma = get("gamma", "0.99");
-        std::string hidden = get("hidden_sizes", "64,64");
-        std::string n_steps = get("n_steps", "2048");
-        std::string batch = get("batch_size", "64");
-        std::string n_epochs = get("n_epochs", "10");
-        std::string clip = get("clip_range", "0.2");
-        std::string gae = get("gae_lambda", "0.95");
-
-        // Convert "64,64" to [64, 64]
-        std::string policy_kwargs = "dict(net_arch=[" + hidden + "])";
-
-        if (algo == "PPO") {
-            return
-                "from stable_baselines3 import PPO\n"
-                "\n"
-                "model = PPO(\n"
-                "    'MlpPolicy',\n"
-                "    env,\n"
-                "    learning_rate=" + lr + ",\n"
-                "    gamma=" + gamma + ",\n"
-                "    gae_lambda=" + gae + ",\n"
-                "    clip_range=" + clip + ",\n"
-                "    n_steps=" + n_steps + ",\n"
-                "    batch_size=" + batch + ",\n"
-                "    n_epochs=" + n_epochs + ",\n"
-                "    policy_kwargs=" + policy_kwargs + ",\n"
-                "    verbose=1,\n"
-                ")\n"
-                "model.learn(total_timesteps=1_000_000)\n";
-        } else {
-            return
-                "from stable_baselines3 import SAC\n"
-                "\n"
-                "model = SAC(\n"
-                "    'MlpPolicy',\n"
-                "    env,\n"
-                "    learning_rate=" + lr + ",\n"
-                "    gamma=" + gamma + ",\n"
-                "    batch_size=" + batch + ",\n"
-                "    policy_kwargs=" + policy_kwargs + ",\n"
-                "    verbose=1,\n"
-                ")\n"
-                "model.learn(total_timesteps=1_000_000)\n";
-        }
     }
 
     if (node_type_name == "MuJoCoPlant") {

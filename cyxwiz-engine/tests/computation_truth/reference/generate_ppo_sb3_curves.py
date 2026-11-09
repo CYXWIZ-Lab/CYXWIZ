@@ -23,7 +23,8 @@ import sys
 import time
 from pathlib import Path
 
-DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "fixtures" / "ppo_sb3_curves.json"
+# The Engine reads it to draw the reference on the RL Training Dashboard
+DEFAULT_OUTPUT = Path(__file__).resolve().parents[3] / "resources" / "rl_reference" / "ppo_sb3_curves.json"
 # One row per update: these SB3 logger values, in this order
 COLUMNS = ["time/total_timesteps", "rollout/ep_rew_mean", "train/policy_gradient_loss", "train/value_loss",
            "train/approx_kl", "train/clip_fraction", "train/explained_variance"]

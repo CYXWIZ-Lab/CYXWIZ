@@ -40,7 +40,11 @@ namespace guided { struct CheckNode; }
 
 namespace cyxwiz {
 class LiveGraphCompile;
+struct RLTrainingConfiguration;
 }  // namespace cyxwiz
+namespace cyxwiz::rl {
+class RLTrainingRun;
+}
 
 namespace cyxwiz::dashboard {
 class DashboardWindow;
@@ -991,8 +995,7 @@ private:
 
     // RL-specific code generation
     bool IsRLGraph(const std::vector<int>& sorted_ids) const;
-    std::string GenerateRLPyTorchCode(const std::vector<int>& sorted_ids) const;
-    std::string GenerateRLPyCyxWizCode(const std::vector<int>& sorted_ids) const;
+    std::string GenerateRLCode(const std::vector<int>& sorted_ids) const;
 
     // Framework-specific layer conversion
     std::string NodeTypeToPythonLayer(const MLNode& node);
@@ -1375,7 +1378,11 @@ private:
     std::vector<PendingDashboardWidget> pending_dashboard_widgets_;
     void ApplyPendingDashboardWidgets();
     void RenderDashboardWindows();
-    std::atomic<bool> rl_script_running_{false};  // cleared on the script's worker thread
+    // The Engine's PPO run of an RL graph (TOFIX195 S4.3), started by Train
+    std::unique_ptr<cyxwiz::rl::RLTrainingRun> rl_run_;
+    bool rl_run_reported_ = true;  // its end is on the dashboard
+    std::string rl_status_ = "PPO starting";  // the toolbar's line while it runs
+    void PollRLTraining();
 
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
     uint64_t pipeline_task_id_ = 0;
@@ -1418,14 +1425,16 @@ private:
     int currently_executing_node_id_ = -1;                     // Node currently being executed
     float execution_pulse_time_ = 0.0f;                        // Animation time for pulsing effect
 
-    // Scripting engine for Python-based RL training
+    // Scripting engine: RL metrics scripts report (pycyxwiz.rl_update_metric)
     scripting::ScriptingEngine* scripting_engine_ = nullptr;
 public:
     void SetScriptingEngine(scripting::ScriptingEngine* engine) { scripting_engine_ = engine; }
-private:
-    bool HasRLNodes() const;
-    void OnStartRLTraining();
-    void OnStopRLTraining();
+
+    // Train on an RL graph: the Engine's PPO on a worker, metrics on the RL
+    // Training Dashboard. False with the reason while one runs.
+    bool StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfiguration> config, std::string& error);
+    bool IsRLTrainingActive() const;
+    void StopRLTraining();
 };
 
 } // namespace gui

@@ -62,6 +62,7 @@ const char* PinTypeName(gui::PinType type) {
         case gui::PinType::Loss: return "loss";
         case gui::PinType::Optimizer: return "optimizer";
         case gui::PinType::Dataset: return "dataset";
+        case gui::PinType::Environment: return "environment";
     }
     return "unknown";
 }

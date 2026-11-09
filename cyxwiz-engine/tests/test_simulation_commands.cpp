@@ -60,7 +60,7 @@ int main() {
         auto in = Graph(SimulationState::Stopped, false);
         in.rl_running = true;
         const auto c = BuildCommands(in);
-        Check(!c.run.enabled && c.run.disabled_reason == "Stop RL training first.", "Train RL holds the graph");
+        Check(!c.run.enabled && c.run.disabled_reason == "Stop PPO training first.", "a PPO run holds the graph");
         Check(!c.clear.enabled && c.clear.disabled_reason == "The graph has no Signal Scope.", "no Scope: nothing to clear");
     }
     {

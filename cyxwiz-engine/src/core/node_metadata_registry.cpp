@@ -4438,49 +4438,100 @@ void NodeMetadataRegistry::InitializeAudioNodes() {
 // RL Nodes
 // =============================================================================
 void NodeMetadataRegistry::InitializeRLNodes() {
-    RegisterNode({NodeType::GymEnvironment, NodeCategory::RL, "Gym Environment", ICON_FA_ROCKET,
-        {"gym", "environment", "rl"}, 0, false, "OpenAI Gym connector",
-        "Blocked: the graph compiler refuses reinforcement learning graphs until native RL training exists. Train RL does not use this node.", "",
-        {}, {{"Observation", PinType::Tensor, true, "Obs"}, {"Info", PinType::Parameters, true, "Info"}},
-        {{"env_name", "string", "CartPole-v1", "Environment", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+    // TOFIX195 S4.3: a PPO graph is Environment -> ordinary layers -> Policy
+    // Head / Value Head -> PPO, trained by the Engine (core/rl/ppo_trainer).
+    RegisterNode(WithPropertiesEditor({NodeType::RLEnvironment, NodeCategory::RL, "Environment", ICON_FA_CUBE,
+        {"environment", "gym", "gymnasium", "rl", "reinforcement", "mujoco", "cartpole"}, 0, false,
+        "N copies of an environment to train in",
+        "Picks an environment from the ones the Engine and the loaded plugins offer (CartPole-v1 is built in; "
+        "the MuJoCo Simulation plugin adds InvertedPendulum-v5 and HalfCheetah-v5) and steps several copies "
+        "side by side. Its observation feeds the policy and value layers; its Environment pin goes to PPO. "
+        "The environment's own settings come from its plugin.",
+        "Environment -> Dense -> Tanh -> Dense -> Tanh -> Policy Head -> PPO",
+        {},
+        {{"Observation", PinType::Tensor, true,
+          "What each copy observes, [copies, observation size]: connect it to the first policy and value layers."},
+         {"Environment", PinType::Environment, true, "The copies themselves: connect it to PPO's Environment."}},
+        {{"environment", "string", "cyxwiz.builtin:CartPole-v1",
+          "The environment, as <provider>:<id> (the built-in ones are cyxwiz.builtin)", {}, "",
+          "Environment", "Environment", true},
+         {"copies", "int", "8", "Copies stepped side by side; one rollout is copies x steps per copy", {},
+          "1-1024", "Copies", "Environment", true}},
+        NodeImplementationStatus::Implemented, 0}, NodePropertiesEditor::Custom));
 
-    RegisterNode({NodeType::ReplayBufferNode, NodeCategory::RL, "Replay Buffer", ICON_FA_DATABASE,
-        {"replay", "buffer", "experience"}, 0, false, "Experience replay",
-        "Blocked: the graph compiler refuses reinforcement learning graphs until native RL training exists. Train RL does not use this node.", "",
-        {{"State", PinType::Tensor, true, "State"}, {"Action", PinType::Tensor, true, "Action"},
-         {"Reward", PinType::Tensor, true, "Reward"}, {"NextState", PinType::Tensor, true, "Next"}},
-        {{"Batch", PinType::Dataset, true, "Batch"}},
-        {{"capacity", "int", "100000", "Capacity", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+    RegisterNode({NodeType::PolicyHead, NodeCategory::RL, "Policy Head", ICON_FA_BULLSEYE,
+        {"policy", "actor", "head", "rl", "ppo"}, 0, false,
+        "Ends the policy layers: the output layer and the action distribution",
+        "Adds the output layer sized from the environment: one logit per choice (categorical) for discrete "
+        "actions, one mean per action (Gaussian, with one learned log standard deviation per action) for "
+        "continuous ones. Its weights start orthogonal with gain 0.01, as Stable-Baselines3 does. Do not put "
+        "a Softmax before it.",
+        "Environment -> Dense -> Tanh -> Dense -> Tanh -> Policy Head -> PPO",
+        {{"Features", PinType::Tensor, true, "The last policy layer's output (reached from the Environment's Observation)."}},
+        {{"Policy", PinType::Tensor, true, "The policy: connect it to PPO's Policy."}},
+        {{"log_std_init", "float", "0.0",
+          "Starting log standard deviation of every action (continuous actions only)", {}, "",
+          "Log std at start", "Gaussian"}},
+        NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::PolicyNetwork, NodeCategory::RL, "Policy Network", ICON_FA_BRAIN,
-        {"policy", "actor"}, 0, false, "Actor/Policy network",
-        "Blocked: the graph compiler refuses reinforcement learning graphs until native RL training exists. Train RL does not use this node.", "",
-        {{"Observation", PinType::Tensor, true, "Obs"}},
-        {{"Action", PinType::Tensor, true, "Action"}},
-        {{"hidden_sizes", "string", "256,256", "Hidden sizes", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
+    RegisterNode({NodeType::ValueHead, NodeCategory::RL, "Value Head", ICON_FA_GAUGE,
+        {"value", "critic", "head", "rl", "ppo"}, 0, false,
+        "Ends the value layers: one output, the expected return",
+        "Adds a one-output layer (orthogonal, gain 1) that estimates the return from a state. The value "
+        "layers are separate from the policy layers, as in Stable-Baselines3's MlpPolicy.",
+        "Environment -> Dense -> Tanh -> Dense -> Tanh -> Value Head -> PPO",
+        {{"Features", PinType::Tensor, true, "The last value layer's output (reached from the Environment's Observation)."}},
+        {{"Value", PinType::Tensor, true, "The value estimate: connect it to PPO's Value."}},
+        {},
+        NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::ValueNetwork, NodeCategory::RL, "Value Network", ICON_FA_CHART_LINE,
-        {"value", "critic"}, 0, false, "Critic/Value network",
-        "Blocked: the graph compiler refuses reinforcement learning graphs until native RL training exists. Train RL does not use this node.", "",
-        {{"Observation", PinType::Tensor, true, "Obs"}},
-        {{"Value", PinType::Tensor, true, "Value"}},
-        {{"hidden_sizes", "string", "256,256", "Hidden sizes", {}, ""}},
-        NodeImplementationStatus::Template, 0, "Blocked"});
-
-    // Train RL reads this node and runs a generated Python script; the Engine's
-    // own trainer does not run it yet.
-    RegisterNode({NodeType::RLTraining, NodeCategory::RL, "RL Training", ICON_FA_ROCKET,
-        {"reinforcement", "training", "ppo", "rl"}, 0, false,
-        "Reinforcement learning settings for Train RL",
-        "Train RL generates a Python script that trains stable-baselines3 PPO on the MuJoCo Plant's model, "
-        "using this node's timesteps, learning rate, gamma, GAE lambda, clip range, "
-        "batch size, epochs, entropy and value coefficients and gradient clip. It runs PPO only; the other "
-        "algorithms and their settings are for Code Gen, and Train RL does not use the node's pins. "
-        "It needs the MuJoCo plugin and the mujoco, gymnasium and stable-baselines3 Python packages.",
-        "", {}, {}, {}, NodeImplementationStatus::External, 0, "Python"});
+    RegisterNode({NodeType::PPO, NodeCategory::RL, "PPO", ICON_FA_ARROWS_ROTATE,
+        {"ppo", "proximal", "policy", "optimization", "reinforcement", "rl", "training"}, 0, false,
+        "Proximal Policy Optimization: trains the policy and value layers on the environment",
+        "Stable-Baselines3's PPO: collects steps per copy from every copy, estimates advantages with GAE, then "
+        "updates both networks for several epochs of minibatches with the clipped objective (Adam, eps 1e-5). "
+        "Optionally normalises observations and rewards as VecNormalize does. The defaults are SB3's; "
+        "Tuned for loads RL Zoo's values for the environment.",
+        "Environment -> ... -> Policy Head / Value Head -> PPO",
+        {{"Policy", PinType::Tensor, true, "From the Policy Head."},
+         {"Environment", PinType::Environment, true, "From the Environment's Environment pin."},
+         {"Value", PinType::Tensor, true, "From the Value Head."}},
+        {{"Trained policy", PinType::Parameters, true, "The trained policy and value networks."}},
+        {{"total_timesteps", "int", "100000", "Environment steps to train for, over all copies (total_timesteps)", {},
+          "1-1000000000", "Total steps", "Run", true},
+         {"stop_at_return", "bool", "false", "Stop early once the last 100 episodes average the target", {}, "",
+          "Stop at a mean return", "Run"},
+         {"target_return", "float", "475", "Mean return of the last 100 episodes that stops the run", {}, "",
+          "Target return", "Run"},
+         {"seed", "int", "1", "Seeds the copies, the network weights, the actions and the minibatches (seed)", {},
+          "0-2147483647", "Seed", "Run"},
+         {"n_steps", "int", "2048", "Steps from every copy in one rollout (n_steps)", {}, "1-1000000",
+          "Steps per copy", "Rollout", true},
+         {"gamma", "float", "0.99", "Discount of future rewards (gamma)", {}, "0-1", "Discount", "Rollout"},
+         {"gae_lambda", "float", "0.95", "GAE lambda: bias against variance of the advantages (gae_lambda)", {}, "0-1",
+          "GAE lambda", "Rollout"},
+         {"n_epochs", "int", "10", "Passes over each rollout (n_epochs)", {}, "1-1000", "Epochs", "Update", true},
+         {"batch_size", "int", "64", "Steps in one minibatch (batch_size)", {}, "1-1000000", "Minibatch size",
+          "Update", true},
+         {"learning_rate", "float", "0.0003", "Adam's learning rate, eps 1e-5 (learning_rate)", {}, "",
+          "Learning rate", "Update", true},
+         {"clip_range", "float", "0.2", "How far one update may move the policy (clip_range)", {}, "",
+          "Clip range", "Update"},
+         {"clip_range_vf", "float", "0", "Clip of the value change; 0 is off (clip_range_vf)", {}, "",
+          "Value clip", "Update"},
+         {"ent_coef", "float", "0", "Weight of the entropy bonus (ent_coef)", {}, "", "Entropy weight", "Update"},
+         {"vf_coef", "float", "0.5", "Weight of the value loss (vf_coef)", {}, "", "Value weight", "Update"},
+         {"max_grad_norm", "float", "0.5", "Clip of the gradient norm over both networks; 0 is off (max_grad_norm)",
+          {}, "", "Max gradient norm", "Update"},
+         {"normalize_advantage", "bool", "true", "Normalise the advantages of each minibatch (normalize_advantage)",
+          {}, "", "Normalise advantages", "Update"},
+         {"normalize_observations", "bool", "false",
+          "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
+          "Normalise"},
+         {"normalize_rewards", "bool", "false",
+          "Rewards scaled by the running deviation of the return, as VecNormalize (norm_reward)", {}, "", "Rewards",
+          "Normalise"}},
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

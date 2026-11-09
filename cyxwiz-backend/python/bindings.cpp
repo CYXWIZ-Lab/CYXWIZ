@@ -3221,8 +3221,9 @@ Example queries:
     // =========================================================================
     // RL Training Dashboard Bridge
     // =========================================================================
-    // These functions allow Python RL training scripts (SB3) to stream metrics
-    // back to the C++ TrainingDashboardPanel and check pause/stop state.
+    // A Python RL script (SB3, CleanRL, your own) streams its metrics to the
+    // Engine's RL Training Dashboard. The Engine's own PPO (Train on an RL
+    // graph) reports there directly.
 
     // The callback holds a Python object, so it is never destroyed by a static
     // destructor: at process exit the module's statics go after the embedding
@@ -3231,8 +3232,6 @@ Example queries:
     // under the GIL; a call works on its own copy.
     using RLMetricCallback = std::function<void(const std::string&, float)>;
     static auto* s_rl_metric_callback = new RLMetricCallback();
-    static std::atomic<bool> s_rl_stop_requested{false};
-    static std::atomic<bool> s_rl_paused{false};
 
     m.def("rl_set_metric_callback", [](py::object callback) {
         if (callback.is_none()) {
@@ -3254,22 +3253,6 @@ Example queries:
         }
     }, py::arg("name"), py::arg("value"),
        "Update an RL metric on the dashboard (thread-safe)");
-
-    m.def("rl_should_stop", []() -> bool {
-        return s_rl_stop_requested.load();
-    }, "Check if stop was requested for RL training");
-
-    m.def("rl_is_paused", []() -> bool {
-        return s_rl_paused.load();
-    }, "Check if RL training is paused");
-
-    m.def("rl_set_stop", [](bool val) {
-        s_rl_stop_requested.store(val);
-    }, py::arg("value"), "Set RL training stop flag");
-
-    m.def("rl_set_paused", [](bool val) {
-        s_rl_paused.store(val);
-    }, py::arg("value"), "Set RL training pause flag");
 
     // pycyxwiz.nodes: last, so the classes it uses are bound (TOFIX125 P3).
     pycyxwiz_bindings::InstallNodesSubmodule(m);

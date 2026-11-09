@@ -26,6 +26,7 @@ To write your own nodes in Python or C++, see
 | [Your own nodes](extension_nodes.md) | Python node bundles and C++ plugins in the Engine: install, approve, use |
 | [Graph simulation](graph_simulation.md) | Run Sim, the Simulation menu and the Simulation Monitor |
 | [Environments for reinforcement learning](rl_environments.md) | Plugin environments (MuJoCo tasks), their settings, and `pycyxwiz.rl` for Gymnasium and Stable-Baselines3 |
+| [Training a policy (PPO)](rl_training.md) | The RL graph (Environment, layers, Policy / Value Head, PPO), its settings, Train and the RL Training Dashboard |
 
 ## Data
 

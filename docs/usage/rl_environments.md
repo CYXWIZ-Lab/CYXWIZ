@@ -6,8 +6,9 @@ copy and reads back what each copy observed and earned. The plugin only
 simulates. Plugin authors: see `IEnvironmentProvider` in the
 [plugin API reference](../extending/plugin-api-reference.md).
 
-Training a policy from the graph comes with the RL training node; this page
-covers the environments themselves and how to use them from Python.
+Training a policy from the graph: see [Training a policy](rl_training.md)
+(Environment, Policy Head, Value Head and PPO nodes). This page covers the
+environments themselves and how to use them from Python.
 
 ## Built in: CartPole-v1
 

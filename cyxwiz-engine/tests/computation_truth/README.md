@@ -447,8 +447,9 @@ statistics to float precision.
 generate_ppo_sb3_curves.py is not a test fixture generator but the reference
 the trainer is judged by: it trains SB3 PPO on the Engine's own environments
 (pycyxwiz.rl, the same MuJoCo build) with test_ppo_trainer's settings and
-copy counts for three seeds, and records every update (fixtures/
-ppo_sb3_curves.json). On 2026-11-09 SB3 reached CartPole's 475 at 59,648 /
+copy counts for three seeds, and records every update in
+cyxwiz-engine/resources/rl_reference/ppo_sb3_curves.json, which the RL
+Training Dashboard draws under a run of the same environment and settings. On 2026-11-09 SB3 reached CartPole's 475 at 59,648 /
 64,256 / 72,192 steps and InvertedPendulum's 950 at 120,832 / 135,168 /
 161,792; the Engine's trainer reached them at 69,376 and 122,880.
 

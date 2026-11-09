@@ -29,6 +29,8 @@ namespace cyxwiz {
 /**
  * Represents a compiled layer ready for execution
  */
+struct RLTrainingConfiguration;  // rl_graph_compile.h
+
 struct CompiledLayer {
     gui::NodeType type = gui::NodeType::Dense;
     int node_id = -1;
@@ -617,6 +619,10 @@ struct TrainingConfiguration {
     std::string pair_score_mode = "distance";
     double pair_score_threshold = 0.5;
 
+    // A reinforcement learning graph (Environment, Policy Head, Value Head,
+    // PPO; TOFIX195 S4.3): set instead of the supervised fields above.
+    std::shared_ptr<const RLTrainingConfiguration> rl;
+
     // Validation
     bool is_valid = false;
     std::string error_message;
@@ -780,6 +786,10 @@ public:
     static std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type);
 
 private:
+    // An RL graph: Environment -> layers -> Policy Head / Value Head -> PPO (rl_graph_compile.cpp)
+    TrainingConfiguration CompileReinforcementLearning(const std::vector<gui::MLNode>& nodes,
+                                                       const std::vector<gui::NodeLink>& links);
+
     // Topological sort for execution order
     std::vector<int> TopologicalSort(
         const std::vector<gui::MLNode>& nodes,

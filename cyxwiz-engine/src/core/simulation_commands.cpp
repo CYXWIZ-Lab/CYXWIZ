@@ -26,7 +26,7 @@ Commands BuildCommands(const CommandInputs& in) {
     std::string run_why;
     if (!in.simulation_graph) run_why = "The open graph has nothing to simulate.";
     else if (running) run_why = "The graph is running.";
-    else if (in.rl_running) run_why = "Stop RL training first.";
+    else if (in.rl_running) run_why = "Stop PPO training first.";
     const std::string idle_why = active ? "" : (in.simulation_graph ? "Run the graph first." : "Nothing is running.");
 
     Commands c;

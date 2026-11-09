@@ -119,6 +119,10 @@ ResolvedOptimizerConfiguration ResolveOptimizerConfiguration(
 // executable path.
 BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& config);
 
+// The layers alone, from a flat input of input_size values: no loss and no
+// optimizer (the PPO run's policy and value networks, TOFIX195 S4.3).
+BuiltExecutableModel BuildNetworkFromLayers(const std::vector<CompiledLayer>& layers, size_t input_size);
+
 // While alive, graph compiles and model builds on this thread do not log
 // their info lines (the background compile runs after every edit and counts
 // parameters, TOFIX123); warnings still log. Other threads are unaffected.

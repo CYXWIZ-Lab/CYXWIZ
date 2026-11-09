@@ -60,6 +60,8 @@
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
+#include "../core/rl_graph_compile.h"
+#include "../plugin/registries/plugin_environment_registry.h"
 #include "panels/training_plot_panel.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
@@ -1145,10 +1147,19 @@ MainWindow::MainWindow()
         }
     });
 
+    // An RL graph's Environment node names an environment of the plugin
+    // environment registry (TOFIX195 S4.3)
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment;
+        if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(key, environment)) return false;
+        info = environment.info;
+        return true;
+    });
+
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
-        // Show Training Dashboard when training starts
-        if (training_plot_panel_) {
+        // Show Training Dashboard when training starts (an RL run has its own)
+        if (training_plot_panel_ && !node_editor_->IsRLTrainingActive()) {
             training_plot_panel_->SetVisible(true);
         }
     });
@@ -1219,7 +1230,7 @@ MainWindow::MainWindow()
             auto nodes = node_editor_->GetNodes();
             auto links = node_editor_->GetLinks();
             StartTrainingFromGraph(nodes, links);
-            if (training_plot_panel_) {
+            if (training_plot_panel_ && !node_editor_->IsRLTrainingActive()) {
                 training_plot_panel_->SetVisible(true);
             }
             spdlog::info("Started training from Train menu");
@@ -3920,6 +3931,19 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
             return;
         }
 
+        // An RL graph trains with the Engine's PPO (TOFIX195 S4.3): no data,
+        // no Local Debug, its own dashboard
+        if (compile_result_rl_) {
+            if (cyxwiz::TrainingManager::Instance().IsTrainingActive()) {
+                spdlog::warn("Train: a model is training; stop it first");
+                return;
+            }
+            std::string error;
+            if (!node_editor_ || !node_editor_->StartRLTraining(compile_result_rl_, error))
+                spdlog::error("Train: {}", error.empty() ? "the node editor is not available" : error);
+            return;
+        }
+
         // === Local Debug staleness gate ===
         // After the compile gate passes, check whether the user has run
         // a successful Local Debug on the current graph. Three states:
@@ -4195,6 +4219,20 @@ void MainWindow::LocalDebugGraphAndReport() {
         compile_result_backend_placements_.clear();
         compile_result_issues_ = {{cyxwiz::IssueLevel::Error, -1, "",
                                    "The node editor or the Studio Debugger is not available.",
+                                   cyxwiz::errors::Ui::InvalidWorkflowState}};
+        ShowCompileReport(cyxwiz::compile_report::Mode::DebugBlocked);
+        return;
+    }
+
+    // An RL graph has no batch to debug: Train runs its PPO (TOFIX195 S4.3)
+    const auto& graph = node_editor_->GetNodes();
+    if (std::any_of(graph.begin(), graph.end(), [](const MLNode& n) { return cyxwiz::IsRLGraphNode(n.type); })) {
+        compile_result_success_ = false;
+        compile_result_has_config_ = false;
+        compile_result_backend_placements_.clear();
+        compile_result_issues_ = {{cyxwiz::IssueLevel::Info, -1, "",
+                                   "Local Debug runs one batch of a model trained on data. An RL graph has no batch: "
+                                   "Train runs its PPO, and the RL Training Dashboard shows each update.",
                                    cyxwiz::errors::Ui::InvalidWorkflowState}};
         ShowCompileReport(cyxwiz::compile_report::Mode::DebugBlocked);
         return;
@@ -5467,6 +5505,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
     compile_result_has_config_ = false;
     compile_result_backend_placements_.clear();
     compile_result_success_ = false;
+    compile_result_rl_.reset();
     if (properties_) {
         properties_->ClearBackendPlacementFacts();
     }
@@ -5478,9 +5517,10 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         compile_result_issues_ = config.issues;
         compile_result_backend_placements_ = config.backend_placements;
         compile_result_success_ = config.is_valid;
+        compile_result_rl_ = config.rl;
         // Launch readiness (data columns, device qualification, row limits):
         // reported by Compile, and therefore also before Train starts.
-        if (config.is_valid) {
+        if (config.is_valid && !config.rl) {
             const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
             for (auto& issue : gui::CheckGraphLaunchReadiness(
                      nodes, config, cyxwiz::DataRegistry::Instance(), &route)) {

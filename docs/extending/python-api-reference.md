@@ -47,11 +47,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 | `oneapi_available() -> bool` | Check if oneAPI is available |
 | `opencl_available() -> bool` | Check if OpenCL is available |
 | `relu(input: Tensor) -> Tensor` | Apply ReLU activation: f(x) = max(0, x) |
-| `rl_is_paused() -> bool` | Check if RL training is paused |
 | `rl_set_metric_callback(callback: object) -> None` | Set a callback function(name: str, value: float) for RL metric updates |
-| `rl_set_paused(value: bool) -> None` | Set RL training pause flag |
-| `rl_set_stop(value: bool) -> None` | Set RL training stop flag |
-| `rl_should_stop() -> bool` | Check if stop was requested for RL training |
 | `rl_update_metric(name: str, value: float) -> None` | Update an RL metric on the dashboard (thread-safe) |
 | `sentencepiece_tokenizer_unavailable_message() -> str` | Return the canonical explanation for unavailable SentencePiece tokenizer support |
 | `set_device(device: Device) -> None` | Set the active device |

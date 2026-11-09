@@ -380,6 +380,22 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
                         "model once over the stacked batch; connect the encoder layers straight to the loss";
                 return false;
             }
+            // TOFIX195 S4.3: the native PPO graph replaced the RL sketch nodes
+            if (node_type == NodeType::GymEnvironment || node_type == NodeType::ReplayBufferNode ||
+                node_type == NodeType::PolicyNetwork || node_type == NodeType::ValueNetwork ||
+                node_type == NodeType::RLTraining) {
+                const char* replaced =
+                    node_type == NodeType::GymEnvironment     ? "a Gym Environment node, which Environment replaced"
+                    : node_type == NodeType::ReplayBufferNode ? "a Replay Buffer node, which PPO does not use"
+                    : node_type == NodeType::PolicyNetwork
+                        ? "a Policy Network node, which layer nodes ending in a Policy Head replaced"
+                    : node_type == NodeType::ValueNetwork
+                        ? "a Value Network node, which layer nodes ending in a Value Head replaced"
+                        : "an RL Training node, which PPO replaced";
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' is " + replaced +
+                        ": remove it from the file or rebuild the graph from the PPO pattern";
+                return false;
+            }
 
             const int saved_node_id = node_json.at("id").get<int>();
             const std::string saved_node_name = node_json.at("name").get<std::string>();
