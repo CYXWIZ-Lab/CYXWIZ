@@ -230,7 +230,9 @@ int main() {
     text::EmbeddingsRequest sample = er;
     sample.sample_words = 20;
     const text::EmbeddingsAnswer es = text::RunEmbeddings("corpus", sample, run, missing);
-    Check(es.ok() && es.sampled && es.rows_used >= 2 && es.rows_used < 9 && es.words_read >= 20, "embeddings: a sample of the rows");
+    Check(es.ok() && es.sampled && es.rows_used >= 2 && es.rows_used < 9 && es.words_read >= 20,
+          "embeddings: a sample of the rows (" + es.error + ", rows " + std::to_string(es.rows_used) + ", words " +
+              std::to_string(es.words_read) + ")");
     Contains(text_view::EmbeddingsSentence(es, "", {}), "Learned from " + std::to_string(es.rows_used) + " of the column's 9 rows", "sample sentence");
     // CBOW trains too, and the node gets the architecture.
     text::EmbeddingsRequest cbow = er;

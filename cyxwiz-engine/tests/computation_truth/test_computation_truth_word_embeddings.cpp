@@ -712,6 +712,24 @@ int main(int, char** argv) {
     bad_pieces.max_n = 3;
     Check(!WordEmbeddings::TrainFastText({{"a", "b", "a", "b", "a", "b", "a", "b", "a", "b"}}, bad_pieces).success,
           "fastText: max_n below min_n is refused");
+    // One-word sentences: every epoch has kept words but no context pairs. The
+    // run is refused in words, not by ArrayFire on an empty draw.
+    const std::vector<std::vector<std::string>> lone_words = {{"a"}, {"b"}, {"a"}, {"b"}, {"a"}, {"b"}};
+    for (const bool cbow : {false, true}) {
+        const std::string how = cbow ? "CBOW" : "skip-gram";
+        cyxwiz::Word2VecOptions lone;
+        lone.cbow = cbow;
+        lone.min_count = 1;
+        const auto lone_model = WordEmbeddings::TrainWord2Vec(lone_words, lone);
+        Check(!lone_model.success && lone_model.error_message.find("no training examples") != std::string::npos,
+              "word2vec " + how + ": one-word sentences: " + lone_model.error_message);
+        cyxwiz::FastTextOptions lone_ft;
+        lone_ft.cbow = cbow;
+        lone_ft.min_count = 1;
+        const auto lone_ft_model = WordEmbeddings::TrainFastText(lone_words, lone_ft);
+        Check(!lone_ft_model.success && lone_ft_model.error_message.find("ArrayFire") == std::string::npos,
+              "fastText " + how + ": one-word sentences: " + lone_ft_model.error_message);
+    }
     Check(!WordEmbeddings::CountCooccurrences({0, 7}, {0, 0}, 3, 2, &error).success,
           "a GloVe token outside the vocabulary is refused");
     cyxwiz::GloVeState two_words;
