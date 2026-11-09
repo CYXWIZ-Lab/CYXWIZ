@@ -252,7 +252,7 @@ void ModelPanel::RenderLayers(float height) {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         const bool chosen = i == selected_row_;
-        char index[16];
+        char index[24];
         std::snprintf(index, sizeof(index), "%zu", i + 1);
         if (ImGui::Selectable(index, chosen, ImGuiSelectableFlags_SpanAllColumns)) {
             selected_row_ = i;

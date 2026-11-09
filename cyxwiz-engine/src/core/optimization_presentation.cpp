@@ -18,15 +18,6 @@ namespace {
 constexpr const char* kMinus = "\xE2\x88\x92";  // U+2212
 constexpr double kInf = std::numeric_limits<double>::infinity();
 
-const char* SenseText(ConstraintSense sense) {
-    switch (sense) {
-        case ConstraintSense::LessEqual: return "\xE2\x89\xA4";     // ≤
-        case ConstraintSense::GreaterEqual: return "\xE2\x89\xA5";  // ≥
-        case ConstraintSense::Equal: return "=";
-    }
-    return "";
-}
-
 std::string Point(const std::vector<double>& p) {
     std::string s = "(";
     for (size_t i = 0; i < p.size(); ++i) s += (i ? ", " : "") + Number(p[i], 5);

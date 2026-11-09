@@ -170,9 +170,15 @@ int main() {
         r.a = {{12, -51, 4}, {6, 167, -68}, {-4, 24, -41}, {-1, 1, 0}};
         const linalg::Answer q = linalg::Run(r);
         Check(q.tabs[0].title == "Q (4 × 3)" && q.tabs[1].title == "R (3 × 3)", "qr: the reduced Q");
-        Check(linalg::Run({linalg::Op::Add, {}, {}}).error == "A is empty.", "an empty A");
-        Check(linalg::Run({linalg::Op::Add, {{1, 2}, {3}}, {}}).error == "A has rows of different lengths.", "a ragged A");
-        Check(linalg::Run({linalg::Op::Rank, {{1, NAN}}, {}}).error == "A has a value that is not a number.", "a NaN");
+        const auto only_a = [](linalg::Op op, linalg::Matrix a) {
+            linalg::Request request;
+            request.op = op;
+            request.a = std::move(a);
+            return request;
+        };
+        Check(linalg::Run(only_a(linalg::Op::Add, {})).error == "A is empty.", "an empty A");
+        Check(linalg::Run(only_a(linalg::Op::Add, {{1, 2}, {3}})).error == "A has rows of different lengths.", "a ragged A");
+        Check(linalg::Run(only_a(linalg::Op::Rank, {{1, NAN}})).error == "A has a value that is not a number.", "a NaN");
     }
 
     // ---- a stop

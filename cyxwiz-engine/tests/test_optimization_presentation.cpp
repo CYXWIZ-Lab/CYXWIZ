@@ -188,7 +188,8 @@ void CheckCalculus() {
           "a step of 0 refused");
     Check(Has(RunDerivative({"sin(x)", "1", DifferenceRule::Central, "1e-"}).error, "is not a number"), "a step that is not a number refused");
     Check(RunDerivative({"sin(x)", "1", DifferenceRule::Central, "1e-5"}).ok(), "a typed step");
-    DerivativeRequest kink{"max(x, 0)", "1"};
+    DerivativeRequest kink;
+    kink.formula = "max(x, 0)";
     const auto k = RunDerivative(kink);
     Check(k.ok() && Has(k.title, "\xE2\x89\x88") && k.curve_df.empty(), "no derivative formula: " + k.title);
 
