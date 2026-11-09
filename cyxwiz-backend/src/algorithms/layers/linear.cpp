@@ -422,4 +422,26 @@ std::map<std::string, Tensor> LinearLayer::GetGradients() {
     return grads;
 }
 
+Tensor OrthogonalWeights(size_t rows, size_t cols, float gain) {
+    if (rows == 0 || cols == 0) throw std::invalid_argument("OrthogonalWeights: rows and cols must be at least 1");
+    try {
+        const bool wide = rows < cols;
+        const dim_t m = static_cast<dim_t>(wide ? cols : rows);
+        const dim_t k = static_cast<dim_t>(wide ? rows : cols);
+        const af::array a = af::randn(m, k, f32);
+        af::array q, r, tau;
+        af::qr(q, r, tau, a);
+        const af::seq first_k(static_cast<double>(k));
+        const af::array top = r(first_k, first_k);
+        const af::array diagonal = k == 1 ? top : af::diag(top);  // af::diag refuses a 1 x 1 matrix
+        const af::array signs = af::sign(diagonal) * -2.0f + 1.0f;  // af::sign is 1 for negatives
+        af::array w = q(af::span, first_k) * af::tile(af::transpose(signs), static_cast<unsigned>(m)) * gain;
+        if (wide) w = af::transpose(w);
+        w.eval();
+        return Tensor::FromArrayRowMajor2D(w);
+    } catch (const af::exception& e) {
+        throw std::runtime_error(std::string("OrthogonalWeights failed on the ArrayFire device: ") + e.what());
+    }
+}
+
 } // namespace cyxwiz

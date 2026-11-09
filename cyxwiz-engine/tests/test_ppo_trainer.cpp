@@ -1,6 +1,7 @@
 // The Engine's PPO trainer (core/rl/ppo_trainer) learns, headless:
 // CartPole-v1 (built in, discrete) reaches a mean return of 475 over 100
-// episodes, the same seed gives the same first updates, bad setups are
+// episodes and stops there, the same seed gives the same first updates,
+// normalised observations and rewards train, bad setups are
 // refused with the reason, and Stop ends a run. With a MuJoCo plugin folder
 // as the argument it also trains InvertedPendulum-v5 (continuous) to 1000.
 //
@@ -37,20 +38,19 @@ using namespace cyxwiz;
 using cyxwiz::plugin::EnvironmentBatch;
 using cyxwiz::plugin::PluginEnvironmentRegistry;
 
-// Stable-Baselines3's MlpPolicy shape: two hidden layers of 64 with tanh. The
-// output layer starts small (gain 0.01 for the policy), as SB3 does.
-std::unique_ptr<IExecutableModel> Mlp(size_t in, size_t out, float output_scale) {
+// Stable-Baselines3's MlpPolicy: two hidden layers of 64 with tanh,
+// orthogonal weights (gain sqrt 2, the output layer output_gain: 0.01 for the
+// policy, 1 for the value) and zero biases.
+std::unique_ptr<IExecutableModel> Mlp(size_t in, size_t out, float output_gain) {
     auto model = std::make_shared<SequentialModel>();
     model->Add<LinearModule>(in, 64);
     model->Add<TanhModule>();
     model->Add<LinearModule>(64, 64);
     model->Add<TanhModule>();
     model->Add<LinearModule>(64, out);
-    auto params = model->GetParameters();
-    for (auto& [name, tensor] : params)
-        if (name.rfind("layer4.", 0) == 0) tensor = tensor * output_scale;
-    model->SetParameters(params);
-    return std::make_unique<SequentialExecutableModel>(model);
+    auto executable = std::make_unique<SequentialExecutableModel>(model);
+    rl::InitializeLikeStableBaselines3(*executable, output_gain);
+    return executable;
 }
 
 // The registry's batch as the trainer's environment
@@ -79,6 +79,7 @@ struct Outcome {
 
 Outcome Train(const std::string& key, int copies, rl::PpoConfig config, float target, uint64_t init_seed) {
     Outcome outcome;
+    config.target_return = target;
     auto batch = Make(key, copies);
     if (!batch) return outcome;
     SeedCurrentArrayFireRandomEngine(init_seed);
@@ -94,7 +95,6 @@ Outcome Train(const std::string& key, int copies, rl::PpoConfig config, float ta
                             key.c_str(), m.update, static_cast<long long>(m.timesteps), m.mean_episode_return,
                             m.mean_episode_length, m.policy_loss, m.value_loss, m.approx_kl, m.explained_variance,
                             m.steps_per_second);
-            if (m.episodes >= 100 && m.mean_episode_return >= target) trainer.Stop();
         },
         outcome.error);
     return outcome;
@@ -121,9 +121,9 @@ void CheckCartPole() {
     const auto outcome = Train(key, 8, CartPoleConfig(1), 475.0f, 1);
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     Check(outcome.ok, "CartPole trains: " + outcome.error);
-    const bool reached = !outcome.updates.empty() && outcome.updates.back().mean_episode_return >= 475.0f &&
-                         outcome.updates.back().episodes >= 100;
-    Check(reached, "CartPole reaches a mean return of 475 within 200000 steps");
+    const bool reached = !outcome.updates.empty() && outcome.updates.back().reached_target &&
+                         outcome.updates.back().mean_episode_return >= 475.0f && outcome.updates.back().episodes >= 100;
+    Check(reached, "CartPole reaches a mean return of 475 within 200000 steps, and the run stops there");
     if (!outcome.updates.empty())
         std::printf("CartPole-v1: mean return %.1f after %lld steps (%d updates, %.0f s)\n",
                     outcome.updates.back().mean_episode_return, static_cast<long long>(outcome.updates.back().timesteps),
@@ -138,6 +138,16 @@ void CheckCartPole() {
     for (size_t i = 0; same && i < 3; ++i)
         same = a.updates[i].policy_loss == b.updates[i].policy_loss && a.updates[i].value_loss == b.updates[i].value_loss;
     Check(same, "the same seeds give the same first three updates");
+
+    // Normalised observations and rewards (VecNormalize) train too
+    auto normalised = short_config;
+    normalised.normalize_observations = normalised.normalize_rewards = true;
+    const auto c = Train(key, 8, normalised, 1e9f, 9);
+    bool finite = c.ok && c.updates.size() == 3;
+    for (const auto& u : c.updates) finite = finite && std::isfinite(u.policy_loss) && std::isfinite(u.value_loss);
+    Check(finite, "with normalised observations and rewards the first three updates are finite: " + c.error);
+    Check(c.ok && c.updates.back().value_loss != b.updates.back().value_loss,
+          "normalised rewards change what the value network learns");
 }
 
 void CheckRefusals() {

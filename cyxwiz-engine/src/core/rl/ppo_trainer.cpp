@@ -2,6 +2,7 @@
 
 #include "../optimizer_step.h"
 
+#include <cyxwiz/layers/linear.h>
 #include <cyxwiz/optimizers/adam.h>
 #include <cyxwiz/optimizers/gradient_clipping.h>
 
@@ -58,6 +59,30 @@ float ExplainedVariance(const std::vector<float>& values, const std::vector<floa
 
 }  // namespace
 
+void InitializeLikeStableBaselines3(IExecutableModel& model, float output_gain) {
+    auto params = model.GetParameters();
+    // the output layer: the weight matrix of the highest layer index ("layer<K>.weight")
+    int last = -1;
+    const auto layer_index = [](const std::string& name) {
+        if (name.rfind("layer", 0) != 0) return -1;
+        try {
+            return std::stoi(name.substr(5));
+        } catch (...) {
+            return -1;
+        }
+    };
+    for (const auto& [name, tensor] : params)
+        if (tensor.Shape().size() == 2) last = std::max(last, layer_index(name));
+    for (auto& [name, tensor] : params) {
+        const auto shape = tensor.Shape();
+        if (shape.size() == 2)
+            tensor = OrthogonalWeights(shape[0], shape[1], layer_index(name) == last ? output_gain : std::sqrt(2.0f));
+        else
+            tensor = Tensor::Zeros(shape, DataType::Float32);
+    }
+    model.SetParameters(params);
+}
+
 PpoTrainer::PpoTrainer(PpoEnvironment environment, std::unique_ptr<IExecutableModel> policy,
                        std::unique_ptr<IExecutableModel> value, PpoConfig config)
     : environment_(std::move(environment)), policy_(std::move(policy)), value_(std::move(value)),
@@ -84,6 +109,8 @@ bool PpoTrainer::CheckSetup(std::string& error) const {
     else if (!(config_.learning_rate > 0.0f)) error = "The learning rate must be above 0.";
     else if (!(config_.gamma > 0.0f && config_.gamma <= 1.0f) || !(config_.gae_lambda >= 0.0f && config_.gae_lambda <= 1.0f))
         error = "Gamma must be in (0, 1] and the GAE lambda in [0, 1].";
+    else if (!(config_.clip_observations > 0.0f) || !(config_.clip_rewards > 0.0f))
+        error = "The observation and reward clips must be above 0.";
     else if (info.observation_size < 1 || info.action_size < 1) error = "The environment observes or acts on nothing.";
     return error.empty();
 }
@@ -111,9 +138,17 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     std::vector<int> episode_length(n, 0);
     std::deque<std::pair<float, int>> recent;  // the last 100 episodes
     PpoUpdateMetrics metrics;
+    VecNormalizeSettings norm;
+    norm.observations = config_.normalize_observations;
+    norm.rewards = config_.normalize_rewards;
+    norm.clip_observations = config_.clip_observations;
+    norm.clip_rewards = config_.clip_rewards;
+    norm.gamma = config_.gamma;
+    normalizer_ = std::make_unique<VecNormalize>(n, obs_size, norm);
 
     try {
         if (!environment_.reset(config_.seed, obs.data(), error)) return false;
+        normalizer_->Reset(obs.data());
         while (metrics.timesteps < config_.total_timesteps && !stop_) {
             const auto update_start = std::chrono::steady_clock::now();
             policy_->SetTraining(false);
@@ -155,6 +190,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                     episode_return[i] += rewards[i];
                     ++episode_length[i];
                 }
+                normalizer_->Step(obs.data(), rewards.data(), terminated.data(), truncated.data(), final_obs.data());
                 // A cut episode is worth what its last observation is worth
                 std::vector<size_t> cut;
                 for (size_t i = 0; i < n; ++i)
@@ -280,7 +316,9 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
             const double seconds =
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - update_start).count();
             metrics.steps_per_second = seconds > 0.0 ? static_cast<float>(rollout / seconds) : 0.0f;
+            metrics.reached_target = recent.size() >= 100 && metrics.mean_episode_return >= config_.target_return;
             if (on_update) on_update(metrics);
+            if (metrics.reached_target) break;
         }
     } catch (const std::exception& e) {
         error = std::string("PPO training failed: ") + e.what();

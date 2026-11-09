@@ -7328,6 +7328,7 @@ set(CYXWIZ_PPO_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/ppo_pytorch.json")
 add_executable(test_computation_truth_ppo tests/test_computation_truth_ppo.cpp)
 target_link_libraries(test_computation_truth_ppo PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_include_directories(test_computation_truth_ppo PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
 target_compile_definitions(test_computation_truth_ppo PRIVATE CYXWIZ_PPO_FIXTURE="${CYXWIZ_PPO_PYTORCH_FIXTURE}")
 add_custom_target(copy_test_computation_truth_ppo_fixture
     COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -7340,6 +7341,16 @@ add_custom_target(copy_test_computation_truth_ppo_fixture
 )
 add_dependencies(test_computation_truth_ppo copy_test_computation_truth_ppo_fixture)
 add_test(NAME ppo_pytorch_parity COMMAND test_computation_truth_ppo)
+
+# ===== Test: observation/reward normalisation vs Stable-Baselines3's VecNormalize (TOFIX195 S4.3a) =====
+add_executable(test_computation_truth_vec_normalize
+    tests/test_computation_truth_vec_normalize.cpp
+    src/core/rl/vec_normalize.cpp
+)
+target_link_libraries(test_computation_truth_vec_normalize PRIVATE nlohmann_json::nlohmann_json)
+target_compile_definitions(test_computation_truth_vec_normalize PRIVATE
+    CYXWIZ_VEC_NORMALIZE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/vec_normalize_sb3.json")
+add_test(NAME vec_normalize_sb3_parity COMMAND test_computation_truth_vec_normalize)
 
 # ===== Test: the PPO trainer learns CartPole (and InvertedPendulum with the MuJoCo plugin) (TOFIX195 S4.2) =====
 add_executable(test_ppo_trainer

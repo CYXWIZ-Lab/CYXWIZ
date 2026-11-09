@@ -9,6 +9,7 @@
 
 #include "../executable_model.h"
 #include "../../plugin/interfaces/i_environment_provider.h"
+#include "vec_normalize.h"
 
 #include <cyxwiz/rl/ppo.h>
 #include <cyxwiz/tensor.h>
@@ -16,6 +17,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -49,6 +51,13 @@ struct PpoConfig {
     float log_std_init = 0.0f;
     PpoLossSettings loss;
     uint64_t seed = 0;
+    // VecNormalize; its gamma is the trainer's
+    bool normalize_observations = false;
+    bool normalize_rewards = false;
+    float clip_observations = 10.0f;
+    float clip_rewards = 10.0f;
+    // Stop once the last 100 episodes average at least this; NaN: run all steps
+    float target_return = std::numeric_limits<float>::quiet_NaN();
 };
 
 // After each update.
@@ -67,7 +76,14 @@ struct PpoUpdateMetrics {
     float explained_variance = 0.0f;
     float std = 0.0f;                 // mean action standard deviation (Gaussian)
     float steps_per_second = 0.0f;
+    bool reached_target = false;      // the run stops after this update
 };
+
+// Stable-Baselines3's MlpPolicy initialisation (ortho_init): every weight
+// matrix orthogonal with gain sqrt 2, the last one (the output layer) with
+// output_gain (0.01 for a policy, 1 for a value network), biases zero. Draws
+// from the current ArrayFire random engine.
+void InitializeLikeStableBaselines3(IExecutableModel& model, float output_gain);
 
 class PpoTrainer {
 public:
@@ -89,6 +105,8 @@ public:
     IExecutableModel& Value() { return *value_; }
     const Tensor& LogStd() const { return log_std_; }
     bool Discrete() const { return environment_.info.discrete_actions; }
+    // The observation statistics a trained policy needs (null before Train)
+    const VecNormalize* Normalizer() const { return normalizer_.get(); }
 
 private:
     bool CheckSetup(std::string& error) const;
@@ -101,6 +119,7 @@ private:
     std::unique_ptr<Optimizer> policy_optimizer_;
     std::unique_ptr<Optimizer> value_optimizer_;
     std::unique_ptr<Optimizer> log_std_optimizer_;
+    std::unique_ptr<VecNormalize> normalizer_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> paused_{false};
 };

@@ -1,11 +1,14 @@
 // The backend's PPO math (cyxwiz/rl/ppo.h) against PyTorch: the
 // Stable-Baselines3 loss and its gradients for Gaussian and categorical
 // policies under three settings, log-probabilities, GAE, and the samplers'
-// seeds and distributions. Fixture: computation_truth/fixtures/ppo_pytorch.json
+// seeds and distributions, and orthogonal weight init. Fixture: computation_truth/fixtures/ppo_pytorch.json
 // (reference/generate_ppo_fixtures.py, TOFIX195 S4.1).
 
+#include <cyxwiz/layers/linear.h>
 #include <cyxwiz/rl/ppo.h>
 #include <cyxwiz/tensor.h>
+
+#include "algorithms/arrayfire_backend_utils.h"
 
 #include <nlohmann/json.hpp>
 
@@ -190,6 +193,31 @@ void CheckSampling() {
               "choice " + std::to_string(k) + " picked " + std::to_string(counts[k] / rows) + " of the time");
 }
 
+// torch.nn.init.orthogonal_'s contract: W W^T (wide) or W^T W (tall) is gain^2 I
+void CheckOrthogonal() {
+    const struct { size_t rows, cols; float gain; } cases[] = {{64, 4, 1.4142135f}, {2, 64, 0.01f}, {64, 64, 1.0f}, {1, 64, 1.0f}, {64, 1, 2.0f}};
+    for (const auto& c : cases) {
+        cyxwiz::SeedCurrentArrayFireRandomEngine(3);
+        const auto w = Values(cyxwiz::OrthogonalWeights(c.rows, c.cols, c.gain));
+        cyxwiz::SeedCurrentArrayFireRandomEngine(3);
+        const auto again = Values(cyxwiz::OrthogonalWeights(c.rows, c.cols, c.gain));
+        const std::string name = std::to_string(c.rows) + "x" + std::to_string(c.cols);
+        Check(w.size() == c.rows * c.cols && w == again, name + ": one seed, one matrix");
+        const bool wide = c.rows < c.cols;
+        const size_t k = wide ? c.rows : c.cols, len = wide ? c.cols : c.rows;
+        const auto at = [&](size_t vec, size_t i) { return wide ? w[vec * c.cols + i] : w[i * c.cols + vec]; };
+        double worst = 0.0;
+        for (size_t a = 0; a < k; ++a)
+            for (size_t b = 0; b < k; ++b) {
+                double dot = 0.0;
+                for (size_t i = 0; i < len; ++i) dot += double(at(a, i)) * at(b, i);
+                const double want = a == b ? double(c.gain) * c.gain : 0.0;
+                worst = std::max(worst, std::abs(dot - want) / (double(c.gain) * c.gain));
+            }
+        Check(worst < 1e-4, name + " is orthogonal times the gain: largest error " + std::to_string(worst));
+    }
+}
+
 void CheckErrors() {
     const std::vector<float> two = {0.0f, 0.0f};
     const Tensor mean({1, 2}, two.data());
@@ -214,6 +242,7 @@ int main(int, char** argv) {
     CheckCategorical(fixture);
     CheckGae(fixture);
     CheckSampling();
+    CheckOrthogonal();
     CheckErrors();
     if (failures == 0) std::printf("test_computation_truth_ppo: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
