@@ -707,6 +707,270 @@ extern "C" __global__ void cyxwiz_attention_backward_dkdv(
 }
 )";
 
+// A whole small multilayer perceptron per launch (TOFIX206 3.2): PPO's
+// networks are a few Dense layers of <= 256 units, so per-layer GEMMs and
+// element-wise kernels cost far more in launches than in arithmetic. One
+// block carries MLP_RB rows through every layer; the rows' activations live
+// in shared memory, the weights ([out, in], first dimension fastest) are read
+// from global memory (L2-resident at these sizes). Every array is the
+// semantic [rows, width] array: element (r, j) at r + j * rows. Activation
+// codes are NeuralActivation's values; the formulas match CyxWiz's ArrayFire
+// activations (GELU in its tanh form).
+constexpr const char* kMlpKernelSource = R"(
+#define MLP_MAXL 8
+#define MLP_RB 4
+struct MlpShape {
+  int layers;
+  int widths[MLP_MAXL + 1];
+  int acts[MLP_MAXL];
+  int zoff[MLP_MAXL + 1];
+  float slope;
+  float alpha;
+};
+struct MlpWeights { const float* w[MLP_MAXL]; const float* b[MLP_MAXL]; };
+struct MlpGrads { float* dw[MLP_MAXL]; float* db[MLP_MAXL]; };
+
+__device__ __forceinline__ float mlp_sigmoid(float z) { return 1.0f / (1.0f + expf(-z)); }
+
+__device__ float mlp_act(int a, float z, float slope, float alpha) {
+  switch (a) {
+  case 1: return z > 0.0f ? z : 0.0f;
+  case 2: { const float k = 0.7978845608028654f * (z + 0.044715f * z * z * z);
+            return 0.5f * z * (1.0f + tanhf(k)); }
+  case 3: return z * mlp_sigmoid(z);
+  case 4: return z > 0.0f ? z : alpha * (expf(z) - 1.0f);
+  case 5: return 1.0507009873554805f * (z > 0.0f ? z : 1.6732632423543772f * (expf(z) - 1.0f));
+  case 7: return tanhf(z);
+  case 8: return mlp_sigmoid(z);
+  case 9: return z > 0.0f ? z : slope * z;
+  default: return z;
+  }
+}
+
+__device__ float mlp_dact(int a, float z, float slope, float alpha) {
+  switch (a) {
+  case 1: return z > 0.0f ? 1.0f : 0.0f;
+  case 2: { const float c = 0.7978845608028654f;
+            const float t = tanhf(c * (z + 0.044715f * z * z * z));
+            return 0.5f * (1.0f + t) + 0.5f * z * (1.0f - t * t) * c * (1.0f + 3.0f * 0.044715f * z * z); }
+  case 3: { const float s = mlp_sigmoid(z); return s * (1.0f + z * (1.0f - s)); }
+  case 4: return z > 0.0f ? 1.0f : alpha * expf(z);
+  case 5: return 1.0507009873554805f * (z > 0.0f ? 1.0f : 1.6732632423543772f * expf(z));
+  case 7: { const float t = tanhf(z); return 1.0f - t * t; }
+  case 8: { const float s = mlp_sigmoid(z); return s * (1.0f - s); }
+  case 9: return z > 0.0f ? 1.0f : slope;
+  default: return 1.0f;
+  }
+}
+
+// Y (and Z, the pre-activations, when z is given) for MLP_RB rows per block.
+// Shared memory: 2 * MLP_RB * maxw floats.
+extern "C" __global__ void cyxwiz_mlp_forward(MlpShape s, MlpWeights p, const float* __restrict__ x,
+                                              float* __restrict__ y, float* __restrict__ z, int rows, int maxw) {
+  extern __shared__ float sh[];
+  float* cur = sh;
+  float* nxt = sh + MLP_RB * maxw;
+  const int r0 = blockIdx.x * MLP_RB;
+  const int nr = min(MLP_RB, rows - r0);
+  const int w0 = s.widths[0];
+  for (int k = threadIdx.x; k < MLP_RB * w0; k += blockDim.x) {
+    const int rb = k / w0, i = k - rb * w0;
+    cur[rb * maxw + i] = rb < nr ? x[(r0 + rb) + (size_t)i * rows] : 0.0f;
+  }
+  __syncthreads();
+  for (int l = 0; l < s.layers; ++l) {
+    const int win = s.widths[l], wout = s.widths[l + 1];
+    const float* __restrict__ W = p.w[l];
+    const float* __restrict__ B = p.b[l];
+    for (int u = threadIdx.x; u < wout; u += blockDim.x) {
+      const float bias = B ? B[u] : 0.0f;
+      float acc[MLP_RB];
+      for (int rb = 0; rb < MLP_RB; ++rb) acc[rb] = bias;
+      for (int i = 0; i < win; ++i) {
+        const float wv = W[u + (size_t)i * wout];
+        for (int rb = 0; rb < MLP_RB; ++rb) acc[rb] += cur[rb * maxw + i] * wv;
+      }
+      for (int rb = 0; rb < MLP_RB; ++rb) {
+        float a = 0.0f;
+        if (rb < nr) {
+          if (z) z[(r0 + rb) + (size_t)(s.zoff[l] + u) * rows] = acc[rb];
+          a = mlp_act(s.acts[l], acc[rb], s.slope, s.alpha);
+          if (l + 1 == s.layers) y[(r0 + rb) + (size_t)u * rows] = a;
+        }
+        nxt[rb * maxw + u] = a;
+      }
+    }
+    __syncthreads();
+    float* t = cur; cur = nxt; nxt = t;
+  }
+}
+
+// Every layer's delta (dLoss/dZ) from dY, for MLP_RB rows per block. The
+// deltas are written unit-fastest, delta[(zoff + u) + r * zwidth], so the
+// gradient kernel's reads coalesce. W^T * delta reads the weights through a
+// shared tile of MLP_TU units x win inputs (coalesced loads; the +1 pad keeps
+// the column reads off one bank). Shared memory: 2 * MLP_RB * maxw +
+// MLP_TU_PAD * maxw floats, maxw = the widest layer (not the input).
+#define MLP_TU 32
+#define MLP_TU_PAD 33
+extern "C" __global__ void cyxwiz_mlp_backward_deltas(MlpShape s, MlpWeights p, const float* __restrict__ z,
+                                                      const float* __restrict__ dy, float* __restrict__ delta,
+                                                      int rows, int maxw) {
+  extern __shared__ float sh[];
+  float* cur = sh;
+  float* nxt = sh + MLP_RB * maxw;
+  float* tile = sh + 2 * MLP_RB * maxw;
+  const int r0 = blockIdx.x * MLP_RB;
+  const int nr = min(MLP_RB, rows - r0);
+  const int L = s.layers;
+  const int zw = s.zoff[L];
+  const int wl = s.widths[L];
+  for (int k = threadIdx.x; k < MLP_RB * wl; k += blockDim.x) {
+    const int rb = k / wl, u = k - rb * wl;
+    float d = 0.0f;
+    if (rb < nr) {
+      const size_t zi = (r0 + rb) + (size_t)(s.zoff[L - 1] + u) * rows;
+      d = dy[(r0 + rb) + (size_t)u * rows] * mlp_dact(s.acts[L - 1], z[zi], s.slope, s.alpha);
+      delta[(s.zoff[L - 1] + u) + (size_t)(r0 + rb) * zw] = d;
+    }
+    cur[rb * maxw + u] = d;
+  }
+  __syncthreads();
+  for (int l = L - 1; l >= 1; --l) {
+    const int wout = s.widths[l + 1], win = s.widths[l];
+    const float* __restrict__ W = p.w[l];
+    float acc[MLP_RB];
+    for (int rb = 0; rb < MLP_RB; ++rb) acc[rb] = 0.0f;
+    const int i = threadIdx.x;  // blockDim.x >= win (the widest layer, in warps)
+    for (int u0 = 0; u0 < wout; u0 += MLP_TU) {
+      const int tu = min(MLP_TU, wout - u0);
+      for (int k = threadIdx.x; k < MLP_TU * win; k += blockDim.x) {
+        const int uu = k % MLP_TU, ii = k / MLP_TU;
+        tile[ii * MLP_TU_PAD + uu] = uu < tu ? W[(u0 + uu) + (size_t)ii * wout] : 0.0f;
+      }
+      __syncthreads();
+      if (i < win) {
+        for (int uu = 0; uu < tu; ++uu) {
+          const float wv = tile[i * MLP_TU_PAD + uu];
+          for (int rb = 0; rb < MLP_RB; ++rb) acc[rb] += cur[rb * maxw + u0 + uu] * wv;
+        }
+      }
+      __syncthreads();
+    }
+    if (i < win) {
+      for (int rb = 0; rb < MLP_RB; ++rb) {
+        float d = 0.0f;
+        if (rb < nr) {
+          const size_t zi = (r0 + rb) + (size_t)(s.zoff[l - 1] + i) * rows;
+          d = acc[rb] * mlp_dact(s.acts[l - 1], z[zi], s.slope, s.alpha);
+          delta[(s.zoff[l - 1] + i) + (size_t)(r0 + rb) * zw] = d;
+        }
+        nxt[rb * maxw + i] = d;
+      }
+    }
+    __syncthreads();
+    float* t = cur; cur = nxt; nxt = t;
+  }
+}
+
+// One thread per weight and bias of every layer: the sum over the rows, in
+// row order (deterministic: no atomics).
+extern "C" __global__ void cyxwiz_mlp_param_grads(MlpShape s, MlpGrads g, const float* __restrict__ x,
+                                                  const float* __restrict__ z, const float* __restrict__ delta,
+                                                  int rows, long long total) {
+  long long k = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  if (k >= total) return;
+  for (int l = 0; l < s.layers; ++l) {
+    const int win = s.widths[l], wout = s.widths[l + 1];
+    const long long weights = (long long)wout * win;
+    if (k >= weights + wout) { k -= weights + wout; continue; }
+    const int u = (int)(k < weights ? k % wout : k - weights);
+    const int zw = s.zoff[s.layers];
+    const float* __restrict__ d = delta + (s.zoff[l] + u);  // unit-fastest: row r at d[r * zw]
+    float acc = 0.0f;
+    if (k >= weights) {
+      for (int r = 0; r < rows; ++r) acc += d[(size_t)r * zw];
+      g.db[l][u] = acc;
+      return;
+    }
+    const int i = (int)(k / wout);
+    if (l == 0) {
+      const float* __restrict__ a = x + (size_t)i * rows;
+      for (int r = 0; r < rows; ++r) acc += d[(size_t)r * zw] * a[r];
+    } else {
+      const float* __restrict__ zp = z + (size_t)(s.zoff[l - 1] + i) * rows;
+      const int act = s.acts[l - 1];
+      for (int r = 0; r < rows; ++r) acc += d[(size_t)r * zw] * mlp_act(act, zp[r], s.slope, s.alpha);
+    }
+    g.dw[l][u + (size_t)i * wout] = acc;
+    return;
+  }
+}
+)";
+
+// Host mirrors of the kernels' argument structs (same order and types).
+constexpr int kMlpMaxLayers = 8;
+constexpr int kMlpRowsPerBlock = 4;
+struct MlpShapeArg {
+    int layers = 0;
+    int widths[kMlpMaxLayers + 1] = {};
+    int acts[kMlpMaxLayers] = {};
+    int zoff[kMlpMaxLayers + 1] = {};
+    float slope = 0.01f;
+    float alpha = 1.0f;
+};
+struct MlpWeightsArg {
+    const float* w[kMlpMaxLayers] = {};
+    const float* b[kMlpMaxLayers] = {};
+};
+struct MlpGradsArg {
+    float* dw[kMlpMaxLayers] = {};
+    float* db[kMlpMaxLayers] = {};
+};
+static_assert(static_cast<size_t>(kMlpMaxLayers) == NeuralOpRequest::kMaxMlpLayers, "kernel and request limits differ");
+
+// Why the request is outside the small-MLP contract, or "" when it fits.
+std::string MlpContractError(const NeuralOpRequest& r) {
+    if (!r.device_resident) return "mlp ops run device-resident only";
+    if (r.dtype != DataType::Float32) return "mlp ops are Float32 only";
+    if (r.mlp_layers < 1 || r.mlp_layers > NeuralOpRequest::kMaxMlpLayers) return "mlp needs 1 to 8 layers";
+    if (r.batch < 1 || r.batch > (1u << 20)) return "mlp needs 1 to 1,048,576 rows";
+    if (r.mlp_widths[0] < 1 || r.mlp_widths[0] > 1024) return "mlp input width must be 1 to 1024";
+    for (size_t l = 1; l <= r.mlp_layers; ++l)
+        if (r.mlp_widths[l] < 1 || r.mlp_widths[l] > 256) return "mlp layer widths must be 1 to 256";
+    for (size_t l = 0; l < r.mlp_layers; ++l) {
+        switch (r.mlp_activations[l]) {
+        case NeuralActivation::None: case NeuralActivation::Relu: case NeuralActivation::Gelu:
+        case NeuralActivation::Swish: case NeuralActivation::Elu: case NeuralActivation::Selu:
+        case NeuralActivation::Tanh: case NeuralActivation::Sigmoid: case NeuralActivation::LeakyRelu:
+            break;
+        default:
+            return "mlp activation not supported (none, relu, leaky relu, elu, selu, gelu, swish, tanh, sigmoid)";
+        }
+    }
+    return {};
+}
+
+MlpShapeArg MlpShapeOf(const NeuralOpRequest& r, size_t& z_width, int& max_width) {
+    MlpShapeArg s;
+    s.layers = static_cast<int>(r.mlp_layers);
+    s.slope = r.mlp_negative_slope;
+    s.alpha = r.mlp_elu_alpha;
+    z_width = 0;
+    max_width = 0;
+    for (size_t l = 0; l <= r.mlp_layers; ++l) {
+        s.widths[l] = static_cast<int>(r.mlp_widths[l]);
+        max_width = std::max(max_width, s.widths[l]);
+    }
+    for (size_t l = 0; l < r.mlp_layers; ++l) {
+        s.acts[l] = static_cast<int>(r.mlp_activations[l]);
+        s.zoff[l] = static_cast<int>(z_width);
+        z_width += r.mlp_widths[l + 1];
+    }
+    s.zoff[r.mlp_layers] = static_cast<int>(z_width);
+    return s;
+}
+
 struct NvidiaRuntimeProbe {
     bool ok = false;
     int device_count = 0;
@@ -867,7 +1131,8 @@ public:
         cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, native_device);
         cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, native_device);
         nvrtcProgram program = nullptr;
-        if (nvrtcCreateProgram(&program, kDeviceKernelSource, "cyxwiz_device.cu", 0, nullptr, nullptr) !=
+        const std::string source = std::string(kDeviceKernelSource) + kMlpKernelSource;
+        if (nvrtcCreateProgram(&program, source.c_str(), "cyxwiz_device.cu", 0, nullptr, nullptr) !=
             NVRTC_SUCCESS) {
             failure = "NVRTC program creation failed (device kernels)";
             return false;
@@ -893,7 +1158,10 @@ public:
             cuModuleGetFunction(&conv_im2col_, module_, "cyxwiz_conv_im2col") != CUDA_SUCCESS ||
             cuModuleGetFunction(&conv_col2im_, module_, "cyxwiz_conv_col2im") != CUDA_SUCCESS ||
             cuModuleGetFunction(&conv_bias_add_, module_, "cyxwiz_conv_bias_add") != CUDA_SUCCESS ||
-            cuModuleGetFunction(&conv_bias_grad_, module_, "cyxwiz_conv_bias_grad") != CUDA_SUCCESS) {
+            cuModuleGetFunction(&conv_bias_grad_, module_, "cyxwiz_conv_bias_grad") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&mlp_forward_, module_, "cyxwiz_mlp_forward") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&mlp_deltas_, module_, "cyxwiz_mlp_backward_deltas") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&mlp_grads_, module_, "cyxwiz_mlp_param_grads") != CUDA_SUCCESS) {
             failure = "device kernel module load failed";
             return false;
         }
@@ -911,6 +1179,9 @@ public:
     CUfunction ConvCol2im() const { return conv_col2im_; }
     CUfunction ConvBiasAdd() const { return conv_bias_add_; }
     CUfunction ConvBiasGrad() const { return conv_bias_grad_; }
+    CUfunction MlpForward() const { return mlp_forward_; }
+    CUfunction MlpDeltas() const { return mlp_deltas_; }
+    CUfunction MlpGrads() const { return mlp_grads_; }
     // The cuBLAS handle bound to the caller's stream for this call.
     cublasHandle_t Cublas(CUstream stream) {
         cublasSetStream(cublas_, reinterpret_cast<cudaStream_t>(stream));
@@ -1007,6 +1278,9 @@ private:
     CUfunction conv_col2im_ = nullptr;
     CUfunction conv_bias_add_ = nullptr;
     CUfunction conv_bias_grad_ = nullptr;
+    CUfunction mlp_forward_ = nullptr;
+    CUfunction mlp_deltas_ = nullptr;
+    CUfunction mlp_grads_ = nullptr;
     cublasHandle_t cublas_ = nullptr;
     float* workspace_ = nullptr;
     size_t workspace_floats_ = 0;
@@ -1102,6 +1376,14 @@ public:
         // Device-resident 2D convolution (TOFIX140 A1b).
         if (request.op == NeuralOp::Conv2dForward || request.op == NeuralOp::Conv2dBackward) {
             capability.detail = conv2d_contract::ContractError(request);
+            if (!capability.detail.empty()) return capability;
+            capability.supported = true;
+            capability.reason = BackendFallbackReason::BackendInternalError;
+            return capability;
+        }
+        // A whole small MLP (TOFIX206 3.2).
+        if (request.op == NeuralOp::MlpForward || request.op == NeuralOp::MlpBackward) {
+            capability.detail = MlpContractError(request);
             if (!capability.detail.empty()) return capability;
             capability.supported = true;
             capability.reason = BackendFallbackReason::BackendInternalError;
@@ -2128,6 +2410,102 @@ private:
         return Ok();
     }
 
+    // Threads per block: the widest layer, in whole warps (at most 256).
+    static unsigned MlpThreads(const MlpShapeArg& s) {
+        int widest = 1;
+        for (int l = 1; l <= s.layers; ++l) widest = std::max(widest, s.widths[l]);
+        return static_cast<unsigned>(std::min(256, (widest + 31) / 32 * 32));
+    }
+
+    NeuralOpStatus ExecuteMlpForward(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
+        size_t z_width = 0;
+        int max_width = 0;
+        const MlpShapeArg s = MlpShapeOf(r, z_width, max_width);
+        const size_t rows = r.batch, L = r.mlp_layers;
+        const auto& in = buffers.inputs;
+        const auto& out = buffers.outputs;
+        bool ok = in.size() == 1 + 2 * L && out.size() == (r.training ? 2u : 1u) &&
+                  in[0].elements == rows * r.mlp_widths[0] && out[0].elements == rows * r.mlp_widths[L] &&
+                  (!r.training || out[1].elements == rows * z_width);
+        MlpWeightsArg p;
+        for (size_t l = 0; ok && l < L; ++l) {
+            ok = in[1 + 2 * l].elements == r.mlp_widths[l + 1] * r.mlp_widths[l] &&
+                 in[2 + 2 * l].elements == r.mlp_widths[l + 1];
+            p.w[l] = static_cast<const float*>(in[1 + 2 * l].handle);
+            p.b[l] = static_cast<const float*>(in[2 + 2 * l].handle);
+        }
+        if (!ok) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        "mlp_forward buffers do not match the request (X, W_1, b_1 ... -> Y[, Z])");
+        }
+        const float* x = static_cast<const float*>(in[0].handle);
+        float* y = static_cast<float*>(out[0].handle);
+        float* z = r.training ? static_cast<float*>(out[1].handle) : nullptr;
+        int rows_arg = static_cast<int>(rows);
+        MlpShapeArg shape = s;
+        void* args[] = {&shape, &p, const_cast<float**>(&x), &y, &z, &rows_arg, &max_width};
+        const unsigned blocks = static_cast<unsigned>((rows + kMlpRowsPerBlock - 1) / kMlpRowsPerBlock);
+        const unsigned shared = static_cast<unsigned>(2 * kMlpRowsPerBlock * max_width * sizeof(float));
+        if (cuLaunchKernel(device_state_.MlpForward(), blocks, 1, 1, MlpThreads(s), 1, 1, shared,
+                           static_cast<CUstream>(buffers.queue.cuda_stream), args, nullptr) != CUDA_SUCCESS) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "mlp_forward launch failed");
+        }
+        return Ok();
+    }
+
+    NeuralOpStatus ExecuteMlpBackward(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
+        size_t z_width = 0;
+        int max_width = 0;
+        const MlpShapeArg s = MlpShapeOf(r, z_width, max_width);
+        const size_t rows = r.batch, L = r.mlp_layers;
+        const auto& in = buffers.inputs;
+        const auto& out = buffers.outputs;
+        bool ok = in.size() == L + 3 && out.size() == 2 * L && in[0].elements == rows * r.mlp_widths[0] &&
+                  in[L + 1].elements == rows * z_width && in[L + 2].elements == rows * r.mlp_widths[L];
+        MlpWeightsArg p;
+        MlpGradsArg g;
+        long long total = 0;
+        for (size_t l = 0; ok && l < L; ++l) {
+            const size_t weights = r.mlp_widths[l + 1] * r.mlp_widths[l];
+            ok = in[1 + l].elements == weights && out[2 * l].elements == weights &&
+                 out[2 * l + 1].elements == r.mlp_widths[l + 1];
+            p.w[l] = static_cast<const float*>(in[1 + l].handle);
+            g.dw[l] = static_cast<float*>(out[2 * l].handle);
+            g.db[l] = static_cast<float*>(out[2 * l + 1].handle);
+            total += static_cast<long long>(weights + r.mlp_widths[l + 1]);
+        }
+        if (!ok) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        "mlp_backward buffers do not match the request (X, W_1 ... W_L, Z, dY -> dW_1, db_1 ...)");
+        }
+        const auto stream = static_cast<CUstream>(buffers.queue.cuda_stream);
+        float* delta = device_state_.Workspace(rows * z_width, stream);
+        if (!delta) return Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted, "mlp delta workspace");
+        const float* x = static_cast<const float*>(in[0].handle);
+        const float* z = static_cast<const float*>(in[L + 1].handle);
+        const float* dy = static_cast<const float*>(in[L + 2].handle);
+        int rows_arg = static_cast<int>(rows);
+        MlpShapeArg shape = s;
+        int max_hidden = 1;
+        for (size_t l = 1; l <= L; ++l) max_hidden = std::max(max_hidden, static_cast<int>(r.mlp_widths[l]));
+        void* delta_args[] = {&shape, &p, const_cast<float**>(&z), const_cast<float**>(&dy), &delta, &rows_arg,
+                              &max_hidden};
+        const unsigned blocks = static_cast<unsigned>((rows + kMlpRowsPerBlock - 1) / kMlpRowsPerBlock);
+        // cur + nxt rows, and the 32-unit weight tile (33 floats per input with the pad)
+        const unsigned shared = static_cast<unsigned>((2 * kMlpRowsPerBlock + 33) * max_hidden * sizeof(float));
+        if (cuLaunchKernel(device_state_.MlpDeltas(), blocks, 1, 1, MlpThreads(s), 1, 1, shared, stream, delta_args,
+                           nullptr) != CUDA_SUCCESS) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "mlp_backward deltas launch failed");
+        }
+        constexpr unsigned kThreads = 256;
+        void* grad_args[] = {&shape, &g, const_cast<float**>(&x), const_cast<float**>(&z), &delta, &rows_arg, &total};
+        if (cuLaunchKernel(device_state_.MlpGrads(), Blocks(total, kThreads), 1, 1, kThreads, 1, 1, 0, stream,
+                           grad_args, nullptr) != CUDA_SUCCESS) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "mlp_backward gradients launch failed");
+        }
+        return Ok();
+    }
+
     NeuralOpStatus ExecuteDevice(const NeuralOpRequest& request,
                                  NeuralDeviceOpBuffers& buffers) override {
         const NeuralCapability capability = QueryCapability(request);
@@ -2143,6 +2521,14 @@ private:
             }
             return request.op == NeuralOp::AttentionForward ? ExecuteAttentionForward(request, buffers)
                                                             : ExecuteAttentionBackward(request, buffers);
+        }
+        if (request.op == NeuralOp::MlpForward || request.op == NeuralOp::MlpBackward) {
+            std::string failure;
+            if (!device_state_.Ensure(buffers.queue.native_device, failure)) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, failure);
+            }
+            return request.op == NeuralOp::MlpForward ? ExecuteMlpForward(request, buffers)
+                                                      : ExecuteMlpBackward(request, buffers);
         }
         if (request.op == NeuralOp::Conv2dForward || request.op == NeuralOp::Conv2dBackward) {
             std::string failure;

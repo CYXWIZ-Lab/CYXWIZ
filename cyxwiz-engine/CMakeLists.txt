@@ -7505,6 +7505,34 @@ set_target_properties(benchmark_conv2d_provider PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ===== Test: the whole small-MLP kernels against the model's layers (TOFIX206 3.2) =====
+add_executable(test_fused_mlp
+    tests/test_fused_mlp.cpp
+)
+target_include_directories(test_fused_mlp PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_fused_mlp PRIVATE
+    cyxwiz-backend
+)
+set_target_properties(test_fused_mlp PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(WIN32)
+    target_compile_definitions(test_fused_mlp PRIVATE NOMINMAX)
+endif()
+add_test(NAME fused_mlp_parity COMMAND test_fused_mlp)
+
+# ===== Tool: a CUDA call counter loaded into any process (TOFIX206 3.2) =====
+# CUDA_INJECTION64_PATH=<this dll> counts kernel launches, waits and copies
+# (CUPTI callbacks, no administrator rights); a development tool.
+find_package(CUDAToolkit QUIET)
+if(WIN32 AND CUDAToolkit_FOUND AND TARGET CUDA::cupti)
+    add_library(cyxwiz-cuda-call-counter SHARED tests/tools/cuda_call_counter.cpp)
+    target_link_libraries(cyxwiz-cuda-call-counter PRIVATE CUDA::cupti)
+    set_target_properties(cyxwiz-cuda-call-counter PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()
+
 # ===== Benchmark: word2vec and GloVe on a real corpus (TOFIX152), not a ctest =====
 add_executable(benchmark_word_vectors
     tests/benchmarks_word_vectors.cpp

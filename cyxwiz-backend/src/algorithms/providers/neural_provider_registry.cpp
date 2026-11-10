@@ -160,6 +160,8 @@ const char* NeuralOpName(NeuralOp op) {
     case NeuralOp::DeviceProbe: return "device_probe";
     case NeuralOp::Conv2dForward: return "conv2d_forward";
     case NeuralOp::Conv2dBackward: return "conv2d_backward";
+    case NeuralOp::MlpForward: return "mlp_forward";
+    case NeuralOp::MlpBackward: return "mlp_backward";
     }
     return "unknown_neural_op";
 }

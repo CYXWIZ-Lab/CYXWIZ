@@ -43,6 +43,11 @@ enum class NeuralOp {
     // NeuralOpRequest conv fields.
     Conv2dForward,
     Conv2dBackward,
+    // A whole small multilayer perceptron (Dense + activation chain) in one
+    // launch forward and two backward (TOFIX206 3.2); contract with the
+    // NeuralOpRequest mlp fields.
+    MlpForward,
+    MlpBackward,
 };
 
 CYXWIZ_API const char* NeuralOpName(NeuralOp op);
@@ -57,6 +62,7 @@ enum class NeuralActivation {
     SquaredRelu,
     Tanh,
     Sigmoid,
+    LeakyRelu,  // negative slope in NeuralOpRequest::mlp_negative_slope
 };
 
 enum class NeuralFfnType {
@@ -176,6 +182,23 @@ struct NeuralOpRequest {
     size_t conv_stride = 1;
     size_t conv_padding = 0;
     bool conv_bias = false;
+    // Small multilayer perceptron (device-resident), TOFIX206 3.2. batch =
+    // rows; layer l (0-based) maps mlp_widths[l] -> mlp_widths[l + 1], adds
+    // its bias, then applies mlp_activations[l] (None for a plain Dense).
+    // Weights as the Linear layer keeps them, [out, in]; every array is the
+    // semantic array (first dimension fastest).
+    //   MlpForward   inputs  X [rows, w0], W_1 [w1, w0], b_1 [w1], ... W_L, b_L
+    //                outputs Y [rows, wL]; when `training`, also Z [rows,
+    //                w1 + ... + wL]: every layer's pre-activation, in order
+    //   MlpBackward  inputs  X, W_1 ... W_L, Z, dY [rows, wL]
+    //                outputs dW_1, db_1, ... dW_L, db_L, each summed over the
+    //                rows (as the Linear layer's gradients)
+    static constexpr size_t kMaxMlpLayers = 8;
+    size_t mlp_layers = 0;
+    size_t mlp_widths[kMaxMlpLayers + 1] = {};
+    NeuralActivation mlp_activations[kMaxMlpLayers] = {};
+    float mlp_negative_slope = 0.01f;  // LeakyRelu
+    float mlp_elu_alpha = 1.0f;        // Elu
 };
 
 // Host-side CyxWiz-owned buffers, explicit copies at the boundary (v1).
@@ -293,7 +316,8 @@ CYXWIZ_API void SetNeuralProvidersDisabledForTesting(bool disabled);
 // TOFIX178 1.0(c)): it exports cyxwiz_<name>_abi() returning this number and
 // cyxwiz_<name>_register(NeuralProviderRegistry*). A module with another
 // number is not loaded. Raise it when the provider interface changes.
-#define CYXWIZ_NEURAL_PROVIDER_MODULE_ABI 1
+// 2: the small-MLP ops and request fields (TOFIX206 3.2).
+#define CYXWIZ_NEURAL_PROVIDER_MODULE_ABI 2
 
 #ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
 // Test-only: synchronizes the device and reports free/total device memory
