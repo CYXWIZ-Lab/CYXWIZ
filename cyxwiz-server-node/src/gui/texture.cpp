@@ -84,7 +84,12 @@ std::string FindResourceFile(const std::string& file_name) {
     for (const auto& dir : ResourceDirs()) {
         const auto path = dir / file_name;
         std::error_code ec;
-        if (std::filesystem::exists(path, ec)) return path.string();
+        if (std::filesystem::exists(path, ec)) {
+            // UTF-8, never the Windows code page: the executable's folder may
+            // hold any character (a user folder under C:\Users).
+            const auto utf8 = path.u8string();
+            return std::string(utf8.begin(), utf8.end());
+        }
     }
     return {};
 }

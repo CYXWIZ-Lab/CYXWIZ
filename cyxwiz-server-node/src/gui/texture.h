@@ -24,7 +24,8 @@ bool LoadTexture(const std::string& path, Texture& out);
 
 // Finds a node resource (a file name, or a path such as "fonts/x.ttf") in
 // resources/ beside the executable, in a macOS bundle's Resources, or in
-// ./resources. Empty when not found.
+// ./resources. The path is UTF-8 (ImGui's font loader and stb_image, built
+// with STBI_WINDOWS_UTF8, open it as such). Empty when not found.
 std::string FindResourceFile(const std::string& file_name);
 
 }  // namespace cyxwiz::servernode::gui

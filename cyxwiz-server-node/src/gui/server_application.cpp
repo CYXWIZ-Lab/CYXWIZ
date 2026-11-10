@@ -17,6 +17,7 @@
 #include <implot.h>
 #include <spdlog/spdlog.h>
 #define STB_IMAGE_IMPLEMENTATION
+#define STBI_WINDOWS_UTF8  // file names are UTF-8 (FindResourceFile)
 #include <stb_image.h>
 
 #include <filesystem>
@@ -208,11 +209,12 @@ bool ServerApplication::InitializeImGui() {
 void ServerApplication::LoadFonts() {
     ImGuiIO& io = ImGui::GetIO();
 
-    const std::string inter = FindResourceFile("fonts/Inter-Regular.ttf");
-    const std::string font_dir =
-        inter.empty() ? std::string{} : std::filesystem::path(inter).parent_path().string() + "/";
+    // Each font by FindResourceFile: UTF-8 paths, which ImGui opens as such.
+    const std::string inter_path = FindResourceFile("fonts/Inter-Regular.ttf");
+    const std::string fa_path = FindResourceFile("fonts/fa-solid-900.ttf");
+    const std::string mono_path = FindResourceFile("fonts/JetBrainsMono-Regular.ttf");
 
-    if (font_dir.empty()) {
+    if (inter_path.empty()) {
         spdlog::warn("Fonts not found beside the executable or in ./resources; using default fonts");
         font_regular_ = io.Fonts->AddFontDefault();
         font_mono_ = io.Fonts->AddFontDefault();
@@ -227,7 +229,6 @@ void ServerApplication::LoadFonts() {
     font_config.PixelSnapH = true;
 
     // Load regular font
-    std::string inter_path = font_dir + "Inter-Regular.ttf";
     font_regular_ = io.Fonts->AddFontFromFileTTF(inter_path.c_str(), 15.0f, &font_config);
 
     // Merge FontAwesome icons
@@ -237,17 +238,15 @@ void ServerApplication::LoadFonts() {
     icon_config.GlyphMinAdvanceX = 14.0f;
     static const ImWchar icon_ranges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
 
-    std::string fa_path = font_dir + "fa-solid-900.ttf";
-    if (std::filesystem::exists(fa_path)) {
+    if (!fa_path.empty()) {
         io.Fonts->AddFontFromFileTTF(fa_path.c_str(), 14.0f, &icon_config, icon_ranges);
     }
 
     // Load mono font
-    std::string mono_path = font_dir + "JetBrainsMono-Regular.ttf";
-    if (std::filesystem::exists(mono_path)) {
+    if (!mono_path.empty()) {
         font_mono_ = io.Fonts->AddFontFromFileTTF(mono_path.c_str(), 14.0f, &font_config);
         // Merge icons into mono font too
-        if (std::filesystem::exists(fa_path)) {
+        if (!fa_path.empty()) {
             io.Fonts->AddFontFromFileTTF(fa_path.c_str(), 14.0f, &icon_config, icon_ranges);
         }
     } else {
@@ -256,12 +255,12 @@ void ServerApplication::LoadFonts() {
 
     // Load large font
     font_large_ = io.Fonts->AddFontFromFileTTF(inter_path.c_str(), 24.0f, &font_config);
-    if (std::filesystem::exists(fa_path)) {
+    if (!fa_path.empty()) {
         io.Fonts->AddFontFromFileTTF(fa_path.c_str(), 22.0f, &icon_config, icon_ranges);
     }
 
     io.Fonts->Build();
-    spdlog::info("Fonts loaded from: {}", font_dir);
+    spdlog::info("Fonts loaded from: {}", inter_path);
 }
 
 void ServerApplication::ApplyTheme() {
