@@ -123,6 +123,9 @@ struct StudioDebuggerPanel::WhereItLooksState {
     std::shared_ptr<DebugModelSession> session;
     bool building = false;
     std::string unavailable;  // why the model cannot be rebuilt
+    // The canvas had no clean compile when the capture opened: try again once
+    // it has one (the first compile after opening a project, or a fix).
+    bool waiting_for_clean = false;
 
     // The evaluation pass for the picked item.
     size_t eval_item = std::numeric_limits<size_t>::max();
@@ -155,11 +158,26 @@ void StudioDebuggerPanel::UpdateLayerModelSession() {
     if (!where_it_looks_) where_it_looks_ = std::make_shared<WhereItLooksState>();
     WhereItLooksState& s = *where_it_looks_;
     if (!layer_capture_ || layer_capture_->Layers().empty()) return;
+    // Why there is no clean compile to rebuild from; it changes while the view waits.
+    const auto no_clean_reason = [this]() -> std::string {
+        if (!live_compile_ || live_compile_->CanvasEmpty())
+            return "no graph is open on the canvas; open the run's graph and the model is rebuilt from it";
+        if (!live_compile_->UpToDate())
+            return "the canvas's graph is still compiling; the model is rebuilt from it when it finishes";
+        return "the canvas's graph does not compile cleanly now; the run's model is rebuilt from it";
+    };
+    if (s.waiting_for_clean && !s.Busy()) {
+        if (live_compile_ && live_compile_->CleanConfig())
+            s.capture = nullptr;  // rebuild below
+        else
+            s.unavailable = no_clean_reason();
+    }
 
     if (s.capture != layer_capture_.get() && !s.Busy()) {
         s.capture = layer_capture_.get();
         s.session.reset();
         s.unavailable.clear();
+        s.waiting_for_clean = false;
         s.eval_item = std::numeric_limits<size_t>::max();
         s.eval_output.clear();
         s.result_key.clear();
@@ -168,7 +186,8 @@ void StudioDebuggerPanel::UpdateLayerModelSession() {
         // the captured ones (FromCapture checks node by node).
         const TrainingConfiguration* clean = live_compile_ ? live_compile_->CleanConfig() : nullptr;
         if (!clean) {
-            s.unavailable = "the canvas's graph does not compile cleanly now; the run's model is rebuilt from it";
+            s.waiting_for_clean = true;
+            s.unavailable = no_clean_reason();
             return;
         }
         s.building = true;

@@ -85,6 +85,7 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
                               bool count_parameters,
                               Clock::time_point now) {
     Collect();
+    canvas_empty_ = nodes.empty();
     // An extension registered, removed or approved changes what the graph
     // compiles to, without a graph edit.
     const uint64_t revision =

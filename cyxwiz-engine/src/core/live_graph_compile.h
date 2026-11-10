@@ -54,6 +54,8 @@ public:
     // The latest finished compile is of the graph as it is now (false while
     // an edit waits for the pause or compiles).
     bool UpToDate() const { return result_ && result_->revision == seen_revision_; }
+    // The last Update saw no nodes: no graph is open on the canvas.
+    bool CanvasEmpty() const { return canvas_empty_; }
     // The latest compile when it is of the graph as it is now and found no
     // error; nullptr otherwise.
     const TrainingConfiguration* CleanConfig() const;
@@ -93,6 +95,7 @@ private:
     uint64_t seen_revision_ = 0;
     uint64_t invalidations_ = 0;
     bool seen_any_ = false;
+    bool canvas_empty_ = false;
     Clock::time_point last_change_{};
     uint64_t requested_revision_ = 0;  // revision the running worker compiles
     std::future<std::shared_ptr<Result>> pending_;
