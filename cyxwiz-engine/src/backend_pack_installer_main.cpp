@@ -577,6 +577,24 @@ int main(int argc, char** argv) {
         }
         for (const auto& plugin : plugins.plugins)
             if (plugin.pack_id == options.pack_id) remove_plugin_id = plugin.plugin_id;
+        // An installed plugin pack that is not active (another base became
+        // active since, or it was deactivated): found by its folder,
+        // runtime/plugins/<plugin-id>/<pack-id>/plugin.json
+        const bool plain_id = !options.pack_id.empty() &&
+            options.pack_id.find_first_of("/\\:") == std::string::npos && options.pack_id != "." &&
+            options.pack_id != "..";
+        if (remove_plugin_id.empty() && plain_id) {
+            std::error_code scan_error;
+            for (const auto& entry :
+                 std::filesystem::directory_iterator(options.runtime_root / "plugins", scan_error)) {
+                std::error_code entry_error;
+                if (entry.is_directory(entry_error) &&
+                    std::filesystem::is_regular_file(entry.path() / options.pack_id / "plugin.json", entry_error)) {
+                    remove_plugin_id = entry.path().filename().string();
+                    break;
+                }
+            }
+        }
         cyxwiz::runtime::ActiveRuntimeState active;
         if (!cyxwiz::runtime::LoadActiveRuntimeState(
                 options.runtime_root / "active-runtime.json", active,

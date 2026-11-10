@@ -59,6 +59,50 @@ class VerifyInstallerPackageTests(unittest.TestCase):
 
             self.assertEqual(4, len(required))
 
+    def test_bootstrap_metadata_accepts_a_plugin_pack(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
+            stage = Path(temporary)
+            trust = stage / "runtime" / "trust" / "trusted-keys.json"
+            manifests = stage / "runtime" / "catalogs" / "manifests"
+            trust.parent.mkdir(parents=True)
+            manifests.mkdir(parents=True)
+            trust.write_text(json.dumps({"schema_version": 1, "keys": []}), encoding="utf-8")
+            documents = {
+                "base-v1": {"schema_version": 1, "signed": {"pack_id": "base-v1", "backend": "cpu"}},
+                "cuda-v1": {"schema_version": 1, "signed": {"pack_id": "cuda-v1", "backend": "cuda"}},
+                "mujoco-v1": {
+                    "schema_version": 2,
+                    "signed": {
+                        "pack_id": "mujoco-v1",
+                        "pack_kind": "plugin_pack",
+                        "plugin_id": "com.cyxwiz.simulation.mujoco",
+                        "companion_base_id": "base-v1",
+                    },
+                },
+            }
+            for pack_id, document in documents.items():
+                document["kind"] = "cyxwiz-backend-pack-manifest"
+                (manifests / f"{pack_id}.json").write_text(json.dumps(document), encoding="utf-8")
+            (manifests.parent / "current.json").write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "kind": "cyxwiz-backend-pack-catalog",
+                    "signed": {"packs": [{"pack_id": pack_id} for pack_id in documents]},
+                }),
+                encoding="utf-8",
+            )
+
+            required = verify_installer_package.require_bootstrap_metadata(stage)
+
+            self.assertEqual(5, len(required))
+
+            # A schema-2 manifest that is not a plugin pack is refused
+            bad = documents["mujoco-v1"]
+            bad["signed"]["pack_kind"] = "backend"
+            (manifests / "mujoco-v1.json").write_text(json.dumps(bad), encoding="utf-8")
+            with self.assertRaises(verify_installer_package.PackageSmokeError):
+                verify_installer_package.require_bootstrap_metadata(stage)
+
     def test_bootstrap_metadata_rejects_a_missing_catalog(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
             with self.assertRaises(verify_installer_package.PackageSmokeError):

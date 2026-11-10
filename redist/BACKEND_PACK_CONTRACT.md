@@ -501,6 +501,21 @@ same runtime mutation lease. Plugins whose companion base differs from the
 active base are inactive. The Engine loads each active plugin pack folder as an
 exact plugin folder; it does not scan `plugins/` for other versions.
 
+Packaging names every third-party notice (`--third-party-license NAME=PATH`,
+PATH inside the plugin folder); a pack whose plugin ships third-party runtime
+libraries without one fails. The MuJoCo simulation pack, from a clean Release
+build of the plugin:
+
+```
+python redist/scripts/package_release.py plugin --plugin-dir plugins/simulation/mujoco \
+  --base-pack-id <base-pack-id> \
+  --third-party-license MuJoCo=bin/MUJOCO_LICENSE.txt \
+  --third-party-license MuJoCo-third-party=bin/MUJOCO_THIRD_PARTY_NOTICES.txt \
+  --third-party-license Gymnasium=assets/GYMNASIUM_LICENSE.txt
+```
+
+The Gymnasium notice covers the task models in `assets/` (MIT).
+
 ## Customer Verification Summary
 
 The consolidated installer reads the shared machine-local qualification

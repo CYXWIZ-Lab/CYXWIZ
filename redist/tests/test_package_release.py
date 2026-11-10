@@ -727,6 +727,25 @@ class PackageReleaseTests(unittest.TestCase):
                 self.args("plugin", "--plugin-dir", str(plugin),
                           "--third-party-license", "MuJoCo=bin/missing.txt"),
                 self.script)
+        # A notice NAME is a pack folder; its PATH stays inside the plugin
+        with self.assertRaisesRegex(package_release.PackageError, "NAME must be"):
+            package_release.build_package(
+                self.args("plugin", "--plugin-dir", str(plugin),
+                          "--third-party-license", "../escape=bin/MUJOCO_LICENSE.txt"),
+                self.script)
+        (self.root / "outside.txt").write_text("x", encoding="ascii")
+        with self.assertRaisesRegex(package_release.PackageError, "outside --plugin-dir"):
+            package_release.build_package(
+                self.args("plugin", "--plugin-dir", str(plugin),
+                          "--third-party-license", "Outside=../../../outside.txt"),
+                self.script)
+        # Third-party runtime libraries (mujoco.dll) need a notice
+        with self.assertRaisesRegex(package_release.PackageError, "no notice"):
+            package_release.build_package(
+                self.artifact_args("plugin", "--plugin-dir", str(plugin),
+                                   "--base-pack-id", "cyxwiz-base-1.2.3-1-windows-x86_64",
+                                   "--stage-only"),
+                self.script)
 
     def cuda_pack_args(self):
         notices = self.root / "nvidia-notices"

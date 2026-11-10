@@ -1465,7 +1465,12 @@ def build_plugin_pack(
         name, separator, relative = entry.partition("=")
         if not separator or not name or not relative:
             raise PackageError(f"--third-party-license must be NAME=PATH, got {entry!r}")
-        notice = require_file(plugin_dir / relative, f"{name} notice")
+        # NAME is a folder of the pack and PATH a file of the plugin: neither leaves its place
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+            raise PackageError(f"--third-party-license NAME must be letters, digits, '.', '_' or '-': {name!r}")
+        notice = require_file(plugin_dir / relative, f"{name} notice").resolve()
+        if not notice.is_relative_to(plugin_dir):
+            raise PackageError(f"--third-party-license {name}: {relative} is outside --plugin-dir")
         destination = Path("THIRD_PARTY_LICENSES") / name / notice.name
         copy_file(notice, stage / destination)
         license_sources[destination.as_posix()] = _license_source(name)
@@ -1487,6 +1492,14 @@ def build_plugin_pack(
         components.append(Component(component.path, component.size, component.sha256, source))
     if dropped:
         print(f"[OK] Left to the CPU base: {', '.join(dropped)}")
+    # Missing notices fail packaging (BACKEND_PACK_CONTRACT.md): a pack with a
+    # third-party runtime, or third-party assets, names their notices
+    has_runtime = any(component.source == "plugin-runtime" for component in components)
+    if has_runtime and not license_sources:
+        raise PackageError(
+            "The plugin ships third-party runtime libraries but no notice: pass "
+            "--third-party-license NAME=PATH for each (see BACKEND_PACK_CONTRACT.md, Plugin Packs)"
+        )
 
     if args.stage_only:
         return stage, None
