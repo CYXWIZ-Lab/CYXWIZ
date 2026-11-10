@@ -101,11 +101,15 @@ public:
     struct DataItemsStart {
         DataItemsJob job;
         std::string loading;  // "Cats and dogs": loading first; empty otherwise
+        bool compiling = false;  // the canvas's compile is not up to date yet (just after a load)
     };
     using DataItemsCallback = std::function<DataItemsStart()>;
     // The view's message when the items cannot start now.
     static std::string DataItemsNotStarted(const DataItemsStart& start, const std::string& what);
     void SetDataItemsCallback(DataItemsCallback callback) { data_items_callback_ = std::move(callback); }
+    // The Data Input loads a view waited for have ended (`failed` names what
+    // could not be loaded, empty when all loaded): Top images starts then.
+    void DataLoadsEnded(const std::string& failed);
     void SetRunWaitCallback(RunWaitCallback callback) { run_wait_callback_ = std::move(callback); }
     // The line under the run controls: a wait, or why a waiting run did not
     // start.
@@ -237,6 +241,9 @@ private:
     std::shared_ptr<DebugModelSession> LayerModelSession() const;
     // Model > Layers > Top images (studio_debugger_top_images.cpp, 6.3e).
     void RenderTopImages();
+    // The Inspector's card for the picture picked in Top images; false when
+    // none is picked (or Top images is not shown).
+    bool RenderTopImagesPick();
     // A channel clicked in Feature maps or Units: Top images' "the clicked channel".
     void NoteClickedChannel(size_t layer, size_t channel);
     // Where it looks with Method Saliency (6.3c): Compute and the result for

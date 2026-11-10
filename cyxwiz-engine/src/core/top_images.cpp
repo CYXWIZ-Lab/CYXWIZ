@@ -3,6 +3,7 @@
 #include <arrayfire.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <numeric>
 #include <stdexcept>
 
@@ -130,6 +131,36 @@ std::vector<Vote> StrongestVotes(const std::vector<float>& weights, size_t outpu
         for (size_t o = 0; o < outputs; ++o) strongest(o, static_cast<int>(o), 1.0f);
     }
     return votes;
+}
+
+std::string ValueText(float value) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.3g", value);
+    return buffer;
+}
+
+std::string Caption(size_t rank, const std::string& label) {
+    return "#" + std::to_string(rank) + (label.empty() ? "" : " \xC2\xB7 " + label);
+}
+
+std::string RowSummary(const std::vector<std::string>& labels, const std::vector<float>& values) {
+    std::vector<std::pair<std::string, size_t>> counts;
+    for (const auto& l : labels) {
+        if (l.empty()) continue;
+        auto found = std::find_if(counts.begin(), counts.end(), [&](const auto& c) { return c.first == l; });
+        if (found == counts.end())
+            counts.emplace_back(l, 1);
+        else
+            ++found->second;
+    }
+    std::string text;
+    for (const auto& [label, count] : counts)
+        text += (text.empty() ? "" : ", ") + std::to_string(count) + " \xC3\x97 " + label;
+    if (!values.empty()) {
+        const std::string range = ValueText(values.front()) + " to " + ValueText(values.back());
+        text += (text.empty() ? "" : " \xC2\xB7 ") + range;
+    }
+    return text;
 }
 
 }  // namespace cyxwiz::top_images

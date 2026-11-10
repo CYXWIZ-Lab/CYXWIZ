@@ -1096,6 +1096,7 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
     ReadLayerSample();
 
     ImGui::BeginChild("StudioDebuggerLayerInspector", ImVec2(0.0f, 0.0f), false);
+    RenderTopImagesPick();
     if (BeginCard("StudioDebuggerLayerSample")) {
         // A card is its own window: wrap inside it.
         ImGui::PushTextWrapPos(0.0f);

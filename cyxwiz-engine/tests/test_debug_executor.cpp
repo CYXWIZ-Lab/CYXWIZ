@@ -3289,6 +3289,14 @@ void TestTopImages() {
     const auto past = GetSourceSampleRange(numbered, 30, 4, &taken, 9);
     ExpectTrue(past && taken == 1 && RowMajor(past->data) == std::vector<float>({30}),
                "running past the end falls back to the first item alone");
+    // Words for the result.
+    ExpectTrue(ti::ValueText(4.2134f) == "4.21" && ti::ValueText(0.0123f) == "0.0123", "values, 3 digits");
+    ExpectTrue(ti::Caption(1, "dog") == "#1 \xC2\xB7 dog" && ti::Caption(2, "") == "#2",
+               "captions");
+    ExpectTrue(ti::RowSummary({"dog", "cat", "dog", "", "dog"}, {4.21f, 4.0f, 3.5f, 3.2f, 3.12f}) ==
+                   "3 \xC3\x97 dog, 1 \xC3\x97 cat \xC2\xB7 4.21 to 3.12",
+               "a row's summary: labels counted, the value range");
+    ExpectTrue(ti::RowSummary({}, {2.0f, 1.0f}) == "2 to 1", "no labels: the range alone");
     spdlog::info("  OK: top images");
 }
 

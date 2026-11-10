@@ -1119,10 +1119,16 @@ MainWindow::MainWindow()
         studio_debugger_panel_->SetDataItemsCallback([this]() -> cyxwiz::StudioDebuggerPanel::DataItemsStart {
             if (!node_editor_) return {};
             if (const std::string loading = StartDataInputLoads(node_editor_->GetNodes(), node_editor_->GetLinks());
-                !loading.empty())
+                !loading.empty()) {
+                data_items_after_loads_ = true;
                 return {{}, loading};
+            }
             const cyxwiz::TrainingConfiguration* clean = live_compile_ ? live_compile_->CleanConfig() : nullptr;
-            if (!clean) return {};
+            if (!clean) {
+                cyxwiz::StudioDebuggerPanel::DataItemsStart waiting;
+                waiting.compiling = live_compile_ && !live_compile_->UpToDate();
+                return waiting;
+            }
             auto& project = cyxwiz::ProjectManager::Instance();
             const std::filesystem::path root = project.GetProjectRoot();
             cyxwiz::StepRunRoots roots{root.string(), project.GetArtifactsPath(), project.GetExportsPath(),
@@ -3869,6 +3875,8 @@ void MainWindow::PollDataInputLoads() {
     }
     data_input_loads_.clear();
     data_input_loads_names_.clear();
+    if (std::exchange(data_items_after_loads_, false) && studio_debugger_panel_)
+        studio_debugger_panel_->DataLoadsEnded(failed_names);
     const bool train = std::exchange(train_after_loads_, false);
     const auto debug_run = std::exchange(debug_run_after_loads_, std::nullopt);
     const auto debugger_not_started = [&](const std::string& why) {

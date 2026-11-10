@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace cyxwiz::top_images {
@@ -57,5 +58,15 @@ struct Vote {
     float weight = 0.0f;
 };
 std::vector<Vote> StrongestVotes(const std::vector<float>& weights, size_t outputs, size_t channels, size_t per_output);
+
+// Words for the result (approved board TopImagesStates).
+// "4.21": a channel value, 3 significant digits.
+std::string ValueText(float value);
+// "#1 · dog" under a picture, its value on the line below (no label: "#1").
+std::string Caption(size_t rank, const std::string& label);
+// A channel's card summary over its top items, strongest first:
+// "6 × dog, 3 × cat · 4.21 to 3.12" (labels counted in order of first
+// appearance; empty labels are left out of the count).
+std::string RowSummary(const std::vector<std::string>& labels, const std::vector<float>& values);
 
 }  // namespace cyxwiz::top_images

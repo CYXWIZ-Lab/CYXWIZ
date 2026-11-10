@@ -453,10 +453,18 @@ says how to get one.
     - **The 16 strongest for this sample** (conv layers).
     On a conv layer **Ranked by** picks a channel's strength per image: its
     **Maximum** over the map (it fires somewhere) or its **Mean** (it fires
-    all over). Hover a picture for its file, label and the channel's value;
-    click it to make it the debugger's picked sample (run Local Debug to see
-    it). Results are not saved. Patches (the part of the image the channel
-    sees) come later.
+    all over). The settings sit in one bar with **Compute** (or **Stop**) on
+    the right. While it runs, a card shows its steps, each ticked as it ends:
+    **Load the data** (a reopened project's Data Inputs load first, as for
+    Train; it then waits for the graph to compile and continues by itself),
+    **Prepare 320 images**, and **Run this snapshot's model** with a bar and
+    the count, plus the time so far. The result is one card per channel: how
+    it was picked, a summary ("4 × class 0, 5 × class 1 · 15.9 to 11.7") and
+    the 9 pictures, each captioned with its rank and label and its value
+    below. Click a picture to see it large in the Inspector with its file,
+    label, rank and value, and **Make it the picked sample** (run Local Debug
+    to see it). Results are not saved. Patches (the part of the image the
+    channel sees) come later.
   - Greyed views are next: **Contributions** on a Dense layer and
     **Embedding** on flat outputs. Hover one for what it will show.
 - The **Inspector** shows the sample as the first layer received it (after

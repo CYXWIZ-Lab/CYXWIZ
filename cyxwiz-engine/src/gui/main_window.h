@@ -357,6 +357,7 @@ private:
     std::string data_input_loads_project_;
     std::string data_input_loads_names_;
     bool train_after_loads_ = false;
+    bool data_items_after_loads_ = false;  // a debugger view waits for the loads
     std::optional<DebugRunAfterLoads> debug_run_after_loads_;
     // The names of the Data Inputs loading for the graph (started here when
     // none are), empty when its data is loaded.
