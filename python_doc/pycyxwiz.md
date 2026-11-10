@@ -1158,6 +1158,58 @@ fit = mt.fit_temperature(probabilities, y_test.tolist(), rows=list(range(0, 200,
 print(fit["temperature"])   # 1.283: calibration error 0.0724 -> 0.0562 on the odd rows
 ```
 
+### 6.6 `pycyxwiz.utilities`
+
+The six tabs of Tools > Utilities (docs/usage/utilities.md), on the same SDK
+code as the Engine. Checked against `hashlib`, `json`, `re`, numpy and the
+exact unit definitions by
+`cyxwiz-backend/python/tests/test_python_utilities.py`.
+
+- `evaluate(expression, variables={}, degrees=False)`: the Calculator's
+  value (the parser of `calculus.Expression`).
+- `unit_categories()`, `units(category="")` (dicts: `id`, `label`, `symbol`,
+  `category`, `scale`, `offset`, `aliases`; base = value * scale + offset),
+  `find_unit(name, category="")` (or None), `convert(value, from_unit,
+  to_unit)`, `conversion_formula(from_unit, to_unit)`. Units are found by id,
+  label, symbol or alias (`"km/h"`, `"metres"`, `"MiB"`). kB is 1000 bytes,
+  KiB 1024; below absolute zero raises.
+- `hash(data, algorithm="sha256")`: text (UTF-8) or bytes; md5, sha1,
+  sha256, sha512. `hash_file(path, algorithm="sha256", progress=None)`:
+  read in 1 MB blocks; `progress(done, total)` returning False stops
+  (ValueError "Stopped").
+- `json_check(text, indent=2)`: `valid`; then `formatted`, `minified` (keys
+  in the document's order), `keys`, `depth`, `objects`, `arrays`, `strings`,
+  `numbers`, `bools`, `nulls`; or `line`, `column` (where Python's json puts
+  the error) and `error`. `json_get(text, path)`: the Python value at
+  `"config.max_workers"`, `"items[0].name"` or `"$.a.b"` (KeyError when it
+  is not there).
+- `regex_find(pattern, text, ignore_case=False, multiline=False)`: dicts
+  `text`, `start`, `end` (characters, as `re`), `line`, `column`, `groups`.
+  `regex_replace(pattern, text, replacement, ...)`: `$&` the match, `$1`
+  .. `$9` the groups. ECMAScript: `\w` and `\b` know ASCII letters only.
+- `random(distribution, count, a=0, b=1, seed=-1)`: uniform (a low, b high),
+  normal (a mean, b sd), exponential (a rate), poisson (a mean), integers
+  (a low, b high). Returns `values`, `seed`, `mean`, `sd_sample`,
+  `sd_population`, `median`, `q1`, `q3`, `min`, `max`, `edges`, `counts`.
+  One seed draws the same values on every platform; seed -1 draws a seed
+  and returns it.
+- `uuid4(count=1)`: version 4 UUIDs from the operating system's random
+  source.
+
+From `examples/python/utilities.py`:
+
+```python
+import pycyxwiz as cx
+u = cx.utilities
+u.convert(100, "km/h", "knot")                    # 53.99568034557235
+u.conversion_formula("celsius", "fahrenheit")     # '°F = °C x 1.8 + 32'
+u.json_check('{\n  "name": "CyxWiz",\n  "version": "1.0.0"\n  "gpu": true\n}')   # line 4, column 3
+[m["text"] for m in u.regex_find(r"^\w+", text, multiline=True)]   # ['John', 'Jane', 'Support']
+r = u.random("normal", 1000, 10, 2, seed=42)
+r["mean"], r["sd_sample"], r["median"]            # 9.9239, 2.0449, 9.9598
+u.random("integers", 6000, 1, 6, seed=7)["counts"]   # [1045, 986, 975, 996, 989, 1009]
+```
+
 ---
 
 ## 7. Time Series (`pycyxwiz.timeseries`)

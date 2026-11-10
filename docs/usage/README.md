@@ -53,6 +53,7 @@ To write your own nodes in Python or C++, see
 | [Signal processing](signal_processing.md) | Explore > Signal: spectrum, spectrogram, filters, wavelets |
 | [Text](text.md) | Explore > Text: words, TF-IDF terms, VADER sentiment, tokens, word vectors and the word map |
 | [Linear algebra](linear_algebra.md) | Tools > Linear Algebra (matrices typed, pasted or from tables; into the graph), the PCA, Truncated SVD, Whitening, Linear Solve and Linear Projection nodes |
+| [Utilities](utilities.md) | Tools > Utilities: calculator, exact unit conversion, seeded random values and UUIDs, hashes of text and files, JSON check and tree, regex with multiline and replace |
 | [Optimization and calculus](optimization_calculus.md) | Tools > Optimization and Calculus (optimizer paths, linear and quadratic programs, integrals, derivatives, curvature), the Portfolio Weights node |
 | [Feature Importance](feature_importance.md) | Which columns matter to a model |
 | [Analysis demo graph](analysis_demo_graph.md) | Analysis nodes working together on one dataset |
