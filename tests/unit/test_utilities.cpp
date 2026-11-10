@@ -40,3 +40,13 @@ TEST_CASE("UUIDs are version 4 and do not repeat across calls", "[utilities][uui
     }
     REQUIRE(seen.size() == 10000);
 }
+
+TEST_CASE("A conversion's formula reads in plain digits", "[utilities][units]") {
+    const auto km = cyxwiz::Utilities::ConvertUnit(2.0, "kilometer", "meter");
+    REQUIRE(km.success);
+    REQUIRE(km.output_value == 2000.0);
+    REQUIRE(km.formula == "m = km x 1000");
+    const auto f = cyxwiz::Utilities::ConvertUnit(100.0, "celsius", "fahrenheit");
+    REQUIRE(f.success);
+    REQUIRE(f.formula == "\xC2\xB0" "F = \xC2\xB0" "C x 1.8 + 32");
+}

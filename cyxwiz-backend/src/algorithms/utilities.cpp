@@ -236,15 +236,12 @@ std::string UnitKey(const std::string& name) {
     return key;
 }
 
-std::string FullNumber(double v) {
+// A number for a formula or message: 15 significant digits, about what a
+// double holds for sure, so a factor built from 5/9 reads 1.8 and 32, not
+// 1.7999999999999998 and 31.999999999999986.
+std::string ShortNumber(double v) {
     std::ostringstream oss;
-    oss << std::setprecision(17) << v;
-    // Shortest text that reads back as the same double.
-    for (int digits = 1; digits <= 17; ++digits) {
-        std::ostringstream shorter;
-        shorter << std::setprecision(digits) << v;
-        if (std::stod(shorter.str()) == v) return shorter.str();
-    }
+    oss << std::setprecision(15) << v;
     return oss.str();
 }
 
@@ -406,7 +403,7 @@ UnitConversionResult Utilities::ConvertUnit(
     result.category = from->category;
     const double base = value * from->scale + from->offset;
     if (from->category == "temperature" && base < 0.0) {
-        result.error_message = "Below absolute zero (" + FullNumber(base) + " K)";
+        result.error_message = "Below absolute zero (" + ShortNumber(base) + " K)";
         return result;
     }
     // to = from * a + b
@@ -415,8 +412,8 @@ UnitConversionResult Utilities::ConvertUnit(
     result.output_value = (base - to->offset) / to->scale;
     result.input_unit = from->id;
     result.output_unit = to->id;
-    result.formula = to->symbol + " = " + from->symbol + " x " + FullNumber(a);
-    if (b != 0.0) result.formula += (b > 0.0 ? " + " : " - ") + FullNumber(std::fabs(b));
+    result.formula = to->symbol + " = " + from->symbol + " x " + ShortNumber(a);
+    if (b != 0.0) result.formula += (b > 0.0 ? " + " : " - ") + ShortNumber(std::fabs(b));
     result.success = true;
     return result;
 }
