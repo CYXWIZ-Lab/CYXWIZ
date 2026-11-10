@@ -229,6 +229,9 @@ public:
     // 6.0b, Local Debug's picked sample). nullopt: this batcher cannot reach
     // items by number. A number outside the data throws.
     virtual std::optional<Batch> GetSourceSamples(const std::vector<size_t>& /*indices*/) { return std::nullopt; }
+    // How many items the source holds (every part of the split), the numbers
+    // GetSourceSamples takes are below it; 0 when the batcher cannot tell.
+    virtual size_t SourceSampleCount() const { return 0; }
     // The Data Split part an item falls in; nullopt when it is in none (left
     // out, e.g. by a Quality node) or the batcher cannot tell.
     virtual std::optional<BatcherPhase> SourceSamplePart(size_t /*index*/) const { return std::nullopt; }
@@ -239,14 +242,30 @@ public:
     virtual std::vector<std::string> ClassNames() const { return {}; }
 };
 
-// Items index .. index + count - 1 by number as one batch (GetSourceSamples),
-// or the item at `index` alone when the data ends before them; `taken` gets
-// how many. nullopt: the batcher cannot reach items by number. An `index`
-// outside the data throws.
+// `count` items spread evenly over `total` items from `index` (Top images,
+// TOFIX178 6.3e): how many fit and the step between them (every step-th
+// item; 1 when they are consecutive).
+struct ItemSpread {
+    size_t count = 0;
+    size_t stride = 1;
+};
+inline ItemSpread SpreadItems(size_t total, size_t index, size_t count) {
+    if (index >= total || count == 0) return {0, 1};
+    const size_t available = total - index;
+    ItemSpread spread;
+    spread.count = std::min(count, available);
+    spread.stride = std::max<size_t>(1, available / spread.count);
+    return spread;
+}
+
+// Items index, index + stride, ... (count of them) by number as one batch
+// (GetSourceSamples), or the item at `index` alone when the data ends before
+// them; `taken` gets how many. nullopt: the batcher cannot reach items by
+// number. An `index` outside the data throws.
 inline std::optional<Batch> GetSourceSampleRange(IBatcher& batcher, size_t index, size_t count,
-                                                 size_t* taken = nullptr) {
+                                                 size_t* taken = nullptr, size_t stride = 1) {
     std::vector<size_t> indices;
-    for (size_t i = 0; i < (count > 0 ? count : 1); ++i) indices.push_back(index + i);
+    for (size_t i = 0; i < (count > 0 ? count : 1); ++i) indices.push_back(index + i * std::max<size_t>(1, stride));
     std::optional<Batch> batch;
     try {
         batch = batcher.GetSourceSamples(indices);
@@ -521,6 +540,7 @@ public:
     size_t GetNumSamples() const override { return indices_.size(); }
     // Rows of the table by number, as validation sees them (TOFIX178 6.0b).
     std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    size_t SourceSampleCount() const override;
     // This batcher's part when the row is in it (it holds one part).
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
 

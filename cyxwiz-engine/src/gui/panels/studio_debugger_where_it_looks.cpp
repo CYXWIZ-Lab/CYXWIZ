@@ -39,6 +39,7 @@ namespace {
 
 constexpr size_t kOcclusionChunk = 64;          // covered inputs a forward
 constexpr size_t kChunkElements = size_t{8} << 20;  // ... and at most this many values
+constexpr size_t kFeatureMeanRows = 512;            // a table's fill: the mean over this many rows
 
 std::vector<float> HostRowMajor(const Tensor& t) {
     const af::array flat = t.GetRowMajorFlatArray();
@@ -230,6 +231,11 @@ void StudioDebuggerPanel::UpdateLayerModelSession() {
         });
 }
 
+std::shared_ptr<DebugModelSession> StudioDebuggerPanel::LayerModelSession() const {
+    if (!where_it_looks_ || where_it_looks_->capture != layer_capture_.get()) return nullptr;
+    return where_it_looks_->session;
+}
+
 const std::vector<float>* StudioDebuggerPanel::EvalModelOutput() const {
     if (!where_it_looks_ || where_it_looks_->capture != layer_capture_.get() ||
         where_it_looks_->eval_item != selected_layer_sample_ || where_it_looks_->eval_output.empty())
@@ -399,7 +405,7 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
             plan.fill = {pad};
             fill_source = "the pad id (" + std::to_string(static_cast<long long>(pad)) + ")";
         } else {
-            fill_source = "its mean over the graph's prepared rows";
+            fill_source = "its mean over up to 512 of the graph's prepared rows, spread over the data";
         }
     }
     const float pad_id = plan.fill.empty() ? 0.0f : plan.fill[0];
@@ -440,10 +446,10 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
             auto result = std::make_shared<occlusion::Result>();
             auto worker_plan = std::make_shared<occlusion::Plan>(plan);
             auto error = std::make_shared<std::string>();
-            FeatureMeansJob means_job;
+            DataItemsJob items_job;
             if (*kind == occlusion::InputKind::Features) {
-                if (feature_means_callback_) means_job = feature_means_callback_();
-                if (!means_job) {
+                if (data_items_callback_) items_job = data_items_callback_();
+                if (!items_job) {
                     s.computing = false;
                     s.error = "the feature means need the graph's data and a clean compile";
                 }
@@ -455,7 +461,7 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
                 AsyncTaskManager::Instance().RunAsync(
                     "Studio Debugger: where it looks",
                     [state, result, worker_plan, error, input_tensor, item, target, rule, pieces, chunk,
-                     means_job](LambdaTask&) {
+                     items_job](LambdaTask&) {
                         try {
                             const Tensor one = ItemInput(input_tensor, item, worker_plan->kind);
                             if (worker_plan->kind == occlusion::InputKind::Image) {
@@ -468,10 +474,18 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
                                 for (size_t k = 0; k < c; ++k)
                                     worker_plan->fill[k] = static_cast<float>(sum[k] / static_cast<double>(v.size() / c));
                             } else if (worker_plan->kind == occlusion::InputKind::Features) {
-                                std::string why;
-                                worker_plan->fill = means_job([&] { return state->cancel->load(); }, &why);
-                                if (worker_plan->fill.size() != worker_plan->sample_shape[1])
-                                    throw std::runtime_error(why.empty() ? "the feature means could not be read" : why);
+                                // Each feature's mean over up to 512 rows spread over the data.
+                                const DataItems rows = items_job(kFeatureMeanRows, [&] { return state->cancel->load(); });
+                                const auto& shape = rows.features.Shape();
+                                if (!rows.why.empty() || shape.size() != 2 || shape[1] != worker_plan->sample_shape[1])
+                                    throw std::runtime_error(rows.why.empty() ? "the feature means could not be read"
+                                                                              : rows.why);
+                                // Rows [N, F] row-major: ArrayFire (F, N); the mean over N.
+                                const af::array by_row =
+                                    af::moddims(rows.features.GetRowMajorFlatArray().as(f32),
+                                                static_cast<dim_t>(shape[1]), static_cast<dim_t>(shape[0]));
+                                worker_plan->fill = HostRowMajor(Tensor::FromRowMajorFlatArray(
+                                    af::flat(af::mean(by_row, 1)), {shape[1]}));
                             }
                             *result = occlusion::Run(
                                 *state->session, one, *worker_plan, pieces, rule, target, chunk,

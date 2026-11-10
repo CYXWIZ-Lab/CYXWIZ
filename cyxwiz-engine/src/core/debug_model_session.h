@@ -14,6 +14,7 @@
 #include <cyxwiz/tensor.h>
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace cyxwiz {
@@ -49,10 +50,18 @@ public:
     };
     LayerGradient LayerOutputGradient(const Tensor& input, const Tensor& target_weights, size_t module_index);
 
+    // One layer's output for `input` (any number of items), from a forward
+    // pass only, in eval mode (Top images, TOFIX178 6.3e). Throws when the
+    // layer is not on the path to the output.
+    Tensor LayerOutput(const Tensor& input, size_t module_index);
+
 private:
     explicit DebugModelSession(std::unique_ptr<IExecutableModel> model);
 
     std::unique_ptr<IExecutableModel> model_;
+    // Views compute on workers (Where it looks, Top images): one call at a
+    // time, since a call sets the model's observers and caches.
+    std::recursive_mutex mutex_;
 };
 
 }  // namespace cyxwiz

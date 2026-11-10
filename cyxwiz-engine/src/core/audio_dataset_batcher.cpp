@@ -135,6 +135,10 @@ Batch AudioDatasetBatcher::GetNextBatch() {
     return batch;
 }
 
+size_t AudioDatasetBatcher::SourceSampleCount() const {
+    return dataset_ ? dataset_->Size() : 0;
+}
+
 std::optional<Batch> AudioDatasetBatcher::GetSourceSamples(const std::vector<size_t>& indices) {
     if (!dataset_ || indices.empty()) return std::nullopt;
     for (size_t index : indices)

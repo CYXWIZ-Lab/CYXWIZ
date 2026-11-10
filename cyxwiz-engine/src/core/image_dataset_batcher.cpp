@@ -160,6 +160,10 @@ Batch ImageDatasetBatcher::GetNextBatch() {
     return batch;
 }
 
+size_t ImageDatasetBatcher::SourceSampleCount() const {
+    return images_ ? images_->Count() : 0;
+}
+
 std::optional<Batch> ImageDatasetBatcher::GetSourceSamples(const std::vector<size_t>& indices) {
     if (!images_ || indices.empty()) return std::nullopt;
     for (size_t index : indices) {

@@ -66,7 +66,7 @@ struct LayerSection {
 std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
                                         const std::map<int, std::string>& group_of_node);
 
-enum class View { FeatureMaps, Values, Units, Weights, Gradients, Filters, WhereItLooks };
+enum class View { FeatureMaps, Values, Units, Weights, Gradients, Filters, WhereItLooks, TopImages };
 
 struct ViewTab {
     View view = View::Values;
@@ -87,9 +87,23 @@ struct LayerViews {
 // `first_spatial_layer`: the first layer that takes the image, whose filters
 // see colours (its Filters view). `takes_model_input`: the layer the model's
 // input enters, which gets Where it looks (6.3b) for an image, tokens or
-// features.
+// features. Every layer with channels or units gets Top images (6.3e):
+// "Top images" when the model's input is pictures (`picture_input`), else
+// "Top samples".
 LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummary* output_numerics,
-                          bool first_spatial_layer, bool takes_model_input = false);
+                          bool first_spatial_layer, bool takes_model_input = false, bool picture_input = true);
+
+// A sample of the model's input [H, W, C] (C 1 or 3, row-major values) as an
+// RGBA picture, its value range stretched to 0..255; nullopt for any other shape.
+struct Picture {
+    std::vector<unsigned char> rgba;
+    size_t width = 0;
+    size_t height = 0;
+};
+std::optional<Picture> SamplePicture(const std::vector<float>& values, const std::vector<size_t>& shape);
+
+// The Inspector's note for Top images.
+const std::string& TopImagesHint();
 
 struct SpatialShape {
     size_t height = 0;

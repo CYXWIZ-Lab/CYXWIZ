@@ -58,6 +58,7 @@ public:
     // Clips by number, as validation sees them: no augmentation (TOFIX178
     // 6.0b, Local Debug's picked sample).
     std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    size_t SourceSampleCount() const override;
     // The part (of the three this batcher holds) the clip falls in.
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
     std::string SourceSampleName(size_t index) const override;

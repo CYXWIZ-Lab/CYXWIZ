@@ -559,9 +559,12 @@ void StudioDebuggerPanel::RenderLayersView() {
                 output_numerics = ScanDebugTensorNumerics(lv::SampleOf(output->tensor, selected_layer_sample_),
                                                           gui::NodeType::Dense);
             }
+            const CapturedTensor* model_input = layer_capture_->Layers().front().Find(CapturedTensorRole::Input);
+            const auto picture = model_input ? lv::AsSpatial(model_input->tensor.Shape()) : std::nullopt;
             cache.views = lv::PlanLayerViews(info, output ? &output_numerics : nullptr,
                                              selected_layer_ == cache.first_spatial,
-                                             selected_layer_ == 0 && layer.module_index == 0);
+                                             selected_layer_ == 0 && layer.module_index == 0,
+                                             picture && (picture->channels == 1 || picture->channels == 3));
         } catch (const std::exception& e) {
             cache.error = e.what();
         }
@@ -785,7 +788,10 @@ void StudioDebuggerPanel::RenderLayersView() {
             if (k % static_cast<size_t>(columns) != 0) ImGui::SameLine(0.0f, gap);
             ImGui::PushID(static_cast<int>(k));
             const ImVec2 at = ImGui::GetCursorScreenPos();
-            if (ImGui::InvisibleButton("##tile", ImVec2(tile, tile_h)) && clickable) selected_channel_rank_ = k;
+            if (ImGui::InvisibleButton("##tile", ImVec2(tile, tile_h)) && clickable) {
+                selected_channel_rank_ = k;
+                NoteClickedChannel(selected_layer_, c.order[k]);
+            }
             dl->AddImageRounded(Texture(c.tiles[k]), at, ImVec2(at.x + tile, at.y + tile_h), ImVec2(0, 0),
                                 ImVec2(1, 1), IM_COL32_WHITE, 4.0f);
             if (k == selected_channel_rank_ || ImGui::IsItemHovered()) {
@@ -830,7 +836,11 @@ void StudioDebuggerPanel::RenderLayersView() {
     const auto draw_units = [&](LayerViewCache& c) {
         const ImVec2 size(std::min(ImGui::GetContentRegionAvail().x, 720.0f), 150.0f);
         const ImVec2 at = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton("##units", size);
+        if (ImGui::InvisibleButton("##units", size) && c.units.size() > 0) {
+            const float fx = (ImGui::GetIO().MousePos.x - at.x) / size.x;
+            NoteClickedChannel(selected_layer_, std::min(c.units.size() - 1, static_cast<size_t>(std::max(0.0f, fx) *
+                                                                                              static_cast<float>(c.units.size()))));
+        }
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float limit = static_cast<float>(std::max(1e-12, c.numerics.maximum_absolute));
         const float mid = at.y + size.y * 0.5f;
@@ -1009,6 +1019,8 @@ void StudioDebuggerPanel::RenderLayersView() {
         WrappedMuted("This view could not be read: " + cache.error);
     } else if (tab.view == lv::View::WhereItLooks) {
         RenderWhereItLooks(cache.sample_texture, cache.sample_width, cache.sample_height);
+    } else if (tab.view == lv::View::TopImages) {
+        RenderTopImages();
     } else {
         header();
         if (comparing && ImGui::BeginTable("##LayerCompare", 2, ImGuiTableFlags_SizingStretchSame)) {
@@ -1056,24 +1068,14 @@ void StudioDebuggerPanel::ReadLayerSample() {
         cache.sample_key = sample_key;
         try {
             if (const auto* input = layers.front().Find(CapturedTensorRole::Input)) {
-                const auto spatial = lv::AsSpatial(input->tensor.Shape());
-                if (spatial && (spatial->channels == 3 || spatial->channels == 1)) {
+                if (lv::AsSpatial(input->tensor.Shape())) {
                     const Tensor sample = lv::SampleOf(input->tensor, selected_layer_sample_);
-                    const auto numerics = ScanDebugTensorNumerics(sample, gui::NodeType::Dense);
-                    std::vector<float> values = lv::ReadValues(sample);
-                    const float low = static_cast<float>(numerics.minimum);
-                    const float span = std::max(1e-6f, static_cast<float>(numerics.maximum) - low);
-                    std::vector<unsigned char> rgba(spatial->height * spatial->width * 4, 255);
-                    for (size_t p = 0; p < spatial->height * spatial->width; ++p) {
-                        for (size_t ch = 0; ch < 3; ++ch) {
-                            const float v = values[p * spatial->channels + (spatial->channels == 3 ? ch : 0)];
-                            rgba[p * 4 + ch] = static_cast<unsigned char>(
-                                std::lround(std::clamp((std::isfinite(v) ? v - low : 0.0f) / span, 0.0f, 1.0f) * 255.0f));
-                        }
+                    if (const auto picture = lv::SamplePicture(lv::ReadValues(sample), sample.Shape())) {
+                        cache.sample_texture = Upload(picture->rgba, static_cast<int>(picture->width),
+                                                      static_cast<int>(picture->height));
+                        cache.sample_width = static_cast<int>(picture->width);
+                        cache.sample_height = static_cast<int>(picture->height);
                     }
-                    cache.sample_texture = Upload(rgba, static_cast<int>(spatial->width), static_cast<int>(spatial->height));
-                    cache.sample_width = static_cast<int>(spatial->width);
-                    cache.sample_height = static_cast<int>(spatial->height);
                 }
             }
             for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
@@ -1154,6 +1156,7 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
                                   ? (CaptureSettings().where_it_looks_method == core::WhereItLooksMethod::Saliency
                                          ? where_it_looks::SaliencyInspectorHint()
                                          : where_it_looks::InspectorHint())
+                              : shown_view == lv::View::TopImages ? lv::TopImagesHint()
                                                                      : views.hint;
     if (feature_maps && cache.spatial && selected_channel_rank_ < cache.tiles.size()) {
         if (BeginCard("StudioDebuggerLayerChannel")) {

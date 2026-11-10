@@ -21,6 +21,7 @@
 #include <imgui.h>
 #include <functional>
 #include <utility>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -32,6 +33,7 @@
 namespace cyxwiz {
 
 class LiveGraphCompile;
+class DebugModelSession;
 namespace occlusion {
 enum class InputKind;
 }
@@ -79,13 +81,24 @@ public:
         std::function<std::optional<std::string>(StudioDebuggerRunMode, int sample_index, int explain_node_id)>;
 
     void SetRunDebugCallback(RunDebugCallback callback) { run_debug_callback_ = std::move(callback); }
-    // Where it looks on a table (TOFIX178 6.3b): each feature's mean over the
-    // graph's prepared rows. Called on the UI thread with the graph frozen;
-    // the job runs on a worker (empty with `why` when the means cannot be
-    // read). An empty job: the canvas does not compile cleanly.
-    using FeatureMeansJob = std::function<std::vector<float>(const std::function<bool()>& stop, std::string* why)>;
-    using FeatureMeansCallback = std::function<FeatureMeansJob()>;
-    void SetFeatureMeansCallback(FeatureMeansCallback callback) { feature_means_callback_ = std::move(callback); }
+    // Items from the graph's data, prepared as validation sees them, in the
+    // model's input layout: `count` of them spread over the data (Where it
+    // looks' feature means, TOFIX178 6.3b; Top images, 6.3e). Called on the
+    // UI thread with the graph frozen; the job runs on a worker (`why` set
+    // when the items cannot be read). An empty job: the canvas does not
+    // compile cleanly.
+    struct DataItems {
+        Tensor features;
+        Tensor labels;
+        std::vector<size_t> indices;           // each item's number in its source
+        std::vector<std::string> names;        // "cat.10599.jpg"; empty when items have no name
+        std::vector<std::string> class_names;  // in label order; empty when unknown
+        std::string description;               // "320 images of cat_dog, every 78th from image 0"
+        std::string why;
+    };
+    using DataItemsJob = std::function<DataItems(size_t count, const std::function<bool()>& stop)>;
+    using DataItemsCallback = std::function<DataItemsJob()>;
+    void SetDataItemsCallback(DataItemsCallback callback) { data_items_callback_ = std::move(callback); }
     void SetRunWaitCallback(RunWaitCallback callback) { run_wait_callback_ = std::move(callback); }
     // The line under the run controls: a wait, or why a waiting run did not
     // start.
@@ -213,6 +226,12 @@ private:
     // prediction for the picked item, and occlusion.
     void UpdateLayerModelSession();
     void RenderWhereItLooks(uint32_t sample_texture, int sample_width, int sample_height);
+    // The shown capture's rebuilt model; null while it is built or when it cannot be.
+    std::shared_ptr<DebugModelSession> LayerModelSession() const;
+    // Model > Layers > Top images (studio_debugger_top_images.cpp, 6.3e).
+    void RenderTopImages();
+    // A channel clicked in Feature maps or Units: Top images' "the clicked channel".
+    void NoteClickedChannel(size_t layer, size_t channel);
     // Where it looks with Method Saliency (6.3c): Compute and the result for
     // the picked item and target. `item_values`: token ids or feature values.
     void RenderSaliency(occlusion::InputKind kind, const std::vector<float>& item_values, float pad_id,
@@ -246,7 +265,7 @@ private:
     static std::string FormatShape(const std::vector<size_t>& shape);
 
     RunDebugCallback run_debug_callback_;
-    FeatureMeansCallback feature_means_callback_;
+    DataItemsCallback data_items_callback_;
     RunWaitCallback run_wait_callback_;
     RunCompletedCallback run_completed_callback_;
     FocusNodeCallback focus_node_callback_;
@@ -309,6 +328,11 @@ private:
     std::shared_ptr<LayerViewCache> layer_view_cache_;
     struct WhereItLooksState;
     std::shared_ptr<WhereItLooksState> where_it_looks_;
+    struct TopImagesState;
+    std::shared_ptr<TopImagesState> top_images_;
+    size_t clicked_channel_layer_ = std::numeric_limits<size_t>::max();
+    size_t clicked_channel_ = 0;
+    std::string picked_from_top_images_;  // the item clicked last, named
     // A training run shown instead of the debug run (6.3d); empty = none.
     std::string shown_training_run_;
     std::optional<TrainingRunRecord> shown_training_record_;

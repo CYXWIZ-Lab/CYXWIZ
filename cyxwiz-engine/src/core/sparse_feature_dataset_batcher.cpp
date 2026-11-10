@@ -346,6 +346,10 @@ Batch SparseFeatureDatasetBatcher::GetNextBatch() {
     return batch;
 }
 
+size_t SparseFeatureDatasetBatcher::SourceSampleCount() const {
+    return dataset_ ? static_cast<size_t>(dataset_->GetNumRows()) : 0;
+}
+
 std::optional<Batch> SparseFeatureDatasetBatcher::GetSourceSamples(const std::vector<size_t>& indices) {
     if (!dataset_ || indices.empty()) return std::nullopt;
     std::vector<int64_t> rows;

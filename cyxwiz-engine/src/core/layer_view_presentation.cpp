@@ -131,8 +131,44 @@ std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
     return sections;
 }
 
+std::optional<Picture> SamplePicture(const std::vector<float>& values, const std::vector<size_t>& shape) {
+    if (shape.size() != 3 || (shape[2] != 1 && shape[2] != 3) || values.size() != shape[0] * shape[1] * shape[2])
+        return std::nullopt;
+    float low = 0.0f, high = 0.0f;
+    bool any = false;
+    for (float v : values) {
+        if (!std::isfinite(v)) continue;
+        low = any ? std::min(low, v) : v;
+        high = any ? std::max(high, v) : v;
+        any = true;
+    }
+    const float span = std::max(1e-6f, high - low);
+    Picture picture;
+    picture.height = shape[0];
+    picture.width = shape[1];
+    const size_t channels = shape[2];
+    picture.rgba.assign(picture.width * picture.height * 4, 255);
+    for (size_t p = 0; p < picture.width * picture.height; ++p) {
+        for (size_t ch = 0; ch < 3; ++ch) {
+            const float v = values[p * channels + (channels == 3 ? ch : 0)];
+            picture.rgba[p * 4 + ch] = static_cast<unsigned char>(
+                std::lround(std::clamp((std::isfinite(v) ? v - low : 0.0f) / span, 0.0f, 1.0f) * 255.0f));
+        }
+    }
+    return picture;
+}
+
+const std::string& TopImagesHint() {
+    static const std::string hint =
+        "Top images answer \"what makes this channel fire\": the items from the data where the channel is "
+        "strongest. A channel whose top images all show the background looks at the background. With a Dense head "
+        "right after the layer, its weight says which class a channel votes for. A Local Debug run's model has its "
+        "starting weights; open a training snapshot to see a trained model.";
+    return hint;
+}
+
 LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummary* output_numerics,
-                          bool first_spatial_layer, bool takes_model_input) {
+                          bool first_spatial_layer, bool takes_model_input, bool picture_input) {
     LayerViews views;
     const TensorInfo* output = Find(layer, CapturedTensorRole::Output);
     const TensorInfo* input = Find(layer, CapturedTensorRole::Input);
@@ -157,6 +193,8 @@ LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummar
 
     if (takes_model_input && input && (IsSpatial(input->shape) || input->shape.size() == 2))
         views.tabs.push_back({View::WhereItLooks, "Where it looks", {}});
+    if (output && (IsSpatial(output->shape) || (output->shape.size() == 2 && output->shape[1] > 1)))
+        views.tabs.push_back({View::TopImages, picture_input ? "Top images" : "Top samples", {}});
     if (weights && weights->shape.size() == 2 && input && input->shape.size() == 2) {
         views.later.push_back({"Contributions", "How this sample's output was computed: w \xC3\x97 x per input, "
                                                 "the largest first, then the bias and the activation"});

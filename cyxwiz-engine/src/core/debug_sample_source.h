@@ -27,6 +27,8 @@ struct DebugSample {
     // Each item's name in its source ("cat.10599.jpg"; empty when it has
     // none) and the classes in label order (empty when unknown).
     std::vector<std::string> item_names;
+    // Each item's number in its source, in batch order.
+    std::vector<size_t> item_indices;
     std::vector<std::string> class_names;
     // Why the picked item cannot run (Local Debug then runs a synthetic sample
     // and says so); empty when it can.
@@ -41,6 +43,10 @@ struct DebugSampleRequest {
     // "batch of 8", TOFIX178 6.1c); the picked item alone when the data ends
     // before them.
     size_t count = 1;
+    // Spread the `count` items evenly over the whole data from `index`
+    // (every total / count-th item; Top images, TOFIX178 6.3e) instead of
+    // consecutive ones.
+    bool spread = false;
     const std::vector<gui::MLNode>* nodes = nullptr;
     const std::vector<gui::NodeLink>* links = nullptr;
     // The project folders and prepared-data cache Train uses, for the data

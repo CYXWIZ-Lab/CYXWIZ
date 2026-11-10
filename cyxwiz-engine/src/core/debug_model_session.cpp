@@ -4,6 +4,7 @@
 
 #include <cyxwiz/sequential.h>
 
+#include <optional>
 #include <stdexcept>
 
 namespace cyxwiz {
@@ -72,10 +73,12 @@ std::unique_ptr<DebugModelSession> DebugModelSession::FromCapture(const Training
 }
 
 Tensor DebugModelSession::Forward(const Tensor& input) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return model_->Forward(input);
 }
 
 Tensor DebugModelSession::InputGradient(const Tensor& input, const Tensor& target_weights) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     const Tensor output = model_->Forward(input);
     if (output.Shape() != target_weights.Shape())
         throw std::runtime_error("the target " + ShapeText(target_weights.Shape()) +
@@ -83,9 +86,27 @@ Tensor DebugModelSession::InputGradient(const Tensor& input, const Tensor& targe
     return model_->Backward(target_weights);
 }
 
+Tensor DebugModelSession::LayerOutput(const Tensor& input, size_t module_index) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::optional<Tensor> kept;
+    model_->SetLayerForwardObserver([&](size_t index, const Tensor&, const Tensor& output, float) {
+        if (index == module_index) kept = output.Clone();
+    });
+    try {
+        model_->Forward(input);
+    } catch (...) {
+        model_->SetLayerForwardObserver(nullptr);
+        throw;
+    }
+    model_->SetLayerForwardObserver(nullptr);
+    if (!kept) throw std::runtime_error("layer " + std::to_string(module_index) + " is not on the path to the output");
+    return *kept;
+}
+
 DebugModelSession::LayerGradient DebugModelSession::LayerOutputGradient(const Tensor& input,
                                                                         const Tensor& target_weights,
                                                                         size_t module_index) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     LayerGradient result;
     bool reached_forward = false;
     bool reached_backward = false;

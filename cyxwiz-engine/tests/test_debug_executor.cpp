@@ -10,6 +10,8 @@
 #include "../src/core/debug_model_session.h"
 #include "../src/core/occlusion.h"
 #include "../src/core/saliency.h"
+#include "../src/core/top_images.h"
+#include "../src/core/dataset_batcher.h"
 #include "../src/core/training_snapshots_presentation.h"
 #include "../src/core/where_it_looks_presentation.h"
 #include "../src/core/debug_numerics.h"
@@ -3151,6 +3153,145 @@ void TestTrainingSnapshotsPresentation() {
     spdlog::info("  OK: training snapshots presentation");
 }
 
+// TOFIX178 6.3e: top images. Strengths per channel and item against host
+// arithmetic, item ranges in both layouts, a batched run equal to items one
+// at a time on the ResNet, and the Dense head's votes.
+void TestTopImages() {
+    spdlog::info("--- TestTopImages ---");
+    namespace ti = top_images;
+    // [H=2, W=2, C=3, N=2] row-major: ((h * 2 + w) * 3 + c) * 2 + n.
+    std::vector<float> maps(24);
+    for (size_t i = 0; i < maps.size(); ++i) maps[i] = std::sin(1.3f * float(i)) * 3.0f;
+    const Tensor spatial = FromRowMajor(maps, {2, 2, 3, 2});
+    for (const auto rank : {ti::Rank::Maximum, ti::Rank::Mean}) {
+        const auto s = ti::ChannelStrengths(spatial, rank);
+        ExpectTrue(s.channels == 3 && s.items == 2, "a spatial output's channels and items");
+        for (size_t c = 0; c < 3; ++c)
+            for (size_t n = 0; n < 2; ++n) {
+                float best = -1e30f, sum = 0.0f;
+                for (size_t pos = 0; pos < 4; ++pos) {
+                    const float v = maps[(pos * 3 + c) * 2 + n];
+                    best = std::max(best, v);
+                    sum += v;
+                }
+                const float want = rank == ti::Rank::Maximum ? best : sum / 4.0f;
+                ExpectTrue(std::fabs(s.At(c, n) - want) < 1e-5f, "channel " + std::to_string(c) + " item " +
+                                                                       std::to_string(n) + " strength");
+            }
+    }
+    // [N=3, C=2] row-major: n * 2 + c.
+    const auto flat = ti::ChannelStrengths(FromRowMajor({1, 2, 3, 4, 5, 6}, {3, 2}), ti::Rank::Maximum);
+    ExpectTrue(flat.channels == 2 && flat.items == 3 && flat.At(0, 2) == 5.0f && flat.At(1, 0) == 2.0f,
+               "a flat output's value per channel and item");
+    ExpectTrue(ti::TopItems(flat, 1, 2) == std::vector<size_t>({2, 1}), "top items strongest first");
+    ExpectTrue(ti::TopItems(flat, 5, 2).empty(), "no channel: none");
+
+    // Item ranges: batch last and batch first.
+    const auto images = RowMajor(ti::ItemRange(spatial, 1, 2));
+    for (size_t s = 0; s < 12; ++s) ExpectTrue(images[s] == maps[s * 2 + 1], "item 1 of a batch-last batch");
+    ExpectTrue(RowMajor(ti::ItemRange(FromRowMajor({1, 2, 3, 4, 5, 6}, {3, 2}), 1, 3)) ==
+                   std::vector<float>({3, 4, 5, 6}),
+               "items 1-2 of a batch-first batch");
+
+    // The ResNet: five items, batched in chunks of 2 = each item alone.
+    const auto resnet = CompileResNetExample();
+    DebugExecutor exe(resnet);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "the ResNet runs with capture: " + res.failure_summary);
+    std::string error;
+    auto session = DebugModelSession::FromCapture(resnet, *res.layer_capture, &error);
+    ExpectTrue(session != nullptr, "the ResNet is rebuilt: " + error);
+    const Tensor& image = CapturedTensorOf(res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    const auto pixels = RowMajor(image);  // [H, W, C, 1]
+    const size_t n = 5;
+    std::vector<float> batch(pixels.size() * n);
+    for (size_t s = 0; s < pixels.size(); ++s)
+        for (size_t i = 0; i < n; ++i) batch[s * n + i] = pixels[s] * (1.0f - 0.15f * float(i)) + 0.05f * float(i);
+    auto shape = image.Shape();
+    shape.back() = n;
+    const Tensor items = FromRowMajor(batch, shape);
+    const CapturedLayer* pooled = nullptr;
+    const CapturedLayer* conv = nullptr;
+    for (const auto& l : res.layer_capture->Layers()) {
+        const auto& out = CapturedTensorOf(l, CapturedTensorRole::Output).Shape();
+        if (!pooled && out.size() == 2 && out[1] > 1) pooled = &l;
+        if (!conv && out.size() == 4) conv = &l;
+    }
+    ExpectTrue(pooled && conv, "the ResNet has a pooled and a conv layer");
+    size_t progress_calls = 0;
+    for (const CapturedLayer* layer : {pooled, conv}) {
+        const auto batched = ti::Run(*session, items, layer->module_index, ti::Rank::Maximum, 2,
+                                     [&](size_t, size_t) { ++progress_calls; });
+        ExpectTrue(!batched.cancelled && batched.items == n && batched.channels > 1, layer->node_name + " strengths");
+        float worst = 0.0f;
+        for (size_t i = 0; i < n; ++i) {
+            const auto alone = ti::ChannelStrengths(session->LayerOutput(ti::ItemRange(items, i, i + 1),
+                                                                         layer->module_index),
+                                                    ti::Rank::Maximum);
+            for (size_t c = 0; c < batched.channels; ++c) worst = std::max(worst, std::fabs(alone.At(c, 0) - batched.At(c, i)));
+        }
+        ExpectTrue(worst < 1e-4f, layer->node_name + ": batched == one at a time, worst " + std::to_string(worst));
+    }
+    ExpectEq(progress_calls, 6, "progress after each chunk (3 chunks per layer)");
+    const auto stopped = ti::Run(*session, items, pooled->module_index, ti::Rank::Maximum, 2, {}, [] { return true; });
+    ExpectTrue(stopped.cancelled, "Stop ends the run");
+    bool refused = false;
+    try {
+        session->LayerOutput(image, 999);
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    ExpectTrue(refused, "a layer not in the model is refused");
+
+    // Votes: one logit votes both classes; two outputs vote each.
+    const auto one = ti::StrongestVotes({0.3f, -0.5f, 0.1f, -0.2f, 0.4f}, 1, 5, 2);
+    ExpectTrue(one.size() == 4 && one[0].channel == 4 && one[0].towards == 1 && one[1].channel == 0 &&
+                   one[2].channel == 1 && one[2].towards == 0 && one[3].channel == 3,
+               "one logit: the largest positive weights vote class 1, the largest negative class 0");
+    const auto two = ti::StrongestVotes({0.1f, 0.9f, 0.2f, 0.7f, 0.0f, -0.4f}, 2, 3, 1);
+    ExpectTrue(two.size() == 2 && two[0].channel == 1 && two[0].towards == 0 && two[1].channel == 0 &&
+                   two[1].towards == 1,
+               "two outputs: each votes with its largest weight");
+
+    // Items spread over the data (6.3e): every k-th, and a stand-in batcher
+    // handing back exactly those numbers.
+    const auto spread = SpreadItems(25000, 0, 320);
+    ExpectTrue(spread.count == 320 && spread.stride == 78, "320 of 25,000: every 78th");
+    ExpectTrue(SpreadItems(100, 0, 320).count == 100 && SpreadItems(100, 0, 320).stride == 1,
+               "more asked than there are: all of them, consecutive");
+    ExpectTrue(SpreadItems(10, 10, 4).count == 0, "nothing past the end");
+    struct Numbered : IBatcher {
+        Batch GetNextBatch() override { return {}; }
+        void Reset() override {}
+        bool IsEpochComplete() const override { return true; }
+        size_t GetNumBatches() const override { return 0; }
+        size_t GetNumSamples() const override { return 0; }
+        void SetNormalization(float, float) override {}
+        void SetOneHotEncoding(size_t) override {}
+        void SetFlatten(bool) override {}
+        size_t SourceSampleCount() const override { return 40; }
+        std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override {
+            std::vector<float> v;
+            for (size_t i : indices) {
+                if (i >= 40) throw std::out_of_range("past the end");
+                v.push_back(static_cast<float>(i));
+            }
+            Batch b;
+            b.data = FromRowMajor(v, {v.size(), 1});
+            return b;
+        }
+    } numbered;
+    size_t taken = 0;
+    const auto every = GetSourceSampleRange(numbered, 2, 4, &taken, 9);
+    ExpectTrue(every && taken == 4 && RowMajor(every->data) == std::vector<float>({2, 11, 20, 29}),
+               "items 2, 11, 20, 29 by number");
+    const auto past = GetSourceSampleRange(numbered, 30, 4, &taken, 9);
+    ExpectTrue(past && taken == 1 && RowMajor(past->data) == std::vector<float>({30}),
+               "running past the end falls back to the first item alone");
+    spdlog::info("  OK: top images");
+}
+
 void TestDebugModelSession() {
     spdlog::info("--- TestDebugModelSession ---");
     // An MLP (no dropout or BatchNorm: the run's training forward equals
@@ -4135,6 +4276,7 @@ int main(int argc, char** argv) {
         TestOcclusion();
         TestSaliencyAgainstPyTorch();
         TestTrainingSnapshotsPresentation();
+        TestTopImages();
         TestWhereItLooksPresentation();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();

@@ -104,6 +104,7 @@ public:
     // Rows of the file by number, as validation sees them (TOFIX178 6.0b):
     // each read from its row group.
     std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    size_t SourceSampleCount() const override;
     // This batcher's part when the row is in it (it holds one part).
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
 

@@ -179,6 +179,10 @@ private Data Studio tickets (`tofix*/track*`).
   a training run's snapshots with each epoch's loss and validation accuracy;
   Model > Layers steps through them keeping the layer and channel, and
   **Compare with** draws the same view for two epochs side by side.
+  **Top images** shows, for a layer's channels, the 9 images (of 320 spread
+  over the data) that excite each most: the Dense head's strongest votes per
+  class, the clicked channel, or this sample's strongest channels; ranked by
+  a channel's maximum or mean over its map.
   Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in

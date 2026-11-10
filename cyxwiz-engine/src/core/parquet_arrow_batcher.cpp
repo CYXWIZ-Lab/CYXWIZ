@@ -1146,6 +1146,10 @@ void ParquetArrowBatcher::FinishBatch(Batch& batch, size_t rows_filled, std::vec
     batch.size = rows_filled;
 }
 
+size_t ParquetArrowBatcher::SourceSampleCount() const {
+    return dataset_ ? static_cast<size_t>(dataset_->GetNumRows()) : 0;
+}
+
 std::optional<Batch> ParquetArrowBatcher::GetSourceSamples(const std::vector<size_t>& indices) {
     if (!dataset_ || indices.empty()) return std::nullopt;
     const size_t total = static_cast<size_t>(dataset_->GetNumRows());

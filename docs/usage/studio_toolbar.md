@@ -396,8 +396,8 @@ says how to get one.
     - tokens (a text graph): each token replaced by the pad id, padding left
       out; one chip per token, by its id in the vocabulary;
     - table features: each feature replaced by its mean over up to 512 of the
-      graph's prepared rows (the data steps as Local Debug runs them); a bar
-      per feature.
+      graph's prepared rows, spread over the data (the data steps as Local
+      Debug runs them); a bar per feature.
     **Explain** picks the output: the predicted class, the true class, or
     any other class from the list. **Compute** runs the forward passes on the
     device, 64 at a time, off the UI thread; **Stop** ends it. Blue means
@@ -438,6 +438,25 @@ says how to get one.
     keeps the method and Show; both are also in **Preferences > Studio
     Debugger**. Saliency is checked against PyTorch
     (`cyxwiz-engine/tests/computation_truth/reference/generate_saliency_fixtures.py`).
+  - **Top images** (every layer with channels or units; **Top samples** when
+    the model's input is not pictures): the items from the data that excite a
+    channel most. **Compute** takes 320 items spread over the data (every
+    k-th, as validation prepares them, so a folder sorted by class gives both
+    classes), runs them through the run's model in batches on the device
+    (**Stop** ends it) and shows, per channel, the 9 strongest. **Channels**
+    picks the rows:
+    - **The Dense head's strongest votes**, when the model's last layer is a
+      Dense reading these channels (after a Global Avg Pool): for each class
+      the two channels with the largest weight towards it, with the weight
+      and the class it votes for;
+    - **The clicked channel**: the one last clicked in Feature maps or Units;
+    - **The 16 strongest for this sample** (conv layers).
+    On a conv layer **Ranked by** picks a channel's strength per image: its
+    **Maximum** over the map (it fires somewhere) or its **Mean** (it fires
+    all over). Hover a picture for its file, label and the channel's value;
+    click it to make it the debugger's picked sample (run Local Debug to see
+    it). Results are not saved. Patches (the part of the image the channel
+    sees) come later.
   - Greyed views are next: **Contributions** on a Dense layer and
     **Embedding** on flat outputs. Hover one for what it will show.
 - The **Inspector** shows the sample as the first layer received it (after

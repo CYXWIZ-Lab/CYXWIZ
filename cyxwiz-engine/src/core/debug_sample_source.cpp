@@ -26,11 +26,21 @@ const char* PartName(const std::optional<BatcherPhase>& part) {
 
 // Items `index` .. `index + count - 1` from `source` (as validation sees
 // them), named with the part of the first of `parts` that holds the first.
-DebugSample Take(IBatcher& source, std::initializer_list<const IBatcher*> parts, size_t index, size_t count,
+DebugSample Take(IBatcher& source, std::initializer_list<const IBatcher*> parts, const DebugSampleRequest& request,
                  const std::string& item, const std::string& dataset) {
     DebugSample sample;
+    const size_t index = request.index;
+    size_t count = request.count;
+    size_t stride = 1;
+    if (request.spread) {
+        if (const size_t total = source.SourceSampleCount(); total > index) {
+            const auto spread = SpreadItems(total, index, count);
+            count = spread.count;
+            stride = spread.stride;
+        }
+    }
     size_t taken = 0;
-    const auto batch = GetSourceSampleRange(source, index, count, &taken);
+    const auto batch = GetSourceSampleRange(source, index, count, &taken, stride);
     if (!batch) {
         sample.unavailable = "this data's batcher cannot reach an item by number yet";
         return sample;
@@ -44,12 +54,16 @@ DebugSample Take(IBatcher& source, std::initializer_list<const IBatcher*> parts,
         if (batcher && !part) part = batcher->SourceSamplePart(index);
     sample.features = batch->data;
     sample.labels = batch->labels;
-    for (size_t i = 0; i < taken; ++i) sample.item_names.push_back(source.SourceSampleName(index + i));
+    for (size_t i = 0; i < taken; ++i) {
+        sample.item_indices.push_back(index + i * stride);
+        sample.item_names.push_back(source.SourceSampleName(index + i * stride));
+    }
     sample.class_names = source.ClassNames();
-    sample.description = taken == 1
-        ? item + " " + std::to_string(index) + " of " + dataset + ", " + PartName(part)
-        : item + "s " + std::to_string(index) + "-" + std::to_string(index + taken - 1) + " of " + dataset +
-              ", the first in " + PartName(part);
+    sample.description = taken == 1 ? item + " " + std::to_string(index) + " of " + dataset + ", " + PartName(part)
+                         : stride > 1 ? std::to_string(taken) + " " + item + "s of " + dataset + ", every " +
+                                            std::to_string(stride) + "th from " + item + " " + std::to_string(index)
+                                      : item + "s " + std::to_string(index) + "-" + std::to_string(index + taken - 1) +
+                                            " of " + dataset + ", the first in " + PartName(part);
     return sample;
 }
 
@@ -112,13 +126,13 @@ DebugSample TableSample(TrainingConfiguration& config, const DebugSampleRequest&
     }
     if (set.arrow_val)
         return Take(*set.arrow_val, {set.arrow_train.get(), set.arrow_val.get(), set.arrow_test.get()},
-                    request.index, request.count, "row", dataset);
+                    request, "row", dataset);
     if (set.parquet_val)
         return Take(*set.parquet_val, {set.parquet_train.get(), set.parquet_val.get(), set.parquet_test.get()},
-                    request.index, request.count, "row", dataset);
+                    request, "row", dataset);
     if (set.sparse_val)
         return Take(*set.sparse_val, {set.sparse_train.get(), set.sparse_val.get(), set.sparse_test.get()},
-                    request.index, request.count, "row", dataset);
+                    request, "row", dataset);
     sample.unavailable = "the table's batchers could not be built";
     return sample;
 }
@@ -133,7 +147,7 @@ DebugSample MakeDebugSample(TrainingConfiguration& config, const DebugSampleRequ
             const DataRegistry::ImageDatasetEntry entry = *found;  // a copy: the registry may reload
             // The batcher training and Run Test make (MakeImageBatcher), one image per batch.
             auto batcher = MakeImageBatcher(entry, config, 1, ImageSplitOf(config), request.stop);
-            DebugSample taken = Take(*batcher, {batcher.get()}, request.index, request.count, "image",
+            DebugSample taken = Take(*batcher, {batcher.get()}, request, "image",
                                      config.dataset_name);
             taken.class_names = entry.ShownClassNames();  // with the names typed on the Data Input
             return taken;
@@ -152,7 +166,7 @@ DebugSample MakeDebugSample(TrainingConfiguration& config, const DebugSampleRequ
                 return sample;
             }
             ApplyAudioInputShape(*batcher, config);
-            return Take(*batcher, {batcher.get()}, request.index, request.count, "clip", config.dataset_name);
+            return Take(*batcher, {batcher.get()}, request, "clip", config.dataset_name);
         }
         if (config.sequence_batch.enabled) {
             sample.unavailable = "picking a sequence (token tagging) sample comes later";

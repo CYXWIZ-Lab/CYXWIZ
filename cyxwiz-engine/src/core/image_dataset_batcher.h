@@ -55,6 +55,7 @@ public:
     void ExcludeFiles(const std::vector<std::string>& files);
 
     std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    size_t SourceSampleCount() const override;
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
     std::string SourceSampleName(size_t index) const override;
 
