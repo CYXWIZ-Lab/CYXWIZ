@@ -496,6 +496,19 @@ says how to get one.
     Separate clouds per class mean the layer already tells the classes
     apart; mixed ones mean the layers after it still have work to do.
     Results are not saved.
+  - **Unit weights** (a Dense layer that reads the model's image flattened:
+    only Flatten, Dropout or Reshape before it, and as many inputs as the
+    image has pixels and colours): each unit's weights drawn as the image
+    they read. A grey image is drawn red where a bright pixel raises the
+    unit and blue where it lowers it; a colour image as the colours that
+    raise it (bright) or lower it (dark); each unit on its own scale.
+    **Order** picks the largest weight norm first or unit order; the first
+    32 units show, and **All N units** shows every one. Hover a unit for its
+    weight norm and range; click it for the Inspector: the unit large, its
+    norm, bias and value for this sample, and **Top images of unit N**,
+    which opens Top images on that unit. A data table (a CSV of pixel
+    columns) is not an image to the model, so its first Dense has no Unit
+    weights.
 - Views that run the model again (Where it looks, Top images, Embedding)
   rebuild it from the canvas's graph. With no graph open, or while it
   compiles or has errors, the view says which and continues by itself once

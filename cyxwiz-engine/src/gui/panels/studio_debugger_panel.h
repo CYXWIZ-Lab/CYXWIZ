@@ -248,6 +248,12 @@ private:
     // Inspector's card for its clicked point.
     void RenderEmbedding();
     bool RenderEmbeddingPick();
+    // Unit weights as images (6.4c): whether layer `layer` is a Dense that
+    // reads the model's image flattened ([height, width, channels], else
+    // empty), the view, and the clicked unit's Inspector card.
+    std::vector<size_t> UnitWeightsImage(size_t layer) const;
+    void RenderUnitWeights(const std::string& weight_name);
+    bool RenderUnitWeightsPick();
     // The Inspector's card for the picture picked in Top images; false when
     // none is picked (or Top images is not shown).
     bool RenderTopImagesPick();
@@ -352,6 +358,11 @@ private:
     struct TopImagesState;
     std::shared_ptr<TopImagesState> top_images_;
     struct EmbeddingState;
+    struct UnitWeightsState;
+    std::shared_ptr<UnitWeightsState> unit_weights_;
+    // The Inspector asked for the clicked unit's Top images: the layer view
+    // switches to that tab, which then shows the clicked channel.
+    bool show_top_images_of_clicked_ = false;
     std::shared_ptr<EmbeddingState> embedding_;
     // The views' computations over the graph's data (studio_debugger_items_run.h).
     std::shared_ptr<ItemsRun> top_images_run_;

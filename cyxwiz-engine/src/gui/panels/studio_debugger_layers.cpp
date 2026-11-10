@@ -5,6 +5,7 @@
 // follows the approved Stage 6 mockup (Main artboard).
 
 #include "studio_debugger_panel.h"
+#include "../../core/unit_weights.h"
 #include "studio_debugger_colors.h"
 #include "studio_debugger_widgets.h"
 
@@ -564,7 +565,8 @@ void StudioDebuggerPanel::RenderLayersView() {
             cache.views = lv::PlanLayerViews(info, output ? &output_numerics : nullptr,
                                              selected_layer_ == cache.first_spatial,
                                              selected_layer_ == 0 && layer.module_index == 0,
-                                             picture && (picture->channels == 1 || picture->channels == 3));
+                                             picture && (picture->channels == 1 || picture->channels == 3),
+                                             !UnitWeightsImage(selected_layer_).empty());
         } catch (const std::exception& e) {
             cache.error = e.what();
         }
@@ -592,6 +594,15 @@ void StudioDebuggerPanel::RenderLayersView() {
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor();
         return;
+    }
+    if (show_top_images_of_clicked_) {
+        bool found = false;
+        for (size_t i = 0; i < views.tabs.size(); ++i)
+            if (views.tabs[i].view == lv::View::TopImages) {
+                selected_layer_tab_ = static_cast<int>(i);
+                found = true;
+            }
+        if (!found) show_top_images_of_clicked_ = false;  // Top images takes it otherwise
     }
     selected_layer_tab_ = std::clamp(selected_layer_tab_, 0, static_cast<int>(views.tabs.size()) - 1);
     {
@@ -750,7 +761,7 @@ void StudioDebuggerPanel::RenderLayersView() {
     // looks stays one snapshot at a time (it runs that snapshot's model).
     const bool comparing = compare_capture_ && !compare_label_.empty() && tab.view != lv::View::WhereItLooks &&
                            tab.view != lv::View::TopImages && tab.view != lv::View::Contributions &&
-                           tab.view != lv::View::Embedding;
+                           tab.view != lv::View::Embedding && tab.view != lv::View::UnitWeights;
     const CapturedLayer* compared = nullptr;
     if (comparing) {
         for (const auto& l : compare_capture_->Layers())
@@ -1027,6 +1038,8 @@ void StudioDebuggerPanel::RenderLayersView() {
         RenderContributions(tab.tensor);
     } else if (tab.view == lv::View::Embedding) {
         RenderEmbedding();
+    } else if (tab.view == lv::View::UnitWeights) {
+        RenderUnitWeights(tab.tensor);
     } else {
         header();
         if (comparing && ImGui::BeginTable("##LayerCompare", 2, ImGuiTableFlags_SizingStretchSame)) {
@@ -1104,6 +1117,7 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
     ImGui::BeginChild("StudioDebuggerLayerInspector", ImVec2(0.0f, 0.0f), false);
     RenderTopImagesPick();
     RenderEmbeddingPick();
+    RenderUnitWeightsPick();
     if (BeginCard("StudioDebuggerLayerSample")) {
         // A card is its own window: wrap inside it.
         ImGui::PushTextWrapPos(0.0f);
@@ -1166,6 +1180,7 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
                                          : where_it_looks::InspectorHint())
                               : shown_view == lv::View::TopImages ? lv::TopImagesHint()
                               : shown_view == lv::View::Embedding ? lv::EmbeddingHint()
+                              : shown_view == lv::View::UnitWeights ? unit_weights::Hint()
                               : shown_view == lv::View::Contributions && !contributions_inspector_.empty()
                                   ? contributions_inspector_
                                                                      : views.hint;

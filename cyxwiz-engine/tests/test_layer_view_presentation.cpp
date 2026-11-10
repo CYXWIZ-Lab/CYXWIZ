@@ -185,6 +185,11 @@ void TestViewsFollowShapes() {
                                         "Top images"}),
           "Dense tabs");
     Check(Later(dense).empty(), "nothing left for later on a Dense layer");
+    const auto reads_image = PlanLayerViews(Dense2(), nullptr, false, false, true, true);
+    Check(Labels(reads_image) == std::vector<std::string>({"Units", "Values", "Weights", "Gradients", "Unit weights",
+                                                           "Contributions", "Embedding", "Top images"}),
+          "a Dense that reads the image flattened has Unit weights after Gradients");
+    Check(reads_image.tabs[4].tensor == dense.tabs[2].tensor, "Unit weights reads the Dense's weights");
     Check(!dense.hint.empty(), "a weights layer has an inspector hint");
 
     const LayerInfo empty;

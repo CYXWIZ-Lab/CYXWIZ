@@ -178,7 +178,7 @@ const std::string& EmbeddingHint() {
 }
 
 LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummary* output_numerics,
-                          bool first_spatial_layer, bool takes_model_input, bool picture_input) {
+                          bool first_spatial_layer, bool takes_model_input, bool picture_input, bool reads_image) {
     LayerViews views;
     const TensorInfo* output = Find(layer, CapturedTensorRole::Output);
     const TensorInfo* input = Find(layer, CapturedTensorRole::Input);
@@ -194,6 +194,8 @@ LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummar
         views.tabs.push_back({View::Weights, "Weights", weights->name});
         if (Find(layer, CapturedTensorRole::Gradient, weights->name))
             views.tabs.push_back({View::Gradients, "Gradients", weights->name});
+        if (reads_image && weights->shape.size() == 2)
+            views.tabs.push_back({View::UnitWeights, "Unit weights", weights->name});
     }
 
     if (first_spatial_layer && weights && weights->shape.size() == 4 &&

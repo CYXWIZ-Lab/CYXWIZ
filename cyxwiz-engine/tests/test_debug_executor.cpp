@@ -13,6 +13,7 @@
 #include "../src/core/top_images.h"
 #include "../src/core/dense_contributions.h"
 #include "../src/core/layer_embedding.h"
+#include "../src/core/unit_weights.h"
 #include "../src/core/dataset_batcher.h"
 #include "../src/core/training_snapshots_presentation.h"
 #include "../src/core/where_it_looks_presentation.h"
@@ -3399,6 +3400,81 @@ void TestLayerEmbedding() {
     spdlog::info("  OK: layer embedding (PCA, t-SNE, UMAP)");
 }
 
+// TOFIX178 6.4c: unit weights as images. A Flatten hands the Dense the image
+// [H, W, C] row-major, so weight k of a unit is that pixel and colour; norms
+// and rows read on the device match the host; order, drawing, the image rule.
+void TestUnitWeights() {
+    spdlog::info("--- TestUnitWeights ---");
+    namespace uw = unit_weights;
+    // Flatten order on a built model: the Dense's input is the sample read row-major.
+    TrainingConfiguration cfg;
+    cfg.preprocessing_domain = PreprocessingDomain::Image;
+    cfg.input_shape = {4, 3, 2};
+    cfg.input_size = 24;
+    cfg.output_size = 5;
+    cfg.loss_type = gui::NodeType::CrossEntropyLoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+    CompiledLayer flatten;
+    flatten.type = gui::NodeType::Flatten;
+    flatten.input_shape = {4, 3, 2};
+    flatten.output_shape = {24};
+    CompiledLayer dense;
+    dense.type = gui::NodeType::Dense;
+    dense.units = 5;
+    dense.input_shape = {24};
+    dense.output_shape = {5};
+    cfg.layers = {flatten, dense};
+    auto built = BuildExecutableFromConfig(cfg);
+    ExpectTrue(built.ok(), "the image MLP builds: " + built.error_message);
+    std::vector<float> pixels(24);
+    for (size_t k = 0; k < pixels.size(); ++k) pixels[k] = 0.25f * static_cast<float>(k) - 1.0f;
+    // As the image batcher hands it out: batch first [1, H, W, C].
+    const Tensor image = FromRowMajor(pixels, {1, 4, 3, 2});
+    Tensor seen, flat;
+    built.model->SetLayerForwardObserver([&](size_t i, const Tensor& in, const Tensor& out, float) {
+        if (i == 0) {
+            seen = in.Clone();
+            flat = out.Clone();
+        }
+    });
+    built.model->Forward(image);
+    ExpectTrue(seen.Shape() == std::vector<size_t>({1, 4, 3, 2}), "the Flatten takes the image batch first");
+    ExpectTrue(RowMajor(flat) == pixels, "a Flatten hands the Dense the image [H, W, C] row-major");
+
+    // Norms and rows on the device == the host.
+    const std::vector<float> w = {3, 4, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1};  // [3 units, 4 inputs]
+    const Tensor weights = FromRowMajor(w, {3, 4});
+    const auto norms = uw::RowNorms(weights);
+    ExpectTrue(norms.size() == 3 && std::fabs(norms[0] - 5.0f) < 1e-6f && std::fabs(norms[1] - std::sqrt(3.0f)) < 1e-6f &&
+                   std::fabs(norms[2] - 2.0f) < 1e-6f,
+               "each unit's weight norm");
+    ExpectTrue(uw::Order(norms, true, 0) == std::vector<size_t>({0, 2, 1}), "the largest norm first");
+    ExpectTrue(uw::Order(norms, true, 2) == std::vector<size_t>({0, 2}), "the first N by norm");
+    ExpectTrue(uw::Order(norms, false, 2) == std::vector<size_t>({0, 1}), "unit order");
+    ExpectTrue(uw::Rows(weights, {2, 0}) == std::vector<float>({1, 1, 1, 1, 3, 4, 0, 0}), "rows gathered in order");
+
+    // Drawing: grey keeps 0 at 0 and the sign; colour spans 0..1.
+    const float grey[4] = {-2.0f, 1.0f, 0.0f, 4.0f};
+    const auto g = uw::Draw(grey, {2, 2, 1});
+    ExpectTrue(g.pixels == std::vector<float>({-0.5f, 0.25f, 0.0f, 1.0f}) && g.low == -2.0f && g.high == 4.0f,
+               "a grey unit over its largest |weight|");
+    const float colour[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12};
+    const auto c = uw::Draw(colour, {2, 2, 3});
+    ExpectTrue(c.pixels.front() == 0.0f && c.pixels.back() == 1.0f && std::fabs(c.pixels[6] - 0.5f) < 1e-6f,
+               "a colour unit over its own range");
+
+    // The image rule.
+    ExpectTrue(uw::ReadsImage(784, 28, 28, 1, true).has_value(), "a first Dense on a 28 x 28 image");
+    ExpectTrue(uw::ReadsImage(12288, 64, 64, 3, true).has_value(), "a first Dense on a 64 x 64 colour image");
+    ExpectTrue(!uw::ReadsImage(784, 28, 28, 1, false), "not after a layer with parameters");
+    ExpectTrue(!uw::ReadsImage(100, 28, 28, 1, true), "not with another input size");
+    ExpectTrue(!uw::ReadsImage(8, 2, 2, 2, true), "not for 2 channels");
+    ExpectTrue(uw::Lead({28, 28, 1}, 128, 32, true).find("784 input weights drawn as the 28 \xC3\x97 28 image") !=
+                   std::string::npos,
+               "the lead names the picture");
+    spdlog::info("  OK: unit weights (Flatten order, norms, rows, drawing)");
+}
+
 void TestDebugModelSession() {
     spdlog::info("--- TestDebugModelSession ---");
     // An MLP (no dropout or BatchNorm: the run's training forward equals
@@ -4386,6 +4462,7 @@ int main(int argc, char** argv) {
         TestTopImages();
         TestContributions();
         TestLayerEmbedding();
+        TestUnitWeights();
         TestWhereItLooksPresentation();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();

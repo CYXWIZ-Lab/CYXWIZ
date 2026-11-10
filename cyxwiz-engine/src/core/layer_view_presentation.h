@@ -66,7 +66,10 @@ struct LayerSection {
 std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
                                         const std::map<int, std::string>& group_of_node);
 
-enum class View { FeatureMaps, Values, Units, Weights, Gradients, Filters, WhereItLooks, TopImages, Contributions, Embedding };
+enum class View {
+    FeatureMaps, Values, Units, Weights, Gradients, Filters, WhereItLooks, TopImages, Contributions, Embedding,
+    UnitWeights
+};
 
 struct ViewTab {
     View view = View::Values;
@@ -89,9 +92,11 @@ struct LayerViews {
 // input enters, which gets Where it looks (6.3b) for an image, tokens or
 // features. Every layer with channels or units gets Top images (6.3e):
 // "Top images" when the model's input is pictures (`picture_input`), else
-// "Top samples".
+// "Top samples". `reads_image`: a Dense that reads the model's image
+// flattened, whose units' weights are pictures (Unit weights, 6.4c).
 LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummary* output_numerics,
-                          bool first_spatial_layer, bool takes_model_input = false, bool picture_input = true);
+                          bool first_spatial_layer, bool takes_model_input = false, bool picture_input = true,
+                          bool reads_image = false);
 
 // A sample of the model's input [H, W, C] (C 1 or 3, row-major values) as an
 // RGBA picture, its value range stretched to 0..255; nullopt for any other shape.

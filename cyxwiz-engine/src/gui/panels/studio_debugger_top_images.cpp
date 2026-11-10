@@ -135,6 +135,11 @@ void StudioDebuggerPanel::RenderTopImages() {
     if (!votes.empty()) options.push_back("The Dense head's strongest votes");
     options.push_back("The clicked channel");
     if (spatial) options.push_back("The 16 strongest for this sample");
+    if (show_top_images_of_clicked_) {  // asked from a unit's Inspector card
+        show_top_images_of_clicked_ = false;
+        for (size_t i = 0; i < options.size(); ++i)
+            if (options[i] == std::string("The clicked channel")) s.choice = static_cast<int>(i);
+    }
     s.choice = std::clamp(s.choice, 0, static_cast<int>(options.size()) - 1);
     const std::string picked_option = options[static_cast<size_t>(s.choice)];
     const bool clicked_here = clicked_channel_layer_ == selected_layer_;

@@ -193,6 +193,9 @@ private Data Studio tickets (`tofix*/track*`).
   **Embedding** projects 320 items' values at a flat layer to 2-D (PCA,
   t-SNE or UMAP), coloured by true or predicted class with the mistakes
   ringed; click a point to inspect its item.
+  **Unit weights** draws each unit of a Dense layer that reads the image
+  flattened as the picture of what it looks for, the strongest units first;
+  click one for it large with its bias, value and top images.
   Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in
