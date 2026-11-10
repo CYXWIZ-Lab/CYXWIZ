@@ -7853,9 +7853,8 @@ int main(int argc, char** argv) {
           "UnitConverter output dataset is registered");
     auto converted_units_table = converted_units->GetArrowTable();
     Check(converted_units_table != nullptr, "UnitConverter output table exists");
-    Check(std::fabs(ReadNumericValue(converted_units_table, "x", 0) -
-                    3.28084) < 0.001,
-          "UnitConverter should convert meters to feet");
+    Check(std::fabs(ReadNumericValue(converted_units_table, "x", 0) - 1.0 / 0.3048) < 1e-12,
+          "UnitConverter should convert meters to feet exactly (1 ft = 0.3048 m)");
 
     const std::string calculator_json =
         R"({"nodes":[)"

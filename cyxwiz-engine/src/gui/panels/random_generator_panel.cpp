@@ -84,7 +84,7 @@ void RandomGeneratorPanel::RenderToolbar() {
 
     if (has_result_) {
         ImGui::Text("Count: %d | Mean: %.4f | StdDev: %.4f",
-                    result_.count, result_.mean, result_.std_dev);
+                    result_.count, result_.mean, result_.std_dev_sample);
     } else {
         ImGui::TextDisabled("No data generated");
     }
@@ -210,7 +210,7 @@ void RandomGeneratorPanel::RenderResults() {
 
 void RandomGeneratorPanel::RenderHistogram() {
     const ui::Tokens& t = ui::CurrentTokens();
-    if (!has_result_ || result_.histogram.empty()) {
+    if (!has_result_ || result_.histogram_counts.empty()) {
         ui::EmptyState(ICON_FA_CHART_BAR, "No histogram yet", "Pick a distribution, then Generate.");
         return;
     }
@@ -220,8 +220,8 @@ void RandomGeneratorPanel::RenderHistogram() {
 
     // Find max count for scaling
     int max_count = 0;
-    for (const auto& bin : result_.histogram) {
-        max_count = std::max(max_count, bin.second);
+    for (const int count : result_.histogram_counts) {
+        max_count = std::max(max_count, count);
     }
 
     if (max_count == 0) {
@@ -234,16 +234,13 @@ void RandomGeneratorPanel::RenderHistogram() {
     float bar_width = ImGui::GetContentRegionAvail().x - 100;
     float bar_height = 18.0f;
 
-    // Calculate bin range for labels
-    double bin_width = (result_.max_value - result_.min_value) / 20.0;
-
-    for (const auto& bin : result_.histogram) {
-        float fraction = static_cast<float>(bin.second) / max_count;
+    for (size_t i = 0; i < result_.histogram_counts.size(); ++i) {
+        const int count = result_.histogram_counts[i];
+        float fraction = static_cast<float>(count) / max_count;
         float width = fraction * bar_width;
 
         // Bin label
-        double bin_start = result_.min_value + bin.first * bin_width;
-        ImGui::Text("[%.2f]", bin_start);
+        ImGui::Text("[%.2f]", result_.histogram_edges[i]);
         ImGui::SameLine();
 
         // Draw bar
@@ -255,7 +252,7 @@ void RandomGeneratorPanel::RenderHistogram() {
         );
 
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + width + 5);
-        ImGui::Text("%d", bin.second);
+        ImGui::Text("%d", count);
 
         ImGui::Spacing();
     }
@@ -302,7 +299,7 @@ void RandomGeneratorPanel::RenderStatistics() {
 
     ImGui::Text("Std Deviation:");
     ImGui::NextColumn();
-    ImGui::Text("%.6g", result_.std_dev);
+    ImGui::Text("%.6g", result_.std_dev_sample);
     ImGui::NextColumn();
 
     ImGui::Text("Seed Used:");
@@ -332,7 +329,7 @@ void RandomGeneratorPanel::RenderStatistics() {
         ImGui::Text("Range: %.6g", range);
 
         // Variance
-        double variance = result_.std_dev * result_.std_dev;
+        double variance = result_.std_dev_sample * result_.std_dev_sample;
         ImGui::Text("Variance: %.6g", variance);
     }
 }

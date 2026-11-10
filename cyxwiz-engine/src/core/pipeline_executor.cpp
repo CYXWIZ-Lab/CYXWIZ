@@ -4,6 +4,7 @@
 #include "hashing_output_stream.h"
 #include <cyxwiz/device.h>
 #include <cyxwiz/model_evaluation.h>
+#include <cyxwiz/utilities.h>
 #include "project_data_path.h"
 #include "sql_transform.h"
 #include "filter_condition.h"
@@ -527,78 +528,15 @@ bool BuildRuleEngineCaseExpression(const std::shared_ptr<arrow::Table>& table,
     return true;
 }
 
-std::string NormalizeUnitName(std::string unit) {
-    unit = ToLowerAscii(TrimString(unit));
-    unit.erase(std::remove_if(unit.begin(), unit.end(),
-                              [](unsigned char c) { return std::isspace(c); }),
-               unit.end());
-    return unit;
+// A literal that reads back as exactly `v` in DuckDB SQL.
+std::string SqlDouble(double v) {
+    std::ostringstream oss;
+    oss << std::setprecision(17) << v;
+    return "CAST(" + oss.str() + " AS DOUBLE)";
 }
 
-bool UnitScaleToBase(const std::string& category,
-                     const std::string& unit,
-                     double& scale,
-                     std::string& error) {
-    const std::string normalized = NormalizeUnitName(unit);
-    const auto fail = [&]() {
-        error = "UnitConverter: unsupported " + category + " unit '" + unit + "'";
-        return false;
-    };
-
-    if (category == "length") {
-        if (normalized == "m" || normalized == "meter" || normalized == "meters") scale = 1.0;
-        else if (normalized == "km" || normalized == "kilometer" || normalized == "kilometers") scale = 1000.0;
-        else if (normalized == "cm" || normalized == "centimeter" || normalized == "centimeters") scale = 0.01;
-        else if (normalized == "mm" || normalized == "millimeter" || normalized == "millimeters") scale = 0.001;
-        else if (normalized == "ft" || normalized == "foot" || normalized == "feet") scale = 0.3048;
-        else if (normalized == "in" || normalized == "inch" || normalized == "inches") scale = 0.0254;
-        else if (normalized == "mi" || normalized == "mile" || normalized == "miles") scale = 1609.344;
-        else return fail();
-        return true;
-    }
-
-    if (category == "mass") {
-        if (normalized == "kg" || normalized == "kilogram" || normalized == "kilograms") scale = 1.0;
-        else if (normalized == "g" || normalized == "gram" || normalized == "grams") scale = 0.001;
-        else if (normalized == "mg" || normalized == "milligram" || normalized == "milligrams") scale = 0.000001;
-        else if (normalized == "lb" || normalized == "lbs" || normalized == "pound" || normalized == "pounds") scale = 0.45359237;
-        else if (normalized == "oz" || normalized == "ounce" || normalized == "ounces") scale = 0.028349523125;
-        else return fail();
-        return true;
-    }
-
-    if (category == "time") {
-        if (normalized == "s" || normalized == "sec" || normalized == "second" || normalized == "seconds") scale = 1.0;
-        else if (normalized == "min" || normalized == "minute" || normalized == "minutes") scale = 60.0;
-        else if (normalized == "h" || normalized == "hr" || normalized == "hour" || normalized == "hours") scale = 3600.0;
-        else if (normalized == "day" || normalized == "days" || normalized == "d") scale = 86400.0;
-        else return fail();
-        return true;
-    }
-
-    if (category == "area") {
-        if (normalized == "m2" || normalized == "m^2" || normalized == "sqm") scale = 1.0;
-        else if (normalized == "cm2" || normalized == "cm^2") scale = 0.0001;
-        else if (normalized == "ft2" || normalized == "ft^2" || normalized == "sqft") scale = 0.09290304;
-        else if (normalized == "acre" || normalized == "acres") scale = 4046.8564224;
-        else return fail();
-        return true;
-    }
-
-    if (category == "volume") {
-        if (normalized == "l" || normalized == "liter" || normalized == "liters") scale = 1.0;
-        else if (normalized == "ml" || normalized == "milliliter" || normalized == "milliliters") scale = 0.001;
-        else if (normalized == "m3" || normalized == "m^3") scale = 1000.0;
-        else if (normalized == "ft3" || normalized == "ft^3") scale = 28.316846592;
-        else if (normalized == "gal" || normalized == "gallon" || normalized == "gallons") scale = 3.785411784;
-        else return fail();
-        return true;
-    }
-
-    error = "UnitConverter: unsupported category '" + category + "'";
-    return false;
-}
-
+// The column converted from one unit to another of the shared table
+// (Utilities::Units, the Utilities window's too): to = from * a + b.
 bool BuildUnitConverterExpression(const std::string& category,
                                   const std::string& from_unit,
                                   const std::string& to_unit,
@@ -606,43 +544,22 @@ bool BuildUnitConverterExpression(const std::string& category,
                                   std::string& expression,
                                   std::string& error) {
     const std::string normalized_category = ToLowerAscii(TrimString(category));
-    if (normalized_category == "temperature") {
-        const std::string from = NormalizeUnitName(from_unit);
-        const std::string to = NormalizeUnitName(to_unit);
-        std::string celsius_expression;
-        if (from == "c" || from == "celsius") {
-            celsius_expression = quoted_column;
-        } else if (from == "f" || from == "fahrenheit") {
-            celsius_expression = "((" + quoted_column + " - 32.0) * 5.0 / 9.0)";
-        } else if (from == "k" || from == "kelvin") {
-            celsius_expression = "(" + quoted_column + " - 273.15)";
-        } else {
-            error = "UnitConverter: unsupported temperature unit '" + from_unit + "'";
-            return false;
-        }
-
-        if (to == "c" || to == "celsius") {
-            expression = celsius_expression;
-        } else if (to == "f" || to == "fahrenheit") {
-            expression = "((" + celsius_expression + ") * 9.0 / 5.0 + 32.0)";
-        } else if (to == "k" || to == "kelvin") {
-            expression = "((" + celsius_expression + ") + 273.15)";
-        } else {
-            error = "UnitConverter: unsupported temperature unit '" + to_unit + "'";
-            return false;
-        }
-        return true;
-    }
-
-    double from_scale = 1.0;
-    double to_scale = 1.0;
-    if (!UnitScaleToBase(normalized_category, from_unit, from_scale, error) ||
-        !UnitScaleToBase(normalized_category, to_unit, to_scale, error)) {
+    const auto categories = Utilities::GetUnitCategories();
+    if (std::find(categories.begin(), categories.end(), normalized_category) == categories.end()) {
+        error = "UnitConverter: unsupported category '" + category + "'";
         return false;
     }
-
-    expression = "((" + quoted_column + ") * " + std::to_string(from_scale) +
-                 " / " + std::to_string(to_scale) + ")";
+    const UnitDefinition* from = Utilities::FindUnit(from_unit, normalized_category);
+    const UnitDefinition* to = Utilities::FindUnit(to_unit, normalized_category);
+    if (!from || !to) {
+        error = "UnitConverter: unsupported " + normalized_category + " unit '" + (from ? to_unit : from_unit) + "'";
+        return false;
+    }
+    const double a = from->scale / to->scale;
+    const double b = (from->offset - to->offset) / to->scale;
+    expression = "(CAST(" + quoted_column + " AS DOUBLE) * " + SqlDouble(a);
+    if (b != 0.0) expression += " + " + SqlDouble(b);
+    expression += ")";
     return true;
 }
 
@@ -1947,6 +1864,7 @@ bool BuildRegexOptions(const std::string& flags,
             continue;
         }
         if (flag == 'm' || flag == 'M') {
+            options |= std::regex::multiline;  // ^ and $ at every line (C++17)
             continue;
         }
         error = "RegexTester: unsupported regex flag '" + std::string(1, flag) + "'";

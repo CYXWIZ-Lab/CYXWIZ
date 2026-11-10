@@ -4,6 +4,7 @@
 
 #include "api_export.h"
 #include <vector>
+#include <functional>
 #include <string>
 #include <map>
 #include <cstdint>
@@ -26,6 +27,20 @@ struct CYXWIZ_API CalculatorResult {
 };
 
 // Unit Conversion Result
+// One unit of the shared table (Utilities window, UnitConverter node, Python):
+// base = value * scale + offset in the category's base unit (metre, kilogram,
+// second, byte, square metre, litre, metre per second, kelvin). Factors are
+// the exact definitions.
+struct CYXWIZ_API UnitDefinition {
+    std::string id;        // "kilometer_per_hour"
+    std::string label;     // "kilometre per hour"
+    std::string symbol;    // "km/h"
+    std::string category;  // "speed"
+    double scale = 1.0;
+    double offset = 0.0;
+    std::vector<std::string> aliases;  // other names it is found by
+};
+
 struct CYXWIZ_API UnitConversionResult {
     double input_value = 0.0;
     double output_value = 0.0;
@@ -44,11 +59,16 @@ struct CYXWIZ_API RandomNumberResult {
     double min_value = 0.0;
     double max_value = 0.0;
     double mean = 0.0;
-    double std_dev = 0.0;
+    double std_dev_population = 0.0;    // divides by n
+    double std_dev_sample = 0.0;        // divides by n - 1 (0 for one value)
+    double median = 0.0;                // exact; quartiles by linear interpolation (numpy's default)
+    double q1 = 0.0;
+    double q3 = 0.0;
     std::string distribution;           // "uniform", "normal", "exponential", etc.
     uint64_t seed_used = 0;
     int count = 0;
-    std::map<int, int> histogram;       // For visualization (bin -> count)
+    std::vector<double> histogram_edges;  // bins + 1 edges; the last bin includes its right edge
+    std::vector<int> histogram_counts;    // one count per bin, empty bins included
     bool success = false;
     std::string error_message;
 };
@@ -168,6 +188,18 @@ public:
     static std::vector<std::string> GetUnitCategories();
 
     /**
+     * The unit table, in display order
+     */
+    static const std::vector<UnitDefinition>& Units();
+
+    /**
+     * A unit by id, label, symbol or alias (case and spaces ignored; an exact
+     * symbol wins, so "mm" is not "Mm"), within the category when one is given
+     * @return nullptr when there is none
+     */
+    static const UnitDefinition* FindUnit(const std::string& name, const std::string& category = "");
+
+    /**
      * Get units for a category
      * @param category Category name
      * @return List of unit names
@@ -280,14 +312,18 @@ public:
     );
 
     /**
-     * Compute hash of file
+     * Compute hash of file, read in 1 MB blocks (never held in memory whole)
      * @param file_path Path to file
      * @param algorithm "md5", "sha1", "sha256", "sha512", "all"
-     * @return HashResult
+     * @param progress Called after each block with (bytes done, file size);
+     *        returning false stops (error_message "Stopped")
+     * @return HashResult (success false with a message when OpenSSL is not in
+     *         the build or the algorithm is unknown)
      */
     static HashResult HashFile(
         const std::string& file_path,
-        const std::string& algorithm = "sha256"
+        const std::string& algorithm = "sha256",
+        const std::function<bool(uint64_t, uint64_t)>& progress = {}
     );
 
     /**
@@ -387,22 +423,12 @@ public:
 private:
     // Unit conversion helpers
     static std::string GetCategoryForUnit(const std::string& unit);
-    static double ConvertToBase(double value, const std::string& unit);
-    static double ConvertFromBase(double value, const std::string& unit);
-
-    // Hash implementation helpers
-    static std::string ComputeMD5(const std::vector<uint8_t>& data);
-    static std::string ComputeSHA1(const std::vector<uint8_t>& data);
-    static std::string ComputeSHA256(const std::vector<uint8_t>& data);
-    static std::string ComputeSHA512(const std::vector<uint8_t>& data);
-    static std::string BytesToHex(const std::vector<uint8_t>& bytes);
-
-    // JSON helpers
-    static void AnalyzeJSON(const std::string& json, JSONResult& result);
 
     // Random number helpers
     static void ComputeStatistics(RandomNumberResult& result);
-    static void BuildHistogram(RandomNumberResult& result, int num_bins = 20);
+    // 20 equal bins from min to max; for integers, one bin per value
+    // (centred on it) while there are at most 50 values, else integer-wide bins.
+    static void BuildHistogram(RandomNumberResult& result, bool integers);
 };
 
 } // namespace cyxwiz

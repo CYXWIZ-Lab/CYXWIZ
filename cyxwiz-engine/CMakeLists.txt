@@ -6689,6 +6689,26 @@ target_compile_definitions(test_computation_truth_signal PRIVATE
 set_target_properties(test_computation_truth_signal PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME ComputationTruthSignal COMMAND test_computation_truth_signal)
 
+# Tools > Utilities against hashlib, json, re, numpy and the exact unit
+# definitions (TOFIX129 D12).
+set(CYXWIZ_UTILITIES_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/utilities_truth.json")
+add_executable(test_computation_truth_utilities
+    tests/computation_truth/test_computation_truth_utilities.cpp
+)
+target_include_directories(test_computation_truth_utilities PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_computation_truth_utilities PRIVATE
+    nlohmann_json::nlohmann_json
+    cyxwiz-backend
+)
+target_compile_definitions(test_computation_truth_utilities PRIVATE
+    CYXWIZ_UTILITIES_FIXTURE="${CYXWIZ_UTILITIES_FIXTURE}"
+)
+set_target_properties(test_computation_truth_utilities PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME ComputationTruthUtilities COMMAND test_computation_truth_utilities)
+
 # Expressions, calculus, LP / QP and the optimizer paths against sympy / scipy /
 # torch (TOFIX129 D10).
 set(CYXWIZ_OPTIMIZATION_FIXTURE

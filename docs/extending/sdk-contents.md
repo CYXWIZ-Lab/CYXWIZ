@@ -76,7 +76,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/text_processing.h` |  | `TokenizationResult`, `WordFrequencyResult`, `TFIDFResult`, `EmbeddingResult`, `VaderScores`, `TextProcessing` |
 | `cyxwiz/time_series.h` |  | `DecompositionResult`, `AutocorrelationResult`, `StationarityResult`, `Differenced`, `SeasonalityResult`, `ForecastResult`, `TimeSeriesStop`, `TimeSeries`, `WindowConfig`, `WindowResult` |
 | `cyxwiz/tokenizer.h` |  | `TokenizedText`, `Vocabulary`, `Tokenizer`, `TokenizerType`, `ByteBPEPiecePolicy`, `BPEInitialUnit` |
-| `cyxwiz/utilities.h` |  | `CalculatorResult`, `UnitConversionResult`, `RandomNumberResult`, `HashResult`, `JSONResult`, `RegexMatch`, `RegexResult`, `Utilities` |
+| `cyxwiz/utilities.h` |  | `CalculatorResult`, `UnitDefinition`, `UnitConversionResult`, `RandomNumberResult`, `HashResult`, `JSONResult`, `RegexMatch`, `RegexResult`, `Utilities` |
 | `cyxwiz/version.h` |  |  |
 | `cyxwiz/word_embeddings.h` | Word vectors (TOFIX152): pretrained files read as gensim reads them (KeyedVectors.load_word2vec_format), and a table lined up with a token vocabulary for the Embedding layer. Files are read on the host; the matrix work runs on the selected ArrayFire device. | `WordVectors`, `WordAlignmentOptions`, `WordAlignment`, `Word2VecOptions`, `Word2VecBatch`, `Word2VecModel`, `GloVeOptions`, `GloVeCounts`, `GloVeState`, `GloVeBatch`, `GloVeModel`, `FastTextOptions`, `FastTextModel`, `FastTextFileInfo`, `WordEmbeddings`, `FastTextSource` |
 | `cyxwiz/activations/relu.h` |  | `ReLU` |
