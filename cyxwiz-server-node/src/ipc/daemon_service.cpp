@@ -1,5 +1,6 @@
 // daemon_service.cpp - gRPC service implementation for daemon management
 #include "ipc/daemon_service.h"
+#include "core/grpc_listen.h"
 
 // Generated protobuf/gRPC headers
 #include <daemon.grpc.pb.h>
@@ -60,7 +61,7 @@ bool DaemonServiceImpl::Start(const std::string& address) {
     }
 
     grpc::ServerBuilder builder;
-    builder.AddListeningPort(address, grpc::InsecureServerCredentials());
+    cyxwiz::servernode::core::ListenExclusively(builder, address, grpc::InsecureServerCredentials());
     builder.RegisterService(this);
 
     server_ = builder.BuildAndStart();

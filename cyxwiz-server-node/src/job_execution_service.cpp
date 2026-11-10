@@ -1,4 +1,5 @@
 #include "job_execution_service.h"
+#include "core/grpc_listen.h"
 #include "node_data_dir.h"
 #include "node_job_timing.h"
 #include "core/sha256_digest.h"
@@ -95,7 +96,7 @@ bool JobExecutionServiceImpl::StartServer(const std::string& listen_address) {
 
     try {
         grpc::ServerBuilder builder;
-        builder.AddListeningPort(listen_address, grpc::InsecureServerCredentials());
+        cyxwiz::servernode::core::ListenExclusively(builder, listen_address, grpc::InsecureServerCredentials());
         builder.RegisterService(this);
 
         // Set max message size for large model transfers

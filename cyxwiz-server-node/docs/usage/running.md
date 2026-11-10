@@ -142,6 +142,7 @@ $env:CYXWIZ_TEST_CENTRAL_JWT_SECRET = '<central server jwt.secret>'
 | `--doctor` FAIL on a device route | the device's compute route is not verified on this machine; see the Engine's Compute Devices preferences |
 | Job refused "Device problem" / "Out of memory" | the node's admission check: the job does not fit or the route is not verified |
 | Deployed model not loaded, log "the Server Node cannot run extension nodes yet" | the model has an extension node (a user's C++ plugin or Python node) whose code the node does not have; serve it from the Engine for now |
+| Daemon exits at start: "Failed to start NodeService gRPC server on 0.0.0.0:50055; is the port in use (another cyxwiz-server-daemon already running)?" | another daemon already owns the node's ports. One daemon per machine: stop the old one (by its PID) or keep using it. Before this check, macOS and Linux let a second daemon share the ports and the GUI talked to either one at random |
 
 ## Related
 

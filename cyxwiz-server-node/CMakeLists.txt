@@ -515,6 +515,13 @@ if(CYXWIZ_BUILD_TESTS)
     target_compile_features(test_allocation_device_type PRIVATE cxx_std_17)
     add_test(NAME test_allocation_device_type COMMAND test_allocation_device_type)
 
+    # A daemon's gRPC ports are its own: a second daemon cannot share them
+    add_executable(test_grpc_listen tests/test_grpc_listen.cpp)
+    target_include_directories(test_grpc_listen PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_grpc_listen PRIVATE cyxwiz-protocol Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_grpc_listen PRIVATE cxx_std_17)
+    add_test(NAME test_grpc_listen COMMAND test_grpc_listen)
+
     # Mock Engine Client (standalone test tool)
     add_executable(mock_engine_client
         tests/mock_engine_client.cpp

@@ -11,6 +11,7 @@
 #endif
 
 #include <cyxwiz/cyxwiz.h>
+#include "core/grpc_listen.h"
 #include "common/server_address.h"
 #include <spdlog/spdlog.h>
 #include <iostream>
@@ -654,7 +655,7 @@ int main(int argc, char** argv) {
 
         // Create gRPC server for NodeService
         grpc::ServerBuilder node_service_builder;
-        node_service_builder.AddListeningPort(
+        cyxwiz::servernode::core::ListenExclusively(node_service_builder,
             daemon_config.node_service_address,
             server_credentials
         );
@@ -662,7 +663,9 @@ int main(int argc, char** argv) {
         auto node_grpc_server = node_service_builder.BuildAndStart();
 
         if (!node_grpc_server) {
-            spdlog::error("Failed to start NodeService gRPC server");
+            spdlog::error("Failed to start NodeService gRPC server on {}; is the port in use "
+                          "(another cyxwiz-server-daemon already running)?",
+                          daemon_config.node_service_address);
             cyxwiz::Shutdown();
             return 1;
         }
