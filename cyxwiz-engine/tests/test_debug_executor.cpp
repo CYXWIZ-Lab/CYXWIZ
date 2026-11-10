@@ -638,6 +638,29 @@ void TestNormalizationRegularizationConfigurationContract() {
     ExpectTrue(direct_batch_norm_rejected,
                "direct BatchNormModule construction should reject eps=0");
 
+    // TOFIX207: a gradient through an evaluated BatchNorm1d (saliency on an
+    // image MLP): the running statistics are constants, so dx = dy * gamma /
+    // sqrt(running_var + eps), as PyTorch's eval BatchNorm1d gives.
+    const auto bn_tensor = [](std::vector<float> v, std::vector<size_t> shape) {
+        return Tensor(shape, v.data(), DataType::Float32);
+    };
+    BatchNormModule eval_bn(3, 1e-5f, 0.1f);
+    eval_bn.SetParameters({{"gamma", bn_tensor({2.0f, -1.0f, 0.5f}, {3})},
+                           {"beta", bn_tensor({0.1f, 0.2f, 0.3f}, {3})},
+                           {"running_mean", bn_tensor({1.0f, 0.0f, -1.0f}, {3})},
+                           {"running_var", bn_tensor({4.0f, 1.0f, 0.25f}, {3})}});
+    eval_bn.SetTraining(false);
+    eval_bn.Forward(bn_tensor({1.0f, 2.0f, 3.0f, -1.0f, 0.5f, 0.0f}, {2, 3}));
+    const auto eval_dx =
+        layer_view::ReadValues(eval_bn.Backward(bn_tensor({1.0f, 1.0f, 1.0f, 2.0f, 0.0f, -1.0f}, {2, 3})));
+    const std::vector<float> scale = {2.0f / std::sqrt(4.0f + 1e-5f), -1.0f / std::sqrt(1.0f + 1e-5f),
+                                      0.5f / std::sqrt(0.25f + 1e-5f)};
+    const std::vector<float> expected_dx = {scale[0], scale[1], scale[2], 2.0f * scale[0], 0.0f, -scale[2]};
+    float eval_worst = eval_dx.size() == expected_dx.size() ? 0.0f : 1.0f;
+    for (size_t i = 0; i < eval_dx.size() && i < expected_dx.size(); ++i)
+        eval_worst = std::max(eval_worst, std::fabs(eval_dx[i] - expected_dx[i]));
+    ExpectTrue(eval_worst < 1e-5f,
+               "an eval-mode BatchNorm1d backward scales by gamma / sqrt(running_var + eps)");
 
     spdlog::info(
         "  OK: normalization/regularization exact values and invalid states are enforced");
