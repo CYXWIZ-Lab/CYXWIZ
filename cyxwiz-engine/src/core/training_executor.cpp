@@ -25,7 +25,7 @@
 #include "training_trace_collector.h"
 #include "backend_placement_capabilities.h"
 #include "model_builder.h"
-#include "runtime_log_store.h"
+#include "run_execution_device.h"
 #include "sequence_model_input.h"
 #include "sequence_training_step.h"
 #include "training_batcher_setup.h"
@@ -50,31 +50,6 @@
 namespace cyxwiz {
 
 namespace {
-
-void AppendExecutionDeviceLifecycleEvent(
-    const ExecutionDeviceContext& context, const std::string& run_id) {
-    RuntimeLogEvent event;
-    event.timestamp_utc = std::chrono::system_clock::now();
-    event.level = context.valid ? RuntimeLogLevel::Info
-                                : RuntimeLogLevel::Warning;
-    event.category = "device";
-    event.source = "TrainingExecutor";
-    event.event_name = "ExecutionDeviceContext.Bind";
-    event.run_id = run_id;
-    event.backend = context.effective_backend;
-    event.device_id = context.effective_device_id;
-    event.device_name = context.device_name;
-    event.message = context.Describe();
-    if (!context.valid) {
-        event.primary_error_code = errors::Runtime::ExecutionFailed;
-    }
-    event.details.emplace_back("requested_backend", context.requested_backend);
-    event.details.emplace_back(
-        "requested_device_id", std::to_string(context.requested_device_id));
-    event.details.emplace_back(
-        "execution_policy", context.ExecutionPolicyName());
-    RuntimeLogStore::Instance().Append(std::move(event));
-}
 
 void LogTrainingBackendPlacementPlan(const TrainingConfiguration& config) {
     if (config.backend_placements.empty()) {
@@ -759,22 +734,10 @@ void TrainingExecutor::Train(
     stop_requested_.store(false);
     is_paused_.store(false);
 
-    const auto next_run_execution_policy = GetNextRunExecutionPolicy();
-    if (next_run_execution_policy.has_value()) {
-        config_.strict_execution =
-            *next_run_execution_policy ==
-            ExecutionPolicy::Strict;
-        spdlog::info(
-            "TrainingExecutor: applied next-run execution policy: {}",
-            ExecutionPolicyDisplayName(*next_run_execution_policy));
-    }
-
+    // The run's device follows the same flow for every kind of run (run_execution_device)
     const ExecutionPolicy execution_policy_value =
-        config_.strict_execution
-            ? ExecutionPolicy::Strict
-            : ExecutionPolicy::Compatibility;
-    spdlog::info("TrainingExecutor: execution policy {}",
-                 ExecutionPolicyDisplayName(execution_policy_value));
+        ResolveRunExecutionPolicy(config_.strict_execution, "TrainingExecutor");
+    config_.strict_execution = execution_policy_value == ExecutionPolicy::Strict;
 
     CrashRunRecorder::Instance().StartTrainingRun(
         config_,
@@ -820,15 +783,10 @@ void TrainingExecutor::Train(
     // Do not publish an effective device until preflight actually succeeds.
     ExecutionDeviceContext execution_context;
     try {
-        execution_context = PrepareExecutionDeviceForRun(
-            execution_policy_value, [this](DeviceType type, int device_id) {
+        execution_context = PrepareRunExecutionDevice(
+            execution_policy_value, "TrainingExecutor", [this](DeviceType type, int device_id) {
                 return ModelUnsupportedOnRoute(config_, type, device_id);
             });
-        if (execution_context.selection_fallback_applied) {
-            spdlog::warn("TrainingExecutor: {}", execution_context.error);
-        }
-        spdlog::info("TrainingExecutor: ArrayFire device preflight completed: {}",
-                     execution_context.Describe());
     } catch (const std::exception& e) {
         const std::string reason = std::string("device_preflight_failed: ") + e.what();
         spdlog::error("TrainingExecutor: {}", reason);
@@ -842,8 +800,7 @@ void TrainingExecutor::Train(
     const ScopedActiveExecutionDeviceContext active_execution_context_scope;
     CrashRunRecorder::Instance().MarkBackendEvent(
         "ExecutionDeviceContext.Bind", execution_context.Describe());
-    training_trace.RecordExecutionDeviceContext(execution_context);
-    AppendExecutionDeviceLifecycleEvent(execution_context, training_run_id);
+    RecordRunExecutionDeviceBind(execution_context, training_run_id, "TrainingExecutor");
     const auto execution_placement_plan =
         BuildExecutionPlacementPlan(config_, execution_context);
     training_trace.RecordPlacementPlan(

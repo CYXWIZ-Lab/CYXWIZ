@@ -14,6 +14,7 @@ set(_cyxwiz_engine_src "${CMAKE_SOURCE_DIR}/cyxwiz-engine/src")
 
 set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/training_executor.cpp
+    ${_cyxwiz_engine_src}/core/run_execution_device.cpp
     ${_cyxwiz_engine_src}/core/optimizer_step.cpp
     ${_cyxwiz_engine_src}/core/rl/ppo_trainer.cpp
     ${_cyxwiz_engine_src}/core/rl/vec_normalize.cpp
