@@ -274,13 +274,8 @@ public:
     void SetOpenSentimentCallback(std::function<void()> cb) { open_sentiment_callback_ = cb; }
     void SetOpenLanguageModelGenerationCallback(std::function<void()> cb) { open_language_model_generation_callback_ = cb; }
 
-    // Utilities callbacks (Phase 12)
-    void SetOpenCalculatorCallback(std::function<void()> cb) { open_calculator_callback_ = cb; }
-    void SetOpenUnitConverterCallback(std::function<void()> cb) { open_unit_converter_callback_ = cb; }
-    void SetOpenRandomGeneratorCallback(std::function<void()> cb) { open_random_generator_callback_ = cb; }
-    void SetOpenHashGeneratorCallback(std::function<void()> cb) { open_hash_generator_callback_ = cb; }
-    void SetOpenJSONViewerCallback(std::function<void()> cb) { open_json_viewer_callback_ = cb; }
-    void SetOpenRegexTesterCallback(std::function<void()> cb) { open_regex_tester_callback_ = cb; }
+    // Tools > Utilities: opens the one window on a tab (TOFIX129 D12).
+    void SetOpenUtilitiesCallback(std::function<void(const std::string&)> cb) { open_utilities_callback_ = std::move(cb); }
 
     // Export/Import callbacks
     void SetExportModelCallback(std::function<void(int)> callback) { export_model_callback_ = callback; }  // int = format index
@@ -746,13 +741,8 @@ private:
     std::function<void()> open_sentiment_callback_;
     std::function<void()> open_language_model_generation_callback_;
 
-    // Utilities callbacks (Phase 12)
-    std::function<void()> open_calculator_callback_;
-    std::function<void()> open_unit_converter_callback_;
-    std::function<void()> open_random_generator_callback_;
-    std::function<void()> open_hash_generator_callback_;
-    std::function<void()> open_json_viewer_callback_;
-    std::function<void()> open_regex_tester_callback_;
+    // Tools > Utilities (TOFIX129 D12)
+    std::function<void(const std::string&)> open_utilities_callback_;
 
     // Export/Import callbacks
     std::function<void(int)> export_model_callback_;  // int = format index (0=CyxModel, 1=Safetensors, 2=ONNX, 3=GGUF)

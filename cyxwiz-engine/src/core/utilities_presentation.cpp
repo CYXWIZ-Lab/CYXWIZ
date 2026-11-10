@@ -23,12 +23,6 @@ std::string Plural(size_t n, const char* one, const char* many) {
     return std::to_string(n) + " " + (n == 1 ? one : many);
 }
 
-std::string Grouped(uint64_t n) {
-    std::string s = std::to_string(n);
-    for (int i = static_cast<int>(s.size()) - 3; i > 0; i -= 3) s.insert(static_cast<size_t>(i), ",");
-    return s;
-}
-
 }  // namespace
 
 const char* TabLabel(Tab tab) {
@@ -82,6 +76,12 @@ std::string FullNumber(double v) {
         if (std::stod(s) == v && (!plain || s.find('e') == std::string::npos)) return s;
     }
     return FormatNumber(v, 17);
+}
+
+std::string FormatCount(uint64_t n) {
+    std::string s = std::to_string(n);
+    for (int i = static_cast<int>(s.size()) - 3; i > 0; i -= 3) s.insert(static_cast<size_t>(i), ",");
+    return s;
 }
 
 // ---- Units
@@ -177,7 +177,7 @@ std::string JsonSummary(const JSONResult& r) {
     return Plural(static_cast<size_t>(r.object_count), "object", "objects") + dot +
            Plural(static_cast<size_t>(r.array_count), "array", "arrays") + dot +
            Plural(r.keys.size(), "top-level key", "top-level keys") + dot + "depth " + std::to_string(r.depth) + dot +
-           Grouped(r.formatted_json.size()) + " characters formatted" + dot + Grouped(r.minified_json.size()) +
+           FormatCount(r.formatted_json.size()) + " characters formatted" + dot + FormatCount(r.minified_json.size()) +
            " minified";
 }
 
@@ -259,7 +259,7 @@ std::string RandomTitle(const RandomNumberResult& r, const std::vector<double>& 
     const std::string dot = " \xC2\xB7 ";
     std::string params;
     for (size_t i = 0; i < p.size(); ++i) params += (i ? ", " : "") + FullNumber(p[i]);
-    return Grouped(static_cast<uint64_t>(r.values.size())) + " values" + dot + DistributionLabel(r.distribution) + "(" +
+    return FormatCount(static_cast<uint64_t>(r.values.size())) + " values" + dot + DistributionLabel(r.distribution) + "(" +
            params + ")" + dot + "seed " + std::to_string(r.seed_used);
 }
 

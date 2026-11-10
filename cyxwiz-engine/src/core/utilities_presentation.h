@@ -7,6 +7,7 @@
 #include <cyxwiz/utilities.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,6 +28,8 @@ Tab TabFromId(const std::string& id);
 std::string FormatNumber(double v, int digits);
 // The shortest text that reads back as exactly `v`.
 std::string FullNumber(double v);
+// "1,000"
+std::string FormatCount(uint64_t n);
 
 // ---- Units
 std::string CategoryLabel(const std::string& category);  // "length" -> "Length"

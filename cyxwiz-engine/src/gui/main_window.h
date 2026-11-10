@@ -76,12 +76,7 @@ class OptimizationPanel;
 // Text: Language Model Generation (the data tools are Explore > Text)
 class LanguageModelGenerationPanel;
 // Utilities panels (Phase 12)
-class CalculatorPanel;
-class UnitConverterPanel;
-class RandomGeneratorPanel;
-class HashGeneratorPanel;
-class JSONViewerPanel;
-class RegexTesterPanel;
+class UtilitiesPanel;
 // Plugin Manager panel
 class PluginManagerPanel;
 // Data Studio panel (Phase 1 Week 1)
@@ -417,12 +412,7 @@ private:
     std::unique_ptr<cyxwiz::LanguageModelGenerationPanel> language_model_generation_panel_;
 
     // Utilities panels (Phase 12)
-    std::unique_ptr<cyxwiz::CalculatorPanel> calculator_panel_;
-    std::unique_ptr<cyxwiz::UnitConverterPanel> unit_converter_panel_;
-    std::unique_ptr<cyxwiz::RandomGeneratorPanel> random_generator_panel_;
-    std::unique_ptr<cyxwiz::HashGeneratorPanel> hash_generator_panel_;
-    std::unique_ptr<cyxwiz::JSONViewerPanel> json_viewer_panel_;
-    std::unique_ptr<cyxwiz::RegexTesterPanel> regex_tester_panel_;
+    std::unique_ptr<cyxwiz::UtilitiesPanel> utilities_panel_;
     
     // Cloud panels (DataStream)
     std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;

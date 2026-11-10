@@ -95,12 +95,7 @@
 #include "data_studio/text_view.h"
 #include "panels/language_model_generation_panel.h"
 // Utilities panels (Phase 12)
-#include "panels/calculator_panel.h"
-#include "panels/unit_converter_panel.h"
-#include "panels/random_generator_panel.h"
-#include "panels/hash_generator_panel.h"
-#include "panels/json_viewer_panel.h"
-#include "panels/regex_tester_panel.h"
+#include "panels/utilities_panel.h"
 #include "panels/cloud_browser.h"
 #include "panels/node_browser_panel.h"
 #include "panels/node_info_panel.h"
@@ -670,13 +665,8 @@ MainWindow::MainWindow()
     language_model_generation_panel_ =
         std::make_unique<cyxwiz::LanguageModelGenerationPanel>();
 
-    // Utilities panels (Phase 12)
-    calculator_panel_ = std::make_unique<cyxwiz::CalculatorPanel>();
-    unit_converter_panel_ = std::make_unique<cyxwiz::UnitConverterPanel>();
-    random_generator_panel_ = std::make_unique<cyxwiz::RandomGeneratorPanel>();
-    hash_generator_panel_ = std::make_unique<cyxwiz::HashGeneratorPanel>();
-    json_viewer_panel_ = std::make_unique<cyxwiz::JSONViewerPanel>();
-    regex_tester_panel_ = std::make_unique<cyxwiz::RegexTesterPanel>();
+    // Tools > Utilities: one window with six tabs (TOFIX129 D12).
+    utilities_panel_ = std::make_unique<cyxwiz::UtilitiesPanel>();
     
     // Cloud panels (DataStream)
     cloud_browser_panel_ = std::make_unique<gui::CloudBrowserPanel>();
@@ -1976,42 +1966,9 @@ MainWindow::MainWindow()
         }
     });
 
-    // Utilities panel callbacks (Phase 12)
-    toolbar_->SetOpenCalculatorCallback([this]() {
-        if (calculator_panel_) {
-            calculator_panel_->SetVisible(true);
-            spdlog::info("Opened Calculator panel");
-        }
-    });
-    toolbar_->SetOpenUnitConverterCallback([this]() {
-        if (unit_converter_panel_) {
-            unit_converter_panel_->SetVisible(true);
-            spdlog::info("Opened Unit Converter panel");
-        }
-    });
-    toolbar_->SetOpenRandomGeneratorCallback([this]() {
-        if (random_generator_panel_) {
-            random_generator_panel_->SetVisible(true);
-            spdlog::info("Opened Random Generator panel");
-        }
-    });
-    toolbar_->SetOpenHashGeneratorCallback([this]() {
-        if (hash_generator_panel_) {
-            hash_generator_panel_->SetVisible(true);
-            spdlog::info("Opened Hash Generator panel");
-        }
-    });
-    toolbar_->SetOpenJSONViewerCallback([this]() {
-        if (json_viewer_panel_) {
-            json_viewer_panel_->SetVisible(true);
-            spdlog::info("Opened JSON Viewer panel");
-        }
-    });
-    toolbar_->SetOpenRegexTesterCallback([this]() {
-        if (regex_tester_panel_) {
-            regex_tester_panel_->SetVisible(true);
-            spdlog::info("Opened Regex Tester panel");
-        }
+    // Tools > Utilities opens the window on a tab (TOFIX129 D12).
+    toolbar_->SetOpenUtilitiesCallback([this](const std::string& tab) {
+        if (utilities_panel_) utilities_panel_->Open(tab);
     });
 
     // Set minimap visibility pointers for View -> Minimaps menu
@@ -2489,18 +2446,8 @@ MainWindow::~MainWindow() {
     // NOW reset MainWindow's scripting_engine_ - it should be the last reference
     spdlog::info("~MainWindow: scripting_engine_");
     scripting_engine_.reset();
-    spdlog::info("~MainWindow: regex_tester_panel_");
-    regex_tester_panel_.reset();
-    spdlog::info("~MainWindow: json_viewer_panel_");
-    json_viewer_panel_.reset();
-    spdlog::info("~MainWindow: hash_generator_panel_");
-    hash_generator_panel_.reset();
-    spdlog::info("~MainWindow: random_generator_panel_");
-    random_generator_panel_.reset();
-    spdlog::info("~MainWindow: unit_converter_panel_");
-    unit_converter_panel_.reset();
-    spdlog::info("~MainWindow: calculator_panel_");
-    calculator_panel_.reset();
+    spdlog::info("~MainWindow: utilities_panel_");
+    utilities_panel_.reset();
     spdlog::info("~MainWindow: optimization_panel_");
     optimization_panel_.reset();
     spdlog::info("~MainWindow: linear_algebra_panel_");
@@ -2928,13 +2875,8 @@ void MainWindow::Render() {
     // Text: Language Model Generation
     TimedRender("language model generation", language_model_generation_panel_);
 
-    // Render Utilities panels (Phase 12)
-    TimedRender("calculator", calculator_panel_);
-    TimedRender("unit converter", unit_converter_panel_);
-    TimedRender("random generator", random_generator_panel_);
-    TimedRender("hash generator", hash_generator_panel_);
-    TimedRender("json viewer", json_viewer_panel_);
-    TimedRender("regex tester", regex_tester_panel_);
+    // Tools > Utilities (TOFIX129 D12)
+    TimedRender("utilities", utilities_panel_);
     
     // Cloud panels
     TimedRender("cloud browser", cloud_browser_panel_);
@@ -3391,13 +3333,8 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     // Text: Language Model Generation
     if (language_model_generation_panel_) language_model_generation_panel_->SetVisible(false);
 
-    // Utilities panels (Phase 12)
-    if (calculator_panel_) calculator_panel_->SetVisible(false);
-    if (unit_converter_panel_) unit_converter_panel_->SetVisible(false);
-    if (random_generator_panel_) random_generator_panel_->SetVisible(false);
-    if (hash_generator_panel_) hash_generator_panel_->SetVisible(false);
-    if (json_viewer_panel_) json_viewer_panel_->SetVisible(false);
-    if (regex_tester_panel_) regex_tester_panel_->SetVisible(false);
+    // Tools > Utilities (TOFIX129 D12)
+    if (utilities_panel_) utilities_panel_->SetVisible(false);
     
     // Cloud panels (hidden by default - access via sidebar/view menu)
     if (cloud_browser_panel_) cloud_browser_panel_->SetVisible(false);

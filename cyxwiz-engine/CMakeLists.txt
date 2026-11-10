@@ -693,15 +693,10 @@ set(ENGINE_SOURCES
     src/serving/inference_server.cpp
     src/gui/panels/linear_algebra_panel.cpp
     src/gui/panels/optimization_panel.cpp
+    src/gui/panels/utilities_panel.cpp
     src/gui/panels/optimization_plots.cpp
     src/gui/panels/language_model_generation_panel.cpp
     src/gui/panels/language_model_load_dialog.cpp
-    src/gui/panels/calculator_panel.cpp
-    src/gui/panels/unit_converter_panel.cpp
-    src/gui/panels/random_generator_panel.cpp
-    src/gui/panels/hash_generator_panel.cpp
-    src/gui/panels/json_viewer_panel.cpp
-    src/gui/panels/regex_tester_panel.cpp
     src/core/data_analyzer.cpp
     src/gui/tutorial/tutorial_system.cpp
     src/gui/panels/query_console.cpp
@@ -969,15 +964,10 @@ set(ENGINE_HEADERS
     src/serving/inference_server.h
     src/gui/panels/linear_algebra_panel.h
     src/gui/panels/optimization_panel.h
+    src/gui/panels/utilities_panel.h
     src/gui/panels/optimization_plots.h
     src/gui/panels/language_model_generation_panel.h
     src/gui/panels/language_model_load_dialog.h
-    src/gui/panels/calculator_panel.h
-    src/gui/panels/unit_converter_panel.h
-    src/gui/panels/random_generator_panel.h
-    src/gui/panels/hash_generator_panel.h
-    src/gui/panels/json_viewer_panel.h
-    src/gui/panels/regex_tester_panel.h
     src/gui/tutorial/tutorial_system.h
     src/gui/panels/query_console.h
     src/gui/patterns/pattern.h

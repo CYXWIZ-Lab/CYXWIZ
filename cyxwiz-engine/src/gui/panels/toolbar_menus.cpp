@@ -536,12 +536,13 @@ void ToolbarPanel::BuildActionHandlers() {
     call("tools.embeddings", open_embeddings_callback_);
     call("tools.sentiment", open_sentiment_callback_);
     call("tools.language_model", open_language_model_generation_callback_);
-    call("tools.calculator", open_calculator_callback_);
-    call("tools.unit_converter", open_unit_converter_callback_);
-    call("tools.random_generator", open_random_generator_callback_);
-    call("tools.hash_generator", open_hash_generator_callback_);
-    call("tools.json_viewer", open_json_viewer_callback_);
-    call("tools.regex_tester", open_regex_tester_callback_);
+    for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.calculator", "calculator"},
+                                  {"tools.unit_converter", "units"}, {"tools.random_generator", "random"},
+                                  {"tools.hash_generator", "hash"}, {"tools.json_viewer", "json"},
+                                  {"tools.regex_tester", "regex"}})
+        h[id] = [this, tab = std::string(tab)](const std::string&) {
+            if (open_utilities_callback_) open_utilities_callback_(tab);
+        };
     call("tools.profiler", open_profiler_callback_);
     call("tools.memory_panel", open_memory_panel_callback_);
     call("tools.system_monitor", open_memory_monitor_callback_);

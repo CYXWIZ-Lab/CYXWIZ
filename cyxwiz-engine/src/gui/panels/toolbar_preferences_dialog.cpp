@@ -6,6 +6,7 @@
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
 #include "../../core/engine_config.h"
+#include "../../core/utilities_presentation.h"
 #include "../../core/data_budget.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/execution_device_preferences.h"
@@ -15,6 +16,7 @@
 #include "../../core/training_trace_collector.h"
 #include "../../core/window_manager.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 
 #include <algorithm>
 #include <cstring>
@@ -154,6 +156,59 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                                cyxwiz::FormatDataBytes(cyxwiz::RequestedDataBudgetBytes()).c_str(),
                                                cyxwiz::FormatDataBytes(cyxwiz::DataBudgetBytes()).c_str());
                         ImGui::PopTextWrapPos();
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Tools > Utilities");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    {
+                        // The Utilities window's defaults (TOFIX129 D12), saved at
+                        // once; the window also has "Save as my default".
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        cyxwiz::core::UtilitiesConfig u = engine_config.GetUtilities();
+                        bool changed = false;
+                        const auto combo = [&changed](const char* label, std::string& value,
+                                                      const std::vector<std::pair<std::string, std::string>>& items) {
+                            std::string shown = value;
+                            for (const auto& [id, text] : items)
+                                if (id == value) shown = text;
+                            ImGui::SetNextItemWidth(180.0f);
+                            if (ImGui::BeginCombo(label, shown.c_str())) {
+                                for (const auto& [id, text] : items) {
+                                    if (ImGui::Selectable(text.c_str(), id == value)) {
+                                        value = id;
+                                        changed = true;
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+                        };
+                        std::vector<std::pair<std::string, std::string>> tabs;
+                        for (const auto tab : cyxwiz::utilities_view::kTabs)
+                            tabs.push_back({cyxwiz::utilities_view::TabId(tab), cyxwiz::utilities_view::TabLabel(tab)});
+                        combo("Opens on##util_tab", u.tab, tabs);
+                        ImGui::Text("Digits shown:");
+                        ImGui::SameLine();
+                        changed |= ui::NumberField("##util_digits", &u.digits, 1, 17, 1, 40.0f, "Significant digits (1 to 17)");
+                        changed |= ImGui::Checkbox("Calculator in degrees##util_degrees", &u.degrees);
+                        std::vector<std::pair<std::string, std::string>> categories;
+                        for (const auto& c : cyxwiz::Utilities::GetUnitCategories())
+                            categories.push_back({c, cyxwiz::utilities_view::CategoryLabel(c)});
+                        combo("Unit category##util_units", u.unit_category, categories);
+                        combo("Hash algorithm##util_hash", u.hash_algorithm,
+                              {{"md5", "MD5"}, {"sha1", "SHA-1"}, {"sha256", "SHA-256"}, {"sha512", "SHA-512"}});
+                        ImGui::Text("JSON indent:");
+                        ImGui::SameLine();
+                        changed |= ui::NumberField("##util_indent", &u.json_indent, 0, 8, 1, 36.0f);
+                        changed |= ImGui::Checkbox("Regex: ignore case##util_icase", &u.regex_ignore_case);
+                        changed |= ImGui::Checkbox("Regex: multiline##util_multiline", &u.regex_multiline);
+                        if (changed) {
+                            engine_config.SetUtilities(u);
+                            engine_config.Save();
+                        }
+                        ImGui::TextDisabled("Used when the Engine starts.");
                     }
 
                     ImGui::EndTabItem();
