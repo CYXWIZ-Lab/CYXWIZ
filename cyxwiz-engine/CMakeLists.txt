@@ -251,6 +251,7 @@ set(ENGINE_SOURCES
     src/core/text_explore.cpp
     src/core/linear_algebra_presentation.cpp
     src/core/optimization_presentation.cpp
+    src/core/utilities_presentation.cpp
     src/core/text_presentation.cpp
     src/core/word_map.cpp
     src/core/project_column_roles.cpp
@@ -8099,6 +8100,16 @@ if(MSVC)
 endif()
 set_target_properties(test_optimization_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME OptimizationPresentation COMMAND test_optimization_presentation)
+
+# What the Utilities window shows (TOFIX129 D12), from real Utilities results.
+add_executable(test_utilities_presentation tests/test_utilities_presentation.cpp src/core/utilities_presentation.cpp)
+target_include_directories(test_utilities_presentation PRIVATE src)
+target_link_libraries(test_utilities_presentation PRIVATE cyxwiz-backend)
+if(MSVC)
+    target_compile_definitions(test_utilities_presentation PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_utilities_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME UtilitiesPresentation COMMAND test_utilities_presentation)
 
 # The word map (TOFIX129 D8, M-1 .. M-8): words placed, layouts, clusters, groups.
 add_executable(test_word_map tests/test_word_map.cpp src/core/word_map.cpp)
