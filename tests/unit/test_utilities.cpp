@@ -2,6 +2,9 @@
 
 #include <cyxwiz/utilities.h>
 
+#include <set>
+#include <string>
+
 TEST_CASE("Hash utilities preserve standard digest values", "[utilities][hash]") {
     const auto result = cyxwiz::Utilities::HashText("abc", "all");
 
@@ -21,4 +24,19 @@ TEST_CASE("Hash verification is case-insensitive", "[utilities][hash]") {
         "abc", "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD",
         "sha256"));
     REQUIRE_FALSE(cyxwiz::Utilities::VerifyHash("abc", "deadbeef", "sha256"));
+}
+
+TEST_CASE("UUIDs are version 4 and do not repeat across calls", "[utilities][uuid]") {
+    std::set<std::string> seen;
+    for (int call = 0; call < 2000; ++call) {
+        for (const auto& id : cyxwiz::Utilities::GenerateUUIDs(5)) {
+            REQUIRE(id.size() == 36);
+            REQUIRE(id[8] == '-');
+            REQUIRE(id[13] == '-');
+            REQUIRE(id[14] == '4');  // version
+            REQUIRE(std::string("89ab").find(id[19]) != std::string::npos);  // RFC 4122 variant
+            REQUIRE(seen.insert(id).second);
+        }
+    }
+    REQUIRE(seen.size() == 10000);
 }

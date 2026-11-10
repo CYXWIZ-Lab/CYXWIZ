@@ -598,13 +598,16 @@ RandomNumberResult Utilities::GenerateIntegers(int count, int min, int max, int6
 std::vector<std::string> Utilities::GenerateUUIDs(int count) {
     std::vector<std::string> uuids;
 
+    // Every bit from the operating system's random source (random_device is
+    // rand_s on Windows, getrandom / /dev/urandom on Linux and macOS). A
+    // generator seeded once from 32 bits gave each call one of 2^32 streams,
+    // so ids (.cyxmodel archives among them) could repeat.
     std::random_device rd;
-    std::mt19937_64 gen(rd());
-    const auto dist = [](std::mt19937_64& g) { return cyxwiz::portable::Bits64(g); };
+    const auto word = [&rd] { return (static_cast<uint64_t>(rd()) << 32) | static_cast<uint64_t>(rd()); };
 
     for (int i = 0; i < count; i++) {
-        uint64_t part1 = dist(gen);
-        uint64_t part2 = dist(gen);
+        uint64_t part1 = word();
+        uint64_t part2 = word();
 
         // Format as UUID v4: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
         // Set version (4) and variant (8, 9, A, or B)

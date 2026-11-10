@@ -259,7 +259,8 @@ public:
     );
 
     /**
-     * Generate UUID v4
+     * Generate UUID v4, every random bit from the operating system's random
+     * source (not a seeded generator)
      * @param count Number of UUIDs to generate
      * @return Vector of UUID strings
      */
