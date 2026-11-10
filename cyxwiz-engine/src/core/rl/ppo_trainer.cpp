@@ -207,6 +207,13 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
         }
         return model.Forward(x);
     };
+    // One Adam pass (and clip) for the policy, the value network and log_std
+    // together when the device's provider runs it (TOFIX206 3.2 C); else, or
+    // once it fails, each optimizer steps per tensor as before.
+    auto* policy_adam = dynamic_cast<AdamOptimizer*>(policy_optimizer_.get());
+    auto* value_adam = dynamic_cast<AdamOptimizer*>(value_optimizer_.get());
+    auto* log_std_adam = dynamic_cast<AdamOptimizer*>(log_std_optimizer_.get());
+    bool adam_together = policy_adam && value_adam && log_std_adam;
     const auto backward = [](IExecutableModel& model, std::unique_ptr<FusedMlp>& fused,
                              const Tensor& grad) -> std::map<std::string, Tensor> {
         if (fused) return fused->Backward(grad);
@@ -344,8 +351,27 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                     auto value_grads = backward(*value_, value_fused_, r.grad_value_output);
                     std::map<std::string, Tensor> log_std_grads;
                     if (!discrete) log_std_grads["log_std"] = r.grad_log_std;
+                    bool stepped = false;
+                    if (adam_together) {
+                        auto policy_params = policy_->GetParameters();
+                        auto value_params = value_->GetParameters();
+                        std::map<std::string, Tensor> log_std_params{{"log_std", log_std_}};
+                        std::vector<AdamOptimizer::Group> groups{{policy_adam, &policy_params, &policy_grads},
+                                                                 {value_adam, &value_params, &value_grads}};
+                        if (!discrete) groups.push_back({log_std_adam, &log_std_params, &log_std_grads});
+                        std::string why;
+                        if (AdamOptimizer::StepTogether(groups, config_.max_grad_norm, why)) {
+                            policy_->SetParameters(policy_params);
+                            value_->SetParameters(value_params);
+                            if (!discrete) log_std_ = log_std_params.at("log_std");
+                            stepped = true;
+                        } else {
+                            adam_together = false;
+                            spdlog::info("PPO: the optimizers step per tensor ({})", why);
+                        }
+                    }
                     // One global norm over every parameter, as one optimizer over all of them clips
-                    if (config_.max_grad_norm > 0.0f) {
+                    if (!stepped && config_.max_grad_norm > 0.0f) {
                         std::map<std::string, Tensor> all;
                         for (auto& [k, g] : policy_grads) all["p:" + k] = g;
                         for (auto& [k, g] : value_grads) all["v:" + k] = g;
@@ -355,12 +381,14 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                         for (auto& [k, g] : value_grads) g = all["v:" + k];
                         for (auto& [k, g] : log_std_grads) g = all["s:" + k];
                     }
-                    ApplyOptimizerStep(*policy_, *policy_optimizer_, policy_grads, {});
-                    ApplyOptimizerStep(*value_, *value_optimizer_, value_grads, {});
-                    if (!discrete) {
-                        std::map<std::string, Tensor> params{{"log_std", log_std_}};
-                        log_std_optimizer_->Step(params, log_std_grads);
-                        log_std_ = params.at("log_std");
+                    if (!stepped) {
+                        ApplyOptimizerStep(*policy_, *policy_optimizer_, policy_grads, {});
+                        ApplyOptimizerStep(*value_, *value_optimizer_, value_grads, {});
+                        if (!discrete) {
+                            std::map<std::string, Tensor> params{{"log_std", log_std_}};
+                            log_std_optimizer_->Step(params, log_std_grads);
+                            log_std_ = params.at("log_std");
+                        }
                     }
                     statistics_sum = minibatches == 0 ? r.statistics : statistics_sum + r.statistics;
                     last_statistics = r.statistics;
