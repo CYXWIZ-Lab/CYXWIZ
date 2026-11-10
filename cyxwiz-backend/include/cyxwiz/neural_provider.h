@@ -369,7 +369,9 @@ CYXWIZ_API void SetNeuralProvidersDisabledForTesting(bool disabled);
 // TOFIX178 1.0(c)): it exports cyxwiz_<name>_abi() returning this number and
 // cyxwiz_<name>_register(NeuralProviderRegistry*). A module with another
 // number is not loaded. Raise it when the provider interface changes.
-// 2: the small-MLP ops and request fields (TOFIX206 3.2).
+// 2: the small-MLP, Adam and PPO ops (MlpForward/Backward, AdamStep,
+// PpoSample/Loss/Gae), their request fields and NeuralActivation::LeakyRelu
+// (TOFIX206 3.2).
 #define CYXWIZ_NEURAL_PROVIDER_MODULE_ABI 2
 
 #ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER

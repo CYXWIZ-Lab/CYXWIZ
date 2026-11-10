@@ -4,6 +4,7 @@
 #include "../arrayfire_backend_utils.h"
 #include "optimizer_utils.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -283,8 +284,8 @@ void AdamOptimizer::StepImpl(
 
 bool AdamOptimizer::StepTogether(const std::vector<Group>& groups, float max_grad_norm, std::string& why) {
     why.clear();
-    if (groups.empty()) {
-        why = "no optimizers";
+    if (groups.empty() || !groups.front().optimizer) {
+        why = groups.empty() ? "no optimizers" : "an empty group";
         return false;
     }
     const AdamOptimizer& first = *groups.front().optimizer;
@@ -324,6 +325,16 @@ bool AdamOptimizer::StepTogether(const std::vector<Group>& groups, float max_gra
                 return false;
             }
             const auto s = o->parameter_steps_.find(name);
+            const bool has_m = o->m_.count(name) > 0;
+            if (has_m != (o->v_.count(name) > 0) || has_m != (s != o->parameter_steps_.end())) {
+                why = "parameter '" + name + "' has incomplete Adam state";
+                return false;
+            }
+            if (has_m && (o->m_.at(name).NumElements() != parameter.NumElements() ||
+                          o->v_.at(name).NumElements() != parameter.NumElements())) {
+                why = "parameter '" + name + "' and its Adam moments differ in size";
+                return false;
+            }
             const int at = s == o->parameter_steps_.end() ? 0 : s->second;
             if (step >= 0 && at != step) {
                 why = "parameters at different steps";
@@ -394,7 +405,13 @@ bool AdamOptimizer::StepTogether(const std::vector<Group>& groups, float max_gra
         it.optimizer->v_[it.name] = std::move(outputs[3 * i + 2]);
         it.optimizer->parameter_steps_[it.name] = step + 1;
     }
-    for (const auto& group : groups) ++group.optimizer->step_count_;
+    // Once per optimizer, as one Step each would count it
+    std::vector<AdamOptimizer*> counted;
+    for (const auto& group : groups)
+        if (std::find(counted.begin(), counted.end(), group.optimizer) == counted.end()) {
+            counted.push_back(group.optimizer);
+            ++group.optimizer->step_count_;
+        }
     return true;
 }
 

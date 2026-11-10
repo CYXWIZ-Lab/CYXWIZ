@@ -131,25 +131,36 @@ Common SurrogateAndValue(const af::array& log_prob, const af::array& value, cons
     return out;
 }
 
-// The device's neural provider for a PPO op (TOFIX206 3.2 B), or null: the
-// ArrayFire path then. A provider call that fails is said once and the
-// ArrayFire path takes over for that call.
+// PPO ops on a provider (TOFIX206 3.2 B): ran, failed, and the ops turned
+// off after a failure (index: the op minus PpoSample)
+std::atomic<long long> ppo_ran{0}, ppo_failed{0};
+std::atomic<bool> ppo_off[3] = {};
+
+std::atomic<bool>& PpoOff(NeuralOp op) {
+    return ppo_off[static_cast<int>(op) - static_cast<int>(NeuralOp::PpoSample)];
+}
+
+// The device's neural provider for a PPO op, or null: the ArrayFire path
+// then. An op whose provider call failed once stays on ArrayFire (said once).
 std::shared_ptr<INeuralNetworkProvider> PpoProvider(NeuralOpRequest& r) {
     r.target = CaptureCurrentNeuralDeviceTarget();
     r.device_resident = true;
     r.dtype = DataType::Float32;
-    if (r.target.platform == DeviceType::CPU) return nullptr;
+    if (r.target.platform == DeviceType::CPU || PpoOff(r.op)) return nullptr;
     return NeuralProviderRegistry::Instance().FindSupporting(r);
 }
 
 bool RunPpoOp(INeuralNetworkProvider& provider, const NeuralOpRequest& r, const std::vector<const Tensor*>& inputs,
               const std::vector<std::vector<size_t>>& shapes, std::vector<Tensor>& outputs) {
     const NeuralOpStatus status = ExecuteNeuralOpOnDevice(provider, r, inputs, shapes, outputs);
-    if (status.ok) return true;
-    static std::atomic<bool> said{false};
-    if (!said.exchange(true))
-        spdlog::warn("PPO: {} {} failed ({}); the ArrayFire path runs it", provider.ProviderId(), NeuralOpName(r.op),
-                     status.detail);
+    if (status.ok) {
+        ++ppo_ran;
+        return true;
+    }
+    ++ppo_failed;
+    if (!PpoOff(r.op).exchange(true))
+        spdlog::warn("PPO: {} {} failed ({}); ArrayFire runs it from now on", provider.ProviderId(),
+                     NeuralOpName(r.op), status.detail);
     return false;
 }
 
@@ -328,6 +339,8 @@ Tensor SampleCategorical(const Tensor& logits, uint64_t seed) {
     MaxWithIndex(best_value, best_index, LogSoftmaxRows(Array(logits)) - af::log(-af::log(u)), 1);
     return Make(af::moddims(best_index.as(f32), rows), {static_cast<size_t>(rows)});
 }
+
+PpoProviderCounts PpoProviderCountsForTesting() { return {ppo_ran.load(), ppo_failed.load()}; }
 
 Tensor PpoSampleStep(const Tensor& head, const Tensor& value, const Tensor& log_std, bool discrete, uint64_t seed) {
     Require(head.Shape().size() == 2, "PPO: the policy output must be [B, W]");

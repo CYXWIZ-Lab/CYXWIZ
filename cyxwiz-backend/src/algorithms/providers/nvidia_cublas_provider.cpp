@@ -935,6 +935,9 @@ std::string MlpContractError(const NeuralOpRequest& r) {
     if (r.dtype != DataType::Float32) return "mlp ops are Float32 only";
     if (r.mlp_layers < 1 || r.mlp_layers > NeuralOpRequest::kMaxMlpLayers) return "mlp needs 1 to 8 layers";
     if (r.batch < 1 || r.batch > (1u << 20)) return "mlp needs 1 to 1,048,576 rows";
+    // The backward's gradient threads each sum every row: past 65,536 rows a
+    // launch could outlast the display driver's watchdog
+    if (r.op == NeuralOp::MlpBackward && r.batch > (1u << 16)) return "mlp_backward takes up to 65,536 rows";
     if (r.mlp_widths[0] < 1 || r.mlp_widths[0] > 1024) return "mlp input width must be 1 to 1024";
     for (size_t l = 1; l <= r.mlp_layers; ++l)
         if (r.mlp_widths[l] < 1 || r.mlp_widths[l] > 256) return "mlp layer widths must be 1 to 256";
@@ -1179,7 +1182,8 @@ extern "C" __global__ void cyxwiz_ppo_loss(const float* __restrict__ head, const
       for (int k = 0; k < width; ++k) s += expf(head[r + (size_t)k * rows] - m);
       lse = logf(s);
       a = (int)lrintf(actions[r]);
-      lp = head[r + (size_t)a * rows] - m - lse;
+      // An index outside the choices has no probability (the ArrayFire path's one-hot is all zero)
+      lp = (a >= 0 && a < width) ? head[r + (size_t)a * rows] - m - lse : 0.0f;
       for (int k = 0; k < width; ++k) {
         const float lpk = head[r + (size_t)k * rows] - m - lse;
         h -= expf(lpk) * lpk;

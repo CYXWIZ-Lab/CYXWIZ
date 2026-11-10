@@ -91,6 +91,15 @@ CYXWIZ_API Tensor SampleCategorical(const Tensor& logits, uint64_t seed);       
 CYXWIZ_API Tensor PpoSampleStep(const Tensor& head, const Tensor& value, const Tensor& log_std, bool discrete,
                                 uint64_t seed);
 
+// Test-only: how many PPO ops (sampling, loss, GAE) ran on a neural provider,
+// and how many fell back to ArrayFire after the provider failed, since the
+// process started. After a failure that op stays on ArrayFire.
+struct CYXWIZ_API PpoProviderCounts {
+    long long ran = 0;
+    long long failed = 0;
+};
+CYXWIZ_API PpoProviderCounts PpoProviderCountsForTesting();
+
 // Generalized advantage estimation over a rollout of T steps of N copies
 // (row t = step t). dones[t, i] = 1 when copy i's episode ended at step t
 // (terminated or truncated; a truncated step's reward should already hold

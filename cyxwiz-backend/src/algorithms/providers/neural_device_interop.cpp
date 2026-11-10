@@ -153,7 +153,7 @@ public:
     // An array moved in (a fresh output): no other handle shares it, so the
     // lock below does not copy it.
     explicit LockedDeviceArray(af::array&& array) : LockedDeviceArray(std::move(array), false, 0) {}
-    explicit LockedDeviceArray(const af::array& array, bool read_only = false)
+    explicit LockedDeviceArray(const af::array& array, bool read_only)
         : LockedDeviceArray(af::array(array), read_only, 0) {}
 
 private:

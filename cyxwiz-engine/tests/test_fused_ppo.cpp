@@ -79,6 +79,15 @@ bool ProviderServes(cyxwiz::NeuralOp op, bool discrete) {
     return cyxwiz::NeuralProviderRegistry::Instance().FindSupporting(r) != nullptr;
 }
 
+// The provider ran exactly `runs` PPO ops since `before`, none fell back:
+// a comparison of the ArrayFire path with itself cannot pass for the kernels
+void RanOnProvider(const cyxwiz::rl::PpoProviderCounts& before, long long runs, const std::string& what) {
+    const auto now = cyxwiz::rl::PpoProviderCountsForTesting();
+    Check(now.ran - before.ran == runs && now.failed == before.failed,
+          what + ": ran on the provider (" + std::to_string(now.ran - before.ran) + " of " + std::to_string(runs) +
+              ", " + std::to_string(now.failed - before.failed) + " fell back)");
+}
+
 template <typename F>
 auto OnArrayFire(F f) {
     cyxwiz::SetNeuralProvidersDisabledForTesting(true);
@@ -116,7 +125,9 @@ void CompareLoss(bool discrete, float clip_vf, bool normalize, size_t rows) {
         return discrete ? cyxwiz::rl::PpoCategoricalLoss(head, value, batch, s)
                         : cyxwiz::rl::PpoGaussianLoss(head, log_std, value, batch, s);
     };
+    const auto before = cyxwiz::rl::PpoProviderCountsForTesting();
     const auto device = run();
+    RanOnProvider(before, 1, what);
     const auto reference = OnArrayFire(run);
     const std::pair<const char*, double> parts[] = {
         {"statistics", Difference(device.statistics, reference.statistics)},
@@ -147,7 +158,9 @@ void CompareGae(size_t steps, size_t copies) {
     const cyxwiz::Tensor dones({steps, copies}, d.data(), cyxwiz::DataType::Float32);
     const auto last = Random({copies}, 14, 1.0f);
     cyxwiz::Tensor adv, ret, ref_adv, ref_ret;
+    const auto before = cyxwiz::rl::PpoProviderCountsForTesting();
     cyxwiz::rl::ComputeGae(rewards, values, dones, last, 0.99f, 0.95f, adv, ret);
+    RanOnProvider(before, 1, "GAE");
     OnArrayFire([&]() {
         cyxwiz::rl::ComputeGae(rewards, values, dones, last, 0.99f, 0.95f, ref_adv, ref_ret);
         return 0;
@@ -167,7 +180,9 @@ void CheckSampleStep() {
         for (size_t k = 0; k < classes; ++k) logits_host[r * classes + k] = row_logits[k];
     const cyxwiz::Tensor logits({rows, classes}, logits_host.data(), cyxwiz::DataType::Float32);
     const auto value = Random({rows, 1}, 21, 1.0f);
+    const auto before = cyxwiz::rl::PpoProviderCountsForTesting();
     const auto packed = Host(cyxwiz::rl::PpoSampleStep(logits, value, cyxwiz::Tensor(), true, 77));
+    RanOnProvider(before, 1, "categorical sampling");
     Check(packed.size() == rows * 3, "categorical packed size");
     const auto values = Host(value);
     double z = 0.0;
@@ -206,7 +221,9 @@ void CheckSampleStep() {
     const cyxwiz::Tensor mean({rows, act}, mean_host.data(), cyxwiz::DataType::Float32);
     const float ls_host[2] = {-0.5f, 0.2f};
     const cyxwiz::Tensor log_std({act}, ls_host, cyxwiz::DataType::Float32);
+    const auto gaussian_before = cyxwiz::rl::PpoProviderCountsForTesting();
     const auto g = Host(cyxwiz::rl::PpoSampleStep(mean, value, log_std, false, 91));
+    RanOnProvider(gaussian_before, 1, "Gaussian sampling");
     Check(g.size() == rows * (2 + act), "Gaussian packed size");
     for (size_t j = 0; j < act; ++j) {
         double sum = 0.0, sq = 0.0;
