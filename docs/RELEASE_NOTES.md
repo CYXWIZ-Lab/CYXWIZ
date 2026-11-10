@@ -7,6 +7,17 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **The Studio Debugger reads image MLPs right.** A model that flattens the
+  image first (no convolution before its Dense layers) takes images in
+  another layout than a CNN; the debugger now keeps one layout for both. On
+  such a model the Inspector shows the sample's picture, the views say Top
+  images, and Where it looks (occlusion and saliency), Top images and
+  Embedding run the model on the right pixels. Captures saved before are
+  read the same way.
+- **Saliency through BatchNorm1d.** An input gradient through a model with
+  BatchNorm1d in eval mode (saliency) stopped with "backward requires a
+  matching training-mode forward pass"; it now uses the running statistics,
+  as PyTorch does.
 - **PCA, t-SNE and UMAP are fast on wide data.** With more features than
   samples (a layer's 8,192 values for a few hundred images) PCA works from
   the samples' Gram matrix; it took minutes before and now takes well under
