@@ -122,8 +122,11 @@ void CheckSaveAndLoad(cyxwiz::rl::TrainedPolicy& trained, const std::string& fil
     const auto path = std::filesystem::temp_directory_path() / file;
     std::string error;
     Check(cyxwiz::rl::SaveTrainedPolicy(trained, path, error), "the policy saves: " + error);
+    SelectCpu();  // loading follows the Engine's device choice, here the CPU the run trained on
     auto loaded = cyxwiz::rl::LoadTrainedPolicy(path, error);
     Check(loaded != nullptr, "the policy loads: " + error);
+    Check(loaded == nullptr || (loaded->device_type == cyxwiz::DeviceType::CPU && loaded->device_id == 0),
+          "the loaded policy acts on the chosen device");
     if (loaded) {
         const size_t width = trained.config.observation_size;
         const auto obs = SampleObservations(32, width);

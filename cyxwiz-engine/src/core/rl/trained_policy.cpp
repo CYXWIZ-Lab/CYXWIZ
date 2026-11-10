@@ -1,5 +1,6 @@
 #include "trained_policy.h"
 
+#include "../execution_device_preferences.h"
 #include "../formats/cyxmodel_format.h"
 #include "../graph_compiler.h"
 #include "../graph_document.h"
@@ -476,10 +477,18 @@ std::unique_ptr<TrainedPolicy> LoadTrainedPolicy(const std::filesystem::path& pa
         auto out = std::make_unique<TrainedPolicy>();
         out->config = *compiled.rl;
         out->graph_json = graph_json;
-        if (const auto* active = Device::GetCurrentDevice()) {
-            out->device_type = active->GetType();
-            out->device_id = active->GetDeviceId();
+        // Where it acts: the device a run would train on, so a loaded policy
+        // and a trained one follow the same choice; built there, so the
+        // record and its arrays agree (any thread, with or without a device)
+        const auto route = PreviewRequestedRouteTrainingReadiness();
+        if (route.route_available && route.authorized) {
+            out->device_type = route.type;
+            out->device_id = route.device_id;
+        } else {
+            out->device_type = DeviceType::CPU;
+            out->device_id = 0;
         }
+        const PolicyDeviceScope on_its_device(*out);
         if (!BuildRLNetworks(out->config, out->policy, out->value, error)) return nullptr;
         if (!SetWeights(*out->policy, "policy.", weights, shapes, dtypes, "policy", error) ||
             !SetWeights(*out->value, "value.", weights, shapes, dtypes, "value", error))

@@ -64,7 +64,9 @@ std::string PolicyMismatch(const TrainedPolicy& policy, const RLTrainingConfigur
 bool SaveTrainedPolicy(const TrainedPolicy& policy, const std::filesystem::path& path, std::string& error);
 // Null with the reason: not an RL policy, the environment is not available,
 // or the graph's networks differ from the saved weights. The networks are
-// built on this thread's ArrayFire device (the policy records it).
+// built on the device the Engine would train on (the route chosen in
+// Preferences > Devices when it may train, else the qualified CPU route), and
+// the policy records it.
 std::unique_ptr<TrainedPolicy> LoadTrainedPolicy(const std::filesystem::path& path, std::string& error);
 
 }  // namespace cyxwiz::rl
