@@ -35,10 +35,16 @@ public:
     // saved, kept with the trained policy.
     bool Start(std::shared_ptr<const RLTrainingConfiguration> config, std::string graph_json, std::string& error);
     void Stop();
+    // Stop, and return once the worker has ended (nothing steps the
+    // environment any more: its plugin may shut down)
+    void StopAndWait();
     void Pause();
     void Resume();
 
     bool Active() const { return state_ == State::Running; }
+    // True while any run in this process trains (its worker is between start
+    // and end): what the runtime truth reports as a PPO training
+    static bool AnyActive();
     bool Paused() const { return paused_; }
     State GetState() const { return state_; }
     std::string Message() const;  // why it failed, or how it ended

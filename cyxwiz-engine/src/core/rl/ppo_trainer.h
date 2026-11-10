@@ -77,6 +77,10 @@ struct PpoUpdateMetrics {
     float std = 0.0f;                 // mean action standard deviation (Gaussian)
     float steps_per_second = 0.0f;
     bool reached_target = false;      // the run stops after this update
+    // How this update ran (TOFIX206 3.2): "fused small-network kernels
+    // (<provider>)" or "ArrayFire operations (<why>)", and ", optimizers per
+    // tensor" when the joint Adam pass did not apply
+    std::string compute_path;
 };
 
 // Stable-Baselines3's MlpPolicy initialisation (ortho_init): every weight
@@ -116,12 +120,6 @@ public:
     // when Train never started or an optimizer's state cannot be exported.
     bool TakeTrained(PpoTrainedState& out, std::string& error);
 
-    // How the networks ran (TOFIX206 3.2), once Train has started: "fused
-    // small-network kernels (<provider>)" when both networks are Dense /
-    // activation chains a provider runs whole on this device, else "ArrayFire
-    // operations (<why>)".
-    const std::string& NetworkPath() const { return network_path_; }
-
 private:
     bool CheckSetup(std::string& error) const;
 
@@ -137,7 +135,7 @@ private:
     // The networks as whole-network kernels, while the provider serves them
     std::unique_ptr<FusedMlp> policy_fused_;
     std::unique_ptr<FusedMlp> value_fused_;
-    std::string network_path_;
+    std::string network_path_;  // the worker's own; each update carries a copy (compute_path)
     std::atomic<bool> stop_{false};
     std::atomic<bool> paused_{false};
 };

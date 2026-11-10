@@ -7,6 +7,7 @@
 #include "route_qualification_snapshot.h"
 #include "training_manager.h"
 #include "training_trace_collector.h"
+#include "rl/rl_training_run.h"
 
 #include "backend_pack_lifecycle_service.h"
 #include "backend_pack_platform.h"
@@ -520,9 +521,9 @@ public:
             return MakeTrainingTruth(
                 TrainingTraceCollector::Instance().Snapshot(), true, &metrics);
         }
-        // A run outside the training manager (PPO) holds the device and
-        // writes the trace
-        if (HasActiveExecutionDeviceContext()) {
+        // A run outside the training manager (PPO) writes the trace; another
+        // holder of the device (Run Test) is not a training
+        if (rl::RLTrainingRun::AnyActive()) {
             return MakeTrainingTruth(
                 TrainingTraceCollector::Instance().Snapshot(), true, nullptr);
         }
@@ -539,7 +540,7 @@ public:
             return MakeTrainingTruth(
                 TrainingTraceCollector::Instance().Snapshot(), true, &metrics);
         }
-        if (HasActiveExecutionDeviceContext()) {  // a PPO run
+        if (rl::RLTrainingRun::AnyActive()) {  // a PPO run
             return MakeTrainingTruth(
                 TrainingTraceCollector::Instance().Snapshot(), true, nullptr);
         }

@@ -209,10 +209,13 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
             return true;
         };
         double v = 0.0;
-        if (number("total_timesteps", "100000", v)) c.total_timesteps = static_cast<int64_t>(v);
-        if (number("n_steps", "2048", v)) c.n_steps = static_cast<int>(v);
-        if (number("batch_size", "64", v)) c.batch_size = static_cast<int>(v);
-        if (number("n_epochs", "10", v)) c.n_epochs = static_cast<int>(v);
+        // Counts clamped before the cast (a typed 1e30 is not undefined behaviour);
+        // CheckSetup refuses what is still out of range
+        const auto count = [](double x, double most) { return std::clamp(x, -1.0, most); };
+        if (number("total_timesteps", "100000", v)) c.total_timesteps = static_cast<int64_t>(count(v, 1e15));
+        if (number("n_steps", "2048", v)) c.n_steps = static_cast<int>(count(v, 1e9));
+        if (number("batch_size", "64", v)) c.batch_size = static_cast<int>(count(v, 1e9));
+        if (number("n_epochs", "10", v)) c.n_epochs = static_cast<int>(count(v, 1e9));
         if (number("learning_rate", "0.0003", v)) c.learning_rate = static_cast<float>(v);
         if (number("gamma", "0.99", v)) c.gamma = static_cast<float>(v);
         if (number("gae_lambda", "0.95", v)) c.gae_lambda = static_cast<float>(v);

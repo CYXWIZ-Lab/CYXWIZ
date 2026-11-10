@@ -214,9 +214,20 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     auto* value_adam = dynamic_cast<AdamOptimizer*>(value_optimizer_.get());
     auto* log_std_adam = dynamic_cast<AdamOptimizer*>(log_std_optimizer_.get());
     bool adam_together = policy_adam && value_adam && log_std_adam;
-    const auto backward = [](IExecutableModel& model, std::unique_ptr<FusedMlp>& fused,
-                             const Tensor& grad) -> std::map<std::string, Tensor> {
-        if (fused) return fused->Backward(grad);
+    // x: the minibatch's input, to run the layers' own forward when the
+    // fused backward fails (the layers have no forward of it cached)
+    const auto backward = [this](IExecutableModel& model, std::unique_ptr<FusedMlp>& fused, const Tensor& x,
+                                 const Tensor& grad) -> std::map<std::string, Tensor> {
+        if (fused) {
+            try {
+                return fused->Backward(grad);
+            } catch (const std::exception& e) {
+                spdlog::warn("PPO: the fused network failed ({}); ArrayFire operations from now on", e.what());
+                fused.reset();
+                network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
+                model.Forward(x);
+            }
+        }
         model.Backward(grad);
         return model.GetGradients();
     };
@@ -272,7 +283,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                 // A cut episode is worth what its last observation is worth
                 std::vector<size_t> cut;
                 for (size_t i = 0; i < n; ++i)
-                    if (truncated[i]) cut.push_back(i);
+                    if (truncated[i] && !terminated[i]) cut.push_back(i);  // a time limit, as SB3 bootstraps
                 if (!cut.empty()) {
                     std::vector<float> last(cut.size() * obs_size);
                     for (size_t k = 0; k < cut.size(); ++k)
@@ -345,8 +356,8 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                     const Tensor value = forward(*value_, value_fused_, mb_obs, true);
                     const PpoLossResult r = discrete ? PpoCategoricalLoss(head, value, batch, config_.loss)
                                                      : PpoGaussianLoss(head, log_std_, value, batch, config_.loss);
-                    auto policy_grads = backward(*policy_, policy_fused_, r.grad_policy_output);
-                    auto value_grads = backward(*value_, value_fused_, r.grad_value_output);
+                    auto policy_grads = backward(*policy_, policy_fused_, mb_obs, r.grad_policy_output);
+                    auto value_grads = backward(*value_, value_fused_, mb_obs, r.grad_value_output);
                     std::map<std::string, Tensor> log_std_grads;
                     if (!discrete) log_std_grads["log_std"] = r.grad_log_std;
                     bool stepped = false;
@@ -394,7 +405,9 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                 }
             }
 
+            if (stop_) break;  // a stopped update is not reported as one
             ++metrics.update;
+            metrics.compute_path = network_path_ + (adam_together ? "" : ", optimizers per tensor");
             if (minibatches > 0) {  // the minibatches' mean, and the last one's loss
                 const PpoLossStatistics mean = ReadPpoLossStatistics(statistics_sum, static_cast<float>(minibatches));
                 metrics.policy_loss = mean.policy_loss;

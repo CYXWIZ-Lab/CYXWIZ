@@ -1,6 +1,7 @@
 #include "policy_playback.h"
 
 #include "../../plugin/registries/plugin_environment_registry.h"
+#include "../execution_device_context.h"
 
 #include <spdlog/spdlog.h>
 
@@ -75,6 +76,8 @@ void PolicyPlayback::Run() {
         // Act on the device the policy's networks live on (its training run's route)
         const auto activation = Device(p.device_type, p.device_id).ActivateExact(false);
         if (!activation.success) return fail("the policy's device did not start: " + activation.message);
+        // The device is in use while it plays: Preferences > Devices waits, as for a training
+        const ScopedActiveExecutionDeviceContext in_use;
         std::string error;
         auto batch = plugin::PluginEnvironmentRegistry::Instance().Create(p.config.environment_key,
                                                                           p.config.environment_settings, 1, error);

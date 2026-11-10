@@ -63,6 +63,9 @@ struct PluginEnvironmentStepBuffers {
     float* rewards = nullptr;
     uint8_t* terminated = nullptr;  // 1: the episode reached a terminal state
     uint8_t* truncated = nullptr;   // 1: the episode was cut (step limit)
+    // A copy that ends both ways reports terminated: the trainer bootstraps a cut
+    // episode from its last observation only when it was not terminated (as
+    // Stable-Baselines3 reads Gymnasium's flags).
     float* final_observations = nullptr;
 };
 

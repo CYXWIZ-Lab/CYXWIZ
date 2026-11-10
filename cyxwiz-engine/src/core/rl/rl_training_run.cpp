@@ -51,6 +51,11 @@ void RLTrainingRun::Stop() {
     if (trainer_) trainer_->Stop();
 }
 
+void RLTrainingRun::StopAndWait() {
+    Stop();
+    if (worker_.joinable()) worker_.join();
+}
+
 void RLTrainingRun::Pause() {
     std::lock_guard<std::mutex> lock(mutex_);
     paused_ = true;
@@ -85,7 +90,18 @@ std::vector<PpoUpdateMetrics> RLTrainingRun::TakeUpdates() {
     return out;
 }
 
+namespace {
+std::atomic<int> active_runs{0};
+}  // namespace
+
+bool RLTrainingRun::AnyActive() { return active_runs.load() > 0; }
+
 void RLTrainingRun::Run() {
+    // Counted for the worker's whole life, every return included
+    struct Counted {
+        Counted() { ++active_runs; }
+        ~Counted() { --active_runs; }
+    } counted;
     const auto& c = *config_;
     bool traced = false;
     const auto fail = [this, &traced](const std::string& why) {
