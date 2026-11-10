@@ -211,7 +211,8 @@ their `.vec` file.
 gensim's names and defaults (`Word2Vec`): vector size 100, window 5,
 minimum count 5, negative samples 5, epochs 5, down-sampling 1e-3, learning
 rate 0.025 falling to 0.0001, plus **Batch** (examples per device step,
-2048) and **Seed** (the same seed repeats a run on one device).
+2048) and **Seed** (the same seed draws the same samples and starting
+vectors on every device; see [Seeds and reproducibility](seeds_and_reproducibility.md)).
 
 Training runs in batches on the device. One step applies the summed gradient
 of its batch's examples, with gensim's update rules (in CBOW every context word

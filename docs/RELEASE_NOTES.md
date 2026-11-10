@@ -7,6 +7,17 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **A seed repeats on every operating system and device** (guide in
+  `docs/usage/seeds_and_reproducibility.md`). Splits, folds, batch order,
+  balancing, augmentation, samples and weight initialisation draw the same
+  numbers on Windows, Linux and macOS and on CPU, CUDA and OpenCL; until now
+  they repeated only on one platform. **The same seed now gives different
+  splits, batches and initial weights than in earlier releases, once**, so a
+  rerun old project's metrics can move a little.
+  - Audio augmentation repeats from the DataLoader seed, and Add Noise no
+    longer adds the same noise to every clip (`add_noise(seed=...)`).
+  - Plugin SDK: new header `cyxwiz/portable_random.h` (shuffle and draws
+    that are the same with every compiler).
 - **Tools > Model is one window** (guide in `docs/usage/model_tools.md`,
   example `examples/cyxgraph/model_tools`) with tabs Summary, Learning
   rate, Explain, Health and Projector; its menu items open it on a tab.
