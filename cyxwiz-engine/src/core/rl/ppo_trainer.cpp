@@ -246,11 +246,9 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                     return false;
                 }
                 const uint64_t sample_seed = random.Next();
-                const Tensor action = discrete ? SampleCategorical(head, sample_seed) : SampleGaussian(head, log_std_, sample_seed);
-                const Tensor logp = discrete ? CategoricalLogProb(head, action) : GaussianLogProb(head, log_std_, action);
-                // One read for the step: the values, log-probabilities and actions
-                const auto step_host =
-                    Host(Tensor::Cat({value.Reshape({n}), logp.Reshape({n}), action.Reshape({n * act_size})}, 0));
+                // One read for the step: the values, log-probabilities and actions (one launch on a
+                // provider, TOFIX206 3.2 B)
+                const auto step_host = Host(PpoSampleStep(head, value, log_std_, discrete, sample_seed));
                 const float* values = step_host.data();
                 const float* logps = values + n;
                 const float* actions = logps + n;
