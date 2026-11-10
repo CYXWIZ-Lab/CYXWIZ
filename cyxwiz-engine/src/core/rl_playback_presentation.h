@@ -29,6 +29,7 @@ struct Inputs {
     std::vector<double> returns;   // finished episodes, oldest first
     std::vector<float> action;
     bool shown_in_view = false;
+    std::string view_title;        // the plugin view's window title ("MuJoCo Viewport"); empty: unknown
 };
 
 struct View {
@@ -42,9 +43,16 @@ struct View {
     std::vector<std::pair<std::string, std::string>> facts;  // Episode, Step, Return, Last returns, Action
     ViewKind view = ViewKind::None;
     std::string view_note;
+    std::string view_link;         // "Show the MuJoCo Viewport" (PluginView only)
 };
 
 View Build(const Inputs& in);
+
+// The playback's choices, as the panel and Preferences > Simulation show them
+// (indices: 0 best / 1 sampled; the PlaybackSpeed order)
+inline constexpr const char* kActionChoices[] = {"Best", "Sampled"};
+inline constexpr const char* kSpeedChoices[] = {"Real time", "x4", "As fast as possible"};
+inline constexpr const char* kActionChoicesHint = "Best: the most likely action; Sampled: drawn as in training";
 
 // Where a policy came from: "this session's run (88,320 steps)" or
 // "ppo_cartpole.cyxmodel (88,320 steps)"

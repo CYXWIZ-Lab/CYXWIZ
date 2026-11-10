@@ -193,10 +193,22 @@ NodeEditor::NodeEditor()
     // under Examples in the Nodes panel.
 
     // A plugin is never shut down under a graph run that evaluates its nodes.
+    // Nor under a PPO run or a policy playback stepping one of its environments.
     cyxwiz::plugin::PluginManager::Instance().SetPluginStoppingHandler([this](const std::string& plugin_id) {
         if (simulation_plugins_.count(plugin_id)) {
             spdlog::info("Graph simulation stopped: its plugin {} is stopping", plugin_id);
             OnStopSimulation();
+        }
+        const auto owned = [&plugin_id](const std::string& environment_key) {
+            return environment_key.rfind(plugin_id + ":", 0) == 0;
+        };
+        if (rl_run_ && rl_run_->Active() && rl_run_->Config() && owned(rl_run_->Config()->environment_key)) {
+            spdlog::info("PPO stopped: its environment's plugin {} is stopping", plugin_id);
+            rl_run_->StopAndWait();
+        }
+        if (rl_playback_ && rl_playback_->Policy() && owned(rl_playback_->Policy()->config.environment_key)) {
+            spdlog::info("Policy playback stopped: its environment's plugin {} is stopping", plugin_id);
+            rl_playback_->Stop();
         }
     });
 
@@ -287,6 +299,23 @@ void NodeEditor::Render() {
     if (!simulation_session_.IsActive()) simulation_plugins_.clear();
     ApplySubgraphRequest();
     ApplyStepAfterInsert();
+
+    // The RL run, its dashboard and the policy playback are windows of their
+    // own: they keep going and stay on screen with the Studio window closed.
+    // RL metrics scripts reported (TOFIX134 P0 item 7); a script that reports
+    // without an RL run started from the canvas still gets the dashboard.
+    if (scripting_engine_) {
+        const auto samples = scripting_engine_->TakeRLMetrics();
+        if (!samples.empty() && !rl_dashboard_) {
+            rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
+            rl_dashboard_->SetVisible(true);
+        }
+        for (const auto& sample : samples) rl_dashboard_->UpdateCustomMetric(sample.name, sample.value);
+    }
+    PollRLTraining();
+    if (rl_dashboard_) rl_dashboard_->Render();
+    if (rl_playback_) rl_playback_->Render();
+
     if (!show_window_) return;
 
     SyncParameterDrivenPins();
@@ -921,27 +950,8 @@ void NodeEditor::Render() {
         ImGui::EndPopup();
     }
 
-    // RL metrics scripts reported (TOFIX134 P0 item 7); a script that reports
-    // without an RL run started from the canvas still gets the dashboard.
-    if (scripting_engine_) {
-        const auto samples = scripting_engine_->TakeRLMetrics();
-        if (!samples.empty() && !rl_dashboard_) {
-            rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
-            rl_dashboard_->SetVisible(true);
-        }
-        for (const auto& sample : samples) rl_dashboard_->UpdateCustomMetric(sample.name, sample.value);
-    }
-
-    PollRLTraining();
-
     // Plot nodes: result lane and their Plot windows (TOFIX134 P2).
     RenderPlotNodes();
-
-    // Render RL Training Dashboard (separate window)
-    if (rl_dashboard_) {
-        rl_dashboard_->Render();
-    }
-    if (rl_playback_) rl_playback_->Render();
 
     // ===== Save as Pattern Dialog =====
     if (show_save_pattern_dialog_) {
@@ -4347,6 +4357,7 @@ void NodeEditor::PollRLTraining() {
     }
     for (const auto& m : rl_run_->TakeUpdates()) {
         rl_dashboard_->AddPpoUpdate(m);
+        if (!m.compute_path.empty()) rl_dashboard_->SetPpoComputePath(m.compute_path);
         rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
                      cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" + rl_device_suffix_;
     }

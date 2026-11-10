@@ -79,17 +79,28 @@ bool IsMenuTitle(const std::string& title) {
     return std::find(std::begin(kTitles), std::end(kTitles), title) != std::end(kTitles);
 }
 
-// The plugin commands of one menu, in registration order, a separator
-// between groups
+// The plugin commands of one menu, a separator between groups: each group
+// once, in the order its first command registered (a plugin registered
+// again does not split its group), its commands in registration order
 void AppendPluginCommands(Context focus, const std::vector<PluginCommandEntry>& commands, const std::string& menu,
                           std::vector<MenuItem>& items) {
+    // A group is one plugin's (its id, the key's prefix): two plugins' "run" stay apart
+    const auto group_of = [](const PluginCommandEntry& c) { return c.key.substr(0, c.key.find(':')) + '\n' + c.group; };
+    std::vector<std::string> groups;
+    for (const auto& c : commands)
+        if (c.menu == menu && std::find(groups.begin(), groups.end(), group_of(c)) == groups.end())
+            groups.push_back(group_of(c));
+    std::vector<const PluginCommandEntry*> ordered;
+    for (const auto& g : groups)
+        for (const auto& c : commands)
+            if (c.menu == menu && group_of(c) == g) ordered.push_back(&c);
     bool first = true;
     std::string group;
-    for (const auto& c : commands) {
-        if (c.menu != menu) continue;
-        if (!first && c.group != group) items.push_back(Sep());
+    for (const auto* entry : ordered) {
+        const auto& c = *entry;
+        if (!first && group_of(c) != group) items.push_back(Sep());
         first = false;
-        group = c.group;
+        group = group_of(c);
         Opts opts;
         opts.argument = c.key;
         opts.checkable = c.checkable;
@@ -790,12 +801,14 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         std::vector<PluginCommandEntry> plugin_commands;
         for (const auto& c : in.plugin_commands)
             if (c.menu == "Simulation" && !(in.simulation_graph && c.replaced_by_graph_run)) plugin_commands.push_back(c);
-        std::string plugin;
-        for (std::size_t k = 0; k < plugin_commands.size();) {
-            plugin = plugin_commands[k].plugin_name;
+        // Each plugin once, under its name, in the order it first registered
+        std::vector<std::string> plugins;
+        for (const auto& c : plugin_commands)
+            if (std::find(plugins.begin(), plugins.end(), c.plugin_name) == plugins.end()) plugins.push_back(c.plugin_name);
+        for (const auto& plugin : plugins) {
             std::vector<PluginCommandEntry> own;
-            for (; k < plugin_commands.size() && plugin_commands[k].plugin_name == plugin; ++k)
-                own.push_back(plugin_commands[k]);
+            for (const auto& c : plugin_commands)
+                if (c.plugin_name == plugin) own.push_back(c);
             if (!i.empty()) i.push_back(Sep());
             if (!plugin.empty()) i.push_back(Head(plugin));
             AppendPluginCommands(f, own, "Simulation", i);

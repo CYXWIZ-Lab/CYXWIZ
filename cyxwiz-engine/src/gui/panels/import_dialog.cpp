@@ -196,16 +196,17 @@ void ImportDialog::RenderButtons() {
     if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular)) Close();
     ImGui::SameLine();
     if (policy) {
-        if (ui::SecondaryButton("Open its graph", can_open, reason)) StartJob(probed_path_, true);
+        if (ui::SecondaryButton("Open its graph", can_open, reason, ui::ButtonSize::Regular))
+            StartJob(probed_path_, true);
         ImGui::SameLine();
-        if (ui::PrimaryButton(play)) {
+        if (ui::PrimaryButton(play, true, nullptr, ui::ButtonSize::Regular)) {
             std::string why;
             if (play_policy_callback_(probed_path_, why)) Close();
             else error_ = why;
         }
         return;
     }
-    if (ui::PrimaryButton("Open its graph", can_open, reason)) StartJob(probed_path_, true);
+    if (ui::PrimaryButton("Open its graph", can_open, reason, ui::ButtonSize::Regular)) StartJob(probed_path_, true);
 }
 
 } // namespace cyxwiz

@@ -15,6 +15,7 @@
 #include "../../core/training_manager.h"
 #include "../../core/training_trace_collector.h"
 #include "../../core/window_manager.h"
+#include "../../core/rl_playback_presentation.h"
 #include "../ui_tokens.h"
 
 #include <algorithm>
@@ -385,8 +386,9 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             engine_config.SetSimulationRateHz(rate_hz);
                             engine_config.Save();
                         }
-                        ImGui::SameLine();
+                        ImGui::PushTextWrapPos(0.0f);  // under the field, wrapped: no clipping when narrow
                         ImGui::TextDisabled("ticks a second (1 to 1000; 60 by default)");
+                        ImGui::PopTextWrapPos();
                         ImGui::TableNextColumn();
                         ImGui::AlignTextToFramePadding();
                         ImGui::TextUnformatted("Simulation Monitor");
@@ -413,8 +415,8 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     if (ImGui::BeginTable("##policy_playback_prefs", 2, ImGuiTableFlags_SizingStretchProp)) {
                         ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 200.0f);
                         ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
-                        static const char* const kActions[] = {"Best", "Sampled"};
-                        static const char* const kSpeeds[] = {"Real time", "x4", "As fast as possible"};
+                        const auto& kActions = cyxwiz::rl_playback::kActionChoices;
+                        const auto& kSpeeds = cyxwiz::rl_playback::kSpeedChoices;
                         ImGui::TableNextColumn();
                         ImGui::AlignTextToFramePadding();
                         ImGui::TextUnformatted("Actions");
@@ -424,8 +426,10 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             engine_config.SetPolicyPlaybackBestActions(actions == 0);
                             engine_config.Save();
                         }
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("Best: the most likely action; Sampled: as in training");
+                        // Under the choice, wrapped: it does not clip in a narrow dialog
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("%s", cyxwiz::rl_playback::kActionChoicesHint);
+                        ImGui::PopTextWrapPos();
                         ImGui::TableNextColumn();
                         ImGui::AlignTextToFramePadding();
                         ImGui::TextUnformatted("Speed");
@@ -701,7 +705,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     if (training_active) {
                         ImGui::TextColored(
                             t.warning,
-                            "%s Training is active; device changes are disabled until the run finishes.",
+                            "%s The device is in use (a training run or a playing policy); device changes are disabled until it ends.",
                             ICON_FA_TRIANGLE_EXCLAMATION);
                     } else {
                         ImGui::TextDisabled(

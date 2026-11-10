@@ -1150,7 +1150,7 @@ MainWindow::MainWindow()
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
         // Show Training Dashboard when training starts (an RL run has its own)
-        if (training_plot_panel_ && !node_editor_->IsRLTrainingActive()) {
+        if (training_plot_panel_ && !compile_result_rl_) {  // an RL graph has its own dashboard, started or refused
             training_plot_panel_->SetVisible(true);
         }
     });
@@ -1221,7 +1221,7 @@ MainWindow::MainWindow()
             auto nodes = node_editor_->GetNodes();
             auto links = node_editor_->GetLinks();
             StartTrainingFromGraph(nodes, links);
-            if (training_plot_panel_ && !node_editor_->IsRLTrainingActive()) {
+            if (training_plot_panel_ && !compile_result_rl_) {  // an RL graph has its own dashboard, started or refused
                 training_plot_panel_->SetVisible(true);
             }
             spdlog::info("Started training from Train menu");

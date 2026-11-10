@@ -71,10 +71,15 @@ void CheckMuJoCo() {
     in.source = PolicySource("InvertedPendulum.cyxmodel", 122880);
     in.action = {-0.0831f};
     in.shown_in_view = true;
+    in.view_title = "MuJoCo Viewport";
     in.episode_return = 412.0;
     const View v = Build(in);
-    Check(v.view == ViewKind::PluginView && v.view_note.find("MuJoCo Viewport") != std::string::npos,
-          "a MuJoCo copy is in the MuJoCo Viewport");
+    Check(v.view == ViewKind::PluginView && v.view_note == "The MuJoCo Viewport shows the copy being played." &&
+              v.view_link == "Show the MuJoCo Viewport",
+          "a plugin's copy is in its view, named by the view's title");
+    Inputs untitled = in;
+    untitled.view_title.clear();
+    Check(Build(untitled).view_link == "Show the plugin's view", "a view without a known title");
     Check(Fact(v, "Action") == "[-0.083]" && Fact(v, "Return") == "412.0" && Fact(v, "Last returns") == "None finished yet",
           "continuous facts");
     Check(v.source_line == "policy from InvertedPendulum.cyxmodel (122,880 steps)", "a file's source line");

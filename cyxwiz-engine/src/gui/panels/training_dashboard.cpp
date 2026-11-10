@@ -77,12 +77,19 @@ void TrainingDashboardPanel::Push(const std::string& name, double value, double 
         m.history.clear();
         m.steps.clear();
     }
+    // and a PPO run's value after a script's starts a series by steps: the two
+    // lists stay the same length
+    if (!std::isnan(steps) && m.steps.size() != m.history.size()) {
+        m.history.clear();
+        m.steps.clear();
+    }
     m.history.push_back(value);
     if (!std::isnan(steps)) m.steps.push_back(steps);
     if (m.history.size() > kMaxHistory + kMaxHistory / 10) {
-        const auto drop = static_cast<long long>(m.history.size() - kMaxHistory);
-        m.history.erase(m.history.begin(), m.history.begin() + drop);
-        if (!m.steps.empty()) m.steps.erase(m.steps.begin(), m.steps.begin() + drop);
+        const size_t drop = m.history.size() - kMaxHistory;
+        m.history.erase(m.history.begin(), m.history.begin() + static_cast<long long>(drop));
+        const size_t step_drop = (std::min)(drop, m.steps.size());
+        m.steps.erase(m.steps.begin(), m.steps.begin() + static_cast<long long>(step_drop));
     }
     m.dirty = true;
 }
@@ -108,6 +115,7 @@ void TrainingDashboardPanel::ResetRLMetrics() {
     device_tooltip_.clear();
     device_fallback_ = false;
     device_note_.clear();
+    device_compute_path_.clear();
     last_update_.reset();
     outcome_.clear();
     failed_ = false;
@@ -234,7 +242,10 @@ void TrainingDashboardPanel::RenderRunHeader() {
     if (!device_chip_.empty()) {  // where it trains; a fallback in the caution tone
         ImGui::SameLine();
         ui::StatusPill("##rl_device", device_chip_.c_str(), device_fallback_ ? t.caution : t.text_dim);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", device_tooltip_.c_str());
+        if (ImGui::IsItemHovered()) {
+            if (device_compute_path_.empty()) ImGui::SetTooltip("%s", device_tooltip_.c_str());
+            else ImGui::SetTooltip("%s\nRuns as %s", device_tooltip_.c_str(), device_compute_path_.c_str());
+        }
     }
 
     // Pause / Resume and Stop while it runs; after it, Play policy and Save
@@ -254,6 +265,7 @@ void TrainingDashboardPanel::RenderRunHeader() {
                                 : 0.0f) +
                     ui::ButtonWidth(reset, ui::ButtonSize::Small);
     ImGui::SameLine();
+    if (ImGui::GetContentRegionAvail().x < w) ImGui::NewLine();  // narrow: the buttons on a line of their own
     ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - w));
     if (has_policy) {
         if (ui::PrimaryButton(play, true, nullptr, ui::ButtonSize::Small) && controls_.play) controls_.play();

@@ -12,6 +12,7 @@
 #include "../ui_tokens.h"
 
 #include <imgui.h>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
@@ -57,6 +58,9 @@ void PolicyPlaybackPanel::ShowPluginView() {
     if (!plugin::PluginEnvironmentRegistry::Instance().Find(policy->config.environment_key, env) ||
         env.info.view_panel_id.empty())
         return;
+    // The view's own title, from the plugin that registered it (looked up once)
+    for (const auto& panel : plugin::PluginPanelRegistry::Instance().GetAllPanels())
+        if (panel.panel_id == env.info.view_panel_id) view_title_ = panel.title;
     plugin::PluginPanelRegistry::Instance().ShowPanel(env.plugin_id, env.info.view_panel_id);
 }
 
@@ -95,7 +99,13 @@ void PolicyPlaybackPanel::RenderCartPole(const rl::PolicyPlayback::Snapshot& s, 
 }
 
 void PolicyPlaybackPanel::Render() {
-    if (!visible_) return;
+    if (!visible_) {
+        // Closed (its X): nothing plays unseen; Play opens it again
+        if (was_visible_) playback_.Stop();
+        was_visible_ = false;
+        return;
+    }
+    was_visible_ = true;
     ImGui::SetNextWindowSize(ImVec2(900, 480), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Policy Playback", &visible_)) {
         ImGui::End();
@@ -124,6 +134,7 @@ void PolicyPlaybackPanel::Render() {
     in.returns = s.returns;
     in.action = s.action;
     in.shown_in_view = s.shown_in_view;
+    in.view_title = view_title_;
     const pb::View v = pb::Build(in);
     // The copy moves: draw every frame (the plugin's view too)
     if (v.status == pb::Status::Playing) plugin::EnginePluginContext::KeepFullFrameRate();
@@ -153,13 +164,15 @@ void PolicyPlaybackPanel::Render() {
     if (v.can_new_episode) right += gap + ui::ButtonWidth(new_episode, ui::ButtonSize::Regular);
     if (v.can_stop) right += gap + ui::ButtonWidth(stop, ui::ButtonSize::Regular);
     ImGui::SameLine();
+    if (ImGui::GetContentRegionAvail().x < right) ImGui::NewLine();  // narrow: the buttons on a line of their own
     ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - right));
     if (ui::PrimaryButton(primary.c_str(), true, nullptr, ui::ButtonSize::Regular)) {
         if (v.status == pb::Status::Playing) playback_.Pause();
         else if (v.status == pb::Status::Paused) playback_.Resume();
         else {
-            std::string error;
-            playback_.Start(policy, playback_.Speed(), playback_.Best(), error);
+            start_error_.clear();
+            if (!playback_.Start(policy, playback_.Speed(), playback_.Best(), start_error_))
+                spdlog::error("Policy playback: {}", start_error_);
             view_opened_ = false;
         }
     }
@@ -174,20 +187,24 @@ void PolicyPlaybackPanel::Render() {
 
     // The view at the left, the facts and choices at the right (wide enough
     // for the speed choice)
-    static const char* const kActions[] = {"Best", "Sampled"};
-    static const char* const kSpeeds[] = {"Real time", "x4", "As fast as possible"};
+    const auto& kActions = pb::kActionChoices;
+    const auto& kSpeeds = pb::kSpeedChoices;
     const float label_w = 70.0f;
-    const float side = std::max(300.0f, label_w + ui::SegmentedControlWidth(kSpeeds, 3) + gap);
+    const float side_wanted = std::max(300.0f, label_w + ui::SegmentedControlWidth(kSpeeds, 3) + gap);
     const ImVec2 avail = ImGui::GetContentRegionAvail();
-    const float view_w = std::max(200.0f, avail.x - side - gap);
+    // Narrow: the facts and choices go under the view instead of beside it
+    const bool stacked = avail.x < side_wanted + 200.0f + gap;
+    const float side = stacked ? avail.x : side_wanted;
+    const float view_w = stacked ? avail.x : avail.x - side - gap;
     ImGui::BeginGroup();
     if (v.view == pb::ViewKind::CartPole) {
         RenderCartPole(s, view_w, std::max(160.0f, std::min(avail.y - 60.0f, view_w * 0.4f)));
     }
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + view_w);
+    if (!start_error_.empty()) ImGui::TextColored(t.error, "%s", start_error_.c_str());
     ImGui::TextColored(v.status == pb::Status::Failed ? t.error : t.text_dim, "%s", v.view_note.c_str());
     ImGui::PopTextWrapPos();
-    if (v.view == pb::ViewKind::PluginView && ui::LinkButton("Show the MuJoCo Viewport")) ShowPluginView();
+    if (v.view == pb::ViewKind::PluginView && ui::LinkButton(v.view_link.c_str())) ShowPluginView();
     if (v.view == pb::ViewKind::None && !s.returns.empty()) {
         std::vector<float> returns;
         for (const double r : s.returns) returns.push_back(static_cast<float>(r));
@@ -198,7 +215,7 @@ void PolicyPlaybackPanel::Render() {
         ImGui::PopStyleColor(2);
     }
     ImGui::EndGroup();
-    ImGui::SameLine();
+    if (!stacked) ImGui::SameLine();
     ImGui::BeginGroup();
     if (ImGui::BeginTable("##playback_facts", 2, ImGuiTableFlags_SizingFixedFit, ImVec2(side, 0.0f))) {
         for (const auto& [label, value] : v.facts) {

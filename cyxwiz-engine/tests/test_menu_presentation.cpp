@@ -404,6 +404,22 @@ int main() {
         Check(none && none->items.size() == 3 && none->items[0].kind == MenuItem::Kind::Header &&
                   none->items[2].id == "simulation.monitor",
               "no simulation plugin: the menu says so and keeps the Monitor");
+        // A plugin registered again (its commands around another plugin's):
+        // each plugin heads its commands once, each of its groups stays whole
+        MenuInputs mixed = bare;
+        mixed.plugin_commands = {
+            {"a.plugin:run", "Simulation", "run", "Run A", "", true, "", false, false, "Plugin A", false},
+            {"b.plugin:run", "Simulation", "run", "Run B", "", true, "", false, false, "Plugin B", false},
+            {"a.plugin:stop", "Simulation", "run", "Stop A", "", true, "", false, false, "Plugin A", false}};
+        const MenuModel mixed_model = BuildMenuModel(mixed);
+        const Menu* mixed_menu = simulation_menu(mixed_model);
+        std::vector<std::string> labels;
+        if (mixed_menu)
+            for (const auto& item : mixed_menu->items)
+                if (item.kind == MenuItem::Kind::Header || item.id == "plugin.command") labels.push_back(item.label);
+        Check(labels.size() >= 5 && labels[0] == "Plugin A" && labels[1] == "Run A" && labels[2] == "Stop A" &&
+                  labels[3] == "Plugin B" && labels[4] == "Run B",
+              "a plugin's commands stay under one heading, in one group");
         MenuInputs signal_only = graph;
         signal_only.plugin_commands.clear();
         signal_only.plugin_panels.clear();

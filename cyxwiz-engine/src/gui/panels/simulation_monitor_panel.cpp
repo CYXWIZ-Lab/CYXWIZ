@@ -207,7 +207,7 @@ void SimulationMonitorPanel::RenderScopes() {
             } else {
                 const bool auto_scale = [&]() {
                     const auto it = scope.parameters.find("auto_scale");
-                    return it != scope.parameters.end() && it->second == "true";
+                    return it == scope.parameters.end() || it->second == "true";  // the node's default is on
                 }();
                 ::gui::DrawScopeTrace("##trace", scope.name.c_str(), times, values,
                                       ImVec2(-1.0f, std::max(60.0f, plot_height)), auto_scale, colour);

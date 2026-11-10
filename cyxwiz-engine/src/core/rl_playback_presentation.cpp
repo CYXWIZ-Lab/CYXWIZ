@@ -9,7 +9,6 @@ namespace cyxwiz::rl_playback {
 namespace {
 
 constexpr const char* kBuiltinProvider = "cyxwiz.builtin:";
-constexpr const char* kMuJoCoProvider = "com.cyxwiz.simulation.mujoco:";
 
 std::string Thousands(int64_t n) {
     std::string digits = std::to_string(n < 0 ? -n : n);
@@ -80,11 +79,11 @@ View Build(const Inputs& in) {
     }
 
     if (in.shown_in_view) {
+        // Any plugin's view, named by its own window title
         v.view = ViewKind::PluginView;
-        v.view_note = StartsWith(in.environment_key, kMuJoCoProvider)
-                          ? "The MuJoCo Viewport shows the copy being played, with its own camera and overlay. "
-                            "Its Run and Step are off while the playback shows the scene."
-                          : "The plugin's own view shows the copy being played.";
+        const std::string name = in.view_title.empty() ? std::string("plugin's view") : in.view_title;
+        v.view_note = "The " + name + " shows the copy being played.";
+        v.view_link = "Show the " + name;
     } else if (StartsWith(in.environment_key, kBuiltinProvider) && in.environment_id == "CartPole-v1") {
         v.view = ViewKind::CartPole;
         v.view_note = "Drawn from the copy's state: cart position and pole angle.";

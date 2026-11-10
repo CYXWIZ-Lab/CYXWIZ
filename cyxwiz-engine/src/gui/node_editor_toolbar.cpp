@@ -15,6 +15,7 @@
 #include "../core/async_task_manager.h"
 #include "../core/graph_executor.h"
 #include "../core/live_graph_compile.h"
+#include "../core/rl/rl_training_run.h"
 #include "../core/rl_graph_compile.h"
 #include "../core/studio_toolbar_presentation.h"
 #include "../core/training_manager.h"
@@ -565,7 +566,10 @@ void NodeEditor::ShowToolbar() {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop training");
     } else if (rl_active) {
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(t.success, ICON_FA_SPINNER " %s", rl_status_.c_str());
+        if (rl_run_ && rl_run_->Paused())  // as the dashboard says it
+            ImGui::TextColored(t.pending, ICON_FA_PAUSE " %s \xC2\xB7 Paused", rl_status_.c_str());
+        else
+            ImGui::TextColored(t.success, ICON_FA_SPINNER " %s", rl_status_.c_str());
         if (!rl_device_tooltip_.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", rl_device_tooltip_.c_str());
         ImGui::SameLine();
         if (ui::DangerButton(ICON_FA_STOP " Stop##stop_ppo")) StopRLTraining();

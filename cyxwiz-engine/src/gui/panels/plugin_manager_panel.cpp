@@ -6,6 +6,7 @@
 #include "../../plugin/security/permission_store.h"
 #include "../../core/async_task_manager.h"
 #include "../ui_tokens.h"
+#include "../ui_buttons.h"
 #include "../python_bundle_ui.h"
 #include "../../extension/python/python_node_provider.h"
 #include <imgui.h>
@@ -196,9 +197,6 @@ void PluginManagerPanel::RenderPluginList(const std::vector<const plugin::Loaded
 // Plugin Card
 // ============================================================================
 
-namespace {
-constexpr float kBadgePaddingX = 4.0f;
-}  // namespace
 
 void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
     const ui::Tokens& t = ui::CurrentTokens();
@@ -278,7 +276,7 @@ void PluginManagerPanel::RenderPluginCard(const plugin::LoadedPlugin* p) {
     for (auto perm : all_perms) {
         if (plugin::HasPermission(p->manifest.permissions, perm)) {
             const char* name = plugin::security::PermissionStore::PermissionDisplayName(perm);
-            const float badge_width = ImGui::CalcTextSize(name).x + 2.0f * kBadgePaddingX;
+            const float badge_width = ui::StatusPillWidth(name);
             if (!first_badge) {
                 ImGui::SameLine();
                 if (ImGui::GetCursorScreenPos().x + badge_width > right_edge) ImGui::NewLine();
@@ -344,26 +342,13 @@ void PluginManagerPanel::ReloadStartupList() {
 void PluginManagerPanel::RenderPermissionBadge(plugin::PluginPermission perm, bool is_dangerous) {
     const ui::Tokens& t = ui::CurrentTokens();
     const char* name = plugin::security::PermissionStore::PermissionDisplayName(perm);
-    ImVec4 bg = is_dangerous ? ui::WithAlpha(t.error, 0.8f) : ui::WithAlpha(t.success, 0.8f);
-    ImVec4 text_col = ui::ReadableOn(t, bg);
-
-    ImGui::PushStyleColor(ImGuiCol_Button, bg);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bg);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, bg);
-    ImGui::PushStyleColor(ImGuiCol_Text, text_col);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(kBadgePaddingX, 1));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-
-    ImGui::SmallButton(name);
-
+    // A label, not an action: the shared status pill, its dot in the risk's tone
+    ui::StatusPill((std::string("##perm_") + name).c_str(), name, is_dangerous ? t.error : t.success);
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::TextUnformatted(plugin::security::PermissionStore::PermissionDescription(perm));
         ImGui::EndTooltip();
     }
-
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor(4);
 }
 
 // ============================================================================

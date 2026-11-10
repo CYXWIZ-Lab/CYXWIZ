@@ -151,7 +151,7 @@ void Formula(const char* what, const char* formula) {
 void RenderSignalScope(MLNode& node, RenderNodePropertiesContext& context) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     int win = std::clamp(ParseIntOr(ParamOr(node, "window_size"), 500), 10, 100000);
-    bool auto_scale = ParamOr(node, "auto_scale") == "true";
+    bool auto_scale = ParamOr(node, "auto_scale", "true") == "true";  // the node's default is on
     {
         properties_rows::Rows rows("##scope");
         if (rows.ok) {

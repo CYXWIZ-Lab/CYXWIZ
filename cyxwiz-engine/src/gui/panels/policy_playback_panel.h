@@ -32,6 +32,9 @@ private:
     rl::PolicyPlayback playback_;
     std::string file_name_;
     bool visible_ = false;
+    bool was_visible_ = false;  // closing the window stops the playback
+    std::string start_error_;   // why Play policy could not start again
+    std::string view_title_;    // the plugin view's window title, once shown
     bool view_opened_ = false;  // the plugin's view was opened for this playback
 };
 

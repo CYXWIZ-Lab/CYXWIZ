@@ -61,6 +61,8 @@ public:
     // The device the run trains on, once its preflight is done
     // (core/rl_device_presentation): the chip, its route on hover, a note
     void SetPpoDevice(std::string chip, std::string tooltip, bool fallback, std::string note);
+    // How the run computes (fused kernels or ArrayFire operations), shown with the chip's route
+    void SetPpoComputePath(std::string path) { device_compute_path_ = std::move(path); }
     void AddPpoUpdate(const rl::PpoUpdateMetrics& m);
     void EndPpoRun(const std::string& outcome, bool failed);
 
@@ -92,6 +94,7 @@ private:
     std::string device_tooltip_;
     bool device_fallback_ = false;
     std::string device_note_;
+    std::string device_compute_path_;
     std::optional<rl::PpoUpdateMetrics> last_update_;
     std::string outcome_;
     bool failed_ = false;
