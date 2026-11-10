@@ -378,6 +378,16 @@ private:
     std::string active_download_model_id_;
 
     std::mutex stream_mutex_;
+
+    // Brings the connection back: a call that finds the daemon unreachable
+    // marks the client disconnected, and while it is, this thread waits on the
+    // same channel and marks it connected again once the daemon answers (a
+    // restarted daemon, or one started after the GUI). The channel and stub
+    // are kept, so no call can use a stub that was freed.
+    void StartWatch();
+    void StopWatch();
+    std::thread watch_thread_;
+    std::atomic<bool> watch_stop_{false};
 };
 
 } // namespace cyxwiz::servernode::ipc

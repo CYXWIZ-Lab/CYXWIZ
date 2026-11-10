@@ -530,6 +530,13 @@ if(CYXWIZ_BUILD_TESTS)
     target_compile_features(test_secret_file PRIVATE cxx_std_17)
     add_test(NAME test_secret_file COMMAND test_secret_file)
 
+    # The GUI's daemon client reconnects after the daemon restarts
+    add_executable(test_daemon_client_reconnect tests/test_daemon_client_reconnect.cpp src/ipc/daemon_client.cpp)
+    target_include_directories(test_daemon_client_reconnect PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_daemon_client_reconnect PRIVATE cyxwiz-protocol spdlog::spdlog Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_daemon_client_reconnect PRIVATE cxx_std_17)
+    add_test(NAME test_daemon_client_reconnect COMMAND test_daemon_client_reconnect)
+
     # Mock Engine Client (standalone test tool)
     add_executable(mock_engine_client
         tests/mock_engine_client.cpp
