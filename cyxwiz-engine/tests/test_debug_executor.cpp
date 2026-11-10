@@ -3388,6 +3388,10 @@ void TestLayerEmbedding() {
                "unit scaling; a constant axis sits at 0.5");
     ExpectTrue(le::Nearest(unit, 0.95f, 0.5f, 0.1f, 1.0f) == std::optional<size_t>(1), "the nearest point");
     ExpectTrue(!le::Nearest(unit, 0.25f, 0.9f, 0.1f, 1.0f), "nothing near: none");
+    const std::vector<float> three = {0.0f, 0.0f, 3.0f, 4.0f, 10.0f, -2.0f};
+    const auto twin = le::SameRow(three, 3, 2, {3.0f + 1e-6f, 4.0f});
+    ExpectTrue(twin && *twin == 1, "a sample that is one of the items is found (float noise allowed)");
+    ExpectTrue(!le::SameRow(three, 3, 2, {3.0f, 4.1f}), "a sample near an item is not taken for it");
     const auto counts = le::ClassCounts({1, 0, 1, -1, 1}, {"cat", "dog"});
     ExpectTrue(counts.size() == 2 && counts[0].label == 0 && counts[0].name == "cat" && counts[0].count == 1 &&
                    counts[1].label == 1 && counts[1].name == "dog" && counts[1].count == 3,

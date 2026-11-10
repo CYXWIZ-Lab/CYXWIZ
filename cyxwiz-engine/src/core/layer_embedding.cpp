@@ -65,6 +65,28 @@ Projection Project(const std::vector<float>& rows, size_t items, size_t features
     return p;
 }
 
+std::optional<size_t> SameRow(const std::vector<float>& rows, size_t items, size_t features,
+                              const std::vector<float>& row) {
+    if (row.size() != features || rows.size() < items * features) return std::nullopt;
+    double length = 0.0;
+    for (float v : row) length += static_cast<double>(v) * v;
+    const double limit = 1e-4 * std::max(1.0, std::sqrt(length));
+    std::optional<size_t> best;
+    double best_d = limit * limit;
+    for (size_t i = 0; i < items; ++i) {
+        double d = 0.0;
+        for (size_t f = 0; f < features && d <= best_d; ++f) {
+            const double e = static_cast<double>(rows[i * features + f]) - row[f];
+            d += e * e;
+        }
+        if (d <= best_d) {
+            best_d = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
 Scaled ToUnit(const Projection& projection) {
     const auto scale = [](const std::vector<float>& v) {
         std::vector<float> out(v.size(), 0.5f);

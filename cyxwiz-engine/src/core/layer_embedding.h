@@ -46,6 +46,13 @@ struct ClassCount {
 };
 std::vector<ClassCount> ClassCounts(const std::vector<int>& labels, const std::vector<std::string>& names);
 
+// The item whose row is `row` (within float noise: 1e-4 of the row's length),
+// when this sample is itself one of the items; nullopt otherwise. A second
+// copy of a point would be projected apart (t-SNE pushes a duplicate pair
+// out of the cloud), so the view rings the item instead.
+std::optional<size_t> SameRow(const std::vector<float>& rows, size_t items, size_t features,
+                              const std::vector<float>& row);
+
 const char* MethodName(Method method);
 
 }  // namespace cyxwiz::layer_embedding

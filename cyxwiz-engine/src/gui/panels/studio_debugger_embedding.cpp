@@ -54,7 +54,9 @@ struct StudioDebuggerPanel::EmbeddingState {
 
     std::string result_key;  // capture / layer / method
     le::Projection projection;
-    le::Scaled points;  // the items, then this sample last
+    le::Scaled points;  // the items, then this sample unless it is one of them
+    size_t item_count = 0;
+    size_t own_index = 0;  // this sample's point
     DataItems items;
     std::vector<int> labels;
     std::vector<int> predicted;
@@ -122,6 +124,8 @@ void StudioDebuggerPanel::RenderEmbedding() {
             std::vector<int> labels;
             std::vector<int> predicted;
             le::Projection projection;
+            size_t item_count = 0;
+            size_t own_index = 0;
             bool cancelled = false;
             std::string error;
         };
@@ -172,9 +176,12 @@ void StudioDebuggerPanel::RenderEmbedding() {
                     const auto own = lv::ReadValues(
                         session->LayerOutput(ti::ItemRange(own_input, own_item, own_item + 1), module));
                     if (own.size() != features) throw std::runtime_error("this sample's output is not one row");
-                    rows.insert(rows.end(), own.begin(), own.end());  // this sample, ringed
+                    const auto among = le::SameRow(rows, n, features, own);
+                    computed->item_count = n;
+                    computed->own_index = among ? *among : n;
+                    if (!among) rows.insert(rows.end(), own.begin(), own.end());  // this sample, ringed
                     r.stage->store(3);
-                    computed->projection = le::Project(rows, n + 1, features, method);
+                    computed->projection = le::Project(rows, rows.size() / features, features, method);
                     if (!computed->projection.error.empty()) throw std::runtime_error(computed->projection.error);
                     if (computed->items.labels.NumElements() > 0)
                         computed->labels =
@@ -195,6 +202,8 @@ void StudioDebuggerPanel::RenderEmbedding() {
                 state->result_key = key;
                 state->projection = std::move(computed->projection);
                 state->points = le::ToUnit(state->projection);
+                state->item_count = computed->item_count;
+                state->own_index = computed->own_index;
                 state->items = std::move(computed->items);
                 state->labels = std::move(computed->labels);
                 state->predicted = std::move(computed->predicted);
@@ -268,7 +277,7 @@ void StudioDebuggerPanel::RenderEmbedding() {
     }
 
     // The result: the lead, the plot and its legend.
-    const size_t n = s.points.x.size() - 1;  // the last point is this sample
+    const size_t n = std::min(s.item_count, s.points.x.size());
     const bool by_predicted = s.colour == 1;
     const std::vector<int>& colours = by_predicted ? s.predicted : s.labels;
     const std::vector<std::string> names = facts.class_names.empty() ? s.items.class_names : facts.class_names;
@@ -311,7 +320,7 @@ void StudioDebuggerPanel::RenderEmbedding() {
             dl->AddCircle(p, 6.0f, ui::ToU32(t.warning), 0, 1.5f);
     }
     if (s.picked && *s.picked < n) dl->AddCircle(place(*s.picked), 8.0f, ui::ToU32(t.accent_text), 0, 2.0f);
-    dl->AddCircle(place(n), 7.5f, ui::ToU32(t.text_bright), 0, 2.0f);  // this sample
+    if (s.own_index < s.points.x.size()) dl->AddCircle(place(s.own_index), 7.5f, ui::ToU32(t.text_bright), 0, 2.0f);
     std::optional<size_t> hovered;
     if (ImGui::IsItemHovered()) {
         const ImVec2 m = ImGui::GetIO().MousePos;
@@ -325,6 +334,7 @@ void StudioDebuggerPanel::RenderEmbedding() {
                                          : "item " + (i < s.items.indices.size() ? std::to_string(s.items.indices[i]) : "");
             ImGui::BeginTooltip();
             ImGui::TextUnformatted(name.c_str());
+            if (i == s.own_index) ImGui::TextColored(DebuggerMuted(), "this sample");
             if (i < s.labels.size() && s.labels[i] >= 0)
                 ImGui::TextColored(DebuggerMuted(), "label %s", lv::ClassName(s.labels[i], names).c_str());
             if (i < s.predicted.size() && s.predicted[i] >= 0)
@@ -379,7 +389,7 @@ bool StudioDebuggerPanel::RenderEmbeddingPick() {
     if (!embedding_ || !embedding_->picked || ImGui::GetFrameCount() - embedding_->shown_frame > 1) return false;
     EmbeddingState& s = *embedding_;
     const size_t i = *s.picked;
-    if (i + 1 >= s.points.x.size()) return false;
+    if (i >= std::min(s.item_count, s.points.x.size())) return false;
     const auto& facts = ShownSampleFacts();
     const auto names = facts.class_names.empty() ? s.items.class_names : facts.class_names;
     if (BeginCard("EmbeddingPick")) {

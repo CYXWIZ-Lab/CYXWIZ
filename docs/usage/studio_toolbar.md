@@ -487,7 +487,8 @@ says how to get one.
     few seconds; they keep neighbours together, and the gaps between their
     clusters mean little). **Colour by** the **True class** or the
     **Predicted class**; with the predicted class the items the model gets
-    wrong are ringed in amber. The white ring is this sample. The steps show
+    wrong are ringed in amber. The white ring is this sample (when it is
+    one of the 320, that point is ringed rather than drawn twice). The steps show
     in a card while it runs, as for Top images (the data loads first on a
     reopened project). Hover a point for its item, label and prediction;
     click it to see it in the Inspector, with **Make it the picked sample**.
