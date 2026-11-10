@@ -9,6 +9,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
+#include <stdexcept>
+#include <utility>
 #include <cstdio>
 #include <cstring>
 
@@ -177,6 +180,30 @@ bool OptimizerStates(const std::map<std::string, std::vector<uint8_t>>& files,
     return true;
 }
 
+// ArrayFire arrays belong to the backend that made them: work on a policy's
+// networks happens on its device, whatever this thread was on; the thread's
+// device comes back after (and nothing changes when it already matches).
+class PolicyDeviceScope {
+public:
+    explicit PolicyDeviceScope(const TrainedPolicy& p) {
+        const auto* current = Device::GetCurrentDevice();
+        if (current && current->GetType() == p.device_type && current->GetDeviceId() == p.device_id) return;
+        if (current) previous_ = std::make_pair(current->GetType(), current->GetDeviceId());
+        const auto activation = Device(p.device_type, p.device_id).ActivateExact(false);
+        if (!activation.success) throw std::runtime_error("the policy's device did not start: " + activation.message);
+        switched_ = true;
+    }
+    ~PolicyDeviceScope() {
+        if (switched_ && previous_) Device(previous_->first, previous_->second).ActivateExact(false);
+    }
+    PolicyDeviceScope(const PolicyDeviceScope&) = delete;
+    PolicyDeviceScope& operator=(const PolicyDeviceScope&) = delete;
+
+private:
+    std::optional<std::pair<DeviceType, int>> previous_;
+    bool switched_ = false;
+};
+
 // The parameters of `model` from the package's "<prefix><name>" weights
 bool SetWeights(IExecutableModel& model, const std::string& prefix,
                 const std::map<std::string, std::vector<uint8_t>>& weights,
@@ -237,6 +264,7 @@ std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& 
 
 std::vector<float> PolicyActions(TrainedPolicy& p, std::vector<float> observations, size_t rows, bool best,
                                  uint64_t seed) {
+    const PolicyDeviceScope on_its_device(p);
     const auto& info = p.config.environment;
     const size_t obs_size = p.config.observation_size;
     if (p.normalizer) p.normalizer->NormalizeObservations(observations.data(), rows);
@@ -305,6 +333,7 @@ bool SaveTrainedPolicy(const TrainedPolicy& p, const std::filesystem::path& path
         return false;
     }
     try {
+        const PolicyDeviceScope on_its_device(p);
         std::map<std::string, std::vector<uint8_t>> weights;
         std::map<std::string, std::vector<int64_t>> shapes;
         std::map<std::string, TensorDType> dtypes;
@@ -447,6 +476,10 @@ std::unique_ptr<TrainedPolicy> LoadTrainedPolicy(const std::filesystem::path& pa
         auto out = std::make_unique<TrainedPolicy>();
         out->config = *compiled.rl;
         out->graph_json = graph_json;
+        if (const auto* active = Device::GetCurrentDevice()) {
+            out->device_type = active->GetType();
+            out->device_id = active->GetDeviceId();
+        }
         if (!BuildRLNetworks(out->config, out->policy, out->value, error)) return nullptr;
         if (!SetWeights(*out->policy, "policy.", weights, shapes, dtypes, "policy", error) ||
             !SetWeights(*out->value, "value.", weights, shapes, dtypes, "value", error))

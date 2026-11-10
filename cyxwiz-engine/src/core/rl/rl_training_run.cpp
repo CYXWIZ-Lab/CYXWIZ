@@ -1,9 +1,15 @@
 #include "rl_training_run.h"
 
 #include "../../plugin/registries/plugin_environment_registry.h"
+#include "../run_execution_device.h"
+#include "../training_trace_collector.h"
 #include "algorithms/arrayfire_backend_utils.h"
 
+#include <cyxwiz/device.h>
+
 #include <spdlog/spdlog.h>
+
+#include <chrono>
 
 namespace cyxwiz::rl {
 
@@ -28,6 +34,7 @@ bool RLTrainingRun::Start(std::shared_ptr<const RLTrainingConfiguration> config,
         updates_.clear();
         message_.clear();
         trained_.reset();
+        device_ = {};
     }
     config_ = std::move(config);
     graph_json_ = std::move(graph_json);
@@ -61,6 +68,11 @@ std::string RLTrainingRun::Message() const {
     return message_;
 }
 
+ExecutionDeviceContext RLTrainingRun::Device() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return device_;
+}
+
 std::shared_ptr<TrainedPolicy> RLTrainingRun::Trained() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return trained_;
@@ -75,13 +87,38 @@ std::vector<PpoUpdateMetrics> RLTrainingRun::TakeUpdates() {
 
 void RLTrainingRun::Run() {
     const auto& c = *config_;
-    const auto fail = [this](const std::string& why) {
+    bool traced = false;
+    const auto fail = [this, &traced](const std::string& why) {
         spdlog::error("PPO: {}", why);
+        if (traced) TrainingTraceCollector::Instance().FinishRun("failed");
         std::lock_guard<std::mutex> lock(mutex_);
         message_ = why;
         state_ = State::Failed;
     };
     try {
+        // The device: the user's route under the next-run policy, as supervised
+        // training takes it; held on this worker for the whole run, so the
+        // Engine knows a training uses it (Preferences > Devices waits)
+        ExecutionDeviceContext device;
+        try {
+            device = PrepareRunExecutionDevice(ResolveRunExecutionPolicy(false, "PPO"), "PPO");
+        } catch (const std::exception& e) {
+            return fail(std::string("The training device did not start: ") + e.what());
+        }
+        const ScopedExecutionDeviceContext device_scope(device);
+        const ScopedActiveExecutionDeviceContext active_device_scope;
+        const std::string run_id =
+            "ppo-" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::system_clock::now().time_since_epoch())
+                                        .count());
+        TrainingTraceCollector::Instance().StartRun(run_id);
+        traced = true;
+        RecordRunExecutionDeviceBind(device, run_id, "PPO");
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            device_ = device;
+        }
+
         std::string error;
         std::shared_ptr<plugin::EnvironmentBatch> batch(
             plugin::PluginEnvironmentRegistry::Instance().Create(c.environment_key, c.environment_settings, c.copies,
@@ -128,7 +165,13 @@ void RLTrainingRun::Run() {
         if (!history.empty()) {
             if (!trainer.TakeTrained(state, error)) return fail(error);
             trained = MakeTrainedPolicy(c, graph_json_, std::move(state), std::move(history));
+            if (const auto* active = cyxwiz::Device::GetCurrentDevice()) {  // where its networks live
+                trained->device_type = active->GetType();
+                trained->device_id = active->GetDeviceId();
+            }
         }
+        TrainingTraceCollector::Instance().FinishRun(stop_requested_ ? "stopped" : "completed");
+        traced = false;
         std::lock_guard<std::mutex> lock(mutex_);
         trained_ = std::move(trained);
         if (stop_requested_) {

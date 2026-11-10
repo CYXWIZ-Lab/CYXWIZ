@@ -72,6 +72,9 @@ void PolicyPlayback::Run() {
     };
     try {
         auto& p = *policy_;
+        // Act on the device the policy's networks live on (its training run's route)
+        const auto activation = Device(p.device_type, p.device_id).ActivateExact(false);
+        if (!activation.success) return fail("the policy's device did not start: " + activation.message);
         std::string error;
         auto batch = plugin::PluginEnvironmentRegistry::Instance().Create(p.config.environment_key,
                                                                           p.config.environment_settings, 1, error);

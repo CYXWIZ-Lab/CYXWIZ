@@ -8,6 +8,7 @@
 // per-update metrics. A finished or stopped run keeps its trained policy
 // (TOFIX195 S5) until the next Start. Engine side: it links the plugin host.
 
+#include "../execution_device_context.h"
 #include "../rl_graph_compile.h"
 #include "ppo_trainer.h"
 #include "trained_policy.h"
@@ -49,6 +50,11 @@ public:
     // The policy of the last finished or stopped run (null otherwise)
     std::shared_ptr<TrainedPolicy> Trained() const;
 
+    // The device the run trains on: the user's route from Preferences >
+    // Devices under the next-run policy, as supervised training resolves it
+    // (run_execution_device). Not valid before the run's preflight.
+    ExecutionDeviceContext Device() const;
+
 private:
     void Run();
 
@@ -63,6 +69,7 @@ private:
     std::string message_;
     PpoTrainer* trainer_ = nullptr;  // while Run trains
     std::shared_ptr<TrainedPolicy> trained_;
+    ExecutionDeviceContext device_;
 };
 
 }  // namespace cyxwiz::rl

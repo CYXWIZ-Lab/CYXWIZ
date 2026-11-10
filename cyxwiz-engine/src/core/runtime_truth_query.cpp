@@ -515,15 +515,20 @@ class EngineRuntimeTruthProvider final : public RuntimeTruthQueryProvider {
 public:
     RuntimeTrainingTruth GetCurrentTraining() const override {
         auto& manager = TrainingManager::Instance();
-        const bool active = manager.IsTrainingActive();
-        if (!active) {
-            RuntimeTrainingTruth truth;
-            truth.source = "training_manager";
-            return truth;
+        if (manager.IsTrainingActive()) {
+            const auto metrics = manager.GetCurrentMetrics();
+            return MakeTrainingTruth(
+                TrainingTraceCollector::Instance().Snapshot(), true, &metrics);
         }
-        const auto metrics = manager.GetCurrentMetrics();
-        return MakeTrainingTruth(
-            TrainingTraceCollector::Instance().Snapshot(), true, &metrics);
+        // A run outside the training manager (PPO) holds the device and
+        // writes the trace
+        if (HasActiveExecutionDeviceContext()) {
+            return MakeTrainingTruth(
+                TrainingTraceCollector::Instance().Snapshot(), true, nullptr);
+        }
+        RuntimeTrainingTruth truth;
+        truth.source = "training_manager";
+        return truth;
     }
 
     RuntimeTrainingTruth GetLastTraining() const override {
@@ -533,6 +538,10 @@ public:
             const auto metrics = manager.GetCurrentMetrics();
             return MakeTrainingTruth(
                 TrainingTraceCollector::Instance().Snapshot(), true, &metrics);
+        }
+        if (HasActiveExecutionDeviceContext()) {  // a PPO run
+            return MakeTrainingTruth(
+                TrainingTraceCollector::Instance().Snapshot(), true, nullptr);
         }
         return MakeTrainingTruth(
             TrainingTraceCollector::LatestTrace(), false, nullptr);

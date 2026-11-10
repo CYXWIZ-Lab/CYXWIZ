@@ -8,16 +8,23 @@
 // loads back acting the same; a graph whose layers differ is refused. With a
 // MuJoCo plugin folder as the argument, a short InvertedPendulum run with
 // normalised observations saves and loads the same way (continuous actions).
+// The device (TOFIX206): every run takes the route chosen the Engine's way
+// (the pending selection + the next-run policy, here the ArrayFire CPU), and
+// reports it; Strict refuses a route that cannot start, Compatibility falls
+// back to the CPU and says so.
 //
 //   test_rl_graph_training [<MuJoCo plugin folder>]
 
+#include "../src/core/execution_device_preferences.h"
 #include "../src/core/graph_compiler.h"
+#include "../src/core/training_trace_collector.h"
 #include "../src/core/rl/rl_training_run.h"
 #include "../src/core/rl/trained_policy.h"
 #include "../src/plugin/plugin_manager.h"
 #include "../src/core/rl_graph_compile.h"
 #include "../src/core/rl_graph_presentation.h"
 #include "../src/plugin/registries/plugin_environment_registry.h"
+#include "route_qualification_test_fixture.h"
 #include "rl_graph_test_support.h"
 
 #include <chrono>
@@ -32,6 +39,18 @@
 namespace {
 
 int failures = 0;
+
+void Check(bool ok, const std::string& what);
+
+// The route for the next run, chosen as Preferences > Devices chooses it
+void SelectRoute(cyxwiz::DeviceType type, int device_id, cyxwiz::ExecutionPolicy policy) {
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(type, device_id);
+    cyxwiz::ClearNextRunExecutionPolicy();
+    cyxwiz::SetNextRunExecutionPolicy(policy);
+}
+
+void SelectCpu() { SelectRoute(cyxwiz::DeviceType::CPU, 0, cyxwiz::ExecutionPolicy::Strict); }
 
 void Check(bool ok, const std::string& what) {
     if (ok) return;
@@ -141,6 +160,7 @@ void CheckCartPole() {
     cyxwiz::rl::RLTrainingRun run;
     std::string error;
     const auto start = std::chrono::steady_clock::now();
+    SelectCpu();
     Check(run.Start(config, rl_graph_test::Json(g), error), "the run starts: " + error);
     Check(!run.Start(config, "", error) && error.find("already training") != std::string::npos,
           "a second start while it runs is refused: " + error);
@@ -209,6 +229,7 @@ void CheckContinuous(const std::filesystem::path& plugin) {
     const auto config = Compile(g);
     if (config) {
         cyxwiz::rl::RLTrainingRun run;
+        SelectCpu();
         Check(run.Start(config, rl_graph_test::Json(g), error), "the InvertedPendulum run starts: " + error);
         Wait(run, 300.0);
         Check(run.GetState() == cyxwiz::rl::RLTrainingRun::State::Finished, "it finishes: " + run.Message());
@@ -235,6 +256,7 @@ void CheckStopAndFailure() {
     if (!config) return;
     cyxwiz::rl::RLTrainingRun run;
     std::string error;
+    SelectCpu();
     Check(run.Start(config, "", error), "a long run starts: " + error);
     run.Pause();
     Check(run.Paused(), "it pauses");
@@ -247,10 +269,58 @@ void CheckStopAndFailure() {
     // An environment the registry no longer offers (its plugin went after the compile)
     auto copy = std::make_shared<cyxwiz::RLTrainingConfiguration>(*config);
     copy->environment_key = "com.example.gone:Nope-v0";
+    SelectCpu();
     Check(run.Start(copy, "", error), "a run with a vanished environment starts: " + error);
     Wait(run, 30.0);
     Check(run.GetState() == cyxwiz::rl::RLTrainingRun::State::Failed && !run.Message().empty(),
           "it fails with the reason: " + run.Message());
+}
+
+// The run's device is the chosen route, reported as such; Strict refuses a
+// route that cannot start; Compatibility falls back to the CPU and says so
+void CheckDevice() {
+    rl_graph_test::Ids id{};
+    auto g = rl_graph_test::Pattern(id);
+    g.At(id.ppo).parameters["n_steps"] = "64";
+    g.At(id.ppo).parameters["total_timesteps"] = "1024";
+    g.At(id.ppo).parameters["stop_at_return"] = "false";
+    const auto config = Compile(g);
+    if (!config) return;
+    std::string error;
+
+    cyxwiz::rl::RLTrainingRun run;
+    SelectCpu();
+    Check(run.Start(config, rl_graph_test::Json(g), error), "a CPU run starts: " + error);
+    Wait(run, 120.0);
+    const auto device = run.Device();
+    Check(run.GetState() == cyxwiz::rl::RLTrainingRun::State::Finished, "the CPU run finishes: " + run.Message());
+    Check(device.valid && device.effective_backend == "arrayfire_cpu" && device.requested_backend == "arrayfire_cpu" &&
+              !device.selection_fallback_applied,
+          "the run reports the chosen CPU route: " + device.Describe());
+    const auto trained = run.Trained();
+    Check(trained && trained->device_type == cyxwiz::DeviceType::CPU, "its policy lives on the CPU");
+    Check(cyxwiz::TrainingTraceCollector::LatestTrace().effective_backend == "arrayfire_cpu",
+          "the training trace records the run's device");
+    Check(!cyxwiz::HasActiveExecutionDeviceContext(), "the device is free once the run ends");
+
+    // A route that cannot start (no CPU device 7)
+    cyxwiz::rl::RLTrainingRun strict;
+    SelectRoute(cyxwiz::DeviceType::CPU, 7, cyxwiz::ExecutionPolicy::Strict);
+    Check(strict.Start(config, "", error), "a Strict run on a missing route starts: " + error);
+    Wait(strict, 60.0);
+    Check(strict.GetState() == cyxwiz::rl::RLTrainingRun::State::Failed &&
+              strict.Message().find("The training device did not start") != std::string::npos,
+          "Strict refuses it with the reason: " + strict.Message());
+
+    cyxwiz::rl::RLTrainingRun compatible;
+    SelectRoute(cyxwiz::DeviceType::CPU, 7, cyxwiz::ExecutionPolicy::Compatibility);
+    Check(compatible.Start(config, "", error), "a Compatibility run on a missing route starts: " + error);
+    Wait(compatible, 120.0);
+    const auto fallback = compatible.Device();
+    Check(compatible.GetState() == cyxwiz::rl::RLTrainingRun::State::Finished &&
+              fallback.selection_fallback_applied && fallback.effective_backend == "arrayfire_cpu" &&
+              !fallback.error.empty(),
+          "Compatibility falls back to the CPU and says so: " + fallback.Describe());
 }
 
 }  // namespace
@@ -262,6 +332,9 @@ int main(int argc, char** argv) {
         info = e.info;
         return true;
     });
+    // Routes certified as the installer's qualification would certify them
+    cyxwiz::test::InstallQualifiedRouteSnapshot();
+    CheckDevice();
     CheckStopAndFailure();
     CheckCartPole();
     if (argc > 1) CheckContinuous(std::filesystem::absolute(argv[1]));

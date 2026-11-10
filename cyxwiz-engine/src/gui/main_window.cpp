@@ -3897,6 +3897,11 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         spdlog::warn("Train: wait for Run Test preparation/evaluation or cancel it first");
         return;
     }
+    // One training at a time, whatever its kind: a PPO run holds the device
+    if (node_editor_ && node_editor_->IsRLTrainingActive()) {
+        spdlog::warn("Train: a PPO run is training; stop it first");
+        return;
+    }
     // A reopened project keeps each Data Input's settings, not its loaded
     // data: load what training needs first, then train.
     if (StartDataInputLoads(nodes, links)) {

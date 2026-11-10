@@ -467,8 +467,10 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     bool backend_manager_verify_requested = false;
 
+                    // Supervised training, or a PPO run: both hold the run's device
                     const bool training_active =
-                        cyxwiz::TrainingManager::Instance().IsTrainingActive();
+                        cyxwiz::TrainingManager::Instance().IsTrainingActive() ||
+                        cyxwiz::HasActiveExecutionDeviceContext();
                     const auto active_run_trace =
                         cyxwiz::TrainingTraceCollector::LatestTrace();
                     const bool has_run_bound_device =

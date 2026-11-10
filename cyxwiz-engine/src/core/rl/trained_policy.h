@@ -11,6 +11,8 @@
 #include "../rl_graph_compile.h"
 #include "ppo_trainer.h"
 
+#include <cyxwiz/device.h>
+
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -30,6 +32,9 @@ struct TrainedPolicy {
     std::unique_ptr<VecNormalize> normalizer;  // the observation statistics
     std::map<std::string, OptimizerState> optimizers;
     std::vector<PpoUpdateMetrics> updates;
+    // The ArrayFire device its networks live on: playback acts there
+    DeviceType device_type = DeviceType::CPU;
+    int device_id = 0;
     // Steps trained and the last mean return of 100 episodes
     int64_t steps = 0;
     float mean_return = std::numeric_limits<float>::quiet_NaN();
@@ -58,7 +63,8 @@ std::string PolicyMismatch(const TrainedPolicy& policy, const RLTrainingConfigur
 
 bool SaveTrainedPolicy(const TrainedPolicy& policy, const std::filesystem::path& path, std::string& error);
 // Null with the reason: not an RL policy, the environment is not available,
-// or the graph's networks differ from the saved weights.
+// or the graph's networks differ from the saved weights. The networks are
+// built on this thread's ArrayFire device (the policy records it).
 std::unique_ptr<TrainedPolicy> LoadTrainedPolicy(const std::filesystem::path& path, std::string& error);
 
 }  // namespace cyxwiz::rl
