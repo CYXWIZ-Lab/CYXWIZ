@@ -14,8 +14,10 @@
 // selection and a Strict next-run policy, as Preferences > Devices sets them,
 // over routes certified the installer's way; the report records the device
 // the run actually trained on. CYXWIZ_GATE_NO_PROVIDERS=1 turns the neural
-// providers off (the networks run as ArrayFire operations) for comparisons.
+// providers off (the networks run as ArrayFire operations) for comparisons;
+// CYXWIZ_GATE_STEPS=<n> caps the run at n steps for measurements.
 
+#include "../src/core/backend_placement_capabilities.h"
 #include "../src/core/execution_device_preferences.h"
 #include "../src/core/graph_compiler.h"
 #include <cyxwiz/neural_provider.h>
@@ -111,6 +113,9 @@ int main(int argc, char** argv) {
         g.At(id.ppo).parameters["total_timesteps"] = task == "CartPole-v1" ? "200000" : "300000";
         g.At(id.ppo).parameters["stop_at_return"] = "true";
     }
+    // CYXWIZ_GATE_STEPS=<n>: a shorter run, for measurements (not the gate)
+    if (const char* steps = std::getenv("CYXWIZ_GATE_STEPS"); steps && std::atoll(steps) > 0)
+        g.At(id.ppo).parameters["total_timesteps"] = steps;
     cyxwiz::GraphCompiler compiler;
     const auto compiled = compiler.Compile(g.nodes, g.links, true);
     if (!compiled.rl) return Fail("the graph does not compile: " + compiled.error_message);
@@ -122,7 +127,14 @@ int main(int argc, char** argv) {
     const auto start = std::chrono::steady_clock::now();
     if (!run.Start(compiled.rl, rl_graph_test::Json(g), error)) return Fail(error);
     nlohmann::json rows = nlohmann::json::array();
-    std::string device;  // where the run trains, once its preflight is done
+    std::string device;        // where the run trains, once its preflight is done
+    std::string compute_path;  // how the last update ran (fused kernels or ArrayFire)
+    // The policy's hidden layers as compiled: "64 Tanh-64 Tanh"
+    std::string layers;
+    for (const auto& layer : config.policy_layers) {
+        if (layer.units > 0) layers += (layers.empty() ? "" : "-") + std::to_string(layer.units);
+        else layers += std::string(" ") + cyxwiz::backend_placement::LayerTypeName(layer.type);
+    }
     long long reached = -1;
     float last_return = std::numeric_limits<float>::quiet_NaN();
     // The report as it stands: written every few updates as well as at the end,
@@ -136,8 +148,9 @@ int main(int argc, char** argv) {
             {"copies", config.copies},
             {"total_timesteps", config.ppo.total_timesteps},
             {"target", target},
-            {"layers", cheetah ? "256-256 ReLU" : "64-64 Tanh"},
+            {"layers", layers},
             {"device", device},
+            {"compute_path", compute_path},
             {"outcome", outcome},
             {"reached_target_at", reached < 0 ? nlohmann::json(nullptr) : nlohmann::json(reached)},
             {"final_mean_return", Number(last_return)},
@@ -163,6 +176,7 @@ int main(int argc, char** argv) {
             }
         }
         for (const auto& m : run.TakeUpdates()) {
+            compute_path = m.compute_path;
             rows.push_back({m.timesteps, Number(m.mean_episode_return), Number(m.policy_loss), Number(m.value_loss),
                             Number(m.approx_kl), Number(m.clip_fraction), Number(m.explained_variance),
                             Number(m.std), Number(m.steps_per_second)});

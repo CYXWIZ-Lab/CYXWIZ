@@ -326,6 +326,50 @@ void CheckDevice() {
           "Compatibility falls back to the CPU and says so: " + fallback.Describe());
 }
 
+// With a CUDA device: a run on the CUDA route chosen the Engine's way keeps
+// its policy there; this thread (not on CUDA) acts and saves through the
+// policy's device; loaded on the CPU route it acts there. Skipped (said so)
+// without a CUDA device.
+void CheckGpuPolicy() {
+    bool cuda = false;
+    for (const auto& d : cyxwiz::Device::GetAvailableDevices()) cuda = cuda || d.type == cyxwiz::DeviceType::CUDA;
+    if (!cuda) {
+        std::printf("no CUDA device: the GPU policy checks are skipped\n");
+        return;
+    }
+    rl_graph_test::Ids id{};
+    auto g = rl_graph_test::Pattern(id);
+    g.At(id.ppo).parameters["n_steps"] = "64";
+    g.At(id.ppo).parameters["total_timesteps"] = "2048";
+    g.At(id.ppo).parameters["stop_at_return"] = "false";
+    const auto config = Compile(g);
+    if (!config) return;
+    std::string error;
+    cyxwiz::rl::RLTrainingRun run;
+    SelectRoute(cyxwiz::DeviceType::CUDA, 0, cyxwiz::ExecutionPolicy::Strict);
+    Check(run.Start(config, rl_graph_test::Json(g), error), "a CUDA run starts: " + error);
+    Wait(run, 300.0);
+    Check(run.GetState() == cyxwiz::rl::RLTrainingRun::State::Finished, "the CUDA run finishes: " + run.Message());
+    const auto trained = run.Trained();
+    Check(trained && trained->device_type == cyxwiz::DeviceType::CUDA, "its policy lives on CUDA");
+    if (!trained) return;
+    // This thread acts and saves whatever device it is on: the policy's scope switches to CUDA and back
+    const auto obs = SampleObservations(8, trained->config.observation_size);
+    const auto actions = cyxwiz::rl::PolicyActions(*trained, obs, 8, true, 0);
+    Check(actions.size() == 8, "a CUDA policy acts from another thread's device");
+    const auto path = std::filesystem::temp_directory_path() / "cyxwiz_rl_gpu_policy.cyxmodel";
+    Check(cyxwiz::rl::SaveTrainedPolicy(*trained, path, error), "a CUDA policy saves: " + error);
+    SelectCpu();
+    auto loaded = cyxwiz::rl::LoadTrainedPolicy(path, error);
+    Check(loaded && loaded->device_type == cyxwiz::DeviceType::CPU, "it loads on the CPU route: " + error);
+    if (loaded) {
+        const auto cpu_actions = cyxwiz::rl::PolicyActions(*loaded, obs, 8, true, 0);
+        Check(cpu_actions.size() == 8, "and acts there");
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -340,6 +384,7 @@ int main(int argc, char** argv) {
     CheckDevice();
     CheckStopAndFailure();
     CheckCartPole();
+    CheckGpuPolicy();
     if (argc > 1) CheckContinuous(std::filesystem::absolute(argv[1]));
     if (failures == 0) std::printf("test_rl_graph_training: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

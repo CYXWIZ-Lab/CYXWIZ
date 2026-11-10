@@ -1,9 +1,11 @@
 // The Engine's PPO trainer (core/rl/ppo_trainer) learns, headless:
 // CartPole-v1 (built in, discrete) reaches a mean return of 475 over 100
 // episodes and stops there, the same seed gives the same first updates,
-// normalised observations and rewards train, bad setups are
-// refused with the reason, and Stop ends a run. With a MuJoCo plugin folder
-// as the argument it also trains InvertedPendulum-v5 (continuous) to 1000.
+// normalised observations and rewards train, bad setups are refused with the
+// reason, and every update says how it ran (fused kernels on a provider, or
+// ArrayFire operations). With a MuJoCo plugin folder as the argument it also
+// trains InvertedPendulum-v5 (continuous) to 950. Stop is checked through
+// RLTrainingRun (test_rl_graph_training).
 //
 //   test_ppo_trainer [<MuJoCo plugin folder>]
 //
@@ -127,6 +129,9 @@ void CheckCartPole() {
     const bool reached = !outcome.updates.empty() && outcome.updates.back().reached_target &&
                          outcome.updates.back().mean_episode_return >= 475.0f && outcome.updates.back().episodes >= 100;
     Check(reached, "CartPole reaches a mean return of 475 within 200000 steps, and the run stops there");
+    Check(!outcome.updates.empty() && !outcome.updates.back().compute_path.empty(),
+          "an update says how it ran");
+    if (!outcome.updates.empty()) std::printf("CartPole-v1 ran as %s\n", outcome.updates.back().compute_path.c_str());
     if (!outcome.updates.empty())
         std::printf("CartPole-v1: mean return %.1f after %lld steps (%d updates, %.0f s)\n",
                     outcome.updates.back().mean_episode_return, static_cast<long long>(outcome.updates.back().timesteps),
