@@ -6,6 +6,7 @@
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
+#include "cyxwiz/portable_random.h"
 
 #include <imgui.h>
 #include <imgui_stdlib.h>
@@ -266,7 +267,7 @@ void LinearAlgebraPanel::RenderInputs() {
         if (rows != cols && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("A square A only");
         preset("Random", [&] {
             std::mt19937 rng(static_cast<unsigned>(random_seed_++));
-            std::uniform_int_distribution<int> value(-9, 9);
+            const auto value = [low = -9, high = 9](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
             for (auto& r : a_)
                 for (double& v : r) v = value(rng);
         });

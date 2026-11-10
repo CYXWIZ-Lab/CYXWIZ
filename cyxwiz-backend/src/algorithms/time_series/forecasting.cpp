@@ -13,6 +13,7 @@
 
 #include "cyxwiz/time_series.h"
 #include "series_device.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -494,7 +495,7 @@ ForecastResult Forecast(const std::vector<double>& y, const Spec& spec, int hori
         } else if (horizon > 0) {
             const int paths = 5000;
             std::mt19937_64 rng(20261030);
-            std::normal_distribution<double> noise(0.0, std::sqrt(sigma2));
+            const auto noise = [mean = 0.0, sd = std::sqrt(sigma2)](auto& r) { return cyxwiz::portable::Normal(r, mean, sd); };
             std::vector<std::vector<double>> samples(static_cast<size_t>(horizon), std::vector<double>(paths));
             const double phi_v = spec.damped ? p.phi : 1.0;
             for (int path = 0; path < paths; ++path) {

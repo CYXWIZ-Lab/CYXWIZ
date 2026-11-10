@@ -15,6 +15,7 @@
 // OpenSSL headers if available
 #ifdef CYXWIZ_HAS_OPENSSL
 #include <openssl/evp.h>
+#include "cyxwiz/portable_random.h"
 #endif
 
 namespace cyxwiz {
@@ -437,7 +438,7 @@ RandomNumberResult Utilities::GenerateUniform(int count, double min, double max,
     gen.seed(static_cast<uint64_t>(seed));
     result.seed_used = static_cast<uint64_t>(seed);
 
-    std::uniform_real_distribution<double> dist(min, max);
+    const auto dist = [low = min, high = max](auto& r) { return cyxwiz::portable::Uniform(r, low, high); };
 
     result.values.reserve(count);
     for (int i = 0; i < count; i++) {
@@ -473,7 +474,7 @@ RandomNumberResult Utilities::GenerateNormal(int count, double mean, double std_
     gen.seed(static_cast<uint64_t>(seed));
     result.seed_used = static_cast<uint64_t>(seed);
 
-    std::normal_distribution<double> dist(mean, std_dev);
+    const auto dist = [mean = mean, sd = std_dev](auto& r) { return cyxwiz::portable::Normal(r, mean, sd); };
 
     result.values.reserve(count);
     for (int i = 0; i < count; i++) {
@@ -509,7 +510,7 @@ RandomNumberResult Utilities::GenerateExponential(int count, double lambda, int6
     gen.seed(static_cast<uint64_t>(seed));
     result.seed_used = static_cast<uint64_t>(seed);
 
-    std::exponential_distribution<double> dist(lambda);
+    const auto dist = [rate = lambda](auto& r) { return cyxwiz::portable::Exponential(r, rate); };
 
     result.values.reserve(count);
     for (int i = 0; i < count; i++) {
@@ -545,7 +546,7 @@ RandomNumberResult Utilities::GeneratePoisson(int count, double lambda, int64_t 
     gen.seed(static_cast<uint64_t>(seed));
     result.seed_used = static_cast<uint64_t>(seed);
 
-    std::poisson_distribution<int> dist(lambda);
+    const auto dist = [mean = lambda](auto& r) { return static_cast<int>(cyxwiz::portable::Poisson(r, mean)); };
 
     result.values.reserve(count);
     for (int i = 0; i < count; i++) {
@@ -581,7 +582,7 @@ RandomNumberResult Utilities::GenerateIntegers(int count, int min, int max, int6
     gen.seed(static_cast<uint64_t>(seed));
     result.seed_used = static_cast<uint64_t>(seed);
 
-    std::uniform_int_distribution<int> dist(min, max);
+    const auto dist = [low = min, high = max](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
 
     result.values.reserve(count);
     for (int i = 0; i < count; i++) {
@@ -599,7 +600,7 @@ std::vector<std::string> Utilities::GenerateUUIDs(int count) {
 
     std::random_device rd;
     std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint64_t> dist;
+    const auto dist = [](std::mt19937_64& g) { return cyxwiz::portable::Bits64(g); };
 
     for (int i = 0; i < count; i++) {
         uint64_t part1 = dist(gen);

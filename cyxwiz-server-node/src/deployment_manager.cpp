@@ -1,4 +1,5 @@
 #include "deployment_manager.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 #include <random>
@@ -528,7 +529,7 @@ std::string DeploymentManager::GenerateDeploymentId() const {
     // Generate UUID-like deployment ID
     static std::random_device rd;
     static std::mt19937 gen(rd());
-    static std::uniform_int_distribution<> dis(0, 15);
+    static const auto dis = [low = 0, high = 15](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
     static const char* hex = "0123456789abcdef";
 
     std::string id = "dep_";

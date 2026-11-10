@@ -1441,7 +1441,7 @@ add_executable(test_plot_arrow_source
     src/core/plot/plot_scales.cpp
     src/core/series_decimation.cpp
 )
-target_include_directories(test_plot_arrow_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(test_plot_arrow_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include)
 target_link_libraries(test_plot_arrow_source PRIVATE Arrow::arrow_shared nlohmann_json::nlohmann_json)
 if(WIN32)
     target_compile_definitions(test_plot_arrow_source PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
@@ -1640,7 +1640,7 @@ add_executable(test_dashboard_runtime
     src/core/plot/world_map.cpp
     src/core/series_decimation.cpp
 )
-target_include_directories(test_dashboard_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(test_dashboard_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include)
 target_link_libraries(test_dashboard_runtime PRIVATE Arrow::arrow_shared Parquet::parquet_shared duckdb spdlog::spdlog fmt::fmt nlohmann_json::nlohmann_json)
 if(WIN32)
     target_compile_definitions(test_dashboard_runtime PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
@@ -2715,6 +2715,7 @@ add_executable(test_tree_model_artifact
 
 target_include_directories(test_tree_model_artifact PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
 )
 
 target_link_libraries(test_tree_model_artifact PRIVATE

@@ -6,6 +6,7 @@
 #include "word_map.h"
 
 #include "algorithms/arrayfire_host_materialization.h"
+#include "cyxwiz/portable_random.h"
 
 #include <cyxwiz/tokenizer.h>
 
@@ -529,7 +530,10 @@ EmbeddingsAnswer RunEmbeddings(const std::string& table, const EmbeddingsRequest
     const TextData& d = a.data;
     std::vector<size_t> order(d.texts.size());
     std::iota(order.begin(), order.end(), size_t{0});
-    if (request.sample_words > 0) std::shuffle(order.begin(), order.end(), std::mt19937(request.seed));
+    if (request.sample_words > 0) {
+        std::mt19937 rng(request.seed);
+        cyxwiz::portable::Shuffle(order.begin(), order.end(), rng);
+    }
     std::vector<std::vector<std::string>> sentences;
     std::vector<size_t> used;
     for (const size_t i : order) {

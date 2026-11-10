@@ -503,6 +503,7 @@ if(CYXWIZ_BUILD_TESTS)
         "${_cyxwiz_installer_engine_dir}/src/data/data_table.cpp"
         "${_cyxwiz_installer_engine_dir}/src/core/csv_records.cpp"
     )
+    target_include_directories(test_plot_table_source PRIVATE "${_cyxwiz_installer_backend_dir}/include")
     target_link_libraries(test_plot_table_source PRIVATE nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt)
     if(MSVC)
         target_compile_options(test_plot_table_source PRIVATE /utf-8)
@@ -603,6 +604,8 @@ if(CYXWIZ_BUILD_TESTS)
             CXX_STANDARD 20
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
         )
+        # Header-only SDK headers (cyxwiz/portable_random.h); nothing is linked.
+        target_include_directories(${_cyxwiz_p0_test} PRIVATE "${_cyxwiz_installer_backend_dir}/include")
         add_test(NAME ${_cyxwiz_p0_test}_contract COMMAND ${_cyxwiz_p0_test})
     endforeach()
     if(Python3_EXECUTABLE)
