@@ -39,6 +39,7 @@ constexpr size_t kStrongestRows = 16;  // "the 16 strongest for this sample"
 constexpr size_t kChunkItems = 64;
 constexpr size_t kChunkElements = size_t{8} << 20;
 constexpr float kThumb = 64.0f;
+constexpr float kLabelWidth = 150.0f;  // the row's words, left of its pictures
 
 void Wrapped(const ImVec4& colour, const std::string& text) {
     ImGui::PushTextWrapPos(0.0f);
@@ -169,9 +170,10 @@ void StudioDebuggerPanel::RenderTopImages() {
         const bool have = s.result_key == key;
         const auto session = LayerModelSession();
         if (ui::PrimaryButton(have ? "Compute again" : "Compute", session != nullptr, "Rebuilding the run's model...")) {
-            DataItemsJob job = data_items_callback_ ? data_items_callback_() : DataItemsJob{};
+            const DataItemsStart start = data_items_callback_ ? data_items_callback_() : DataItemsStart{};
+            const DataItemsJob job = start.job;
             if (!job) {
-                s.error = "the " + items_word + " need the graph's data and a clean compile";
+                s.error = DataItemsNotStarted(start, "the " + items_word);
             } else {
                 s.computing = true;
                 s.error.clear();
@@ -285,18 +287,31 @@ void StudioDebuggerPanel::RenderTopImages() {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (const auto& row : rows) {
         ImGui::PushID(static_cast<int>(row.channel));
+        // The row's words wrap in their column; the pictures wrap under the
+        // first when the view is narrow (nothing is clipped).
+        const float row_x = ImGui::GetCursorPosX();
         ImGui::BeginGroup();
+        ImGui::PushTextWrapPos(row_x + kLabelWidth - 10.0f);
         ImGui::Text("Channel %zu", row.channel);
         ImGui::TextColored(DebuggerMuted(), "%s", row.sub.c_str());
         if (!row.vote.empty())
             ImGui::TextColored(row.towards >= 0 ? ui::DivergingAt(t, row.towards == 0 ? -0.8f : 0.8f) : DebuggerMuted(),
                                "%s", row.vote.c_str());
+        ImGui::PopTextWrapPos();
         ImGui::EndGroup();
-        ImGui::SameLine(150.0f);
+        ImGui::SameLine(row_x + kLabelWidth);
+        ImGui::BeginGroup();
+        const float pictures_x = ImGui::GetCursorPosX();
         const auto top = ti::TopItems(s.strengths, row.channel, kShownPerRow);
         for (size_t k = 0; k < top.size(); ++k) {
             const size_t item = top[k];
-            if (k) ImGui::SameLine(0.0f, 6.0f);
+            if (k) {
+                ImGui::SameLine(0.0f, 6.0f);
+                if (ImGui::GetContentRegionAvail().x < kThumb) {
+                    ImGui::NewLine();
+                    ImGui::SetCursorPosX(pictures_x);
+                }
+            }
             ImGui::PushID(static_cast<int>(k));
             const ImVec2 at = ImGui::GetCursorScreenPos();
             const bool pressed = ImGui::InvisibleButton("##item", ImVec2(kThumb, kThumb));
@@ -341,6 +356,7 @@ void StudioDebuggerPanel::RenderTopImages() {
             }
             ImGui::PopID();
         }
+        ImGui::EndGroup();
         ImGui::PopID();
         ImGui::Spacing();
     }

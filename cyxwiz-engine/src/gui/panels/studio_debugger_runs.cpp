@@ -28,6 +28,13 @@ void Wrapped(const ImVec4& colour, const std::string& text) {
 
 }  // namespace
 
+std::string StudioDebuggerPanel::DataItemsNotStarted(const DataItemsStart& start, const std::string& what) {
+    if (!start.loading.empty())
+        return "loading " + start.loading + " first (its data is not loaded in this session); press Compute when it "
+               "is loaded";
+    return what + " need the graph's data and a clean compile";
+}
+
 const StudioDebuggerSampleFacts& StudioDebuggerPanel::ShownSampleFacts() const {
     return shown_training_run_.empty() ? session_.sample_facts : shown_training_facts_;
 }

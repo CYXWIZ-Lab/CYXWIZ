@@ -86,7 +86,8 @@ public:
     // looks' feature means, TOFIX178 6.3b; Top images, 6.3e). Called on the
     // UI thread with the graph frozen; the job runs on a worker (`why` set
     // when the items cannot be read). An empty job: the canvas does not
-    // compile cleanly.
+    // compile cleanly, or its data is being loaded first (`loading` names it:
+    // a reopened project's Data Inputs load as for Train).
     struct DataItems {
         Tensor features;
         Tensor labels;
@@ -97,7 +98,13 @@ public:
         std::string why;
     };
     using DataItemsJob = std::function<DataItems(size_t count, const std::function<bool()>& stop)>;
-    using DataItemsCallback = std::function<DataItemsJob()>;
+    struct DataItemsStart {
+        DataItemsJob job;
+        std::string loading;  // "Cats and dogs": loading first; empty otherwise
+    };
+    using DataItemsCallback = std::function<DataItemsStart()>;
+    // The view's message when the items cannot start now.
+    static std::string DataItemsNotStarted(const DataItemsStart& start, const std::string& what);
     void SetDataItemsCallback(DataItemsCallback callback) { data_items_callback_ = std::move(callback); }
     void SetRunWaitCallback(RunWaitCallback callback) { run_wait_callback_ = std::move(callback); }
     // The line under the run controls: a wait, or why a waiting run did not

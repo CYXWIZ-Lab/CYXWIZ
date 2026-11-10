@@ -448,10 +448,11 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
             auto error = std::make_shared<std::string>();
             DataItemsJob items_job;
             if (*kind == occlusion::InputKind::Features) {
-                if (data_items_callback_) items_job = data_items_callback_();
+                const DataItemsStart start = data_items_callback_ ? data_items_callback_() : DataItemsStart{};
+                items_job = start.job;
                 if (!items_job) {
                     s.computing = false;
-                    s.error = "the feature means need the graph's data and a clean compile";
+                    s.error = DataItemsNotStarted(start, "the feature means");
                 }
             }
             if (s.computing) {

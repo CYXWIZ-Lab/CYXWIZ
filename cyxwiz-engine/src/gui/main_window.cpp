@@ -1113,16 +1113,21 @@ MainWindow::MainWindow()
                 return session;
             };
         });
-        // Where it looks on a table: each feature's mean over up to 512 of the
-        // graph's prepared rows (the data steps as Local Debug runs them).
-        studio_debugger_panel_->SetDataItemsCallback([this]() -> cyxwiz::StudioDebuggerPanel::DataItemsJob {
+        // Items from the graph's data for the debugger's views (Where it looks'
+        // table fill, Top images): a reopened project's data loads first, as
+        // for Train; the view asks again when it is loaded.
+        studio_debugger_panel_->SetDataItemsCallback([this]() -> cyxwiz::StudioDebuggerPanel::DataItemsStart {
+            if (!node_editor_) return {};
+            if (const std::string loading = StartDataInputLoads(node_editor_->GetNodes(), node_editor_->GetLinks());
+                !loading.empty())
+                return {{}, loading};
             const cyxwiz::TrainingConfiguration* clean = live_compile_ ? live_compile_->CleanConfig() : nullptr;
-            if (!clean || !node_editor_) return {};
+            if (!clean) return {};
             auto& project = cyxwiz::ProjectManager::Instance();
             const std::filesystem::path root = project.GetProjectRoot();
             cyxwiz::StepRunRoots roots{root.string(), project.GetArtifactsPath(), project.GetExportsPath(),
                                        project.GetIngestionCachePath()};
-            return [config = *clean, nodes = node_editor_->GetNodes(), links = node_editor_->GetLinks(), roots,
+            return {[config = *clean, nodes = node_editor_->GetNodes(), links = node_editor_->GetLinks(), roots,
                     cache_config = GraphMaterializationCacheConfig(root)](
                        size_t count, const std::function<bool()>& stop) mutable {
                 cyxwiz::StudioDebuggerPanel::DataItems items;
@@ -1151,7 +1156,7 @@ MainWindow::MainWindow()
                 items.class_names = sample.class_names;
                 items.description = sample.description;
                 return items;
-            };
+            }};
         });
         studio_debugger_panel_->SetRunCompletedCallback(
             [this](const cyxwiz::StudioDebuggerSnapshot& session) {
