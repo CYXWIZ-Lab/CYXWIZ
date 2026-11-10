@@ -50,3 +50,20 @@ TEST_CASE("A conversion's formula reads in plain digits", "[utilities][units]") 
     REQUIRE(f.success);
     REQUIRE(f.formula == "\xC2\xB0" "F = \xC2\xB0" "C x 1.8 + 32");
 }
+
+TEST_CASE("LookUpJSON tells a value, a missing path and a malformed path apart", "[utilities][json]") {
+    const std::string doc = R"({"b": 1, "a": {"list": [10, {"name": "x"}]}, "s": "text"})";
+    auto found = cyxwiz::Utilities::LookUpJSON(doc, "$.a.list[1].name");
+    REQUIRE((found.found && found.value_json == "\"x\""));
+    found = cyxwiz::Utilities::LookUpJSON(doc, "a");
+    REQUIRE((found.found && found.value_json == R"({"list":[10,{"name":"x"}]})"));
+    found = cyxwiz::Utilities::LookUpJSON(doc, "a.list[5]");
+    REQUIRE((!found.found && found.parsed && found.path_valid && found.error == "[5] is past the end (2 items)"));
+    found = cyxwiz::Utilities::LookUpJSON(doc, "a.list[x]");
+    REQUIRE((!found.found && !found.path_valid));
+    found = cyxwiz::Utilities::LookUpJSON(doc, "a.list[1");
+    REQUIRE((!found.found && !found.path_valid));
+    found = cyxwiz::Utilities::LookUpJSON("{oops", "a");
+    REQUIRE((!found.found && !found.parsed));
+    REQUIRE(cyxwiz::Utilities::GetJSONValue(doc, "s") == "text");
+}

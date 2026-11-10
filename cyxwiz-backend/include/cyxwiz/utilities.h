@@ -111,6 +111,8 @@ struct CYXWIZ_API JSONResult {
 
 // A value looked up in JSON by path (Utilities::LookUpJSON).
 struct CYXWIZ_API JSONLookup {
+    bool parsed = true;      // false: the text is not JSON
+    bool path_valid = true;  // false: the path itself is malformed (a [ without ], an index that is not a number)
     bool found = false;
     std::string value_json;  // the value as JSON text (a string keeps its quotes)
     std::string error;       // why not: the text is not JSON, a key or index is missing

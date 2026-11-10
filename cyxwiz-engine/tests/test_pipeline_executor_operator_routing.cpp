@@ -3156,8 +3156,8 @@ int main(int argc, char** argv) {
     {
         std::ofstream csv(json_payload_csv_path);
         csv << "payload\n";
-        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Ada\"\"}}\"\n";
-        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Grace\"\"}}\"\n";
+        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Ada\"\",\"\"langs\"\":[\"\"C\"\",\"\"Lisp\"\"]}}\"\n";
+        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Grace\"\",\"\"langs\"\":[\"\"COBOL\"\"]}}\"\n";
     }
     {
         std::ofstream csv(decision_tree_csv_path);
@@ -7899,6 +7899,16 @@ int main(int argc, char** argv) {
           "JSONPathExtractor should extract first row value");
     Check(ReadStringValue(json_path_table, "value", 1) == "Grace",
           "JSONPathExtractor should extract second row value");
+
+    // Array items by [n], as Tools > Utilities > JSON; a row without one is empty.
+    std::string json_index_json = json_path_json;
+    json_index_json.replace(json_index_json.find("$.user.name"), 11, "user.langs[1]");
+    cyxwiz::PipelineExecutor json_index_executor;
+    Check(json_index_executor.ExecutePipeline(json_index_json),
+          "JSONPathExtractor should read an array item: " + json_index_executor.GetLastError());
+    auto json_index_table = registry.GetArrowDataset("ds_jsonpath_652")->GetArrowTable();
+    Check(ReadStringValue(json_index_table, "value", 0) == "Lisp", "JSONPathExtractor reads user.langs[1]");
+    Check(json_index_table->column(0)->null_count() == 1, "a row without langs[1] gives an empty cell");
 
     const std::string regex_tester_json =
         R"({"nodes":[)"

@@ -4862,11 +4862,14 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::JSONPathExtractor, NodeCategory::Utility, "JSONPath", ICON_FA_CODE_BRANCH,
-        {"json", "jsonpath", "extract"}, 0, false, "Extract data using JSONPath",
-        "Query JSON data using JSONPath expressions.", "",
+        {"json", "jsonpath", "extract"}, 0, false, "The value at a path in each row's JSON",
+        "Reads one value from the JSON text of each row: keys by dots, array items by [n] "
+        "(\"$.user.name\", \"items[0].price\"). A row without that value gives an empty cell; "
+        "text values lose their quotes, objects and arrays stay JSON. The same paths as "
+        "Tools > Utilities > JSON.", "",
         {{"JSON", PinType::Dataset, true, "JSON data"}},
         {{"Result", PinType::Dataset, true, "Extracted values"}},
-        {{"path", "string", "$.data[*].value", "JSONPath expression", {}, ""}},
+        {{"path", "string", "$.value", "Keys by dots, array items by [n], e.g. $.user.name or items[0].price", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 }
 

@@ -920,14 +920,8 @@ JSONResult Utilities::MinifyJSON(const std::string& json_text) {
 
 JSONLookup Utilities::LookUpJSON(const std::string& json_text, const std::string& path) {
     JSONLookup out;
-    nlohmann::ordered_json root;
-    try {
-        root = nlohmann::ordered_json::parse(json_text);
-    } catch (const nlohmann::json::parse_error&) {
-        out.error = "The text is not valid JSON";
-        return out;
-    }
-    // Keys by dots, indices in brackets; "$" and "$." at the start are allowed.
+    // The path first: keys by dots, indices in brackets; "$" and "$." at the
+    // start are allowed. A malformed path is path_valid false, whatever the text.
     std::vector<std::pair<std::string, bool>> parts;  // (key or index, is index)
     std::string current;
     size_t i = 0;
@@ -942,10 +936,18 @@ JSONLookup Utilities::LookUpJSON(const std::string& json_text, const std::string
             current.clear();
             const size_t close = path.find(']', i);
             if (close == std::string::npos) {
+                out.path_valid = false;
                 out.error = "A [ in the path has no ]";
                 return out;
             }
-            parts.push_back({path.substr(i + 1, close - i - 1), true});
+            const std::string index = path.substr(i + 1, close - i - 1);
+            if (index.empty() || index.size() > 9 ||
+                !std::all_of(index.begin(), index.end(), [](unsigned char ch) { return std::isdigit(ch); })) {
+                out.path_valid = false;
+                out.error = "[" + index + "] is not an item number";
+                return out;
+            }
+            parts.push_back({index, true});
             i = close;
         } else {
             current += c;
@@ -953,13 +955,19 @@ JSONLookup Utilities::LookUpJSON(const std::string& json_text, const std::string
     }
     if (!current.empty()) parts.push_back({current, false});
 
+    nlohmann::ordered_json root;
+    try {
+        root = nlohmann::ordered_json::parse(json_text);
+    } catch (const nlohmann::json::parse_error&) {
+        out.parsed = false;
+        out.error = "The text is not valid JSON";
+        return out;
+    }
     const nlohmann::ordered_json* at = &root;
     for (const auto& [part, is_index] : parts) {
         if (is_index) {
-            const bool digits = !part.empty() && part.size() < 10 &&
-                                std::all_of(part.begin(), part.end(), [](unsigned char ch) { return std::isdigit(ch); });
-            if (!at->is_array() || !digits) {
-                out.error = "[" + part + "] needs an array and a whole number";
+            if (!at->is_array()) {
+                out.error = "[" + part + "] needs an array";
                 return out;
             }
             const size_t index = std::stoul(part);

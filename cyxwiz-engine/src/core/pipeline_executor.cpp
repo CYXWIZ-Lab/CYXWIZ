@@ -1795,56 +1795,7 @@ bool BuildCalculatorExpression(const std::string& formula,
     return true;
 }
 
-bool ParseSimpleJsonPath(const std::string& path,
-                         std::vector<std::string>& segments,
-                         std::string& error) {
-    segments.clear();
-    const std::string trimmed = TrimString(path);
-    if (trimmed.empty()) {
-        error = "JSONPathExtractor: path is required";
-        return false;
-    }
-    if (trimmed == "$") {
-        return true;
-    }
-    if (trimmed.rfind("$.", 0) != 0) {
-        error = "JSONPathExtractor: only simple $.field paths are supported";
-        return false;
-    }
-
-    std::stringstream tokens(trimmed.substr(2));
-    std::string token;
-    while (std::getline(tokens, token, '.')) {
-        token = TrimString(token);
-        if (token.empty() || token.find('[') != std::string::npos ||
-            token.find(']') != std::string::npos) {
-            error = "JSONPathExtractor: only dot-separated object fields are supported";
-            return false;
-        }
-        segments.push_back(token);
-    }
-    return true;
-}
-
-bool ExtractJsonPathValue(const nlohmann::json& document,
-                          const std::vector<std::string>& segments,
-                          nlohmann::json& value) {
-    const nlohmann::json* current = &document;
-    for (const auto& segment : segments) {
-        if (!current->is_object()) {
-            return false;
-        }
-        const auto it = current->find(segment);
-        if (it == current->end()) {
-            return false;
-        }
-        current = &(*it);
-    }
-    value = *current;
-    return true;
-}
-
-std::string JsonValueToDatasetString(const nlohmann::json& value) {
+std::string JsonValueToDatasetString(const nlohmann::ordered_json& value) {
     if (value.is_string()) {
         return value.get<std::string>();
     }
@@ -8256,11 +8207,15 @@ bool PipelineExecutor::ExecuteJSONPathExtractor(const Node& node, ExecutionConte
         return false;
     }
 
-    const std::string path = ParameterOrDefault(node.parameters, "path", "$");
-    std::vector<std::string> path_segments;
-    std::string path_error;
-    if (!ParseSimpleJsonPath(path, path_segments, path_error)) {
-        ReportError(path_error);
+    // The Utilities window's and pycyxwiz.utilities' path rule
+    // (Utilities::LookUpJSON): keys by dots, array items by [n], "$." allowed.
+    const std::string path = TrimString(ParameterOrDefault(node.parameters, "path", "$"));
+    if (path.empty()) {
+        ReportError("JSONPathExtractor: path is required");
+        return false;
+    }
+    if (const JSONLookup check = Utilities::LookUpJSON("{}", path); !check.path_valid) {
+        ReportError("JSONPathExtractor: " + check.error);
         return false;
     }
 
@@ -8334,18 +8289,14 @@ bool PipelineExecutor::ExecuteJSONPathExtractor(const Node& node, ExecutionConte
                 return false;
             }
 
-            nlohmann::json document;
-            try {
-                document = nlohmann::json::parse(json_text);
-            } catch (const std::exception& e) {
-                ReportError("JSONPathExtractor: invalid JSON at row " +
-                            std::to_string(row) + ": " + e.what());
+            const JSONLookup found = Utilities::LookUpJSON(json_text, path);
+            if (!found.parsed) {
+                ReportError("JSONPathExtractor: invalid JSON at row " + std::to_string(row));
                 return false;
             }
-
-            nlohmann::json value;
-            if (!ExtractJsonPathValue(document, path_segments, value) ||
-                value.is_null()) {
+            const nlohmann::ordered_json value =
+                found.found ? nlohmann::ordered_json::parse(found.value_json) : nlohmann::ordered_json();
+            if (value.is_null()) {
                 auto status = result_builder.AppendNull();
                 if (!status.ok()) {
                     ReportError("JSONPathExtractor: Failed to append null result");
