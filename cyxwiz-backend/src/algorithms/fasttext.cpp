@@ -381,7 +381,17 @@ FastTextModel WordEmbeddings::TrainFastText(const std::vector<std::vector<std::s
         for (int epoch = 0; epoch < options.epochs; ++epoch) {
             const EpochExamples examples_of_epoch =
                 MakeEpochExamples(corpus, corpus_sentence, keep_probability, window, options.cbow, true, engine);
-            if (examples_of_epoch.outputs.isempty()) continue;
+            if (examples_of_epoch.outputs.isempty()) {
+                // No context pairs this epoch: it still counts (loss 0, 0
+                // examples), so epoch_loss and the callbacks keep one entry per
+                // epoch and Stop is still heard.
+                model.epoch_loss.push_back(0.0);
+                if (options.on_epoch_loss) options.on_epoch_loss(epoch + 1, 0.0, 0);
+                if (options.on_progress &&
+                    !options.on_progress(static_cast<double>(epoch + 1) / options.epochs, epoch + 1))
+                    return fail("Training was stopped");
+                continue;
+            }
             const af::array ex_inputs =
                 options.cbow ? examples_of_epoch.inputs
                              : af::moddims(examples_of_epoch.inputs, examples_of_epoch.inputs.elements(), 1);
