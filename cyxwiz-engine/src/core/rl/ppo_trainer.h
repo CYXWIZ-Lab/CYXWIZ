@@ -11,6 +11,7 @@
 #include "../../plugin/interfaces/i_environment_provider.h"
 #include "vec_normalize.h"
 
+#include <cyxwiz/fused_mlp.h>
 #include <cyxwiz/optimizers/optimizer_base.h>
 #include <cyxwiz/rl/ppo.h>
 #include <cyxwiz/tensor.h>
@@ -115,6 +116,12 @@ public:
     // when Train never started or an optimizer's state cannot be exported.
     bool TakeTrained(PpoTrainedState& out, std::string& error);
 
+    // How the networks ran (TOFIX206 3.2), once Train has started: "fused
+    // small-network kernels (<provider>)" when both networks are Dense /
+    // activation chains a provider runs whole on this device, else "ArrayFire
+    // operations (<why>)".
+    const std::string& NetworkPath() const { return network_path_; }
+
 private:
     bool CheckSetup(std::string& error) const;
 
@@ -127,6 +134,10 @@ private:
     std::unique_ptr<Optimizer> value_optimizer_;
     std::unique_ptr<Optimizer> log_std_optimizer_;
     std::unique_ptr<VecNormalize> normalizer_;
+    // The networks as whole-network kernels, while the provider serves them
+    std::unique_ptr<FusedMlp> policy_fused_;
+    std::unique_ptr<FusedMlp> value_fused_;
+    std::string network_path_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> paused_{false};
 };

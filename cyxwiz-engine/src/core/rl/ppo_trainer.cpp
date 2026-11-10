@@ -5,6 +5,9 @@
 #include <cyxwiz/layers/linear.h>
 #include <cyxwiz/optimizers/adam.h>
 #include <cyxwiz/optimizers/gradient_clipping.h>
+#include <cyxwiz/sequential.h>
+
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <chrono>
@@ -113,6 +116,8 @@ bool PpoTrainer::TakeTrained(PpoTrainedState& out, std::string& error) {
         (!environment_.info.discrete_actions && !state(*log_std_optimizer_, optimizers["log_std"])))
         return false;
     out.optimizers = std::move(optimizers);
+    policy_fused_.reset();  // they read the networks that move out
+    value_fused_.reset();
     out.policy = std::move(policy_);
     out.value = std::move(value_);
     out.log_std = log_std_;
@@ -166,6 +171,49 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     norm.gamma = config_.gamma;
     normalizer_ = std::make_unique<VecNormalize>(n, obs_size, norm);
 
+    // Small Dense/activation networks run whole on the device's provider: a
+    // few launches per forward and backward instead of several per layer
+    // (TOFIX206 3.2). Otherwise, or when a fused call fails, the layers run
+    // as ArrayFire operations.
+    const auto fuse = [](IExecutableModel& model, std::string& why) -> std::unique_ptr<FusedMlp> {
+        SequentialModel* sequential = model.AsSequentialModel();
+        if (!sequential) {
+            why = "not a sequential network";
+            return nullptr;
+        }
+        return FusedMlp::For(*sequential, why);
+    };
+    std::string policy_why, value_why;
+    policy_fused_ = fuse(*policy_, policy_why);
+    value_fused_ = fuse(*value_, value_why);
+    if (policy_fused_ && value_fused_) {
+        network_path_ = "fused small-network kernels (" + policy_fused_->ProviderId() + ")";
+    } else {
+        policy_fused_.reset();  // both or neither: one path to report
+        value_fused_.reset();
+        network_path_ = "ArrayFire operations (" + (policy_why.empty() ? "value: " + value_why : "policy: " + policy_why) + ")";
+    }
+    spdlog::info("PPO: the networks run as {}", network_path_);
+    const auto forward = [this](IExecutableModel& model, std::unique_ptr<FusedMlp>& fused, const Tensor& x,
+                                bool keep) -> Tensor {
+        if (fused) {
+            try {
+                return fused->Forward(x, keep);
+            } catch (const std::exception& e) {
+                spdlog::warn("PPO: the fused network failed ({}); ArrayFire operations from now on", e.what());
+                fused.reset();  // this network only: its forward and backward stay on one path
+                network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
+            }
+        }
+        return model.Forward(x);
+    };
+    const auto backward = [](IExecutableModel& model, std::unique_ptr<FusedMlp>& fused,
+                             const Tensor& grad) -> std::map<std::string, Tensor> {
+        if (fused) return fused->Backward(grad);
+        model.Backward(grad);
+        return model.GetGradients();
+    };
+
     try {
         if (!environment_.reset(config_.seed, obs.data(), error)) return false;
         normalizer_->Reset(obs.data());
@@ -178,14 +226,14 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                 while (paused_ && !stop_) std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 if (stop_) break;
                 const Tensor obs_t = Rows(obs, n, obs_size);
-                const Tensor head = policy_->Forward(obs_t);
+                const Tensor head = forward(*policy_, policy_fused_, obs_t, false);
                 if (head.Shape() != std::vector<size_t>{n, policy_outputs}) {
                     error = "The policy network gives " + std::to_string(head.NumElements() / std::max<size_t>(n, 1)) +
                             " outputs per observation; " + info.name + " needs " + std::to_string(policy_outputs) +
                             (discrete ? " (one per choice)." : " (one per action).");
                     return false;
                 }
-                const Tensor value = value_->Forward(obs_t);
+                const Tensor value = forward(*value_, value_fused_, obs_t, false);
                 if (value.NumElements() != n) {
                     error = "The value network must give one value per observation.";
                     return false;
@@ -224,7 +272,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                     std::vector<float> last(cut.size() * obs_size);
                     for (size_t k = 0; k < cut.size(); ++k)
                         std::copy_n(final_obs.begin() + cut[k] * obs_size, obs_size, last.begin() + k * obs_size);
-                    const auto last_values = Host(value_->Forward(Rows(last, cut.size(), obs_size)));
+                    const auto last_values = Host(forward(*value_, value_fused_, Rows(last, cut.size(), obs_size), false));
                     for (size_t k = 0; k < cut.size(); ++k) rewards[cut[k]] += config_.gamma * last_values[k];
                 }
                 for (size_t i = 0; i < n; ++i) {
@@ -244,7 +292,7 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
             if (stop_) break;
 
             // ---- Advantages and returns
-            const auto last_values = Host(value_->Forward(Rows(obs, n, obs_size)));
+            const auto last_values = Host(forward(*value_, value_fused_, Rows(obs, n, obs_size), false));
             Tensor advantages, returns;
             ComputeGae(Rows(reward_buf, steps, n), Rows(value_buf, steps, n), Rows(done_buf, steps, n),
                        Tensor({n}, last_values.data()), config_.gamma, config_.gae_lambda, advantages, returns);
@@ -288,14 +336,12 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                     batch.returns = rows(epoch_ret);
                     batch.old_values = rows(epoch_values);
                     const Tensor mb_obs = rows(epoch_obs);
-                    const Tensor head = policy_->Forward(mb_obs);
-                    const Tensor value = value_->Forward(mb_obs);
+                    const Tensor head = forward(*policy_, policy_fused_, mb_obs, true);
+                    const Tensor value = forward(*value_, value_fused_, mb_obs, true);
                     const PpoLossResult r = discrete ? PpoCategoricalLoss(head, value, batch, config_.loss)
                                                      : PpoGaussianLoss(head, log_std_, value, batch, config_.loss);
-                    policy_->Backward(r.grad_policy_output);
-                    value_->Backward(r.grad_value_output);
-                    auto policy_grads = policy_->GetGradients();
-                    auto value_grads = value_->GetGradients();
+                    auto policy_grads = backward(*policy_, policy_fused_, r.grad_policy_output);
+                    auto value_grads = backward(*value_, value_fused_, r.grad_value_output);
                     std::map<std::string, Tensor> log_std_grads;
                     if (!discrete) log_std_grads["log_std"] = r.grad_log_std;
                     // One global norm over every parameter, as one optimizer over all of them clips

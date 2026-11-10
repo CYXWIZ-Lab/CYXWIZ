@@ -13,10 +13,12 @@
 // CPU). The run takes it the Engine's way (TOFIX206): the pending device
 // selection and a Strict next-run policy, as Preferences > Devices sets them,
 // over routes certified the installer's way; the report records the device
-// the run actually trained on.
+// the run actually trained on. CYXWIZ_GATE_NO_PROVIDERS=1 turns the neural
+// providers off (the networks run as ArrayFire operations) for comparisons.
 
 #include "../src/core/execution_device_preferences.h"
 #include "../src/core/graph_compiler.h"
+#include <cyxwiz/neural_provider.h>
 #include "../src/core/rl/rl_training_run.h"
 #include "../src/core/rl_graph_compile.h"
 #include "../src/core/rl_graph_presentation.h"
@@ -76,6 +78,9 @@ int main(int argc, char** argv) {
     const std::string seed = argv[2];
     const std::filesystem::path output = argv[3];
     if (!SelectRequestedRoute()) return Fail("CYXWIZ_TEST_ARRAYFIRE_BACKEND names no device route (cpu, cuda, opencl)");
+    // CYXWIZ_GATE_NO_PROVIDERS=1: no neural provider (the networks as ArrayFire operations), to compare
+    if (const char* off = std::getenv("CYXWIZ_GATE_NO_PROVIDERS"); off && off[0] == '1')
+        cyxwiz::SetNeuralProvidersDisabledForTesting(true);
     const bool mujoco = task != "CartPole-v1";
     cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
         cyxwiz::plugin::PluginEnvironmentRegistry::Environment e;
