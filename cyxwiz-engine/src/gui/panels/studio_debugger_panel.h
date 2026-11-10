@@ -34,6 +34,7 @@ namespace cyxwiz {
 
 class LiveGraphCompile;
 class DebugModelSession;
+struct ItemsRun;
 namespace occlusion {
 enum class InputKind;
 }
@@ -243,6 +244,10 @@ private:
     void RenderTopImages();
     // Model > Layers > Contributions (studio_debugger_contributions.cpp, 6.4).
     void RenderContributions(const std::string& weight_name);
+    // Model > Layers > Embedding (studio_debugger_embedding.cpp, 6.4b) and the
+    // Inspector's card for its clicked point.
+    void RenderEmbedding();
+    bool RenderEmbeddingPick();
     // The Inspector's card for the picture picked in Top images; false when
     // none is picked (or Top images is not shown).
     bool RenderTopImagesPick();
@@ -346,6 +351,11 @@ private:
     std::shared_ptr<WhereItLooksState> where_it_looks_;
     struct TopImagesState;
     std::shared_ptr<TopImagesState> top_images_;
+    struct EmbeddingState;
+    std::shared_ptr<EmbeddingState> embedding_;
+    // The views' computations over the graph's data (studio_debugger_items_run.h).
+    std::shared_ptr<ItemsRun> top_images_run_;
+    std::shared_ptr<ItemsRun> embedding_run_;
     size_t clicked_channel_layer_ = std::numeric_limits<size_t>::max();
     size_t clicked_channel_ = 0;
     std::string picked_from_top_images_;  // the item clicked last, named

@@ -66,7 +66,7 @@ struct LayerSection {
 std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
                                         const std::map<int, std::string>& group_of_node);
 
-enum class View { FeatureMaps, Values, Units, Weights, Gradients, Filters, WhereItLooks, TopImages, Contributions };
+enum class View { FeatureMaps, Values, Units, Weights, Gradients, Filters, WhereItLooks, TopImages, Contributions, Embedding };
 
 struct ViewTab {
     View view = View::Values;
@@ -104,6 +104,9 @@ std::optional<Picture> SamplePicture(const std::vector<float>& values, const std
 
 // The Inspector's note for Top images.
 const std::string& TopImagesHint();
+
+// The Inspector's note for Embedding.
+const std::string& EmbeddingHint();
 
 struct SpatialShape {
     size_t height = 0;

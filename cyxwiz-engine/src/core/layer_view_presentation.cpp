@@ -167,6 +167,16 @@ const std::string& TopImagesHint() {
     return hint;
 }
 
+const std::string& EmbeddingHint() {
+    static const std::string hint =
+        "The embedding places each item from the data by this layer's values: items close together look alike to "
+        "the layer. Classes that sit in their own clusters are already apart here, so the layers after it have an "
+        "easy job. PCA keeps the large distances but lets clusters overlap; t-SNE and UMAP keep neighbours together, "
+        "and the gaps between their clusters mean little. Colour by Predicted class rings the items the model gets wrong. "
+        "Click a point to inspect that item.";
+    return hint;
+}
+
 LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummary* output_numerics,
                           bool first_spatial_layer, bool takes_model_input, bool picture_input) {
     LayerViews views;
@@ -195,12 +205,10 @@ LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummar
         views.tabs.push_back({View::WhereItLooks, "Where it looks", {}});
     if (weights && weights->shape.size() == 2 && input && input->shape.size() == 2)
         views.tabs.push_back({View::Contributions, "Contributions", weights->name});
+    if (output && output->shape.size() == 2 && output->shape[1] > 1)
+        views.tabs.push_back({View::Embedding, "Embedding", {}});
     if (output && (IsSpatial(output->shape) || (output->shape.size() == 2 && output->shape[1] > 1)))
         views.tabs.push_back({View::TopImages, picture_input ? "Top images" : "Top samples", {}});
-    if (output && output->shape.size() == 2 && output->shape[1] > 1) {
-        views.later.push_back({"Embedding", "This layer's output over many samples, projected to 2-D (Explore "
-                                            "\xE2\x80\xBA Projection), coloured by class"});
-    }
 
     std::string facts;
     if (weights) {

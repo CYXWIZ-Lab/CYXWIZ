@@ -7,6 +7,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **PCA, t-SNE and UMAP are fast on wide data.** With more features than
+  samples (a layer's 8,192 values for a few hundred images) PCA works from
+  the samples' Gram matrix; it took minutes before and now takes well under
+  a second, with the same result. t-SNE and UMAP start from it too.
 - **Model Summary and NAS count parameters from the real shapes.**
   - Model Summary (and Architecture Diagram) start from the input shape the
     compile reads from the data. Before, any graph without a Dataset Input
@@ -186,6 +190,9 @@ private Data Studio tickets (`tofix*/track*`).
   **Contributions** shows how a Dense layer's output was computed for the
   sample: its largest w × x terms, the sum, bias and value, and where an
   input comes from.
+  **Embedding** projects 320 items' values at a flat layer to 2-D (PCA,
+  t-SNE or UMAP), coloured by true or predicted class with the mistakes
+  ringed; click a point to inspect its item.
   Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in

@@ -7,6 +7,7 @@
 // captioned pictures, the picked one large in the Inspector.
 
 #include "studio_debugger_panel.h"
+#include "studio_debugger_items_run.h"
 #include "studio_debugger_colors.h"
 #include "studio_debugger_widgets.h"
 
@@ -51,27 +52,12 @@ void Wrapped(const ImVec4& colour, const std::string& text) {
     ImGui::PopTextWrapPos();
 }
 
-// The steps of a computation, in order.
-enum class Stage { Loading, Preparing, Running };
-
 }  // namespace
 
 struct StudioDebuggerPanel::TopImagesState {
     bool mean = false;  // Ranked by: Maximum | Mean (spatial layers)
     int choice = 0;     // the Channels option picked
 
-    // A computation: waiting for the data to load, then on a worker.
-    bool waiting_for_load = false;
-    std::string loading;  // the data being loaded
-    bool start_after_load = false;
-    bool waiting_for_compile = false;  // the data loaded; the canvas compiles again
-    bool computing = false;
-    std::chrono::steady_clock::time_point started;
-    std::shared_ptr<std::atomic<int>> stage = std::make_shared<std::atomic<int>>(0);
-    std::shared_ptr<std::atomic<size_t>> done = std::make_shared<std::atomic<size_t>>(0);
-    std::shared_ptr<std::atomic<size_t>> total = std::make_shared<std::atomic<size_t>>(0);
-    std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
-    std::string error;
 
     // The result.
     std::string result_key;  // capture / layer / rank the result is for
@@ -97,15 +83,6 @@ struct StudioDebuggerPanel::TopImagesState {
 void StudioDebuggerPanel::NoteClickedChannel(size_t layer, size_t channel) {
     clicked_channel_layer_ = layer;
     clicked_channel_ = channel;
-}
-
-void StudioDebuggerPanel::DataLoadsEnded(const std::string& failed) {
-    if (!top_images_ || !top_images_->waiting_for_load) return;
-    top_images_->waiting_for_load = false;
-    if (failed.empty())
-        top_images_->start_after_load = true;  // the view starts it on its next frame
-    else
-        top_images_->error = "the data could not be loaded (" + failed + ")";
 }
 
 void StudioDebuggerPanel::RenderTopImages() {
@@ -165,39 +142,16 @@ void StudioDebuggerPanel::RenderTopImages() {
     const ti::Rank rank = s.mean ? ti::Rank::Mean : ti::Rank::Maximum;
     const std::string key = std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" +
                             std::to_string(layer.module_index) + "/" + std::to_string(s.mean);
-    const bool busy = s.computing || s.waiting_for_load;
+    if (!top_images_run_) top_images_run_ = std::make_shared<ItemsRun>();
+    ItemsRun& run = *top_images_run_;
+    const bool busy = run.Busy();
     const auto session = LayerModelSession();
 
     // Starts a computation now, or after the graph's data has loaded.
     const auto start = [&]() {
-        s.error.clear();
         s.picked_item.reset();
-        const DataItemsStart begun = data_items_callback_ ? data_items_callback_() : DataItemsStart{};
-        if (!begun.job) {
-            if (!begun.loading.empty() || begun.compiling) {
-                // Loads first, or the compile catches up with a load: start
-                // when ready (DataLoadsEnded, or the next frames for a compile).
-                if (!s.waiting_for_load && !s.start_after_load) s.started = std::chrono::steady_clock::now();
-                s.waiting_for_load = true;
-                if (!begun.loading.empty()) s.loading = begun.loading;
-                s.waiting_for_compile = begun.compiling;
-            } else {
-                s.error = DataItemsNotStarted(begun, "the " + items_word);
-            }
-            return;
-        }
-        const bool after_wait = s.waiting_for_load || s.start_after_load;
-        s.waiting_for_load = false;
-        s.waiting_for_compile = false;
-        if (!after_wait) {
-            s.loading.clear();
-            s.started = std::chrono::steady_clock::now();
-        }
-        s.computing = true;
-        s.stage->store(static_cast<int>(Stage::Preparing));
-        s.done->store(0);
-        s.total->store(kTopItems);
-        s.cancel->store(false);
+        const DataItemsJob job = BeginItems(run, data_items_callback_, "the " + items_word);
+        if (!job) return;
         struct Computed {
             ti::Strengths strengths;
             DataItems items;
@@ -206,25 +160,25 @@ void StudioDebuggerPanel::RenderTopImages() {
         };
         auto computed = std::make_shared<Computed>();
         auto state = top_images_;
+        auto shared_run = top_images_run_;
         const size_t module = layer.module_index;
-        const DataItemsJob job = begun.job;
         AsyncTaskManager::Instance().RunAsync(
             "Studio Debugger: top images",
-            [state, computed, job, session, module, rank](LambdaTask&) {
+            [shared_run, computed, job, session, module, rank](LambdaTask&) {
+                ItemsRun& r = *shared_run;
                 try {
-                    computed->items = job(kTopItems, [state] { return state->cancel->load(); });
+                    computed->items = job(kTopItems, [&r] { return r.cancel->load(); });
                     if (!computed->items.why.empty()) throw std::runtime_error(computed->items.why);
                     const auto& shape = computed->items.features.Shape();
                     const size_t n = shape.size() == 4 ? shape.back() : (shape.empty() ? 0 : shape.front());
                     const size_t per_item = n ? computed->items.features.NumElements() / n : 1;
-                    state->total->store(n);
-                    state->stage->store(static_cast<int>(Stage::Running));
+                    r.total->store(n);
+                    r.stage->store(2);
                     const size_t chunk = std::clamp<size_t>(kChunkElements / std::max<size_t>(1, per_item), 1,
                                                             kChunkItems);
                     computed->strengths = ti::Run(
                         *session, computed->items.features, module, rank, chunk,
-                        [state](size_t done, size_t) { state->done->store(done); },
-                        [state] { return state->cancel->load(); });
+                        [&r](size_t done, size_t) { r.done->store(done); }, [&r] { return r.cancel->load(); });
                     if (computed->items.labels.NumElements() > 0)
                         computed->labels = lv::ItemLabels(lv::ReadValues(computed->items.labels),
                                                           computed->items.labels.Shape());
@@ -233,10 +187,10 @@ void StudioDebuggerPanel::RenderTopImages() {
                 }
             },
             nullptr,
-            [state, computed, key](bool, const std::string&) {
-                state->computing = false;
+            [state, shared_run, computed, key](bool, const std::string&) {
+                shared_run->computing = false;
                 if (!computed->error.empty()) {
-                    state->error = computed->error;
+                    shared_run->error = computed->error;
                     return;
                 }
                 if (computed->strengths.cancelled) return;
@@ -247,14 +201,7 @@ void StudioDebuggerPanel::RenderTopImages() {
                 state->labels = std::move(computed->labels);
             });
     };
-    if (s.start_after_load && !s.computing && session) {
-        s.start_after_load = false;
-        start();
-    } else if (s.waiting_for_compile && !s.computing && session) {
-        s.start_after_load = true;  // keeps the started time and the load step
-        start();
-        s.start_after_load = false;
-    }
+    if (session && RetryItems(run)) start();
 
     // The settings bar: Channels, Ranked by, how many, Compute / Stop.
     ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_raised);
@@ -291,12 +238,7 @@ void StudioDebuggerPanel::RenderTopImages() {
         SameLineIfFits(width, 18.0f);
         RightAlignOnLine(width);
         if (busy) {
-            if (ui::DangerButton("Stop")) {
-                s.cancel->store(true);
-                s.waiting_for_load = false;
-                s.waiting_for_compile = false;
-                s.start_after_load = false;
-            }
+            if (ui::DangerButton("Stop")) StopItems(run);
         } else if (ui::PrimaryButton(action, session != nullptr, "Rebuilding the run's model...")) {
             start();
         }
@@ -314,73 +256,15 @@ void StudioDebuggerPanel::RenderTopImages() {
 
     // While it runs: its steps, ticked as they end.
     if (busy) {
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_raised);
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
-        ImGui::BeginChild("TopImagesRunning", ImVec2(std::min(ImGui::GetContentRegionAvail().x, 760.0f), 0.0f),
-                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-        const int seconds = static_cast<int>(
-            std::chrono::duration<float>(std::chrono::steady_clock::now() - s.started).count());
-        ImGui::TextColored(DebuggerBright(), "Computing top images for %s", channel_words.c_str());
-        const std::string elapsed = std::to_string(seconds) + " s";
-        RightAlignOnLine(ImGui::CalcTextSize(elapsed.c_str()).x);
-        ImGui::TextColored(DebuggerMuted(), "%s", elapsed.c_str());
-        ImGui::Spacing();
-        const Stage stage = s.waiting_for_load ? Stage::Loading : static_cast<Stage>(s.stage->load());
-        struct Step {
-            Stage stage;
-            std::string title;
-            std::string detail;
-        };
-        const std::vector<Step> steps = {
-            {Stage::Loading, "Load the data",
-             s.waiting_for_compile ? "loaded; the graph compiles again"
-             : s.waiting_for_load  ? "loading " + s.loading
-                                   : (s.loading.empty() ? "already loaded" : s.loading + ": loaded")},
-            {Stage::Preparing, "Prepare " + std::to_string(kTopItems) + " " + items_word + " (spread over the data, "
-                                   "the data steps as validation sees them)",
-             stage == Stage::Preparing ? "preparing" : (stage > Stage::Preparing ? "done" : "")},
-            {Stage::Running, "Run this snapshot's model on the compute device",
-             stage == Stage::Running ? std::to_string(s.done->load()) + " of " + std::to_string(s.total->load()) + " " +
-                                           items_word
-                                     : ""},
-        };
-        for (const auto& step : steps) {
-            const bool finished = step.stage < stage;
-            const bool active = step.stage == stage;
-            ImGui::TextColored(finished ? t.success : (active ? t.accent_text : t.text_faint), "%s",
-                               finished ? ICON_FA_CHECK : (active ? ICON_FA_SPINNER : ICON_FA_CIRCLE));
-            ImGui::SameLine(0.0f, 10.0f);
-            ImGui::PushTextWrapPos(ImGui::GetContentRegionMax().x - 140.0f);
-            ImGui::TextColored(active ? DebuggerText() : DebuggerMuted(), "%s", step.title.c_str());
-            ImGui::PopTextWrapPos();
-            if (!step.detail.empty()) {
-                ImGui::SameLine();
-                RightAlignOnLine(ImGui::CalcTextSize(step.detail.c_str()).x);
-                ImGui::TextColored(DebuggerMuted(), "%s", step.detail.c_str());
-            }
-            if (active && step.stage == Stage::Running && s.total->load() > 0) {
-                const float fraction = static_cast<float>(s.done->load()) / static_cast<float>(s.total->load());
-                const ImVec2 at = ImGui::GetCursorScreenPos();
-                const float width = ImGui::GetContentRegionAvail().x - 26.0f;
-                ImGui::Dummy(ImVec2(width + 26.0f, 8.0f));
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                dl->AddRectFilled(ImVec2(at.x + 26.0f, at.y + 1.0f), ImVec2(at.x + 26.0f + width, at.y + 7.0f),
-                                  ui::ToU32(t.bg_input), 3.0f);
-                dl->AddRectFilled(ImVec2(at.x + 26.0f, at.y + 1.0f),
-                                  ImVec2(at.x + 26.0f + width * std::clamp(fraction, 0.0f, 1.0f), at.y + 7.0f),
-                                  ui::ToU32(t.accent), 3.0f);
-            }
-            ImGui::Spacing();
-        }
-        Wrapped(DebuggerFaint(), "The steps also show in Background Tasks. The rest of the debugger stays usable; Stop "
-                                 "ends after the current batch.");
-        ImGui::EndChild();
-        ImGui::PopStyleVar(2);
-        ImGui::PopStyleColor();
+        DrawItemsRunCard(run, "Computing top images for " + channel_words,
+                         {{"Prepare " + std::to_string(kTopItems) + " " + items_word +
+                               " (spread over the data, the data steps as validation sees them)",
+                           "preparing"},
+                          {"Run this snapshot's model on the compute device", ""}},
+                         2);
         return;
     }
-    if (!s.error.empty()) Wrapped(DebuggerMuted(), "Not computed: " + s.error + ".");
+    if (!run.error.empty()) Wrapped(DebuggerMuted(), "Not computed: " + run.error + ".");
 
     // Ready: what Compute does.
     if (s.result_key != key || s.strengths.channels != channels) {

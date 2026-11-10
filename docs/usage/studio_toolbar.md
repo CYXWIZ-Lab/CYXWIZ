@@ -477,8 +477,28 @@ says how to get one.
     layer), and what the other inputs add up to. Click a row: the Inspector
     says where that input comes from (for a Flatten of a conv stage, the
     layer, row, column and channel).
-  - A greyed view is next: **Embedding** on flat outputs. Hover it for what
-    it will show.
+  - **Embedding** (a flat output with more than one feature, such as a
+    Flatten, a Dense or a pooled vector): where the items of the data land
+    in this layer's features. **Compute** takes 320 images (or samples)
+    spread over the data, runs them through the snapshot's model and
+    projects the layer's output to 2-D with the **Method** you pick: **PCA**
+    (in a moment; it keeps the large distances, and the caption says how
+    much of the variance the two components hold), **t-SNE** or **UMAP** (a
+    few seconds; they keep neighbours together, and the gaps between their
+    clusters mean little). **Colour by** the **True class** or the
+    **Predicted class**; with the predicted class the items the model gets
+    wrong are ringed in amber. The white ring is this sample. The steps show
+    in a card while it runs, as for Top images (the data loads first on a
+    reopened project). Hover a point for its item, label and prediction;
+    click it to see it in the Inspector, with **Make it the picked sample**.
+    The legend sits beside the plot, or below it when the column is narrow.
+    Separate clouds per class mean the layer already tells the classes
+    apart; mixed ones mean the layers after it still have work to do.
+    Results are not saved.
+- Views that run the model again (Where it looks, Top images, Embedding)
+  rebuild it from the canvas's graph. With no graph open, or while it
+  compiles or has errors, the view says which and continues by itself once
+  the graph compiles cleanly.
 - The **Inspector** shows the sample as the first layer received it (after
   the data steps), its name and label, the prediction with how it was read
   (from the evaluation pass, with dropout off and BatchNorm on its running

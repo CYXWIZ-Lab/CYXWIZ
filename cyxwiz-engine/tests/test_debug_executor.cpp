@@ -12,6 +12,7 @@
 #include "../src/core/saliency.h"
 #include "../src/core/top_images.h"
 #include "../src/core/dense_contributions.h"
+#include "../src/core/layer_embedding.h"
 #include "../src/core/dataset_batcher.h"
 #include "../src/core/training_snapshots_presentation.h"
 #include "../src/core/where_it_looks_presentation.h"
@@ -3346,6 +3347,54 @@ void TestContributions() {
     spdlog::info("  OK: contributions (MLP output rebuilt, worst {})", worst);
 }
 
+// TOFIX178 6.4b: Embedding. Two clouds in 8-D stay apart in 2-D with each
+// method; unit scaling, the nearest point and the class counts.
+void TestLayerEmbedding() {
+    spdlog::info("--- TestLayerEmbedding ---");
+    namespace le = layer_embedding;
+    const size_t n = 40, f = 8;
+    std::vector<float> rows(n * f);
+    std::vector<int> labels(n);
+    for (size_t i = 0; i < n; ++i) {
+        labels[i] = static_cast<int>(i % 2);
+        for (size_t k = 0; k < f; ++k)
+            rows[i * f + k] = (labels[i] ? 5.0f : -5.0f) + 0.3f * std::sin(1.7f * float(i * f + k));
+    }
+    for (const auto method : {le::Method::PCA, le::Method::TSNE, le::Method::UMAP}) {
+        const auto p = le::Project(rows, n, f, method);
+        ExpectTrue(p.error.empty() && p.x.size() == n && p.y.size() == n,
+                   std::string(le::MethodName(method)) + " projects every item: " + p.error);
+        // The two classes' centres are further apart than either cloud is wide.
+        double cx[2] = {0, 0}, cy[2] = {0, 0}, spread[2] = {0, 0};
+        for (size_t i = 0; i < n; ++i) {
+            cx[labels[i]] += p.x[i] / (n / 2.0);
+            cy[labels[i]] += p.y[i] / (n / 2.0);
+        }
+        for (size_t i = 0; i < n; ++i)
+            spread[labels[i]] = std::max(spread[labels[i]], std::hypot(p.x[i] - cx[labels[i]], p.y[i] - cy[labels[i]]));
+        const double apart = std::hypot(cx[0] - cx[1], cy[0] - cy[1]);
+        ExpectTrue(apart > spread[0] && apart > spread[1],
+                   std::string(le::MethodName(method)) + " keeps the two clouds apart");
+        ExpectTrue(!p.about.empty(), "the projection says how it was made");
+    }
+    const auto few = le::Project({1, 2}, 2, 1, le::Method::PCA);
+    ExpectTrue(!few.error.empty(), "too few items: said so");
+
+    le::Projection small;
+    small.x = {0.0f, 10.0f, 5.0f};
+    small.y = {2.0f, 2.0f, 2.0f};
+    const auto unit = le::ToUnit(small);
+    ExpectTrue(unit.x == std::vector<float>({0.0f, 1.0f, 0.5f}) && unit.y == std::vector<float>({0.5f, 0.5f, 0.5f}),
+               "unit scaling; a constant axis sits at 0.5");
+    ExpectTrue(le::Nearest(unit, 0.95f, 0.5f, 0.1f, 1.0f) == std::optional<size_t>(1), "the nearest point");
+    ExpectTrue(!le::Nearest(unit, 0.25f, 0.9f, 0.1f, 1.0f), "nothing near: none");
+    const auto counts = le::ClassCounts({1, 0, 1, -1, 1}, {"cat", "dog"});
+    ExpectTrue(counts.size() == 2 && counts[0].label == 0 && counts[0].name == "cat" && counts[0].count == 1 &&
+                   counts[1].label == 1 && counts[1].name == "dog" && counts[1].count == 3,
+               "class counts, items without a class left out");
+    spdlog::info("  OK: layer embedding (PCA, t-SNE, UMAP)");
+}
+
 void TestDebugModelSession() {
     spdlog::info("--- TestDebugModelSession ---");
     // An MLP (no dropout or BatchNorm: the run's training forward equals
@@ -4332,6 +4381,7 @@ int main(int argc, char** argv) {
         TestTrainingSnapshotsPresentation();
         TestTopImages();
         TestContributions();
+        TestLayerEmbedding();
         TestWhereItLooksPresentation();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();

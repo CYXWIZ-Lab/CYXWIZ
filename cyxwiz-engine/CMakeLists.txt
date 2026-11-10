@@ -290,6 +290,7 @@ set(ENGINE_SOURCES
     src/core/saliency.cpp
     src/core/top_images.cpp
     src/core/dense_contributions.cpp
+    src/core/layer_embedding.cpp
     src/core/training_snapshots_presentation.cpp
     src/core/debug_sample_source.cpp
     src/core/debug_numerics.cpp
@@ -691,6 +692,8 @@ set(ENGINE_SOURCES
     src/gui/panels/studio_debugger_runs.cpp
     src/gui/panels/studio_debugger_top_images.cpp
     src/gui/panels/studio_debugger_contributions.cpp
+    src/gui/panels/studio_debugger_items_run.cpp
+    src/gui/panels/studio_debugger_embedding.cpp
     src/gui/panels/studio_debugger_capture.cpp
     src/gui/panels/layer_capture_controls.cpp
     src/gui/panels/gradcam_panel.cpp
@@ -890,6 +893,7 @@ set(ENGINE_HEADERS
     src/core/saliency.h
     src/core/top_images.h
     src/core/dense_contributions.h
+    src/core/layer_embedding.h
     src/core/training_snapshots_presentation.h
     src/core/where_it_looks_presentation.h
     src/core/synthetic_batch.h
@@ -1929,6 +1933,7 @@ add_executable(test_debug_executor
     src/core/saliency.cpp
     src/core/top_images.cpp
     src/core/dense_contributions.cpp
+    src/core/layer_embedding.cpp
     src/core/training_snapshots_presentation.cpp
     src/core/where_it_looks_presentation.cpp
     src/core/debug_numerics.cpp
