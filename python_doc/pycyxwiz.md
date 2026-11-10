@@ -1171,25 +1171,30 @@ exact unit definitions by
   `category`, `scale`, `offset`, `aliases`; base = value * scale + offset),
   `find_unit(name, category="")` (or None), `convert(value, from_unit,
   to_unit)`, `conversion_formula(from_unit, to_unit)`. Units are found by id,
-  label, symbol or alias (`"km/h"`, `"metres"`, `"MiB"`). kB is 1000 bytes,
-  KiB 1024; below absolute zero raises.
-- `hash(data, algorithm="sha256")`: text (UTF-8) or bytes; md5, sha1,
-  sha256, sha512. `hash_file(path, algorithm="sha256", progress=None)`:
-  read in 1 MB blocks; `progress(done, total)` returning False stops
-  (ValueError "Stopped").
+  label or alias in any case, or by symbol as written (`"km/h"`, `"metres"`,
+  `"MiB"`, `"qt"`; `"Mb"` is not `"MB"`). kB is 1000 bytes, KiB 1024;
+  temperatures go through Celsius (0 °C is 32 °F exactly); below absolute
+  zero raises.
+- `hash(data, algorithm="sha256")`: text (UTF-8), bytes, bytearray or
+  memoryview; md5, sha1, sha256, sha512 (anything else raises ValueError).
+  `hash_file(path, algorithm="sha256", progress=None)`: read in 1 MB blocks;
+  `progress(done, total)` returning False stops (ValueError "Stopped"); any
+  other return, None included, goes on.
 - `json_check(text, indent=2)`: `valid`; then `formatted`, `minified` (keys
   in the document's order), `keys`, `depth`, `objects`, `arrays`, `strings`,
   `numbers`, `bools`, `nulls`; or `line`, `column` (where Python's json puts
   the error) and `error`. `json_get(text, path)`: the Python value at
   `"config.max_workers"`, `"items[0].name"` or `"$.a.b"` (KeyError when it
-  is not there).
+  is not there; ValueError when the text is not JSON or the path is malformed,
+  such as `"a..b"`). `"$"` names the root only at the start: `"$oid"` is a key.
 - `regex_find(pattern, text, ignore_case=False, multiline=False)`: dicts
   `text`, `start`, `end` (characters, as `re`), `line`, `column`, `groups`.
   `regex_replace(pattern, text, replacement, ...)`: `$&` the match, `$1`
   .. `$9` the groups. ECMAScript: `\w` and `\b` know ASCII letters only.
 - `random(distribution, count, a=0, b=1, seed=-1)`: uniform (a low, b high),
-  normal (a mean, b sd), exponential (a rate), poisson (a mean), integers
-  (a low, b high). Returns `values`, `seed`, `mean`, `sd_sample`,
+  normal (a mean, b sd), exponential (a rate), poisson (a mean, at most
+  1e9), integers (a low, b high: whole numbers that fit a 32-bit int).
+  Returns `values`, `seed`, `mean`, `sd_sample`,
   `sd_population`, `median`, `q1`, `q3`, `min`, `max`, `edges`, `counts`.
   One seed draws the same values on every platform; seed -1 draws a seed
   and returns it.

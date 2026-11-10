@@ -140,6 +140,8 @@ private:
     ExploreJob<RegexJob> regex_job_;
     std::string regex_key_;
     int regex_runs_ = 0;
+    std::string regex_rows_key_;                 // the answer regex_rows_ were built from
+    std::vector<utilities_view::RegexRow> regex_rows_;
 };
 
 }  // namespace cyxwiz

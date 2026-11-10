@@ -12,7 +12,7 @@ OpenCL devices.
 | DataLoader seed | DataLoader node (`seed`, `balance_seed`) | Batch order each epoch; under- and oversampling; the weighted sampler; image and audio augmentation |
 | Model seed | DataLoader node (`model_seed`) | Weight initialisation, dropout masks and noise layers |
 | Cross-validation seed | Results > Cross-validation | Fold membership (k-fold and stratified) and learning-curve subsets |
-| Tool seeds | Explore tabs (Groups, Text), Random Generator, word embeddings, k-means, GMM, Random Forest, hyperparameter search, text generation | Each tool's own sample or start |
+| Tool seeds | Explore tabs (Groups, Text), Tools > Utilities > Random, word embeddings, k-means, GMM, Random Forest, hyperparameter search, text generation | Each tool's own sample or start |
 
 Each epoch reseeds the model draws from the model seed and the batch order from
 the DataLoader seed, each with the epoch number, so a run resumed from a

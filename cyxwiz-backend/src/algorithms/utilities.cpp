@@ -7,6 +7,7 @@
 #include <chrono>
 #include <sstream>
 #include <iomanip>
+#include <filesystem>
 #include <fstream>
 #include <regex>
 #include <cctype>
@@ -199,10 +200,10 @@ const std::vector<UnitDefinition>& UnitTable() {
         {"cubic_inch", "cubic inch", "in3", "volume", kInch * kInch * kInch * 1000.0, 0.0, {"in^3"}},
         {"cubic_foot", "cubic foot", "ft3", "volume", kFoot * kFoot * kFoot * 1000.0, 0.0, {"ft^3"}},
         {"gallon", "US gallon", "gal (US)", "volume", kUsGallon, 0.0, {"gallons", "us_gallon", "gal"}},
-        {"quart", "US quart", "qt (US)", "volume", kUsGallon / 4.0, 0.0, {"quarts", "us_quart"}},
-        {"pint", "US pint", "pt (US)", "volume", kUsGallon / 8.0, 0.0, {"pints", "us_pint"}},
+        {"quart", "US quart", "qt (US)", "volume", kUsGallon / 4.0, 0.0, {"quarts", "us_quart", "qt"}},
+        {"pint", "US pint", "pt (US)", "volume", kUsGallon / 8.0, 0.0, {"pints", "us_pint", "pt"}},
         {"cup", "US cup", "cup (US)", "volume", kUsGallon / 16.0, 0.0, {"cups", "us_cup"}},
-        {"fluid_ounce", "US fluid ounce", "fl oz (US)", "volume", kUsGallon / 128.0, 0.0, {"fluid_ounces", "us_fluid_ounce"}},
+        {"fluid_ounce", "US fluid ounce", "fl oz (US)", "volume", kUsGallon / 128.0, 0.0, {"fluid_ounces", "us_fluid_ounce", "fl_oz", "floz"}},
         {"imperial_gallon", "imperial gallon", "gal (UK)", "volume", kImperialGallon, 0.0, {"uk_gallon"}},
         {"imperial_pint", "imperial pint", "pt (UK)", "volume", kImperialGallon / 8.0, 0.0, {"uk_pint"}},
 
@@ -356,13 +357,13 @@ const UnitDefinition* Utilities::FindUnit(const std::string& name, const std::st
     if (key.empty()) return nullptr;
     const std::string wanted = UnitKey(category);
     const auto in_category = [&](const UnitDefinition& u) { return wanted.empty() || u.category == wanted; };
-    // Exact symbols first (mm is not Mm), then ids, labels, symbols and aliases
-    // in any case.
+    // Symbols as written only (MB is a megabyte, Mb is not; mm is not Mm),
+    // then ids, labels and aliases in any case.
     for (const auto& u : UnitTable())
         if (in_category(u) && u.symbol == name) return &u;
     for (const auto& u : UnitTable()) {
         if (!in_category(u)) continue;
-        if (u.id == key || UnitKey(u.label) == key || UnitKey(u.symbol) == key) return &u;
+        if (u.id == key || UnitKey(u.label) == key) return &u;
         for (const auto& alias : u.aliases)
             if (UnitKey(alias) == key) return &u;
     }
@@ -401,15 +402,33 @@ UnitConversionResult Utilities::ConvertUnit(
         return result;
     }
     result.category = from->category;
-    const double base = value * from->scale + from->offset;
-    if (from->category == "temperature" && base < 0.0) {
-        result.error_message = "Below absolute zero (" + ShortNumber(base) + " K)";
-        return result;
-    }
     // to = from * a + b
     const double a = from->scale / to->scale;
     const double b = (from->offset - to->offset) / to->scale;
-    result.output_value = (base - to->offset) / to->scale;
+    if (from->category == "temperature") {
+        // Through Celsius with the defining constants (degF = degC * 9/5 + 32,
+        // K = degC + 273.15, degR = K * 9/5): 0 C is 32 F exactly.
+        const auto to_celsius = [](double v, const std::string& id) {
+            if (id == "kelvin") return v - 273.15;
+            if (id == "fahrenheit") return (v - 32.0) * 5.0 / 9.0;
+            if (id == "rankine") return (v - 491.67) * 5.0 / 9.0;
+            return v;
+        };
+        const auto from_celsius = [](double c, const std::string& id) {
+            if (id == "kelvin") return c + 273.15;
+            if (id == "fahrenheit") return c * 9.0 / 5.0 + 32.0;
+            if (id == "rankine") return (c + 273.15) * 9.0 / 5.0;
+            return c;
+        };
+        const double celsius = to_celsius(value, from->id);
+        if (celsius < -273.15 - 1e-9) {
+            result.error_message = "Below absolute zero (" + ShortNumber(celsius + 273.15) + " K)";
+            return result;
+        }
+        result.output_value = from_celsius(celsius, to->id);
+    } else {
+        result.output_value = (value * from->scale + from->offset - to->offset) / to->scale;
+    }
     result.input_unit = from->id;
     result.output_unit = to->id;
     result.formula = to->symbol + " = " + from->symbol + " x " + ShortNumber(a);
@@ -628,6 +647,10 @@ RandomNumberResult Utilities::GeneratePoisson(int count, double lambda, int64_t 
         result.error_message = "Lambda must be positive";
         return result;
     }
+    if (lambda > 1e9) {
+        result.error_message = "The mean must be at most 1e9";
+        return result;
+    }
 
     std::mt19937_64 gen;
     if (seed < 0) {
@@ -749,7 +772,8 @@ HashResult Utilities::HashFile(const std::string& file_path, const std::string& 
     Digests digests(algorithm, result.error_message);
     if (!result.error_message.empty()) return result;
 
-    std::ifstream file(file_path, std::ios::binary);
+    const std::string& u8 = file_path;
+    std::ifstream file(std::filesystem::path(std::u8string(u8.begin(), u8.end())), std::ios::binary);
     if (!file) {
         result.error_message = "Could not open file: " + file_path;
         return result;
@@ -923,24 +947,31 @@ JSONLookup Utilities::LookUpJSON(const std::string& json_text, const std::string
     // The path first: keys by dots, indices in brackets; "$" and "$." at the
     // start are allowed. A malformed path is path_valid false, whatever the text.
     std::vector<std::pair<std::string, bool>> parts;  // (key or index, is index)
+    std::string p = path;
+    if (p == "$") p.clear();
+    else if (p.rfind("$.", 0) == 0) p = p.substr(2);
+    else if (p.rfind("$[", 0) == 0) p = p.substr(1);  // "$oid" stays a key
+    if (!p.empty() && (p.front() == '.' || p.back() == '.' || p.find("..") != std::string::npos)) {
+        out.path_valid = false;
+        out.error = "The path has an empty key (a dot at an end, or two dots)";
+        return out;
+    }
     std::string current;
-    size_t i = 0;
-    if (path.rfind("$", 0) == 0) i = 1;
-    for (; i < path.size(); ++i) {
-        const char c = path[i];
+    for (size_t i = 0; i < p.size(); ++i) {
+        const char c = p[i];
         if (c == '.') {
             if (!current.empty()) parts.push_back({current, false});
             current.clear();
         } else if (c == '[') {
             if (!current.empty()) parts.push_back({current, false});
             current.clear();
-            const size_t close = path.find(']', i);
+            const size_t close = p.find(']', i);
             if (close == std::string::npos) {
                 out.path_valid = false;
                 out.error = "A [ in the path has no ]";
                 return out;
             }
-            const std::string index = path.substr(i + 1, close - i - 1);
+            const std::string index = p.substr(i + 1, close - i - 1);
             if (index.empty() || index.size() > 9 ||
                 !std::all_of(index.begin(), index.end(), [](unsigned char ch) { return std::isdigit(ch); })) {
                 out.path_valid = false;

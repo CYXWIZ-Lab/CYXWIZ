@@ -413,7 +413,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             appearance_ = loaded;
         }
 
-        if (config.contains("utilities") && config["utilities"].is_object()) {
+        if (config.contains("utilities") && config["utilities"].is_object()) try {
             const auto& u = config["utilities"];
             UtilitiesConfig loaded;
             loaded.tab = u.value("tab", loaded.tab);
@@ -425,6 +425,10 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.regex_ignore_case = u.value("regex_ignore_case", loaded.regex_ignore_case);
             loaded.regex_multiline = u.value("regex_multiline", loaded.regex_multiline);
             utilities_ = loaded;
+        } catch (const std::exception& e) {
+            // A hand-edited value of the wrong type: the shipped defaults, and
+            // the rest of the file still loads.
+            spdlog::warn("Engine settings: the utilities defaults could not be read ({}); using the shipped ones", e.what());
         }
 
         data_budget_bytes_ = 0;

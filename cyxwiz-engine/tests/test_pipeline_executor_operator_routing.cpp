@@ -7856,6 +7856,26 @@ int main(int argc, char** argv) {
     Check(std::fabs(ReadNumericValue(converted_units_table, "x", 0) - 1.0 / 0.3048) < 1e-12,
           "UnitConverter should convert meters to feet exactly (1 ft = 0.3048 m)");
 
+    // Temperatures go through Celsius with the defining constants, as the
+    // Utilities window: x = 1 degC is 33.8 degF.
+    const std::string temperature_json =
+        R"({"nodes":[)"
+        R"({"id":643,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":644,"type":"UnitConverter","name":"Convert","parameters":{)"
+        R"("category":"temperature","from_unit":"celsius","to_unit":"fahrenheit"}})"
+        R"(],"links":[{"start_node":643,"end_node":644}]})";
+    cyxwiz::PipelineExecutor temperature_executor;
+    Check(temperature_executor.ExecutePipeline(temperature_json),
+          "UnitConverter should convert temperatures: " + temperature_executor.GetLastError());
+    auto converted_temperature = registry.GetArrowDataset("ds_unitconverter_644");
+    Check(converted_temperature != nullptr && converted_temperature->GetArrowTable() != nullptr,
+          "UnitConverter temperature output table exists");
+    if (converted_temperature != nullptr && converted_temperature->GetArrowTable() != nullptr)
+        Check(std::fabs(ReadNumericValue(converted_temperature->GetArrowTable(), "x", 0) - 33.8) < 1e-12,
+              "UnitConverter should convert 1 degC to 33.8 degF");
+
     const std::string calculator_json =
         R"({"nodes":[)"
         R"({"id":645,"type":"DataInput","name":"Input","parameters":{)"

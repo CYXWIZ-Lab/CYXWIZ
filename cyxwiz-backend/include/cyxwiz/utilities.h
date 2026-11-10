@@ -377,8 +377,8 @@ public:
 
     /**
      * The value at a path: keys by dots, array items by [n]
-     * ("config.max_workers", "items[0].name"; a leading "$" or "$." is
-     * allowed). The value comes back as JSON text in the document's key
+     * ("config.max_workers", "items[0].name"; "$", "$." or "$[" at the start
+     * name the root; a key such as "$oid" is a key). The value comes back as JSON text in the document's key
      * order, or found false with the reason.
      */
     static JSONLookup LookUpJSON(const std::string& json_text, const std::string& path);

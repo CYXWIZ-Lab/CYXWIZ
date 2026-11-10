@@ -59,6 +59,10 @@ for text in ["", "abc", "Hello, World!", "héllo ✓", "a" * 5000]:
 blob = bytes(range(256)) * 9
 check(u.hash(blob, "SHA256") == hashlib.sha256(blob).hexdigest(), "bytes, algorithm in any case")
 check(raises(ValueError, lambda: u.hash("abc", "sha3")), "an unknown algorithm raises")
+check(raises(ValueError, lambda: u.hash("abc", "all")), "'all' is not one digest")
+check(u.hash(bytearray(blob)) == hashlib.sha256(blob).hexdigest() and u.hash(memoryview(blob)) == hashlib.sha256(blob).hexdigest(),
+      "bytearray and memoryview hash as bytes")
+check(raises(TypeError, lambda: u.hash(12)), "a number is not data")
 with tempfile.TemporaryDirectory() as folder:
     path = os.path.join(folder, "data.bin")
     data = bytes((i * 31 + 7) % 256 for i in range(2 * 1024 * 1024 + 99))
@@ -69,6 +73,9 @@ with tempfile.TemporaryDirectory() as folder:
     check(digest == hashlib.sha512(data).hexdigest(), "hash_file against hashlib")
     check(len(seen) == 3 and seen[-1] == (len(data), len(data)), f"progress per 1 MB block: {seen}")
     check(raises(ValueError, lambda: u.hash_file(path, "md5", lambda done, total: False)), "a stop raises")
+    calls = []
+    check(u.hash_file(path, "md5", lambda done, total: calls.append(done)) == hashlib.md5(data).hexdigest() and len(calls) == 3,
+          "a callback returning None goes on")
     check(raises(ValueError, lambda: u.hash_file(os.path.join(folder, "missing.bin"))), "a missing file raises")
 
 # ---- Units: the fixture's exact conversions, refusals and names
@@ -103,6 +110,11 @@ check(u.json_get(doc, "a.list[1].name") == "x" and u.json_get(doc, "$.a.list[0]"
 check(u.json_get(doc, "a") == {"list": [10, {"name": "x"}]} and u.json_get(doc, "s") == "text", "json_get objects and strings")
 check(raises(KeyError, lambda: u.json_get(doc, "a.list[5]")) and raises(KeyError, lambda: u.json_get(doc, "nope")),
       "a missing path raises KeyError")
+check(raises(ValueError, lambda: u.json_get("{oops", "a")) and raises(ValueError, lambda: u.json_get(doc, "a..list"))
+      and raises(ValueError, lambda: u.json_get(doc, "a.list[x]")), "bad JSON or a malformed path raises ValueError")
+check(u.json_get('{"$oid": 7}', "$oid") == 7, "$oid is a key")
+check(u.convert(0, "celsius", "fahrenheit") == 32 and u.convert(100, "celsius", "fahrenheit") == 212, "0 C is 32 F, 100 C is 212 F")
+check(u.find_unit("qt")["id"] == "quart" and u.find_unit("Mb") is None, "qt is a quart; Mb is not MB")
 
 # ---- Regex: Python's re on the fixture's text
 text = truth["regex"]["text"]
@@ -133,6 +145,9 @@ for c in truth["random"]:
     check(r["counts"] == c["counts"] and r["seed"] == c["seed"], tag + ": histogram counts and seed")
 check(raises(ValueError, lambda: u.random("gamma", 10)), "an unknown distribution raises")
 check(raises(ValueError, lambda: u.random("normal", 10, 0.0, -1.0, 1)), "a negative SD raises")
+check(raises(ValueError, lambda: u.random("integers", 10, 0.5, 9, 1))
+      and raises(ValueError, lambda: u.random("integers", 10, 0, 3e9, 1)), "integer bounds are whole and fit an int")
+check(raises(ValueError, lambda: u.random("poisson", 10, 2e9, 0, 1)), "a Poisson mean past 1e9 raises")
 drawn = u.random("uniform", 5)
 check(drawn["seed"] >= 0 and len(drawn["values"]) == 5, "seed -1 draws a seed and returns it")
 ids = u.uuid4(50)

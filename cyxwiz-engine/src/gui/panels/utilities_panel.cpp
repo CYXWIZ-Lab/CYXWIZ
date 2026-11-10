@@ -75,6 +75,9 @@ void BigNumber(const std::string& text) {
     ImGui::TextUnformatted(text.c_str());
 }
 
+// A UTF-8 path (from the file dialogs) as a filesystem path.
+std::filesystem::path Utf8Path(const std::string& s) { return std::filesystem::path(std::u8string(s.begin(), s.end())); }
+
 // What to do next, in a table column (ui::EmptyState centres on the window).
 void ColumnHint(const char* title, const char* hint) {
     const auto& t = ui::CurrentTokens();
@@ -236,7 +239,7 @@ void UtilitiesPanel::SaveDefaults() {
 
 void UtilitiesPanel::SaveCsv(const std::string& name, const std::string& text) {
     if (const auto path = FileDialogs::SaveFile("Save as CSV", {{"CSV", "csv"}}, nullptr, name.c_str())) {
-        std::ofstream out(*path, std::ios::binary);
+        std::ofstream out(Utf8Path(*path), std::ios::binary);
         out << text;
         message_error_ = !out;
         message_ = out ? "Saved " + *path : "Could not write " + *path;
@@ -412,17 +415,22 @@ void UtilitiesPanel::RenderUnits() {
     SideBySide("##units", ImGuiTableFlags_SizingStretchProp, narrow,
         [&] {
         Label("Convert");
+        ui::FlowRow convert_row;
+        convert_row.Next(140.0f);
         ImGui::SetNextItemWidth(140.0f);
         bool changed = ImGui::InputText("##unit_value", &unit_value_);
-        ImGui::SameLine();
+        convert_row.Next(250.0f);
         changed |= unit_combo("##from", from_unit_);
+        ui::FlowRow to_row;
+        to_row.Next(ui::ButtonWidth("Swap", ui::ButtonSize::Small));
         if (ui::SecondaryButton("Swap")) {
             std::swap(from_unit_, to_unit_);
             changed = true;
         }
-        ImGui::SameLine();
+        to_row.Next(TextWidth("to"));
+        ImGui::AlignTextToFramePadding();
         Label("to");
-        ImGui::SameLine();
+        to_row.Next(250.0f);
         changed |= unit_combo("##to", to_unit_);
         if (changed) ConvertUnits();
         ImGui::Spacing();
@@ -467,15 +475,25 @@ void UtilitiesPanel::RenderUnits() {
 
 void UtilitiesPanel::RenderRandom() {
     const auto& t = ui::CurrentTokens();
-    ui::BeginSettingsColumn("utilities_random", 280.0f);
+    // Narrow: the settings above the results instead of a column beside them.
+    const bool narrow = ImGui::GetContentRegionAvail().x < kSideBySideWidth;
+    const auto begin_results = [narrow] {
+        if (narrow) ImGui::Spacing();
+        else ui::BeginResultsArea();
+    };
+    const auto end_results = [narrow] {
+        if (!narrow) ui::EndResultsArea();
+    };
+    if (!narrow) ui::BeginSettingsColumn("utilities_random", 280.0f);
     ui::SettingsSection("Draw");
     ImGui::SetNextItemWidth(-1);
     ImGui::Combo("##distribution", &distribution_, kDistributions, IM_ARRAYSIZE(kDistributions));
     const int d = distribution_;
-    const auto field = [](const char* label, const char* id, double* v, double min, double step) {
+    const auto field = [](const char* label, const char* id, double* v, double min, double step, double max = 1e300) {
         ui::FieldLabel(label);
         ui::NumberFieldOptions o;
         o.min = min;
+        o.max = max;
         o.step = step;
         o.format = "%.6g";
         o.width = 120.0f;
@@ -485,8 +503,14 @@ void UtilitiesPanel::RenderRandom() {
         case 0: field("Low", "##a", &a_[0], -1e300, 1.0); field("High", "##b", &b_[0], -1e300, 1.0); break;
         case 1: field("Mean", "##a", &a_[1], -1e300, 1.0); field("SD", "##b", &b_[1], 1e-300, 0.5); break;
         case 2: field("Rate (1 / mean)", "##a", &a_[2], 1e-300, 0.1); break;
-        case 3: field("Mean", "##a", &a_[3], 1e-300, 1.0); break;
-        default: field("Low", "##a", &a_[4], -2147483648.0, 1.0); field("High", "##b", &b_[4], -2147483648.0, 1.0); break;
+        case 3: field("Mean", "##a", &a_[3], 1e-300, 1.0, 1e9); break;
+        default:
+            // Whole numbers that fit an int.
+            field("Low", "##a", &a_[4], -1e9, 1.0, 1e9);
+            field("High", "##b", &b_[4], -1e9, 1.0, 1e9);
+            a_[4] = std::round(a_[4]);
+            b_[4] = std::round(b_[4]);
+            break;
     }
     ui::FieldLabel("Count");
     ui::NumberField("##count", &count_, 1, 1000000, 100, 120.0f);
@@ -531,16 +555,17 @@ void UtilitiesPanel::RenderRandom() {
     ImGui::TextColored(t.text_faint, "%s", "From the operating system's random source (128 bits each), not from the seed.");
     ImGui::PopTextWrapPos();
 
-    ui::BeginResultsArea();
+    begin_results();
     if (Running(random_job_)) {
-        ui::EndResultsArea();
+        end_results();
         return;
     }
     if (!random_job_.Error().empty()) ui::NoticeLine(random_job_.Error(), t.error);
     const RandomJob* job = random_job_.Answer(random_key_);
     if (!job) {
-        ui::EmptyState(ICON_FA_DICE, "No values yet", "Pick a distribution, then Generate.");
-        ui::EndResultsArea();
+        if (narrow) ColumnHint("No values yet", "Pick a distribution, then Generate.");
+        else ui::EmptyState(ICON_FA_DICE, "No values yet", "Pick a distribution, then Generate.");
+        end_results();
         return;
     }
     const auto& r = job->result;
@@ -550,6 +575,7 @@ void UtilitiesPanel::RenderRandom() {
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const float width = ImGui::GetContentRegionAvail().x;
     ImGui::Dummy(ImVec2(width, height + 18.0f));
+    const bool over_histogram = ImGui::IsItemHovered();  // not under a popup or another window
     const int max_count = r.histogram_counts.empty() ? 1 : std::max(1, *std::max_element(r.histogram_counts.begin(), r.histogram_counts.end()));
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled(origin, ImVec2(origin.x + width, origin.y + height), ui::ToU32(t.plot_bg));
@@ -560,7 +586,7 @@ void UtilitiesPanel::RenderRandom() {
         const ImVec2 a(origin.x + bar * static_cast<float>(i) + 1.0f, origin.y + height - h);
         const ImVec2 b(origin.x + bar * static_cast<float>(i + 1) - 1.0f, origin.y + height);
         draw->AddRectFilled(a, b, ui::ToU32(t.series[0]));
-        if (ImGui::IsMouseHoveringRect(ImVec2(a.x, origin.y), b))
+        if (over_histogram && ImGui::IsMouseHoveringRect(ImVec2(a.x, origin.y), b))
             ImGui::SetTooltip("%s to %s: %d", view::FormatNumber(r.histogram_edges[i], 6).c_str(),
                               view::FormatNumber(r.histogram_edges[i + 1], 6).c_str(), r.histogram_counts[i]);
     }
@@ -583,7 +609,7 @@ void UtilitiesPanel::RenderRandom() {
     }
     ImGui::SameLine();
     if (ui::SecondaryButton("Send to Data Studio")) SendToDataStudio(*job);
-    ui::EndResultsArea();
+    end_results();
 }
 
 void UtilitiesPanel::SendToDataStudio(const RandomJob& job) {
@@ -595,7 +621,9 @@ void UtilitiesPanel::SendToDataStudio(const RandomJob& job) {
         return;
     }
     const auto table = arrow::Table::Make(arrow::schema({arrow::field("value", arrow::float64())}), {column});
-    const std::string name = "random_" + job.result.distribution + "_seed" + std::to_string(job.result.seed_used);
+    const std::string base = "random_" + job.result.distribution + "_seed" + std::to_string(job.result.seed_used);
+    std::string name = base;
+    for (int n = 2; DataRegistry::Instance().GetArrowDataset(name); ++n) name = base + "_" + std::to_string(n);
     const auto dataset = DataRegistry::Instance().RegisterArrowTable(table, name);
     message_error_ = dataset == nullptr;
     message_ = dataset ? "Added the table " + name + " (" + view::FormatCount(job.result.values.size()) +
@@ -656,7 +684,7 @@ void UtilitiesPanel::RenderHash() {
             }
             std::error_code ec;
             if (!hash_file_.empty()) {
-                const auto size = std::filesystem::file_size(hash_file_, ec);
+                const auto size = std::filesystem::file_size(Utf8Path(hash_file_), ec);
                 if (!ec) ImGui::TextColored(t.text_faint, "%s, read in 1 MB blocks", view::SizeText(size).c_str());
             }
         }
@@ -710,6 +738,7 @@ void UtilitiesPanel::RenderJson() {
     };
     ui::FlowRow row;
     row.Next(ui::ButtonWidth("Check", ui::ButtonSize::Regular));
+    std::string rerun;  // a path typed under the answer runs once it is drawn
     if (ui::PrimaryButton("Check")) run("check");
     row.Next(ui::ButtonWidth("Format", ui::ButtonSize::Small));
     if (ui::SecondaryButton("Format")) run("format");
@@ -772,7 +801,7 @@ void UtilitiesPanel::RenderJson() {
                 ImGui::SetNextItemWidth(220.0f);
                 if (ImGui::InputTextWithHint("##json_path", "Path, e.g. config.max_workers", &json_path_,
                                              ImGuiInputTextFlags_EnterReturnsTrue))
-                    run(job->action);
+                    rerun = job->action;
                 if (!job->path_value.empty()) {
                     ImGui::SameLine();
                     ImGui::TextUnformatted(job->path_value.c_str());
@@ -802,6 +831,7 @@ void UtilitiesPanel::RenderJson() {
             }
         }
         });
+    if (!rerun.empty()) run(rerun);
 }
 
 // ---------------------------------------------------------------- Regex
@@ -821,6 +851,7 @@ void UtilitiesPanel::RenderRegex() {
             return job;  // a bad pattern is an answer, shown with its reason
         });
     };
+    bool rerun = false;  // Replace under the answer runs once it is drawn
     const float button = ui::ButtonWidth("Test", ui::ButtonSize::Regular);
     ImGui::SetNextItemWidth(-button - ImGui::GetStyle().ItemSpacing.x);
     const bool enter = ImGui::InputTextWithHint("##pattern", "A regular expression", &pattern_, ImGuiInputTextFlags_EnterReturnsTrue);
@@ -851,7 +882,11 @@ void UtilitiesPanel::RenderRegex() {
                 ui::NoticeLine("The pattern: " + view::RegexSummary(job->result), t.error);
             } else {
                 Label(view::RegexSummary(job->result).c_str());
-                const auto rows = view::RegexRows(job->result, job->text);
+                if (regex_rows_key_ != regex_key_) {
+                    regex_rows_ = view::RegexRows(job->result, job->text);
+                    regex_rows_key_ = regex_key_;
+                }
+                const auto& rows = regex_rows_;
                 if (!rows.empty() &&
                     ImGui::BeginTable("##matches", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
                                       ImVec2(0, 220.0f))) {
@@ -862,7 +897,11 @@ void UtilitiesPanel::RenderRegex() {
                     ImGui::TableSetupColumn("Characters");
                     ImGui::TableSetupColumn("Groups", ImGuiTableColumnFlags_WidthStretch, 1.5f);
                     ImGui::TableHeadersRow();
-                    for (const auto& row : rows) {
+                    ImGuiListClipper clipper;
+                    clipper.Begin(static_cast<int>(rows.size()));
+                    while (clipper.Step())
+                    for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r) {
+                        const auto& row = rows[static_cast<size_t>(r)];
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();
                         ImGui::TextUnformatted(row.text.c_str());
@@ -889,9 +928,9 @@ void UtilitiesPanel::RenderRegex() {
                     ImGui::SetNextItemWidth(260.0f);
                     if (ImGui::InputTextWithHint("##replacement", "$& the match, $1 a group", &replacement_,
                                                  ImGuiInputTextFlags_EnterReturnsTrue))
-                        run();
+                        rerun = true;
                     ImGui::SameLine();
-                    if (ui::SecondaryButton("Replace all")) run();  // not "Replace": the header above has that id
+                    if (ui::SecondaryButton("Replace all")) rerun = true;  // not "Replace": the header above has that id
                     if (job->replaced.success) {
                         ImGui::InputTextMultiline("##replaced", const_cast<std::string*>(&job->replaced.replaced_text),
                                                   ImVec2(-1, 120.0f), ImGuiInputTextFlags_ReadOnly);
@@ -901,6 +940,7 @@ void UtilitiesPanel::RenderRegex() {
             }
         }
         });
+    if (rerun) run();
 }
 
 }  // namespace cyxwiz

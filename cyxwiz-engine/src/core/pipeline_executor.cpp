@@ -555,11 +555,21 @@ bool BuildUnitConverterExpression(const std::string& category,
         error = "UnitConverter: unsupported " + normalized_category + " unit '" + (from ? to_unit : from_unit) + "'";
         return false;
     }
-    const double a = from->scale / to->scale;
-    const double b = (from->offset - to->offset) / to->scale;
-    expression = "(CAST(" + quoted_column + " AS DOUBLE) * " + SqlDouble(a);
-    if (b != 0.0) expression += " + " + SqlDouble(b);
-    expression += ")";
+    const std::string column = "CAST(" + quoted_column + " AS DOUBLE)";
+    if (normalized_category == "temperature") {
+        // Through Celsius with the defining constants, as Utilities::ConvertUnit:
+        // 0 C is 32 F exactly.
+        std::string celsius = column;
+        if (from->id == "kelvin") celsius = "(" + column + " - 273.15)";
+        if (from->id == "fahrenheit") celsius = "((" + column + " - 32.0) * 5.0 / 9.0)";
+        if (from->id == "rankine") celsius = "((" + column + " - 491.67) * 5.0 / 9.0)";
+        expression = celsius;
+        if (to->id == "kelvin") expression = "(" + celsius + " + 273.15)";
+        if (to->id == "fahrenheit") expression = "(" + celsius + " * 9.0 / 5.0 + 32.0)";
+        if (to->id == "rankine") expression = "((" + celsius + " + 273.15) * 9.0 / 5.0)";
+        return true;
+    }
+    expression = "(" + column + " * " + SqlDouble(from->scale / to->scale) + ")";
     return true;
 }
 

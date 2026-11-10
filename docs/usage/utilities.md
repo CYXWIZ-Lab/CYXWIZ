@@ -58,8 +58,14 @@ Every factor is the exact definition:
 **Data units:** kB, MB and GB are powers of 1000, and KiB, MiB and GiB powers
 of 1024. 1 GB = 0.9313225746 GiB.
 
-**Temperatures** convert through kelvin; a value below absolute zero is
-refused ("Below absolute zero (-26.85 K)" for -300 °C).
+**Temperatures** convert through Celsius with the defining constants
+(°F = °C x 9/5 + 32, K = °C + 273.15), so 0 °C is exactly 32 °F and 100 °C
+exactly 212 °F. A value below absolute zero is refused ("Below absolute zero
+(-26.85 K)" for -300 °C); -459.67 °F is absolute zero.
+
+**Names:** a unit is found by its id, label or alias in any case
+("Kilometer", "metres", "qt", "fl_oz"), or by its symbol exactly as written:
+"MB" is a megabyte, "Mb" is nothing (the megabit is "Mbit").
 
 A year is 365 days.
 
@@ -153,7 +159,7 @@ u.evaluate("2 * pi + sqrt(16)")                    # 10.283185307179586
 u.convert(100, "km/h", "knot")                      # 53.99568034557235
 u.conversion_formula("celsius", "fahrenheit")       # '°F = °C x 1.8 + 32'
 u.hash("Hello, World!")                             # 'dffd6021...986f'
-u.hash_file("data.bin", "md5", lambda done, total: True)   # return False to stop
+u.hash_file("data.bin", "md5", lambda done, total: print(done))   # only False stops
 u.json_check(text)                                  # valid, formatted, minified, counts / line, column
 u.json_get(text, "config.max_workers")              # the Python value (KeyError when missing)
 u.regex_find(r"^\w+", text, multiline=True)         # text, start, end, line, column, groups
@@ -163,6 +169,7 @@ u.uuid4(5)
 ```
 
 Errors raise: an expression that does not parse, an unknown unit, a bad
-pattern or an unknown algorithm raises `ValueError`; a missing JSON path
+pattern, an unknown algorithm, text that is not JSON or a malformed JSON path
+raises `ValueError`; a JSON path that is well formed but not in the document
 raises `KeyError`. The example `examples/python/utilities.py` runs every tab's
 work and prints the results.

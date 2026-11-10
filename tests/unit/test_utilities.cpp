@@ -1,3 +1,4 @@
+#include <cmath>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cyxwiz/utilities.h>
@@ -66,4 +67,42 @@ TEST_CASE("LookUpJSON tells a value, a missing path and a malformed path apart",
     found = cyxwiz::Utilities::LookUpJSON("{oops", "a");
     REQUIRE((!found.found && !found.parsed));
     REQUIRE(cyxwiz::Utilities::GetJSONValue(doc, "s") == "text");
+    // "$" names the root only at the start; "$oid" is an ordinary key.
+    found = cyxwiz::Utilities::LookUpJSON(R"({"$oid": "5f1"})", "$oid");
+    REQUIRE((found.found && found.value_json == "\"5f1\""));
+    found = cyxwiz::Utilities::LookUpJSON(doc, "$");
+    REQUIRE(found.found);
+    for (const char* empty_key : {"a..list", ".a", "a.", "$..a"}) {
+        found = cyxwiz::Utilities::LookUpJSON(doc, empty_key);
+        REQUIRE((!found.found && found.parsed && !found.path_valid));
+    }
+}
+
+TEST_CASE("Temperatures go through Celsius with the defining constants", "[utilities][units]") {
+    using cyxwiz::Utilities;
+    REQUIRE(Utilities::ConvertUnit(0.0, "celsius", "fahrenheit").output_value == 32.0);
+    REQUIRE(Utilities::ConvertUnit(100.0, "celsius", "fahrenheit").output_value == 212.0);
+    REQUIRE(Utilities::ConvertUnit(32.0, "fahrenheit", "celsius").output_value == 0.0);
+    REQUIRE(Utilities::ConvertUnit(0.0, "celsius", "kelvin").output_value == 273.15);
+    const auto zero = Utilities::ConvertUnit(-459.67, "fahrenheit", "kelvin");
+    REQUIRE(zero.success);
+    REQUIRE(std::fabs(zero.output_value) < 1e-9);
+    REQUIRE(!Utilities::ConvertUnit(-1.0, "kelvin", "celsius").success);
+    REQUIRE(!Utilities::ConvertUnit(-460.0, "fahrenheit", "celsius").success);
+}
+
+TEST_CASE("Unit symbols match as written; ids, labels and aliases in any case", "[utilities][units]") {
+    using cyxwiz::Utilities;
+    REQUIRE(Utilities::FindUnit("qt") != nullptr);
+    REQUIRE(Utilities::FindUnit("qt")->id == "quart");
+    REQUIRE(Utilities::FindUnit("pt")->id == "pint");
+    REQUIRE(Utilities::FindUnit("fl_oz") != nullptr);
+    REQUIRE(Utilities::FindUnit("MB")->id == "megabyte");
+    REQUIRE(Utilities::FindUnit("Mb") == nullptr);  // Mbit is the megabit
+    REQUIRE(Utilities::FindUnit("Kilometer")->id == "kilometer");
+}
+
+TEST_CASE("A Poisson mean past 1e9 is refused", "[utilities][random]") {
+    REQUIRE(!cyxwiz::Utilities::GeneratePoisson(10, 2e9, 1).success);
+    REQUIRE(cyxwiz::Utilities::GeneratePoisson(10, 1e9, 1).success);
 }
