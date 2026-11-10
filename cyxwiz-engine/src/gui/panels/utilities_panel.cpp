@@ -85,6 +85,39 @@ void ColumnHint(const char* title, const char* hint) {
     ImGui::PopTextWrapPos();
 }
 
+// Widths for ui::FlowRow, so a row of controls wraps in a narrow (docked)
+// window instead of running past its edge.
+float TextWidth(const char* text) { return ImGui::CalcTextSize(text).x; }
+float NumberWidth(float field) {
+    return field + 2.0f * (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x);
+}
+float CheckboxWidth(const char* label) {
+    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + TextWidth(label);
+}
+float LabelledWidth(const char* label, float control) {
+    return TextWidth(label) + ImGui::GetStyle().ItemSpacing.x + control;
+}
+
+// Narrower than this, a tab's two areas stack (a docked window can be ~350 px).
+constexpr float kSideBySideWidth = 640.0f;
+
+// Two areas side by side, or the second under the first when `narrow`.
+template <typename Left, typename Right>
+void SideBySide(const char* id, ImGuiTableFlags flags, bool narrow, Left left, Right right) {
+    if (narrow) {
+        left();
+        ImGui::Spacing();
+        right();
+        return;
+    }
+    if (!ImGui::BeginTable(id, 2, flags)) return;
+    ImGui::TableNextColumn();
+    left();
+    ImGui::TableNextColumn();
+    right();
+    ImGui::EndTable();
+}
+
 // The running job's progress bar and Stop; true when it is running.
 template <typename T>
 bool Running(ExploreJob<T>& job) {
@@ -223,6 +256,7 @@ void UtilitiesPanel::Evaluate() {
 
 void UtilitiesPanel::RenderCalculator() {
     const auto& t = ui::CurrentTokens();
+    const bool narrow = ImGui::GetContentRegionAvail().x < kSideBySideWidth;
     const float button = ui::ButtonWidth("Evaluate", ui::ButtonSize::Regular);
     ImGui::SetNextItemWidth(-button - ImGui::GetStyle().ItemSpacing.x);
     const bool enter = ImGui::InputTextWithHint("##expression", "An expression, e.g. 2 * pi + sqrt(16)", &expression_,
@@ -230,22 +264,25 @@ void UtilitiesPanel::RenderCalculator() {
     ImGui::SameLine();
     if (ui::PrimaryButton("Evaluate") || enter) Evaluate();
 
+    const char* angles[] = {"Radians", "Degrees"};
+    int angle = degrees_ ? 1 : 0;
+    ui::FlowRow row;
+    row.Next(LabelledWidth("Angles", ui::SegmentedControlWidth(angles, 2)));
     ImGui::AlignTextToFramePadding();
     Label("Angles");
     ImGui::SameLine();
-    const char* angles[] = {"Radians", "Degrees"};
-    int angle = degrees_ ? 1 : 0;
     if (ui::SegmentedControl("##angles", angles, 2, &angle)) {
         degrees_ = angle == 1;
         Evaluate();
     }
-    ImGui::SameLine(0, 18.0f);
+    row.Next(LabelledWidth("Digits", NumberWidth(40.0f)));
+    ImGui::AlignTextToFramePadding();
     Label("Digits");
     ImGui::SameLine();
     ui::NumberField("##digits", &digits_, 1, 17, 1, 40.0f, "Significant digits shown (1 to 17)");
 
-    if (ImGui::BeginTable("##calc", 2, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableNextColumn();
+    SideBySide("##calc", ImGuiTableFlags_SizingStretchProp, narrow,
+        [&] {
         Label("Result");
         if (calc_.success) {
             BigNumber(view::FormatNumber(calc_.result, digits_));
@@ -269,12 +306,14 @@ void UtilitiesPanel::RenderCalculator() {
             variables_.erase(remove);
             Evaluate();
         }
+        ui::FlowRow variable_row;
+        variable_row.Next(90.0f);
         ImGui::SetNextItemWidth(90.0f);
         ImGui::InputTextWithHint("##var_name", "name", &new_name_);
-        ImGui::SameLine();
+        variable_row.Next(120.0f);
         ImGui::SetNextItemWidth(120.0f);
         ImGui::InputTextWithHint("##var_value", "value", &new_value_);
-        ImGui::SameLine();
+        variable_row.Next(ui::ButtonWidth("Add", ui::ButtonSize::Small));
         if (ui::SecondaryButton("Add", !new_name_.empty() && !new_value_.empty())) {
             const auto value = Utilities::Evaluate(new_value_, variables_, degrees_ ? "degrees" : "radians");
             if (!IsIdentifier(new_name_)) {
@@ -291,7 +330,8 @@ void UtilitiesPanel::RenderCalculator() {
         }
         if (!variable_error_.empty()) ui::NoticeLine(variable_error_, t.error);
 
-        ImGui::TableNextColumn();
+        },
+        [&] {
         Label("History");
         if (history_.empty()) ImGui::TextColored(t.text_faint, "%s", "Nothing evaluated yet.");
         for (size_t i = 0; i < history_.size(); ++i) {
@@ -317,8 +357,7 @@ void UtilitiesPanel::RenderCalculator() {
             ImGui::TextColored(t.text_faint, "%s", "The same parser as Optimization and Calculus and pycyxwiz.calculus.Expression.");
             ImGui::PopTextWrapPos();
         }
-        ImGui::EndTable();
-    }
+        });
 }
 
 // ---------------------------------------------------------------- Units
@@ -337,8 +376,11 @@ void UtilitiesPanel::ConvertUnits() {
 
 void UtilitiesPanel::RenderUnits() {
     const auto& t = ui::CurrentTokens();
+    const bool narrow = ImGui::GetContentRegionAvail().x < kSideBySideWidth;
+    ui::FlowRow categories;
     for (const auto& category : Utilities::GetUnitCategories()) {
         const std::string label = view::CategoryLabel(category);
+        categories.Next(ui::ButtonWidth(label.c_str(), ui::ButtonSize::Small));
         ImGui::PushID(category.c_str());
         if (ui::GhostButton(label.c_str(), true, nullptr, category == unit_category_)) {
             unit_category_ = category;
@@ -348,9 +390,7 @@ void UtilitiesPanel::RenderUnits() {
             ConvertUnits();
         }
         ImGui::PopID();
-        ImGui::SameLine();
     }
-    ImGui::NewLine();
 
     const auto units = view::UnitsOf(unit_category_);
     const auto unit_combo = [&](const char* id, std::string& chosen) {
@@ -369,8 +409,8 @@ void UtilitiesPanel::RenderUnits() {
         return changed;
     };
 
-    if (ImGui::BeginTable("##units", 2, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableNextColumn();
+    SideBySide("##units", ImGuiTableFlags_SizingStretchProp, narrow,
+        [&] {
         Label("Convert");
         ImGui::SetNextItemWidth(140.0f);
         bool changed = ImGui::InputText("##unit_value", &unit_value_);
@@ -402,7 +442,8 @@ void UtilitiesPanel::RenderUnits() {
         ImGui::SameLine();
         ui::NumberField("##unit_digits", &digits_, 1, 17, 1, 40.0f, "Significant digits shown (1 to 17)");
 
-        ImGui::TableNextColumn();
+        },
+        [&] {
         const UnitDefinition* from = Utilities::FindUnit(from_unit_, unit_category_);
         Label((unit_value_ + " " + (from ? from->symbol : from_unit_) + " in every " + unit_category_ + " unit").c_str());
         if (all_.success && ImGui::BeginTable("##all", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
@@ -419,8 +460,7 @@ void UtilitiesPanel::RenderUnits() {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(t.text_faint, "%s", view::CategoryNote(unit_category_).c_str());
         ImGui::PopTextWrapPos();
-        ImGui::EndTable();
-    }
+        });
 }
 
 // ---------------------------------------------------------------- Random
@@ -567,16 +607,19 @@ void UtilitiesPanel::SendToDataStudio(const RandomJob& job) {
 
 void UtilitiesPanel::RenderHash() {
     const auto& t = ui::CurrentTokens();
+    const bool narrow = ImGui::GetContentRegionAvail().x < kSideBySideWidth;
     const char* sources[] = {"Text", "File"};
+    ui::FlowRow row;
+    row.Next(ui::SegmentedControlWidth(sources, 2));
     ui::SegmentedControl("##hash_source", sources, 2, &hash_source_);
-    ImGui::SameLine(0, 18.0f);
+    row.Next(130.0f);
     ImGui::SetNextItemWidth(130.0f);
     if (ImGui::BeginCombo("##algorithm", view::AlgorithmLabel(hash_algorithm_).c_str())) {
         for (const char* a : kAlgorithms)
             if (ImGui::Selectable(view::AlgorithmLabel(a).c_str(), hash_algorithm_ == a)) hash_algorithm_ = a;
         ImGui::EndCombo();
     }
-    ImGui::SameLine();
+    row.Next(ui::ButtonWidth("Hash", ui::ButtonSize::Regular));
     const bool can = hash_source_ == 0 || !hash_file_.empty();
     if (ui::PrimaryButton("Hash", can, "Choose a file first") ) {
         hash_key_ = "hash#" + std::to_string(++hash_runs_);
@@ -599,8 +642,8 @@ void UtilitiesPanel::RenderHash() {
         });
     }
 
-    if (ImGui::BeginTable("##hash", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable)) {
-        ImGui::TableNextColumn();
+    SideBySide("##hash", ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable, narrow,
+        [&] {
         if (hash_source_ == 0) {
             Label("Text");
             ImGui::InputTextMultiline("##hash_text", &hash_text_, ImVec2(-1, 180));
@@ -618,7 +661,8 @@ void UtilitiesPanel::RenderHash() {
             }
         }
 
-        ImGui::TableNextColumn();
+        },
+        [&] {
         if (!Running(hash_job_)) {
             if (!hash_job_.Error().empty()) ui::NoticeLine(hash_job_.Error(), t.error);
             if (const HashJob* job = hash_job_.Answer(hash_key_)) {
@@ -641,14 +685,14 @@ void UtilitiesPanel::RenderHash() {
                 ColumnHint("No hash yet", "Type text or choose a file, then Hash.");
             }
         }
-        ImGui::EndTable();
-    }
+        });
 }
 
 // ---------------------------------------------------------------- JSON
 
 void UtilitiesPanel::RenderJson() {
     const auto& t = ui::CurrentTokens();
+    const bool narrow = ImGui::GetContentRegionAvail().x < kSideBySideWidth;
     const auto run = [this](const std::string& action) {
         json_key_ = "json#" + std::to_string(++json_runs_);
         const std::string text = json_text_, path = json_path_;
@@ -661,28 +705,32 @@ void UtilitiesPanel::RenderJson() {
             return job;  // an invalid text is an answer, shown with its place
         });
     };
+    ui::FlowRow row;
+    row.Next(ui::ButtonWidth("Check", ui::ButtonSize::Regular));
     if (ui::PrimaryButton("Check")) run("check");
-    ImGui::SameLine();
+    row.Next(ui::ButtonWidth("Format", ui::ButtonSize::Small));
     if (ui::SecondaryButton("Format")) run("format");
-    ImGui::SameLine();
+    row.Next(ui::ButtonWidth("Minify", ui::ButtonSize::Small));
     if (ui::SecondaryButton("Minify")) run("minify");
-    ImGui::SameLine(0, 18.0f);
+    row.Next(LabelledWidth("Indent", NumberWidth(36.0f)));
+    ImGui::AlignTextToFramePadding();
     Label("Indent");
     ImGui::SameLine();
     ui::NumberField("##indent", &json_indent_, 0, 8, 1, 36.0f);
-    ImGui::SameLine(0, 18.0f);
+    row.Next(ui::ButtonWidth("Example", ui::ButtonSize::Small));
     if (ui::LinkButton("Example")) json_text_ = kSampleJson;
-    ImGui::SameLine();
+    row.Next(ui::ButtonWidth("Clear", ui::ButtonSize::Small));
     if (ui::LinkButton("Clear")) json_text_.clear();
 
-    if (ImGui::BeginTable("##json", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable)) {
-        ImGui::TableNextColumn();
+    SideBySide("##json", ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable, narrow,
+        [&] {
         Label("Input");
-        ImGui::InputTextMultiline("##json_text", &json_text_, ImVec2(-1, -ImGui::GetFrameHeightWithSpacing() * 2.0f),
+        ImGui::InputTextMultiline("##json_text", &json_text_, ImVec2(-1, narrow ? 200.0f : -ImGui::GetFrameHeightWithSpacing() * 2.0f),
                                   ImGuiInputTextFlags_AllowTabInput);
         ImGui::TextColored(t.text_faint, "%s", view::SizeText(json_text_.size()).c_str());
 
-        ImGui::TableNextColumn();
+        },
+        [&] {
         if (!Running(json_job_)) {
             const JsonJob* job = json_job_.Answer(json_key_);
             if (!job) {
@@ -750,14 +798,14 @@ void UtilitiesPanel::RenderJson() {
                 }
             }
         }
-        ImGui::EndTable();
-    }
+        });
 }
 
 // ---------------------------------------------------------------- Regex
 
 void UtilitiesPanel::RenderRegex() {
     const auto& t = ui::CurrentTokens();
+    const bool narrow = ImGui::GetContentRegionAvail().x < kSideBySideWidth;
     const auto run = [this] {
         regex_key_ = "regex#" + std::to_string(++regex_runs_);
         const std::string pattern = pattern_, text = regex_text_, replacement = replacement_;
@@ -775,19 +823,23 @@ void UtilitiesPanel::RenderRegex() {
     const bool enter = ImGui::InputTextWithHint("##pattern", "A regular expression", &pattern_, ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
     if (ui::PrimaryButton("Test") || enter) run();
-    ImGui::TextColored(t.text_faint, "%s", "ECMAScript (C++ std::regex): \\w and \\b know ASCII letters only.");
-    ImGui::SameLine(0, 18.0f);
+    ui::FlowRow flags;
+    flags.Next(CheckboxWidth("Ignore case"));
     if (ImGui::Checkbox("Ignore case", &ignore_case_)) run();
-    ImGui::SameLine();
+    flags.Next(CheckboxWidth("Multiline: ^ and $ at every line"));
     if (ImGui::Checkbox("Multiline: ^ and $ at every line", &multiline_)) run();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "%s", "ECMAScript (C++ std::regex): \\w and \\b know ASCII letters only.");
+    ImGui::PopTextWrapPos();
 
-    if (ImGui::BeginTable("##regex", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable)) {
-        ImGui::TableNextColumn();
+    SideBySide("##regex", ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_Resizable, narrow,
+        [&] {
         Label("Text");
-        ImGui::InputTextMultiline("##regex_text", &regex_text_, ImVec2(-1, -ImGui::GetFrameHeightWithSpacing() * 2.0f));
+        ImGui::InputTextMultiline("##regex_text", &regex_text_, ImVec2(-1, narrow ? 160.0f : -ImGui::GetFrameHeightWithSpacing() * 2.0f));
         ImGui::TextColored(t.text_faint, "%s", view::SizeText(regex_text_.size()).c_str());
 
-        ImGui::TableNextColumn();
+        },
+        [&] {
         if (!Running(regex_job_)) {
             const RegexJob* job = regex_job_.Answer(regex_key_);
             if (!job) {
@@ -836,7 +888,7 @@ void UtilitiesPanel::RenderRegex() {
                                                  ImGuiInputTextFlags_EnterReturnsTrue))
                         run();
                     ImGui::SameLine();
-                    if (ui::SecondaryButton("Replace")) run();
+                    if (ui::SecondaryButton("Replace all")) run();  // not "Replace": the header above has that id
                     if (job->replaced.success) {
                         ImGui::InputTextMultiline("##replaced", const_cast<std::string*>(&job->replaced.replaced_text),
                                                   ImVec2(-1, 120.0f), ImGuiInputTextFlags_ReadOnly);
@@ -845,8 +897,7 @@ void UtilitiesPanel::RenderRegex() {
                 }
             }
         }
-        ImGui::EndTable();
-    }
+        });
 }
 
 }  // namespace cyxwiz
