@@ -5,6 +5,8 @@
 #include <vector>
 #include <string>
 #include <chrono>
+#include <functional>
+#include <future>
 
 namespace cyxwiz::servernode::gui {
 
@@ -71,6 +73,21 @@ private:
     void DisconnectFromCentral();
     std::string FormatMB(size_t mb) const;
 
+    // Apply, Retry and Disconnect wait on the daemon, which waits on Central
+    // Server and the web API: they run off the UI thread so the window keeps
+    // drawing, and the status line shows the call in progress.
+    struct CentralCallOutcome {
+        enum class Kind { Apply, Retry, Disconnect };
+        Kind kind = Kind::Apply;
+        bool success = false;
+        bool connected = false;
+        std::string node_id;
+        std::string message;
+    };
+    void StartCentralCall(std::string label, std::function<CentralCallOutcome()> call);
+    void FinishCentralCallIfDone();
+    bool IsCentralCallRunning() const { return central_call_.valid(); }
+
     // Allocation data
     std::vector<ResourceAllocation> allocations_;
     bool allocations_dirty_ = false;
@@ -78,7 +95,8 @@ private:
     // UI state
     bool show_advanced_ = false;
     std::string status_message_;
-    bool is_applying_ = false;
+    std::future<CentralCallOutcome> central_call_;
+    std::string central_call_label_;
     bool show_retry_button_ = false;
     bool connection_failed_ = false;
     bool is_connected_to_central_ = false;
