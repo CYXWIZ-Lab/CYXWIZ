@@ -48,6 +48,10 @@ void CheckCartPole() {
     Check(Fact(v, "Action") == "push right", "CartPole's action in words");
     Check(v.view == ViewKind::CartPole, "the built-in CartPole is drawn by the Engine");
 
+    in.device = "CPU";
+    Check(Build(in).source_line == "policy from this session's run (88,320 steps) \xC2\xB7 on CPU",
+          "the source line says where it acts");
+    in.device.clear();
     in.status = Status::Paused;
     Check(Build(in).primary_label == "Resume", "paused: Resume");
     in.status = Status::Stopped;

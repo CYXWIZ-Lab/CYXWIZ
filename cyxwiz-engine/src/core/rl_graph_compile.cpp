@@ -40,6 +40,13 @@ void SetRLEnvironmentLookup(RLEnvironmentLookup lookup) {
     g_lookup = std::move(lookup);
 }
 
+std::vector<int> HiddenUnits(const std::vector<CompiledLayer>& layers) {
+    std::vector<int> units;
+    for (const auto& layer : layers)
+        if (layer.units > 0) units.push_back(layer.units);
+    return units;
+}
+
 bool IsRLGraphNode(gui::NodeType type) {
     return type == gui::NodeType::RLEnvironment || type == gui::NodeType::PolicyHead ||
            type == gui::NodeType::ValueHead || type == gui::NodeType::PPO;

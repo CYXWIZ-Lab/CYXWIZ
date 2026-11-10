@@ -566,6 +566,7 @@ void NodeEditor::ShowToolbar() {
     } else if (rl_active) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.success, ICON_FA_SPINNER " %s", rl_status_.c_str());
+        if (!rl_device_tooltip_.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", rl_device_tooltip_.c_str());
         ImGui::SameLine();
         if (ui::DangerButton(ICON_FA_STOP " Stop##stop_ppo")) StopRLTraining();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop PPO training (the RL Training Dashboard has Pause)");

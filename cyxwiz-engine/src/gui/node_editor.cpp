@@ -32,6 +32,7 @@
 #include "panels/training_dashboard.h"
 #include "../core/rl/rl_training_run.h"
 #include "../core/rl/trained_policy.h"
+#include "../core/rl_device_presentation.h"
 #include "../core/rl_playback_presentation.h"
 #include "../core/model_export_presentation.h"
 #include "../core/file_dialogs.h"
@@ -4279,6 +4280,9 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     if (!rl_run_->Start(config, GetGraphJson(), error)) return false;
     rl_run_reported_ = false;
     rl_status_ = "PPO starting";
+    rl_device_suffix_.clear();
+    rl_device_tooltip_.clear();
+    rl_device_shown_ = false;
 
     if (!rl_dashboard_) rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
     cyxwiz::TrainingDashboardPanel::PpoRunInfo info;
@@ -4316,10 +4320,35 @@ void NodeEditor::StopRLTraining() {
 // The run's updates onto the dashboard, and its end
 void NodeEditor::PollRLTraining() {
     if (!rl_run_ || !rl_dashboard_) return;
+    // The device the run trains on, once its preflight is done (TOFIX206)
+    if (!rl_device_shown_ && rl_run_->Config()) {
+        const auto context = rl_run_->Device();
+        if (context.valid) {
+            rl_device_shown_ = true;
+            cyxwiz::rl_device::RunDevice device;
+            device.valid = true;
+            device.requested_backend = context.requested_backend;
+            device.requested_device_id = context.requested_device_id;
+            device.effective_backend = context.effective_backend;
+            device.effective_device_id = context.effective_device_id;
+            device.device_name = context.device_name;
+            device.policy = context.ExecutionPolicyName();
+            device.fallback = context.selection_fallback_applied;
+            device.error = context.error;
+            const auto& c = *rl_run_->Config();
+            const auto chip = cyxwiz::rl_device::DeviceChip(device);
+            rl_dashboard_->SetPpoDevice(chip.text, chip.tooltip, chip.fallback,
+                                        cyxwiz::rl_device::DashboardNote(device, cyxwiz::HiddenUnits(c.policy_layers),
+                                                                         cyxwiz::HiddenUnits(c.value_layers)));
+            rl_device_suffix_ = cyxwiz::rl_device::ToolbarSuffix(device);
+            rl_device_tooltip_ = chip.tooltip;
+            if (rl_status_ == "PPO starting") rl_status_ += rl_device_suffix_;
+        }
+    }
     for (const auto& m : rl_run_->TakeUpdates()) {
         rl_dashboard_->AddPpoUpdate(m);
         rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
-                     cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps";
+                     cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" + rl_device_suffix_;
     }
     if (rl_run_->Active()) cyxwiz::plugin::EnginePluginContext::KeepFullFrameRate();  // the dashboard moves
     if (rl_run_reported_ || rl_run_->Active()) return;

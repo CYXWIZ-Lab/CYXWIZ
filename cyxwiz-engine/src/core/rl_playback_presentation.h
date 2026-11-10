@@ -22,6 +22,7 @@ struct Inputs {
     std::string environment_id;    // "CartPole-v1"
     bool discrete = false;
     std::string source;            // PolicySource(...)
+    std::string device;            // "CPU": where the policy acts (empty: not said)
     int episode = 0;
     int step = 0;
     double episode_return = 0.0;

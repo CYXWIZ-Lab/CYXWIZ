@@ -56,7 +56,7 @@ View Build(const Inputs& in) {
     View v;
     v.status = in.status;
     v.title = in.environment_id;
-    v.source_line = "policy from " + in.source;
+    v.source_line = "policy from " + in.source + (in.device.empty() ? "" : " \xC2\xB7 on " + in.device);
     switch (in.status) {
         case Status::Playing: v.status_text = "Playing"; v.primary_label = "Pause"; break;
         case Status::Paused: v.status_text = "Paused"; v.primary_label = "Resume"; break;

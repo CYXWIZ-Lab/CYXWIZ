@@ -1384,6 +1384,9 @@ private:
     std::unique_ptr<cyxwiz::rl::RLTrainingRun> rl_run_;
     bool rl_run_reported_ = true;  // its end is on the dashboard
     std::string rl_status_ = "PPO starting";  // the toolbar's line while it runs
+    std::string rl_device_suffix_;   // " · CPU" once the run's device is known
+    std::string rl_device_tooltip_;  // its full route, on hover
+    bool rl_device_shown_ = false;
     void PollRLTraining();
     // The trained policy (TOFIX195 S5): of the last run, or loaded from a
     // .cyxmodel (rl_policy_file_: its file name; empty for the run's)

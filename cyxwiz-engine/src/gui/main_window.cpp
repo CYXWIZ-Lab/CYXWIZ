@@ -60,6 +60,7 @@
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
+#include "../core/rl_device_presentation.h"
 #include "../core/rl_graph_compile.h"
 #include "panels/training_plot_panel.h"
 #include "panels/script_editor.h"
@@ -5525,6 +5526,23 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         compile_result_rl_ = config.rl;
         // Launch readiness (data columns, device qualification, row limits):
         // reported by Compile, and therefore also before Train starts.
+        // An RL graph on a GPU route with small networks: advice, never a switch (TOFIX206)
+        if (config.is_valid && config.rl) {
+            const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
+            const std::string advice = route.route_available
+                ? cyxwiz::rl_device::CompileAdvice(
+                      cyxwiz::rl_device::BackendWord(cyxwiz::ExecutionDeviceSelectionBackendName(route.type)),
+                      cyxwiz::HiddenUnits(config.rl->policy_layers), cyxwiz::HiddenUnits(config.rl->value_layers))
+                : std::string();
+            if (!advice.empty()) {
+                cyxwiz::ValidationIssue issue;
+                issue.level = cyxwiz::IssueLevel::Info;
+                issue.node_id = config.rl->ppo_node_id;
+                issue.node_name = "PPO";
+                issue.message = advice;
+                compile_result_issues_.push_back(std::move(issue));
+            }
+        }
         if (config.is_valid && !config.rl) {
             const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
             for (auto& issue : gui::CheckGraphLaunchReadiness(

@@ -1,6 +1,8 @@
 #include "policy_playback_panel.h"
 
 #include "../../core/engine_config.h"
+#include "../../core/execution_device_preferences.h"
+#include "../../core/rl_device_presentation.h"
 #include "../../core/rl_playback_presentation.h"
 #include "../../plugin/engine_plugin_context.h"
 #include "../../plugin/registries/plugin_environment_registry.h"
@@ -115,6 +117,7 @@ void PolicyPlaybackPanel::Render() {
     in.environment_id = policy->config.environment.id;
     in.discrete = policy->config.environment.discrete_actions;
     in.source = pb::PolicySource(file_name_, policy->steps);
+    in.device = rl_device::BackendWord(ExecutionDeviceSelectionBackendName(policy->device_type));
     in.episode = s.episode;
     in.step = s.step;
     in.episode_return = s.episode_return;

@@ -104,6 +104,10 @@ void TrainingDashboardPanel::ResetRLMetrics() {
     training_ = false;
     run_.reset();
     controls_ = {};
+    device_chip_.clear();
+    device_tooltip_.clear();
+    device_fallback_ = false;
+    device_note_.clear();
     last_update_.reset();
     outcome_.clear();
     failed_ = false;
@@ -115,6 +119,13 @@ void TrainingDashboardPanel::BeginPpoRun(PpoRunInfo info, PpoRunControls control
     controls_ = std::move(controls);
     training_ = true;
     visible_ = true;
+}
+
+void TrainingDashboardPanel::SetPpoDevice(std::string chip, std::string tooltip, bool fallback, std::string note) {
+    device_chip_ = std::move(chip);
+    device_tooltip_ = std::move(tooltip);
+    device_fallback_ = fallback;
+    device_note_ = std::move(note);
 }
 
 void TrainingDashboardPanel::AddPpoUpdate(const rl::PpoUpdateMetrics& m) {
@@ -220,6 +231,11 @@ void TrainingDashboardPanel::RenderRunHeader() {
     if (failed_ && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", outcome_.c_str());
     ImGui::SameLine();
     ImGui::TextColored(t.text_dim, "%s", run_->title.c_str());
+    if (!device_chip_.empty()) {  // where it trains; a fallback in the caution tone
+        ImGui::SameLine();
+        ui::StatusPill("##rl_device", device_chip_.c_str(), device_fallback_ ? t.caution : t.text_dim);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", device_tooltip_.c_str());
+    }
 
     // Pause / Resume and Stop while it runs; after it, Play policy and Save
     // policy... when it left one; Reset at the right
@@ -277,6 +293,11 @@ void TrainingDashboardPanel::RenderRunHeader() {
     ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
     ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 6.0f), "");
     ImGui::PopStyleColor(2);
+    if (!device_note_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(device_fallback_ ? t.caution : t.text_dim, "%s", device_note_.c_str());
+        ImGui::PopTextWrapPos();
+    }
 }
 
 void TrainingDashboardPanel::RenderKpis() {

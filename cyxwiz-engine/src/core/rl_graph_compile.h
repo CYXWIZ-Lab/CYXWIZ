@@ -45,4 +45,7 @@ void SetRLEnvironmentLookup(RLEnvironmentLookup lookup);
 // True for the node types of an RL graph
 bool IsRLGraphNode(gui::NodeType type);
 
+// The units of a network's layers that have them (its hidden widths)
+std::vector<int> HiddenUnits(const std::vector<CompiledLayer>& layers);
+
 }  // namespace cyxwiz

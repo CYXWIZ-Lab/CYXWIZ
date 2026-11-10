@@ -298,6 +298,7 @@ set(ENGINE_SOURCES
     src/core/rl/trained_policy.cpp
     src/core/rl/policy_playback.cpp
     src/core/rl_playback_presentation.cpp
+    src/core/rl_device_presentation.cpp
     src/gui/panels/policy_playback_panel.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
@@ -7400,6 +7401,16 @@ if(MSVC)
     target_link_options(test_rl_graph_training PRIVATE /STACK:4194304)
 endif()
 add_test(NAME rl_graph_training_cartpole COMMAND test_rl_graph_training)
+
+# ===== Test: what the RL surfaces say about a PPO run's device (TOFIX206) =====
+add_executable(test_rl_device_presentation
+    tests/test_rl_device_presentation.cpp
+    src/core/rl_device_presentation.cpp
+)
+if(WIN32)
+    target_compile_definitions(test_rl_device_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME rl_device_presentation COMMAND test_rl_device_presentation)
 
 # ===== Test: the Policy Playback panel's words (TOFIX195 S5.3) =====
 add_executable(test_rl_playback_presentation

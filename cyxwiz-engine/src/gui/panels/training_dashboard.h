@@ -58,6 +58,9 @@ public:
         std::function<void()> save;
     };
     void BeginPpoRun(PpoRunInfo info, PpoRunControls controls);
+    // The device the run trains on, once its preflight is done
+    // (core/rl_device_presentation): the chip, its route on hover, a note
+    void SetPpoDevice(std::string chip, std::string tooltip, bool fallback, std::string note);
     void AddPpoUpdate(const rl::PpoUpdateMetrics& m);
     void EndPpoRun(const std::string& outcome, bool failed);
 
@@ -85,6 +88,10 @@ private:
     // The Engine's PPO run, when one reports here
     std::optional<PpoRunInfo> run_;
     PpoRunControls controls_;
+    std::string device_chip_;
+    std::string device_tooltip_;
+    bool device_fallback_ = false;
+    std::string device_note_;
     std::optional<rl::PpoUpdateMetrics> last_update_;
     std::string outcome_;
     bool failed_ = false;
