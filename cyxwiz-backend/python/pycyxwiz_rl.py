@@ -1,7 +1,7 @@
-"""Plugin environments for reinforcement learning as Gymnasium environments: load_plugin(folder), environments(), Env(id, **settings) (a gymnasium.Env) and VectorEnv(id, num_envs, **settings) (a gymnasium VectorEnv with same-step autoreset). Stable-Baselines3, CleanRL or your own code then train on exactly the physics the Engine trains on. Needs numpy, gymnasium and the _cyxwiz_envs module built with the Engine; see docs/usage/rl_environments.md."""
+"""Plugin environments for reinforcement learning as Gymnasium environments: load_plugin(folder), environments(), Env(id, **settings) (a gymnasium.Env) and VectorEnv(id, num_envs, **settings) (a gymnasium VectorEnv with same-step autoreset). Stable-Baselines3, CleanRL or your own code then train on exactly the physics the Engine trains on. Needs numpy, gymnasium 1.1 or newer (same-step autoreset) and the _cyxwiz_envs module built with the Engine; see docs/usage/rl_environments.md."""
 
 # Compiled into pycyxwiz and installed as the submodule pycyxwiz.rl when
-# pycyxwiz is imported (TOFIX195 S3.4).
+# pycyxwiz is imported.
 
 import importlib as _importlib
 

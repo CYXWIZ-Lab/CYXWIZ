@@ -8,7 +8,9 @@
 #
 # MUJOCO_DIR (cache path) points at an already extracted release of the same
 # version instead, for offline builds and for macOS (the macOS release is a
-# .dmg, which CMake cannot extract).
+# .dmg, which CMake cannot extract). The folder has include/mujoco/ and lib/
+# with the shared library; on macOS copy the headers and
+# libmujoco.<version>.dylib out of mujoco.framework into that layout.
 
 include_guard(GLOBAL)
 include(FetchContent)

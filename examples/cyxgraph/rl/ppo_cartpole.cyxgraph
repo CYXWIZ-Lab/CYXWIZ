@@ -1,15 +1,14 @@
 {
   "id": "ppo_cartpole",
   "name": "PPO on CartPole-v1",
-  "description": "PPO on the built-in CartPole-v1 (no plugin), tuned: 8 copies, RL Zoo settings, stops when the last 100 episodes average 475 (about 70,000-90,000 steps, a minute on a GPU). Open it, then Train (F5); the RL Training Dashboard shows the run with the Stable-Baselines3 reference of the same settings.",
+  "description": "PPO on the built-in CartPole-v1 (no plugin), tuned: 8 copies, RL Zoo settings, stops when the last 100 episodes average 475 (about 70,000-90,000 steps, under a minute on the CPU or a GPU). Open it, then Train (F5); the RL Training Dashboard shows the run with the Stable-Baselines3 reference of the same settings.",
   "category": "Reinforcement Learning",
   "tags": [
     "ppo",
     "reinforcement",
     "rl",
     "policy",
-    "cartpole",
-    "mujoco"
+    "cartpole"
   ],
   "template": {
     "nodes": [

@@ -175,7 +175,7 @@ On 2026-11-09 with the tuned settings:
 
 ## Not yet
 
-- Exporting the policy to ONNX (TOFIX188), and continuing training from a
+- Exporting the policy to ONNX, and continuing training from a
   saved policy (its optimizer states are already in the file).
 - Algorithms other than PPO; learning-rate schedules (RL Zoo's CartPole
   settings use linear ones, the preset uses them as constants).

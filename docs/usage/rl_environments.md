@@ -18,7 +18,7 @@ position and speed, pole angle and speed), takes one of 2 actions (0 pushes
 left, 1 pushes right), +1 each step, ends when the pole leans past 12 degrees
 or the cart leaves [-2.4, 2.4], cut at 500 steps; one step is 0.02 s. Its one
 setting is `max_episode_steps` (0 keeps 500). Each step replayed in Gymnasium
-gives the same observation, reward and ending to 1e-6.
+gives the same observation, reward and ending to 1e-5.
 
 ## The MuJoCo plugin's environments
 
@@ -31,7 +31,7 @@ They are Gymnasium's MuJoCo tasks (version 5): the same model files
 (Gymnasium's, MIT licence, in the plugin's `assets` folder), observations,
 rewards, endings and start-state noise, so returns compare with Gymnasium's.
 Replayed in Gymnasium from the same start state with the same actions they
-give the same observations and rewards to 1e-6.
+give the same observations and rewards to 1e-5.
 
 Settings (every one is checked: a word where a number belongs, a value under
 its minimum, a fraction where a whole number belongs, or a name the
@@ -53,7 +53,8 @@ second with 64 copies, and 64,000 or 21,000 with one copy.
 
 ## From Python (`pycyxwiz.rl`)
 
-Without the Engine running, in any Python that has numpy and gymnasium, with
+Without the Engine running, in any Python that has numpy and gymnasium 1.1 or
+newer (its same-step autoreset), with
 the folder holding `pycyxwiz` and `_cyxwiz_envs` (the Engine's `bin` folder)
 on `sys.path`:
 
