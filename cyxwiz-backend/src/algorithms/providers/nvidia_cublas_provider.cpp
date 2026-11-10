@@ -971,6 +971,109 @@ MlpShapeArg MlpShapeOf(const NeuralOpRequest& r, size_t& z_width, int& max_width
     return s;
 }
 
+// One Adam step over many tensors (TOFIX206 3.2 C): a small network's
+// optimizer step is one kernel per tensor plus about two per tensor for the
+// global-norm clip; here it is two launches for all of them. Kernel 1 sums
+// the squared gradients into one partial per block (a fixed grid, so the
+// order and the result do not change between runs); kernel 2 has every block
+// add the partials in the same order, take the clip scale, and update every
+// element. The tensor of an element comes from the offsets table.
+constexpr const char* kAdamKernelSource = R"(
+#define ADAM_MAXT 32
+#define ADAM_BLOCKS 64
+#define ADAM_THREADS 256
+struct AdamTable {
+  const float* p[ADAM_MAXT];
+  const float* g[ADAM_MAXT];
+  const float* m[ADAM_MAXT];
+  const float* v[ADAM_MAXT];
+  float* po[ADAM_MAXT];
+  float* mo[ADAM_MAXT];
+  float* vo[ADAM_MAXT];
+  long long off[ADAM_MAXT + 1];
+  int tensors;
+};
+
+__device__ __forceinline__ int adam_tensor_of(const AdamTable& t, long long k) {
+  int lo = 0, hi = t.tensors - 1;
+  while (lo < hi) {
+    const int mid = (lo + hi + 1) >> 1;
+    if (t.off[mid] <= k) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
+extern "C" __global__ void cyxwiz_adam_sumsq(AdamTable t, float* __restrict__ partial) {
+  __shared__ float sh[ADAM_THREADS];
+  const long long total = t.off[t.tensors];
+  float acc = 0.0f;
+  for (long long k = (long long)blockIdx.x * blockDim.x + threadIdx.x; k < total; k += (long long)gridDim.x * blockDim.x) {
+    const int i = adam_tensor_of(t, k);
+    const float g = t.g[i][k - t.off[i]];
+    acc += g * g;
+  }
+  sh[threadIdx.x] = acc;
+  __syncthreads();
+  for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+    if (threadIdx.x < s) sh[threadIdx.x] += sh[threadIdx.x + s];
+    __syncthreads();
+  }
+  if (threadIdx.x == 0) partial[blockIdx.x] = sh[0];
+}
+
+extern "C" __global__ void cyxwiz_adam_apply(AdamTable t, const float* __restrict__ partial, int partials,
+                                             float max_norm, float lr, float b1, float b2, float eps,
+                                             float bc1, float bc2) {
+  __shared__ float scale_sh;
+  if (threadIdx.x == 0) {
+    float scale = 1.0f;
+    if (max_norm > 0.0f) {
+      float sum = 0.0f;
+      for (int b = 0; b < partials; ++b) sum += partial[b];
+      scale = fminf(max_norm / (sqrtf(sum) + 1e-6f), 1.0f);
+    }
+    scale_sh = scale;
+  }
+  __syncthreads();
+  const float scale = scale_sh;
+  const long long total = t.off[t.tensors];
+  for (long long k = (long long)blockIdx.x * blockDim.x + threadIdx.x; k < total; k += (long long)gridDim.x * blockDim.x) {
+    const int i = adam_tensor_of(t, k);
+    const long long j = k - t.off[i];
+    const float g = t.g[i][j] * scale;
+    const float m = b1 * t.m[i][j] + (1.0f - b1) * g;
+    const float v = b2 * t.v[i][j] + (1.0f - b2) * g * g;
+    t.mo[i][j] = m;
+    t.vo[i][j] = v;
+    t.po[i][j] = t.p[i][j] - lr * (m / bc1) / (sqrtf(v / bc2) + eps);
+  }
+}
+)";
+
+constexpr int kAdamMaxTensors = 32;
+constexpr unsigned kAdamBlocks = 64;
+constexpr unsigned kAdamThreads = 256;
+struct AdamTableArg {
+    const float* p[kAdamMaxTensors] = {};
+    const float* g[kAdamMaxTensors] = {};
+    const float* m[kAdamMaxTensors] = {};
+    const float* v[kAdamMaxTensors] = {};
+    float* po[kAdamMaxTensors] = {};
+    float* mo[kAdamMaxTensors] = {};
+    float* vo[kAdamMaxTensors] = {};
+    long long off[kAdamMaxTensors + 1] = {};
+    int tensors = 0;
+};
+static_assert(static_cast<size_t>(kAdamMaxTensors) == NeuralOpRequest::kMaxAdamTensors, "kernel and request limits differ");
+
+std::string AdamContractError(const NeuralOpRequest& r) {
+    if (!r.device_resident) return "adam_step runs device-resident only";
+    if (r.dtype != DataType::Float32) return "adam_step is Float32 only";
+    if (r.adam_tensors < 1 || r.adam_tensors > NeuralOpRequest::kMaxAdamTensors) return "adam_step takes 1 to 32 tensors";
+    if (!(r.adam_bias_correction1 > 0.0f) || !(r.adam_bias_correction2 > 0.0f)) return "adam_step needs positive bias corrections";
+    return {};
+}
+
 struct NvidiaRuntimeProbe {
     bool ok = false;
     int device_count = 0;
@@ -1131,7 +1234,7 @@ public:
         cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, native_device);
         cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, native_device);
         nvrtcProgram program = nullptr;
-        const std::string source = std::string(kDeviceKernelSource) + kMlpKernelSource;
+        const std::string source = std::string(kDeviceKernelSource) + kMlpKernelSource + kAdamKernelSource;
         if (nvrtcCreateProgram(&program, source.c_str(), "cyxwiz_device.cu", 0, nullptr, nullptr) !=
             NVRTC_SUCCESS) {
             failure = "NVRTC program creation failed (device kernels)";
@@ -1161,7 +1264,9 @@ public:
             cuModuleGetFunction(&conv_bias_grad_, module_, "cyxwiz_conv_bias_grad") != CUDA_SUCCESS ||
             cuModuleGetFunction(&mlp_forward_, module_, "cyxwiz_mlp_forward") != CUDA_SUCCESS ||
             cuModuleGetFunction(&mlp_deltas_, module_, "cyxwiz_mlp_backward_deltas") != CUDA_SUCCESS ||
-            cuModuleGetFunction(&mlp_grads_, module_, "cyxwiz_mlp_param_grads") != CUDA_SUCCESS) {
+            cuModuleGetFunction(&mlp_grads_, module_, "cyxwiz_mlp_param_grads") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&adam_sumsq_, module_, "cyxwiz_adam_sumsq") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&adam_apply_, module_, "cyxwiz_adam_apply") != CUDA_SUCCESS) {
             failure = "device kernel module load failed";
             return false;
         }
@@ -1182,6 +1287,8 @@ public:
     CUfunction MlpForward() const { return mlp_forward_; }
     CUfunction MlpDeltas() const { return mlp_deltas_; }
     CUfunction MlpGrads() const { return mlp_grads_; }
+    CUfunction AdamSumsq() const { return adam_sumsq_; }
+    CUfunction AdamApply() const { return adam_apply_; }
     // The cuBLAS handle bound to the caller's stream for this call.
     cublasHandle_t Cublas(CUstream stream) {
         cublasSetStream(cublas_, reinterpret_cast<cudaStream_t>(stream));
@@ -1281,6 +1388,8 @@ private:
     CUfunction mlp_forward_ = nullptr;
     CUfunction mlp_deltas_ = nullptr;
     CUfunction mlp_grads_ = nullptr;
+    CUfunction adam_sumsq_ = nullptr;
+    CUfunction adam_apply_ = nullptr;
     cublasHandle_t cublas_ = nullptr;
     float* workspace_ = nullptr;
     size_t workspace_floats_ = 0;
@@ -1376,6 +1485,14 @@ public:
         // Device-resident 2D convolution (TOFIX140 A1b).
         if (request.op == NeuralOp::Conv2dForward || request.op == NeuralOp::Conv2dBackward) {
             capability.detail = conv2d_contract::ContractError(request);
+            if (!capability.detail.empty()) return capability;
+            capability.supported = true;
+            capability.reason = BackendFallbackReason::BackendInternalError;
+            return capability;
+        }
+        // One Adam step over many tensors (TOFIX206 3.2 C).
+        if (request.op == NeuralOp::AdamStep) {
+            capability.detail = AdamContractError(request);
             if (!capability.detail.empty()) return capability;
             capability.supported = true;
             capability.reason = BackendFallbackReason::BackendInternalError;
@@ -2506,6 +2623,59 @@ private:
         return Ok();
     }
 
+    NeuralOpStatus ExecuteAdamStep(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
+        const size_t T = r.adam_tensors;
+        const auto& in = buffers.inputs;
+        const auto& out = buffers.outputs;
+        if (in.size() != 4 * T || out.size() != 3 * T) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                        "adam_step buffers do not match the request (param, grad, m, v -> param', m', v' per tensor)");
+        }
+        AdamTableArg table;
+        table.tensors = static_cast<int>(T);
+        long long total = 0;
+        for (size_t t = 0; t < T; ++t) {
+            const size_t n = in[4 * t].elements;
+            if (n == 0 || in[4 * t + 1].elements != n || in[4 * t + 2].elements != n || in[4 * t + 3].elements != n ||
+                out[3 * t].elements != n || out[3 * t + 1].elements != n || out[3 * t + 2].elements != n) {
+                return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
+                            "adam_step: a tensor's param, grad, m, v and outputs differ in size");
+            }
+            table.p[t] = static_cast<const float*>(in[4 * t].handle);
+            table.g[t] = static_cast<const float*>(in[4 * t + 1].handle);
+            table.m[t] = static_cast<const float*>(in[4 * t + 2].handle);
+            table.v[t] = static_cast<const float*>(in[4 * t + 3].handle);
+            table.po[t] = static_cast<float*>(out[3 * t].handle);
+            table.mo[t] = static_cast<float*>(out[3 * t + 1].handle);
+            table.vo[t] = static_cast<float*>(out[3 * t + 2].handle);
+            table.off[t] = total;
+            total += static_cast<long long>(n);
+        }
+        table.off[T] = total;
+        const auto stream = static_cast<CUstream>(buffers.queue.cuda_stream);
+        float* partial = nullptr;
+        int partials = 0;
+        float max_norm = r.adam_max_norm;
+        if (max_norm > 0.0f) {
+            partial = device_state_.Workspace(kAdamBlocks, stream);
+            if (!partial) return Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted, "adam partial sums");
+            partials = static_cast<int>(kAdamBlocks);
+            void* sum_args[] = {&table, &partial};
+            if (cuLaunchKernel(device_state_.AdamSumsq(), kAdamBlocks, 1, 1, kAdamThreads, 1, 1, 0, stream, sum_args,
+                               nullptr) != CUDA_SUCCESS) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "adam_step norm launch failed");
+            }
+        }
+        float lr = r.adam_learning_rate, b1 = r.adam_beta1, b2 = r.adam_beta2, eps = r.adam_epsilon;
+        float bc1 = r.adam_bias_correction1, bc2 = r.adam_bias_correction2;
+        void* apply_args[] = {&table, &partial, &partials, &max_norm, &lr, &b1, &b2, &eps, &bc1, &bc2};
+        if (cuLaunchKernel(device_state_.AdamApply(), kAdamBlocks, 1, 1, kAdamThreads, 1, 1, 0, stream, apply_args,
+                           nullptr) != CUDA_SUCCESS) {
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "adam_step launch failed");
+        }
+        return Ok();
+    }
+
     NeuralOpStatus ExecuteDevice(const NeuralOpRequest& request,
                                  NeuralDeviceOpBuffers& buffers) override {
         const NeuralCapability capability = QueryCapability(request);
@@ -2521,6 +2691,13 @@ private:
             }
             return request.op == NeuralOp::AttentionForward ? ExecuteAttentionForward(request, buffers)
                                                             : ExecuteAttentionBackward(request, buffers);
+        }
+        if (request.op == NeuralOp::AdamStep) {
+            std::string failure;
+            if (!device_state_.Ensure(buffers.queue.native_device, failure)) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, failure);
+            }
+            return ExecuteAdamStep(request, buffers);
         }
         if (request.op == NeuralOp::MlpForward || request.op == NeuralOp::MlpBackward) {
             std::string failure;

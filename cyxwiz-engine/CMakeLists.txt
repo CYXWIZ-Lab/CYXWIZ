@@ -7523,6 +7523,24 @@ if(WIN32)
 endif()
 add_test(NAME fused_mlp_parity COMMAND test_fused_mlp)
 
+# ===== Test: one Adam step for several optimizers against the existing path (TOFIX206 3.2 C) =====
+add_executable(test_fused_adam
+    tests/test_fused_adam.cpp
+)
+target_include_directories(test_fused_adam PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_fused_adam PRIVATE
+    cyxwiz-backend
+)
+set_target_properties(test_fused_adam PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(WIN32)
+    target_compile_definitions(test_fused_adam PRIVATE NOMINMAX)
+endif()
+add_test(NAME fused_adam_parity COMMAND test_fused_adam)
+
 # ===== Tool: a CUDA call counter loaded into any process (TOFIX206 3.2) =====
 # CUDA_INJECTION64_PATH=<this dll> counts kernel launches, waits and copies
 # (CUPTI callbacks, no administrator rights); a development tool.

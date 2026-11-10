@@ -48,6 +48,10 @@ enum class NeuralOp {
     // NeuralOpRequest mlp fields.
     MlpForward,
     MlpBackward,
+    // One Adam step over many tensors, after an optional global-norm clip
+    // across all of their gradients (TOFIX206 3.2 C); contract with the
+    // NeuralOpRequest adam fields.
+    AdamStep,
 };
 
 CYXWIZ_API const char* NeuralOpName(NeuralOp op);
@@ -199,6 +203,23 @@ struct NeuralOpRequest {
     NeuralActivation mlp_activations[kMaxMlpLayers] = {};
     float mlp_negative_slope = 0.01f;  // LeakyRelu
     float mlp_elu_alpha = 1.0f;        // Elu
+    // Adam over adam_tensors tensors (device-resident), TOFIX206 3.2 C.
+    //   inputs  for each tensor t: param_t, grad_t, m_t, v_t (any shape, the
+    //           four of a tensor the same size)
+    //   outputs for each tensor t: param'_t, m'_t, v'_t
+    // With adam_max_norm > 0 the gradients are first scaled by
+    // min(1, max_norm / (||all gradients||_2 + 1e-6)); then m' = b1 m + (1 -
+    // b1) g, v' = b2 v + (1 - b2) g^2, param' = param - lr (m' / bc1) /
+    // (sqrt(v' / bc2) + eps), bc1 / bc2 the bias corrections of the step.
+    static constexpr size_t kMaxAdamTensors = 32;
+    size_t adam_tensors = 0;
+    float adam_learning_rate = 0.0f;
+    float adam_beta1 = 0.9f;
+    float adam_beta2 = 0.999f;
+    float adam_epsilon = 1e-8f;
+    float adam_bias_correction1 = 1.0f;
+    float adam_bias_correction2 = 1.0f;
+    float adam_max_norm = 0.0f;  // <= 0: no clip
 };
 
 // Host-side CyxWiz-owned buffers, explicit copies at the boundary (v1).
