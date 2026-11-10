@@ -9,6 +9,7 @@
 
 #include "arrayfire_host_materialization.h"
 #include "arrayfire_indexed.h"
+#include "device_random.h"
 
 #include <arrayfire.h>
 
@@ -303,8 +304,8 @@ SaliencyMap ModelInterpretability::ComputeSmoothGrad(const ExplainFunctions& mod
     try {
         const int count = std::max(1, num_samples);
         const af::array x = Samples(input);  // [1, F]
-        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, seed);
-        const af::array noisy = af::tile(x, count) + noise_std * af::randn(af::dim4(count, x.dims(1)), f32, engine);
+        af::randomEngine engine = cyxwiz::DeviceRandomEngine(seed);
+        const af::array noisy = af::tile(x, count) + noise_std * cyxwiz::DeviceNormal(af::dim4(count, x.dims(1)), f32, engine);
         const Tensor batch = Batch(noisy, input.Shape());
         const Tensor output = model.forward(batch);
         const Tensor grad = model.backward(OneHot(output, result.target_class));

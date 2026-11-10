@@ -25,6 +25,7 @@
 #include "word_training_vocabulary.h"
 #include "word_vector_device.h"
 #include "word2vec_sampling.h"
+#include "device_random.h"
 
 #include <arrayfire.h>
 
@@ -151,7 +152,7 @@ Word2VecModel WordEmbeddings::TrainWord2Vec(const std::vector<std::vector<std::s
     const dim_t batch = StepBatch(options.batch_size, v);
 
     try {
-        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, options.seed);
+        af::randomEngine engine = cyxwiz::DeviceRandomEngine(options.seed);
         // gensim: input vectors uniform in +-0.5 / vector_size, output vectors 0.
         af::array w_in = (af::randu(af::dim4(v, d), f32, engine) - 0.5f) / static_cast<float>(d);
         af::array w_out = af::constant(0.0f, v, d, f32);

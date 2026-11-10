@@ -1,5 +1,6 @@
 #include "cyxwiz/image_augmentation.h"
 #include "cyxwiz/portable_random.h"
+#include "../device_random.h"
 
 #include <algorithm>
 #include <array>
@@ -421,8 +422,8 @@ af::array GaussianNoise(const af::array& images, const ImageOpDraws& draws, cons
         }
         noise = RowsToImages(af::transpose(af::array(static_cast<dim_t>(shape.Size()), n, draws.noise.data())), shape);
     } else {
-        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, draws.noise_seed);
-        noise = af::randn(images.dims(), f32, engine);
+        af::randomEngine engine = cyxwiz::DeviceRandomEngine(draws.noise_seed);
+        noise = cyxwiz::DeviceNormal(images.dims(), f32, engine);
     }
     const af::array out = images + (op.noise_mean + noise * op.sigma);
     return op.clip ? af::clamp(out, 0.0, 1.0) : out;

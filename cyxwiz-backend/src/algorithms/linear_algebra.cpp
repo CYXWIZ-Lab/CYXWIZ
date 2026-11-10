@@ -12,6 +12,7 @@
 #include "arrayfire_backend_utils.h"
 #include "arrayfire_host_values.h"
 #include "svd_device.h"
+#include "device_random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -558,8 +559,8 @@ SVDResult LinearAlgebra::LeadingEigenvectors(const std::vector<std::vector<doubl
     try {
         const af::array s = ToDevice(S);
         const int l = std::min(d, k + 10);  // oversampled, as scikit-learn's randomized_svd
-        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, 0);
-        af::array q = af::randn(af::dim4(d, l), s.type(), engine);
+        af::randomEngine engine = cyxwiz::DeviceRandomEngine(0);
+        af::array q = cyxwiz::DeviceNormal(af::dim4(d, l), s.type(), engine);
         // Orthonormal columns by Cholesky QR (l x l only; a ridge keeps a rank-deficient block solvable).
         const auto orthonormal = [&](const af::array& z) {
             af::array g = af::matmul(z, z, AF_MAT_TRANS, AF_MAT_NONE);

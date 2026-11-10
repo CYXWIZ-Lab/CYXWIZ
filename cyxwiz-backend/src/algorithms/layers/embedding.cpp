@@ -3,6 +3,7 @@
 #include "layer_arrayfire_utils.h"
 #include "../arrayfire_backend_utils.h"
 #include "../arrayfire_indexed.h"
+#include "../device_random.h"
 
 #include <cmath>
 #include <cstring>
@@ -93,7 +94,7 @@ EmbeddingLayer::EmbeddingLayer(int num_embeddings, int embedding_dim,
 
 void EmbeddingLayer::InitializeWeights() {
     // Initialize with normal distribution N(0, 1)
-    af::array w = af::randn(af::dim4(num_embeddings_, embedding_dim_), af::dtype::f32);
+    af::array w = cyxwiz::DeviceNormal(af::dim4(num_embeddings_, embedding_dim_), f32);
     w.eval();
     if (padding_idx_ >= 0 && padding_idx_ < num_embeddings_) {
         w(padding_idx_, af::span) = 0.0f;

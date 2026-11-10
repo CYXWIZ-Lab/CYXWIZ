@@ -23,6 +23,7 @@
 #include "arrayfire_indexed.h"
 #include "word_training_vocabulary.h"
 #include "word_vector_device.h"
+#include "device_random.h"
 
 #include <arrayfire.h>
 
@@ -321,7 +322,7 @@ GloVeModel WordEmbeddings::TrainGloVe(const std::vector<std::vector<std::string>
 
         // glove.c: every vector and bias uniform in [-0.5, 0.5) / vector_size,
         // AdaGrad sums start at 1.
-        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, options.seed);
+        af::randomEngine engine = cyxwiz::DeviceRandomEngine(options.seed);
         const float scale = 1.0f / static_cast<float>(d);
         DeviceState s;
         s.word = (af::randu(af::dim4(v, d), f32, engine) - 0.5f) * scale;

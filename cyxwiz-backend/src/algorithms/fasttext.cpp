@@ -26,6 +26,7 @@
 #include "word2vec_sampling.h"
 #include "word_training_vocabulary.h"
 #include "word_vector_device.h"
+#include "device_random.h"
 
 #include <arrayfire.h>
 
@@ -362,7 +363,7 @@ FastTextModel WordEmbeddings::TrainFastText(const std::vector<std::vector<std::s
         // others in batches of their own at full width.
         const DevicePieces pieces =
             ToDevice(host_pieces, options.cbow ? 0 : NarrowWidth(host_pieces, model.counts, 0.98));
-        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, options.seed);
+        af::randomEngine engine = cyxwiz::DeviceRandomEngine(options.seed);
         // fastText and gensim: input rows (words and n-grams) uniform in
         // +-1 / vector_size, output rows 0.
         af::array w_in =
