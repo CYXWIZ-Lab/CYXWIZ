@@ -22,6 +22,7 @@
 #include "bindings_tensor.h"
 #include "bindings_module.h"
 #include "bindings_optimize.h"
+#include "bindings_utilities.h"
 #include "bindings_model.h"
 // Distributed training
 #include "cyxwiz/distributed/process_group.h"
@@ -2026,6 +2027,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
     // Tools > Optimization and Calculus from Python (TOFIX129 D10).
     pycyxwiz_bindings::BindCalculus(m);
     pycyxwiz_bindings::BindOptimize(m);
+    pycyxwiz_bindings::BindUtilities(m);
 
     // ============================================================================
     // TIME SERIES SUBMODULE

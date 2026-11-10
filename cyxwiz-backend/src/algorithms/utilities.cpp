@@ -918,74 +918,74 @@ JSONResult Utilities::MinifyJSON(const std::string& json_text) {
     return ParseJSONText(json_text, 2);
 }
 
-std::string Utilities::GetJSONValue(const std::string& json_text, const std::string& path) {
+JSONLookup Utilities::LookUpJSON(const std::string& json_text, const std::string& path) {
+    JSONLookup out;
+    nlohmann::ordered_json root;
     try {
-        auto json = nlohmann::json::parse(json_text);
-
-        // Simple path parser: supports dot notation and array indices
-        std::vector<std::string> parts;
-        std::string current;
-
-        for (size_t i = 0; i < path.size(); i++) {
-            char c = path[i];
-            if (c == '.') {
-                if (!current.empty()) {
-                    parts.push_back(current);
-                    current.clear();
-                }
-            } else if (c == '[') {
-                if (!current.empty()) {
-                    parts.push_back(current);
-                    current.clear();
-                }
-                // Find closing bracket
-                size_t end = path.find(']', i);
-                if (end != std::string::npos) {
-                    parts.push_back(path.substr(i + 1, end - i - 1));
-                    i = end;
-                }
-            } else {
-                current += c;
-            }
-        }
-        if (!current.empty()) {
-            parts.push_back(current);
-        }
-
-        // Navigate the JSON
-        nlohmann::json current_json = json;
-        for (const auto& part : parts) {
-            // Check if it's an array index
-            bool is_index = true;
-            for (char c : part) {
-                if (!std::isdigit(c)) {
-                    is_index = false;
-                    break;
-                }
-            }
-
-            if (is_index && current_json.is_array()) {
-                int idx = std::stoi(part);
-                if (idx >= 0 && idx < static_cast<int>(current_json.size())) {
-                    current_json = current_json[idx];
-                } else {
-                    return "Index out of bounds";
-                }
-            } else if (current_json.is_object() && current_json.contains(part)) {
-                current_json = current_json[part];
-            } else {
-                return "Path not found: " + part;
-            }
-        }
-
-        if (current_json.is_string()) {
-            return current_json.get<std::string>();
-        } else {
-            return current_json.dump();
-        }
-    } catch (const std::exception& e) {
-        return std::string("Error: ") + e.what();
+        root = nlohmann::ordered_json::parse(json_text);
+    } catch (const nlohmann::json::parse_error&) {
+        out.error = "The text is not valid JSON";
+        return out;
     }
+    // Keys by dots, indices in brackets; "$" and "$." at the start are allowed.
+    std::vector<std::pair<std::string, bool>> parts;  // (key or index, is index)
+    std::string current;
+    size_t i = 0;
+    if (path.rfind("$", 0) == 0) i = 1;
+    for (; i < path.size(); ++i) {
+        const char c = path[i];
+        if (c == '.') {
+            if (!current.empty()) parts.push_back({current, false});
+            current.clear();
+        } else if (c == '[') {
+            if (!current.empty()) parts.push_back({current, false});
+            current.clear();
+            const size_t close = path.find(']', i);
+            if (close == std::string::npos) {
+                out.error = "A [ in the path has no ]";
+                return out;
+            }
+            parts.push_back({path.substr(i + 1, close - i - 1), true});
+            i = close;
+        } else {
+            current += c;
+        }
+    }
+    if (!current.empty()) parts.push_back({current, false});
+
+    const nlohmann::ordered_json* at = &root;
+    for (const auto& [part, is_index] : parts) {
+        if (is_index) {
+            const bool digits = !part.empty() && part.size() < 10 &&
+                                std::all_of(part.begin(), part.end(), [](unsigned char ch) { return std::isdigit(ch); });
+            if (!at->is_array() || !digits) {
+                out.error = "[" + part + "] needs an array and a whole number";
+                return out;
+            }
+            const size_t index = std::stoul(part);
+            if (index >= at->size()) {
+                out.error = "[" + part + "] is past the end (" + std::to_string(at->size()) + " items)";
+                return out;
+            }
+            at = &(*at)[index];
+        } else {
+            if (!at->is_object() || !at->contains(part)) {
+                out.error = "No key \"" + part + "\"";
+                return out;
+            }
+            at = &(*at)[part];
+        }
+    }
+    out.found = true;
+    out.value_json = at->dump();
+    return out;
+}
+
+std::string Utilities::GetJSONValue(const std::string& json_text, const std::string& path) {
+    const JSONLookup found = LookUpJSON(json_text, path);
+    if (!found.found) return found.error;
+    const auto value = nlohmann::ordered_json::parse(found.value_json);
+    return value.is_string() ? value.get<std::string>() : found.value_json;
 }
 
 // ============================================================================

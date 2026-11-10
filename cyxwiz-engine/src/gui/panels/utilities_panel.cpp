@@ -701,7 +701,10 @@ void UtilitiesPanel::RenderJson() {
             JsonJob job;
             job.action = action;
             job.result = action == "minify" ? Utilities::MinifyJSON(text) : Utilities::FormatJSON(text, indent);
-            if (job.result.is_valid && !path.empty()) job.path_value = Utilities::GetJSONValue(text, path);
+            if (job.result.is_valid && !path.empty()) {
+                const JSONLookup found = Utilities::LookUpJSON(text, path);
+                job.path_value = found.found ? "= " + found.value_json : found.error;
+            }
             return job;  // an invalid text is an answer, shown with its place
         });
     };
@@ -772,7 +775,7 @@ void UtilitiesPanel::RenderJson() {
                     run(job->action);
                 if (!job->path_value.empty()) {
                     ImGui::SameLine();
-                    ImGui::Text("= %s", job->path_value.c_str());
+                    ImGui::TextUnformatted(job->path_value.c_str());
                 }
                 const std::string& shown = job->action == "minify" ? job->result.minified_json : job->result.formatted_json;
                 if (json_tree_for_ != json_key_) {

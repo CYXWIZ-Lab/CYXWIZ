@@ -19,6 +19,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 - [pycyxwiz.stats](#pycyxwizstats)
 - [pycyxwiz.text](#pycyxwiztext)
 - [pycyxwiz.timeseries](#pycyxwiztimeseries)
+- [pycyxwiz.utilities](#pycyxwizutilities)
 
 ## pycyxwiz
 
@@ -1762,3 +1763,26 @@ Time series analysis functions
 | `success` (property) |  |
 | `target_features` (property) |  |
 | `y` (property) |  |
+
+## pycyxwiz.utilities
+
+Tools > Utilities from Python: units, hashes, JSON, regex, seeded random values, UUIDs, the calculator
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `conversion_formula(from_unit: str, to_unit: str) -> str` | The conversion as text, e.g. '°F = °C x 1.8 + 32'. |
+| `convert(value: float, from_unit: str, to_unit: str) -> float` | value converted between two units of one category (exact definitions; below absolute zero is refused). |
+| `evaluate(expression: str, variables: Mapping[str, float] = {}, degrees: bool = False) -> float` | The value of an expression (the Calculator's parser, as calculus.Expression); variables by name. |
+| `find_unit(name: str, category: str = '') -> object` | A unit by id, label, symbol or alias, or None. |
+| `hash(data: object, algorithm: str = 'sha256') -> str` | The hex digest of text (UTF-8) or bytes: md5, sha1, sha256 or sha512 (OpenSSL). |
+| `hash_file(path: str, algorithm: str = 'sha256', progress: Callable[[int, int], bool] = None) -> str` | The hex digest of a file read in 1 MB blocks; progress(done, total) returning False stops (ValueError 'Stopped'). |
+| `json_check(text: str, indent: int = 2) -> dict` | Whether text is JSON: formatted and minified text (keys in the document's order) and the counts, or the error's line and column (where Python's json puts it). |
+| `json_get(text: str, path: str) -> object` | The Python value at a path such as 'config.max_workers' or 'items[0].name' (KeyError when it is not there). |
+| `random(distribution: str, count: int, a: float = 0.0, b: float = 1.0, seed: int = -1) -> dict` | Seeded values (the same on every platform): uniform(a=low, b=high), normal(a=mean, b=sd), exponential(a=rate), poisson(a=mean), integers(a=low, b=high). Returns the values, mean, both SDs, median, quartiles, range and histogram edges / counts; seed -1 draws one (returned as 'seed'). |
+| `regex_find(pattern: str, text: str, ignore_case: bool = False, multiline: bool = False) -> list` | The matches (ECMAScript, C++ std::regex; \w and \b know ASCII letters): text, start / end in characters (as Python's re), line, column, groups. |
+| `regex_replace(pattern: str, text: str, replacement: str, ignore_case: bool = False, multiline: bool = False) -> str` | Every match replaced: $& the match, $1 .. $9 its groups (ECMAScript). |
+| `unit_categories() -> list[str]` | length, mass, temperature, time, data, area, volume, speed |
+| `units(category: str = '') -> list` | The unit table (id, label, symbol, category, scale, offset, aliases): base = value * scale + offset. |
+| `uuid4(count: int = 1) -> list[str]` | Version 4 UUIDs, every random bit from the operating system's random source. |

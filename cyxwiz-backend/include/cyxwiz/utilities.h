@@ -109,6 +109,13 @@ struct CYXWIZ_API JSONResult {
     std::string error_message;
 };
 
+// A value looked up in JSON by path (Utilities::LookUpJSON).
+struct CYXWIZ_API JSONLookup {
+    bool found = false;
+    std::string value_json;  // the value as JSON text (a string keeps its quotes)
+    std::string error;       // why not: the text is not JSON, a key or index is missing
+};
+
 // Regex Match
 struct CYXWIZ_API RegexMatch {
     std::string match_text;
@@ -367,7 +374,16 @@ public:
     static JSONResult MinifyJSON(const std::string& json_text);
 
     /**
-     * Extract value at JSON path
+     * The value at a path: keys by dots, array items by [n]
+     * ("config.max_workers", "items[0].name"; a leading "$" or "$." is
+     * allowed). The value comes back as JSON text in the document's key
+     * order, or found false with the reason.
+     */
+    static JSONLookup LookUpJSON(const std::string& json_text, const std::string& path);
+
+    /**
+     * Extract value at JSON path (LookUpJSON as one string: a string value
+     * without its quotes, other values as JSON, or the reason it was not found)
      * @param json_text Input JSON string
      * @param path JSON path (e.g., "data.items[0].name")
      * @return String representation of value

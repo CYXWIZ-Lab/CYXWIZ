@@ -711,6 +711,7 @@ if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
         python/bindings_tensor.cpp
         python/bindings_module.cpp
         python/bindings_optimize.cpp
+        python/bindings_utilities.cpp
         python/bindings_model.cpp
     )
 
@@ -732,11 +733,12 @@ if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
     target_include_directories(pycyxwiz PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
     # Python subclasses of pycyxwiz.Module (TOFIX125 P3), pycyxwiz.text
-    # against the text truth fixture (TOFIX129 D8) and pycyxwiz.optimize /
-    # calculus against the optimization fixture (D10): run with the Python
+    # against the text truth fixture (TOFIX129 D8), pycyxwiz.optimize /
+    # calculus against the optimization fixture (D10) and pycyxwiz.utilities
+    # against the utilities fixture (D12): run with the Python
     # pycyxwiz is built for; the backend DLLs are in the runtime folder.
     if(Python3_EXECUTABLE)
-        foreach(_pycyxwiz_test python_modules python_nodes python_bundle python_text python_optimize python_model)
+        foreach(_pycyxwiz_test python_modules python_nodes python_bundle python_text python_optimize python_model python_utilities)
             add_test(NAME pycyxwiz_${_pycyxwiz_test}
                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_${_pycyxwiz_test}.py
                         $<TARGET_FILE_DIR:pycyxwiz> ${CMAKE_BINARY_DIR}/bin/$<CONFIG>)
