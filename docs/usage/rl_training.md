@@ -92,7 +92,10 @@ small GPU operations, and some graphics drivers struggle under that load.
 When the chosen device is a GPU, Compile adds an Info line saying so and the
 dashboard repeats it; the Engine never switches devices for you. While a PPO
 run is active, the device choices in Preferences are disabled until it ends,
-and a second training run (Train on a model graph) is refused.
+and a second training run (Train on a model graph) is refused. A run on a GPU
+that another training run (another Engine, a tool) is using waits for it:
+the toolbar says "PPO waiting for the GPU" and the dashboard chip says why;
+Stop ends the wait. See [What runs where on a GPU](gpu_providers.md).
 
 ## The RL Training Dashboard
 

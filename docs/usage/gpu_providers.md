@@ -11,6 +11,7 @@ changes for you.
 | RNN / LSTM / GRU on an NVIDIA GPU (CUDA) | `cyxwiz.nvidia-cublas-cell` |
 | Conv2D on an NVIDIA GPU (CUDA) | `cyxwiz.nvidia-cublas-cell` |
 | RNN / LSTM / GRU on an OpenCL GPU | `cyxwiz.opencl-cell` |
+| PPO's networks (Dense + activations, up to 256 units), its sampling, loss, GAE and Adam on an NVIDIA GPU (CUDA) | `cyxwiz.nvidia-cublas-cell` |
 
 ## The NVIDIA provider
 
@@ -23,6 +24,27 @@ back to the host. The Console shows when it is used:
 
 It is needed for Conv2D on CUDA because ArrayFire cannot compile its CUDA
 convolution kernel for real image sizes. It comes with the **CUDA GPU pack**.
+
+For PPO it runs each small network whole (one GPU launch forward, two
+backward) and PPO's own steps as single launches: about a tenth of the GPU
+launches of the layer-by-layer path, and two to three times faster. The
+Console says which path a run takes:
+
+> PPO: the networks run as fused small-network kernels (cyxwiz.nvidia-cublas-cell)
+
+and the RL Training Dashboard's device chip says it on hover ("Runs as ...").
+
+## One training run per GPU
+
+A training run on a GPU (a model graph's Train, or PPO) holds that GPU for
+the whole run, across every Engine and tool on the computer. A second run
+on the same GPU waits until the first ends and says why:
+
+> Waiting for the GPU: another training run is using NVIDIA GeForce GTX 1050 Ti
+
+Stop ends the wait (the run is cancelled). A run on the CPU, or on another
+GPU, does not wait. Many small runs at once on one GPU are what strain a
+graphics driver, so the Engine never stacks them.
 
 ## Without it
 
