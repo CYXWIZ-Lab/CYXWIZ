@@ -275,7 +275,9 @@ DebugResult DebugExecutor::Run() {
         const auto module_provenance = std::move(built.module_provenance);
         std::shared_ptr<LayerCapture> capture;
         if (capture_options_) {
-            capture = std::make_shared<LayerCapture>(*capture_options_, module_provenance);
+            LayerCaptureOptions options = *capture_options_;
+            options.images_batch_first = !UsesSpatialSequentialInput(config_);  // TOFIX207
+            capture = std::make_shared<LayerCapture>(options, module_provenance);
             result.layer_capture = capture;
         }
 

@@ -27,6 +27,14 @@ const CapturedTensor* CapturedLayer::Find(CapturedTensorRole role, std::string_v
     return nullptr;
 }
 
+Tensor ImagesBatchLast(const Tensor& tensor) {
+    return tensor.Shape().size() == 4 ? tensor.Permute({1, 2, 3, 0}) : tensor;
+}
+
+Tensor ImagesBatchFirst(const Tensor& tensor) {
+    return tensor.Shape().size() == 4 ? tensor.Permute({3, 0, 1, 2}) : tensor;
+}
+
 LayerCapture::LayerCapture(LayerCaptureOptions options, const std::vector<BuiltModuleProvenance>& provenance)
     : options_(options) {
     for (const auto& p : provenance)
@@ -77,8 +85,8 @@ void LayerCapture::Hold(CapturedLayer& layer, CapturedTensorRole role, std::stri
 void LayerCapture::RecordForward(size_t module_index, const Tensor& input, const Tensor& output) {
     if (!options_.activations) return;
     CapturedLayer& layer = LayerFor(module_index);
-    Hold(layer, CapturedTensorRole::Input, "input", input);
-    Hold(layer, CapturedTensorRole::Output, "output", output);
+    Hold(layer, CapturedTensorRole::Input, "input", options_.images_batch_first ? ImagesBatchLast(input) : input);
+    Hold(layer, CapturedTensorRole::Output, "output", options_.images_batch_first ? ImagesBatchLast(output) : output);
 }
 
 void LayerCapture::RecordModuleTensors(IExecutableModel& model) {

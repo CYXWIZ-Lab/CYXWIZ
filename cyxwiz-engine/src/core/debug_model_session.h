@@ -28,8 +28,11 @@ public:
     static std::unique_ptr<DebugModelSession> FromCapture(const TrainingConfiguration& config,
                                                           const LayerCapture& capture, std::string* error);
 
-    // The model's output for `input`, in the model's input layout (the
+    // The model's output for `input`, in the capture's layout (the
     // capture's first layer input; any number of samples), in eval mode.
+    // Images are [H, W, C, N] for every model: a Flatten-first model gets
+    // them batch first here, and an image gradient comes back as [H, W, C, N]
+    // (TOFIX207).
     Tensor Forward(const Tensor& input);
 
     // d(sum of output x target_weights) / d input, in eval mode.
@@ -56,9 +59,15 @@ public:
     Tensor LayerOutput(const Tensor& input, size_t module_index);
 
 private:
-    explicit DebugModelSession(std::unique_ptr<IExecutableModel> model);
+    DebugModelSession(std::unique_ptr<IExecutableModel> model, bool images_batch_first);
+
+    // The model's own layout for a debugger tensor, and the debugger's for a
+    // model tensor (TOFIX207).
+    Tensor ToModel(const Tensor& tensor) const;
+    Tensor FromModel(const Tensor& tensor) const;
 
     std::unique_ptr<IExecutableModel> model_;
+    bool images_batch_first_ = false;
     // Views compute on workers (Where it looks, Top images): one call at a
     // time, since a call sets the model's observers and caches.
     std::recursive_mutex mutex_;

@@ -1,6 +1,7 @@
 #include "debug_model_session.h"
 
 #include "model_builder.h"
+#include "spatial_sequential_head.h"
 
 #include <cyxwiz/sequential.h>
 
@@ -19,8 +20,17 @@ std::string ShapeText(const std::vector<size_t>& shape) {
 
 }  // namespace
 
-DebugModelSession::DebugModelSession(std::unique_ptr<IExecutableModel> model) : model_(std::move(model)) {
+DebugModelSession::DebugModelSession(std::unique_ptr<IExecutableModel> model, bool images_batch_first)
+    : model_(std::move(model)), images_batch_first_(images_batch_first) {
     model_->SetTraining(false);
+}
+
+Tensor DebugModelSession::ToModel(const Tensor& tensor) const {
+    return images_batch_first_ ? ImagesBatchFirst(tensor) : tensor;
+}
+
+Tensor DebugModelSession::FromModel(const Tensor& tensor) const {
+    return images_batch_first_ ? ImagesBatchLast(tensor) : tensor;
 }
 
 std::unique_ptr<DebugModelSession> DebugModelSession::FromCapture(const TrainingConfiguration& config,
@@ -69,31 +79,32 @@ std::unique_ptr<DebugModelSession> DebugModelSession::FromCapture(const Training
         }
         module->SetParameters(weights);
     }
-    return std::unique_ptr<DebugModelSession>(new DebugModelSession(std::move(built.model)));
+    return std::unique_ptr<DebugModelSession>(
+        new DebugModelSession(std::move(built.model), !UsesSpatialSequentialInput(config)));
 }
 
 Tensor DebugModelSession::Forward(const Tensor& input) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return model_->Forward(input);
+    return model_->Forward(ToModel(input));
 }
 
 Tensor DebugModelSession::InputGradient(const Tensor& input, const Tensor& target_weights) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    const Tensor output = model_->Forward(input);
+    const Tensor output = model_->Forward(ToModel(input));
     if (output.Shape() != target_weights.Shape())
         throw std::runtime_error("the target " + ShapeText(target_weights.Shape()) +
                                  " does not have the output's shape " + ShapeText(output.Shape()));
-    return model_->Backward(target_weights);
+    return FromModel(model_->Backward(target_weights));
 }
 
 Tensor DebugModelSession::LayerOutput(const Tensor& input, size_t module_index) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::optional<Tensor> kept;
     model_->SetLayerForwardObserver([&](size_t index, const Tensor&, const Tensor& output, float) {
-        if (index == module_index) kept = output.Clone();
+        if (index == module_index) kept = FromModel(output.Clone());
     });
     try {
-        model_->Forward(input);
+        model_->Forward(ToModel(input));
     } catch (...) {
         model_->SetLayerForwardObserver(nullptr);
         throw;
@@ -112,12 +123,12 @@ DebugModelSession::LayerGradient DebugModelSession::LayerOutputGradient(const Te
     bool reached_backward = false;
     model_->SetLayerForwardObserver([&](size_t index, const Tensor&, const Tensor& output, float) {
         if (index != module_index) return;
-        result.output = output.Clone();
+        result.output = FromModel(output.Clone());
         reached_forward = true;
     });
     model_->SetLayerBackwardObserver([&](size_t index, const Tensor& gradient) {
         if (index != module_index) return;
-        result.gradient = gradient.Clone();
+        result.gradient = FromModel(gradient.Clone());
         reached_backward = true;
     });
     const auto clear = [&] {

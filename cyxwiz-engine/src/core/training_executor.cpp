@@ -2408,7 +2408,9 @@ void TrainingExecutor::TakeLayerSnapshot(int epoch, const std::string& run_id) {
         const Tensor input = UsesSpatialSequentialInput(config_)
                                  ? SpatialBatchFromRows(schedule.features, config_.input_shape)
                                  : schedule.features;
-        auto capture = CaptureStep(*model_, *loss_, input, schedule.labels, schedule.options, module_provenance_);
+        LayerCaptureOptions options = schedule.options;
+        options.images_batch_first = !UsesSpatialSequentialInput(config_);  // TOFIX207
+        auto capture = CaptureStep(*model_, *loss_, input, schedule.labels, options, module_provenance_);
         spdlog::info("TrainingExecutor: layer snapshot after epoch {} ({} layers, {:.1f} MB{})", epoch,
                      capture->Layers().size(), capture->BytesHeld() / 1048576.0,
                      capture->Truncated() ? ", over the budget: some tensors left out" : "");

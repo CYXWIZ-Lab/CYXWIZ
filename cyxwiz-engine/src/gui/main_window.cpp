@@ -156,6 +156,7 @@
 #include "../core/graph_compiler.h"
 #include "../core/debug_executor.h"
 #include "../core/debug_sample_source.h"
+#include "../core/layer_capture.h"
 #include "../core/spatial_batch_layout.h"
 #include "../core/spatial_sequential_head.h"
 #include "../core/debug_session_manager.h"
@@ -1152,10 +1153,12 @@ MainWindow::MainWindow()
                     items.why = sample.unavailable;
                     return items;
                 }
-                // The model's input layout, as Local Debug feeds it.
+                // The debugger's layout, as a capture keeps it: images
+                // [H, W, C, N] for every model (DebugModelSession hands a
+                // Flatten-first model its own batch-first layout; TOFIX207).
                 items.features = cyxwiz::UsesSpatialSequentialInput(reconciled)
                                      ? cyxwiz::SpatialBatchFromRows(sample.features, reconciled.input_shape)
-                                     : sample.features;
+                                     : cyxwiz::ImagesBatchLast(sample.features);
                 items.labels = sample.labels;
                 items.indices = sample.item_indices;
                 items.names = sample.item_names;

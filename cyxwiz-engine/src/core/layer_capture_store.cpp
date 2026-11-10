@@ -66,6 +66,22 @@ fs::path LayerCaptureDir(const std::string& run_id, const std::string& label) {
     return GetDebugRunStoreRoot() / run_id / "layers" / label;
 }
 
+// A capture whose first layer took an image batch first [N, H, W, C] and
+// returned rows [N, H x W x C] (a Flatten-first model, saved before the
+// image layout was recorded).
+static bool LooksBatchFirst(const std::vector<CapturedLayer>& layers) {
+    const CapturedLayer* first = nullptr;
+    for (const auto& layer : layers)
+        if (layer.module_index == 0) first = &layer;
+    if (!first) return false;
+    const CapturedTensor* in = first->Find(CapturedTensorRole::Input);
+    const CapturedTensor* out = first->Find(CapturedTensorRole::Output);
+    if (!in || !out) return false;
+    const auto& i = in->tensor.Shape();
+    const auto& o = out->tensor.Shape();
+    return i.size() == 4 && o.size() == 2 && o[0] == i[0] && o[1] == i[1] * i[2] * i[3];
+}
+
 bool SaveLayerCapture(const LayerCapture& capture, const std::string& run_id, const std::string& label,
                       std::string* error) {
     if (!SafeFolderName(run_id) || !SafeFolderName(label))
@@ -98,7 +114,10 @@ bool SaveLayerCapture(const LayerCapture& capture, const std::string& run_id, co
              {{"activations", options.activations},
               {"parameters", options.parameters},
               {"gradients", options.gradients},
-              {"byte_budget", options.byte_budget}}},
+              {"byte_budget", options.byte_budget},
+              {"images_batch_first", options.images_batch_first}}},
+            // Every rank-4 input / output is kept as [H, W, C, N] (TOFIX207).
+            {"image_layout", "HWCN"},
             {"skipped_tensors", capture.SkippedTensors()},
             {"skipped_bytes", capture.SkippedBytes()},
             {"layers", std::move(layers)}};
@@ -130,6 +149,7 @@ std::shared_ptr<LayerCapture> LoadLayerCapture(const std::string& run_id, const 
         options.parameters = o.value("parameters", options.parameters);
         options.gradients = o.value("gradients", options.gradients);
         options.byte_budget = o.value("byte_budget", options.byte_budget);
+        options.images_batch_first = o.value("images_batch_first", options.images_batch_first);
         std::vector<CapturedLayer> layers;
         for (const auto& l : index.at("layers")) {
             CapturedLayer layer;
@@ -148,6 +168,17 @@ std::shared_ptr<LayerCapture> LoadLayerCapture(const std::string& run_id, const 
                 layer.tensors.push_back({*role, name, std::move(*tensor)});
             }
             layers.push_back(std::move(layer));
+        }
+        // Saved before the layout was recorded: a Flatten-first model kept
+        // its image batch first. Its first layer turns [N, H, W, C] into
+        // [N, H x W x C] rows (a spatial model's Flatten or pool comes after
+        // a spatial layer); convert those captures to [H, W, C, N].
+        if (!index.contains("image_layout") && LooksBatchFirst(layers)) {
+            options.images_batch_first = true;
+            for (auto& layer : layers)
+                for (auto& t : layer.tensors)
+                    if (t.role == CapturedTensorRole::Input || t.role == CapturedTensorRole::Output)
+                        t.tensor = ImagesBatchLast(t.tensor);
         }
         return std::make_shared<LayerCapture>(options, std::move(layers), index.value("skipped_tensors", size_t{0}),
                                               index.value("skipped_bytes", size_t{0}));

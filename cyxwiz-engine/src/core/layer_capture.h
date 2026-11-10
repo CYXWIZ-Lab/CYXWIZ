@@ -27,7 +27,17 @@ struct LayerCaptureOptions {
     bool parameters = true;   // weights and kept state
     bool gradients = true;    // the parameters' gradients after backward
     size_t byte_budget = size_t{256} << 20;
+    // The model takes rank-4 tensors batch first [N, H, W, C]: its first
+    // layer is not spatial (a Flatten-first image MLP; UsesSpatialSequentialInput
+    // false). The capture keeps every image as [H, W, C, N], as a spatial
+    // model takes it, so the debugger reads one layout (TOFIX207).
+    bool images_batch_first = false;
 };
+
+// The debugger's image layout [H, W, C, N] from a batch-first [N, H, W, C]
+// tensor, and back; any other rank comes back as it is (TOFIX207).
+Tensor ImagesBatchLast(const Tensor& tensor);
+Tensor ImagesBatchFirst(const Tensor& tensor);
 
 enum class CapturedTensorRole { Input, Output, Parameter, State, Gradient };
 

@@ -26,10 +26,10 @@ struct ImageShape {
 
 // The image this Dense reads, when it reads the model's image flattened:
 // every layer before the Dense has no parameters (Flatten, Dropout,
-// Reshape), the model's input is a picture [N, H, W, C] (batch first, as a
-// Flatten takes it) with C 1 or 3, and the Dense has H x W x C inputs. The
-// Flatten keeps [H, W, C] row-major order, so weight k of a unit belongs to
-// row k / (W C), column (k / C) % W, channel k % C.
+// Reshape), the model's input is a picture (H x W, C 1 or 3) and the Dense
+// has H x W x C inputs. Such a model takes the image batch first [N, H, W, C]
+// and its Flatten keeps [H, W, C] row-major order, so weight k of a unit
+// belongs to row k / (W C), column (k / C) % W, channel k % C.
 std::optional<ImageShape> ReadsImage(size_t dense_inputs, size_t image_height, size_t image_width,
                                      size_t image_channels, bool only_parameter_free_layers_before);
 

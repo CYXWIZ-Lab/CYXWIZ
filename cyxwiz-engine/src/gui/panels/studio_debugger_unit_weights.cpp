@@ -100,7 +100,7 @@ std::vector<size_t> StudioDebuggerPanel::UnitWeightsImage(size_t layer_index) co
     if (layer_index >= layers.size() || layers.front().module_index != 0) return {};
     const CapturedTensor* model_input = layers.front().Find(CapturedTensorRole::Input);
     if (!model_input) return {};
-    // A Flatten takes the image batch first: [N, H, W, C].
+    // The capture keeps the image as [H, W, C, N] (TOFIX207).
     const auto& shape = model_input->tensor.Shape();
     if (shape.size() != 4) return {};
     bool parameter_free = true;
@@ -112,7 +112,7 @@ std::vector<size_t> StudioDebuggerPanel::UnitWeightsImage(size_t layer_index) co
         if (tensor.role == CapturedTensorRole::Parameter && tensor.tensor.Shape().size() == 2 && !weight)
             weight = &tensor;
     if (!weight) return {};
-    const auto image = uw::ReadsImage(weight->tensor.Shape()[1], shape[1], shape[2], shape[3], parameter_free);
+    const auto image = uw::ReadsImage(weight->tensor.Shape()[1], shape[0], shape[1], shape[2], parameter_free);
     if (!image) return {};
     return {image->height, image->width, image->channels};
 }

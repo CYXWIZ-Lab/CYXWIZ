@@ -638,6 +638,7 @@ void TestNormalizationRegularizationConfigurationContract() {
     ExpectTrue(direct_batch_norm_rejected,
                "direct BatchNormModule construction should reject eps=0");
 
+
     spdlog::info(
         "  OK: normalization/regularization exact values and invalid states are enforced");
 }
@@ -3475,6 +3476,104 @@ void TestUnitWeights() {
     spdlog::info("  OK: unit weights (Flatten order, norms, rows, drawing)");
 }
 
+// TOFIX207: a Flatten-first image MLP takes its image batch first; the
+// capture keeps it as [H, W, C, N] like a spatial model's, the rebuilt model
+// takes and gives that layout, and the store keeps it (an older capture saved
+// batch first is converted on load).
+void TestImageMlpLayout() {
+    spdlog::info("--- TestImageMlpLayout ---");
+    namespace fs = std::filesystem;
+    TrainingConfiguration cfg;
+    cfg.preprocessing_domain = PreprocessingDomain::Image;
+    cfg.input_shape = {4, 3, 2};
+    cfg.input_size = 24;
+    cfg.output_size = 3;
+    cfg.loss_type = gui::NodeType::CrossEntropyLoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+    CompiledLayer flatten;
+    flatten.type = gui::NodeType::Flatten;
+    flatten.node_id = 301;
+    flatten.input_shape = {4, 3, 2};
+    flatten.output_shape = {24};
+    CompiledLayer dense;
+    dense.type = gui::NodeType::Dense;
+    dense.node_id = 302;
+    dense.units = 3;
+    dense.input_shape = {24};
+    dense.output_shape = {3};
+    cfg.layers = {flatten, dense};
+
+    std::vector<float> pixels(24);
+    for (size_t k = 0; k < pixels.size(); ++k) pixels[k] = 0.1f * static_cast<float>(k) - 1.0f;
+    DebugExecutor exe(cfg);
+    exe.SetLayerCapture({});
+    exe.SetInputSample(Tensor({1, 4, 3, 2}, pixels.data(), DataType::Float32), MakeSyntheticBatch(cfg, 7).labels,
+                       "image 0 of tiny, train");
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "the image MLP runs with capture: " + res.failure_summary);
+    const LayerCapture& capture = *res.layer_capture;
+    ExpectTrue(capture.Options().images_batch_first, "the capture knows the model takes images batch first");
+    const Tensor& image = CapturedTensorOf(capture.Layers().front(), CapturedTensorRole::Input);
+    ExpectTrue(image.Shape() == std::vector<size_t>({4, 3, 2, 1}), "the capture keeps the image as [H, W, C, N]");
+    ExpectTrue(layer_view::ReadValues(layer_view::SampleOf(image, 0)) == pixels, "the sample reads back as given");
+
+    std::string error;
+    auto session = DebugModelSession::FromCapture(cfg, capture, &error);
+    ExpectTrue(session != nullptr, "the image MLP is rebuilt: " + error);
+    const auto out = RowMajor(session->Forward(image));
+    const auto kept = RowMajor(CapturedTensorOf(capture.Layers().back(), CapturedTensorRole::Output));
+    ExpectTrue(MaxAbsDifference(out, kept) < 1e-5f, "the rebuilt model takes the [H, W, C, N] image");
+    const Tensor gradient = session->InputGradient(image, FromRowMajor({1.0f, 0.0f, 0.0f}, {1, 3}));
+    ExpectTrue(gradient.Shape() == std::vector<size_t>({4, 3, 2, 1}), "the image gradient comes back as [H, W, C, N]");
+    ExpectTrue(session->LayerOutput(image, 0).Shape() == std::vector<size_t>({1, 24}), "the Flatten's rows");
+    // Two images at once: items in the debugger's layout.
+    std::vector<float> two(pixels);
+    two.insert(two.end(), pixels.rbegin(), pixels.rend());
+    const Tensor batch = ImagesBatchLast(Tensor({2, 4, 3, 2}, two.data(), DataType::Float32));
+    const auto both = RowMajor(session->Forward(batch));
+    ExpectTrue(both.size() == 6 && MaxAbsDifference(std::vector<float>(both.begin(), both.begin() + 3), out) < 1e-5f,
+               "a batch of items in [H, W, C, N] runs item by item");
+
+    // The store keeps the layout; an older capture saved batch first converts on load.
+    const fs::path root = fs::temp_directory_path() / "cyxwiz_image_mlp_layout";
+    fs::remove_all(root);
+    const ScopedDebugRunRootOverrideForTesting debug_root(root);
+    ExpectTrue(SaveLayerCapture(capture, "run-i", kLocalDebugCaptureLabel, &error), "the capture saves: " + error);
+    auto loaded = LoadLayerCapture("run-i", kLocalDebugCaptureLabel, &error);
+    ExpectTrue(loaded && loaded->Options().images_batch_first &&
+                   CapturedTensorOf(loaded->Layers().front(), CapturedTensorRole::Input).Shape() ==
+                       std::vector<size_t>({4, 3, 2, 1}),
+               "the saved capture reads back as [H, W, C, N]");
+    std::vector<CapturedLayer> old_layers = capture.Layers();
+    for (auto& layer : old_layers)
+        for (auto& t : layer.tensors)
+            if (t.role == CapturedTensorRole::Input || t.role == CapturedTensorRole::Output)
+                t.tensor = ImagesBatchFirst(t.tensor);
+    const LayerCapture old(LayerCaptureOptions{}, std::move(old_layers), 0, 0);
+    ExpectTrue(SaveLayerCapture(old, "run-o", kLocalDebugCaptureLabel, &error), "an old-style capture saves");
+    const fs::path index = LayerCaptureDir("run-o", kLocalDebugCaptureLabel) / "capture.json";
+    nlohmann::json json;
+    {
+        std::ifstream in(index);
+        in >> json;
+    }
+    json.erase("image_layout");
+    json["options"].erase("images_batch_first");
+    {
+        std::ofstream outfile(index, std::ios::trunc);
+        outfile << json.dump(1);
+    }
+    loaded = LoadLayerCapture("run-o", kLocalDebugCaptureLabel, &error);
+    ExpectTrue(loaded && loaded->Options().images_batch_first &&
+                   CapturedTensorOf(loaded->Layers().front(), CapturedTensorRole::Input).Shape() ==
+                       std::vector<size_t>({4, 3, 2, 1}) &&
+                   layer_view::ReadValues(layer_view::SampleOf(
+                       CapturedTensorOf(loaded->Layers().front(), CapturedTensorRole::Input), 0)) == pixels,
+               "a capture saved batch first before the layout was recorded converts on load");
+    fs::remove_all(root);
+    spdlog::info("  OK: image MLP layout (capture, session, store)");
+}
+
 void TestDebugModelSession() {
     spdlog::info("--- TestDebugModelSession ---");
     // An MLP (no dropout or BatchNorm: the run's training forward equals
@@ -4463,6 +4562,7 @@ int main(int argc, char** argv) {
         TestContributions();
         TestLayerEmbedding();
         TestUnitWeights();
+        TestImageMlpLayout();
         TestWhereItLooksPresentation();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();
