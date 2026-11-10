@@ -74,6 +74,7 @@ set(IPC_CLIENT_SOURCES
 # ========== Daemon-Specific Sources ==========
 set(DAEMON_SOURCES
     src/daemon_main.cpp
+    src/core/secret_file.cpp
     src/deployment_handler.cpp
     src/deployment_manager.cpp
     src/model_loader.cpp
@@ -521,6 +522,13 @@ if(CYXWIZ_BUILD_TESTS)
     target_link_libraries(test_grpc_listen PRIVATE cyxwiz-protocol Catch2::Catch2 Catch2::Catch2WithMain)
     target_compile_features(test_grpc_listen PRIVATE cxx_std_17)
     add_test(NAME test_grpc_listen COMMAND test_grpc_listen)
+
+    # The P2P secret is read from a file kept to its owner
+    add_executable(test_secret_file tests/test_secret_file.cpp src/core/secret_file.cpp)
+    target_include_directories(test_secret_file PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_secret_file PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_secret_file PRIVATE cxx_std_17)
+    add_test(NAME test_secret_file COMMAND test_secret_file)
 
     # Mock Engine Client (standalone test tool)
     add_executable(mock_engine_client

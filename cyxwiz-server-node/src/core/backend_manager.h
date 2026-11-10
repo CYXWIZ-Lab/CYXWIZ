@@ -62,9 +62,10 @@ struct NodeConfig {
     std::string ca_path;
 
     // P2P Authentication
-    // Secret for validating P2P JWT tokens from Central Server
-    // Must match Central Server's jwt.secret or jwt.p2p_secret
-    std::string p2p_secret;
+    // File holding the secret that validates the Engine's P2P tokens; it must
+    // match Central Server's jwt.p2p_secret. A relative path is relative to
+    // the config file's folder. The secret itself never sits in the config.
+    std::string p2p_secret_file;
 
     // Training
     bool training_enabled = true;

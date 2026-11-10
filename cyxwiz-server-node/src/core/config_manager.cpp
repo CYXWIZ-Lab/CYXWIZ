@@ -66,7 +66,11 @@ bool ConfigManager::LoadConfig(const std::string& path, NodeConfig& config) {
             if (network["cert_path"]) config.cert_path = network["cert_path"].as<std::string>();
             if (network["key_path"]) config.key_path = network["key_path"].as<std::string>();
             if (network["ca_path"]) config.ca_path = network["ca_path"].as<std::string>();
-            if (network["p2p_secret"]) config.p2p_secret = network["p2p_secret"].as<std::string>();
+            if (network["p2p_secret_file"]) config.p2p_secret_file = network["p2p_secret_file"].as<std::string>();
+            if (network["p2p_secret"] && !network["p2p_secret"].as<std::string>().empty()) {
+                spdlog::error("{}: network.p2p_secret is not read; put the secret in a file kept to "
+                              "its owner and set network.p2p_secret_file to it", path);
+            }
         }
 
         // Training settings
@@ -171,7 +175,7 @@ bool ConfigManager::SaveConfig(const NodeConfig& config, const std::string& path
         out << YAML::Key << "cert_path" << YAML::Value << config.cert_path;
         out << YAML::Key << "key_path" << YAML::Value << config.key_path;
         out << YAML::Key << "ca_path" << YAML::Value << config.ca_path;
-        out << YAML::Key << "p2p_secret" << YAML::Value << config.p2p_secret;
+        out << YAML::Key << "p2p_secret_file" << YAML::Value << config.p2p_secret_file;
         out << YAML::EndMap;
 
         // Training settings

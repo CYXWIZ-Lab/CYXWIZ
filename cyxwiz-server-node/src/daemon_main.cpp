@@ -12,6 +12,7 @@
 
 #include <cyxwiz/cyxwiz.h>
 #include "core/grpc_listen.h"
+#include "core/secret_file.h"
 #include "common/server_address.h"
 #include <spdlog/spdlog.h>
 #include <iostream>
@@ -76,7 +77,8 @@ void PrintUsage(const char* program) {
               << "  --config=PATH        Config file (default: the first of ./config/server_config.yaml,\n"
               << "                       ./server_config.yaml, ../config/server_config.yaml, then\n"
               << "                       %APPDATA%/CyxWiz or ~/.config/cyxwiz/server_config.yaml)\n"
-              << "  --p2p-secret=SECRET  Secret the central server signs Engine tokens with ([jwt].p2p_secret)\n"
+              << "  --p2p-secret-file=PATH File holding the secret the central server signs Engine\n"
+              << "                       tokens with ([jwt].p2p_secret); keep it to its owner (chmod 600)\n"
               << "  --tls                Enable TLS for gRPC servers\n"
               << "  --tls-cert=PATH      Path to TLS certificate file\n"
               << "  --tls-key=PATH       Path to TLS private key file\n"
@@ -111,7 +113,9 @@ struct DaemonConfig {
     std::string server;        // --server: the one server address
     std::string config_path;
     int http_port = 0;
-    std::string p2p_secret;
+    std::string p2p_secret_file;
+    bool p2p_secret_on_command_line = false;  // --p2p-secret=: refused
+    std::string p2p_secret;                   // read from p2p_secret_file
     bool enable_tls = false;
     std::string tls_cert_path;
     std::string tls_key_path;
@@ -129,7 +133,7 @@ struct DaemonConfig {
         central_server = cfg.CentralAddress();
         auth_api_url = cfg.AuthApiUrl();
         http_port = cfg.http_api_port;
-        p2p_secret = cfg.p2p_secret;
+        p2p_secret_file = cfg.p2p_secret_file;
         enable_tls = cfg.enable_tls;
         tls_cert_path = cfg.cert_path;
         tls_key_path = cfg.key_path;
@@ -366,8 +370,10 @@ DaemonConfig ParseArgs(int argc, char** argv) {
             config.inference_address = argv[i] + 17;
         } else if (std::strncmp(argv[i], "--config=", 9) == 0) {
             config.config_path = argv[i] + 9;
+        } else if (std::strncmp(argv[i], "--p2p-secret-file=", 18) == 0) {
+            config.p2p_secret_file = argv[i] + 18;
         } else if (std::strncmp(argv[i], "--p2p-secret=", 13) == 0) {
-            config.p2p_secret = argv[i] + 13;
+            config.p2p_secret_on_command_line = true;
         } else if (std::strcmp(argv[i], "--tls") == 0) {
             config.enable_tls = true;
         } else if (std::strncmp(argv[i], "--tls-cert=", 11) == 0) {
@@ -402,6 +408,12 @@ int main(int argc, char** argv) {
     // Command-line args first: --config chooses the config file, the others
     // override what it says.
     DaemonConfig cli_config = ParseArgs(argc, argv);
+    if (cli_config.p2p_secret_on_command_line) {
+        std::cerr << "--p2p-secret= puts the secret where every user of this machine can read it "
+                     "(the process list). Write it to a file only you can read and pass "
+                     "--p2p-secret-file=PATH" << std::endl;
+        return 1;
+    }
 
     cyxwiz::servernode::core::ConfigManager config_manager;
     std::string config_path = cli_config.config_path;
@@ -432,7 +444,15 @@ int main(int argc, char** argv) {
     if (!cli_config.central_server.empty()) daemon_config.central_server = cli_config.central_server;
     if (cli_config.http_port > 0) daemon_config.http_port = cli_config.http_port;
     if (!cli_config.inference_address.empty()) daemon_config.inference_address = cli_config.inference_address;
-    if (!cli_config.p2p_secret.empty()) daemon_config.p2p_secret = cli_config.p2p_secret;
+    // The config's secret file is relative to the config file; --p2p-secret-file
+    // to the folder the daemon starts in.
+    if (!cli_config.p2p_secret_file.empty()) {
+        daemon_config.p2p_secret_file = cli_config.p2p_secret_file;
+    } else if (!daemon_config.p2p_secret_file.empty() &&
+               std::filesystem::path(daemon_config.p2p_secret_file).is_relative()) {
+        daemon_config.p2p_secret_file =
+            (std::filesystem::path(config_path).parent_path() / daemon_config.p2p_secret_file).string();
+    }
     if (cli_config.enable_tls) daemon_config.enable_tls = true;
     if (!cli_config.tls_cert_path.empty()) daemon_config.tls_cert_path = cli_config.tls_cert_path;
     if (!cli_config.tls_key_path.empty()) daemon_config.tls_key_path = cli_config.tls_key_path;
@@ -466,6 +486,25 @@ int main(int argc, char** argv) {
             : RunBenchmarkRouteCommand(daemon_config.benchmark_route, daemon_config.benchmark_out);
         cyxwiz::Shutdown();
         return code;
+    }
+
+    // Engine jobs are accepted only with a token signed by the central server;
+    // without the secret the node could not check them, so it does not start.
+    if (daemon_config.p2p_secret_file.empty()) {
+        spdlog::error("No P2P secret: pass --p2p-secret-file=PATH or set network.p2p_secret_file "
+                      "(the file holds the central server's jwt.p2p_secret)");
+        cyxwiz::Shutdown();
+        return 1;
+    }
+    {
+        const auto secret = cyxwiz::servernode::core::ReadSecretFile(daemon_config.p2p_secret_file);
+        if (!secret.error.empty()) {
+            spdlog::error("P2P secret: {}", secret.error);
+            cyxwiz::Shutdown();
+            return 1;
+        }
+        daemon_config.p2p_secret = secret.secret;
+        spdlog::info("P2P secret read from {}", daemon_config.p2p_secret_file);
     }
 
     // Load or generate node ID
