@@ -80,12 +80,12 @@ void ToolbarPanel::RenderStudioDebuggerPreferences() {
 
     ImGui::Spacing();
     ImGui::TextUnformatted("Saliency shows");
-    static const char* const kShow[] = {"Gradient size", "Gradient Ã input"};
+    static const char* const kShow[] = {"Gradient size", "Gradient \xC3\x97 input"};
     int show = static_cast<int>(settings.saliency_show);
     if (ui::SegmentedControl("##saliency_show", kShow, 2, &show))
         settings.saliency_show = static_cast<core::SaliencyShow>(show);
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Size: where a small change moves the score most. Gradient Ã input: signed, which "
+    ImGui::TextDisabled("Size: where a small change moves the score most. Gradient \xC3\x97 input: signed, which "
                         "elements push the score up or down.");
     ImGui::PopTextWrapPos();
 
