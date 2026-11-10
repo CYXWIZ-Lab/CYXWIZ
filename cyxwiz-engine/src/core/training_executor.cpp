@@ -797,6 +797,33 @@ void TrainingExecutor::Train(
         throw;
     }
     const ScopedExecutionDeviceContext execution_context_scope(execution_context);
+    // One training run per GPU on this machine (TOFIX206 3.2 E): wait for it,
+    // Stop ends the wait; held for the whole run
+    auto gpu_lease = AcquireGpuRunLease(
+        execution_context, [this]() { return stop_requested_.load(); },
+        [this](const std::string& message) {
+            UpdateMetrics([&](TrainingMetrics& m) { m.status_message = message; });
+        });
+    if (gpu_lease.cancelled) {
+        spdlog::info("TrainingExecutor: stopped while waiting for the GPU");
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.total_epochs = epochs;
+            m.is_training = false;
+            m.is_paused = false;
+            m.is_complete = true;
+            m.terminal_status = "cancelled";
+            m.terminal_reason = "user_cancelled";
+            m.status_message = "Training cancelled while waiting for the GPU";
+        });
+        CrashRunRecorder::Instance().MarkCancelled();
+        TrainingTraceCollector::Instance().RecordTerminalEvent("cancelled", "user_cancelled", 0, 0.0f, 0.0f);
+        TrainingTraceCollector::Instance().FinishRun("cancelled");
+        BackendDebugHooks::SetDebugEventCallback({});
+        is_paused_.store(false);
+        is_training_.store(false);
+        return;
+    }
+    if (!gpu_lease.error.empty()) spdlog::warn("TrainingExecutor: {}; the run goes on without it", gpu_lease.error);
     const ScopedActiveExecutionDeviceContext active_execution_context_scope;
     CrashRunRecorder::Instance().MarkBackendEvent(
         "ExecutionDeviceContext.Bind", execution_context.Describe());

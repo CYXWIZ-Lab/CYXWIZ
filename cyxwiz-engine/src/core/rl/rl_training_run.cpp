@@ -73,6 +73,11 @@ std::string RLTrainingRun::Message() const {
     return message_;
 }
 
+std::string RLTrainingRun::Waiting() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return waiting_;
+}
+
 ExecutionDeviceContext RLTrainingRun::Device() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return device_;
@@ -122,6 +127,24 @@ void RLTrainingRun::Run() {
             return fail(std::string("The training device did not start: ") + e.what());
         }
         const ScopedExecutionDeviceContext device_scope(device);
+        // One training run per GPU on this machine: wait for it, Stop ends the wait
+        auto lease = AcquireGpuRunLease(
+            device, [this]() { return stop_requested_.load(); },
+            [this](const std::string& message) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                waiting_ = message;
+            });
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            waiting_.clear();
+        }
+        if (lease.cancelled) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            message_ = "Stopped while waiting for the GPU";
+            state_ = State::Stopped;
+            return;
+        }
+        if (!lease.error.empty()) spdlog::warn("PPO: {}; the run goes on without it", lease.error);
         const ScopedActiveExecutionDeviceContext active_device_scope;
         const std::string run_id =
             "ppo-" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(

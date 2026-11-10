@@ -4330,6 +4330,15 @@ void NodeEditor::StopRLTraining() {
 // The run's updates onto the dashboard, and its end
 void NodeEditor::PollRLTraining() {
     if (!rl_run_ || !rl_dashboard_) return;
+    // Another training run holds the GPU: the run waits and says so (TOFIX206 3.2 E)
+    if (!rl_device_shown_) {
+        const std::string waiting = rl_run_->Waiting();
+        if (!waiting.empty() && rl_device_tooltip_ != waiting) {
+            rl_status_ = "PPO waiting for the GPU";
+            rl_device_tooltip_ = waiting;
+            rl_dashboard_->SetPpoDevice("Waiting for the GPU", waiting, true, waiting);
+        }
+    }
     // The device the run trains on, once its preflight is done (TOFIX206)
     if (!rl_device_shown_ && rl_run_->Config()) {
         const auto context = rl_run_->Device();
@@ -4352,7 +4361,8 @@ void NodeEditor::PollRLTraining() {
                                                                          cyxwiz::HiddenUnits(c.value_layers)));
             rl_device_suffix_ = cyxwiz::rl_device::ToolbarSuffix(device);
             rl_device_tooltip_ = chip.tooltip;
-            if (rl_status_ == "PPO starting") rl_status_ += rl_device_suffix_;
+            if (rl_status_ == "PPO starting" || rl_status_ == "PPO waiting for the GPU")
+                rl_status_ = "PPO starting" + rl_device_suffix_;
         }
     }
     for (const auto& m : rl_run_->TakeUpdates()) {

@@ -7559,6 +7559,16 @@ if(WIN32)
 endif()
 add_test(NAME fused_ppo_parity COMMAND test_fused_ppo)
 
+# ===== Test: one training run per GPU on this machine (TOFIX206 3.2 E) =====
+add_executable(test_gpu_run_lease
+    tests/test_gpu_run_lease.cpp
+)
+target_link_libraries(test_gpu_run_lease PRIVATE cyxwiz-training-core)
+if(WIN32)
+    target_compile_definitions(test_gpu_run_lease PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME gpu_run_lease COMMAND test_gpu_run_lease)
+
 # ===== Tool: a CUDA call counter loaded into any process (TOFIX206 3.2) =====
 # CUDA_INJECTION64_PATH=<this dll> counts kernel launches, waits and copies
 # (CUPTI callbacks, no administrator rights); a development tool.

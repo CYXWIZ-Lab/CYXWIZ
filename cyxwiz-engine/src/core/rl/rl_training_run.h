@@ -48,6 +48,9 @@ public:
     bool Paused() const { return paused_; }
     State GetState() const { return state_; }
     std::string Message() const;  // why it failed, or how it ended
+    // While the run waits for its GPU (another training run holds it): what to
+    // tell the user; empty otherwise
+    std::string Waiting() const;
     const RLTrainingConfiguration* Config() const { return config_.get(); }
 
     // The updates since the last call (UI thread)
@@ -73,6 +76,7 @@ private:
     mutable std::mutex mutex_;  // guards the members below and trainer_
     std::vector<PpoUpdateMetrics> updates_;
     std::string message_;
+    std::string waiting_;  // what to tell the user while it waits for its GPU
     PpoTrainer* trainer_ = nullptr;  // while Run trains
     std::shared_ptr<TrainedPolicy> trained_;
     ExecutionDeviceContext device_;
