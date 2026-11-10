@@ -2,6 +2,7 @@
 #include "split_partitioning.h"
 
 #include "materialization_memory_guard.h"
+#include "cyxwiz/portable_random.h"
 
 #include <arrow/api.h>
 #include <spdlog/spdlog.h>
@@ -568,7 +569,7 @@ void SparseFeatureDatasetBatcher::SetClassIndexLabelMode(bool enable) {
 }
 
 void SparseFeatureDatasetBatcher::ShuffleIndices() {
-    std::shuffle(indices_.begin(), indices_.end(), rng_);
+    cyxwiz::portable::Shuffle(indices_.begin(), indices_.end(), rng_);
 }
 
 void SparseFeatureDatasetBatcher::PopulateInspection(

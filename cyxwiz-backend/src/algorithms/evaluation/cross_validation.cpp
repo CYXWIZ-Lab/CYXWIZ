@@ -1,4 +1,5 @@
 #include "cyxwiz/model_evaluation.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <numeric>
@@ -24,7 +25,7 @@ std::vector<std::pair<std::vector<int>, std::vector<int>>> ModelEvaluation::KFol
 
     if (shuffle) {
         std::mt19937 gen(seed);
-        std::shuffle(indices.begin(), indices.end(), gen);
+        cyxwiz::portable::Shuffle(indices.begin(), indices.end(), gen);
     }
 
     // Compute fold sizes
@@ -73,7 +74,7 @@ std::vector<std::pair<std::vector<int>, std::vector<int>>> ModelEvaluation::Stra
     if (shuffle) {
         std::mt19937 gen(seed);
         for (auto& [cls, indices] : class_indices) {
-            std::shuffle(indices.begin(), indices.end(), gen);
+            cyxwiz::portable::Shuffle(indices.begin(), indices.end(), gen);
         }
     }
 
