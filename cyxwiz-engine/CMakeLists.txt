@@ -4838,6 +4838,17 @@ endif()
 set_target_properties(test_active_model_use PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME active_model_use COMMAND test_active_model_use)
 
+# ===== Test: seeded draws that are the same on every compiler and OS (TOFIX205) =====
+add_executable(test_portable_random
+    tests/test_portable_random.cpp
+)
+target_include_directories(test_portable_random PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include)
+if(WIN32)
+    target_compile_definitions(test_portable_random PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_portable_random PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME portable_random COMMAND test_portable_random)
+
 # ===== Test: the Row Filter's condition as dialog rows (TOFIX129 B-5) =====
 add_executable(test_filter_condition
     tests/test_filter_condition.cpp

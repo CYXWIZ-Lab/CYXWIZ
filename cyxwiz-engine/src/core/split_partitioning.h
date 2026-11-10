@@ -5,10 +5,11 @@
 #include <arrow/compute/api.h>
 #include <spdlog/spdlog.h>
 
+#include "cyxwiz/portable_random.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <limits>
 #include <map>
 #include <memory>
 #include <numeric>
@@ -207,7 +208,7 @@ public:
     int8_t Next(size_t class_id) {
         auto& left = remaining_.at(class_id);
         const uint64_t total = left[0] + left[1] + left[2];
-        uint64_t draw = shuffle_ && total > 0 ? Below(total) : 0;
+        uint64_t draw = shuffle_ && total > 0 ? cyxwiz::portable::Below(rng_, total) : 0;
         int8_t partition = 0;
         while (partition < 2 && draw >= left[static_cast<size_t>(partition)]) {
             draw -= left[static_cast<size_t>(partition)];
@@ -218,14 +219,6 @@ public:
     }
 
 private:
-    // Uniform in [0, bound): rejection sampling on the raw 64-bit output.
-    uint64_t Below(uint64_t bound) {
-        const uint64_t limit = std::numeric_limits<uint64_t>::max() - std::numeric_limits<uint64_t>::max() % bound;
-        uint64_t value = rng_();
-        while (value >= limit) value = rng_();
-        return value % bound;
-    }
-
     bool shuffle_;
     std::mt19937_64 rng_;
     std::vector<std::array<uint64_t, 3>> remaining_;
