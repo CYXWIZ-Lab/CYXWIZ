@@ -1,4 +1,5 @@
 #include "cyxwiz/audio_processing.h"
+#include "cyxwiz/portable_random.h"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
@@ -353,7 +354,7 @@ AudioFeatures AudioProcessing::ComputeMFCC(const AudioData& audio, const MFCCCon
 // Augmentation
 // ============================================================================
 
-AudioData AudioProcessing::AddNoise(const AudioData& audio, float snr_db) {
+AudioData AudioProcessing::AddNoise(const AudioData& audio, float snr_db, uint32_t seed) {
     AudioData result = audio;
     if (!audio.valid) return result;
 
@@ -364,11 +365,9 @@ AudioData AudioProcessing::AddNoise(const AudioData& audio, float snr_db) {
     float noise_power = signal_power / std::pow(10.0f, snr_db / 10.0f);
     float noise_std = std::sqrt(noise_power);
 
-    std::mt19937 rng(42);
-    std::normal_distribution<float> dist(0.0f, noise_std);
-
+    std::mt19937 rng(seed);
     for (size_t i = 0; i < result.num_samples; i++) {
-        result.samples[i] += dist(rng);
+        result.samples[i] += static_cast<float>(cyxwiz::portable::Normal(rng, 0.0, noise_std));
     }
 
     return result;

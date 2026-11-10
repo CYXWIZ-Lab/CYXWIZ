@@ -170,7 +170,7 @@ Derives from `Module`.
 | Member | What it does |
 |---|---|
 | `AudioProcessing(/, *args, **kwargs)` |  |
-| `add_noise(audio: AudioData, snr_db: float = 20.0) -> AudioData` |  |
+| `add_noise(audio: AudioData, snr_db: float = 20.0, seed: int = 42) -> AudioData` |  |
 | `compute_mel_spectrogram(audio: AudioData, config: MelConfig = MelConfig()) -> AudioFeatures` |  |
 | `compute_mfcc(audio: AudioData, config: MFCCConfig = MFCCConfig()) -> AudioFeatures` |  |
 | `compute_spectrogram(audio: AudioData, config: SpectrogramConfig = SpectrogramConfig()) -> AudioFeatures` |  |

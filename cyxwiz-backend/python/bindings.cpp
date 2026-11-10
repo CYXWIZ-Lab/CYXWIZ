@@ -2190,7 +2190,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def_static("compute_mfcc", &cyxwiz::AudioProcessing::ComputeMFCC,
                     py::arg("audio"), py::arg("config") = cyxwiz::MFCCConfig{})
         .def_static("add_noise", &cyxwiz::AudioProcessing::AddNoise,
-                    py::arg("audio"), py::arg("snr_db") = 20.0f)
+                    py::arg("audio"), py::arg("snr_db") = 20.0f, py::arg("seed") = 42u)
         .def_static("time_stretch", &cyxwiz::AudioProcessing::TimeStretch,
                     py::arg("audio"), py::arg("rate") = 1.0f)
         .def_static("pitch_shift", &cyxwiz::AudioProcessing::PitchShift,
