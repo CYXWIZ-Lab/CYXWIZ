@@ -104,6 +104,17 @@ void StudioDebuggerPanel::RenderEmbedding() {
 
     const auto start = [&]() {
         s.picked.reset();
+        // This sample goes through the same evaluation pass as the items (the
+        // captured output is the training step's: BatchNorm on the batch's
+        // statistics, so it would sit apart from them).
+        const CapturedLayer& first = layer_capture_->Layers().front();
+        const CapturedTensor* first_input = first.Find(CapturedTensorRole::Input);
+        if (!first_input || first.module_index != 0) {
+            run.error = "the run did not keep the model's input";
+            return;
+        }
+        const Tensor own_input = first_input->tensor;
+        const size_t own_item = selected_layer_sample_;
         const DataItemsJob job = BeginItems(run, data_items_callback_, "the " + items_word);
         if (!job) return;
         struct Computed {
@@ -118,11 +129,11 @@ void StudioDebuggerPanel::RenderEmbedding() {
         auto state = embedding_;
         auto shared_run = embedding_run_;
         const size_t module = layer.module_index;
-        const std::vector<float> own = lv::ReadValues(lv::SampleOf(output->tensor, selected_layer_sample_));
         const std::vector<std::string> class_names = facts.class_names;
         AsyncTaskManager::Instance().RunAsync(
             "Studio Debugger: embedding",
-            [shared_run, computed, job, session, module, method, rule, own, features, class_names](LambdaTask&) {
+            [shared_run, computed, job, session, module, method, rule, own_input, own_item, features,
+             class_names](LambdaTask&) {
                 ItemsRun& r = *shared_run;
                 try {
                     computed->items = job(kItems, [&r] { return r.cancel->load(); });
@@ -158,6 +169,9 @@ void StudioDebuggerPanel::RenderEmbedding() {
                         }
                         r.done->store(end);
                     }
+                    const auto own = lv::ReadValues(
+                        session->LayerOutput(ti::ItemRange(own_input, own_item, own_item + 1), module));
+                    if (own.size() != features) throw std::runtime_error("this sample's output is not one row");
                     rows.insert(rows.end(), own.begin(), own.end());  // this sample, ringed
                     r.stage->store(3);
                     computed->projection = le::Project(rows, n + 1, features, method);
