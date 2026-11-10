@@ -7,6 +7,7 @@
 #include "../model_builder.h"
 
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
@@ -186,11 +187,12 @@ bool OptimizerStates(const std::map<std::string, std::vector<uint8_t>>& files,
 // device comes back after (and nothing changes when it already matches).
 class PolicyDeviceScope {
 public:
-    explicit PolicyDeviceScope(const TrainedPolicy& p) {
+    explicit PolicyDeviceScope(const TrainedPolicy& p) : PolicyDeviceScope(p.device_type, p.device_id) {}
+    PolicyDeviceScope(DeviceType type, int id) {
         const auto* current = Device::GetCurrentDevice();
-        if (current && current->GetType() == p.device_type && current->GetDeviceId() == p.device_id) return;
+        if (current && current->GetType() == type && current->GetDeviceId() == id) return;
         if (current) previous_ = std::make_pair(current->GetType(), current->GetDeviceId());
-        const auto activation = Device(p.device_type, p.device_id).ActivateExact(false);
+        const auto activation = Device(type, id).ActivateExact(false);
         if (!activation.success) throw std::runtime_error("the policy's device did not start: " + activation.message);
         switched_ = true;
     }
@@ -265,6 +267,7 @@ std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& 
 
 std::vector<float> PolicyActions(TrainedPolicy& p, std::vector<float> observations, size_t rows, bool best,
                                  uint64_t seed) {
+    const std::lock_guard<std::mutex> lock(p.in_use);
     const PolicyDeviceScope on_its_device(p);
     const auto& info = p.config.environment;
     const size_t obs_size = p.config.observation_size;
@@ -334,6 +337,7 @@ bool SaveTrainedPolicy(const TrainedPolicy& p, const std::filesystem::path& path
         return false;
     }
     try {
+        const std::lock_guard<std::mutex> lock(p.in_use);
         const PolicyDeviceScope on_its_device(p);
         std::map<std::string, std::vector<uint8_t>> weights;
         std::map<std::string, std::vector<int64_t>> shapes;
@@ -474,21 +478,24 @@ std::unique_ptr<TrainedPolicy> LoadTrainedPolicy(const std::filesystem::path& pa
                     "), and its graph does not compile here: " + why;
             return nullptr;
         }
+        // Where it acts: the device a run would train on, so a loaded policy
+        // and a trained one follow the same choice; built there, so the
+        // record and its arrays agree (any thread, with or without a device).
+        // The scope opens before the policy exists, so a failed load frees
+        // its arrays on their own device.
+        const auto route = PreviewRequestedRouteTrainingReadiness();
+        const bool on_route = route.route_available && route.authorized;
+        if (!on_route)
+            spdlog::info("Policy: acts on the CPU ({})",
+                         route.message.empty() ? std::string("no training route is chosen") : route.message);
+        const DeviceType device_type = on_route ? route.type : DeviceType::CPU;
+        const int device_id = on_route ? route.device_id : 0;
+        const PolicyDeviceScope on_its_device(device_type, device_id);
         auto out = std::make_unique<TrainedPolicy>();
         out->config = *compiled.rl;
         out->graph_json = graph_json;
-        // Where it acts: the device a run would train on, so a loaded policy
-        // and a trained one follow the same choice; built there, so the
-        // record and its arrays agree (any thread, with or without a device)
-        const auto route = PreviewRequestedRouteTrainingReadiness();
-        if (route.route_available && route.authorized) {
-            out->device_type = route.type;
-            out->device_id = route.device_id;
-        } else {
-            out->device_type = DeviceType::CPU;
-            out->device_id = 0;
-        }
-        const PolicyDeviceScope on_its_device(*out);
+        out->device_type = device_type;
+        out->device_id = device_id;
         if (!BuildRLNetworks(out->config, out->policy, out->value, error)) return nullptr;
         if (!SetWeights(*out->policy, "policy.", weights, shapes, dtypes, "policy", error) ||
             !SetWeights(*out->value, "value.", weights, shapes, dtypes, "value", error))

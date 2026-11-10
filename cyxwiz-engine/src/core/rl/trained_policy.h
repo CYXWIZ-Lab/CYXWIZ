@@ -18,6 +18,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,10 @@ struct TrainedPolicy {
     // Steps trained and the last mean return of 100 episodes
     int64_t steps = 0;
     float mean_return = std::numeric_limits<float>::quiet_NaN();
+    // Held while the networks are used: playback acts on its worker while
+    // Save runs on the GUI thread, and a forward pass changes the layers'
+    // caches and the weights' device layout (PolicyActions, SaveTrainedPolicy)
+    mutable std::mutex in_use;
 };
 
 // The two networks of a compiled RL graph: its layers plus each head's output
