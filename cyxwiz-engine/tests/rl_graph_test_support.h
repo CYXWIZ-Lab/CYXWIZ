@@ -40,22 +40,24 @@ struct Ids {
     int env, p1, pa1, p2, pa2, phead, v1, va1, v2, va2, vhead, ppo;
 };
 
-inline Graph Pattern(Ids& id) {
+// The pattern's two hidden layers per network: `units` wide with `activation`
+// (64 and Tanh as the pattern ships; RL Zoo's HalfCheetah uses 256 and ReLU)
+inline Graph Pattern(Ids& id, int units = 64, gui::NodeType activation = gui::NodeType::Tanh) {
     using gui::NodeType;
     Graph g;
     id.env = g.Add(NodeType::RLEnvironment, "Environment");
     id.p1 = g.Add(NodeType::Dense, "Policy Dense 1");
-    id.pa1 = g.Add(NodeType::Tanh, "Policy Tanh 1");
+    id.pa1 = g.Add(activation, "Policy Activation 1");
     id.p2 = g.Add(NodeType::Dense, "Policy Dense 2");
-    id.pa2 = g.Add(NodeType::Tanh, "Policy Tanh 2");
+    id.pa2 = g.Add(activation, "Policy Activation 2");
     id.phead = g.Add(NodeType::PolicyHead, "Policy Head");
     id.v1 = g.Add(NodeType::Dense, "Value Dense 1");
-    id.va1 = g.Add(NodeType::Tanh, "Value Tanh 1");
+    id.va1 = g.Add(activation, "Value Activation 1");
     id.v2 = g.Add(NodeType::Dense, "Value Dense 2");
-    id.va2 = g.Add(NodeType::Tanh, "Value Tanh 2");
+    id.va2 = g.Add(activation, "Value Activation 2");
     id.vhead = g.Add(NodeType::ValueHead, "Value Head");
     id.ppo = g.Add(NodeType::PPO, "PPO");
-    for (int d : {id.p1, id.p2, id.v1, id.v2}) g.At(d).parameters["units"] = "64";
+    for (int d : {id.p1, id.p2, id.v1, id.v2}) g.At(d).parameters["units"] = std::to_string(units);
     g.Link(id.env, id.p1);
     g.Link(id.p1, id.pa1);
     g.Link(id.pa1, id.p2);

@@ -7402,6 +7402,27 @@ if(MSVC)
 endif()
 add_test(NAME rl_graph_training_cartpole COMMAND test_rl_graph_training)
 
+# ===== Tool: the RL stability gate's runs, one task and seed per process (TOFIX195) =====
+# Not a ctest: HalfCheetah trains for a million steps.
+add_executable(cyxwiz-rl-stability-gate
+    tests/tool_rl_stability_gate.cpp
+    src/core/rl/rl_training_run.cpp
+    src/core/rl/trained_policy.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(cyxwiz-rl-stability-gate PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+target_include_directories(cyxwiz-rl-stability-gate PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+if(WIN32)
+    target_compile_definitions(cyxwiz-rl-stability-gate PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+if(MSVC)
+    target_link_options(cyxwiz-rl-stability-gate PRIVATE /STACK:4194304)
+endif()
+
 # ===== Test: what the RL surfaces say about a PPO run's device (TOFIX206) =====
 add_executable(test_rl_device_presentation
     tests/test_rl_device_presentation.cpp
