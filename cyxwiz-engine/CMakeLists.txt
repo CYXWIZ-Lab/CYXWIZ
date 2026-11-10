@@ -7334,7 +7334,7 @@ set(CYXWIZ_PPO_PYTORCH_FIXTURE
 add_executable(test_computation_truth_ppo tests/test_computation_truth_ppo.cpp)
 target_link_libraries(test_computation_truth_ppo PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
 target_include_directories(test_computation_truth_ppo PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
-target_compile_definitions(test_computation_truth_ppo PRIVATE CYXWIZ_PPO_FIXTURE="${CYXWIZ_PPO_PYTORCH_FIXTURE}")
+target_compile_definitions(test_computation_truth_ppo PRIVATE CYXWIZ_PPO_FIXTURE="${CYXWIZ_PPO_PYTORCH_FIXTURE}" NOMINMAX)
 add_custom_target(copy_test_computation_truth_ppo_fixture
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:test_computation_truth_ppo>/computation_truth_fixtures"
@@ -7540,6 +7540,24 @@ if(WIN32)
     target_compile_definitions(test_fused_adam PRIVATE NOMINMAX)
 endif()
 add_test(NAME fused_adam_parity COMMAND test_fused_adam)
+
+# ===== Test: PPO's provider kernels against the ArrayFire path (TOFIX206 3.2 B) =====
+add_executable(test_fused_ppo
+    tests/test_fused_ppo.cpp
+)
+target_include_directories(test_fused_ppo PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_fused_ppo PRIVATE
+    cyxwiz-backend
+)
+set_target_properties(test_fused_ppo PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(WIN32)
+    target_compile_definitions(test_fused_ppo PRIVATE NOMINMAX)
+endif()
+add_test(NAME fused_ppo_parity COMMAND test_fused_ppo)
 
 # ===== Tool: a CUDA call counter loaded into any process (TOFIX206 3.2) =====
 # CUDA_INJECTION64_PATH=<this dll> counts kernel launches, waits and copies

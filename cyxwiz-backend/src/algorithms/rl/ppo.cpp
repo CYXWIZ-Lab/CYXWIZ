@@ -1,5 +1,10 @@
 #include "cyxwiz/rl/ppo.h"
 
+#include "cyxwiz/neural_provider.h"
+
+#include <spdlog/spdlog.h>
+
+#include <atomic>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -39,9 +44,13 @@ void Require(bool ok, const std::string& what) {
 }
 
 // A [B] or [B, 1] tensor as an ArrayFire column of B rows.
-af::array Column(const Tensor& t, size_t rows, const char* name) {
+void RequireRows(const Tensor& t, size_t rows, const char* name) {
     Require(t.NumElements() == rows, std::string("PPO: ") + name + " needs " + std::to_string(rows) +
                                          " values, got " + std::to_string(t.NumElements()));
+}
+
+af::array Column(const Tensor& t, size_t rows, const char* name) {
+    RequireRows(t, rows, name);
     return af::moddims(Array(t), static_cast<dim_t>(rows));
 }
 
@@ -122,6 +131,65 @@ Common SurrogateAndValue(const af::array& log_prob, const af::array& value, cons
     return out;
 }
 
+// The device's neural provider for a PPO op (TOFIX206 3.2 B), or null: the
+// ArrayFire path then. A provider call that fails is said once and the
+// ArrayFire path takes over for that call.
+std::shared_ptr<INeuralNetworkProvider> PpoProvider(NeuralOpRequest& r) {
+    r.target = CaptureCurrentNeuralDeviceTarget();
+    r.device_resident = true;
+    r.dtype = DataType::Float32;
+    if (r.target.platform == DeviceType::CPU) return nullptr;
+    return NeuralProviderRegistry::Instance().FindSupporting(r);
+}
+
+bool RunPpoOp(INeuralNetworkProvider& provider, const NeuralOpRequest& r, const std::vector<const Tensor*>& inputs,
+              const std::vector<std::vector<size_t>>& shapes, std::vector<Tensor>& outputs) {
+    const NeuralOpStatus status = ExecuteNeuralOpOnDevice(provider, r, inputs, shapes, outputs);
+    if (status.ok) return true;
+    static std::atomic<bool> said{false};
+    if (!said.exchange(true))
+        spdlog::warn("PPO: {} {} failed ({}); the ArrayFire path runs it", provider.ProviderId(), NeuralOpName(r.op),
+                     status.detail);
+    return false;
+}
+
+// The loss on the provider; false: the ArrayFire path
+bool LossOnDevice(const Tensor& head, const Tensor* log_std, const Tensor& value, const PpoBatch& batch,
+                  const PpoLossSettings& s, PpoLossResult& out) {
+    const size_t rows = Rows(head), width = head.Shape()[1];
+    const bool discrete = log_std == nullptr;
+    NeuralOpRequest r;
+    r.op = NeuralOp::PpoLoss;
+    r.batch = rows;
+    r.ppo_discrete = discrete;
+    r.ppo_width = width;
+    r.ppo_clip_range = s.clip_range;
+    r.ppo_clip_range_vf = s.clip_range_vf;
+    r.ppo_ent_coef = s.ent_coef;
+    r.ppo_vf_coef = s.vf_coef;
+    r.ppo_normalize_advantage = s.normalize_advantage;
+    const auto provider = PpoProvider(r);
+    if (!provider) return false;
+    // old_values only matter with a value clip; the kernel reads [rows] either way
+    const Tensor zeros = batch.old_values.NumElements() == rows ? Tensor() : Tensor::Zeros({rows}, DataType::Float32);
+    const Tensor& old_values = batch.old_values.NumElements() == rows ? batch.old_values : zeros;
+    std::vector<const Tensor*> inputs{&head, &value, &batch.actions, &batch.old_log_prob,
+                                      &batch.advantages, &batch.returns, &old_values};
+    std::vector<std::vector<size_t>> shapes{{rows, width}, {rows, 1}, {rows}, {6}};
+    if (!discrete) {
+        inputs.push_back(log_std);
+        shapes.push_back({width});
+    }
+    std::vector<Tensor> o;
+    if (!RunPpoOp(*provider, r, inputs, shapes, o)) return false;
+    out.grad_policy_output = std::move(o[0]);
+    out.grad_value_output = std::move(o[1]);
+    out.log_prob = std::move(o[2]);
+    out.statistics = std::move(o[3]);
+    if (!discrete) out.grad_log_std = std::move(o[4]);
+    return true;
+}
+
 void CheckSettings(const PpoLossSettings& s) {
     Require(std::isfinite(s.clip_range) && s.clip_range > 0.0f, "PPO: the clip range must be above 0");
     Require(std::isfinite(s.clip_range_vf) && s.clip_range_vf >= 0.0f, "PPO: the value clip range must be 0 or more");
@@ -174,6 +242,12 @@ PpoLossResult PpoGaussianLoss(const Tensor& mean, const Tensor& log_std, const T
     const dim_t act = static_cast<dim_t>(mean.Shape()[1]);
     Require(batch.actions.Shape() == mean.Shape(), "PPO: actions must match the means [B, A]");
     Require(log_std.NumElements() == static_cast<size_t>(act), "PPO: one log standard deviation per action");
+    RequireRows(value, rows, "values");
+    RequireRows(batch.old_log_prob, rows, "old_log_prob");
+    RequireRows(batch.advantages, rows, "advantages");
+    RequireRows(batch.returns, rows, "returns");
+    PpoLossResult on_device;
+    if (LossOnDevice(mean, &log_std, value, batch, settings, on_device)) return on_device;
     const unsigned r = static_cast<unsigned>(rows);
     const af::array ls_row = af::moddims(Array(log_std), 1, act);
     const af::array ls = af::tile(ls_row, r, 1);
@@ -203,6 +277,13 @@ PpoLossResult PpoCategoricalLoss(const Tensor& logits, const Tensor& value, cons
     Require(logits.Shape().size() == 2, "PPO: logits must be [B, K]");
     const size_t rows = Rows(logits);
     const dim_t classes = static_cast<dim_t>(logits.Shape()[1]);
+    RequireRows(value, rows, "values");
+    RequireRows(batch.actions, rows, "actions");
+    RequireRows(batch.old_log_prob, rows, "old_log_prob");
+    RequireRows(batch.advantages, rows, "advantages");
+    RequireRows(batch.returns, rows, "returns");
+    PpoLossResult on_device;
+    if (LossOnDevice(logits, nullptr, value, batch, settings, on_device)) return on_device;
     const unsigned k = static_cast<unsigned>(classes);
     const af::array log_p = LogSoftmaxRows(Array(logits));
     const af::array p = af::exp(log_p);
@@ -248,6 +329,29 @@ Tensor SampleCategorical(const Tensor& logits, uint64_t seed) {
     return Make(af::moddims(best_index.as(f32), rows), {static_cast<size_t>(rows)});
 }
 
+Tensor PpoSampleStep(const Tensor& head, const Tensor& value, const Tensor& log_std, bool discrete, uint64_t seed) {
+    Require(head.Shape().size() == 2, "PPO: the policy output must be [B, W]");
+    const size_t rows = head.Shape()[0], width = head.Shape()[1];
+    Require(value.NumElements() == rows, "PPO: one value per row");
+    Require(discrete || log_std.NumElements() == width, "PPO: one log standard deviation per action");
+    const size_t act = discrete ? 1 : width;
+    NeuralOpRequest r;
+    r.op = NeuralOp::PpoSample;
+    r.batch = rows;
+    r.ppo_discrete = discrete;
+    r.ppo_width = width;
+    r.ppo_seed = seed;
+    if (const auto provider = PpoProvider(r)) {
+        std::vector<const Tensor*> inputs{&head, &value};
+        if (!discrete) inputs.push_back(&log_std);
+        std::vector<Tensor> o;
+        if (RunPpoOp(*provider, r, inputs, {{rows * (2 + act)}}, o)) return std::move(o[0]);
+    }
+    const Tensor action = discrete ? SampleCategorical(head, seed) : SampleGaussian(head, log_std, seed);
+    const Tensor logp = discrete ? CategoricalLogProb(head, action) : GaussianLogProb(head, log_std, action);
+    return Tensor::Cat({value.Reshape({rows}), logp.Reshape({rows}), action.Reshape({rows * act})}, 0);
+}
+
 void ComputeGae(const Tensor& rewards, const Tensor& values, const Tensor& dones, const Tensor& last_values,
                 float gamma, float gae_lambda, Tensor& advantages, Tensor& returns) {
     Require(rewards.Shape().size() == 2 && values.Shape() == rewards.Shape() && dones.Shape() == rewards.Shape(),
@@ -255,6 +359,21 @@ void ComputeGae(const Tensor& rewards, const Tensor& values, const Tensor& dones
     const dim_t steps = static_cast<dim_t>(rewards.Shape()[0]);
     const dim_t copies = static_cast<dim_t>(rewards.Shape()[1]);
     Require(last_values.NumElements() == static_cast<size_t>(copies), "GAE: one last value per copy");
+    const std::vector<size_t> shape = {static_cast<size_t>(steps), static_cast<size_t>(copies)};
+    NeuralOpRequest request;
+    request.op = NeuralOp::PpoGae;
+    request.batch = static_cast<size_t>(copies);
+    request.ppo_steps = static_cast<size_t>(steps);
+    request.ppo_gamma = gamma;
+    request.ppo_gae_lambda = gae_lambda;
+    if (const auto provider = PpoProvider(request)) {
+        std::vector<Tensor> o;
+        if (RunPpoOp(*provider, request, {&rewards, &values, &dones, &last_values}, {shape, shape}, o)) {
+            advantages = std::move(o[0]);
+            returns = std::move(o[1]);
+            return;
+        }
+    }
     const af::array r = Array(rewards);
     const af::array v = Array(values);
     const af::array not_done = 1.0f - Array(dones);
@@ -268,7 +387,6 @@ void ComputeGae(const Tensor& rewards, const Tensor& values, const Tensor& dones
         adv.row(t) = gae;
         next_value = v.row(t);
     }
-    const std::vector<size_t> shape = {static_cast<size_t>(steps), static_cast<size_t>(copies)};
     advantages = Make(adv, shape);
     returns = Make(adv + v, shape);
 }

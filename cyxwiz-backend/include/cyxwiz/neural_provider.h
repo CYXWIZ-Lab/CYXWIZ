@@ -52,6 +52,11 @@ enum class NeuralOp {
     // across all of their gradients (TOFIX206 3.2 C); contract with the
     // NeuralOpRequest adam fields.
     AdamStep,
+    // PPO's per-step sampling, its minibatch loss and GAE, one launch each
+    // (TOFIX206 3.2 B); contract with the NeuralOpRequest ppo fields.
+    PpoSample,
+    PpoLoss,
+    PpoGae,
 };
 
 CYXWIZ_API const char* NeuralOpName(NeuralOp op);
@@ -220,6 +225,33 @@ struct NeuralOpRequest {
     float adam_bias_correction1 = 1.0f;
     float adam_bias_correction2 = 1.0f;
     float adam_max_norm = 0.0f;  // <= 0: no clip
+    // PPO (device-resident), TOFIX206 3.2 B. batch = rows; ppo_width = K
+    // logits per row (categorical) or A actions per row (Gaussian). Arrays
+    // are semantic (first dimension fastest); [rows] may also be [rows, 1].
+    //   PpoSample  inputs  head [rows, W], value [rows][, log_std [W]]
+    //              outputs one [rows * (2 + A)] array: the values, the
+    //              log-probabilities, then the actions row by row (A = 1,
+    //              an index, for a categorical policy). Draws come from a
+    //              counter-based hash of ppo_seed and the element.
+    //   PpoLoss    inputs  head [rows, W], value, actions ([rows] indices or
+    //              [rows, W]), old_log_prob, advantages, returns,
+    //              old_values [rows][, log_std [W]]
+    //              outputs grad_head [rows, W], grad_value [rows], log_prob
+    //              [rows], statistics [6] (as PpoLossResult)[, grad_log_std [W]]
+    //   PpoGae     inputs  rewards, values, dones [ppo_steps, copies],
+    //              last_values [copies]; batch = copies
+    //              outputs advantages, returns [ppo_steps, copies]
+    bool ppo_discrete = true;
+    size_t ppo_width = 0;
+    size_t ppo_steps = 0;
+    uint64_t ppo_seed = 0;
+    float ppo_clip_range = 0.2f;
+    float ppo_clip_range_vf = 0.0f;
+    float ppo_ent_coef = 0.0f;
+    float ppo_vf_coef = 0.5f;
+    bool ppo_normalize_advantage = true;
+    float ppo_gamma = 0.99f;
+    float ppo_gae_lambda = 0.95f;
 };
 
 // Host-side CyxWiz-owned buffers, explicit copies at the boundary (v1).

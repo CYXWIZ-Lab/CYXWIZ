@@ -82,6 +82,15 @@ CYXWIZ_API Tensor CategoricalLogProb(const Tensor& logits, const Tensor& actions
 CYXWIZ_API Tensor SampleGaussian(const Tensor& mean, const Tensor& log_std, uint64_t seed);   // [B, A]
 CYXWIZ_API Tensor SampleCategorical(const Tensor& logits, uint64_t seed);                     // [B] indices as floats
 
+// One rollout step's draw for B rows, ready for one host read: [B * (2 + A)]
+// on the device, the values, the log-probabilities, then the actions row by
+// row (A = 1, an index, for a categorical policy; log_std is then unused).
+// One launch on the device's neural provider when it has one, its draws from
+// a counter-based hash of seed; else the ArrayFire path (SampleCategorical /
+// SampleGaussian and the log-probability), whose draws differ (TOFIX206 3.2 B).
+CYXWIZ_API Tensor PpoSampleStep(const Tensor& head, const Tensor& value, const Tensor& log_std, bool discrete,
+                                uint64_t seed);
+
 // Generalized advantage estimation over a rollout of T steps of N copies
 // (row t = step t). dones[t, i] = 1 when copy i's episode ended at step t
 // (terminated or truncated; a truncated step's reward should already hold

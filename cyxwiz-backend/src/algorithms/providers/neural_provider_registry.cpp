@@ -163,6 +163,9 @@ const char* NeuralOpName(NeuralOp op) {
     case NeuralOp::MlpForward: return "mlp_forward";
     case NeuralOp::MlpBackward: return "mlp_backward";
     case NeuralOp::AdamStep: return "adam_step";
+    case NeuralOp::PpoSample: return "ppo_sample";
+    case NeuralOp::PpoLoss: return "ppo_loss";
+    case NeuralOp::PpoGae: return "ppo_gae";
     }
     return "unknown_neural_op";
 }

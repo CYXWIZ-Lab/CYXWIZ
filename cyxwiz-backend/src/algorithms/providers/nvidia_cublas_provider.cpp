@@ -1074,6 +1074,239 @@ std::string AdamContractError(const NeuralOpRequest& r) {
     return {};
 }
 
+// PPO's pieces, one launch each (TOFIX206 3.2 B): the per-step sampling
+// (log-softmax or Gaussian, the draw, its log-probability, packed for the one
+// host read of the step), the minibatch loss with every gradient and the six
+// statistics (one block: its sums run in a fixed order), and GAE (one thread
+// per environment copy). The formulas are cyxwiz::rl's ArrayFire ones
+// (Stable-Baselines3's PPO); draws come from a counter-based hash instead of
+// ArrayFire's random engine, so they differ from the ArrayFire path's.
+constexpr const char* kPpoKernelSource = R"(
+#define PPO_THREADS 256
+#define PPO_LOG_SQRT_2PI 0.91893853320467274178f
+
+__device__ __forceinline__ unsigned long long ppo_mix(unsigned long long z) {
+  z += 0x9E3779B97F4A7C15ull;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+  return z ^ (z >> 31);
+}
+// Uniform in (0, 1): 24 bits, never 0 or 1
+__device__ __forceinline__ float ppo_uniform(unsigned long long seed, unsigned long long i) {
+  const unsigned long long h = ppo_mix(seed ^ ppo_mix(i));
+  return ((float)(h >> 40) + 0.5f) * (1.0f / 16777216.0f);
+}
+
+extern "C" __global__ void cyxwiz_ppo_sample(const float* __restrict__ head, const float* __restrict__ value,
+                                             const float* __restrict__ log_std, float* __restrict__ out,
+                                             int rows, int width, int discrete, unsigned long long seed) {
+  const int r = blockIdx.x * blockDim.x + threadIdx.x;
+  if (r >= rows) return;
+  out[r] = value[r];
+  if (discrete) {
+    float m = -3.402823466e38f;
+    for (int k = 0; k < width; ++k) m = fmaxf(m, head[r + (size_t)k * rows]);
+    float s = 0.0f;
+    for (int k = 0; k < width; ++k) s += expf(head[r + (size_t)k * rows] - m);
+    const float lse = logf(s);
+    int best = 0;
+    float best_score = -3.402823466e38f;
+    for (int k = 0; k < width; ++k) {
+      // Gumbel-max: argmax(log p - log(-log u)) is a draw from p
+      const float u = ppo_uniform(seed, (unsigned long long)r * width + k);
+      const float score = (head[r + (size_t)k * rows] - m - lse) - logf(-logf(u));
+      if (score > best_score) { best_score = score; best = k; }
+    }
+    out[rows + r] = head[r + (size_t)best * rows] - m - lse;
+    out[2 * rows + r] = (float)best;
+  } else {
+    float lp = 0.0f;
+    for (int j = 0; j < width; ++j) {
+      // Box-Muller from two hashed uniforms
+      const unsigned long long i = 2ull * ((unsigned long long)r * width + j);
+      const float u1 = ppo_uniform(seed, i), u2 = ppo_uniform(seed, i + 1);
+      const float z = sqrtf(-2.0f * logf(u1)) * cospif(2.0f * u2);
+      const float ls = log_std[j];
+      out[2 * rows + (size_t)r * width + j] = head[r + (size_t)j * rows] + z * expf(ls);
+      lp += -0.5f * z * z - ls - PPO_LOG_SQRT_2PI;
+    }
+    out[rows + r] = lp;
+  }
+}
+
+__device__ float ppo_block_sum(float v, float* sh) {
+  sh[threadIdx.x] = v;
+  __syncthreads();
+  for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+    if (threadIdx.x < s) sh[threadIdx.x] += sh[threadIdx.x + s];
+    __syncthreads();
+  }
+  const float total = sh[0];
+  __syncthreads();
+  return total;
+}
+
+// One block. stats: loss, policy_loss, value_loss, entropy_loss, approx_kl, clip_fraction.
+extern "C" __global__ void cyxwiz_ppo_loss(const float* __restrict__ head, const float* __restrict__ value,
+                                           const float* __restrict__ actions, const float* __restrict__ old_lp,
+                                           const float* __restrict__ adv_in, const float* __restrict__ returns,
+                                           const float* __restrict__ old_values, const float* __restrict__ log_std,
+                                           float* __restrict__ grad_head, float* __restrict__ grad_value,
+                                           float* __restrict__ log_prob, float* __restrict__ stats,
+                                           float* __restrict__ grad_log_std, int rows, int width, int discrete,
+                                           float clip, float clip_vf, float ent_coef, float vf_coef, int normalize) {
+  __shared__ float sh[PPO_THREADS];
+  const float b = (float)rows;
+  // Advantage normalisation (unbiased std), as SB3
+  float mean = 0.0f, inv_std = 1.0f;
+  if (normalize && rows > 1) {
+    float s = 0.0f;
+    for (int r = threadIdx.x; r < rows; r += blockDim.x) s += adv_in[r];
+    mean = ppo_block_sum(s, sh) / b;
+    float q = 0.0f;
+    for (int r = threadIdx.x; r < rows; r += blockDim.x) { const float c = adv_in[r] - mean; q += c * c; }
+    inv_std = 1.0f / (sqrtf(ppo_block_sum(q, sh) / (b - 1.0f)) + 1e-8f);
+  }
+  float pol = 0.0f, val = 0.0f, kl = 0.0f, clipped_rows = 0.0f, ent = 0.0f;
+  for (int r = threadIdx.x; r < rows; r += blockDim.x) {
+    const float adv = (adv_in[r] - mean) * inv_std;
+    float lp = 0.0f, m = 0.0f, lse = 0.0f, h = 0.0f;
+    int a = 0;
+    if (discrete) {
+      m = -3.402823466e38f;
+      for (int k = 0; k < width; ++k) m = fmaxf(m, head[r + (size_t)k * rows]);
+      float s = 0.0f;
+      for (int k = 0; k < width; ++k) s += expf(head[r + (size_t)k * rows] - m);
+      lse = logf(s);
+      a = (int)lrintf(actions[r]);
+      lp = head[r + (size_t)a * rows] - m - lse;
+      for (int k = 0; k < width; ++k) {
+        const float lpk = head[r + (size_t)k * rows] - m - lse;
+        h -= expf(lpk) * lpk;
+      }
+      ent += h;
+    } else {
+      for (int j = 0; j < width; ++j) {
+        const float ls = log_std[j];
+        const float d = actions[r + (size_t)j * rows] - head[r + (size_t)j * rows];
+        lp += -0.5f * d * d * expf(-2.0f * ls) - ls - PPO_LOG_SQRT_2PI;
+      }
+    }
+    log_prob[r] = lp;
+    const float log_ratio = lp - old_lp[r];
+    const float ratio = expf(log_ratio);
+    const float s1 = adv * ratio;
+    const float s2 = adv * fminf(fmaxf(ratio, 1.0f - clip), 1.0f + clip);
+    pol += fminf(s1, s2);
+    // torch.minimum sends a tie's gradient half to each side; clamp passes it inside [1 - c, 1 + c]
+    const float tie = s1 == s2 ? 1.0f : 0.0f;
+    const float w1 = (s1 < s2 ? 1.0f : 0.0f) + 0.5f * tie;
+    const float w2 = (s2 < s1 ? 1.0f : 0.0f) + 0.5f * tie;
+    const float inside = (ratio >= 1.0f - clip && ratio <= 1.0f + clip) ? 1.0f : 0.0f;
+    const float dlogp = -(adv * (w1 + w2 * inside) * ratio) / b;
+    kl += (ratio - 1.0f) - log_ratio;
+    clipped_rows += fabsf(ratio - 1.0f) > clip ? 1.0f : 0.0f;
+    float predicted = value[r], pass = 1.0f;
+    if (clip_vf > 0.0f) {
+      const float delta = value[r] - old_values[r];
+      predicted = old_values[r] + fminf(fmaxf(delta, -clip_vf), clip_vf);
+      pass = (delta >= -clip_vf && delta <= clip_vf) ? 1.0f : 0.0f;
+    }
+    const float error = predicted - returns[r];
+    val += error * error;
+    grad_value[r] = vf_coef * 2.0f * error * pass / b;
+    if (discrete) {
+      for (int k = 0; k < width; ++k) {
+        const float lpk = head[r + (size_t)k * rows] - m - lse;
+        const float p = expf(lpk);
+        const float onehot = k == a ? 1.0f : 0.0f;
+        // d log_prob / d logits = one_hot - p; d entropy / d logits = -p (log p + H)
+        grad_head[r + (size_t)k * rows] = dlogp * (onehot - p) + ent_coef * p * (lpk + h) / b;
+      }
+    } else {
+      for (int j = 0; j < width; ++j) {
+        const float d = actions[r + (size_t)j * rows] - head[r + (size_t)j * rows];
+        grad_head[r + (size_t)j * rows] = dlogp * d * expf(-2.0f * log_std[j]);
+      }
+    }
+  }
+  const float policy_loss = -ppo_block_sum(pol, sh) / b;
+  const float value_loss = ppo_block_sum(val, sh) / b;
+  const float approx_kl = ppo_block_sum(kl, sh) / b;
+  const float clip_fraction = ppo_block_sum(clipped_rows, sh) / b;
+  float entropy_loss = 0.0f;
+  if (discrete) {
+    entropy_loss = -ppo_block_sum(ent, sh) / b;
+  } else {
+    float e = 0.0f;
+    for (int j = 0; j < width; ++j) e += 0.5f + PPO_LOG_SQRT_2PI + log_std[j];
+    entropy_loss = -e;
+    // d loss / d log_std_j = sum over rows of dlogp (d^2 / var - 1), minus ent_coef
+    for (int j = 0; j < width; ++j) {
+      float g = 0.0f;
+      for (int r = threadIdx.x; r < rows; r += blockDim.x) {
+        const float adv = (adv_in[r] - mean) * inv_std;
+        const float lpr = log_prob[r];
+        const float ratio = expf(lpr - old_lp[r]);
+        const float s1 = adv * ratio;
+        const float s2 = adv * fminf(fmaxf(ratio, 1.0f - clip), 1.0f + clip);
+        const float tie = s1 == s2 ? 1.0f : 0.0f;
+        const float w1 = (s1 < s2 ? 1.0f : 0.0f) + 0.5f * tie;
+        const float w2 = (s2 < s1 ? 1.0f : 0.0f) + 0.5f * tie;
+        const float inside = (ratio >= 1.0f - clip && ratio <= 1.0f + clip) ? 1.0f : 0.0f;
+        const float dlogp = -(adv * (w1 + w2 * inside) * ratio) / b;
+        const float d = actions[r + (size_t)j * rows] - head[r + (size_t)j * rows];
+        g += dlogp * (d * d * expf(-2.0f * log_std[j]) - 1.0f);
+      }
+      const float total = ppo_block_sum(g, sh);
+      if (threadIdx.x == 0) grad_log_std[j] = total - ent_coef;
+    }
+  }
+  if (threadIdx.x == 0) {
+    stats[0] = policy_loss + ent_coef * entropy_loss + vf_coef * value_loss;
+    stats[1] = policy_loss;
+    stats[2] = value_loss;
+    stats[3] = entropy_loss;
+    stats[4] = approx_kl;
+    stats[5] = clip_fraction;
+  }
+}
+
+// One thread per copy, backwards over the steps ([steps, copies], steps fastest)
+extern "C" __global__ void cyxwiz_ppo_gae(const float* __restrict__ rewards, const float* __restrict__ values,
+                                          const float* __restrict__ dones, const float* __restrict__ last_values,
+                                          float* __restrict__ advantages, float* __restrict__ returns,
+                                          int steps, int copies, float gamma, float lambda) {
+  const int n = blockIdx.x * blockDim.x + threadIdx.x;
+  if (n >= copies) return;
+  float next_value = last_values[n];
+  float gae = 0.0f;
+  for (int t = steps - 1; t >= 0; --t) {
+    const size_t i = (size_t)t + (size_t)n * steps;
+    const float not_done = 1.0f - dones[i];
+    const float delta = rewards[i] + gamma * next_value * not_done - values[i];
+    gae = delta + gamma * lambda * not_done * gae;
+    advantages[i] = gae;
+    returns[i] = gae + values[i];
+    next_value = values[i];
+  }
+}
+)";
+
+std::string PpoContractError(const NeuralOpRequest& r) {
+    if (!r.device_resident) return "ppo ops run device-resident only";
+    if (r.dtype != DataType::Float32) return "ppo ops are Float32 only";
+    if (r.op == NeuralOp::PpoGae) {
+        if (r.batch < 1 || r.ppo_steps < 1 || r.batch * r.ppo_steps > (1u << 26)) return "ppo_gae needs 1 to 2^26 steps x copies";
+        return {};
+    }
+    if (r.batch < 1 || r.batch > (r.op == NeuralOp::PpoLoss ? (1u << 16) : (1u << 20)))
+        return "ppo_sample takes up to 2^20 rows, ppo_loss up to 65,536";
+    if (r.ppo_width < 1 || r.ppo_width > (r.ppo_discrete ? 64u : 32u))
+        return "ppo ops take up to 64 choices or 32 actions";
+    return {};
+}
+
 struct NvidiaRuntimeProbe {
     bool ok = false;
     int device_count = 0;
@@ -1234,7 +1467,8 @@ public:
         cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, native_device);
         cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, native_device);
         nvrtcProgram program = nullptr;
-        const std::string source = std::string(kDeviceKernelSource) + kMlpKernelSource + kAdamKernelSource;
+        const std::string source =
+            std::string(kDeviceKernelSource) + kMlpKernelSource + kAdamKernelSource + kPpoKernelSource;
         if (nvrtcCreateProgram(&program, source.c_str(), "cyxwiz_device.cu", 0, nullptr, nullptr) !=
             NVRTC_SUCCESS) {
             failure = "NVRTC program creation failed (device kernels)";
@@ -1266,7 +1500,10 @@ public:
             cuModuleGetFunction(&mlp_deltas_, module_, "cyxwiz_mlp_backward_deltas") != CUDA_SUCCESS ||
             cuModuleGetFunction(&mlp_grads_, module_, "cyxwiz_mlp_param_grads") != CUDA_SUCCESS ||
             cuModuleGetFunction(&adam_sumsq_, module_, "cyxwiz_adam_sumsq") != CUDA_SUCCESS ||
-            cuModuleGetFunction(&adam_apply_, module_, "cyxwiz_adam_apply") != CUDA_SUCCESS) {
+            cuModuleGetFunction(&adam_apply_, module_, "cyxwiz_adam_apply") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&ppo_sample_, module_, "cyxwiz_ppo_sample") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&ppo_loss_, module_, "cyxwiz_ppo_loss") != CUDA_SUCCESS ||
+            cuModuleGetFunction(&ppo_gae_, module_, "cyxwiz_ppo_gae") != CUDA_SUCCESS) {
             failure = "device kernel module load failed";
             return false;
         }
@@ -1289,6 +1526,9 @@ public:
     CUfunction MlpGrads() const { return mlp_grads_; }
     CUfunction AdamSumsq() const { return adam_sumsq_; }
     CUfunction AdamApply() const { return adam_apply_; }
+    CUfunction PpoSample() const { return ppo_sample_; }
+    CUfunction PpoLoss() const { return ppo_loss_; }
+    CUfunction PpoGae() const { return ppo_gae_; }
     // The cuBLAS handle bound to the caller's stream for this call.
     cublasHandle_t Cublas(CUstream stream) {
         cublasSetStream(cublas_, reinterpret_cast<cudaStream_t>(stream));
@@ -1390,6 +1630,9 @@ private:
     CUfunction mlp_grads_ = nullptr;
     CUfunction adam_sumsq_ = nullptr;
     CUfunction adam_apply_ = nullptr;
+    CUfunction ppo_sample_ = nullptr;
+    CUfunction ppo_loss_ = nullptr;
+    CUfunction ppo_gae_ = nullptr;
     cublasHandle_t cublas_ = nullptr;
     float* workspace_ = nullptr;
     size_t workspace_floats_ = 0;
@@ -1485,6 +1728,14 @@ public:
         // Device-resident 2D convolution (TOFIX140 A1b).
         if (request.op == NeuralOp::Conv2dForward || request.op == NeuralOp::Conv2dBackward) {
             capability.detail = conv2d_contract::ContractError(request);
+            if (!capability.detail.empty()) return capability;
+            capability.supported = true;
+            capability.reason = BackendFallbackReason::BackendInternalError;
+            return capability;
+        }
+        // PPO's sampling, loss and GAE (TOFIX206 3.2 B).
+        if (request.op == NeuralOp::PpoSample || request.op == NeuralOp::PpoLoss || request.op == NeuralOp::PpoGae) {
+            capability.detail = PpoContractError(request);
             if (!capability.detail.empty()) return capability;
             capability.supported = true;
             capability.reason = BackendFallbackReason::BackendInternalError;
@@ -2623,6 +2874,65 @@ private:
         return Ok();
     }
 
+    NeuralOpStatus ExecutePpo(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
+        const auto& in = buffers.inputs;
+        const auto& out = buffers.outputs;
+        const auto stream = static_cast<CUstream>(buffers.queue.cuda_stream);
+        const auto f = [](const NeuralDeviceBuffer& b) { return static_cast<float*>(b.handle); };
+        const auto bad = [](const char* what) {
+            return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract, what);
+        };
+        int rows = static_cast<int>(r.batch), width = static_cast<int>(r.ppo_width);
+        int discrete = r.ppo_discrete ? 1 : 0;
+        const size_t R = r.batch, W = r.ppo_width;
+        if (r.op == NeuralOp::PpoGae) {
+            const size_t n = r.batch * r.ppo_steps;
+            if (in.size() != 4 || out.size() != 2 || in[0].elements != n || in[1].elements != n || in[2].elements != n ||
+                in[3].elements != r.batch || out[0].elements != n || out[1].elements != n)
+                return bad("ppo_gae buffers do not match (rewards, values, dones, last_values -> advantages, returns)");
+            float *rw = f(in[0]), *v = f(in[1]), *d = f(in[2]), *last = f(in[3]), *adv = f(out[0]), *ret = f(out[1]);
+            int steps = static_cast<int>(r.ppo_steps);
+            float gamma = r.ppo_gamma, lambda = r.ppo_gae_lambda;
+            void* args[] = {&rw, &v, &d, &last, &adv, &ret, &steps, &rows, &gamma, &lambda};
+            if (cuLaunchKernel(device_state_.PpoGae(), Blocks(rows, 64), 1, 1, 64, 1, 1, 0, stream, args, nullptr) !=
+                CUDA_SUCCESS)
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "ppo_gae launch failed");
+            return Ok();
+        }
+        const size_t act = discrete ? 1 : W;
+        if (r.op == NeuralOp::PpoSample) {
+            if (in.size() != (discrete ? 2u : 3u) || out.size() != 1 || in[0].elements != R * W || in[1].elements != R ||
+                (!discrete && in[2].elements != W) || out[0].elements != R * (2 + act))
+                return bad("ppo_sample buffers do not match (head, value[, log_std] -> packed)");
+            float *head = f(in[0]), *value = f(in[1]), *ls = discrete ? nullptr : f(in[2]), *packed = f(out[0]);
+            unsigned long long seed = r.ppo_seed;
+            void* args[] = {&head, &value, &ls, &packed, &rows, &width, &discrete, &seed};
+            if (cuLaunchKernel(device_state_.PpoSample(), Blocks(rows, 128), 1, 1, 128, 1, 1, 0, stream, args,
+                               nullptr) != CUDA_SUCCESS)
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "ppo_sample launch failed");
+            return Ok();
+        }
+        // PpoLoss
+        if (in.size() != (discrete ? 7u : 8u) || out.size() != (discrete ? 4u : 5u) || in[0].elements != R * W ||
+            in[1].elements != R || in[2].elements != R * act || in[3].elements != R || in[4].elements != R ||
+            in[5].elements != R || in[6].elements != R || (!discrete && in[7].elements != W) ||
+            out[0].elements != R * W || out[1].elements != R || out[2].elements != R || out[3].elements != 6 ||
+            (!discrete && out[4].elements != W))
+            return bad("ppo_loss buffers do not match (head, value, actions, old_log_prob, advantages, returns, "
+                       "old_values[, log_std] -> grad_head, grad_value, log_prob, statistics[, grad_log_std])");
+        float *head = f(in[0]), *value = f(in[1]), *actions = f(in[2]), *old_lp = f(in[3]), *adv = f(in[4]);
+        float *ret = f(in[5]), *old_v = f(in[6]), *ls = discrete ? nullptr : f(in[7]);
+        float *g_head = f(out[0]), *g_value = f(out[1]), *lp = f(out[2]), *stats = f(out[3]);
+        float* g_ls = discrete ? nullptr : f(out[4]);
+        float clip = r.ppo_clip_range, clip_vf = r.ppo_clip_range_vf, ent = r.ppo_ent_coef, vf = r.ppo_vf_coef;
+        int normalize = r.ppo_normalize_advantage ? 1 : 0;
+        void* args[] = {&head, &value, &actions, &old_lp, &adv, &ret, &old_v, &ls, &g_head, &g_value, &lp, &stats,
+                        &g_ls, &rows, &width, &discrete, &clip, &clip_vf, &ent, &vf, &normalize};
+        if (cuLaunchKernel(device_state_.PpoLoss(), 1, 1, 1, 256, 1, 1, 0, stream, args, nullptr) != CUDA_SUCCESS)
+            return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "ppo_loss launch failed");
+        return Ok();
+    }
+
     NeuralOpStatus ExecuteAdamStep(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
         const size_t T = r.adam_tensors;
         const auto& in = buffers.inputs;
@@ -2698,6 +3008,13 @@ private:
                 return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, failure);
             }
             return ExecuteAdamStep(request, buffers);
+        }
+        if (request.op == NeuralOp::PpoSample || request.op == NeuralOp::PpoLoss || request.op == NeuralOp::PpoGae) {
+            std::string failure;
+            if (!device_state_.Ensure(buffers.queue.native_device, failure)) {
+                return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, failure);
+            }
+            return ExecutePpo(request, buffers);
         }
         if (request.op == NeuralOp::MlpForward || request.op == NeuralOp::MlpBackward) {
             std::string failure;
