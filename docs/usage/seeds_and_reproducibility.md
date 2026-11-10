@@ -14,9 +14,12 @@ OpenCL devices.
 | Cross-validation seed | Results > Cross-validation | Fold membership (k-fold and stratified) and learning-curve subsets |
 | Tool seeds | Explore tabs (Groups, Text), Random Generator, word embeddings, k-means, GMM, Random Forest, hyperparameter search, text generation | Each tool's own sample or start |
 
-Each epoch reseeds the batch order from the DataLoader seed and the model draws
-from the model seed, each with the epoch number, so a run resumed from a
-checkpoint draws what the full run would have drawn.
+Each epoch reseeds the model draws from the model seed and the batch order from
+the DataLoader seed, each with the epoch number, so a run resumed from a
+checkpoint draws what the full run would have drawn. Image and audio datasets
+are the exception for now: their batch order and augmentation after a resume
+differ from the full run's, and the run says so (its data order is marked not
+exact).
 
 ## How close is "the same"
 
@@ -38,7 +41,8 @@ checkpoint draws what the full run would have drawn.
 
 Before this release, seeds repeated only on one operating system. The C++
 standard library's shuffle and distributions differ between Visual Studio, GCC
-and Clang, and the default random engine on a GPU drew differently from the CPU.
+and Clang, and ArrayFire's normal draws (`af::randn`) differ between the CPU and
+the GPU.
 A seed now picks the same rows and numbers everywhere.
 
 As a result, the same seed gives different splits, batch orders, augmentation

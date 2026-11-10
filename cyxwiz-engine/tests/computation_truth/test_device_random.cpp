@@ -101,6 +101,21 @@ int main(int argc, char** argv) {
         Check(af::allTrue<bool>(!af::isNaN(many)) && af::allTrue<bool>(!af::isInf(many)), "no NaN or infinity");
         const af::array halves = cyxwiz::DeviceNormal(af::dim4(4), f16, engine);
         Check(halves.type() == f16, "the asked type comes back");
+        // randu returns exact 0 and 1 now and then (about once in 2e7 values):
+        // neither may become an infinity.
+        for (const af::dtype type : {f32, f64}) {
+            if (type == f64 && !cyxwiz::test::DeviceComputesInDouble()) continue;
+            const float edges[] = {0.0f, 1.0f, 1.0f, 0.5f};
+            const float other[] = {0.0f, 0.0f, 0.5f, 0.25f};
+            const af::array z =
+                cyxwiz::NormalFromUniforms(af::array(4, edges).as(type), af::array(4, other).as(type));
+            const auto host = Host<double>(z.as(f64));
+            bool finite = true;
+            for (const double v : host) finite = finite && std::isfinite(v);
+            Check(finite, std::string("a uniform of exactly 0 or 1 gives a finite normal (") +
+                              (type == f64 ? "f64" : "f32") + ")");
+            Check(host[0] == 0.0 && std::abs(host[3]) < 1e-6, "a first uniform of 0 gives 0; a second of 1/4 gives cos = 0");
+        }
     }
     if (cyxwiz::test::DeviceComputesInDouble()) {
         af::randomEngine engine = cyxwiz::DeviceRandomEngine(7);

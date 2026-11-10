@@ -9,6 +9,8 @@
 
 #include <arrayfire.h>
 
+#include <limits>
+
 namespace cyxwiz {
 
 // A Philox engine seeded with `seed`.
@@ -16,13 +18,23 @@ inline af::randomEngine DeviceRandomEngine(unsigned long long seed) {
     return af::randomEngine(AF_RANDOM_ENGINE_PHILOX_4X32_10, seed);
 }
 
-// Standard normal values of `type` (f32 or f64) by Box-Muller on two uniform
-// draws of `dims`; in place of af::randn, which differs between devices.
+// Box-Muller on two uniform arrays. randu returns exact 0 and exact 1 (in
+// 2^28 Philox f32 draws on the CPU: 8 zeros, 13 ones), so 1 - u is kept above
+// 0 and log never sees 0: a value is at most about 13 (f32) from the mean.
+inline af::array NormalFromUniforms(const af::array& u_first, const af::array& u_second) {
+    const double tiny = u_first.type() == f64 ? (std::numeric_limits<double>::min)()
+                                              : static_cast<double>((std::numeric_limits<float>::min)());
+    const af::array u1 = (af::max)(1.0 - u_first, tiny);  // (0, 1]
+    return af::sqrt(-2.0 * af::log(u1)) * af::cos(6.283185307179586 * u_second);
+}
+
+// Standard normal values of `type` (f32 or f64) from two uniform draws of
+// `dims`; in place of af::randn, which differs between devices.
 inline af::array DeviceNormal(const af::dim4& dims, af::dtype type, af::randomEngine& engine) {
     const af::dtype work = type == f64 ? f64 : f32;
-    const af::array u1 = 1.0 - af::randu(dims, work, engine);  // (0, 1]
-    const af::array u2 = af::randu(dims, work, engine);
-    af::array z = af::sqrt(-2.0 * af::log(u1)) * af::cos(6.283185307179586 * u2);
+    const af::array u_first = af::randu(dims, work, engine);
+    const af::array u_second = af::randu(dims, work, engine);
+    const af::array z = NormalFromUniforms(u_first, u_second);
     return work == type ? z : z.as(type);
 }
 

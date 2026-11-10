@@ -1,4 +1,4 @@
-"""Seeded draws must repeat on every compiler, OS and device (TOFIX205).
+"""Seeded draws must repeat on every compiler, OS and device.
 
 Fails when the Engine, backend or server node source uses a random-number call
 whose results differ between MSVC, libstdc++ and libc++ (std::shuffle,
@@ -14,13 +14,21 @@ import sys
 
 FOLDERS = ['cyxwiz-engine/src', 'cyxwiz-backend/src', 'cyxwiz-backend/include', 'cyxwiz-server-node/src']
 SUFFIXES = {'.cpp', '.h', '.hpp', '.cc', '.cxx', '.inl'}
+DISTRIBUTIONS = ('uniform_int|uniform_real|normal|lognormal|exponential|poisson|bernoulli|binomial|negative_binomial|'
+                 'geometric|gamma|weibull|extreme_value|chi_squared|cauchy|fisher_f|student_t|discrete|'
+                 'piecewise_constant|piecewise_linear')
 BANNED = [
-    (re.compile(r'\bstd::(shuffle|sample|random_shuffle)\s*\('), 'std::shuffle / std::sample: use cyxwiz::portable::Shuffle'),
-    (re.compile(r'\bstd::\w+_distribution\b'), 'a std distribution: use the cyxwiz::portable draw'),
-    (re.compile(r'\bstd::default_random_engine\b'), 'std::default_random_engine: use std::mt19937'),
-    (re.compile(r'(?<![\w:.>])s?rand\s*\(\s*\)|(?<![\w:.>])srand\s*\('), 'rand(): use std::mt19937 and cyxwiz::portable'),
-    (re.compile(r'\baf::randn\s*\('), 'af::randn: use cyxwiz::DeviceNormal'),
-    (re.compile(r'\bAF_RANDOM_ENGINE_(DEFAULT|THREEFRY\w*|MERSENNE\w*)\b'), 'an ArrayFire engine: use cyxwiz::DeviceRandomEngine'),
+    # Bare shuffle( / sample( are left alone: other classes have methods of
+    # those names; a using-declaration that brings in std's is caught.
+    (re.compile(r'\bstd::(ranges::)?(shuffle|sample|random_shuffle)\s*\(|\busing\s+std::(ranges::)?(shuffle|sample)\b'),
+     'std::shuffle / std::sample: use cyxwiz::portable::Shuffle'),
+    # With or without std:: (using namespace std, aliases).
+    (re.compile(r'\b(' + DISTRIBUTIONS + r')_distribution\b'), 'a std distribution: use the cyxwiz::portable draw'),
+    (re.compile(r'\bdefault_random_engine\b'), 'std::default_random_engine: use std::mt19937'),
+    (re.compile(r'(?<![\w.>:])(std::|::)?s?rand\s*\('), 'rand(): use std::mt19937 and cyxwiz::portable'),
+    (re.compile(r'(?<![\w.>:])(af::)?randn\s*\('), 'af::randn: use cyxwiz::DeviceNormal'),
+    (re.compile(r'\bAF_RANDOM_ENGINE_(DEFAULT|THREEFRY\w*|MERSENNE\w*)\b'),
+     'an ArrayFire engine named by default or not Philox: use cyxwiz::DeviceRandomEngine'),
 ]
 
 
