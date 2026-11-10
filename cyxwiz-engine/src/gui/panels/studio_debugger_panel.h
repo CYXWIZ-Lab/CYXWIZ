@@ -241,6 +241,8 @@ private:
     std::shared_ptr<DebugModelSession> LayerModelSession() const;
     // Model > Layers > Top images (studio_debugger_top_images.cpp, 6.3e).
     void RenderTopImages();
+    // Model > Layers > Contributions (studio_debugger_contributions.cpp, 6.4).
+    void RenderContributions(const std::string& weight_name);
     // The Inspector's card for the picture picked in Top images; false when
     // none is picked (or Top images is not shown).
     bool RenderTopImagesPick();
@@ -347,6 +349,11 @@ private:
     size_t clicked_channel_layer_ = std::numeric_limits<size_t>::max();
     size_t clicked_channel_ = 0;
     std::string picked_from_top_images_;  // the item clicked last, named
+    // Contributions: the explained output or unit, and the clicked input.
+    std::string contributions_key_;  // capture / layer / item they are for
+    int contributions_output_ = -1;
+    std::optional<size_t> contributions_pick_;
+    std::string contributions_inspector_;
     // A training run shown instead of the debug run (6.3d); empty = none.
     std::string shown_training_run_;
     std::optional<TrainingRunRecord> shown_training_record_;

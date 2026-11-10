@@ -183,6 +183,9 @@ private Data Studio tickets (`tofix*/track*`).
   over the data) that excite each most: the Dense head's strongest votes per
   class, the clicked channel, or this sample's strongest channels; ranked by
   a channel's maximum or mean over its map.
+  **Contributions** shows how a Dense layer's output was computed for the
+  sample: its largest w × x terms, the sum, bias and value, and where an
+  input comes from.
   Guide: `docs/usage/studio_toolbar.md`, "Model > Layers".
 - **Example: cats vs dogs ResNet from scratch**
   (`examples/cyxgraph/cats_dogs_resnet_scratch.cyxgraph`, guide in

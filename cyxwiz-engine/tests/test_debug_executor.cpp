@@ -11,6 +11,7 @@
 #include "../src/core/occlusion.h"
 #include "../src/core/saliency.h"
 #include "../src/core/top_images.h"
+#include "../src/core/dense_contributions.h"
 #include "../src/core/dataset_batcher.h"
 #include "../src/core/training_snapshots_presentation.h"
 #include "../src/core/where_it_looks_presentation.h"
@@ -3300,6 +3301,51 @@ void TestTopImages() {
     spdlog::info("  OK: top images");
 }
 
+// TOFIX178 6.4: Contributions. Terms by hand; the MLP's output layer
+// rebuilt from its captured input, weights and bias equals its captured
+// output; a row read from the device; an input's place.
+void TestContributions() {
+    spdlog::info("--- TestContributions ---");
+    namespace ct = contributions;
+    const auto e = ct::Explain({0.5f, -2.0f, 0.1f, 1.0f}, {2.0f, 1.0f, 3.0f, -0.25f}, 0.5, 2);
+    ExpectTrue(e.top.size() == 2 && e.top[0].input == 1 && e.top[0].wx == -2.0f && e.top[1].input == 0,
+               "the largest |w x x| first");
+    ExpectTrue(std::fabs(e.sum - (1.0 - 2.0 + 0.3 - 0.25)) < 1e-6 && std::fabs(e.value - (e.sum + 0.5)) < 1e-9,
+               "the sum and the value");
+    ExpectTrue(e.rest == 2 && std::fabs(e.rest_sum - 0.05) < 1e-7, "the rest of the inputs and their share");
+    ExpectTrue(ct::InputPlace(4 * 8 * 128 + 6 * 128 + 65, {8, 8, 128}) == "row 4, column 6, channel 65",
+               "an input's place in an [H, W, C] layer");
+    ExpectTrue(ct::InputPlace(3, {8}).empty(), "no place in a flat layer");
+    ExpectTrue(ct::Signed(0.06811) == "+0.0681" && ct::Signed(-0.08333) == "-0.0833" && ct::Signed(0.00001) == "0.0000",
+               "signed values");
+    ExpectTrue(ct::MatrixRow(FromRowMajor({1, 2, 3, 4, 5, 6}, {2, 3}), 1) == std::vector<float>({4, 5, 6}),
+               "a row of a matrix");
+
+    // The MLP's output Dense: sum of w x x + b == its captured output.
+    DebugExecutor exe(MakeTabularConfig());
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "the MLP runs with capture: " + res.failure_summary);
+    const CapturedLayer& dense = CapturedNamed(*res.layer_capture, "Output Dense");
+    const Tensor& input = CapturedTensorOf(dense, CapturedTensorRole::Input);
+    const Tensor& weight = CapturedTensorOf(dense, CapturedTensorRole::Parameter, "weight");
+    const Tensor& bias = CapturedTensorOf(dense, CapturedTensorRole::Parameter, "bias");
+    const auto out = RowMajor(CapturedTensorOf(dense, CapturedTensorRole::Output));
+    const auto x_all = RowMajor(input);
+    const auto b = RowMajor(bias);
+    const size_t in = input.Shape()[1], outputs = weight.Shape()[0];
+    float worst = 0.0f;
+    for (size_t item = 0; item < input.Shape()[0]; ++item)
+        for (size_t o = 0; o < outputs; ++o) {
+            const std::vector<float> x(x_all.begin() + static_cast<std::ptrdiff_t>(item * in),
+                                       x_all.begin() + static_cast<std::ptrdiff_t>((item + 1) * in));
+            const auto ex = ct::Explain(ct::MatrixRow(weight, o), x, b[o], 8);
+            worst = std::max(worst, std::fabs(static_cast<float>(ex.value) - out[item * outputs + o]));
+        }
+    ExpectTrue(worst < 1e-4f, "sum of w x x + b == the captured output, worst " + std::to_string(worst));
+    spdlog::info("  OK: contributions (MLP output rebuilt, worst {})", worst);
+}
+
 void TestDebugModelSession() {
     spdlog::info("--- TestDebugModelSession ---");
     // An MLP (no dropout or BatchNorm: the run's training forward equals
@@ -4285,6 +4331,7 @@ int main(int argc, char** argv) {
         TestSaliencyAgainstPyTorch();
         TestTrainingSnapshotsPresentation();
         TestTopImages();
+        TestContributions();
         TestWhereItLooksPresentation();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();

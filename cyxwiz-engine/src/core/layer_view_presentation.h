@@ -66,7 +66,7 @@ struct LayerSection {
 std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
                                         const std::map<int, std::string>& group_of_node);
 
-enum class View { FeatureMaps, Values, Units, Weights, Gradients, Filters, WhereItLooks, TopImages };
+enum class View { FeatureMaps, Values, Units, Weights, Gradients, Filters, WhereItLooks, TopImages, Contributions };
 
 struct ViewTab {
     View view = View::Values;

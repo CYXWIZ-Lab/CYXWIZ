@@ -193,12 +193,10 @@ LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummar
 
     if (takes_model_input && input && (IsSpatial(input->shape) || input->shape.size() == 2))
         views.tabs.push_back({View::WhereItLooks, "Where it looks", {}});
+    if (weights && weights->shape.size() == 2 && input && input->shape.size() == 2)
+        views.tabs.push_back({View::Contributions, "Contributions", weights->name});
     if (output && (IsSpatial(output->shape) || (output->shape.size() == 2 && output->shape[1] > 1)))
         views.tabs.push_back({View::TopImages, picture_input ? "Top images" : "Top samples", {}});
-    if (weights && weights->shape.size() == 2 && input && input->shape.size() == 2) {
-        views.later.push_back({"Contributions", "How this sample's output was computed: w \xC3\x97 x per input, "
-                                                "the largest first, then the bias and the activation"});
-    }
     if (output && output->shape.size() == 2 && output->shape[1] > 1) {
         views.later.push_back({"Embedding", "This layer's output over many samples, projected to 2-D (Explore "
                                             "\xE2\x80\xBA Projection), coloured by class"});

@@ -748,7 +748,8 @@ void StudioDebuggerPanel::RenderLayersView() {
     // Compare with another snapshot of the run (6.3d): the same view drawn
     // twice, side by side, the compared one without the controls. Where it
     // looks stays one snapshot at a time (it runs that snapshot's model).
-    const bool comparing = compare_capture_ && !compare_label_.empty() && tab.view != lv::View::WhereItLooks;
+    const bool comparing = compare_capture_ && !compare_label_.empty() && tab.view != lv::View::WhereItLooks &&
+                           tab.view != lv::View::TopImages && tab.view != lv::View::Contributions;
     const CapturedLayer* compared = nullptr;
     if (comparing) {
         for (const auto& l : compare_capture_->Layers())
@@ -1021,6 +1022,8 @@ void StudioDebuggerPanel::RenderLayersView() {
         RenderWhereItLooks(cache.sample_texture, cache.sample_width, cache.sample_height);
     } else if (tab.view == lv::View::TopImages) {
         RenderTopImages();
+    } else if (tab.view == lv::View::Contributions) {
+        RenderContributions(tab.tensor);
     } else {
         header();
         if (comparing && ImGui::BeginTable("##LayerCompare", 2, ImGuiTableFlags_SizingStretchSame)) {
@@ -1158,6 +1161,8 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
                                          ? where_it_looks::SaliencyInspectorHint()
                                          : where_it_looks::InspectorHint())
                               : shown_view == lv::View::TopImages ? lv::TopImagesHint()
+                              : shown_view == lv::View::Contributions && !contributions_inspector_.empty()
+                                  ? contributions_inspector_
                                                                      : views.hint;
     if (feature_maps && cache.spatial && selected_channel_rank_ < cache.tiles.size()) {
         if (BeginCard("StudioDebuggerLayerChannel")) {

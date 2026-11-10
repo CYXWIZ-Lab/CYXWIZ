@@ -465,8 +465,20 @@ says how to get one.
     label, rank and value, and **Make it the picked sample** (run Local Debug
     to see it). Results are not saved. Patches (the part of the image the
     channel sees) come later.
-  - Greyed views are next: **Contributions** on a Dense layer and
-    **Embedding** on flat outputs. Hover one for what it will show.
+  - **Contributions** (a Dense layer): how its output was computed for the
+    picked sample, output = the sum of w × x + b, from the captured input and
+    weights of that step (the same numbers the forward used). On the model's
+    head **Explain** picks the output (the predicted class first, then the
+    others); on a hidden Dense **Unit** picks the unit (this sample's
+    strongest first, any unit from the list). The 8 largest terms come first,
+    with w, x and w × x (blue pulls the output down, red pushes it up); the
+    line under them gives the sum, the bias and the value, then the other
+    logits and the prediction (a head) or the activation after it (a hidden
+    layer), and what the other inputs add up to. Click a row: the Inspector
+    says where that input comes from (for a Flatten of a conv stage, the
+    layer, row, column and channel).
+  - A greyed view is next: **Embedding** on flat outputs. Hover it for what
+    it will show.
 - The **Inspector** shows the sample as the first layer received it (after
   the data steps), its name and label, the prediction with how it was read
   (from the evaluation pass, with dropout off and BatchNorm on its running

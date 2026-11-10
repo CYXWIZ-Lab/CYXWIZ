@@ -135,7 +135,7 @@ void TestViewsFollowShapes() {
           "weights, gradients and filters read the conv weights, not the bias");
     Check(Later(first).empty(), "first conv: nothing left for later");
     const auto dense_first = Labels(PlanLayerViews(Dense2(), nullptr, false, true, false));
-    Check(dense_first[dense_first.size() - 2] == "Where it looks" && dense_first.back() == "Top samples",
+    Check(dense_first[dense_first.size() - 3] == "Where it looks" && dense_first.back() == "Top samples",
           "a Dense layer taking the model's features explains them too; its top items are samples");
     const auto conv64 = Labels(PlanLayerViews(Conv64(), nullptr, false, false));
     Check(std::find(conv64.begin(), conv64.end(), "Where it looks") == conv64.end(),
@@ -177,9 +177,10 @@ void TestViewsFollowShapes() {
     CheckText(flatten.facts, "output 8192", "Flatten facts");
 
     const auto dense = PlanLayerViews(Dense2(), nullptr, false);
-    Check(Labels(dense) == std::vector<std::string>({"Units", "Values", "Weights", "Gradients", "Top images"}),
+    Check(Labels(dense) ==
+              std::vector<std::string>({"Units", "Values", "Weights", "Gradients", "Contributions", "Top images"}),
           "Dense tabs");
-    Check(Later(dense) == std::vector<std::string>({"Contributions", "Embedding"}), "Dense later tabs");
+    Check(Later(dense) == std::vector<std::string>({"Embedding"}), "Dense later tabs");
     for (const auto& t : dense.later) Check(!t.why.empty(), "a later tab says why: " + t.label);
     Check(!dense.hint.empty(), "a weights layer has an inspector hint");
 
