@@ -66,6 +66,34 @@ the node it concerns:
 the steps with **Stop**, and the **RL Training Dashboard** opens. Local
 Debug does not apply to an RL graph (it runs one supervised batch).
 
+## Where it trains
+
+PPO trains on the device chosen in **Preferences > Devices**, the same choice
+and the same policy as any other training run:
+
+- **Strict residency**: the chosen device must start, or the run stops with the reason.
+- **Compatibility**: if the chosen device fails its check, the run trains on
+  the CPU and says so (the chip turns to the caution colour and reads
+  "CPU · fallback"; the note under the progress bar gives the reason).
+
+Where the run actually trains is shown on every surface:
+
+- the dashboard chip, for example **CPU · Intel** or **CUDA · GeForce GTX 1050 Ti**;
+  hover it for the full route (backend, device, policy);
+- the toolbar line, for example `PPO update 22 · 5,632 steps · CPU` (hover:
+  the same route);
+- the Viewport's **Active Compute Runtime** (`ACTIVE RUN CPU`);
+- Policy Playback's source line (`policy from this session's run (67,584 steps) · on CPU`):
+  a trained policy acts on the device it trained on.
+
+Small networks (every hidden layer at most 256 units, such as the 64-64
+pattern) usually train faster on the CPU: each environment step runs many
+small GPU operations, and some graphics drivers struggle under that load.
+When the chosen device is a GPU, Compile adds an Info line saying so and the
+dashboard repeats it; the Engine never switches devices for you. While a PPO
+run is active, the device choices in Preferences are disabled until it ends,
+and a second training run (Train on a model graph) is refused.
+
 ## The RL Training Dashboard
 
 - Status, the run (environment and copies), **Pause** / **Resume**, **Stop**.
