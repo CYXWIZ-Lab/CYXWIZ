@@ -73,7 +73,9 @@ void PrintUsage(const char* program) {
               << "  --central-server=ADDR Central server address only (default: localhost:50051)\n"
               << "  --http-port=PORT     HTTP REST API port (default: 8082)\n"
               << "  --inference-addr=ADDR gRPC InferenceService address (default: 0.0.0.0:50057)\n"
-              << "  --config=PATH        Path to config file (default: ~/.cyxwiz/daemon.yaml)\n"
+              << "  --config=PATH        Config file (default: the first of ./config/server_config.yaml,\n"
+              << "                       ./server_config.yaml, ../config/server_config.yaml, then\n"
+              << "                       %APPDATA%/CyxWiz or ~/.config/cyxwiz/server_config.yaml)\n"
               << "  --p2p-secret=SECRET  Secret the central server signs Engine tokens with ([jwt].p2p_secret)\n"
               << "  --tls                Enable TLS for gRPC servers\n"
               << "  --tls-cert=PATH      Path to TLS certificate file\n"
@@ -397,9 +399,18 @@ int main(int argc, char** argv) {
     spdlog::info("CyxWiz Server Daemon v{}", cyxwiz::GetVersionString());
     spdlog::info("========================================");
 
-    // Load config file first
+    // Command-line args first: --config chooses the config file, the others
+    // override what it says.
+    DaemonConfig cli_config = ParseArgs(argc, argv);
+
     cyxwiz::servernode::core::ConfigManager config_manager;
-    std::string config_path = cyxwiz::servernode::core::ConfigManager::FindConfigFile();
+    std::string config_path = cli_config.config_path;
+    if (config_path.empty()) {
+        config_path = cyxwiz::servernode::core::ConfigManager::FindConfigFile();
+    } else if (!std::filesystem::exists(config_path)) {
+        std::cerr << "--config: " << config_path << " does not exist" << std::endl;
+        return 1;
+    }
     config_manager.Load(config_path);
     const auto& node_config = config_manager.GetConfig();
 
@@ -408,8 +419,6 @@ int main(int argc, char** argv) {
     daemon_config.LoadFromNodeConfig(node_config);
     daemon_config.config_path = config_path;
 
-    // Parse command-line args (overrides config file)
-    DaemonConfig cli_config = ParseArgs(argc, argv);
     if (!cli_config.ipc_address.empty()) daemon_config.ipc_address = cli_config.ipc_address;
     if (!cli_config.server.empty()) {
         const auto endpoints = cyxwiz::protocol::ResolveServerAddress(cli_config.server);
@@ -423,7 +432,6 @@ int main(int argc, char** argv) {
     if (!cli_config.central_server.empty()) daemon_config.central_server = cli_config.central_server;
     if (cli_config.http_port > 0) daemon_config.http_port = cli_config.http_port;
     if (!cli_config.inference_address.empty()) daemon_config.inference_address = cli_config.inference_address;
-    if (!cli_config.config_path.empty()) daemon_config.config_path = cli_config.config_path;
     if (!cli_config.p2p_secret.empty()) daemon_config.p2p_secret = cli_config.p2p_secret;
     if (cli_config.enable_tls) daemon_config.enable_tls = true;
     if (!cli_config.tls_cert_path.empty()) daemon_config.tls_cert_path = cli_config.tls_cert_path;

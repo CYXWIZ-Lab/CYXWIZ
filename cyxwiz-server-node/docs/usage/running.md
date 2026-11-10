@@ -75,7 +75,7 @@ the Windows firewall.
 | `--ipc-address=ADDR` | `localhost:50054` | where the GUI connects |
 | `--http-port=PORT` | `8082` | REST inference API (`/v1/predict`) |
 | `--inference-addr=ADDR` | `0.0.0.0:50057` | gRPC inference service |
-| `--config=PATH` | `~/.cyxwiz/daemon.yaml` | config file (the options above override it) |
+| `--config=PATH` | the first of `./config/server_config.yaml`, `./server_config.yaml`, `../config/server_config.yaml`, `%APPDATA%\CyxWiz\server_config.yaml` (`~/.config/cyxwiz/` elsewhere) | config file; the options above override it. A `--config` file that does not exist stops the daemon |
 | `--tls`, `--tls-cert=`, `--tls-key=`, `--tls-ca=`, `--tls-auto` | off | TLS for the gRPC servers |
 | `--doctor`, `--benchmark` | | one-shot checks (section 2) |
 
