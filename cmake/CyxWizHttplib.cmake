@@ -19,3 +19,12 @@ if(WIN32 AND TARGET httplib::httplib)
     endif()
     unset(_cyxwiz_httplib_defs)
 endif()
+
+# On macOS the same option resolves names through CFHost, so every program
+# that includes httplib needs CFNetwork; the vcpkg package does not link it.
+if(APPLE AND TARGET httplib::httplib)
+    find_library(CYXWIZ_HTTPLIB_CFNETWORK CFNetwork REQUIRED)
+    find_library(CYXWIZ_HTTPLIB_COREFOUNDATION CoreFoundation REQUIRED)
+    set_property(TARGET httplib::httplib APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        ${CYXWIZ_HTTPLIB_CFNETWORK} ${CYXWIZ_HTTPLIB_COREFOUNDATION})
+endif()

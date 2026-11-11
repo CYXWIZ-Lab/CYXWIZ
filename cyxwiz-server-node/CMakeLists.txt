@@ -60,6 +60,15 @@ set(SHARED_CORE_SOURCES
     src/auth/token_refresh.cpp
 )
 
+# Every target that compiles SHARED_CORE_SOURCES links these: on macOS the
+# metrics collector reads GPU use through IOKit.
+set(SHARED_CORE_PLATFORM_LIBS)
+if(APPLE)
+    find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
+    find_library(IOKIT_LIBRARY IOKit REQUIRED)
+    set(SHARED_CORE_PLATFORM_LIBS ${COREFOUNDATION_LIBRARY} ${IOKIT_LIBRARY})
+endif()
+
 # ========== IPC Sources ==========
 # Daemon service (server-side) - only for daemon
 set(IPC_SERVER_SOURCES
@@ -211,10 +220,7 @@ if(CYXWIZ_BUILD_DAEMON)
             GOOGLE_PROTOBUF_NO_THREADLOCAL
         )
     elseif(APPLE)
-        find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
-        find_library(CFNETWORK_LIBRARY CFNetwork REQUIRED)
-        find_library(IOKIT_LIBRARY IOKit REQUIRED)
-        target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${COREFOUNDATION_LIBRARY} ${CFNETWORK_LIBRARY} ${IOKIT_LIBRARY})
+        target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${SHARED_CORE_PLATFORM_LIBS})
     else()
         target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread)
     endif()
@@ -340,7 +346,7 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
             GOOGLE_PROTOBUF_NO_THREADLOCAL
         )
     else()
-        target_link_libraries(cyxwiz-server-gui PRIVATE pthread)
+        target_link_libraries(cyxwiz-server-gui PRIVATE pthread ${SHARED_CORE_PLATFORM_LIBS})
     endif()
 
     # ONNX Runtime linkage
@@ -448,6 +454,7 @@ if(CYXWIZ_BUILD_TESTS)
         unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
         httplib::httplib
+        ${SHARED_CORE_PLATFORM_LIBS}
     )
 
     target_compile_definitions(test_job_execution_service PRIVATE
@@ -622,6 +629,7 @@ if(CYXWIZ_BUILD_TESTS)
         yaml-cpp::yaml-cpp
         unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
+        ${SHARED_CORE_PLATFORM_LIBS}
     )
 
     if(WIN32)
