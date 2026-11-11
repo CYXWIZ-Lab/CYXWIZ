@@ -203,4 +203,21 @@ Tensor MishModule::Backward(const Tensor& grad_output) {
     return activation_->Backward(grad_output, input_cache_);
 }
 
+// ============================================================================
+// HardswishModule Implementation
+// ============================================================================
+
+HardswishModule::HardswishModule() {
+    activation_ = std::make_unique<HardswishActivation>();
+}
+
+Tensor HardswishModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor HardswishModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
 } // namespace cyxwiz

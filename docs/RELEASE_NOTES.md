@@ -129,6 +129,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Hardswish activation node.** `x * relu6(x + 3) / 6` (torch.nn.Hardswish),
+  the activation of MobileNetV3; also `pycyxwiz.hardswish` and
+  `HardswishModule`.
 - **One-cycle learning-rate schedule.** `lr_schedule = one_cycle` on any
   optimizer node: torch's OneCycleLR over the run's optimizer updates, with
   `learning_rate` as the peak and `warmup_ratio` as the rising share.

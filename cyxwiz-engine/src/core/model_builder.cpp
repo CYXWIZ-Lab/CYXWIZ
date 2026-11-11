@@ -1163,6 +1163,12 @@ bool BuildSequential(
                 break;
             }
 
+            case gui::NodeType::Hardswish: {
+                model.Add<HardswishModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Hardswish", i);
+                break;
+            }
+
             case gui::NodeType::Softmax: {
                 model.Add<SoftmaxModule>();
                 CYXWIZ_BUILDER_INFO("  [{}] Softmax", i);

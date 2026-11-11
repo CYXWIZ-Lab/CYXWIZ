@@ -28,6 +28,7 @@ inline bool IsExecutableActivationNode(gui::NodeType node_type) {
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
+        case gui::NodeType::Hardswish:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:

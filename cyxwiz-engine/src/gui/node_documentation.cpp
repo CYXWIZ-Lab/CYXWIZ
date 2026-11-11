@@ -205,6 +205,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::GELU:
         case NodeType::Swish:
         case NodeType::Mish:
+        case NodeType::Hardswish:
         case NodeType::Sigmoid:
         case NodeType::Tanh:
         case NodeType::Softmax:
@@ -955,6 +956,19 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "Used in EfficientNet and modern CNNs",
             "Slightly more expensive than ReLU"
+        },
+        "Activation"
+    };
+
+    docs_[NodeType::Hardswish] = {
+        "Hardswish",
+        "f(x) = x * relu6(x + 3) / 6: Swish with its sigmoid replaced by a straight piece. "
+        "0 below -3, x above 3.",
+        "Cheaper than Swish and Mish, with nearly the same shape.",
+        {},
+        {
+            "The activation of MobileNetV3 and EfficientNet-Lite",
+            "A good swap for ReLU in small CNNs"
         },
         "Activation"
     };

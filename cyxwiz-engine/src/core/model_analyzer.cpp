@@ -151,6 +151,7 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::GELU: return "GELU";
         case gui::NodeType::Swish: return "Swish";
         case gui::NodeType::Mish: return "Mish";
+        case gui::NodeType::Hardswish: return "Hardswish";
         case gui::NodeType::Sigmoid: return "Sigmoid";
         case gui::NodeType::Tanh: return "Tanh";
         case gui::NodeType::Softmax: return "Softmax";
@@ -631,6 +632,7 @@ bool ModelAnalyzer::IsActivation(gui::NodeType type) const {
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
+        case gui::NodeType::Hardswish:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:
@@ -743,6 +745,7 @@ int64_t ModelAnalyzer::ComputeActivationFLOPs(int64_t elements, gui::NodeType ty
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
+        case gui::NodeType::Hardswish:
             return 8 * elements;  // more complex
         case gui::NodeType::Softmax:
             return 3 * elements;  // exp, sum, div

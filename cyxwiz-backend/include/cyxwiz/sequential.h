@@ -48,7 +48,8 @@ enum class ModuleType {
     TransformerEncoder,
     TransformerDecoder,
     LayerNorm,
-    MultiHeadAttention
+    MultiHeadAttention,
+    Hardswish
 };
 
 enum class TensorUnaryOp {
@@ -1411,6 +1412,22 @@ public:
 
 private:
     std::unique_ptr<MishActivation> activation_;
+};
+
+/**
+ * @brief Wrapper for Hardswish activation: x * relu6(x + 3) / 6 (torch.nn.Hardswish)
+ */
+class CYXWIZ_API HardswishModule : public Module {
+public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
+    HardswishModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Hardswish"; }
+
+private:
+    std::unique_ptr<HardswishActivation> activation_;
 };
 
 /**

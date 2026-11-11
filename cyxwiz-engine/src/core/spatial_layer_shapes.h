@@ -101,6 +101,7 @@ inline bool IsShapePreservingLayer(gui::NodeType type) {
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
+        case gui::NodeType::Hardswish:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Dropout:

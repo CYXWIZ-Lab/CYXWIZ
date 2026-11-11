@@ -1172,6 +1172,7 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::ELU, NodeCategory::Activation, "ELU", {"activation"}},
         {NodeType::Swish, NodeCategory::Activation, "Swish", {"activation"}},
         {NodeType::Mish, NodeCategory::Activation, "Mish", {"activation"}},
+        {NodeType::Hardswish, NodeCategory::Activation, "Hardswish", {"activation"}},
         {NodeType::Parameter, NodeCategory::Utility, "Parameter", {"parameter", "constant"}},
         {NodeType::SineWave, NodeCategory::Signal, "Sine Wave", {"signal", "sine", "wave"}},
         {NodeType::StepSignal, NodeCategory::Signal, "Step Signal", {"signal", "step"}},
@@ -3678,6 +3679,16 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
 
     RegisterNode({NodeType::Mish, NodeCategory::Activation, "Mish", ICON_FA_BOLT,
         {"mish", "activation"}, 0, false, "Mish activation", "", "",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Activated"}},
+        {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Hardswish, NodeCategory::Activation, "Hardswish", ICON_FA_BOLT,
+        {"hardswish", "hard swish", "h-swish", "activation", "mobilenet"}, 0, false,
+        "Hardswish activation: x * relu6(x + 3) / 6",
+        "Swish with its sigmoid replaced by a straight piece: 0 below -3, x above 3, x * (x + 3) / 6 between. "
+        "Cheap to compute; MobileNetV3 and EfficientNet-Lite use it. Same as torch.nn.Hardswish.",
+        "Conv2D -> BatchNorm -> Hardswish",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Activated"}},
         {}, NodeImplementationStatus::Implemented, 0});

@@ -630,6 +630,9 @@ enum class NodeType {
     ImageFilter,        // a typed kernel or a classic one (cv::filter2D)
     ImageGabor,         // a bank of oriented kernels, one channel each
 
+    // ===== Appended activations =====
+    Hardswish,          // x * relu6(x + 3) / 6 (torch.nn.Hardswish)
+
     // Special sentinel value
     Unknown
 };

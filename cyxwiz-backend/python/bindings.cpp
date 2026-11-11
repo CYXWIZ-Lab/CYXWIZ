@@ -1394,6 +1394,11 @@ PYBIND11_MODULE(pycyxwiz, m) {
         return act.Forward(x);
     }, py::arg("input"), "Apply Mish activation");
 
+    m.def("hardswish", [](const cyxwiz::Tensor& x) {
+        cyxwiz::HardswishActivation act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply Hardswish activation: x * relu6(x + 3) / 6");
+
     // Layer-like functional operations
     m.def("flatten", [](const cyxwiz::Tensor& x) {
         cyxwiz::FlattenLayer layer;
@@ -2252,6 +2257,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("GELU", cyxwiz::ModuleType::GELU)
         .value("Swish", cyxwiz::ModuleType::Swish)
         .value("Mish", cyxwiz::ModuleType::Mish)
+        .value("Hardswish", cyxwiz::ModuleType::Hardswish)
         .export_values();
 
     // Module base class; Python subclasses become real modules (TOFIX125 P3).
@@ -2315,6 +2321,10 @@ PYBIND11_MODULE(pycyxwiz, m) {
     // MishModule
     py::class_<cyxwiz::MishModule, cyxwiz::Module>(m, "MishModule")
         .def(py::init<>(), "Create a Mish module");
+
+    // HardswishModule
+    py::class_<cyxwiz::HardswishModule, cyxwiz::Module>(m, "HardswishModule")
+        .def(py::init<>(), "Create a Hardswish module");
 
     // Deterministic sinusoidal positional encoding used by Studio Transformer graphs.
     py::class_<cyxwiz::PositionalEncodingModule, cyxwiz::Module>(
@@ -2415,6 +2425,10 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("add_mish", [](cyxwiz::SequentialModel& self) {
             self.Add<cyxwiz::MishModule>();
         }, "Add a Mish activation")
+
+        .def("add_hardswish", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::HardswishModule>();
+        }, "Add a Hardswish activation")
 
         // Core methods
         .def("forward", &cyxwiz::SequentialModel::Forward,

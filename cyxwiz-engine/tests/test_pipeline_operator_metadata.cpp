@@ -931,6 +931,7 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
         gui::NodeType::ELU,
         gui::NodeType::Swish,
         gui::NodeType::Mish,
+        gui::NodeType::Hardswish,
         gui::NodeType::Resize,  // TOFIX140 A1: the image input shape comes from it
         gui::NodeType::PReLU,   // TOFIX140 A2
         gui::NodeType::SELU,    // TOFIX140 A2
@@ -3449,8 +3450,10 @@ void CheckOptimizerFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
                            "learning_rate", "float", "0.01") &&
               ParameterMatches(metadata.GetMetadata(gui::NodeType::SGD),
                                "momentum", "float", "0.9") &&
-              !HasParameter(metadata.GetMetadata(gui::NodeType::SGD),
-                            "weight_decay"),
+              ParameterMatches(metadata.GetMetadata(gui::NodeType::SGD),
+                               "weight_decay", "float", "0") &&
+              ParameterMatches(metadata.GetMetadata(gui::NodeType::SGD),
+                               "nesterov", "bool", "false"),
           "SGD metadata should match the backend constructor contract");
 
     for (const auto type : {gui::NodeType::Adam, gui::NodeType::NAdam}) {
@@ -3491,6 +3494,7 @@ void CheckDenseActivationCodegenContract() {
         gui::NodeType::GELU,
         gui::NodeType::Swish,
         gui::NodeType::Mish,
+        gui::NodeType::Hardswish,
         gui::NodeType::Sigmoid,
         gui::NodeType::Tanh,
         gui::NodeType::Softmax,
@@ -5161,6 +5165,7 @@ int main() {
         gui::NodeType::ELU,
         gui::NodeType::Swish,
         gui::NodeType::Mish,
+        gui::NodeType::Hardswish,
         gui::NodeType::MSELoss,
         gui::NodeType::CrossEntropyLoss,
         gui::NodeType::BCELoss,
@@ -5290,6 +5295,7 @@ int main() {
         gui::NodeType::ELU,
         gui::NodeType::Swish,
         gui::NodeType::Mish,
+        gui::NodeType::Hardswish,
         gui::NodeType::MSELoss,
         gui::NodeType::CrossEntropyLoss,
         gui::NodeType::BCELoss,
@@ -5579,6 +5585,7 @@ int main() {
         gui::NodeType::GELU,
         gui::NodeType::Swish,
         gui::NodeType::Mish,
+        gui::NodeType::Hardswish,
         gui::NodeType::Sigmoid,
         gui::NodeType::Tanh,
         gui::NodeType::Softmax,
@@ -5662,6 +5669,7 @@ int main() {
         {gui::NodeType::GELU, "activation"},
         {gui::NodeType::Swish, "activation"},
         {gui::NodeType::Mish, "activation"},
+        {gui::NodeType::Hardswish, "activation"},
         {gui::NodeType::MSELoss, "loss"},
         {gui::NodeType::CrossEntropyLoss, "loss"},
         {gui::NodeType::BCELoss, "loss"},

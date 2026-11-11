@@ -576,6 +576,9 @@ std::unique_ptr<Module> CreateModule(
         case ModuleType::Mish:
             return std::make_unique<MishModule>();
 
+        case ModuleType::Hardswish:
+            return std::make_unique<HardswishModule>();
+
         default:
             spdlog::error("CreateModule: Unknown module type {}", static_cast<int>(type));
             return nullptr;
