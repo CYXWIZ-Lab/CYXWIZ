@@ -5535,7 +5535,8 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
             const std::string advice = route.route_available
                 ? cyxwiz::rl_device::CompileAdvice(
                       cyxwiz::rl_device::BackendWord(cyxwiz::ExecutionDeviceSelectionBackendName(route.type)),
-                      cyxwiz::HiddenUnits(config.rl->policy_layers), cyxwiz::HiddenUnits(config.rl->value_layers))
+                      cyxwiz::HiddenUnits(config.rl->policy_layers), cyxwiz::HiddenUnits(config.rl->value_layers),
+                      cyxwiz::FusedNetworksExpected(*config.rl, route.type, route.device_id))
                 : std::string();
             if (!advice.empty()) {
                 cyxwiz::ValidationIssue issue;

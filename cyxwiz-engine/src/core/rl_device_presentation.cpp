@@ -68,14 +68,15 @@ std::string Widths(const std::vector<int>& policy_units, const std::vector<int>&
 }
 
 std::string CompileAdvice(const std::string& backend_word, const std::vector<int>& policy_units,
-                          const std::vector<int>& value_units) {
-    if (backend_word.empty() || backend_word == "CPU" || !SmallNetworks(policy_units, value_units)) return {};
+                          const std::vector<int>& value_units, bool fused_expected) {
+    if (fused_expected || backend_word.empty() || backend_word == "CPU" || !SmallNetworks(policy_units, value_units))
+        return {};
     return "Small networks (" + Widths(policy_units, value_units) + ") " + kDriverReason + " Training uses " +
            backend_word + ", as chosen in Preferences > Devices.";
 }
 
 std::string DashboardNote(const RunDevice& d, const std::vector<int>& policy_units,
-                          const std::vector<int>& value_units) {
+                          const std::vector<int>& value_units, const std::string& compute_path) {
     if (!d.valid) return {};
     if (d.fallback)
         return "Trained on the " + BackendWord(d.effective_backend) + ": the chosen " +
@@ -83,6 +84,7 @@ std::string DashboardNote(const RunDevice& d, const std::vector<int>& policy_uni
                " device failed its check, and the Compatibility policy fell back. Strict would have refused the "
                "run instead.";
     if (BackendWord(d.effective_backend) == "CPU" || !SmallNetworks(policy_units, value_units)) return {};
+    if (compute_path.empty() || compute_path.rfind("fused", 0) == 0) return {};  // not known yet, or no launch cost
     return "Small networks (" + Widths(policy_units, value_units) + ") " + kDriverReason +
            " Preferences > Devices chooses where training runs.";
 }

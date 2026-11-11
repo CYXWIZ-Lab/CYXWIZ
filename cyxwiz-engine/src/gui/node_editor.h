@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 #include <unordered_map>
+#include "../core/rl_device_presentation.h"
 #include <memory>
 #include <optional>
 #include <functional>
@@ -1387,6 +1388,8 @@ private:
     std::unique_ptr<cyxwiz::rl::RLTrainingRun> rl_run_;
     bool rl_run_reported_ = true;  // its end is on the dashboard
     std::string rl_status_ = "PPO starting";  // the toolbar's line while it runs
+    cyxwiz::rl_device::RunDevice rl_run_device_;  // the run's device, once its preflight is done
+    std::string rl_compute_path_;                  // how the run computes, as its updates report it
     std::string rl_device_suffix_;   // " · CPU" once the run's device is known
     std::string rl_device_tooltip_;  // its full route, on hover
     bool rl_device_shown_ = false;

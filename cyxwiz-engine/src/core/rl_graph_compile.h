@@ -5,6 +5,7 @@
 // (rl_graph_compile.cpp); the PPO run builds the two networks from it.
 
 #include "graph_compiler.h"
+#include <cyxwiz/device.h>
 #include "rl/ppo_trainer.h"
 #include "../plugin/interfaces/i_environment_provider.h"
 
@@ -44,6 +45,12 @@ void SetRLEnvironmentLookup(RLEnvironmentLookup lookup);
 
 // True for the node types of an RL graph
 bool IsRLGraphNode(gui::NodeType type);
+
+// Whether the device's neural provider would run both networks as fused
+// small-network kernels (Dense layers of at most 256 units with the fused
+// activations): asked of the provider registry, without touching the
+// device. A prediction for Compile; the run's compute path says what it did.
+bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType platform, int device_id);
 
 // The units of a network's layers that have them (its hidden widths)
 std::vector<int> HiddenUnits(const std::vector<CompiledLayer>& layers);

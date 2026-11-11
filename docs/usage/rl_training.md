@@ -45,7 +45,7 @@ SB3's.
 | | Learning rate (`learning_rate`, Adam with eps 1e-5) | 0.0003 |
 | | Clip range (`clip_range`), Value clip (`clip_range_vf`, 0 off) | 0.2, 0 |
 | | Entropy weight (`ent_coef`), Value weight (`vf_coef`) | 0, 0.5 |
-| | Max gradient norm (`max_grad_norm`, over both networks) | 0.5 |
+| | Max gradient norm (`max_grad_norm`, over both networks; as PyTorch's `clip_grad_norm_`: a NaN norm is not refused and makes the step NaN) | 0.5 |
 | | Normalise advantages (`normalize_advantage`) | on |
 | Normalise | Observations, Rewards: running statistics as SB3's VecNormalize (clip 10) | off |
 
@@ -86,11 +86,15 @@ Where the run actually trains is shown on every surface:
 - Policy Playback's source line (`policy from this session's run (67,584 steps) · on CPU`):
   a trained policy acts on the device it trained on.
 
-Small networks (every hidden layer at most 256 units, such as the 64-64
-pattern) usually train faster on the CPU: each environment step runs many
-small GPU operations, and some graphics drivers struggle under that load.
-When the chosen device is a GPU, Compile adds an Info line saying so and the
-dashboard repeats it; the Engine never switches devices for you. While a PPO
+On an NVIDIA GPU with the CUDA GPU pack, PPO runs its networks as fused
+kernels and trains several times faster than on the CPU. Elsewhere (OpenCL,
+oneAPI, or CUDA without the pack) it runs layer by layer, and small networks
+(every hidden layer at most 256 units, such as the 64-64 pattern) usually
+train faster on the CPU: each environment step runs many small GPU
+operations, and some graphics drivers struggle under that load. Only then
+does Compile add an Info line saying so, and the dashboard repeats it once
+the run reports how it computes; the Engine never switches devices for you.
+See [Why small networks are slow on a GPU](gpu_providers.md#why-small-networks-are-slow-on-a-gpu-and-what-cyxwiz-does-about-it). While a PPO
 run is active, the device choices in Preferences are disabled until it ends,
 and a second training run (Train on a model graph) is refused. A run on a GPU
 that another training run (another Engine, a tool) is using waits for it:

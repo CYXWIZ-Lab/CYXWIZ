@@ -18,6 +18,7 @@
 #include "../src/core/execution_device_preferences.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/training_trace_collector.h"
+#include <cyxwiz/neural_provider.h>
 #include "../src/core/rl/rl_training_run.h"
 #include "../src/core/rl/trained_policy.h"
 #include "../src/plugin/plugin_manager.h"
@@ -159,6 +160,17 @@ void CheckCartPole() {
     g.At(id.ppo).parameters["total_timesteps"] = "200000";
     const auto config = Compile(g);
     if (!config) return;
+
+    // Compile's prediction of the fused small-network kernels: never on the
+    // CPU; on CUDA exactly when a provider serves CUDA; not for a layer
+    // wider than the kernels take
+    Check(!cyxwiz::FusedNetworksExpected(*config, cyxwiz::DeviceType::CPU, 0), "no fused kernels on the CPU");
+    const bool cuda_provider = !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
+    Check(cyxwiz::FusedNetworksExpected(*config, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+          "CartPole's 64-64 networks are expected fused on CUDA exactly when a provider serves CUDA");
+    auto wide = *config;
+    wide.policy_layers.front().units = 300;
+    Check(!cyxwiz::FusedNetworksExpected(wide, cyxwiz::DeviceType::CUDA, 0), "a 300-unit layer is not expected fused");
 
     cyxwiz::rl::RLTrainingRun run;
     std::string error;

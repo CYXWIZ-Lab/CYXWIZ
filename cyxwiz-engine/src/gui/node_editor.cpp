@@ -4295,6 +4295,8 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     rl_device_suffix_.clear();
     rl_device_tooltip_.clear();
     rl_device_shown_ = false;
+    rl_run_device_ = {};
+    rl_compute_path_.clear();
 
     if (!rl_dashboard_) rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
     cyxwiz::TrainingDashboardPanel::PpoRunInfo info;
@@ -4361,7 +4363,8 @@ void NodeEditor::PollRLTraining() {
             const auto chip = cyxwiz::rl_device::DeviceChip(device);
             rl_dashboard_->SetPpoDevice(chip.text, chip.tooltip, chip.fallback,
                                         cyxwiz::rl_device::DashboardNote(device, cyxwiz::HiddenUnits(c.policy_layers),
-                                                                         cyxwiz::HiddenUnits(c.value_layers)));
+                                                                         cyxwiz::HiddenUnits(c.value_layers), ""));
+            rl_run_device_ = device;
             rl_device_suffix_ = cyxwiz::rl_device::ToolbarSuffix(device);
             rl_device_tooltip_ = chip.tooltip;
             if (rl_status_ == "PPO starting" || rl_status_ == "PPO waiting for the GPU")
@@ -4370,7 +4373,17 @@ void NodeEditor::PollRLTraining() {
     }
     for (const auto& m : rl_run_->TakeUpdates()) {
         rl_dashboard_->AddPpoUpdate(m);
-        if (!m.compute_path.empty()) rl_dashboard_->SetPpoComputePath(m.compute_path);
+        if (!m.compute_path.empty() && m.compute_path != rl_compute_path_) {
+            // How the run computes, now known (or changed by a fallback): the note follows it
+            rl_compute_path_ = m.compute_path;
+            rl_dashboard_->SetPpoComputePath(m.compute_path);
+            if (rl_run_device_.valid && rl_run_->Config()) {
+                const auto& c = *rl_run_->Config();
+                rl_dashboard_->SetPpoNote(cyxwiz::rl_device::DashboardNote(rl_run_device_, cyxwiz::HiddenUnits(c.policy_layers),
+                                                                           cyxwiz::HiddenUnits(c.value_layers),
+                                                                           rl_compute_path_));
+            }
+        }
         rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
                      cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" + rl_device_suffix_;
     }
