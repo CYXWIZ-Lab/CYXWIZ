@@ -254,6 +254,7 @@ set(ENGINE_SOURCES
     src/core/utilities_presentation.cpp
     src/core/system_metrics.cpp
     src/core/monitor_sampler.cpp
+    src/core/monitor_presentation.cpp
     src/core/text_presentation.cpp
     src/core/word_map.cpp
     src/core/project_column_roles.cpp
@@ -8113,6 +8114,15 @@ if(WIN32)
 endif()
 set_target_properties(test_system_metrics PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME SystemMetrics COMMAND test_system_metrics)
+add_executable(test_monitor_presentation tests/test_monitor_presentation.cpp src/core/monitor_presentation.cpp
+    src/core/system_metrics.cpp src/core/monitor_sampler.cpp)
+target_include_directories(test_monitor_presentation PRIVATE src)
+target_link_libraries(test_monitor_presentation PRIVATE Threads::Threads)
+if(WIN32)
+    target_compile_definitions(test_monitor_presentation PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_monitor_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME MonitorPresentation COMMAND test_monitor_presentation)
 # The same figures against psutil (a skip where psutil is not installed).
 if(Python3_EXECUTABLE)
     add_test(NAME system_metrics_psutil
