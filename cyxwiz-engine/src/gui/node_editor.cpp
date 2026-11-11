@@ -10,6 +10,7 @@
 #include "../core/test_manager.h"
 #include "panels/script_editor.h"
 #include "properties.h"
+#include "properties_parameter_rules.h"
 #include "../core/studio_toolbar_presentation.h"
 #include "patterns/pattern_library.h"
 #include "icons.h"
@@ -2191,7 +2192,8 @@ void NodeEditor::RenderNodes() {
             case NodeType::TextTokenizer: {
                 const char* types[] = {"Whitespace", "Word", "Character", "Byte BPE"};
                 auto type_it = node.parameters.find("tokenizer_type");
-                int type_idx = type_it != node.parameters.end() ? std::stoi(type_it->second) : 1;
+                int type_idx = 1;  // a value that is not a number shows no type (it is not a crash)
+                if (type_it != node.parameters.end() && !properties_rules::TryParseIntStrict(type_it->second, type_idx)) type_idx = -1;
                 if (type_idx >= 0 && type_idx < 4) {
                     ImGui::TextColored(t.accent_text, "Type: %s", types[type_idx]);
                 }
@@ -2236,7 +2238,8 @@ void NodeEditor::RenderNodes() {
                 if (sf != node.parameters.end()) {
                     ImGui::TextColored(t.accent_text, "Scale: %sx", sf->second.c_str());
                 }
-                int m = mode != node.parameters.end() ? std::stoi(mode->second) : 0;
+                int m = 0;
+                if (mode != node.parameters.end() && !properties_rules::TryParseIntStrict(mode->second, m)) m = -1;
                 if (m >= 0 && m < 2) {
                     ImGui::TextColored(t.accent_text, "Mode: %s", modes[m]);
                 }
