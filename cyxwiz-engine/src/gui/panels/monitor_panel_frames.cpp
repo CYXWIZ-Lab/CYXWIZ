@@ -4,6 +4,7 @@
 
 #include "monitor_panel.h"
 
+#include "../../core/frame_pace.h"
 #include "../frame_metrics.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
@@ -113,6 +114,7 @@ void MonitorPanel::RenderFrames() {
         std::snprintf(atlas, sizeof(atlas), "%d x %d (%.1f MB as an RGBA texture)", io.Fonts->TexWidth, io.Fonts->TexHeight, megabytes);
         rows.push_back({"Font atlas", atlas});
     }
+    rows.push_back({"Frame rate now", PaceText(CurrentFramePace())});
     MonitorRows("##frame_facts", rows);
 
     bool overlay = metrics.enabled();

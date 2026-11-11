@@ -1,5 +1,6 @@
 // The frame-time bookkeeping behind the overlay and Monitor > Frames.
 
+#include "core/frame_pace.h"
 #include "core/frame_times.h"
 
 #include <cmath>
@@ -72,6 +73,20 @@ int main() {
     s = times.Summarize();
     Check(s.frames == 0 && s.windows.empty() && Near(s.build_worst, 0.0) && times.History().empty(),
           "Reset forgets the old frames (the overlay switched on again)");
+
+    // The frame pace: one decision from four facts.
+    using cyxwiz::FramePace;
+    using cyxwiz::PaceOf;
+    Check(PaceOf(false, false, false, true) == FramePace::Full, "in front and active: full speed");
+    Check(PaceOf(false, true, false, true) == FramePace::Idle, "no input for a second: idle");
+    Check(PaceOf(false, true, true, true) == FramePace::Full, "training keeps a focused Engine at full speed");
+    Check(PaceOf(false, false, false, false) == FramePace::NotInFront, "another window in front: 30 a second");
+    Check(PaceOf(false, true, true, false) == FramePace::NotInFront, "training behind another window: 30 a second");
+    Check(PaceOf(false, true, false, false) == FramePace::Idle, "idle wins over not in front (the longer wait)");
+    Check(PaceOf(true, false, true, true) == FramePace::Minimised, "minimised draws nothing, whatever else is true");
+    Check(std::string(cyxwiz::PaceText(FramePace::Idle)) == "10 frames a second (idle: no input for a second)" &&
+              std::string(cyxwiz::PaceText(FramePace::Minimised)) == "Not drawing (the window is minimised)",
+          "the pace in words");
 
     if (g_failures != 0) {
         std::cerr << g_failures << " of " << g_checks << " checks failed\n";

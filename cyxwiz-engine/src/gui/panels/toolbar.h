@@ -288,6 +288,12 @@ public:
     // Debug logging pointers (for View -> Developer Tools)
     void SetIdleLogPtr(bool* ptr) { idle_log_ptr_ = ptr; }
     void SetVerbosePythonLogPtr(bool* ptr) { verbose_python_log_ptr_ = ptr; }
+    // Tools > Diagnostics: the three switches (frame-rate log, Python command
+    // log, frame overlay) are the user's saved settings. Apply sets them from
+    // the Engine settings once the pointers above are set; Save writes them
+    // after a change (the menu and Preferences > General).
+    void ApplySavedDiagnostics();
+    void SaveDiagnostics();
 
     // Python diagnostics callback (Preferences -> Python)
     void SetPythonDiagnosticsCallback(std::function<std::string()> callback) { python_diagnostics_callback_ = callback; }

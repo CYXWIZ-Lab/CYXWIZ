@@ -102,7 +102,7 @@ private:
     static constexpr double MINIMISED_WAIT_TIME = 0.25;  // no frames while minimised; wake 4x a second
 
     // Debug logging flags (can be toggled via console commands)
-    bool log_idle_transitions_ = false;  // Log idle mode enter/exit
+    bool log_idle_transitions_ = false;  // Tools > Diagnostics > Log Frame-rate Changes (saved in MonitorConfig)
 
     // Startup project path (from command line)
     std::string window_title_;  // as last set

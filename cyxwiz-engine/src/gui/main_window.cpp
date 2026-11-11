@@ -1200,9 +1200,12 @@ MainWindow::MainWindow()
     });
     // Python's own collection: the number of objects gc.collect() found.
     monitor_panel_->SetCollectPython([this](std::function<void(long long)> done) {
-        if (!scripting_engine_ || !scripting_engine_->IsInitialized() || scripting_engine_->IsCommandRunning() ||
-            scripting_engine_->IsScriptRunning())
-            return false;
+        if (!scripting_engine_ || scripting_engine_->IsCommandRunning() || scripting_engine_->IsScriptRunning()) return false;
+        if (!scripting_engine_->IsInitialized()) {
+            // Python starts on first use; before that it holds nothing.
+            done(cyxwiz::monitor_view::kPythonNotStarted);
+            return true;
+        }
         scripting::ScriptingEngine::RunCallbacks callbacks;
         callbacks.on_complete = [done](const scripting::ExecutionResult& result) {
             long long objects = 0;
@@ -2509,9 +2512,12 @@ MainWindow::~MainWindow() {
     spdlog::info("~MainWindow: all panels destroyed");
 }
 
+// The application's frame-rate log switch is the last of the three
+// Diagnostics switches to arrive: all three then take their saved values.
 void MainWindow::SetIdleLogPtr(bool* ptr) {
     if (toolbar_) {
         toolbar_->SetIdleLogPtr(ptr);
+        toolbar_->ApplySavedDiagnostics();
     }
 }
 

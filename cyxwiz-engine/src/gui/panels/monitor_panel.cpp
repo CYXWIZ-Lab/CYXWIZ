@@ -412,7 +412,7 @@ void MonitorPanel::FreeUnusedMemory() {
         released_ = "Freeing...";
     } else {
         released_waiting_ = false;
-        released_ = view::ReleasedText(released_device_ran_, released_bytes_, -1);
+        released_ = view::ReleasedText(released_device_ran_, released_bytes_, view::kPythonBusy);
         spdlog::info("Free unused memory: {}", released_);
     }
 }

@@ -285,7 +285,7 @@ private:
     std::string language_error_;
     std::unique_ptr<PythonSandbox> sandbox_;
     bool sandbox_enabled_;
-    bool verbose_logging_{false};  // Log all commands including internal ones
+    bool verbose_logging_{false};  // Tools > Diagnostics > Log Every Python Command: each command with its duration
     double console_timeout_seconds_{30.0};  // Console command timeout (default 30s)
 
     // ========== Async execution state ==========

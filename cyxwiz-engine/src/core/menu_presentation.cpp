@@ -700,13 +700,13 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Action(f, "tools.clear_cache", "Clear Caches...", "Lists the caches with their sizes and clears the ones you tick."),
                          Action(f, "tools.gc", "Free Unused Memory", "Returns unused device memory to the driver, collects Python's garbage and says what was freed.")}));
         i.push_back(Sub("tools.diagnostics", "Diagnostics", "Extra logging for support.",
-                        {Toggle(f, "tools.idle_log", "Log Idle Mode Transitions",
-                                "Logs when the Engine slows its frame rate to save power.", in.idle_log),
-                         Toggle(f, "tools.verbose_python", "Verbose Python Logging",
-                                "Logs more detail from the Python runtime.", in.verbose_python),
+                        {Toggle(f, "tools.idle_log", "Log Frame-rate Changes",
+                                "One log line when the Engine slows or speeds its frames: idle, not in front, minimised.", in.idle_log),
+                         Toggle(f, "tools.verbose_python", "Log Every Python Command",
+                                "Logs each command the Engine sends to Python, with how long it took.", in.verbose_python),
                          Sep(),
                          Toggle(f, "tools.frame_overlay", "Frame Time Overlay",
-                                "Shows frame time, the panels that cost the most and the font atlas size.",
+                                "Shows the whole frame time and the Engine's own interface-building time. More in Monitor > Frames.",
                                 in.frame_overlay)}));
         model.menus.push_back(std::move(m));
     }

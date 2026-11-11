@@ -319,7 +319,8 @@ std::string ReleasedText(bool device_ran, std::uint64_t freed_bytes, long long p
     if (!device_ran) text = "The compute device is not started yet, so it holds nothing to free.";
     else if (freed_bytes == 0) text = "Nothing to free on the device: the Engine holds no memory it is not using.";
     else text = "Freed " + SizeText(freed_bytes) + " of device memory the Engine was holding but not using.";
-    if (python_objects < 0) text += " Python is busy, so its collection was skipped.";
+    if (python_objects == kPythonNotStarted) text += " Python has not been started, so it holds nothing.";
+    else if (python_objects < 0) text += " Python is busy, so its collection was skipped.";
     else if (python_objects == 0) text += " Python had nothing to collect.";
     else text += " Python collected " + Count(python_objects) + (python_objects == 1 ? " object." : " objects.");
     return text;

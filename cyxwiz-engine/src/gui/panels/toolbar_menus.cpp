@@ -4,6 +4,7 @@
 // state and with which chord. This file only builds the state snapshot,
 // draws the model and maps action ids to the handlers the rest of the Engine
 // already registers on ToolbarPanel.
+#include "../../core/engine_config.h"
 #include "toolbar.h"
 
 #include "../appearance_settings.h"
@@ -555,15 +556,19 @@ void ToolbarPanel::BuildActionHandlers() {
     h["tools.idle_log"] = [this](const std::string&) {
         if (!idle_log_ptr_) return;
         *idle_log_ptr_ = !*idle_log_ptr_;
-        spdlog::info("Idle mode logging {}", *idle_log_ptr_ ? "ENABLED" : "DISABLED");
+        spdlog::info("Frame-rate changes are {} logged", *idle_log_ptr_ ? "now" : "no longer");
+        SaveDiagnostics();
     };
     h["tools.frame_overlay"] = [this](const std::string&) {
-        if (frame_overlay_ptr_) *frame_overlay_ptr_ = !*frame_overlay_ptr_;
+        if (!frame_overlay_ptr_) return;
+        *frame_overlay_ptr_ = !*frame_overlay_ptr_;
+        SaveDiagnostics();
     };
     h["tools.verbose_python"] = [this](const std::string&) {
         if (!verbose_python_log_ptr_) return;
         *verbose_python_log_ptr_ = !*verbose_python_log_ptr_;
-        spdlog::info("Verbose Python logging {}", *verbose_python_log_ptr_ ? "ENABLED" : "DISABLED");
+        spdlog::info("Python commands are {} logged", *verbose_python_log_ptr_ ? "now" : "no longer");
+        SaveDiagnostics();
     };
 
     // Script
@@ -616,6 +621,23 @@ void ToolbarPanel::BuildActionHandlers() {
         spdlog::info("User signed out");
         if (on_logout_callback_) on_logout_callback_();
     };
+}
+
+void ToolbarPanel::ApplySavedDiagnostics() {
+    const core::MonitorConfig saved = core::EngineConfig::Instance().GetMonitor();
+    if (idle_log_ptr_) *idle_log_ptr_ = saved.log_frame_rate;
+    if (verbose_python_log_ptr_) *verbose_python_log_ptr_ = saved.log_python_commands;
+    if (frame_overlay_ptr_) *frame_overlay_ptr_ = saved.frame_overlay;
+}
+
+void ToolbarPanel::SaveDiagnostics() {
+    auto& config = core::EngineConfig::Instance();
+    core::MonitorConfig saved = config.GetMonitor();
+    if (idle_log_ptr_) saved.log_frame_rate = *idle_log_ptr_;
+    if (verbose_python_log_ptr_) saved.log_python_commands = *verbose_python_log_ptr_;
+    if (frame_overlay_ptr_) saved.frame_overlay = *frame_overlay_ptr_;
+    config.SetMonitor(saved);
+    if (!config.Save()) spdlog::warn("The diagnostics switches could not be saved to the Engine settings");
 }
 
 }  // namespace cyxwiz

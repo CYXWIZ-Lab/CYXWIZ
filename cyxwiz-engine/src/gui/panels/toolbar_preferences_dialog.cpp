@@ -211,6 +211,82 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::TextDisabled("Used when the Engine starts.");
                     }
 
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Tools > Monitoring and Diagnostics");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    {
+                        // The Monitor window's defaults (TOFIX129 D13), saved at
+                        // once; the window also has "Save as my default".
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        cyxwiz::core::MonitorConfig m = engine_config.GetMonitor();
+                        bool changed = false;
+                        ImGui::Text("Sample every:");
+                        ImGui::SameLine();
+                        ui::NumberFieldOptions interval;
+                        interval.min = 0.25;
+                        interval.max = 60.0;
+                        interval.step = 1.0;
+                        interval.format = "%.2g";
+                        interval.width = 56.0f;
+                        interval.hint = "Seconds between the Monitor window's readings";
+                        changed |= ui::NumberField("##monitor_interval", &m.interval_seconds, interval);
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("s");
+                        const std::pair<double, const char*> keeps[] = {{300.0, "5 min"}, {900.0, "15 min"}, {3600.0, "1 hour"}};
+                        const char* keep_shown = "15 min";
+                        for (const auto& [seconds, text] : keeps)
+                            if (m.keep_seconds == seconds) keep_shown = text;
+                        ImGui::SetNextItemWidth(160.0f);
+                        if (ImGui::BeginCombo("Keep readings for##monitor_keep", keep_shown)) {
+                            for (const auto& [seconds, text] : keeps)
+                                if (ImGui::Selectable(text, m.keep_seconds == seconds)) {
+                                    m.keep_seconds = seconds;
+                                    changed = true;
+                                }
+                            ImGui::EndCombo();
+                        }
+                        const std::pair<const char*, const char*> tabs[] = {
+                            {"system", "System"}, {"memory", "Memory"}, {"loaded_data", "Loaded data"}, {"frames", "Frames"}};
+                        const char* tab_shown = "System";
+                        for (const auto& [id, text] : tabs)
+                            if (m.tab == id) tab_shown = text;
+                        ImGui::SetNextItemWidth(160.0f);
+                        if (ImGui::BeginCombo("Monitor opens on##monitor_tab", tab_shown)) {
+                            for (const auto& [id, text] : tabs)
+                                if (ImGui::Selectable(text, m.tab == id)) {
+                                    m.tab = id;
+                                    changed = true;
+                                }
+                            ImGui::EndCombo();
+                        }
+                        if (changed) {
+                            engine_config.SetMonitor(m);
+                            engine_config.Save();
+                        }
+                        ImGui::TextDisabled("Used when the Engine starts.");
+
+                        // The Tools > Diagnostics switches: on at once, and kept.
+                        ImGui::Spacing();
+                        bool switched = false;
+                        if (idle_log_ptr_) {
+                            switched |= ImGui::Checkbox("Log frame-rate changes##diag_pace", idle_log_ptr_);
+                            ui::Tooltip("One log line when the Engine slows or speeds its frames:\n"
+                                        "idle (10 a second), not in front (30 a second), minimised.");
+                        }
+                        if (verbose_python_log_ptr_) {
+                            switched |= ImGui::Checkbox("Log every Python command##diag_python", verbose_python_log_ptr_);
+                            ui::Tooltip("Each command the Engine sends to Python, with how long it took.");
+                        }
+                        if (frame_overlay_ptr_) {
+                            switched |= ImGui::Checkbox("Frame time overlay##diag_overlay", frame_overlay_ptr_);
+                            ui::Tooltip("The whole frame time and the Engine's own interface-building time,\n"
+                                        "at the top right of the window. More in Tools > Monitoring > Frames.");
+                        }
+                        if (switched) SaveDiagnostics();
+                    }
+
                     ImGui::EndTabItem();
                 }
 

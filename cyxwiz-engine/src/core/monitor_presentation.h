@@ -106,7 +106,10 @@ std::string HistoryCsv(const std::vector<MonitorSample>& history);
 
 // ---- Free unused memory
 // What the window says after the button: device memory given back and Python
-// objects collected (-1: Python was busy and was not asked).
+// objects collected (kPythonBusy: it was running something and was not asked;
+// kPythonNotStarted: no Python yet, so nothing to collect).
+inline constexpr long long kPythonBusy = -1;
+inline constexpr long long kPythonNotStarted = -3;
 std::string ReleasedText(bool device_ran, std::uint64_t freed_bytes, long long python_objects);
 
 }  // namespace cyxwiz::monitor_view

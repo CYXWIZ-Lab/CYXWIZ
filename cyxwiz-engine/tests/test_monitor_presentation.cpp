@@ -216,6 +216,9 @@ void TestReleased() {
     Same(ReleasedText(false, 0, -1),
          "The compute device is not started yet, so it holds nothing to free. Python is busy, so its collection was skipped.",
          "not started, Python busy");
+    Same(ReleasedText(true, 0, kPythonNotStarted),
+         "Nothing to free on the device: the Engine holds no memory it is not using. Python has not been started, so it holds nothing.",
+         "Python not started");
     Same(ReleasedText(true, 1 * kMB, 1), "Freed 1.00 MB of device memory the Engine was holding but not using. Python collected 1 object.",
          "one object");
 }
