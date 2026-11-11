@@ -21,6 +21,8 @@ struct ImNodesEditorContext;
 // Forward declarations
 // Forward declare ScriptingEngine in global scripting namespace
 #include "../core/graph_model.h"
+#include "../core/graph_simulation_session.h"
+#include "../core/simulation_commands.h"
 #include "../core/studio_toolbar_presentation.h"
 #include "../core/operator_figures.h"
 #include "../core/pipeline_node_run_facts.h"
@@ -29,9 +31,8 @@ namespace scripting { class ScriptingEngine; }
 
 namespace cyxwiz {
 class ScriptEditorPanel;
-class GraphExecutor;
-class RLTrainingExecutor;
 class TrainingDashboardPanel;
+class PolicyPlaybackPanel;
 class PipelineExecutor;
 class PipelineExecutionTracker;
 struct TaskInfo;
@@ -40,7 +41,12 @@ namespace guided { struct CheckNode; }
 
 namespace cyxwiz {
 class LiveGraphCompile;
+struct RLTrainingConfiguration;
 }  // namespace cyxwiz
+namespace cyxwiz::rl {
+class RLTrainingRun;
+struct TrainedPolicy;
+}
 
 namespace cyxwiz::dashboard {
 class DashboardWindow;
@@ -295,6 +301,8 @@ public:
     void SetShowMinimap(bool show) { show_minimap_ = show; }
     bool GetShowMinimap() const { return show_minimap_; }
     bool* GetShowMinimapPtr() { return &show_minimap_; }
+    // Policy Playback's window, for View > Panels (it says how to get a policy when none plays)
+    bool* GetPolicyPlaybackVisiblePtr();
 
     // Icon pack selection (for node icons)
     void SetIconPack(IconPack pack) { icon_pack_ = pack; }
@@ -345,13 +353,24 @@ public:
     bool SaveCurrentGraph();
     std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
 
-    // Thread-safe scalar simulation bridge used by Properties.
-    bool IsGraphSimulationRunning() const { return is_simulating_.load(); }
-    bool TryGetSimulationScalar(int pin_id, float& value) const;
-    float GetSimulationTime() const;
-    bool SetSimulationNodeParameter(int node_id,
-                                    const std::string& key,
-                                    const std::string& value);
+    // The graph simulation run: Properties reads Scope history and sends
+    // live edits through it.
+    cyxwiz::GraphSimulationSession& GetSimulationSession() { return simulation_session_; }
+    bool IsGraphSimulationRunning() const { return simulation_session_.IsActive(); }
+    // The graph has nodes a graph run steps (built-in signal nodes, or plugin
+    // nodes their plugin runs in a simulation).
+    bool HasSimulationNodes() const;
+    // The graph's Signal Scopes, in canvas order.
+    std::vector<const MLNode*> GetSignalScopes() const;
+    // The open graph's name: its file name without the extension, or "Untitled".
+    std::string GetGraphStem() const;
+    // The run's commands for the toolbar, the Simulation menu and the
+    // Simulation Monitor, and the one place they are carried out.
+    cyxwiz::simulation::Commands GetSimulationCommands() const;
+    void RunSimulationCommand(cyxwiz::simulation::Command command);
+    // Called when a graph run has started (MainWindow shows the Simulation
+    // Monitor when Preferences says so).
+    void SetSimulationStartedCallback(std::function<void()> callback) { simulation_started_callback_ = std::move(callback); }
 
     // Training callback - set by MainWindow to trigger training from node graph
     using TrainCallback = std::function<void(const std::vector<MLNode>&, const std::vector<NodeLink>&)>;
@@ -818,6 +837,7 @@ private:
     // the canvas is doing (graph locked, the mode); TOFIX178 UI-1.
     void RenderCanvasFooter();
     static constexpr float kCanvasFooterHeight = 26.0f;
+    bool toolbar_two_rows_ = false;  // the bar is in its two-row form (logged on change)
     int toolbar_fold_level_ = -1;  // the bar's last form, logged when it changes
     void HandleInteractions();
     void ShowContextMenu();
@@ -990,8 +1010,7 @@ private:
 
     // RL-specific code generation
     bool IsRLGraph(const std::vector<int>& sorted_ids) const;
-    std::string GenerateRLPyTorchCode(const std::vector<int>& sorted_ids) const;
-    std::string GenerateRLPyCyxWizCode(const std::vector<int>& sorted_ids) const;
+    std::string GenerateRLCode(const std::vector<int>& sorted_ids) const;
 
     // Framework-specific layer conversion
     std::string NodeTypeToPythonLayer(const MLNode& node);
@@ -1328,18 +1347,16 @@ private:
     std::vector<SubgraphData> subgraphs_;
 
     // ===== Graph Simulation State =====
-    std::unique_ptr<cyxwiz::GraphExecutor> graph_executor_;
-    std::thread sim_thread_;
-    std::atomic<bool> is_simulating_{false};
-    std::atomic<bool> sim_stop_requested_{false};
-    float sim_rate_hz_ = 60.0f;  // Simulation tick rate
+    cyxwiz::GraphSimulationSession simulation_session_;
+    // The plugins whose nodes the current run evaluates: stopping one of
+    // them stops the run first.
+    std::set<std::string> simulation_plugins_;
+    std::function<void()> simulation_started_callback_;
 
     void OnRunSimulation();
     void OnStopSimulation();
-    bool HasSimulationNodes() const;  // Check if graph contains signal/plant nodes
 
     // ===== RL Training State =====
-    std::unique_ptr<cyxwiz::RLTrainingExecutor> rl_executor_;
     std::shared_ptr<cyxwiz::TrainingDashboardPanel> rl_dashboard_;
 
     // Plot nodes (TOFIX134 P2): the result lane and one Plot window per
@@ -1379,7 +1396,20 @@ private:
     std::vector<PendingDashboardWidget> pending_dashboard_widgets_;
     void ApplyPendingDashboardWidgets();
     void RenderDashboardWindows();
-    std::atomic<bool> rl_script_running_{false};  // cleared on the script's worker thread
+    // The Engine's PPO run of an RL graph (TOFIX195 S4.3), started by Train
+    std::unique_ptr<cyxwiz::rl::RLTrainingRun> rl_run_;
+    bool rl_run_reported_ = true;  // its end is on the dashboard
+    std::string rl_status_ = "PPO starting";  // the toolbar's line while it runs
+    std::string rl_device_suffix_;   // " · CPU" once the run's device is known
+    std::string rl_device_tooltip_;  // its full route, on hover
+    bool rl_device_shown_ = false;
+    void PollRLTraining();
+    // The trained policy (TOFIX195 S5): of the last run, or loaded from a
+    // .cyxmodel (rl_policy_file_: its file name; empty for the run's)
+    std::shared_ptr<cyxwiz::rl::TrainedPolicy> rl_policy_;
+    std::string rl_policy_file_;
+    std::string rl_policy_message_;  // the last Save / Load outcome, for Properties
+    std::unique_ptr<cyxwiz::PolicyPlaybackPanel> rl_playback_;
 
     // ===== Unified Canvas Phase 2: Data Pipeline Execution =====
     uint64_t pipeline_task_id_ = 0;
@@ -1422,19 +1452,29 @@ private:
     int currently_executing_node_id_ = -1;                     // Node currently being executed
     float execution_pulse_time_ = 0.0f;                        // Animation time for pulsing effect
 
-    // Scripting engine for Python-based RL training
+    // Scripting engine: RL metrics scripts report (pycyxwiz.rl_update_metric)
     scripting::ScriptingEngine* scripting_engine_ = nullptr;
 public:
     void SetScriptingEngine(scripting::ScriptingEngine* engine) { scripting_engine_ = engine; }
-private:
-    bool HasRLNodes() const;
-    void OnStartRLTraining();
-    void OnStopRLTraining();
-    void ExportPolicyONNX(const std::string& output_path);
-    bool export_onnx_dialog_open_ = false;
 
-    // Phase 4.7: Performance metrics
-    float last_eval_time_ms_ = 0.0f;
+    // Train on an RL graph: the Engine's PPO on a worker, metrics on the RL
+    // Training Dashboard. False with the reason while one runs.
+    bool StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfiguration> config, std::string& error);
+    bool IsRLTrainingActive() const;
+    void StopRLTraining();
+
+    // The trained RL policy (TOFIX195 S5): play it, save it, load one.
+    bool HasRLPolicy() const { return rl_policy_ != nullptr; }
+    std::string RLPolicyLine() const;
+    const std::string& RLPolicyMessage() const { return rl_policy_message_; }
+    bool PlayRLPolicy(std::string& error);
+    // Asks where (a file dialog). False with an empty error when cancelled.
+    bool SaveRLPolicy(std::string& error);
+    // Loads a saved policy to play (Open Model File).
+    bool LoadRLPolicy(const std::string& path, std::string& error);
+    // A file dialog, then the policy, which must fit the open graph
+    // (the PPO node's Load policy...).
+    bool ChooseRLPolicyForGraph(std::string& error);
 };
 
 } // namespace gui

@@ -2,7 +2,7 @@
 #include "training_report_window.h"
 #include <set>
 #include <cyxwiz/optimizers/adam.h>
-#include <cyxwiz/optimizers/gradient_clipping.h>
+#include "optimizer_step.h"
 #include "training_generation_preview.h"
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
@@ -25,7 +25,7 @@
 #include "training_trace_collector.h"
 #include "backend_placement_capabilities.h"
 #include "model_builder.h"
-#include "runtime_log_store.h"
+#include "run_execution_device.h"
 #include "sequence_model_input.h"
 #include "sequence_training_step.h"
 #include "training_batcher_setup.h"
@@ -50,31 +50,6 @@
 namespace cyxwiz {
 
 namespace {
-
-void AppendExecutionDeviceLifecycleEvent(
-    const ExecutionDeviceContext& context, const std::string& run_id) {
-    RuntimeLogEvent event;
-    event.timestamp_utc = std::chrono::system_clock::now();
-    event.level = context.valid ? RuntimeLogLevel::Info
-                                : RuntimeLogLevel::Warning;
-    event.category = "device";
-    event.source = "TrainingExecutor";
-    event.event_name = "ExecutionDeviceContext.Bind";
-    event.run_id = run_id;
-    event.backend = context.effective_backend;
-    event.device_id = context.effective_device_id;
-    event.device_name = context.device_name;
-    event.message = context.Describe();
-    if (!context.valid) {
-        event.primary_error_code = errors::Runtime::ExecutionFailed;
-    }
-    event.details.emplace_back("requested_backend", context.requested_backend);
-    event.details.emplace_back(
-        "requested_device_id", std::to_string(context.requested_device_id));
-    event.details.emplace_back(
-        "execution_policy", context.ExecutionPolicyName());
-    RuntimeLogStore::Instance().Append(std::move(event));
-}
 
 void LogTrainingBackendPlacementPlan(const TrainingConfiguration& config) {
     if (config.backend_placements.empty()) {
@@ -781,22 +756,10 @@ void TrainingExecutor::Train(
     stop_requested_.store(false);
     is_paused_.store(false);
 
-    const auto next_run_execution_policy = GetNextRunExecutionPolicy();
-    if (next_run_execution_policy.has_value()) {
-        config_.strict_execution =
-            *next_run_execution_policy ==
-            ExecutionPolicy::Strict;
-        spdlog::info(
-            "TrainingExecutor: applied next-run execution policy: {}",
-            ExecutionPolicyDisplayName(*next_run_execution_policy));
-    }
-
+    // The run's device follows the same flow for every kind of run (run_execution_device)
     const ExecutionPolicy execution_policy_value =
-        config_.strict_execution
-            ? ExecutionPolicy::Strict
-            : ExecutionPolicy::Compatibility;
-    spdlog::info("TrainingExecutor: execution policy {}",
-                 ExecutionPolicyDisplayName(execution_policy_value));
+        ResolveRunExecutionPolicy(config_.strict_execution, "TrainingExecutor");
+    config_.strict_execution = execution_policy_value == ExecutionPolicy::Strict;
 
     CrashRunRecorder::Instance().StartTrainingRun(
         config_,
@@ -837,20 +800,34 @@ void TrainingExecutor::Train(
         is_paused_.store(false);
         is_training_.store(false);
     };
+    // Stopped before the first batch (while waiting for the GPU, while the
+    // data was being prepared): cancelled, not failed
+    auto cancel_run = [&](const std::string& message) {
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.total_epochs = epochs;
+            m.is_training = false;
+            m.is_paused = false;
+            m.is_complete = true;
+            m.terminal_status = "cancelled";
+            m.terminal_reason = "user_cancelled";
+            m.status_message = message;
+        });
+        CrashRunRecorder::Instance().MarkCancelled();
+        TrainingTraceCollector::Instance().RecordTerminalEvent("cancelled", "user_cancelled", 0, 0.0f, 0.0f);
+        TrainingTraceCollector::Instance().FinishRun("cancelled");
+        BackendDebugHooks::SetDebugEventCallback({});
+        is_paused_.store(false);
+        is_training_.store(false);
+    };
 
     // Pre-device failures must close the same run as later setup/epoch failures.
     // Do not publish an effective device until preflight actually succeeds.
     ExecutionDeviceContext execution_context;
     try {
-        execution_context = PrepareExecutionDeviceForRun(
-            execution_policy_value, [this](DeviceType type, int device_id) {
+        execution_context = PrepareRunExecutionDevice(
+            execution_policy_value, "TrainingExecutor", [this](DeviceType type, int device_id) {
                 return ModelUnsupportedOnRoute(config_, type, device_id);
             });
-        if (execution_context.selection_fallback_applied) {
-            spdlog::warn("TrainingExecutor: {}", execution_context.error);
-        }
-        spdlog::info("TrainingExecutor: ArrayFire device preflight completed: {}",
-                     execution_context.Describe());
     } catch (const std::exception& e) {
         const std::string reason = std::string("device_preflight_failed: ") + e.what();
         spdlog::error("TrainingExecutor: {}", reason);
@@ -861,11 +838,37 @@ void TrainingExecutor::Train(
         throw;
     }
     const ScopedExecutionDeviceContext execution_context_scope(execution_context);
+    // One training run per GPU on this machine (TOFIX206 3.2 E): wait for it,
+    // Stop ends the wait; held for the whole run
+    bool gpu_waited = false;
+    auto gpu_lease = AcquireGpuRunLease(
+        execution_context,
+        [this]() {
+            if (gpu_wait_hooks_.should_cancel && gpu_wait_hooks_.should_cancel()) stop_requested_.store(true);
+            return stop_requested_.load();
+        },
+        [&](const std::string& message) {
+            gpu_waited = true;
+            UpdateMetrics([&](TrainingMetrics& m) {
+                m.status_message = message;
+                m.waiting_for_gpu = message;
+            });
+            if (gpu_wait_hooks_.on_change) gpu_wait_hooks_.on_change(message);
+        });
+    if (gpu_waited) {
+        UpdateMetrics([](TrainingMetrics& m) { m.waiting_for_gpu.clear(); });
+        if (gpu_wait_hooks_.on_change) gpu_wait_hooks_.on_change({});
+    }
+    if (gpu_lease.cancelled) {
+        spdlog::info("TrainingExecutor: stopped while waiting for the GPU");
+        cancel_run("Training cancelled while waiting for the GPU");
+        return;
+    }
+    if (!gpu_lease.error.empty()) spdlog::warn("TrainingExecutor: {}; the run goes on without it", gpu_lease.error);
     const ScopedActiveExecutionDeviceContext active_execution_context_scope;
     CrashRunRecorder::Instance().MarkBackendEvent(
         "ExecutionDeviceContext.Bind", execution_context.Describe());
-    training_trace.RecordExecutionDeviceContext(execution_context);
-    AppendExecutionDeviceLifecycleEvent(execution_context, training_run_id);
+    RecordRunExecutionDeviceBind(execution_context, training_run_id, "TrainingExecutor");
     const auto execution_placement_plan =
         BuildExecutionPlacementPlan(config_, execution_context);
     training_trace.RecordPlacementPlan(
@@ -1025,22 +1028,7 @@ void TrainingExecutor::Train(
                 if (stop_requested_.load()) {
                     // Stopped while the data was being prepared: cancelled, not failed.
                     spdlog::info("TrainingExecutor: stopped while preparing the data");
-                    UpdateMetrics([&](TrainingMetrics& m) {
-                        m.total_epochs = epochs;
-                        m.is_training = false;
-                        m.is_paused = false;
-                        m.is_complete = true;
-                        m.terminal_status = "cancelled";
-                        m.terminal_reason = "user_cancelled";
-                        m.status_message = "Training cancelled while preparing the data";
-                    });
-                    CrashRunRecorder::Instance().MarkCancelled();
-                    TrainingTraceCollector::Instance().RecordTerminalEvent("cancelled", "user_cancelled", 0, 0.0f,
-                                                                           0.0f);
-                    TrainingTraceCollector::Instance().FinishRun("cancelled");
-                    BackendDebugHooks::SetDebugEventCallback({});
-                    is_paused_.store(false);
-                    is_training_.store(false);
+                    cancel_run("Training cancelled while preparing the data");
                     return;
                 }
                 spdlog::error("TrainingExecutor: preparing the dataset batchers failed: {}", e.what());
@@ -2304,34 +2292,14 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
         TrainingTraceStage::UpdateParameters, epoch, batch_num,
         total_batches, batch_loss, current_acc);
 
-    auto params = model_->GetParameters();
-    // Regularization node (TOFIX140 A4): the gradient of
-    // l1 x sum(|w|) + l2 x sum(w^2), once per step and before clipping, as
-    // torch's backward of loss + penalty gives it.
-    const float l1 = config_.regularization_l1;
-    const float l2 = config_.regularization_l2;
-    if (l1 > 0.0f || l2 > 0.0f) {
-        for (auto& [name, grad] : averaged_grads) {
-            const auto found = params.find(name);
-            if (found == params.end()) continue;
-            const Tensor weight = found->second.Shape() == grad.Shape()
-                ? found->second
-                : found->second.Reshape(grad.Shape());
-            if (l1 > 0.0f) grad = grad + weight.Sign() * l1;
-            if (l2 > 0.0f) grad = grad + weight * (2.0f * l2);
-        }
-    }
-
-    if (health_) health_->OnStep(averaged_grads);  // before clipping, as torch's .grad
-
-    if (config_.grad_clip_norm > 0.0f) {
-        const float norm = ClipGradientsByGlobalNorm(averaged_grads, config_.grad_clip_norm);
-        UpdateMetrics([norm](TrainingMetrics& m) { m.grad_norm = norm; });
-    }
-
     const auto optimizer_start = std::chrono::steady_clock::now();
-    optimizer_->Step(params, averaged_grads);
-    model_->SetParameters(params);
+    OptimizerStepSettings step_settings;
+    step_settings.regularization_l1 = config_.regularization_l1;
+    step_settings.regularization_l2 = config_.regularization_l2;
+    step_settings.grad_clip_norm = config_.grad_clip_norm;
+    if (health_) step_settings.on_gradients = [this](const std::map<std::string, Tensor>& g) { health_->OnStep(g); };
+    const float norm = ApplyOptimizerStep(*model_, *optimizer_, averaged_grads, step_settings);
+    if (norm >= 0.0f) UpdateMetrics([norm](TrainingMetrics& m) { m.grad_norm = norm; });
     TrainingProfileStageFence();
     const auto optimizer_ms = std::chrono::duration<float, std::milli>(
         std::chrono::steady_clock::now() - optimizer_start).count();

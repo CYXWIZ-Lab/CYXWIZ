@@ -2,7 +2,7 @@
 
 # What the plugin SDK contains
 
-Every header the plugin SDK installs under `<sdk>/include`, with the summary at the top of the header and the types it declares. Plugin API 1.3.0. The SDK also installs `cyxwiz-backend`'s import library, the CMake package `CyxWizSDK`, the template plugin, the data plugin example (source and built) and the Python example nodes; see [plugin-quickstart.md](plugin-quickstart.md). The SDK ships no ArrayFire, ImGui or spdlog headers: anything below that needs them (an `af::array` in a signature, a panel's ImGui calls) builds only inside the CyxWiz source tree.
+Every header the plugin SDK installs under `<sdk>/include`, with the summary at the top of the header and the types it declares. Plugin API 1.4.0. The SDK also installs `cyxwiz-backend`'s import library, the CMake package `CyxWizSDK`, the template plugin, the data plugin example (source and built) and the Python example nodes; see [plugin-quickstart.md](plugin-quickstart.md). The SDK ships no ArrayFire, ImGui or spdlog headers: anything below that needs them (an `af::array` in a signature, a panel's ImGui calls) builds only inside the CyxWiz source tree.
 
 ## Plugin interface
 
@@ -11,11 +11,15 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `plugin/plugin_types.h` |  | `PluginVersion`, `PluginDependency`, `PluginManifest`, `IPlugin`, `PluginPermission`, `PluginCapability`, `PluginState` |
 | `plugin/plugin_context.h` |  | `AssistantContextSnapshot`, `PluginContext` |
 | `plugin/plugin_fingerprint.h` | Build fingerprint of a plugin (TOFIX125 P5 step 5.1, Part D6, decision D4). A trainable plugin node is a real cyxwiz::Module: the plugin shares C++ objects with the Engine, so it must be built the way the Engine was (compiler family, standard library, build type, pointer size, SDK and ArrayFire... | `FingerprintDifference` |
+| `plugin/plugin_ui.h` |  | `UiColor`, `UiColors`, `PluginUi`, `UiButtonSize` |
 | `plugin/interfaces/arrow_c_stream.h` | The Arrow C data interface and C stream interface: the structs of the Apache Arrow specification (https://arrow.apache.org/docs/format/CDataInterface.html, CStreamInterface.html), unchanged. They are the stable C ABI through which a plugin's data reaches the Engine (IDataProvider) and the... | `ArrowSchema`, `ArrowArray`, `ArrowArrayStream` |
 | `plugin/interfaces/i_analytics_provider.h` | A plugin's dataset analytics (plugin API 1.3): Data Studio's Explore > Plugins tab lists them, the user picks a dataset and columns, and the Engine calls Compute on a worker thread with those columns as an Arrow C stream. | `AnalyticsResult`, `PluginAnalyticsInfo`, `IAnalyticsProvider`, `AnalyticsColumns` |
+| `plugin/interfaces/i_command_provider.h` | Commands a plugin adds to the Engine's menus (plugin API 1.4). The Engine finds them through IPlugin::QueryInterface("ICommandProvider") when the plugin starts (UIModify permission), lists them in the menu they name and in the Command Palette, asks their state while a menu is drawn and runs one... | `PluginCommandInfo`, `PluginCommandState`, `ICommandProvider` |
 | `plugin/interfaces/i_assistant_provider.h` |  | `AssistantCommandRequest`, `AssistantCommandSection`, `AssistantCommandSource`, `AssistantCommandResponse`, `IAssistantProvider` |
 | `plugin/interfaces/i_data_provider.h` | A plugin's dataset file formats (plugin API 1.3). Each loader names a format and its file extensions; Data Input lists it beside CSV and Parquet, and opens a file of that format through OpenDataset, which hands the rows over as an Arrow C stream of record batches. From there the dataset is like... | `PluginDataLoaderInfo`, `IDataProvider` |
 | `plugin/interfaces/i_node_provider.h` |  | `PluginNodeEvalContext`, `PluginNodeEvalResult`, `PluginNodeTypeInfo`, `PinInfo`, `DynamicPinResult`, `NodeTypeCallback`, `INodeProvider` |
+| `plugin/interfaces/i_simulation_provider.h` | Graph simulation runs with a plugin's nodes (plugin API 1.4). The Engine finds this through IPlugin::QueryInterface("ISimulationProvider") when the plugin starts (UIModify permission). A plugin node runs in a graph simulation only when its plugin names it here: INodeProvider::EvaluateNode stays... | `PluginSimulationNodeInfo`, `PluginSimulationGraphNode`, `PluginSimulationBeginResult`, `ISimulationProvider` |
+| `plugin/interfaces/i_environment_provider.h` | Environments for reinforcement learning (plugin API 1.4). The Engine finds this through IPlugin::QueryInterface("IEnvironmentProvider") when the plugin starts (Training permission). The Engine is the learner: it asks for many copies of one environment, sends one action per copy and reads back... | `PluginEnvironmentSetting`, `PluginEnvironmentInfo`, `PluginEnvironmentStepBuffers`, `IEnvironmentBatch`, `PluginEnvironmentCreateResult`, `IEnvironmentProvider` |
 | `plugin/interfaces/i_panel_provider.h` |  | `PluginPanelInfo`, `IPanelProvider` |
 | `plugin/interfaces/i_tensor_node_provider.h` | Trainable extension nodes from a C++ plugin (TOFIX125 P2, plugin API 1.1). A plugin returns this from IPlugin::QueryInterface("ITensorNodeProvider"). Each node is one tensor in, one tensor out (a layer or an activation); its module is a real cyxwiz::Module, so it trains like a built-in layer.... | `TensorNodeInfo`, `Pin`, `Parameter`, `TensorNodeCallback`, `ITensorNodeProvider` |
 | `plugin/interfaces/i_training_hook.h` |  | `TrainingContext`, `ITrainingHook` |
@@ -49,6 +53,7 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/error_codes.h` |  | `DiagnosticCodeDescriptor` |
 | `cyxwiz/expression.h` | A typed formula such as "(1 - x)^2 + 100*(y - x^2)^2": parsed once into a tree, evaluated at one point on the host or at many points on the device, and differentiated exactly. The Calculator, the optimization window and the calculus functions all read formulas through it. Grammar, loosest first:... | `Expression`, `AngleUnit` |
 | `cyxwiz/feature_importance.h` |  | `FeatureImportanceResult`, `FeatureImportanceAnalyzer` |
+| `cyxwiz/fused_mlp.h` | A SequentialModel that is a small chain of Dense layers and activations, run as whole-network kernels on the active device's neural provider (NeuralOp::MlpForward / MlpBackward): one launch forward, two backward, instead of several per layer (TOFIX206 3.2). The model keeps its parameters; each... | `FusedMlp` |
 | `cyxwiz/gpu_execution_modes.h` |  | `GpuExecutionMode`, `GpuOperationFamily` |
 | `cyxwiz/gradient_check.h` | Numerical gradient check for a module's hand-written Backward (TOFIX125 P2 step 2.4, decision D1: extension authors write the gradient and the engine checks it). Central differences of L = sum(Forward(x) * r) for a fixed random r, compared with Backward(r) for the input and GetGradients() for... | `GradientCheckOptions`, `GradientCheckResult`, `LossCheckTargets` |
 | `cyxwiz/image_augmentation.h` | Image transforms for training batches (TOFIX140 image transforms). A batch is rows [N, H*W*C], each row one [H, W, C] image in [0, 1]. The transforms follow torchvision.transforms.functional and run on the whole batch on the ArrayFire device; the host only draws each sample's settings (flip... | `ImageShape`, `ImageOp`, `ImageOpDraws`, `BatchMixDraw`, `ImageAugmentation`, `ImageOpKind`, `AugmentOp`, `AugmentSpace`, `AutoAugmentPolicy`, `Interpolation`, `MorphologyOp`, `EraseMethod`, `BatchMix` |
@@ -102,10 +107,11 @@ Every header the plugin SDK installs under `<sdk>/include`, with the summary at 
 | `cyxwiz/losses/metric_learning.h` |  | `CosineEmbeddingLoss`, `TripletLossGradients`, `TripletLoss`, `ContrastiveLoss`, `DistanceType` |
 | `cyxwiz/losses/probability.h` |  | `BCELoss`, `BCEWithLogitsLoss`, `KLDivLoss`, `SoftDiceLoss`, `TverskyLoss`, `JaccardLoss` |
 | `cyxwiz/losses/regression.h` |  | `MSELoss`, `L1Loss`, `SmoothL1Loss`, `HuberLoss` |
-| `cyxwiz/optimizers/adam.h` |  | `AdamOptimizer`, `AdamWOptimizer`, `NAdamOptimizer` |
+| `cyxwiz/optimizers/adam.h` |  | `AdamOptimizer`, `Group`, `AdamWOptimizer`, `NAdamOptimizer` |
 | `cyxwiz/optimizers/adaptive.h` |  | `RMSpropOptimizer`, `AdaGradOptimizer`, `AdadeltaOptimizer` |
 | `cyxwiz/optimizers/gradient_clipping.h` |  |  |
 | `cyxwiz/optimizers/lamb.h` |  | `LAMBOptimizer` |
 | `cyxwiz/optimizers/lr_warmup.h` |  | `LRWarmupState`, `LRWarmup`, `WarmupType` |
 | `cyxwiz/optimizers/optimizer_base.h` |  | `OptimizerState`, `Optimizer`, `OptimizerType` |
 | `cyxwiz/optimizers/sgd.h` |  | `SGDOptimizer` |
+| `cyxwiz/rl/ppo.h` | Proximal Policy Optimization on the device, with hand-written gradients like every CyxWiz loss. The policy network outputs the mean of a Gaussian (continuous actions, with a learned state-independent log standard deviation) or the logits of a categorical (discrete actions); the value network... | `PpoLossSettings`, `PpoLossStatistics`, `PpoLossResult`, `PpoBatch`, `PpoProviderCounts` |

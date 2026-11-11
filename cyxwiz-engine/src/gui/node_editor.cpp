@@ -19,8 +19,8 @@
 #include "../core/async_task_manager.h"
 #include "../core/project_manager.h"
 #include "../core/graph_executor.h"
+#include "../core/engine_config.h"
 #include "../core/simulation_runtime_capabilities.h"
-#include "../core/rl_training_executor.h"
 #include "separate_windows.h"
 #include "../core/pipeline_executor.h"  // Unified Canvas Phase 2
 #include "../core/pipeline_execution_task.h"
@@ -30,9 +30,21 @@
 #include "subgraph_document.h"
 #include "../core/pipeline_runtime_capabilities.h"
 #include "panels/training_dashboard.h"
-#include "../core/rl_script_generator.h"
+#include "../core/rl/rl_training_run.h"
+#include "../core/rl/trained_policy.h"
+#include "../core/rl_device_presentation.h"
+#include "../core/rl_playback_presentation.h"
+#include "../core/model_export_presentation.h"
+#include "../core/file_dialogs.h"
+#include "../plugin/engine_plugin_context.h"
+#include "panels/policy_playback_panel.h"
+#include "../plugin/registries/plugin_environment_registry.h"
+#include "../core/plot/plot_model.h"
 #include "../scripting/scripting_engine.h"
 #include "../core/extension_node_registry.h"
+#include "../plugin/plugin_manager.h"
+#include "../plugin/registries/plugin_panel_registry.h"
+#include "../plugin/registries/plugin_simulation_registry.h"
 #include "../core/extension_node_presentation.h"
 #include "../core/node_metadata_registry.h"
 #include "graph_training_launcher.h"
@@ -51,6 +63,7 @@
 #include <cmath>
 #include <cstring>
 #include <nlohmann/json.hpp>
+#include <filesystem>
 #include <fstream>
 #ifdef _WIN32
 #include <windows.h>
@@ -176,11 +189,43 @@ NodeEditor::NodeEditor()
 
     // Initialize shape inference engine
 
+    rl_playback_ = std::make_unique<cyxwiz::PolicyPlaybackPanel>();  // shown by Play or View > Panels
+
     // The canvas starts empty (owner 2026-10-02); ready-made graphs are
     // under Examples in the Nodes panel.
+
+    // A plugin is never shut down under a graph run that evaluates its nodes.
+    // Nor under a PPO run or a policy playback stepping one of its environments.
+    cyxwiz::plugin::PluginManager::Instance().SetPluginStoppingHandler([this](const std::string& plugin_id) {
+        if (simulation_plugins_.count(plugin_id)) {
+            spdlog::info("Graph simulation stopped: its plugin {} is stopping", plugin_id);
+            OnStopSimulation();
+        }
+        const auto owned = [&plugin_id](const std::string& environment_key) {
+            return environment_key.rfind(plugin_id + ":", 0) == 0;
+        };
+        if (rl_run_ && rl_run_->Active() && rl_run_->Config() && owned(rl_run_->Config()->environment_key)) {
+            spdlog::info("PPO stopped: its environment's plugin {} is stopping", plugin_id);
+            rl_run_->StopAndWait();
+        }
+        if (rl_playback_->Policy() && owned(rl_playback_->Policy()->config.environment_key)) {
+            spdlog::info("Policy playback stopped: its environment's plugin {} is stopping", plugin_id);
+            rl_playback_->Stop();
+        }
+    });
+
+    // An RL graph's Environment names an environment of the plugin
+    // environment registry: the compiler finds it there (TOFIX195 S4.3)
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment;
+        if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(key, environment)) return false;
+        info = environment.info;
+        return true;
+    });
 }
 
 NodeEditor::~NodeEditor() {
+    cyxwiz::plugin::PluginManager::Instance().SetPluginStoppingHandler(nullptr);
     OnStopSimulation();
     // Owned background work must not outlive the editor: the pipeline task is
     // asked to stop and its queued UI delivery is dropped before any editor
@@ -236,8 +281,8 @@ std::string NodeEditor::GetGraphReplacementBlockReason() const {
         graph_preparation_busy_callback_ && graph_preparation_busy_callback_(),
         training_data_loading_callback_ && training_data_loading_callback_(),
         properties_panel_ && properties_panel_->IsDialogBusy(),
-        is_simulating_.load(), pipeline_execution_active_,
-        rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())}));
+        simulation_session_.IsActive(), pipeline_execution_active_,
+        IsRLTrainingActive()}));
 }
 
 bool NodeEditor::CanReplaceGraph(const char* operation) {
@@ -252,8 +297,27 @@ bool NodeEditor::CanReplaceGraph(const char* operation) {
 }
 
 void NodeEditor::Render() {
+    simulation_session_.Poll();
+    if (!simulation_session_.IsActive()) simulation_plugins_.clear();
     ApplySubgraphRequest();
     ApplyStepAfterInsert();
+
+    // The RL run, its dashboard and the policy playback are windows of their
+    // own: they keep going and stay on screen with the Studio window closed.
+    // RL metrics scripts reported (TOFIX134 P0 item 7); a script that reports
+    // without an RL run started from the canvas still gets the dashboard.
+    if (scripting_engine_) {
+        const auto samples = scripting_engine_->TakeRLMetrics();
+        if (!samples.empty() && !rl_dashboard_) {
+            rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
+            rl_dashboard_->SetVisible(true);
+        }
+        for (const auto& sample : samples) rl_dashboard_->UpdateCustomMetric(sample.name, sample.value);
+    }
+    PollRLTraining();
+    if (rl_dashboard_) rl_dashboard_->Render();
+    rl_playback_->Render();
+
     if (!show_window_) return;
 
     SyncParameterDrivenPins();
@@ -888,24 +952,8 @@ void NodeEditor::Render() {
         ImGui::EndPopup();
     }
 
-    // RL metrics scripts reported (TOFIX134 P0 item 7); a script that reports
-    // without an RL run started from the canvas still gets the dashboard.
-    if (scripting_engine_) {
-        const auto samples = scripting_engine_->TakeRLMetrics();
-        if (!samples.empty() && !rl_dashboard_) {
-            rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
-            rl_dashboard_->SetVisible(true);
-        }
-        for (const auto& sample : samples) rl_dashboard_->UpdateCustomMetric(sample.name, sample.value);
-    }
-
     // Plot nodes: result lane and their Plot windows (TOFIX134 P2).
     RenderPlotNodes();
-
-    // Render RL Training Dashboard (separate window)
-    if (rl_dashboard_) {
-        rl_dashboard_->Render();
-    }
 
     // ===== Save as Pattern Dialog =====
     if (show_save_pattern_dialog_) {
@@ -2246,38 +2294,21 @@ void NodeEditor::RenderNodes() {
                 break;
             }
 
-            // RL
-            case NodeType::GymEnvironment: {
-                auto env = node.parameters.find("env_name");
+            // RL (TOFIX195 S4.3)
+            case NodeType::RLEnvironment: {
+                const auto env = node.parameters.find("environment");
+                const auto copies = node.parameters.find("copies");
                 if (env != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Env: %s", env->second.c_str());
+                    const size_t colon = env->second.find(':');
+                    const std::string id = colon == std::string::npos ? env->second : env->second.substr(colon + 1);
+                    ImGui::TextColored(t.accent_text, "%s x %s", id.c_str(),
+                                       copies != node.parameters.end() ? copies->second.c_str() : "1");
                 }
                 break;
             }
-            case NodeType::ReplayBufferNode: {
-                auto cap = node.parameters.find("capacity");
-                if (cap != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Cap: %s", cap->second.c_str());
-                }
-                break;
-            }
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork: {
-                auto hs = node.parameters.find("hidden_size");
-                if (hs != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Hidden: %s", hs->second.c_str());
-                }
-                break;
-            }
-            case NodeType::RLTraining: {
-                auto algo = node.parameters.find("algorithm");
-                auto eps = node.parameters.find("episodes");
-                if (algo != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Algo: %s", algo->second.c_str());
-                }
-                if (eps != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Episodes: %s", eps->second.c_str());
-                }
+            case NodeType::PPO: {
+                const auto steps = node.parameters.find("total_timesteps");
+                if (steps != node.parameters.end()) ImGui::TextColored(t.accent_text, "%s steps", steps->second.c_str());
                 break;
             }
 
@@ -4118,52 +4149,31 @@ bool NodeEditor::HasSimulationNodes() const {
         if (cyxwiz::IsBuiltInSimulationRuntimeNode(node.type)) {
             return true;
         }
-        // Check for MuJoCo Plant or other simulation plugin nodes
-        if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant") ||
-            cyxwiz::IsExtensionTypeName(node, "MuJoCoEnv")) {
+        // A plugin node its plugin runs in a graph simulation (ISimulationProvider).
+        if (node.type == NodeType::PluginCustom &&
+            cyxwiz::plugin::PluginSimulationRegistry::Instance().IsSimulationNode(node.extension_type_id)) {
             return true;
         }
     }
     return false;
 }
 
-bool NodeEditor::TryGetSimulationScalar(int pin_id, float& value) const {
-    if (!graph_executor_) return false;
-    cyxwiz::NodeValue node_value;
-    if (!graph_executor_->TryGetPinValue(pin_id, node_value)) return false;
-    const auto* scalar = std::get_if<float>(&node_value);
-    if (!scalar) return false;
-    value = *scalar;
-    return true;
-}
-
-float NodeEditor::GetSimulationTime() const {
-    return graph_executor_ ? graph_executor_->GetSimTime() : 0.0f;
-}
-
-bool NodeEditor::SetSimulationNodeParameter(int node_id,
-                                            const std::string& key,
-                                            const std::string& value) {
-    return graph_executor_ &&
-           graph_executor_->SetNodeParameter(node_id, key, value);
-}
-
 void NodeEditor::OnRunSimulation() {
-    if (is_simulating_) return;
+    if (simulation_session_.IsActive()) return;
 
-    // A previous failed simulation may have ended its worker before the UI
-    // observed the terminal state. Reclaim it before assigning a new thread.
-    if (sim_thread_.joinable()) {
-        sim_thread_.join();
+    // The plugins with nodes in the graph check them and take what the run
+    // needs (a physics model to step) before the first tick.
+    std::string refused;
+    auto lease = cyxwiz::plugin::PluginSimulationRegistry::Instance().BeginGraphRun(nodes_, refused);
+    if (!lease) {
+        simulation_session_.FailToStart(refused);
+        return;
     }
+    const auto panels = lease->Panels();
+    auto plugins = lease->PluginIds();
 
-    spdlog::info("NodeEditor: Starting graph simulation");
-
-    // Create and build executor
-    graph_executor_ = std::make_unique<cyxwiz::GraphExecutor>();
-
-    // Set plugin eval callback: routes to ExtensionNodeRegistry → plugin DLL
-    graph_executor_->SetPluginEvalCallback(
+    // Plugin nodes are evaluated by their plugin, found through ExtensionNodeRegistry.
+    const bool started = simulation_session_.Start(nodes_, links_,
         [](const std::string& plugin_qualified_name,
            const cyxwiz::NodeEvalContext& ctx) -> cyxwiz::NodeEvalResult {
 
@@ -4209,249 +4219,262 @@ void NodeEditor::OnRunSimulation() {
                 }
             }
             return result;
-        }
-    );
-
-    if (!graph_executor_->Build(nodes_, links_)) {
-        spdlog::error("NodeEditor: Graph build failed: {}", graph_executor_->GetError());
-        graph_executor_.reset();
-        return;
+        },
+        static_cast<float>(cyxwiz::core::EngineConfig::Instance().SimulationRateHz()), std::move(lease));
+    if (!started) return;
+    simulation_plugins_ = std::move(plugins);
+    for (const auto& [plugin_id, panel_id] : panels) {
+        cyxwiz::plugin::PluginPanelRegistry::Instance().ShowPanel(plugin_id, panel_id);
     }
-
-    // Launch simulation thread
-    sim_stop_requested_ = false;
-    is_simulating_ = true;
-
-    sim_thread_ = std::thread([this]() {
-        float dt = 1.0f / sim_rate_hz_;
-        auto tick_duration = std::chrono::microseconds(static_cast<int>(1000000.0f / sim_rate_hz_));
-
-        while (!sim_stop_requested_) {
-            auto start = std::chrono::steady_clock::now();
-
-            if (!graph_executor_->Tick(dt)) {
-                spdlog::warn("NodeEditor: Simulation tick failed: {}", graph_executor_->GetError());
-                break;
-            }
-
-            // Sleep to maintain target rate
-            auto elapsed = std::chrono::steady_clock::now() - start;
-            auto remaining = tick_duration - elapsed;
-            if (remaining > std::chrono::microseconds(0)) {
-                std::this_thread::sleep_for(remaining);
-            }
-        }
-
-        is_simulating_ = false;
-        spdlog::info("NodeEditor: Simulation stopped at t={:.2f}s", graph_executor_->GetSimTime());
-    });
+    if (simulation_started_callback_) simulation_started_callback_();
 }
 
 void NodeEditor::OnStopSimulation() {
-    if (!is_simulating_ && !sim_thread_.joinable()) return;
-
-    spdlog::info("NodeEditor: Stopping graph simulation");
-    sim_stop_requested_ = true;
-
-    if (sim_thread_.joinable()) {
-        sim_thread_.join();
-    }
-
-    is_simulating_ = false;
+    simulation_session_.Stop();
+    simulation_plugins_.clear();
 }
 
-// ===== RL Training =====
-
-bool NodeEditor::HasRLNodes() const {
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::RLTraining ||
-            node.type == NodeType::PolicyNetwork ||
-            node.type == NodeType::ValueNetwork) {
-            return true;
-        }
-    }
-    return false;
+std::vector<const MLNode*> NodeEditor::GetSignalScopes() const {
+    std::vector<const MLNode*> scopes;
+    for (const auto& node : nodes_)
+        if (node.type == NodeType::SignalScope) scopes.push_back(&node);
+    return scopes;
 }
 
-void NodeEditor::OnStartRLTraining() {
-    if (rl_script_running_ || (rl_executor_ && rl_executor_->IsTraining())) return;
-    if (!scripting_engine_) {
-        spdlog::error("NodeEditor: ScriptingEngine not set, cannot run Python RL training");
-        return;
-    }
-    if (scripting_engine_->IsScriptRunning()) {
-        spdlog::warn("NodeEditor: A script is already running");
-        return;
-    }
+std::string NodeEditor::GetGraphStem() const {
+    return current_file_path_.empty() ? std::string("Untitled")
+                                      : std::filesystem::path(current_file_path_).stem().string();
+}
 
-    spdlog::info("NodeEditor: Starting Python-based RL training");
+cyxwiz::simulation::Commands NodeEditor::GetSimulationCommands() const {
+    cyxwiz::simulation::CommandInputs in;
+    in.simulation_graph = HasSimulationNodes();
+    in.has_scopes = in.simulation_graph && !GetSignalScopes().empty();
+    in.state = simulation_session_.GetState();
+    in.rl_running = IsRLTrainingActive();
+    return cyxwiz::simulation::BuildCommands(in);
+}
 
-    // Build config from RLTraining node parameters
-    cyxwiz::RLTrainingConfig config;
-
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::RLTraining) {
-            auto it = node.parameters.find("total_timesteps");
-            if (it != node.parameters.end()) config.total_timesteps = std::stoi(it->second);
-            it = node.parameters.find("max_episode_steps");
-            if (it != node.parameters.end()) config.max_episode_steps = std::stoi(it->second);
-            it = node.parameters.find("learning_rate");
-            if (it != node.parameters.end()) config.learning_rate = std::stof(it->second);
-            it = node.parameters.find("gamma");
-            if (it != node.parameters.end()) config.gamma = std::stof(it->second);
-            it = node.parameters.find("clip_range");
-            if (it != node.parameters.end()) config.clip_range = std::stof(it->second);
-            it = node.parameters.find("n_steps");
-            if (it != node.parameters.end()) config.n_steps = std::stoi(it->second);
-            it = node.parameters.find("batch_size");
-            if (it != node.parameters.end()) config.batch_size = std::stoi(it->second);
-            it = node.parameters.find("n_epochs");
-            if (it != node.parameters.end()) config.n_epochs = std::stoi(it->second);
+void NodeEditor::RunSimulationCommand(cyxwiz::simulation::Command command) {
+    using cyxwiz::simulation::Command;
+    // The same checks as the buttons: a stale menu click does nothing
+    const auto commands = GetSimulationCommands();
+    switch (command) {
+        case Command::Run:
+            if (!commands.run.enabled) return;
+            if (simulation_session_.GetState() == cyxwiz::SimulationState::Paused) simulation_session_.Resume();
+            else OnRunSimulation();
             break;
-        }
+        case Command::Pause:
+            if (commands.pause.enabled) simulation_session_.Pause();
+            break;
+        case Command::Step:
+            if (commands.step.enabled) simulation_session_.Step();
+            break;
+        case Command::Stop:
+            if (commands.stop.enabled) OnStopSimulation();
+            break;
+        case Command::Clear:
+            if (commands.clear.enabled) simulation_session_.ClearScopes();
+            break;
     }
+}
 
-    // Find MuJoCo Plant node for MJCF path
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::PluginCustom) {
-            if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant")) {
-                config.plugin_qualified_name = node.extension_type_id;
-                auto mp = node.parameters.find("mjcf_path");
-                if (mp != node.parameters.end() && !mp->second.empty()) {
-                    config.env_mjcf_path = mp->second;
-                } else {
-                    auto meta = node.parameters.find("_meta_loaded_path");
-                    if (meta != node.parameters.end()) config.env_mjcf_path = meta->second;
-                }
-                break;
-            }
-        }
+// ===== RL Training (TOFIX195 S4.3) =====
+
+bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfiguration> config, std::string& error) {
+    if (!config) {
+        error = "The graph is not a compiled RL graph.";
+        return false;
     }
+    if (!rl_run_) rl_run_ = std::make_unique<cyxwiz::rl::RLTrainingRun>();
+    const auto& c = *config;
+    if (!rl_run_->Start(config, GetGraphJson(), error)) return false;
+    rl_run_reported_ = false;
+    rl_status_ = "PPO starting";
+    rl_device_suffix_.clear();
+    rl_device_tooltip_.clear();
+    rl_device_shown_ = false;
 
-    // Extract RewardFunction and ObservationFilter node params
-    std::map<std::string, std::string> reward_params, obs_filter_params;
-    for (const auto& node : nodes_) {
-        if (node.type == NodeType::PluginCustom) {
-            if (cyxwiz::IsExtensionTypeName(node, "RewardFunction")) {
-                reward_params = node.parameters;
-            }
-            if (cyxwiz::IsExtensionTypeName(node, "ObservationFilter")) {
-                obs_filter_params = node.parameters;
-            }
-        }
-    }
-
-    // Determine save path
-    std::string save_path = "models/rl_policy";
-
-    // Generate Python script
-    std::string script = cyxwiz::RLScriptGenerator::Generate(
-        config, reward_params, obs_filter_params, save_path);
-
-    // Create/show dashboard
-    if (!rl_dashboard_) {
-        rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
-    }
-    rl_dashboard_->ResetRLMetrics();
-    rl_dashboard_->SetRLTrainingState(true);
-    rl_dashboard_->SetVisible(true);
-
-    // Set up pycyxwiz flags
-    std::string setup_script = "import pycyxwiz\npycyxwiz.rl_set_stop(False)\npycyxwiz.rl_set_paused(False)\n";
-    scripting_engine_->ExecuteCommand(setup_script);
-
-    // Completion handling for this run only (TOFIX133 P0 item 9).
-    auto dashboard = rl_dashboard_;
-    rl_script_running_ = true;
-    scripting::ScriptingEngine::RunCallbacks callbacks;
-    callbacks.on_complete = [this, dashboard](const scripting::ExecutionResult& result) {
-        rl_script_running_ = false;
-        dashboard->SetRLTrainingState(false);
-        if (!result.success) {
-            spdlog::error("RL training script failed: {}", result.error_message);
-        } else {
-            spdlog::info("RL training script completed successfully");
-        }
+    if (!rl_dashboard_) rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
+    cyxwiz::TrainingDashboardPanel::PpoRunInfo info;
+    info.title = "PPO on " + c.environment.id + " x " + std::to_string(c.copies);
+    info.total_timesteps = static_cast<long long>(c.ppo.total_timesteps);
+    info.target_return = c.ppo.target_return;
+    info.continuous = !c.environment.discrete_actions;
+    info.reference = cyxwiz::rl::FindPpoReference(cyxwiz::rl::ReadPpoReferenceFile(), c.environment.id, c.copies, c.ppo);
+    auto* run = rl_run_.get();
+    cyxwiz::TrainingDashboardPanel::PpoRunControls controls;
+    controls.pause = [run]() { run->Pause(); };
+    controls.resume = [run]() { run->Resume(); };
+    controls.stop = [run]() { run->Stop(); };
+    controls.paused = [run]() { return run->Paused(); };
+    controls.waiting = [run]() { return !run->Waiting().empty(); };
+    controls.has_policy = [this]() { return rl_policy_ != nullptr && rl_policy_file_.empty(); };
+    controls.play = [this]() {
+        std::string why;
+        if (!PlayRLPolicy(why)) spdlog::error("Play policy: {}", why);
     };
-
-    // Run training script async
-    if (!scripting_engine_->ExecuteScriptAsync(script, std::move(callbacks))) {
-        rl_script_running_ = false;
-        dashboard->SetRLTrainingState(false);
-        spdlog::warn("RL training not started: another script is running");
-    }
+    controls.save = [this]() {
+        std::string why;
+        if (!SaveRLPolicy(why) && !why.empty()) spdlog::error("Save policy: {}", why);
+    };
+    rl_dashboard_->BeginPpoRun(std::move(info), std::move(controls));
+    spdlog::info("Train: PPO on {} x {} started", c.environment.id, c.copies);
+    return true;
 }
 
+bool NodeEditor::IsRLTrainingActive() const { return rl_run_ && rl_run_->Active(); }
 
-// ===== ONNX Export =====
+void NodeEditor::StopRLTraining() {
+    if (rl_run_) rl_run_->Stop();
+}
 
-void NodeEditor::ExportPolicyONNX(const std::string& output_path) {
-    if (!rl_executor_) {
-        spdlog::error("NodeEditor: No RL executor for ONNX export");
-        return;
-    }
-
-    auto metrics = rl_executor_->GetMetrics();
-    if (metrics.episode_count == 0) {
-        spdlog::error("NodeEditor: No trained policy to export");
-        return;
-    }
-
-    // Request export via plugin's EvaluateNode with "export_onnx" command
-    std::string plugin_qname;
-    for (const auto& node : nodes_) {
-        if (cyxwiz::IsExtensionTypeName(node, "MuJoCoPlant") ||
-            cyxwiz::IsExtensionTypeName(node, "MuJoCoEnv") ||
-            cyxwiz::IsExtensionTypeName(node, "RLAgent")) {
-            plugin_qname = node.extension_type_id;
-            break;
+// The run's updates onto the dashboard, and its end
+void NodeEditor::PollRLTraining() {
+    if (!rl_run_ || !rl_dashboard_) return;
+    // Another training run holds the GPU: the run waits and says so (TOFIX206 3.2 E)
+    if (!rl_device_shown_) {
+        const std::string waiting = rl_run_->Waiting();
+        if (!waiting.empty() && rl_device_tooltip_ != waiting) {
+            rl_status_ = "PPO waiting for the GPU";
+            rl_device_tooltip_ = waiting;
+            rl_dashboard_->SetPpoDevice("Waiting for the GPU", waiting, true, waiting);
         }
     }
-
-    if (plugin_qname.empty()) {
-        spdlog::error("NodeEditor: No MuJoCo plugin node found for ONNX export");
-        return;
+    // The device the run trains on, once its preflight is done (TOFIX206)
+    if (!rl_device_shown_ && rl_run_->Config()) {
+        const auto context = rl_run_->Device();
+        if (context.valid) {
+            rl_device_shown_ = true;
+            cyxwiz::rl_device::RunDevice device;
+            device.valid = true;
+            device.requested_backend = context.requested_backend;
+            device.requested_device_id = context.requested_device_id;
+            device.effective_backend = context.effective_backend;
+            device.effective_device_id = context.effective_device_id;
+            device.device_name = context.device_name;
+            device.policy = context.ExecutionPolicyName();
+            device.fallback = context.selection_fallback_applied;
+            device.error = context.error;
+            const auto& c = *rl_run_->Config();
+            const auto chip = cyxwiz::rl_device::DeviceChip(device);
+            rl_dashboard_->SetPpoDevice(chip.text, chip.tooltip, chip.fallback,
+                                        cyxwiz::rl_device::DashboardNote(device, cyxwiz::HiddenUnits(c.policy_layers),
+                                                                         cyxwiz::HiddenUnits(c.value_layers)));
+            rl_device_suffix_ = cyxwiz::rl_device::ToolbarSuffix(device);
+            rl_device_tooltip_ = chip.tooltip;
+            if (rl_status_ == "PPO starting" || rl_status_ == "PPO waiting for the GPU")
+                rl_status_ = "PPO starting" + rl_device_suffix_;
+        }
     }
-
-    auto* provider = cyxwiz::ExtensionNodeRegistry::Instance().SignalProvider(plugin_qname);
-    if (!provider) {
-        spdlog::error("NodeEditor: Plugin provider not found");
-        return;
+    for (const auto& m : rl_run_->TakeUpdates()) {
+        rl_dashboard_->AddPpoUpdate(m);
+        if (!m.compute_path.empty()) rl_dashboard_->SetPpoComputePath(m.compute_path);
+        rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
+                     cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" + rl_device_suffix_;
     }
-
-    cyxwiz::plugin::PluginNodeEvalContext ctx;
-    ctx.node_type_name = "RLAgent";
-    ctx.parameters["command"] = "export_onnx";
-    ctx.parameters["output_path"] = output_path;
-
-    auto result = provider->EvaluateNode(ctx);
-    if (result.success) {
-        spdlog::info("NodeEditor: Policy exported to {}", output_path);
-    } else {
-        spdlog::warn("NodeEditor: ONNX export: {}", result.error_message.empty() ? "not yet fully wired" : result.error_message);
+    if (rl_run_->Active()) cyxwiz::plugin::EnginePluginContext::KeepFullFrameRate();  // the dashboard moves
+    if (rl_run_reported_ || rl_run_->Active()) return;
+    const auto state = rl_run_->GetState();
+    // A run that ended before it had a device (stopped while it waited for the GPU): the chip
+    // no longer says it waits
+    if (!rl_device_shown_ && !rl_device_tooltip_.empty()) {
+        rl_device_tooltip_.clear();
+        rl_dashboard_->SetPpoDevice("No device", rl_run_->Message(), false, {});
+    }
+    rl_dashboard_->EndPpoRun(rl_run_->Message(), state == cyxwiz::rl::RLTrainingRun::State::Failed);
+    rl_run_reported_ = true;
+    // The run's policy replaces the one kept (TOFIX195 S5)
+    if (auto trained = rl_run_->Trained()) {
+        rl_policy_ = std::move(trained);
+        rl_policy_file_.clear();
+        rl_policy_message_.clear();
+        if (cyxwiz::core::EngineConfig::Instance().PlayPolicyAfterTraining()) {
+            std::string why;
+            if (!PlayRLPolicy(why)) spdlog::error("Play policy: {}", why);
+        }
     }
 }
 
-void NodeEditor::OnStopRLTraining() {
-    spdlog::info("NodeEditor: Stopping RL training");
+std::string NodeEditor::RLPolicyLine() const {
+    return cyxwiz::rl_playback::PolicyLine(rl_policy_ != nullptr, rl_policy_file_, rl_policy_ ? rl_policy_->steps : 0,
+                                           rl_policy_ ? rl_policy_->mean_return : 0.0f);
+}
 
-    // Stop Python-based training
-    if (rl_script_running_ && scripting_engine_) {
-        // Signal Python to stop via pycyxwiz atomic flag
-        scripting_engine_->ExecuteCommand("import pycyxwiz; pycyxwiz.rl_set_stop(True)");
-        scripting_engine_->StopScript();
-        rl_script_running_ = false;
-    }
+bool* NodeEditor::GetPolicyPlaybackVisiblePtr() { return rl_playback_->VisiblePtr(); }
 
-    // Stop old C++ executor (for backward compat)
-    if (rl_executor_) {
-        rl_executor_->Stop();
-        rl_executor_.reset();
+bool NodeEditor::PlayRLPolicy(std::string& error) {
+    if (!rl_policy_) {
+        error = "There is no trained policy yet: Train the RL graph, or load a saved policy.";
+        return false;
     }
+    if (!rl_playback_->Play(rl_policy_, rl_policy_file_, error)) return false;
+    spdlog::info("Policy playback: {} started", rl_policy_->config.environment.id);
+    return true;
+}
 
-    if (rl_dashboard_) {
-        rl_dashboard_->SetRLTrainingState(false);
+bool NodeEditor::SaveRLPolicy(std::string& error) {
+    error.clear();
+    if (!rl_policy_) {
+        error = "There is no trained policy to save.";
+        rl_policy_message_ = error;
+        return false;
     }
+    const std::string suggested = cyxwiz::model_export::DefaultPath(cyxwiz::ProjectManager::Instance().GetProjectRoot(),
+                                                                    current_file_path_, cyxwiz::ModelFormat::CyxModel);
+    const auto path = cyxwiz::FileDialogs::SaveFile("Save policy", {{"CyxWiz Models", "cyxmodel"}},
+                                                    suggested.empty() ? nullptr : suggested.c_str(),
+                                                    "policy.cyxmodel");
+    if (!path) return false;  // cancelled
+    if (!cyxwiz::rl::SaveTrainedPolicy(*rl_policy_, *path, error)) {
+        rl_policy_message_ = error;
+        return false;
+    }
+    rl_policy_message_ = "Saved to " + *path;
+    spdlog::info("Saved the PPO policy to {}", *path);
+    return true;
+}
+
+bool NodeEditor::LoadRLPolicy(const std::string& path, std::string& error) {
+    auto loaded = cyxwiz::rl::LoadTrainedPolicy(path, error);
+    if (!loaded) {
+        rl_policy_message_ = error;
+        return false;
+    }
+    rl_policy_ = std::shared_ptr<cyxwiz::rl::TrainedPolicy>(std::move(loaded));
+    rl_policy_file_ = std::filesystem::path(path).filename().string();
+    rl_policy_message_ = "Loaded " + rl_policy_file_;
+    spdlog::info("Loaded the PPO policy {} ({})", path, rl_policy_->config.environment.id);
+    return true;
+}
+
+bool NodeEditor::ChooseRLPolicyForGraph(std::string& error) {
+    error.clear();
+    const auto path = cyxwiz::FileDialogs::OpenFile("Load policy", {{"CyxWiz Models", "cyxmodel"}});
+    if (!path) return false;  // cancelled
+    auto loaded = cyxwiz::rl::LoadTrainedPolicy(*path, error);
+    if (!loaded) {
+        rl_policy_message_ = error;
+        return false;
+    }
+    // It must fit the open graph (its environment and layers)
+    cyxwiz::GraphCompiler compiler;
+    const auto compiled = compiler.Compile(nodes_, links_, true);
+    if (!compiled.rl) {
+        error = "The open graph does not compile, so the policy cannot be checked against it: " + compiled.error_message;
+        rl_policy_message_ = error;
+        return false;
+    }
+    error = cyxwiz::rl::PolicyMismatch(*loaded, *compiled.rl);
+    if (!error.empty()) {
+        rl_policy_message_ = error;
+        return false;
+    }
+    rl_policy_ = std::shared_ptr<cyxwiz::rl::TrainedPolicy>(std::move(loaded));
+    rl_policy_file_ = std::filesystem::path(*path).filename().string();
+    rl_policy_message_ = "Loaded " + rl_policy_file_;
+    return true;
 }
 
 // ============================================================================

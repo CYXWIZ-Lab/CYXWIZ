@@ -71,6 +71,10 @@ bool MjRenderer::Initialize(const mjModel* model, int width, int height,
         return false;
     }
 
+    // The offscreen buffer starts at the model's <visual> size (640x480 by
+    // default): size it to the panel
+    mjr_resizeOffscreen(width_, height_, &con_);
+
     // Use the actual offscreen FBO size — may be smaller than requested
     if (con_.offWidth > 0 && con_.offHeight > 0) {
         if (con_.offWidth < width_ || con_.offHeight < height_) {
@@ -152,11 +156,10 @@ unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data) {
         // Reallocate CPU buffer
         pixel_buffer_.resize(width_ * height_ * 3);
 
-        // Recreate MuJoCo context with new size (compat context)
+        // Resize only the offscreen buffer (compat context); the meshes and
+        // textures stay uploaded
         MakeCompatContextCurrent();
-        mjr_freeContext(&con_);
-        mjr_defaultContext(&con_);
-        mjr_makeContext(model, &con_, mjFONTSCALE_150);
+        mjr_resizeOffscreen(width_, height_, &con_);
 
         // Clamp to actual offscreen FBO size
         if (con_.offWidth > 0 && con_.offHeight > 0) {
@@ -232,7 +235,7 @@ void MjRenderer::RotateCamera(float dx, float dy) {
 }
 
 void MjRenderer::ZoomCamera(float dz) {
-    cam_.distance *= (1.0f - dz * 0.05f);
+    cam_.distance *= (1.0f - dz * 0.12f);
     if (cam_.distance < 0.01f) cam_.distance = 0.01f;
     if (cam_.distance > 100.0f) cam_.distance = 100.0f;
 }

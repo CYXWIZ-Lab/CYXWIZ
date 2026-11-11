@@ -219,8 +219,115 @@ BackendPackRemovalResult BackendPackRemover::Remove(
             {}, deactivation);
     }
 
-    const auto pending_root = runtime_root_ / "staging" / "removal" /
-        backend / pack_id;
+    return QuarantineAndDelete(
+        target, target_exists,
+        runtime_root_ / "staging" / "removal" / backend / pack_id,
+        progress, deactivation);
+}
+
+BackendPackRemovalResult BackendPackRemover::RemovePlugin(
+    std::string plugin_id,
+    std::string pack_id) {
+    std::unique_lock<std::mutex> removal_lock(
+        removal_mutex_, std::try_to_lock);
+    if (!removal_lock.owns_lock()) {
+        return {BackendPackRemovalStatus::Busy,
+                "A backend-pack removal is already running"};
+    }
+    cancel_requested_.store(false);
+    BackendPackRemovalProgress progress;
+    progress.stage = BackendPackRemovalStage::Validating;
+    progress.pack_id = pack_id;
+    progress.message = "Validating the installed plugin pack";
+    SetProgress(progress);
+
+    if (!IsIdentifier(plugin_id) || !IsIdentifier(pack_id) ||
+        runtime_root_.empty() || !runtime_root_.is_absolute()) {
+        return Finish(
+            BackendPackRemovalStatus::InvalidRequest,
+            "A safe plugin, pack identity, and runtime root are required");
+    }
+    RuntimeMutationLease mutation;
+    if (!mutation.OwnsMutation() ||
+        (execution_active_ && execution_active_())) {
+        return Finish(
+            BackendPackRemovalStatus::ExecutionActive,
+            "Plugin-pack removal is blocked while an execution context is active");
+    }
+
+    ActivePluginsState plugins;
+    std::string error;
+    if (!LoadActivePluginsState(runtime_root_ / kActivePluginsFileName, plugins, error)) {
+        return Finish(BackendPackRemovalStatus::InvalidRuntime, error);
+    }
+    const auto target = PluginPackDirectory(runtime_root_, plugin_id, pack_id);
+    std::error_code filesystem_error;
+    const auto target_status = std::filesystem::symlink_status(target, filesystem_error);
+    const bool target_missing =
+        target_status.type() == std::filesystem::file_type::not_found ||
+        filesystem_error == std::make_error_code(std::errc::no_such_file_or_directory);
+    if (target_missing) filesystem_error.clear();
+    const bool target_exists = !target_missing && !filesystem_error;
+    const bool target_active = std::any_of(
+        plugins.plugins.begin(), plugins.plugins.end(),
+        [&](const ActivePluginPackState& value) {
+            return value.plugin_id == plugin_id && value.pack_id == pack_id;
+        });
+    if (!target_exists) {
+        if (filesystem_error) {
+            return Finish(BackendPackRemovalStatus::FilesystemFailure,
+                          "Cannot inspect the installed plugin pack");
+        }
+    } else if (!ValidateRemovalTarget(runtime_root_, target, error)) {
+        return Finish(BackendPackRemovalStatus::FilesystemFailure, error);
+    }
+
+    std::optional<BackendPackStateResult> deactivation;
+    if (target_active) {
+        progress.stage = BackendPackRemovalStage::Deactivating;
+        progress.message = "Deactivating the plugin pack before removal";
+        SetProgress(progress);
+        BackendPackStateService state_service(runtime_root_, execution_active_);
+        deactivation = state_service.DeactivatePluginPack(plugin_id);
+        if (deactivation->status != BackendPackStateStatus::Completed) {
+            return Finish(
+                deactivation->status == BackendPackStateStatus::ExecutionActive
+                    ? BackendPackRemovalStatus::ExecutionActive
+                    : BackendPackRemovalStatus::InvalidRuntime,
+                "Cannot deactivate the plugin pack before removal: " +
+                    deactivation->message,
+                {}, deactivation);
+        }
+        if (checkpoint_ &&
+            !checkpoint_(BackendPackRemovalCheckpoint::AfterDeactivation)) {
+            return Finish(
+                BackendPackRemovalStatus::Interrupted,
+                "Plugin-pack removal interrupted after safe deactivation",
+                {}, deactivation);
+        }
+    }
+    if (cancel_requested_.load()) {
+        return Finish(
+            BackendPackRemovalStatus::Interrupted,
+            "Plugin-pack removal cancelled before filesystem mutation",
+            {}, deactivation);
+    }
+    return QuarantineAndDelete(
+        target, target_exists,
+        runtime_root_ / "staging" / "removal" / "plugins" / plugin_id / pack_id,
+        progress, deactivation);
+}
+
+// The pack is inactive: move it into a private quarantine, then delete it. A
+// retry finishes a quarantine an interrupted removal left behind.
+BackendPackRemovalResult BackendPackRemover::QuarantineAndDelete(
+    const std::filesystem::path& target,
+    bool target_exists,
+    const std::filesystem::path& pending_root,
+    BackendPackRemovalProgress& progress,
+    const std::optional<BackendPackStateResult>& deactivation) {
+    std::error_code filesystem_error;
+    std::string error;
     if (!target_exists) {
         const bool pending_exists =
             std::filesystem::exists(pending_root, filesystem_error) &&

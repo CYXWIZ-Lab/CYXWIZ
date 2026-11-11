@@ -19,6 +19,7 @@
 #include "../arrayfire_host_materialization.h"
 
 #include <arrayfire.h>
+#include <af/internal.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -143,15 +144,49 @@ bool CaptureArrayFireQueue(NeuralDeviceQueue& queue, std::string& error) {
 // Locks an ArrayFire array's device buffer for the lifetime of the object.
 class LockedDeviceArray {
 public:
-    explicit LockedDeviceArray(const af::array& array) : array_(array) {
+    // `read_only`: an input the provider only reads. When it is evaluated and
+    // contiguous, its buffer is handed over as it is (af_get_raw_ptr):
+    // af_get_device_ptr would first copy a buffer other arrays share (a
+    // Tensor's copies do), one device copy per input per call (TOFIX206 3.2).
+    // A contiguous view (a column range of a table) is its parent's buffer
+    // from its offset: af_get_raw_ptr gives the parent's start, so on CUDA the
+    // handle is that address plus the offset; an OpenCL or oneAPI handle is a
+    // buffer object, not an address, so there only a view at offset 0 is
+    // handed over and the rest are copied. The provider runs on ArrayFire's
+    // queue, so ArrayFire work on the array stays ordered, and array_ (which
+    // holds the parent) keeps it alive.
+    // An array moved in (a fresh output): no other handle shares it, so the
+    // lock below does not copy it.
+    explicit LockedDeviceArray(af::array&& array) : LockedDeviceArray(std::move(array), false, 0) {}
+    explicit LockedDeviceArray(const af::array& array, bool read_only)
+        : LockedDeviceArray(af::array(array), read_only, 0) {}
+
+private:
+    LockedDeviceArray(af::array array, bool read_only, int) : array_(std::move(array)) {
         void* pointer = nullptr;
+        if (read_only) {
+            array_.eval();
+            bool linear = false;
+            dim_t offset = 0;
+            if (af_is_linear(&linear, array_.get()) == AF_SUCCESS && linear &&
+                af_get_offset(&offset, array_.get()) == AF_SUCCESS &&
+                (offset == 0 || af::getActiveBackend() == AF_BACKEND_CUDA) &&
+                af_get_raw_ptr(&pointer, array_.get()) == AF_SUCCESS && pointer) {
+                buffer_.handle = static_cast<char*>(pointer) + offset * static_cast<dim_t>(af::getSizeOf(array_.type()));
+                buffer_.elements = static_cast<size_t>(array_.elements());
+                return;
+            }
+        }
         if (af_get_device_ptr(&pointer, array_.get()) == AF_SUCCESS) {
             buffer_.handle = pointer;
             buffer_.elements = static_cast<size_t>(array_.elements());
+            locked_ = true;
         }
     }
+
+public:
     ~LockedDeviceArray() {
-        if (buffer_.handle) af_unlock_array(array_.get());
+        if (locked_) af_unlock_array(array_.get());
     }
     LockedDeviceArray(const LockedDeviceArray&) = delete;
     LockedDeviceArray& operator=(const LockedDeviceArray&) = delete;
@@ -161,6 +196,7 @@ public:
 private:
     af::array array_;
     NeuralDeviceBuffer buffer_;
+    bool locked_ = false;
 };
 
 NeuralOpStatus Failed(const std::string& detail) {
@@ -222,6 +258,7 @@ NeuralOpStatus ExecuteNeuralOpOnDevice(INeuralNetworkProvider& provider, const N
     if (!request.device_resident) {
         return Failed("ExecuteNeuralOpOnDevice needs a request with device_resident=true");
     }
+    if (NeuralProvidersDisabledForTesting()) return Failed("neural providers are disabled for testing");
     try {
         NeuralDeviceOpBuffers buffers;
         std::string error;
@@ -239,7 +276,7 @@ NeuralOpStatus ExecuteNeuralOpOnDevice(INeuralNetworkProvider& provider, const N
             if (!input || input->GetDataType() != DataType::Float32) {
                 return Failed("device-resident inputs must be Float32 tensors");
             }
-            locked.push_back(std::make_unique<LockedDeviceArray>(input->GetSemanticArray()));
+            locked.push_back(std::make_unique<LockedDeviceArray>(input->GetSemanticArray(), true));
             if (!locked.back()->Buffer().handle) return Failed("input device buffer could not be locked");
             buffers.inputs.push_back(locked.back()->Buffer());
         }
@@ -247,8 +284,7 @@ NeuralOpStatus ExecuteNeuralOpOnDevice(INeuralNetworkProvider& provider, const N
         for (const auto& shape : output_shapes) {
             dim_t count = 1;
             for (size_t d : shape) count *= static_cast<dim_t>(d);
-            af::array storage(count, f32);
-            locked_outputs.push_back(std::make_unique<LockedDeviceArray>(storage));
+            locked_outputs.push_back(std::make_unique<LockedDeviceArray>(af::array(count, f32)));
             if (!locked_outputs.back()->Buffer().handle) return Failed("output device buffer could not be locked");
             buffers.outputs.push_back(locked_outputs.back()->Buffer());
         }

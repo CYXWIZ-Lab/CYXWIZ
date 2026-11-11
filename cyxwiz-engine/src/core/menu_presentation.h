@@ -38,6 +38,30 @@ struct NamedEntry {
     std::string group;  // plugin panels: category
 };
 
+// A menu command a plugin adds (ICommandProvider, plugin API 1.4).
+struct PluginCommandEntry {
+    std::string key;    // "<plugin id>:<command id>", the argument of "plugin.command"
+    std::string menu;   // the top menu by title; an unknown title goes to Apps
+    std::string group;  // a separator between groups
+    std::string label;
+    std::string hint;
+    bool enabled = true;
+    std::string disabled_reason;
+    bool checkable = false;
+    bool checked = false;
+    std::string plugin_name;            // the Simulation menu heads a plugin's commands with it
+    bool replaced_by_graph_run = false;  // hidden while the open graph is a simulation graph
+};
+
+// A command of the open graph's simulation run (core/simulation_commands.h).
+struct SimulationCommandEntry {
+    std::string action_id;  // "simulation.run"
+    std::string label;
+    std::string hint;
+    bool enabled = false;
+    std::string disabled_reason;
+};
+
 // A loaded plugin, for the Apps menu (TOFIX125 step 2.10).
 struct LoadedPluginEntry {
     std::string id;
@@ -56,9 +80,6 @@ struct MenuInputs {
     bool script_open = false;
     bool script_running = false;
     bool onnx_export_available = false;
-    bool mujoco_loaded = false;
-    bool mujoco_viewport_visible = false;
-    bool mujoco_env_visible = false;
     bool auto_save = false;
     bool studio_minimap = false;
     bool script_minimap = false;
@@ -77,8 +98,15 @@ struct MenuInputs {
     std::vector<NamedEntry> icon_packs;
     std::vector<NamedEntry> tutorials;      // checked = completed
     std::vector<NamedEntry> plugin_panels;  // checked = visible, group = category
+    std::vector<PluginCommandEntry> plugin_commands;
+    // The open graph has simulation nodes: the Simulation menu runs it
+    // (TOFIX195 S2.4).
+    bool simulation_graph = false;
+    std::string simulation_graph_name;
+    std::vector<SimulationCommandEntry> simulation_commands;
+    bool simulation_monitor_visible = false;
     std::vector<LoadedPluginEntry> loaded_plugins;
-    // Python node bundles (TOFIX125 P4 step 4.5): detail "2 nodes Â· not approved".
+    // Python node bundles (TOFIX125 P4 step 4.5): detail "2 nodes · not approved".
     std::vector<LoadedPluginEntry> python_bundles;
 };
 

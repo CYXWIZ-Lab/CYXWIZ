@@ -119,6 +119,14 @@ public:
     BackendPackInstallResult StageRepair(
         const VerifiedBackendPackPayload& payload,
         std::uint64_t disk_budget_bytes);
+    // Plugin packs (payload.plugin_id set) need no route qualification: a
+    // complete, verified folder is activated in active-plugins.json.
+    BackendPackInstallResult InstallOrUpdatePlugin(
+        const VerifiedBackendPackPayload& payload,
+        std::uint64_t disk_budget_bytes);
+    BackendPackInstallResult RepairPlugin(
+        const VerifiedBackendPackPayload& payload,
+        std::uint64_t disk_budget_bytes);
     void Cancel();
     BackendPackInstallProgress GetProgress() const;
 
@@ -130,14 +138,17 @@ private:
         RepairOptionalPack,
         InstallFreshBase,
         UpdateBase,
-        RepairBase
+        RepairBase,
+        InstallPluginPack,
+        RepairPluginPack
     };
 
     enum class InstallTarget {
         OptionalPack,
         FreshBase,
         BaseUpdate,
-        BaseRepair
+        BaseRepair,
+        PluginPack
     };
 
     enum class PayloadStagingMode {

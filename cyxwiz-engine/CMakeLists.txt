@@ -95,11 +95,15 @@ set(CYXWIZ_PLUGIN_SDK_HEADERS
     plugin/plugin_types.h
     plugin/plugin_context.h
     plugin/plugin_fingerprint.h
+    plugin/plugin_ui.h
     plugin/interfaces/arrow_c_stream.h
     plugin/interfaces/i_analytics_provider.h
+    plugin/interfaces/i_command_provider.h
     plugin/interfaces/i_assistant_provider.h
     plugin/interfaces/i_data_provider.h
     plugin/interfaces/i_node_provider.h
+    plugin/interfaces/i_simulation_provider.h
+    plugin/interfaces/i_environment_provider.h
     plugin/interfaces/i_panel_provider.h
     plugin/interfaces/i_tensor_node_provider.h
     plugin/interfaces/i_training_hook.h
@@ -125,6 +129,10 @@ include(${CMAKE_SOURCE_DIR}/cmake/CyxWizPluginSDK.cmake)
 # and its tests, never by a plugin.
 add_library(cyxwiz-plugin-host STATIC
     src/plugin/registries/plugin_panel_registry.cpp
+    src/plugin/registries/plugin_command_registry.cpp
+    src/plugin/registries/plugin_simulation_registry.cpp
+    src/plugin/registries/plugin_environment_registry.cpp
+    src/plugin/builtin/classic_control_environments.cpp
     src/plugin/registries/plugin_data_loader_registry.cpp
     src/plugin/registries/plugin_analytics_registry.cpp
     src/plugin/security/permission_store.cpp
@@ -290,8 +298,14 @@ set(ENGINE_SOURCES
     src/core/large_text_file.cpp
     src/core/dataset_audit.cpp
     src/core/graph_executor.cpp
-    src/core/rl_training_executor.cpp
-    src/core/rl_script_generator.cpp
+    src/core/graph_simulation_session.cpp
+    src/core/simulation_commands.cpp
+    src/core/rl/rl_training_run.cpp
+    src/core/rl/trained_policy.cpp
+    src/core/rl/policy_playback.cpp
+    src/core/rl_playback_presentation.cpp
+    src/core/rl_device_presentation.cpp
+    src/gui/panels/policy_playback_panel.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
     src/core/synthetic_batch.cpp
@@ -413,7 +427,6 @@ set(ENGINE_SOURCES
     src/core/formats/text_dataset.cpp
     src/core/formats/timeseries_dataset.cpp
     src/core/formats/audio_dataset.cpp
-    src/core/gym_connector.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/engine_graph_training_dispatch.cpp
     src/gui/main_window.cpp
@@ -422,6 +435,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor.cpp
     src/gui/node_editor_plot.cpp
     src/gui/node_editor_toolbar.cpp
+    src/gui/simulation_scope_plot.cpp
     src/gui/plot/plot_node_lane.cpp
     src/core/pipeline_type_names.cpp
     src/gui/node_editor_clipboard.cpp
@@ -580,6 +594,7 @@ set(ENGINE_SOURCES
     src/gui/ui_buttons.cpp
     src/gui/ui_tokens.cpp
     src/gui/ui_widgets.cpp
+    src/gui/plugin_ui_kit.cpp
     src/gui/frame_metrics.cpp
     src/gui/panel_memory.cpp
     src/gui/separate_windows.cpp
@@ -743,6 +758,7 @@ set(ENGINE_SOURCES
     src/gui/panels/cloud_browser.cpp
     src/gui/panels/node_browser_panel.cpp  # Node Browser: KNIME-style node palette
     src/gui/panels/node_info_panel.cpp     # Node Info: Context-sensitive documentation
+    src/gui/panels/simulation_monitor_panel.cpp  # Simulation Monitor: the graph run and its Scopes
     src/gui/panels/cloud_dataset_manager.cpp
     src/gui/panels/p2p_training_panel.cpp
     src/gui/panels/p2p_training_panel_recovery.cpp
@@ -2941,6 +2957,58 @@ if(WIN32)
 endif()
 
 set_target_properties(test_graph_executor_simulation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Graph simulation session (Scope history, run / pause / step / stop) =====
+add_executable(test_graph_simulation_session
+    tests/test_graph_simulation_session.cpp
+    src/core/graph_executor.cpp
+    src/core/graph_simulation_session.cpp
+)
+
+target_include_directories(test_graph_simulation_session PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_graph_simulation_session PRIVATE
+    imgui::imgui
+    spdlog::spdlog
+)
+
+if(WIN32)
+    target_compile_definitions(test_graph_simulation_session PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_graph_simulation_session PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: Graph run commands (toolbar, Simulation menu, Simulation Monitor) =====
+add_executable(test_simulation_commands
+    tests/test_simulation_commands.cpp
+    src/core/simulation_commands.cpp
+)
+
+target_include_directories(test_simulation_commands PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_simulation_commands PRIVATE
+    imgui::imgui
+)
+
+if(WIN32)
+    target_compile_definitions(test_simulation_commands PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_simulation_commands PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
@@ -7469,6 +7537,121 @@ add_custom_target(copy_test_regularization_node_training_fixture
 add_dependencies(test_regularization_node_training copy_test_regularization_node_training_fixture)
 add_test(NAME regularization_node_pytorch_parity COMMAND test_regularization_node_training)
 
+# ===== Test: PPO math (cyxwiz/rl/ppo.h) vs PyTorch / Stable-Baselines3 (TOFIX195 S4.1) =====
+set(CYXWIZ_PPO_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/ppo_pytorch.json")
+add_executable(test_computation_truth_ppo tests/test_computation_truth_ppo.cpp)
+target_link_libraries(test_computation_truth_ppo PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_include_directories(test_computation_truth_ppo PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_compile_definitions(test_computation_truth_ppo PRIVATE CYXWIZ_PPO_FIXTURE="${CYXWIZ_PPO_PYTORCH_FIXTURE}" NOMINMAX)
+add_custom_target(copy_test_computation_truth_ppo_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_ppo>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_PPO_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_ppo>/computation_truth_fixtures/ppo_pytorch.json"
+    SOURCES "${CYXWIZ_PPO_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_ppo copy_test_computation_truth_ppo_fixture)
+add_test(NAME ppo_pytorch_parity COMMAND test_computation_truth_ppo)
+
+# ===== Test: observation/reward normalisation vs Stable-Baselines3's VecNormalize (TOFIX195 S4.3a) =====
+add_executable(test_computation_truth_vec_normalize
+    tests/test_computation_truth_vec_normalize.cpp
+    src/core/rl/vec_normalize.cpp
+)
+target_link_libraries(test_computation_truth_vec_normalize PRIVATE nlohmann_json::nlohmann_json)
+target_compile_definitions(test_computation_truth_vec_normalize PRIVATE
+    CYXWIZ_VEC_NORMALIZE_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/vec_normalize_sb3.json")
+add_test(NAME vec_normalize_sb3_parity COMMAND test_computation_truth_vec_normalize)
+
+# ===== Test: the PPO trainer learns CartPole (and InvertedPendulum with the MuJoCo plugin) (TOFIX195 S4.2) =====
+add_executable(test_ppo_trainer
+    tests/test_ppo_trainer.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(test_ppo_trainer PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+target_include_directories(test_ppo_trainer PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+if(WIN32)
+    target_compile_definitions(test_ppo_trainer PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME ppo_trainer_cartpole COMMAND test_ppo_trainer)
+
+# ===== Test: RL graphs compile (Environment, layers, heads, PPO) and say what is wrong (TOFIX195 S4.3) =====
+add_executable(test_rl_graph_compile tests/test_rl_graph_compile.cpp)
+target_link_libraries(test_rl_graph_compile PRIVATE cyxwiz-training-core)
+target_compile_definitions(test_rl_graph_compile PRIVATE
+    CYXWIZ_PPO_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/ppo_sb3_curves.json")
+if(MSVC)
+    target_link_options(test_rl_graph_compile PRIVATE /STACK:4194304)
+endif()
+add_test(NAME rl_graph_compile COMMAND test_rl_graph_compile)
+
+# ===== Test: Train on an RL graph: the PPO pattern learns CartPole through RLTrainingRun (TOFIX195 S4.3) =====
+add_executable(test_rl_graph_training
+    tests/test_rl_graph_training.cpp
+    src/core/rl/rl_training_run.cpp
+    src/core/rl/trained_policy.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(test_rl_graph_training PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+target_include_directories(test_rl_graph_training PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+if(WIN32)
+    target_compile_definitions(test_rl_graph_training PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+if(MSVC)
+    target_link_options(test_rl_graph_training PRIVATE /STACK:4194304)
+endif()
+add_test(NAME rl_graph_training_cartpole COMMAND test_rl_graph_training)
+
+# ===== Tool: the RL stability gate's runs, one task and seed per process (TOFIX195) =====
+# Not a ctest: HalfCheetah trains for a million steps.
+add_executable(cyxwiz-rl-stability-gate
+    tests/tool_rl_stability_gate.cpp
+    src/core/rl/rl_training_run.cpp
+    src/core/rl/trained_policy.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/engine_plugin_context.cpp
+    src/plugin/plugin_loader.cpp
+)
+target_link_libraries(cyxwiz-rl-stability-gate PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+target_include_directories(cyxwiz-rl-stability-gate PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+if(WIN32)
+    target_compile_definitions(cyxwiz-rl-stability-gate PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+if(MSVC)
+    target_link_options(cyxwiz-rl-stability-gate PRIVATE /STACK:4194304)
+endif()
+
+# ===== Test: what the RL surfaces say about a PPO run's device (TOFIX206) =====
+add_executable(test_rl_device_presentation
+    tests/test_rl_device_presentation.cpp
+    src/core/rl_device_presentation.cpp
+)
+if(WIN32)
+    target_compile_definitions(test_rl_device_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME rl_device_presentation COMMAND test_rl_device_presentation)
+
+# ===== Test: the Policy Playback panel's words (TOFIX195 S5.3) =====
+add_executable(test_rl_playback_presentation
+    tests/test_rl_playback_presentation.cpp
+    src/core/rl_playback_presentation.cpp
+)
+if(WIN32)
+    target_compile_definitions(test_rl_playback_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME rl_playback_presentation COMMAND test_rl_playback_presentation)
+
 # ===== Test: metric learning (pairs, triplets) vs PyTorch (TOFIX140 A5) =====
 set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/metric_graph_pytorch.json")
@@ -7530,6 +7713,80 @@ target_link_libraries(benchmark_conv2d_provider PRIVATE
 set_target_properties(benchmark_conv2d_provider PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: the whole small-MLP kernels against the model's layers (TOFIX206 3.2) =====
+add_executable(test_fused_mlp
+    tests/test_fused_mlp.cpp
+)
+target_include_directories(test_fused_mlp PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_fused_mlp PRIVATE
+    cyxwiz-backend
+)
+set_target_properties(test_fused_mlp PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(WIN32)
+    target_compile_definitions(test_fused_mlp PRIVATE NOMINMAX)
+endif()
+add_test(NAME fused_mlp_parity COMMAND test_fused_mlp)
+
+# ===== Test: one Adam step for several optimizers against the existing path (TOFIX206 3.2 C) =====
+add_executable(test_fused_adam
+    tests/test_fused_adam.cpp
+)
+target_include_directories(test_fused_adam PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_fused_adam PRIVATE
+    cyxwiz-backend
+)
+set_target_properties(test_fused_adam PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(WIN32)
+    target_compile_definitions(test_fused_adam PRIVATE NOMINMAX)
+endif()
+add_test(NAME fused_adam_parity COMMAND test_fused_adam)
+
+# ===== Test: PPO's provider kernels against the ArrayFire path (TOFIX206 3.2 B) =====
+add_executable(test_fused_ppo
+    tests/test_fused_ppo.cpp
+)
+target_include_directories(test_fused_ppo PRIVATE
+    ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
+)
+target_link_libraries(test_fused_ppo PRIVATE
+    cyxwiz-backend
+)
+set_target_properties(test_fused_ppo PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(WIN32)
+    target_compile_definitions(test_fused_ppo PRIVATE NOMINMAX)
+endif()
+add_test(NAME fused_ppo_parity COMMAND test_fused_ppo)
+
+# ===== Test: one training run per GPU on this machine (TOFIX206 3.2 E) =====
+add_executable(test_gpu_run_lease
+    tests/test_gpu_run_lease.cpp
+)
+target_link_libraries(test_gpu_run_lease PRIVATE cyxwiz-training-core)
+if(WIN32)
+    target_compile_definitions(test_gpu_run_lease PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME gpu_run_lease COMMAND test_gpu_run_lease)
+
+# ===== Tool: a CUDA call counter loaded into any process (TOFIX206 3.2) =====
+# CUDA_INJECTION64_PATH=<this dll> counts kernel launches, waits and copies
+# (CUPTI callbacks, no administrator rights); a development tool.
+find_package(CUDAToolkit QUIET)
+if(WIN32 AND CUDAToolkit_FOUND AND TARGET CUDA::cupti)
+    add_library(cyxwiz-cuda-call-counter SHARED tests/tools/cuda_call_counter.cpp)
+    target_link_libraries(cyxwiz-cuda-call-counter PRIVATE CUDA::cupti)
+    set_target_properties(cyxwiz-cuda-call-counter PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()
 
 # ===== Benchmark: word2vec and GloVe on a real corpus (TOFIX152), not a ctest =====
 add_executable(benchmark_word_vectors
@@ -8235,6 +8492,32 @@ add_executable(test_plugin_tensor_nodes
 target_link_libraries(test_plugin_tensor_nodes PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
 target_compile_definitions(test_plugin_tensor_nodes PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 add_dependencies(test_plugin_tensor_nodes activation_nodes)
+
+# ===== _cyxwiz_envs: plugin environments in a Python process (TOFIX195 S3.4) =====
+# The Engine's plugin host as a Python module, next to pycyxwiz; pycyxwiz.rl
+# builds gymnasium environments on it.
+if(CYXWIZ_HAS_PYTHON AND TARGET pycyxwiz)
+    pybind11_add_module(_cyxwiz_envs
+        src/plugin/environment_host_module.cpp
+        src/plugin/plugin_manager.cpp
+        src/plugin/engine_plugin_context.cpp
+        src/plugin/plugin_loader.cpp
+    )
+    target_link_libraries(_cyxwiz_envs PRIVATE cyxwiz-training-core cyxwiz-plugin-host imgui::imgui)
+    # Beside pycyxwiz and the backend DLLs it loads
+    set_target_properties(_cyxwiz_envs PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    if(WIN32)
+        target_compile_definitions(_cyxwiz_envs PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+    endif()
+    # The oracle checks need a Python with numpy and gymnasium (the Engine's
+    # python-embed, which also has mujoco and stable_baselines3).
+    set(CYXWIZ_RL_ORACLE_PYTHON "" CACHE FILEPATH "Python with gymnasium for the reinforcement learning oracle checks")
+    if(CYXWIZ_RL_ORACLE_PYTHON)
+        add_test(NAME classic_control_gymnasium
+                 COMMAND ${CYXWIZ_RL_ORACLE_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_classic_control_gymnasium.py
+                         $<TARGET_FILE_DIR:_cyxwiz_envs>)
+    endif()
+endif()
 
 # ===== Tool: load plugin folders and check their nodes (TOFIX125 P5 step 5.3) =====
 add_executable(cyxwiz-plugin-check

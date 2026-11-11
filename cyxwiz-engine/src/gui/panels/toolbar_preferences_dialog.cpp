@@ -3,6 +3,7 @@
 #include "toolbar.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
 #include "../../core/engine_config.h"
@@ -15,6 +16,7 @@
 #include "../../core/training_manager.h"
 #include "../../core/training_trace_collector.h"
 #include "../../core/window_manager.h"
+#include "../../core/rl_playback_presentation.h"
 #include "../ui_tokens.h"
 #include "../ui_widgets.h"
 
@@ -493,6 +495,95 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::EndTabItem();
                 }
 
+                // ========== Simulation Tab (graph runs) ==========
+                if (ImGui::BeginTabItem(ICON_FA_WAVE_SQUARE " Simulation")) {
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Defaults for graph runs (Run Sim). They apply to the next run.");
+                    ImGui::Spacing();
+                    // Engine-wide, applied and saved at once
+                    auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                    if (ImGui::BeginTable("##simulation_prefs", 2, ImGuiTableFlags_SizingStretchProp)) {
+                        ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+                        ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Tick rate");
+                        ImGui::TableNextColumn();
+                        int rate_hz = engine_config.SimulationRateHz();
+                        if (ui::NumberField("##simulation_rate", &rate_hz,
+                                            cyxwiz::core::EngineConfig::kMinSimulationRateHz,
+                                            cyxwiz::core::EngineConfig::kMaxSimulationRateHz, 10, 70.0f,
+                                            "Ticks a second of a graph run")) {
+                            engine_config.SetSimulationRateHz(rate_hz);
+                            engine_config.Save();
+                        }
+                        ImGui::PushTextWrapPos(0.0f);  // under the field, wrapped: no clipping when narrow
+                        ImGui::TextDisabled("ticks a second (1 to 1000; 60 by default)");
+                        ImGui::PopTextWrapPos();
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Simulation Monitor");
+                        ImGui::TableNextColumn();
+                        bool open_monitor = engine_config.OpenSimulationMonitorOnRun();
+                        if (ImGui::Checkbox("Open it when a run starts (on by default)", &open_monitor)) {
+                            engine_config.SetOpenSimulationMonitorOnRun(open_monitor);
+                            engine_config.Save();
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::Spacing();
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("If you close the Monitor during a run it stays closed until the next Run. "
+                                        "A Scope's window size and scale are set on the Scope node, in Properties.");
+                    ImGui::PopTextWrapPos();
+
+                    // Playing a trained RL policy (TOFIX195 S5): the Policy Playback panel starts from these
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::TextUnformatted("Policy playback");
+                    ImGui::TextDisabled("How the Policy Playback panel starts. Changing it in the panel does not change these.");
+                    ImGui::Spacing();
+                    if (ImGui::BeginTable("##policy_playback_prefs", 2, ImGuiTableFlags_SizingStretchProp)) {
+                        ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+                        ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+                        const auto& kActions = cyxwiz::rl_playback::kActionChoices;
+                        const auto& kSpeeds = cyxwiz::rl_playback::kSpeedChoices;
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Actions");
+                        ImGui::TableNextColumn();
+                        int actions = engine_config.PolicyPlaybackBestActions() ? 0 : 1;
+                        if (ui::SegmentedControl("##pref_playback_actions", kActions, 2, &actions)) {
+                            engine_config.SetPolicyPlaybackBestActions(actions == 0);
+                            engine_config.Save();
+                        }
+                        // Under the choice, wrapped: it does not clip in a narrow dialog
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("%s", cyxwiz::rl_playback::kActionChoicesHint);
+                        ImGui::PopTextWrapPos();
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Speed");
+                        ImGui::TableNextColumn();
+                        int speed = engine_config.PolicyPlaybackSpeed();
+                        if (ui::SegmentedControl("##pref_playback_speed", kSpeeds, 3, &speed)) {
+                            engine_config.SetPolicyPlaybackSpeed(speed);
+                            engine_config.Save();
+                        }
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("After training");
+                        ImGui::TableNextColumn();
+                        bool play_after = engine_config.PlayPolicyAfterTraining();
+                        if (ImGui::Checkbox("Play the policy when a PPO run finishes (off by default)", &play_after)) {
+                            engine_config.SetPlayPolicyAfterTraining(play_after);
+                            engine_config.Save();
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndTabItem();
+                }
+
                 // ========== Keyboard Shortcuts Tab ==========
                 const ImGuiTabItemFlags shortcuts_flags =
                     preferences_select_tab_ == "Shortcuts" ? ImGuiTabItemFlags_SetSelected
@@ -511,8 +602,10 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     bool backend_manager_verify_requested = false;
 
+                    // Supervised training, or a PPO run: both hold the run's device
                     const bool training_active =
-                        cyxwiz::TrainingManager::Instance().IsTrainingActive();
+                        cyxwiz::TrainingManager::Instance().IsTrainingActive() ||
+                        cyxwiz::HasActiveExecutionDeviceContext();
                     const auto active_run_trace =
                         cyxwiz::TrainingTraceCollector::LatestTrace();
                     const bool has_run_bound_device =
@@ -743,7 +836,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     if (training_active) {
                         ImGui::TextColored(
                             t.warning,
-                            "%s Training is active; device changes are disabled until the run finishes.",
+                            "%s The device is in use (a training run or a playing policy); device changes are disabled until it ends.",
                             ICON_FA_TRIANGLE_EXCLAMATION);
                     } else {
                         ImGui::TextDisabled(

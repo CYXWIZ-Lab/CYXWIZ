@@ -1330,6 +1330,7 @@ public:
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
     std::string GetName() const override;
+    float NegativeSlope() const { return negative_slope_; }
 
 private:
     std::unique_ptr<LeakyReLUActivation> activation_;
@@ -1347,6 +1348,7 @@ public:
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
     std::string GetName() const override;
+    float Alpha() const { return alpha_; }
 
 private:
     std::unique_ptr<ELUActivation> activation_;

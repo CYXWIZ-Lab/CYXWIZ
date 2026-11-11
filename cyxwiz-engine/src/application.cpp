@@ -31,6 +31,7 @@
 #include "core/dataset_catalog.h"
 #include "core/project_manager.h"
 #include "core/training_manager.h"
+#include "plugin/engine_plugin_context.h"
 #include "core/engine_config.h"
 #include "core/python_detector.h"
 #include "core/texture_manager.h"
@@ -669,10 +670,12 @@ void CyxWizApp::HandleInput() {
 
     bool has_activity = mouse_moved || mouse_clicked || mouse_scrolled || key_pressed;
 
-    // Check if training is active (need full frame rate)
-    bool training_active = cyxwiz::TrainingManager::Instance().IsTrainingActive();
+    // Training, and a plugin with something moving (a running simulation),
+    // need the full frame rate without input.
+    const bool keep_full_rate = cyxwiz::TrainingManager::Instance().IsTrainingActive() ||
+                                cyxwiz::plugin::EnginePluginContext::FullFrameRateRequested();
 
-    if (has_activity || training_active) {
+    if (has_activity || keep_full_rate) {
         last_activity_time_ = current_time;
         is_idle_ = false;
     } else if (current_time - last_activity_time_ > IDLE_TIMEOUT) {
@@ -685,7 +688,7 @@ void CyxWizApp::HandleInput() {
     // One decision for the frame (core/frame_pace.h). Every change is noted
     // for Monitor > Frames and, when the switch is on, logged: idle, not in
     // front and minimised alike.
-    const cyxwiz::FramePace pace = cyxwiz::PaceOf(minimised, is_idle_, training_active, focused);
+    const cyxwiz::FramePace pace = cyxwiz::PaceOf(minimised, is_idle_, keep_full_rate, focused);
     if (pace != cyxwiz::CurrentFramePace()) {
         cyxwiz::CurrentFramePaceSlot().store(pace, std::memory_order_relaxed);
         if (log_idle_transitions_) spdlog::info("Frame rate: {}", cyxwiz::PaceText(pace));
@@ -818,7 +821,7 @@ void CyxWizApp::Render() {
                 spdlog::debug("Project selected from start page");
                 startup_project_path_ = start_page_->GetSelectedProjectPath();
                 startup_project_from_command_line_ = false;
-                startup_graph_path_.clear();
+                if (!startup_graph_from_command_line_) startup_graph_path_.clear();  // as below
                 project_selected_ = true;
                 start_page_.reset();
 
@@ -833,7 +836,8 @@ void CyxWizApp::Render() {
             } else if (result == cyxwiz::StartPage::Result::ContinueWithout) {
                 spdlog::info("User chose to continue without project");
                 startup_project_path_ = "";  // No project
-                startup_graph_path_.clear();
+                // A graph named on the command line still opens (cyxwiz-engine graph.cyxgraph)
+                if (!startup_graph_from_command_line_) startup_graph_path_.clear();
                 project_selected_ = true;    // But allow main window to open
                 start_page_.reset();
 

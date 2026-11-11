@@ -110,8 +110,8 @@ Two times, kept apart:
 The table lists the windows drawn in this frame with their time, as measured,
 and their running average. **Frame rate now** says which pace the Engine is
 in: full speed, 30 frames a second (another window is in front), 10 frames a
-second (idle: no input for a second) or not drawing (minimised). Training
-keeps a focused Engine at full speed.
+second (idle: no input for a second) or not drawing (minimised). Training,
+and a running simulation, keep a focused Engine at full speed.
 
 Frames are recorded only while this tab is open or the overlay is on, and
 the history starts again each time.

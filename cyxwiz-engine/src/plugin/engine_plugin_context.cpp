@@ -6,6 +6,7 @@
 #include "registries/plugin_training_hook_manager.h"
 #include "registries/plugin_analytics_registry.h"
 #include <spdlog/spdlog.h>
+#include <chrono>
 
 namespace cyxwiz::plugin {
 
@@ -96,6 +97,22 @@ bool EnginePluginContext::RegisterPanelProvider(IPanelProvider* provider) {
     if (!CheckPermission(PluginPermission::UIModify, "RegisterPanelProvider")) return false;
     PluginPanelRegistry::Instance().Register(plugin_id_, provider);
     return true;
+}
+
+bool EnginePluginContext::ShowPanel(const std::string& panel_id) {
+    return PluginPanelRegistry::Instance().ShowPanel(plugin_id_, panel_id);
+}
+
+void EnginePluginContext::RequestFullFrameRate() { KeepFullFrameRate(); }
+
+void EnginePluginContext::KeepFullFrameRate() {
+    full_rate_requested_at_.store(std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
+bool EnginePluginContext::FullFrameRateRequested() {
+    const auto at = std::chrono::steady_clock::time_point(
+        std::chrono::steady_clock::duration(full_rate_requested_at_.load()));
+    return std::chrono::steady_clock::now() - at < std::chrono::seconds(1);
 }
 
 bool EnginePluginContext::CheckDataInterfaces(const char* interface_name) const {

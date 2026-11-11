@@ -2,7 +2,8 @@
 
 // How fast the Engine draws its frames right now. It slows down when nothing
 // needs drawing: after a second without input, when another program is in
-// front, and when its window is minimised. Training keeps it at full speed.
+// front, and when its window is minimised. Training, and a plugin with
+// something moving (a running simulation), keep it at full speed.
 //
 // The application decides the pace each frame; Tools > Diagnostics > Log
 // Frame-rate Changes writes one line per change, and Monitor > Frames shows
@@ -15,11 +16,11 @@ namespace cyxwiz {
 enum class FramePace { Full, NotInFront, Idle, Minimised };
 
 // The pace for a frame. A minimised window draws nothing whatever else is
-// true; an idle Engine waits longest of the visible states; training keeps a
-// visible, focused Engine at full speed.
-constexpr FramePace PaceOf(bool minimised, bool idle, bool training, bool focused) {
+// true; an idle Engine waits longest of the visible states; training (or a
+// running simulation) keeps a visible, focused Engine at full speed.
+constexpr FramePace PaceOf(bool minimised, bool idle, bool keep_full_rate, bool focused) {
     if (minimised) return FramePace::Minimised;
-    if (idle && !training) return FramePace::Idle;
+    if (idle && !keep_full_rate) return FramePace::Idle;
     if (!focused) return FramePace::NotInFront;
     return FramePace::Full;
 }

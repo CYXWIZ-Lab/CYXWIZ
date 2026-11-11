@@ -158,6 +158,9 @@ public:
         std::string& artifact_json
     );
 
+    // rl/policy.json of a trained RL policy; false when the package has none
+    bool ExtractRLPolicy(const std::string& input_path, std::string& policy_json);
+
     /**
      * Get last error message
      */
@@ -176,10 +179,7 @@ public:
     static nlohmann::json WeightsManifestToJson(const WeightsManifest& manifest);
     static WeightsManifest JsonToWeightsManifest(const nlohmann::json& j);
 
-private:
-    std::string last_error_;
-
-    // Binary tensor serialization
+    // Binary tensor serialization (the weights' header: shape and dtype)
     std::vector<uint8_t> SerializeTensorWithHeader(
         const std::vector<uint8_t>& data,
         const std::vector<int64_t>& shape,
@@ -192,6 +192,9 @@ private:
         std::vector<int64_t>& shape,
         TensorDType& dtype
     );
+
+private:
+    std::string last_error_;
 
     bool CreateArchive(const std::string& output_path,
                        const std::map<std::string, std::vector<uint8_t>>& files,

@@ -195,6 +195,7 @@ set(BACKEND_SOURCES
     src/algorithms/gradient_check.cpp
     src/algorithms/sequential/activation_modules.cpp
     src/algorithms/sequential/feedforward_modules.cpp
+    src/algorithms/sequential/fused_mlp.cpp
     src/algorithms/sequential/spatial_modules.cpp
     src/algorithms/sequential/recurrent_modules.cpp
     src/algorithms/sequential/regularization_shape_modules.cpp
@@ -277,6 +278,7 @@ set(BACKEND_SOURCES
     src/algorithms/audio_processing.cpp
     src/algorithms/utilities.cpp
     src/algorithms/rl_interface.cpp
+    src/algorithms/rl/ppo.cpp
     src/algorithms/dataloader.cpp
     src/algorithms/data/synthetic_dataset.cpp
     src/algorithms/data/mnist_dataset.cpp
@@ -734,6 +736,17 @@ if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EmbedPythonSource.cmake
         COMMENT "Embedding pycyxwiz.nodes")
     target_sources(pycyxwiz PRIVATE ${_pycyxwiz_nodes_inc})
+    # pycyxwiz.rl likewise (TOFIX195 S3.4)
+    set(_pycyxwiz_rl_inc ${CMAKE_CURRENT_BINARY_DIR}/generated/pycyxwiz_rl_source.inc)
+    add_custom_command(
+        OUTPUT ${_pycyxwiz_rl_inc}
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/python/pycyxwiz_rl.py
+                -DOUTPUT=${_pycyxwiz_rl_inc} -DNAME=kPycyxwizRlSource
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EmbedPythonSource.cmake
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/python/pycyxwiz_rl.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EmbedPythonSource.cmake
+        COMMENT "Embedding pycyxwiz.rl")
+    target_sources(pycyxwiz PRIVATE ${_pycyxwiz_rl_inc})
     target_include_directories(pycyxwiz PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
     # Python subclasses of pycyxwiz.Module (TOFIX125 P3), pycyxwiz.text

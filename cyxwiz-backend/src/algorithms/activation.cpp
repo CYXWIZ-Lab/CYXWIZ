@@ -62,10 +62,15 @@ static af::array TensorToAf(const Tensor& t) {
 }
 
 // Helper: Create Tensor from ArrayFire array
-static Tensor AfToTensor(const af::array& arr) {
+// The result keeps the input's shape: ArrayFire drops trailing 1 dimensions,
+// so a [rows, 1] input would come back as [rows] and the next layer would
+// read it as one row.
+static Tensor AfToTensor(const af::array& arr, const Tensor& like) {
     af::array materialized = arr;
     materialized.eval();
-    return Tensor(materialized);
+    Tensor out(materialized);
+    if (out.Shape() != like.Shape() && out.NumElements() == like.NumElements()) return out.Reshape(like.Shape());
+    return out;
 }
 
 // One ArrayFire path (the CPU is ArrayFire's CPU backend): a device error is
@@ -128,7 +133,7 @@ Tensor ReLUActivation::Forward(const Tensor& input) {
         af::array x = TensorToAf(input);
         // ReLU: max(0, x)
         af::array output = af::max(x, 0.0f);
-        return AfToTensor(output);
+        return AfToTensor(output, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("ReLU::Forward", e);
     }
@@ -140,7 +145,7 @@ Tensor ReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         af::array x = TensorToAf(input);
         // Gradient: grad * (x > 0)
         af::array dx = grad_out * (x > 0).as(af::dtype::f32);
-        return AfToTensor(dx);
+        return AfToTensor(dx, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("ReLU::Backward", e);
     }
@@ -157,7 +162,7 @@ Tensor LeakyReLUActivation::Forward(const Tensor& input) {
         af::array positive = af::max(x, 0.0f);
         af::array negative = af::min(x, 0.0f) * alpha_;
         af::array output = positive + negative;
-        return AfToTensor(output);
+        return AfToTensor(output, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("LeakyReLU::Forward", e);
     }
@@ -170,7 +175,7 @@ Tensor LeakyReLUActivation::Backward(const Tensor& grad_output, const Tensor& in
         // Use array expression instead of af::select with two scalars
         af::array mask = (x > 0).as(af::dtype::f32);
         af::array dx = grad_out * (mask + (1.0f - mask) * alpha_);
-        return AfToTensor(dx);
+        return AfToTensor(dx, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("LeakyReLU::Backward", e);
     }
@@ -188,7 +193,7 @@ Tensor ELUActivation::Forward(const Tensor& input) {
         af::array negative = alpha_ * (af::exp(af::min(x, 0.0f)) - 1.0f);
         // Only apply negative part where x <= 0
         af::array output = af::select(x > 0, x, negative);
-        return AfToTensor(output);
+        return AfToTensor(output, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("ELU::Forward", e);
     }
@@ -200,7 +205,7 @@ Tensor ELUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
         af::array x = TensorToAf(input);
         // Gradient: grad * (1 if x > 0 else alpha * exp(x))
         af::array dx = grad_out * af::select(x > 0, 1.0f, alpha_ * af::exp(x));
-        return AfToTensor(dx);
+        return AfToTensor(dx, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("ELU::Backward", e);
     }
@@ -216,7 +221,7 @@ Tensor GELUActivation::Forward(const Tensor& input) {
         // GELU approximation: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
         af::array inner = SQRT_2_OVER_PI * (x + GELU_CONST * af::pow(x, 3));
         af::array output = 0.5f * x * (1.0f + af::tanh(inner));
-        return AfToTensor(output);
+        return AfToTensor(output, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("GELU::Forward", e);
     }
@@ -241,7 +246,7 @@ Tensor GELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         af::array dx = grad_out * (0.5f * (1.0f + tanh_inner) +
                                     0.5f * x * sech2_inner * d_inner);
 
-        return AfToTensor(dx);
+        return AfToTensor(dx, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("GELU::Backward", e);
     }
@@ -257,7 +262,7 @@ Tensor SwishActivation::Forward(const Tensor& input) {
         // Swish: x * sigmoid(x)
         af::array sigmoid_x = af::sigmoid(x);
         af::array output = x * sigmoid_x;
-        return AfToTensor(output);
+        return AfToTensor(output, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Swish::Forward", e);
     }
@@ -273,7 +278,7 @@ Tensor SwishActivation::Backward(const Tensor& grad_output, const Tensor& input)
         af::array sigmoid_x = af::sigmoid(x);
         af::array dx = grad_out * sigmoid_x * (1.0f + x * (1.0f - sigmoid_x));
 
-        return AfToTensor(dx);
+        return AfToTensor(dx, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Swish::Backward", e);
     }
@@ -288,7 +293,7 @@ Tensor SigmoidActivation::Forward(const Tensor& input) {
         af::array x = TensorToAf(input);
         // Sigmoid: 1 / (1 + exp(-x))
         af::array output = af::sigmoid(x);
-        return AfToTensor(output);
+        return AfToTensor(output, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Sigmoid::Forward", e);
     }
@@ -303,7 +308,7 @@ Tensor SigmoidActivation::Backward(const Tensor& grad_output, const Tensor& inpu
         af::array sigmoid_x = af::sigmoid(x);
         af::array dx = grad_out * sigmoid_x * (1.0f - sigmoid_x);
 
-        return AfToTensor(dx);
+        return AfToTensor(dx, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Sigmoid::Backward", e);
     }
@@ -317,7 +322,7 @@ Tensor TanhActivation::Forward(const Tensor& input) {
     try {
         af::array x = TensorToAf(input);
         af::array output = af::tanh(x);
-        return AfToTensor(output);
+        return AfToTensor(output, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Tanh::Forward", e);
     }
@@ -332,7 +337,7 @@ Tensor TanhActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         af::array tanh_x = af::tanh(x);
         af::array dx = grad_out * (1.0f - tanh_x * tanh_x);
 
-        return AfToTensor(dx);
+        return AfToTensor(dx, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Tanh::Backward", e);
     }
@@ -423,7 +428,7 @@ Tensor MishActivation::Forward(const Tensor& input) {
         af::array softplus_x =
             af::max(x, 0.0f) + af::log(1.0f + af::exp(-af::abs(x)));
         af::array output = x * af::tanh(softplus_x);
-        return AfToTensor(output);
+        return AfToTensor(output, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Mish::Forward", e);
     }
@@ -445,7 +450,7 @@ Tensor MishActivation::Backward(const Tensor& grad_output, const Tensor& input) 
 
         af::array dx = grad_out * (tanh_sp + x * sech2_sp * sigmoid_x);
 
-        return AfToTensor(dx);
+        return AfToTensor(dx, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Mish::Backward", e);
     }
@@ -468,7 +473,7 @@ Tensor HardswishActivation::Forward(const Tensor& input) {
         af::array mask_high = (x >= 3.0f).as(af::dtype::f32);
         af::array mask_mid = (1.0f - mask_low) * (1.0f - mask_high);
         af::array output = mask_high * x + mask_mid * (x * (x + 3.0f) / 6.0f);
-        return AfToTensor(output);
+        return AfToTensor(output, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Hardswish::Forward", e);
     }
@@ -489,7 +494,7 @@ Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& in
         af::array mask_high = (x >= 3.0f).as(af::dtype::f32);
         af::array mask_mid = (1.0f - mask_low) * (1.0f - mask_high);
         af::array dx = grad_out * (mask_high + mask_mid * ((2.0f * x + 3.0f) / 6.0f));
-        return AfToTensor(dx);
+        return AfToTensor(dx, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Hardswish::Backward", e);
     }
@@ -503,7 +508,7 @@ Tensor HardswishActivation::Backward(const Tensor& grad_output, const Tensor& in
 Tensor SquaredReLUActivation::Forward(const Tensor& input) {
     try {
         af::array r = af::max(TensorToAf(input), 0.0f);
-        return AfToTensor(r * r);
+        return AfToTensor(r * r, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("SquaredReLU::Forward", e);
     }
@@ -512,7 +517,7 @@ Tensor SquaredReLUActivation::Forward(const Tensor& input) {
 Tensor SquaredReLUActivation::Backward(const Tensor& grad_output, const Tensor& input) {
     try {
         af::array dx = TensorToAf(grad_output) * (2.0f * af::max(TensorToAf(input), 0.0f));
-        return AfToTensor(dx);
+        return AfToTensor(dx, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("SquaredReLU::Backward", e);
     }
@@ -530,7 +535,7 @@ constexpr float kInvSqrt2Pi = 0.39894228040143268f;  // 1 / sqrt(2*pi)
 Tensor GELUExactActivation::Forward(const Tensor& input) {
     try {
         af::array x = TensorToAf(input);
-        return AfToTensor(0.5f * x * (1.0f + af::erf(x * kInvSqrt2)));
+        return AfToTensor(0.5f * x * (1.0f + af::erf(x * kInvSqrt2)), input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("GELUExact::Forward", e);
     }
@@ -542,7 +547,7 @@ Tensor GELUExactActivation::Backward(const Tensor& grad_output, const Tensor& in
         af::array x = TensorToAf(input);
         af::array cdf = 0.5f * (1.0f + af::erf(x * kInvSqrt2));
         af::array pdf = kInvSqrt2Pi * af::exp(-0.5f * x * x);
-        return AfToTensor(TensorToAf(grad_output) * (cdf + x * pdf));
+        return AfToTensor(TensorToAf(grad_output) * (cdf + x * pdf), input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("GELUExact::Backward", e);
     }
@@ -559,7 +564,7 @@ Tensor SELUActivation::Forward(const Tensor& input) {
         af::array positive = af::max(x, 0.0f);
         af::array negative = af::min(x, 0.0f);
         af::array output = SCALE * (positive + ALPHA * (af::exp(negative) - 1.0f));
-        return AfToTensor(output);
+        return AfToTensor(output, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("SELU::Forward", e);
     }
@@ -574,7 +579,7 @@ Tensor SELUActivation::Backward(const Tensor& grad_output, const Tensor& input) 
         af::array negative_mask = (x <= 0).as(af::dtype::f32);
         af::array grad_input = grad * SCALE *
             (positive_mask + ALPHA * af::exp(af::min(x, 0.0f)) * negative_mask);
-        return AfToTensor(grad_input);
+        return AfToTensor(grad_input, input);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("SELU::Backward", e);
     }

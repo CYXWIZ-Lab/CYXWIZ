@@ -1,5 +1,7 @@
 #include "menu_presentation.h"
 
+#include <algorithm>
+#include <iterator>
 #include <utility>
 
 namespace cyxwiz::menu {
@@ -68,6 +70,44 @@ MenuItem Head(const std::string& label) {
     item.kind = Kind::Header;
     item.label = label;
     return item;
+}
+
+// The Engine's top menus a plugin command can name
+bool IsMenuTitle(const std::string& title) {
+    static const char* const kTitles[] = {"File", "Edit", "View", "Nodes", "Train", "Data", "Tools",
+                                          "Script", "Deploy", "Simulation", "Help"};
+    return std::find(std::begin(kTitles), std::end(kTitles), title) != std::end(kTitles);
+}
+
+// The plugin commands of one menu, a separator between groups: each group
+// once, in the order its first command registered (a plugin registered
+// again does not split its group), its commands in registration order
+void AppendPluginCommands(Context focus, const std::vector<PluginCommandEntry>& commands, const std::string& menu,
+                          std::vector<MenuItem>& items) {
+    // A group is one plugin's (its id, the key's prefix): two plugins' "run" stay apart
+    const auto group_of = [](const PluginCommandEntry& c) { return c.key.substr(0, c.key.find(':')) + '\n' + c.group; };
+    std::vector<std::string> groups;
+    for (const auto& c : commands)
+        if (c.menu == menu && std::find(groups.begin(), groups.end(), group_of(c)) == groups.end())
+            groups.push_back(group_of(c));
+    std::vector<const PluginCommandEntry*> ordered;
+    for (const auto& g : groups)
+        for (const auto& c : commands)
+            if (c.menu == menu && group_of(c) == g) ordered.push_back(&c);
+    bool first = true;
+    std::string group;
+    for (const auto* entry : ordered) {
+        const auto& c = *entry;
+        if (!first && group_of(c) != group) items.push_back(Sep());
+        first = false;
+        group = group_of(c);
+        Opts opts;
+        opts.argument = c.key;
+        opts.checkable = c.checkable;
+        opts.checked = c.checked;
+        if (!c.enabled) opts.why = c.disabled_reason.empty() ? "Not available now." : c.disabled_reason;
+        items.push_back(Action(focus, "plugin.command", c.label, c.hint, opts));
+    }
 }
 
 MenuItem Sub(const std::string& id, const std::string& label, const std::string& hint,
@@ -756,20 +796,57 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
 
     // ---------------------------------------------------------- Simulation
     {
+        // The open graph's run when it has simulation nodes; then each
+        // simulation plugin's commands under its name (its own run controls
+        // give way to the graph run); then the windows.
         Menu m{"simulation", "Simulation", {}};
         auto& i = m.items;
-        const std::string need_mujoco = in.mujoco_loaded ? "" : "The MuJoCo plugin is not loaded.";
-        i.push_back(Planned(f, "sim.run", "Run Simulation", "Runs the simulation."));
-        i.push_back(Planned(f, "sim.pause", "Pause", "Pauses the simulation."));
-        i.push_back(Planned(f, "sim.stop", "Stop", "Stops the simulation."));
-        i.push_back(Planned(f, "sim.step", "Step Once", "Advances one step."));
-        i.push_back(Sep());
-        i.push_back(Toggle(f, "sim.viewport", "Open Viewport", "Shows the MuJoCo viewport.",
-                           in.mujoco_viewport_visible, need_mujoco));
-        i.push_back(Toggle(f, "sim.env_library", "Environment Library", "Shows the environment list.",
-                           in.mujoco_env_visible, need_mujoco));
-        i.push_back(Sep());
-        i.push_back(Planned(f, "sim.load_mjcf", "Load MJCF Model...", "Loads a MuJoCo model file."));
+        if (in.simulation_graph) {
+            i.push_back(Head("Graph run: " + in.simulation_graph_name));
+            for (const auto& c : in.simulation_commands) {
+                Opts opts;
+                if (!c.enabled) opts.why = c.disabled_reason.empty() ? "Not available now." : c.disabled_reason;
+                i.push_back(Action(f, c.action_id, c.label, c.hint, opts));
+            }
+        }
+        std::vector<PluginCommandEntry> plugin_commands;
+        for (const auto& c : in.plugin_commands)
+            if (c.menu == "Simulation" && !(in.simulation_graph && c.replaced_by_graph_run)) plugin_commands.push_back(c);
+        // Each plugin once, under its name, in the order it first registered
+        std::vector<std::string> plugins;
+        for (const auto& c : plugin_commands)
+            if (std::find(plugins.begin(), plugins.end(), c.plugin_name) == plugins.end()) plugins.push_back(c.plugin_name);
+        for (const auto& plugin : plugins) {
+            std::vector<PluginCommandEntry> own;
+            for (const auto& c : plugin_commands)
+                if (c.plugin_name == plugin) own.push_back(c);
+            if (!i.empty()) i.push_back(Sep());
+            if (!plugin.empty()) i.push_back(Head(plugin));
+            AppendPluginCommands(f, own, "Simulation", i);
+        }
+        const bool from_plugins = !plugin_commands.empty() ||
+            std::any_of(in.plugin_panels.begin(), in.plugin_panels.end(),
+                        [](const NamedEntry& p) { return p.group == "Simulation"; });
+        if (!from_plugins) {
+            if (!i.empty()) i.push_back(Sep());
+            i.push_back(Head("No simulation plugin loaded. Add one in the Plugin Manager."));
+        }
+        if (!i.empty()) i.push_back(Sep());
+        {
+            Opts opts;
+            opts.checkable = true;
+            opts.checked = in.simulation_monitor_visible;
+            i.push_back(Action(f, "simulation.monitor", "Simulation Monitor",
+                               "Shows or hides the Simulation Monitor: the graph run and its Scopes.", opts));
+        }
+        for (const auto& p : in.plugin_panels) {
+            if (p.group != "Simulation") continue;
+            Opts opts;
+            opts.checkable = true;
+            opts.checked = p.checked;
+            opts.argument = p.id;
+            i.push_back(Action(f, "apps.panel", p.label, "Shows or hides this window.", opts));
+        }
         model.menus.push_back(std::move(m));
     }
 
@@ -819,6 +896,17 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                 item.detail = b.detail;
                 i.push_back(std::move(item));
             }
+        }
+        // Plugin commands for a menu the Engine does not have, under its title
+        std::vector<std::string> other_menus;
+        for (const auto& c : in.plugin_commands)
+            if (!IsMenuTitle(c.menu) &&
+                std::find(other_menus.begin(), other_menus.end(), c.menu) == other_menus.end())
+                other_menus.push_back(c.menu);
+        for (const auto& title : other_menus) {
+            i.push_back(Sep());
+            i.push_back(Head(title));
+            AppendPluginCommands(f, in.plugin_commands, title, i);
         }
         i.push_back(Sep());
         i.push_back(Action(f, "apps.plugin_manager", "Plugin Manager", "Install, enable or remove plugins."));

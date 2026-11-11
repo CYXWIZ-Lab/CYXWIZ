@@ -83,6 +83,7 @@ class DataStudioPanel;
 class FoldsView;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
+class SimulationMonitorPanel;
 struct StudioDebuggerSnapshot;
 struct StudioDebuggerRunControl;
 struct StudioDebuggerRunInputs;
@@ -276,6 +277,7 @@ private:
     std::string operation_error_message_;
     bool compile_result_success_ = false;
     bool compile_result_has_config_ = false;
+    std::shared_ptr<const cyxwiz::RLTrainingConfiguration> compile_result_rl_;  // an RL graph's compile
     cyxwiz::compile_report::ConfigFacts compile_result_config_;
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
@@ -416,6 +418,7 @@ private:
     std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;
     std::unique_ptr<gui::NodeBrowserPanel> node_browser_panel_;
     std::unique_ptr<cyxwiz::NodeInfoPanel> node_info_panel_;
+    std::unique_ptr<cyxwiz::SimulationMonitorPanel> simulation_monitor_panel_;
     std::unique_ptr<gui::CloudDatasetManagerPanel> cloud_dataset_manager_panel_;
 
     // Plugin Manager

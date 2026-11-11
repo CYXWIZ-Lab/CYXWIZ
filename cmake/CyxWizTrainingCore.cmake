@@ -14,6 +14,13 @@ set(_cyxwiz_engine_src "${CMAKE_SOURCE_DIR}/cyxwiz-engine/src")
 
 set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/training_executor.cpp
+    ${_cyxwiz_engine_src}/core/run_execution_device.cpp
+    ${_cyxwiz_engine_src}/core/optimizer_step.cpp
+    ${_cyxwiz_engine_src}/core/rl/ppo_trainer.cpp
+    ${_cyxwiz_engine_src}/core/rl/vec_normalize.cpp
+    ${_cyxwiz_engine_src}/core/rl/ppo_reference.cpp
+    ${_cyxwiz_engine_src}/core/rl_graph_presentation.cpp
+    ${_cyxwiz_engine_src}/core/rl_graph_compile.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_sampling.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_evaluation.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_metrics.cpp

@@ -124,6 +124,7 @@ struct TrainingMetrics {
     bool is_paused = false;
     bool is_complete = false;
     std::string status_message;
+    std::string waiting_for_gpu;  // why, while the run waits for another run's GPU (else empty)
     std::string terminal_status;
     std::string terminal_reason;
 
@@ -257,6 +258,16 @@ public:
     // True once Stop was asked for; long setup work (a batcher factory
     // preparing images) checks it to stop early.
     bool StopRequested() const { return stop_requested_.load(); }
+    // While Train waits for another training run to release the GPU:
+    // on_change is told why when the wait starts and "" when it ends;
+    // should_cancel is asked every 200 ms, true ends the run as Stop does
+    // (for a caller that otherwise cancels from its batch callback). Set
+    // before Train.
+    struct GpuWaitHooks {
+        std::function<void(const std::string& reason)> on_change;
+        std::function<bool()> should_cancel;
+    };
+    void SetGpuWaitHooks(GpuWaitHooks hooks) { gpu_wait_hooks_ = std::move(hooks); }
     // Stop, first writing a resume checkpoint at the batch it stops on where
     // the loop supports mid-epoch resume (sequence batches); the other loops
     // keep their epoch-end checkpoint. Needs EnableResumeCheckpoints. Used
@@ -394,6 +405,7 @@ private:
     // Thread safety
     std::atomic<bool> is_training_{false};
     std::atomic<bool> stop_requested_{false};
+    GpuWaitHooks gpu_wait_hooks_;
     std::atomic<bool> checkpoint_on_stop_{false};
     std::atomic<bool> is_paused_{false};
 

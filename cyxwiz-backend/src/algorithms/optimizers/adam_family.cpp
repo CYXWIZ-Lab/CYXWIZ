@@ -1,13 +1,17 @@
 #include "cyxwiz/optimizers/adam.h"
+#include "cyxwiz/neural_provider.h"
 #include "cyxwiz/tensor.h"
 #include "../arrayfire_backend_utils.h"
 #include "optimizer_utils.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <typeinfo>
 #include <utility>
+#include <vector>
 
 #include <arrayfire.h>
 
@@ -248,26 +252,23 @@ void AdamOptimizer::StepImpl(
 
             if (wd > 0.0f) {
                 param_gpu = param_gpu * (1.0f - lr * wd);
-                param_gpu.eval();
             }
 
             // Update biased first moment estimate: m = b1 * m + (1 - b1) * grad
             m_gpu = b1 * m_gpu + (1.0f - b1) * grad_gpu;
-            m_gpu.eval();
 
             // Update biased second moment estimate: v = b2 * v + (1 - b2) * grad^2
             v_gpu = b2 * v_gpu + (1.0f - b2) * grad_gpu * grad_gpu;
-            v_gpu.eval();
 
             // Compute bias-corrected estimates
-            af::array m_hat = m_gpu / bias_correction1;
-            m_hat.eval();
-            af::array v_hat = v_gpu / bias_correction2;
-            v_hat.eval();
+            const af::array m_hat = m_gpu / bias_correction1;
+            const af::array v_hat = v_gpu / bias_correction2;
 
             // Update parameters: param = param - lr * m_hat / (sqrt(v_hat) + eps)
             param_gpu = param_gpu - lr * m_hat / (af::sqrt(v_hat) + eps);
-            param_gpu.eval();
+            // One kernel writes all three: a small network's step is bound by
+            // launches, not arithmetic
+            af::eval(m_gpu, v_gpu, param_gpu);
 
             param.SetFromSemanticArray(param_gpu, param.Shape());
             m_[name].SetFromSemanticArray(m_gpu, m_[name].Shape());
@@ -279,6 +280,139 @@ void AdamOptimizer::StepImpl(
         }
     }
     ++step_count_;
+}
+
+bool AdamOptimizer::StepTogether(const std::vector<Group>& groups, float max_grad_norm, std::string& why) {
+    why.clear();
+    if (groups.empty() || !groups.front().optimizer) {
+        why = groups.empty() ? "no optimizers" : "an empty group";
+        return false;
+    }
+    const AdamOptimizer& first = *groups.front().optimizer;
+    struct Item {
+        AdamOptimizer* optimizer;
+        std::string name;
+        Tensor* parameter;
+        const Tensor* gradient;
+    };
+    std::vector<Item> items;
+    int step = -1;
+    for (const auto& group : groups) {
+        AdamOptimizer* o = group.optimizer;
+        if (!o || !group.parameters || !group.gradients) {
+            why = "an empty group";
+            return false;
+        }
+        if (typeid(*o) != typeid(AdamOptimizer)) {
+            why = "only plain Adam steps together";
+            return false;
+        }
+        if (o->learning_rate_ != first.learning_rate_ || o->beta1_ != first.beta1_ || o->beta2_ != first.beta2_ ||
+            o->epsilon_ != first.epsilon_) {
+            why = "the optimizers' hyperparameters differ";
+            return false;
+        }
+        if (o->step_count_ == (std::numeric_limits<int>::max)()) {
+            why = "update count overflow";
+            return false;
+        }
+        for (auto& [name, parameter] : *group.parameters) {
+            const auto g = group.gradients->find(name);
+            if (g == group.gradients->end()) continue;
+            if (parameter.GetDataType() != DataType::Float32 || g->second.GetDataType() != DataType::Float32 ||
+                parameter.NumElements() != g->second.NumElements() || parameter.NumElements() == 0) {
+                why = "parameter '" + name + "' and its gradient do not match as Float32 tensors";
+                return false;
+            }
+            const auto s = o->parameter_steps_.find(name);
+            const bool has_m = o->m_.count(name) > 0;
+            if (has_m != (o->v_.count(name) > 0) || has_m != (s != o->parameter_steps_.end())) {
+                why = "parameter '" + name + "' has incomplete Adam state";
+                return false;
+            }
+            if (has_m && (o->m_.at(name).NumElements() != parameter.NumElements() ||
+                          o->v_.at(name).NumElements() != parameter.NumElements())) {
+                why = "parameter '" + name + "' and its Adam moments differ in size";
+                return false;
+            }
+            const int at = s == o->parameter_steps_.end() ? 0 : s->second;
+            if (step >= 0 && at != step) {
+                why = "parameters at different steps";
+                return false;
+            }
+            step = at;
+            items.push_back({o, name, &parameter, &g->second});
+        }
+    }
+    if (items.empty()) {
+        why = "no gradients";
+        return false;
+    }
+    if (items.size() > NeuralOpRequest::kMaxAdamTensors) {
+        why = "more than " + std::to_string(NeuralOpRequest::kMaxAdamTensors) + " tensors";
+        return false;
+    }
+    NeuralOpRequest r;
+    r.op = NeuralOp::AdamStep;
+    r.target = CaptureCurrentNeuralDeviceTarget();
+    r.device_resident = true;
+    r.dtype = DataType::Float32;
+    r.adam_tensors = items.size();
+    r.adam_learning_rate = static_cast<float>(first.learning_rate_);
+    r.adam_beta1 = static_cast<float>(first.beta1_);
+    r.adam_beta2 = static_cast<float>(first.beta2_);
+    r.adam_epsilon = static_cast<float>(first.epsilon_);
+    // As Step computes them: the float betas to the step's power
+    r.adam_bias_correction1 = 1.0f - static_cast<float>(std::pow(r.adam_beta1, step + 1));
+    r.adam_bias_correction2 = 1.0f - static_cast<float>(std::pow(r.adam_beta2, step + 1));
+    r.adam_max_norm = max_grad_norm > 0.0f ? max_grad_norm : 0.0f;
+    const auto provider = NeuralProviderRegistry::Instance().FindSupporting(r);
+    if (!provider) {
+        why = std::string("no neural provider steps Adam on ") + NeuralDevicePlatformName(r.target.platform);
+        return false;
+    }
+    // Moments start at zero, as Step starts them
+    std::vector<Tensor> zeros_m(items.size()), zeros_v(items.size());
+    std::vector<const Tensor*> inputs;
+    std::vector<std::vector<size_t>> shapes;
+    for (size_t i = 0; i < items.size(); ++i) {
+        const Item& it = items[i];
+        const auto m = it.optimizer->m_.find(it.name);
+        const Tensor* mt = nullptr;
+        const Tensor* vt = nullptr;
+        if (m != it.optimizer->m_.end()) {
+            mt = &m->second;
+            vt = &it.optimizer->v_.at(it.name);
+        } else {
+            zeros_m[i] = Tensor::Zeros(it.parameter->Shape(), DataType::Float32);
+            zeros_v[i] = Tensor::Zeros(it.parameter->Shape(), DataType::Float32);
+            mt = &zeros_m[i];
+            vt = &zeros_v[i];
+        }
+        inputs.insert(inputs.end(), {it.parameter, it.gradient, mt, vt});
+        for (int k = 0; k < 3; ++k) shapes.push_back(it.parameter->Shape());
+    }
+    std::vector<Tensor> outputs;
+    const NeuralOpStatus status = ExecuteNeuralOpOnDevice(*provider, r, inputs, shapes, outputs);
+    if (!status.ok) {
+        why = std::string(provider->ProviderId()) + " adam_step failed: " + status.detail;
+        return false;
+    }
+    for (size_t i = 0; i < items.size(); ++i) {
+        const Item& it = items[i];
+        *it.parameter = std::move(outputs[3 * i]);
+        it.optimizer->m_[it.name] = std::move(outputs[3 * i + 1]);
+        it.optimizer->v_[it.name] = std::move(outputs[3 * i + 2]);
+        it.optimizer->parameter_steps_[it.name] = step + 1;
+    }
+    // Once per optimizer, as one Step each would count it
+    std::vector<AdamOptimizer*> counted;
+    for (const auto& group : groups)
+        if (std::find(counted.begin(), counted.end(), group.optimizer) == counted.end()) {
+            counted.push_back(group.optimizer);
+            ++group.optimizer->step_count_;
+        }
+    return true;
 }
 
 void AdamOptimizer::ZeroGrad() {

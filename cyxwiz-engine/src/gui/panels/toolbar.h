@@ -109,8 +109,16 @@ public:
         menu::TrainingState training = menu::TrainingState::Idle;
         bool script_open = false;
         bool script_running = false;
+        // The open graph's simulation run (Simulation menu)
+        bool simulation_graph = false;
+        std::string simulation_graph_name;
+        std::vector<menu::SimulationCommandEntry> simulation_commands;
     };
     void SetMenuStateProvider(std::function<MenuStateSnapshot()> provider) { menu_state_provider_ = provider; }
+    // Simulation menu: a graph run command by its action id ("simulation.run")
+    void SetSimulationCommandCallback(std::function<void(const std::string&)> callback) {
+        simulation_command_callback_ = std::move(callback);
+    }
     void SetFrameOverlayPtr(bool* ptr) { frame_overlay_ptr_ = ptr; }
     // One sentence about the hovered menu item, for the status bar. Empty
     // when no menu item is hovered this frame.
@@ -437,6 +445,7 @@ private:
     std::function<void()> run_script_callback_;
     std::function<void()> stop_script_callback_;
     std::function<MenuStateSnapshot()> menu_state_provider_;
+    std::function<void(const std::string&)> simulation_command_callback_;
     bool* frame_overlay_ptr_ = nullptr;
     std::unordered_map<std::string, std::function<void(const std::string&)>> action_handlers_;
     std::string status_hint_;

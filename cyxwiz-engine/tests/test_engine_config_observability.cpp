@@ -36,6 +36,21 @@ int main() {
     Check(config.GetRuntimeLogSavedFilters() == expected,
           "valid and invalid saved expressions should survive round trip");
 
+    // Preferences > Simulation: the graph run's defaults, kept within range
+    using cyxwiz::core::EngineConfig;
+    config.SetSimulationRateHz(5000);
+    Check(config.SimulationRateHz() == EngineConfig::kMaxSimulationRateHz, "the tick rate is at most 1000");
+    config.SetSimulationRateHz(0);
+    Check(config.SimulationRateHz() == EngineConfig::kMinSimulationRateHz, "the tick rate is at least 1");
+    config.SetSimulationRateHz(120);
+    config.SetOpenSimulationMonitorOnRun(false);
+    Check(config.Save(path), "simulation defaults should persist");
+    config.SetSimulationRateHz(60);
+    config.SetOpenSimulationMonitorOnRun(true);
+    Check(config.Load(path), "simulation defaults should reload");
+    Check(config.SimulationRateHz() == 120 && !config.OpenSimulationMonitorOnRun(),
+          "the tick rate and the open-on-run choice survive a round trip");
+
     std::error_code error;
     std::filesystem::remove(path, error);
     Check(!error, "temporary test config should be removable");

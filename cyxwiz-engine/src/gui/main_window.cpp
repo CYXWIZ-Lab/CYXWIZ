@@ -60,6 +60,8 @@
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
+#include "../core/rl_device_presentation.h"
+#include "../core/rl_graph_compile.h"
 #include "panels/training_plot_panel.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
@@ -98,6 +100,7 @@
 #include "panels/cloud_browser.h"
 #include "panels/node_browser_panel.h"
 #include "panels/node_info_panel.h"
+#include "panels/simulation_monitor_panel.h"
 #include "../core/node_metadata.h"
 #include "panels/cloud_dataset_manager.h"
 #include "panels/plugin_manager_panel.h"
@@ -533,10 +536,17 @@ MainWindow::MainWindow()
     // Initialize scripting engine (shared resource)
     scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
     console_->SetScriptingEngine(scripting_engine_);
+    // The assistant's view of the workspace is built when a command is sent,
+    // on the UI thread: building it reads the training trace and the last run
+    // from disk, far too slow for every frame.
     console_->SetAssistantCommandHandler(
         [](const cyxwiz::plugin::AssistantCommandRequest& request) {
             return cyxwiz::plugin::PluginManager::Instance()
                 .RunAssistantCommand(request);
+        },
+        [this]() {
+            cyxwiz::plugin::PluginManager::Instance().SetAssistantContextSnapshotForAll(
+                BuildAssistantContextSnapshot(node_editor_.get(), studio_debugger_panel_.get()));
         });
 
     // New panel system
@@ -701,6 +711,15 @@ MainWindow::MainWindow()
     node_browser_panel_ = std::make_unique<gui::NodeBrowserPanel>();
     node_browser_panel_->SetNodeEditor(node_editor_.get());
     node_info_panel_ = std::make_unique<cyxwiz::NodeInfoPanel>();
+    // The graph run's window; a run shows it when Preferences > Simulation says so.
+    simulation_monitor_panel_ = std::make_unique<cyxwiz::SimulationMonitorPanel>();
+    simulation_monitor_panel_->SetNodeEditor(node_editor_.get());
+    if (node_editor_) {
+        node_editor_->SetSimulationStartedCallback([this]() {
+            if (cyxwiz::core::EngineConfig::Instance().OpenSimulationMonitorOnRun())
+                simulation_monitor_panel_->ShowAndFocus();
+        });
+    }
     // Connect Node Browser hover to Info Panel
     if (node_browser_panel_ && node_info_panel_) {
         // Hover previews a node; a click keeps it in the Info panel.
@@ -1093,8 +1112,8 @@ MainWindow::MainWindow()
 
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
-        // Show Training Dashboard when training starts
-        if (training_plot_panel_) {
+        // Show Training Dashboard when training starts (an RL run has its own)
+        if (training_plot_panel_ && !compile_result_rl_) {  // an RL graph has its own dashboard, started or refused
             training_plot_panel_->SetVisible(true);
         }
     });
@@ -1165,7 +1184,7 @@ MainWindow::MainWindow()
             auto nodes = node_editor_->GetNodes();
             auto links = node_editor_->GetLinks();
             StartTrainingFromGraph(nodes, links);
-            if (training_plot_panel_) {
+            if (training_plot_panel_ && !compile_result_rl_) {  // an RL graph has its own dashboard, started or refused
                 training_plot_panel_->SetVisible(true);
             }
             spdlog::info("Started training from Train menu");
@@ -1521,6 +1540,16 @@ MainWindow::MainWindow()
     // File > Open Model File...: reads a model file and opens its graph.
     toolbar_->SetImportModelCallback([this]() {
         if (import_dialog_) import_dialog_->Open();
+    });
+
+    // A trained RL policy plays without touching the open graph (TOFIX195 S5)
+    import_dialog_->SetPlayPolicyCallback([this](const std::string& input_path, std::string& error) {
+        if (!node_editor_) {
+            error = "Studio is not ready.";
+            return false;
+        }
+        if (!node_editor_->LoadRLPolicy(input_path, error)) return false;
+        return node_editor_->PlayRLPolicy(error);
     });
 
     import_dialog_->SetOpenGraphCallback(
@@ -2048,7 +2077,20 @@ MainWindow::MainWindow()
             s.script_open = script_editor_->HasEditableScript();
             s.script_running = script_editor_->IsScriptRunning();
         }
+        if (node_editor_ && node_editor_->HasSimulationNodes()) {
+            s.simulation_graph = true;
+            s.simulation_graph_name = node_editor_->GetGraphStem();
+            const auto c = node_editor_->GetSimulationCommands();
+            for (const auto* view : {&c.run, &c.pause, &c.step, &c.stop, &c.clear})
+                s.simulation_commands.push_back({cyxwiz::simulation::ActionId(view->command), view->label, view->hint,
+                                                 view->enabled, view->disabled_reason});
+        }
         return s;
+    });
+    toolbar_->SetSimulationCommandCallback([this](const std::string& action_id) {
+        cyxwiz::simulation::Command command;
+        if (node_editor_ && cyxwiz::simulation::CommandFromActionId(action_id, command))
+            node_editor_->RunSimulationCommand(command);
     });
 
     // Set up Open Python Console callback
@@ -2815,13 +2857,6 @@ void MainWindow::Render() {
     UpdateLiveCompile();
     UpdateLocalDebugStatus();
 
-    auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
-    if (plugin_manager.GetPluginCount() > 0) {
-        plugin_manager.SetAssistantContextSnapshotForAll(
-            BuildAssistantContextSnapshot(
-                node_editor_.get(), studio_debugger_panel_.get()));
-    }
-
     // Check if we need to connect P2PClient to monitoring panel
     if (!monitoring_job_id_.empty() && job_manager_ && p2p_training_panel_) {
         auto p2p_client = job_manager_->GetP2PClient(monitoring_job_id_);
@@ -2889,6 +2924,7 @@ void MainWindow::Render() {
     TimedRender("cloud browser", cloud_browser_panel_);
     TimedRender("node browser", node_browser_panel_);
     TimedRender("node info", node_info_panel_);
+    TimedRender("simulation monitor", simulation_monitor_panel_);
     TimedRender("cloud dataset manager", cloud_dataset_manager_panel_);
 
     // Plugin Manager panel
@@ -2897,8 +2933,11 @@ void MainWindow::Render() {
     // Data Studio panel (Phase 1 Week 1)
     TimedRender("data studio", data_studio_panel_);
 
-    // Render plugin-provided panels
-    cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();
+    // Render plugin-provided panels (one line in the frame overlay)
+    {
+        PanelTimer timer("plugin panels");
+        cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();
+    }
 
     // Render permission approval dialogs
     cyxwiz::plugin::PluginManager::Instance().RenderPermissionDialogs();
@@ -3213,6 +3252,7 @@ void MainWindow::BuildInitialDockLayout() {
                              "P2P Training Progress"})
         ImGui::DockBuilderDockWindow(name, dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("###StudioDebuggerPanel", dock_id_bottom_right);
+    ImGui::DockBuilderDockWindow("Simulation Monitor", dock_id_bottom_right);
 
     // Finish the docking layout
     ImGui::DockBuilderFinish(dockspace_id);
@@ -3252,6 +3292,7 @@ void MainWindow::RegisterPanelsWithSidebar() {
     add("Script Editor", ICON_FA_CODE, script_editor_, "Workspace");
     add("Console", ICON_FA_TERMINAL, console_, "Workspace");
     add("Viewport", ICON_FA_CUBE, viewport_, "Workspace");
+    add("Simulation Monitor", ICON_FA_WAVE_SQUARE, simulation_monitor_panel_, "Workspace");
 
     // Data
     add("Data Studio", ICON_FA_WAND_MAGIC_SPARKLES, data_studio_panel_, "Data");
@@ -3264,6 +3305,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Training
     add("Training", ICON_FA_CHART_LINE, training_plot_panel_, "Training");
     add("Studio Debugger", ICON_FA_BUG, studio_debugger_panel_, "Training");
+    if (node_editor_)  // its window belongs to the Studio (it plays a policy trained there)
+        dock_style.RegisterPanel("Policy Playback", ICON_FA_PLAY, node_editor_->GetPolicyPlaybackVisiblePtr(), nullptr,
+                                 "Training", "");
     add("Tasks", ICON_FA_HOURGLASS_HALF, task_progress_panel_, "Training");
 
     // Network
@@ -3673,6 +3717,11 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         spdlog::warn("Train: wait for Run Test preparation/evaluation or cancel it first");
         return;
     }
+    // One training at a time, whatever its kind: a PPO run holds the device
+    if (node_editor_ && node_editor_->IsRLTrainingActive()) {
+        spdlog::warn("Train: a PPO run is training; stop it first");
+        return;
+    }
     // A reopened project keeps each Data Input's settings, not its loaded
     // data: load what training needs first, then train.
     if (StartDataInputLoads(nodes, links)) {
@@ -3704,6 +3753,19 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         if (!compile_result_success_) {
             ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked);
             spdlog::error("StartTrainingFromGraph: blocked - graph has errors");
+            return;
+        }
+
+        // An RL graph trains with the Engine's PPO (TOFIX195 S4.3): no data,
+        // no Local Debug, its own dashboard
+        if (compile_result_rl_) {
+            if (cyxwiz::TrainingManager::Instance().IsTrainingActive()) {
+                spdlog::warn("Train: a model is training; stop it first");
+                return;
+            }
+            std::string error;
+            if (!node_editor_ || !node_editor_->StartRLTraining(compile_result_rl_, error))
+                spdlog::error("Train: {}", error.empty() ? "the node editor is not available" : error);
             return;
         }
 
@@ -3999,6 +4061,20 @@ void MainWindow::LocalDebugGraphAndReport() {
         compile_result_backend_placements_.clear();
         compile_result_issues_ = {{cyxwiz::IssueLevel::Error, -1, "",
                                    "The node editor or the Studio Debugger is not available.",
+                                   cyxwiz::errors::Ui::InvalidWorkflowState}};
+        ShowCompileReport(cyxwiz::compile_report::Mode::DebugBlocked);
+        return;
+    }
+
+    // An RL graph has no batch to debug: Train runs its PPO (TOFIX195 S4.3)
+    const auto& graph = node_editor_->GetNodes();
+    if (std::any_of(graph.begin(), graph.end(), [](const MLNode& n) { return cyxwiz::IsRLGraphNode(n.type); })) {
+        compile_result_success_ = false;
+        compile_result_has_config_ = false;
+        compile_result_backend_placements_.clear();
+        compile_result_issues_ = {{cyxwiz::IssueLevel::Info, -1, "",
+                                   "Local Debug runs one batch of a model trained on data. An RL graph has no batch: "
+                                   "Train runs its PPO, and the RL Training Dashboard shows each update.",
                                    cyxwiz::errors::Ui::InvalidWorkflowState}};
         ShowCompileReport(cyxwiz::compile_report::Mode::DebugBlocked);
         return;
@@ -5271,6 +5347,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
     compile_result_has_config_ = false;
     compile_result_backend_placements_.clear();
     compile_result_success_ = false;
+    compile_result_rl_.reset();
     if (properties_) {
         properties_->ClearBackendPlacementFacts();
     }
@@ -5282,9 +5359,27 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         compile_result_issues_ = config.issues;
         compile_result_backend_placements_ = config.backend_placements;
         compile_result_success_ = config.is_valid;
+        compile_result_rl_ = config.rl;
         // Launch readiness (data columns, device qualification, row limits):
         // reported by Compile, and therefore also before Train starts.
-        if (config.is_valid) {
+        // An RL graph on a GPU route with small networks: advice, never a switch (TOFIX206)
+        if (config.is_valid && config.rl) {
+            const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
+            const std::string advice = route.route_available
+                ? cyxwiz::rl_device::CompileAdvice(
+                      cyxwiz::rl_device::BackendWord(cyxwiz::ExecutionDeviceSelectionBackendName(route.type)),
+                      cyxwiz::HiddenUnits(config.rl->policy_layers), cyxwiz::HiddenUnits(config.rl->value_layers))
+                : std::string();
+            if (!advice.empty()) {
+                cyxwiz::ValidationIssue issue;
+                issue.level = cyxwiz::IssueLevel::Info;
+                issue.node_id = config.rl->ppo_node_id;
+                issue.node_name = "PPO";
+                issue.message = advice;
+                compile_result_issues_.push_back(std::move(issue));
+            }
+        }
+        if (config.is_valid && !config.rl) {
             const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
             for (auto& issue : gui::CheckGraphLaunchReadiness(
                      nodes, config, cyxwiz::DataRegistry::Instance(), &route)) {

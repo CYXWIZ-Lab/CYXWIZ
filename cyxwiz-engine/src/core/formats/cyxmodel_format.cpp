@@ -74,6 +74,7 @@ nlohmann::json CyxModelFormat::ManifestToJson(const ModelManifest& manifest) {
     j["content"]["tree_model_type"] = manifest.tree_model_type;
     j["content"]["tree_model_artifact_path"] =
         manifest.tree_model_artifact_path;
+    j["content"]["has_rl_policy"] = manifest.has_rl_policy;
     j["content"]["sequence_batch_first"] = manifest.sequence_batch_first;
     j["content"]["sequence_create_attention_mask"] =
         manifest.sequence_create_attention_mask;
@@ -170,6 +171,7 @@ ModelManifest CyxModelFormat::JsonToManifest(const nlohmann::json& j) {
             j["content"].value("tree_model_type", "");
         manifest.tree_model_artifact_path =
             j["content"].value("tree_model_artifact_path", "");
+        manifest.has_rl_policy = j["content"].value("has_rl_policy", false);
         manifest.sequence_batch_first =
             j["content"].value("sequence_batch_first", true);
         manifest.sequence_create_attention_mask =
@@ -660,6 +662,10 @@ bool CyxModelFormat::Create(
         }
     }
 
+    if (!options.rl_policy_json.empty()) {
+        files["rl/policy.json"] = std::vector<uint8_t>(options.rl_policy_json.begin(), options.rl_policy_json.end());
+    }
+
     return CreateArchive(output_path, files, options.compress);
 }
 
@@ -720,7 +726,7 @@ bool CyxModelFormat::Extract(
     const std::pair<bool,const char*> required_assets[] = {
         {manifest.has_graph,"graph.cyxgraph"}, {manifest.has_tokenizer,"tokenizer/config.json"},
         {manifest.has_vocabulary,"tokenizer/vocab.txt"}, {manifest.has_training_history,"history.json"},
-        {manifest.has_tree_model_artifact,"tree/model.json"},
+        {manifest.has_tree_model_artifact,"tree/model.json"}, {manifest.has_rl_policy,"rl/policy.json"},
         {manifest.has_sequence_token_vocabulary,manifest.sequence_token_vocabulary_path.c_str()},
         {manifest.has_sequence_pos_vocabulary,manifest.sequence_pos_vocabulary_path.c_str()},
         {manifest.has_sequence_tag_vocabulary,manifest.sequence_tag_vocabulary_path.c_str()}};
@@ -866,6 +872,7 @@ ProbeResult CyxModelFormat::Probe(const std::string& input_path) {
         result.has_tree_model_artifact = manifest.has_tree_model_artifact;
         result.tree_model_type = manifest.tree_model_type;
         result.tree_model_artifact_path = manifest.tree_model_artifact_path;
+        result.has_rl_policy = manifest.has_rl_policy && files.count("rl/policy.json") > 0;
         if (files.count("tree/model.json")) {
             result.has_tree_model_artifact = true;
             if (result.tree_model_artifact_path.empty()) result.tree_model_artifact_path="tree/model.json";
@@ -1031,6 +1038,19 @@ bool CyxModelFormat::ExtractTreeModelArtifact(
         return false;
     }
 
+    return true;
+}
+
+bool CyxModelFormat::ExtractRLPolicy(const std::string& input_path, std::string& policy_json) {
+    std::map<std::string, std::vector<uint8_t>> files;
+    if (!ReadPackage(input_path, files)) return false;
+    policy_json.clear();
+    const auto it = files.find("rl/policy.json");
+    if (it == files.end()) {
+        last_error_ = "The file holds no trained RL policy (rl/policy.json)";
+        return false;
+    }
+    policy_json.assign(it->second.begin(), it->second.end());
     return true;
 }
 

@@ -199,8 +199,9 @@ void Console::SetScriptingEngine(
 void Console::SetAssistantCommandHandler(
     std::function<cyxwiz::plugin::AssistantCommandResponse(
         const cyxwiz::plugin::AssistantCommandRequest &)>
-        handler) {
-  agent_llm_->SetCommandHandler(std::move(handler));
+        handler,
+    std::function<void()> refresh_context) {
+  agent_llm_->SetCommandHandler(std::move(handler), std::move(refresh_context));
 }
 
 void Console::SetProjectRoot(std::string project_root) {

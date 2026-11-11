@@ -19,6 +19,8 @@ struct View {
     std::string layers;            // "embedding [5000, 100], lstm ..." (capped)
     bool can_open_graph = false;
     std::string open_disabled_reason;
+    // A trained RL policy (rl/policy.json): Play policy loads and plays it
+    bool can_play_policy = false;
     std::string note;
 };
 

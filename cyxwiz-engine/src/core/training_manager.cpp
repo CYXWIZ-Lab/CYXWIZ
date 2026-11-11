@@ -100,6 +100,11 @@ TrainingMetrics TrainingManager::GetCurrentMetrics() const {
     return cached_metrics_;
 }
 
+std::string TrainingManager::WaitingForGpu() const {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    return cached_metrics_.waiting_for_gpu;
+}
+
 bool TrainingManager::StartTrainingCommon(
     std::unique_ptr<TrainingExecutor> executor,
     int epochs,
@@ -1264,6 +1269,12 @@ void TrainingManager::TrainingThreadFunc(
                 }
             };
 
+            // The toolbar says when the run waits for another run's GPU
+            exec->SetGpuWaitHooks({[this](const std::string& reason) {
+                                       std::lock_guard<std::mutex> lock(metrics_mutex_);
+                                       cached_metrics_.waiting_for_gpu = reason;
+                                   },
+                                   {}});
             try {
                 exec->Train(
                     epochs,

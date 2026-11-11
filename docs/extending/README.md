@@ -8,7 +8,7 @@ A C++ plugin can also add **dataset formats** (Data Input opens their files)
 and **dataset analytics** (Data Studio's Explore > Plugins runs them): see
 [Data plugins](data-plugin-guide.md).
 
-> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 > Each guide carries this line; a test fails when the plugin API or pycyxwiz
 > version changes until the guide is checked again (see
 > [How these pages stay true](#how-these-pages-stay-true)).

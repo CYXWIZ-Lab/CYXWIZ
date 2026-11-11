@@ -54,7 +54,7 @@ enum class NodeCategory {
 
     // Specialized
     DNN,              // Pre-trained models, detection, pose
-    RL,               // Gym, ReplayBuffer, Policy, Value
+    RL,               // Environment, Policy Head, Value Head, PPO
     BigData,          // Spark, Dask, Ray, Kafka (Coming Soon)
 
     // Workflow & UI
@@ -292,12 +292,15 @@ enum class NodeType {
     MFCC,               // Extract MFCC features
     AudioAugmentation,  // Time stretch, pitch shift, noise
 
-    // ===== RL Nodes =====
-    GymEnvironment,     // OpenAI Gym environment connector
-    ReplayBufferNode,   // Experience replay buffer
-    PolicyNetwork,      // Actor network for RL
-    ValueNetwork,       // Critic network for RL
-    RLTraining,         // RL training loop controller
+    // ===== Retired RL nodes (TOFIX195 S4.3) =====
+    // Environment, Policy Head, Value Head and PPO (appended below) replaced
+    // them: the slots stay so later ids do not move; a saved graph with one
+    // fails to load.
+    GymEnvironment,
+    ReplayBufferNode,
+    PolicyNetwork,
+    ValueNetwork,
+    RLTraining,
 
     // ===== Smart I/O Nodes (Unified - replaces individual format nodes) =====
     DataInput,          // Universal data input with smart dialog (auto-detects format)
@@ -654,6 +657,12 @@ enum class NodeType {
     // ===== Appended optimization step (TOFIX129 D10) =====
     PortfolioWeights,   // the least risky mix of assets from a returns table (a convex QP)
 
+    // ===== Appended reinforcement learning (TOFIX195 S4.3) =====
+    RLEnvironment,      // N copies of an environment from the environment registry
+    PolicyHead,         // Ends the policy layers: output layer sized from the environment, action distribution
+    ValueHead,          // Ends the value layers: one output, the expected return
+    PPO,                // Proximal Policy Optimization over an environment, a policy and a value network
+
     // Special sentinel value
     Unknown
 };
@@ -665,7 +674,8 @@ enum class PinType {
     Parameters,  // Model parameters
     Loss,        // Loss value
     Optimizer,   // Optimizer state
-    Dataset      // Dataset handle reference
+    Dataset,     // Dataset handle reference
+    Environment  // Environment copies (RL Environment -> PPO)
     // Note: Shape is metadata (node parameter), not a data flow type
 };
 

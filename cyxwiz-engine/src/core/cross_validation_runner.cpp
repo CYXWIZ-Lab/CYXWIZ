@@ -239,6 +239,16 @@ CrossValidationOutcome RunCrossValidation(const TrainingConfiguration& config, c
                     executor.Stop();
                 }
             };
+            // Cancel also ends a wait for another training run's GPU (no batch runs meanwhile)
+            // and the tab says why it waits
+            executor.SetGpuWaitHooks({[&](const std::string& reason) {
+                                          progress.waiting = reason;
+                                          if (callbacks.on_progress) callbacks.on_progress(progress);
+                                      },
+                                      [&]() {
+                                          if (callbacks.should_cancel && callbacks.should_cancel()) cancelled = true;
+                                          return cancelled;
+                                      }});
             const EpochCallback on_epoch = [&](int epoch, float, float, float, float, float) {
                 progress.epoch = epoch + 1;
                 if (callbacks.on_progress) callbacks.on_progress(progress);

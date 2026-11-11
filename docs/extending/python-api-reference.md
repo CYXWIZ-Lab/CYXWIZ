@@ -15,6 +15,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 - [pycyxwiz.model](#pycyxwizmodel)
 - [pycyxwiz.nodes](#pycyxwiznodes)
 - [pycyxwiz.optimize](#pycyxwizoptimize)
+- [pycyxwiz.rl](#pycyxwizrl)
 - [pycyxwiz.signal](#pycyxwizsignal)
 - [pycyxwiz.stats](#pycyxwizstats)
 - [pycyxwiz.system](#pycyxwizsystem)
@@ -51,11 +52,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 | `oneapi_available() -> bool` | Check if oneAPI is available |
 | `opencl_available() -> bool` | Check if OpenCL is available |
 | `relu(input: Tensor) -> Tensor` | Apply ReLU activation: f(x) = max(0, x) |
-| `rl_is_paused() -> bool` | Check if RL training is paused |
 | `rl_set_metric_callback(callback: object) -> None` | Set a callback function(name: str, value: float) for RL metric updates |
-| `rl_set_paused(value: bool) -> None` | Set RL training pause flag |
-| `rl_set_stop(value: bool) -> None` | Set RL training stop flag |
-| `rl_should_stop() -> bool` | Check if stop was requested for RL training |
 | `rl_update_metric(name: str, value: float) -> None` | Update an RL metric on the dashboard (thread-safe) |
 | `sentencepiece_tokenizer_unavailable_message() -> str` | Return the canonical explanation for unavailable SentencePiece tokenizer support |
 | `set_device(device: Device) -> None` | Set the active device |
@@ -1656,6 +1653,17 @@ Linear and quadratic programs (HiGHS) and the training optimizers' paths
 | `linprog(c: Sequence[float], constraints: object = None, bounds: object = None, maximize: bool = False) -> dict` | Minimize (or maximize) c . x subject to the constraints, each (coefficients, '<=' / '>=' / '=', rhs[, name]), and the bounds (None: every x >= 0). Returns a dict: success, status ('optimal', 'infeasible', 'unbounded', 'failed'), message, x, fun, slack, binding and shadow_prices (per row: how much the best value changes when its rhs grows by 1), iterations |
 | `portfolio(means: Sequence[float], covariance: Sequence[Sequence[float]], target_return: float \| None = None, long_only: bool = True) -> dict` | The least risky mix of assets (Markowitz), as the Portfolio Weights node: minimize 0.5 w' C w with the weights summing to 1 (row 'Budget'), earning at least target_return a period (row 'Return'; None: the minimum-variance mix), and with long_only no weight below 0. means and covariance per period |
 | `qp(Q: Sequence[Sequence[float]], c: Sequence[float], constraints: object = None, bounds: object = None) -> dict` | Minimize 0.5 x' Q x + c . x subject to the constraints and the bounds (None: every x free). Q must be symmetric positive semidefinite, else status 'not convex' names its most negative eigenvalue. Returns the same dict as linprog |
+
+## pycyxwiz.rl
+
+Plugin environments for reinforcement learning as Gymnasium environments: load_plugin(folder), environments(), Env(id, **settings) (a gymnasium.Env) and VectorEnv(id, num_envs, **settings) (a gymnasium VectorEnv with same-step autoreset). Stable-Baselines3, CleanRL or your own code then train on exactly the physics the Engine trains on. Needs numpy, gymnasium 1.1 or newer (same-step autoreset) and the _cyxwiz_envs module built with the Engine; see docs/usage/rl_environments.md.
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `environments()` | The environments the loaded plugins offer: one dict each (key, id, sizes, action range, settings). |
+| `load_plugin(folder)` | Loads and starts the plugin in `folder` (the one holding plugin.json); returns its id. |
 
 ## pycyxwiz.signal
 

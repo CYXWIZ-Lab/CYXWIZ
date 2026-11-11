@@ -120,4 +120,13 @@ private:
     Tensor input_cache_;  // Cached input from forward pass
 };
 
+/**
+ * @brief A [rows, cols] weight with orthonormal rows or columns, times gain
+ *
+ * torch.nn.init.orthogonal_: QR of a standard-normal matrix (the taller way
+ * round), Q's columns signed by R's diagonal. Draws from the current
+ * ArrayFire random engine, so SeedCurrentArrayFireRandomEngine repeats it.
+ */
+CYXWIZ_API Tensor OrthogonalWeights(size_t rows, size_t cols, float gain);
+
 } // namespace cyxwiz

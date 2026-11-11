@@ -243,14 +243,12 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_TI_WAVE_SQUARE;
 
             // RL
-            case NodeType::GymEnvironment:
+            case NodeType::RLEnvironment:
                 return ICON_TI_FOCUS;
-            case NodeType::ReplayBufferNode:
-                return ICON_TI_DATABASE;
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork:
+            case NodeType::PolicyHead:
+            case NodeType::ValueHead:
                 return ICON_TI_BRAIN;
-            case NodeType::RLTraining:
+            case NodeType::PPO:
                 return ICON_TI_SCAN;
 
             // Smart I/O Nodes
@@ -464,8 +462,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Core Layers
             case NodeType::Dense:
             case NodeType::DNNModelLoad:
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork:
+            case NodeType::PolicyHead:
+            case NodeType::ValueHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -522,7 +520,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MultiHeadAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
-            case NodeType::GymEnvironment:
+            case NodeType::RLEnvironment:
             case NodeType::KNNClassifier:
                 return ICON_RI_TARGET;
             case NodeType::TransformerEncoder:
@@ -684,7 +682,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // DNN Inference Nodes
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
-            case NodeType::RLTraining:
+            case NodeType::PPO:
                 return ICON_RI_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -708,7 +706,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_RI_MUSIC;
 
             // RL
-            case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
@@ -799,7 +796,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Data Pipeline
             case NodeType::DatasetInput:
             case NodeType::DataLoader:
-            case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
@@ -827,8 +823,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Core Layers
             case NodeType::Dense:
             case NodeType::DNNModelLoad:
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork:
+            case NodeType::PolicyHead:
+            case NodeType::ValueHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -900,7 +896,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MultiHeadAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
-            case NodeType::GymEnvironment:
+            case NodeType::RLEnvironment:
             case NodeType::KNNClassifier:
                 return ICON_LU_TARGET;
             case NodeType::TransformerEncoder:
@@ -1040,7 +1036,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // DNN Inference Nodes
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
-            case NodeType::RLTraining:
+            case NodeType::PPO:
                 return ICON_LU_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -1122,7 +1118,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Data Pipeline
             case NodeType::DatasetInput:
             case NodeType::DataLoader:
-            case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
@@ -1150,8 +1145,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Core Layers
             case NodeType::Dense:
             case NodeType::DNNModelLoad:
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork:
+            case NodeType::PolicyHead:
+            case NodeType::ValueHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -1223,7 +1218,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MultiHeadAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
-            case NodeType::GymEnvironment:
+            case NodeType::RLEnvironment:
             case NodeType::KNNClassifier:
                 return ICON_IO_TARGET;
             case NodeType::TransformerEncoder:
@@ -1363,7 +1358,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // DNN Inference Nodes
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
-            case NodeType::RLTraining:
+            case NodeType::PPO:
                 return ICON_IO_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -1445,7 +1440,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Data Pipeline
             case NodeType::DatasetInput:
             case NodeType::DataLoader:
-            case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
@@ -1473,8 +1467,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Core Layers
             case NodeType::Dense:
             case NodeType::DNNModelLoad:
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork:
+            case NodeType::PolicyHead:
+            case NodeType::ValueHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -1546,7 +1540,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MultiHeadAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
-            case NodeType::GymEnvironment:
+            case NodeType::RLEnvironment:
             case NodeType::KNNClassifier:
                 return ICON_PH_TARGET;
             case NodeType::TransformerEncoder:
@@ -1686,7 +1680,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // DNN Inference Nodes
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
-            case NodeType::RLTraining:
+            case NodeType::PPO:
                 return ICON_PH_MAGNIFYING_GLASS;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -2012,14 +2006,12 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_WAVE_SQUARE;
 
         // RL
-        case NodeType::GymEnvironment:
+        case NodeType::RLEnvironment:
             return ICON_FA_BULLSEYE;
-        case NodeType::ReplayBufferNode:
-            return ICON_FA_DATABASE;
-        case NodeType::PolicyNetwork:
-        case NodeType::ValueNetwork:
+        case NodeType::PolicyHead:
+        case NodeType::ValueHead:
             return ICON_FA_BRAIN;
-        case NodeType::RLTraining:
+        case NodeType::PPO:
             return ICON_FA_CROSSHAIRS;
 
         // Smart I/O Nodes

@@ -301,6 +301,66 @@ int main() {
         execution.get();
     }
 
+    {
+        // Plugin packs live in active-plugins.json only.
+        Fixture fixture;
+        namespace rt = cyxwiz::runtime;
+        const auto plugins_path = fixture.root / rt::kActivePluginsFileName;
+        rt::ActivePluginsState plugins;
+        std::string error;
+        failures += !Expect(rt::LoadActivePluginsState(plugins_path, plugins, error) &&
+                                plugins.plugins.empty(),
+                            "a missing active-plugins.json must read as no active plugins");
+        const auto before = fixture.ActiveText();
+        rt::BackendPackStateService service(fixture.root);
+        failures += !Expect(service.ActivatePluginPack("com.example.sim", "sim-v1").status ==
+                                rt::BackendPackStateStatus::InvalidRuntime,
+                            "a plugin pack that is not installed must not activate");
+        Fixture::Touch(rt::PluginPackDirectory(fixture.root, "com.example.sim", "sim-v1") /
+                       "plugin.json");
+        Fixture::Touch(rt::PluginPackDirectory(fixture.root, "com.example.sim", "sim-v2") /
+                       "plugin.json");
+        const auto first = service.ActivatePluginPack("com.example.sim", "sim-v1");
+        const auto second = service.ActivatePluginPack("com.example.sim", "sim-v2");
+        failures += !Expect(
+            first.status == rt::BackendPackStateStatus::Completed &&
+                second.status == rt::BackendPackStateStatus::Completed &&
+                rt::LoadActivePluginsState(plugins_path, plugins, error) &&
+                plugins.plugins.size() == 1 && plugins.plugins.front().pack_id == "sim-v2" &&
+                fixture.ActiveText() == before,
+            "one pack per plugin is active and active-runtime.json never changes");
+        failures += !Expect(
+            service.DeactivatePluginPack("com.example.sim").status ==
+                    rt::BackendPackStateStatus::Completed &&
+                service.DeactivatePluginPack("com.example.sim").status ==
+                    rt::BackendPackStateStatus::InvalidRequest &&
+                rt::LoadActivePluginsState(plugins_path, plugins, error) &&
+                plugins.plugins.empty() && fixture.ActiveText() == before,
+            "deactivation removes the plugin and rejects an inactive one");
+
+        // Entries recorded for an earlier base are dropped on the next change.
+        plugins = {"base-old", {{"com.example.other", "other-v1"}}};
+        failures += !Expect(rt::SaveActivePluginsStateAtomic(plugins_path, plugins, error),
+                            error);
+        failures += !Expect(
+            service.ActivatePluginPack("com.example.sim", "sim-v1").status ==
+                    rt::BackendPackStateStatus::Completed &&
+                rt::LoadActivePluginsState(plugins_path, plugins, error) &&
+                plugins.base_pack_id == "base-v1" && plugins.plugins.size() == 1 &&
+                plugins.plugins.front().plugin_id == "com.example.sim",
+            "plugins of another base must not survive into the active base");
+
+        std::ofstream(plugins_path, std::ios::binary | std::ios::trunc)
+            << R"({"schema_version":1,"base_pack_id":"base-v1","plugins":[)"
+            << R"({"plugin_id":"a","pack_id":"a1"},{"plugin_id":"a","pack_id":"a2"}]})";
+        failures += !Expect(!rt::LoadActivePluginsState(plugins_path, plugins, error),
+                            "duplicate active plugins must fail closed");
+        std::ofstream(plugins_path, std::ios::binary | std::ios::trunc)
+            << R"({"schema_version":1,"base_pack_id":"base-v1","plugins":[],"generation":2})";
+        failures += !Expect(!rt::LoadActivePluginsState(plugins_path, plugins, error),
+                            "unknown active-plugins fields must fail closed");
+    }
+
     if (failures == 0) {
         std::cout << "backend pack state service contract tests passed\n";
     }

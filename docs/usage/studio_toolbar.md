@@ -38,8 +38,12 @@ click each (hover for what each does). Next to it the mode's action: Code
 Gen, the framework (PyTorch, TensorFlow, Keras, PyCyxWiz) and **Generate**;
 Data Pipeline, **Execute Pipeline**, then its progress, the step it is on
 (hover) and **Cancel** while it runs; then **Export**. A graph with
-simulation or RL nodes shows **Run Sim** / **Train RL** / **Export ONNX**
-here instead, with the sim time, its speed or the RL episode and reward.
+simulation nodes shows **Run Sim** here instead: during a run **Pause** (or
+**Resume**), **Step**, **Stop Sim** and the sim time (see
+[Graph simulation](graph_simulation.md)). An RL graph (Environment, Policy
+Head, Value Head, PPO) trains with **Train**: while PPO runs, the update and
+the steps take Train's place, with **Stop** (see
+[Training a policy](rl_training.md)).
 
 ## Compile, Local Debug, Train (right)
 
@@ -141,6 +145,18 @@ menu (**Pipeline**); last, Compile and Local Debug become coloured dots
 (their result on hover, their menu on click) and the graph shows its file
 name without the extension. The graph, Save, the Compile and Debug results,
 Train and a running pipeline's progress always stay.
+
+When even that does not fit on one row (the Studio panel in the default
+layout is narrower), the bar takes two rows:
+
+- Row 1: the graph, Save, Edit and View, then the mode and its actions.
+- Row 2, at the right: Compile, Local Debug and Train, or a run's line and
+  **Stop**. Compile and Local Debug get their labels back when the row has
+  room.
+- When row 1 cannot hold the mode even as a menu, the mode (and a running
+  pipeline's progress) starts row 2 instead, and the steps fold beside it.
+- When row 2 is still too narrow, the run's line shortens to its state
+  (*Waiting*, *Epoch 3 / 5*, *Update 196*); hover it for the whole line.
 
 ## The canvas footer
 

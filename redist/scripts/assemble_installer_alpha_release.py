@@ -187,7 +187,7 @@ def _validate_pack_matrix(repository_root: Path, *, cpu_only: bool = False) -> N
         validate_pack_manifest(document)
         packs.append(document["signed"])
     for pack in packs:
-        if cpu_only and pack["pack_kind"] != "base":
+        if cpu_only and pack["pack_kind"] == "backend_pack":
             raise AlphaReleaseError("CPU-only release must not contain optional packs")
         identity = (pack["platform"], pack["architecture"])
         if identity not in TARGET_BY_PACK:
@@ -219,6 +219,11 @@ def _validate_pack_matrix(repository_root: Path, *, cpu_only: bool = False) -> N
             if pack["pack_kind"] == "backend_pack"
             and pack["companion_base_id"] in bases
         ]
+        for plugin in target_packs:
+            if plugin["pack_kind"] == "plugin_pack" and plugin["companion_base_id"] not in bases:
+                raise AlphaReleaseError(
+                    f"plugin pack {plugin['pack_id']} requires a base absent from {target.key}"
+                )
         if not bases:
             raise AlphaReleaseError(f"{target.key} requires a base")
         optional_total += len(optional)

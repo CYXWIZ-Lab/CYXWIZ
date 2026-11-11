@@ -6,11 +6,16 @@
 #include "security/permission_store.h"
 #include "../core/extension_node_registry.h"
 #include "registries/plugin_panel_registry.h"
+#include "registries/plugin_command_registry.h"
+#include "registries/plugin_simulation_registry.h"
+#include "registries/plugin_environment_registry.h"
 #include "registries/plugin_data_loader_registry.h"
 #include "registries/plugin_training_hook_manager.h"
 #include "registries/plugin_analytics_registry.h"
 #include "interfaces/i_panel_provider.h"
 #include "interfaces/i_node_provider.h"
+#include "interfaces/i_simulation_provider.h"
+#include "interfaces/i_environment_provider.h"
 #include "interfaces/i_tensor_node_provider.h"
 #include <cyxwiz/sequential.h>
 #include "interfaces/i_training_hook.h"
@@ -117,8 +122,17 @@ void PluginManager::SetSearchPaths(const std::vector<std::filesystem::path>& pat
     }
 }
 
+void PluginManager::SetPackPlugins(std::vector<std::pair<std::string, std::filesystem::path>> plugins) {
+    std::lock_guard lock(mutex_);
+    pack_plugins_ = std::move(plugins);
+    for (const auto& [id, folder] : pack_plugins_) {
+        spdlog::debug("  Plugin pack {}: {}", id, folder.string());
+    }
+}
+
 std::vector<std::filesystem::path> PluginManager::DiscoverPlugins() const {
     std::vector<std::filesystem::path> plugin_dirs;
+    for (const auto& pack : pack_plugins_) plugin_dirs.push_back(pack.second);
 
     for (const auto& search_path : search_paths_) {
         if (!std::filesystem::exists(search_path)) {
@@ -357,6 +371,57 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
                         pi.show_by_default, p);
                 }
                 spdlog::info("PluginManager: Registered {} panels for '{}'", dll_panels.size(), plugin_id);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
+            }
+        }
+
+        // Register menu commands (plugin API 1.4, with crash isolation)
+        auto* command_provider = static_cast<ICommandProvider*>(instance->QueryInterface("ICommandProvider"));
+        if (command_provider && !permitted(PluginPermission::UIModify, "ICommandProvider")) command_provider = nullptr;
+        if (auto* p = command_provider) {
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterCommands", [&]() {
+                const auto commands = p->GetCommands();
+                for (const auto& command : commands) PluginCommandRegistry::Instance().Register(plugin_id, command, p);
+                spdlog::info("PluginManager: Registered {} menu commands for '{}'", commands.size(), plugin_id);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
+            }
+        }
+
+        // Register the nodes that run in a graph simulation (plugin API 1.4, with crash isolation)
+        auto* simulation_provider = static_cast<ISimulationProvider*>(instance->QueryInterface("ISimulationProvider"));
+        if (simulation_provider && !permitted(PluginPermission::UIModify, "ISimulationProvider")) simulation_provider = nullptr;
+        if (auto* p = simulation_provider) {
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterSimulationNodes", [&]() {
+                const auto nodes = p->GetSimulationNodes();
+                for (const auto& node : nodes) PluginSimulationRegistry::Instance().Register(plugin_id, node, p);
+                spdlog::info("PluginManager: Registered {} simulation nodes for '{}'", nodes.size(), plugin_id);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
+            }
+        }
+
+        // Register the environments for reinforcement learning (plugin API 1.4, with crash isolation)
+        auto* environment_provider = static_cast<IEnvironmentProvider*>(instance->QueryInterface("IEnvironmentProvider"));
+        if (environment_provider && !permitted(PluginPermission::Training, "IEnvironmentProvider")) environment_provider = nullptr;
+        if (auto* p = environment_provider) {
+            auto& lease = extension_leases_[plugin_id];
+            if (!lease) lease = std::make_shared<ExtensionLease>();
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterEnvironments", [&]() {
+                const auto environments = p->GetEnvironments();
+                for (const auto& environment : environments)
+                    PluginEnvironmentRegistry::Instance().Register(plugin_id, environment, p, lease);
+                spdlog::info("PluginManager: Registered {} environments for '{}'", environments.size(), plugin_id);
             });
             if (reg_result.crashed) {
                 plugin->state = PluginState::Failed;
@@ -644,12 +709,20 @@ void PluginManager::InitializeAll() {
 void PluginManager::RemoveRegistrations(const std::string& plugin_id) {
     ExtensionNodeRegistry::Instance().RemoveByProvider(plugin_id);
     PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginCommandRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginSimulationRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginEnvironmentRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginTrainingHookManager::Instance().RemoveByPlugin(plugin_id);
     PluginAnalyticsRegistry::Instance().RemoveByPlugin(plugin_id);
 }
 
+void PluginManager::SetPluginStoppingHandler(std::function<void(const std::string& plugin_id)> handler) {
+    plugin_stopping_handler_ = std::move(handler);
+}
+
 void PluginManager::ShutdownPlugin(const std::string& plugin_id) {
+    if (plugin_stopping_handler_) plugin_stopping_handler_(plugin_id);
     std::lock_guard assistant_lock(assistant_command_mutex_);
     std::lock_guard lock(mutex_);
 
@@ -686,6 +759,7 @@ void PluginManager::ShutdownAll() {
 }
 
 void PluginManager::UnloadPlugin(const std::string& plugin_id) {
+    if (plugin_stopping_handler_) plugin_stopping_handler_(plugin_id);
     std::lock_guard assistant_lock(assistant_command_mutex_);
     std::lock_guard lock(mutex_);
 

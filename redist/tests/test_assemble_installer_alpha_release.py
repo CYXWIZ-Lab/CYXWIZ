@@ -371,6 +371,56 @@ class AlphaReleaseAssemblerTests(unittest.TestCase):
         with self.assertRaises(assembler.AlphaReleaseError):
             assembler._validate_pack_matrix(repository)
 
+    def _plugin_matrix(self, name: str, companion: str | None = None) -> Path:
+        """Four bases plus one plugin pack for the first base (shape checks only)."""
+        repository = self.root / name
+        manifests = repository / "bootstrap" / "catalogs" / "manifests"
+        manifests.mkdir(parents=True)
+        bases = sorted(path for path in self.manifests if path.name.startswith("base-"))
+        for path in bases:
+            shutil.copyfile(path, manifests / path.name)
+        base = json.loads(bases[0].read_text(encoding="utf-8"))["signed"]
+        digest = hashlib.sha256(b"component").hexdigest()
+        plugin = {
+            "schema_version": 2,
+            "kind": "cyxwiz-backend-pack-manifest",
+            "signed": {
+                "pack_id": "mujoco-plugin",
+                "pack_kind": "plugin_pack",
+                "plugin_id": "com.cyxwiz.simulation.mujoco",
+                "package_version": "1",
+                "platform": base["platform"],
+                "architecture": base["architecture"],
+                "cyxwiz_release": {"minimum": "0.2.0", "maximum": "0.2.0"},
+                "companion_base_id": companion or base["pack_id"],
+                "conflicts": [],
+                "support_status": "supported",
+                "components": [{
+                    "path": "plugin.json", "size": 9, "sha256": digest,
+                    "source": "cyxwiz-plugin", "executable": False,
+                }],
+                "licenses": [{"component": "mujoco", "path": "plugin.json"}],
+                "archive": {"file_name": "mujoco-plugin.zip", "size": 9, "sha256": digest},
+                "generated_utc": "2026-11-06T00:00:00Z",
+            },
+            "signatures": [{"key_id": "pack-2026", "algorithm": "ed25519", "value": "A" * 86}],
+        }
+        (manifests / "mujoco-plugin.json").write_text(json.dumps(plugin), encoding="utf-8")
+        return repository
+
+    def test_plugin_pack_is_not_an_accelerator_pack(self) -> None:
+        # A plugin pack may ship in a CPU-only release and does not make a
+        # release "full": it is not an optional compute backend.
+        repository = self._plugin_matrix("plugin-matrix")
+        assembler._validate_pack_matrix(repository, cpu_only=True)
+        with self.assertRaisesRegex(assembler.AlphaReleaseError, "--cpu-only"):
+            assembler._validate_pack_matrix(repository)
+
+    def test_plugin_pack_requires_its_base_in_the_release(self) -> None:
+        repository = self._plugin_matrix("plugin-orphan", companion="base-absent")
+        with self.assertRaisesRegex(assembler.AlphaReleaseError, "plugin pack mujoco-plugin"):
+            assembler._validate_pack_matrix(repository, cpu_only=True)
+
     def test_cpu_only_rejects_diagnostic_base_before_publication(self) -> None:
         repository = self.root / "diagnostic-matrix"
         manifests = repository / "bootstrap" / "catalogs" / "manifests"

@@ -2,12 +2,55 @@
 #include "mj_mjcf_parser.h"
 #include "rl/reward_shaper.h"
 #include "rl/observation_filter.h"
+#include "env/mj_env_batch.h"
 
 #include <spdlog/spdlog.h>
 #include <mujoco/mujoco.h>
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <string_view>
+
 namespace cyxwiz::plugin::mujoco {
+
+namespace {
+
+// Two spellings of one model file (relative/absolute, slashes) are the same model.
+bool SameModelFile(const std::string& a, const std::string& b) {
+    if (a == b) return true;
+    if (a.empty() || b.empty()) return false;
+    std::error_code ec_a, ec_b;
+    const auto ca = std::filesystem::weakly_canonical(std::filesystem::path(a), ec_a);
+    const auto cb = std::filesystem::weakly_canonical(std::filesystem::path(b), ec_b);
+    return !ec_a && !ec_b && ca == cb;
+}
+
+// The actuator a Plant input pin drives: by name, or "actuator_<i>" for an
+// unnamed actuator (the name ParseMjcfFile gives it).
+int ActuatorId(const mjModel* m, const std::string& pin_name) {
+    const int id = mj_name2id(m, mjOBJ_ACTUATOR, pin_name.c_str());
+    if (id >= 0) return id;
+    constexpr std::string_view kPrefix = "actuator_";
+    if (pin_name.rfind(kPrefix, 0) != 0) return -1;
+    const std::string digits = pin_name.substr(kPrefix.size());
+    if (digits.empty() || digits.size() > 9 ||
+        !std::all_of(digits.begin(), digits.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; }))
+        return -1;
+    const int index = std::stoi(digits);
+    if (index < m->nu && !mj_id2name(m, mjOBJ_ACTUATOR, index)) return index;
+    return -1;
+}
+
+// MuJoCo state (mjtNum, double) as the float values node pins carry.
+std::vector<float> ToFloats(const mjtNum* values, mjtSize count) {
+    std::vector<float> out(static_cast<size_t>(count));
+    for (mjtSize i = 0; i < count; ++i) out[static_cast<size_t>(i)] = static_cast<float>(values[i]);
+    return out;
+}
+
+}  // namespace
 
 // =============================================================================
 // IPlugin Lifecycle
@@ -16,29 +59,51 @@ namespace cyxwiz::plugin::mujoco {
 bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnLoad");
 
-    // Log MuJoCo version (mj_versionString available since MuJoCo 2.3.0)
-    int ver = mj_version();
-    ctx.LogInfo("MuJoCo Simulation: Using MuJoCo version " +
-                std::to_string(ver / 100) + "." +
-                std::to_string((ver / 10) % 10) + "." +
-                std::to_string(ver % 10));
+    ctx.LogInfo(std::string("MuJoCo Simulation: Using MuJoCo version ") + mj_versionString());
 
     // Capture main GLFW window for renderer context management.
     main_window_ = glfwGetCurrentContext();
 
-    // Set assets directory for the environment library.
-    // Assets are in the source tree: plugins/simulation/mujoco/assets/
-    // At runtime, resolve relative to known plugin search paths.
-    env_library_.SetAssetsDir("plugins/simulation/mujoco/assets");
+    // The built-in environments ship in the plugin's own folder (next to plugin.json).
+    assets_dir_ = (ctx.GetPluginDir() / "assets").string();
+    env_library_.SetAssetsDir(assets_dir_);
 
-    // Scan for previously downloaded Menagerie models
+    // Scan for previously downloaded Menagerie models and earlier imports
     env_library_.ScanDownloadedModels();
+    env_library_.ScanImportedModels();
 
-    // Wire browser panel load callback and downloader
-    browser_panel_.SetLoadCallback([this](const std::string& path) {
-        return LoadEnvironment(path);
+    // Wire browser panel load callback and downloader; the viewport shows the
+    // loaded model's name and where it comes from.
+    browser_panel_.SetLoadCallback([this](const std::string& path, const EnvInfo& info) {
+        if (!LoadEnvironment(path)) return false;
+        if (info.source == EnvSource::Imported) {
+            viewport_panel_.SetModelLabel(info.name, "Imported from URL");
+        } else {
+            const char* source = info.source == EnvSource::Menagerie ? "Menagerie" : "Built-in";
+            viewport_panel_.SetModelLabel(info.name, std::string(source) + " \xC2\xB7 " + info.category);
+        }
+        return true;
     });
     browser_panel_.SetDownloader(&menagerie_downloader_);
+    browser_panel_.SetContext(&ctx);
+    // One model at a time: while a graph run steps it, the library loads no other
+    // (loading stops a viewport run, which the user started here)
+    browser_panel_.SetLoadBlocker([this]() -> std::string {
+        return viewport_panel_.IsGraphSimActive()
+                   ? "A graph run is stepping the loaded model. Stop the graph run to load another."
+                   : std::string();
+    });
+
+    ctx_ = &ctx;
+    // The viewport draws the Engine's widgets and opens the library; a model
+    // file it opens is named after the file.
+    viewport_panel_.SetContext(&ctx);
+    viewport_panel_.SetOpenModel([this](const std::string& path) {
+        if (!LoadEnvironment(path)) return false;
+        viewport_panel_.SetModelLabel(std::filesystem::path(path).stem().string(), "Your file");
+        browser_panel_.ClearLoaded();
+        return true;
+    });
 
     state_ = PluginState::Loaded;
     return true;
@@ -47,7 +112,7 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
 bool MuJoCoPlugin::OnInitialize(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnInitialize");
 
-    // Note: Registration of interfaces (IPanelProvider, INodeProvider, ITrainingHook)
+    // Note: Registration of interfaces (IPanelProvider, INodeProvider)
     // is handled engine-side via QueryInterface in PluginManager to avoid DLL singleton
     // duplication issues. Do NOT call ctx.Register*() here.
 
@@ -58,14 +123,20 @@ bool MuJoCoPlugin::OnInitialize(PluginContext& ctx) {
 void MuJoCoPlugin::OnShutdown(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnShutdown");
     sim_executor_.Stop();  // Must stop before freeing model/renderer
+    // A running download reports to the library panel: finish it while the panel exists
+    menagerie_downloader_.CancelDownload();
     renderer_.Shutdown();
-    env_manager_.Close();
-    current_env_id_.clear();
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        env_manager_.Close();
+        loaded_mjcf_path_.clear();
+    }
     state_ = PluginState::Loaded;
 }
 
 void MuJoCoPlugin::OnUnload(PluginContext& ctx) {
     ctx.LogInfo("MuJoCo Simulation: OnUnload");
+    ctx_ = nullptr;
     state_ = PluginState::Unloaded;
 }
 
@@ -79,18 +150,21 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
         renderer_.Shutdown();
     }
 
-    if (!env_manager_.LoadModel(mjcf_path)) {
-        return false;
+    // Nothing may step the old model while it is replaced: the executor stops
+    // first, and the graph simulation's EvaluateNode waits on the physics lock.
+    sim_executor_.Stop();
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        if (!env_manager_.LoadModel(mjcf_path)) {
+            loaded_mjcf_path_.clear();
+            return false;
+        }
+        // The loaded path, for ResolveDynamicPins and the Plant's model check
+        loaded_mjcf_path_ = mjcf_path;
+        env_manager_.Reset();
     }
 
-    // Store the loaded path so ResolveDynamicPins can use it
-    loaded_mjcf_path_ = mjcf_path;
-
-    // Reset environment to get initial state
-    env_manager_.Reset();
-
     // Wire simulation executor and viewport
-    sim_executor_.Stop();
     sim_executor_.SetEnvManager(&env_manager_);
     viewport_panel_.SetSimExecutor(&sim_executor_);
 
@@ -126,7 +200,64 @@ std::vector<PluginPanelInfo> MuJoCoPlugin::GetPanels() {
     return { viewport, browser };
 }
 
+void MuJoCoPlugin::SyncPlayback() {
+    std::string path, title;
+    std::vector<mjtNum> state;
+    int copy = 0;
+    bool active = false;
+    {
+        std::lock_guard<std::mutex> lock(view_slot_->mutex);
+        active = view_slot_->owner != nullptr;
+        if (active) {
+            path = view_slot_->model_path;
+            title = view_slot_->title;
+            copy = view_slot_->copy;
+            if (view_slot_->version != shown_version_) {
+                shown_version_ = view_slot_->version;
+                state = view_slot_->state;
+            }
+        }
+    }
+    if (active) {
+        if (viewport_panel_.IsGraphSimActive()) return;  // the graph run keeps its model
+        if (!playback_) {
+            playback_ = true;
+            restore_path_ = loaded_mjcf_path_;
+            restore_title_ = viewport_panel_.ModelTitle();
+            restore_subtitle_ = viewport_panel_.ModelSubtitle();
+        }
+        if (loaded_mjcf_path_ != path) {
+            if (!LoadEnvironment(path)) {
+                spdlog::warn("[MuJoCo] Policy playback: the model {} did not load", path);
+                return;
+            }
+            viewport_panel_.SetModelLabel(title, "Policy playback");
+            state.clear();
+            shown_version_ = 0;  // apply the latest state next frame, after the renderer starts
+        }
+        viewport_panel_.SetPlayback(true, title + " \xC2\xB7 copy " + std::to_string(copy));
+        if (!state.empty()) {
+            std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+            const mjModel* m = env_manager_.GetModel();
+            mjData* d = env_manager_.GetMutableData();
+            if (m && d && static_cast<size_t>(mj_stateSize(m, mjSTATE_FULLPHYSICS)) == state.size()) {
+                mj_setState(m, d, state.data(), mjSTATE_FULLPHYSICS);
+                mj_forward(m, d);
+            }
+        }
+    } else if (playback_) {
+        playback_ = false;
+        viewport_panel_.SetPlayback(false);
+        if (!restore_path_.empty() && restore_path_ != loaded_mjcf_path_ && LoadEnvironment(restore_path_))
+            viewport_panel_.SetModelLabel(restore_title_, restore_subtitle_);
+        else if (restore_path_.empty())  // nothing before it: the played model stays
+            viewport_panel_.SetModelLabel(viewport_panel_.ModelTitle(), "From the last policy playback");
+    }
+}
+
 void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
+    if (panel_id == "mujoco_viewport") SyncPlayback();
+
     // Lazy renderer init — deferred from LoadEnvironment to avoid
     // cross-DLL GL context/glad issues. Init happens here in the
     // engine's render loop where the GL context is guaranteed current.
@@ -148,44 +279,54 @@ void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
 }
 
 // =============================================================================
-// ITrainingHook - RL Metric Logging
+// ICommandProvider: the Simulation menu
 // =============================================================================
 
-void MuJoCoPlugin::OnTrainingStart(TrainingContext& ctx) {
-    spdlog::info("[MuJoCo] RL training started — env='{}', epochs={}",
-                 current_env_id_.empty() ? "(none)" : current_env_id_,
-                 ctx.total_epochs);
+namespace {
+constexpr const char* kViewportPanelId = "mujoco_viewport";
+}  // namespace
+
+std::vector<PluginCommandInfo> MuJoCoPlugin::GetCommands() {
+    return {
+        // The viewport's own run gives way to a graph run in the menu
+        {"run", "Simulation", "run", "Run Simulation", "Runs the loaded model in the viewport, or resumes it.", false, true},
+        {"pause", "Simulation", "run", "Pause", "Pauses the running model.", false, true},
+        {"stop", "Simulation", "run", "Stop", "Stops the run.", false, true},
+        {"step", "Simulation", "run", "Step Once", "Pauses the model and advances it one step.", false, true},
+        {"load", "Simulation", "model", "Load MJCF Model...", "Opens a MuJoCo model file in the viewport.", false, false},
+    };
 }
 
-void MuJoCoPlugin::OnTrainingEnd([[maybe_unused]] TrainingContext& ctx) {
-    spdlog::info("[MuJoCo] RL training ended — {} episodes completed, "
-                 "mean_reward={:.2f}, mean_length={:.1f}",
-                 env_manager_.GetEpisodeCount(),
-                 env_manager_.GetMeanEpisodeReward(),
-                 env_manager_.GetMeanEpisodeLength());
-}
-
-void MuJoCoPlugin::OnEpochEnd(TrainingContext& ctx) {
-    // Inject RL-specific metrics into training context
-    if (env_manager_.IsLoaded()) {
-        ctx.custom_metrics["mean_episode_reward"] = env_manager_.GetMeanEpisodeReward();
-        ctx.custom_metrics["mean_episode_length"] = env_manager_.GetMeanEpisodeLength();
-        ctx.custom_metrics["total_episodes"] = static_cast<float>(env_manager_.GetEpisodeCount());
-        ctx.custom_metrics["total_env_steps"] = static_cast<float>(env_manager_.GetCurrentStep());
+PluginCommandState MuJoCoPlugin::GetCommandState(const std::string& command_id) {
+    const auto run = viewport_panel_.GetRunState();
+    auto disabled = [](const char* reason) { return PluginCommandState{false, reason, false}; };
+    if (command_id == "load") {
+        if (run.playback) return disabled(MjViewportPanel::kPlaybackReason);
+        return run.graph ? disabled("A graph run is stepping the loaded model. Stop the graph run to load another.")
+                         : PluginCommandState{};
     }
+    if (run.graph) return disabled(MjViewportPanel::kGraphReason);
+    if (run.playback) return disabled(MjViewportPanel::kPlaybackReason);
+    if (!env_manager_.IsLoaded()) return disabled("Load a model first: Environment Library or Load MJCF Model...");
+    if (command_id == "run") return run.running ? disabled("The model is running.") : PluginCommandState{};
+    if (command_id == "pause") return run.running ? PluginCommandState{} : disabled("Nothing is running.");
+    if (command_id == "stop") return run.active ? PluginCommandState{} : disabled("Nothing is running.");
+    return PluginCommandState{};  // step
 }
 
-bool MuJoCoPlugin::ShouldStopEarly([[maybe_unused]] const TrainingContext& ctx) {
-    // Stop if reward exceeds the solved threshold for this environment
-    if (reward_threshold_ < std::numeric_limits<float>::max()) {
-        float mean_reward = env_manager_.GetMeanEpisodeReward();
-        if (mean_reward >= reward_threshold_) {
-            spdlog::info("[MuJoCo] Environment solved! mean_reward={:.2f} >= threshold={:.2f}",
-                         mean_reward, reward_threshold_);
-            return true;
-        }
+void MuJoCoPlugin::RunCommand(const std::string& command_id) {
+    if (command_id == "run") viewport_panel_.RunOrResume();
+    else if (command_id == "pause") viewport_panel_.PauseRun();
+    else if (command_id == "stop") viewport_panel_.StopRun();
+    else if (command_id == "step") viewport_panel_.StepOnce();
+    else if (command_id == "load" && ctx_ && ctx_->GetUi()) {
+        const std::string path = ctx_->GetUi()->OpenFileDialog("Open MJCF model", "MJCF model", "xml");
+        if (path.empty()) return;
+        // The viewport opens it before its next frame: show it
+        viewport_panel_.RequestOpenModel(path);
     }
-    return false;
+    // The run and the model are shown in the viewport
+    if (ctx_) ctx_->ShowPanel(kViewportPanelId);
 }
 
 // =============================================================================
@@ -194,25 +335,6 @@ bool MuJoCoPlugin::ShouldStopEarly([[maybe_unused]] const TrainingContext& ctx) 
 
 std::vector<PluginNodeTypeInfo> MuJoCoPlugin::GetNodeTypes() {
     std::vector<PluginNodeTypeInfo> nodes;
-
-    // --- MuJoCo Environment node ---
-    // Loads an MJCF model and provides the Gymnasium-compatible env interface
-    {
-        PluginNodeTypeInfo n;
-        n.type_name    = "MuJoCoEnv";
-        n.display_name = "MuJoCo Environment";
-        n.category     = "RL / Simulation";
-        n.description  = "Load a MuJoCo MJCF model as a Gymnasium-compatible environment";
-        n.color        = 0xFF44AA88;  // Teal
-
-        n.pins.push_back({"env", "Environment", false});
-
-        n.default_parameters["mjcf_path"]       = "inverted_pendulum.xml";
-        n.default_parameters["max_steps"]        = "1000";
-        n.default_parameters["frame_skip"]       = "1";
-        n.default_parameters["reward_threshold"] = "inf";
-        nodes.push_back(std::move(n));
-    }
 
     // --- Reward Function node ---
     // Configurable reward shaping for RL training
@@ -257,31 +379,6 @@ std::vector<PluginNodeTypeInfo> MuJoCoPlugin::GetNodeTypes() {
         n.default_parameters["include_qvel"] = "true";
         n.default_parameters["include_sensors"] = "false";
         n.default_parameters["normalize"]    = "true";
-        nodes.push_back(std::move(n));
-    }
-
-    // --- RL Agent node ---
-    // PPO/SAC agent that interacts with the environment
-    {
-        PluginNodeTypeInfo n;
-        n.type_name    = "RLAgent";
-        n.display_name = "RL Agent";
-        n.category     = "RL / Simulation";
-        n.description  = "Reinforcement learning agent (PPO or SAC) for MuJoCo environments";
-        n.color        = 0xFF4488DD;  // Red-orange
-
-        n.pins.push_back({"env", "Environment", true});
-        n.pins.push_back({"policy", "Model", false});
-
-        n.default_parameters["algorithm"]       = "PPO";
-        n.default_parameters["learning_rate"]   = "3e-4";
-        n.default_parameters["gamma"]           = "0.99";
-        n.default_parameters["gae_lambda"]      = "0.95";
-        n.default_parameters["clip_range"]      = "0.2";
-        n.default_parameters["n_steps"]         = "2048";
-        n.default_parameters["batch_size"]      = "64";
-        n.default_parameters["n_epochs"]        = "10";
-        n.default_parameters["hidden_sizes"]    = "64,64";
         nodes.push_back(std::move(n));
     }
 
@@ -333,22 +430,6 @@ std::string MuJoCoPlugin::GenerateCode(
         return "# MuJoCo simulation nodes currently support PyTorch only\n";
     }
 
-    if (node_type_name == "MuJoCoEnv") {
-        std::string mjcf = get("mjcf_path", "inverted_pendulum.xml");
-        std::string max_steps = get("max_steps", "1000");
-        std::string frame_skip = get("frame_skip", "1");
-        return
-            "import gymnasium as gym\n"
-            "import mujoco\n"
-            "\n"
-            "env = gym.make(\n"
-            "    'InvertedPendulum-v5',  # or custom: gym.make('MuJoCoEnv', xml_file='" + mjcf + "')\n"
-            "    max_episode_steps=" + max_steps + ",\n"
-            "    frame_skip=" + frame_skip + ",\n"
-            ")\n"
-            "obs, info = env.reset()\n";
-    }
-
     if (node_type_name == "RewardFunction") {
         std::string alive = get("alive_bonus", "1.0");
         std::string ctrl_w = get("ctrl_cost_weight", "0.1");
@@ -390,55 +471,6 @@ std::string MuJoCoPlugin::GenerateCode(
             "    return filtered\n";
     }
 
-    if (node_type_name == "RLAgent") {
-        std::string algo = get("algorithm", "PPO");
-        std::string lr = get("learning_rate", "3e-4");
-        std::string gamma = get("gamma", "0.99");
-        std::string hidden = get("hidden_sizes", "64,64");
-        std::string n_steps = get("n_steps", "2048");
-        std::string batch = get("batch_size", "64");
-        std::string n_epochs = get("n_epochs", "10");
-        std::string clip = get("clip_range", "0.2");
-        std::string gae = get("gae_lambda", "0.95");
-
-        // Convert "64,64" to [64, 64]
-        std::string policy_kwargs = "dict(net_arch=[" + hidden + "])";
-
-        if (algo == "PPO") {
-            return
-                "from stable_baselines3 import PPO\n"
-                "\n"
-                "model = PPO(\n"
-                "    'MlpPolicy',\n"
-                "    env,\n"
-                "    learning_rate=" + lr + ",\n"
-                "    gamma=" + gamma + ",\n"
-                "    gae_lambda=" + gae + ",\n"
-                "    clip_range=" + clip + ",\n"
-                "    n_steps=" + n_steps + ",\n"
-                "    batch_size=" + batch + ",\n"
-                "    n_epochs=" + n_epochs + ",\n"
-                "    policy_kwargs=" + policy_kwargs + ",\n"
-                "    verbose=1,\n"
-                ")\n"
-                "model.learn(total_timesteps=1_000_000)\n";
-        } else {
-            return
-                "from stable_baselines3 import SAC\n"
-                "\n"
-                "model = SAC(\n"
-                "    'MlpPolicy',\n"
-                "    env,\n"
-                "    learning_rate=" + lr + ",\n"
-                "    gamma=" + gamma + ",\n"
-                "    batch_size=" + batch + ",\n"
-                "    policy_kwargs=" + policy_kwargs + ",\n"
-                "    verbose=1,\n"
-                ")\n"
-                "model.learn(total_timesteps=1_000_000)\n";
-        }
-    }
-
     if (node_type_name == "MuJoCoPlant") {
         std::string mjcf = get("mjcf_path", "model.xml");
         std::string timestep = get("timestep", "0.002");
@@ -463,49 +495,97 @@ std::string MuJoCoPlugin::GenerateCode(
     return "# Unknown MuJoCo node type: " + node_type_name + "\n";
 }
 
+std::vector<PluginSimulationNodeInfo> MuJoCoPlugin::GetSimulationNodes() {
+    return {{"MuJoCoPlant", kViewportPanelId}, {"RewardFunction", ""}, {"ObservationFilter", ""}};
+}
+
+PluginSimulationBeginResult MuJoCoPlugin::BeginGraphRun(const std::vector<PluginSimulationGraphNode>& nodes) {
+    obs_filters_.clear();  // each run starts its running normalisation again
+    const auto refuse = [](std::string reason) { return PluginSimulationBeginResult{false, std::move(reason)}; };
+    bool steps_physics = false;
+    for (const auto& node : nodes) {
+        if (node.node_type != "MuJoCoPlant") continue;
+        steps_physics = true;
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        if (!env_manager_.IsLoaded())
+            return refuse("No MuJoCo model is loaded. Load the MuJoCo Plant's model from the Environment Library, "
+                          "then run the graph.");
+        // The node's model is the model it steps: never another one silently.
+        // Its own mjcf_path, or else the model its pins were synced from.
+        const auto param = [&](const char* key) {
+            const auto it = node.parameters.find(key);
+            return it == node.parameters.end() ? std::string() : it->second;
+        };
+        const std::string node_model = param("mjcf_path");
+        const std::string synced_model = param("_meta_loaded_path");
+        if (!node_model.empty() && !SameModelFile(node_model, loaded_mjcf_path_))
+            return refuse("The MuJoCo Plant's model '" + node_model + "' is not the model loaded in the viewport ('" +
+                          loaded_mjcf_path_ + "'). Load it from the Environment Library.");
+        if (node_model.empty() && !synced_model.empty() && !SameModelFile(synced_model, loaded_mjcf_path_))
+            return refuse("The MuJoCo Plant's pins were made for '" + synced_model + "' but the viewport has '" +
+                          loaded_mjcf_path_ + "' loaded. Sync the node again or load that model.");
+    }
+    if (!steps_physics) return {};
+    // One driver at a time: the viewport's own run is not stopped behind the user's back.
+    if (sim_executor_.GetMode() != SimMode::Stopped)
+        return refuse("The MuJoCo Viewport is running the model. Stop it there, then run the graph.");
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        graph_clock_.Begin(env_manager_.GetData()->time);
+    }
+    viewport_panel_.SetGraphSimActive(true);
+    return {};
+}
+
+void MuJoCoPlugin::EndGraphRun() {
+    viewport_panel_.SetGraphSimActive(false);
+}
+
+std::vector<PluginEnvironmentInfo> MuJoCoPlugin::GetEnvironments() {
+    std::vector<PluginEnvironmentInfo> environments;
+    for (const auto& task : MjTasks()) {
+        PluginEnvironmentInfo info;
+        std::string error;
+        if (DescribeMjTask(task, (std::filesystem::path(assets_dir_) / task.model_file).string(), info, error))
+            environments.push_back(std::move(info));
+        else if (ctx_)
+            ctx_->LogWarn("MuJoCo Simulation: " + task.id + " is not offered: " + error);
+    }
+    return environments;
+}
+
+PluginEnvironmentCreateResult MuJoCoPlugin::CreateEnvironments(const std::string& id,
+                                                               const std::map<std::string, std::string>& settings,
+                                                               int count) {
+    const MjTaskSpec* task = FindMjTask(id);
+    if (!task) return {nullptr, "The MuJoCo plugin has no environment '" + id + "'."};
+    std::string error;
+    IEnvironmentBatch* batch = MjEnvBatch::Create(
+        *task, (std::filesystem::path(assets_dir_) / task->model_file).string(), settings, count, view_slot_, error);
+    return {batch, error};
+}
+
 PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx) {
     PluginNodeEvalResult result;
 
     if (ctx.node_type_name == "MuJoCoPlant") {
-        // If sim_executor is already running (manual control or RL training),
-        // don't step physics here � would cause concurrent access crash
-        if (sim_executor_.GetMode() != SimMode::Stopped) {
-            sim_executor_.Stop();  // Request stop and wait for thread to finish
+        // Only a graph run that BeginGraphRun accepted steps the physics.
+        if (!viewport_panel_.IsGraphSimActive()) {
+            result.success = false;
+            result.error_message = "The MuJoCo Plant steps the physics only inside a graph run";
+            return result;
         }
 
-        // Signal viewport that graph sim is driving physics
-        viewport_panel_.SetGraphSimActive(true);
-
+        // One physics transaction: the model cannot be replaced (LoadEnvironment)
+        // or rendered while this tick applies, steps and reads it. Loading
+        // another model is refused while the graph run holds this one.
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         if (!env_manager_.IsLoaded()) {
             result.success = false;
             result.error_message = "No MuJoCo model loaded";
             return result;
         }
 
-        // Gather actuator controls from input pins
-        std::vector<ActuatorInput> actuators;
-        for (const auto& [pin_name, value] : ctx.input_values) {
-            if (pin_name == "u") {
-                // Vector mode: single control vector
-                if (std::holds_alternative<std::vector<float>>(value)) {
-                    const auto& vec = std::get<std::vector<float>>(value);
-                    for (size_t i = 0; i < vec.size(); ++i) {
-                        actuators.push_back({std::to_string(i), vec[i]});
-                    }
-                } else if (std::holds_alternative<float>(value)) {
-                    actuators.push_back({"0", std::get<float>(value)});
-                }
-            } else {
-                // Bus mode: per-actuator scalar pins
-                float v = 0.0f;
-                if (std::holds_alternative<float>(value)) {
-                    v = std::get<float>(value);
-                }
-                actuators.push_back({pin_name, v});
-            }
-        }
-
-        // Step physics directly (avoid sim_executor thread contention)
         mjData* d = env_manager_.GetMutableData();
         const mjModel* m = env_manager_.GetModel();
         if (!d || !m) {
@@ -514,24 +594,30 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
             return result;
         }
 
-        // Apply actuator controls
-        for (const auto& act : actuators) {
-            int id = mj_name2id(m, mjOBJ_ACTUATOR, act.name.c_str());
-            if (id >= 0 && id < m->nu) {
-                d->ctrl[id] = act.value;
+        // Controls from the input pins: "u" is the whole control vector by
+        // actuator index; any other pin is one actuator by name (the pin names
+        // ResolveDynamicPins gave it, "actuator_<i>" for an unnamed one).
+        std::vector<std::pair<int, float>> controls;
+        for (const auto& [pin_name, value] : ctx.input_values) {
+            if (pin_name == "u") {
+                if (std::holds_alternative<std::vector<float>>(value)) {
+                    const auto& vec = std::get<std::vector<float>>(value);
+                    for (size_t i = 0; i < vec.size() && static_cast<int>(i) < m->nu; ++i)
+                        controls.emplace_back(static_cast<int>(i), vec[i]);
+                } else if (std::holds_alternative<float>(value) && m->nu > 0) {
+                    controls.emplace_back(0, std::get<float>(value));
+                }
+            } else if (std::holds_alternative<float>(value)) {
+                const int id = ActuatorId(m, pin_name);
+                if (id >= 0) controls.emplace_back(id, std::get<float>(value));
             }
         }
 
-        // Step physics under physics mutex (prevents concurrent render access)
-        int frame_skip = env_manager_.GetFrameSkip();
-        {
-            std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
-            for (int i = 0; i < frame_skip; i++) {
-                mj_step(m, d);
-            }
-        }
+        // The physics follows the graph's clock (mj_graph_clock.h)
+        for (const auto& [id, v] : controls) d->ctrl[id] = v;
+        const int steps = graph_clock_.StepsForTick(d->time, m->opt.timestep, ctx.sim_time, ctx.dt);
+        for (int i = 0; i < steps; ++i) mj_step(m, d);
 
-        // Read sensor outputs
         for (int i = 0; i < m->nsensor; i++) {
             const char* name = mj_id2name(m, mjOBJ_SENSOR, i);
             std::string sname = name ? name : ("sensor_" + std::to_string(i));
@@ -547,17 +633,10 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
                 result.output_values[sname] = std::move(vals);
             }
         }
-        if (d && m) {
-            std::vector<float> qpos(d->qpos, d->qpos + m->nq);
-            std::vector<float> qvel(d->qvel, d->qvel + m->nv);
-            result.output_values["qpos"] = std::move(qpos);
-            result.output_values["qvel"] = std::move(qvel);
-        }
-
-        // Sensor vector (concatenation of all sensor readings)
-        if (d && m && m->nsensor > 0) {
-            std::vector<float> sensor_data(d->sensordata, d->sensordata + m->nsensordata);
-            result.output_values["sensor"] = std::move(sensor_data);
+        result.output_values["qpos"] = ToFloats(d->qpos, m->nq);
+        result.output_values["qvel"] = ToFloats(d->qvel, m->nv);
+        if (m->nsensor > 0) {
+            result.output_values["sensor"] = ToFloats(d->sensordata, m->nsensordata);
         }
 
         return result;
@@ -585,14 +664,15 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
         state.sensor = get_vec("sensor");
         state.sim_time = ctx.sim_time;
 
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         const mjData* d = env_manager_.GetData();
         const mjModel* m = env_manager_.GetModel();
         if (d && m) {
-            if (state.qpos.empty()) state.qpos.assign(d->qpos, d->qpos + m->nq);
-            if (state.qvel.empty()) state.qvel.assign(d->qvel, d->qvel + m->nv);
-            if (state.ctrl.empty()) state.ctrl.assign(d->ctrl, d->ctrl + m->nu);
+            if (state.qpos.empty()) state.qpos = ToFloats(d->qpos, m->nq);
+            if (state.qvel.empty()) state.qvel = ToFloats(d->qvel, m->nv);
+            if (state.ctrl.empty()) state.ctrl = ToFloats(d->ctrl, m->nu);
             if (state.sensor.empty() && m->nsensordata > 0)
-                state.sensor.assign(d->sensordata, d->sensordata + m->nsensordata);
+                state.sensor = ToFloats(d->sensordata, m->nsensordata);
         }
 
         float reward = shaper.ComputeReward(state);
@@ -618,17 +698,24 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
         std::vector<float> qvel = get_vec("qvel");
         std::vector<float> sensors = get_vec("sensor");
 
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         const mjData* d = env_manager_.GetData();
         const mjModel* m = env_manager_.GetModel();
         if (d && m) {
-            if (qpos.empty()) qpos.assign(d->qpos, d->qpos + m->nq);
-            if (qvel.empty()) qvel.assign(d->qvel, d->qvel + m->nv);
+            if (qpos.empty()) qpos = ToFloats(d->qpos, m->nq);
+            if (qvel.empty()) qvel = ToFloats(d->qvel, m->nv);
             if (sensors.empty() && m->nsensordata > 0)
-                sensors.assign(d->sensordata, d->sensordata + m->nsensordata);
+                sensors = ToFloats(d->sensordata, m->nsensordata);
         }
 
-        rl::ObservationFilter filter(cfg);
-        std::vector<float> obs = filter.Filter(qpos, qvel, sensors);
+        // Keep the running normalisation across the ticks of a run, one filter
+        // per settings; BeginGraphRun starts them again for each run.
+        // Nodes with the same settings share one filter: the evaluation
+        // context does not say which node is evaluated.
+        const std::string key = std::string(cfg.include_qpos ? "p" : "-") + (cfg.include_qvel ? "v" : "-") +
+                                (cfg.include_sensors ? "s" : "-") + (cfg.normalize ? "n" : "-");
+        auto filter = obs_filters_.try_emplace(key, cfg).first;
+        std::vector<float> obs = filter->second.Filter(qpos, qvel, sensors);
         result.output_values["obs"] = std::move(obs);
         return result;
     }
@@ -718,7 +805,7 @@ DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
     result.metadata["timestep"] = std::to_string(info.timestep);
 
     spdlog::info("MuJoCoPlant: Resolved {} pins for '{}' ({})",
-                 result.pins.size(), it->second, info.model_name);
+                 result.pins.size(), mjcf_path, info.model_name);
     return result;
 }
 

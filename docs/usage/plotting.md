@@ -478,8 +478,11 @@ Canvas training reports to this window, and so does word-vector training
 ## RL Training Dashboard
 
 A separate window for reinforcement learning (episode reward and length,
-policy loss, value loss, explained variance). It opens with **Train RL** on
-the canvas (graphs with RL nodes), or when a script reports RL metrics:
+policy loss, value loss, explained variance, entropy, approximate KL, clip
+fraction, action spread). It opens with **Train** on an RL graph (the
+Engine's PPO: progress, speed, Pause / Stop and the SB3 reference; see
+[Training a policy](rl_training.md#the-rl-training-dashboard)), or when a
+script reports RL metrics:
 
 ```python
 import pycyxwiz
@@ -491,7 +494,8 @@ for episode in range(100):
 ```
 
 Metric names the window shows: `episode_reward`, `episode_length`,
-`policy_loss`, `value_loss`, `explained_variance`.
+`policy_loss`, `value_loss`, `explained_variance`, `entropy`, `approx_kl`,
+`clip_fraction`, `action_std`.
 
 ## Not available yet
 
