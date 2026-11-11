@@ -109,7 +109,7 @@ void StudioDebuggerPanel::RenderTopImages() {
     const bool spatial = out_shape.size() == 4;
     const size_t channels = spatial ? out_shape[2] : (out_shape.size() == 2 ? out_shape[1] : 0);
     const auto picture_shape = input ? lv::AsSpatial(input->tensor.Shape()) : std::nullopt;
-    const bool pictures = picture_shape && (picture_shape->channels == 1 || picture_shape->channels == 3);
+    const bool pictures = picture_shape.has_value();  // any channel count: a sheet's first tile
     const std::string items_word = pictures ? "images" : "samples";
     const ui::Tokens& t = ui::CurrentTokens();
 
@@ -424,7 +424,8 @@ void StudioDebuggerPanel::RenderTopImages() {
                         const Tensor one = ti::ItemRange(s.items.features, item, item + 1);
                         auto shape = one.Shape();
                         shape.pop_back();
-                        if (const auto picture = lv::SamplePicture(lv::ReadValues(one), shape))
+                        if (const auto picture =
+                                lv::SamplePicture(lv::ReadValues(one), shape, layer_capture_->Options().input_channels))
                             id = TextureManager::Instance().CreateTextureFromUint8Data(
                                 picture->rgba.data(), static_cast<int>(picture->width), static_cast<int>(picture->height), 4);
                     } catch (const std::exception& e) {

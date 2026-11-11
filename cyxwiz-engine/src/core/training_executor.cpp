@@ -2410,6 +2410,7 @@ void TrainingExecutor::TakeLayerSnapshot(int epoch, const std::string& run_id) {
                                  : schedule.features;
         LayerCaptureOptions options = schedule.options;
         options.images_batch_first = !UsesSpatialSequentialInput(config_);  // TOFIX207
+        options.input_channels = config_.image_channels;
         auto capture = CaptureStep(*model_, *loss_, input, schedule.labels, options, module_provenance_);
         spdlog::info("TrainingExecutor: layer snapshot after epoch {} ({} layers, {:.1f} MB{})", epoch,
                      capture->Layers().size(), capture->BytesHeld() / 1048576.0,

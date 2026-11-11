@@ -12,6 +12,7 @@
 
 #include "debug_numerics.h"
 #include "engine_config.h"
+#include "image_sheet.h"
 #include "layer_capture.h"
 
 #include <cstddef>
@@ -98,14 +99,20 @@ LayerViews PlanLayerViews(const LayerInfo& layer, const DebugTensorNumericSummar
                           bool first_spatial_layer, bool takes_model_input = false, bool picture_input = true,
                           bool reads_image = false);
 
-// A sample of the model's input [H, W, C] (C 1 or 3, row-major values) as an
-// RGBA picture, its value range stretched to 0..255; nullopt for any other shape.
+// A sample of the model's input [H, W, C] (row-major values) as pictures,
+// its value range stretched to 0..255: one for a grey or RGB image, a sheet
+// for any other (image_sheet.h; `channels` names them). No tiles for a
+// shape that is not an image.
+ImageSheet SampleSheet(const std::vector<float>& values, const std::vector<size_t>& shape,
+                       const ImageChannelLayout& channels = {});
+// The sheet's first tile: the picture a thumbnail shows. nullopt when there is none.
 struct Picture {
     std::vector<unsigned char> rgba;
     size_t width = 0;
     size_t height = 0;
 };
-std::optional<Picture> SamplePicture(const std::vector<float>& values, const std::vector<size_t>& shape);
+std::optional<Picture> SamplePicture(const std::vector<float>& values, const std::vector<size_t>& shape,
+                                     const ImageChannelLayout& channels = {});
 
 // The Inspector's note for Top images.
 const std::string& TopImagesHint();

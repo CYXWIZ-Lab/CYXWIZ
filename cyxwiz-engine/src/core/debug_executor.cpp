@@ -277,6 +277,7 @@ DebugResult DebugExecutor::Run() {
         if (capture_options_) {
             LayerCaptureOptions options = *capture_options_;
             options.images_batch_first = !UsesSpatialSequentialInput(config_);  // TOFIX207
+            options.input_channels = config_.image_channels;
             capture = std::make_shared<LayerCapture>(options, module_provenance);
             result.layer_capture = capture;
         }

@@ -149,6 +149,31 @@ void TestViewsFollowShapes() {
               picture->rgba[3] == 255 && picture->rgba[4] == 255 && picture->rgba[6] == 0,
           "a sample as an RGBA picture");
     Check(!SamplePicture({1, 2, 3, 4}, {2, 2}), "a flat sample is no picture");
+    {
+        // RGB + edges, 1 x 2: the picture first, then the 4th channel as a grey tile on its own scale.
+        const std::vector<float> rgbe = {0.0f, 0.5f, 1.0f, 3.0f, 1.0f, 0.5f, 0.0f, 7.0f};
+        const cyxwiz::ImageChannelLayout layout{{"R", "G", "B", "edges"}, 3};
+        const auto sheet = SampleSheet(rgbe, {1, 2, 4}, layout);
+        Check(sheet.tiles.size() == 2 && sheet.CountMark() == "+1", "RGB + edges is a sheet of two tiles");
+        CheckText(sheet.tiles[0].name, "R, G, B", "the picture tile's name");
+        CheckText(sheet.tiles[1].name, "channel 4 \xC2\xB7 edges", "the further channel's name");
+        Check(sheet.tiles[0].rgba[0] == 0 && sheet.tiles[0].rgba[2] == 255 && sheet.tiles[0].rgba[4] == 255,
+              "the picture is stretched over its three channels, not the 4th");
+        Check(sheet.tiles[1].rgba[0] == 0 && sheet.tiles[1].rgba[1] == 0 && sheet.tiles[1].rgba[4] == 255 &&
+                  sheet.tiles[1].rgba[6] == 255 && sheet.tiles[1].rgba[7] == 255,
+              "the 4th channel is grey on its own scale");
+        const auto thumb = SamplePicture(rgbe, {1, 2, 4}, layout);
+        Check(thumb && thumb->rgba == sheet.tiles[0].rgba, "a thumbnail is the sheet's first tile");
+        // No colour picture: every channel a tile; without names, numbered.
+        const auto bank = SampleSheet({0, 1, 2, 3, 4, 5, 6, 7}, {1, 2, 4});
+        Check(bank.tiles.size() == 4 && bank.CountMark() == "+3", "four unnamed channels are four tiles");
+        CheckText(bank.tiles[0].name, "channel 1", "a numbered channel");
+        // Grey and RGB stay one picture with no name and no count.
+        const auto one = SampleSheet({0.0f, 0.5f, 1.0f, 1.0f, 0.5f, 0.0f}, {1, 2, 3});
+        Check(one.tiles.size() == 1 && one.tiles[0].name.empty() && one.CountMark().empty(), "RGB is one picture");
+        const auto grey = SampleSheet({0.0f, 2.0f}, {1, 2, 1});
+        Check(grey.tiles.size() == 1 && grey.tiles[0].name.empty() && grey.tiles[0].rgba[4] == 255, "grey is one picture");
+    }
     CheckText(first.facts,
               "weights [3, 3, 3, 32] + bias [32], 896 parameters \xC2\xB7 output 64 \xC3\x97 64 \xC3\x97 32, "
               "42.6 % zeros",

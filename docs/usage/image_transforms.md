@@ -254,7 +254,7 @@ Horizontal Flip and Normalize run on each batch.
 | Image Contrast (CLAHE) | `clip_limit` (2.0), `tile_grid` (8), `colour` (lightness / each_channel) | Contrast Limited Adaptive Histogram Equalization on each tile. `lightness` changes only Lab L, so colours stay; `each_channel` equalizes R, G and B alone. | same |
 | Image Denoise | `strength` (10), `colour_strength` (10), `patch_size` (7, odd), `search_size` (21, odd) | Non-local means (`fastNlMeansDenoisingColored`; `fastNlMeansDenoising` for grey). Slow: about 45 ms an image at 64 x 64, so the compiler shows the time; it is spent once. | same |
 | Image Sharpen | `amount` (1.0), `radius` (1.0), `threshold` (0, from 0 to 1) | Unsharp mask: image + amount x (image - Gaussian blur of sigma `radius`). With a threshold, only pixels whose detail is above it change. | same |
-| Image Edges | `method` (canny / sobel / laplacian / scharr / log / dog), `threshold1` / `threshold2` (50 / 150, Canny), `kernel_size` (3; Sobel 1, 3, 5 or 7; Laplacian and LoG odd up to 31), `direction` (magnitude / x / y / angle, Sobel and Scharr), `sigma` (1.0, LoG and DoG), `sigma2` (1.6, DoG) | Colour images are made grey first. Canny gives white edges on black; the others the edge strength. See [Image Edges](#image-edges). | one channel: `[H, W, 1]` |
+| Image Edges | `method` (canny / sobel / laplacian / scharr / log / dog), `threshold1` / `threshold2` (50 / 150, Canny), `kernel_size` (3; Sobel 1, 3, 5 or 7; Laplacian and LoG odd up to 31), `direction` (magnitude / x / y / angle, Sobel and Scharr), `sigma` (1.0, LoG and DoG), `sigma2` (1.6, DoG), `keep_image` (false) | Colour images are made grey first. Canny gives white edges on black; the others the edge strength. See [Image Edges](#image-edges). | one channel: `[H, W, 1]`; with `keep_image`, `[H, W, C + 1]` |
 | Image Smooth | `method` (box / median / bilateral), `kernel_size` (5, odd), `sigma_color` / `sigma_space` (75 / 75, bilateral) | Box averages, median takes the middle value (removes specks, keeps edges), bilateral mixes only similar colours. A Gaussian blur is Image Gaussian Blur, on the GPU. | same |
 | Image Warp | `method` (four_corners / three_points / log_polar / linear_polar), `source_points`, `target_points` (`0,0, 1,0, 1,1, 0,1`), `interpolation` (linear), `width` / `height` (0), `center_x` / `center_y` (0.5), `max_radius` (0.5), `inverse` | The same warp for every image. Points are `x, y` fractions of the image, top-left first, clockwise: four for four_corners, three for three_points. Polar warps unroll the image around the centre, so a rotation becomes a shift; they keep the size. | same, or `width` x `height` |
 | Image Pyramid | `operation` (down / up / detail), `levels` (1) | down: Gaussian smoothing then half the size, per level; up: double the size, per level; detail: the Laplacian level `levels - 1` halvings down (the image minus its smoothed copy). | down halves each side per level (rounding up); detail at level 1 keeps it |
@@ -305,6 +305,43 @@ Horizontal Flip and Normalize run on each batch.
 
 Strengths are stored as their size, cut at 255. Sets prepared before these
 settings existed keep their key and are not prepared again.
+
+**Keep image** (`keep_image`) keeps the image and adds the edge map as one
+more channel: an RGB image becomes 4 channels (R, G, B, edges), a grey one 2.
+The model's first layer then reads `[H, W, 4]`. See
+[More than three channels](#more-than-three-channels).
+
+### More than three channels
+
+An image with a channel added (Image Edges with Keep image) is neither grey
+nor RGB. What changes:
+
+- **Steps after it run on each channel alone**: Image Contrast, Denoise,
+  Sharpen, Smooth, Warp, Pyramid and Image Filter, and the transforms that
+  move pixels (crops, flips, rotate, affine, blur, morphology, noise). Each
+  channel gets the same crop, flip or warp.
+- **Colour steps need RGB**: Color Jitter, Grayscale, Random Grayscale and
+  the Advanced Augment policies do not compile after it (`Color Jitter needs
+  a 1- or 3-channel image`). Put them before the step that adds the channel.
+  A second Image Edges is refused the same way.
+- **Normalize**: ImageNet statistics are for RGB and are refused (`the images
+  have 4 channels here (R, G, B, edges)`). Use `same`, or Per channel with
+  one mean and std per channel; the rows are named R, G, B, edges, and Data
+  Studio > Explore > Profile > Use in Normalize fills all four.
+- **Pictures**: wherever such an image is shown it is a sheet: the colour
+  picture, then each further channel as a grey tile with its name, each on
+  its own scale. Small thumbnails (Data Studio > Prepare) show the picture
+  with `+1`; hover for the whole sheet. Data Studio > Explore > Images and
+  the Studio Debugger's Inspector show every tile.
+- **Studio Debugger**: Where it looks draws its heat over the colour
+  picture and covers or differentiates every channel. Filters and Unit
+  weights are not offered for a first layer that reads more than three
+  channels.
+
+```
+Data Input (images) -> Resize 72 -> Image Edges (canny, keep image)
+  -> Center Crop 64 -> Normalize (same 0.5 / 0.5) -> Conv2D -> ...
+```
 
 ### Image Filter
 

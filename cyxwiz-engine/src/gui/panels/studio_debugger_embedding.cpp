@@ -100,7 +100,7 @@ void StudioDebuggerPanel::RenderEmbedding() {
     }
     const size_t features = output->tensor.Shape()[1];
     const auto picture_shape = input ? lv::AsSpatial(input->tensor.Shape()) : std::nullopt;
-    const bool pictures = picture_shape && (picture_shape->channels == 1 || picture_shape->channels == 3);
+    const bool pictures = picture_shape.has_value();  // any channel count: a sheet's first tile
     const std::string items_word = pictures ? "images" : "samples";
     const auto& facts = ShownSampleFacts();
     const lv::OutputRule rule = lv::OutputRuleFromKey(facts.output_rule);
@@ -422,7 +422,8 @@ bool StudioDebuggerPanel::RenderEmbeddingPick() {
                 const Tensor one = ti::ItemRange(s.items.features, i, i + 1);
                 auto shape = one.Shape();
                 if (shape.size() == 4) shape.pop_back();
-                if (const auto picture = lv::SamplePicture(lv::ReadValues(one), shape))
+                if (const auto picture =
+                        lv::SamplePicture(lv::ReadValues(one), shape, layer_capture_->Options().input_channels))
                     id = TextureManager::Instance().CreateTextureFromUint8Data(
                         picture->rgba.data(), static_cast<int>(picture->width), static_cast<int>(picture->height), 4);
             } catch (const std::exception& e) {

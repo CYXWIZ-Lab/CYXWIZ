@@ -2121,6 +2121,8 @@ void ApplyImageInputShape(TrainingConfiguration& config) {
         cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
     config.input_shape = {shape.height, shape.width, shape.channels};
     config.input_size = shape.Size();
+    config.image_channels =
+        cyxwiz::CompiledImageChannels(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
 }
 
 void ApplyTextInputShape(TrainingConfiguration& config) {
@@ -6976,7 +6978,6 @@ static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& c
 
 cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config);
 std::vector<std::string> CurrentImageChannelNames(const TrainingConfiguration& config);
-std::string JoinedChannelNames(const std::vector<std::string>& names);
 
 static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration& config) {
     // Every batcher takes mean / std through SetNormalization; the image
@@ -7090,12 +7091,6 @@ std::vector<std::string> CurrentImageChannelNames(const TrainingConfiguration& c
         .names;
 }
 
-// "R, G, B, edges".
-std::string JoinedChannelNames(const std::vector<std::string>& names) {
-    std::string text;
-    for (const auto& name : names) text += (text.empty() ? "" : ", ") + name;
-    return text;
-}
 
 const std::vector<std::pair<std::string, cyxwiz::image::Interpolation>> kInterpolations = {
     {"nearest", cyxwiz::image::Interpolation::Nearest}, {"bilinear", cyxwiz::image::Interpolation::Bilinear}};

@@ -115,7 +115,9 @@ bool SaveLayerCapture(const LayerCapture& capture, const std::string& run_id, co
               {"parameters", options.parameters},
               {"gradients", options.gradients},
               {"byte_budget", options.byte_budget},
-              {"images_batch_first", options.images_batch_first}}},
+              {"images_batch_first", options.images_batch_first},
+              {"input_channel_names", options.input_channels.names},
+              {"input_colour_channels", options.input_channels.colour}}},
             // Every rank-4 input / output is kept as [H, W, C, N] (TOFIX207).
             {"image_layout", "HWCN"},
             {"skipped_tensors", capture.SkippedTensors()},
@@ -150,6 +152,8 @@ std::shared_ptr<LayerCapture> LoadLayerCapture(const std::string& run_id, const 
         options.gradients = o.value("gradients", options.gradients);
         options.byte_budget = o.value("byte_budget", options.byte_budget);
         options.images_batch_first = o.value("images_batch_first", options.images_batch_first);
+        options.input_channels.names = o.value("input_channel_names", std::vector<std::string>{});
+        options.input_channels.colour = o.value("input_colour_channels", size_t{0});
         std::vector<CapturedLayer> layers;
         for (const auto& l : index.at("layers")) {
             CapturedLayer layer;

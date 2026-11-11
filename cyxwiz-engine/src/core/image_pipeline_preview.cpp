@@ -28,21 +28,26 @@ const char* ModeName(ResizeMode mode) {
     }
 }
 
-// Rows [1, shape.Size()] in 0..1 -> RGBA bytes.
-PreviewPicture Picture(const Tensor& rows, const image::ImageShape& shape) {
+// Rows [1, shape.Size()] in 0..1 -> RGBA bytes: one picture, or a sheet's tiles.
+PreviewPicture Picture(const Tensor& rows, const image::ImageShape& shape, const ImageChannelLayout& channels) {
     PreviewPicture p;
     p.width = static_cast<int>(shape.width);
     p.height = static_cast<int>(shape.height);
-    const float* values = rows.ReadData<float>();
-    const size_t pixels = shape.height * shape.width;
-    p.rgba.assign(pixels * 4, 255);
-    for (size_t i = 0; i < pixels; ++i) {
-        for (size_t c = 0; c < 3; ++c) {
-            const float v = values[i * shape.channels + (shape.channels >= 3 ? c : 0)];
-            p.rgba[i * 4 + c] = static_cast<uint8_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
-        }
-    }
+    ImageSheet sheet =
+        BuildImageSheet(rows.ReadData<float>(), shape.height, shape.width, shape.channels, channels, SheetRange::Unit);
+    if (sheet.tiles.empty()) return p;
+    p.rgba = std::move(sheet.tiles.front().rgba);
+    p.first_name = std::move(sheet.tiles.front().name);
+    p.more.assign(std::make_move_iterator(sheet.tiles.begin() + 1), std::make_move_iterator(sheet.tiles.end()));
     return p;
+}
+
+// "12 x 8", or "12 x 8 x 4 (R, G, B, edges)" for a sheet.
+std::string SizeText(const image::ImageShape& shape, const ImageChannelLayout& channels) {
+    std::string text = std::to_string(shape.width) + kTimes + std::to_string(shape.height);
+    if (shape.channels != 1 && shape.channels != 3)
+        text += kTimes + std::to_string(shape.channels) + " (" + JoinedChannelNames(channels.names) + ")";
+    return text;
 }
 
 // What one draw did, in words.
@@ -139,7 +144,8 @@ ImagePipelinePreview PreviewImagePipeline(const std::string& path, const Prepare
         std::vector<float> rows(decoded.size());
         for (size_t i = 0; i < rows.size(); ++i) rows[i] = decoded[i] / 255.0f;
         Tensor x({1, shape.Size()}, rows.data());
-        out.decoded = Picture(x, shape);
+        ImageChannelLayout channels = DecodedChannelLayout(shape.channels);
+        out.decoded = Picture(x, shape, channels);
         out.decoded.title = "Resize " + std::to_string(spec.width) + kTimes + std::to_string(spec.height);
         out.decoded.detail = std::string(ModeName(spec.mode)) + ", once";
 
@@ -176,10 +182,10 @@ ImagePipelinePreview PreviewImagePipeline(const std::string& path, const Prepare
                 x = image::ApplyImageOp(op, none, shape, x);
                 shape = image::ImageShapeAfter(op, shape);
             }
-            PreviewPicture p = Picture(x, shape);
+            channels = ChannelLayoutAfter(step, channels, shape.channels);
+            PreviewPicture p = Picture(x, shape, channels);
             p.title = FixedImageStepText(step);
-            p.detail = std::to_string(shape.width) + kTimes + std::to_string(shape.height) +
-                       (cv_step ? ", once on the CPU" : ", once");
+            p.detail = SizeText(shape, channels) + (cv_step ? ", once on the CPU" : ", once");
             out.fixed.push_back(std::move(p));
         }
         for (const auto& op : split.per_batch.ops) out.random_ops.push_back(ImageOpText(op));
@@ -188,6 +194,7 @@ ImagePipelinePreview PreviewImagePipeline(const std::string& path, const Prepare
             std::mt19937 draw_rng(seed + 1 + static_cast<uint32_t>(d));
             Tensor y = x;
             image::ImageShape s = shape;
+            ImageChannelLayout drawn_channels = channels;
             std::string detail;
             for (const auto& op : split.per_batch.ops) {
                 const std::string why = image::ValidateImageOp(op, s);
@@ -198,10 +205,11 @@ ImagePipelinePreview PreviewImagePipeline(const std::string& path, const Prepare
                 const auto drawn = image::DrawImageOp(op, s, 1, true, draw_rng);
                 y = image::ApplyImageOp(op, drawn, s, y);
                 s = image::ImageShapeAfter(op, s);
+                drawn_channels = ChannelLayoutAfter(FixedImageStep{op}, drawn_channels, s.channels);
                 const std::string text = DrawText(op, drawn);
                 if (!text.empty()) detail += (detail.empty() ? "" : ", ") + text;
             }
-            PreviewPicture p = Picture(y, s);
+            PreviewPicture p = Picture(y, s, drawn_channels);
             p.title = "Draw " + std::to_string(d + 1);
             p.detail = detail;
             out.draws.push_back(std::move(p));

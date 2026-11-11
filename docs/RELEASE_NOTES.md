@@ -129,6 +129,14 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Images with more than three channels.** Image Edges can keep the image
+  and add the edge map as a 4th channel (`keep_image`); the model then
+  reads RGB + edges. Steps after it run on each channel; colour steps and
+  ImageNet statistics say why they need RGB; Normalize's per-channel rows
+  are named (R, G, B, edges). Such an image is shown as a sheet: the colour
+  picture and one named grey tile per further channel, in Data Studio >
+  Prepare (thumbnail with `+1`, hover for the sheet), Explore > Images and
+  the Studio Debugger's Inspector, Top images, Embedding and Where it looks.
 - **Image Edges: one direction, the angle, LoG and DoG.** Sobel and Scharr
   take `direction` (magnitude, x, y or angle); two new methods are `log`
   (Laplacian of Gaussian, with `sigma`) and `dog` (Difference of Gaussians,

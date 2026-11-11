@@ -533,14 +533,6 @@ std::vector<FixedImageStep> MergeImageSteps(const image::ImageAugmentation& comp
     return steps;
 }
 
-ImageChannelLayout DecodedChannelLayout(size_t channels) {
-    if (channels == 3) return {{"R", "G", "B"}, 3};
-    if (channels == 1) return {{"grey"}, 0};
-    ImageChannelLayout layout;
-    for (size_t c = 0; c < channels; ++c) layout.names.push_back("channel " + std::to_string(c + 1));
-    return layout;
-}
-
 ImageChannelLayout ChannelLayoutAfter(const FixedImageStep& step, const ImageChannelLayout& input,
                                       size_t output_channels) {
     // A step that keeps the count changes pixels, not what the channels are.

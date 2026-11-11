@@ -13,6 +13,7 @@
 //   SearchField     text field with a magnifier hint
 //   FlowRow         toolbar items that wrap to the next line when they do not fit
 //   EmptyState      what to do next when there is nothing to show
+//   SheetTiles/SheetCountMark/SheetTooltip   an image's channels as named tiles
 //   BeginDialog/EndDialog   sized, centred modal with a scrolling body and fixed footer
 //   ConfirmDialog/MessageDialog   one-call modals with the shared button order
 
@@ -150,6 +151,22 @@ DialogResult EndDialog(const char* primary_label, const char* secondary_label = 
 // (Primary, or Danger when `danger`) and Cancel. Call OpenPopup(title) once.
 DialogResult ConfirmDialog(const char* title, const char* message, const char* confirm_label,
                            bool danger = false, const std::vector<std::string>& bullets = {});
+// An image that is neither grey nor RGB is a sheet of tiles: the colour
+// picture, then each further channel in grey with its name.
+struct SheetTile {
+    ImTextureID texture = 0;
+    std::string name;
+};
+// The tiles left to right, each `width` wide (height = width x aspect) with
+// its name under it; they wrap at the content width, or after `per_row`
+// tiles when that is not 0.
+void SheetTiles(const std::vector<SheetTile>& tiles, float width, float aspect, size_t per_row = 0);
+// "+N" in the bottom-right corner of a thumbnail drawn from p0 to p1 that
+// shows only a sheet's first tile.
+void SheetCountMark(ImDrawList* draw_list, const ImVec2& p0, const ImVec2& p1, size_t more);
+// The whole sheet beside the pointer, for the item just drawn.
+void SheetTooltip(const std::vector<SheetTile>& tiles, float aspect);
+
 // One-call notice with an OK button. Returns true when dismissed.
 bool MessageDialog(const char* title, const char* message);
 

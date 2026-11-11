@@ -20,6 +20,7 @@
 #include "../../core/training_snapshots_presentation.h"
 #include "../../core/where_it_looks_presentation.h"
 #include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include "../ui_tokens.h"
 #include "../icons.h"
 
@@ -194,6 +195,9 @@ struct StudioDebuggerPanel::LayerViewCache {
     uint32_t sample_texture = 0;
     int sample_width = 0;
     int sample_height = 0;
+    // The whole sheet when the input is neither grey nor RGB: sample_texture
+    // (its first tile) and the further channels' tiles, named.
+    std::vector<ui::SheetTile> sample_sheet;
     std::vector<float> model_output;
     std::vector<lv::LayerSection> sections;  // the list's canvas-group sections
 
@@ -207,6 +211,9 @@ struct StudioDebuggerPanel::LayerViewCache {
     }
     void DropSampleTexture() {
         if (sample_texture) TextureManager::Instance().DeleteTexture(sample_texture);
+        for (size_t i = 1; i < sample_sheet.size(); ++i)  // tile 0 is sample_texture
+            if (sample_sheet[i].texture) TextureManager::Instance().DeleteTexture(static_cast<uint32_t>(sample_sheet[i].texture));
+        sample_sheet.clear();
         sample_texture = 0;
     }
     ~LayerViewCache() {
@@ -565,7 +572,7 @@ void StudioDebuggerPanel::RenderLayersView() {
             cache.views = lv::PlanLayerViews(info, output ? &output_numerics : nullptr,
                                              selected_layer_ == cache.first_spatial,
                                              selected_layer_ == 0 && layer.module_index == 0,
-                                             picture && (picture->channels == 1 || picture->channels == 3),
+                                             picture.has_value(),
                                              !UnitWeightsImage(selected_layer_).empty());
         } catch (const std::exception& e) {
             cache.error = e.what();
@@ -1089,11 +1096,22 @@ void StudioDebuggerPanel::ReadLayerSample() {
             if (const auto* input = layers.front().Find(CapturedTensorRole::Input)) {
                 if (lv::AsSpatial(input->tensor.Shape())) {
                     const Tensor sample = lv::SampleOf(input->tensor, selected_layer_sample_);
-                    if (const auto picture = lv::SamplePicture(lv::ReadValues(sample), sample.Shape())) {
-                        cache.sample_texture = Upload(picture->rgba, static_cast<int>(picture->width),
-                                                      static_cast<int>(picture->height));
-                        cache.sample_width = static_cast<int>(picture->width);
-                        cache.sample_height = static_cast<int>(picture->height);
+                    const ImageSheet sheet =
+                        lv::SampleSheet(lv::ReadValues(sample), sample.Shape(), layer_capture_->Options().input_channels);
+                    if (!sheet.tiles.empty()) {
+                        const ImageSheetTile& picture = sheet.tiles.front();
+                        cache.sample_texture = Upload(picture.rgba, static_cast<int>(picture.width),
+                                                      static_cast<int>(picture.height));
+                        cache.sample_width = static_cast<int>(picture.width);
+                        cache.sample_height = static_cast<int>(picture.height);
+                        if (sheet.tiles.size() > 1) {
+                            cache.sample_sheet.push_back({Texture(cache.sample_texture), picture.name});
+                            for (size_t i = 1; i < sheet.tiles.size(); ++i)
+                                cache.sample_sheet.push_back(
+                                    {Texture(Upload(sheet.tiles[i].rgba, static_cast<int>(sheet.tiles[i].width),
+                                                    static_cast<int>(sheet.tiles[i].height))),
+                                     sheet.tiles[i].name});
+                        }
                     }
                 }
             }
@@ -1122,10 +1140,16 @@ bool StudioDebuggerPanel::RenderLayersInspector() {
         // A card is its own window: wrap inside it.
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(DebuggerMuted(), "Sample");
-        if (cache.sample_texture) {
+        if (cache.sample_texture && cache.sample_sheet.empty()) {
             const float side = std::min(160.0f, ImGui::GetContentRegionAvail().x);
             const float h = side * static_cast<float>(cache.sample_height) / static_cast<float>(std::max(1, cache.sample_width));
             ImGui::Image(Texture(cache.sample_texture), ImVec2(side, h));
+        } else if (cache.sample_texture) {
+            // A sheet: two tiles a row, smaller from 8 channels on; they wrap, nothing is clipped.
+            const float avail = ImGui::GetContentRegionAvail().x;
+            const float side = cache.sample_sheet.size() > 4 ? 88.0f : std::min(160.0f, (avail - 10.0f) * 0.5f);
+            ui::SheetTiles(cache.sample_sheet, std::max(48.0f, side),
+                           static_cast<float>(cache.sample_height) / static_cast<float>(std::max(1, cache.sample_width)));
         }
         const auto& facts = ShownSampleFacts();
         const std::string item = ItemHeadline(facts, selected_layer_sample_, {});

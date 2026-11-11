@@ -512,6 +512,9 @@ struct TrainingConfiguration {
     // The OpenCV image steps (TOFIX178 1.3f), done once when the images are
     // prepared; each one's position places it among image_augmentation.ops.
     std::vector<cyxwiz::CvImageStep> image_cv_steps;
+    // What the model input's channels are after those steps (image graphs):
+    // R, G, B; grey; R, G, B, edges.
+    cyxwiz::ImageChannelLayout image_channels;
     // The Advanced Augment node that set image_augmentation.mix (mixup / cutmix).
     int image_mix_node_id = -1;
     // The Quality Analyzer node and the files its analysis leaves out of

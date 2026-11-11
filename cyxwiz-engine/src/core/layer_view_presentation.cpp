@@ -131,31 +131,18 @@ std::vector<LayerSection> SectionLayers(const std::vector<LayerInfo>& layers,
     return sections;
 }
 
-std::optional<Picture> SamplePicture(const std::vector<float>& values, const std::vector<size_t>& shape) {
-    if (shape.size() != 3 || (shape[2] != 1 && shape[2] != 3) || values.size() != shape[0] * shape[1] * shape[2])
-        return std::nullopt;
-    float low = 0.0f, high = 0.0f;
-    bool any = false;
-    for (float v : values) {
-        if (!std::isfinite(v)) continue;
-        low = any ? std::min(low, v) : v;
-        high = any ? std::max(high, v) : v;
-        any = true;
-    }
-    const float span = std::max(1e-6f, high - low);
-    Picture picture;
-    picture.height = shape[0];
-    picture.width = shape[1];
-    const size_t channels = shape[2];
-    picture.rgba.assign(picture.width * picture.height * 4, 255);
-    for (size_t p = 0; p < picture.width * picture.height; ++p) {
-        for (size_t ch = 0; ch < 3; ++ch) {
-            const float v = values[p * channels + (channels == 3 ? ch : 0)];
-            picture.rgba[p * 4 + ch] = static_cast<unsigned char>(
-                std::lround(std::clamp((std::isfinite(v) ? v - low : 0.0f) / span, 0.0f, 1.0f) * 255.0f));
-        }
-    }
-    return picture;
+ImageSheet SampleSheet(const std::vector<float>& values, const std::vector<size_t>& shape,
+                       const ImageChannelLayout& channels) {
+    if (shape.size() != 3 || values.size() != shape[0] * shape[1] * shape[2]) return {};
+    return BuildImageSheet(values.data(), shape[0], shape[1], shape[2], channels, SheetRange::Stretched);
+}
+
+std::optional<Picture> SamplePicture(const std::vector<float>& values, const std::vector<size_t>& shape,
+                                     const ImageChannelLayout& channels) {
+    ImageSheet sheet = SampleSheet(values, shape, channels);
+    if (sheet.tiles.empty()) return std::nullopt;
+    ImageSheetTile& first = sheet.tiles.front();
+    return Picture{std::move(first.rgba), first.width, first.height};
 }
 
 const std::string& TopImagesHint() {

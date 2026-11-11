@@ -8,6 +8,8 @@
 // host; a view reads the slice it shows. A byte budget bounds what is held;
 // tensors past it are skipped and counted. No capture object, no cost.
 
+#include "image_channel_layout.h"
+
 #include <cyxwiz/tensor.h>
 
 #include <cstddef>
@@ -32,6 +34,9 @@ struct LayerCaptureOptions {
     // false). The capture keeps every image as [H, W, C, N], as a spatial
     // model takes it, so the debugger reads one layout (TOFIX207).
     bool images_batch_first = false;
+    // What the model input's channels are (image models; empty otherwise):
+    // the debugger draws an input that is neither grey nor RGB as a sheet.
+    ImageChannelLayout input_channels;
 };
 
 // The debugger's image layout [H, W, C, N] from a batch-first [N, H, W, C]

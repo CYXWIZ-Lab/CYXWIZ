@@ -11,6 +11,8 @@
 // Filter always does). No OpenCV in this header;
 // ApplyCvImageStep lives in image_cv_steps_apply.cpp.
 
+#include "image_channel_layout.h"
+
 #include <cyxwiz/image_augmentation.h>
 
 #include <nlohmann/json.hpp>
@@ -137,17 +139,6 @@ std::string FixedImageStepText(const FixedImageStep& step);
 // the OpenCV steps placed at their positions.
 std::vector<FixedImageStep> MergeImageSteps(const image::ImageAugmentation& compiled,
                                             const std::vector<CvImageStep>& cv_steps);
-// What an image's channels are: one name each ("R", "G", "B", "grey",
-// "edges", "channel 5"), and how many leading channels are still the colour
-// picture (3 or 0). An image with other channels is shown as that picture
-// and one grey tile per further channel.
-struct ImageChannelLayout {
-    std::vector<std::string> names;
-    size_t colour = 0;
-    bool operator==(const ImageChannelLayout&) const = default;
-};
-// A decoded image: RGB, grey, or numbered channels.
-ImageChannelLayout DecodedChannelLayout(size_t channels);
 // The layout after one step that turns `input` into `output_channels` channels.
 ImageChannelLayout ChannelLayoutAfter(const FixedImageStep& step, const ImageChannelLayout& input,
                                       size_t output_channels);
