@@ -151,6 +151,8 @@ void CheckProgressAndShares() {
     p.epochs = 40;
     const std::string line = ProgressLine(p, 62.0);
     Check(line.rfind("Fold 3 of 5 \xC2\xB7 epoch 22 of 40 \xC2\xB7 about ", 0) == 0 && Has(line, " left"), "progress: " + line);
+    p.waiting = "Waiting for the GPU: another training run is using NVIDIA GeForce GTX 1050 Ti";
+    Check(ProgressLine(p, 62.0) == "Fold 3 of 5 \xC2\xB7 " + p.waiting, "a fold waiting for the GPU says why: " + ProgressLine(p, 62.0));
     std::vector<double> shares;
     std::string error;
     Check(ParseShares("10%, 25%, 50%, 75%, 100%", shares, error) && shares.size() == 5 && shares[0] == 0.1 && shares[4] == 1.0, "percent list");
