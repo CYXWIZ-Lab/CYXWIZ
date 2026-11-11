@@ -171,6 +171,18 @@ void CheckCartPole() {
     auto wide = *config;
     wide.policy_layers.front().units = 300;
     Check(!cyxwiz::FusedNetworksExpected(wide, cyxwiz::DeviceType::CUDA, 0), "a 300-unit layer is not expected fused");
+    if (cuda_provider) {
+        auto mixed = *config;  // two LeakyReLU slopes in one network: FusedMlp refuses them
+        for (auto& layer : mixed.policy_layers)
+            if (layer.type != gui::NodeType::Dense) layer.type = gui::NodeType::LeakyReLU;
+        mixed.policy_layers.back().negative_slope = 0.2f;
+        Check(!cyxwiz::FusedNetworksExpected(mixed, cyxwiz::DeviceType::CUDA, 0),
+              "LeakyReLU layers with different slopes are not expected fused");
+        auto huge = *config;  // a minibatch past the backward's rows
+        huge.ppo.batch_size = 70000;
+        Check(!cyxwiz::FusedNetworksExpected(huge, cyxwiz::DeviceType::CUDA, 0),
+              "a minibatch past the backward's 65,536 rows is not expected fused");
+    }
 
     cyxwiz::rl::RLTrainingRun run;
     std::string error;

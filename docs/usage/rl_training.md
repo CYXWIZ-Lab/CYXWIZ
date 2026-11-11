@@ -87,8 +87,11 @@ Where the run actually trains is shown on every surface:
   a trained policy acts on the device it trained on.
 
 On an NVIDIA GPU with the CUDA GPU pack, PPO runs its networks as fused
-kernels and trains several times faster than on the CPU. Elsewhere (OpenCL,
-oneAPI, or CUDA without the pack) it runs layer by layer, and small networks
+kernels and trains several times faster than on the CPU, when both networks
+fit them: Dense layers (at most 8, each at most 256 units) with ReLU, Leaky
+ReLU, ELU, SELU, GELU, Swish, Tanh or Sigmoid between them. Otherwise (other
+layers such as Dropout or LayerNorm, OpenCL, oneAPI, or CUDA without the
+pack) it runs layer by layer, and small networks
 (every hidden layer at most 256 units, such as the 64-64 pattern) usually
 train faster on the CPU: each environment step runs many small GPU
 operations, and some graphics drivers struggle under that load. Only then

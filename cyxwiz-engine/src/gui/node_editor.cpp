@@ -4363,7 +4363,8 @@ void NodeEditor::PollRLTraining() {
             const auto chip = cyxwiz::rl_device::DeviceChip(device);
             rl_dashboard_->SetPpoDevice(chip.text, chip.tooltip, chip.fallback,
                                         cyxwiz::rl_device::DashboardNote(device, cyxwiz::HiddenUnits(c.policy_layers),
-                                                                         cyxwiz::HiddenUnits(c.value_layers), ""));
+                                                                         cyxwiz::HiddenUnits(c.value_layers),
+                                                                         rl_compute_path_));
             rl_run_device_ = device;
             rl_device_suffix_ = cyxwiz::rl_device::ToolbarSuffix(device);
             rl_device_tooltip_ = chip.tooltip;

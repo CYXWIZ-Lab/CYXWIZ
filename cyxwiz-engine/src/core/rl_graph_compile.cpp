@@ -56,6 +56,7 @@ bool MlpChain(const std::vector<CompiledLayer>& layers, size_t inputs, size_t ou
               size_t (&widths)[NeuralOpRequest::kMaxMlpLayers + 1],
               NeuralActivation (&acts)[NeuralOpRequest::kMaxMlpLayers], float& slope, float& alpha) {
     count = 0;
+    bool has_slope = false, has_alpha = false;  // one of each per network, as FusedMlp takes them
     widths[0] = inputs;
     for (const auto& layer : layers) {
         if (layer.type == gui::NodeType::Dense) {
@@ -73,12 +74,16 @@ bool MlpChain(const std::vector<CompiledLayer>& layers, size_t inputs, size_t ou
             case gui::NodeType::Swish: acts[count - 1] = NeuralActivation::Swish; break;
             case gui::NodeType::SELU: acts[count - 1] = NeuralActivation::Selu; break;
             case gui::NodeType::ELU:
+                if (has_alpha && layer.alpha != alpha) return false;
                 acts[count - 1] = NeuralActivation::Elu;
                 alpha = layer.alpha;
+                has_alpha = true;
                 break;
             case gui::NodeType::LeakyReLU:
+                if (has_slope && layer.negative_slope != slope) return false;
                 acts[count - 1] = NeuralActivation::LeakyRelu;
                 slope = layer.negative_slope;
+                has_slope = true;
                 break;
             default: return false;
         }
@@ -105,6 +110,9 @@ bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType pla
         if (!MlpChain(*layers, std::max<size_t>(config.observation_size, 1), outputs, r.mlp_layers, r.mlp_widths,
                       r.mlp_activations, r.mlp_negative_slope, r.mlp_elu_alpha))
             return false;
+        if (!NeuralProviderRegistry::Instance().FindSupporting(r)) return false;
+        r.op = NeuralOp::MlpBackward;  // the minibatch's backward, with its row limit
+        r.batch = static_cast<size_t>(std::max(config.ppo.batch_size, 1));
         if (!NeuralProviderRegistry::Instance().FindSupporting(r)) return false;
     }
     return true;

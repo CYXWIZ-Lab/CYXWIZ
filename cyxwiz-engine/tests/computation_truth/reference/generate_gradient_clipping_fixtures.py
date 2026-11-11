@@ -6,8 +6,9 @@ The reference is torch.nn.utils.clip_grad_norm_ with its default
 gradients, as PPO and the optimizer nodes' "Gradient clip norm" use it:
 
 - a clip that bites, a clip that does not, a NaN norm and an infinite norm;
-- three Adam steps with the clip, and one step with a NaN and with an
-  infinite norm.
+- three Adam steps with a clip that bites and with one that does not (the
+  parameters and Adam's two moments after each), and one step with a NaN
+  and with an infinite norm.
 
 Non-finite numbers are written as the strings "nan", "inf" and "-inf" (JSON
 has no NaN).
@@ -75,14 +76,20 @@ def adam_case(name: str, steps: list[dict[str, torch.Tensor]], max_norm: float) 
             p.grad = grads[k].clone()
         torch.nn.utils.clip_grad_norm_(list(params.values()), max_norm)
         optimizer.step()
-        after.append({k: tensor_fixture(p) for k, p in params.items()})
+        # The moments scale with the clip (the parameters barely do: Adam's step is nearly
+        # scale-free), so they show a clip coefficient that is off
+        after.append({
+            "parameters": {k: tensor_fixture(p) for k, p in params.items()},
+            "first_moment": {k: tensor_fixture(optimizer.state[p]["exp_avg"]) for k, p in params.items()},
+            "second_moment": {k: tensor_fixture(optimizer.state[p]["exp_avg_sq"]) for k, p in params.items()},
+        })
     return {
         "name": name,
         "max_norm": max_norm,
         "lr": 1e-3, "beta1": 0.9, "beta2": 0.999, "eps": 1e-8,
         "initial": {k: tensor_fixture(v) for k, v in init.items()},
-        "steps": [{"gradients": {k: tensor_fixture(g) for k, g in grads.items()}, "parameters": p}
-                  for grads, p in zip(steps, after)],
+        "steps": [{"gradients": {k: tensor_fixture(g) for k, g in grads.items()}, **state}
+                  for grads, state in zip(steps, after)],
     }
 
 
@@ -103,6 +110,7 @@ def main() -> None:
         ],
         "adam": [
             adam_case("three_clipped_steps", [gradients(10), gradients(11), gradients(12)], 0.5),
+            adam_case("three_idle_clip_steps", [gradients(10), gradients(11), gradients(12)], 1000.0),
             adam_case("nan_norm_step", [gradients(13, poison=float("nan"))], 0.5),
             adam_case("inf_norm_step", [gradients(14, poison=float("inf"))], 0.5),
         ],

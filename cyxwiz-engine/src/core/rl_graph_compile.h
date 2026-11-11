@@ -48,8 +48,11 @@ bool IsRLGraphNode(gui::NodeType type);
 
 // Whether the device's neural provider would run both networks as fused
 // small-network kernels (Dense layers of at most 256 units with the fused
-// activations): asked of the provider registry, without touching the
-// device. A prediction for Compile; the run's compute path says what it did.
+// activations, one LeakyReLU slope and one ELU alpha per network, the
+// minibatch within the backward's rows): asked of the provider registry's
+// capability checks; no kernel runs. The first use of the registry loads the
+// provider modules (as supervised Compile's placement does). A prediction
+// for Compile; the run's compute path says what it did.
 bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType platform, int device_id);
 
 // The units of a network's layers that have them (its hidden widths)

@@ -32,8 +32,9 @@ optimizer step:
 3. Every gradient is multiplied by `coef`. When the norm is under the limit,
    `coef` is 1 and nothing changes.
 
-With clipping on, the training log shows the norm before clipping on each
-reported batch (`grad_norm=...`), so you can see how often it bites. The
+With clipping on, language-model (sequence) training prints the norm before
+clipping on each reported batch of its training log (`grad_norm=...`), so
+you can see how often it bites. The
 PyTorch code the Studio generates (Code Gen mode, Generate) has the same
 `clip_grad_norm_` line before `optimizer.step()` in its training-loop
 outline.

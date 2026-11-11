@@ -4,7 +4,9 @@
 // and the fused Adam step with its clip (AdamOptimizer::StepTogether, PPO on
 // a provider) all match torch.nn.utils.clip_grad_norm_ (its default,
 // error_if_nonfinite=False) followed by torch.optim.Adam: a clip that bites,
-// one that does not, a NaN norm and an infinite norm. Fixture:
+// one that does not, a NaN norm and an infinite norm; for Adam the
+// parameters and both moments after every step (the moments scale with the
+// clip, the parameters barely do). Fixture:
 // computation_truth/fixtures/gradient_clipping_pytorch.json
 // (reference/generate_gradient_clipping_fixtures.py).
 //
@@ -188,6 +190,22 @@ void CheckAdam(const json& cases, bool fused_available) {
                 std::string why;
                 Check(GroupMatches(p, s.at("parameters"), 1e-5, why),
                       what + ": the parameters after step " + std::to_string(step) + " (" + why + ")");
+                // Adam's moments scale with the clip: they show a clip coefficient that is off
+                cyxwiz::OptimizerState state;
+                std::string error;
+                if (!adam.ExportState(state, error)) {
+                    Check(false, what + ": the Adam state exports (" + error + ")");
+                    continue;
+                }
+                for (const char* moment : {"first_moment", "second_moment"}) {
+                    Params got;
+                    for (const auto& [k, t] : state.tensors) {
+                        const std::string prefix = std::string(moment) + "/";
+                        if (k.rfind(prefix, 0) == 0) got[k.substr(prefix.size())] = t;
+                    }
+                    Check(GroupMatches(got, s.at(moment), 1e-5, why),
+                          what + ": Adam's " + moment + " after step " + std::to_string(step) + " (" + why + ")");
+                }
             }
         }
     }
