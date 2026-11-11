@@ -6,7 +6,6 @@
 
 #include <spdlog/spdlog.h>
 
-#include <filesystem>
 #include <thread>
 
 #ifdef _WIN32
@@ -15,6 +14,7 @@
 #endif
 #include <windows.h>
 #else
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
@@ -68,21 +68,20 @@ void RecordRunExecutionDeviceBind(const ExecutionDeviceContext& context, const s
 // ---- One training run per GPU (TOFIX206 3.2 E)
 
 struct GpuRunLease::Handle {
+    bool owned = false;  // the wait succeeded: only then is there a lock to release
 #ifdef _WIN32
     HANDLE mutex = nullptr;
     ~Handle() {
-        if (mutex) {
-            ReleaseMutex(mutex);
-            CloseHandle(mutex);
-        }
+        if (!mutex) return;
+        if (owned) ReleaseMutex(mutex);
+        CloseHandle(mutex);
     }
 #else
     int fd = -1;
     ~Handle() {
-        if (fd >= 0) {
-            flock(fd, LOCK_UN);
-            close(fd);
-        }
+        if (fd < 0) return;
+        if (owned) flock(fd, LOCK_UN);
+        close(fd);
     }
 #endif
 };
@@ -92,9 +91,14 @@ GpuRunLease::~GpuRunLease() = default;
 
 namespace {
 
-// The device's name as a lock name: letters and digits, the rest '_'
+// The device as a lock name: its physical identity (the same card through
+// CUDA or OpenCL, apart from another card of its model), else its name and
+// index; letters and digits, the rest '_'
 std::string LeaseName(const ExecutionDeviceContext& context) {
-    std::string name = context.device_name.empty() ? context.effective_backend : context.device_name;
+    std::string name = context.physical_fingerprint;
+    if (name.empty())
+        name = (context.device_name.empty() ? context.effective_backend : context.device_name) + " " +
+               std::to_string(context.effective_device_id);
     for (char& c : name)
         if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) c = '_';
     return "CyxWiz.GpuRun." + name;
@@ -107,8 +111,8 @@ GpuRunLeaseResult AcquireGpuRunLease(const ExecutionDeviceContext& context, cons
     GpuRunLeaseResult result;
     if (!context.valid || context.effective_backend == "arrayfire_cpu") return result;
     const std::string name = LeaseName(context);
-    // ArrayFire names devices with '_' for spaces: the user reads the name
     std::string device = context.device_name.empty() ? context.effective_backend : context.device_name;
+    // ArrayFire names devices with '_' for spaces: the user reads the name
     std::replace(device.begin(), device.end(), '_', ' ');
     auto handle = std::make_unique<GpuRunLease::Handle>();
     bool said = false;
@@ -122,8 +126,10 @@ GpuRunLeaseResult AcquireGpuRunLease(const ExecutionDeviceContext& context, cons
         return !(cancelled && cancelled());
     };
 #ifdef _WIN32
+    // Every session of the computer where the system allows it, else this one
     const std::wstring wide(name.begin(), name.end());
-    handle->mutex = CreateMutexW(nullptr, FALSE, (L"Local\\" + wide).c_str());
+    handle->mutex = CreateMutexW(nullptr, FALSE, (L"Global\\" + wide).c_str());
+    if (!handle->mutex) handle->mutex = CreateMutexW(nullptr, FALSE, (L"Local\\" + wide).c_str());
     if (!handle->mutex) {
         result.error = "the GPU lease could not be created (error " + std::to_string(GetLastError()) + ")";
         return result;
@@ -141,13 +147,22 @@ GpuRunLeaseResult AcquireGpuRunLease(const ExecutionDeviceContext& context, cons
         }
     }
 #else
-    const auto path = std::filesystem::temp_directory_path() / (name + ".lock");
-    handle->fd = open(path.c_str(), O_CREAT | O_RDWR, 0666);
+    // One file for every user of the computer (read-only is enough to lock
+    // it); not inherited by the processes the run starts
+    const std::string path = "/tmp/" + name + ".lock";
+    handle->fd = open(path.c_str(), O_RDONLY | O_CREAT | O_CLOEXEC, 0644);
+    // Another user's file: some systems refuse O_CREAT on it in a shared folder
+    if (handle->fd < 0) handle->fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
     if (handle->fd < 0) {
-        result.error = "the GPU lease file could not be opened: " + path.string();
+        result.error = "the GPU lease file could not be opened: " + path;
         return result;
     }
     while (flock(handle->fd, LOCK_EX | LOCK_NB) != 0) {
+        if (errno == EINTR) continue;
+        if (errno != EWOULDBLOCK) {  // locks not supported here: not "another run"
+            result.error = "the GPU lease file could not be locked (error " + std::to_string(errno) + "): " + path;
+            return result;
+        }
         if (!wait_turn()) {
             result.cancelled = true;
             return result;
@@ -155,6 +170,7 @@ GpuRunLeaseResult AcquireGpuRunLease(const ExecutionDeviceContext& context, cons
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 #endif
+    handle->owned = true;
     if (said) spdlog::info("The GPU is free: the run starts on {}", device);
     result.lease = std::unique_ptr<GpuRunLease>(new GpuRunLease(std::move(handle)));
     return result;

@@ -40,15 +40,19 @@ operations partway through.
 
 ## One training run per GPU
 
-A training run on a GPU (a model graph's Train, or PPO) holds that GPU for
-the whole run, across every Engine and tool on the computer. A second run
-on the same GPU waits until the first ends and says why:
+A training run on a GPU (a model graph's Train, cross-validation, or PPO)
+holds that GPU for the whole run, across every Engine and tool you run on
+the computer. A second run on the same GPU waits until the first ends and
+says why, in the Console and on the Studio toolbar:
 
 > Waiting for the GPU: another training run is using NVIDIA GeForce GTX 1050 Ti
 
 Stop ends the wait (the run is cancelled). A run on the CPU, or on another
-GPU, does not wait. Many small runs at once on one GPU are what strain a
-graphics driver, so the Engine never stacks them.
+GPU (also a second card of the same model), does not wait. The same card is
+one GPU whether a run reaches it through CUDA or OpenCL. Runs started under
+another user account of the computer are not always seen. Many small runs
+at once on one GPU are what strain a graphics driver, so the Engine never
+stacks them.
 
 ## Without it
 

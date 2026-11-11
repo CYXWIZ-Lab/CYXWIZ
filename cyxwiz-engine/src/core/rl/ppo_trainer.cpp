@@ -234,20 +234,19 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     };
     // Both networks over the same rows (the rollout's observations, a
     // minibatch): one launch forward and two backward for the two when both
-    // are fused (TOFIX206 3.2 B2). A failure moves both to ArrayFire
-    // operations.
-    const auto drop_fused = [this](const std::exception& e) {
-        spdlog::warn("PPO: the fused networks failed ({}); ArrayFire operations from now on", e.what());
-        policy_fused_.reset();
-        value_fused_.reset();
-        network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
+    // are fused (TOFIX206 3.2 B2). A failed pair call leaves each network on
+    // its own launches (and its own fallback) from then on.
+    bool pair_ok = true;
+    const auto unpair = [&pair_ok](const std::exception& e) {
+        spdlog::warn("PPO: the two networks in one launch failed ({}); one network per launch from now on", e.what());
+        pair_ok = false;
     };
     const auto forward_both = [&](const Tensor& x, bool keep) -> std::pair<Tensor, Tensor> {
-        if (policy_fused_ && value_fused_) {
+        if (pair_ok && policy_fused_ && value_fused_) {
             try {
                 return FusedMlp::ForwardPair(*policy_fused_, *value_fused_, x, keep);
             } catch (const std::exception& e) {
-                drop_fused(e);
+                unpair(e);
             }
         }
         Tensor head = forward(*policy_, policy_fused_, x, keep);
@@ -255,13 +254,11 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
     };
     const auto backward_both = [&](const Tensor& x, const Tensor& policy_grad, const Tensor& value_grad)
         -> std::pair<FusedMlp::Gradients, FusedMlp::Gradients> {
-        if (policy_fused_ && value_fused_) {
+        if (pair_ok && policy_fused_ && value_fused_) {
             try {
                 return FusedMlp::BackwardPair(*policy_fused_, policy_grad, *value_fused_, value_grad);
             } catch (const std::exception& e) {
-                drop_fused(e);
-                policy_->Forward(x);  // the layers' own forward of the minibatch, for their backward
-                value_->Forward(x);
+                unpair(e);  // each network's own Backward reads what the kept pair forward left it
             }
         }
         auto policy_grads = backward(*policy_, policy_fused_, x, policy_grad);
@@ -365,14 +362,14 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                                              1);
             const af::array table_array = table.GetSemanticArray();
             // Every epoch's shuffled order, uploaded once per update (TOFIX206 3.2 B2)
-            const size_t epochs = static_cast<size_t>(std::max(config_.n_epochs, 0));
+            const size_t epochs = static_cast<size_t>(config_.n_epochs);  // at least 1 (CheckSetup)
             std::vector<unsigned> orders(rollout * epochs);
             for (size_t e = 0; e < epochs; ++e) {
                 unsigned* order = orders.data() + e * rollout;
                 std::iota(order, order + rollout, 0u);
                 for (size_t i = rollout; i > 1; --i) std::swap(order[i - 1], order[random.Next() % i]);
             }
-            const af::array orders_device = orders.empty() ? af::array() : af::array(static_cast<dim_t>(orders.size()), orders.data());
+            const af::array orders_device(static_cast<dim_t>(orders.size()), orders.data());
 
             // ---- K epochs of minibatches
             policy_->SetTraining(true);
@@ -384,9 +381,9 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                     const size_t end = std::min(rollout, start + static_cast<size_t>(config_.batch_size));
                     // The minibatch's rows gathered into a table of their own: each
                     // of its columns is a contiguous run the provider reads in place
-                    const dim_t at = static_cast<dim_t>(epoch * rollout + start);
-                    af::array rows_array =
-                        af::lookup(table_array, orders_device(af::seq(static_cast<double>(at), static_cast<double>(at + static_cast<dim_t>(end - start) - 1))), 0);
+                    const double first = static_cast<double>(epoch * rollout + start);
+                    const af::seq its_rows(first, first + static_cast<double>(end - start) - 1.0);
+                    af::array rows_array = af::lookup(table_array, orders_device(its_rows), 0);
                     rows_array.eval();
                     const Tensor minibatch = Tensor::FromSemanticArray(rows_array, {end - start, width});
                     const auto column = [&minibatch](size_t from, size_t count) {

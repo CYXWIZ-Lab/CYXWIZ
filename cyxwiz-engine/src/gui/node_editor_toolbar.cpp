@@ -560,7 +560,12 @@ void NodeEditor::ShowToolbar() {
     if (training_active) {
         const auto metrics = training_mgr.GetCurrentMetrics();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(t.success, ICON_FA_SPINNER " Epoch %d / %d", metrics.current_epoch, metrics.total_epochs);
+        if (!metrics.waiting_for_gpu.empty()) {  // another training run holds the GPU
+            ImGui::TextColored(t.pending, ICON_FA_CLOCK " Waiting for the GPU");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", metrics.waiting_for_gpu.c_str());
+        } else {
+            ImGui::TextColored(t.success, ICON_FA_SPINNER " Epoch %d / %d", metrics.current_epoch, metrics.total_epochs);
+        }
         ImGui::SameLine();
         if (ui::DangerButton(ICON_FA_STOP " Stop")) training_mgr.StopTraining();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop training");

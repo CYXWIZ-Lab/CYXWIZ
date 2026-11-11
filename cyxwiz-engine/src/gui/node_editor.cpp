@@ -4374,6 +4374,12 @@ void NodeEditor::PollRLTraining() {
     if (rl_run_->Active()) cyxwiz::plugin::EnginePluginContext::KeepFullFrameRate();  // the dashboard moves
     if (rl_run_reported_ || rl_run_->Active()) return;
     const auto state = rl_run_->GetState();
+    // A run that ended before it had a device (stopped while it waited for the GPU): the chip
+    // no longer says it waits
+    if (!rl_device_shown_ && !rl_device_tooltip_.empty()) {
+        rl_device_tooltip_.clear();
+        rl_dashboard_->SetPpoDevice("No device", rl_run_->Message(), false, {});
+    }
     rl_dashboard_->EndPpoRun(rl_run_->Message(), state == cyxwiz::rl::RLTrainingRun::State::Failed);
     rl_run_reported_ = true;
     // The run's policy replaces the one kept (TOFIX195 S5)

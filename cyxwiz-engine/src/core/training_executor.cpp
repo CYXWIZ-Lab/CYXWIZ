@@ -778,6 +778,25 @@ void TrainingExecutor::Train(
         is_paused_.store(false);
         is_training_.store(false);
     };
+    // Stopped before the first batch (while waiting for the GPU, while the
+    // data was being prepared): cancelled, not failed
+    auto cancel_run = [&](const std::string& message) {
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.total_epochs = epochs;
+            m.is_training = false;
+            m.is_paused = false;
+            m.is_complete = true;
+            m.terminal_status = "cancelled";
+            m.terminal_reason = "user_cancelled";
+            m.status_message = message;
+        });
+        CrashRunRecorder::Instance().MarkCancelled();
+        TrainingTraceCollector::Instance().RecordTerminalEvent("cancelled", "user_cancelled", 0, 0.0f, 0.0f);
+        TrainingTraceCollector::Instance().FinishRun("cancelled");
+        BackendDebugHooks::SetDebugEventCallback({});
+        is_paused_.store(false);
+        is_training_.store(false);
+    };
 
     // Pre-device failures must close the same run as later setup/epoch failures.
     // Do not publish an effective device until preflight actually succeeds.
@@ -799,28 +818,28 @@ void TrainingExecutor::Train(
     const ScopedExecutionDeviceContext execution_context_scope(execution_context);
     // One training run per GPU on this machine (TOFIX206 3.2 E): wait for it,
     // Stop ends the wait; held for the whole run
+    bool gpu_waited = false;
     auto gpu_lease = AcquireGpuRunLease(
-        execution_context, [this]() { return stop_requested_.load(); },
-        [this](const std::string& message) {
-            UpdateMetrics([&](TrainingMetrics& m) { m.status_message = message; });
+        execution_context,
+        [this]() {
+            if (gpu_wait_hooks_.should_cancel && gpu_wait_hooks_.should_cancel()) stop_requested_.store(true);
+            return stop_requested_.load();
+        },
+        [&](const std::string& message) {
+            gpu_waited = true;
+            UpdateMetrics([&](TrainingMetrics& m) {
+                m.status_message = message;
+                m.waiting_for_gpu = message;
+            });
+            if (gpu_wait_hooks_.on_change) gpu_wait_hooks_.on_change(message);
         });
+    if (gpu_waited) {
+        UpdateMetrics([](TrainingMetrics& m) { m.waiting_for_gpu.clear(); });
+        if (gpu_wait_hooks_.on_change) gpu_wait_hooks_.on_change({});
+    }
     if (gpu_lease.cancelled) {
         spdlog::info("TrainingExecutor: stopped while waiting for the GPU");
-        UpdateMetrics([&](TrainingMetrics& m) {
-            m.total_epochs = epochs;
-            m.is_training = false;
-            m.is_paused = false;
-            m.is_complete = true;
-            m.terminal_status = "cancelled";
-            m.terminal_reason = "user_cancelled";
-            m.status_message = "Training cancelled while waiting for the GPU";
-        });
-        CrashRunRecorder::Instance().MarkCancelled();
-        TrainingTraceCollector::Instance().RecordTerminalEvent("cancelled", "user_cancelled", 0, 0.0f, 0.0f);
-        TrainingTraceCollector::Instance().FinishRun("cancelled");
-        BackendDebugHooks::SetDebugEventCallback({});
-        is_paused_.store(false);
-        is_training_.store(false);
+        cancel_run("Training cancelled while waiting for the GPU");
         return;
     }
     if (!gpu_lease.error.empty()) spdlog::warn("TrainingExecutor: {}; the run goes on without it", gpu_lease.error);
@@ -987,22 +1006,7 @@ void TrainingExecutor::Train(
                 if (stop_requested_.load()) {
                     // Stopped while the data was being prepared: cancelled, not failed.
                     spdlog::info("TrainingExecutor: stopped while preparing the data");
-                    UpdateMetrics([&](TrainingMetrics& m) {
-                        m.total_epochs = epochs;
-                        m.is_training = false;
-                        m.is_paused = false;
-                        m.is_complete = true;
-                        m.terminal_status = "cancelled";
-                        m.terminal_reason = "user_cancelled";
-                        m.status_message = "Training cancelled while preparing the data";
-                    });
-                    CrashRunRecorder::Instance().MarkCancelled();
-                    TrainingTraceCollector::Instance().RecordTerminalEvent("cancelled", "user_cancelled", 0, 0.0f,
-                                                                           0.0f);
-                    TrainingTraceCollector::Instance().FinishRun("cancelled");
-                    BackendDebugHooks::SetDebugEventCallback({});
-                    is_paused_.store(false);
-                    is_training_.store(false);
+                    cancel_run("Training cancelled while preparing the data");
                     return;
                 }
                 spdlog::error("TrainingExecutor: preparing the dataset batchers failed: {}", e.what());

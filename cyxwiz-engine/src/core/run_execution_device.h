@@ -33,15 +33,18 @@ void RecordRunExecutionDeviceBind(const ExecutionDeviceContext& context, const s
 // One training run per GPU on this machine (TOFIX206 3.2 E, owner D9): a run on
 // a GPU route holds its device's lease for its whole life, across Engines and
 // tools, so runs never stack their traffic on one GPU; another run waits for
-// it. Keyed by the device's name (one physical GPU through CUDA or OpenCL is
-// one lease). Released by the lease's end, or by the system when its process
-// dies. Hold and release it on the run's own thread.
+// it. Keyed by the device's physical identity (one GPU through CUDA or OpenCL
+// is one lease, two cards of one model are two); without one, by its name
+// and index. Released by the lease's end, or by the system when its process
+// dies. Hold and release it on the run's own thread. Runs of another user
+// account on the same computer are excluded only where the system lets them
+// share the lock (Windows: the first user's lock is theirs alone).
 class GpuRunLease {
 public:
     ~GpuRunLease();
     GpuRunLease(const GpuRunLease&) = delete;
     GpuRunLease& operator=(const GpuRunLease&) = delete;
-    struct Handle;  // the system's lock (opaque: only AcquireGpuRunLease makes one)
+    struct Handle;  // the system's lock, defined with AcquireGpuRunLease (the one place that makes it)
     explicit GpuRunLease(std::unique_ptr<Handle> handle);
 
 private:

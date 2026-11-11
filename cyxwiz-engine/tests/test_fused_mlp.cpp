@@ -183,6 +183,20 @@ void CheckViews() {
         gd = it == got_grads.end() ? 1.0 : std::max(gd, Difference(it->second, g));
     }
     Check(gd == 0.0, "a column view's gradients equal its copy's (differ by " + std::to_string(gd) + ")");
+
+    // One column at an offset (a [rows, 1] input), and a run of rows (not
+    // contiguous: it goes over as a copy): the same results as owned copies
+    auto narrow = Chain(1, {8}, 1, Activations()[0].add);
+    auto narrow_fused = cyxwiz::FusedMlp::For(narrow, why);
+    if (narrow_fused) {
+        const auto one = table.Slice(1, 5, 6);
+        Check(Difference(narrow_fused->Forward(one, false), narrow_fused->Forward(owned(one), false)) == 0.0,
+              "a single column at an offset reads as its copy");
+    }
+    const auto tall = Random({rows + 9, inputs}, 23);
+    const auto some_rows = tall.Slice(0, 4, 4 + static_cast<int>(rows));
+    Check(Difference(fused->Forward(some_rows, false), fused->Forward(owned(some_rows), false)) == 0.0,
+          "a run of rows reads as its copy");
 }
 
 // Two networks in one launch each way (PPO's policy and value networks, TOFIX206

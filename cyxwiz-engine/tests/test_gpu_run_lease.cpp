@@ -34,8 +34,9 @@ cyxwiz::ExecutionDeviceContext Gpu(const std::string& name) {
 
 int main() {
     using namespace std::chrono_literals;
-    // A per-process name: the test never meets a real run's lease
-    const std::string name = "Lease Test GPU " + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    // The test's own device names: it never meets a real run's lease (and
+    // leaves the same two lock files each time where leases are files)
+    const std::string name = "Lease Test GPU";
 
     cyxwiz::ExecutionDeviceContext cpu;
     cpu.valid = true;
