@@ -729,6 +729,19 @@ struct MlpShape {
 };
 struct MlpWeights { const float* w[MLP_MAXL]; const float* b[MLP_MAXL]; };
 struct MlpGrads { float* dw[MLP_MAXL]; float* db[MLP_MAXL]; };
+// One or two networks per launch (blockIdx.y picks one; PPO's policy and
+// value networks run together). y, z: forward outputs (z also the backward's
+// input); dy, delta: the backward's.
+struct MlpNets {
+  MlpShape s[2];
+  MlpWeights p[2];
+  MlpGrads g[2];
+  float* y[2];
+  float* z[2];
+  const float* dy[2];
+  float* delta[2];
+  long long total0;  // the first network's weights and biases (the gradient kernel's split)
+};
 
 __device__ __forceinline__ float mlp_sigmoid(float z) { return 1.0f / (1.0f + expf(-z)); }
 
@@ -763,10 +776,13 @@ __device__ float mlp_dact(int a, float z, float slope, float alpha) {
   }
 }
 
-// Y (and Z, the pre-activations, when z is given) for MLP_RB rows per block.
-// Shared memory: 2 * MLP_RB * maxw floats.
-extern "C" __global__ void cyxwiz_mlp_forward(MlpShape s, MlpWeights p, const float* __restrict__ x,
-                                              float* __restrict__ y, float* __restrict__ z, int rows, int maxw) {
+// Y (and Z, the pre-activations, when z is given) of network blockIdx.y for
+// MLP_RB rows per block. Shared memory: 2 * MLP_RB * maxw floats.
+extern "C" __global__ void cyxwiz_mlp_forward(MlpNets P, const float* __restrict__ x, int rows, int maxw) {
+  const MlpShape& s = P.s[blockIdx.y];
+  const MlpWeights& p = P.p[blockIdx.y];
+  float* __restrict__ y = P.y[blockIdx.y];
+  float* __restrict__ z = P.z[blockIdx.y];
   extern __shared__ float sh[];
   float* cur = sh;
   float* nxt = sh + MLP_RB * maxw;
@@ -813,9 +829,12 @@ extern "C" __global__ void cyxwiz_mlp_forward(MlpShape s, MlpWeights p, const fl
 // MLP_TU_PAD * maxw floats, maxw = the widest layer (not the input).
 #define MLP_TU 32
 #define MLP_TU_PAD 33
-extern "C" __global__ void cyxwiz_mlp_backward_deltas(MlpShape s, MlpWeights p, const float* __restrict__ z,
-                                                      const float* __restrict__ dy, float* __restrict__ delta,
-                                                      int rows, int maxw) {
+extern "C" __global__ void cyxwiz_mlp_backward_deltas(MlpNets P, int rows, int maxw) {
+  const MlpShape& s = P.s[blockIdx.y];
+  const MlpWeights& p = P.p[blockIdx.y];
+  const float* __restrict__ z = P.z[blockIdx.y];
+  const float* __restrict__ dy = P.dy[blockIdx.y];
+  float* __restrict__ delta = P.delta[blockIdx.y];
   extern __shared__ float sh[];
   float* cur = sh;
   float* nxt = sh + MLP_RB * maxw;
@@ -873,13 +892,17 @@ extern "C" __global__ void cyxwiz_mlp_backward_deltas(MlpShape s, MlpWeights p, 
   }
 }
 
-// One thread per weight and bias of every layer: the sum over the rows, in
-// row order (deterministic: no atomics).
-extern "C" __global__ void cyxwiz_mlp_param_grads(MlpShape s, MlpGrads g, const float* __restrict__ x,
-                                                  const float* __restrict__ z, const float* __restrict__ delta,
-                                                  int rows, long long total) {
+// One thread per weight and bias of every layer of every network: the sum
+// over the rows, in row order (deterministic: no atomics).
+extern "C" __global__ void cyxwiz_mlp_param_grads(MlpNets P, const float* __restrict__ x, int rows, long long total) {
   long long k = (long long)blockIdx.x * blockDim.x + threadIdx.x;
   if (k >= total) return;
+  const int n = k < P.total0 ? 0 : 1;
+  if (n == 1) k -= P.total0;
+  const MlpShape& s = P.s[n];
+  const MlpGrads& g = P.g[n];
+  const float* __restrict__ z = P.z[n];
+  const float* __restrict__ delta = P.delta[n];
   for (int l = 0; l < s.layers; ++l) {
     const int win = s.widths[l], wout = s.widths[l + 1];
     const long long weights = (long long)wout * win;
@@ -927,50 +950,78 @@ struct MlpGradsArg {
     float* dw[kMlpMaxLayers] = {};
     float* db[kMlpMaxLayers] = {};
 };
+struct MlpNetsArg {
+    MlpShapeArg s[2];
+    MlpWeightsArg p[2];
+    MlpGradsArg g[2];
+    float* y[2] = {};
+    float* z[2] = {};
+    const float* dy[2] = {};
+    float* delta[2] = {};
+    long long total0 = 0;
+};
+
+// Network n's chain of a request (0: mlp_*, 1: mlp2_*)
+struct MlpChain {
+    size_t layers;
+    const size_t* widths;
+    const NeuralActivation* acts;
+    float slope;
+    float alpha;
+};
+MlpChain MlpChainOf(const NeuralOpRequest& r, size_t n) {
+    if (n == 0) return {r.mlp_layers, r.mlp_widths, r.mlp_activations, r.mlp_negative_slope, r.mlp_elu_alpha};
+    return {r.mlp2_layers, r.mlp2_widths, r.mlp2_activations, r.mlp2_negative_slope, r.mlp2_elu_alpha};
+}
 static_assert(static_cast<size_t>(kMlpMaxLayers) == NeuralOpRequest::kMaxMlpLayers, "kernel and request limits differ");
 
 // Why the request is outside the small-MLP contract, or "" when it fits.
 std::string MlpContractError(const NeuralOpRequest& r) {
     if (!r.device_resident) return "mlp ops run device-resident only";
     if (r.dtype != DataType::Float32) return "mlp ops are Float32 only";
-    if (r.mlp_layers < 1 || r.mlp_layers > NeuralOpRequest::kMaxMlpLayers) return "mlp needs 1 to 8 layers";
+    if (r.mlp_networks < 1 || r.mlp_networks > 2) return "mlp runs one or two networks per launch";
     if (r.batch < 1 || r.batch > (1u << 20)) return "mlp needs 1 to 1,048,576 rows";
     // The backward's gradient threads each sum every row: past 65,536 rows a
     // launch could outlast the display driver's watchdog
     if (r.op == NeuralOp::MlpBackward && r.batch > (1u << 16)) return "mlp_backward takes up to 65,536 rows";
-    if (r.mlp_widths[0] < 1 || r.mlp_widths[0] > 1024) return "mlp input width must be 1 to 1024";
-    for (size_t l = 1; l <= r.mlp_layers; ++l)
-        if (r.mlp_widths[l] < 1 || r.mlp_widths[l] > 256) return "mlp layer widths must be 1 to 256";
-    for (size_t l = 0; l < r.mlp_layers; ++l) {
-        switch (r.mlp_activations[l]) {
-        case NeuralActivation::None: case NeuralActivation::Relu: case NeuralActivation::Gelu:
-        case NeuralActivation::Swish: case NeuralActivation::Elu: case NeuralActivation::Selu:
-        case NeuralActivation::Tanh: case NeuralActivation::Sigmoid: case NeuralActivation::LeakyRelu:
-            break;
-        default:
-            return "mlp activation not supported (none, relu, leaky relu, elu, selu, gelu, swish, tanh, sigmoid)";
+    if (r.mlp_networks == 2 && r.mlp2_widths[0] != r.mlp_widths[0]) return "two mlp networks need the same input width";
+    for (size_t n = 0; n < r.mlp_networks; ++n) {
+        const MlpChain c = MlpChainOf(r, n);
+        if (c.layers < 1 || c.layers > NeuralOpRequest::kMaxMlpLayers) return "mlp needs 1 to 8 layers";
+        if (c.widths[0] < 1 || c.widths[0] > 1024) return "mlp input width must be 1 to 1024";
+        for (size_t l = 1; l <= c.layers; ++l)
+            if (c.widths[l] < 1 || c.widths[l] > 256) return "mlp layer widths must be 1 to 256";
+        for (size_t l = 0; l < c.layers; ++l) {
+            switch (c.acts[l]) {
+            case NeuralActivation::None: case NeuralActivation::Relu: case NeuralActivation::Gelu:
+            case NeuralActivation::Swish: case NeuralActivation::Elu: case NeuralActivation::Selu:
+            case NeuralActivation::Tanh: case NeuralActivation::Sigmoid: case NeuralActivation::LeakyRelu:
+                break;
+            default:
+                return "mlp activation not supported (none, relu, leaky relu, elu, selu, gelu, swish, tanh, sigmoid)";
+            }
         }
     }
     return {};
 }
 
-MlpShapeArg MlpShapeOf(const NeuralOpRequest& r, size_t& z_width, int& max_width) {
+MlpShapeArg MlpShapeOf(const MlpChain& c, size_t& z_width, int& max_width) {
     MlpShapeArg s;
-    s.layers = static_cast<int>(r.mlp_layers);
-    s.slope = r.mlp_negative_slope;
-    s.alpha = r.mlp_elu_alpha;
+    s.layers = static_cast<int>(c.layers);
+    s.slope = c.slope;
+    s.alpha = c.alpha;
     z_width = 0;
     max_width = 0;
-    for (size_t l = 0; l <= r.mlp_layers; ++l) {
-        s.widths[l] = static_cast<int>(r.mlp_widths[l]);
+    for (size_t l = 0; l <= c.layers; ++l) {
+        s.widths[l] = static_cast<int>(c.widths[l]);
         max_width = std::max(max_width, s.widths[l]);
     }
-    for (size_t l = 0; l < r.mlp_layers; ++l) {
-        s.acts[l] = static_cast<int>(r.mlp_activations[l]);
+    for (size_t l = 0; l < c.layers; ++l) {
+        s.acts[l] = static_cast<int>(c.acts[l]);
         s.zoff[l] = static_cast<int>(z_width);
-        z_width += r.mlp_widths[l + 1];
+        z_width += c.widths[l + 1];
     }
-    s.zoff[r.mlp_layers] = static_cast<int>(z_width);
+    s.zoff[c.layers] = static_cast<int>(z_width);
     return s;
 }
 
@@ -2790,35 +2841,46 @@ private:
     }
 
     NeuralOpStatus ExecuteMlpForward(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
-        size_t z_width = 0;
-        int max_width = 0;
-        const MlpShapeArg s = MlpShapeOf(r, z_width, max_width);
-        const size_t rows = r.batch, L = r.mlp_layers;
+        const size_t nets = r.mlp_networks, rows = r.batch;
         const auto& in = buffers.inputs;
         const auto& out = buffers.outputs;
-        bool ok = in.size() == 1 + 2 * L && out.size() == (r.training ? 2u : 1u) &&
-                  in[0].elements == rows * r.mlp_widths[0] && out[0].elements == rows * r.mlp_widths[L] &&
-                  (!r.training || out[1].elements == rows * z_width);
-        MlpWeightsArg p;
-        for (size_t l = 0; ok && l < L; ++l) {
-            ok = in[1 + 2 * l].elements == r.mlp_widths[l + 1] * r.mlp_widths[l] &&
-                 in[2 + 2 * l].elements == r.mlp_widths[l + 1];
-            p.w[l] = static_cast<const float*>(in[1 + 2 * l].handle);
-            p.b[l] = static_cast<const float*>(in[2 + 2 * l].handle);
+        MlpNetsArg P;
+        size_t z_width[2] = {};
+        int max_width = 0;
+        unsigned threads = 32;
+        size_t weights_in = 0;
+        for (size_t n = 0; n < nets; ++n) {
+            int widest = 0;
+            P.s[n] = MlpShapeOf(MlpChainOf(r, n), z_width[n], widest);
+            max_width = std::max(max_width, widest);
+            threads = std::max(threads, MlpThreads(P.s[n]));
+            weights_in += 2 * MlpChainOf(r, n).layers;
+        }
+        bool ok = in.size() == 1 + weights_in && out.size() == nets * (r.training ? 2u : 1u) &&
+                  in[0].elements == rows * r.mlp_widths[0];
+        for (size_t n = 0, i = 1; ok && n < nets; ++n) {
+            const MlpChain c = MlpChainOf(r, n);
+            for (size_t l = 0; ok && l < c.layers; ++l, i += 2) {
+                ok = in[i].elements == c.widths[l + 1] * c.widths[l] && in[i + 1].elements == c.widths[l + 1];
+                P.p[n].w[l] = static_cast<const float*>(in[i].handle);
+                P.p[n].b[l] = static_cast<const float*>(in[i + 1].handle);
+            }
+            ok = ok && out[n].elements == rows * c.widths[c.layers] &&
+                 (!r.training || out[nets + n].elements == rows * z_width[n]);
+            if (!ok) break;
+            P.y[n] = static_cast<float*>(out[n].handle);
+            P.z[n] = r.training ? static_cast<float*>(out[nets + n].handle) : nullptr;
         }
         if (!ok) {
             return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
-                        "mlp_forward buffers do not match the request (X, W_1, b_1 ... -> Y[, Z])");
+                        "mlp_forward buffers do not match the request (X, each network's W_1, b_1 ... -> each Y[, each Z])");
         }
         const float* x = static_cast<const float*>(in[0].handle);
-        float* y = static_cast<float*>(out[0].handle);
-        float* z = r.training ? static_cast<float*>(out[1].handle) : nullptr;
         int rows_arg = static_cast<int>(rows);
-        MlpShapeArg shape = s;
-        void* args[] = {&shape, &p, const_cast<float**>(&x), &y, &z, &rows_arg, &max_width};
+        void* args[] = {&P, const_cast<float**>(&x), &rows_arg, &max_width};
         const unsigned blocks = static_cast<unsigned>((rows + kMlpRowsPerBlock - 1) / kMlpRowsPerBlock);
         const unsigned shared = static_cast<unsigned>(2 * kMlpRowsPerBlock * max_width * sizeof(float));
-        if (cuLaunchKernel(device_state_.MlpForward(), blocks, 1, 1, MlpThreads(s), 1, 1, shared,
+        if (cuLaunchKernel(device_state_.MlpForward(), blocks, static_cast<unsigned>(nets), 1, threads, 1, 1, shared,
                            static_cast<CUstream>(buffers.queue.cuda_stream), args, nullptr) != CUDA_SUCCESS) {
             return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "mlp_forward launch failed");
         }
@@ -2826,51 +2888,65 @@ private:
     }
 
     NeuralOpStatus ExecuteMlpBackward(const NeuralOpRequest& r, NeuralDeviceOpBuffers& buffers) {
-        size_t z_width = 0;
-        int max_width = 0;
-        const MlpShapeArg s = MlpShapeOf(r, z_width, max_width);
-        const size_t rows = r.batch, L = r.mlp_layers;
+        const size_t nets = r.mlp_networks, rows = r.batch;
         const auto& in = buffers.inputs;
         const auto& out = buffers.outputs;
-        bool ok = in.size() == L + 3 && out.size() == 2 * L && in[0].elements == rows * r.mlp_widths[0] &&
-                  in[L + 1].elements == rows * z_width && in[L + 2].elements == rows * r.mlp_widths[L];
-        MlpWeightsArg p;
-        MlpGradsArg g;
-        long long total = 0;
-        for (size_t l = 0; ok && l < L; ++l) {
-            const size_t weights = r.mlp_widths[l + 1] * r.mlp_widths[l];
-            ok = in[1 + l].elements == weights && out[2 * l].elements == weights &&
-                 out[2 * l + 1].elements == r.mlp_widths[l + 1];
-            p.w[l] = static_cast<const float*>(in[1 + l].handle);
-            g.dw[l] = static_cast<float*>(out[2 * l].handle);
-            g.db[l] = static_cast<float*>(out[2 * l + 1].handle);
-            total += static_cast<long long>(weights + r.mlp_widths[l + 1]);
+        MlpNetsArg P;
+        size_t z_width[2] = {};
+        long long totals[2] = {};
+        int max_hidden = 1;
+        unsigned threads = 32;
+        size_t inputs = 1, outputs = 0;
+        for (size_t n = 0; n < nets; ++n) {
+            int widest = 0;
+            P.s[n] = MlpShapeOf(MlpChainOf(r, n), z_width[n], widest);
+            threads = std::max(threads, MlpThreads(P.s[n]));
+            const MlpChain c = MlpChainOf(r, n);
+            for (size_t l = 1; l <= c.layers; ++l) max_hidden = std::max(max_hidden, static_cast<int>(c.widths[l]));
+            inputs += c.layers + 2;
+            outputs += 2 * c.layers;
+        }
+        bool ok = in.size() == inputs && out.size() == outputs && in[0].elements == rows * r.mlp_widths[0];
+        for (size_t n = 0, i = 1, o = 0; ok && n < nets; ++n) {
+            const MlpChain c = MlpChainOf(r, n);
+            for (size_t l = 0; ok && l < c.layers; ++l, ++i, o += 2) {
+                const size_t weights = c.widths[l + 1] * c.widths[l];
+                ok = in[i].elements == weights && out[o].elements == weights && out[o + 1].elements == c.widths[l + 1];
+                P.p[n].w[l] = static_cast<const float*>(in[i].handle);
+                P.g[n].dw[l] = static_cast<float*>(out[o].handle);
+                P.g[n].db[l] = static_cast<float*>(out[o + 1].handle);
+                totals[n] += static_cast<long long>(weights + c.widths[l + 1]);
+            }
+            ok = ok && in[i].elements == rows * z_width[n] && in[i + 1].elements == rows * c.widths[c.layers];
+            if (!ok) break;
+            P.z[n] = static_cast<float*>(in[i].handle);  // read only
+            P.dy[n] = static_cast<const float*>(in[i + 1].handle);
+            i += 2;
         }
         if (!ok) {
             return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
-                        "mlp_backward buffers do not match the request (X, W_1 ... W_L, Z, dY -> dW_1, db_1 ...)");
+                        "mlp_backward buffers do not match the request (X, each network's W_1 ... W_L, Z, dY -> "
+                        "each network's dW_1, db_1 ...)");
         }
         const auto stream = static_cast<CUstream>(buffers.queue.cuda_stream);
-        float* delta = device_state_.Workspace(rows * z_width, stream);
+        float* delta = device_state_.Workspace(rows * (z_width[0] + z_width[1]), stream);
         if (!delta) return Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted, "mlp delta workspace");
+        P.delta[0] = delta;
+        P.delta[1] = delta + rows * z_width[0];
+        P.total0 = totals[0];
+        long long total = totals[0] + totals[1];
         const float* x = static_cast<const float*>(in[0].handle);
-        const float* z = static_cast<const float*>(in[L + 1].handle);
-        const float* dy = static_cast<const float*>(in[L + 2].handle);
         int rows_arg = static_cast<int>(rows);
-        MlpShapeArg shape = s;
-        int max_hidden = 1;
-        for (size_t l = 1; l <= L; ++l) max_hidden = std::max(max_hidden, static_cast<int>(r.mlp_widths[l]));
-        void* delta_args[] = {&shape, &p, const_cast<float**>(&z), const_cast<float**>(&dy), &delta, &rows_arg,
-                              &max_hidden};
+        void* delta_args[] = {&P, &rows_arg, &max_hidden};
         const unsigned blocks = static_cast<unsigned>((rows + kMlpRowsPerBlock - 1) / kMlpRowsPerBlock);
         // cur + nxt rows, and the 32-unit weight tile (33 floats per input with the pad)
         const unsigned shared = static_cast<unsigned>((2 * kMlpRowsPerBlock + 33) * max_hidden * sizeof(float));
-        if (cuLaunchKernel(device_state_.MlpDeltas(), blocks, 1, 1, MlpThreads(s), 1, 1, shared, stream, delta_args,
-                           nullptr) != CUDA_SUCCESS) {
+        if (cuLaunchKernel(device_state_.MlpDeltas(), blocks, static_cast<unsigned>(nets), 1, threads, 1, 1, shared,
+                           stream, delta_args, nullptr) != CUDA_SUCCESS) {
             return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "mlp_backward deltas launch failed");
         }
         constexpr unsigned kThreads = 256;
-        void* grad_args[] = {&shape, &g, const_cast<float**>(&x), const_cast<float**>(&z), &delta, &rows_arg, &total};
+        void* grad_args[] = {&P, const_cast<float**>(&x), &rows_arg, &total};
         if (cuLaunchKernel(device_state_.MlpGrads(), Blocks(total, kThreads), 1, 1, kThreads, 1, 1, 0, stream,
                            grad_args, nullptr) != CUDA_SUCCESS) {
             return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "mlp_backward gradients launch failed");

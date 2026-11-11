@@ -232,6 +232,41 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
         model.Backward(grad);
         return model.GetGradients();
     };
+    // Both networks over the same rows (the rollout's observations, a
+    // minibatch): one launch forward and two backward for the two when both
+    // are fused (TOFIX206 3.2 B2). A failure moves both to ArrayFire
+    // operations.
+    const auto drop_fused = [this](const std::exception& e) {
+        spdlog::warn("PPO: the fused networks failed ({}); ArrayFire operations from now on", e.what());
+        policy_fused_.reset();
+        value_fused_.reset();
+        network_path_ = std::string("ArrayFire operations (the fused kernels failed: ") + e.what() + ")";
+    };
+    const auto forward_both = [&](const Tensor& x, bool keep) -> std::pair<Tensor, Tensor> {
+        if (policy_fused_ && value_fused_) {
+            try {
+                return FusedMlp::ForwardPair(*policy_fused_, *value_fused_, x, keep);
+            } catch (const std::exception& e) {
+                drop_fused(e);
+            }
+        }
+        Tensor head = forward(*policy_, policy_fused_, x, keep);
+        return {std::move(head), forward(*value_, value_fused_, x, keep)};
+    };
+    const auto backward_both = [&](const Tensor& x, const Tensor& policy_grad, const Tensor& value_grad)
+        -> std::pair<FusedMlp::Gradients, FusedMlp::Gradients> {
+        if (policy_fused_ && value_fused_) {
+            try {
+                return FusedMlp::BackwardPair(*policy_fused_, policy_grad, *value_fused_, value_grad);
+            } catch (const std::exception& e) {
+                drop_fused(e);
+                policy_->Forward(x);  // the layers' own forward of the minibatch, for their backward
+                value_->Forward(x);
+            }
+        }
+        auto policy_grads = backward(*policy_, policy_fused_, x, policy_grad);
+        return {std::move(policy_grads), backward(*value_, value_fused_, x, value_grad)};
+    };
 
     try {
         if (!environment_.reset(config_.seed, obs.data(), error)) return false;
@@ -245,14 +280,13 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                 while (paused_ && !stop_) std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 if (stop_) break;
                 const Tensor obs_t = Rows(obs, n, obs_size);
-                const Tensor head = forward(*policy_, policy_fused_, obs_t, false);
+                const auto [head, value] = forward_both(obs_t, false);
                 if (head.Shape() != std::vector<size_t>{n, policy_outputs}) {
                     error = "The policy network gives " + std::to_string(head.NumElements() / std::max<size_t>(n, 1)) +
                             " outputs per observation; " + info.name + " needs " + std::to_string(policy_outputs) +
                             (discrete ? " (one per choice)." : " (one per action).");
                     return false;
                 }
-                const Tensor value = forward(*value_, value_fused_, obs_t, false);
                 if (value.NumElements() != n) {
                     error = "The value network must give one value per observation.";
                     return false;
@@ -365,12 +399,10 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
                     batch.advantages = column(obs_size + act_size + 2, 1);
                     batch.returns = column(width - 1, 1);
                     const Tensor mb_obs = column(0, obs_size);
-                    const Tensor head = forward(*policy_, policy_fused_, mb_obs, true);
-                    const Tensor value = forward(*value_, value_fused_, mb_obs, true);
+                    const auto [head, value] = forward_both(mb_obs, true);
                     const PpoLossResult r = discrete ? PpoCategoricalLoss(head, value, batch, config_.loss)
                                                      : PpoGaussianLoss(head, log_std_, value, batch, config_.loss);
-                    auto policy_grads = backward(*policy_, policy_fused_, mb_obs, r.grad_policy_output);
-                    auto value_grads = backward(*value_, value_fused_, mb_obs, r.grad_value_output);
+                    auto [policy_grads, value_grads] = backward_both(mb_obs, r.grad_policy_output, r.grad_value_output);
                     std::map<std::string, Tensor> log_std_grads;
                     if (!discrete) log_std_grads["log_std"] = r.grad_log_std;
                     bool stepped = false;

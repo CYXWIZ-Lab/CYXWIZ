@@ -185,6 +185,67 @@ void CheckViews() {
     Check(gd == 0.0, "a column view's gradients equal its copy's (differ by " + std::to_string(gd) + ")");
 }
 
+// Two networks in one launch each way (PPO's policy and value networks, TOFIX206
+// 3.2 B2) give exactly each one's own Forward and Backward, also when the two
+// differ in depth, widths and activation (slope, alpha)
+void CheckPairs() {
+    struct Pair {
+        const char* what;
+        size_t inputs, rows;
+        std::vector<size_t> hidden_a, hidden_b;
+        size_t out_a, out_b;
+        size_t act_a, act_b;  // into Activations()
+    };
+    const Pair pairs[] = {
+        {"CartPole policy + value x8", 4, 8, {64, 64}, {64, 64}, 2, 1, 0, 0},
+        {"CartPole policy + value x64", 4, 64, {64, 64}, {64, 64}, 2, 1, 0, 0},
+        {"HalfCheetah policy + value x64", 17, 64, {256, 256}, {256, 256}, 6, 1, 1, 1},
+        {"LeakyReLU 7-33-3 + ELU 7-1-129-1 x13", 7, 13, {33}, {1, 129}, 3, 1, 2, 4},
+    };
+    for (const auto& p : pairs) {
+        auto a = Chain(p.inputs, p.hidden_a, p.out_a, Activations()[p.act_a].add);
+        auto b = Chain(p.inputs, p.hidden_b, p.out_b, Activations()[p.act_b].add);
+        std::string why;
+        auto fa = cyxwiz::FusedMlp::For(a, why);
+        auto fb = cyxwiz::FusedMlp::For(b, why);
+        if (!fa || !fb) {
+            Check(false, std::string(p.what) + ": fused (" + why + ")");
+            continue;
+        }
+        const auto x = Random({p.rows, p.inputs}, 41);
+        const auto dya = Random({p.rows, p.out_a}, 42);
+        const auto dyb = Random({p.rows, p.out_b}, 43);
+        const auto ya = fa->Forward(x, true);
+        const auto ga = fa->Backward(dya);
+        const auto yb = fb->Forward(x, true);
+        const auto gb = fb->Backward(dyb);
+        try {
+            const auto [pa, pb] = cyxwiz::FusedMlp::ForwardPair(*fa, *fb, x, true);
+            const auto [qa, qb] = cyxwiz::FusedMlp::BackwardPair(*fa, dya, *fb, dyb);
+            Check(Difference(pa, ya) == 0.0 && Difference(pb, yb) == 0.0, std::string(p.what) + ": the pair's forward");
+            double gd = 0.0;
+            for (const auto& [want, got] : {std::pair{&ga, &qa}, std::pair{&gb, &qb}})
+                for (const auto& [name, g] : *want) {
+                    const auto it = got->find(name);
+                    gd = it == got->end() ? 1.0 : std::max(gd, Difference(it->second, g));
+                }
+            Check(gd == 0.0, std::string(p.what) + ": the pair's gradients (differ by " + std::to_string(gd) + ")");
+            // Without keep: the same forward, and no backward from it
+            const auto [ka, kb] = cyxwiz::FusedMlp::ForwardPair(*fa, *fb, x, false);
+            Check(Difference(ka, ya) == 0.0 && Difference(kb, yb) == 0.0, std::string(p.what) + ": forward without keep");
+            bool refused = false;
+            try {
+                cyxwiz::FusedMlp::BackwardPair(*fa, dya, *fb, dyb);
+            } catch (const std::exception&) {
+                refused = true;
+            }
+            Check(refused, std::string(p.what) + ": a backward needs a kept pair");
+        } catch (const std::exception& e) {
+            Check(false, std::string(p.what) + ": " + e.what());
+        }
+    }
+}
+
 void CheckRefusals() {
     std::string why;
     auto wide = Chain(4, {300}, 2, Activations()[0].add);
@@ -244,6 +305,44 @@ void Time(const char* what, size_t inputs, const std::vector<size_t>& hidden, si
                 ms[1] > 0.0 ? ms[0] / ms[1] : 0.0);
 }
 
+// A policy and a value network: each fused alone against both in one pair
+void TimePair(const char* what, size_t inputs, size_t hidden, size_t outputs, size_t rows) {
+    auto a = Chain(inputs, {hidden, hidden}, outputs, Activations()[0].add);
+    auto b = Chain(inputs, {hidden, hidden}, 1, Activations()[0].add);
+    std::string why;
+    auto fa = cyxwiz::FusedMlp::For(a, why);
+    auto fb = cyxwiz::FusedMlp::For(b, why);
+    if (!fa || !fb) return;
+    const auto x = Random({rows, inputs}, 51);
+    const auto dya = Random({rows, outputs}, 52);
+    const auto dyb = Random({rows, 1}, 53);
+    const auto run = [&](bool pair, int n) {
+        cyxwiz::Tensor last;
+        for (int i = 0; i < n; ++i) {
+            if (pair) {
+                cyxwiz::FusedMlp::ForwardPair(*fa, *fb, x, true);
+                last = cyxwiz::FusedMlp::BackwardPair(*fa, dya, *fb, dyb).second.begin()->second;
+            } else {
+                fa->Forward(x, true);
+                fa->Backward(dya);
+                fb->Forward(x, true);
+                last = fb->Backward(dyb).begin()->second;
+            }
+        }
+        volatile float v = last.ReadData<float>()[0];
+        (void)v;
+    };
+    double ms[2];
+    for (int k = 0; k < 2; ++k) {
+        run(k == 1, 5);
+        const auto start = std::chrono::steady_clock::now();
+        run(k == 1, 200);
+        ms[k] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / 200.0;
+    }
+    std::printf("%-34s apart %.3f ms, pair %.3f ms per forward+backward of both (%.1fx)\n", what, ms[0], ms[1],
+                ms[1] > 0.0 ? ms[0] / ms[1] : 0.0);
+}
+
 // `count <fused|layers> <n> [inputs hidden outputs rows]`: n forward + backward
 // passes of one path and nothing else, for a CUDA call counter
 // (cyxwiz-cuda-call-counter) to count per pass: run with n and with 0.
@@ -300,9 +399,14 @@ int main(int argc, char** argv) {
     if (cyxwiz::FusedMlp::For(probe, why)) {
         CheckParity();
         CheckViews();
+        CheckPairs();
         Time("CartPole policy 4-64-64-2 x8", 4, {64, 64}, 2, 8);
         Time("CartPole minibatch 4-64-64-2 x64", 4, {64, 64}, 2, 64);
         Time("HalfCheetah 17-256-256-6 x64", 17, {256, 256}, 6, 64);
+        TimePair("CartPole pair x8", 4, 64, 2, 8);
+        TimePair("CartPole pair x64", 4, 64, 2, 64);
+        TimePair("HalfCheetah pair x1", 17, 256, 6, 1);
+        TimePair("HalfCheetah pair x64", 17, 256, 6, 64);
     } else {
         std::printf("fused comparison not run: %s\n", why.c_str());
     }

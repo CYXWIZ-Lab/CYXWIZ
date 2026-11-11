@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace cyxwiz {
 
@@ -39,6 +40,15 @@ public:
     // The parameters' gradients for dY [rows, outputs] after a kept
     // Forward, each summed over the rows. Throws as Forward does.
     std::map<std::string, Tensor> Backward(const Tensor& dy);
+
+    // Two networks over the same X in one launch forward and two backward
+    // for both (PPO's policy and value networks): the same results as each
+    // one's Forward and Backward. Both on one provider; throws as Forward.
+    using Gradients = std::map<std::string, Tensor>;
+    static std::pair<Tensor, Tensor> ForwardPair(FusedMlp& first, FusedMlp& second, const Tensor& x, bool keep);
+    // After a kept ForwardPair of the same two
+    static std::pair<Gradients, Gradients> BackwardPair(FusedMlp& first, const Tensor& dy_first, FusedMlp& second,
+                                                        const Tensor& dy_second);
 
     // The provider that runs it ("cyxwiz.nvidia-cublas-cell")
     std::string ProviderId() const;

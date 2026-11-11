@@ -208,6 +208,20 @@ struct NeuralOpRequest {
     NeuralActivation mlp_activations[kMaxMlpLayers] = {};
     float mlp_negative_slope = 0.01f;  // LeakyRelu
     float mlp_elu_alpha = 1.0f;        // Elu
+    // Two networks over the same X per launch (mlp_networks = 2; PPO's policy
+    // and value networks): the second network's chain in mlp2_*, its input
+    // width mlp2_widths[0] = mlp_widths[0]. Buffers, the first network's
+    // before the second's:
+    //   MlpForward   inputs  X, W_1, b_1 ... of the first, W_1, b_1 ... of the second
+    //                outputs Y_1, Y_2; when `training`, also Z_1, Z_2
+    //   MlpBackward  inputs  X, W_1 ... Z_1, dY_1 of the first, W_1 ... Z_2, dY_2 of the second
+    //                outputs dW_1, db_1 ... of the first, then of the second
+    size_t mlp_networks = 1;
+    size_t mlp2_layers = 0;
+    size_t mlp2_widths[kMaxMlpLayers + 1] = {};
+    NeuralActivation mlp2_activations[kMaxMlpLayers] = {};
+    float mlp2_negative_slope = 0.01f;
+    float mlp2_elu_alpha = 1.0f;
     // Adam over adam_tensors tensors (device-resident), TOFIX206 3.2 C.
     //   inputs  for each tensor t: param_t, grad_t, m_t, v_t (any shape, the
     //           four of a tensor the same size)
@@ -369,9 +383,9 @@ CYXWIZ_API void SetNeuralProvidersDisabledForTesting(bool disabled);
 // TOFIX178 1.0(c)): it exports cyxwiz_<name>_abi() returning this number and
 // cyxwiz_<name>_register(NeuralProviderRegistry*). A module with another
 // number is not loaded. Raise it when the provider interface changes.
-// 2: the small-MLP, Adam and PPO ops (MlpForward/Backward, AdamStep,
-// PpoSample/Loss/Gae), their request fields and NeuralActivation::LeakyRelu
-// (TOFIX206 3.2).
+// 2: the small-MLP, Adam and PPO ops (MlpForward/Backward, one or two
+// networks per launch, AdamStep, PpoSample/Loss/Gae), their request fields and
+// NeuralActivation::LeakyRelu (TOFIX206 3.2).
 #define CYXWIZ_NEURAL_PROVIDER_MODULE_ABI 2
 
 #ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER

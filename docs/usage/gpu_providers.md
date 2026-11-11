@@ -25,9 +25,10 @@ back to the host. The Console shows when it is used:
 It is needed for Conv2D on CUDA because ArrayFire cannot compile its CUDA
 convolution kernel for real image sizes. It comes with the **CUDA GPU pack**.
 
-For PPO it runs each small network whole (one GPU launch forward, two
-backward) and PPO's own steps as single launches: about a tenth of the GPU
-launches of the layer-by-layer path, and two to three times faster. The
+For PPO it runs the policy and value networks whole and together (one GPU
+launch forward for both, two backward), reads each minibatch in place, and
+runs PPO's own steps as single launches: about a seventeenth of the GPU
+launches of the layer-by-layer path, and three to four times faster. The
 Console says which path a run takes:
 
 > PPO: the networks run as fused small-network kernels (cyxwiz.nvidia-cublas-cell)
