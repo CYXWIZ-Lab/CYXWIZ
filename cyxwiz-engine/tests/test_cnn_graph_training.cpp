@@ -119,12 +119,14 @@ void CheckClose(const cyxwiz::Tensor& actual, const nlohmann::json& expected, co
 // generate_cnn_graph_fixtures.py) built from Engine nodes: a stem, one ResNet
 // downsampling block with a projection shortcut, Global Avg Pool and a Dense
 // head; one training step's forward, gradients and BatchNorm running statistics.
+void CheckGraphAgainstPyTorch(cyxwiz::GraphCompiler& compiler, const std::vector<gui::MLNode>& nodes,
+                              const std::vector<gui::NodeLink>& links, const nlohmann::json& c);
+
 void CheckResidualCnnAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
     std::ifstream in(CYXWIZ_CNN_GRAPH_FIXTURE);
     Check(in.good(), std::string("cannot open ") + CYXWIZ_CNN_GRAPH_FIXTURE);
     const auto fixture = nlohmann::json::parse(in);
     const auto& c = fixture.at("cases").at(0);
-    const std::string name = c.at("name").get<std::string>();
 
     gui::MLNode data;
     data.id = 1;
@@ -184,12 +186,23 @@ void CheckResidualCnnAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
     links.push_back(labels);
     links.push_back(to_adam);
 
+    CheckGraphAgainstPyTorch(compiler, nodes, links, c);
+    std::cout << "residual CNN matches PyTorch: logits, input and " << c.at("layers").size()
+              << " layers' gradients, BatchNorm running statistics\n";
+}
+
+// A graph of Engine nodes against a fixture case: PyTorch's weights go in by
+// node name; one training step's logits, input gradient, every layer's
+// gradients and BatchNorm's running statistics are compared.
+void CheckGraphAgainstPyTorch(cyxwiz::GraphCompiler& compiler, const std::vector<gui::MLNode>& nodes,
+                              const std::vector<gui::NodeLink>& links, const nlohmann::json& c) {
+    const std::string name = c.at("name").get<std::string>();
     const auto config = compiler.Compile(nodes, links, true);
     for (const auto& issue : config.issues) {
         if (issue.level == cyxwiz::IssueLevel::Error)
             std::cerr << "  issue: " << issue.node_name << ": " << issue.message << "\n";
     }
-    Check(config.is_valid, name + ": the residual CNN compiles");
+    Check(config.is_valid, name + ": the graph compiles");
     auto built = cyxwiz::BuildExecutableFromConfig(config);
     Check(built.ok(), name + ": ModelBuilder builds it: " + built.error_message);
     if (!built.ok()) return;
@@ -233,8 +246,63 @@ void CheckResidualCnnAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
             if (it != state.end()) CheckClose(it->second, value, tolerance, name + " " + layer_name + " " + key);
         }
     }
-    std::cout << "residual CNN matches PyTorch: logits, input and " << c.at("layers").size()
-              << " layers' gradients, BatchNorm running statistics\n";
+}
+
+// The Squeeze-Excitation node after a stem, against PyTorch: its gate's two
+// Linear layers are the node's reduce_* and expand_* parameters.
+void CheckSqueezeExcitationAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
+    std::ifstream in(CYXWIZ_CNN_GRAPH_FIXTURE);
+    Check(in.good(), std::string("cannot open ") + CYXWIZ_CNN_GRAPH_FIXTURE);
+    const auto fixture = nlohmann::json::parse(in);
+    const auto& c = fixture.at("cases").at(1);
+    Check(c.at("name").get<std::string>() == "squeeze_excitation_block", "the second fixture case is the Squeeze-Excitation node");
+
+    gui::MLNode data;
+    data.id = 1;
+    data.type = gui::NodeType::DataInput;
+    data.name = "Images";
+    data.outputs = {Pin(102, gui::PinType::Tensor, "Data", false), Pin(103, gui::PinType::Labels, "Labels", false)};
+    data.parameters = {{"dataset_name", "se_fixture"}, {"file_category", "image"},
+                       {"folder_path", "D:/tmp/se_fixture"}, {"image_layout", "0"}};
+    gui::MLNode loss;
+    loss.id = 40;
+    loss.type = gui::NodeType::CrossEntropyLoss;
+    loss.name = "Cross entropy";
+    loss.inputs = {Pin(4001, gui::PinType::Tensor, "Predictions", true), Pin(4002, gui::PinType::Labels, "Targets", true)};
+    loss.outputs = {Pin(4003, gui::PinType::Loss, "Loss", false)};
+    gui::MLNode adam;
+    adam.id = 41;
+    adam.type = gui::NodeType::Adam;
+    adam.name = "Adam";
+    adam.inputs = {Pin(4101, gui::PinType::Loss, "Loss", true)};
+    gui::MLNode output;
+    output.id = 42;
+    output.type = gui::NodeType::Output;
+    output.name = "Output";
+    output.parameters = {{"num_classes", "2"}};
+    const std::vector<gui::MLNode> nodes = {
+        data, Layer(2, gui::NodeType::Resize, "Resize 8", {{"width", "8"}, {"height", "8"}, {"mode", "exact"}}),
+        Layer(3, gui::NodeType::Conv2D, "Stem conv",
+              {{"filters", "8"}, {"kernel_size", "3"}, {"stride", "1"}, {"padding", "1"}}),
+        Layer(4, gui::NodeType::BatchNorm, "Stem BN", {{"eps", "1e-5"}, {"momentum", "0.1"}}),
+        Layer(5, gui::NodeType::ReLU, "Stem ReLU"),
+        Layer(10, gui::NodeType::SqueezeExcitation, "SE", {{"reduction", "2"}}),
+        Layer(32, gui::NodeType::GlobalAvgPool, "GAP"),
+        Layer(33, gui::NodeType::Dense, "Head", {{"units", "2"}}), loss, adam, output};
+    std::vector<gui::NodeLink> links = {Link(1, 1, 2), Link(2, 2, 3), Link(3, 3, 4), Link(4, 4, 5),
+                                        Link(5, 5, 10), Link(6, 10, 32), Link(7, 32, 33)};
+    gui::NodeLink to_loss = Link(17, 33, 40);
+    to_loss.to_pin = 4001;
+    gui::NodeLink labels;
+    labels.id = 18; labels.from_node = 1; labels.from_pin = 103; labels.to_node = 40; labels.to_pin = 4002;
+    gui::NodeLink to_adam;
+    to_adam.id = 19; to_adam.from_node = 40; to_adam.from_pin = 4003; to_adam.to_node = 41; to_adam.to_pin = 4101;
+    links.push_back(to_loss);
+    links.push_back(labels);
+    links.push_back(to_adam);
+    CheckGraphAgainstPyTorch(compiler, nodes, links, c);
+    std::cout << "Squeeze-Excitation node matches PyTorch: logits, input and " << c.at("layers").size()
+              << " layers' gradients\n";
 }
 
 }  // namespace
@@ -655,6 +723,7 @@ int main() {
     }
 
     CheckResidualCnnAgainstPyTorch(compiler);
+    CheckSqueezeExcitationAgainstPyTorch(compiler);
     std::cout << "CNN graph compiles, builds and runs forward: " << parameters << " parameters\n";
     return 0;
 }

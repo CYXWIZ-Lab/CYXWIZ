@@ -2322,6 +2322,12 @@ PYBIND11_MODULE(pycyxwiz, m) {
     py::class_<cyxwiz::MishModule, cyxwiz::Module>(m, "MishModule")
         .def(py::init<>(), "Create a Mish module");
 
+    // Squeeze-and-Excitation on [H,W,C,N]
+    py::class_<cyxwiz::SqueezeExcitationModule, cyxwiz::Module>(m, "SqueezeExcitation")
+        .def(py::init<size_t, size_t>(), py::arg("channels"), py::arg("squeeze_channels"),
+             "Squeeze-and-Excitation: scale each channel of a feature map [H,W,C,N] by a learned gate "
+             "(torchvision.ops.SqueezeExcitation with ReLU and Sigmoid)");
+
     // HardswishModule
     py::class_<cyxwiz::HardswishModule, cyxwiz::Module>(m, "HardswishModule")
         .def(py::init<>(), "Create a Hardswish module");

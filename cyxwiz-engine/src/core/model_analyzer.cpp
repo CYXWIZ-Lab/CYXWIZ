@@ -130,6 +130,7 @@ std::string GetNodeTypeName(gui::NodeType type) {
         case gui::NodeType::LayerNorm: return "LayerNorm";
         case gui::NodeType::GroupNorm: return "GroupNorm";
         case gui::NodeType::InstanceNorm: return "InstanceNorm";
+        case gui::NodeType::SqueezeExcitation: return "SqueezeExcitation";
         case gui::NodeType::Dropout: return "Dropout";
         case gui::NodeType::Flatten: return "Flatten";
         case gui::NodeType::RNN: return "RNN";
@@ -332,6 +333,14 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     int64_t in_h = current_shape.size() >= 1 ? current_shape[0] : 1;
                     int64_t in_w = current_shape.size() >= 2 ? current_shape[1] : 1;
                     layer_analysis.flops = ComputeConv2DFLOPs(in_h, in_w, in_channels, out_h, out_w, filters, kernel_size, batch_size);
+                    break;
+                }
+                case gui::NodeType::SqueezeExcitation: {
+                    // Linear(C -> S) and Linear(S -> C), with biases; S = C / reduction, at least 1.
+                    const int64_t channels = current_shape.size() >= 3 ? current_shape[2] : (current_shape.empty() ? 1 : current_shape.back());
+                    const int64_t squeeze = std::max<int64_t>(1, channels / std::max<int64_t>(1, GetIntParam(*node, "reduction", 16)));
+                    layer_analysis.parameters = 2 * channels * squeeze + squeeze + channels;
+                    layer_analysis.flops = static_cast<int64_t>(batch_size) * 4 * channels * squeeze;
                     break;
                 }
                 case gui::NodeType::BatchNorm:
@@ -582,6 +591,7 @@ bool ModelAnalyzer::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::LayerNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::Flatten:
         case gui::NodeType::Reshape:
         case gui::NodeType::View:
@@ -661,6 +671,7 @@ bool ModelAnalyzer::IsNormalization(gui::NodeType type) const {
         case gui::NodeType::LayerNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
             return true;
         default:
             return false;
@@ -889,6 +900,7 @@ std::vector<size_t> ModelAnalyzer::InferOutputShape(
         case gui::NodeType::LayerNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::TensorAbs:
         case gui::NodeType::TensorExp:
         case gui::NodeType::TensorLog:

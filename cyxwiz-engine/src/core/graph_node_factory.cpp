@@ -127,6 +127,7 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::BatchNorm:
         case NodeType::LayerNorm:
         case NodeType::GroupNorm:
+        case NodeType::SqueezeExcitation:
         case NodeType::InstanceNorm: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;

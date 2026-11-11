@@ -23,9 +23,20 @@ The Resize node sets the input shape (`[height, width, 3]`); the Properties
 | ConvTranspose2D | `(H - 1) x s - 2p + k + output_padding` | `nn.ConvTranspose2d` |
 | BatchNorm (`eps`, `momentum`) | unchanged; one mean and variance per channel over the batch and every pixel | `nn.BatchNorm2d` (after Flatten the same node is `nn.BatchNorm1d`) |
 | GroupNorm, InstanceNorm | unchanged | `nn.GroupNorm` / `nn.InstanceNorm2d` |
+| Squeeze-Excitation (`reduction` r) | unchanged; each channel is multiplied by a learned value between 0 and 1 | `torchvision.ops.SqueezeExcitation(C, C // r)` |
 | Adaptive Avg Pool (`output_size` s) | `[s, s, C]` for any H, W (cell i averages rows `floor(i*H/s)` to `ceil((i+1)*H/s) - 1`) | `nn.AdaptiveAvgPool2d(s)` |
 | Upsample, PixelShuffle | scaled | `nn.Upsample` / `nn.PixelShuffle` |
 | Activations, Dropout | unchanged | PReLU only with one shared slope (`num_parameters` 1) |
+
+**Squeeze-Excitation** lets the model weigh its channels for each image. It
+takes each channel's mean over the map (squeeze), passes the `C` means through
+Dense(`C / reduction`) - ReLU - Dense(`C`) - Sigmoid (excite), and multiplies
+every channel of the map by its value. Put it after a convolution block
+(Conv2D - BatchNorm - activation), as SENet, MobileNetV3 and EfficientNet do.
+`reduction` 16 is the paper's value; use 4 where the layer has few channels
+(the hidden width is never below 1). It adds about `2 x C x C / reduction`
+parameters. **Hardswish** (`x * relu6(x + 3) / 6`) is the activation those
+small models pair it with.
 
 ## Ending the convolution section
 
@@ -115,7 +126,8 @@ identity residual block and a downsampling block, and sets torch's weights on a
 residual CNN (stem, downsampling block with a projection shortcut, Global Avg
 Pool, Dense) to match torch's logits, input gradient, every layer's gradients and
 BatchNorm's running statistics on CUDA, OpenCL and CPU
-(`tests/computation_truth/fixtures/cnn_graph_pytorch.json`). `conv1d_graph_pytorch_parity` builds a Conv1D
+(`tests/computation_truth/fixtures/cnn_graph_pytorch.json`). The same fixture
+holds a stem followed by the Squeeze-Excitation node, matched the same way. `conv1d_graph_pytorch_parity` builds a Conv1D
 graph on table rows (Flatten) and on an Embedding (Global Avg Pool, and the
 text CNN with Global Max Pool), sets
 torch's parameters on the built model and matches torch's output and every

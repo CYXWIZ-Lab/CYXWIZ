@@ -67,6 +67,7 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::LayerNorm: return "LayerNorm";
         case gui::NodeType::GroupNorm: return "GroupNorm";
         case gui::NodeType::InstanceNorm: return "InstanceNorm";
+        case gui::NodeType::SqueezeExcitation: return "SqueezeExcitation";
         case gui::NodeType::MultiHeadAttention: return "MultiHeadAttention";
         case gui::NodeType::CrossAttention: return "CrossAttention";
         case gui::NodeType::LinearAttention: return "LinearAttention";
@@ -157,6 +158,7 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::BatchNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:

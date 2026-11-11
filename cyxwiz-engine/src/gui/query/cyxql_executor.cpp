@@ -993,6 +993,7 @@ std::string Executor::nodeTypeToString(gui::NodeType type) const {
         {gui::NodeType::LayerNorm, "LayerNorm"},
         {gui::NodeType::GroupNorm, "GroupNorm"},
         {gui::NodeType::InstanceNorm, "InstanceNorm"},
+        {gui::NodeType::SqueezeExcitation, "SqueezeExcitation"},
         {gui::NodeType::Dropout, "Dropout"},
         {gui::NodeType::Flatten, "Flatten"},
         {gui::NodeType::RNN, "RNN"},

@@ -6819,6 +6819,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::LayerNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::PReLU:  // learned slopes: a layer, not an inline activation
         case gui::NodeType::MultiHeadAttention:
         case gui::NodeType::CrossAttention:
@@ -8041,6 +8042,7 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::AdaptiveAvgPool:
         case gui::NodeType::DepthwiseConv2D:
             // spatial_layer_shapes.h; the compile loop reports the reasons.

@@ -1267,6 +1267,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
          "compiled as a trainable group-normalisation layer"},
         {gui::NodeType::InstanceNorm, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable instance-normalisation layer"},
+        {gui::NodeType::SqueezeExcitation, PipelineTrainingSupportRole::ModelLayer,
+         "compiled as a trainable Squeeze-Excitation layer"},
         {gui::NodeType::LayerNorm, PipelineTrainingSupportRole::ModelLayer,
          "compiled as a trainable CPU-backed transformer normalization layer"},
         {gui::NodeType::CrossAttention, PipelineTrainingSupportRole::ModelLayer,

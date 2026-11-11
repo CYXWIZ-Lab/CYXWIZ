@@ -45,6 +45,7 @@ LayerSlot LayerSlotFor(gui::NodeType type) {
         case gui::NodeType::LayerNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
             return kNormSlot;
         case gui::NodeType::ReLU:
         case gui::NodeType::LeakyReLU:

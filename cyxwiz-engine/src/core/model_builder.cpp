@@ -1192,6 +1192,7 @@ bool BuildSequential(
             case gui::NodeType::AvgPool2D:
             case gui::NodeType::ConvTranspose2D:
             case gui::NodeType::GroupNorm:
+            case gui::NodeType::SqueezeExcitation:
             case gui::NodeType::InstanceNorm: {
                 if (!spatial_head || i >= spatial_head->input_shapes.size()) {
                     throw std::runtime_error(
@@ -1250,6 +1251,17 @@ bool BuildSequential(
                         const bool affine = ParseBoolParam(layer_cfg, "affine", false);
                         model.Add<InstanceNorm2DModule>(channels, eps, affine);
                         CYXWIZ_BUILDER_INFO("  [{}] InstanceNorm2D(channels={})", i, channels);
+                        break;
+                    }
+                    case gui::NodeType::SqueezeExcitation: {
+                        const int reduction = spatial::ParseIntParam(layer_cfg.parameters, "reduction", 16);
+                        if (reduction < 1) {
+                            throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) +
+                                                     ": reduction must be 1 or more");
+                        }
+                        const size_t squeeze = std::max<size_t>(1, static_cast<size_t>(channels) / static_cast<size_t>(reduction));
+                        model.Add<SqueezeExcitationModule>(static_cast<size_t>(channels), squeeze);
+                        CYXWIZ_BUILDER_INFO("  [{}] SqueezeExcitation(channels={}, squeeze={})", i, channels, squeeze);
                         break;
                     }
                     default:

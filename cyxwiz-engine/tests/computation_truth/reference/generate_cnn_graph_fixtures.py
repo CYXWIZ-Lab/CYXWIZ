@@ -96,7 +96,7 @@ def build() -> list[dict[str, Any]]:
             entry[key] = writer(tensor) if key == "weights" else plain(tensor)
             entry["grad_" + key] = writer(tensor.grad) if key == "weights" else plain(tensor.grad)
         layers[name] = entry
-    return [{
+    residual = {
         "name": "resnet_downsampling_block",
         "tolerance": {"atol": 3e-4, "rtol": 3e-4},
         "input": hwcn(x),
@@ -106,7 +106,60 @@ def build() -> list[dict[str, Any]]:
         "output": plain(logits),
         "grad_output": plain(grad_out),
         "grad_input": hwcn(x.grad),
-    }]
+    }
+    return [residual, squeeze_excitation()]
+
+
+def squeeze_excitation() -> dict[str, Any]:
+    """The Squeeze-Excitation node after a stem (Conv 3->8, BatchNorm, ReLU): each channel's mean ->
+    Linear 8->4 -> ReLU -> Linear 4->8 -> Sigmoid scales the stem's feature map (torchvision.ops.
+    SqueezeExcitation's arithmetic, its 1x1 convolutions written as Linear); global average pool; Head 8->2.
+    The node's parameters are reduce_weight / reduce_bias / expand_weight / expand_bias ([out, in])."""
+    torch.manual_seed(1787)
+    params: dict[str, dict[str, torch.Tensor]] = {
+        "Stem conv": {"weights": torch.randn(8, 3, 3, 3) * (2.0 / 27) ** 0.5, "bias": torch.randn(8) * 0.1},
+        "Stem BN": {"gamma": torch.randn(8) * 0.3 + 1.0, "beta": torch.randn(8) * 0.1},
+        "SE": {"reduce_weight": torch.randn(4, 8) * 0.4, "reduce_bias": torch.randn(4) * 0.1,
+               "expand_weight": torch.randn(8, 4) * 0.4, "expand_bias": torch.randn(8) * 0.1},
+        "Head": {"weight": torch.randn(2, 8) * 0.25, "bias": torch.randn(2) * 0.1},
+    }
+    running = {"Stem BN": {"running_mean": torch.randn(8) * 0.2, "running_var": torch.rand(8) + 0.5}}
+    for layer in params.values():
+        for tensor in layer.values():
+            tensor.requires_grad_(True)
+    before = {name: {k: plain(v) for k, v in stats.items()} for name, stats in running.items()}
+    x = (torch.randn(4, 3, 8, 8) * 0.8 + 0.2).requires_grad_(True)
+    stem = functional.conv2d(x, params["Stem conv"]["weights"], params["Stem conv"]["bias"], stride=1, padding=1)
+    stem = functional.relu(functional.batch_norm(stem, running["Stem BN"]["running_mean"],
+                                                 running["Stem BN"]["running_var"], params["Stem BN"]["gamma"],
+                                                 params["Stem BN"]["beta"], training=True, momentum=0.1, eps=1e-5))
+    squeezed = stem.mean(dim=(2, 3))
+    reduced = functional.relu(functional.linear(squeezed, params["SE"]["reduce_weight"], params["SE"]["reduce_bias"]))
+    gate = torch.sigmoid(functional.linear(reduced, params["SE"]["expand_weight"], params["SE"]["expand_bias"]))
+    scaled = stem * gate[:, :, None, None]
+    logits = functional.linear(scaled.mean(dim=(2, 3)), params["Head"]["weight"], params["Head"]["bias"])
+    torch.manual_seed(17870)
+    grad_out = torch.randn_like(logits)
+    logits.backward(grad_out)
+    layers: dict[str, Any] = {}
+    for name, layer in params.items():
+        entry: dict[str, Any] = {}
+        for key, tensor in layer.items():
+            writer = conv_weight if key == "weights" else plain
+            entry[key] = writer(tensor)
+            entry["grad_" + key] = writer(tensor.grad)
+        layers[name] = entry
+    return {
+        "name": "squeeze_excitation_block",
+        "tolerance": {"atol": 3e-4, "rtol": 3e-4},
+        "input": hwcn(x),
+        "layers": layers,
+        "state": before,
+        "state_after": {name: {k: plain(v) for k, v in stats.items()} for name, stats in running.items()},
+        "output": plain(logits),
+        "grad_output": plain(grad_out),
+        "grad_input": hwcn(x.grad),
+    }
 
 
 def main() -> None:

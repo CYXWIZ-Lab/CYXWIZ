@@ -129,6 +129,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Squeeze-Excitation node.** Scales each channel of a feature map by a
+  learned gate (mean over the map, Dense - ReLU - Dense - Sigmoid), as
+  torchvision's SqueezeExcitation; one setting, `reduction`.
 - **Hardswish activation node.** `x * relu6(x + 3) / 6` (torch.nn.Hardswish),
   the activation of MobileNetV3; also `pycyxwiz.hardswish` and
   `HardswishModule`.

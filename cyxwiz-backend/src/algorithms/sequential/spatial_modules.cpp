@@ -1,6 +1,7 @@
 #include <cyxwiz/sequential.h>
 
 #include <map>
+#include <stdexcept>
 #include <string>
 
 namespace cyxwiz {
@@ -307,6 +308,74 @@ Tensor GlobalAvgPool2DModule::Backward(const Tensor& grad_output) {
 
 std::string GlobalAvgPool2DModule::GetName() const {
     return "GlobalAvgPool2D";
+}
+
+SqueezeExcitationModule::SqueezeExcitationModule(size_t channels, size_t squeeze_channels)
+    : channels_(channels), squeeze_channels_(squeeze_channels) {
+    if (channels_ == 0 || squeeze_channels_ == 0) {
+        throw std::invalid_argument("SqueezeExcitation requires at least one channel and one squeeze channel");
+    }
+    pool_ = std::make_unique<GlobalAvgPool2DLayer>();
+    reduce_ = std::make_unique<LinearModule>(channels_, squeeze_channels_);
+    expand_ = std::make_unique<LinearModule>(squeeze_channels_, channels_);
+}
+
+Tensor SqueezeExcitationModule::Over(const std::vector<size_t>& shape) const {
+    return gate_.Transpose().Reshape({1, 1, shape[2], shape[3]}).BroadcastTo(shape);
+}
+
+Tensor SqueezeExcitationModule::Forward(const Tensor& input) {
+    const auto& shape = input.Shape();
+    if (shape.size() != 4 || shape[2] != channels_) {
+        throw std::invalid_argument("SqueezeExcitation expects [H,W,C,N] with C = " + std::to_string(channels_));
+    }
+    input_cache_ = input;
+    // Squeeze: each channel's mean [C,N] as rows [N,C]; excite: one value per channel in (0, 1).
+    reduce_out_ = reduce_->Forward(pool_->Forward(input).Transpose());
+    expand_out_ = expand_->Forward(relu_.Forward(reduce_out_));
+    gate_ = sigmoid_.Forward(expand_out_);
+    return input * Over(shape);
+}
+
+Tensor SqueezeExcitationModule::Backward(const Tensor& grad_output) {
+    if (grad_output.Shape() != input_cache_.Shape() || gate_.Shape().size() != 2) {
+        throw std::invalid_argument("SqueezeExcitation: backward requires a matching forward pass");
+    }
+    // The map reaches the output directly (times the gate) and through the gate.
+    const Tensor direct = grad_output * Over(grad_output.Shape());
+    const Tensor to_gate = (grad_output * input_cache_).Sum(0, false).Sum(0, false).Transpose();  // [N,C]
+    const Tensor to_reduced = expand_->Backward(sigmoid_.Backward(to_gate, expand_out_));
+    const Tensor to_pooled = reduce_->Backward(relu_.Backward(to_reduced, reduce_out_));
+    return direct + pool_->Backward(to_pooled.Transpose());
+}
+
+std::map<std::string, Tensor> SqueezeExcitationModule::GetParameters() {
+    std::map<std::string, Tensor> parameters;
+    for (auto& [name, tensor] : reduce_->GetParameters()) parameters.emplace("reduce_" + name, tensor);
+    for (auto& [name, tensor] : expand_->GetParameters()) parameters.emplace("expand_" + name, tensor);
+    return parameters;
+}
+
+void SqueezeExcitationModule::SetParameters(const std::map<std::string, Tensor>& params) {
+    std::map<std::string, Tensor> reduce, expand;
+    for (const auto& [name, tensor] : params) {
+        if (name.rfind("reduce_", 0) == 0) reduce.emplace(name.substr(7), tensor);
+        if (name.rfind("expand_", 0) == 0) expand.emplace(name.substr(7), tensor);
+    }
+    if (!reduce.empty()) reduce_->SetParameters(reduce);
+    if (!expand.empty()) expand_->SetParameters(expand);
+}
+
+std::map<std::string, Tensor> SqueezeExcitationModule::GetGradients() {
+    std::map<std::string, Tensor> gradients;
+    for (auto& [name, tensor] : reduce_->GetGradients()) gradients.emplace("reduce_" + name, tensor);
+    for (auto& [name, tensor] : expand_->GetGradients()) gradients.emplace("expand_" + name, tensor);
+    return gradients;
+}
+
+std::string SqueezeExcitationModule::GetName() const {
+    return "SqueezeExcitation(channels=" + std::to_string(channels_) +
+        ", squeeze=" + std::to_string(squeeze_channels_) + ")";
 }
 
 GlobalMaxPool2DModule::GlobalMaxPool2DModule()

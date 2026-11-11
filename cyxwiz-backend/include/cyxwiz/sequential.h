@@ -552,6 +552,42 @@ private:
 };
 
 /**
+ * @brief Squeeze-and-Excitation on `[H,W,C,N]` (torchvision.ops.SqueezeExcitation
+ * with ReLU and Sigmoid): each channel's mean over the map goes through
+ * Linear(C -> squeeze) - ReLU - Linear(squeeze -> C) - Sigmoid, and the map is
+ * multiplied by that one value per sample and channel. The output has the
+ * input's shape. Parameters: reduce_weight [squeeze, C], reduce_bias [squeeze],
+ * expand_weight [C, squeeze], expand_bias [C].
+ */
+class CYXWIZ_API SqueezeExcitationModule : public Module {
+public:
+    SqueezeExcitationModule(size_t channels, size_t squeeze_channels);
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::map<std::string, Tensor> GetParameters() override;
+    void SetParameters(const std::map<std::string, Tensor>& params) override;
+    std::map<std::string, Tensor> GetGradients() override;
+    bool HasParameters() const override { return true; }
+    std::string GetName() const override;
+
+private:
+    // The gate [N,C] laid over the map's shape [H,W,C,N].
+    Tensor Over(const std::vector<size_t>& shape) const;
+
+    std::unique_ptr<GlobalAvgPool2DLayer> pool_;
+    std::unique_ptr<LinearModule> reduce_;
+    std::unique_ptr<LinearModule> expand_;
+    ReLUActivation relu_;
+    SigmoidActivation sigmoid_;
+    size_t channels_;
+    size_t squeeze_channels_;
+    Tensor reduce_out_;  // before the ReLU
+    Tensor expand_out_;  // before the Sigmoid
+    Tensor gate_;        // [N,C]
+};
+
+/**
  * @brief Wrapper for EmbeddingLayer — token-ID lookup table.
  *
  * Translates [batch, seq_len] integer indices into

@@ -69,6 +69,7 @@ inline bool IsSpatialLayer(gui::NodeType type) {
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:
         case gui::NodeType::AdaptiveAvgPool:
@@ -237,6 +238,9 @@ inline std::vector<size_t> SampleShapeAfter(gui::NodeType type, const Params& pa
             ResolveGeometry(type, params, in[2]);  // validates the groups
             return in;
         case gui::NodeType::InstanceNorm:
+            return in;
+        case gui::NodeType::SqueezeExcitation:
+            if (ParseIntParam(params, "reduction", 16) < 1) throw std::invalid_argument("reduction must be 1 or more");
             return in;
         case gui::NodeType::AdaptiveAvgPool: {
             const size_t size = static_cast<size_t>(AdaptiveOutputSize(params));

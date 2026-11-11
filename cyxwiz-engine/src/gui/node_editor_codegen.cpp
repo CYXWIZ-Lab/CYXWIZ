@@ -1095,6 +1095,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
                 code += "        x = self.layer" + std::to_string(layer_idx++) + "(x)\n";
                 break;
 
@@ -2814,6 +2815,14 @@ std::string NodeEditor::NodeTypeToPyCyxWizLayer(const MLNode& node) {
                    ", num_channels=" + num_channels +
                    ", eps=" + eps + ", affine=" +
                    (affine == "true" ? "True" : "False") + ")";
+            break;
+        }
+
+        case NodeType::SqueezeExcitation: {
+            std::string reduction = "16";
+            const auto it = node.parameters.find("reduction");
+            if (it != node.parameters.end() && !it->second.empty()) reduction = it->second;
+            code = "cx.SqueezeExcitation(channels, max(1, channels // " + reduction + "))";
             break;
         }
 

@@ -98,6 +98,7 @@ bool NASEvaluator::IsTrainableLayer(gui::NodeType type) {
         case gui::NodeType::LayerNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::MultiHeadAttention:
         case gui::NodeType::TransformerEncoder:
         case gui::NodeType::TransformerDecoder:

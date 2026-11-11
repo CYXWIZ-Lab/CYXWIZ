@@ -55,6 +55,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
                 return ICON_TI_CHART_BAR;
 
             // Regularization
@@ -460,6 +461,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
                 return ICON_RI_BAR_CHART;
 
             // Core Layers
@@ -823,6 +825,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
             case NodeType::DescribeStats:
             case NodeType::FeatureImportanceNode:
                 return ICON_LU_BAR_CHART;
@@ -1147,6 +1150,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
             case NodeType::DescribeStats:
             case NodeType::FeatureImportanceNode:
                 return ICON_IO_STATS_UP;
@@ -1471,6 +1475,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
             case NodeType::DescribeStats:
             case NodeType::FeatureImportanceNode:
                 return ICON_PH_CHART_BAR;
@@ -1807,6 +1812,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::LayerNorm:
         case NodeType::GroupNorm:
         case NodeType::InstanceNorm:
+        case NodeType::SqueezeExcitation:
             return ICON_FA_CHART_BAR;
 
         // Regularization

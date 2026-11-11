@@ -172,6 +172,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::LayerNorm:
         case NodeType::GroupNorm:
         case NodeType::InstanceNorm:
+        case NodeType::SqueezeExcitation:
             return "Normalization";
 
         // Regularization
@@ -564,6 +565,21 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "Use when batch size is too small for BatchNorm",
             "32 groups is a common default"
+        },
+        "Normalization"
+    };
+
+    docs_[NodeType::SqueezeExcitation] = {
+        "Squeeze-Excitation",
+        "Scales each channel of a feature map by a learned value between 0 and 1, worked out from the "
+        "channels' means: the model learns which channels matter for each image.",
+        "mean over the map -> Dense(C / reduction) -> ReLU -> Dense(C) -> Sigmoid -> multiply.",
+        {
+            {"reduction", "The gate's hidden width is C / reduction, at least 1"}
+        },
+        {
+            "After a convolution block, before the next one (SENet, MobileNetV3, EfficientNet)",
+            "Adds few parameters: about 2 x C x C / reduction"
         },
         "Normalization"
     };

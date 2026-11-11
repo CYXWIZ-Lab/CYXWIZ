@@ -3011,6 +3011,19 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Affine", "Normalization", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::SqueezeExcitation, NodeCategory::Normalization, "Squeeze-Excitation", ICON_FA_SCALE_BALANCED,
+        {"squeeze", "excitation", "se", "se block", "channel attention", "attention", "gate", "mobilenet", "senet"}, 0, false,
+        "Scale each channel of a feature map by a learned gate",
+        "Squeeze: each channel's mean over the map. Excite: Dense(C -> C / reduction) - ReLU - Dense(-> C) - Sigmoid gives "
+        "one value between 0 and 1 per channel, and the map is multiplied by it. The model learns which channels matter "
+        "for each image. Same as torchvision.ops.SqueezeExcitation; the channel count comes from the layer before it.",
+        "Conv2D -> BatchNorm -> ReLU -> Squeeze-Excitation -> ...",
+        {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
+        {{"Output", PinType::Tensor, true, "The feature map with each channel scaled, same shape."}},
+        {{"reduction", "int", "16", "The gate's hidden width is C / reduction (at least 1). 16 is the paper's value; "
+          "4 is usual for small models", {}, "1-1024", "Reduction"}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::InstanceNorm, NodeCategory::Normalization, "InstanceNorm", ICON_FA_SCALE_BALANCED,
         {"instancenorm", "instance normalization", "style transfer", "channels"}, 0, false,
         "Normalize each channel independently per sample",
