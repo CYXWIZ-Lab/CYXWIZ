@@ -402,9 +402,13 @@ void NodeEditor::PasteClipboard() {
                  clipboard_.nodes.size(), clipboard_.links.size());
 }
 
+// Copies the selection beside itself through the clipboard, then puts back
+// what the user had copied: Duplicate is not Copy.
 void NodeEditor::DuplicateSelection() {
+    const auto kept = clipboard_;
     CopySelection();
-    PasteClipboard();
+    if (clipboard_.valid) PasteClipboard();
+    clipboard_ = kept;
 }
 
 // ===== Keyboard Shortcuts =====
