@@ -1,4 +1,5 @@
 #include "saliency.h"
+#include "debug_host_read.h"
 
 #include <arrayfire.h>
 
@@ -11,7 +12,7 @@ namespace {
 
 std::vector<double> Host(const af::array& a) {
     std::vector<float> values(static_cast<size_t>(a.elements()));
-    if (!values.empty()) a.as(f32).host(values.data());
+    if (!values.empty()) ReadDebugValues(a, values.data(), "Saliency::Host", "the input gradient or the output");
     return {values.begin(), values.end()};
 }
 

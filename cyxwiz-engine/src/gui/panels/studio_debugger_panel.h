@@ -336,6 +336,9 @@ private:
     // device and its textures (studio_debugger_layers.cpp).
     struct LayerViewCache;
     std::shared_ptr<const LayerCapture> layer_capture_;
+    // Raised whenever layer_capture_ changes: what the views key their
+    // results by (an address can come back for the next capture).
+    uint64_t layer_capture_id_ = 0;
     std::string layer_capture_run_id_;   // the run the capture belongs to
     std::string layer_capture_label_;    // "local_debug", "epoch_0005"
     std::vector<std::string> layer_capture_labels_;
@@ -386,6 +389,7 @@ private:
     std::string shown_training_run_;
     std::optional<TrainingRunRecord> shown_training_record_;
     std::vector<LayerCaptureInfo> shown_training_captures_;
+    bool shown_training_read_ = false;  // the run store answered for the shown run
     StudioDebuggerSampleFacts shown_training_facts_;
     std::vector<training_snapshots::RunRow> training_run_rows_;  // listed with the saved runs
     std::set<std::string> open_run_details_;

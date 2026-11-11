@@ -157,13 +157,15 @@ void StudioDebuggerPanel::RenderTopImages() {
     const bool clicked_here = clicked_channel_layer_ == selected_layer_;
     const size_t clicked = clicked_here ? std::min(clicked_channel_, channels - 1) : 0;
     const ti::Rank rank = s.mean ? ti::Rank::Mean : ti::Rank::Maximum;
-    const std::string key = std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" +
+    const std::string key = std::to_string(layer_capture_id_) + "/" +
                             std::to_string(layer.module_index) + "/" + std::to_string(s.mean);
     if (!top_images_run_) top_images_run_ = std::make_shared<ItemsRun>();
     ItemsRun& run = *top_images_run_;
     const bool busy = run.Busy();
     const auto session = LayerModelSession();
 
+    // A pick belongs to the result it was made in.
+    if (s.result_key != key) s.picked_item.reset();
     // Starts a computation now, or after the graph's data has loaded.
     const auto start = [&]() {
         s.picked_item.reset();

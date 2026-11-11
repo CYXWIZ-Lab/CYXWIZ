@@ -49,6 +49,7 @@ void StudioDebuggerPanel::ShowTrainingRun(const std::string& run_id) {
     // Model > Layers reads this run from now on (a snapshot opened from
     // Compare before Layers is shown is kept).
     layer_capture_.reset();
+    ++layer_capture_id_;
     layer_capture_run_id_ = run_id;
     layer_capture_label_.clear();
     layer_capture_labels_.clear();
@@ -56,6 +57,7 @@ void StudioDebuggerPanel::ShowTrainingRun(const std::string& run_id) {
     selected_layer_ = 0;
     shown_training_record_.reset();
     shown_training_captures_.clear();
+    shown_training_read_ = false;
     shown_training_facts_ = {};
     struct Loaded {
         std::optional<TrainingRunRecord> record;
@@ -73,6 +75,7 @@ void StudioDebuggerPanel::ShowTrainingRun(const std::string& run_id) {
             if (shown_training_run_ != run_id) return;  // another run is shown now
             shown_training_record_ = loaded->record;
             shown_training_captures_ = loaded->captures;
+            shown_training_read_ = true;
             if (const auto& r = loaded->record) {
                 shown_training_facts_.item_names = r->item_names;
                 shown_training_facts_.class_names = r->class_names;
@@ -179,7 +182,8 @@ void StudioDebuggerPanel::RenderSnapshotTable() {
     CardHeading(table.heading.c_str());
     ImGui::Spacing();
     if (table.rows.empty()) {
-        Wrapped(DebuggerMuted(), "Reading the run's snapshots...");
+        Wrapped(DebuggerMuted(), shown_training_read_ ? "This run has no snapshots left in the run store."
+                                                      : "Reading the run's snapshots...");
         ImGui::EndChild();
         return;
     }

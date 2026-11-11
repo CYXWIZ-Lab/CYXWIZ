@@ -1,4 +1,5 @@
 #include "occlusion.h"
+#include "debug_host_read.h"
 
 #include <arrayfire.h>
 
@@ -27,7 +28,7 @@ std::vector<size_t> Starts(size_t length, size_t patch, size_t step) {
 std::vector<float> RowMajor(const Tensor& t) {
     const af::array flat = t.GetRowMajorFlatArray();
     std::vector<float> values(static_cast<size_t>(flat.elements()));
-    if (!values.empty()) flat.as(f32).host(values.data());
+    if (!values.empty()) ReadDebugValues(flat, values.data(), "Occlusion::RowMajor", "the item or the model's output");
     return values;
 }
 

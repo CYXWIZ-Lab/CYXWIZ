@@ -1,4 +1,5 @@
 #include "top_images.h"
+#include "debug_host_read.h"
 
 #include <arrayfire.h>
 
@@ -42,7 +43,7 @@ Strengths ChannelStrengths(const Tensor& layer_output, Rank rank) {
                                  " has no channels to rank items by");
     }
     s.values.resize(s.channels * s.items);
-    if (!s.values.empty()) per.host(s.values.data());
+    if (!s.values.empty()) ReadDebugValues(per, s.values.data(), "TopImages::ChannelStrengths", "one value per channel and item");
     return s;
 }
 

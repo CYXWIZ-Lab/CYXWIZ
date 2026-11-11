@@ -81,7 +81,6 @@ public:
 
     // In run order; layers that ran no forward follow, in module order.
     const std::vector<CapturedLayer>& Layers() const { return layers_; }
-    const CapturedLayer* FindLayer(int node_id) const;
 
     // Bytes held counts every tensor in full, also where two share storage
     // (a layer's output is the next one's input), so it can overstate.

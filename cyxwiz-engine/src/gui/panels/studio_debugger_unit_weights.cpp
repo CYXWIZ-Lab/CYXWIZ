@@ -132,7 +132,7 @@ void StudioDebuggerPanel::RenderUnitWeights(const std::string& weight_name) {
     const ui::Tokens& t = ui::CurrentTokens();
     const size_t units = weight->tensor.Shape()[0];
     const std::string layer_key =
-        std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" + std::to_string(selected_layer_);
+        std::to_string(layer_capture_id_) + "/" + std::to_string(selected_layer_);
     if (s.picked_layer != layer_key) {
         s.picked.reset();
         s.picked_layer = layer_key;

@@ -1,4 +1,5 @@
 #include "unit_weights.h"
+#include "debug_host_read.h"
 
 #include "count_text.h"
 
@@ -39,7 +40,7 @@ std::vector<float> RowNorms(const Tensor& weights) {
     const af::array grid = Grid(weights);
     const af::array norms = af::sqrt(af::sum(grid * grid, 0));
     std::vector<float> out(static_cast<size_t>(grid.dims(1)));
-    if (!out.empty()) norms.host(out.data());
+    if (!out.empty()) ReadDebugValues(norms, out.data(), "UnitWeights::Norms", "one norm per unit");
     return out;
 }
 
@@ -68,7 +69,8 @@ std::vector<float> Rows(const Tensor& weights, const std::vector<size_t>& units)
     const af::array picked =
         af::lookup(grid, af::array(static_cast<dim_t>(index.size()), index.data()), 1);  // (inputs, units)
     std::vector<float> out(static_cast<size_t>(picked.elements()));
-    picked.host(out.data());  // column-major: one unit's row after another
+    // Column-major: one unit's row after another.
+    if (!out.empty()) ReadDebugValues(picked, out.data(), "UnitWeights::Rows", "the shown units' weights");
     return out;
 }
 

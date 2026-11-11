@@ -77,13 +77,8 @@ struct ViewTab {
     std::string label;
     std::string tensor;  // the parameter or gradient the view reads ("weights")
 };
-struct LaterTab {
-    std::string label;
-    std::string why;  // hover text: what it will show and when
-};
 struct LayerViews {
     std::vector<ViewTab> tabs;
-    std::vector<LaterTab> later;
     std::string facts;  // "output 64 × 64 × 32, 42.6 % zeros" (zeros when known and any)
     std::string hint;   // the inspector's note for views without a channel
 };

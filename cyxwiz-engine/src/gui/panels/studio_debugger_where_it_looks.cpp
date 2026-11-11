@@ -9,6 +9,7 @@
 // its size or gradient x input). All model work runs off the UI thread.
 
 #include "studio_debugger_panel.h"
+#include "../../core/debug_host_read.h"
 #include "studio_debugger_colors.h"
 #include "studio_debugger_widgets.h"
 
@@ -44,7 +45,7 @@ constexpr size_t kFeatureMeanRows = 512;            // a table's fill: the mean 
 std::vector<float> HostRowMajor(const Tensor& t) {
     const af::array flat = t.GetRowMajorFlatArray();
     std::vector<float> values(static_cast<size_t>(flat.elements()));
-    if (!values.empty()) flat.as(f32).host(values.data());
+    if (!values.empty()) ReadDebugValues(flat, values.data(), "WhereItLooks::HostRowMajor", "the item or the model's output");
     return values;
 }
 
@@ -118,8 +119,8 @@ void DrawHeatLegend(const std::string& low, const std::string& high) {
 }  // namespace
 
 struct StudioDebuggerPanel::WhereItLooksState {
-    // The rebuilt model, for one capture.
-    const LayerCapture* capture = nullptr;
+    // The rebuilt model, for one capture (layer_capture_id_).
+    uint64_t capture_id = 0;
     std::shared_ptr<DebugModelSession> session;
     bool building = false;
     std::string unavailable;  // why the model cannot be rebuilt
@@ -143,8 +144,6 @@ struct StudioDebuggerPanel::WhereItLooksState {
     std::vector<occlusion::Piece> pieces;
     occlusion::Result result;
     std::vector<float> item_values;  // tokens: ids; features: values
-    std::string fill_source;
-    std::string headline;
     std::string error;
 
     // The saliency of one item and target (6.3c).
@@ -168,13 +167,13 @@ void StudioDebuggerPanel::UpdateLayerModelSession() {
     };
     if (s.waiting_for_clean && !s.Busy()) {
         if (live_compile_ && live_compile_->CleanConfig())
-            s.capture = nullptr;  // rebuild below
+            s.capture_id = 0;  // rebuild below
         else
             s.unavailable = no_clean_reason();
     }
 
-    if (s.capture != layer_capture_.get() && !s.Busy()) {
-        s.capture = layer_capture_.get();
+    if (s.capture_id != layer_capture_id_ && !s.Busy()) {
+        s.capture_id = layer_capture_id_;
         s.session.reset();
         s.unavailable.clear();
         s.waiting_for_clean = false;
@@ -208,9 +207,9 @@ void StudioDebuggerPanel::UpdateLayerModelSession() {
                 }
             },
             nullptr,
-            [state, built, key = capture.get()](bool, const std::string&) {
+            [state, built, key = layer_capture_id_](bool, const std::string&) {
                 state->building = false;
-                if (state->capture != key) return;
+                if (state->capture_id != key) return;
                 state->session = built->session;
                 if (!built->session) state->unavailable = built->error.empty() ? "it could not be rebuilt" : built->error;
             });
@@ -227,43 +226,48 @@ void StudioDebuggerPanel::UpdateLayerModelSession() {
     }
     s.evaluating = true;
     s.eval_item = selected_layer_sample_;
+    s.eval_output.clear();  // the item before's prediction is not this one's
     auto output = std::make_shared<std::vector<float>>();
+    auto failed = std::make_shared<std::string>();
     auto state = where_it_looks_;
     const Tensor input_tensor = input->tensor;
     const size_t item = selected_layer_sample_;
     const bool spatial = input_tensor.Shape().size() == 4;
     AsyncTaskManager::Instance().RunAsync(
         "Studio Debugger: evaluation pass",
-        [state, output, input_tensor, item, spatial](LambdaTask&) {
+        [state, output, failed, input_tensor, item, spatial](LambdaTask&) {
             try {
                 const Tensor one = ItemInput(input_tensor, item,
                                              spatial ? occlusion::InputKind::Image : occlusion::InputKind::Features);
                 *output = HostRowMajor(state->session->Forward(one));
             } catch (const std::exception& e) {
                 spdlog::warn("Studio Debugger: evaluation pass failed: {}", e.what());
+                *failed = e.what();
             }
         },
         nullptr,
-        [state, output, item](bool, const std::string&) {
+        [state, output, failed, item](bool, const std::string&) {
             state->evaluating = false;
-            if (state->eval_item == item) state->eval_output = std::move(*output);
+            if (state->eval_item != item) return;
+            state->eval_output = std::move(*output);
+            if (!failed->empty()) state->unavailable = "its evaluation pass failed (" + *failed + ")";
         });
 }
 
 std::shared_ptr<DebugModelSession> StudioDebuggerPanel::LayerModelSession() const {
-    if (!where_it_looks_ || where_it_looks_->capture != layer_capture_.get()) return nullptr;
+    if (!where_it_looks_ || where_it_looks_->capture_id != layer_capture_id_) return nullptr;
     return where_it_looks_->session;
 }
 
 const std::vector<float>* StudioDebuggerPanel::EvalModelOutput() const {
-    if (!where_it_looks_ || where_it_looks_->capture != layer_capture_.get() ||
+    if (!where_it_looks_ || where_it_looks_->capture_id != layer_capture_id_ ||
         where_it_looks_->eval_item != selected_layer_sample_ || where_it_looks_->eval_output.empty())
         return nullptr;
     return &where_it_looks_->eval_output;
 }
 
 std::string StudioDebuggerPanel::EvalModelUnavailable() const {
-    if (!where_it_looks_ || where_it_looks_->capture != layer_capture_.get()) return {};
+    if (!where_it_looks_ || where_it_looks_->capture_id != layer_capture_id_) return {};
     return where_it_looks_->unavailable;
 }
 
@@ -431,7 +435,7 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
     ImGui::SameLine(110.0f);
     WrappedText(wl::CoverText(plan, fill_source));
 
-    const std::string key = std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" +
+    const std::string key = std::to_string(layer_capture_id_) + "/" +
                             std::to_string(selected_layer_sample_) + "/" + std::to_string(s.target);
     ImGui::Spacing();
     if (s.computing) {
@@ -638,7 +642,7 @@ void StudioDebuggerPanel::RenderSaliency(occlusion::InputKind kind, const std::v
     const CapturedTensor* input = first.Find(CapturedTensorRole::Input);
     const lv::OutputRule rule = lv::OutputRuleFromKey(ShownSampleFacts().output_rule);
     const bool times_input = CaptureSettings().saliency_show == core::SaliencyShow::TimesInput;
-    const std::string key = std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" +
+    const std::string key = std::to_string(layer_capture_id_) + "/" +
                             std::to_string(selected_layer_sample_) + "/" + std::to_string(s.target);
 
     ImGui::Spacing();

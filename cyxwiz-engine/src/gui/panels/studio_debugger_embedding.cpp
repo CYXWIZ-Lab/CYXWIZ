@@ -58,6 +58,7 @@ struct StudioDebuggerPanel::EmbeddingState {
     le::Scaled points;  // the items, then this sample unless it is one of them
     size_t item_count = 0;
     size_t own_index = 0;  // this sample's point
+    size_t own_item = 0;   // the item it was placed for
     DataItems items;
     std::vector<int> labels;
     std::vector<int> predicted;
@@ -105,13 +106,16 @@ void StudioDebuggerPanel::RenderEmbedding() {
     const auto& facts = ShownSampleFacts();
     const lv::OutputRule rule = lv::OutputRuleFromKey(facts.output_rule);
     const auto method = static_cast<le::Method>(s.method);
-    const std::string key = std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" +
+    const std::string key = std::to_string(layer_capture_id_) + "/" +
                             std::to_string(layer.module_index) + "/" + std::to_string(s.method);
     const auto session = LayerModelSession();
     const ui::Tokens& t = ui::CurrentTokens();
 
+    // A pick belongs to the result it was made in.
+    if (s.result_key != key) s.picked.reset();
     const auto start = [&]() {
         s.picked.reset();
+        s.own_item = selected_layer_sample_;
         // This sample goes through the same evaluation pass as the items (the
         // captured output is the training step's: BatchNorm on the batch's
         // statistics, so it would sit apart from them).
@@ -340,7 +344,8 @@ void StudioDebuggerPanel::RenderEmbedding() {
             dl->AddCircle(p, 6.0f, ui::ToU32(t.warning), 0, 1.5f);
     }
     if (s.picked && *s.picked < n) dl->AddCircle(place(*s.picked), 8.0f, ui::ToU32(t.accent_text), 0, 2.0f);
-    if (s.own_index < s.points.x.size()) dl->AddCircle(place(s.own_index), 7.5f, ui::ToU32(t.text_bright), 0, 2.0f);
+    const bool own_shown = s.own_item == selected_layer_sample_ && s.own_index < s.points.x.size();
+    if (own_shown) dl->AddCircle(place(s.own_index), 7.5f, ui::ToU32(t.text_bright), 0, 2.0f);
     std::optional<size_t> hovered;
     if (ImGui::IsItemHovered()) {
         const ImVec2 m = ImGui::GetIO().MousePos;
@@ -354,7 +359,7 @@ void StudioDebuggerPanel::RenderEmbedding() {
                                          : "item " + (i < s.items.indices.size() ? std::to_string(s.items.indices[i]) : "");
             ImGui::BeginTooltip();
             ImGui::TextUnformatted(name.c_str());
-            if (i == s.own_index) ImGui::TextColored(DebuggerMuted(), "this sample");
+            if (own_shown && i == s.own_index) ImGui::TextColored(DebuggerMuted(), "this sample");
             if (i < s.labels.size() && s.labels[i] >= 0)
                 ImGui::TextColored(DebuggerMuted(), "label %s", lv::ClassName(s.labels[i], names).c_str());
             if (i < s.predicted.size() && s.predicted[i] >= 0)

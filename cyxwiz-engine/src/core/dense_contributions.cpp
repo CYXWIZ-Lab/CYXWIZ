@@ -1,4 +1,5 @@
 #include "dense_contributions.h"
+#include "debug_host_read.h"
 
 #include <arrayfire.h>
 
@@ -43,7 +44,7 @@ std::vector<float> MatrixRow(const Tensor& matrix, size_t row) {
                                        static_cast<dim_t>(shape[0]));
     const af::array one = grid(af::span, static_cast<int>(row));
     std::vector<float> values(shape[1]);
-    if (!values.empty()) one.host(values.data());
+    if (!values.empty()) ReadDebugValues(one, values.data(), "DenseContributions::MatrixRow", "one unit's weights");
     return values;
 }
 

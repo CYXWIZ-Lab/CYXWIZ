@@ -151,7 +151,7 @@ void WrappedMuted(const std::string& text) {
 // What the shown view read, and its textures; rebuilt when the selection
 // changes, never per frame.
 struct StudioDebuggerPanel::LayerViewCache {
-    const LayerCapture* capture = nullptr;
+    uint64_t capture_id = 0;  // layer_capture_id_ it was read from
     std::vector<lv::LayerInfo> layers;
     std::vector<lv::LayerRow> rows;
     size_t first_spatial = std::numeric_limits<size_t>::max();
@@ -229,6 +229,7 @@ void StudioDebuggerPanel::RefreshLayerCaptureSource() {
     if (live && shown_training_run_.empty()) {
         if (layer_capture_ != live) {
             layer_capture_ = live;
+            ++layer_capture_id_;
             layer_capture_run_id_ = run_id;
             layer_capture_label_ = kLocalDebugCaptureLabel;
             layer_capture_labels_ = {kLocalDebugCaptureLabel};
@@ -239,6 +240,7 @@ void StudioDebuggerPanel::RefreshLayerCaptureSource() {
     }
     if (layer_capture_run_id_ != run_id) {
         layer_capture_.reset();
+        ++layer_capture_id_;
         layer_capture_run_id_ = run_id;
         layer_capture_label_.clear();
         layer_capture_labels_.clear();
@@ -279,6 +281,7 @@ void StudioDebuggerPanel::RefreshLayerCaptureSource() {
             layer_capture_labels_ = loaded->labels;
             layer_capture_label_ = loaded->label;
             layer_capture_ = loaded->capture;
+            ++layer_capture_id_;
             selected_layer_ = 0;
             if (layer_capture_ && !layer_keep_node_.empty()) {
                 const auto& layers = layer_capture_->Layers();
@@ -296,6 +299,7 @@ void StudioDebuggerPanel::ShowLayerSnapshot(const std::string& label) {
         layer_keep_node_ = layer_capture_->Layers()[selected_layer_].node_name;
     layer_capture_label_ = label;
     layer_capture_.reset();
+    ++layer_capture_id_;
     layer_capture_listed_ = false;
 }
 
@@ -324,12 +328,12 @@ void StudioDebuggerPanel::RenderLayersView() {
     }
 
     // The layer list follows the capture.
-    if (cache.capture != layer_capture_.get()) {
+    if (cache.capture_id != layer_capture_id_) {
         cache.DropViewTextures();
         cache.DropSampleTexture();
         cache.key.clear();
         cache.sample_key.clear();
-        cache.capture = layer_capture_.get();
+        cache.capture_id = layer_capture_id_;
         cache.layers.clear();
         cache.rows.clear();
         cache.first_spatial = std::numeric_limits<size_t>::max();
@@ -556,7 +560,7 @@ void StudioDebuggerPanel::RenderLayersView() {
 
     // The tabs need the output's zeros for the facts: plan with the sample's
     // numerics, read once per layer and item.
-    const std::string layer_key = std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" +
+    const std::string layer_key = std::to_string(layer_capture_id_) + "/" +
                                   std::to_string(selected_layer_) + "/" + std::to_string(selected_layer_sample_);
     if (cache.key.rfind(layer_key + "|", 0) != 0) {
         cache.numerics = {};
@@ -619,14 +623,6 @@ void StudioDebuggerPanel::RenderLayersView() {
         SubViewSelector("StudioDebuggerLayerTabs", labels.data(), static_cast<int>(labels.size()),
                         &selected_layer_tab_);
         if (before != selected_layer_tab_) heatmap_row_begin_ = 0;
-        for (size_t i = 0; i < views.later.size(); ++i) {
-            const auto& later = views.later[i];
-            // The tabs draw nothing for a single view: the first later
-            // button then starts the line.
-            if (labels.size() > 1 || i > 0)
-                SameLineIfFits(ui::ButtonWidth(later.label.c_str(), ui::ButtonSize::Small));
-            ui::SecondaryButton(later.label.c_str(), false, later.why.c_str());
-        }
     }
     ImGui::Spacing();
 
@@ -1086,7 +1082,7 @@ void StudioDebuggerPanel::ReadLayerSample() {
 
     // The sample as the model saw it (after the data steps), and the model's
     // output for it, read once per item.
-    const std::string sample_key = std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" +
+    const std::string sample_key = std::to_string(layer_capture_id_) + "/" +
                                    std::to_string(selected_layer_sample_);
     if (cache.sample_key != sample_key) {
         cache.DropSampleTexture();

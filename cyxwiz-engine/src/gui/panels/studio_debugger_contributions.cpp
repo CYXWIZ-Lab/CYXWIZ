@@ -64,7 +64,7 @@ void StudioDebuggerPanel::RenderContributions(const std::string& weight_name) {
     const bool head = &layer == &layers.back();
     const auto& facts = ShownSampleFacts();
     const lv::OutputRule rule = lv::OutputRuleFromKey(facts.output_rule);
-    const std::string key = std::to_string(reinterpret_cast<uintptr_t>(layer_capture_.get())) + "/" +
+    const std::string key = std::to_string(layer_capture_id_) + "/" +
                             std::to_string(selected_layer_) + "/" + std::to_string(selected_layer_sample_);
     if (contributions_key_ != key) {
         contributions_key_ = key;

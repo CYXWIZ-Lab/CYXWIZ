@@ -49,12 +49,6 @@ LayerCapture::LayerCapture(LayerCaptureOptions options, std::vector<CapturedLaye
         for (const auto& t : layer.tensors) bytes_held_ += t.tensor.NumBytes();
 }
 
-const CapturedLayer* LayerCapture::FindLayer(int node_id) const {
-    for (const auto& layer : layers_)
-        if (layer.node_id == node_id) return &layer;
-    return nullptr;
-}
-
 CapturedLayer& LayerCapture::LayerFor(size_t module_index) {
     for (auto& layer : layers_)
         if (layer.module_index == module_index) return layer;
