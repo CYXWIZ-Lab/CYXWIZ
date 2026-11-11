@@ -37,6 +37,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 | `get_version() -> str` | Get version string |
 | `gradcheck(make: Callable, input_shapes: Sequence[Sequence[int]] = [], seed: int = 125, tolerance: float = 0.02, step: float = 0.01, input_range: float = 2.0) -> GradientCheckResult` | Check a module's backward against central differences of its forward, for the input and every parameter. make(input_shape) returns a fresh module; input_shape includes the batch. Default shapes [2, 3] and [3, 4, 5]. The same checker as the Engine's Check gradient. |
 | `gradcheck_loss(make: Callable, targets: str = 'one_hot', input_shapes: Sequence[Sequence[int]] = [], seed: int = 125, tolerance: float = 0.02, step: float = 0.01, input_range: float = 2.0) -> GradientCheckResult` | Check a loss's backward against central differences of its forward. make() returns a fresh loss; targets 'one_hot' (rows over the last dimension) or 'values'. Default predictions shapes [2, 3] and [4, 5]. The same checker as the Engine's Check gradient. |
+| `hardswish(input: Tensor) -> Tensor` | Apply Hardswish activation: x * relu6(x + 3) / 6 |
 | `initialize() -> bool` | Initialize the CyxWiz backend |
 | `is_sentencepiece_tokenizer_available() -> bool` | Return true when the optional SentencePiece tokenizer provider adapter is available |
 | `leaky_relu(input: Tensor, negative_slope: float = 0.009999999776482582) -> Tensor` | Apply LeakyReLU activation |
@@ -604,6 +605,14 @@ Derives from `Activation`.
 | `backward(self: Hardswish, arg0: Tensor, arg1: Tensor) -> Tensor` |  |
 | `forward(self: Hardswish, arg0: Tensor) -> Tensor` |  |
 
+### `HardswishModule`
+
+Derives from `Module`.
+
+| Member | What it does |
+|---|---|
+| `HardswishModule(self: HardswishModule) -> None` | Create a Hardswish module |
+
 ### `InstanceNorm2D`
 
 Derives from `Layer`.
@@ -1006,7 +1015,7 @@ Derives from `Optimizer`.
 
 | Member | What it does |
 |---|---|
-| `SGD(self: SGD, learning_rate: float = 0.01, momentum: float = 0.0) -> None` | SGD optimizer with optional momentum |
+| `SGD(self: SGD, learning_rate: float = 0.01, momentum: float = 0.0, weight_decay: float = 0.0, nesterov: bool = False) -> None` | SGD optimizer with optional momentum, Nesterov momentum and L2 weight decay (torch.optim.SGD, dampening 0) |
 | `step(self: SGD, parameters: Mapping[str, Tensor], gradients: Mapping[str, Tensor]) -> None` |  |
 | `zero_grad(self: SGD) -> None` |  |
 
@@ -1023,6 +1032,7 @@ Sequential model container for building neural networks
 | `add_elu(self: Sequential, alpha: float = 1.0) -> None` | Add an ELU activation |
 | `add_flatten(self: Sequential, start_dim: int = 1) -> None` | Add a Flatten layer |
 | `add_gelu(self: Sequential) -> None` | Add a GELU activation |
+| `add_hardswish(self: Sequential) -> None` | Add a Hardswish activation |
 | `add_leaky_relu(self: Sequential, negative_slope: float = 0.009999999776482582) -> None` | Add a LeakyReLU activation |
 | `add_linear(self: Sequential, in_features: int, out_features: int, use_bias: bool = True) -> None` | Add a Linear layer |
 | `add_mish(self: Sequential) -> None` | Add a Mish activation |
@@ -1101,6 +1111,14 @@ Derives from `Module`.
 | `n_fft` (property) |  |
 | `win_length` (property) |  |
 | `window_type` (property) |  |
+
+### `SqueezeExcitation`
+
+Derives from `Module`.
+
+| Member | What it does |
+|---|---|
+| `SqueezeExcitation(self: SqueezeExcitation, channels: int, squeeze_channels: int) -> None` | Squeeze-and-Excitation: scale each channel of a feature map [H,W,C,N] by a learned gate (torchvision.ops.SqueezeExcitation with ReLU and Sigmoid) |
 
 ### `StepResult`
 

@@ -23,6 +23,10 @@ namespace cyxwiz::spatial {
 using Params = std::map<std::string, std::string>;
 
 // The resolved geometry of a convolution or pooling layer.
+// Squeeze-Excitation's hidden width: C / reduction, at least 1. Throws when
+// the reduction is below 1. (Defined after ParseIntParam.)
+inline size_t SqueezeChannels(size_t channels, const Params& params);
+
 struct Geometry {
     int channels_out = 0;    // Conv2D filters / ConvTranspose2D out_channels / Depthwise C x M; 0 = keeps C
     int depth_multiplier = 1;  // DepthwiseConv2D only
@@ -44,6 +48,12 @@ inline int ParseIntParam(const Params& params, const char* key, int fallback) {
     } catch (const std::exception&) {
         throw std::invalid_argument(std::string(key) + " must be a whole number, not '" + it->second + "'");
     }
+}
+
+inline size_t SqueezeChannels(size_t channels, const Params& params) {
+    const int reduction = ParseIntParam(params, "reduction", 16);
+    if (reduction < 1) throw std::invalid_argument("reduction must be 1 or more");
+    return std::max<size_t>(1, channels / static_cast<size_t>(reduction));
 }
 
 // "same" keeps the sample size at stride 1 ((k-1)/2 each side, odd kernels);
@@ -240,7 +250,7 @@ inline std::vector<size_t> SampleShapeAfter(gui::NodeType type, const Params& pa
         case gui::NodeType::InstanceNorm:
             return in;
         case gui::NodeType::SqueezeExcitation:
-            if (ParseIntParam(params, "reduction", 16) < 1) throw std::invalid_argument("reduction must be 1 or more");
+            SqueezeChannels(in[2], params);  // validates the reduction
             return in;
         case gui::NodeType::AdaptiveAvgPool: {
             const size_t size = static_cast<size_t>(AdaptiveOutputSize(params));

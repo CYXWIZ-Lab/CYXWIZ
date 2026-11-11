@@ -373,6 +373,12 @@ std::map<std::string, Tensor> SqueezeExcitationModule::GetGradients() {
     return gradients;
 }
 
+size_t SqueezeExcitationModule::BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    size_t elements = 1;
+    for (const size_t dim : sample_input_shape) elements *= dim;
+    return 3 * elements;
+}
+
 std::string SqueezeExcitationModule::GetName() const {
     return "SqueezeExcitation(channels=" + std::to_string(channels_) +
         ", squeeze=" + std::to_string(squeeze_channels_) + ")";

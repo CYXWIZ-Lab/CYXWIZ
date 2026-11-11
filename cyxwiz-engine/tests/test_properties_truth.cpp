@@ -918,8 +918,14 @@ int main() {
         auto sgd = MakeNode(2, gui::NodeType::SGD, "SGD");
         sgd.parameters["learning_rate"] = "0";
         sgd.parameters["momentum"] = "0.9";
+        sgd.parameters["weight_decay"] = "0.0005";
 
         const auto report = gui::properties_truth::ResolveNodeTruth(sgd);
+        const auto* decay = FindProperty(report, "weight_decay");
+        Check(decay != nullptr && !HasStatus(*decay, gui::properties_truth::TruthStatus::Unsupported),
+              "SGD weight decay is a runtime setting, not an unsupported one");
+        Check(FindProperty(report, "nesterov") != nullptr && FindProperty(report, "weight_decay_exclude") != nullptr,
+              "SGD should surface nesterov and weight_decay_exclude truth");
         const auto* lr = FindProperty(report, "learning_rate");
         Check(lr != nullptr,
               "SGD should surface learning_rate truth");

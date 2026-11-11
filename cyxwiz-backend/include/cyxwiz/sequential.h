@@ -570,6 +570,8 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    // Backward holds the gate laid over the map and two products of the map's size.
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
 private:
     // The gate [N,C] laid over the map's shape [H,W,C,N].

@@ -1094,7 +1094,7 @@ void AddOptimizerTruth(NodeTruthReport& report, const MLNode& node) {
         RequireFloatAtLeast(clip, "grad_clip_norm", 0.0, true);
         report.properties.push_back(std::move(clip));
     }
-    if (node.type == NodeType::AdamW) {
+    if (node.type == NodeType::AdamW || node.type == NodeType::SGD) {
         report.properties.push_back(ResolveStringProperty(
             node, "Weight decay exclude", "weight_decay_exclude", "none",
             TruthOwner::Runtime, true, false, false));
@@ -1104,10 +1104,14 @@ void AddOptimizerTruth(NodeTruthReport& report, const MLNode& node) {
         case NodeType::SGD:
             add_bounded("momentum", "Momentum", "0.9", 0.0, true,
                         1.0, false);
-            AddUnsupportedOptimizerParameterTruth(
-                report, node, "weight_decay", "Weight decay",
-                "The current SGD backend has no weight-decay term; use AdamW "
-                "or an explicit supported regularization path.");
+            {
+                auto decay = ResolveFloatProperty(node, "Weight decay", "weight_decay", "0",
+                                                  TruthOwner::Runtime, true, false);
+                RequireFloatAtLeast(decay, "weight_decay", 0.0, true);
+                report.properties.push_back(std::move(decay));
+            }
+            report.properties.push_back(ResolveBoolProperty(
+                node, "Nesterov", "nesterov", false, TruthOwner::Runtime, true, false));
             break;
         case NodeType::Adam:
         case NodeType::NAdam:

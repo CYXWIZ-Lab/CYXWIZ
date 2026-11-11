@@ -338,7 +338,11 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                 case gui::NodeType::SqueezeExcitation: {
                     // Linear(C -> S) and Linear(S -> C), with biases; S = C / reduction, at least 1.
                     const int64_t channels = current_shape.size() >= 3 ? current_shape[2] : (current_shape.empty() ? 1 : current_shape.back());
-                    const int64_t squeeze = std::max<int64_t>(1, channels / std::max<int64_t>(1, GetIntParam(*node, "reduction", 16)));
+                    int64_t squeeze = 1;  // a reduction the compiler refuses counts as the smallest gate
+                    try {
+                        squeeze = static_cast<int64_t>(spatial::SqueezeChannels(static_cast<size_t>(std::max<int64_t>(1, channels)), node->parameters));
+                    } catch (const std::invalid_argument&) {
+                    }
                     layer_analysis.parameters = 2 * channels * squeeze + squeeze + channels;
                     layer_analysis.flops = static_cast<int64_t>(batch_size) * 4 * channels * squeeze;
                     break;

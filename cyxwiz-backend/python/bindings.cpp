@@ -2257,7 +2257,8 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("GELU", cyxwiz::ModuleType::GELU)
         .value("Swish", cyxwiz::ModuleType::Swish)
         .value("Mish", cyxwiz::ModuleType::Mish)
-        .value("Hardswish", cyxwiz::ModuleType::Hardswish)
+        // ModuleType::Hardswish is not listed: export_values() below would put its name over the
+        // Hardswish activation class. Use HardswishModule or Sequential.add_hardswish().
         .export_values();
 
     // Module base class; Python subclasses become real modules (TOFIX125 P3).
