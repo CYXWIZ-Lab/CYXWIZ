@@ -93,6 +93,7 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
         std_inv_ = Tensor::FromSemanticArray(af::flat(inverse), std::vector<size_t>{num_features_});
         normalized_ = Tensor::FromSemanticArray(normalized, shape);
         input_cache_ = input;
+        forward_training_ = is_training_;
         return Tensor::FromSemanticArray(y, shape);
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("BatchNormModule::Forward failed on the ArrayFire device: ") + e.what());
@@ -114,7 +115,7 @@ Tensor BatchNormModule::Backward(const Tensor& grad_output) {
         // Batch statistics depend on every row; running ones (eval) are
         // constants, so the input gradient is only the per-feature scale, as
         // BatchNorm2DLayer does. The mode is the one the forward ran in.
-        const af::array dx = is_training_
+        const af::array dx = forward_training_
             ? af::tile(FeatureRow(std_inv_), down) / count *
                   (count * weighted - af::tile(af::sum(weighted, 0), down) -
                    normalized * af::tile(af::sum(weighted * normalized, 0), down))

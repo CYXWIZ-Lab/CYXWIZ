@@ -1447,6 +1447,7 @@ private:
     // Cached for backward pass
     Tensor normalized_;
     Tensor std_inv_;
+    bool forward_training_ = true;  // the mode of the forward they came from
 
     // Gradients
     Tensor grad_gamma_;
