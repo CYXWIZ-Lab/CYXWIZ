@@ -734,6 +734,7 @@ void NodeEditor::Render() {
         ImGui::SetWindowFontScale(1.0f);
 
         RenderCanvasFooter();
+        if (nodes_.empty() && pending_nodes_.empty()) RenderEmptyCanvas();
         // Render minimap overlay in bottom-right corner, above the footer
         if (show_minimap_) {
             RenderMinimap();
@@ -938,6 +939,79 @@ void NodeEditor::Render() {
 
     // Plot nodes: result lane and their Plot windows (TOFIX134 P2).
     RenderPlotNodes();
+}
+
+void NodeEditor::RenderEmptyCanvas() {
+    namespace st = cyxwiz::studio_toolbar;
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (canvas_size_.x < 240.0f || canvas_size_.y < 160.0f) return;
+    if (!starter_graphs_found_) {
+        starter_graphs_ = FindStarterGraphs();
+        starter_graphs_found_ = true;
+    }
+    const st::EmptyCanvas text;
+    // A small window of its own in the canvas centre (the canvas takes the
+    // clicks everywhere else, so a node can still be dropped around it).
+    ::gui::NextWindowFollowsCurrent();
+    ImGui::SetNextWindowPos(ImVec2(canvas_origin_.x + canvas_size_.x * 0.5f, canvas_origin_.y + canvas_size_.y * 0.45f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                                   ImGuiWindowFlags_NoMove;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    if (ImGui::Begin("##EmptyCanvas", nullptr, flags)) {
+        const float wrap = std::min(canvas_size_.x - 48.0f, ImGui::GetFontSize() * 26.0f);
+        const auto centred = [wrap](const char* line, const ImVec4& colour) {
+            const float w = std::min(ImGui::CalcTextSize(line).x, wrap);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (wrap - w) * 0.5f));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap);
+            ImGui::TextColored(colour, "%s", line);
+            ImGui::PopTextWrapPos();
+        };
+        ImGui::Dummy(ImVec2(wrap, 0.0f));
+        centred(text.title, t.text_bright);
+        centred(text.hint, t.text_dim);
+        ImGui::Spacing();
+        const char* search = ICON_FA_MAGNIFYING_GLASS " Search nodes";
+        const char* panel = ICON_FA_CUBES " Open the Nodes panel";
+        const char* example = ICON_FA_DIAGRAM_PROJECT " Open an example graph " ICON_FA_CHEVRON_DOWN;
+        const float sp = ImGui::GetStyle().ItemSpacing.x;
+        const float row = ui::ButtonWidth(search, ui::ButtonSize::Small) +
+                          (open_nodes_panel_callback_ ? ui::ButtonWidth(panel, ui::ButtonSize::Small) + sp : 0.0f) +
+                          (starter_graphs_.empty() ? 0.0f : ui::ButtonWidth(example, ui::ButtonSize::Small) + sp);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (wrap - row) * 0.5f));
+        if (ui::SecondaryButton(search)) {
+            node_add_search_.just_activated = true;
+            node_add_search_.is_active = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The box at the top right of the canvas: type a node's name");
+        if (open_nodes_panel_callback_) {
+            ImGui::SameLine();
+            if (ui::SecondaryButton(panel)) open_nodes_panel_callback_();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag a node from it onto the canvas");
+        }
+        if (!starter_graphs_.empty()) {
+            ImGui::SameLine();
+            if (ui::SecondaryButton(example)) ImGui::OpenPopup("##example_graphs");
+            if (ImGui::BeginPopup("##example_graphs")) {
+                for (const auto& starter : starter_graphs_) {
+                    const std::string label = starter.icon + "  " + starter.title;
+                    if (ImGui::MenuItem(label.c_str()) && LoadGraph(starter.path)) {
+                        // A copy to work on: Save asks for a name instead of
+                        // overwriting the example next to the Engine.
+                        DetachFromFile();
+                        spdlog::info("Opened the example graph {}", starter.path);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", starter.description.c_str(), starter.path.c_str());
+                }
+                ImGui::EndPopup();
+            }
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 // The Studio's notices and questions (TOFIX129 A3-8), on the shared dialog

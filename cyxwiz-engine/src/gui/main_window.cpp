@@ -996,6 +996,11 @@ MainWindow::MainWindow()
     node_editor_->SetOpenDebuggerCallback([this]() {
         if (studio_debugger_panel_) studio_debugger_panel_->Show();
     });
+    node_editor_->SetOpenNodesPanelCallback([this]() {
+        if (!node_browser_panel_) return;
+        node_browser_panel_->SetVisible(true);
+        ::gui::BringToFront("Nodes");
+    });
 
     if (studio_debugger_panel_) {
         // One run path for the panel's Run, F6 and Explain Node: the graph is

@@ -6,6 +6,7 @@
 // look comes from the shared tokens and widgets, so the page follows the
 // active theme.
 
+#include "../starter_graphs.h"
 #include "create_project_dialog.h"
 
 #include <functional>
@@ -24,13 +25,6 @@ public:
         ContinueWithout        // Continue without a project
     };
 
-    struct StarterGraph {
-        std::string title;
-        std::string description;
-        std::string domain;
-        std::string icon;
-        std::string path;
-    };
 
     // Python status shown as a chip at the top right; clicking it calls
     // `on_click` (the application opens the Python dialog).
@@ -77,7 +71,7 @@ private:
         long long last_opened = 0;
     };
     std::vector<Recent> recent_;
-    std::vector<StarterGraph> starter_graphs_;
+    std::vector<::gui::StarterGraph> starter_graphs_;  // gui/starter_graphs
 
     char search_[256] = {};
     std::string selected_path_;          // selected recent project (file path)

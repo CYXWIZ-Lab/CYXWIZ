@@ -435,6 +435,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor.cpp
     src/gui/node_editor_plot.cpp
     src/gui/node_editor_toolbar.cpp
+    src/gui/starter_graphs.cpp
     src/gui/simulation_scope_plot.cpp
     src/gui/plot/plot_node_lane.cpp
     src/core/pipeline_type_names.cpp

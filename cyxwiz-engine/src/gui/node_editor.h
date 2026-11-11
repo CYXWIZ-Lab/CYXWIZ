@@ -1,5 +1,7 @@
 #pragma once
 
+#include "starter_graphs.h"
+
 #include <vector>
 #include <string>
 #include <map>
@@ -297,6 +299,8 @@ public:
         require_debug_before_train_ = require_debug;
     }
     void SetOpenDebuggerCallback(std::function<void()> callback) { open_debugger_callback_ = std::move(callback); }
+    // Shows the Nodes panel (the empty canvas's "Open the Nodes panel").
+    void SetOpenNodesPanelCallback(std::function<void()> callback) { open_nodes_panel_callback_ = std::move(callback); }
 
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
@@ -845,6 +849,11 @@ private:
     void CarryDockFromOldName();
     bool dock_carried_ = false;
     void DrawStudioDialogs();
+    // An empty canvas says how to start (TOFIX129 A3-3).
+    void RenderEmptyCanvas();
+    std::function<void()> open_nodes_panel_callback_;
+    std::vector<StarterGraph> starter_graphs_;  // found once, on the first empty canvas
+    bool starter_graphs_found_ = false;
     void InsertFlatten();
     // Save and Save As from the Studio on an empty canvas say why nothing was written.
     bool save_refusal_pending_ = false;
