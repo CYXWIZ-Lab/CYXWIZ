@@ -17,6 +17,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 - [pycyxwiz.optimize](#pycyxwizoptimize)
 - [pycyxwiz.signal](#pycyxwizsignal)
 - [pycyxwiz.stats](#pycyxwizstats)
+- [pycyxwiz.system](#pycyxwizsystem)
 - [pycyxwiz.text](#pycyxwiztext)
 - [pycyxwiz.timeseries](#pycyxwiztimeseries)
 - [pycyxwiz.utilities](#pycyxwizutilities)
@@ -1700,6 +1701,21 @@ Statistics and clustering functions
 | `roc(arg0: Sequence[int], arg1: Sequence[float]) -> dict` | ROC curve and AUC |
 | `silhouette(arg0: Sequence[Sequence[float]], arg1: Sequence[int]) -> float` | Silhouette score |
 | `tsne(data: Sequence[Sequence[float]], n_dims: int = 2, perplexity: int = 30) -> list[list[float]]` | t-SNE embedding |
+
+## pycyxwiz.system
+
+The Engine's memory: what it holds on the compute device, what the device has free, host tensors
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `device_memory_free(hardware_uuid: str = '') -> dict` | The device's own memory for every program: known, total_bytes, free_bytes, source. Asked from the NVIDIA management library by DeviceInfo.hardware_uuid ('' = the only card); a driver that does not answer gives known False and source 'Not reported by this driver'. Never a guess. |
+| `device_memory_held() -> dict` | What this process holds on its compute device (ArrayFire's memory manager): known, allocated_bytes (in use plus kept for reuse), in_use_bytes, buffers, buffers_in_use. known is False before initialize(). |
+| `host_tensor_bytes() -> int` | Bytes of main memory held by host tensors (the tensor allocator; not the whole process). |
+| `host_tensor_peak_bytes() -> int` | The highest host_tensor_bytes since the process started or since reset_host_tensor_peak(). |
+| `release_unused_device_memory() -> dict` | Returns the device buffers kept for reuse to the driver; buffers in use stay. Answers ran, allocated_before, allocated_after and freed_bytes. ran is False before initialize(). |
+| `reset_host_tensor_peak() -> None` | Starts the host tensor peak again from the current value. |
 
 ## pycyxwiz.text
 

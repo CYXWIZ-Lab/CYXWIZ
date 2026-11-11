@@ -328,14 +328,6 @@ void EnrichCudaIdentity(DeviceInfo& info) {
         }
     }
 
-    // What the device has free right now, for every program (a reading at
-    // listing time; ReadDeviceMemoryFree gives a fresh one).
-    const DeviceMemoryFree free_memory = ReadDeviceMemoryFree(info.hardware_uuid);
-    if (free_memory.known) {
-        info.memory_available = static_cast<size_t>(free_memory.free_bytes);
-        info.memory_available_known = true;
-    }
-
     if (cu_device_get_attribute) {
         constexpr int kPciBusId = 33;
         constexpr int kPciDeviceId = 34;
@@ -425,6 +417,19 @@ void EnrichSelectedDeviceIdentity(DeviceInfo& info) {
 #endif
     } catch (const std::exception&) {
         // Optional identity telemetry remains explicitly unknown.
+    }
+    // What the device has free right now, for every program (a reading at
+    // listing time; ReadDeviceMemoryFree gives a fresh one). The card is named
+    // by its hardware id, so its CUDA and its OpenCL listing both carry it. A
+    // CUDA device without an id may be the machine's only card; any other
+    // device without an id is not guessed.
+    const bool cuda_without_id = info.type == DeviceType::CUDA && !info.hardware_uuid_known;
+    if (info.hardware_uuid_known || cuda_without_id) {
+        const DeviceMemoryFree free_memory = ReadDeviceMemoryFree(cuda_without_id ? std::string() : info.hardware_uuid);
+        if (free_memory.known) {
+            info.memory_available = static_cast<size_t>(free_memory.free_bytes);
+            info.memory_available_known = true;
+        }
     }
     FinalizeDeviceIdentity(info);
 }

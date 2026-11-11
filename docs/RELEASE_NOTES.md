@@ -18,6 +18,39 @@ private Data Studio tickets (`tofix*/track*`).
     longer adds the same noise to every clip (`add_noise(seed=...)`).
   - Plugin SDK: new header `cyxwiz/portable_random.h` (shuffle and draws
     that are the same with every compiler).
+- **Tools > Monitoring is one Monitor window** (guide in
+  `docs/usage/monitoring.md`, example `examples/python/system_memory.py`)
+  with tabs System, Memory, Loaded data and Frames. It replaces Memory
+  Visualization and System Monitor.
+  - Every figure is measured, on Windows, Linux and macOS. The old System
+    Monitor showed made-up numbers on Linux and macOS, and the old memory
+    charts were never filled in.
+  - The compute device card says what the Engine holds on the device and,
+    for NVIDIA cards, what the device has free for every program. Other
+    drivers read "Not reported by this driver".
+  - The Engine's memory is recorded all the time (process, device, tables,
+    tensors), so the Memory chart has a history when you open it. Export
+    asks where to save.
+  - **Clear Caches...** opens at any time and lists every cache with its
+    size (it did nothing before the first training run). **Free Unused
+    Memory** (was Garbage Collection) says what it freed.
+  - The Engine no longer re-lists the compute devices several times a second
+    while these windows are open.
+- **Tools > Diagnostics switches are kept** between sessions and are also in
+  Preferences > General.
+  - **Log Frame-rate Changes** (was Log Idle Mode Transitions) logs every
+    change of pace: idle, another window in front, minimised.
+  - **Log Every Python Command** (was Verbose Python Logging, which changed
+    nothing) logs each command with its duration.
+  - **Frame Time Overlay** shows the whole frame and the Engine's own
+    interface-building time as two figures (they shared one label).
+- **Studio Debugger > Runtime**: the Timeline is drawn on a time axis (new
+  runs), the memory bars are named for what they measure (host tensors,
+  with a peak per run), and the Crash view no longer reads a file every
+  frame.
+  - Plugin SDK: new header `cyxwiz/device_memory.h`;
+    `ReleaseUnusedDeviceMemory` now returns what it gave back. Python:
+    `pycyxwiz.system`.
 - **Tools > Model is one window** (guide in `docs/usage/model_tools.md`,
   example `examples/cyxgraph/model_tools`) with tabs Summary, Learning
   rate, Explain, Health and Projector; its menu items open it on a tab.

@@ -1215,6 +1215,49 @@ r["mean"], r["sd_sample"], r["median"]            # 9.9239, 2.0449, 9.9598
 u.random("integers", 6000, 1, 6, seed=7)["counts"]   # [1045, 986, 975, 996, 989, 1009]
 ```
 
+### 6.7 `pycyxwiz.system`
+
+The Engine's memory figures, as Tools > Monitoring shows them
+(docs/usage/monitoring.md), on the SDK header `cyxwiz/device_memory.h`.
+Checked by `cyxwiz-backend/python/tests/test_python_system.py`.
+
+- `device_memory_held()`: what this process holds on its compute device
+  (ArrayFire's memory manager). Dict: `known` (False before `initialize()`),
+  `allocated_bytes` (in use plus kept for reuse), `in_use_bytes`, `buffers`,
+  `buffers_in_use`.
+- `device_memory_free(hardware_uuid="")`: the device's own memory for every
+  program. Dict: `known`, `total_bytes`, `free_bytes`, `source`. NVIDIA cards
+  answer through the NVIDIA management library, by
+  `DeviceInfo.hardware_uuid` (`""`: the machine's only card). A driver that
+  does not report gives `known` False and `source` "Not reported by this
+  driver"; nothing is guessed. `get_available_devices()` now fills
+  `memory_available` for a card that answers.
+- `release_unused_device_memory()`: returns the buffers kept for reuse to
+  the driver (buffers in use stay). Dict: `ran`, `allocated_before`,
+  `allocated_after`, `freed_bytes`.
+- `host_tensor_bytes()`, `host_tensor_peak_bytes()`,
+  `reset_host_tensor_peak()`: main memory held by host tensors (the tensor
+  allocator; not the whole process).
+
+For the machine's CPU and main memory use `psutil`.
+
+```python
+import pycyxwiz as cx
+s = cx.system
+
+cx.initialize()
+batch = cx.Tensor.random([4096, 1024], seed=1)       # 16 MB of float32
+h = s.device_memory_held()
+h["allocated_bytes"], h["in_use_bytes"]                # 16777216, 16777216
+del batch
+s.device_memory_held()["in_use_bytes"]                 # 0 (still allocated: kept for reuse)
+s.release_unused_device_memory()["freed_bytes"]        # 16777216
+f = s.device_memory_free()
+f["known"], f["source"]                                # True, 'NVIDIA management library' (a GTX 1050 Ti)
+```
+
+The example `examples/python/system_memory.py` prints these steps.
+
 ---
 
 ## 7. Time Series (`pycyxwiz.timeseries`)

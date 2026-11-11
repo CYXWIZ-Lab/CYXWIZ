@@ -23,6 +23,7 @@
 #include "bindings_module.h"
 #include "bindings_optimize.h"
 #include "bindings_utilities.h"
+#include "bindings_system.h"
 #include "bindings_model.h"
 // Distributed training
 #include "cyxwiz/distributed/process_group.h"
@@ -2028,6 +2029,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
     pycyxwiz_bindings::BindCalculus(m);
     pycyxwiz_bindings::BindOptimize(m);
     pycyxwiz_bindings::BindUtilities(m);
+    pycyxwiz_bindings::BindSystem(m);
 
     // ============================================================================
     // TIME SERIES SUBMODULE
