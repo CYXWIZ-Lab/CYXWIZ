@@ -1,5 +1,6 @@
 ﻿#include <cyxwiz/sequential.h>
 #include "../arrayfire_backend_utils.h"
+#include "../arrayfire_host_values.h"
 #include <arrayfire.h>
 #include <cmath>
 #include <random>
@@ -437,11 +438,13 @@ Tensor PositionalEncodingModule::ForwardAt(const Tensor& input, size_t position_
 
     try {
         // Compute one sinusoidal table for this sequence on the selected
-        // backend. Preserve the native formula's double intermediate and
-        // Float32 encoding before adding it to the model activations.
+        // backend, in float64 where the device has it (the native formula's
+        // precision) and float32 otherwise (Intel Iris Pro on OpenCL has no
+        // float64), then add it to the model activations as Float32.
+        const af::dtype precision = DeviceHasDouble() ? f64 : f32;
         const af::dim4 dims(1, static_cast<dim_t>(shape[1]), static_cast<dim_t>(d_model_));
-        const af::array position = af::range(dims, 1, f64) + static_cast<double>(position_offset);
-        const af::array dimension = af::range(dims, 2, f64);
+        const af::array position = af::range(dims, 1, precision) + static_cast<double>(position_offset);
+        const af::array dimension = af::range(dims, 2, precision);
         const af::array angle = position / af::pow(10000.0, 2.0 * af::floor(dimension / 2.0) /
                                                            static_cast<double>(d_model_));
         const af::array encoding = af::select(af::mod(dimension, 2.0) == 0.0,
