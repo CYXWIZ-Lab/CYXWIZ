@@ -194,7 +194,11 @@ bool ResolveFilterKernel(const CvImageStep& s, FilterKernel& k, std::string* why
 
 std::string ValidateCvImageStep(const CvImageStep& s, const image::ImageShape& in) {
     if (in.height == 0 || in.width == 0) return "the image has no pixels";
-    if (in.channels != 1 && in.channels != 3) return "needs grey or RGB images (1 or 3 channels)";
+    if (in.channels == 0) return "the image has no channels";
+    // Every other step runs on each channel alone when the image is neither grey nor RGB.
+    if (s.kind == CvImageStepKind::Edges && in.channels != 1 && in.channels != 3)
+        return "needs grey or RGB images: these have " + std::to_string(in.channels) +
+               " channels. Put it before the step that adds channels";
     const size_t side = std::min(in.height, in.width);
     switch (s.kind) {
         case CvImageStepKind::Contrast:
@@ -523,6 +527,38 @@ std::vector<FixedImageStep> MergeImageSteps(const image::ImageAugmentation& comp
     }
     for (; next < cv_steps.size(); ++next) steps.emplace_back(cv_steps[next]);
     return steps;
+}
+
+ImageChannelLayout DecodedChannelLayout(size_t channels) {
+    if (channels == 3) return {{"R", "G", "B"}, 3};
+    if (channels == 1) return {{"grey"}, 0};
+    ImageChannelLayout layout;
+    for (size_t c = 0; c < channels; ++c) layout.names.push_back("channel " + std::to_string(c + 1));
+    return layout;
+}
+
+ImageChannelLayout ChannelLayoutAfter(const FixedImageStep& step, const ImageChannelLayout& input,
+                                      size_t output_channels) {
+    // A step that keeps the count changes pixels, not what the channels are.
+    if (output_channels == input.names.size()) return input;
+    if (const auto* cv = std::get_if<CvImageStep>(&step); cv && cv->kind == CvImageStepKind::Edges && output_channels == 1)
+        return {{"edges"}, 0};
+    // Another count: grey for one channel, else numbered. No colour picture is known.
+    if (output_channels == 3) return {{"channel 1", "channel 2", "channel 3"}, 0};
+    return DecodedChannelLayout(output_channels);
+}
+
+ImageChannelLayout CompiledImageChannels(const image::ImageAugmentation& compiled,
+                                         const std::vector<CvImageStep>& cv_steps,
+                                         const image::ImageShape& decoded) {
+    image::ImageShape shape = decoded;
+    ImageChannelLayout layout = DecodedChannelLayout(decoded.channels);
+    for (const auto& step : MergeImageSteps(compiled, cv_steps)) {
+        if (const auto* op = std::get_if<image::ImageOp>(&step)) shape = image::ImageShapeAfter(*op, shape);
+        else shape = CvImageShapeAfter(std::get<CvImageStep>(step), shape);
+        layout = ChannelLayoutAfter(step, layout, shape.channels);
+    }
+    return layout;
 }
 
 image::ImageShape CompiledImageShape(const image::ImageAugmentation& compiled,

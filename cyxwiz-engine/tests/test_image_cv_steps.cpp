@@ -391,8 +391,67 @@ int main() {
         s = Step(CvImageStepKind::Smooth);
         s.kernel_size = 4;
         Check(!ValidateCvImageStep(s, kRgb).empty(), "even kernel");
-        Check(!ValidateCvImageStep(Step(CvImageStepKind::Sharpen), image::ImageShape{kH, kW, 4}).empty(),
-              "four channels refused");
+        Check(ValidateCvImageStep(Step(CvImageStepKind::Edges), image::ImageShape{kH, kW, 4}) ==
+                  "needs grey or RGB images: these have 4 channels. Put it before the step that adds channels",
+              "Edges needs grey or RGB");
+    }
+    // More than three channels: every other step runs on each channel alone.
+    {
+        const image::ImageShape four{kH, kW, 4};
+        cv::Mat grey;
+        cv::cvtColor(rgb, grey, cv::COLOR_RGB2GRAY);
+        std::vector<uint8_t> stacked(four.Size());  // R, G, B and the grey image as a 4th channel
+        for (size_t i = 0; i < static_cast<size_t>(kH) * kW; ++i) {
+            for (int k = 0; k < 3; ++k) stacked[i * 4 + k] = rgb.data[i * 3 + k];
+            stacked[i * 4 + 3] = grey.data[i];
+        }
+        const image::ImageShape g{kH, kW, 1};
+        for (auto kind : {CvImageStepKind::Contrast, CvImageStepKind::Denoise, CvImageStepKind::Sharpen,
+                          CvImageStepKind::Smooth, CvImageStepKind::Warp, CvImageStepKind::Pyramid,
+                          CvImageStepKind::Filter}) {
+            const CvImageStep s = Step(kind);
+            const std::string name = CvImageStepText(s);
+            Check(ValidateCvImageStep(s, four).empty(), name + " accepts four channels");
+            const image::ImageShape after = CvImageShapeAfter(s, four);
+            Check(after.channels == 4, name + " keeps four channels");
+            std::vector<uint8_t> out(after.Size());
+            std::string error;
+            Check(ApplyCvImageStep(s, four, stacked.data(), out.data(), &error), name + " runs on four channels: " + error);
+            const size_t pixels = after.height * after.width;
+            for (int k = 0; k < 4; ++k) {
+                std::vector<uint8_t> plane(static_cast<size_t>(kH) * kW), expected(pixels);
+                for (size_t i = 0; i < plane.size(); ++i) plane[i] = stacked[i * 4 + k];
+                Check(ApplyCvImageStep(s, g, plane.data(), expected.data(), &error), name + " runs on the plane");
+                bool same = true;
+                for (size_t i = 0; i < pixels; ++i) same = same && out[i * 4 + k] == expected[i];
+                Check(same, name + ": channel " + std::to_string(k + 1) + " is the step on that channel alone");
+            }
+        }
+    }
+    // What the channels are, through the steps.
+    {
+        Check(DecodedChannelLayout(3) == ImageChannelLayout{{"R", "G", "B"}, 3}, "a decoded image is RGB");
+        Check(DecodedChannelLayout(1) == ImageChannelLayout{{"grey"}, 0}, "or grey");
+        Check(DecodedChannelLayout(5).names.back() == "channel 5" && DecodedChannelLayout(5).colour == 0, "or numbered");
+        image::ImageAugmentation compiled;
+        image::ImageOp crop;
+        crop.kind = image::ImageOpKind::CenterCrop;
+        crop.width = 20;
+        crop.height = 16;
+        compiled.ops = {crop};
+        CvImageStep sharpen = Step(CvImageStepKind::Sharpen);
+        Check(CompiledImageChannels(compiled, {sharpen}, kRgb) == DecodedChannelLayout(3),
+              "steps that keep the count keep the picture");
+        CvImageStep edges = Step(CvImageStepKind::Edges);
+        edges.position = 1;
+        Check(CompiledImageChannels(compiled, {sharpen, edges}, kRgb) == ImageChannelLayout{{"edges"}, 0},
+              "Image Edges leaves one channel named edges");
+        image::ImageOp gray;
+        gray.kind = image::ImageOpKind::Grayscale;
+        compiled.ops = {gray};
+        const auto after_gray = CompiledImageChannels(compiled, {}, kRgb);
+        Check(after_gray.names.size() == compiled.ShapeAfter(kRgb).channels && after_gray.colour == (after_gray.names.size() == 3 ? 3u : 0u),
+              "Grayscale: one name per channel it leaves");
     }
     // Identity: every setting is in it.
     {

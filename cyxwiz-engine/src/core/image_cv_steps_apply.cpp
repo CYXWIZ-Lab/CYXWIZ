@@ -61,6 +61,21 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
     };
     int w = static_cast<int>(input.width), h = static_cast<int>(input.height);
     const int c = static_cast<int>(input.channels);
+    // Neither grey nor RGB: the step on each channel alone, as a grey image.
+    // (Image Filter's kernel already runs per channel for any count.)
+    if (c != 1 && c != 3 && s.kind != CvImageStepKind::Filter) {
+        const image::ImageShape plane_in{input.height, input.width, 1};
+        const image::ImageShape plane_out = CvImageShapeAfter(s, plane_in);
+        if (plane_out.channels != 1) return fail("needs grey or RGB images");
+        const size_t pixels_in = input.height * input.width, pixels_out = plane_out.height * plane_out.width;
+        std::vector<uint8_t> one(pixels_in), result(pixels_out);
+        for (int k = 0; k < c; ++k) {
+            for (size_t i = 0; i < pixels_in; ++i) one[i] = in[i * c + k];
+            if (!ApplyCvImageStep(s, plane_in, one.data(), result.data(), error)) return false;
+            for (size_t i = 0; i < pixels_out; ++i) out[i * c + k] = result[i];
+        }
+        return true;
+    }
     std::vector<float> x(input.Size());
     for (size_t i = 0; i < x.size(); ++i) x[i] = in[i] / 255.0f;
     bool ok = false;

@@ -6,7 +6,9 @@
 // done once when the images are prepared, on the CPU workers, in canvas
 // order with the device transforms that are done once (Center Crop,
 // Grayscale, Gaussian Blur, Morphology). The prepared set is uint8, so each
-// step reads and writes uint8 [H, W, C] images. No OpenCV in this header;
+// step reads and writes uint8 [H, W, C] images. C may be any count: on images
+// that are neither grey nor RGB a step runs on each channel alone (Image
+// Filter always does). No OpenCV in this header;
 // ApplyCvImageStep lives in image_cv_steps_apply.cpp.
 
 #include <cyxwiz/image_augmentation.h>
@@ -134,6 +136,24 @@ std::string FixedImageStepText(const FixedImageStep& step);
 // the OpenCV steps placed at their positions.
 std::vector<FixedImageStep> MergeImageSteps(const image::ImageAugmentation& compiled,
                                             const std::vector<CvImageStep>& cv_steps);
+// What an image's channels are: one name each ("R", "G", "B", "grey",
+// "edges", "channel 5"), and how many leading channels are still the colour
+// picture (3 or 0). An image with other channels is shown as that picture
+// and one grey tile per further channel.
+struct ImageChannelLayout {
+    std::vector<std::string> names;
+    size_t colour = 0;
+    bool operator==(const ImageChannelLayout&) const = default;
+};
+// A decoded image: RGB, grey, or numbered channels.
+ImageChannelLayout DecodedChannelLayout(size_t channels);
+// The layout after one step that turns `input` into `output_channels` channels.
+ImageChannelLayout ChannelLayoutAfter(const FixedImageStep& step, const ImageChannelLayout& input,
+                                      size_t output_channels);
+// The layout a model receives from `decoded` through the compiled steps.
+ImageChannelLayout CompiledImageChannels(const image::ImageAugmentation& compiled,
+                                         const std::vector<CvImageStep>& cv_steps,
+                                         const image::ImageShape& decoded);
 // The [H, W, C] a model receives from `decoded` through the compiled steps.
 image::ImageShape CompiledImageShape(const image::ImageAugmentation& compiled,
                                      const std::vector<CvImageStep>& cv_steps, const image::ImageShape& decoded);
