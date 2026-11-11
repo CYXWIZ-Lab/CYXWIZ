@@ -4307,6 +4307,7 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     controls.resume = [run]() { run->Resume(); };
     controls.stop = [run]() { run->Stop(); };
     controls.paused = [run]() { return run->Paused(); };
+    controls.waiting = [run]() { return !run->Waiting().empty(); };
     controls.has_policy = [this]() { return rl_policy_ != nullptr && rl_policy_file_.empty(); };
     controls.play = [this]() {
         std::string why;

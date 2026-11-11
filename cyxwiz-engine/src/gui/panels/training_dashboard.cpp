@@ -233,8 +233,11 @@ void TrainingDashboardPanel::RenderRunHeader() {
     const ui::Tokens& t = ui::CurrentTokens();
     const bool running = training_.load();
     const bool paused = running && controls_.paused && controls_.paused();
-    const char* state = running ? (paused ? "Paused" : "Training") : (failed_ ? "Failed" : outcome_.c_str());
-    const ImVec4 colour = running ? (paused ? t.pending : t.success) : (failed_ ? t.error : t.pending);
+    const bool waiting = running && controls_.waiting && controls_.waiting();
+    const char* state = running ? (waiting ? "Waiting" : paused ? "Paused" : "Training")
+                                : (failed_ ? "Failed" : outcome_.c_str());
+    const ImVec4 colour =
+        running ? (waiting ? t.caution : paused ? t.pending : t.success) : (failed_ ? t.error : t.pending);
     ui::StatusPill("##rl_status", state, colour);
     if (failed_ && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", outcome_.c_str());
     ImGui::SameLine();

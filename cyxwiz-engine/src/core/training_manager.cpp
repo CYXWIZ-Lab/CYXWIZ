@@ -100,6 +100,11 @@ TrainingMetrics TrainingManager::GetCurrentMetrics() const {
     return cached_metrics_;
 }
 
+std::string TrainingManager::WaitingForGpu() const {
+    std::lock_guard<std::mutex> lock(metrics_mutex_);
+    return cached_metrics_.waiting_for_gpu;
+}
+
 bool TrainingManager::StartTrainingCommon(
     std::unique_ptr<TrainingExecutor> executor,
     int epochs,

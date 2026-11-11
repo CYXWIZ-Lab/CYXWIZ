@@ -52,6 +52,7 @@ public:
         std::function<void()> resume;
         std::function<void()> stop;
         std::function<bool()> paused;
+        std::function<bool()> waiting;  // for another training run's GPU (the device chip says why)
         // After the run: its trained policy (TOFIX195 S5)
         std::function<bool()> has_policy;
         std::function<void()> play;

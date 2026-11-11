@@ -87,6 +87,8 @@ public:
 
     // Get current training metrics (thread-safe)
     TrainingMetrics GetCurrentMetrics() const;
+    // Why the run waits for another training run's GPU, while it does ("" otherwise)
+    std::string WaitingForGpu() const;
 
     /**
      * Start training with compiled graph configuration
