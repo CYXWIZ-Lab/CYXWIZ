@@ -1133,18 +1133,23 @@ void NodeEditor::Render() {
         // Button 1: Auto-Insert Flatten
         if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES " Auto-Insert Flatten", ImVec2(210, 0))) {
             if (from_node && to_node) {
-                // Create Flatten node
+                // The state before the change, so Undo removes the Flatten.
+                SaveUndoState();
+                const std::string from_name = from_node->name, to_name = to_node->name;
                 MLNode flatten_node = CreateNode(NodeType::Flatten, "Flatten");
 
-                // Calculate position at midpoint between nodes
-                ImVec2 from_pos = ImNodes::GetNodeGridSpacePos(from_node->id);
-                ImVec2 to_pos = ImNodes::GetNodeGridSpacePos(to_node->id);
+                // Midway between the two, from the positions cached while the
+                // canvas was drawn (ImNodes' own are only valid inside its scope).
+                const auto from_it = cached_node_positions_.find(pending_flatten_from_node_);
+                const auto to_it = cached_node_positions_.find(pending_flatten_to_node_);
+                const ImVec2 from_pos = from_it != cached_node_positions_.end() ? from_it->second : ImVec2(0, 0);
+                const ImVec2 to_pos = to_it != cached_node_positions_.end() ? to_it->second : from_pos;
                 ImVec2 flatten_pos = ImVec2(
                     (from_pos.x + to_pos.x) / 2.0f,
                     (from_pos.y + to_pos.y) / 2.0f
                 );
 
-                // Add to graph
+                // Add to graph (from_node / to_node point into nodes_: not used after this)
                 nodes_.push_back(flatten_node);
                 pending_positions_[flatten_node.id] = flatten_pos;
                 pending_positions_frames_ = 3;  // Apply position for 3 frames
@@ -1158,12 +1163,9 @@ void NodeEditor::Render() {
                          pending_flatten_from_node_, flatten_node.id);
                 CreateLink(flatten_out, pending_flatten_to_pin_,
                          flatten_node.id, pending_flatten_to_node_);
+                RebuildPinLookup();
 
-                // Save undo state
-                SaveUndoState();
-
-                spdlog::info("Auto-inserted Flatten node between {} and {}",
-                           from_node->name, to_node->name);
+                spdlog::info("Inserted a Flatten node between {} and {} (Ctrl+Z removes it)", from_name, to_name);
             }
 
             show_auto_insert_flatten_dialog_ = false;
