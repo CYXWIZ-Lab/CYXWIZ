@@ -144,12 +144,17 @@ bool CaptureArrayFireQueue(NeuralDeviceQueue& queue, std::string& error) {
 // Locks an ArrayFire array's device buffer for the lifetime of the object.
 class LockedDeviceArray {
 public:
-    // `read_only`: an input the provider only reads. When it is evaluated,
-    // contiguous and not a sub-array, its own buffer is handed over as it is
-    // (af_get_raw_ptr): af_get_device_ptr would first copy a buffer other
-    // arrays share (a Tensor's copies do), one device copy per input per call
-    // (TOFIX206 3.2). The provider runs on ArrayFire's queue, so ArrayFire
-    // work on the array stays ordered, and array_ keeps it alive.
+    // `read_only`: an input the provider only reads. When it is evaluated and
+    // contiguous, its buffer is handed over as it is (af_get_raw_ptr):
+    // af_get_device_ptr would first copy a buffer other arrays share (a
+    // Tensor's copies do), one device copy per input per call (TOFIX206 3.2).
+    // A contiguous view (a column range of a table) is its parent's buffer
+    // from its offset: af_get_raw_ptr gives the parent's start, so on CUDA the
+    // handle is that address plus the offset; an OpenCL or oneAPI handle is a
+    // buffer object, not an address, so there only a view at offset 0 is
+    // handed over and the rest are copied. The provider runs on ArrayFire's
+    // queue, so ArrayFire work on the array stays ordered, and array_ (which
+    // holds the parent) keeps it alive.
     // An array moved in (a fresh output): no other handle shares it, so the
     // lock below does not copy it.
     explicit LockedDeviceArray(af::array&& array) : LockedDeviceArray(std::move(array), false, 0) {}
@@ -161,11 +166,13 @@ private:
         void* pointer = nullptr;
         if (read_only) {
             array_.eval();
-            bool linear = false, owner = false;
+            bool linear = false;
+            dim_t offset = 0;
             if (af_is_linear(&linear, array_.get()) == AF_SUCCESS && linear &&
-                af_is_owner(&owner, array_.get()) == AF_SUCCESS && owner &&
+                af_get_offset(&offset, array_.get()) == AF_SUCCESS &&
+                (offset == 0 || af::getActiveBackend() == AF_BACKEND_CUDA) &&
                 af_get_raw_ptr(&pointer, array_.get()) == AF_SUCCESS && pointer) {
-                buffer_.handle = pointer;
+                buffer_.handle = static_cast<char*>(pointer) + offset * static_cast<dim_t>(af::getSizeOf(array_.type()));
                 buffer_.elements = static_cast<size_t>(array_.elements());
                 return;
             }

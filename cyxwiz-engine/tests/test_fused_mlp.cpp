@@ -155,6 +155,36 @@ void CheckParity() {
     Compare(last_act, "Dense-Dense-Tanh", 6, 5, 3);
 }
 
+// Inputs that are column runs of a wider table (a minibatch's columns, TOFIX206
+// 3.2 B2) are read in place from their offset: the same results as owned copies
+void CheckViews() {
+    const size_t rows = 64, inputs = 4, outputs = 2;
+    auto model = Chain(inputs, {64, 64}, outputs, Activations()[0].add);
+    std::string why;
+    auto fused = cyxwiz::FusedMlp::For(model, why);
+    if (!fused) return;
+    const auto table = Random({rows, 3 + inputs + 2}, 21);
+    const auto x_view = table.Slice(1, 3, 3 + static_cast<int>(inputs));  // offset 3 * rows
+    const auto dy_table = Random({rows, 1 + outputs}, 22);
+    const auto dy_view = dy_table.Slice(1, 1, 1 + static_cast<int>(outputs));
+    const auto owned = [](const cyxwiz::Tensor& t) {
+        const float* data = t.ReadData<float>();
+        return cyxwiz::Tensor(t.Shape(), std::vector<float>(data, data + t.NumElements()).data());
+    };
+    const auto x = owned(x_view), dy = owned(dy_view);
+    const cyxwiz::Tensor want = fused->Forward(x, true);
+    const auto want_grads = fused->Backward(dy);
+    const cyxwiz::Tensor got = fused->Forward(x_view, true);
+    const auto got_grads = fused->Backward(dy_view);
+    Check(Difference(got, want) == 0.0, "a column view's forward equals its copy's");
+    double gd = 0.0;
+    for (const auto& [name, g] : want_grads) {
+        const auto it = got_grads.find(name);
+        gd = it == got_grads.end() ? 1.0 : std::max(gd, Difference(it->second, g));
+    }
+    Check(gd == 0.0, "a column view's gradients equal its copy's (differ by " + std::to_string(gd) + ")");
+}
+
 void CheckRefusals() {
     std::string why;
     auto wide = Chain(4, {300}, 2, Activations()[0].add);
@@ -269,6 +299,7 @@ int main(int argc, char** argv) {
     std::string why;
     if (cyxwiz::FusedMlp::For(probe, why)) {
         CheckParity();
+        CheckViews();
         Time("CartPole policy 4-64-64-2 x8", 4, {64, 64}, 2, 8);
         Time("CartPole minibatch 4-64-64-2 x64", 4, {64, 64}, 2, 64);
         Time("HalfCheetah 17-256-256-6 x64", 17, {256, 256}, 6, 64);

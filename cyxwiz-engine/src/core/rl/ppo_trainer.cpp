@@ -7,6 +7,7 @@
 #include <cyxwiz/optimizers/gradient_clipping.h>
 #include <cyxwiz/sequential.h>
 
+#include <arrayfire.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -313,45 +314,57 @@ bool PpoTrainer::Train(const std::function<void(const PpoUpdateMetrics&)>& on_up
             ComputeGae(Rows(reward_buf, steps, n), Rows(value_buf, steps, n), Rows(done_buf, steps, n),
                        Tensor({n}, last_values.data()), config_.gamma, config_.gae_lambda, advantages, returns);
             const auto returns_host = Host(returns);
-            // The rollout as one [rollout, width] table on the device: each
-            // epoch shuffles it with one gather, each minibatch is a run of rows
-            const size_t width = obs_size + act_size + 4;
-            const Tensor table = Tensor::Cat({Rows(obs_buf, rollout, obs_size), Rows(act_buf, rollout, act_size),
-                                              Rows(logp_buf, rollout, 1), Rows(value_buf, rollout, 1),
-                                              advantages.Reshape({rollout, 1}), returns.Reshape({rollout, 1})},
+            // The rollout as one [rollout, width] table on the device (the
+            // host's columns go up in one piece)
+            const size_t host_width = obs_size + act_size + 2;
+            const size_t width = host_width + 2;
+            std::vector<float> host_table(rollout * host_width);
+            for (size_t r = 0; r < rollout; ++r) {
+                float* row = host_table.data() + r * host_width;
+                std::copy_n(obs_buf.begin() + r * obs_size, obs_size, row);
+                std::copy_n(act_buf.begin() + r * act_size, act_size, row + obs_size);
+                row[obs_size + act_size] = logp_buf[r];
+                row[obs_size + act_size + 1] = value_buf[r];
+            }
+            const Tensor table = Tensor::Cat({Rows(host_table, rollout, host_width), advantages.Reshape({rollout, 1}),
+                                              returns.Reshape({rollout, 1})},
                                              1);
+            const af::array table_array = table.GetSemanticArray();
+            // Every epoch's shuffled order, uploaded once per update (TOFIX206 3.2 B2)
+            const size_t epochs = static_cast<size_t>(std::max(config_.n_epochs, 0));
+            std::vector<unsigned> orders(rollout * epochs);
+            for (size_t e = 0; e < epochs; ++e) {
+                unsigned* order = orders.data() + e * rollout;
+                std::iota(order, order + rollout, 0u);
+                for (size_t i = rollout; i > 1; --i) std::swap(order[i - 1], order[random.Next() % i]);
+            }
+            const af::array orders_device = orders.empty() ? af::array() : af::array(static_cast<dim_t>(orders.size()), orders.data());
 
             // ---- K epochs of minibatches
             policy_->SetTraining(true);
             value_->SetTraining(true);
-            std::vector<int> order(rollout);
             Tensor statistics_sum, last_statistics;  // on the device until the update ends
             int minibatches = 0;
-            for (int epoch = 0; epoch < config_.n_epochs && !stop_; ++epoch) {
-                std::iota(order.begin(), order.end(), 0);
-                for (size_t i = rollout; i > 1; --i) std::swap(order[i - 1], order[random.Next() % i]);
-                const Tensor shuffled = table.IndexSelect(0, order);
-                const auto column = [&shuffled](size_t from, size_t count) {
-                    return shuffled.Slice(1, static_cast<int>(from), static_cast<int>(from + count));
-                };
-                const Tensor epoch_obs = column(0, obs_size);
-                const Tensor epoch_actions = column(obs_size, act_size);
-                const Tensor epoch_logp = column(obs_size + act_size, 1);
-                const Tensor epoch_values = column(obs_size + act_size + 1, 1);
-                const Tensor epoch_adv = column(obs_size + act_size + 2, 1);
-                const Tensor epoch_ret = column(width - 1, 1);
+            for (size_t epoch = 0; epoch < epochs && !stop_; ++epoch) {
                 for (size_t start = 0; start < rollout && !stop_; start += static_cast<size_t>(config_.batch_size)) {
                     const size_t end = std::min(rollout, start + static_cast<size_t>(config_.batch_size));
-                    const auto rows = [start, end](const Tensor& t) {
-                        return t.Slice(0, static_cast<int>(start), static_cast<int>(end));
+                    // The minibatch's rows gathered into a table of their own: each
+                    // of its columns is a contiguous run the provider reads in place
+                    const dim_t at = static_cast<dim_t>(epoch * rollout + start);
+                    af::array rows_array =
+                        af::lookup(table_array, orders_device(af::seq(static_cast<double>(at), static_cast<double>(at + static_cast<dim_t>(end - start) - 1))), 0);
+                    rows_array.eval();
+                    const Tensor minibatch = Tensor::FromSemanticArray(rows_array, {end - start, width});
+                    const auto column = [&minibatch](size_t from, size_t count) {
+                        return minibatch.Slice(1, static_cast<int>(from), static_cast<int>(from + count));
                     };
                     PpoBatch batch;
-                    batch.actions = rows(epoch_actions);
-                    batch.old_log_prob = rows(epoch_logp);
-                    batch.advantages = rows(epoch_adv);
-                    batch.returns = rows(epoch_ret);
-                    batch.old_values = rows(epoch_values);
-                    const Tensor mb_obs = rows(epoch_obs);
+                    batch.actions = column(obs_size, act_size);
+                    batch.old_log_prob = column(obs_size + act_size, 1);
+                    batch.old_values = column(obs_size + act_size + 1, 1);
+                    batch.advantages = column(obs_size + act_size + 2, 1);
+                    batch.returns = column(width - 1, 1);
+                    const Tensor mb_obs = column(0, obs_size);
                     const Tensor head = forward(*policy_, policy_fused_, mb_obs, true);
                     const Tensor value = forward(*value_, value_fused_, mb_obs, true);
                     const PpoLossResult r = discrete ? PpoCategoricalLoss(head, value, batch, config_.loss)
