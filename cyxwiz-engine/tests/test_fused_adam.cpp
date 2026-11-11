@@ -4,7 +4,10 @@
 // and the exported optimizer states after three steps agree, with and
 // without the clip, for PPO's groups (a policy and a value network of six
 // tensors each, a log standard deviation). Also: what StepTogether refuses
-// (AdamW, different learning rates, parameters at different steps).
+// (AdamW, different learning rates, parameters at different steps). And a
+// non-finite gradient norm, on every clip path, does what torch's
+// clip_grad_norm_ does by default: a NaN norm makes the gradients (and so the
+// parameters) NaN, an infinite norm makes the finite gradients 0.
 //
 // Runs on the device CYXWIZ_TEST_ARRAYFIRE_BACKEND names; without a provider
 // for it (the CPU), StepTogether says so and the comparison is not run.
@@ -18,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <map>
 #include <random>
 #include <string>
@@ -150,6 +154,64 @@ void CheckRefusals(bool provider) {
           "parameters at different steps are refused: " + why);
 }
 
+// [values of a] [values of b] as host floats
+std::vector<float> Host(const cyxwiz::Tensor& t) {
+    const float* d = t.ReadData<float>();
+    return std::vector<float>(d, d + t.NumElements());
+}
+
+void CheckNonFiniteAsTorch(bool provider) {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+    const auto grads = [](float a0, float a1, float b0) {
+        const float a[2] = {a0, a1};
+        const float b[1] = {b0};
+        return Params{{"a", cyxwiz::Tensor({2}, a, cyxwiz::DataType::Float32)},
+                      {"b", cyxwiz::Tensor({1}, b, cyxwiz::DataType::Float32)}};
+    };
+    for (const bool device : {false, true}) {
+        const std::string path = device ? "device clip" : "host clip";
+        Params g = grads(1.0f, nan, 2.0f);
+        try {
+            if (device) cyxwiz::ClipGradientsByGlobalNormOnDevice(g, 1.0f);
+            else cyxwiz::ClipGradientsByGlobalNorm(g, 1.0f);
+            const auto a = Host(g.at("a")), b = Host(g.at("b"));
+            Check(std::isnan(a[0]) && std::isnan(a[1]) && std::isnan(b[0]), path + ": a NaN norm makes every gradient NaN");
+        } catch (const std::exception& e) {
+            Check(false, path + ": a NaN norm is not refused (" + e.what() + ")");
+        }
+        g = grads(3.0f, inf, 4.0f);
+        try {
+            if (device) cyxwiz::ClipGradientsByGlobalNormOnDevice(g, 1.0f);
+            else cyxwiz::ClipGradientsByGlobalNorm(g, 1.0f);
+            const auto a = Host(g.at("a")), b = Host(g.at("b"));
+            Check(a[0] == 0.0f && b[0] == 0.0f && std::isnan(a[1]),
+                  path + ": an infinite norm makes the finite gradients 0 (inf x 0 is NaN)");
+        } catch (const std::exception& e) {
+            Check(false, path + ": an infinite norm is not refused (" + e.what() + ")");
+        }
+    }
+    if (!provider) return;
+    // The fused Adam (its clip in the same kernel): NaN gradients give NaN
+    // parameters; an infinite norm leaves the finite parameters as they were
+    // (first step, a zero gradient moves nothing)
+    const float p_init[2] = {0.5f, -0.25f};
+    for (const bool nan_case : {true, false}) {
+        Params p{{"a", cyxwiz::Tensor({2}, p_init, cyxwiz::DataType::Float32)},
+                 {"b", cyxwiz::Tensor({1}, p_init, cyxwiz::DataType::Float32)}};
+        const Params g = nan_case ? grads(1.0f, nan, 2.0f) : grads(3.0f, inf, 4.0f);
+        cyxwiz::AdamOptimizer o(1e-3);
+        std::string why;
+        Check(cyxwiz::AdamOptimizer::StepTogether({{&o, &p, &g}}, 1.0f, why), "StepTogether runs: " + why);
+        const auto a = Host(p.at("a")), b = Host(p.at("b"));
+        if (nan_case)
+            Check(std::isnan(a[0]) && std::isnan(a[1]) && std::isnan(b[0]), "fused Adam: a NaN norm makes the parameters NaN");
+        else
+            Check(a[0] == p_init[0] && b[0] == p_init[0] && std::isnan(a[1]),
+                  "fused Adam: an infinite norm leaves the finite parameters as they were");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -160,6 +222,7 @@ int main() {
     std::string why;
     const bool provider = cyxwiz::AdamOptimizer::StepTogether({{&o, &probe, &probe_grad}}, 0.0f, why);
     CheckRefusals(provider);
+    CheckNonFiniteAsTorch(provider);
     if (provider) {
         Compare(0.0f, 0.1f);
         Compare(0.5f, 0.1f);   // the norm is far above 0.5: every step clips

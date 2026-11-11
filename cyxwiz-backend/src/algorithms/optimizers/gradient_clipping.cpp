@@ -39,13 +39,10 @@ float ClipGradientsByGlobalNorm(std::map<std::string, Tensor>& gradients, float 
                                  e.what());
     }
     const float norm = static_cast<float>(std::sqrt(squared));
-    if (!std::isfinite(norm)) {
-        throw std::runtime_error("Gradient norm is not finite; the step cannot be clipped safely");
-    }
-    if (norm > max_norm) {
-        const float scale = max_norm / (norm + 1e-6f);
-        for (auto& [name, grad] : gradients) grad = grad * scale;
-    }
+    // As torch: coef clamped at 1, a NaN kept (so a NaN norm scales by NaN)
+    const float coef = max_norm / (norm + 1e-6f);
+    if (!(coef >= 1.0f))
+        for (auto& [name, grad] : gradients) grad = grad * coef;
     return norm;
 }
 
@@ -56,7 +53,9 @@ Tensor ClipGradientsByGlobalNormOnDevice(std::map<std::string, Tensor>& gradient
     try {
         af::array norm = af::sqrt(SumOfSquares(gradients));
         norm.eval();
-        af::array scale = (af::min)(max_norm / (norm + 1e-6f), 1.0f);
+        // As torch: coef clamped at 1, a NaN kept (af::min would turn NaN into 1)
+        const af::array coef = max_norm / (norm + 1e-6f);
+        af::array scale = af::select(coef >= 1.0f, 1.0, coef);
         scale.eval();
         // Left unevaluated: the optimizer's step evaluates the scaled
         // gradient in its own kernel

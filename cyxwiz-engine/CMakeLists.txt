@@ -7347,6 +7347,26 @@ add_custom_target(copy_test_computation_truth_ppo_fixture
 add_dependencies(test_computation_truth_ppo copy_test_computation_truth_ppo_fixture)
 add_test(NAME ppo_pytorch_parity COMMAND test_computation_truth_ppo)
 
+# ===== Test: gradient clipping (host, device, fused Adam) vs torch clip_grad_norm_ + Adam (TOFIX206) =====
+set(CYXWIZ_GRADIENT_CLIPPING_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/gradient_clipping_pytorch.json")
+add_executable(test_computation_truth_gradient_clipping tests/test_computation_truth_gradient_clipping.cpp)
+target_link_libraries(test_computation_truth_gradient_clipping PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_include_directories(test_computation_truth_gradient_clipping PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_compile_definitions(test_computation_truth_gradient_clipping PRIVATE
+    CYXWIZ_GRADIENT_CLIPPING_FIXTURE="${CYXWIZ_GRADIENT_CLIPPING_PYTORCH_FIXTURE}" NOMINMAX)
+add_custom_target(copy_test_computation_truth_gradient_clipping_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_gradient_clipping>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_GRADIENT_CLIPPING_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_gradient_clipping>/computation_truth_fixtures/gradient_clipping_pytorch.json"
+    SOURCES "${CYXWIZ_GRADIENT_CLIPPING_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_gradient_clipping copy_test_computation_truth_gradient_clipping_fixture)
+add_test(NAME gradient_clipping_pytorch_parity COMMAND test_computation_truth_gradient_clipping)
+
 # ===== Test: observation/reward normalisation vs Stable-Baselines3's VecNormalize (TOFIX195 S4.3a) =====
 add_executable(test_computation_truth_vec_normalize
     tests/test_computation_truth_vec_normalize.cpp

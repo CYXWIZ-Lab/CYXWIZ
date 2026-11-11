@@ -73,6 +73,7 @@ To write your own nodes in Python or C++, see
 | [Linear Attention](linear_attention.md) | Self-attention with linear cost |
 | [Regularization nodes](regularization.md) | Penalties on the model's parameters |
 | [Learning-rate schedulers](lr_schedulers.md) | Changing the learning rate during training |
+| [Gradient clipping](gradient_clipping.md) | Limiting how far one step can move the weights (as PyTorch's clip_grad_norm_) |
 | [Metric learning](metric_learning.md) | Pairs and triplets |
 | [Sentiment text classification](sentiment_text_classification.md) | The example text classification graphs |
 

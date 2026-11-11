@@ -436,6 +436,21 @@ generator with torch 2.10 (the Engine's python-embed has it). The same test
 checks OrthogonalWeights (torch.nn.init.orthogonal_'s contract: W W^T or
 W^T W is gain^2 I, one seed one matrix), which the PPO networks start from.
 
+Gradient clipping by the global norm has three implementations: the host
+clip (ClipGradientsByGlobalNorm, the optimizer nodes' Gradient clip norm),
+the device clip (ClipGradientsByGlobalNormOnDevice, PPO's per-tensor path)
+and the clip inside the fused Adam kernel (AdamOptimizer::StepTogether, PPO
+on the NVIDIA provider). `gradient_clipping_pytorch_parity`
+(test_computation_truth_gradient_clipping.cpp, fixture from
+generate_gradient_clipping_fixtures.py) matches each of them against
+torch.nn.utils.clip_grad_norm_ with its default error_if_nonfinite=False,
+followed by torch.optim.Adam: a clip that bites, one that does not, a NaN
+norm (every gradient, then every parameter, NaN) and an infinite norm (the
+finite gradients 0, the finite parameters unchanged). Non-finite numbers are
+written as "nan" / "inf" in the fixture. Run it on CPU and CUDA
+(CYXWIZ_TEST_ARRAYFIRE_BACKEND); the fused Adam is checked where a provider
+runs it.
+
 The PPO trainer's observation and reward normalisation (core/rl/vec_normalize,
 TOFIX195 S4.3a) is checked against Stable-Baselines3's own VecNormalize:
 `vec_normalize_sb3_parity` (test_computation_truth_vec_normalize.cpp, fixture
