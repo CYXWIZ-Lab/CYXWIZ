@@ -54,21 +54,14 @@ void PopulateMemorySnapshot(TrainingTraceEvent& event) {
         event.process_memory_source = process.source;
     }
 
-    if (cyxwiz::IsInitialized()) {
-        try {
-            size_t alloc_bytes = 0;
-            size_t alloc_buffers = 0;
-            size_t lock_bytes = 0;
-            size_t lock_buffers = 0;
-            af::deviceMemInfo(
-                &alloc_bytes, &alloc_buffers, &lock_bytes, &lock_buffers);
-            event.af_allocated_bytes = static_cast<uint64_t>(alloc_bytes);
-            event.af_alloc_buffers = static_cast<uint64_t>(alloc_buffers);
-            event.af_locked_bytes = static_cast<uint64_t>(lock_bytes);
-            event.af_lock_buffers = static_cast<uint64_t>(lock_buffers);
-        } catch (...) {
-            // Memory tracing must never affect training.
-        }
+    // Read on this (the computing) thread; the Monitor window reads the
+    // remembered answer from its own thread.
+    const DeviceMemoryHeld held = ReadDeviceMemoryHeld();
+    if (held.known) {
+        event.af_allocated_bytes = held.allocated_bytes;
+        event.af_alloc_buffers = held.buffers;
+        event.af_locked_bytes = held.in_use_bytes;
+        event.af_lock_buffers = held.buffers_in_use;
     }
 }
 

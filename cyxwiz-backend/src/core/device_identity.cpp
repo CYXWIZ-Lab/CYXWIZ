@@ -11,12 +11,8 @@
 
 #include <arrayfire.h>
 
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
+#include "cyxwiz/device_memory.h"
+#include "dynamic_library.h"
 
 namespace cyxwiz::detail {
 namespace {
@@ -47,50 +43,6 @@ std::string PciFingerprint(const DeviceInfo& info) {
         << std::setw(2) << info.pci_device << '.'
         << info.pci_function;
     return LowerAscii(out.str());
-}
-
-class DynamicLibrary {
-public:
-#ifdef _WIN32
-    explicit DynamicLibrary(const wchar_t* name, bool already_loaded = false)
-        : handle_(already_loaded ? GetModuleHandleW(name) : LoadLibraryW(name)),
-          owns_(!already_loaded && handle_ != nullptr) {}
-
-    ~DynamicLibrary() {
-        if (owns_) FreeLibrary(handle_);
-    }
-
-    void* Find(const char* symbol) const {
-        return handle_ != nullptr
-            ? reinterpret_cast<void*>(GetProcAddress(handle_, symbol))
-            : nullptr;
-    }
-
-private:
-    HMODULE handle_ = nullptr;
-    bool owns_ = false;
-#else
-    explicit DynamicLibrary(const char* name, bool already_loaded = false)
-        : handle_(dlopen(name,
-                         RTLD_LAZY |
-                             (already_loaded ? RTLD_NOLOAD : RTLD_LOCAL))) {}
-
-    ~DynamicLibrary() {
-        if (handle_ != nullptr) dlclose(handle_);
-    }
-
-    void* Find(const char* symbol) const {
-        return handle_ != nullptr ? dlsym(handle_, symbol) : nullptr;
-    }
-
-private:
-    void* handle_ = nullptr;
-#endif
-};
-
-template <typename Function>
-Function FindFunction(const DynamicLibrary& library, const char* symbol) {
-    return reinterpret_cast<Function>(library.Find(symbol));
 }
 
 #ifdef CYXWIZ_ENABLE_OPENCL
@@ -374,6 +326,14 @@ void EnrichCudaIdentity(DeviceInfo& info) {
                 sizeof(uuid.bytes));
             info.hardware_uuid_known = !info.hardware_uuid.empty();
         }
+    }
+
+    // What the device has free right now, for every program (a reading at
+    // listing time; ReadDeviceMemoryFree gives a fresh one).
+    const DeviceMemoryFree free_memory = ReadDeviceMemoryFree(info.hardware_uuid);
+    if (free_memory.known) {
+        info.memory_available = static_cast<size_t>(free_memory.free_bytes);
+        info.memory_available_known = true;
     }
 
     if (cu_device_get_attribute) {

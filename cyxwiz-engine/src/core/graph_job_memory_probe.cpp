@@ -3,6 +3,7 @@
 #include "training_trace_collector.h"
 
 #include <arrayfire.h>
+#include <cyxwiz/device_memory.h>
 
 #include <atomic>
 #include <filesystem>
@@ -11,9 +12,7 @@ namespace cyxwiz {
 namespace {
 
 std::uint64_t AllocatedDeviceBytes() {
-    size_t alloc_bytes = 0, alloc_buffers = 0, lock_bytes = 0, lock_buffers = 0;
-    af::deviceMemInfo(&alloc_bytes, &alloc_buffers, &lock_bytes, &lock_buffers);
-    return alloc_bytes;
+    return ReadDeviceMemoryHeld().allocated_bytes;
 }
 
 }  // namespace

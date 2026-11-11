@@ -133,6 +133,8 @@ set(BACKEND_SOURCES
     src/core/debug_hooks.cpp
     src/core/device_identity.cpp
     src/core/device_identity.h
+    src/core/device_memory.cpp
+    src/core/dynamic_library.h
     src/core/device_probe.h
     src/core/memory_manager.cpp
     src/core/cyxwiz_c.cpp
@@ -300,6 +302,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/engine.h
     include/cyxwiz/tensor.h
     include/cyxwiz/device.h
+    include/cyxwiz/device_memory.h
     include/cyxwiz/memory_manager.h
     include/cyxwiz/optimizer.h
     include/cyxwiz/optimizers/adaptive.h

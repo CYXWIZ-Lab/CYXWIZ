@@ -59,6 +59,7 @@ add_executable(cyxwiz-tests
     unit/test_data_loader.cpp
     unit/test_training_dataloader.cpp
     unit/test_utilities.cpp
+    unit/test_device_memory.cpp
     unit/test_cyxmodel_format.cpp
     unit/test_text_inference_input.cpp
     unit/test_byte_bpe.cpp

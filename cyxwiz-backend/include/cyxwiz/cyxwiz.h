@@ -13,6 +13,7 @@
 // Core components (order matters - no dependencies first)
 #include "memory_manager.h"
 #include "device.h"
+#include "device_memory.h"
 #include "tensor.h"
 #include "engine.h"
 
@@ -85,10 +86,6 @@ CYXWIZ_API bool IsInitialized();
 
 // Shutdown the backend
 CYXWIZ_API void Shutdown();
-
-// Return unused device buffers to the driver (ArrayFire garbage collection).
-// Safe to call at any time.
-CYXWIZ_API void ReleaseUnusedDeviceMemory();
 
 // Get version string
 CYXWIZ_API const char* GetVersionString();
