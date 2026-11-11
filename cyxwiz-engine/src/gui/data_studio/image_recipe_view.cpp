@@ -33,10 +33,10 @@ const char* kRowPayload = "CYXWIZ_RECIPE_ROW";
 const NodeType kOnceSteps[] = {NodeType::CenterCrop,   NodeType::Grayscale,     NodeType::ImageGaussianBlur,
                                NodeType::MorphologyTransform, NodeType::ImageContrast, NodeType::ImageDenoise,
                                NodeType::ImageSharpen, NodeType::ImageEdges,    NodeType::ImageSmooth,
-                               NodeType::ImageWarp,    NodeType::ImagePyramid};
+                               NodeType::ImageWarp,    NodeType::ImagePyramid,  NodeType::ImageFilter};
 const NodeType kOpenCvSteps[] = {NodeType::ImageContrast, NodeType::ImageDenoise, NodeType::ImageSharpen,
                                  NodeType::ImageEdges,    NodeType::ImageSmooth,  NodeType::ImageWarp,
-                                 NodeType::ImagePyramid};
+                                 NodeType::ImagePyramid,  NodeType::ImageFilter};
 const NodeType kPerBatchSteps[] = {NodeType::RandomCrop,        NodeType::RandomResizedCrop, NodeType::HorizontalFlip,
                                    NodeType::VerticalFlip,      NodeType::ImageRotate,       NodeType::RandomAffine,
                                    NodeType::RandomPerspective, NodeType::ColorJitter,       NodeType::RandomGrayscale,

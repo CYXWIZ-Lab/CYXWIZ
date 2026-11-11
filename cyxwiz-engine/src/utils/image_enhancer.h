@@ -100,6 +100,30 @@ public:
     );
 
     /**
+     * How a kernel reads pixels past the image's edge
+     */
+    enum class KernelBorder {
+        Reflect101, // gfedcb|abcdefgh|gfedcba (OpenCV's default)
+        Reflect,    // fedcba|abcdefgh|hgfedcb
+        Replicate,  // aaaaaa|abcdefgh|hhhhhhh
+        Zero        // 000000|abcdefgh|0000000
+    };
+
+    /**
+     * Apply a kernel to every channel (cv::filter2D: correlation, the
+     * kernel's centre on the pixel). The result is not clamped.
+     * @param image_data Float image data (0-1 range) [modified in-place]
+     * @param kernel rows x cols numbers, row-major
+     * @return true if successful, false otherwise
+     */
+    static bool ApplyKernel(
+        std::vector<float>& image_data,
+        int width, int height, int channels,
+        const std::vector<float>& kernel, int rows, int cols,
+        KernelBorder border = KernelBorder::Reflect101
+    );
+
+    /**
      * Enhancement presets for common use cases
      */
     enum class EnhancementPreset {

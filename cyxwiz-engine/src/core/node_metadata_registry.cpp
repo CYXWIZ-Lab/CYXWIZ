@@ -1999,6 +1999,32 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
          {"levels", "int", "1", "How many times; detail: which level (1 = the finest)", {}, ">0", "Levels"}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::ImageFilter, NodeCategory::Preprocessing, "Image Filter", ICON_FA_TABLE_CELLS,
+        {"image", "filter", "kernel", "convolution", "sharpen", "emboss", "outline", "prewitt", "roberts",
+         "kirsch", "robinson", "box", "opencv", "once"}, 0, false,
+        "Run one fixed kernel over every image",
+        "Each output pixel is the sum of its neighbours times the kernel, the kernel's centre on the pixel, each "
+        "channel alone (cv::filter2D). Pick a classic kernel or type your own: rows split by ';', numbers by "
+        "spaces. A kernel that sums to 0 (outline, Prewitt, Roberts, Kirsch, Robinson) answers with both signs: "
+        "output absolute keeps its size, offset stores it around mid-grey (128 = no response). " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Filter -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"preset", "enum", "sharpen", "The kernel: a classic one, or custom to type it",
+          {"custom", "identity", "box", "sharpen", "emboss", "outline", "prewitt_x", "prewitt_y", "roberts_x",
+           "roberts_y", "kirsch", "robinson"}, "", "Kernel"},
+         {"direction", "enum", "n", "Kirsch and Robinson: the side an edge is brighter on",
+          {"n", "ne", "e", "se", "s", "sw", "w", "nw"}, "", "Direction"},
+         {"kernel", "string", "0 -1 0; -1 5 -1; 0 -1 0",
+          "custom: rows split by ';', numbers by spaces or commas; up to 31 each way", {}, "", "Custom kernel"},
+         {"normalize", "bool", "false", "Divide the kernel by its sum (when not 0), so brightness stays", {}, "",
+          "Normalize"},
+         {"border", "enum", "reflect_101", "What the kernel reads past the image's edge",
+          {"reflect_101", "reflect", "replicate", "zero"}, "", "Border"},
+         {"output", "enum", "clip", "A response outside 0 to 1: cut, its size, or around mid-grey",
+          {"clip", "absolute", "offset"}, "", "Output"}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", ICON_FA_WAND_MAGIC_SPARKLES,
         {"image", "augmentation", "preset", "recipe", "cifar", "randaugment"}, 0, false,
         "A standard training augmentation recipe in one node",

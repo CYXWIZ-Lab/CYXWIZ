@@ -625,6 +625,10 @@ enum class NodeType {
     GaussianNoise,      // N(mean, sigma) added to every pixel
     RandomGrayscale,    // gray in the same channels, at random
 
+    // ===== Appended classic image filters (TOFIX178 1.10) =====
+    // Done once when the images are prepared, on the CPU workers.
+    ImageFilter,        // a typed kernel or a classic one (cv::filter2D)
+
     // Special sentinel value
     Unknown
 };

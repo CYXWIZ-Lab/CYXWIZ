@@ -206,6 +206,38 @@ bool ImageEnhancer::ApplySharpen(
     }
 }
 
+bool ImageEnhancer::ApplyKernel(
+    std::vector<float>& image_data,
+    int width, int height, int channels,
+    const std::vector<float>& kernel, int rows, int cols,
+    KernelBorder border
+) {
+    if (!ValidateInput(image_data, width, height, channels)) {
+        return false;
+    }
+    if (rows <= 0 || cols <= 0 || kernel.size() != static_cast<size_t>(rows) * static_cast<size_t>(cols)) {
+        spdlog::error("ImageEnhancer: a {} x {} kernel needs {} numbers, got {}", rows, cols, rows * cols,
+                      kernel.size());
+        return false;
+    }
+
+    try {
+        cv::Mat img(height, width, CV_32FC(channels), image_data.data());
+        const cv::Mat k(rows, cols, CV_32F, const_cast<float*>(kernel.data()));
+        const int cv_border = border == KernelBorder::Reflect     ? cv::BORDER_REFLECT
+                              : border == KernelBorder::Replicate ? cv::BORDER_REPLICATE
+                              : border == KernelBorder::Zero      ? cv::BORDER_CONSTANT
+                                                                  : cv::BORDER_REFLECT_101;
+        cv::Mat filtered;
+        cv::filter2D(img, filtered, CV_32F, k, cv::Point(-1, -1), 0.0, cv_border);
+        std::memcpy(image_data.data(), filtered.data, image_data.size() * sizeof(float));
+        return true;
+    } catch (const cv::Exception& e) {
+        spdlog::error("ImageEnhancer: OpenCV exception in ApplyKernel: {}", e.what());
+        return false;
+    }
+}
+
 bool ImageEnhancer::ApplyPreset(
     std::vector<float>& image_data,
     int width, int height, int channels,

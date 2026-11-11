@@ -129,6 +129,13 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Image Filter node.** One fixed kernel over every image, done once when
+  the images are prepared: a classic one (identity, box, sharpen, emboss,
+  outline, Prewitt x / y, Roberts x / y, Kirsch and Robinson in eight
+  directions) or the numbers you type (`0 -1 0; -1 5 -1; 0 -1 0`), with
+  Normalize, a border choice and three ways to store answers outside 0 to
+  255 (clip, absolute, around mid-grey). On the canvas and in Data Studio >
+  Prepare. Example: `examples/cyxgraph/cats_dogs_image_filter.cyxgraph`.
 - **Neural Architecture Search trains its best versions.** Tools > Model >
   Neural Architecture Search reads the input and output sizes from the
   graph (no typed Input Configuration). It shows the quick score as a card

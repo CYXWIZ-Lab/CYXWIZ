@@ -1,4 +1,4 @@
-// ApplyCvImageStep: the Engine's OpenCV classes (ImageEnhancer,
+// ApplyCvImageStep: the Engine's OpenCV classes (ImageEnhancer incl. its kernel filter,
 // BlurTransform, PerspectiveTransform, PyramidTransform) on one uint8 image.
 // They work on float [0, 1]; uint8 in and rounding once at the end keeps
 // the prepared set's values what the classes give.
@@ -111,6 +111,22 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
             config.output_width = s.out_width;
             config.output_height = s.out_height;
             ok = PerspectiveTransform::Apply(x, w, h, c, config);
+            break;
+        }
+        case CvImageStepKind::Filter: {
+            FilterKernel k;
+            std::string why;
+            if (!ResolveFilterKernel(s, k, &why)) return fail(why);
+            const auto border = s.filter_border == CvFilterBorder::Reflect     ? ImageEnhancer::KernelBorder::Reflect
+                                : s.filter_border == CvFilterBorder::Replicate ? ImageEnhancer::KernelBorder::Replicate
+                                : s.filter_border == CvFilterBorder::Zero      ? ImageEnhancer::KernelBorder::Zero
+                                                                               : ImageEnhancer::KernelBorder::Reflect101;
+            ok = ImageEnhancer::ApplyKernel(x, w, h, c, k.values, k.rows, k.cols, border);
+            // Stored 0 to 255: the response's size, or around mid-grey (128 = no response).
+            if (ok && s.filter_output == CvFilterOutput::Absolute)
+                for (float& v : x) v = std::fabs(v);
+            if (ok && s.filter_output == CvFilterOutput::Offset)
+                for (float& v : x) v += 128.0f / 255.0f;
             break;
         }
         case CvImageStepKind::Pyramid:

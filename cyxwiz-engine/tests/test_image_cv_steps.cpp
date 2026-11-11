@@ -197,6 +197,107 @@ int main() {
               "no detail is mid-grey");
         Check(Run(detail, rgb) != flat_detail, "an image with edges has detail");
     }
+    // Filter: a kernel over every channel, as cv::filter2D gives it.
+    {
+        const auto by_opencv = [&](const std::vector<float>& values, int rows, int cols, int border, double add,
+                                   bool absolute) {
+            return OnFloat(rgb, [&](const cv::Mat& x, cv::Mat& y) {
+                cv::filter2D(x, y, CV_32F, cv::Mat(rows, cols, CV_32F, const_cast<float*>(values.data())),
+                             cv::Point(-1, -1), add, border);
+                if (absolute) y = cv::abs(y);
+            });
+        };
+        CvImageStep s = Step(CvImageStepKind::Filter);  // sharpen 3 x 3
+        Check(CvImageShapeAfter(s, kRgb) == kRgb, "a filter keeps the shape");
+        Check(Worst(Run(s, rgb), by_opencv({0, -1, 0, -1, 5, -1, 0, -1, 0}, 3, 3, cv::BORDER_REFLECT_101, 0, false)) == 0,
+              "sharpen is filter2D with its kernel");
+        Check(CvImageStepText(s) == "Filter (Sharpen 3 \xC3\x97 3)", "filter text");
+
+        // Identity changes nothing; a typed identity is the same set.
+        s.filter_preset = CvFilterPreset::Identity;
+        const auto same = Run(s, rgb);
+        Check(std::equal(same.begin(), same.end(), rgb.data), "identity keeps every pixel");
+        CvImageStep typed = s;
+        typed.filter_preset = CvFilterPreset::Custom;
+        typed.filter_kernel = "0 0 0; 0, 1, 0\n0 0 0;";
+        Check(Run(typed, rgb) == same, "rows by ';' or a new line, numbers by spaces or commas");
+
+        // Prewitt x, absolute, zero border.
+        s = Step(CvImageStepKind::Filter);
+        s.filter_preset = CvFilterPreset::PrewittX;
+        s.filter_output = CvFilterOutput::Absolute;
+        s.filter_border = CvFilterBorder::Zero;
+        Check(Worst(Run(s, rgb), by_opencv({-1, 0, 1, -1, 0, 1, -1, 0, 1}, 3, 3, cv::BORDER_CONSTANT, 0, true)) == 0,
+              "Prewitt x, its size, zeros past the edge");
+        Check(CvImageStepText(s) == "Filter (Prewitt x 3 \xC3\x97 3, absolute)", "absolute in the text");
+
+        // Roberts (2 x 2) around mid-grey, the edge repeated.
+        s = Step(CvImageStepKind::Filter);
+        s.filter_preset = CvFilterPreset::RobertsY;
+        s.filter_output = CvFilterOutput::Offset;
+        s.filter_border = CvFilterBorder::Replicate;
+        Check(Worst(Run(s, rgb), by_opencv({0, 1, -1, 0}, 2, 2, cv::BORDER_REPLICATE, 128.0 / 255.0, false)) == 0,
+              "Roberts y around mid-grey");
+        const cv::Mat flat(kH, kW, CV_8UC3, cv::Scalar(90, 90, 90));
+        const auto none = Run(s, flat);
+        Check(std::all_of(none.begin(), none.end(), [](uint8_t v) { return v == 128; }), "no response is mid-grey");
+
+        // The compass kernels turn clockwise from north.
+        s = Step(CvImageStepKind::Filter);
+        s.filter_preset = CvFilterPreset::Kirsch;
+        FilterKernel k;
+        Check(ResolveFilterKernel(s, k) && k.values == std::vector<float>({5, 5, 5, -3, 0, -3, -3, -3, -3}), "Kirsch north");
+        s.filter_direction = CvFilterDirection::NE;
+        Check(ResolveFilterKernel(s, k) && k.values == std::vector<float>({-3, 5, 5, -3, 0, 5, -3, -3, -3}), "Kirsch north-east");
+        Check(CvImageStepText(s) == "Filter (Kirsch NE)", "compass text");
+        s.filter_preset = CvFilterPreset::Robinson;
+        s.filter_direction = CvFilterDirection::E;
+        Check(ResolveFilterKernel(s, k) && k.values == std::vector<float>({-1, 0, 1, -2, 0, 2, -1, 0, 1}), "Robinson east");
+        s.filter_direction = CvFilterDirection::S;
+        Check(ResolveFilterKernel(s, k) && k.values == std::vector<float>({-1, -2, -1, 0, 0, 0, 1, 2, 1}), "Robinson south");
+
+        // Normalize: a typed box of ones is the box preset; a kernel summing to 0 stays.
+        s = Step(CvImageStepKind::Filter);
+        s.filter_preset = CvFilterPreset::Custom;
+        s.filter_kernel = "1 1 1; 1 1 1; 1 1 1";
+        s.filter_normalize = true;
+        CvImageStep box = Step(CvImageStepKind::Filter);
+        box.filter_preset = CvFilterPreset::Box;
+        Check(Run(s, rgb) == Run(box, rgb), "ones normalized are the box");
+        Check(Worst(Run(box, rgb), OnFloat(rgb, [](const cv::Mat& x, cv::Mat& y) { cv::blur(x, y, cv::Size(3, 3)); })) <= 1,
+              "the box is cv::blur 3 x 3");
+        s.filter_kernel = "-1 0 1";
+        Check(ResolveFilterKernel(s, k) && k.rows == 1 && k.cols == 3 && k.values == std::vector<float>({-1, 0, 1}),
+              "a kernel that sums to 0 is not divided; one row is a kernel");
+
+        // What cannot be read says why.
+        s.filter_kernel = "1 2; 3";
+        Check(ValidateCvImageStep(s, kRgb) == "the kernel's rows differ in length: row 2 has 1, the rows before it 2", "ragged rows");
+        s.filter_kernel = "1 x 1";
+        Check(ValidateCvImageStep(s, kRgb) == "the kernel has something that is not a number in row 1", "not a number");
+        s.filter_kernel = " ; ";
+        Check(!ValidateCvImageStep(s, kRgb).empty(), "an empty kernel");
+        s.filter_kernel = "1 1 1 1 1";
+        Check(ValidateCvImageStep(s, image::ImageShape{4, 4, 1}) ==
+                  "the kernel is 5 \xC3\x97 1: at most 4 each way here (the image's shorter side)",
+              "a kernel wider than the image");
+
+        // The set's key: the numbers applied, the border and the output.
+        CvImageStep a = Step(CvImageStepKind::Filter), b = a;
+        b.filter_border = CvFilterBorder::Zero;
+        Check(CvImageStepIdentity(a) != CvImageStepIdentity(b), "another border is another set");
+        b = a;
+        b.filter_output = CvFilterOutput::Offset;
+        Check(CvImageStepIdentity(a) != CvImageStepIdentity(b), "another output is another set");
+        b = a;
+        b.filter_preset = CvFilterPreset::Kirsch;
+        CvImageStep turned = b;
+        turned.filter_direction = CvFilterDirection::W;
+        Check(CvImageStepIdentity(b) != CvImageStepIdentity(turned), "another direction is another set");
+        b = a;
+        b.filter_kernel = "9 9 9";  // not read by a preset
+        Check(CvImageStepIdentity(a) == CvImageStepIdentity(b), "a preset ignores the typed kernel");
+    }
     // Grey input works for every step.
     {
         cv::Mat grey;
@@ -204,7 +305,7 @@ int main() {
         const image::ImageShape g{kH, kW, 1};
         for (auto kind : {CvImageStepKind::Contrast, CvImageStepKind::Denoise, CvImageStepKind::Sharpen,
                           CvImageStepKind::Edges, CvImageStepKind::Smooth, CvImageStepKind::Warp,
-                          CvImageStepKind::Pyramid})
+                          CvImageStepKind::Pyramid, CvImageStepKind::Filter})
             Check(Run(Step(kind), grey, g).size() == CvImageShapeAfter(Step(kind), g).Size(), "grey input");
     }
     // Checks.

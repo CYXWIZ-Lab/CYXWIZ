@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <numeric>
+#include <sstream>
 
 namespace cyxwiz {
 
@@ -73,7 +75,106 @@ const char* WarpName(CvWarpMethod m) {
 
 bool Polar(CvWarpMethod m) { return m == CvWarpMethod::LogPolar || m == CvWarpMethod::LinearPolar; }
 
+const char* FilterPresetName(CvFilterPreset p) {
+    switch (p) {
+        case CvFilterPreset::Custom: return "custom";
+        case CvFilterPreset::Identity: return "Identity";
+        case CvFilterPreset::Box: return "Box";
+        case CvFilterPreset::Sharpen: return "Sharpen";
+        case CvFilterPreset::Emboss: return "Emboss";
+        case CvFilterPreset::Outline: return "Outline";
+        case CvFilterPreset::PrewittX: return "Prewitt x";
+        case CvFilterPreset::PrewittY: return "Prewitt y";
+        case CvFilterPreset::RobertsX: return "Roberts x";
+        case CvFilterPreset::RobertsY: return "Roberts y";
+        case CvFilterPreset::Kirsch: return "Kirsch";
+        case CvFilterPreset::Robinson: return "Robinson";
+    }
+    return "custom";
+}
+
+bool Compass(CvFilterPreset p) { return p == CvFilterPreset::Kirsch || p == CvFilterPreset::Robinson; }
+
+// A 3 x 3 compass kernel facing north, turned clockwise in steps of 45
+// degrees: its eight outer values move round the ring.
+FilterKernel Turned(const std::array<float, 9>& north, int steps) {
+    static const int kRing[8] = {0, 1, 2, 5, 8, 7, 6, 3};
+    FilterKernel k{3, 3, std::vector<float>(north.begin(), north.end())};
+    for (int i = 0; i < 8; ++i) k.values[static_cast<size_t>(kRing[(i + steps) % 8])] = north[static_cast<size_t>(kRing[i])];
+    return k;
+}
+
+// Rows split by ';' or a new line, numbers by spaces or commas.
+bool ReadKernel(const std::string& text, FilterKernel& kernel, std::string& why) {
+    kernel = {};
+    std::string rows_text = text;
+    std::replace(rows_text.begin(), rows_text.end(), '\n', ';');
+    std::istringstream rows(rows_text);
+    for (std::string row; std::getline(rows, row, ';');) {
+        std::replace(row.begin(), row.end(), ',', ' ');
+        std::istringstream in(row);
+        std::vector<float> values;
+        for (float v; in >> v;) values.push_back(v);
+        if (!in.eof()) {
+            why = "the kernel has something that is not a number in row " + std::to_string(kernel.rows + 1);
+            return false;
+        }
+        if (values.empty()) continue;  // a trailing ';' or an empty line
+        if (kernel.rows > 0 && static_cast<int>(values.size()) != kernel.cols) {
+            why = "the kernel's rows differ in length: row " + std::to_string(kernel.rows + 1) + " has " +
+                  std::to_string(values.size()) + ", the rows before it " + std::to_string(kernel.cols);
+            return false;
+        }
+        kernel.cols = static_cast<int>(values.size());
+        ++kernel.rows;
+        kernel.values.insert(kernel.values.end(), values.begin(), values.end());
+    }
+    if (kernel.rows == 0) {
+        why = "the kernel is empty: type its rows, split by ';' (0 -1 0; -1 5 -1; 0 -1 0)";
+        return false;
+    }
+    if (kernel.rows > kFilterKernelMaxSide || kernel.cols > kFilterKernelMaxSide) {
+        why = "the kernel is " + std::to_string(kernel.rows) + " rows by " + std::to_string(kernel.cols) +
+              " numbers: at most " + std::to_string(kFilterKernelMaxSide) + " each way";
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
+
+float FilterKernel::Sum() const { return std::accumulate(values.begin(), values.end(), 0.0f); }
+
+bool ResolveFilterKernel(const CvImageStep& s, FilterKernel& k, std::string* why) {
+    const int turn = static_cast<int>(s.filter_direction);
+    switch (s.filter_preset) {
+        case CvFilterPreset::Custom: {
+            std::string reason;
+            if (!ReadKernel(s.filter_kernel, k, reason)) {
+                if (why) *why = reason;
+                return false;
+            }
+            break;
+        }
+        case CvFilterPreset::Identity: k = {3, 3, {0, 0, 0, 0, 1, 0, 0, 0, 0}}; break;
+        case CvFilterPreset::Box: k = {3, 3, std::vector<float>(9, 1.0f / 9.0f)}; break;
+        case CvFilterPreset::Sharpen: k = {3, 3, {0, -1, 0, -1, 5, -1, 0, -1, 0}}; break;
+        case CvFilterPreset::Emboss: k = {3, 3, {-2, -1, 0, -1, 1, 1, 0, 1, 2}}; break;
+        case CvFilterPreset::Outline: k = {3, 3, {-1, -1, -1, -1, 8, -1, -1, -1, -1}}; break;
+        case CvFilterPreset::PrewittX: k = {3, 3, {-1, 0, 1, -1, 0, 1, -1, 0, 1}}; break;
+        case CvFilterPreset::PrewittY: k = {3, 3, {-1, -1, -1, 0, 0, 0, 1, 1, 1}}; break;
+        case CvFilterPreset::RobertsX: k = {2, 2, {1, 0, 0, -1}}; break;
+        case CvFilterPreset::RobertsY: k = {2, 2, {0, 1, -1, 0}}; break;
+        case CvFilterPreset::Kirsch: k = Turned({5, 5, 5, -3, 0, -3, -3, -3, -3}, turn); break;
+        case CvFilterPreset::Robinson: k = Turned({1, 2, 1, 0, 0, 0, -1, -2, -1}, turn); break;
+    }
+    if (s.filter_normalize) {
+        const float sum = k.Sum();
+        if (std::fabs(sum) > 1e-6f)
+            for (float& v : k.values) v /= sum;
+    }
+    return true;
+}
 
 std::string ValidateCvImageStep(const CvImageStep& s, const image::ImageShape& in) {
     if (in.height == 0 || in.width == 0) return "the image has no pixels";
@@ -108,6 +209,15 @@ std::string ValidateCvImageStep(const CvImageStep& s, const image::ImageShape& i
                 if (!Odd(s.edge_kernel) || s.edge_kernel > 31) return "kernel size must be odd, at most 31, for Laplacian";
             }
             return "";
+        case CvImageStepKind::Filter: {
+            FilterKernel k;
+            std::string why;
+            if (!ResolveFilterKernel(s, k, &why)) return why;
+            if (static_cast<size_t>(std::max(k.rows, k.cols)) > side)
+                return "the kernel is " + std::to_string(k.cols) + kTimes + std::to_string(k.rows) +
+                       ": at most " + std::to_string(side) + " each way here (the image's shorter side)";
+            return "";
+        }
         case CvImageStepKind::Smooth:
             if (!Odd(s.kernel_size)) return "kernel size must be an odd number of pixels";
             if (static_cast<size_t>(s.kernel_size) > side)
@@ -225,6 +335,16 @@ std::string CvImageStepText(const CvImageStep& s) {
                         (s.out_height > 0 ? std::to_string(s.out_height) : std::string("same"));
             return text;
         }
+        case CvImageStepKind::Filter: {
+            static const char* kDirections[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+            std::string text = std::string("Filter (") + FilterPresetName(s.filter_preset);
+            FilterKernel k;
+            if (Compass(s.filter_preset)) text += std::string(" ") + kDirections[static_cast<int>(s.filter_direction)];
+            else if (ResolveFilterKernel(s, k)) text += " " + std::to_string(k.cols) + kTimes + std::to_string(k.rows);
+            if (s.filter_output == CvFilterOutput::Absolute) text += ", absolute";
+            if (s.filter_output == CvFilterOutput::Offset) text += ", around mid-grey";
+            return text + ")";
+        }
         case CvImageStepKind::Pyramid: {
             const char* op = s.pyramid == CvPyramidOperation::Down ? "down"
                              : s.pyramid == CvPyramidOperation::Up ? "up" : "detail";
@@ -280,6 +400,18 @@ nlohmann::json CvImageStepIdentity(const CvImageStep& s) {
             j["max_radius"] = f(s.max_radius);
             j["inverse"] = s.inverse;
             j["out"] = {s.out_width, s.out_height};
+            break;
+        }
+        case CvImageStepKind::Filter: {
+            // The numbers applied, so a preset and the same kernel typed agree.
+            FilterKernel k;
+            nlohmann::json values = nlohmann::json::array();
+            if (ResolveFilterKernel(s, k))
+                for (float v : k.values) values.push_back(f(v));
+            j["rows"] = k.rows;
+            j["kernel"] = values;
+            j["border"] = static_cast<int>(s.filter_border);
+            j["output"] = static_cast<int>(s.filter_output);
             break;
         }
         case CvImageStepKind::Pyramid:

@@ -1,8 +1,8 @@
 #pragma once
 
 // The OpenCV image steps (TOFIX178 1.3f): Image Contrast (CLAHE), Image
-// Denoise, Image Sharpen, Image Edges, Image Smooth, Image Warp and Image
-// Pyramid. Each gives every image the same result in every epoch, so it is
+// Denoise, Image Sharpen, Image Edges, Image Smooth, Image Warp, Image
+// Pyramid and Image Filter (1.10a). Each gives every image the same result in every epoch, so it is
 // done once when the images are prepared, on the CPU workers, in canvas
 // order with the device transforms that are done once (Center Crop,
 // Grayscale, Gaussian Blur, Morphology). The prepared set is uint8, so each
@@ -22,13 +22,22 @@
 
 namespace cyxwiz {
 
-enum class CvImageStepKind { Contrast, Denoise, Sharpen, Edges, Smooth, Warp, Pyramid };
+enum class CvImageStepKind { Contrast, Denoise, Sharpen, Edges, Smooth, Warp, Pyramid, Filter };
 enum class CvContrastColour { Lightness, EachChannel };
 enum class CvEdgeMethod { Canny, Sobel, Laplacian, Scharr };
 enum class CvSmoothMethod { Box, Median, Bilateral };
 enum class CvWarpMethod { FourCorners, ThreePoints, LogPolar, LinearPolar };
 enum class CvWarpInterpolation { Nearest, Linear, Cubic, Lanczos };
 enum class CvPyramidOperation { Down, Up, Detail };
+// Image Filter: a typed kernel or a classic one; Kirsch and Robinson have
+// eight directions (the side an edge is brighter on).
+enum class CvFilterPreset {
+    Custom, Identity, Box, Sharpen, Emboss, Outline, PrewittX, PrewittY, RobertsX, RobertsY, Kirsch, Robinson
+};
+enum class CvFilterDirection { N, NE, E, SE, S, SW, W, NW };
+enum class CvFilterBorder { Reflect101, Reflect, Replicate, Zero };
+// What becomes of a response outside [0, 1]: cut, its size, or around mid-grey.
+enum class CvFilterOutput { Clip, Absolute, Offset };
 
 struct CvImageStep {
     CvImageStepKind kind = CvImageStepKind::Contrast;
@@ -72,12 +81,31 @@ struct CvImageStep {
     // Pyramid.
     CvPyramidOperation pyramid = CvPyramidOperation::Down;
     int levels = 1;
+    // Filter: cv::filter2D (correlation, the kernel's centre on the pixel).
+    CvFilterPreset filter_preset = CvFilterPreset::Sharpen;
+    CvFilterDirection filter_direction = CvFilterDirection::N;
+    std::string filter_kernel = "0 -1 0; -1 5 -1; 0 -1 0";  // Custom: rows split by ';'
+    bool filter_normalize = false;  // divide by the kernel's sum when it is not 0
+    CvFilterBorder filter_border = CvFilterBorder::Reflect101;
+    CvFilterOutput filter_output = CvFilterOutput::Clip;
 };
+
+// The kernel an Image Filter step applies: its preset (turned to its
+// direction) or its typed text, divided by its sum when the step says so.
+struct FilterKernel {
+    int rows = 0;
+    int cols = 0;
+    std::vector<float> values;  // row-major
+    float Sum() const;
+};
+inline constexpr int kFilterKernelMaxSide = 31;
+// False, with the reason, when the typed kernel cannot be read.
+bool ResolveFilterKernel(const CvImageStep& step, FilterKernel& kernel, std::string* why = nullptr);
 
 // "" when the step can run on `input`, otherwise why not.
 std::string ValidateCvImageStep(const CvImageStep& step, const image::ImageShape& input);
 image::ImageShape CvImageShapeAfter(const CvImageStep& step, const image::ImageShape& input);
-// "Image Contrast (CLAHE) 2 / 8", "Image Edges (Canny 50 / 150)".
+// "CLAHE 2.0 / 8", "Edges (Canny 50 / 150)", "Filter (Sharpen 3 x 3)".
 std::string CvImageStepText(const CvImageStep& step);
 // Every setting the result depends on, for the prepared set's key; the
 // header keeps it, with "text" for Profile's cached sets.

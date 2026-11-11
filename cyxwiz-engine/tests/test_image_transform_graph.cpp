@@ -385,6 +385,38 @@ void CheckCompiler() {
                   {gui::NodeType::Resize, "Second resize", {{"width", "4"}, {"height", "4"}}}},
                  "Second resize", "Resize must come before the image transforms", "Resize after an OpenCV step");
 
+    // Image Filter (TOFIX178 1.10a): a kernel done once with the images.
+    const auto filter = Compile({kResize,
+                                 {gui::NodeType::ImageFilter, "Kirsch", {{"preset", "kirsch"}, {"direction", "se"},
+                                                                         {"border", "replicate"}}},
+                                 {gui::NodeType::ImageFilter, "Typed", {{"preset", "custom"}, {"kernel", "1 2 1; 2 4 2; 1 2 1"},
+                                                                        {"normalize", "true"}}},
+                                 kNormalize});
+    Check(filter.is_valid, "two Image Filters compile; errors:\n" + Errors(filter));
+    Check(filter.image_cv_steps.size() == 2 && filter.image_cv_steps[0].kind == cyxwiz::CvImageStepKind::Filter &&
+              filter.image_cv_steps[0].filter_preset == cyxwiz::CvFilterPreset::Kirsch &&
+              filter.image_cv_steps[0].filter_direction == cyxwiz::CvFilterDirection::SE &&
+              filter.image_cv_steps[0].filter_border == cyxwiz::CvFilterBorder::Replicate &&
+              filter.image_cv_steps[1].filter_preset == cyxwiz::CvFilterPreset::Custom &&
+              filter.image_cv_steps[1].filter_kernel == "1 2 1; 2 4 2; 1 2 1" && filter.image_cv_steps[1].filter_normalize,
+          "the filters keep their settings");
+    Check(filter.input_shape == std::vector<size_t>({8, 8, 3}), "a filter keeps the image's shape");
+    bool zero_sum = false, typed_told = false;
+    for (const auto& issue : filter.issues) {
+        const bool about_sum = issue.level == cyxwiz::IssueLevel::Info && issue.message.find("sums to 0") != std::string::npos;
+        zero_sum = zero_sum || (about_sum && issue.node_name == "Kirsch");
+        typed_told = typed_told || (about_sum && issue.node_name == "Typed");
+    }
+    Check(zero_sum && !typed_told, "a kernel that sums to 0 with output clip says what is lost; a blur does not");
+    CheckRefused({kResize, {gui::NodeType::ImageFilter, "Ragged", {{"preset", "custom"}, {"kernel", "1 2; 3"}}}},
+                 "Ragged", "rows differ in length", "a typed kernel with ragged rows");
+    CheckRefused({kResize, {gui::NodeType::ImageFilter, "Wide", {{"preset", "custom"}, {"kernel", "1 1 1 1 1 1 1 1 1"}}}},
+                 "Wide", "at most 8 each way here", "a kernel wider than the 8 x 8 image");
+    CheckRefused({kResize, {gui::NodeType::ImageFilter, "Gabor", {{"preset", "gabor"}}}},
+                 "Gabor", "preset must be", "an unknown preset");
+    CheckRefused({kResize, {gui::NodeType::HorizontalFlip, "Flip", {}}, {gui::NodeType::ImageFilter, "Late filter", {}}},
+                 "Late filter", "move it before Horizontal Flip", "a filter after a random step");
+
     // Normalize per channel (TOFIX178 1.4).
     const auto per_channel = Compile({kResize, {gui::NodeType::Normalize, "Normalize",
                                                 {{"statistics", "per_channel"},

@@ -32,10 +32,11 @@ std::string TypeId(gui::NodeType type) {
 void CheckGraphImportNameContract(
     const cyxwiz::NodeMetadataRegistry& registry) {
     const auto import_names = gui::GetNodeTypeImportNames();
-    Check(import_names.size() == 229,  // + ClassicModelPredictor (TOFIX145), ConvTranspose2D, WordEmbeddings (TOFIX152), TestEvaluationNode (TOFIX157),
+    Check(import_names.size() == 230,  // + ClassicModelPredictor (TOFIX145), ConvTranspose2D, WordEmbeddings (TOFIX152), TestEvaluationNode (TOFIX157),
                                        // MaxAbsScaler, QuantileTransform, PowerTransform (TOFIX129 D2), HypothesisTest (D3), TSNENode, UMAPNode (D5),
                                        // the seven OpenCV image steps (TOFIX178 1.3f), Random Resized Crop, Random Affine,
-                                       // Random Perspective, Gaussian Noise, Random Grayscale (TOFIX178 1.6b)
+                                       // Random Perspective, Gaussian Noise, Random Grayscale (TOFIX178 1.6b),
+                                       // Image Filter (TOFIX178 1.10a)
           "accepted graph-import name count drifted");
 
     std::set<std::string> names;

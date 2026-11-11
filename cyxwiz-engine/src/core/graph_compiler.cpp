@@ -7492,6 +7492,42 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
                                                          s.pyramid, error) &&
                 ParseIntParam(p, "levels", 1, s.levels, error));
             break;
+        case gui::NodeType::ImageFilter: {
+            using cyxwiz::CvFilterPreset;
+            using cyxwiz::CvFilterDirection;
+            s.kind = CvImageStepKind::Filter;
+            (void)(ParseChoiceParam<CvFilterPreset>(
+                       p, "preset", "sharpen",
+                       {{"custom", CvFilterPreset::Custom},        {"identity", CvFilterPreset::Identity},
+                        {"box", CvFilterPreset::Box},              {"sharpen", CvFilterPreset::Sharpen},
+                        {"emboss", CvFilterPreset::Emboss},        {"outline", CvFilterPreset::Outline},
+                        {"prewitt_x", CvFilterPreset::PrewittX},   {"prewitt_y", CvFilterPreset::PrewittY},
+                        {"roberts_x", CvFilterPreset::RobertsX},   {"roberts_y", CvFilterPreset::RobertsY},
+                        {"kirsch", CvFilterPreset::Kirsch},        {"robinson", CvFilterPreset::Robinson}},
+                       s.filter_preset, error) &&
+                   ParseChoiceParam<CvFilterDirection>(
+                       p, "direction", "n",
+                       {{"n", CvFilterDirection::N}, {"ne", CvFilterDirection::NE}, {"e", CvFilterDirection::E},
+                        {"se", CvFilterDirection::SE}, {"s", CvFilterDirection::S}, {"sw", CvFilterDirection::SW},
+                        {"w", CvFilterDirection::W}, {"nw", CvFilterDirection::NW}},
+                       s.filter_direction, error) &&
+                   ParseChoiceParam<cyxwiz::CvFilterBorder>(
+                       p, "border", "reflect_101",
+                       {{"reflect_101", cyxwiz::CvFilterBorder::Reflect101},
+                        {"reflect", cyxwiz::CvFilterBorder::Reflect},
+                        {"replicate", cyxwiz::CvFilterBorder::Replicate},
+                        {"zero", cyxwiz::CvFilterBorder::Zero}},
+                       s.filter_border, error) &&
+                   ParseChoiceParam<cyxwiz::CvFilterOutput>(
+                       p, "output", "clip",
+                       {{"clip", cyxwiz::CvFilterOutput::Clip},
+                        {"absolute", cyxwiz::CvFilterOutput::Absolute},
+                        {"offset", cyxwiz::CvFilterOutput::Offset}},
+                       s.filter_output, error));
+            if (const auto typed = p.find("kernel"); typed != p.end()) s.filter_kernel = typed->second;
+            s.filter_normalize = ParseBoolParam(p, "normalize", false);
+            break;
+        }
         default:
             return;
     }
@@ -7529,6 +7565,12 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
     if (s.kind == CvImageStepKind::Edges && shape.channels > 1)
         issue(IssueLevel::Info, "Gives one channel: the images become " + std::to_string(after.width) +
                                     " × " + std::to_string(after.height) + " × 1 here");
+    if (s.kind == CvImageStepKind::Filter && s.filter_output == cyxwiz::CvFilterOutput::Clip) {
+        cyxwiz::FilterKernel kernel;
+        if (cyxwiz::ResolveFilterKernel(s, kernel) && std::fabs(kernel.Sum()) < 1e-6f)
+            issue(IssueLevel::Info, "This kernel sums to 0: flat areas become black and negative responses are cut. "
+                                    "Output absolute keeps both signs' size; offset stores them around mid-grey");
+    }
     config.image_cv_steps.push_back(std::move(s));
 }
 
@@ -7677,6 +7719,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::ImageSmooth,        PreprocessingDomain::Image,       ExtractImageCvStep},
     {gui::NodeType::ImageWarp,          PreprocessingDomain::Image,       ExtractImageCvStep},
     {gui::NodeType::ImagePyramid,       PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageFilter,        PreprocessingDomain::Image,       ExtractImageCvStep},
     // Augmentation steps drawn per batch (TOFIX178 1.6b)
     {gui::NodeType::RandomResizedCrop,  PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::RandomAffine,       PreprocessingDomain::Image,       ExtractImageTransform},

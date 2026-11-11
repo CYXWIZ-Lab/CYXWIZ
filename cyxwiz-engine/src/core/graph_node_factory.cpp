@@ -187,6 +187,7 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::ImageSmooth:
         case NodeType::ImageWarp:
         case NodeType::ImagePyramid:
+        case NodeType::ImageFilter:
         case NodeType::RandomResizedCrop:
         case NodeType::RandomAffine:
         case NodeType::RandomPerspective:

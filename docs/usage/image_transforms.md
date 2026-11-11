@@ -8,9 +8,10 @@ Blur**, **Grayscale**, **Morphology Transform** and **Advanced Augment**. They
 follow `torchvision.transforms` (morphology follows `kornia.morphology`): each
 one gives the same pixels as the torchvision transform with the same draws.
 
-Seven more run OpenCV once, when the images are prepared:
+Eight more run OpenCV once, when the images are prepared:
 **Image Contrast (CLAHE)**, **Image Denoise**, **Image Sharpen**,
-**Image Edges**, **Image Smooth**, **Image Warp** and **Image Pyramid** (see
+**Image Edges**, **Image Smooth**, **Image Warp**, **Image Pyramid** and
+**Image Filter** (see
 [OpenCV steps done once](#opencv-steps-done-once)). Node search marks them
 `once`.
 
@@ -257,6 +258,7 @@ Horizontal Flip and Normalize run on each batch.
 | Image Smooth | `method` (box / median / bilateral), `kernel_size` (5, odd), `sigma_color` / `sigma_space` (75 / 75, bilateral) | Box averages, median takes the middle value (removes specks, keeps edges), bilateral mixes only similar colours. A Gaussian blur is Image Gaussian Blur, on the GPU. | same |
 | Image Warp | `method` (four_corners / three_points / log_polar / linear_polar), `source_points`, `target_points` (`0,0, 1,0, 1,1, 0,1`), `interpolation` (linear), `width` / `height` (0), `center_x` / `center_y` (0.5), `max_radius` (0.5), `inverse` | The same warp for every image. Points are `x, y` fractions of the image, top-left first, clockwise: four for four_corners, three for three_points. Polar warps unroll the image around the centre, so a rotation becomes a shift; they keep the size. | same, or `width` x `height` |
 | Image Pyramid | `operation` (down / up / detail), `levels` (1) | down: Gaussian smoothing then half the size, per level; up: double the size, per level; detail: the Laplacian level `levels - 1` halvings down (the image minus its smoothed copy). | down halves each side per level (rounding up); detail at level 1 keeps it |
+| Image Filter | `preset` (sharpen; custom / identity / box / emboss / outline / prewitt_x / prewitt_y / roberts_x / roberts_y / kirsch / robinson), `direction` (n; ne / e / se / s / sw / w / nw, Kirsch and Robinson), `kernel` (`0 -1 0; -1 5 -1; 0 -1 0`, custom), `normalize` (false), `border` (reflect_101 / reflect / replicate / zero), `output` (clip / absolute / offset) | One fixed kernel over every channel (`cv::filter2D`): each output pixel is the sum of its neighbours times the kernel, the kernel's centre on the pixel. See [Image Filter](#image-filter). | same |
 
 - The prepared images are 8-bit, so each step's result is stored as 0 to 255:
   edge strength as its magnitude, pyramid detail around mid-grey (128 = no
@@ -279,6 +281,59 @@ Horizontal Flip and Normalize run on each batch.
   picked image, an OpenCV step as `56 x 56, once on the CPU`. The Properties
   panel's AS COMPILED card shows the step's input and output shapes.
 - Same result in training, validation and test.
+
+### Image Filter
+
+Image Filter runs one kernel you choose over every image, each channel alone.
+It is what a Conv2D filter does, with numbers you set instead of learned
+ones, so it is a good way to see what a kernel does before a network learns
+its own (compare with Studio Debugger > Model > Layers > Filters).
+
+| `preset` | Kernel | What you get |
+| --- | --- | --- |
+| `identity` | `0 0 0; 0 1 0; 0 0 0` | the image unchanged |
+| `box` | nine times 1/9 | a 3 x 3 average (blur) |
+| `sharpen` | `0 -1 0; -1 5 -1; 0 -1 0` | stronger edges, same brightness |
+| `emboss` | `-2 -1 0; -1 1 1; 0 1 2` | a relief lit from the top-left |
+| `outline` | `-1 -1 -1; -1 8 -1; -1 -1 -1` | edges in every direction |
+| `prewitt_x`, `prewitt_y` | `-1 0 1` in each row; `-1 -1 -1; 0 0 0; 1 1 1` | left-right and top-bottom changes |
+| `roberts_x`, `roberts_y` | `1 0; 0 -1` and `0 1; -1 0` | diagonal changes, 2 x 2 |
+| `kirsch` | `5 5 5; -3 0 -3; -3 -3 -3` turned to `direction` | edges brighter on that side, strong |
+| `robinson` | `1 2 1; 0 0 0; -1 -2 -1` turned to `direction` | the same, gentler (Sobel weights) |
+| `custom` | the `kernel` you type | anything |
+
+- **Typing a kernel.** Rows are split by `;` (or a new line), numbers by
+  spaces or commas: `1 2 1; 2 4 2; 1 2 1`. Rows must have the same length; a
+  kernel may be 1 to 31 numbers each way and need not be square, but not
+  larger than the image. `normalize` divides it by its sum, so `1 2 1; 2 4 2;
+  1 2 1` becomes a blur that keeps the brightness; a kernel that sums to 0 is
+  left as typed.
+- **It is a correlation**, as in OpenCV and in Conv2D: the kernel is laid on
+  the image as written, not flipped. Flip your kernel yourself for a
+  textbook convolution; symmetric kernels are the same either way.
+- **`direction`** (Kirsch and Robinson) is the side the edge is brighter on:
+  `n` answers to a bright band above a dark one, `e` to bright on the right,
+  and so on, in steps of 45 degrees.
+- **`border`** is what the kernel reads past the edge: `reflect_101` mirrors
+  without repeating the edge pixel (OpenCV's default), `reflect` mirrors with
+  it, `replicate` repeats the edge pixel, `zero` reads black.
+- **`output`.** The images are stored as 0 to 255, and an edge kernel answers
+  with negative numbers too. `clip` cuts below 0 and above 255 (right for
+  blurs and sharpening); `absolute` keeps the size of the answer (an edge
+  map, either sign); `offset` stores it around mid-grey, 128 = no answer
+  (keeps the sign; this is how emboss is usually shown). With `clip` and a
+  kernel that sums to 0 the compile report says so.
+- The channels stay: a colour image stays colour. Put **Grayscale** before
+  the filter for one channel.
+
+```
+Data Input (images) -> Resize 64 -> Image Filter (outline, absolute)
+  -> Normalize -> Conv2D -> ...
+```
+
+`examples/cyxgraph/cats_dogs_image_filter.cyxgraph` is a small cats-vs-dogs
+CNN with a typed kernel in front; see
+`examples/cyxgraph/cats_dogs_image_filter.md`.
 
 ## Checked against torchvision
 

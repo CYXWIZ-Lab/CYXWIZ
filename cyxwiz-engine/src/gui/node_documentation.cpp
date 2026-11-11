@@ -322,6 +322,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::ImageSmooth:
         case NodeType::ImageWarp:
         case NodeType::ImagePyramid:
+        case NodeType::ImageFilter:
         case NodeType::RandomResizedCrop:
         case NodeType::RandomAffine:
         case NodeType::RandomPerspective:
@@ -2050,6 +2051,27 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "down: a quarter of the pixels with less aliasing than a plain resize",
             "detail: edges and texture only, mid-grey where flat",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageFilter] = {
+        "Image Filter",
+        "One fixed kernel over every image: a classic one (sharpen, emboss, outline, Prewitt, Roberts, Kirsch, "
+        "Robinson, box) or the numbers you type.",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"preset", "custom, identity, box, sharpen, emboss, outline, prewitt_x / _y, roberts_x / _y, kirsch, robinson"},
+            {"direction", "Kirsch and Robinson: n, ne, e, se, s, sw, w or nw"},
+            {"kernel", "custom: rows split by ';', numbers by spaces"},
+            {"normalize", "Divide the kernel by its sum when it is not 0"},
+            {"border", "reflect_101, reflect, replicate or zero"},
+            {"output", "clip, absolute or offset (around mid-grey)"}
+        },
+        {
+            "See what a hand-made filter does before a Conv2D learns its own",
+            "Compare it with the learned kernels in the Studio Debugger's Filters view",
         },
         "Data Pipeline"
     };
