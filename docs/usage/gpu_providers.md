@@ -34,6 +34,9 @@ Console says which path a run takes:
 > PPO: the networks run as fused small-network kernels (cyxwiz.nvidia-cublas-cell)
 
 and the RL Training Dashboard's device chip says it on hover ("Runs as ...").
+The run's trace (Studio Debugger, Runtime) records it as `PPO.ComputePath`
+at the start, and again as a warning if the run falls back to ArrayFire
+operations partway through.
 
 ## One training run per GPU
 

@@ -185,8 +185,16 @@ void RLTrainingRun::Run() {
         }
         spdlog::info("PPO: training on {} x {} for {} steps", c.environment.id, c.copies, c.ppo.total_timesteps);
         std::vector<PpoUpdateMetrics> history;
+        std::string traced_path;  // how the run computes, in its trace at the start and on each change
         const bool ok = trainer.Train(
-            [this, &history](const PpoUpdateMetrics& m) {
+            [this, &history, &traced_path](const PpoUpdateMetrics& m) {
+                if (m.compute_path != traced_path) {
+                    // Falling back from the fused kernels mid-run is worth a look (a warning)
+                    const bool fell_back = !traced_path.empty();
+                    TrainingTraceCollector::Instance().RecordRuntimeEvent("PPO.ComputePath", m.compute_path,
+                                                                          fell_back ? "warning" : "ok");
+                    traced_path = m.compute_path;
+                }
                 history.push_back(m);
                 std::lock_guard<std::mutex> lock(mutex_);
                 updates_.push_back(m);

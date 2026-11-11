@@ -170,6 +170,11 @@ void CheckCartPole() {
     const auto updates = Wait(run, 900.0);
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     Check(run.GetState() == cyxwiz::rl::RLTrainingRun::State::Finished, "the run finishes: " + run.Message());
+    // Its trace says how it computed (the path its updates report)
+    bool path_traced = false;
+    for (const auto& event : cyxwiz::TrainingTraceCollector::Instance().Snapshot().recent_events)
+        path_traced |= event.stage == "PPO.ComputePath" && !updates.empty() && event.message == updates.back().compute_path;
+    Check(path_traced, "the run's trace records how it computes");
     Check(!updates.empty() && updates.back().reached_target && updates.back().mean_episode_return >= 475.0f,
           "the graph's PPO reaches CartPole's 475 and stops there");
     if (!updates.empty())
