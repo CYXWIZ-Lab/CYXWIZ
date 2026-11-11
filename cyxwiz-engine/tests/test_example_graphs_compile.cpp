@@ -141,6 +141,7 @@ int main() {
         root / "cats_dogs_image_filter.cyxgraph",
         root / "cats_dogs_edges_channel.cyxgraph",
         root / "cats_dogs_gabor_bank.cyxgraph",
+        root / "cats_dogs_se_hardswish.cyxgraph",
     };
     for (const auto& path : graphs) {
         std::vector<gui::MLNode> nodes;
