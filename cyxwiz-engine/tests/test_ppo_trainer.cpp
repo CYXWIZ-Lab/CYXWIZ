@@ -19,6 +19,7 @@
 #include "algorithms/arrayfire_backend_utils.h"
 #include "computation_truth/test_device_selection.h"
 
+#include <arrayfire.h>
 #include <cyxwiz/neural_provider.h>
 #include <cyxwiz/sequential.h>
 
@@ -174,8 +175,15 @@ void CheckFallbackMidRun() {
         if (m.update == 2) SetNeuralProvidersDisabledForTesting(true);
     });
     SetNeuralProvidersDisabledForTesting(false);
-    if (outcome.updates.empty() || outcome.updates.front().compute_path.rfind("fused", 0) != 0) {
-        std::printf("mid-run provider failure not checked: the run does not use the fused kernels here\n");
+    const bool fused = !outcome.updates.empty() && outcome.updates.front().compute_path.rfind("fused", 0) == 0;
+    // On CUDA with a provider installed the fused kernels must run: not running them is a failure, not a skip
+    const bool provider_on_cuda =
+        af::getActiveBackend() == AF_BACKEND_CUDA && !NeuralProviderRegistry::Instance().List().empty();
+    if (!fused) {
+        Check(!provider_on_cuda, "a CUDA run with a provider installed uses the fused kernels: " +
+                                     (outcome.updates.empty() ? outcome.error : outcome.updates.front().compute_path));
+        if (!provider_on_cuda)
+            std::printf("mid-run provider failure not checked: the run does not use the fused kernels here\n");
         return;
     }
     Check(outcome.ok && outcome.updates.size() == 6, "the run goes on after its provider fails: " + outcome.error);

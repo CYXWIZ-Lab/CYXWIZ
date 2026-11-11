@@ -143,9 +143,19 @@ int main() {
     Check(narrow.two_rows && narrow.level == 4 && narrow.steps_level == 4 && narrow.compact_run &&
               RowTwoWidth(w, 4, true) == 130,
           "very narrow: row 1 at its narrowest, step dots, the run's line shortened");
-    Check(CompactRunText("PPO update 196 \xC2\xB7 50,176 steps \xC2\xB7 CUDA") == "update 196" &&
-              CompactRunText("PPO waiting for the GPU") == "waiting for the GPU" && CompactRunText("Epoch 3 / 5") == "Epoch 3 / 5",
-          "the run's line shortened");
+    Check(CompactRunText("PPO update 196 \xC2\xB7 50,176 steps \xC2\xB7 CUDA") == "Update 196" &&
+              CompactRunText("PPO waiting for the GPU") == "Waiting" && CompactRunText("Epoch 3 / 5") == "Epoch 3 / 5",
+          "the run's line shortened to its state");
+
+    // A running pipeline's progress goes where the mode goes: on row 1 it
+    // counts there; with the mode on row 2 it counts on row 2
+    BarWidths p = w;
+    p.pipeline = 300;
+    Check(RowOneWidth(p, 3, 10) == 870 && RowTwoWidth(p, 4, false, true, 10) == 650 && BarWidth(p, 4) == 1060,
+          "the pipeline's progress counts on the row that draws it");
+    const BarLayout piped = LayoutBar(p, 700, 10);
+    Check(piped.two_rows && piped.mode_on_row_two && RowTwoWidth(p, piped.steps_level, piped.compact_run, true, 10) <= 700,
+          "with a pipeline running the mode and its progress move to row 2 and row 2 still fits");
 
     // The footer.
     Check(CountsText(11, 11) == "11 nodes \xC2\xB7 11 links" && CountsText(1, 1) == "1 node \xC2\xB7 1 link",

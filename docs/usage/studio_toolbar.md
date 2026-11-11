@@ -146,6 +146,18 @@ menu (**Pipeline**); last, Compile and Local Debug become coloured dots
 name without the extension. The graph, Save, the Compile and Debug results,
 Train and a running pipeline's progress always stay.
 
+When even that does not fit on one row (the Studio panel in the default
+layout is narrower), the bar takes two rows:
+
+- Row 1: the graph, Save, Edit and View, then the mode and its actions.
+- Row 2, at the right: Compile, Local Debug and Train, or a run's line and
+  **Stop**. Compile and Local Debug get their labels back when the row has
+  room.
+- When row 1 cannot hold the mode even as a menu, the mode (and a running
+  pipeline's progress) starts row 2 instead, and the steps fold beside it.
+- When row 2 is still too narrow, the run's line shortens to its state
+  (*Waiting*, *Epoch 3 / 5*, *Update 196*); hover it for the whole line.
+
 ## The canvas footer
 
 Along the canvas bottom: the node and link counts, the selection ("2

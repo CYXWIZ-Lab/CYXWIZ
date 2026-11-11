@@ -205,17 +205,24 @@ void NodeEditor::ShowToolbar() {
     const std::string debug_full = ICON_FA_BUG " Local Debug";
     const float sp = Spacing();
     const float arrow_w = ImGui::CalcTextSize(ICON_FA_CHEVRON_RIGHT).x + 2.0f * sp;
-    // a PPO run's line and Stop in Train's place
-    const float rl_w = ImGui::CalcTextSize((std::string(ICON_FA_SPINNER " ") + rl_status_).c_str()).x + sp +
+    // a PPO run's line and Stop in Train's place, measured at its widest
+    // (a long run and a pause) so the bar does not change rows as it grows
+    const bool rl_paused = rl_run_ && rl_run_->Paused();
+    const char* paused_tail = " \xC2\xB7 Paused";
+    const std::string rl_widest = std::max(rl_status_, std::string("PPO update 0000 \xC2\xB7 0,000,000 steps \xC2\xB7 OpenCL"),
+                                           [](const std::string& a, const std::string& b) { return a.size() < b.size(); });
+    const float rl_w = ImGui::CalcTextSize((std::string(ICON_FA_SPINNER " ") + rl_widest + paused_tail).c_str()).x + sp +
                        W(ICON_FA_STOP " Stop##stop_ppo") + sp;
     const std::string rl_compact = st::CompactRunText(rl_status_);
-    const float rl_compact_w = ImGui::CalcTextSize((std::string(ICON_FA_SPINNER " ") + rl_compact).c_str()).x + sp +
-                               W(ICON_FA_STOP " Stop##stop_ppo") + sp;
+    const float rl_compact_w =
+        ImGui::CalcTextSize((std::string(ICON_FA_SPINNER " Update 0000") + paused_tail).c_str()).x + sp +
+        W(ICON_FA_STOP " Stop##stop_ppo") + sp;
+    const float pipeline_w = pipeline_running ? 150.0f + 50.0f + W(ICON_FA_STOP " Cancel") + 3.0f * sp : 0.0f;
     const float stop_w = W(ICON_FA_STOP " Stop") + sp;
 
     st::BarWidths widths;
-    widths.fixed = W(chip_label(name).c_str()) + sp + W(ICON_FA_FLOPPY_DISK " Save") + sp +
-                   (pipeline_running ? 150.0f + 50.0f + W(ICON_FA_STOP " Cancel") + 3.0f * sp : 0.0f);
+    widths.fixed = W(chip_label(name).c_str()) + sp + W(ICON_FA_FLOPPY_DISK " Save") + sp;
+    widths.pipeline = pipeline_w;
     widths.run = training_active ? 230.0f : rl_active ? rl_w : W(ICON_FA_PLAY " Train");
     widths.run_compact = training_active ? W(ICON_FA_SPINNER " Epoch 000 / 000") + stop_w
                          : rl_active    ? rl_compact_w
@@ -389,8 +396,7 @@ void NodeEditor::ShowToolbar() {
     // Middle: the mode and its actions (or the simulation / RL group),
     // centred between the two sides; a running pipeline's progress after it.
     float middle_w = (mode_as_menu ? widths.mode_menu : short_labels ? widths.mode_short : widths.mode_full) +
-                     (short_labels ? widths.actions_icons : widths.actions_full) +
-                     (pipeline_running ? 150.0f + 50.0f + W(ICON_FA_STOP " Cancel") + 3.0f * sp : 0.0f);
+                     (short_labels ? widths.actions_icons : widths.actions_full) + pipeline_w;
     if (!sim_graph && widths.mode_full > 0.0f) middle_w += sp;
     const float window_x = ImGui::GetWindowPos().x;
     const float row_end = window_x + ImGui::GetWindowContentRegionMax().x;
@@ -601,7 +607,7 @@ void NodeEditor::ShowToolbar() {
     } else if (rl_active) {
         ImGui::AlignTextToFramePadding();
         const std::string& rl_line = compact_run ? rl_compact : rl_status_;
-        if (rl_run_ && rl_run_->Paused())  // as the dashboard says it
+        if (rl_paused)  // as the dashboard says it
             ImGui::TextColored(t.pending, ICON_FA_PAUSE " %s \xC2\xB7 Paused", rl_line.c_str());
         else
             ImGui::TextColored(t.success, ICON_FA_SPINNER " %s", rl_line.c_str());

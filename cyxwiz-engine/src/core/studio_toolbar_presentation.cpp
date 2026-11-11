@@ -85,7 +85,7 @@ TrainButton TrainState(const TrainInputs& in) {
 }
 
 float BarWidth(const BarWidths& w, int level) {
-    float total = w.fixed + w.run + w.gaps;
+    float total = w.fixed + w.pipeline + w.run + w.gaps;
     total += level >= 2 ? w.edit_menu : w.edit_icons;
     total += level >= 2 ? w.view_menu : w.view_full;
     total += level >= 3 ? w.mode_menu : level >= 1 ? w.mode_short : w.mode_full;
@@ -109,7 +109,7 @@ float StepsWidth(const BarWidths& w, int level) {
 }  // namespace
 
 float RowOneWidth(const BarWidths& w, int level, float group_gap) {
-    float total = w.fixed + 3.0f * group_gap;  // graph | edit | view | the mode
+    float total = w.fixed + w.pipeline + 3.0f * group_gap;  // graph | edit | view | the mode (and a pipeline)
     total += level >= 2 ? w.edit_menu : w.edit_icons;
     total += level >= 2 ? w.view_menu : w.view_full;
     total += level >= 3 ? w.mode_menu : level >= 1 ? w.mode_short : w.mode_full;
@@ -119,7 +119,7 @@ float RowOneWidth(const BarWidths& w, int level, float group_gap) {
 
 float RowTwoWidth(const BarWidths& w, int steps_level, bool compact_run, bool with_mode, float group_gap) {
     return StepsWidth(w, steps_level) + (compact_run ? w.run_compact : w.run) +
-           (with_mode ? w.mode_menu + w.actions_icons + group_gap : 0.0f);
+           (with_mode ? w.mode_menu + w.actions_icons + w.pipeline + group_gap : 0.0f);
 }
 
 BarLayout LayoutBar(const BarWidths& w, float available, float group_gap) {
@@ -136,7 +136,7 @@ BarLayout LayoutBar(const BarWidths& w, float available, float group_gap) {
             layout.level = level;
             break;
         }
-    layout.mode_on_row_two = RowOneWidth(w, 4, group_gap) > available;
+    layout.mode_on_row_two = RowOneWidth(w, 4, group_gap) > available;  // the mode, and a pipeline after it
     const bool m = layout.mode_on_row_two;
     layout.steps_level = 4;
     for (const int level : {0, 1})
@@ -151,6 +151,8 @@ BarLayout LayoutBar(const BarWidths& w, float available, float group_gap) {
 std::string CompactRunText(const std::string& run_line) {
     std::string text = run_line.substr(0, run_line.find(" \xC2\xB7 "));
     if (text.rfind("PPO ", 0) == 0) text.erase(0, 4);
+    if (text.rfind("waiting", 0) == 0) return "Waiting";
+    if (!text.empty() && text[0] >= 'a' && text[0] <= 'z') text[0] = static_cast<char>(text[0] - 'a' + 'A');
     return text;
 }
 

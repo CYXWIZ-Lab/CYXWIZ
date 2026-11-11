@@ -3075,8 +3075,9 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     if (preparation_failed_ || is_preparing_) {
         ImGui::TextColored(c.muted, "Getting the data and model ready");
     } else if (is_training_ && !waiting_for_gpu.empty()) {
-        ImGui::TextColored(c.muted, "Starts when the other run ends; Stop cancels");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", waiting_for_gpu.c_str());
+        ImGui::TextColored(c.muted, "Starts when the other run ends");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s\nEarly stop cancels the run while it waits.", waiting_for_gpu.c_str());
     } else if (total_epochs_ > 0) {
         if (finished) {
             ImGui::Text("Executed epochs %d / %d", last_executed_epoch_, total_epochs_);

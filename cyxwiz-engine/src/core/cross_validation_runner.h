@@ -66,7 +66,7 @@ struct CrossValidationProgress {
     double share = 1.0;
     int epoch = 0, epochs = 0;
     bool regression = false;
-    std::string waiting;  // why the fold waits for another training run's GPU, while it does
+    std::string waiting{};  // why the fold waits for another training run's GPU, while it does
 };
 
 struct CrossValidationCallbacks {

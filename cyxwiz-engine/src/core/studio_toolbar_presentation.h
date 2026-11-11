@@ -70,7 +70,8 @@ TrainButton TrainState(const TrainInputs& in);
 
 // The width of each group at each of its forms, measured by the renderer.
 struct BarWidths {
-    float fixed = 0.0f;  // never folds: graph, Save, pipeline progress
+    float fixed = 0.0f;     // never folds: graph, Save
+    float pipeline = 0.0f;  // a running pipeline's progress and Cancel, drawn after the mode
     float run = 0.0f;          // the run group: Train, or the run's line and Stop
     float run_compact = 0.0f;  // the run's line as its icon and state ("Waiting", "update 196") and Stop
     float edit_icons = 0.0f, edit_menu = 0.0f;
@@ -108,8 +109,9 @@ float RowOneWidth(const BarWidths& w, int level, float group_gap);
 // with_mode: the mode starts row 2 (its menu and action icons, then a gap)
 float RowTwoWidth(const BarWidths& w, int steps_level, bool compact_run, bool with_mode = false,
                   float group_gap = 0.0f);
-// The run's line shortened: its first part without "PPO " ("PPO update 196 -
-// 50,176 steps - CUDA" -> "update 196")
+// The run's line shortened to its state: its first part without "PPO ",
+// a wait as "Waiting", first letter capitalised ("PPO update 196 - 50,176
+// steps - CUDA" -> "Update 196"; "PPO waiting for the GPU" -> "Waiting")
 std::string CompactRunText(const std::string& run_line);
 
 // The canvas footer: the counts and what the canvas is doing.

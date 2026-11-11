@@ -38,12 +38,59 @@ The run's trace (Studio Debugger, Runtime) records it as `PPO.ComputePath`
 at the start, and again as a warning if the run falls back to ArrayFire
 operations partway through.
 
+## Why small networks are slow on a GPU, and what CyxWiz does about it
+
+Every GPU operation costs a few microseconds to launch, however little it
+computes. A PPO network is small (two layers of 64 units for CartPole, 256
+for HalfCheetah), and during the rollout it runs on one row per environment
+copy (8 rows for CartPole), so each multiply, bias and activation is far less
+work than its launch. Run layer by layer, the GPU spends most of its time
+waiting for the next launch: measured on a GTX 1050 Ti, about 23,600 launches
+a second with the GPU 11 % busy. On top of that, every environment step waits
+for the GPU, because the environment runs on the CPU and needs the actions
+back.
+
+This is not particular to CyxWiz. Any framework that runs one GPU kernel per
+operation has it: PyTorch in its default (eager) mode runs each `Linear` as
+its own matrix multiply and each activation as its own kernel, which is why
+Stable-Baselines3 warns against running MLP policies on the GPU and suggests
+the CPU. PyTorch's ways around it are a fused or multi-tensor Adam,
+`torch.compile` (which merges the element-wise operations but keeps one
+matrix multiply per layer) and CUDA Graphs (which replay a recorded step).
+
+On an NVIDIA GPU with the CUDA GPU pack, CyxWiz removes the launches instead:
+
+- each network runs **whole in one kernel** (every layer, bias and
+  activation), and the policy and value networks share that one launch; the
+  backward pass is two launches for both;
+- Adam updates **every tensor of both networks in two launches** (one for the
+  gradient norm used by clipping, one for the update);
+- PPO's sampling, loss and advantage (GAE) steps are **one launch each**;
+- each minibatch is **read in place**, without copying its columns.
+
+Measured on a GTX 1050 Ti (GPU launches counted per PPO update):
+
+| | Layer by layer | CyxWiz kernels |
+|---|---|---|
+| CartPole, GPU launches per update | 4,595 | 268 |
+| HalfCheetah, GPU launches per update | 41,590 | 2,317 |
+| CartPole, seconds to a mean return of 475 (seed 1) | 31.9 | 7.9 |
+
+HalfCheetah's 1,000,000 steps take 10-13 minutes on that GPU with the
+kernels (about 77 minutes on the CPU, with three runs sharing the computer).
+
+What is left is the environment's round trip: the actions go back to the CPU
+every step, as in any framework with CPU environments. On OpenCL and oneAPI,
+and on CUDA without the CUDA GPU pack, PPO runs layer by layer and the
+advice above holds: small networks may train as fast on the CPU.
+
 ## One training run per GPU
 
 A training run on a GPU (a model graph's Train, cross-validation, or PPO)
 holds that GPU for the whole run, across every Engine and tool you run on
 the computer. A second run on the same GPU waits until the first ends and
-says why, in the Console and on the Studio toolbar:
+says why: in the Console, on the Studio toolbar, on the Training or RL
+Training Dashboard, and in cross-validation's progress line:
 
 > Waiting for the GPU: another training run is using NVIDIA GeForce GTX 1050 Ti
 
