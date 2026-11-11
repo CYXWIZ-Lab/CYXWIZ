@@ -2945,7 +2945,11 @@ void NodeEditor::HandleInteractions() {
         last_selected_count = num_selected_nodes;
     }
 
-    if (num_selected_nodes > 0 && ImGui::IsKeyReleased(ImGuiKey_Delete)) {
+    // Only when the canvas has the keyboard: Delete in another panel's text
+    // field (or a field on a node) edits that text, not the graph.
+    const bool canvas_has_keys = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+                                 !ImGui::GetIO().WantTextInput;
+    if (num_selected_nodes > 0 && canvas_has_keys && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
         SaveUndoState();  // Save state before deleting nodes
 
         std::vector<int> selected_nodes(num_selected_nodes);

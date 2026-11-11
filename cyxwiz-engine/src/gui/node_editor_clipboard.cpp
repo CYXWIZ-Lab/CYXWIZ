@@ -414,6 +414,8 @@ void NodeEditor::HandleKeyboardShortcuts() {
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         return;
     }
+    // A text field on a node has the keys: Ctrl+A, M, F ... are its typing.
+    if (ImGui::GetIO().WantTextInput) return;
 
     const bool ctrl = ImGui::GetIO().KeyCtrl;
     const bool shift = ImGui::GetIO().KeyShift;
@@ -512,6 +514,14 @@ void NodeEditor::HandleKeyboardShortcuts() {
     if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_U) && selected_node_ids_.size() >= 2) {
         CreateSubgraphFromSelection("");
     }
+
+    // + and - zoom one step around the canvas centre (as View's - / +)
+    if (!ctrl && (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd)) &&
+        cyxwiz::studio_toolbar::ZoomIn(zoom_).enabled)
+        ZoomAroundCentre(1);
+    if (!ctrl && (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract)) &&
+        cyxwiz::studio_toolbar::ZoomOut(zoom_).enabled)
+        ZoomAroundCentre(-1);
 
     // M - Toggle minimap
     if (ImGui::IsKeyPressed(ImGuiKey_M) && !ctrl) {
