@@ -328,7 +328,7 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         if (per_channel) {
             std::string mean, std_dev;
             for (size_t c = 0; c < pre.norm_channel_mean.size(); ++c) {
-                const std::string name = ChannelName(c, pre.norm_channel_mean.size());
+                const std::string name = ChannelName(c, pre.norm_channel_mean.size(), pre.norm_channel_names);
                 std::snprintf(text, sizeof(text), "%s%s %.4f", c ? ", " : "", name.c_str(), pre.norm_channel_mean[c]);
                 mean += text;
                 std::snprintf(text, sizeof(text), "%s%s %.4f", c ? ", " : "", name.c_str(), pre.norm_channel_std[c]);

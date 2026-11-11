@@ -72,6 +72,7 @@ struct CvImageStep {
     CvEdgeDirection edge_direction = CvEdgeDirection::Magnitude;
     float edge_sigma = 1.0f;   // LoG: the smoothing; DoG: the finer blur
     float edge_sigma2 = 1.6f;  // DoG: the coarser blur
+    bool edge_keep_image = false;  // the image's channels, then the edge map as one more
     // Smooth.
     CvSmoothMethod smooth_method = CvSmoothMethod::Median;
     int kernel_size = 5;

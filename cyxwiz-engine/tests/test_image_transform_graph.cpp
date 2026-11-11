@@ -436,6 +436,39 @@ void CheckCompiler() {
     CheckRefused({kResize, {gui::NodeType::ImageEdges, "Sideways", {{"method", "sobel"}, {"direction", "diagonal"}}}},
                  "Sideways", "direction must be", "an unknown direction");
 
+    // Image Edges with the image kept: four channels into the model, named.
+    const auto kept = Compile({kResize,
+                               {gui::NodeType::ImageEdges, "Edges kept", {{"keep_image", "true"}}},
+                               {gui::NodeType::HorizontalFlip, "Flip", {}},
+                               {gui::NodeType::Normalize, "Normalize",
+                                {{"statistics", "per_channel"}, {"channel_mean", "0.5,0.5,0.5,0.1"},
+                                 {"channel_std", "0.2,0.2,0.2,0.3"}}}});
+    Check(kept.is_valid, "RGB + edges compiles; errors:\n" + Errors(kept));
+    Check(kept.input_shape == std::vector<size_t>({8, 8, 4}) && !kept.layers.empty() &&
+              kept.layers.front().input_shape == std::vector<size_t>({8, 8, 4}),
+          "the Conv2D sees [8, 8, 4]");
+    Check(kept.preprocessing.norm_channels == 4 &&
+              kept.preprocessing.norm_channel_names == std::vector<std::string>({"R", "G", "B", "edges"}),
+          "Normalize knows the four channels by name");
+    bool adds = false;
+    for (const auto& issue : kept.issues)
+        adds = adds || (issue.level == cyxwiz::IssueLevel::Info && issue.node_name == "Edges kept" &&
+                        issue.message.find("(R, G, B, edges)") != std::string::npos);
+    Check(adds, "Edges kept says the images become four channels and names them");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "Edges kept", {{"keep_image", "true"}}},
+                  {gui::NodeType::Normalize, "ImageNet", {{"statistics", "imagenet"}}}},
+                 "ImageNet", "the images have 4 channels here (R, G, B, edges)", "ImageNet statistics on RGB + edges");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "Edges kept", {{"keep_image", "true"}}},
+                  {gui::NodeType::Normalize, "Three", {{"statistics", "per_channel"}, {"channel_mean", "0.5,0.5,0.5"},
+                                                       {"channel_std", "0.2,0.2,0.2"}}}},
+                 "Three", "3 means for 4 channels", "three means for four channels");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "Edges kept", {{"keep_image", "true"}}},
+                  {gui::NodeType::ColorJitter, "Jitter", {}}},
+                 "Jitter", "1- or 3-channel", "a colour transform after RGB + edges");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "Edges kept", {{"keep_image", "true"}}},
+                  {gui::NodeType::ImageEdges, "Again", {}}},
+                 "Again", "needs grey or RGB images: these have 4 channels", "Image Edges after RGB + edges");
+
     // Normalize per channel (TOFIX178 1.4).
     const auto per_channel = Compile({kResize, {gui::NodeType::Normalize, "Normalize",
                                                 {{"statistics", "per_channel"},

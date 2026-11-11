@@ -105,6 +105,7 @@ struct GraphPreprocessingConfig {
     std::string norm_statistics = "same";
     std::vector<float> norm_channel_mean, norm_channel_std;
     size_t norm_channels = 0;  // the images' channels where Normalize sits (image graphs)
+    std::vector<std::string> norm_channel_names;  // what they are: R, G, B, edges, ...
     int norm_node_id = -1;
 
     bool has_onehot = false;

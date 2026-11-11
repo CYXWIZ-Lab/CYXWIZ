@@ -307,7 +307,7 @@ image::ImageShape CvImageShapeAfter(const CvImageStep& s, const image::ImageShap
     image::ImageShape out = in;
     switch (s.kind) {
         case CvImageStepKind::Edges:
-            out.channels = 1;
+            out.channels = s.edge_keep_image ? in.channels + 1 : 1;
             break;
         case CvImageStepKind::Warp:
             if (s.out_width > 0) out.width = static_cast<size_t>(s.out_width);
@@ -343,16 +343,19 @@ std::string CvImageStepText(const CvImageStep& s) {
         case CvImageStepKind::Sharpen:
             return "Sharpen " + Setting(s.amount) + ", radius " + Setting(s.radius) +
                    (s.threshold > 0.0f ? ", threshold " + Number(s.threshold) : "");
-        case CvImageStepKind::Edges:
+        case CvImageStepKind::Edges: {
+            const char* kept = s.edge_keep_image ? ", image kept" : "";
             if (s.edge_method == CvEdgeMethod::Canny)
-                return "Edges (Canny " + Number(s.threshold1) + " / " + Number(s.threshold2) + ")";
-            if (s.edge_method == CvEdgeMethod::Scharr) return std::string("Edges (Scharr") + EdgeDirectionSuffix(s) + ")";
+                return "Edges (Canny " + Number(s.threshold1) + " / " + Number(s.threshold2) + ")" + kept;
+            if (s.edge_method == CvEdgeMethod::Scharr)
+                return std::string("Edges (Scharr") + EdgeDirectionSuffix(s) + ")" + kept;
             if (s.edge_method == CvEdgeMethod::LoG)
-                return "Edges (LoG " + std::to_string(s.edge_kernel) + ", sigma " + Number(s.edge_sigma) + ")";
+                return "Edges (LoG " + std::to_string(s.edge_kernel) + ", sigma " + Number(s.edge_sigma) + ")" + kept;
             if (s.edge_method == CvEdgeMethod::DoG)
-                return "Edges (DoG " + Number(s.edge_sigma) + " / " + Number(s.edge_sigma2) + ")";
+                return "Edges (DoG " + Number(s.edge_sigma) + " / " + Number(s.edge_sigma2) + ")" + kept;
             return std::string("Edges (") + EdgeName(s.edge_method) + " " + std::to_string(s.edge_kernel) +
-                   EdgeDirectionSuffix(s) + ")";
+                   EdgeDirectionSuffix(s) + ")" + kept;
+        }
         case CvImageStepKind::Smooth: {
             const std::string k = std::to_string(s.kernel_size) + kTimes + std::to_string(s.kernel_size);
             if (s.smooth_method == CvSmoothMethod::Box) return "Box " + k;
@@ -416,6 +419,7 @@ nlohmann::json CvImageStepIdentity(const CvImageStep& s) {
                 j["direction"] = static_cast<int>(s.edge_direction);
             if (s.edge_method == CvEdgeMethod::LoG || s.edge_method == CvEdgeMethod::DoG) j["sigma"] = f(s.edge_sigma);
             if (s.edge_method == CvEdgeMethod::DoG) j["sigma2"] = f(s.edge_sigma2);
+            if (s.edge_keep_image) j["keep_image"] = true;
             break;
         case CvImageStepKind::Smooth:
             j["method"] = static_cast<int>(s.smooth_method);
@@ -541,8 +545,14 @@ ImageChannelLayout ChannelLayoutAfter(const FixedImageStep& step, const ImageCha
                                       size_t output_channels) {
     // A step that keeps the count changes pixels, not what the channels are.
     if (output_channels == input.names.size()) return input;
-    if (const auto* cv = std::get_if<CvImageStep>(&step); cv && cv->kind == CvImageStepKind::Edges && output_channels == 1)
-        return {{"edges"}, 0};
+    if (const auto* cv = std::get_if<CvImageStep>(&step); cv && cv->kind == CvImageStepKind::Edges) {
+        if (output_channels == 1) return {{"edges"}, 0};
+        if (output_channels == input.names.size() + 1) {  // the image kept, the edge map added
+            ImageChannelLayout layout = input;
+            layout.names.push_back("edges");
+            return layout;
+        }
+    }
     // Another count: grey for one channel, else numbered. No colour picture is known.
     if (output_channels == 3) return {{"channel 1", "channel 2", "channel 3"}, 0};
     return DecodedChannelLayout(output_channels);

@@ -6975,6 +6975,8 @@ static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& c
 }
 
 cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config);
+std::vector<std::string> CurrentImageChannelNames(const TrainingConfiguration& config);
+std::string JoinedChannelNames(const std::vector<std::string>& names);
 
 static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration& config) {
     // Every batcher takes mean / std through SetNormalization; the image
@@ -7005,11 +7007,17 @@ static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration
     }
     const size_t channels = CurrentImageShape(config).channels;
     pre.norm_channels = channels;
+    pre.norm_channel_names = CurrentImageChannelNames(config);
     if (pre.norm_statistics == "imagenet") {
         if (channels != 3)
             return issue(IssueLevel::Error, "ImageNet statistics are for RGB images: the images have " +
                                                 std::to_string(channels) + " channel" + (channels == 1 ? "" : "s") +
-                                                " here.");
+                                                " here" +
+                                                (channels > 3 ? " (" + JoinedChannelNames(pre.norm_channel_names) +
+                                                                    "). Use Per channel with this data's own "
+                                                                    "statistics (Data Studio > Profile > Use in "
+                                                                    "Normalize)."
+                                                              : std::string(".")));
         pre.norm_channel_mean = cyxwiz::ImageNetChannelMean();
         pre.norm_channel_std = cyxwiz::ImageNetChannelStd();
         issue(IssueLevel::Info, "ImageNet statistics: right for a model pretrained on ImageNet; for training from "
@@ -7031,14 +7039,17 @@ static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration
         return issue(IssueLevel::Error,
                      std::to_string(given) + what + (given == 1 ? "" : "s") + " for " + std::to_string(channels) +
                          " channel" + (channels == 1 ? "" : "s") + ": the images have " + std::to_string(channels) +
-                         " here" + (channels == 1 ? " (Grayscale or Image Edges before Normalize)" : "") +
+                         " here" +
+                         (channels == 1   ? std::string(" (Grayscale or Image Edges before Normalize)")
+                          : channels > 3 ? " (" + JoinedChannelNames(pre.norm_channel_names) + ")"
+                                         : std::string()) +
                          ". Give one mean and one std per channel (Use in Normalize does).");
     }
     for (size_t c = 0; c < channels; ++c) {
         if (!(std_dev[c] > 0.0f)) {
             char value[32];
             std::snprintf(value, sizeof(value), "%g", std_dev[c]);
-            return issue(IssueLevel::Error, "Std " + cyxwiz::ChannelName(c, channels) + " is " + value +
+            return issue(IssueLevel::Error, "Std " + cyxwiz::ChannelName(c, channels, pre.norm_channel_names) + " is " + value +
                                                 ": every std must be greater than 0.");
         }
     }
@@ -7071,6 +7082,19 @@ bool ParseChoiceParam(const std::map<std::string, std::string>& params, const st
 // channels, after the transforms and OpenCV steps already compiled.
 cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config) {
     return cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
+}
+
+// What that image's channels are: "R", "G", "B", "edges".
+std::vector<std::string> CurrentImageChannelNames(const TrainingConfiguration& config) {
+    return cyxwiz::CompiledImageChannels(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config))
+        .names;
+}
+
+// "R, G, B, edges".
+std::string JoinedChannelNames(const std::vector<std::string>& names) {
+    std::string text;
+    for (const auto& name : names) text += (text.empty() ? "" : ", ") + name;
+    return text;
 }
 
 const std::vector<std::pair<std::string, cyxwiz::image::Interpolation>> kInterpolations = {
@@ -7446,6 +7470,7 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
                 ParseFloatParam(p, "threshold1", 50.0f, s.threshold1, error) &&
                 ParseFloatParam(p, "threshold2", 150.0f, s.threshold2, error) &&
                 ParseIntParam(p, "kernel_size", 3, s.edge_kernel, error));
+            s.edge_keep_image = ParseBoolParam(p, "keep_image", false);
             break;
         case gui::NodeType::ImageSmooth:
             s.kind = CvImageStepKind::Smooth;
@@ -7572,9 +7597,18 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
                       ms, shape.width, shape.height, ms * 10000.0 / 1000.0 / cores, cores);
         issue(IssueLevel::Warning, text);
     }
-    if (s.kind == CvImageStepKind::Edges && shape.channels > 1)
+    if (s.kind == CvImageStepKind::Edges && s.edge_keep_image) {
+        auto names = CurrentImageChannelNames(config);
+        names.push_back("edges");
+        issue(IssueLevel::Info, "Adds one channel: the images become " + std::to_string(after.width) + " × " +
+                                    std::to_string(after.height) + " × " + std::to_string(after.channels) +
+                                    " here (" + JoinedChannelNames(names) +
+                                    "). Colour transforms and ImageNet statistics need RGB: put them before, "
+                                    "and give Normalize one mean and std per channel");
+    } else if (s.kind == CvImageStepKind::Edges && shape.channels > 1) {
         issue(IssueLevel::Info, "Gives one channel: the images become " + std::to_string(after.width) +
                                     " × " + std::to_string(after.height) + " × 1 here");
+    }
     if (s.kind == CvImageStepKind::Filter && s.filter_output == cyxwiz::CvFilterOutput::Clip) {
         cyxwiz::FilterKernel kernel;
         if (cyxwiz::ResolveFilterKernel(s, kernel) && std::fabs(kernel.Sum()) < 1e-6f)

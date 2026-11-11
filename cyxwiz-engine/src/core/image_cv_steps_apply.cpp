@@ -78,6 +78,7 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
     }
     std::vector<float> x(input.Size());
     for (size_t i = 0; i < x.size(); ++i) x[i] = in[i] / 255.0f;
+    const std::vector<float> original = s.kind == CvImageStepKind::Edges && s.edge_keep_image ? x : std::vector<float>();
     bool ok = false;
     switch (s.kind) {
         case CvImageStepKind::Contrast:
@@ -99,6 +100,15 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
             if (ok && c > 1) {  // the class repeats the edge map in each channel: keep one
                 for (size_t i = 0, n = static_cast<size_t>(w) * h; i < n; ++i) x[i] = x[i * c];
                 x.resize(static_cast<size_t>(w) * h);
+            }
+            if (ok && s.edge_keep_image) {  // the image's channels, then the edge map
+                const size_t pixels = static_cast<size_t>(w) * h, width = static_cast<size_t>(c) + 1;
+                std::vector<float> joined(pixels * width);
+                for (size_t i = 0; i < pixels; ++i) {
+                    for (int k = 0; k < c; ++k) joined[i * width + k] = original[i * c + k];
+                    joined[i * width + c] = x[i];
+                }
+                x = std::move(joined);
             }
             break;
         case CvImageStepKind::Smooth: {

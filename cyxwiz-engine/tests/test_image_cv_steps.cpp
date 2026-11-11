@@ -428,6 +428,38 @@ int main() {
             }
         }
     }
+    // Image Edges with the image kept: the image's channels, then the edge map.
+    {
+        CvImageStep s = Step(CvImageStepKind::Edges);
+        const auto map = Run(s, rgb);
+        s.edge_keep_image = true;
+        Check(CvImageShapeAfter(s, kRgb) == image::ImageShape{kH, kW, 4}, "RGB + edges is four channels");
+        Check(CvImageStepText(s) == "Edges (Canny 50 / 150), image kept", "kept in the text");
+        const auto kept = Run(s, rgb);
+        bool image_same = true, map_same = true;
+        for (size_t i = 0; i < static_cast<size_t>(kH) * kW; ++i) {
+            for (int k = 0; k < 3; ++k) image_same = image_same && kept[i * 4 + k] == rgb.data[i * 3 + k];
+            map_same = map_same && kept[i * 4 + 3] == map[i];
+        }
+        Check(image_same, "the image's pixels are untouched");
+        Check(map_same, "the fourth channel is the edge map");
+        CvImageStep plain = Step(CvImageStepKind::Edges);
+        Check(CvImageStepIdentity(s) != CvImageStepIdentity(plain) && !CvImageStepIdentity(plain).contains("keep_image"),
+              "kept is another set; sets prepared before keep their key");
+        cv::Mat grey;
+        cv::cvtColor(rgb, grey, cv::COLOR_RGB2GRAY);
+        const image::ImageShape g{kH, kW, 1};
+        Check(CvImageShapeAfter(s, g) == image::ImageShape{kH, kW, 2} && Run(s, grey, g).size() == g.Size() * 2,
+              "grey + edges is two channels");
+        Check(CompiledImageChannels({}, {s}, kRgb) == ImageChannelLayout{{"R", "G", "B", "edges"}, 3},
+              "RGB + edges: the picture and one named channel");
+        CvImageStep sharpen = Step(CvImageStepKind::Sharpen);
+        sharpen.position = 0;
+        Check(CompiledImageChannels({}, {s, sharpen}, kRgb).names.back() == "edges" &&
+                  CompiledImageShape({}, {s, sharpen}, kRgb).channels == 4,
+              "a step after it keeps the four channels and their names");
+        Check(!ValidateCvImageStep(s, image::ImageShape{kH, kW, 4}).empty(), "a second Image Edges on four channels is refused");
+    }
     // What the channels are, through the steps.
     {
         Check(DecodedChannelLayout(3) == ImageChannelLayout{{"R", "G", "B"}, 3}, "a decoded image is RGB");

@@ -677,7 +677,12 @@ void Properties::RenderChannelRows(MLNode& node, const cyxwiz::properties_view::
     const ImGuiStyle& style = ImGui::GetStyle();
     for (size_t c = 0; c < channels; ++c) {
         ImGui::PushID(static_cast<int>(c));
-        const std::string label = std::string(is_mean ? "Mean " : "Std ") + cyxwiz::ChannelName(c, channels);
+        const cyxwiz::TrainingConfiguration* compiled = live_compile_ ? live_compile_->Config() : nullptr;
+        static const std::vector<std::string> kNoNames;
+        const auto& names = compiled && compiled->preprocessing.norm_node_id == node.id
+                                ? compiled->preprocessing.norm_channel_names
+                                : kNoNames;
+        const std::string label = std::string(is_mean ? "Mean " : "Std ") + cyxwiz::ChannelName(c, channels, names);
         properties_rows::Label(label.c_str(), false,
                                imagenet ? "torchvision's ImageNet value; pick Per channel to change it"
                                         : param.description.c_str());

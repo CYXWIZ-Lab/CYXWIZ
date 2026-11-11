@@ -1945,7 +1945,7 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         "are made grey first, so the output has one channel and the model's input becomes [H, W, 1]. " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
         "Resize -> Image Edges -> Normalize -> Conv2D",
         {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
-        {{"Output", PinType::Tensor, true, "Edge maps [H, W, 1]"}},
+        {{"Output", PinType::Tensor, true, "Edge maps [H, W, 1]; with Keep image, the image and the map [H, W, C + 1]"}},
         {{"method", "enum", "canny", "Edge detector", {"canny", "sobel", "laplacian", "scharr", "log", "dog"}, "",
           "Method"},
          {"direction", "enum", "magnitude", "Sobel and Scharr: both directions' size, one direction, or the angle",
@@ -1954,7 +1954,9 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
          {"threshold2", "float", "150", "Canny: strong edge threshold, at least the low one", {}, ">=0", "High threshold"},
          {"kernel_size", "int", "3", "Sobel: 1, 3, 5 or 7; Laplacian and LoG: odd up to 31; not used by Canny, Scharr and DoG", {}, ">0", "Kernel size"},
          {"sigma", "float", "1.0", "LoG: the smoothing before the Laplacian; DoG: the finer blur, in pixels", {}, ">0", "Sigma"},
-         {"sigma2", "float", "1.6", "DoG: the coarser blur, greater than sigma", {}, ">0", "Sigma 2"}},
+         {"sigma2", "float", "1.6", "DoG: the coarser blur, greater than sigma", {}, ">0", "Sigma 2"},
+         {"keep_image", "bool", "false",
+          "Keep the image and add the edge map as one more channel (RGB + edges: 4 channels)", {}, "", "Keep image"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ImageSmooth, NodeCategory::Preprocessing, "Image Smooth", ICON_FA_BRUSH,

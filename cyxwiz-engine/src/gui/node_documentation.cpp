@@ -1995,11 +1995,12 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"threshold2", "Canny: strong edge threshold"},
             {"kernel_size", "Sobel: 1, 3, 5 or 7; Laplacian and LoG: odd up to 31"},
             {"sigma", "LoG: smoothing before the Laplacian; DoG: the finer blur"},
-            {"sigma2", "DoG: the coarser blur"}
+            {"sigma2", "DoG: the coarser blur"},
+            {"keep_image", "Keep the image and add the edge map as one more channel"}
         },
         {
             "Shapes matter more than colour or texture",
-            "The model's input becomes [H, W, 1]",
+            "The model's input becomes [H, W, 1], or [H, W, C + 1] with Keep image",
         },
         "Data Pipeline"
     };
