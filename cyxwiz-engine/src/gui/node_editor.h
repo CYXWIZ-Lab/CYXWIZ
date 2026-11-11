@@ -266,6 +266,10 @@ enum class NodeExecutionState {
 
 class NodeEditor {
 public:
+    // The window's id. Its title ("CyxWiz Studio · mnist_mlp •") follows the
+    // graph; everything that finds, docks or focuses the window uses this.
+    static constexpr const char* kWindowId = "###CyxWiz Studio";
+
     NodeEditor();
     ~NodeEditor();
 
@@ -837,8 +841,21 @@ private:
     // the canvas is doing (graph locked, the mode); TOFIX178 UI-1.
     void RenderCanvasFooter();
     static constexpr float kCanvasFooterHeight = 26.0f;
-    bool toolbar_two_rows_ = false;  // the bar is in its two-row form (logged on change)
-    int toolbar_fold_level_ = -1;  // the bar's last form, logged when it changes
+    int toolbar_fold_level_ = -1;  // the bar's last fold, logged when it changes
+    void CarryDockFromOldName();
+    bool dock_carried_ = false;
+    // The bar's menus (TOFIX129 A3): drawn from the bar, or as sections of
+    // More when they fold into it.
+    void DrawEditItems(int selected);
+    void DrawViewItems();
+    void DrawCodeItems();
+    void DrawStepItems(bool compile, bool debug);
+    void DrawFrameworkItems();
+    // Zoom by one step around the canvas centre, so the view stays where it is.
+    void ZoomAroundCentre(int direction);
+    // The line under the bar after Generate or Save as .py (A3-4).
+    std::string code_result_;
+    bool code_result_ok_ = false;
     void HandleInteractions();
     void ShowContextMenu();
     void ConfigureNode(int node_id);
@@ -887,12 +904,16 @@ private:
                        const std::string& source_description);
     void ShowSaveDialog();
     void ShowLoadDialog();
-    void ExportCodeToFile();
-    void ShowExportDialog();
+    // Writes a copy of the graph file where the user picks; the open file stays.
+    void ExportGraphCopy();
 
-    // Code generation
-    void GeneratePythonCode();
-    void GenerateCodeForFramework(CodeFramework framework);
+    // Code generation (the bar's Code menu): into a Script Editor tab, or a
+    // .py file the user picks; either way the line under the bar says what
+    // was written where.
+    void GenerateCodeIntoEditor();
+    void SaveCodeAsPython();
+    // Why the graph cannot be turned into code now; empty when it can.
+    std::string CodeProblem();
     bool ValidateGraph(std::string& error_message);
 
     // Unified Canvas Phase 4.2: Helper for node type names
@@ -1194,8 +1215,6 @@ private:
     float zoom_ = 1.0f;
     ImVec2 canvas_size_ = ImVec2(800.0f, 600.0f);  // the node canvas, read each frame
     ImVec2 canvas_origin_ = ImVec2(0.0f, 0.0f);    // its top-left corner on the screen
-    static constexpr float ZOOM_MIN = 0.25f;  // low enough for Fit to show a large graph whole
-    static constexpr float ZOOM_MAX = 2.0f;
 
     // Icon pack selection (for node icons)
     IconPack icon_pack_ = IconPack::FontAwesome;  // Default to FontAwesome

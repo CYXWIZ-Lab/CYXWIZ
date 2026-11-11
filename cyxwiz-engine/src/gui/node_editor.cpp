@@ -10,6 +10,7 @@
 #include "../core/test_manager.h"
 #include "panels/script_editor.h"
 #include "properties.h"
+#include "../core/studio_toolbar_presentation.h"
 #include "patterns/pattern_library.h"
 #include "icons.h"
 #include "../core/data_registry.h"
@@ -119,7 +120,7 @@ void NodeEditor::ShowNodes(std::vector<int> node_ids) {
 
 void NodeEditor::Raise() {
     show_window_ = true;
-    ::gui::BringToFront("CyxWiz Studio");
+    ::gui::BringToFront(kWindowId);
 }
 
 void NodeEditor::ClearValidationState() {
@@ -296,6 +297,17 @@ bool NodeEditor::CanReplaceGraph(const char* operation) {
     return false;
 }
 
+// The window's id was "CyxWiz Studio" before its title named the graph. When
+// a saved layout knows only that id, the window opens once where it was
+// docked instead of floating.
+void NodeEditor::CarryDockFromOldName() {
+    if (dock_carried_) return;
+    dock_carried_ = true;
+    if (ImGui::FindWindowSettingsByID(ImHashStr(kWindowId))) return;
+    if (const ImGuiWindowSettings* old = ImGui::FindWindowSettingsByID(ImHashStr("CyxWiz Studio")); old && old->DockId)
+        ImGui::SetNextWindowDockID(old->DockId, ImGuiCond_FirstUseEver);
+}
+
 void NodeEditor::Render() {
     simulation_session_.Poll();
     if (!simulation_session_.IsActive()) simulation_plugins_.clear();
@@ -348,9 +360,14 @@ void NodeEditor::Render() {
         pending_context_keep_view_ = false;
     }
 
-    ::gui::NextWindowMayLeave("CyxWiz Studio");
-    const bool expanded = ImGui::Begin("CyxWiz Studio", &show_window_);
-    ::gui::TabMenu("CyxWiz Studio", &show_window_);
+    // The tab names the graph and its unsaved mark (TOFIX129 A3-2); the id stays.
+    const std::string title =
+        cyxwiz::studio_toolbar::WindowTitle(current_file_path_.empty() ? std::string() : GetGraphStem(), unsaved_) +
+        kWindowId;
+    CarryDockFromOldName();
+    ::gui::NextWindowMayLeave(kWindowId);
+    const bool expanded = ImGui::Begin(title.c_str(), &show_window_);
+    ::gui::TabMenu(kWindowId, &show_window_);
     if (expanded) {
         ShowToolbar();
 
@@ -456,7 +473,8 @@ void NodeEditor::Render() {
             if (wheel != 0.0f) {
                 // Real zoom implementation - adjust zoom factor
                 float old_zoom = zoom_;
-                zoom_ = std::clamp(zoom_ + wheel * 0.1f, ZOOM_MIN, ZOOM_MAX);
+                zoom_ = std::clamp(zoom_ + wheel * cyxwiz::studio_toolbar::kZoomStep, cyxwiz::studio_toolbar::kZoomMin,
+                                   cyxwiz::studio_toolbar::kZoomMax);
 
                 // Zoom toward mouse position by adjusting panning
                 if (zoom_ != old_zoom) {

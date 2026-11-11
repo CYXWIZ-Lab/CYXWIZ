@@ -1,4 +1,5 @@
 #include "node_editor.h"
+#include "../core/studio_toolbar_presentation.h"
 #include "subgraph_presentation.h"
 #include "properties.h"
 #include <imgui.h>
@@ -555,7 +556,7 @@ void NodeEditor::FrameNodes(const std::vector<int>& node_ids) {
     constexpr float kMargin = 48.0f;
     const float fit_x = (canvas_size_.x - 2.0f * kMargin) / std::max(1.0f, max_x - min_x);
     const float fit_y = (canvas_size_.y - 2.0f * kMargin) / std::max(1.0f, max_y - min_y);
-    zoom_ = std::clamp(std::min({fit_x, fit_y, 1.0f}), ZOOM_MIN, ZOOM_MAX);
+    zoom_ = std::clamp(std::min({fit_x, fit_y, 1.0f}), cyxwiz::studio_toolbar::kZoomMin, cyxwiz::studio_toolbar::kZoomMax);
     CenterViewOn(ImVec2((min_x + max_x) * 0.5f, (min_y + max_y) * 0.5f));
 }
 

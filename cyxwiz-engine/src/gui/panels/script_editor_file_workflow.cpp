@@ -332,8 +332,8 @@ bool ScriptEditorPanel::IsActiveTabEditable() const {
     return tab && scriptfile::CanWriteTab(tab->is_loading, tab->load_failed, tab->is_large_file);
 }
 
-void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::string& framework_name) {
-    std::string target_filename = "generated_" + framework_name + ".py";
+void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::string& file_name) {
+    const std::string& target_filename = file_name;
 
     // Check if a tab with this filename already exists
     int existing_tab_index = -1;
@@ -352,7 +352,7 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
         active_tab_index_ = existing_tab_index;
         request_focus_ = true;
         ::gui::BringToFront(GetName());
-        spdlog::info("Updated existing {} code tab", framework_name);
+        spdlog::info("Updated the generated code tab {}", file_name);
     } else {
         // Create new tab with generated code
         auto tab = std::make_unique<EditorTab>();
@@ -370,7 +370,7 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
         request_focus_ = true;
         ::gui::BringToFront(GetName());
 
-        spdlog::info("Loaded generated {} code into new tab", framework_name);
+        spdlog::info("Loaded generated code into a new tab {}", file_name);
     }
 }
 

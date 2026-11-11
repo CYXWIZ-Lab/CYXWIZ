@@ -1,19 +1,33 @@
 # The CyxWiz Studio bar
 
-The bar at the top of the CyxWiz Studio canvas, one row in groups.
+The bar at the top of the CyxWiz Studio canvas, one row:
 
-## The graph (left)
+> the graph · Save · Edit · View · the mode · the framework · Code · More ...
+> Compile › Local Debug › Train
+
+The window's tab names the graph: **CyxWiz Studio · mnist_mlp**, with a dot
+after the name while there are unsaved changes (also in its own window's
+title when the Studio is moved out of the main window).
+
+## The graph
 
 - **The graph's name** (the file name, or *Untitled graph*). A dot after the
   name means the graph changed since it was saved. Hover for the full path.
   Click it for the graph menu:
   - **Save** (Ctrl+S): writes the graph's own file. A graph that has no file
-    yet asks for a name.
-  - **Save As...** (Ctrl+Shift+S): writes a new file; the open file stays as
-    it was.
-  - **Load...**, **Export...**, **Custom Node Editor**.
+    yet asks for a name. On an empty canvas nothing is written and Save says
+    so: "Nothing to save yet: the canvas is empty. Add a node, then save."
+  - **Save As...** (Ctrl+Shift+S): writes a new file and the open graph
+    moves to it.
+  - **Load...**: opens another graph in place of this one.
+  - **Export a copy of the graph...**: writes a copy where you choose; the
+    open graph stays on its own file.
+  - **Custom Node Editor**.
   - **Clear the canvas...**: asks first; Ctrl+Z brings the nodes back. The
     file changes only when you save.
+  - While a run keeps the graph busy (training, a test, a pipeline, a Data
+    Input loading its data), Load, Clear and Delete stay in the menu, greyed,
+    with the reason under them ("Not while training is active ...").
 - **Save** is also on the bar.
 
 A starter opened from the start page, a pattern template and an imported
@@ -23,27 +37,42 @@ next to the Engine are never overwritten.
 Ctrl+S and Ctrl+Shift+S save the graph while the canvas is focused (in the
 Script Editor they save the script); see Preferences > Shortcuts.
 
-## Edit and view (left)
+## Edit and View
 
-Icons, with their names on hover: **Select all** (Ctrl+A), **Duplicate**
-(Ctrl+D) and **Delete** (Delete), dimmed until nodes are selected (hover
-says "select nodes first"); zoom out, the zoom level (click it for the zoom
-menu: zoom in / out, zoom to 100%, fit all nodes, minimap), zoom in;
-**Fit** frames all nodes (F); **Minimap** (M, highlighted while shown).
+- **Edit**: **Select all** (Ctrl+A), **Duplicate** (Ctrl+D) and **Delete
+  selected** (Delete). Without a selection Duplicate and Delete are greyed
+  with "Select nodes first" under them.
+- **View · 100%** (the zoom on the button): **Zoom** with **-** and **+**
+  (greyed at 25% and 200%, with the reason on hover; the view keeps its
+  centre), **Zoom to 100%**, **Fit all nodes** (F), **Minimap** (M) and
+  **Find in the graph** (Ctrl+F).
 
-## The mode (middle)
+## The mode, the framework and Code
 
 **Code Gen**, **Data Pipeline** and **Local Training** side by side, one
-click each (hover for what each does). Next to it the mode's action: Code
-Gen, the framework (PyTorch, TensorFlow, Keras, PyCyxWiz) and **Generate**;
-Data Pipeline, **Execute Pipeline**, then its progress, the step it is on
-(hover) and **Cancel** while it runs; then **Export**. A graph with
-simulation nodes shows **Run Sim** here instead: during a run **Pause** (or
-**Resume**), **Step**, **Stop Sim** and the sim time (see
-[Graph simulation](graph_simulation.md)). An RL graph (Environment, Policy
-Head, Value Head, PPO) trains with **Train**: while PPO runs, the update and
-the steps take Train's place, with **Stop** (see
-[Training a policy](rl_training.md)).
+click each (hover for what each does).
+
+- In **Code Gen** mode the framework is beside it (PyTorch, TensorFlow,
+  Keras, PyCyxWiz). In the other modes it is not on the bar, and the Code
+  menu names the framework it uses ("Generate PyTorch Code into Script
+  Editor"), so code is never written for a framework you cannot see.
+- **Code**:
+  - **Generate into Script Editor** opens a Script Editor tab named after
+    the graph and the framework (`mnist_mlp_pytorch.py`); a second Generate
+    replaces that tab's text.
+  - **Save as .py...** asks where and writes the file.
+  - When the graph cannot be turned into code, both are greyed with the
+    reason under them ("The canvas is empty. Add a node first.", "Graph
+    must have at least one Output node.").
+  - A line under the bar says what was written where and when: "Generated
+    118 lines of PyTorch code into Script Editor tab mnist_mlp_pytorch.py ·
+    14:32" (**Hide** removes it). A generated file's header carries the time
+    it was generated.
+- **Data Pipeline** mode has **Execute Pipeline** next to Code; while it runs,
+  its progress, the step it is on (hover) and **Cancel**.
+- A graph with simulation nodes shows **Run Sim** here instead: during a run
+  **Pause** (or **Resume**), **Step**, **Stop Sim** and the sim time (see
+  [Graph simulation](graph_simulation.md)).
 
 ## Compile, Local Debug, Train (right)
 
@@ -51,7 +80,8 @@ the steps take Train's place, with **Stop** (see
   Click the name to run the step (Compile opens its report, Local Debug the
   Studio Debugger); click the result for its menu (the result in a line,
   **Open the compile report** / **Show the first finding on the canvas**,
-  or **Run Local Debug** / **Open the Studio Debugger**).
+  or **Run Local Debug** / **Open the Studio Debugger**). A second Local
+  Debug cannot start while one runs.
   - Compile, checked as you edit (400 ms after a change): **Checking...**,
     **Ready** (with the warnings in its menu), **N errors**, **Empty**. In
     Data Pipeline mode the graph is not checked as you edit (a data graph
@@ -65,7 +95,16 @@ the steps take Train's place, with **Stop** (see
   anyway; F6 checks the new graph first." With `require_debug_before_train`
   on (the `debug` section of the Engine's settings file), Train is disabled until Local Debug passes on
   the graph as it is: "This project requires a passing Local Debug (F6) on
-  this graph". While training, Train becomes the epoch and **Stop**.
+  this graph". While something keeps the graph busy before a run (a Data
+  Input loading its data, a test, a pipeline), Train is greyed with the
+  reason: "Train waits while a Data Input is loading its data. It can start
+  when that ends."
+- While training, Train's place shows the run: **Epoch 3 / 10**, **Pause**
+  (or **Resume**: "Paused at epoch 3 / 10") and **Stop**. A run waiting for
+  the GPU says **Waiting for the GPU** (hover for which run holds it). An RL
+  graph (Environment, Policy Head, Value Head, PPO) trains with **Train**:
+  while PPO runs, the update and the steps take Train's place, with
+  **Pause** / **Resume** and **Stop** (see [Training a policy](rl_training.md)).
 - A reopened project keeps each Data Input's settings, not its loaded data.
   **Train** loads the Data Inputs that feed the Data Loader first, as their
   **Apply** would (the Training Dashboard says "Loading Sentiment CSV before
@@ -136,34 +175,28 @@ the steps take Train's place, with **Stop** (see
 
 ## A narrow canvas
 
-Nothing hides behind a "more" menu; the bar folds by width, in this order,
-and comes back as it widens: the labels go first (Code / Pipeline /
-Training, the mode's actions as icons, Compile as a check mark and Local
-Debug as "Debug" with short results such as "Changed"); then Edit and View
-become one-level menus (**Edit**, **View · 100%**); then the mode becomes a
-menu (**Pipeline**); last, Compile and Local Debug become coloured dots
-(their result on hover, their menu on click) and the graph shows its file
-name without the extension. The graph, Save, the Compile and Debug results,
-Train and a running pipeline's progress always stay.
+Nothing is cut off. When the row is too narrow, it folds in this order, and
+comes back as it widens:
 
-When even that does not fit on one row (the Studio panel in the default
-layout is narrower), the bar takes two rows:
+1. The mode becomes a menu with the mode's whole name (**Code Gen**),
+   **View** drops the zoom from its button, and the simulation buttons keep
+   their icons only.
+2. Then, one at a time, into **More** at the end of the left side: Local
+   Debug, Compile, View, Edit, Code (with Execute Pipeline), the framework,
+   Save. **More** shows each as a section with its own items.
+3. Last, a run's line shortens to its state (*Epoch 3 / 10*, *Paused 3 /
+   10*, *Waiting*, *Update 196*); hover it for the whole line.
 
-- Row 1: the graph, Save, Edit and View, then the mode and its actions.
-- Row 2, at the right: Compile, Local Debug and Train, or a run's line and
-  **Stop**. Compile and Local Debug get their labels back when the row has
-  room.
-- When row 1 cannot hold the mode even as a menu, the mode (and a running
-  pipeline's progress) starts row 2 instead, and the steps fold beside it.
-- When row 2 is still too narrow, the run's line shortens to its state
-  (*Waiting*, *Epoch 3 / 5*, *Update 196*); hover it for the whole line.
+The graph's name, the mode, a running pipeline's progress and Train (or a
+run's line with Pause / Resume and Stop) always stay on the bar.
 
 ## The canvas footer
 
 Along the canvas bottom: the node and link counts, the selection ("2
-selected"), and what the canvas is doing: "Graph replacement locked:
-training is running" while a load or clear would be refused, else the mode
-("Data Pipeline mode · training nodes run in Train").
+selected"), and what the canvas is doing: "Graph replacement locked: a Data
+Input is loading its data" while a load or clear would be refused, else the
+mode ("Data Pipeline mode · training nodes run in Train"). In a narrow
+canvas the right side is cut with "..." rather than running into the counts.
 
 ## The compile report
 

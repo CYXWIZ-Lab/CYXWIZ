@@ -1065,7 +1065,7 @@ MainWindow::MainWindow()
         cyxwiz::StudioDebuggerPanel::CanvasLinks links;
         links.show_canvas = [this]() {
             if (node_editor_) node_editor_->Show();
-            ImGui::SetWindowFocus("CyxWiz Studio");
+            ImGui::SetWindowFocus(gui::NodeEditor::kWindowId);
         };
         links.show_compile_report = [this]() { CompileGraphAndReport(); };
         links.train = [this]() {
@@ -3136,7 +3136,7 @@ void MainWindow::RenderDockSpace() {
         // only the tab focused while it updates, so this starts after a few
         // frames and focuses one window per frame, CyxWiz Studio last.
         if (front_tabs_countdown_ > 0) {
-            static constexpr const char* kFrontTabs[] = {"Asset Browser", "Console", "Data Studio", "CyxWiz Studio"};
+            static constexpr const char* kFrontTabs[] = {"Asset Browser", "Console", "Data Studio", gui::NodeEditor::kWindowId};
             constexpr int kCount = static_cast<int>(sizeof(kFrontTabs) / sizeof(kFrontTabs[0]));
             --front_tabs_countdown_;
             if (front_tabs_countdown_ < kCount) {
@@ -3230,7 +3230,7 @@ void MainWindow::BuildInitialDockLayout() {
     // Dock windows to their designated areas
     // Window names must EXACTLY match the names in ImGui::Begin() calls in each panel
     ImGui::DockBuilderDockWindow("Asset Browser", dock_id_left);
-    ImGui::DockBuilderDockWindow("CyxWiz Studio", dock_id_center_left);
+    ImGui::DockBuilderDockWindow(gui::NodeEditor::kWindowId, dock_id_center_left);
     ImGui::DockBuilderDockWindow("Script Editor", dock_id_center_left); // Tabbed with CyxWiz Studio
     ImGui::DockBuilderDockWindow("Data Studio", dock_id_center_right); // Beside CyxWiz Studio
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
