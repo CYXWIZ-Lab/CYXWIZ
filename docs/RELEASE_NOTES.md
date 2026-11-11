@@ -129,6 +129,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **One-cycle learning-rate schedule.** `lr_schedule = one_cycle` on any
+  optimizer node: torch's OneCycleLR over the run's optimizer updates, with
+  `learning_rate` as the peak and `warmup_ratio` as the rising share.
 - **SGD: Nesterov momentum and weight decay.** The SGD node gains
   `nesterov`, `weight_decay` and `weight_decay_exclude` (none /
   norms_and_biases), with torch.optim.SGD's arithmetic. Before, a

@@ -2595,6 +2595,27 @@ void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
     if (total > std::numeric_limits<int>::max()) {
         throw std::runtime_error("TrainingExecutor: lr_schedule step count exceeds the supported range");
     }
+    std::string error;
+    const auto resume_state = std::exchange(graph_schedule_resume_, std::nullopt);
+    if (config_.lr_schedule == "one_cycle") {
+        // torch.optim.lr_scheduler.OneCycleLR (cos, two phases, cycle_momentum off): from
+        // learning_rate / 25 up to learning_rate over warmup_ratio of the updates, then
+        // down to learning_rate / 250,000.
+        OneCycleLRSchedulerSpec cycle;
+        cycle.max_lr = config_.learning_rate;
+        cycle.total_steps = static_cast<int>(total);
+        cycle.pct_start = config_.warmup_ratio;
+        scheduler_controller_ = std::make_unique<TrainingSchedulerController>(cycle);
+        if (!scheduler_controller_->Attach(*optimizer_, resume_state, error)) {
+            scheduler_controller_.reset();
+            throw std::runtime_error("TrainingExecutor: lr_schedule could not be attached: " + error);
+        }
+        const double first_lr = scheduler_controller_->GetScheduler()->GetLR();
+        spdlog::info("TrainingExecutor: lr_schedule=one_cycle max_lr={:.6g} rise={:.3g} of {} updates first_lr={:.6g}",
+                     cycle.max_lr, cycle.pct_start, cycle.total_steps, first_lr);
+        UpdateMetrics([first_lr](TrainingMetrics& m) { m.learning_rate = first_lr; });
+        return;
+    }
     WarmupDecayLRSchedulerSpec spec;
     spec.peak_lr = config_.learning_rate;
     spec.total_steps = static_cast<int>(total);
@@ -2603,8 +2624,6 @@ void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
                : config_.lr_schedule == "warmup_constant" ? "constant" : "cosine";
     spec.min_lr_ratio = config_.min_lr_ratio;
     scheduler_controller_ = std::make_unique<TrainingSchedulerController>(spec);
-    std::string error;
-    const auto resume_state = std::exchange(graph_schedule_resume_, std::nullopt);
     if (!scheduler_controller_->Attach(*optimizer_, resume_state, error)) {
         scheduler_controller_.reset();
         throw std::runtime_error("TrainingExecutor: lr_schedule could not be attached: " + error);

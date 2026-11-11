@@ -2932,7 +2932,7 @@ void ExtractOptimizerConfiguration(const gui::MLNode& node,
         }
         destination = it->second;
     };
-    parse_choice("lr_schedule", {"none", "warmup_cosine", "warmup_linear", "warmup_constant"},
+    parse_choice("lr_schedule", {"none", "warmup_cosine", "warmup_linear", "warmup_constant", "one_cycle"},
                  config.lr_schedule);
     parse("warmup_ratio", config.warmup_ratio, 0.0f, true, 1.0f, false, config.warmup_ratio);
     parse("min_lr_ratio", config.min_lr_ratio, 0.0f, true, 1.0f, true, config.min_lr_ratio);

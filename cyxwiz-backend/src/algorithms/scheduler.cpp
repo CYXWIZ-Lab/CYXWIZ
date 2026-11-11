@@ -625,6 +625,9 @@ void OneCycleLR::Step(int epoch, float /*metric*/) {
     }
 
     current_step_ = epoch;
+    // torch allows the step numbered total_steps (one past the cycle's last
+    // value) and extrapolates the cosine there; so does this.
+    const double at = static_cast<double>(current_step_);
 
     const double first_phase_end = pct_start_ * total_steps_ - 1.0;
     const double second_phase_end = static_cast<double>(total_steps_ - 1);
@@ -633,14 +636,13 @@ void OneCycleLR::Step(int epoch, float /*metric*/) {
         return end + (start - end) * cosine / 2.0;
     };
 
-    if (static_cast<double>(current_step_) <= first_phase_end) {
-        const double progress =
-            static_cast<double>(current_step_) / first_phase_end;
+    if (at <= first_phase_end && first_phase_end > 0.0) {
+        const double progress = at / first_phase_end;
         current_lr_ = cosine_anneal(initial_lr_, max_lr_, progress);
     } else {
-        const double progress =
-            (static_cast<double>(current_step_) - first_phase_end) /
-            (second_phase_end - first_phase_end);
+        const double progress = second_phase_end > first_phase_end
+            ? std::max(0.0, at - first_phase_end) / (second_phase_end - first_phase_end)
+            : 1.0;
         current_lr_ = cosine_anneal(max_lr_, final_lr_, progress);
     }
 
