@@ -12,6 +12,7 @@
 #include "separate_windows.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
+#include "ui_widgets.h"
 #include "../core/async_task_manager.h"
 #include "../core/graph_executor.h"
 #include "../core/live_graph_compile.h"
@@ -131,8 +132,8 @@ void NodeEditor::DrawGraphMenu() {
     in.nodes = nodes_.size();
     in.locked = GetGraphReplacementBlockReason();
     const st::GraphMenu menu = st::GraphMenuFor(in, ImNodes::NumSelectedNodes());
-    if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK "  Save", "Ctrl+S")) SaveCurrentGraph();
-    if (ImGui::MenuItem(ICON_FA_FILE_EXPORT "  Save As...", "Ctrl+Shift+S")) ShowSaveDialog();
+    if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK "  Save", "Ctrl+S")) SaveFromStudio();
+    if (ImGui::MenuItem(ICON_FA_FILE_EXPORT "  Save As...", "Ctrl+Shift+S")) SaveAsFromStudio();
     if (ItemOrReason(ICON_FA_FOLDER_OPEN "  Load...", nullptr, menu.load)) ShowLoadDialog();
     ImGui::Separator();
     if (ItemOrReason(ICON_FA_COPY "  Export a copy of the graph...", nullptr, menu.export_graph)) ExportGraphCopy();
@@ -154,23 +155,16 @@ void NodeEditor::DrawGraphMenu() {
 }
 
 void NodeEditor::DrawClearConfirm() {
-    const ui::Tokens& t = ui::CurrentTokens();
     if (clear_confirm_requested_) {
         ImGui::OpenPopup("Clear the canvas?###clear_canvas");
         clear_confirm_requested_ = false;
     }
-    if (!ImGui::BeginPopupModal("Clear the canvas?###clear_canvas", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::Text("This removes all %zu nodes and %zu links from the canvas.", nodes_.size(), links_.size());
-    ImGui::TextColored(t.text_dim, "Ctrl+Z brings them back. The graph file changes only when you save.");
-    ImGui::Spacing();
-    if (ui::DangerButton("Clear##confirm", true, nullptr, ui::ButtonSize::Regular)) {
+    const std::string message = "This removes all " + std::to_string(nodes_.size()) + " nodes and " +
+                                std::to_string(links_.size()) +
+                                " links from the canvas.\n\nCtrl+Z brings them back. The graph file changes only when you save.";
+    if (ui::ConfirmDialog("Clear the canvas?###clear_canvas", message.c_str(), "Clear the canvas", true) ==
+        ui::DialogResult::Primary)
         ClearGraph();
-        ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ui::SecondaryButton("Cancel##clear", true, nullptr, ui::ButtonSize::Regular) || ImGui::IsKeyPressed(ImGuiKey_Escape))
-        ImGui::CloseCurrentPopup();
-    ImGui::EndPopup();
 }
 
 void NodeEditor::ZoomAroundCentre(int direction) {
@@ -468,7 +462,7 @@ void NodeEditor::ShowToolbar() {
     DrawGraphMenu();
     if (!fold.save_in_more) {
         ImGui::SameLine();
-        if (ui::GhostButton(ICON_FA_FLOPPY_DISK " Save")) SaveCurrentGraph();
+        if (ui::GhostButton(ICON_FA_FLOPPY_DISK " Save")) SaveFromStudio();
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("%s", current_file_path_.empty() ? "Save the graph (Ctrl+S): asks for a file name the first time"
                                                                : ("Save to " + name + " (Ctrl+S)").c_str());
@@ -637,7 +631,7 @@ void NodeEditor::ShowToolbar() {
         }
         if (fold.save_in_more) {
             Section("Graph");
-            if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK "  Save", "Ctrl+S")) SaveCurrentGraph();
+            if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK "  Save", "Ctrl+S")) SaveFromStudio();
         }
         ImGui::EndPopup();
     }

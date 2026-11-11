@@ -809,6 +809,22 @@ void NodeEditor::ShowSaveDialog() {
     }
 }
 
+void NodeEditor::SaveFromStudio() {
+    if (nodes_.empty()) {
+        save_refusal_pending_ = true;
+        return;
+    }
+    SaveCurrentGraph();
+}
+
+void NodeEditor::SaveAsFromStudio() {
+    if (nodes_.empty()) {
+        save_refusal_pending_ = true;
+        return;
+    }
+    ShowSaveDialog();
+}
+
 bool NodeEditor::SaveCurrentGraph() {
     if (nodes_.empty()) return true;
     if (current_file_path_.empty()) {

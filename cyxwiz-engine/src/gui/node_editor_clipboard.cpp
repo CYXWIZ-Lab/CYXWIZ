@@ -508,10 +508,10 @@ void NodeEditor::HandleKeyboardShortcuts() {
     // Ctrl+S - Save the graph to its file (a name is asked the first time);
     // Ctrl+Shift+S - Save As a new file (the open one stays as it was).
     if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        SaveCurrentGraph();
+        SaveFromStudio();
     }
     if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        ShowSaveDialog();
+        SaveAsFromStudio();
     }
 
     // Ctrl+Shift+U - Create subgraph from selection (Ctrl+Shift+S is Save As)

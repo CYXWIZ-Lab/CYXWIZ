@@ -1,5 +1,6 @@
 #include "ui_buttons.h"
 #include "ui_tokens.h"
+#include "ui_widgets.h"
 #include "../core/pipeline_type_names.h"
 #include "node_editor.h"
 #include "../core/live_graph_compile.h"
@@ -12,7 +13,6 @@
 #include "properties.h"
 #include "properties_parameter_rules.h"
 #include "../core/studio_toolbar_presentation.h"
-#include "patterns/pattern_library.h"
 #include "icons.h"
 #include "../core/data_registry.h"
 #include "../core/training_input_preparation.h"
@@ -934,263 +934,81 @@ void NodeEditor::Render() {
 
     // Outside the Studio Begin/End body: inactive dock tabs skip that body.
     // Open in this render scope, not in the caller's asset-browser/menu scope.
+    DrawStudioDialogs();
+
+    // Plot nodes: result lane and their Plot windows (TOFIX134 P2).
+    RenderPlotNodes();
+}
+
+// The Studio's notices and questions (TOFIX129 A3-8), on the shared dialog
+// helpers: one look, Escape cancels, the action on the right.
+void NodeEditor::DrawStudioDialogs() {
     if (graph_busy_dialog_pending_) {
         ImGui::OpenPopup("Graph busy##GraphReplacement");
         graph_busy_dialog_pending_ = false;
     }
-    ImGui::SetNextWindowSizeConstraints(ImVec2(360.0f, 0.0f), ImVec2(560.0f, FLT_MAX));
-    if (ImGui::BeginPopupModal("Graph busy##GraphReplacement", nullptr,
-                              ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
-        ImGui::TextUnformatted(graph_busy_message_.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        ImGui::TextUnformatted("The requested graph change was not applied.");
-        if (ImGui::Button("OK", ImVec2(100.0f, 0.0f))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SetItemDefaultFocus();
-        ImGui::EndPopup();
-    }
+    const std::string busy = graph_busy_message_ + "\n\nThe requested graph change was not applied.";
+    ui::MessageDialog("Graph busy##GraphReplacement", busy.c_str());
 
     if (pipeline_notice_pending_) {
         ImGui::OpenPopup("Pipeline##PipelineNotice");
         pipeline_notice_pending_ = false;
     }
-    ImGui::SetNextWindowSizeConstraints(ImVec2(360.0f, 0.0f), ImVec2(560.0f, FLT_MAX));
-    if (ImGui::BeginPopupModal("Pipeline##PipelineNotice", nullptr,
-                              ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
-        ImGui::TextUnformatted(pipeline_notice_.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        if (ImGui::Button("OK", ImVec2(100.0f, 0.0f))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SetItemDefaultFocus();
-        ImGui::EndPopup();
+    ui::MessageDialog("Pipeline##PipelineNotice", pipeline_notice_.c_str());
+
+    if (save_refusal_pending_) {
+        ImGui::OpenPopup("Nothing to save yet##SaveRefusal");
+        save_refusal_pending_ = false;
     }
+    ui::MessageDialog("Nothing to save yet##SaveRefusal", cyxwiz::studio_toolbar::SaveRefusal(0).c_str());
 
-    // Plot nodes: result lane and their Plot windows (TOFIX134 P2).
-    RenderPlotNodes();
-
-    // ===== Save as Pattern Dialog =====
-    if (show_save_pattern_dialog_) {
-        ImGui::OpenPopup("Save as Pattern");
-    }
-
-    if (ImGui::BeginPopupModal("Save as Pattern", &show_save_pattern_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Save selected nodes as a reusable pattern");
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::Text("Pattern Name:");
-        ImGui::SetNextItemWidth(300);
-        ImGui::InputText("##PatternName", save_pattern_name_, sizeof(save_pattern_name_));
-
-        ImGui::Spacing();
-        ImGui::Text("Description:");
-        ImGui::SetNextItemWidth(300);
-        ImGui::InputTextMultiline("##PatternDescription", save_pattern_description_,
-                                   sizeof(save_pattern_description_), ImVec2(300, 80));
-
-        ImGui::Spacing();
-        ImGui::TextDisabled("Selected nodes: %zu", selected_node_ids_.size());
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        bool name_valid = std::strlen(save_pattern_name_) > 0;
-
-        if (!name_valid) {
-            ImGui::BeginDisabled();
-        }
-
-        if (ImGui::Button("Save Pattern", ImVec2(140, 0))) {
-            // Get node positions from ImNodes and save
-            auto& library = patterns::PatternLibrary::Instance();
-            auto& pm = cyxwiz::ProjectManager::Instance();
-
-            // Build nodes with positions
-            std::vector<MLNode> nodes_with_pos;
-            for (int node_id : selected_node_ids_) {
-                for (auto& node : nodes_) {
-                    if (node.id == node_id) {
-                        MLNode node_copy = node;
-                        auto it = cached_node_positions_.find(node.id);
-                        ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-                        node_copy.initial_pos_x = pos.x;
-                        node_copy.initial_pos_y = pos.y;
-                        node_copy.has_initial_position = true;
-                        nodes_with_pos.push_back(node_copy);
-                        break;
-                    }
-                }
-            }
-
-            // Build project-specific save path: <project_root>/patterns/<name>.json
-            std::string save_path = pm.GetProjectRoot() + "/patterns/" + save_pattern_name_ + ".json";
-
-            bool success = library.SavePatternFromSelection(
-                nodes_with_pos,
-                links_,
-                selected_node_ids_,
-                save_pattern_name_,
-                save_pattern_description_,
-                patterns::PatternCategory::Custom,
-                save_path
-            );
-
-            if (success) {
-                spdlog::info("Pattern '{}' saved to project: {}", save_pattern_name_, save_path);
-            } else {
-                spdlog::error("Failed to save pattern '{}'", save_pattern_name_);
-            }
-
-            show_save_pattern_dialog_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (!name_valid) {
-            ImGui::EndDisabled();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(140, 0))) {
-            show_save_pattern_dialog_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
-
-    // ===== Empty Graph Warning Popup =====
-    if (show_empty_graph_warning_) {
-        ImGui::OpenPopup("Empty Graph Warning");
-    }
-
-    if (ImGui::BeginPopupModal("Empty Graph Warning", &show_empty_graph_warning_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(ui::CurrentTokens().warning, ICON_FA_TRIANGLE_EXCLAMATION);
-        ImGui::SameLine();
-        ImGui::Text("Cannot Save Empty Graph");
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::TextWrapped("The node graph is empty. Please add at least one node before saving.");
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        float button_width = 120.0f;
-        float window_width = ImGui::GetWindowWidth();
-        ImGui::SetCursorPosX((window_width - button_width) * 0.5f);
-
-        if (ImGui::Button("OK", ImVec2(button_width, 0))) {
-            show_empty_graph_warning_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
-
-    // Auto-Insert Flatten Dialog
+    // A 4-D output wired into a layer that takes (batch, features): offer a
+    // Flatten between them. Cancel leaves the graph as it was.
+    const MLNode* from = FindNodeById(pending_flatten_from_node_);
+    const MLNode* to = FindNodeById(pending_flatten_to_node_);
     if (show_auto_insert_flatten_dialog_) {
-        ImGui::OpenPopup("Shape Mismatch Detected");
+        ImGui::OpenPopup("###insert_flatten");
+        show_auto_insert_flatten_dialog_ = false;
     }
+    const std::string to_name = to ? to->name : std::string("This layer");
+    const std::string title = to_name + " needs a flat input###insert_flatten";
+    const std::string message =
+        (from ? from->name : std::string("The node before it")) +
+        " gives a 4-D output (batch, height, width, channels); " + to_name +
+        " takes a flat input (batch, features).\n\nInsert a Flatten between them? Ctrl+Z removes it.";
+    if (ui::ConfirmDialog(title.c_str(), message.c_str(), "Insert Flatten") == ui::DialogResult::Primary) InsertFlatten();
+}
 
-    if (ImGui::BeginPopupModal("Shape Mismatch Detected",
-                              &show_auto_insert_flatten_dialog_,
-                              ImGuiWindowFlags_AlwaysAutoResize)) {
+void NodeEditor::InsertFlatten() {
+    const MLNode* from_node = FindNodeById(pending_flatten_from_node_);
+    const MLNode* to_node = FindNodeById(pending_flatten_to_node_);
+    if (!from_node || !to_node) return;
+    // The state before the change, so Undo removes the Flatten.
+    SaveUndoState();
+    const std::string from_name = from_node->name, to_name = to_node->name;
+    MLNode flatten_node = CreateNode(NodeType::Flatten, "Flatten");
 
-        ImGui::TextColored(ui::CurrentTokens().warning,
-                         ICON_FA_TRIANGLE_EXCLAMATION " Shape Mismatch");
-        ImGui::Separator();
-        ImGui::Spacing();
+    // Midway between the two, from the positions cached while the canvas
+    // was drawn (ImNodes' own are only valid inside its scope).
+    const auto from_it = cached_node_positions_.find(pending_flatten_from_node_);
+    const auto to_it = cached_node_positions_.find(pending_flatten_to_node_);
+    const ImVec2 from_pos = from_it != cached_node_positions_.end() ? from_it->second : ImVec2(0, 0);
+    const ImVec2 to_pos = to_it != cached_node_positions_.end() ? to_it->second : from_pos;
+    const ImVec2 flatten_pos((from_pos.x + to_pos.x) / 2.0f, (from_pos.y + to_pos.y) / 2.0f);
 
-        // Find source and target nodes for display
-        MLNode* from_node = nullptr;
-        MLNode* to_node = nullptr;
-        for (auto& node : nodes_) {
-            if (node.id == pending_flatten_from_node_) from_node = &node;
-            if (node.id == pending_flatten_to_node_) to_node = &node;
-        }
+    // from_node / to_node point into nodes_: not used after this.
+    const int flatten_in = flatten_node.inputs[0].id;
+    const int flatten_out = flatten_node.outputs[0].id;
+    const int flatten_id = flatten_node.id;
+    nodes_.push_back(std::move(flatten_node));
+    pending_positions_[flatten_id] = flatten_pos;
+    pending_positions_frames_ = 3;  // Apply position for 3 frames
 
-        if (from_node && to_node) {
-            ImGui::Text("Source: %s (4D tensor output)", from_node->name.c_str());
-            ImGui::Text("Target: %s (expects 2D input)", to_node->name.c_str());
-        } else {
-            ImGui::Text("Connection requires shape transformation");
-        }
-
-        ImGui::Spacing();
-        ImGui::TextWrapped("Dense layers require flattened 2D input [batch, features]. "
-                        "The source node outputs a 4D tensor [batch, height, width, channels]. "
-                        "Insert a Flatten node to convert the shape?");
-        ImGui::Spacing();
-
-        // Button 1: Auto-Insert Flatten
-        if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES " Auto-Insert Flatten", ImVec2(210, 0))) {
-            if (from_node && to_node) {
-                // The state before the change, so Undo removes the Flatten.
-                SaveUndoState();
-                const std::string from_name = from_node->name, to_name = to_node->name;
-                MLNode flatten_node = CreateNode(NodeType::Flatten, "Flatten");
-
-                // Midway between the two, from the positions cached while the
-                // canvas was drawn (ImNodes' own are only valid inside its scope).
-                const auto from_it = cached_node_positions_.find(pending_flatten_from_node_);
-                const auto to_it = cached_node_positions_.find(pending_flatten_to_node_);
-                const ImVec2 from_pos = from_it != cached_node_positions_.end() ? from_it->second : ImVec2(0, 0);
-                const ImVec2 to_pos = to_it != cached_node_positions_.end() ? to_it->second : from_pos;
-                ImVec2 flatten_pos = ImVec2(
-                    (from_pos.x + to_pos.x) / 2.0f,
-                    (from_pos.y + to_pos.y) / 2.0f
-                );
-
-                // Add to graph (from_node / to_node point into nodes_: not used after this)
-                nodes_.push_back(flatten_node);
-                pending_positions_[flatten_node.id] = flatten_pos;
-                pending_positions_frames_ = 3;  // Apply position for 3 frames
-
-                // Get flatten node's pin IDs
-                int flatten_in = flatten_node.inputs[0].id;
-                int flatten_out = flatten_node.outputs[0].id;
-
-                // Create connections: from → flatten → to
-                CreateLink(pending_flatten_from_pin_, flatten_in,
-                         pending_flatten_from_node_, flatten_node.id);
-                CreateLink(flatten_out, pending_flatten_to_pin_,
-                         flatten_node.id, pending_flatten_to_node_);
-                RebuildPinLookup();
-
-                spdlog::info("Inserted a Flatten node between {} and {} (Ctrl+Z removes it)", from_name, to_name);
-            }
-
-            show_auto_insert_flatten_dialog_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        // Button 2: Manual
-        if (ImGui::Button(ICON_FA_HAND " Manual", ImVec2(95, 0))) {
-            show_auto_insert_flatten_dialog_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        // Button 3: Cancel
-        if (ImGui::Button(ICON_FA_XMARK " Cancel", ImVec2(95, 0))) {
-            show_auto_insert_flatten_dialog_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
+    // from -> Flatten -> to
+    CreateLink(pending_flatten_from_pin_, flatten_in, pending_flatten_from_node_, flatten_id);
+    CreateLink(flatten_out, pending_flatten_to_pin_, flatten_id, pending_flatten_to_node_);
+    RebuildPinLookup();
+    spdlog::info("Inserted a Flatten node between {} and {} (Ctrl+Z removes it)", from_name, to_name);
 }
 
 // ShowToolbar: node_editor_toolbar.cpp (Studio nav, approved board 7).

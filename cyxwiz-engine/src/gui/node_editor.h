@@ -844,6 +844,10 @@ private:
     int toolbar_fold_level_ = -1;  // the bar's last fold, logged when it changes
     void CarryDockFromOldName();
     bool dock_carried_ = false;
+    void DrawStudioDialogs();
+    void InsertFlatten();
+    // Save and Save As from the Studio on an empty canvas say why nothing was written.
+    bool save_refusal_pending_ = false;
     // The bar's menus (TOFIX129 A3): drawn from the bar, or as sections of
     // More when they fold into it.
     void DrawEditItems(int selected);
@@ -904,6 +908,10 @@ private:
                        const std::string& source_description);
     void ShowSaveDialog();
     void ShowLoadDialog();
+    // The Studio's Save / Save As (bar, graph menu, Ctrl+S): on an empty canvas
+    // they say why nothing was written (File > Save saves the project quietly).
+    void SaveFromStudio();
+    void SaveAsFromStudio();
     // Writes a copy of the graph file where the user picks; the open file stays.
     void ExportGraphCopy();
 
@@ -1250,9 +1258,6 @@ private:
     std::map<int, ImVec2> cached_node_positions_;
 
     // Save as Pattern dialog state
-    bool show_save_pattern_dialog_ = false;
-    char save_pattern_name_[256] = "";
-    char save_pattern_description_[1024] = "";
 
     // Auto-insert Flatten dialog state
     bool show_auto_insert_flatten_dialog_ = false;
@@ -1292,7 +1297,6 @@ private:
     void RollUpRecipeExecutionStates();
 
     // Empty graph warning popup state
-    bool show_empty_graph_warning_ = false;
 
     // Search state (Ctrl+F for existing nodes)
     SearchState search_state_;
