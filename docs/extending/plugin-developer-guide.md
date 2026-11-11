@@ -505,7 +505,7 @@ directly, so your plugin must be built the way the Engine was.
 compiler that builds your plugin, for example
 
 ```
-sdk=0.2;api=1.2;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=none
+sdk=0.2;api=1.3;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=none
 ```
 
 The Engine loads your library, then compares the fingerprint with its own
