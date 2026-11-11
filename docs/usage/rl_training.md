@@ -130,6 +130,8 @@ keeps its trained policy until the next Train.
     four times faster, or *As fast as possible*.
   - The panel shows the episode, its step and return, the last returns and
     the action, with Pause / Resume, New episode and Stop.
+  - **View > Panels > Policy Playback** (or its sidebar icon) shows or hides
+    the panel. Closing it stops the playback.
 - **Where you see it:**
   - **MuJoCo task:** the **MuJoCo Viewport** opens and shows the copy being
     played. Its own Run / Step / Reset are off while it does ("Policy playback

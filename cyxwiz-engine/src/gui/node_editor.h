@@ -301,6 +301,8 @@ public:
     void SetShowMinimap(bool show) { show_minimap_ = show; }
     bool GetShowMinimap() const { return show_minimap_; }
     bool* GetShowMinimapPtr() { return &show_minimap_; }
+    // Policy Playback's window, for View > Panels (it says how to get a policy when none plays)
+    bool* GetPolicyPlaybackVisiblePtr();
 
     // Icon pack selection (for node icons)
     void SetIconPack(IconPack pack) { icon_pack_ = pack; }

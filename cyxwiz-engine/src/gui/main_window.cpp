@@ -3487,6 +3487,9 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Training
     add("Training", ICON_FA_CHART_LINE, training_plot_panel_, "Training");
     add("Studio Debugger", ICON_FA_BUG, studio_debugger_panel_, "Training");
+    if (node_editor_)  // its window belongs to the Studio (it plays a policy trained there)
+        dock_style.RegisterPanel("Policy Playback", ICON_FA_PLAY, node_editor_->GetPolicyPlaybackVisiblePtr(), nullptr,
+                                 "Training", "");
     add("Tasks", ICON_FA_HOURGLASS_HALF, task_progress_panel_, "Training");
 
     // Network

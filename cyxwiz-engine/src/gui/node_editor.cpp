@@ -189,6 +189,8 @@ NodeEditor::NodeEditor()
 
     // Initialize shape inference engine
 
+    rl_playback_ = std::make_unique<cyxwiz::PolicyPlaybackPanel>();  // shown by Play or View > Panels
+
     // The canvas starts empty (owner 2026-10-02); ready-made graphs are
     // under Examples in the Nodes panel.
 
@@ -206,7 +208,7 @@ NodeEditor::NodeEditor()
             spdlog::info("PPO stopped: its environment's plugin {} is stopping", plugin_id);
             rl_run_->StopAndWait();
         }
-        if (rl_playback_ && rl_playback_->Policy() && owned(rl_playback_->Policy()->config.environment_key)) {
+        if (rl_playback_->Policy() && owned(rl_playback_->Policy()->config.environment_key)) {
             spdlog::info("Policy playback stopped: its environment's plugin {} is stopping", plugin_id);
             rl_playback_->Stop();
         }
@@ -314,7 +316,7 @@ void NodeEditor::Render() {
     }
     PollRLTraining();
     if (rl_dashboard_) rl_dashboard_->Render();
-    if (rl_playback_) rl_playback_->Render();
+    rl_playback_->Render();
 
     if (!show_window_) return;
 
@@ -4400,12 +4402,13 @@ std::string NodeEditor::RLPolicyLine() const {
                                            rl_policy_ ? rl_policy_->mean_return : 0.0f);
 }
 
+bool* NodeEditor::GetPolicyPlaybackVisiblePtr() { return rl_playback_->VisiblePtr(); }
+
 bool NodeEditor::PlayRLPolicy(std::string& error) {
     if (!rl_policy_) {
         error = "There is no trained policy yet: Train the RL graph, or load a saved policy.";
         return false;
     }
-    if (!rl_playback_) rl_playback_ = std::make_unique<cyxwiz::PolicyPlaybackPanel>();
     if (!rl_playback_->Play(rl_policy_, rl_policy_file_, error)) return false;
     spdlog::info("Policy playback: {} started", rl_policy_->config.environment.id);
     return true;

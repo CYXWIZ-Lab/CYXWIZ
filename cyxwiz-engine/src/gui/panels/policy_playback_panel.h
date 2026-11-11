@@ -24,6 +24,7 @@ public:
     void Render();
     bool IsVisible() const { return visible_; }
     void SetVisible(bool visible) { visible_ = visible; }
+    bool* VisiblePtr() { return &visible_; }  // View > Panels and the sidebar
 
 private:
     void RenderCartPole(const rl::PolicyPlayback::Snapshot& s, float width, float height);
