@@ -479,15 +479,10 @@ void NodeEditor::Render() {
 
                 // Zoom toward mouse position by adjusting panning
                 if (zoom_ != old_zoom) {
-                    ImVec2 panning = ImNodes::EditorContextGetPanning();
-                    ImVec2 editor_origin = ImGui::GetWindowPos();
-                    editor_origin.y += ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + 30.0f;
-                    editor_origin.x += ImGui::GetStyle().WindowPadding.x;
-
-                    ImVec2 mouse_rel = ImVec2(
-                        mouse_pos.x - editor_origin.x - panning.x,
-                        mouse_pos.y - editor_origin.y - panning.y
-                    );
+                    // The grid point under the pointer stays under it.
+                    const ImVec2 panning = ImNodes::EditorContextGetPanning();
+                    const ImVec2 mouse_rel(mouse_pos.x - canvas_origin_.x - panning.x,
+                                           mouse_pos.y - canvas_origin_.y - panning.y);
 
                     float zoom_factor = zoom_ / old_zoom;
                     ImNodes::EditorContextResetPanning(ImVec2(
@@ -501,18 +496,8 @@ void NodeEditor::Render() {
         // Handle right-click context menu (skip if mouse is over minimap)
         bool right_click_detected = false;
         if (ImNodes::IsEditorHovered() && !mouse_in_minimap_bounds && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            // Store mouse position for node placement in grid space
-            // The editor origin is at the window content region start
-            ImVec2 editor_origin = ImGui::GetWindowPos();
-            editor_origin.y += ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + 30.0f;  // Account for title bar and toolbar
-            editor_origin.x += ImGui::GetStyle().WindowPadding.x;
-            ImVec2 panning = ImNodes::EditorContextGetPanning();
-
-            // Convert screen position to grid space
-            context_menu_pos_ = ImVec2(
-                (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                (mouse_pos.y - editor_origin.y - panning.y) / zoom_
-            );
+            // Where a node added from the menu goes: the grid point clicked.
+            context_menu_pos_ = GridAt(mouse_pos);
             right_click_detected = true;
         }
 
@@ -663,13 +648,7 @@ void NodeEditor::Render() {
                     auto* metadata = registry.GetMetadata(dropped_type);
                     std::string node_name = metadata ? metadata->name : "Node";
 
-                    // Calculate drop position in grid space (reuse mouse_pos from earlier)
-                    ImVec2 editor_origin = ImGui::GetWindowPos();
-                    ImVec2 panning = ImNodes::EditorContextGetPanning();
-                    ImVec2 drop_pos(
-                        (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                        (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_  // Offset for toolbar
-                    );
+                    const ImVec2 drop_pos = GridAt(mouse_pos);
 
                     // Queue node for addition
                     pending_nodes_.emplace_back(
@@ -686,11 +665,7 @@ void NodeEditor::Render() {
                 if (!CanAddNodeToGraph(NodeType::PluginCustom, type_id)) {
                     spdlog::warn("Blocked drag-drop graph add for extension node '{}'", type_id);
                 } else {
-                    ImVec2 editor_origin = ImGui::GetWindowPos();
-                    ImVec2 panning = ImNodes::EditorContextGetPanning();
-                    ImVec2 drop_pos(
-                        (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                        (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_);
+                    const ImVec2 drop_pos = GridAt(mouse_pos);
                     pending_nodes_.emplace_back(NodeType::PluginCustom, type_id, drop_pos);
                     spdlog::info("Drag-drop: Adding extension node {} at ({}, {})",
                                  type_id, drop_pos.x, drop_pos.y);
@@ -699,13 +674,7 @@ void NodeEditor::Render() {
 
             // Handle ANNOTATION drag-drop
             if (ImGui::AcceptDragDropPayload("ANNOTATION") != nullptr) {
-                // Calculate drop position in grid space
-                ImVec2 editor_origin = ImGui::GetWindowPos();
-                ImVec2 panning = ImNodes::EditorContextGetPanning();
-                ImVec2 drop_pos(
-                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_
-                );
+                const ImVec2 drop_pos = GridAt(mouse_pos);
 
                 // Add annotation at drop position
                 AddAnnotationAt(drop_pos);
@@ -714,13 +683,7 @@ void NodeEditor::Render() {
 
             // Handle STUDIO_FRAME drag-drop
             if (ImGui::AcceptDragDropPayload("STUDIO_FRAME") != nullptr) {
-                // Calculate drop position in grid space
-                ImVec2 editor_origin = ImGui::GetWindowPos();
-                ImVec2 panning = ImNodes::EditorContextGetPanning();
-                ImVec2 drop_pos(
-                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_
-                );
+                const ImVec2 drop_pos = GridAt(mouse_pos);
 
                 // Add frame at drop position
                 AddFrameAt(drop_pos);
@@ -1847,6 +1810,20 @@ void NodeEditor::RenderNodes() {
                     extension_style->outline_color, status);
             }
 
+            // A Find match (Ctrl+F): a ring in the warning tone, stronger on
+            // the current one, while the find bar is open.
+            if (search_state_.search_visible && !search_state_.matching_node_ids.empty()) {
+                const auto& ids = search_state_.matching_node_ids;
+                const auto hit = std::find(ids.begin(), ids.end(), node.id);
+                if (hit != ids.end()) {
+                    const bool current = static_cast<int>(hit - ids.begin()) == search_state_.current_match_index;
+                    const float pad = 3.0f * zoom_;
+                    draw_list->AddRect(ImVec2(icon_pos.x - pad, icon_pos.y - pad), ImVec2(icon_max.x + pad, icon_max.y + pad),
+                                       ui::ToU32(ui::WithAlpha(t.warning, current ? 1.0f : 0.55f)), CORNER_RADIUS + pad, 0,
+                                       current ? 3.0f : 2.0f);
+                }
+            }
+
             // A recipe and a visual group look alike otherwise; say which it is.
             if (node.type == NodeType::Subgraph) {
                 const bool recipe = IsPreparationRecipeNode(node.id);
@@ -2871,96 +2848,84 @@ void NodeEditor::HandleInteractions() {
 
 // ===== Search Functionality =====
 
+ImVec2 NodeEditor::GridAt(ImVec2 screen) const {
+    const ImVec2 panning = ImNodes::EditorContextGetPanning();
+    return ImVec2((screen.x - canvas_origin_.x - panning.x) / zoom_, (screen.y - canvas_origin_.y - panning.y) / zoom_);
+}
+
+void NodeEditor::OpenFindBar() {
+    search_state_.search_visible = true;
+    search_focus_requested_ = true;
+}
+
+void NodeEditor::CloseFindBar() {
+    search_state_.search_visible = false;
+    search_state_.matching_node_ids.clear();
+    search_state_.current_match_index = -1;
+}
+
+// Find in the graph (Ctrl+F, View > Find in the graph): a bar in the canvas's
+// top-left corner (TOFIX129 A3-9). Matches have a ring on the canvas; Enter
+// or F3 goes to the next, Shift+Enter or Shift+F3 to the previous, Esc
+// closes, all while typing.
 void NodeEditor::ShowSearchBar() {
     if (!search_state_.search_visible) return;
-
-    // Position the search bar at the top of the node editor window
-    ImVec2 window_pos = ImGui::GetWindowPos();
-    ImVec2 window_size = ImGui::GetWindowSize();
-    float bar_height = 40.0f;
-    float bar_width = 350.0f;
-
-    // Position at top-center of the window
-    ImVec2 bar_pos = ImVec2(
-        window_pos.x + (window_size.x - bar_width) * 0.5f,
-        window_pos.y + ImGui::GetFrameHeight() + 60.0f  // Below toolbar
-    );
+    const ui::Tokens& t = ui::CurrentTokens();
 
     ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(bar_pos);
-    ImGui::SetNextWindowSize(ImVec2(bar_width, bar_height));
-    ImGui::SetNextWindowBgAlpha(0.95f);
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
-                             ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove |
-                             ImGuiWindowFlags_NoScrollbar |
-                             ImGuiWindowFlags_NoSavedSettings;
-
+    ImGui::SetNextWindowPos(ImVec2(canvas_origin_.x + 12.0f, canvas_origin_.y + 12.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, t.bg_raised);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 4.0f));
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
     if (ImGui::Begin("##NodeSearchBar", nullptr, flags)) {
-        // Search icon
-        ImGui::Text(ICON_FA_MAGNIFYING_GLASS);
+        const size_t matches = search_state_.matching_node_ids.size();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_dim, ICON_FA_MAGNIFYING_GLASS);
         ImGui::SameLine();
-
-        // Focus input if just opened
-        static bool was_visible = false;
-        if (!was_visible && search_state_.search_visible) {
+        if (search_focus_requested_) {
             ImGui::SetKeyboardFocusHere();
+            search_focus_requested_ = false;
         }
-        was_visible = search_state_.search_visible;
-
-        // Search input
-        ImGui::SetNextItemWidth(200.0f);
-        bool changed = ImGui::InputText("##SearchInput", search_state_.search_buffer,
-                                        sizeof(search_state_.search_buffer),
-                                        ImGuiInputTextFlags_AutoSelectAll);
-        if (changed) {
+        ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 14.0f, std::max(80.0f, canvas_size_.x - 200.0f)));
+        if (ImGui::InputTextWithHint("##SearchInput", "Find a node, type or setting", search_state_.search_buffer,
+                                     sizeof(search_state_.search_buffer), ImGuiInputTextFlags_AutoSelectAll))
             UpdateSearchResults();
-        }
-
-        // Handle Enter key to navigate to next match
-        if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
-            if (ImGui::GetIO().KeyShift) {
-                NavigateToMatch(-1);
-            } else {
-                NavigateToMatch(1);
+        // The keys work while typing: the bar has the keyboard, not the canvas.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+            const bool shift = ImGui::GetIO().KeyShift;
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                CloseFindBar();
+            } else if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter) ||
+                       ImGui::IsKeyPressed(ImGuiKey_F3)) {
+                NavigateToMatch(shift ? -1 : 1);
+                search_focus_requested_ = true;  // Enter leaves the field: keep typing
             }
         }
 
-        // Match count
         ImGui::SameLine();
-        if (!search_state_.matching_node_ids.empty()) {
-            ImGui::Text("%d/%zu", search_state_.current_match_index + 1,
-                       search_state_.matching_node_ids.size());
-        } else if (strlen(search_state_.search_buffer) > 0) {
-            ImGui::TextColored(ui::CurrentTokens().caution, "No matches");
-        }
-
-        // Navigation buttons
+        ImGui::AlignTextToFramePadding();
+        if (matches > 0)
+            ImGui::TextColored(t.text_dim, "%d of %zu", search_state_.current_match_index + 1, matches);
+        else if (search_state_.search_buffer[0] != '\0')
+            ImGui::TextColored(t.caution, "No match");
+        const char* one = "Only one match";
         ImGui::SameLine();
-        if (ImGui::SmallButton(ICON_FA_CHEVRON_UP)) {
-            NavigateToMatch(-1);
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Previous (Shift+F3)");
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton(ICON_FA_CHEVRON_DOWN)) {
-            NavigateToMatch(1);
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Next (F3)");
-        }
-
-        // Close button
-        ImGui::SameLine();
-        if (ImGui::SmallButton(ICON_FA_XMARK)) {
-            search_state_.search_visible = false;
-            search_state_.matching_node_ids.clear();
-            search_state_.current_match_index = -1;
-        }
+        if (ui::GhostButton(ICON_FA_CHEVRON_UP "##find_prev", matches > 1, matches == 1 ? one : "No match")) NavigateToMatch(-1);
+        if (matches > 1 && ImGui::IsItemHovered()) ImGui::SetTooltip("Previous (Shift+F3, Shift+Enter)");
+        ImGui::SameLine(0.0f, 0.0f);
+        if (ui::GhostButton(ICON_FA_CHEVRON_DOWN "##find_next", matches > 1, matches == 1 ? one : "No match")) NavigateToMatch(1);
+        if (matches > 1 && ImGui::IsItemHovered()) ImGui::SetTooltip("Next (F3, Enter)");
+        ImGui::SameLine(0.0f, 0.0f);
+        if (ui::GhostButton(ICON_FA_XMARK "##find_close")) CloseFindBar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close (Esc)");
     }
     ImGui::End();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
 }
 
 void NodeEditor::UpdateSearchResults() {
@@ -3047,29 +3012,17 @@ void NodeEditor::NavigateToMatch(int direction) {
     ImNodes::SelectNode(node_id);
     selected_node_id_ = node_id;
 
-    // Center viewport on the matched node
+    // Centre the match in the canvas at the zoom it is at.
     auto pos_it = cached_node_positions_.find(node_id);
     if (pos_it != cached_node_positions_.end()) {
-        ImVec2 node_pos = pos_it->second;
-
-        // Get the visible area size (approximately)
-        ImVec2 window_size = ImGui::GetWindowSize();
-        ImVec2 center_offset = ImVec2(window_size.x * 0.5f - 100.0f, window_size.y * 0.5f - 50.0f);
-
-        // Pan to center the node
-        ImNodes::EditorContextResetPanning(ImVec2(-node_pos.x + center_offset.x, -node_pos.y + center_offset.y));
+        const ImVec2 size = ImNodes::GetNodeDimensions(node_id);
+        CenterViewOn(ImVec2(pos_it->second.x + size.x * 0.5f / zoom_, pos_it->second.y + size.y * 0.5f / zoom_));
     }
 
     spdlog::debug("Navigated to match {}/{}: node {}",
                   search_state_.current_match_index + 1,
                   search_state_.matching_node_ids.size(),
                   node_id);
-}
-
-void NodeEditor::HighlightMatchingNodes() {
-    // This function can be called from RenderNodes to add visual highlighting
-    // For now, selection highlighting is handled by ImNodes automatically
-    // TODO: Add custom overlay drawing for matching but not selected nodes
 }
 
 // ===== Alignment and Distribution Tools =====
@@ -3329,16 +3282,13 @@ void NodeEditor::RenderAnnotations() {
     const ui::Tokens& t = ui::CurrentTokens();
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    ImVec2 editor_origin = ImGui::GetWindowPos();
     ImVec2 panning = ImNodes::EditorContextGetPanning();
     ImVec2 mouse_pos = ImGui::GetMousePos();
 
     for (auto& annotation : annotations_) {
-        // Convert grid position to screen position
-        ImVec2 screen_pos(
-            editor_origin.x + annotation.position.x * zoom_ + panning.x,
-            editor_origin.y + annotation.position.y * zoom_ + panning.y + 50.0f
-        );
+        // The note's grid point on screen, as a node's (canvas origin, panning, zoom)
+        ImVec2 screen_pos(canvas_origin_.x + annotation.position.x * zoom_ + panning.x,
+                          canvas_origin_.y + annotation.position.y * zoom_ + panning.y);
 
         float title_height = 24.0f * zoom_;
         float btn_size = 18.0f * zoom_;
@@ -3391,10 +3341,7 @@ void NodeEditor::RenderAnnotations() {
         // Handle dragging
         if (dragging_annotation_id_ == annotation.id && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             ImVec2 new_screen_pos(mouse_pos.x - annotation_drag_offset_.x, mouse_pos.y - annotation_drag_offset_.y);
-            annotation.position = ImVec2(
-                (new_screen_pos.x - editor_origin.x - panning.x) / zoom_,
-                (new_screen_pos.y - editor_origin.y - panning.y - 50.0f) / zoom_
-            );
+            annotation.position = GridAt(new_screen_pos);
             screen_pos = new_screen_pos;
             p_min = screen_pos;
             p_max = ImVec2(screen_pos.x + size.x, screen_pos.y + size.y);

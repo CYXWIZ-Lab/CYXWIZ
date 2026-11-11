@@ -463,9 +463,7 @@ void NodeEditor::HandleKeyboardShortcuts() {
     // Escape - Close search bar, context menu, or clear selection
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         if (search_state_.search_visible) {
-            search_state_.search_visible = false;
-            search_state_.matching_node_ids.clear();
-            search_state_.current_match_index = -1;
+            CloseFindBar();
         } else if (show_context_menu_) {
             show_context_menu_ = false;
         } else {
@@ -473,17 +471,10 @@ void NodeEditor::HandleKeyboardShortcuts() {
         }
     }
 
-    // Ctrl+F - Toggle search bar
+    // Ctrl+F - Open the find bar (or close it); it takes the keyboard
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_F)) {
-        search_state_.search_visible = !search_state_.search_visible;
-        if (search_state_.search_visible) {
-            // Focus the search input when opened
-            ImGui::SetKeyboardFocusHere();
-        } else {
-            // Clear search when closed
-            search_state_.matching_node_ids.clear();
-            search_state_.current_match_index = -1;
-        }
+        if (search_state_.search_visible) CloseFindBar();
+        else OpenFindBar();
     }
 
     // F3 - Navigate to next search match

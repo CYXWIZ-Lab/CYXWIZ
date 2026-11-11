@@ -214,7 +214,7 @@ void NodeEditor::DrawViewItems() {
     if (nodes_.empty()) fit = {false, "The canvas is empty."};
     if (ItemOrReason("Fit all nodes", "F", fit)) FrameAll();
     if (ImGui::MenuItem("Minimap", "M", show_minimap_)) show_minimap_ = !show_minimap_;
-    if (ImGui::MenuItem("Find in the graph", "Ctrl+F")) search_state_.search_visible = true;
+    if (ImGui::MenuItem("Find in the graph", "Ctrl+F")) OpenFindBar();
 }
 
 void NodeEditor::DrawFrameworkItems() {

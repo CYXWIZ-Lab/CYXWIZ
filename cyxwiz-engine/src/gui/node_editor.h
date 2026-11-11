@@ -979,7 +979,11 @@ private:
     void ShowSearchBar();
     void UpdateSearchResults();
     void NavigateToMatch(int direction);  // +1 = next, -1 = previous
-    void HighlightMatchingNodes();
+    void OpenFindBar();
+    void CloseFindBar();
+    bool search_focus_requested_ = false;  // the find field takes the keyboard next frame
+    // The grid point under a screen point (from the canvas origin, its panning and the zoom).
+    ImVec2 GridAt(ImVec2 screen) const;
 
     // Node add search (top-right search box for quick node creation)
     void ShowNodeAddSearch();
