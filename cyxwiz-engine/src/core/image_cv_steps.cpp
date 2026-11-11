@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <numeric>
 #include <sstream>
 
@@ -130,8 +131,14 @@ bool ReadKernel(const std::string& text, FilterKernel& kernel, std::string& why)
         std::replace(row.begin(), row.end(), ',', ' ');
         std::istringstream in(row);
         std::vector<float> values;
-        for (float v; in >> v;) values.push_back(v);
-        if (!in.eof()) {
+        bool numbers = true;
+        for (std::string token; numbers && in >> token;) {
+            char* end = nullptr;
+            const float v = std::strtof(token.c_str(), &end);
+            numbers = end == token.c_str() + token.size() && std::isfinite(v);
+            if (numbers) values.push_back(v);
+        }
+        if (!numbers) {
             why = "the kernel has something that is not a number in row " + std::to_string(kernel.rows + 1);
             return false;
         }
@@ -535,16 +542,16 @@ std::vector<FixedImageStep> MergeImageSteps(const image::ImageAugmentation& comp
 
 ImageChannelLayout ChannelLayoutAfter(const FixedImageStep& step, const ImageChannelLayout& input,
                                       size_t output_channels) {
-    // A step that keeps the count changes pixels, not what the channels are.
-    if (output_channels == input.names.size()) return input;
     if (const auto* cv = std::get_if<CvImageStep>(&step); cv && cv->kind == CvImageStepKind::Edges) {
-        if (output_channels == 1) return {{"edges"}, 0};
+        if (!cv->edge_keep_image && output_channels == 1) return {{"edges"}, 0};
         if (output_channels == input.names.size() + 1) {  // the image kept, the edge map added
             ImageChannelLayout layout = input;
             layout.names.push_back("edges");
             return layout;
         }
     }
+    // A step that keeps the count changes pixels, not what the channels are.
+    if (output_channels == input.names.size()) return input;
     // Another count: grey for one channel, else numbered. No colour picture is known.
     if (output_channels == 3) return {{"channel 1", "channel 2", "channel 3"}, 0};
     return DecodedChannelLayout(output_channels);

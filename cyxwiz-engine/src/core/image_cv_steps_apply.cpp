@@ -39,6 +39,16 @@ ImageEnhancer::EdgeDetectorType ToEdge(CvEdgeMethod m) {
     return ImageEnhancer::EdgeDetectorType::Canny;
 }
 
+ImageEnhancer::EdgeDirection ToDirection(CvEdgeDirection d) {
+    switch (d) {
+        case CvEdgeDirection::Magnitude: return ImageEnhancer::EdgeDirection::Magnitude;
+        case CvEdgeDirection::X: return ImageEnhancer::EdgeDirection::X;
+        case CvEdgeDirection::Y: return ImageEnhancer::EdgeDirection::Y;
+        case CvEdgeDirection::Angle: return ImageEnhancer::EdgeDirection::Angle;
+    }
+    return ImageEnhancer::EdgeDirection::Magnitude;
+}
+
 // CLAHE on each channel alone, as a grey image.
 bool ContrastEachChannel(std::vector<float>& x, int w, int h, int c, float clip, int tiles) {
     const size_t n = static_cast<size_t>(w) * h;
@@ -66,7 +76,7 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
     if (c != 1 && c != 3 && s.kind != CvImageStepKind::Filter) {
         const image::ImageShape plane_in{input.height, input.width, 1};
         const image::ImageShape plane_out = CvImageShapeAfter(s, plane_in);
-        if (plane_out.channels != 1) return fail("needs grey or RGB images");
+        if (s.kind == CvImageStepKind::Edges || plane_out.channels != 1) return fail("needs grey or RGB images");
         const size_t pixels_in = input.height * input.width, pixels_out = plane_out.height * plane_out.width;
         std::vector<uint8_t> one(pixels_in), result(pixels_out);
         for (int k = 0; k < c; ++k) {
@@ -94,8 +104,7 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
             break;
         case CvImageStepKind::Edges:
             ok = ImageEnhancer::ApplyEdgeDetection(x, w, h, c, ToEdge(s.edge_method), s.threshold1, s.threshold2,
-                                                   s.edge_kernel,
-                                                   static_cast<ImageEnhancer::EdgeDirection>(s.edge_direction),
+                                                   s.edge_kernel, ToDirection(s.edge_direction),
                                                    s.edge_sigma, s.edge_sigma2);
             if (ok && c > 1) {  // the class repeats the edge map in each channel: keep one
                 for (size_t i = 0, n = static_cast<size_t>(w) * h; i < n; ++i) x[i] = x[i * c];

@@ -618,7 +618,7 @@ GetPipelineFailClosedRuntimeCapabilities() {
         {"ImagePyramid", "Image Pyramid is a training image step done once when the images are prepared: OpenCV on the CPU workers (TOFIX178 1.3f); PipelineExecutor image transforms are not implemented",
          gui::NodeType::ImagePyramid, std::nullopt, false,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
-        {"ImageFilter", "Image Filter is a training image step done once when the images are prepared: OpenCV on the CPU workers (TOFIX178 1.10a); PipelineExecutor image transforms are not implemented",
+        {"ImageFilter", "Image Filter is a training image step done once when the images are prepared: OpenCV on the CPU workers; PipelineExecutor image transforms are not implemented",
          gui::NodeType::ImageFilter, std::nullopt, false,
          PipelineBackendPrimitiveEvidence::ProvenNodePrimitive},
         {"IFFTNode", "legacy IFFT graph execution is not implemented",

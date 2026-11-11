@@ -24,8 +24,6 @@ struct ImageSheetTile {
 
 struct ImageSheet {
     std::vector<ImageSheetTile> tiles;  // empty when the values do not fit the shape
-    // "+1": the tiles after the first, for a thumbnail that shows only the first.
-    std::string CountMark() const { return tiles.size() > 1 ? "+" + std::to_string(tiles.size() - 1) : std::string(); }
 };
 
 // How the picture tile maps values to 0..255: as they are (pixels in 0..1),

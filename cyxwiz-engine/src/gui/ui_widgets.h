@@ -163,7 +163,7 @@ struct SheetTile {
 void SheetTiles(const std::vector<SheetTile>& tiles, float width, float aspect, size_t per_row = 0);
 // "+N" in the bottom-right corner of a thumbnail drawn from p0 to p1 that
 // shows only a sheet's first tile.
-void SheetCountMark(ImDrawList* draw_list, const ImVec2& p0, const ImVec2& p1, size_t more);
+void SheetCountMark(ImDrawList* draw_list, const ImVec2& p1, size_t more);
 // The whole sheet beside the pointer, for the item just drawn.
 void SheetTooltip(const std::vector<SheetTile>& tiles, float aspect);
 

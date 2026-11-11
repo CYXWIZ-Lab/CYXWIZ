@@ -89,12 +89,6 @@ std::vector<std::string> Labels(const LayerViews& v) {
     return out;
 }
 
-std::vector<std::string> Later(const LayerViews& v) {
-    std::vector<std::string> out;
-    for (const auto& t : v.later) out.push_back(t.label);
-    return out;
-}
-
 void TestRowsAndShapes() {
     CheckText(ShapeText({64, 64, 32}), "64 \xC3\x97 64 \xC3\x97 32", "shape text");
     CheckText(ShapeText({}), "-", "empty shape text");
@@ -133,7 +127,6 @@ void TestViewsFollowShapes() {
           "first conv tabs");
     Check(first.tabs[2].tensor == "weights" && first.tabs[3].tensor == "weights" && first.tabs[4].tensor == "weights",
           "weights, gradients and filters read the conv weights, not the bias");
-    Check(Later(first).empty(), "first conv: nothing left for later");
     const auto dense_first = Labels(PlanLayerViews(Dense2(), nullptr, false, true, false));
     Check(std::find(dense_first.begin(), dense_first.end(), "Where it looks") != dense_first.end() &&
               dense_first.back() == "Top samples",
@@ -154,7 +147,7 @@ void TestViewsFollowShapes() {
         const std::vector<float> rgbe = {0.0f, 0.5f, 1.0f, 3.0f, 1.0f, 0.5f, 0.0f, 7.0f};
         const cyxwiz::ImageChannelLayout layout{{"R", "G", "B", "edges"}, 3};
         const auto sheet = SampleSheet(rgbe, {1, 2, 4}, layout);
-        Check(sheet.tiles.size() == 2 && sheet.CountMark() == "+1", "RGB + edges is a sheet of two tiles");
+        Check(sheet.tiles.size() == 2, "RGB + edges is a sheet of two tiles");
         CheckText(sheet.tiles[0].name, "R, G, B", "the picture tile's name");
         CheckText(sheet.tiles[1].name, "channel 4 \xC2\xB7 edges", "the further channel's name");
         Check(sheet.tiles[0].rgba[0] == 0 && sheet.tiles[0].rgba[2] == 255 && sheet.tiles[0].rgba[4] == 255,
@@ -166,11 +159,11 @@ void TestViewsFollowShapes() {
         Check(thumb && thumb->rgba == sheet.tiles[0].rgba, "a thumbnail is the sheet's first tile");
         // No colour picture: every channel a tile; without names, numbered.
         const auto bank = SampleSheet({0, 1, 2, 3, 4, 5, 6, 7}, {1, 2, 4});
-        Check(bank.tiles.size() == 4 && bank.CountMark() == "+3", "four unnamed channels are four tiles");
+        Check(bank.tiles.size() == 4, "four unnamed channels are four tiles");
         CheckText(bank.tiles[0].name, "channel 1", "a numbered channel");
         // Grey and RGB stay one picture with no name and no count.
         const auto one = SampleSheet({0.0f, 0.5f, 1.0f, 1.0f, 0.5f, 0.0f}, {1, 2, 3});
-        Check(one.tiles.size() == 1 && one.tiles[0].name.empty() && one.CountMark().empty(), "RGB is one picture");
+        Check(one.tiles.size() == 1 && one.tiles[0].name.empty(), "RGB is one picture");
         const auto grey = SampleSheet({0.0f, 2.0f}, {1, 2, 1});
         Check(grey.tiles.size() == 1 && grey.tiles[0].name.empty() && grey.tiles[0].rgba[4] == 255, "grey is one picture");
     }
@@ -186,7 +179,7 @@ void TestViewsFollowShapes() {
               "no zeros in the facts when nothing is zero");
 
     const auto deeper = PlanLayerViews(Conv64(), nullptr, false);
-    Check(Later(deeper).empty() && Labels(deeper).size() == 5 && Labels(deeper).back() == "Top images",
+    Check(Labels(deeper).size() == 5 && Labels(deeper).back() == "Top images",
           "a deeper conv has no Filters or occlusion, and has Top images");
     CheckText(deeper.facts,
               "weights [3, 3, 32, 64] + bias [64], 18,496 parameters \xC2\xB7 output 32 \xC3\x97 32 \xC3\x97 64",
@@ -201,7 +194,6 @@ void TestViewsFollowShapes() {
     const auto flatten = PlanLayerViews(Flatten(), nullptr, false);
     Check(Labels(flatten) == std::vector<std::string>({"Units", "Values", "Embedding", "Top images"}),
           "flat output tabs");
-    Check(Later(flatten).empty(), "nothing left for later on a flat output");
     CheckText(flatten.facts, "output 8192", "Flatten facts");
 
     const auto dense = PlanLayerViews(Dense2(), nullptr, false);
@@ -209,7 +201,6 @@ void TestViewsFollowShapes() {
               std::vector<std::string>({"Units", "Values", "Weights", "Gradients", "Contributions", "Embedding",
                                         "Top images"}),
           "Dense tabs");
-    Check(Later(dense).empty(), "nothing left for later on a Dense layer");
     const auto reads_image = PlanLayerViews(Dense2(), nullptr, false, false, true, true);
     Check(Labels(reads_image) == std::vector<std::string>({"Units", "Values", "Weights", "Gradients", "Unit weights",
                                                            "Contributions", "Embedding", "Top images"}),

@@ -7583,7 +7583,7 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
         // and the search window.
         const double ms = 44.5 * static_cast<double>(shape.height * shape.width) / (64.0 * 64.0) *
                           (static_cast<double>(s.search_size) * s.search_size) / (21.0 * 21.0) *
-                          (shape.channels == 1 ? 0.5 : 1.0);
+                          (shape.channels == 3 ? 1.0 : 0.5 * static_cast<double>(shape.channels));
         const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
         char text[256];
         std::snprintf(text, sizeof(text),

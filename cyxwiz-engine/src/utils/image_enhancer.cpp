@@ -348,8 +348,10 @@ bool ImageEnhancer::ApplyEdgeDetection(
 
             case EdgeDetectorType::Sobel: {
                 cv::Mat grad_x, grad_y;
-                cv::Sobel(gray, grad_x, CV_16S, 1, 0, kernel_size);
-                cv::Sobel(gray, grad_y, CV_16S, 0, 1, kernel_size);
+                // The angle needs unclipped gradients: a 7 x 7 Sobel overflows 16 bits.
+                const int depth = direction == EdgeDirection::Angle ? CV_32F : CV_16S;
+                cv::Sobel(gray, grad_x, depth, 1, 0, kernel_size);
+                cv::Sobel(gray, grad_y, depth, 0, 1, kernel_size);
                 from_gradient(grad_x, grad_y, edges);
                 break;
             }

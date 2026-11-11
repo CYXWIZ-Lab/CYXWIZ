@@ -249,7 +249,7 @@ void ImageGalleryView::RenderPipeline(const ig::Row& row) {
             // A sheet: the picture, then each further channel, named.
             std::vector<ui::SheetTile> tiles{{static_cast<ImTextureID>(texture), p.first_name}};
             tiles.insert(tiles.end(), more.begin(), more.end());
-            ui::SheetTiles(tiles, size.x, size.y / std::max(1.0f, size.x), 4);
+            ui::SheetTiles(tiles, size.x, size.y / std::max(1.0f, size.x));
         }
         ImGui::TextUnformatted(p.title.c_str());
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(size.x, 160.0f));

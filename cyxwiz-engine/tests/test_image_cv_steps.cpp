@@ -161,6 +161,22 @@ int main() {
             const size_t middle = static_cast<size_t>(kH / 2) * kW + kW / 2;
             Check(right[middle] == 0 && down[middle] == 64, "the angle of a ramp to the right is 0, downwards 90 degrees");
         }
+        {
+            // A 7 x 7 Sobel on a steep ramp passes 16 bits: the angle is read from unclipped gradients.
+            cv::Mat steep(kH, kW, CV_8UC3), steep_grey;
+            for (int y = 0; y < kH; ++y)
+                for (int x = 0; x < kW; ++x)
+                    steep.at<cv::Vec3b>(y, x) = cv::Vec3b::all(static_cast<uchar>(std::min(255, x * 20 + y * 10)));
+            cv::cvtColor(steep, steep_grey, cv::COLOR_RGB2GRAY);
+            CvImageStep wide = s;
+            wide.edge_kernel = 7;
+            cv::Mat wx, wy, wide_angle, wide_expected;
+            cv::Sobel(steep_grey, wx, CV_32F, 1, 0, 7);
+            cv::Sobel(steep_grey, wy, CV_32F, 0, 1, 7);
+            cv::phase(wx, wy, wide_angle, true);
+            wide_angle.convertTo(wide_expected, CV_8U, 255.0 / 360.0);
+            Check(Worst(Run(wide, steep), wide_expected) == 0, "Sobel 7 angle on a steep ramp is not clipped");
+        }
         s.edge_method = CvEdgeMethod::Scharr;
         s.edge_direction = CvEdgeDirection::Y;
         cv::Scharr(grey, gy, CV_16S, 0, 1);
@@ -347,6 +363,12 @@ int main() {
         Check(ValidateCvImageStep(s, kRgb) == "the kernel's rows differ in length: row 2 has 1, the rows before it 2", "ragged rows");
         s.filter_kernel = "1 x 1";
         Check(ValidateCvImageStep(s, kRgb) == "the kernel has something that is not a number in row 1", "not a number");
+        s.filter_kernel = "1 2 3 -";
+        Check(ValidateCvImageStep(s, kRgb) == "the kernel has something that is not a number in row 1", "a lone sign is not a number");
+        s.filter_kernel = "0 -1 0; -1 5 2e; 0 -1 0";
+        Check(ValidateCvImageStep(s, kRgb) == "the kernel has something that is not a number in row 2", "half a number is not a number");
+        s.filter_kernel = "1 1e99 1";
+        Check(!ValidateCvImageStep(s, kRgb).empty(), "a number past float's range is refused");
         s.filter_kernel = " ; ";
         Check(!ValidateCvImageStep(s, kRgb).empty(), "an empty kernel");
         s.filter_kernel = "1 1 1 1 1";
@@ -478,6 +500,12 @@ int main() {
         edges.position = 1;
         Check(CompiledImageChannels(compiled, {sharpen, edges}, kRgb) == ImageChannelLayout{{"edges"}, 0},
               "Image Edges leaves one channel named edges");
+        CvImageStep on_grey = Step(CvImageStepKind::Edges);
+        Check(CompiledImageChannels({}, {on_grey}, image::ImageShape{kH, kW, 1}) == ImageChannelLayout{{"edges"}, 0},
+              "Image Edges on a grey image names its channel edges, not grey");
+        on_grey.edge_keep_image = true;
+        Check(CompiledImageChannels({}, {on_grey}, image::ImageShape{kH, kW, 1}) == ImageChannelLayout{{"grey", "edges"}, 0},
+              "a grey image kept beside its edge map");
         image::ImageOp gray;
         gray.kind = image::ImageOpKind::Grayscale;
         compiled.ops = {gray};

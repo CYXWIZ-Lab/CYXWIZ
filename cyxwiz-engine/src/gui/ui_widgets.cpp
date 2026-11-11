@@ -648,9 +648,8 @@ void SheetTiles(const std::vector<SheetTile>& tiles, float width, float aspect, 
     }
 }
 
-void SheetCountMark(ImDrawList* draw_list, const ImVec2& p0, const ImVec2& p1, size_t more) {
+void SheetCountMark(ImDrawList* draw_list, const ImVec2& p1, size_t more) {
     if (!draw_list || more == 0) return;
-    (void)p0;
     const Tokens& t = CurrentTokens();
     const std::string text = "+" + std::to_string(more);
     const ImVec2 size = ImGui::CalcTextSize(text.c_str());

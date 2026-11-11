@@ -78,6 +78,7 @@ void ImageRecipeView::ReleaseTextures() {
     textures_.clear();
     row_texture_.clear();
     row_sheet_.clear();
+    sheet_aspect_.clear();
     row_draws_.clear();
     sample_texture_ = 0;
 }
@@ -164,7 +165,7 @@ void ImageRecipeView::UpdatePreviews(const TrainingConfiguration& config, const 
                     tiles.push_back({static_cast<ImTextureID>(keep(TextureManager::Instance().CreateTextureFromUint8Data(
                                          tile.rgba.data(), static_cast<int>(tile.width), static_cast<int>(tile.height), 4))),
                                      tile.name});
-                sheet_aspect_ = p.width > 0 ? static_cast<float>(p.height) / static_cast<float>(p.width) : 1.0f;
+                sheet_aspect_[first] = p.width > 0 ? static_cast<float>(p.height) / static_cast<float>(p.width) : 1.0f;
                 return tiles;
             };
             // Pictures done once: one per merged step, in order; a row takes
@@ -311,7 +312,10 @@ void ImageRecipeView::RenderRow(::gui::NodeEditor* editor, const ir::View& view,
     ImGui::Dummy(ImVec2(kThumb, kThumb));
     // A sheet shows its first tile here, with the count; hover for all of it.
     const auto sheet = row_sheet_.find(row.node_id);
-    if (sheet != row_sheet_.end()) ui::SheetTooltip(sheet->second, sheet_aspect_);
+    if (sheet != row_sheet_.end()) {
+        const auto aspect = sheet_aspect_.find(static_cast<uint32_t>(sheet->second.front().texture));
+        ui::SheetTooltip(sheet->second, aspect == sheet_aspect_.end() ? 1.0f : aspect->second);
+    }
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(at, ImVec2(at.x + kThumb, at.y + kThumb), ui::ToU32(t.bg_input), 4.0f);
     if (picture != row_texture_.end() && picture->second)
@@ -322,7 +326,7 @@ void ImageRecipeView::RenderRow(::gui::NodeEditor* editor, const ir::View& view,
         dl->AddImageRounded(static_cast<ImTextureID>(draws->second.front()), at, ImVec2(at.x + kThumb, at.y + kThumb),
                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 4.0f);
     if (sheet != row_sheet_.end())
-        ui::SheetCountMark(dl, at, ImVec2(at.x + kThumb, at.y + kThumb), sheet->second.size() - 1);
+        ui::SheetCountMark(dl, ImVec2(at.x + kThumb, at.y + kThumb), sheet->second.size() - 1);
     ImGui::SameLine(0.0f, 12.0f);
     // Window-local x of the panel's right edge: nothing runs past it.
     const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;

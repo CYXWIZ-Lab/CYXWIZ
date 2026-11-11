@@ -60,7 +60,7 @@ private:
     // node -> the whole sheet when that picture is only its first tile (an
     // image that is neither grey nor RGB), and its height / width.
     std::map<int, std::vector<ui::SheetTile>> row_sheet_;
-    float sheet_aspect_ = 1.0f;
+    std::map<uint32_t, float> sheet_aspect_;  // by a sheet's first texture
     std::map<int, std::vector<uint32_t>> row_draws_;      // per-batch node -> its draws
     uint32_t sample_texture_ = 0;
     int open_settings_ = -1;                               // the node whose settings show
