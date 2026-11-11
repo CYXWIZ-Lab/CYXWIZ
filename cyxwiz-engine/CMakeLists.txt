@@ -252,6 +252,8 @@ set(ENGINE_SOURCES
     src/core/linear_algebra_presentation.cpp
     src/core/optimization_presentation.cpp
     src/core/utilities_presentation.cpp
+    src/core/system_metrics.cpp
+    src/core/monitor_sampler.cpp
     src/core/text_presentation.cpp
     src/core/word_map.cpp
     src/core/project_column_roles.cpp
@@ -8100,6 +8102,23 @@ if(MSVC)
 endif()
 set_target_properties(test_utilities_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME UtilitiesPresentation COMMAND test_utilities_presentation)
+
+# The Monitor window's figures: the system probe and the sampler (no backend).
+add_executable(test_system_metrics tests/test_system_metrics.cpp src/core/system_metrics.cpp src/core/monitor_sampler.cpp)
+target_include_directories(test_system_metrics PRIVATE src)
+find_package(Threads REQUIRED)
+target_link_libraries(test_system_metrics PRIVATE Threads::Threads)
+if(WIN32)
+    target_compile_definitions(test_system_metrics PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+set_target_properties(test_system_metrics PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME SystemMetrics COMMAND test_system_metrics)
+# The same figures against psutil (a skip where psutil is not installed).
+if(Python3_EXECUTABLE)
+    add_test(NAME system_metrics_psutil
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/compare_system_metrics.py" "$<TARGET_FILE:test_system_metrics>")
+    set_tests_properties(system_metrics_psutil PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 
 # The word map (TOFIX129 D8, M-1 .. M-8): words placed, layouts, clusters, groups.
 add_executable(test_word_map tests/test_word_map.cpp src/core/word_map.cpp)
