@@ -90,7 +90,7 @@ size_t NodeEditor::FingerprintOf(const nlohmann::json& document) {
 }
 
 std::optional<size_t> NodeEditor::GraphFingerprint() {
-    // Runs every half second from the toolbar, so it must never throw: capturing
+    // Runs from the toolbar after edits (at most twice a second), so it must never throw: capturing
     // an expanded subgraph throws on a missing node, pin or boundary target, and
     // an uncaught exception here could close the Engine without a log line (TOFIX146).
     try {
@@ -107,7 +107,7 @@ std::optional<size_t> NodeEditor::GraphFingerprint() {
 }
 
 void NodeEditor::UpdateUnsavedState() {
-    // A cheap check twice a second: the graph as it would be saved, against
+    // The graph as it would be saved, against
     // the last save or load. A load settles for a few frames first.
     if (fingerprint_baseline_frames_ > 0) {
         if (--fingerprint_baseline_frames_ == 0) {
@@ -117,12 +117,36 @@ void NodeEditor::UpdateUnsavedState() {
         }
         return;
     }
+    // The check writes the graph as it would be saved, so it runs only when
+    // something may have changed it since the last one (TOFIX129 A3-10): a
+    // mouse button or key let go (every edit on the canvas, in Properties or
+    // in a dialog ends with one), or a new graph revision or generation (an
+    // edit a run or a load made). An idle Engine writes nothing.
+    if (UserInputEnded()) unsaved_check_due_ = true;
+    const uint64_t revision = live_compile_ ? live_compile_->GraphRevision() : 0;
+    if (revision != unsaved_seen_revision_ || graph_generation_ != unsaved_seen_generation_) {
+        unsaved_seen_revision_ = revision;
+        unsaved_seen_generation_ = graph_generation_;
+        unsaved_check_due_ = true;
+    }
+    if (!unsaved_check_due_) return;
     const double now = ImGui::GetTime();
     if (now - fingerprint_checked_at_ < 0.5) return;
     fingerprint_checked_at_ = now;
+    unsaved_check_due_ = false;
     // A graph that cannot be captured counts as unsaved; Save reports why.
     const auto fingerprint = GraphFingerprint();
     unsaved_ = !fingerprint.has_value() || *fingerprint != saved_fingerprint_;
+}
+
+bool NodeEditor::UserInputEnded() {
+    const ImGuiIO& io = ImGui::GetIO();
+    for (int button = 0; button < ImGuiMouseButton_COUNT; ++button)
+        if (io.MouseReleased[button]) return true;
+    if (!io.InputQueueCharacters.empty()) return true;
+    for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; ++key)
+        if (ImGui::IsKeyReleased(static_cast<ImGuiKey>(key))) return true;
+    return false;
 }
 
 void NodeEditor::DrawGraphMenu() {

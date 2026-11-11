@@ -834,6 +834,11 @@ private:
     size_t saved_fingerprint_ = 0;
     int fingerprint_baseline_frames_ = 2;  // take the baseline once a load settles
     double fingerprint_checked_at_ = -1.0;
+    // The unsaved check runs only when something may have changed the graph.
+    static bool UserInputEnded();
+    bool unsaved_check_due_ = true;
+    uint64_t unsaved_seen_revision_ = 0;
+    uint64_t unsaved_seen_generation_ = 0;
     bool unsaved_ = false;
     uint64_t graph_generation_ = 0;
     bool clear_confirm_requested_ = false;
