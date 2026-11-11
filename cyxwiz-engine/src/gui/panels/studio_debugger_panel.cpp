@@ -1,3 +1,4 @@
+#include "../../core/runtime_timeline_layout.h"
 #include "studio_debugger_panel.h"
 #include "studio_debugger_colors.h"
 #include "../ui_buttons.h"
@@ -2039,8 +2040,13 @@ void StudioDebuggerPanel::RenderRunHistory() {
 
 void StudioDebuggerPanel::RenderLastRun() {
     if (!session_.last_run.available) {
-        if (auto last_run = CrashRunRecorder::LoadLastRun()) {
-            session_.last_run = *last_run;
+        // A read from disk: at most every two seconds, not every frame.
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_run_lookup_ >= std::chrono::seconds(2)) {
+            last_run_lookup_ = now;
+            if (auto last_run = CrashRunRecorder::LoadLastRun()) {
+                session_.last_run = *last_run;
+            }
         }
     }
 
@@ -2412,7 +2418,6 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
 
     if (ImGui::BeginTable("StudioDebuggerMaterializationStages",
                           7,
-                          ImGuiTableFlags_BordersInnerV |
                           ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable |
                           ImGuiTableFlags_SizingStretchProp)) {
@@ -2514,35 +2519,57 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
     }
 
     std::map<std::string, std::vector<const TrainingTraceEvent*>> lanes;
-    float max_duration = 1.0f;
-    for (const auto& event : trace.recent_events) {
+    for (const auto& event : trace.recent_events)
         lanes[event.thread_id.empty() ? "(unknown)" : event.thread_id].push_back(&event);
-        max_duration = std::max(max_duration, event.duration_ms);
-    }
 
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
     const float label_w = 92.0f;
     const float row_h = 34.0f;
-    const float gap = 4.0f;
-    const float min_bar_w = 7.0f;
-    const float max_bar_w = 165.0f;
+    const float axis_h = 18.0f;
     const int max_events_per_lane = 42;
+    // The last events of each thread. With event times they sit on one time
+    // axis for all threads (core/runtime_timeline_layout.h): a bar starts when
+    // its event started and is as wide as it lasted.
+    std::vector<std::vector<TimelineEvent>> shown;
+    std::vector<int> first_shown;
+    for (const auto& [thread_id, events] : lanes) {
+        const int start = std::max(0, static_cast<int>(events.size()) - max_events_per_lane);
+        first_shown.push_back(start);
+        std::vector<TimelineEvent> lane;
+        for (int i = start; i < static_cast<int>(events.size()); ++i)
+            lane.push_back({events[i]->run_ms, static_cast<double>(events[i]->duration_ms)});
+        shown.push_back(std::move(lane));
+    }
+    const float area_w = std::max(240.0f, ImGui::GetContentRegionAvail().x - label_w - 16.0f);
+    const TimelineLayout layout = LayoutTimeline(shown, area_w);
+    if (!layout.timed)
+        ImGui::TextDisabled("This run was recorded without event times: events are in order, wider for longer, not on a time axis.");
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const TrainingTraceEvent* selected_event = nullptr;
     std::string selected_thread_id;
+    const float lanes_top = origin.y + (layout.timed ? axis_h : 0.0f);
+    if (layout.timed) {
+        // The axis: time into the run, five marks.
+        for (int k = 0; k <= 4; ++k) {
+            const float x = origin.x + label_w + area_w * static_cast<float>(k) / 4.0f;
+            const std::string text = TimelineTimeText(layout.start_ms + (layout.end_ms - layout.start_ms) * k / 4.0);
+            const float text_w = ImGui::CalcTextSize(text.c_str()).x;
+            draw->AddText(ImVec2(k == 4 ? x - text_w : (k == 0 ? x : x - text_w * 0.5f), origin.y),
+                          DebuggerU32(DebuggerMuted()), text.c_str());
+            draw->AddLine(ImVec2(x, lanes_top), ImVec2(x, lanes_top + static_cast<float>(lanes.size()) * row_h),
+                          DebuggerU32(DebuggerBorder(), 0.5f));
+        }
+    }
 
     int lane_index = 0;
     for (const auto& [thread_id, events] : lanes) {
-        const float y = origin.y + lane_index * row_h;
+        const float y = lanes_top + lane_index * row_h;
         draw->AddText(ImVec2(origin.x, y + 8.0f),
                       DebuggerU32(DebuggerMuted()),
                       thread_id.c_str());
-        draw->AddLine(ImVec2(origin.x + label_w, y + row_h - 5.0f),
-                      ImVec2(origin.x + label_w + 1200.0f, y + row_h - 5.0f),
-                      DebuggerU32(DebuggerBorder()));
 
-        const int start = std::max(0, static_cast<int>(events.size()) - max_events_per_lane);
-        float x = origin.x + label_w;
+        const int start = first_shown[static_cast<size_t>(lane_index)];
         for (int i = start; i < static_cast<int>(events.size()); ++i) {
             const auto& event = *events[i];
             // Identity from the event itself, not its position: the recent
@@ -2554,12 +2581,10 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
                 selected_event = &event;
                 selected_thread_id = thread_id;
             }
-            const float normalized = std::max(0.0f, event.duration_ms) / max_duration;
-            const float bar_w = event.duration_ms > 0.0f
-                ? std::max(min_bar_w, min_bar_w + normalized * max_bar_w)
-                : min_bar_w;
-            const ImVec2 min = ImVec2(x, y + 7.0f);
-            const ImVec2 max = ImVec2(x + bar_w, y + 25.0f);
+            const TimelineBar& bar = layout.lanes[static_cast<size_t>(lane_index)][static_cast<size_t>(i - start)];
+            const float bar_w = bar.x1 - bar.x0;
+            const ImVec2 min = ImVec2(origin.x + label_w + bar.x0, y + 7.0f);
+            const ImVec2 max = ImVec2(origin.x + label_w + bar.x1, y + 25.0f);
             ImU32 color = DebuggerU32(DebuggerInfo(), 0.9f);
             if (event.status != "ok") {
                 color = event.status == "warning"
@@ -2596,6 +2621,8 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
                 ImGui::Text("Thread: %s", thread_id.c_str());
                 ImGui::Text("Epoch %d batch %d/%d", event.epoch, event.batch, event.total_batches);
                 ImGui::Text("Duration: %.2f ms", event.duration_ms);
+                if (event.run_ms >= 0.0)
+                    ImGui::Text("Ended %s into the run", TimelineTimeText(event.run_ms).c_str());
                 ImGui::Text("Status: %s", event.status.c_str());
                 if (event.pin_memory_requested ||
                     !event.transfer_mode.empty()) {
@@ -2617,13 +2644,13 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
                 }
                 ImGui::EndTooltip();
             }
-            x += bar_w + gap;
         }
         ++lane_index;
     }
 
-    ImGui::Dummy(ImVec2(label_w + 1300.0f,
-                        std::max(1, lane_index) * row_h + 8.0f));
+    ImGui::SetCursorScreenPos(origin);
+    ImGui::Dummy(ImVec2(label_w + layout.width + 8.0f,
+                        (layout.timed ? axis_h : 0.0f) + std::max(1, lane_index) * row_h + 8.0f));
     ImGui::EndChild();
 
     ImGui::Spacing();
@@ -2665,7 +2692,7 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
     ImGui::Text("Loss %.4f  Accuracy %.2f%%",
                 selected_event->loss,
                 selected_event->accuracy * 100.0f);
-    ImGui::Text("Memory CPU %s peak %s  AF alloc %s locked %s",
+    ImGui::Text("Host tensors %s (peak this run %s)  Device held %s, in use %s",
                 FormatBytesCompact(selected_event->cpu_allocated_bytes).c_str(),
                 FormatBytesCompact(selected_event->cpu_peak_bytes).c_str(),
                 FormatBytesCompact(selected_event->af_allocated_bytes).c_str(),
@@ -2699,7 +2726,7 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
 
     if (!latest) {
         ImGui::TextDisabled("No memory snapshots captured yet.");
-        ImGui::TextDisabled("Restart the rebuilt engine and begin a new training run to attach memory to trace events.");
+        ImGui::TextDisabled("Memory is recorded with a training run's events: start a run to see it.");
         ImGui::EndChild();
         return;
     }
@@ -2793,14 +2820,15 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
     ImGui::SameLine();
     ImGui::TextDisabled("scale max %s", FormatBytesCompact(max_bytes).c_str());
     ImGui::TextDisabled(
-        "These counters exclude process RSS, framework heaps, mapped files, and "
-        "driver allocations. Use System Monitor for whole-process memory. Rising "
-        "tensor allocation with flat device use can still indicate host-side copies.");
+        "These counters are the host tensors and the device buffers only: not the whole "
+        "process, framework heaps, mapped files or driver allocations. Tools > Monitoring > "
+        "Memory shows the whole process. Rising host tensors with flat device use can "
+        "still indicate host-side copies.");
 
     const float full_w = std::max(120.0f, ImGui::GetContentRegionAvail().x - 140.0f);
     auto draw_bar = [&](const char* label, uint64_t bytes, ImU32 color) {
-        ImGui::Text("%-10s", label);
-        ImGui::SameLine(95.0f);
+        ImGui::Text("%-13s", label);
+        ImGui::SameLine(125.0f);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const float ratio = max_bytes > 0
             ? std::min(1.0f, static_cast<float>(static_cast<double>(bytes) / static_cast<double>(max_bytes)))
@@ -2808,16 +2836,17 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
         ImDrawList* draw = ImGui::GetWindowDrawList();
         draw->AddRectFilled(p, ImVec2(p.x + full_w, p.y + 14.0f), DebuggerU32(DebuggerInputBg()), 3.0f);
         draw->AddRectFilled(p, ImVec2(p.x + full_w * ratio, p.y + 14.0f), color, 3.0f);
-        draw->AddRect(p, ImVec2(p.x + full_w, p.y + 14.0f), DebuggerU32(DebuggerBorder()), 3.0f);
         ImGui::Dummy(ImVec2(full_w, 16.0f));
         ImGui::SameLine();
         ImGui::TextDisabled("%s", FormatBytesCompact(bytes).c_str());
     };
 
-    draw_bar("CPU now", latest->cpu_allocated_bytes, DebuggerU32(DebuggerSuccess(), 0.9f));
-    draw_bar("CPU peak", latest->cpu_peak_bytes, DebuggerU32(DebuggerWarning(), 0.9f));
-    draw_bar("AF alloc", latest->af_allocated_bytes, DebuggerU32(DebuggerInfo(), 0.9f));
-    draw_bar("AF locked", latest->af_locked_bytes, DebuggerU32(DebuggerAccentText(), 0.9f));
+    // Host tensors are what the tensor allocator holds in main memory (not the
+    // whole process); the peak is this run's.
+    draw_bar("Host tensors", latest->cpu_allocated_bytes, DebuggerU32(DebuggerSuccess(), 0.9f));
+    draw_bar("Peak this run", latest->cpu_peak_bytes, DebuggerU32(DebuggerWarning(), 0.9f));
+    draw_bar("Device held", latest->af_allocated_bytes, DebuggerU32(DebuggerInfo(), 0.9f));
+    draw_bar("Device in use", latest->af_locked_bytes, DebuggerU32(DebuggerAccentText(), 0.9f));
 
     ImGui::Separator();
     ImGui::TextDisabled("ArrayFire buffers: alloc %llu  locked %llu",
@@ -3728,7 +3757,6 @@ void StudioDebuggerPanel::RenderBackendDecisionAudit() {
     }
 
     if (ImGui::BeginTable("StudioDebuggerBackendDecisionAuditTable", 7,
-                          ImGuiTableFlags_BordersInnerV |
                           ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable |
                           ImGuiTableFlags_ScrollY |
@@ -3892,7 +3920,7 @@ void StudioDebuggerPanel::RenderLayerTimingBreakdown(const TrainingTraceSummary&
         return a.duration_ms > b.duration_ms;
     });
 
-    ImGui::Columns(6, "StudioDebuggerLayerTimingColumns", true);
+    ImGui::Columns(6, "StudioDebuggerLayerTimingColumns", false);
     ImGui::Text("Stage"); ImGui::NextColumn();
     ImGui::Text("Layer"); ImGui::NextColumn();
     ImGui::Text("Name"); ImGui::NextColumn();

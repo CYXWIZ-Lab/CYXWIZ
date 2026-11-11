@@ -8128,6 +8128,11 @@ add_executable(test_frame_times tests/test_frame_times.cpp src/core/frame_times.
 target_include_directories(test_frame_times PRIVATE src)
 set_target_properties(test_frame_times PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME FrameTimes COMMAND test_frame_times)
+
+add_executable(test_runtime_timeline_layout tests/test_runtime_timeline_layout.cpp)
+target_include_directories(test_runtime_timeline_layout PRIVATE src)
+set_target_properties(test_runtime_timeline_layout PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME RuntimeTimelineLayout COMMAND test_runtime_timeline_layout)
 # The same figures against psutil (a skip where psutil is not installed).
 if(Python3_EXECUTABLE)
     add_test(NAME system_metrics_psutil
