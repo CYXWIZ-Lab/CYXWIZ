@@ -7,6 +7,37 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **The CyxWiz Studio bar is one row that never hides Train** (guide in
+  `docs/usage/studio_toolbar.md`). What does not fit folds into **More**
+  instead of being cut off; Compile and Local Debug keep their names.
+  - **Code** (Generate into Script Editor, Save as .py) replaces the gear
+    and Export icons. It says why when the graph cannot be turned into
+    code, and a line under the bar says what was written where and when.
+    Generated files carry the time they were generated (they carried the
+    time the Engine was built).
+  - The framework shows only in Code Gen mode; in the other modes the Code
+    menu names the one it uses.
+  - **Pause** / **Resume** and **Stop** are on the bar while a model or a
+    PPO policy trains. Train is greyed, with the reason, while a Data Input
+    loads its data.
+  - The Studio's tab names the graph, with a dot while it has unsaved
+    changes.
+  - An empty canvas says how to start, with Search nodes, the Nodes panel
+    and the example graphs.
+  - **Find** (Ctrl+F) sits in the canvas corner, marks every match and
+    keeps Enter, F3 and Esc working while you type.
+  - Save on an empty canvas says why nothing was saved; the graph menu has
+    **Export a copy of the graph**.
+- **Studio fixes.**
+  - Delete no longer removes the selected nodes while you type in another
+    panel.
+  - Undo removes a Flatten that Insert Flatten added.
+  - Duplicate keeps what you copied.
+  - Zoom stops at 25% and 200% and keeps the view centred; + and - zoom.
+  - Local Debug cannot start twice.
+  - Clear and Load wait while the graph is busy, and say why.
+  - Nodes, notes and frames dropped on the canvas land under the pointer.
+    Notes in saved graphs show a little higher than before.
 - **A seed repeats on every operating system and device** (guide in
   `docs/usage/seeds_and_reproducibility.md`). Splits, folds, batch order,
   balancing, augmentation, samples and weight initialisation draw the same

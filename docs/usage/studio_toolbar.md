@@ -173,6 +173,39 @@ click each (hover for what each does).
   *Cannot ... the project* with the reason. Stop the run, or wait for it,
   then try again.
 
+## An empty canvas
+
+An empty canvas says **Start a graph** and how to add a node, with three
+buttons: **Search nodes** (the box at the top right of the canvas takes the
+keyboard), **Open the Nodes panel** (drag a node from it onto the canvas)
+and **Open an example graph** (the five task starters of the start page;
+it opens as *Untitled graph*, so Save asks for a name).
+
+## Find in the graph
+
+Ctrl+F (or View > Find in the graph) opens a bar in the canvas's top-left
+corner. It finds nodes by name, by type and by any setting's name or value
+("dense", "relu", "0.001").
+
+- Every match gets a ring on the canvas, the current one stronger, and the
+  view centres on it at the zoom it is at.
+- **Enter** or **F3** goes to the next match, **Shift+Enter** or
+  **Shift+F3** to the previous one, and **Esc** closes the bar, while you
+  type.
+- "2 of 3" says where you are; "No match" when nothing matches.
+
+## Questions and notices
+
+- **Clear the canvas?** names how many nodes and links go; Ctrl+Z brings
+  them back.
+- Connecting a 4-D output (Conv2D, a pooling layer) to a layer that takes
+  a flat input asks **<layer> needs a flat input** and offers **Insert
+  Flatten**. Ctrl+Z removes the Flatten again.
+- **Nothing to save yet** when Save or Save As is pressed on an empty
+  canvas. File > Save still saves the project.
+- **Graph busy** when a load or clear is refused while a run uses the
+  graph.
+
 ## A narrow canvas
 
 Nothing is cut off. When the row is too narrow, it folds in this order, and
