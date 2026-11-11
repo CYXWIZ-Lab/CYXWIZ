@@ -103,7 +103,7 @@ struct CvImageStep {
     CvFilterOutput filter_output = CvFilterOutput::Clip;
     // Gabor: a bank of kernels over the grey image, one channel each.
     int gabor_orientations = 4;              // 0, 180 / n, ... degrees
-    std::string gabor_wavelengths = "3, 6";  // pixels per cycle
+    std::string gabor_wavelengths = "3, 5";  // pixels per cycle
     float gabor_bandwidth = 1.0f;            // octaves: sets the envelope's sigma from the wavelength
     float gabor_aspect = 0.5f;               // the envelope's width across the stripes over its length
     CvGaborResponse gabor_response = CvGaborResponse::Energy;
@@ -122,18 +122,24 @@ inline constexpr int kFilterKernelMaxSide = 31;
 // False, with the reason, when the typed kernel cannot be read.
 bool ResolveFilterKernel(const CvImageStep& step, FilterKernel& kernel, std::string* why = nullptr);
 
-// One filter of an Image Gabor step's bank: its even (cosine) and odd (sine)
-// kernels, each with zero mean and absolute values that sum to 1, so a
-// response to pixels in [0, 1] stays within -1..1.
+// One filter of an Image Gabor step's bank. Its even (cosine) and odd (sine)
+// kernels each have zero mean and absolute values that sum to 1, so a
+// response to pixels in [0, 1] stays within -0.5..0.5.
 struct GaborFilter {
     float degrees = 0.0f;     // the stripes' normal: 0 answers to vertical stripes
     float wavelength = 0.0f;  // pixels per cycle
-    FilterKernel even;
+    float sigma = 0.0f;       // the window across the stripes; along them it is sigma / aspect
+    int side = 0;             // the kernel's rows and columns: two of the longer sigma each way
+    FilterKernel even;        // empty until the kernels are built
     FilterKernel odd;
 };
 inline constexpr size_t kGaborMaxChannels = 32;
-// The bank in channel order: each wavelength, its orientations in turn.
-// False, with the reason, when the settings cannot be read.
+inline constexpr int kGaborKernelMaxSide = 255;
+// The bank in channel order (each wavelength, its orientations in turn),
+// without its kernels: cheap, for names, shapes and checks. False, with the
+// reason, when the settings cannot be read.
+bool DescribeGaborBank(const CvImageStep& step, std::vector<GaborFilter>& bank, std::string* why = nullptr);
+// The bank with its kernels built, for running it.
 bool ResolveGaborBank(const CvImageStep& step, std::vector<GaborFilter>& bank, std::string* why = nullptr);
 // "gabor 45 deg 4 px" per channel; empty when the settings cannot be read.
 std::vector<std::string> GaborChannelNames(const CvImageStep& step);

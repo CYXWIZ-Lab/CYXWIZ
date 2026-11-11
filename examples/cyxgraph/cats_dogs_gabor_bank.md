@@ -42,6 +42,8 @@ saves no path.
   fit the image.
 - **Response** `even` or `odd`: one phase, stored around mid-grey, instead of
   the energy of both.
+- The Horizontal Flip after the bank mirrors each channel's picture but does
+  not swap the 45 and 135 degree channels; read those two as a pair.
 - After a Local Debug run with Layer capture on, the Studio Debugger's
   Inspector shows the sample as the same sheet.
 

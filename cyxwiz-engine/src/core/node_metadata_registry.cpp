@@ -2049,7 +2049,7 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {{"Output", PinType::Tensor, true, "Images [H, W, orientations x wavelengths] (after the image's own channels when kept)"}},
         {{"orientations", "int", "4", "How many directions, spread over 180 degrees (4: 0, 45, 90, 135)", {}, "",
           "Orientations"},
-         {"wavelengths", "string", "3, 6", "The stripes' spacing in pixels per cycle; one set of orientations each", {}, "",
+         {"wavelengths", "string", "3, 5", "The stripes' spacing in pixels per cycle; one set of orientations each", {}, "",
           "Wavelengths"},
          {"bandwidth", "float", "1.0", "In octaves: smaller is a wider window that answers to a narrower range of spacings",
           {}, "", "Bandwidth"},

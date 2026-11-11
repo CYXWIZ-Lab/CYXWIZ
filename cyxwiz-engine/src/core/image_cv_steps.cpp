@@ -128,6 +128,10 @@ bool ReadWavelengths(const std::string& text, std::vector<float>& out, std::stri
             why = "a wavelength must be 2 pixels or more (a stripe and its gap)";
             return false;
         }
+        if (std::find(out.begin(), out.end(), v) != out.end()) {
+            why = "wavelength " + Number(v) + " is given twice";
+            return false;
+        }
         out.push_back(v);
     }
     if (out.empty()) why = "give at least one wavelength, in pixels";
@@ -220,7 +224,7 @@ bool ReadKernel(const std::string& text, FilterKernel& kernel, std::string& why)
 
 float FilterKernel::Sum() const { return std::accumulate(values.begin(), values.end(), 0.0f); }
 
-bool ResolveGaborBank(const CvImageStep& s, std::vector<GaborFilter>& bank, std::string* why) {
+bool DescribeGaborBank(const CvImageStep& s, std::vector<GaborFilter>& bank, std::string* why) {
     bank.clear();
     const auto fail = [&](const std::string& reason) {
         if (why) *why = reason;
@@ -239,14 +243,28 @@ bool ResolveGaborBank(const CvImageStep& s, std::vector<GaborFilter>& bank, std:
                     std::to_string(kGaborMaxChannels));
     for (const float wavelength : wavelengths) {
         const float sigma = GaborSigma(wavelength, s.gabor_bandwidth);
-        const int side = 2 * static_cast<int>(std::ceil(3.0f * sigma)) + 1;
-        for (int k = 0; k < s.gabor_orientations; ++k) {
-            const float degrees = 180.0f * static_cast<float>(k) / static_cast<float>(s.gabor_orientations);
-            const float theta = degrees * 3.14159265358979f / 180.0f;
-            bank.push_back({degrees, wavelength,
-                            GaborKernel(side, sigma, theta, wavelength, s.gabor_aspect, 0.0f),
-                            GaborKernel(side, sigma, theta, wavelength, s.gabor_aspect, -1.5707963267949f)});
+        // Two sigmas of the window's longer side (along the stripes) each way.
+        const double reach = std::ceil(2.0 * static_cast<double>(sigma) / s.gabor_aspect);
+        if (!(2.0 * reach + 1.0 <= kGaborKernelMaxSide)) {
+            bank.clear();
+            return fail("wavelength " + Number(wavelength) + " needs a kernel wider than " +
+                        std::to_string(kGaborKernelMaxSide) + " pixels: use a shorter wavelength, a wider "
+                        "bandwidth or a rounder aspect");
         }
+        const int side = 2 * static_cast<int>(reach) + 1;
+        for (int k = 0; k < s.gabor_orientations; ++k)
+            bank.push_back({180.0f * static_cast<float>(k) / static_cast<float>(s.gabor_orientations), wavelength,
+                            sigma, side, {}, {}});
+    }
+    return true;
+}
+
+bool ResolveGaborBank(const CvImageStep& s, std::vector<GaborFilter>& bank, std::string* why) {
+    if (!DescribeGaborBank(s, bank, why)) return false;
+    for (auto& g : bank) {
+        const float theta = g.degrees * 3.14159265358979f / 180.0f;
+        g.even = GaborKernel(g.side, g.sigma, theta, g.wavelength, s.gabor_aspect, 0.0f);
+        g.odd = GaborKernel(g.side, g.sigma, theta, g.wavelength, s.gabor_aspect, -1.5707963267949f);
     }
     return true;
 }
@@ -254,7 +272,7 @@ bool ResolveGaborBank(const CvImageStep& s, std::vector<GaborFilter>& bank, std:
 std::vector<std::string> GaborChannelNames(const CvImageStep& s) {
     std::vector<GaborFilter> bank;
     std::vector<std::string> names;
-    if (ResolveGaborBank(s, bank))
+    if (DescribeGaborBank(s, bank))
         for (const auto& f : bank) names.push_back("gabor " + Number(f.degrees) + " deg " + Number(f.wavelength) + " px");
     return names;
 }
@@ -346,12 +364,13 @@ std::string ValidateCvImageStep(const CvImageStep& s, const image::ImageShape& i
         case CvImageStepKind::Gabor: {
             std::vector<GaborFilter> bank;
             std::string why;
-            if (!ResolveGaborBank(s, bank, &why)) return why;
+            if (!DescribeGaborBank(s, bank, &why)) return why;
             for (const auto& f : bank)
-                if (static_cast<size_t>(f.even.rows) > side)
-                    return "wavelength " + Number(f.wavelength) + " needs a " + std::to_string(f.even.cols) + kTimes +
-                           std::to_string(f.even.rows) + " kernel: at most " + std::to_string(side) +
-                           " each way here (the image's shorter side). Use a shorter wavelength or a wider bandwidth";
+                if (static_cast<size_t>(f.side) > side)
+                    return "wavelength " + Number(f.wavelength) + " needs a " + std::to_string(f.side) + kTimes +
+                           std::to_string(f.side) + " kernel: at most " + std::to_string(side) +
+                           " each way here (the image's shorter side). Use a shorter wavelength, a wider "
+                           "bandwidth or a rounder aspect";
             return "";
         }
         case CvImageStepKind::Smooth:
@@ -420,7 +439,9 @@ image::ImageShape CvImageShapeAfter(const CvImageStep& s, const image::ImageShap
             break;
         case CvImageStepKind::Gabor: {
             // One channel per filter; a bank that cannot be read is refused before it runs.
-            const size_t filters = std::max<size_t>(1, GaborChannelNames(s).size());
+            std::vector<GaborFilter> bank;
+            DescribeGaborBank(s, bank);
+            const size_t filters = std::max<size_t>(1, bank.size());
             out.channels = (s.gabor_keep_image ? in.channels : 0) + filters;
             break;
         }
@@ -496,10 +517,13 @@ std::string CvImageStepText(const CvImageStep& s) {
             return text + ")";
         }
         case CvImageStepKind::Gabor: {
-            std::string spaced = s.gabor_wavelengths, lengths;
-            std::replace(spaced.begin(), spaced.end(), ',', ' ');
-            std::istringstream in(spaced);
-            for (std::string token; in >> token;) lengths += (lengths.empty() ? "" : " / ") + token;
+            // The wavelengths as they are read ("3.0" is 3); the typed text when they cannot be.
+            std::vector<float> read;
+            std::string unread, lengths;
+            if (ReadWavelengths(s.gabor_wavelengths, read, unread))
+                for (const float v : read) lengths += (lengths.empty() ? "" : " / ") + Number(v);
+            else
+                lengths = s.gabor_wavelengths;
             std::string text = "Gabor (" + std::to_string(s.gabor_orientations) +
                                (s.gabor_orientations == 1 ? " orientation" : " orientations") + ", wavelengths " + lengths;
             if (s.gabor_response == CvGaborResponse::Even) text += ", even";
@@ -585,7 +609,7 @@ nlohmann::json CvImageStepIdentity(const CvImageStep& s) {
             // The filters applied, so "4, 8" and "4 8" are one set.
             std::vector<GaborFilter> bank;
             nlohmann::json filters = nlohmann::json::array();
-            if (ResolveGaborBank(s, bank))
+            if (DescribeGaborBank(s, bank))
                 for (const auto& g : bank) filters.push_back({f(g.degrees), f(g.wavelength)});
             j["filters"] = filters;
             j["bandwidth"] = f(s.gabor_bandwidth);

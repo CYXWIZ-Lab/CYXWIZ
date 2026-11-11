@@ -169,9 +169,17 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
             break;
         }
         case CvImageStepKind::Gabor: {
-            std::vector<GaborFilter> bank;
-            std::string why;
-            if (!ResolveGaborBank(s, bank, &why)) return fail(why);
+            // The kernels are built once per worker thread and step, not per image.
+            thread_local std::string bank_key;
+            thread_local std::vector<GaborFilter> bank;
+            const std::string key = std::to_string(s.gabor_orientations) + "|" + s.gabor_wavelengths + "|" +
+                                    std::to_string(s.gabor_bandwidth) + "|" + std::to_string(s.gabor_aspect);
+            if (bank.empty() || bank_key != key) {
+                std::string why;
+                bank_key.clear();
+                if (!ResolveGaborBank(s, bank, &why)) return fail(why);
+                bank_key = key;
+            }
             const size_t pixels = static_cast<size_t>(w) * h;
             // RGB is read as grey (the luma weights OpenCV's RGB2GRAY uses).
             std::vector<float> grey(pixels);
@@ -192,11 +200,13 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
                 if (energy || s.gabor_response == CvGaborResponse::Even) ok = run(even, bank[g].even);
                 if (ok && (energy || s.gabor_response == CvGaborResponse::Odd)) ok = run(odd, bank[g].odd);
                 if (!ok) break;
-                // Energy: both phases' size. One phase: around mid-grey (128 = no response).
+                // A phase answers within -0.5..0.5 (the kernel's positive weights sum to a half). Energy,
+                // both phases' size, is scaled to fill 0..1; one phase is stored around mid-grey
+                // (128 = no response). Neither can clip.
                 const std::vector<float>& one = s.gabor_response == CvGaborResponse::Odd ? odd : even;
                 for (size_t i = 0; i < pixels; ++i)
                     joined[i * width + kept + g] =
-                        energy ? std::sqrt(even[i] * even[i] + odd[i] * odd[i]) : 0.5f + 0.5f * one[i];
+                        energy ? 1.41421356f * std::sqrt(even[i] * even[i] + odd[i] * odd[i]) : 0.5f + one[i];
             }
             x = std::move(joined);
             break;

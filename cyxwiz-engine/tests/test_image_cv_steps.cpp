@@ -552,7 +552,10 @@ int main() {
 
     // Image Gabor: a bank of striped kernels over the grey image, one channel each.
     {
-        CvImageStep s = Step(CvImageStepKind::Gabor);  // 4 orientations, wavelengths 3 and 6
+        CvImageStep s = Step(CvImageStepKind::Gabor);
+        Check(s.gabor_orientations == 4 && s.gabor_wavelengths == "3, 5" && ValidateCvImageStep(s, image::ImageShape{28, 28, 1}).empty(),
+              "the default bank fits a 28 x 28 image");
+        s.gabor_wavelengths = "3, 6";
         std::vector<GaborFilter> bank;
         Check(ResolveGaborBank(s, bank) && bank.size() == 8, "four orientations at two wavelengths are eight filters");
         Check(bank[0].degrees == 0.0f && bank[1].degrees == 45.0f && bank[3].degrees == 135.0f &&
@@ -563,8 +566,9 @@ int main() {
         for (const size_t g : {size_t{1}, size_t{6}}) {
             const float sigma = bank[g].wavelength / pi * std::sqrt(std::log(2.0f) / 2.0f) * 3.0f;  // 1 octave
             const int side = bank[g].even.rows;
-            Check(side == 2 * static_cast<int>(std::ceil(3.0f * sigma)) + 1 && bank[g].even.cols == side,
-                  "the kernel reaches three sigmas each way");
+            Check(side == bank[g].side && side == 2 * static_cast<int>(std::ceil(2.0f * sigma / 0.5f)) + 1 &&
+                      bank[g].even.cols == side,
+                  "the kernel reaches two of the longer sigma each way");
             for (const bool odd : {false, true}) {
                 cv::Mat cvk = cv::getGaborKernel(cv::Size(side, side), sigma, bank[g].degrees * pi / 180.0f,
                                                  bank[g].wavelength, 0.5, odd ? -CV_PI / 2 : 0.0, CV_32F);
@@ -582,7 +586,7 @@ int main() {
             }
         }
 
-        Check(ValidateCvImageStep(s, kRgb).empty(), "the default bank fits 40 x 32");
+        Check(bank[0].side == 15 && bank[4].side == 29 && ValidateCvImageStep(s, kRgb).empty(), "15 x 15 and 29 x 29 kernels fit 40 x 32");
         Check(CvImageShapeAfter(s, kRgb) == image::ImageShape{kH, kW, 8}, "eight channels");
         Check(CvImageStepText(s) == "Gabor (4 orientations, wavelengths 3 / 6)", "text: " + CvImageStepText(s));
         Check(GaborChannelNames(s) == std::vector<std::string>({"gabor 0 deg 3 px", "gabor 45 deg 3 px", "gabor 90 deg 3 px",
@@ -613,11 +617,12 @@ int main() {
             cv::filter2D(grey_f, o, CV_32F, ko);
             cv::magnitude(e, o, energy);
             for (int i = 0; i < kH * kW; ++i) {
-                const int want = static_cast<int>(std::lround(std::clamp(energy.at<float>(i / kW, i % kW), 0.0f, 1.0f) * 255.0f));
+                const int want = static_cast<int>(
+                    std::lround(std::clamp(1.41421356f * energy.at<float>(i / kW, i % kW), 0.0f, 1.0f) * 255.0f));
                 worst_level = std::max(worst_level, std::abs(want - int(out[static_cast<size_t>(i) * 8 + g])));
             }
         }
-        Check(worst_level <= 1, "energy is both phases' size, worst " + std::to_string(worst_level) + " level");
+        Check(worst_level <= 1, "energy is both phases' size, scaled to the range, worst " + std::to_string(worst_level) + " level");
 
         // Vertical stripes 6 px apart answer in the 0 degree, 6 px channel; a flat image answers nowhere.
         cv::Mat stripes(kH, kW, CV_8UC3), flat(kH, kW, CV_8UC3, cv::Scalar::all(120));
@@ -677,8 +682,24 @@ int main() {
         bad.gabor_wavelengths = "";
         Check(ValidateCvImageStep(bad, kRgb) == "give at least one wavelength, in pixels", "none");
         bad.gabor_wavelengths = "16";
-        Check(ValidateCvImageStep(bad, kRgb).find("wavelength 16 needs a 55 \xC3\x97 55 kernel: at most 32") == 0,
+        Check(ValidateCvImageStep(bad, kRgb).find("wavelength 16 needs a 73 \xC3\x97 73 kernel: at most 32") == 0,
               "a kernel larger than the image: " + ValidateCvImageStep(bad, kRgb));
+        // A wavelength whose kernel would be huge is refused before anything is built.
+        for (const char* huge : {"2000", "1e30"}) {
+            bad.gabor_wavelengths = huge;
+            std::vector<GaborFilter> none_built;
+            Check(ValidateCvImageStep(bad, kRgb).find("needs a kernel wider than 255 pixels") != std::string::npos &&
+                      !ResolveGaborBank(bad, none_built) && none_built.empty(),
+                  std::string("wavelength ") + huge + " is refused without building a kernel");
+        }
+        bad.gabor_wavelengths = "3, 6, 3";
+        Check(ValidateCvImageStep(bad, kRgb) == "wavelength 3 is given twice", "a wavelength twice");
+        // A stripe image at full contrast uses the stored range: the matching filter answers above half.
+        Check(striped[middle + 4] > 128, "the matching filter's energy is " + std::to_string(striped[middle + 4]) + " of 255");
+        // The text shows the wavelengths as they are read.
+        CvImageStep decimal = s;
+        decimal.gabor_wavelengths = "3.0,6";
+        Check(CvImageStepText(decimal) == CvImageStepText(s), "3.0 reads as 3 in the text");
         bad = s;
         bad.gabor_orientations = 16;
         bad.gabor_wavelengths = "3, 4, 5";
