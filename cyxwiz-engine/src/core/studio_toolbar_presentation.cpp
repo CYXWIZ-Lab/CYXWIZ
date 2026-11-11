@@ -85,7 +85,7 @@ TrainButton TrainState(const TrainInputs& in) {
 }
 
 float BarWidth(const BarWidths& w, int level) {
-    float total = w.fixed + w.gaps;
+    float total = w.fixed + w.run + w.gaps;
     total += level >= 2 ? w.edit_menu : w.edit_icons;
     total += level >= 2 ? w.view_menu : w.view_full;
     total += level >= 3 ? w.mode_menu : level >= 1 ? w.mode_short : w.mode_full;
@@ -98,6 +98,60 @@ int FoldLevel(const BarWidths& w, float available) {
     for (int level = 0; level < 4; ++level)
         if (BarWidth(w, level) <= available) return level;
     return 4;
+}
+
+namespace {
+
+float StepsWidth(const BarWidths& w, int level) {
+    return level >= 4 ? w.steps_dots : level >= 1 ? w.steps_short : w.steps_full;
+}
+
+}  // namespace
+
+float RowOneWidth(const BarWidths& w, int level, float group_gap) {
+    float total = w.fixed + 3.0f * group_gap;  // graph | edit | view | the mode
+    total += level >= 2 ? w.edit_menu : w.edit_icons;
+    total += level >= 2 ? w.view_menu : w.view_full;
+    total += level >= 3 ? w.mode_menu : level >= 1 ? w.mode_short : w.mode_full;
+    total += level >= 1 ? w.actions_icons : w.actions_full;
+    return total;
+}
+
+float RowTwoWidth(const BarWidths& w, int steps_level, bool compact_run, bool with_mode, float group_gap) {
+    return StepsWidth(w, steps_level) + (compact_run ? w.run_compact : w.run) +
+           (with_mode ? w.mode_menu + w.actions_icons + group_gap : 0.0f);
+}
+
+BarLayout LayoutBar(const BarWidths& w, float available, float group_gap) {
+    BarLayout layout;
+    layout.level = FoldLevel(w, available);
+    if (BarWidth(w, layout.level) <= available) {  // one row fits
+        layout.steps_level = layout.level;
+        return layout;
+    }
+    layout.two_rows = true;
+    layout.level = 4;
+    for (int level = 0; level < 4; ++level)
+        if (RowOneWidth(w, level, group_gap) <= available) {
+            layout.level = level;
+            break;
+        }
+    layout.mode_on_row_two = RowOneWidth(w, 4, group_gap) > available;
+    const bool m = layout.mode_on_row_two;
+    layout.steps_level = 4;
+    for (const int level : {0, 1})
+        if (RowTwoWidth(w, level, false, m, group_gap) <= available) {
+            layout.steps_level = level;
+            break;
+        }
+    layout.compact_run = RowTwoWidth(w, layout.steps_level, false, m, group_gap) > available;
+    return layout;
+}
+
+std::string CompactRunText(const std::string& run_line) {
+    std::string text = run_line.substr(0, run_line.find(" \xC2\xB7 "));
+    if (text.rfind("PPO ", 0) == 0) text.erase(0, 4);
+    return text;
 }
 
 std::string CountsText(size_t nodes, size_t links) {

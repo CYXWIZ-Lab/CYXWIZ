@@ -105,7 +105,8 @@ int main() {
 
     // Folding: labels first, then Edit / View menus, then the mode menu.
     BarWidths w;
-    w.fixed = 300;
+    w.fixed = 200;
+    w.run = 100, w.run_compact = 60;
     w.edit_icons = 90, w.edit_menu = 60;
     w.view_full = 160, w.view_menu = 110;
     w.mode_full = 330, w.mode_short = 220, w.mode_menu = 100;
@@ -118,6 +119,33 @@ int main() {
     Check(BarWidth(w, 3) == 880 && FoldLevel(w, 900) == 3, "then the mode is a menu");
     Check(FoldLevel(w, 760) == 4 && BarWidth(w, 4) == 760, "then the steps are dots");
     Check(FoldLevel(w, 300) == 4, "the narrowest form when nothing fits");
+
+    // Two rows when no one-row form fits (approved mockup, 2026-11-11)
+    Check(!LayoutBar(w, 760, 10).two_rows && LayoutBar(w, 760, 10).level == 4 && LayoutBar(w, 760, 10).steps_level == 4,
+          "one row while its narrowest form fits");
+    const BarLayout two = LayoutBar(w, 600, 10);
+    // row 1 at 600: level 2 = 200 + 30 + 60 + 110 + 220 + 70 = 690 > 600; level 3 = 570 fits
+    Check(two.two_rows && two.level == 3 && RowOneWidth(w, 3, 10) == 570 && !two.mode_on_row_two,
+          "row 1 folds on its own");
+    Check(two.steps_level == 0 && !two.compact_run && RowTwoWidth(w, 0, false) == 430,
+          "row 2 gets the full step labels back when they fit");
+    // Row 1 cannot hold the mode even folded (570 > 560): the mode starts row 2,
+    // which then needs 180 more (its menu 100, action icons 70, a gap 10)
+    const BarLayout moved = LayoutBar(w, 560, 10);
+    Check(moved.two_rows && moved.level == 4 && moved.mode_on_row_two && moved.steps_level == 1 && !moved.compact_run &&
+              RowTwoWidth(w, 0, false, true, 10) == 610 && RowTwoWidth(w, 1, false, true, 10) == 470,
+          "the mode starts row 2 when row 1 cannot hold it; the step labels shorten to fit beside it");
+    const BarLayout tight = LayoutBar(w, 400, 10);
+    Check(tight.two_rows && tight.mode_on_row_two && tight.steps_level == 4 && !tight.compact_run &&
+              RowTwoWidth(w, 4, false, true, 10) == 350,
+          "then the step dots");
+    const BarLayout narrow = LayoutBar(w, 150, 10);
+    Check(narrow.two_rows && narrow.level == 4 && narrow.steps_level == 4 && narrow.compact_run &&
+              RowTwoWidth(w, 4, true) == 130,
+          "very narrow: row 1 at its narrowest, step dots, the run's line shortened");
+    Check(CompactRunText("PPO update 196 \xC2\xB7 50,176 steps \xC2\xB7 CUDA") == "update 196" &&
+              CompactRunText("PPO waiting for the GPU") == "waiting for the GPU" && CompactRunText("Epoch 3 / 5") == "Epoch 3 / 5",
+          "the run's line shortened");
 
     // The footer.
     Check(CountsText(11, 11) == "11 nodes \xC2\xB7 11 links" && CountsText(1, 1) == "1 node \xC2\xB7 1 link",

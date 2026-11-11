@@ -208,11 +208,18 @@ void NodeEditor::ShowToolbar() {
     // a PPO run's line and Stop in Train's place
     const float rl_w = ImGui::CalcTextSize((std::string(ICON_FA_SPINNER " ") + rl_status_).c_str()).x + sp +
                        W(ICON_FA_STOP " Stop##stop_ppo") + sp;
+    const std::string rl_compact = st::CompactRunText(rl_status_);
+    const float rl_compact_w = ImGui::CalcTextSize((std::string(ICON_FA_SPINNER " ") + rl_compact).c_str()).x + sp +
+                               W(ICON_FA_STOP " Stop##stop_ppo") + sp;
+    const float stop_w = W(ICON_FA_STOP " Stop") + sp;
 
     st::BarWidths widths;
     widths.fixed = W(chip_label(name).c_str()) + sp + W(ICON_FA_FLOPPY_DISK " Save") + sp +
-                   (training_active ? 230.0f : rl_active ? rl_w : W(ICON_FA_PLAY " Train")) +
                    (pipeline_running ? 150.0f + 50.0f + W(ICON_FA_STOP " Cancel") + 3.0f * sp : 0.0f);
+    widths.run = training_active ? 230.0f : rl_active ? rl_w : W(ICON_FA_PLAY " Train");
+    widths.run_compact = training_active ? W(ICON_FA_SPINNER " Epoch 000 / 000") + stop_w
+                         : rl_active    ? rl_compact_w
+                                        : widths.run;
     widths.edit_icons = W(ICON_FA_OBJECT_GROUP) + W(ICON_FA_COPY) + W(ICON_FA_TRASH) + 2.0f * sp;
     widths.edit_menu = W(edit_menu_label);
     widths.view_full = W(ICON_FA_MINUS) + W(zoom_text.c_str()) + W(ICON_FA_PLUS) + W(ICON_FA_EXPAND) + W(ICON_FA_SITEMAP) +
@@ -255,21 +262,29 @@ void NodeEditor::ShowToolbar() {
     widths.steps_dots = ui::StepButtonWidth("", "") * 2.0f + 2.0f * sp;
     widths.gaps = 4.0f * kGroupGap;
     const float avail = ImGui::GetContentRegionAvail().x - 2.0f * ImGui::GetStyle().WindowPadding.x;
-    const int level = st::FoldLevel(widths, avail);
-    if (level != toolbar_fold_level_) {
+    const st::BarLayout layout = st::LayoutBar(widths, avail, kGroupGap);
+    const int level = layout.level;
+    if (level != toolbar_fold_level_ || layout.two_rows != toolbar_two_rows_) {
         toolbar_fold_level_ = level;
-        spdlog::debug("Studio bar: {:.0f} px; needs {:.0f} / {:.0f} / {:.0f} / {:.0f} (full, short labels, menus, narrowest): form {}",
+        toolbar_two_rows_ = layout.two_rows;
+        spdlog::debug("Studio bar: {:.0f} px; needs {:.0f} / {:.0f} / {:.0f} / {:.0f} (full, short labels, menus, narrowest): "
+                      "form {}{}",
                       avail, st::BarWidth(widths, 0), st::BarWidth(widths, 1), st::BarWidth(widths, 2),
-                      st::BarWidth(widths, 3), level);
+                      st::BarWidth(widths, 3), level, layout.two_rows ? ", two rows" : "");
     }
     const bool edit_as_menu = level >= 2, view_as_menu = level >= 2, mode_as_menu = level >= 3;
     const bool short_labels = level >= 1, dots = level >= 4;
+    // The step chips: as the row on one row; on their own row, as wide as it allows
+    const bool steps_short = layout.steps_level >= 1, steps_dots = layout.steps_level >= 4;
+    const bool compact_run = layout.compact_run;
 
     // ---- The bar: one row on the toolbar surface.
     ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_bar);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
-    ImGui::BeginChild("##studio_nav", ImVec2(0, ImGui::GetFrameHeight() + 12.0f),
+    const float bar_rows = layout.two_rows ? 2.0f * ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y
+                                           : ImGui::GetFrameHeight();
+    ImGui::BeginChild("##studio_nav", ImVec2(0, bar_rows + 12.0f),
                       ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
@@ -358,15 +373,17 @@ void NodeEditor::ShowToolbar() {
     const float left_end = ImGui::GetItemRectMax().x;
 
     // Right: Compile > Local Debug > Train (or the epoch and Stop).
-    const std::string compile_label = dots ? std::string() : short_labels ? std::string(ICON_FA_CHECK) : compile_full;
-    const std::string debug_label = dots ? std::string() : short_labels ? std::string("Debug") : debug_full;
-    const std::string compile_status = dots ? std::string() : short_labels ? compile_chip.short_label : compile_chip.label;
-    const std::string debug_status = dots ? std::string() : short_labels ? debug_chip.short_label : debug_chip.label;
+    const std::string compile_label =
+        steps_dots ? std::string() : steps_short ? std::string(ICON_FA_CHECK) : compile_full;
+    const std::string debug_label = steps_dots ? std::string() : steps_short ? std::string("Debug") : debug_full;
+    const std::string compile_status =
+        steps_dots ? std::string() : steps_short ? compile_chip.short_label : compile_chip.label;
+    const std::string debug_status = steps_dots ? std::string() : steps_short ? debug_chip.short_label : debug_chip.label;
     const float steps_w = compile_callback_ ? ui::StepButtonWidth(compile_label.c_str(), compile_status.c_str()) +
                                                   ui::StepButtonWidth(debug_label.c_str(), debug_status.c_str()) +
-                                                  (dots ? 2.0f * sp : 2.0f * arrow_w)
+                                                  (steps_dots ? 2.0f * sp : 2.0f * arrow_w)
                                             : 0.0f;
-    const float run_w = training_active ? 230.0f : rl_active ? rl_w : W(ICON_FA_PLAY " Train");
+    const float run_w = compact_run ? widths.run_compact : widths.run;
     const float right_w = steps_w + run_w;
 
     // Middle: the mode and its actions (or the simulation / RL group),
@@ -376,123 +393,135 @@ void NodeEditor::ShowToolbar() {
                      (pipeline_running ? 150.0f + 50.0f + W(ICON_FA_STOP " Cancel") + 3.0f * sp : 0.0f);
     if (!sim_graph && widths.mode_full > 0.0f) middle_w += sp;
     const float window_x = ImGui::GetWindowPos().x;
-    const float right_start = window_x + ImGui::GetWindowContentRegionMax().x - right_w;
-    const float middle_start = std::max(left_end + kGroupGap, left_end + (right_start - left_end - middle_w) * 0.5f);
-    ImGui::SameLine();
-    if (middle_start - window_x > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(middle_start - window_x);
-
-    if (!sim_graph) {
-        if (mode_as_menu) {
-            if (ui::GhostButton(kModeMenu[mode], true, nullptr, true)) ImGui::OpenPopup("##mode_popup");
-            if (ImGui::BeginPopup("##mode_popup")) {
-                for (int i = 0; i < 3; ++i)
-                    if (ImGui::MenuItem(kModeFull[i], nullptr, mode == i)) execution_mode_ = static_cast<ExecutionMode>(i);
-                ImGui::EndPopup();
-            }
-        } else {
-            int chosen = mode;
-            if (ui::SegmentedControl("##exec_mode", short_labels ? kModeShort : kModeFull, 3, &chosen)) {
-                execution_mode_ = static_cast<ExecutionMode>(chosen);
-                spdlog::info("Execution mode changed to: {}", kModeShort[chosen]);
-            }
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Execution Mode:\nCode Gen - Generate Python code\nData Pipeline - Execute with DuckDB/Arrow\n"
-                              "Local Training - Train ML model locally");
-        ImGui::SameLine();
-        if (execution_mode_ == ExecutionMode::CodeGeneration) {
-            ImGui::SetNextItemWidth(kFrameworkWidth);
-            int framework = static_cast<int>(selected_framework_);
-            if (ImGui::Combo("##Framework", &framework, kFrameworks, 4)) {
-                selected_framework_ = static_cast<CodeFramework>(framework);
-                spdlog::info("Code generation framework changed to: {}", kFrameworks[framework]);
-            }
-            ImGui::SameLine();
-            if (ui::GhostButton(short_labels ? ICON_FA_GEARS "##generate" : ICON_FA_GEARS " Generate")) GeneratePythonCode();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Generate Python code for the chosen framework");
-            ImGui::SameLine();
-        } else if (execution_mode_ == ExecutionMode::DuckDBPipeline && !pipeline_running) {
-            const ImVec4 run_colour = t.success;
-            if (ui::GhostButton(short_labels ? ICON_FA_PLAY "##execute" : ICON_FA_PLAY " Execute Pipeline", true, nullptr,
-                                true, ui::ButtonSize::Small, &run_colour))
-                ExecuteDataPipeline();
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Execute Pipeline: run the data steps (DuckDB / Arrow); training nodes are left to training");
-            ImGui::SameLine();
-        }
-        if (ui::GhostButton(ICON_FA_FILE_EXPORT "##export")) ShowExportDialog();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export the graph or its code");
-        ImGui::SameLine();
-    } else {
-        if (has_sim) {
-            // The graph run's commands, as the Simulation menu and the
-            // Simulation Monitor offer them
-            using cyxwiz::simulation::Command;
-            const auto sim = GetSimulationCommands();
-            const auto sim_state = simulation_session_.GetState();
-            const bool sim_running = sim_state == cyxwiz::SimulationState::Running;
-            const auto button_label = [short_labels](const char* icon, const std::string& text, const char* id) {
-                return short_labels ? std::string(icon) + "##" + id : std::string(icon) + " " + text + "##" + id;
-            };
-            const auto hint = [](const cyxwiz::simulation::CommandView& view) {
-                if (view.enabled && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", view.hint.c_str());
-                ImGui::SameLine();
-            };
-            if (sim_running) {
-                if (ui::GhostButton(button_label(ICON_FA_PAUSE, sim.pause.label, "pause_sim").c_str()))
-                    RunSimulationCommand(Command::Pause);
-                hint(sim.pause);
+    const float row_end = window_x + ImGui::GetWindowContentRegionMax().x;
+    const float right_start = row_end - right_w;
+    // One row: the mode centred between the two sides; two rows: at the end of row 1
+    const float middle_start = layout.two_rows
+                                   ? std::max(left_end + kGroupGap, row_end - middle_w)
+                                   : std::max(left_end + kGroupGap, left_end + (right_start - left_end - middle_w) * 0.5f);
+    // The mode and its actions (or the simulation group), then a running
+    // pipeline's progress: on row 1, or starting row 2 when row 1 cannot hold them
+    const auto render_middle = [&]() {
+        if (!sim_graph) {
+            if (mode_as_menu) {
+                if (ui::GhostButton(kModeMenu[mode], true, nullptr, true)) ImGui::OpenPopup("##mode_popup");
+                if (ImGui::BeginPopup("##mode_popup")) {
+                    for (int i = 0; i < 3; ++i)
+                        if (ImGui::MenuItem(kModeFull[i], nullptr, mode == i)) execution_mode_ = static_cast<ExecutionMode>(i);
+                    ImGui::EndPopup();
+                }
             } else {
-                const ImVec4 run_colour = t.success;
-                if (ui::GhostButton(button_label(ICON_FA_PLAY, sim.run.label, "run_sim").c_str(), sim.run.enabled,
-                                    sim.run.disabled_reason.c_str(), true, ui::ButtonSize::Small, &run_colour))
-                    RunSimulationCommand(Command::Run);
-                hint(sim.run);
+                int chosen = mode;
+                if (ui::SegmentedControl("##exec_mode", short_labels ? kModeShort : kModeFull, 3, &chosen)) {
+                    execution_mode_ = static_cast<ExecutionMode>(chosen);
+                    spdlog::info("Execution mode changed to: {}", kModeShort[chosen]);
+                }
             }
-            if (simulation_session_.IsActive()) {
-                if (ui::GhostButton(button_label(ICON_FA_FORWARD_STEP, "Step", "step_sim").c_str()))
-                    RunSimulationCommand(Command::Step);
-                hint(sim.step);
-                if (ui::DangerButton(short_labels ? ICON_FA_STOP "##stop_sim" : ICON_FA_STOP " Stop Sim"))
-                    RunSimulationCommand(Command::Stop);
-                hint(sim.stop);
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(sim_running ? t.running : t.pending, "t = %.2f s", simulation_session_.GetSimTime());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Execution Mode:\nCode Gen - Generate Python code\nData Pipeline - Execute with DuckDB/Arrow\n"
+                                  "Local Training - Train ML model locally");
+            ImGui::SameLine();
+            if (execution_mode_ == ExecutionMode::CodeGeneration) {
+                ImGui::SetNextItemWidth(kFrameworkWidth);
+                int framework = static_cast<int>(selected_framework_);
+                if (ImGui::Combo("##Framework", &framework, kFrameworks, 4)) {
+                    selected_framework_ = static_cast<CodeFramework>(framework);
+                    spdlog::info("Code generation framework changed to: {}", kFrameworks[framework]);
+                }
                 ImGui::SameLine();
-                if (!sim_running) {
-                    ImGui::TextColored(t.pending, "Paused");
+                if (ui::GhostButton(short_labels ? ICON_FA_GEARS "##generate" : ICON_FA_GEARS " Generate")) GeneratePythonCode();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Generate Python code for the chosen framework");
+                ImGui::SameLine();
+            } else if (execution_mode_ == ExecutionMode::DuckDBPipeline && !pipeline_running) {
+                const ImVec4 run_colour = t.success;
+                if (ui::GhostButton(short_labels ? ICON_FA_PLAY "##execute" : ICON_FA_PLAY " Execute Pipeline", true, nullptr,
+                                    true, ui::ButtonSize::Small, &run_colour))
+                    ExecuteDataPipeline();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Execute Pipeline: run the data steps (DuckDB / Arrow); training nodes are left to training");
+                ImGui::SameLine();
+            }
+            if (ui::GhostButton(ICON_FA_FILE_EXPORT "##export")) ShowExportDialog();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export the graph or its code");
+            ImGui::SameLine();
+        } else {
+            if (has_sim) {
+                // The graph run's commands, as the Simulation menu and the
+                // Simulation Monitor offer them
+                using cyxwiz::simulation::Command;
+                const auto sim = GetSimulationCommands();
+                const auto sim_state = simulation_session_.GetState();
+                const bool sim_running = sim_state == cyxwiz::SimulationState::Running;
+                const auto button_label = [short_labels](const char* icon, const std::string& text, const char* id) {
+                    return short_labels ? std::string(icon) + "##" + id : std::string(icon) + " " + text + "##" + id;
+                };
+                const auto hint = [](const cyxwiz::simulation::CommandView& view) {
+                    if (view.enabled && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", view.hint.c_str());
+                    ImGui::SameLine();
+                };
+                if (sim_running) {
+                    if (ui::GhostButton(button_label(ICON_FA_PAUSE, sim.pause.label, "pause_sim").c_str()))
+                        RunSimulationCommand(Command::Pause);
+                    hint(sim.pause);
+                } else {
+                    const ImVec4 run_colour = t.success;
+                    if (ui::GhostButton(button_label(ICON_FA_PLAY, sim.run.label, "run_sim").c_str(), sim.run.enabled,
+                                        sim.run.disabled_reason.c_str(), true, ui::ButtonSize::Small, &run_colour))
+                        RunSimulationCommand(Command::Run);
+                    hint(sim.run);
+                }
+                if (simulation_session_.IsActive()) {
+                    if (ui::GhostButton(button_label(ICON_FA_FORWARD_STEP, "Step", "step_sim").c_str()))
+                        RunSimulationCommand(Command::Step);
+                    hint(sim.step);
+                    if (ui::DangerButton(short_labels ? ICON_FA_STOP "##stop_sim" : ICON_FA_STOP " Stop Sim"))
+                        RunSimulationCommand(Command::Stop);
+                    hint(sim.stop);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextColored(sim_running ? t.running : t.pending, "t = %.2f s", simulation_session_.GetSimTime());
+                    ImGui::SameLine();
+                    if (!sim_running) {
+                        ImGui::TextColored(t.pending, "Paused");
+                        ImGui::SameLine();
+                    }
+                }
+                // The last run failed or was refused: the reason on hover.
+                if (simulation_session_.GetState() == cyxwiz::SimulationState::Failed) {
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", simulation_session_.GetError().c_str());
                     ImGui::SameLine();
                 }
             }
-            // The last run failed or was refused: the reason on hover.
-            if (simulation_session_.GetState() == cyxwiz::SimulationState::Failed) {
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextColored(t.warning, ICON_FA_TRIANGLE_EXCLAMATION);
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", simulation_session_.GetError().c_str());
-                ImGui::SameLine();
-            }
         }
-    }
 
-    // A running data pipeline: progress, its step and Cancel stay at every width.
-    if (pipeline_running) {
-        const auto info = pipeline_task->GetInfo();
-        ImGui::AlignTextToFramePadding();
-        ImGui::ProgressBar(info.progress, ImVec2(150.0f, 6.0f), "");
-        if (ImGui::IsItemHovered() && !info.status_message.empty()) ImGui::SetTooltip("%s", info.status_message.c_str());
+        // A running data pipeline: progress, its step and Cancel stay at every width.
+        if (pipeline_running) {
+            const auto info = pipeline_task->GetInfo();
+            ImGui::AlignTextToFramePadding();
+            ImGui::ProgressBar(info.progress, ImVec2(150.0f, 6.0f), "");
+            if (ImGui::IsItemHovered() && !info.status_message.empty()) ImGui::SetTooltip("%s", info.status_message.c_str());
+            ImGui::SameLine();
+            ImGui::TextColored(t.text_dim, "%.0f%%", info.progress * 100.0f);
+            if (ImGui::IsItemHovered() && !info.status_message.empty()) ImGui::SetTooltip("%s", info.status_message.c_str());
+            ImGui::SameLine();
+            if (ui::DangerButton(ICON_FA_STOP " Cancel")) cyxwiz::AsyncTaskManager::Instance().Cancel(pipeline_task_id_);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel the pipeline");
+            ImGui::SameLine();
+        }
+    };
+    if (!layout.mode_on_row_two) {
         ImGui::SameLine();
-        ImGui::TextColored(t.text_dim, "%.0f%%", info.progress * 100.0f);
-        if (ImGui::IsItemHovered() && !info.status_message.empty()) ImGui::SetTooltip("%s", info.status_message.c_str());
-        ImGui::SameLine();
-        if (ui::DangerButton(ICON_FA_STOP " Cancel")) cyxwiz::AsyncTaskManager::Instance().Cancel(pipeline_task_id_);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cancel the pipeline");
-        ImGui::SameLine();
+        if (middle_start - window_x > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(middle_start - window_x);
+        render_middle();
     }
-
+    // Row 2: the steps and the run group (row 1 ended on its own line when the mode moved down)
+    if (layout.two_rows && !layout.mode_on_row_two) ImGui::NewLine();
+    if (layout.mode_on_row_two) render_middle();
     if (right_start - window_x > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(right_start - window_x);
     const auto arrow = [&]() {
-        ImGui::SameLine(0.0f, dots ? sp : sp);
-        if (dots) return;
+        ImGui::SameLine(0.0f, sp);
+        if (steps_dots) return;
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.text_faint, ICON_FA_CHEVRON_RIGHT);
         ImGui::SameLine(0.0f, sp);
@@ -561,7 +590,7 @@ void NodeEditor::ShowToolbar() {
         const auto metrics = training_mgr.GetCurrentMetrics();
         ImGui::AlignTextToFramePadding();
         if (!metrics.waiting_for_gpu.empty()) {  // another training run holds the GPU
-            ImGui::TextColored(t.pending, ICON_FA_CLOCK " Waiting for the GPU");
+            ImGui::TextColored(t.pending, compact_run ? ICON_FA_CLOCK " Waiting" : ICON_FA_CLOCK " Waiting for the GPU");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", metrics.waiting_for_gpu.c_str());
         } else {
             ImGui::TextColored(t.success, ICON_FA_SPINNER " Epoch %d / %d", metrics.current_epoch, metrics.total_epochs);
@@ -571,11 +600,19 @@ void NodeEditor::ShowToolbar() {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop training");
     } else if (rl_active) {
         ImGui::AlignTextToFramePadding();
+        const std::string& rl_line = compact_run ? rl_compact : rl_status_;
         if (rl_run_ && rl_run_->Paused())  // as the dashboard says it
-            ImGui::TextColored(t.pending, ICON_FA_PAUSE " %s \xC2\xB7 Paused", rl_status_.c_str());
+            ImGui::TextColored(t.pending, ICON_FA_PAUSE " %s \xC2\xB7 Paused", rl_line.c_str());
         else
-            ImGui::TextColored(t.success, ICON_FA_SPINNER " %s", rl_status_.c_str());
-        if (!rl_device_tooltip_.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", rl_device_tooltip_.c_str());
+            ImGui::TextColored(t.success, ICON_FA_SPINNER " %s", rl_line.c_str());
+        if (ImGui::IsItemHovered()) {  // the shortened line gives its whole text here
+            if (compact_run && !rl_device_tooltip_.empty())
+                ImGui::SetTooltip("%s\n%s", rl_status_.c_str(), rl_device_tooltip_.c_str());
+            else if (compact_run)
+                ImGui::SetTooltip("%s", rl_status_.c_str());
+            else if (!rl_device_tooltip_.empty())
+                ImGui::SetTooltip("%s", rl_device_tooltip_.c_str());
+        }
         ImGui::SameLine();
         if (ui::DangerButton(ICON_FA_STOP " Stop##stop_ppo")) StopRLTraining();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop PPO training (the RL Training Dashboard has Pause)");

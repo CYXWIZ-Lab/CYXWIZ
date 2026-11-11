@@ -827,6 +827,7 @@ private:
     // the canvas is doing (graph locked, the mode); TOFIX178 UI-1.
     void RenderCanvasFooter();
     static constexpr float kCanvasFooterHeight = 26.0f;
+    bool toolbar_two_rows_ = false;  // the bar is in its two-row form (logged on change)
     int toolbar_fold_level_ = -1;  // the bar's last form, logged when it changes
     void HandleInteractions();
     void ShowContextMenu();
