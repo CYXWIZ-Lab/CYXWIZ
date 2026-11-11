@@ -375,9 +375,11 @@ CYXWIZ_API NeuralOpStatus ExecuteNeuralOpOnDevice(
 
 // Test-only: makes the registry answer as if no providers were registered
 // (List() empty, FindSupporting() null), so AF-vs-native oracle tests and
-// legacy placement-policy tests keep measuring what they measure. Never
-// set in production code.
+// legacy placement-policy tests keep measuring what they measure; a call
+// through a provider found before (ExecuteNeuralOpOnDevice) fails, as a
+// provider failing mid-run does. Never set in production code.
 CYXWIZ_API void SetNeuralProvidersDisabledForTesting(bool disabled);
+CYXWIZ_API bool NeuralProvidersDisabledForTesting();
 
 // The run-time interface of a provider module (cyxwiz-nvidia-provider,
 // TOFIX178 1.0(c)): it exports cyxwiz_<name>_abi() returning this number and

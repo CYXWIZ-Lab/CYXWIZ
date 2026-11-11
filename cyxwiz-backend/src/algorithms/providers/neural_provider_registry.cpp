@@ -31,6 +31,8 @@ void SetNeuralProvidersDisabledForTesting(bool disabled) {
     g_neural_providers_disabled_for_testing.store(disabled);
 }
 
+bool NeuralProvidersDisabledForTesting() { return g_neural_providers_disabled_for_testing.load(); }
+
 // The NVIDIA provider is a module of its own (cyxwiz-nvidia-provider,
 // TOFIX178 1.0(c)), loaded at first use: installed with the CUDA GPU pack,
 // or next to the backend in a build. Absent, NVIDIA devices use the

@@ -3,7 +3,8 @@
 // episodes and stops there, the same seed gives the same first updates,
 // normalised observations and rewards train, bad setups are refused with the
 // reason, and every update says how it ran (fused kernels on a provider, or
-// ArrayFire operations). With a MuJoCo plugin folder as the argument it also
+// ArrayFire operations); a provider failing mid-run moves the run to ArrayFire
+// operations and it trains on. With a MuJoCo plugin folder as the argument it also
 // trains InvertedPendulum-v5 (continuous) to 950. Stop is checked through
 // RLTrainingRun (test_rl_graph_training).
 //
@@ -18,6 +19,7 @@
 #include "algorithms/arrayfire_backend_utils.h"
 #include "computation_truth/test_device_selection.h"
 
+#include <cyxwiz/neural_provider.h>
 #include <cyxwiz/sequential.h>
 
 #include <chrono>
@@ -25,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -82,7 +85,8 @@ struct Outcome {
     std::vector<rl::PpoUpdateMetrics> updates;
 };
 
-Outcome Train(const std::string& key, int copies, rl::PpoConfig config, float target, uint64_t init_seed) {
+Outcome Train(const std::string& key, int copies, rl::PpoConfig config, float target, uint64_t init_seed,
+              const std::function<void(const rl::PpoUpdateMetrics&)>& after_update = {}) {
     Outcome outcome;
     config.target_return = target;
     auto batch = Make(key, copies);
@@ -95,6 +99,7 @@ Outcome Train(const std::string& key, int copies, rl::PpoConfig config, float ta
     outcome.ok = trainer.Train(
         [&](const rl::PpoUpdateMetrics& m) {
             outcome.updates.push_back(m);
+            if (after_update) after_update(m);
             if (m.update % 25 == 0 || m.mean_episode_return >= target)
                 std::printf("  %s update %4d  steps %7lld  return %7.1f  len %6.1f  pg %.4f  v %.4f  kl %.4f  ev %.3f  %6.0f steps/s\n",
                             key.c_str(), m.update, static_cast<long long>(m.timesteps), m.mean_episode_return,
@@ -158,6 +163,34 @@ void CheckCartPole() {
           "normalised rewards change what the value network learns");
 }
 
+// The device's provider failing mid-run (every call fails from the third
+// update on): the run moves to ArrayFire operations, says so in each update's
+// compute path, and trains on. Needs the fused kernels (CUDA with the NVIDIA
+// provider); elsewhere there is nothing to fail.
+void CheckFallbackMidRun() {
+    auto config = CartPoleConfig(7);
+    config.total_timesteps = 6 * 8 * 32;
+    const auto outcome = Train("cyxwiz.builtin:CartPole-v1", 8, config, 1e9f, 7, [](const rl::PpoUpdateMetrics& m) {
+        if (m.update == 2) SetNeuralProvidersDisabledForTesting(true);
+    });
+    SetNeuralProvidersDisabledForTesting(false);
+    if (outcome.updates.empty() || outcome.updates.front().compute_path.rfind("fused", 0) != 0) {
+        std::printf("mid-run provider failure not checked: the run does not use the fused kernels here\n");
+        return;
+    }
+    Check(outcome.ok && outcome.updates.size() == 6, "the run goes on after its provider fails: " + outcome.error);
+    if (outcome.updates.size() != 6) return;
+    const std::string& before = outcome.updates[1].compute_path;
+    const std::string& after = outcome.updates.back().compute_path;
+    Check(before.rfind("fused", 0) == 0, "before the failure the run uses the fused kernels: " + before);
+    Check(after.find("ArrayFire operations (the fused kernels failed") != std::string::npos &&
+              after.find("optimizers per tensor") != std::string::npos,
+          "after it, each update says it runs on ArrayFire operations: " + after);
+    bool finite = true;
+    for (const auto& u : outcome.updates) finite = finite && std::isfinite(u.policy_loss) && std::isfinite(u.value_loss);
+    Check(finite, "every update's losses stay finite across the fallback");
+}
+
 void CheckRefusals() {
     auto batch = Make("cyxwiz.builtin:CartPole-v1", 2);
     if (!batch) return;
@@ -209,6 +242,7 @@ int main(int argc, char** argv) {
     if (!cyxwiz::test::SelectTestDeviceFromEnvironment()) return EXIT_FAILURE;
     CheckRefusals();
     CheckCartPole();
+    CheckFallbackMidRun();
     if (argc > 1) CheckPendulum(std::filesystem::absolute(argv[1]));
     if (failures == 0) std::printf("test_ppo_trainer: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -258,6 +258,7 @@ NeuralOpStatus ExecuteNeuralOpOnDevice(INeuralNetworkProvider& provider, const N
     if (!request.device_resident) {
         return Failed("ExecuteNeuralOpOnDevice needs a request with device_resident=true");
     }
+    if (NeuralProvidersDisabledForTesting()) return Failed("neural providers are disabled for testing");
     try {
         NeuralDeviceOpBuffers buffers;
         std::string error;
