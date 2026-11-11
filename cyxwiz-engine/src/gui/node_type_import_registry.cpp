@@ -5,7 +5,7 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 230> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 231> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -220,6 +220,7 @@ constexpr std::array<NodeTypeImportName, 230> kNodeTypeImportNames = {{
         {"ImageWarp", NodeType::ImageWarp},
         {"ImagePyramid", NodeType::ImagePyramid},
         {"ImageFilter", NodeType::ImageFilter},
+        {"ImageGabor", NodeType::ImageGabor},
         {"RandomResizedCrop", NodeType::RandomResizedCrop},
         {"RandomAffine", NodeType::RandomAffine},
         {"RandomPerspective", NodeType::RandomPerspective},

@@ -323,6 +323,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::ImageWarp:
         case NodeType::ImagePyramid:
         case NodeType::ImageFilter:
+        case NodeType::ImageGabor:
         case NodeType::RandomResizedCrop:
         case NodeType::RandomAffine:
         case NodeType::RandomPerspective:
@@ -2076,6 +2077,26 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "See what a hand-made filter does before a Conv2D learns its own",
             "Compare it with the learned kernels in the Studio Debugger's Filters view",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageGabor] = {
+        "Image Gabor",
+        "A bank of striped kernels over every image: one channel per orientation and wavelength.",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"orientations", "Directions over 180 degrees, 1 to 16"},
+            {"wavelengths", "Pixels per cycle, split by commas or spaces"},
+            {"bandwidth", "Octaves, 0.25 to 4"},
+            {"aspect", "The window's width over its length, 0.1 to 1"},
+            {"response", "energy, even or odd"},
+            {"keep_image", "The image's channels first, then the bank's"}
+        },
+        {
+            "Give a small model texture and direction it would otherwise have to learn",
+            "Compare the bank with a first Conv2D's learned kernels in the Studio Debugger's Filters view",
         },
         "Data Pipeline"
     };

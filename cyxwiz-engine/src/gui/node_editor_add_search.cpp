@@ -32,6 +32,7 @@ bool DoneOnceWithImages(NodeType type) {
         case NodeType::ImageWarp:
         case NodeType::ImagePyramid:
         case NodeType::ImageFilter:
+        case NodeType::ImageGabor:
             return true;
         default:
             return false;

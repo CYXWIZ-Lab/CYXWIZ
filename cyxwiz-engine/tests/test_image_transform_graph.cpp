@@ -444,6 +444,25 @@ void CheckCompiler() {
                                 {{"statistics", "per_channel"}, {"channel_mean", "0.5,0.5,0.5,0.1"},
                                  {"channel_std", "0.2,0.2,0.2,0.3"}}}});
     Check(kept.is_valid, "RGB + edges compiles; errors:\n" + Errors(kept));
+    {
+        // Image Gabor: one channel per filter into the model, named; the default bank is too wide for 8 x 8.
+        const Step bank{gui::NodeType::ImageGabor, "Bank",
+                        {{"orientations", "2"}, {"wavelengths", "2"}, {"bandwidth", "2"}, {"keep_image", "true"}}};
+        const auto gabor = Compile({kResize, bank});
+        Check(gabor.is_valid, "RGB + a Gabor bank compiles; errors:\n" + Errors(gabor));
+        Check(gabor.input_shape == std::vector<size_t>({8, 8, 5}) && gabor.image_cv_steps.size() == 1 &&
+                  gabor.image_cv_steps[0].kind == cyxwiz::CvImageStepKind::Gabor && gabor.image_cv_steps[0].gabor_keep_image,
+              "the model sees [8, 8, 5]");
+        Check(gabor.image_channels.names == std::vector<std::string>({"R", "G", "B", "gabor 0 deg 2 px", "gabor 90 deg 2 px"}) &&
+                  gabor.image_channels.colour == 3,
+              "the channels are named for the views");
+        CheckRefused({kResize, {gui::NodeType::ImageGabor, "Wide", {}}}, "Wide", "kernel: at most 8",
+                     "a bank whose kernel is larger than the image");
+        CheckRefused({kResize, {gui::NodeType::ImageGabor, "Phase", {{"wavelengths", "2"}, {"bandwidth", "2"}, {"response", "both"}}}},
+                     "Phase", "response must be", "an unknown response");
+        CheckRefused({kResize, bank, {gui::NodeType::ImageEdges, "Late edges", {}}}, "Late edges", "needs grey or RGB images",
+                     "Image Edges after the bank");
+    }
     Check(kept.input_shape == std::vector<size_t>({8, 8, 4}) && !kept.layers.empty() &&
               kept.layers.front().input_shape == std::vector<size_t>({8, 8, 4}),
           "the Conv2D sees [8, 8, 4]");

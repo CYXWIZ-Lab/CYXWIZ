@@ -129,6 +129,12 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Image Gabor node.** A bank of striped kernels over every image, done
+  once when the images are prepared: one channel per orientation and
+  wavelength (4 x 2 by default), as the energy of both phases or one phase.
+  With Keep image the model reads the photo and the bank (`[H, W, 3 + 8]`);
+  the channels are named and shown as a sheet. Example:
+  `examples/cyxgraph/cats_dogs_gabor_bank.cyxgraph`.
 - **Images with more than three channels.** Image Edges can keep the image
   and add the edge map as a 4th channel (`keep_image`); the model then
   reads RGB + edges. Steps after it run on each channel; colour steps and

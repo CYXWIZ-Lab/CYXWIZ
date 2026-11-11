@@ -7558,6 +7558,19 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
             s.filter_normalize = ParseBoolParam(p, "normalize", false);
             break;
         }
+        case gui::NodeType::ImageGabor:
+            s.kind = CvImageStepKind::Gabor;
+            (void)(ParseIntParam(p, "orientations", 4, s.gabor_orientations, error) &&
+                   ParseFloatParam(p, "bandwidth", 1.0f, s.gabor_bandwidth, error) &&
+                   ParseFloatParam(p, "aspect", 0.5f, s.gabor_aspect, error) &&
+                   ParseChoiceParam<cyxwiz::CvGaborResponse>(p, "response", "energy",
+                                                            {{"energy", cyxwiz::CvGaborResponse::Energy},
+                                                             {"even", cyxwiz::CvGaborResponse::Even},
+                                                             {"odd", cyxwiz::CvGaborResponse::Odd}},
+                                                            s.gabor_response, error));
+            if (const auto typed = p.find("wavelengths"); typed != p.end()) s.gabor_wavelengths = typed->second;
+            s.gabor_keep_image = ParseBoolParam(p, "keep_image", false);
+            break;
         default:
             return;
     }
@@ -7603,6 +7616,15 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
     } else if (s.kind == CvImageStepKind::Edges && shape.channels > 1) {
         issue(IssueLevel::Info, "Gives one channel: the images become " + std::to_string(after.width) +
                                     " × " + std::to_string(after.height) + " × 1 here");
+    }
+    if (s.kind == CvImageStepKind::Gabor) {
+        auto names = s.gabor_keep_image ? CurrentImageChannelNames(config) : std::vector<std::string>();
+        for (auto& name : cyxwiz::GaborChannelNames(s)) names.push_back(std::move(name));
+        issue(IssueLevel::Info, "One channel per filter: the images become " + std::to_string(after.width) + " × " +
+                                    std::to_string(after.height) + " × " + std::to_string(after.channels) +
+                                    " here (" + JoinedChannelNames(names) +
+                                    "). Colour transforms and ImageNet statistics need RGB: put them before, "
+                                    "and give Normalize one mean and std per channel");
     }
     if (s.kind == CvImageStepKind::Filter && s.filter_output == cyxwiz::CvFilterOutput::Clip) {
         cyxwiz::FilterKernel kernel;
@@ -7759,6 +7781,7 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::ImageWarp,          PreprocessingDomain::Image,       ExtractImageCvStep},
     {gui::NodeType::ImagePyramid,       PreprocessingDomain::Image,       ExtractImageCvStep},
     {gui::NodeType::ImageFilter,        PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageGabor,         PreprocessingDomain::Image,       ExtractImageCvStep},
     // Augmentation steps drawn per batch (TOFIX178 1.6b)
     {gui::NodeType::RandomResizedCrop,  PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::RandomAffine,       PreprocessingDomain::Image,       ExtractImageTransform},

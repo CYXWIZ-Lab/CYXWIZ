@@ -550,6 +550,156 @@ int main() {
               "step texts");
     }
 
+    // Image Gabor: a bank of striped kernels over the grey image, one channel each.
+    {
+        CvImageStep s = Step(CvImageStepKind::Gabor);  // 4 orientations, wavelengths 3 and 6
+        std::vector<GaborFilter> bank;
+        Check(ResolveGaborBank(s, bank) && bank.size() == 8, "four orientations at two wavelengths are eight filters");
+        Check(bank[0].degrees == 0.0f && bank[1].degrees == 45.0f && bank[3].degrees == 135.0f &&
+                  bank[0].wavelength == 3.0f && bank[4].wavelength == 6.0f,
+              "each wavelength, its orientations in turn");
+        // The kernels are OpenCV's, then zero mean and absolute values that sum to 1.
+        const float pi = 3.14159265358979f;
+        for (const size_t g : {size_t{1}, size_t{6}}) {
+            const float sigma = bank[g].wavelength / pi * std::sqrt(std::log(2.0f) / 2.0f) * 3.0f;  // 1 octave
+            const int side = bank[g].even.rows;
+            Check(side == 2 * static_cast<int>(std::ceil(3.0f * sigma)) + 1 && bank[g].even.cols == side,
+                  "the kernel reaches three sigmas each way");
+            for (const bool odd : {false, true}) {
+                cv::Mat cvk = cv::getGaborKernel(cv::Size(side, side), sigma, bank[g].degrees * pi / 180.0f,
+                                                 bank[g].wavelength, 0.5, odd ? -CV_PI / 2 : 0.0, CV_32F);
+                cvk -= cv::mean(cvk)[0];
+                cvk /= cv::norm(cvk, cv::NORM_L1);
+                const FilterKernel& ours = odd ? bank[g].odd : bank[g].even;
+                float worst = 0.0f, total = 0.0f, size = 0.0f;
+                for (int i = 0; i < side * side; ++i) {
+                    worst = std::max(worst, std::fabs(ours.values[static_cast<size_t>(i)] - cvk.at<float>(i / side, i % side)));
+                    total += ours.values[static_cast<size_t>(i)];
+                    size += std::fabs(ours.values[static_cast<size_t>(i)]);
+                }
+                Check(worst < 1e-5f, std::string(odd ? "odd" : "even") + " kernel is cv::getGaborKernel's, worst " + std::to_string(worst));
+                Check(std::fabs(total) < 1e-4f && std::fabs(size - 1.0f) < 1e-4f, "zero mean, absolute values sum to 1");
+            }
+        }
+
+        Check(ValidateCvImageStep(s, kRgb).empty(), "the default bank fits 40 x 32");
+        Check(CvImageShapeAfter(s, kRgb) == image::ImageShape{kH, kW, 8}, "eight channels");
+        Check(CvImageStepText(s) == "Gabor (4 orientations, wavelengths 3 / 6)", "text: " + CvImageStepText(s));
+        Check(GaborChannelNames(s) == std::vector<std::string>({"gabor 0 deg 3 px", "gabor 45 deg 3 px", "gabor 90 deg 3 px",
+                                                                "gabor 135 deg 3 px", "gabor 0 deg 6 px", "gabor 45 deg 6 px",
+                                                                "gabor 90 deg 6 px", "gabor 135 deg 6 px"}),
+              "channel names");
+        ImageChannelLayout expected_layout;
+        expected_layout.names = GaborChannelNames(s);
+        Check(CompiledImageChannels({}, {s}, kRgb) == expected_layout, "the bank's channels are named, with no colour picture");
+
+        // Energy equals sqrt(even^2 + odd^2) of cv::filter2D on the grey image.
+        const std::vector<uint8_t> out = Run(s, rgb);
+        cv::Mat grey_f;
+        {
+            cv::Mat f;
+            rgb.convertTo(f, CV_32F, 1.0 / 255.0);
+            std::vector<cv::Mat> planes;
+            cv::split(f, planes);
+            grey_f = 0.299f * planes[0] + 0.587f * planes[1] + 0.114f * planes[2];
+        }
+        int worst_level = 0;
+        for (size_t g = 0; g < bank.size(); ++g) {
+            const int side = bank[g].even.rows;
+            const cv::Mat ke(side, side, CV_32F, const_cast<float*>(bank[g].even.values.data()));
+            const cv::Mat ko(side, side, CV_32F, const_cast<float*>(bank[g].odd.values.data()));
+            cv::Mat e, o, energy;
+            cv::filter2D(grey_f, e, CV_32F, ke);
+            cv::filter2D(grey_f, o, CV_32F, ko);
+            cv::magnitude(e, o, energy);
+            for (int i = 0; i < kH * kW; ++i) {
+                const int want = static_cast<int>(std::lround(std::clamp(energy.at<float>(i / kW, i % kW), 0.0f, 1.0f) * 255.0f));
+                worst_level = std::max(worst_level, std::abs(want - int(out[static_cast<size_t>(i) * 8 + g])));
+            }
+        }
+        Check(worst_level <= 1, "energy is both phases' size, worst " + std::to_string(worst_level) + " level");
+
+        // Vertical stripes 6 px apart answer in the 0 degree, 6 px channel; a flat image answers nowhere.
+        cv::Mat stripes(kH, kW, CV_8UC3), flat(kH, kW, CV_8UC3, cv::Scalar::all(120));
+        for (int y = 0; y < kH; ++y)
+            for (int x = 0; x < kW; ++x)
+                stripes.at<cv::Vec3b>(y, x) = cv::Vec3b::all(static_cast<uchar>(127.5 + 127.5 * std::cos(2.0 * CV_PI * x / 6.0)));
+        const auto striped = Run(s, stripes), even_field = Run(s, flat);
+        const size_t middle = (static_cast<size_t>(kH / 2) * kW + kW / 2) * 8;
+        for (size_t g = 0; g < 8; ++g)
+            if (g != 4)
+                Check(striped[middle + 4] > striped[middle + g] + 20,
+                      "the matching filter answers most (channel " + std::to_string(g) + ": " +
+                          std::to_string(striped[middle + g]) + " against " + std::to_string(striped[middle + 4]) + ")");
+        Check(*std::max_element(even_field.begin(), even_field.end()) == 0, "a flat image has no energy");
+
+        // One phase is stored around mid-grey.
+        CvImageStep even = s;
+        even.gabor_response = CvGaborResponse::Even;
+        const auto flat_even = Run(even, flat);
+        Check(*std::min_element(flat_even.begin(), flat_even.end()) == 128 &&
+                  *std::max_element(flat_even.begin(), flat_even.end()) == 128,
+              "even: no response is mid-grey");
+        Check(CvImageStepText(even) == "Gabor (4 orientations, wavelengths 3 / 6, even)", "response in the text");
+        Check(CvImageStepIdentity(even) != CvImageStepIdentity(s), "another response is another set");
+
+        // The image kept: its channels untouched, then the bank's.
+        CvImageStep kept = s;
+        kept.gabor_keep_image = true;
+        Check(CvImageShapeAfter(kept, kRgb) == image::ImageShape{kH, kW, 11}, "RGB + eight channels");
+        const auto with_image = Run(kept, rgb);
+        bool same = true;
+        for (size_t i = 0; i < static_cast<size_t>(kH) * kW; ++i) {
+            for (size_t k = 0; k < 3; ++k) same = same && with_image[i * 11 + k] == rgb.data[i * 3 + k];
+            for (size_t g = 0; g < 8; ++g) same = same && with_image[i * 11 + 3 + g] == out[i * 8 + g];
+        }
+        Check(same, "the kept image is untouched and the bank's channels are the bank's");
+        const auto kept_layout = CompiledImageChannels({}, {kept}, kRgb);
+        Check(kept_layout.colour == 3 && kept_layout.names.size() == 11 && kept_layout.names[3] == "gabor 0 deg 3 px",
+              "R, G, B then the bank, the colour picture kept");
+        Check(CvImageStepText(kept) == "Gabor (4 orientations, wavelengths 3 / 6), image kept", "kept in the text");
+
+        // The same filters typed another way are the same set; a setting that changes them is another.
+        CvImageStep spaced = s;
+        spaced.gabor_wavelengths = "3  6";
+        nlohmann::json a = CvImageStepIdentity(s), b = CvImageStepIdentity(spaced);
+        Check(a == b, "\"3, 6\" and \"3  6\" are one prepared set");
+        CvImageStep wider = s;
+        wider.gabor_bandwidth = 1.5f;
+        Check(CvImageStepIdentity(wider) != CvImageStepIdentity(s), "another bandwidth is another set");
+
+        // What cannot run says why.
+        CvImageStep bad = s;
+        bad.gabor_wavelengths = "3, x";
+        Check(ValidateCvImageStep(bad, kRgb) == "the wavelengths have something that is not a number: x", "not a number");
+        bad.gabor_wavelengths = "1";
+        Check(ValidateCvImageStep(bad, kRgb) == "a wavelength must be 2 pixels or more (a stripe and its gap)", "too short");
+        bad.gabor_wavelengths = "";
+        Check(ValidateCvImageStep(bad, kRgb) == "give at least one wavelength, in pixels", "none");
+        bad.gabor_wavelengths = "16";
+        Check(ValidateCvImageStep(bad, kRgb).find("wavelength 16 needs a 55 \xC3\x97 55 kernel: at most 32") == 0,
+              "a kernel larger than the image: " + ValidateCvImageStep(bad, kRgb));
+        bad = s;
+        bad.gabor_orientations = 16;
+        bad.gabor_wavelengths = "3, 4, 5";
+        Check(ValidateCvImageStep(bad, kRgb).find("is 48 channels: at most 32") != std::string::npos, "too many channels");
+        bad = s;
+        bad.gabor_orientations = 0;
+        Check(ValidateCvImageStep(bad, kRgb) == "orientations must be from 1 to 16", "no orientation");
+        const image::ImageShape four{kH, kW, 4};
+        Check(ValidateCvImageStep(s, four).find("needs grey or RGB images") == 0, "not on four channels");
+        std::vector<uint8_t> none(static_cast<size_t>(kH) * kW * 8), four_in(four.Size(), 10);
+        std::string error;
+        Check(!ApplyCvImageStep(s, four, four_in.data(), none.data(), &error) && error.find("needs grey or RGB") != std::string::npos,
+              "and it does not run there");
+        // A grey image goes in as it is.
+        cv::Mat grey8;
+        cv::cvtColor(stripes, grey8, cv::COLOR_RGB2GRAY);
+        const image::ImageShape grey_shape{kH, kW, 1};
+        const auto from_grey = Run(s, grey8, grey_shape);
+        Check(from_grey.size() == striped.size() && from_grey[middle + 4] == striped[middle + 4], "grey in, the same bank out");
+    }
+
     std::cout << "test_image_cv_steps: all checks passed\n";
     return 0;
 }

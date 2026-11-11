@@ -2035,6 +2035,32 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
           {"clip", "absolute", "offset"}, "", "Output"}},
         NodeImplementationStatus::Implemented, 0});
 
+    RegisterNode({NodeType::ImageGabor, NodeCategory::Preprocessing, "Image Gabor", ICON_FA_WAVE_SQUARE,
+        {"image", "gabor", "filter", "bank", "texture", "orientation", "stripes", "wavelength", "opencv", "once"}, 0, false,
+        "A bank of striped kernels: one channel per orientation and wavelength",
+        "Each filter is a small patch of stripes under a Gaussian window: it answers where the image has stripes "
+        "of that direction and spacing (texture, fur, edges of one direction). The bank runs every orientation at "
+        "every wavelength over the grey image and gives one channel each. Energy is the answer's size whatever "
+        "the stripes' phase; even and odd keep one phase, stored around mid-grey (128 = no response). "
+        "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps "
+        "done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Gabor -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], grey or RGB, after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images [H, W, orientations x wavelengths] (after the image's own channels when kept)"}},
+        {{"orientations", "int", "4", "How many directions, spread over 180 degrees (4: 0, 45, 90, 135)", {}, "",
+          "Orientations"},
+         {"wavelengths", "string", "3, 6", "The stripes' spacing in pixels per cycle; one set of orientations each", {}, "",
+          "Wavelengths"},
+         {"bandwidth", "float", "1.0", "In octaves: smaller is a wider window that answers to a narrower range of spacings",
+          {}, "", "Bandwidth"},
+         {"aspect", "float", "0.5", "The window's width across the stripes over its length along them (1 = round)", {}, "",
+          "Aspect"},
+         {"response", "enum", "energy", "energy: both phases' size; even or odd: one phase, around mid-grey",
+          {"energy", "even", "odd"}, "", "Response"},
+         {"keep_image", "bool", "false", "Keep the image's channels and add the bank's after them", {}, "",
+          "Keep image"}},
+        NodeImplementationStatus::Implemented, 0});
+
     RegisterNode({NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", ICON_FA_WAND_MAGIC_SPARKLES,
         {"image", "augmentation", "preset", "recipe", "cifar", "randaugment"}, 0, false,
         "A standard training augmentation recipe in one node",

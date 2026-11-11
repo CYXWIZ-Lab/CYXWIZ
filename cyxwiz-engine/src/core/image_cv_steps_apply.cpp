@@ -76,7 +76,8 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
     if (c != 1 && c != 3 && s.kind != CvImageStepKind::Filter) {
         const image::ImageShape plane_in{input.height, input.width, 1};
         const image::ImageShape plane_out = CvImageShapeAfter(s, plane_in);
-        if (s.kind == CvImageStepKind::Edges || plane_out.channels != 1) return fail("needs grey or RGB images");
+        if (s.kind == CvImageStepKind::Edges || s.kind == CvImageStepKind::Gabor || plane_out.channels != 1)
+            return fail("needs grey or RGB images");
         const size_t pixels_in = input.height * input.width, pixels_out = plane_out.height * plane_out.width;
         std::vector<uint8_t> one(pixels_in), result(pixels_out);
         for (int k = 0; k < c; ++k) {
@@ -165,6 +166,39 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
                 for (float& v : x) v = std::fabs(v);
             if (ok && s.filter_output == CvFilterOutput::Offset)
                 for (float& v : x) v += 128.0f / 255.0f;
+            break;
+        }
+        case CvImageStepKind::Gabor: {
+            std::vector<GaborFilter> bank;
+            std::string why;
+            if (!ResolveGaborBank(s, bank, &why)) return fail(why);
+            const size_t pixels = static_cast<size_t>(w) * h;
+            // RGB is read as grey (the luma weights OpenCV's RGB2GRAY uses).
+            std::vector<float> grey(pixels);
+            for (size_t i = 0; i < pixels; ++i)
+                grey[i] = c == 1 ? x[i] : 0.299f * x[i * 3] + 0.587f * x[i * 3 + 1] + 0.114f * x[i * 3 + 2];
+            const size_t kept = s.gabor_keep_image ? static_cast<size_t>(c) : 0, width = kept + bank.size();
+            std::vector<float> joined(pixels * width);
+            for (size_t i = 0; i < pixels; ++i)
+                for (size_t k = 0; k < kept; ++k) joined[i * width + k] = x[i * c + k];
+            const auto run = [&](std::vector<float>& plane, const FilterKernel& k) {
+                plane = grey;
+                return ImageEnhancer::ApplyKernel(plane, w, h, 1, k.values, k.rows, k.cols);
+            };
+            ok = true;
+            std::vector<float> even, odd;
+            for (size_t g = 0; ok && g < bank.size(); ++g) {
+                const bool energy = s.gabor_response == CvGaborResponse::Energy;
+                if (energy || s.gabor_response == CvGaborResponse::Even) ok = run(even, bank[g].even);
+                if (ok && (energy || s.gabor_response == CvGaborResponse::Odd)) ok = run(odd, bank[g].odd);
+                if (!ok) break;
+                // Energy: both phases' size. One phase: around mid-grey (128 = no response).
+                const std::vector<float>& one = s.gabor_response == CvGaborResponse::Odd ? odd : even;
+                for (size_t i = 0; i < pixels; ++i)
+                    joined[i * width + kept + g] =
+                        energy ? std::sqrt(even[i] * even[i] + odd[i] * odd[i]) : 0.5f + 0.5f * one[i];
+            }
+            x = std::move(joined);
             break;
         }
         case CvImageStepKind::Pyramid:

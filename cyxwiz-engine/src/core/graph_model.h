@@ -628,6 +628,7 @@ enum class NodeType {
     // ===== Appended classic image filters (TOFIX178 1.10) =====
     // Done once when the images are prepared, on the CPU workers.
     ImageFilter,        // a typed kernel or a classic one (cv::filter2D)
+    ImageGabor,         // a bank of oriented kernels, one channel each
 
     // Special sentinel value
     Unknown

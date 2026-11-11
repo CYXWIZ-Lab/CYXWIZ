@@ -8,10 +8,10 @@ Blur**, **Grayscale**, **Morphology Transform** and **Advanced Augment**. They
 follow `torchvision.transforms` (morphology follows `kornia.morphology`): each
 one gives the same pixels as the torchvision transform with the same draws.
 
-Eight more run OpenCV once, when the images are prepared:
+Nine more run OpenCV once, when the images are prepared:
 **Image Contrast (CLAHE)**, **Image Denoise**, **Image Sharpen**,
-**Image Edges**, **Image Smooth**, **Image Warp**, **Image Pyramid** and
-**Image Filter** (see
+**Image Edges**, **Image Smooth**, **Image Warp**, **Image Pyramid**,
+**Image Filter** and **Image Gabor** (see
 [OpenCV steps done once](#opencv-steps-done-once)). Node search marks them
 `once`.
 
@@ -258,6 +258,7 @@ Horizontal Flip and Normalize run on each batch.
 | Image Smooth | `method` (box / median / bilateral), `kernel_size` (5, odd), `sigma_color` / `sigma_space` (75 / 75, bilateral) | Box averages, median takes the middle value (removes specks, keeps edges), bilateral mixes only similar colours. A Gaussian blur is Image Gaussian Blur, on the GPU. | same |
 | Image Warp | `method` (four_corners / three_points / log_polar / linear_polar), `source_points`, `target_points` (`0,0, 1,0, 1,1, 0,1`), `interpolation` (linear), `width` / `height` (0), `center_x` / `center_y` (0.5), `max_radius` (0.5), `inverse` | The same warp for every image. Points are `x, y` fractions of the image, top-left first, clockwise: four for four_corners, three for three_points. Polar warps unroll the image around the centre, so a rotation becomes a shift; they keep the size. | same, or `width` x `height` |
 | Image Pyramid | `operation` (down / up / detail), `levels` (1) | down: Gaussian smoothing then half the size, per level; up: double the size, per level; detail: the Laplacian level `levels - 1` halvings down (the image minus its smoothed copy). | down halves each side per level (rounding up); detail at level 1 keeps it |
+| Image Gabor | `orientations` (4; 1 to 16), `wavelengths` (`3, 6`, pixels per cycle), `bandwidth` (1.0 octave; 0.25 to 4), `aspect` (0.5; 0.1 to 1), `response` (energy / even / odd), `keep_image` (false) | A bank of striped kernels over the grey image, one channel per orientation and wavelength. See [Image Gabor](#image-gabor). | `[H, W, orientations x wavelengths]`; with `keep_image`, the image's channels first |
 | Image Filter | `preset` (sharpen; custom / identity / box / emboss / outline / prewitt_x / prewitt_y / roberts_x / roberts_y / kirsch / robinson), `direction` (n; ne / e / se / s / sw / w / nw, Kirsch and Robinson), `kernel` (`0 -1 0; -1 5 -1; 0 -1 0`, custom), `normalize` (false), `border` (reflect_101 / reflect / replicate / zero), `output` (clip / absolute / offset) | One fixed kernel over every channel (`cv::filter2D`): each output pixel is the sum of its neighbours times the kernel, the kernel's centre on the pixel. See [Image Filter](#image-filter). | same |
 
 - The prepared images are 8-bit, so each step's result is stored as 0 to 255:
@@ -313,8 +314,8 @@ The model's first layer then reads `[H, W, 4]`. See
 
 ### More than three channels
 
-An image with a channel added (Image Edges with Keep image) is neither grey
-nor RGB. What changes:
+An image with channels added (Image Edges with Keep image, or an Image
+Gabor bank) is neither grey nor RGB. What changes:
 
 - **Steps after it run on each channel alone**: Image Contrast, Denoise,
   Sharpen, Smooth, Warp, Pyramid and Image Filter, and the transforms that
@@ -323,7 +324,7 @@ nor RGB. What changes:
 - **Colour steps need RGB**: Color Jitter, Grayscale, Random Grayscale and
   the Advanced Augment policies do not compile after it (`Color Jitter needs
   a 1- or 3-channel image`). Put them before the step that adds the channel.
-  A second Image Edges is refused the same way.
+  A second Image Edges, or an Image Gabor, is refused the same way.
 - **Normalize**: ImageNet statistics are for RGB and are refused (`the images
   have 4 channels here (R, G, B, edges)`). Use `same`, or Per channel with
   one mean and std per channel; the rows are named R, G, B, edges, and Data
@@ -331,7 +332,7 @@ nor RGB. What changes:
 - **Pictures**: wherever such an image is shown it is a sheet: the colour
   picture, then each further channel as a grey tile with its name, each on
   its own scale. Small thumbnails (Data Studio > Prepare) show the picture
-  with `+1`; hover for the whole sheet. Data Studio > Explore > Images and
+  with `+1` (the count of further tiles); hover for the whole sheet. Data Studio > Explore > Images and
   the Studio Debugger's Inspector show every tile.
 - **Studio Debugger**: Where it looks draws its heat over the colour
   picture and covers or differentiates every channel. Filters and Unit
@@ -342,6 +343,49 @@ nor RGB. What changes:
 Data Input (images) -> Resize 72 -> Image Edges (canny, keep image)
   -> Center Crop 64 -> Normalize (same 0.5 / 0.5) -> Conv2D -> ...
 ```
+
+### Image Gabor
+
+Image Gabor runs a bank of striped kernels over every image and gives one
+channel per kernel. Each kernel is a small patch of stripes under a Gaussian
+window; it answers where the image has stripes of that direction and
+spacing, which is what fur, grass, fabric and the edges of one direction
+look like up close.
+
+- **Orientations** spread over 180 degrees: 4 gives 0, 45, 90 and 135. The
+  angle is the direction the brightness changes in, so 0 degrees answers to
+  vertical stripes and 90 to horizontal ones.
+- **Wavelengths** are the stripes' spacing in pixels per cycle, split by
+  commas or spaces, each 2 or more. Every wavelength gets the whole set of
+  orientations: `3, 6` with 4 orientations is 8 channels. At most 32.
+- **Bandwidth** (octaves) sets the window's size from the wavelength: at 1
+  the window's sigma is about 0.56 wavelengths. A smaller bandwidth is a
+  wider window that answers to a narrower range of spacings. **Aspect** is
+  the window's width across the stripes over its length along them.
+- The kernel reaches three sigmas each way (wavelength 3: 13 x 13; 6:
+  23 x 23 at bandwidth 1). A kernel larger than the image's shorter side is
+  refused with the size it needs.
+- **Response**: `energy` is the size of both phases together (the even,
+  cosine kernel and the odd, sine one), so it does not depend on where
+  exactly a stripe falls. `even` and `odd` keep one phase with its sign,
+  stored around mid-grey (128 = no response). Every kernel has zero mean, so
+  a flat area answers 0, and absolute values that sum to 1, so a response
+  never leaves the stored range.
+- Colour images are read as grey. **Keep image** keeps the image's channels
+  and adds the bank's after them (`[H, W, 3 + 8]`); without it the model
+  sees the bank alone.
+- The channels are named `gabor 45 deg 3 px`: each wavelength, its
+  orientations in turn. Normalize's Per channel rows and the sheet use the
+  names. See [More than three channels](#more-than-three-channels).
+
+```
+Data Input (images) -> Resize 64 -> Image Gabor (4 orientations, 3 and 6 px, keep image)
+  -> Normalize (same 0.5 / 0.5) -> Conv2D -> ...
+```
+
+`examples/cyxgraph/cats_dogs_gabor_bank.cyxgraph` is a small cats-vs-dogs CNN
+that reads the photo and the bank; see
+`examples/cyxgraph/cats_dogs_gabor_bank.md`.
 
 ### Image Filter
 

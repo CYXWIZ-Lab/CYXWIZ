@@ -26,7 +26,7 @@
 
 namespace cyxwiz {
 
-enum class CvImageStepKind { Contrast, Denoise, Sharpen, Edges, Smooth, Warp, Pyramid, Filter };
+enum class CvImageStepKind { Contrast, Denoise, Sharpen, Edges, Smooth, Warp, Pyramid, Filter, Gabor };
 enum class CvContrastColour { Lightness, EachChannel };
 enum class CvEdgeMethod { Canny, Sobel, Laplacian, Scharr, LoG, DoG };
 // Sobel and Scharr: both directions' mean size, one direction, or the angle.
@@ -44,6 +44,9 @@ enum class CvFilterDirection { N, NE, E, SE, S, SW, W, NW };
 enum class CvFilterBorder { Reflect101, Reflect, Replicate, Zero };
 // What becomes of a response outside [0, 1]: cut, its size, or around mid-grey.
 enum class CvFilterOutput { Clip, Absolute, Offset };
+// Image Gabor: both phases' size (the texture's strength whatever its phase),
+// or one phase stored around mid-grey.
+enum class CvGaborResponse { Energy, Even, Odd };
 
 struct CvImageStep {
     CvImageStepKind kind = CvImageStepKind::Contrast;
@@ -98,6 +101,13 @@ struct CvImageStep {
     bool filter_normalize = false;  // divide by the kernel's sum when it is not 0
     CvFilterBorder filter_border = CvFilterBorder::Reflect101;
     CvFilterOutput filter_output = CvFilterOutput::Clip;
+    // Gabor: a bank of kernels over the grey image, one channel each.
+    int gabor_orientations = 4;              // 0, 180 / n, ... degrees
+    std::string gabor_wavelengths = "3, 6";  // pixels per cycle
+    float gabor_bandwidth = 1.0f;            // octaves: sets the envelope's sigma from the wavelength
+    float gabor_aspect = 0.5f;               // the envelope's width across the stripes over its length
+    CvGaborResponse gabor_response = CvGaborResponse::Energy;
+    bool gabor_keep_image = false;           // the image's channels, then the bank's
 };
 
 // The kernel an Image Filter step applies: its preset (turned to its
@@ -111,6 +121,22 @@ struct FilterKernel {
 inline constexpr int kFilterKernelMaxSide = 31;
 // False, with the reason, when the typed kernel cannot be read.
 bool ResolveFilterKernel(const CvImageStep& step, FilterKernel& kernel, std::string* why = nullptr);
+
+// One filter of an Image Gabor step's bank: its even (cosine) and odd (sine)
+// kernels, each with zero mean and absolute values that sum to 1, so a
+// response to pixels in [0, 1] stays within -1..1.
+struct GaborFilter {
+    float degrees = 0.0f;     // the stripes' normal: 0 answers to vertical stripes
+    float wavelength = 0.0f;  // pixels per cycle
+    FilterKernel even;
+    FilterKernel odd;
+};
+inline constexpr size_t kGaborMaxChannels = 32;
+// The bank in channel order: each wavelength, its orientations in turn.
+// False, with the reason, when the settings cannot be read.
+bool ResolveGaborBank(const CvImageStep& step, std::vector<GaborFilter>& bank, std::string* why = nullptr);
+// "gabor 45 deg 4 px" per channel; empty when the settings cannot be read.
+std::vector<std::string> GaborChannelNames(const CvImageStep& step);
 
 // "" when the step can run on `input`, otherwise why not.
 std::string ValidateCvImageStep(const CvImageStep& step, const image::ImageShape& input);
