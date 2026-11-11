@@ -301,6 +301,8 @@ public:
     void EnableLayerSnapshots(LayerSnapshotSchedule schedule);
     struct LayerSnapshot {
         int epoch = 0;
+        // The tensors, for a snapshot that is not saved; a saved one is read
+        // back from the run store (LoadLayerCapture) and holds none here.
         std::shared_ptr<const LayerCapture> capture;
         // The run and label it is saved under; empty when not saved.
         std::string run_id;

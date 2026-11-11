@@ -357,18 +357,29 @@ void CheckLayerSnapshots(const json& fixture, const std::shared_ptr<cyxwiz::Arro
     if (expected.empty() || expected.back() != epochs) expected.push_back(epochs);
     Check(taken.size() == expected.size(), "one snapshot every 2 epochs and after the last: " +
                                                std::to_string(taken.size()) + " of " + std::to_string(expected.size()));
+    // A saved snapshot keeps no tensors in memory; it reads back from the run store.
+    const auto saved = [](const cyxwiz::TrainingExecutor::LayerSnapshot& snapshot) {
+        std::string why;
+        auto capture = cyxwiz::LoadLayerCapture(snapshot.run_id, snapshot.label, &why);
+        Check(!snapshot.capture && capture != nullptr,
+              "the snapshot after epoch " + std::to_string(snapshot.epoch) + " is on disk, not held in memory: " + why);
+        if (!capture) throw std::runtime_error("a saved snapshot did not read back");
+        return capture;
+    };
     for (size_t i = 0; i < taken.size(); ++i) {
         Check(taken[i].epoch == expected[i], "snapshot " + std::to_string(i) + " after epoch " + std::to_string(expected[i]));
-        const auto& layers = taken[i].capture->Layers();
+        const auto capture = saved(taken[i]);
+        const auto& layers = capture->Layers();
         Check(layers.size() == 1 && layers[0].node_name == "Dense", "the snapshot holds the Dense layer");
         const auto* input = layers[0].Find(cyxwiz::CapturedTensorRole::Input);
         Check(input && input->tensor.Shape() == std::vector<size_t>({1, 2}), "the snapshot ran the given row");
         Check(layers[0].Find(cyxwiz::CapturedTensorRole::Gradient, "weight") != nullptr, "the snapshot holds the gradient");
     }
     // The last snapshot, after the last epoch, holds the trained weights.
+    const auto last = saved(taken.back());
     for (const auto& [name, values] : with) {
         const auto field = name.substr(name.find('.') + 1);
-        const auto* p = taken.back().capture->Layers()[0].Find(cyxwiz::CapturedTensorRole::Parameter, field);
+        const auto* p = last->Layers()[0].Find(cyxwiz::CapturedTensorRole::Parameter, field);
         Check(p != nullptr, "the last snapshot holds " + name);
         const float* data = p->tensor.ReadData<float>();
         Check(std::vector<double>(data, data + p->tensor.NumElements()) == values,
@@ -404,28 +415,6 @@ void CheckLayerSnapshots(const json& fixture, const std::shared_ptr<cyxwiz::Arro
     const auto infos = cyxwiz::ListLayerCaptureInfo(run_id);
     Check(infos.size() == labels.size() && infos.back().epoch == taken.back().epoch && infos.back().bytes > 0,
           "each snapshot is listed with its epoch and its size on disk");
-    std::string error;
-    const auto loaded = cyxwiz::LoadLayerCapture(run_id, taken.back().label, &error);
-    Check(loaded != nullptr, "the last snapshot reads back: " + error);
-    const auto& kept = taken.back().capture->Layers();
-    Check(loaded->Layers().size() == kept.size() && loaded->BytesHeld() == taken.back().capture->BytesHeld(),
-          "the saved snapshot holds every layer and byte");
-    for (size_t l = 0; l < kept.size(); ++l) {
-        const auto& a = kept[l];
-        const auto& b = loaded->Layers()[l];
-        Check(a.node_id == b.node_id && a.node_name == b.node_name && a.tensors.size() == b.tensors.size(),
-              "saved layer " + a.node_name + " keeps its node and tensors");
-        for (size_t t = 0; t < a.tensors.size(); ++t) {
-            const auto& x = a.tensors[t];
-            const auto& y = b.tensors[t];
-            const float* xd = x.tensor.ReadData<float>();
-            const float* yd = y.tensor.ReadData<float>();
-            Check(x.role == y.role && x.name == y.name && x.tensor.Shape() == y.tensor.Shape() &&
-                      std::equal(xd, xd + x.tensor.NumElements(), yd),
-                  "saved " + x.name + " reads back bit for bit");
-        }
-    }
-
     // On items by number from the run's own batchers: rows 0 and 1, as
     // validation reads them.
     cyxwiz::TrainingExecutor::LayerSnapshotSchedule by_number;

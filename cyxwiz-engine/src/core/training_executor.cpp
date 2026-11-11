@@ -1110,7 +1110,10 @@ void TrainingExecutor::Train(
         if (labels.NumElements() > 0 && labels.NumElements() <= 4096) {
             const af::array flat = labels.GetRowMajorFlatArray();
             snapshot_run_record_.label_values.resize(static_cast<size_t>(flat.elements()));
-            flat.as(f32).host(snapshot_run_record_.label_values.data());
+            MaterializeArrayFireToHost(flat.as(f32), snapshot_run_record_.label_values.data(),
+                                       ArrayFireHostSyncCategory::DebugSampleDump, "TrainingExecutor::SnapshotLabels",
+                                       "arrayfire_column_major", "bounded_debug_readback",
+                                       "the snapshot items' labels (at most 4096 values)");
             snapshot_run_record_.label_shape = labels.Shape();
         }
         snapshot_run_record_.output_rule = layer_snapshot_schedule_->output_rule;
@@ -2422,6 +2425,9 @@ void TrainingExecutor::TakeLayerSnapshot(int epoch, const std::string& run_id) {
             if (SaveLayerCapture(*snapshot.capture, run_id, label, &error)) {
                 snapshot.run_id = run_id;
                 snapshot.label = label;
+                // It is on disk now: holding every epoch's tensors on the device
+                // would grow with the run.
+                snapshot.capture.reset();
                 if (!SaveTrainingRunRecord(snapshot_run_record_, &error))
                     spdlog::warn("TrainingExecutor: the run's epochs were not saved with the snapshot: {}", error);
                 PruneLayerCaptures(schedule.keep_runs);
