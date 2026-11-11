@@ -16,7 +16,7 @@ title when the Studio is moved out of the main window).
   Click it for the graph menu:
   - **Save** (Ctrl+S): writes the graph's own file. A graph that has no file
     yet asks for a name. On an empty canvas nothing is written and Save says
-    so: "Nothing to save yet: the canvas is empty. Add a node, then save."
+    so: *Nothing to save yet*, "The canvas is empty. Add a node, then save."
   - **Save As...** (Ctrl+Shift+S): writes a new file and the open graph
     moves to it.
   - **Load...**: opens another graph in place of this one.
@@ -217,11 +217,15 @@ comes back as it widens:
 2. Then, one at a time, into **More** at the end of the left side: Local
    Debug, Compile, View, Edit, Code (with Execute Pipeline), the framework,
    Save. **More** shows each as a section with its own items.
-3. Last, a run's line shortens to its state (*Epoch 3 / 10*, *Paused 3 /
+3. Then a run's line shortens to its state (*Epoch 3 / 10*, *Paused 3 /
    10*, *Waiting*, *Update 196*); hover it for the whole line.
+4. Then the mode goes into **More**, and last the graph's button keeps its
+   icon and the unsaved dot (the window's tab names the graph; hover the
+   button for its name and path). The Studio in the default layout is this
+   narrow: the graph's button, **More** and **Train**.
 
-The graph's name, the mode, a running pipeline's progress and Train (or a
-run's line with Pause / Resume and Stop) always stay on the bar.
+Train (or a run's line with Pause / Resume and Stop) and a running
+pipeline's progress always stay on the bar.
 
 ## The canvas footer
 

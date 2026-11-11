@@ -179,7 +179,7 @@ int main() {
     gm = GraphMenuFor(g, 0);
     Check(!gm.clear.enabled && gm.clear.reason == "The canvas is already empty." && !gm.export_graph.enabled,
           "an empty canvas has nothing to clear or export");
-    Check(SaveRefusal(0) == "Nothing to save yet: the canvas is empty. Add a node, then save." && SaveRefusal(3).empty(),
+    Check(SaveRefusal(0) == "The canvas is empty. Add a node, then save." && SaveRefusal(3).empty(),
           "Save on an empty canvas says why");
 
     // Zoom: on the 10 % grid, held to 25 % .. 200 %.
@@ -197,7 +197,7 @@ int main() {
     // The fold: one row, items into More in a fixed order; the graph and the
     // run group never fold.
     BarWidths w;
-    w.graph = 150, w.run = 80, w.run_compact = 60, w.more = 70, w.save = 70, w.edit = 60;
+    w.graph = 150, w.graph_icon = 40, w.run = 80, w.run_compact = 60, w.more = 70, w.save = 70, w.edit = 60;
     w.view_full = 110, w.view_short = 70, w.mode_full = 330, w.mode_menu = 120;
     w.framework = 110, w.code = 80, w.compile = 140, w.debug = 150, w.gap = 10;
     // level 0: 150+80 + 70+60+110+330+110+80+140+150 = 1280, 10 groups -> 9 gaps = 1370
@@ -213,10 +213,17 @@ int main() {
     Check(BarWidth(w, 6) == 650, "then Code");
     Check(BarWidth(w, 7) == 530, "then the framework");
     Check(BarWidth(w, 8) == 450 && ItemsInMore(w, FoldAt(8)) == 7, "then Save: graph, mode, More and Train remain");
-    Check(BarWidth(w, 9) == 430 && FoldLevel(w, 430) == 9 && FoldLevel(w, 200) == kMaxFold,
-          "last, the run's line shortens; nothing else can go");
-    const BarFold most = FoldAt(9);
-    Check(most.run_compact && most.save_in_more && most.debug_in_more, "the narrowest fold");
+    Check(BarWidth(w, 9) == 430 && FoldLevel(w, 430) == 9, "then the run's line shortens");
+    // level 10: the mode menu (120) and its gap go; More holds 8 items
+    Check(BarWidth(w, 10) == 300 && ItemsInMore(w, FoldAt(10)) == 8, "then the mode goes into More");
+    // level 11: the graph's button keeps its icon (150 -> 40): graph, More, Train
+    Check(BarWidth(w, 11) == 190 && FoldLevel(w, 200) == 11 && FoldLevel(w, 100) == kMaxFold,
+          "last, the graph's button is its icon; Train and More stay");
+    const BarFold most = FoldAt(kMaxFold);
+    Check(most.run_compact && most.save_in_more && most.debug_in_more && most.mode_in_more && most.graph_icon,
+          "the narrowest fold");
+    // The default dock seen on screen (2026-11-11): about 340 px for the bar
+    Check(FoldLevel(w, 340) == 10, "the default dock keeps the graph's name, More and Train");
     BarWidths none = w;  // a bar without the items that would fold first
     none.debug = 0, none.compile = 0;
     Check(ItemsInMore(none, FoldAt(3)) == 0 && BarWidth(none, 3) == BarWidth(none, 1),

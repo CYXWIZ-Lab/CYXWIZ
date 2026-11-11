@@ -168,7 +168,7 @@ GraphMenu GraphMenuFor(const GraphInputs& in, int selected) {
 }
 
 std::string SaveRefusal(size_t nodes) {
-    return nodes == 0 ? "Nothing to save yet: the canvas is empty. Add a node, then save." : std::string();
+    return nodes == 0 ? "The canvas is empty. Add a node, then save." : std::string();
 }
 
 float ZoomStep(float zoom, int direction) {
@@ -200,6 +200,8 @@ BarFold FoldAt(int level) {
     f.framework_in_more = f.level >= 7;
     f.save_in_more = f.level >= 8;
     f.run_compact = f.level >= 9;
+    f.mode_in_more = f.level >= 10;
+    f.graph_icon = f.level >= 11;
     return f;
 }
 
@@ -216,12 +218,13 @@ int ItemsInMore(const BarWidths& w, const BarFold& f) {
     in(f.code_in_more, w.run_pipeline);
     in(f.framework_in_more, w.framework);
     in(f.save_in_more, w.save);
+    in(f.mode_in_more, w.mode_menu);
     return n;
 }
 
 float BarWidth(const BarWidths& w, int level) {
     const BarFold f = FoldAt(level);
-    float total = w.graph + (f.run_compact ? w.run_compact : w.run) + w.progress;
+    float total = (f.graph_icon ? w.graph_icon : w.graph) + (f.run_compact ? w.run_compact : w.run) + w.progress;
     int groups = 2;  // the graph, the run group
     const auto add = [&](bool shown, float width) {
         if (!shown || width <= 0.0f) return;
@@ -231,7 +234,7 @@ float BarWidth(const BarWidths& w, int level) {
     add(!f.save_in_more, w.save);
     add(!f.edit_in_more, w.edit);
     add(!f.view_in_more, f.view_short ? w.view_short : w.view_full);
-    add(true, f.mode_menu ? w.mode_menu : w.mode_full);
+    add(!f.mode_in_more, f.mode_menu ? w.mode_menu : w.mode_full);
     add(true, f.sim_icons ? w.sim_icons : w.sim_full);
     add(!f.framework_in_more, w.framework);
     add(!f.code_in_more, w.code);

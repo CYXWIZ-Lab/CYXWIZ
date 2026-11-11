@@ -322,6 +322,12 @@ void NodeEditor::DrawStepItems(bool compile, bool debug) {
     }
 }
 
+void NodeEditor::SetModeFromBar(int mode) {
+    execution_mode_ = static_cast<ExecutionMode>(mode);
+    code_result_.clear();
+    spdlog::info("Execution mode: {}", st::ModeName(ModeOf(execution_mode_)));
+}
+
 void NodeEditor::ShowToolbar() {
     const ui::Tokens& t = ui::CurrentTokens();
     UpdateUnsavedState();
@@ -386,6 +392,9 @@ void NodeEditor::ShowToolbar() {
                                                        : std::filesystem::path(current_file_path_).filename().string();
     const std::string chip = std::string(ICON_FA_DIAGRAM_PROJECT "  ") + name + (unsaved_ ? "    " : "  ") +
                              ICON_FA_CHEVRON_DOWN "##graph_chip";
+    // The narrowest bar: the icon and the unsaved mark (the window's tab names the graph)
+    const std::string chip_icon = std::string(ICON_FA_DIAGRAM_PROJECT) + (unsaved_ ? "    " : "  ") +
+                                  ICON_FA_CHEVRON_DOWN "##graph_chip";
     const std::string zoom_text = st::ZoomText(zoom_);
     const std::string view_full = "View \xC2\xB7 " + zoom_text + " " ICON_FA_CHEVRON_DOWN "##view_menu";
     const char* view_short = "View " ICON_FA_CHEVRON_DOWN "##view_menu";
@@ -413,6 +422,7 @@ void NodeEditor::ShowToolbar() {
                                            [](const std::string& a, const std::string& b) { return a.size() < b.size(); });
     st::BarWidths w;
     w.graph = W(chip);
+    w.graph_icon = W(chip_icon);
     if (training_active) {
         w.run = spinner_w + ImGui::CalcTextSize("Paused at epoch 0000 / 0000").x + sp + pause_w + stop_w;
         w.run_compact = spinner_w + ImGui::CalcTextSize("Paused 0000 / 0000").x + sp + pause_w + stop_w;
@@ -470,14 +480,17 @@ void NodeEditor::ShowToolbar() {
     const auto gap = []() { ImGui::SameLine(0.0f, kGroupGap); };
 
     // The graph: its name, the unsaved mark and its menu.
-    const std::string chip_prefix = std::string(ICON_FA_DIAGRAM_PROJECT "  ") + name;
+    const std::string& shown_chip = fold.graph_icon ? chip_icon : chip;
+    const std::string chip_prefix =
+        fold.graph_icon ? std::string(ICON_FA_DIAGRAM_PROJECT) : std::string(ICON_FA_DIAGRAM_PROJECT "  ") + name;
     const ImVec2 chip_min = ImGui::GetCursorScreenPos();
-    if (ui::GhostButton(chip.c_str(), true, nullptr, true)) ImGui::OpenPopup("##graph_menu");
+    if (ui::GhostButton(shown_chip.c_str(), true, nullptr, true)) ImGui::OpenPopup("##graph_menu");
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s%s", current_file_path_.empty() ? "Not saved to a file yet" : current_file_path_.c_str(),
+        ImGui::SetTooltip("%s%s%s", fold.graph_icon ? (name + "\n").c_str() : "",
+                          current_file_path_.empty() ? "Not saved to a file yet" : current_file_path_.c_str(),
                           unsaved_ && !current_file_path_.empty() ? "\nChanged since it was saved" : "");
     if (unsaved_) {
-        const float pad = (W(chip) - ImGui::CalcTextSize(chip.c_str(), nullptr, true).x - 2.0f) * 0.5f;
+        const float pad = (W(shown_chip) - ImGui::CalcTextSize(shown_chip.c_str(), nullptr, true).x - 2.0f) * 0.5f;
         const float x = chip_min.x + pad + 1.0f + ImGui::CalcTextSize(chip_prefix.c_str()).x +
                         ImGui::CalcTextSize("    ").x * 0.5f;
         ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(x, chip_min.y + ImGui::GetFrameHeight() * 0.5f), 3.5f,
@@ -511,27 +524,25 @@ void NodeEditor::ShowToolbar() {
 
     // The mode, the framework and Code (or the simulation group).
     if (!sim_graph) {
-        gap();
         int chosen = static_cast<int>(execution_mode_);
-        if (fold.mode_menu) {
-            if (ui::GhostButton(mode_menu.c_str(), true, nullptr, true)) ImGui::OpenPopup("##mode_popup");
-            if (ImGui::BeginPopup("##mode_popup")) {
-                for (int i = 0; i < 3; ++i)
-                    if (ImGui::MenuItem(kModeFull[i], nullptr, chosen == i)) chosen = i;
-                ImGui::EndPopup();
+        if (!fold.mode_in_more) {
+            gap();
+            if (fold.mode_menu) {
+                if (ui::GhostButton(mode_menu.c_str(), true, nullptr, true)) ImGui::OpenPopup("##mode_popup");
+                if (ImGui::BeginPopup("##mode_popup")) {
+                    for (int i = 0; i < 3; ++i)
+                        if (ImGui::MenuItem(kModeFull[i], nullptr, chosen == i)) chosen = i;
+                    ImGui::EndPopup();
+                }
+            } else {
+                ui::SegmentedControl("##exec_mode", kModeFull, 3, &chosen);
             }
-        } else {
-            ui::SegmentedControl("##exec_mode", kModeFull, 3, &chosen);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("How Train and Code treat this graph:\nCode Gen: Code writes Python for the chosen framework\n"
+                                  "Data Pipeline: Execute Pipeline runs the data steps; training nodes run in Train\n"
+                                  "Local Training: Train runs the whole graph on this machine");
         }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("How Train and Code treat this graph:\nCode Gen: Code writes Python for the chosen framework\n"
-                              "Data Pipeline: Execute Pipeline runs the data steps; training nodes run in Train\n"
-                              "Local Training: Train runs the whole graph on this machine");
-        if (chosen != static_cast<int>(execution_mode_)) {
-            execution_mode_ = static_cast<ExecutionMode>(chosen);
-            code_result_.clear();
-            spdlog::info("Execution mode: {}", st::ModeName(ModeOf(execution_mode_)));
-        }
+        if (chosen != static_cast<int>(execution_mode_)) SetModeFromBar(chosen);
         if (mode == st::Mode::CodeGen && !fold.framework_in_more) {
             ImGui::SameLine();
             if (ui::GhostButton(framework_label.c_str(), true, nullptr, true)) ImGui::OpenPopup("##framework_popup");
@@ -652,6 +663,11 @@ void NodeEditor::ShowToolbar() {
         if (fold.framework_in_more && w.framework > 0.0f) {
             Section("Framework");
             DrawFrameworkItems();
+        }
+        if (fold.mode_in_more && !sim_graph) {
+            Section("Mode");
+            for (int i = 0; i < 3; ++i)
+                if (ImGui::MenuItem(kModeFull[i], nullptr, static_cast<int>(execution_mode_) == i)) SetModeFromBar(i);
         }
         if (fold.save_in_more) {
             Section("Graph");

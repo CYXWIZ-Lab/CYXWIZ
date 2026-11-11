@@ -871,6 +871,7 @@ private:
     void DrawFrameworkItems();
     // Zoom by one step around the canvas centre, so the view stays where it is.
     void ZoomAroundCentre(int direction);
+    void SetModeFromBar(int mode);  // the mode chosen on the bar or in More
     // The line under the bar after Generate or Save as .py (A3-4).
     std::string code_result_;
     bool code_result_ok_ = false;

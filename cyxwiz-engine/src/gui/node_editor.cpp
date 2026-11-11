@@ -2892,7 +2892,7 @@ void NodeEditor::ShowSearchBar() {
         }
         ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 14.0f, std::max(80.0f, canvas_size_.x - 200.0f)));
         if (ImGui::InputTextWithHint("##SearchInput", "Find a node, type or setting", search_state_.search_buffer,
-                                     sizeof(search_state_.search_buffer), ImGuiInputTextFlags_AutoSelectAll))
+                                     sizeof(search_state_.search_buffer)))
             UpdateSearchResults();
         // The keys work while typing: the bar has the keyboard, not the canvas.
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {

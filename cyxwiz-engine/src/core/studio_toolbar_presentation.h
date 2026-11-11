@@ -163,7 +163,8 @@ std::string ZoomText(float zoom);  // "100%"
 // The width of each item, measured by the renderer; 0 for an item the bar
 // does not show now (the framework outside Code Gen mode).
 struct BarWidths {
-    float graph = 0.0f;       // never folds
+    float graph = 0.0f;       // the graph's name and menu
+    float graph_icon = 0.0f;  // the same as its icon and unsaved mark (the tab names the graph)
     float run = 0.0f;         // the run group: Train, or a run's line with Pause / Resume and Stop; never folds
     float run_compact = 0.0f;  // the run's line as its state ("Epoch 3 / 10", "Update 196")
     float progress = 0.0f;    // a running pipeline's progress and Cancel; never folds
@@ -184,15 +185,19 @@ struct BarWidths {
 // 0 everything; 1 the mode becomes its menu, View loses the zoom, the
 // simulation group its words; then into More, one per level: 2 Local Debug,
 // 3 Compile, 4 View, 5 Edit, 6 Code (and Execute Pipeline), 7 the framework,
-// 8 Save; 9 the run's line shortens to its state.
+// 8 Save; 9 the run's line shortens to its state; 10 the mode goes into
+// More; 11 the graph's button keeps its icon and unsaved mark (the window's
+// tab names the graph). Train (or the run group) never folds.
 struct BarFold {
     int level = 0;
     bool mode_menu = false, view_short = false, sim_icons = false;
     bool debug_in_more = false, compile_in_more = false, view_in_more = false, edit_in_more = false;
     bool code_in_more = false, framework_in_more = false, save_in_more = false;
     bool run_compact = false;
+    bool mode_in_more = false;
+    bool graph_icon = false;
 };
-constexpr int kMaxFold = 9;
+constexpr int kMaxFold = 11;
 BarFold FoldAt(int level);
 // Items in More at this fold (only items the bar shows count); More is drawn when > 0.
 int ItemsInMore(const BarWidths& w, const BarFold& fold);
