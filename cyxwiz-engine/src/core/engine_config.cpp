@@ -446,6 +446,24 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.saliency_show = sd.value("saliency_show", std::string("size")) == "times_input"
                                        ? SaliencyShow::TimesInput
                                        : SaliencyShow::Size;
+            const std::string channels = sd.value("top_images_channels", std::string("head_votes"));
+            loaded.top_images_channels = channels == "clicked"     ? TopImagesChannels::Clicked
+                                       : channels == "strongest" ? TopImagesChannels::Strongest
+                                                                 : TopImagesChannels::HeadVotes;
+            loaded.top_images_rank = sd.value("top_images_rank", std::string("maximum")) == "mean"
+                                         ? TopImagesRank::Mean
+                                         : TopImagesRank::Maximum;
+            const std::string embedding = sd.value("embedding_method", std::string("pca"));
+            loaded.embedding_method = embedding == "tsne"   ? EmbeddingMethod::Tsne
+                                    : embedding == "umap" ? EmbeddingMethod::Umap
+                                                          : EmbeddingMethod::Pca;
+            loaded.embedding_colour =
+                sd.value("embedding_colour", std::string("true_class")) == "predicted_class"
+                    ? EmbeddingColour::PredictedClass
+                    : EmbeddingColour::TrueClass;
+            loaded.unit_weights_order = sd.value("unit_weights_order", std::string("norm")) == "number"
+                                            ? UnitWeightsOrder::Number
+                                            : UnitWeightsOrder::Norm;
             loaded.keep_capture_runs = std::clamp(sd.value("keep_capture_runs", 10), 1, 1000);
             studio_debugger_ = loaded;
         }
@@ -648,6 +666,19 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"where_it_looks_method",
              studio_debugger_.where_it_looks_method == WhereItLooksMethod::Saliency ? "saliency" : "occlusion"},
             {"saliency_show", studio_debugger_.saliency_show == SaliencyShow::TimesInput ? "times_input" : "size"},
+            {"top_images_channels",
+             studio_debugger_.top_images_channels == TopImagesChannels::Clicked     ? "clicked"
+             : studio_debugger_.top_images_channels == TopImagesChannels::Strongest ? "strongest"
+                                                                                    : "head_votes"},
+            {"top_images_rank", studio_debugger_.top_images_rank == TopImagesRank::Mean ? "mean" : "maximum"},
+            {"embedding_method", studio_debugger_.embedding_method == EmbeddingMethod::Tsne   ? "tsne"
+                                 : studio_debugger_.embedding_method == EmbeddingMethod::Umap ? "umap"
+                                                                                              : "pca"},
+            {"embedding_colour", studio_debugger_.embedding_colour == EmbeddingColour::PredictedClass
+                                     ? "predicted_class"
+                                     : "true_class"},
+            {"unit_weights_order",
+             studio_debugger_.unit_weights_order == UnitWeightsOrder::Number ? "number" : "norm"},
             {"keep_capture_runs", studio_debugger_.keep_capture_runs}
         };
 

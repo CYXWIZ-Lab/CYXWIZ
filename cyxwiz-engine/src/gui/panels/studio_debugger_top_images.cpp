@@ -55,8 +55,10 @@ void Wrapped(const ImVec4& colour, const std::string& text) {
 }  // namespace
 
 struct StudioDebuggerPanel::TopImagesState {
-    bool mean = false;  // Ranked by: Maximum | Mean (spatial layers)
-    int choice = 0;     // the Channels option picked
+    // Ranked by (Maximum | Mean, spatial layers) and the Channels option
+    // picked: from this session's settings every frame.
+    bool mean = false;
+    int choice = 0;
 
 
     // The result.
@@ -131,16 +133,26 @@ void StudioDebuggerPanel::RenderTopImages() {
 
     // Channels: the head's votes (with a head), the clicked channel, this
     // sample's strongest (a conv layer).
+    // The user's choice where the layer offers it, else the layer's first.
+    using core::TopImagesChannels;
     std::vector<const char*> options;
-    if (!votes.empty()) options.push_back("The Dense head's strongest votes");
-    options.push_back("The clicked channel");
-    if (spatial) options.push_back("The 16 strongest for this sample");
+    std::vector<TopImagesChannels> option_kinds;
+    const auto offer = [&](const char* text, TopImagesChannels kind) {
+        options.push_back(text);
+        option_kinds.push_back(kind);
+    };
+    if (!votes.empty()) offer("The Dense head's strongest votes", TopImagesChannels::HeadVotes);
+    offer("The clicked channel", TopImagesChannels::Clicked);
+    if (spatial) offer("The 16 strongest for this sample", TopImagesChannels::Strongest);
     if (show_top_images_of_clicked_) {  // asked from a unit's Inspector card
         show_top_images_of_clicked_ = false;
-        for (size_t i = 0; i < options.size(); ++i)
-            if (options[i] == std::string("The clicked channel")) s.choice = static_cast<int>(i);
+        ChangeSessionSettings(
+            [](core::StudioDebuggerConfig& c) { c.top_images_channels = TopImagesChannels::Clicked; });
     }
-    s.choice = std::clamp(s.choice, 0, static_cast<int>(options.size()) - 1);
+    const core::StudioDebuggerConfig settings = CaptureSettings();
+    const auto wanted = std::find(option_kinds.begin(), option_kinds.end(), settings.top_images_channels);
+    s.choice = wanted == option_kinds.end() ? 0 : static_cast<int>(wanted - option_kinds.begin());
+    s.mean = settings.top_images_rank == core::TopImagesRank::Mean;
     const std::string picked_option = options[static_cast<size_t>(s.choice)];
     const bool clicked_here = clicked_channel_layer_ == selected_layer_;
     const size_t clicked = clicked_here ? std::min(clicked_channel_, channels - 1) : 0;
@@ -219,7 +231,11 @@ void StudioDebuggerPanel::RenderTopImages() {
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(DebuggerMuted(), "Channels");
         ImGui::SameLine();
-        ui::SegmentedControl("TopImagesChannels", options.data(), static_cast<int>(options.size()), &s.choice);
+        int choice = s.choice;
+        if (ui::SegmentedControl("TopImagesChannels", options.data(), static_cast<int>(options.size()), &choice)) {
+            const TopImagesChannels kind = option_kinds[static_cast<size_t>(choice)];
+            ChangeSessionSettings([kind](core::StudioDebuggerConfig& c) { c.top_images_channels = kind; });
+        }
         if (spatial) {
             SameLineIfFits(ImGui::CalcTextSize("Ranked by Maximum Mean").x + 60.0f, 18.0f);
             ImGui::AlignTextToFramePadding();
@@ -227,12 +243,21 @@ void StudioDebuggerPanel::RenderTopImages() {
             ImGui::SameLine();
             static const char* const kRanks[] = {"Maximum", "Mean"};
             int ranked = s.mean ? 1 : 0;
-            if (ui::SegmentedControl("TopImagesRank", kRanks, 2, &ranked)) s.mean = ranked == 1;
+            if (ui::SegmentedControl("TopImagesRank", kRanks, 2, &ranked))
+                ChangeSessionSettings([ranked](core::StudioDebuggerConfig& c) {
+                    c.top_images_rank = ranked == 1 ? core::TopImagesRank::Mean : core::TopImagesRank::Maximum;
+                });
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Maximum: the channel's largest value over its map (it fires somewhere).\n"
                                   "Mean: its mean over the map (it fires all over).");
         }
         ImGui::EndDisabled();
+        SameLineIfFits(ImGui::CalcTextSize("Save as my default").x, 18.0f);
+        RenderSaveViewDefaults("TopImages", "These Top images choices are your defaults",
+                               [](const core::StudioDebuggerConfig& session, core::StudioDebuggerConfig& defaults) {
+                                   defaults.top_images_channels = session.top_images_channels;
+                                   defaults.top_images_rank = session.top_images_rank;
+                               });
         const std::string count = std::to_string(kTopItems) + " " + items_word + " spread over the data";
         SameLineIfFits(ImGui::CalcTextSize(count.c_str()).x, 18.0f);
         ImGui::AlignTextToFramePadding();

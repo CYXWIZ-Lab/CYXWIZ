@@ -41,11 +41,16 @@ int main() {
     cyxwiz::core::StudioDebuggerConfig debugger = config.GetStudioDebugger();
     debugger.where_it_looks_method = cyxwiz::core::WhereItLooksMethod::Saliency;
     debugger.saliency_show = cyxwiz::core::SaliencyShow::TimesInput;
+    debugger.top_images_channels = cyxwiz::core::TopImagesChannels::Strongest;
+    debugger.top_images_rank = cyxwiz::core::TopImagesRank::Mean;
+    debugger.embedding_method = cyxwiz::core::EmbeddingMethod::Umap;
+    debugger.embedding_colour = cyxwiz::core::EmbeddingColour::PredictedClass;
+    debugger.unit_weights_order = cyxwiz::core::UnitWeightsOrder::Number;
     config.SetStudioDebugger(debugger);
     Check(config.Save(path), "the Studio Debugger defaults save");
     config.SetStudioDebugger({});
     Check(config.Load(path), "the Studio Debugger defaults reload");
-    Check(config.GetStudioDebugger() == debugger, "Where it looks' method and saliency's Show survive a round trip");
+    Check(config.GetStudioDebugger() == debugger, "the layer views' saved choices survive a round trip");
 
     std::error_code error;
     std::filesystem::remove(path, error);

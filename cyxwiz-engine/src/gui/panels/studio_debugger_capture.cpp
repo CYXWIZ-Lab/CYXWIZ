@@ -47,6 +47,26 @@ core::StudioDebuggerConfig StudioDebuggerPanel::CaptureSettings() const {
     return capture_session_ ? *capture_session_ : core::EngineConfig::Instance().GetStudioDebugger();
 }
 
+void StudioDebuggerPanel::ChangeSessionSettings(const std::function<void(core::StudioDebuggerConfig&)>& change) {
+    if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
+    change(*capture_session_);
+}
+
+void StudioDebuggerPanel::RenderSaveViewDefaults(
+    const char* id, const char* already,
+    const std::function<void(const core::StudioDebuggerConfig&, core::StudioDebuggerConfig&)>& copy) {
+    auto& engine_config = core::EngineConfig::Instance();
+    const core::StudioDebuggerConfig saved = engine_config.GetStudioDebugger();
+    core::StudioDebuggerConfig defaults = saved;
+    copy(CaptureSettings(), defaults);
+    const bool differs = !(defaults == saved);
+    if (ui::LinkButton((std::string("Save as my default##") + id).c_str(), differs)) {
+        engine_config.SetStudioDebugger(defaults);
+        engine_config.Save();
+    }
+    if (!differs && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", already);
+}
+
 void StudioDebuggerPanel::RenderCaptureControl() {
     core::StudioDebuggerConfig settings = CaptureSettings();
     const bool on = layer_capture::CapturesAnything(settings, false);

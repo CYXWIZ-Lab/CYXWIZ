@@ -83,6 +83,15 @@ enum class ChannelSort { Strongest, Peak, Number };
 // Where it looks (TOFIX178 6.3b-c): the method, and what saliency shows.
 enum class WhereItLooksMethod { Occlusion, Saliency };
 enum class SaliencyShow { Size, TimesInput };  // gradient size, gradient x input
+// Top images (6.4): the channels shown first (the first the layer offers when
+// it has no such choice) and how a channel's map becomes one number.
+enum class TopImagesChannels { HeadVotes, Clicked, Strongest };
+enum class TopImagesRank { Maximum, Mean };
+// Embedding (6.4b): the projection and what colours the points.
+enum class EmbeddingMethod { Pca, Tsne, Umap };
+enum class EmbeddingColour { TrueClass, PredictedClass };
+// Unit weights (6.4c): largest weight norm first, or by number.
+enum class UnitWeightsOrder { Norm, Number };
 
 inline constexpr int kLayerCaptureBatchSamples = 8;
 
@@ -97,6 +106,11 @@ struct StudioDebuggerConfig {
     ChannelSort channel_sort = ChannelSort::Strongest;
     WhereItLooksMethod where_it_looks_method = WhereItLooksMethod::Occlusion;
     SaliencyShow saliency_show = SaliencyShow::Size;
+    TopImagesChannels top_images_channels = TopImagesChannels::HeadVotes;
+    TopImagesRank top_images_rank = TopImagesRank::Maximum;
+    EmbeddingMethod embedding_method = EmbeddingMethod::Pca;
+    EmbeddingColour embedding_colour = EmbeddingColour::TrueClass;
+    UnitWeightsOrder unit_weights_order = UnitWeightsOrder::Norm;
     int keep_capture_runs = 10;  // runs whose captures stay on disk
 
     bool operator==(const StudioDebuggerConfig&) const = default;

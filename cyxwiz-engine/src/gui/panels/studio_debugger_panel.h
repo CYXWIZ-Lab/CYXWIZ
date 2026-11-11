@@ -141,6 +141,13 @@ public:
     // views colour maps: the user's defaults (Preferences > Studio Debugger)
     // until this session's capture control changes them.
     core::StudioDebuggerConfig CaptureSettings() const;
+    // A view's choice, for this session only.
+    void ChangeSessionSettings(const std::function<void(core::StudioDebuggerConfig&)>& change);
+    // "Save as my default" for one view's choices: `copy` moves them from
+    // this session's settings into the saved defaults, and nothing else.
+    void RenderSaveViewDefaults(const char* id, const char* already,
+                                const std::function<void(const core::StudioDebuggerConfig& session,
+                                                         core::StudioDebuggerConfig& defaults)>& copy);
     // The canvas compile, for the capture control's size estimate.
     void SetLiveCompile(const LiveGraphCompile* live_compile) { live_compile_ = live_compile; }
     // Full size (TOFIX178 D1): the main window hides the side panels while

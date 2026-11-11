@@ -49,6 +49,7 @@ void Wrapped(const ImVec4& colour, const std::string& text) {
 }  // namespace
 
 struct StudioDebuggerPanel::EmbeddingState {
+    // From this session's settings every frame.
     int method = 0;  // PCA, t-SNE, UMAP
     int colour = 0;  // true class, predicted class
 
@@ -78,6 +79,11 @@ void StudioDebuggerPanel::RenderEmbedding() {
     EmbeddingState& s = *embedding_;
     ItemsRun& run = *embedding_run_;
     s.shown_frame = ImGui::GetFrameCount();
+    {
+        const core::StudioDebuggerConfig settings = CaptureSettings();
+        s.method = static_cast<int>(settings.embedding_method);
+        s.colour = static_cast<int>(settings.embedding_colour);
+    }
     UpdateLayerModelSession();
     const auto& layers = layer_capture_->Layers();
     const CapturedLayer& layer = layers[selected_layer_];
@@ -224,14 +230,28 @@ void StudioDebuggerPanel::RenderEmbedding() {
         ImGui::TextColored(DebuggerMuted(), "Method");
         ImGui::SameLine();
         static const char* const kMethods[] = {"PCA", "t-SNE", "UMAP"};
-        ui::SegmentedControl("EmbeddingMethod", kMethods, 3, &s.method);
+        int method_choice = s.method;
+        if (ui::SegmentedControl("EmbeddingMethod", kMethods, 3, &method_choice))
+            ChangeSessionSettings([method_choice](core::StudioDebuggerConfig& c) {
+                c.embedding_method = static_cast<core::EmbeddingMethod>(method_choice);
+            });
         ImGui::EndDisabled();
         SameLineIfFits(ImGui::CalcTextSize("Colour by True class Predicted class").x + 60.0f, 18.0f);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(DebuggerMuted(), "Colour by");
         ImGui::SameLine();
         static const char* const kColours[] = {"True class", "Predicted class"};
-        ui::SegmentedControl("EmbeddingColour", kColours, 2, &s.colour);
+        int colour_choice = s.colour;
+        if (ui::SegmentedControl("EmbeddingColour", kColours, 2, &colour_choice))
+            ChangeSessionSettings([colour_choice](core::StudioDebuggerConfig& c) {
+                c.embedding_colour = static_cast<core::EmbeddingColour>(colour_choice);
+            });
+        SameLineIfFits(ImGui::CalcTextSize("Save as my default").x, 18.0f);
+        RenderSaveViewDefaults("Embedding", "This method and colouring are your defaults",
+                               [](const core::StudioDebuggerConfig& session, core::StudioDebuggerConfig& defaults) {
+                                   defaults.embedding_method = session.embedding_method;
+                                   defaults.embedding_colour = session.embedding_colour;
+                               });
         const std::string count = std::to_string(kItems) + " " + items_word + " spread over the data";
         SameLineIfFits(ImGui::CalcTextSize(count.c_str()).x, 18.0f);
         ImGui::AlignTextToFramePadding();

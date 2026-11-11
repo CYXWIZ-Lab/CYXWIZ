@@ -68,7 +68,7 @@ std::vector<unsigned char> Rgba(const uw::Picture& picture, const uw::ImageShape
 }  // namespace
 
 struct StudioDebuggerPanel::UnitWeightsState {
-    bool by_norm = true;
+    bool by_norm = true;  // from this session's settings every frame
     bool all = false;
 
     std::string key;  // capture / layer / order / all
@@ -121,6 +121,7 @@ void StudioDebuggerPanel::RenderUnitWeights(const std::string& weight_name) {
     if (!unit_weights_) unit_weights_ = std::make_shared<UnitWeightsState>();
     UnitWeightsState& s = *unit_weights_;
     s.shown_frame = ImGui::GetFrameCount();
+    s.by_norm = CaptureSettings().unit_weights_order == core::UnitWeightsOrder::Norm;
     const CapturedLayer& layer = layer_capture_->Layers()[selected_layer_];
     const CapturedTensor* weight = layer.Find(CapturedTensorRole::Parameter, weight_name);
     const std::vector<size_t> image_shape = UnitWeightsImage(selected_layer_);
@@ -173,7 +174,15 @@ void StudioDebuggerPanel::RenderUnitWeights(const std::string& weight_name) {
     ImGui::SameLine();
     static const char* const kOrders[] = {"Largest weight norm first", "Unit order"};
     int order_choice = s.by_norm ? 0 : 1;
-    if (ui::SegmentedControl("##UnitWeightsOrder", kOrders, 2, &order_choice)) s.by_norm = order_choice == 0;
+    if (ui::SegmentedControl("##UnitWeightsOrder", kOrders, 2, &order_choice))
+        ChangeSessionSettings([order_choice](core::StudioDebuggerConfig& c) {
+            c.unit_weights_order = order_choice == 0 ? core::UnitWeightsOrder::Norm : core::UnitWeightsOrder::Number;
+        });
+    SameLineIfFits(ImGui::CalcTextSize("Save as my default").x, 18.0f);
+    RenderSaveViewDefaults("UnitWeights", "This order is your default",
+                           [](const core::StudioDebuggerConfig& session, core::StudioDebuggerConfig& defaults) {
+                               defaults.unit_weights_order = session.unit_weights_order;
+                           });
     const std::string count = std::to_string(s.tiles.size()) + " of " + std::to_string(units) + " units";
     if (units > kFirstUnits) {
         const std::string toggle =

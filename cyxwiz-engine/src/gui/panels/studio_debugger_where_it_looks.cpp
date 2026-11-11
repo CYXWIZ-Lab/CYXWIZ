@@ -357,10 +357,6 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
     // the user's defaults (Preferences > Studio Debugger).
     const core::StudioDebuggerConfig settings = CaptureSettings();
     const bool use_saliency = settings.where_it_looks_method == core::WhereItLooksMethod::Saliency;
-    const auto set_session = [&](const std::function<void(core::StudioDebuggerConfig&)>& change) {
-        if (!capture_session_) capture_session_ = core::EngineConfig::Instance().GetStudioDebugger();
-        change(*capture_session_);
-    };
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(DebuggerMuted(), "Method");
     ImGui::SameLine(110.0f);
@@ -368,7 +364,7 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
         static const char* const kMethods[] = {"Occlusion", "Saliency"};
         int method = use_saliency ? 1 : 0;
         if (ui::SegmentedControl("WhereItLooksMethod", kMethods, 2, &method) && !s.computing)
-            set_session([&](core::StudioDebuggerConfig& c) {
+            ChangeSessionSettings([&](core::StudioDebuggerConfig& c) {
                 c.where_it_looks_method = method == 1 ? core::WhereItLooksMethod::Saliency : core::WhereItLooksMethod::Occlusion;
             });
         ImGui::SameLine(0.0f, 12.0f);
@@ -385,23 +381,15 @@ void StudioDebuggerPanel::RenderWhereItLooks(uint32_t sample_texture, int sample
         static const char* const kShows[] = {"Gradient size", "Gradient \xC3\x97 input"};
         int show = settings.saliency_show == core::SaliencyShow::TimesInput ? 1 : 0;
         if (ui::SegmentedControl("WhereItLooksShow", kShows, 2, &show))
-            set_session([&](core::StudioDebuggerConfig& c) {
+            ChangeSessionSettings([&](core::StudioDebuggerConfig& c) {
                 c.saliency_show = show == 1 ? core::SaliencyShow::TimesInput : core::SaliencyShow::Size;
             });
         ImGui::SameLine(0.0f, 12.0f);
-        const core::StudioDebuggerConfig saved = core::EngineConfig::Instance().GetStudioDebugger();
-        const bool differs = saved.where_it_looks_method != settings.where_it_looks_method ||
-                             saved.saliency_show != settings.saliency_show;
-        if (ui::LinkButton("Save as my default", differs)) {
-            core::StudioDebuggerConfig defaults = saved;
-            defaults.where_it_looks_method = settings.where_it_looks_method;
-            defaults.saliency_show = settings.saliency_show;
-            auto& engine_config = core::EngineConfig::Instance();
-            engine_config.SetStudioDebugger(defaults);
-            engine_config.Save();
-        }
-        if (!differs && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Saliency and this Show are your defaults");
+        RenderSaveViewDefaults("WhereItLooks", "Saliency and this Show are your defaults",
+                               [](const core::StudioDebuggerConfig& session, core::StudioDebuggerConfig& defaults) {
+                                   defaults.where_it_looks_method = session.where_it_looks_method;
+                                   defaults.saliency_show = session.saliency_show;
+                               });
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(DebuggerMuted(), "Of");
         ImGui::SameLine(110.0f);

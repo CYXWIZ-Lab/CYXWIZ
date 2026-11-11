@@ -89,6 +89,48 @@ void ToolbarPanel::RenderStudioDebuggerPreferences() {
                         "elements push the score up or down.");
     ImGui::PopTextWrapPos();
 
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Top images: channels");
+    static const char* const kChannels[] = {"The Dense head's strongest votes", "The clicked channel",
+                                            "The 16 strongest for the sample"};
+    int channels = static_cast<int>(settings.top_images_channels);
+    if (ui::SegmentedControl("##top_images_channels", kChannels, 3, &channels))
+        settings.top_images_channels = static_cast<core::TopImagesChannels>(channels);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("A layer that does not offer this choice starts on its first.");
+    ImGui::PopTextWrapPos();
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Top images: ranked by");
+    static const char* const kRank[] = {"Maximum", "Mean"};
+    int rank = static_cast<int>(settings.top_images_rank);
+    if (ui::SegmentedControl("##top_images_rank", kRank, 2, &rank))
+        settings.top_images_rank = static_cast<core::TopImagesRank>(rank);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Maximum: the channel's largest value over its map. Mean: its mean over the map.");
+    ImGui::PopTextWrapPos();
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Embedding: method");
+    static const char* const kEmbedding[] = {"PCA", "t-SNE", "UMAP"};
+    int embedding = static_cast<int>(settings.embedding_method);
+    if (ui::SegmentedControl("##embedding_method", kEmbedding, 3, &embedding))
+        settings.embedding_method = static_cast<core::EmbeddingMethod>(embedding);
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Embedding: colour by");
+    static const char* const kEmbeddingColour[] = {"True class", "Predicted class"};
+    int embedding_colour = static_cast<int>(settings.embedding_colour);
+    if (ui::SegmentedControl("##embedding_colour", kEmbeddingColour, 2, &embedding_colour))
+        settings.embedding_colour = static_cast<core::EmbeddingColour>(embedding_colour);
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Unit weights: order");
+    static const char* const kUnitOrder[] = {"Largest weight norm first", "Unit order"};
+    int unit_order = static_cast<int>(settings.unit_weights_order);
+    if (ui::SegmentedControl("##unit_weights_order", kUnitOrder, 2, &unit_order))
+        settings.unit_weights_order = static_cast<core::UnitWeightsOrder>(unit_order);
+
     if (!(settings == saved)) {
         engine_config.SetStudioDebugger(settings);
         engine_config.Save();

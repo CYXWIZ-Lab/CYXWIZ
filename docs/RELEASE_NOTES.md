@@ -7,6 +7,11 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Saved defaults for the layer views' choices.** Top images (Channels,
+  Ranked by), Embedding (Method, Colour by) and Unit weights (Order) each
+  have a **Save as my default** link beside their controls, and
+  Preferences > Studio Debugger > Layer views sets them too. A change in a
+  view lasts for the session until it is saved.
 - **The Studio Debugger reads image MLPs right.** A model that flattens the
   image first (no convolution before its Dense layers) takes images in
   another layout than a CNN; the debugger now keeps one layout for both. On

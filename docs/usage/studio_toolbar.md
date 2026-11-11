@@ -526,5 +526,13 @@ The colour and the order are part of the session's settings (Layer capture in
 the toolbar): **Save as my default** keeps them, and Preferences > Studio
 Debugger > Layer views sets them too.
 
+The views' own choices work the same way: Where it looks (Method, Show), Top
+images (Channels, Ranked by), Embedding (Method, Colour by) and Unit weights
+(Order) each carry a **Save as my default** link beside their controls, and
+Preferences > Studio Debugger > Layer views lists them all. A change in a view
+lasts for the session until it is saved. A layer that does not offer the saved
+Top images channels (no Dense head after it, or not a feature-map layer)
+starts on the first choice it has.
+
 Everything is computed on the compute device; only what a view draws (the
 shown maps, a page of heatmap rows, a histogram) is copied to the host.
