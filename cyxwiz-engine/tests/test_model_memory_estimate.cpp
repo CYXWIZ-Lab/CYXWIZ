@@ -104,6 +104,7 @@ uint64_t MeasureStep(cyxwiz::BuiltExecutableModel& built, const cyxwiz::Training
 struct Expect {
     std::vector<size_t> sample_shape;  // the batch's per-sample shape when the compiled input is flat
     bool has_state = false;            // BatchNorm running statistics
+    size_t optimizer_tensors = 2;      // state tensors per parameter (Adam: 2)
 };
 
 void RunChecked(const std::string& name, const std::string& relative, const std::string& text, const Expect& expect);
@@ -143,7 +144,7 @@ void RunChecked(const std::string& name, const std::string& relative, const std:
               std::to_string(estimate.state_elements) + " kept = the built model's " + std::to_string(all));
     Check((estimate.state_elements > 0) == expect.has_state,
           expect.has_state ? "BatchNorm running statistics counted as kept state" : "no kept state");
-    Check(estimate.optimizer_tensors_per_parameter == built.optimizer->StateTensorsPerParameter() &&
+    Check(estimate.optimizer_tensors_per_parameter == expect.optimizer_tensors &&
               estimate.optimizer_bytes == estimate.trained_elements * estimate.optimizer_tensors_per_parameter * 4,
           "optimizer state: " + std::to_string(estimate.optimizer_tensors_per_parameter) + " per parameter");
 

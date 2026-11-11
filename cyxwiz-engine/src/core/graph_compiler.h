@@ -183,7 +183,7 @@ struct TextPreprocessingConfig {
 };
 
 // Sequence tagging / NER batch contract. Compile identifies the intended
-// named payloads. Runtime training must enter through StartTrainingSequence
+// named payloads. Runtime training must enter through SequenceTrainingRecipe
 // with a prebuilt ISequenceBatcher; generic tabular dispatch still fails closed.
 struct SequenceBatchConfig {
     // Runtime-only identity captured when preparing the active model.
@@ -208,7 +208,7 @@ struct SequenceBatchConfig {
 
 inline std::string SequenceBatchRuntimeUnsupportedMessage() {
     return "Sequence/NER graph training requires a prebuilt ISequenceBatcher. "
-           "Use the Studio graph-training launcher or StartTrainingSequence; "
+           "Use the Studio graph-training launcher or SequenceTrainingRecipe; "
            "generic tabular TrainingExecutor dispatch cannot consume named "
            "sequence payloads.";
 }

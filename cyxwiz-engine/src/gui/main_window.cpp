@@ -3914,9 +3914,13 @@ void MainWindow::PollDataInputLoads() {
         debugger_not_started("could not load " + failed_names + " (the compile report says why).");
         return;
     }
-    if (debug_run && studio_debugger_panel_)
+    if (train) {
+        // Both asked while the data loaded: one model on the device at a time.
+        debugger_not_started("training started on this data; run again when it ends.");
+        StartTrainingFromGraph(nodes, links);
+    } else if (debug_run && studio_debugger_panel_) {
         studio_debugger_panel_->StartRun(debug_run->mode, debug_run->sample_index, debug_run->explain_node_id);
-    if (train) StartTrainingFromGraph(nodes, links);
+    }
 }
 
 void MainWindow::StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings) {

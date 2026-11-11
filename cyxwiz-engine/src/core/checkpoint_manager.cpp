@@ -609,7 +609,8 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, Model& model) {
         // that state starts from the model's own.
         const auto state_names = model.GetStateParameterNames();
         for (const auto& [name, expected_tensor] : expected) {
-            if (params.find(name) == params.end() && state_names.count(name)) {
+            const bool running_statistic = name.ends_with(".running_mean") || name.ends_with(".running_var");
+            if (params.find(name) == params.end() && state_names.count(name) && running_statistic) {
                 params.emplace(name, expected_tensor);
                 migrated_batch_norm_state.push_back(name);
             }

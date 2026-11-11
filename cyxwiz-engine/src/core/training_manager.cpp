@@ -92,8 +92,8 @@ bool TrainingManager::StartTrainingCommon(
 {
     // Caller has already verified !is_training_.load() and acquired
     // mutex_. This helper carries the common plumbing that used to
-    // be duplicated across StartTraining{Legacy, Arrow, Parquet,
-    // Image, Audio, Text} verbatim.
+    // be duplicated across the per-data start functions (legacy, Arrow, Parquet,
+    // image, audio, text) verbatim.
     is_training_.store(true);
     stop_requested_.store(false);
     {

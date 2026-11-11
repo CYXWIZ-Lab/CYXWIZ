@@ -411,7 +411,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
 bool TabularLoader::IsRegistered(const std::string& name) const {
     auto& reg = cyxwiz::DataRegistry::Instance();
     // Sparse CSR outputs (TF-IDF / Count vectorizer with output_format=sparse)
-    // train through LaunchTraining's sparse path, so this loader owns them too.
+    // train through the training recipe's sparse path, so this loader owns them too.
     return reg.IsArrowDataset(name) || reg.IsParquetBackedDataset(name) ||
            reg.IsSparseFeatureDataset(name);
 }

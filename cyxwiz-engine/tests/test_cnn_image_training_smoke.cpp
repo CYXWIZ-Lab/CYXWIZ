@@ -1,6 +1,6 @@
 // A CNN trained on real images through the Engine's training path
 // (TOFIX140 A1/A1b): the cats/dogs graph is compiled like the Studio does,
-// then trained with the objects TrainingManager::StartTrainingImage builds -
+// then trained with the objects ImageTrainingRecipe builds -
 // an ImageDatasetBatcher on an image folder with class subfolders (default
 // D:/tmp/gui129/catdog_small, or argv[1]) and a TrainingExecutor - and the
 // loss per epoch is printed. Not a ctest entry: the images live outside the repo.
@@ -222,7 +222,7 @@ int main(int argc, char** argv) {
     config.epochs = epochs;
     config.batch_size = 32;
 
-    // What TrainingManager::StartTrainingImage builds: the images decoded
+    // What ImageTrainingRecipe builds: the images decoded
     // once (or opened from the cache), then the batcher on them.
     const auto transforms = cyxwiz::SplitFixedImageTransforms(config.image_augmentation, config.image_cv_steps);
     const auto prepared = cyxwiz::PrepareImageSet(
