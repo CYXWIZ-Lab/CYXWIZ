@@ -103,6 +103,14 @@ std::uint64_t FileTime(const FILETIME& t) {
 }
 #endif
 
+#if defined(__APPLE__)
+// mach_host_self() adds a reference each call: take the port once.
+host_t Host() {
+    static const host_t host = mach_host_self();
+    return host;
+}
+#endif
+
 #if defined(__linux__)
 std::string ReadFile(const char* path) {
     std::ifstream in(path);
@@ -123,7 +131,7 @@ bool ReadCpuTimes(CpuTimes& times) {
 #elif defined(__APPLE__)
     host_cpu_load_info_data_t load{};
     mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
-    if (host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, reinterpret_cast<host_info_t>(&load), &count) !=
+    if (host_statistics(Host(), HOST_CPU_LOAD_INFO, reinterpret_cast<host_info_t>(&load), &count) !=
         KERN_SUCCESS)
         return false;
     times.busy = static_cast<std::uint64_t>(load.cpu_ticks[CPU_STATE_USER]) + load.cpu_ticks[CPU_STATE_SYSTEM] +
@@ -155,16 +163,15 @@ bool ReadMemory(MemoryTotals& totals) {
     if (sysctlbyname("hw.memsize", &total, &size, nullptr, 0) != 0 || total == 0) return false;
     vm_statistics64_data_t vm{};
     mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
-    if (host_statistics64(mach_host_self(), HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm), &count) !=
+    if (host_statistics64(Host(), HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm), &count) !=
         KERN_SUCCESS)
         return false;
     vm_size_t page = 0;
-    if (host_page_size(mach_host_self(), &page) != KERN_SUCCESS) return false;
-    // Free, inactive and purgeable pages are what programs can still take
-    // (Activity Monitor's "memory used" is the rest).
+    if (host_page_size(Host(), &page) != KERN_SUCCESS) return false;
+    // Free and inactive pages are what programs can still take (as psutil
+    // counts "available").
     totals.total_bytes = total;
-    totals.available_bytes =
-        (static_cast<std::uint64_t>(vm.free_count) + vm.inactive_count + vm.purgeable_count) * page;
+    totals.available_bytes = (static_cast<std::uint64_t>(vm.free_count) + vm.inactive_count) * page;
     if (totals.available_bytes > totals.total_bytes) totals.available_bytes = totals.total_bytes;
     return true;
 #elif defined(__linux__)

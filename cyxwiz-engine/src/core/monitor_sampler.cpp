@@ -92,12 +92,13 @@ void MonitorSampler::TrimLocked() {
 
 void MonitorSampler::Run() {
     using Clock = std::chrono::steady_clock;
-    const auto started = Clock::now();
     system_metrics::Probe probe;
     probe.Read();  // the first reading only gives the CPU counters a start
     {
+        // The first kept reading comes a full interval later: CPU figures
+        // over a few milliseconds would be noise.
         std::lock_guard<std::mutex> lock(mutex_);
-        next_ = Clock::now();
+        next_ = Clock::now() + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(interval_));
     }
     for (;;) {
         {
@@ -108,7 +109,7 @@ void MonitorSampler::Run() {
             if (stop_) return;
         }
         MonitorSample sample;
-        sample.seconds = std::chrono::duration<double>(Clock::now() - started).count();
+        sample.seconds = std::chrono::duration<double>(Clock::now() - epoch_).count();
         sample.system = probe.Read();
         if (reader_) {
             try {

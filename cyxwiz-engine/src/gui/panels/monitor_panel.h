@@ -69,6 +69,7 @@ private:
     void SaveDefaults();
     void ExportCsv();
     void MeasureCaches();
+    void SetInterval(double seconds);
 
     // What the sampler thread needs of the device (written on the interface
     // thread, read on the sampler's).
@@ -76,6 +77,7 @@ private:
         std::mutex mutex;
         bool present = false;
         std::string hardware_uuid;
+        double held_stale_after = 3.0;  // seconds: an older held reading is not known
     };
 
     bool visible_ = false;
@@ -117,6 +119,7 @@ private:
     // Clear caches dialog.
     bool caches_open_request_ = false;
     bool caches_measuring_ = false;
+    bool caches_measure_again_ = false;  // asked while a measure was in flight
     bool caches_clearing_ = false;
     std::vector<StorageCache> caches_;
     std::vector<std::string> caches_selected_;

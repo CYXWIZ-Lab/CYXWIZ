@@ -50,7 +50,7 @@ void BindSystem(py::module_& m) {
     s.def(
         "release_unused_device_memory",
         [] {
-            const cyxwiz::DeviceMemoryReleased released = cyxwiz::ReleaseUnusedDeviceMemory();
+            const cyxwiz::DeviceMemoryReleased released = cyxwiz::FreeUnusedDeviceMemory();
             py::dict d;
             d["ran"] = released.ran;
             d["allocated_before"] = released.allocated_before;
@@ -66,7 +66,8 @@ void BindSystem(py::module_& m) {
         "Bytes of main memory held by host tensors (the tensor allocator; not the whole process).");
     s.def(
         "host_tensor_peak_bytes", [] { return static_cast<unsigned long long>(cyxwiz::MemoryManager::GetPeakBytes()); },
-        "The highest host_tensor_bytes since the process started or since reset_host_tensor_peak().");
+        "The highest host_tensor_bytes since the process started, since reset_host_tensor_peak(), or since the "
+        "last training run started (a run starts its own peak).");
     s.def(
         "reset_host_tensor_peak", [] { cyxwiz::MemoryManager::ResetPeak(); },
         "Starts the host tensor peak again from the current value.");

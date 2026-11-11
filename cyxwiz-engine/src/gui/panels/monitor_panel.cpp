@@ -167,17 +167,22 @@ MonitorPanel::MonitorPanel() : device_for_sampler_(std::make_shared<DeviceForSam
     // no device).
     auto device = device_for_sampler_;
     sampler_ = std::make_unique<MonitorSampler>([device](MonitorSample& sample) {
-        const DeviceMemoryHeld held = LastDeviceMemoryHeld();
-        sample.device_held_known = held.known;
-        sample.device_allocated_bytes = held.allocated_bytes;
-        sample.device_in_use_bytes = held.in_use_bytes;
         std::string uuid;
         bool present = false;
+        double stale_after = 3.0;
         {
             std::lock_guard<std::mutex> lock(device->mutex);
             present = device->present;
             uuid = device->hardware_uuid;
+            stale_after = device->held_stale_after;
         }
+        // A reading nobody refreshed (the window minimised, a computation
+        // that reports nothing) is not known: the chart shows a gap, not a
+        // flat line.
+        const DeviceMemoryHeld held = LastDeviceMemoryHeld();
+        sample.device_held_known = held.known && held.age_seconds <= stale_after;
+        sample.device_allocated_bytes = held.allocated_bytes;
+        sample.device_in_use_bytes = held.in_use_bytes;
         if (present && !uuid.empty()) {
             const DeviceMemoryFree free_memory = ReadDeviceMemoryFree(uuid);
             sample.device_free_known = free_memory.known;
@@ -190,6 +195,7 @@ MonitorPanel::MonitorPanel() : device_for_sampler_(std::make_shared<DeviceForSam
         sample.tensors_bytes = static_cast<std::uint64_t>(MemoryManager::GetAllocatedBytes());
     });
     sampler_->Start(interval_, kKeepSeconds[keep_choice_]);
+    SetInterval(interval_);
 
     // The loaded-data account is rebuilt only when a dataset changes.
     catalog_subscription_ =
@@ -199,6 +205,13 @@ MonitorPanel::MonitorPanel() : device_for_sampler_(std::make_shared<DeviceForSam
 MonitorPanel::~MonitorPanel() {
     DatasetCatalog::Instance().Unsubscribe(catalog_subscription_);
     sampler_->Stop();
+}
+
+void MonitorPanel::SetInterval(double seconds) {
+    interval_ = seconds;
+    sampler_->SetInterval(seconds);
+    std::lock_guard<std::mutex> lock(device_for_sampler_->mutex);
+    device_for_sampler_->held_stale_after = std::max(3.0, 2.5 * seconds);
 }
 
 void MonitorPanel::Open(const std::string& tab_id) {
@@ -239,6 +252,8 @@ void MonitorPanel::RefreshDevice() {
             device_.backend = DeviceTypeName(selected->type);
             device_.device_id = selected->device_id;
             if (info.hardware_uuid_known) uuid = info.hardware_uuid;
+            device_.memory_total_known = info.memory_total_known;
+            device_.memory_total_bytes = info.memory_total;
         } catch (const std::exception& e) {
             spdlog::warn("Monitor: the compute device could not be described ({})", e.what());
         }
@@ -311,7 +326,7 @@ void MonitorPanel::RenderBar() {
     options.format = "%.2g";
     options.width = 56.0f;
     options.hint = "Seconds between readings";
-    if (ui::NumberField("##interval", &interval_, options)) sampler_->SetInterval(interval_);
+    if (ui::NumberField("##interval", &interval_, options)) SetInterval(interval_);
     ImGui::SameLine();
     ImGui::TextColored(t.text_dim, "s");
 
@@ -401,7 +416,7 @@ void MonitorPanel::RenderSystem() {
 }
 
 void MonitorPanel::FreeUnusedMemory() {
-    const DeviceMemoryReleased released = cyxwiz::ReleaseUnusedDeviceMemory();
+    const DeviceMemoryReleased released = cyxwiz::FreeUnusedDeviceMemory();
     released_device_ran_ = released.ran;
     released_bytes_ = released.freed_bytes();
     python_collected_ = std::make_shared<std::atomic<long long>>(-2);
@@ -524,11 +539,15 @@ void MonitorPanel::OpenClearCaches() {
     caches_open_request_ = true;
     caches_note_.clear();
     caches_selected_.clear();
+    caches_.clear();  // sizes from the last time (or another project) are not offered
     MeasureCaches();
 }
 
 void MonitorPanel::MeasureCaches() {
-    if (caches_measuring_) return;
+    if (caches_measuring_) {
+        caches_measure_again_ = true;  // that measure may be older than what was just cleared
+        return;
+    }
     caches_measuring_ = true;
     const std::string root = ProjectManager::Instance().GetProjectRoot();
     auto result = std::make_shared<std::vector<StorageCache>>();
@@ -541,6 +560,10 @@ void MonitorPanel::MeasureCaches() {
             if (alive.expired()) return;
             caches_ = std::move(*result);
             caches_measuring_ = false;
+            if (caches_measure_again_) {
+                caches_measure_again_ = false;
+                MeasureCaches();
+            }
         },
         alive_);
 }
@@ -561,7 +584,7 @@ void MonitorPanel::RenderClearCaches() {
         return std::find(caches_selected_.begin(), caches_selected_.end(), id) != caches_selected_.end();
     };
     std::uint64_t total = 0;
-    if (caches_measuring_ && caches_.empty()) {
+    if (caches_.empty()) {
         ImGui::TextColored(t.text_dim, "Measuring the caches...");
     } else if (ImGui::BeginTable("##caches", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Cache", ImGuiTableColumnFlags_WidthStretch, 1.3f);

@@ -23,6 +23,9 @@ struct CYXWIZ_API DeviceMemoryHeld {
     std::uint64_t in_use_bytes = 0;     // of those, in use by live arrays
     std::uint64_t buffers = 0;
     std::uint64_t buffers_in_use = 0;
+    // From LastDeviceMemoryHeld: how long ago that reading was taken. A
+    // watcher treats an old reading as not known rather than as current.
+    double age_seconds = 0.0;
 };
 
 // Reads the calling thread's ArrayFire device and remembers the answer.
@@ -48,7 +51,7 @@ struct CYXWIZ_API DeviceMemoryFree {
 // UUID matches when the machine has exactly one device the source knows.
 CYXWIZ_API DeviceMemoryFree ReadDeviceMemoryFree(const std::string& hardware_uuid);
 
-// What ReleaseUnusedDeviceMemory gave back.
+// What FreeUnusedDeviceMemory gave back.
 struct CYXWIZ_API DeviceMemoryReleased {
     bool ran = false;  // false before Initialize()
     std::uint64_t allocated_before = 0;
@@ -60,7 +63,8 @@ struct CYXWIZ_API DeviceMemoryReleased {
 
 // Returns the buffers the memory manager keeps for reuse to the driver
 // (ArrayFire garbage collection) on the calling thread's device. Buffers in
-// use stay. Safe to call at any time.
-CYXWIZ_API DeviceMemoryReleased ReleaseUnusedDeviceMemory();
+// use stay. Safe to call at any time. (cyxwiz.h's ReleaseUnusedDeviceMemory
+// is the same call without the answer.)
+CYXWIZ_API DeviceMemoryReleased FreeUnusedDeviceMemory();
 
 }  // namespace cyxwiz

@@ -137,7 +137,8 @@ void TestSampler() {
           "settings are held to their limits");
     std::this_thread::sleep_for(std::chrono::milliseconds(1400));
     const auto history = sampler.History();
-    Check(history.size() >= 3 && history.size() <= 8, "about four readings in 1.4 s at 0.25 s: " + std::to_string(history.size()));
+    Check(history.size() >= 3 && history.size() <= 7, "about five readings in 1.4 s at 0.25 s: " + std::to_string(history.size()));
+    Check(!history.empty() && history.front().seconds >= 0.2, "the first reading is a full interval after the start");
     bool ordered = true, extra = true;
     for (size_t i = 0; i < history.size(); ++i) {
         if (i > 0 && history[i].seconds <= history[i - 1].seconds) ordered = false;
@@ -158,9 +159,15 @@ void TestSampler() {
     const size_t after_stop = sampler.size();
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
     Check(sampler.size() == after_stop, "nothing is read after Stop");
+    const auto before_restart = sampler.History();
     sampler.Start(0.25, 60.0);
     std::this_thread::sleep_for(std::chrono::milliseconds(700));
-    Check(sampler.size() >= 1, "a stopped sampler starts again");
+    const auto after_restart = sampler.History();
+    Check(after_restart.size() > before_restart.size(), "a stopped sampler starts again");
+    bool still_ordered = true;
+    for (size_t i = 1; i < after_restart.size(); ++i)
+        if (after_restart[i].seconds <= after_restart[i - 1].seconds) still_ordered = false;
+    Check(still_ordered, "readings stay in time order across a restart");
 }
 
 int Print() {

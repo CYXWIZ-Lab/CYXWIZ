@@ -82,6 +82,8 @@ private:
     double keep_ = 900.0;
     bool stop_ = false;
     std::chrono::steady_clock::time_point next_{};  // when the next reading is due
+    // `seconds` of every reading counts from here, also across Stop and Start.
+    const std::chrono::steady_clock::time_point epoch_ = std::chrono::steady_clock::now();
     std::atomic<bool> running_{false};
     std::atomic<std::uint64_t> generation_{0};
     std::thread thread_;

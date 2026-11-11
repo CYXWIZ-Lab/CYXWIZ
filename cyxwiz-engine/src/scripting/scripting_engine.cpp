@@ -361,19 +361,25 @@ scripting::PythonProjectSwitch ScriptingEngine::SwitchPythonToProject(std::strin
 
 namespace {
 
-// Tools > Diagnostics > Log Every Python Command: one line per command, script
-// or run when it ends, with how long it took. Off: a debug line only.
+// Tools > Diagnostics > Log Every Python Command: a line when a command,
+// script or run starts (a command that hangs or crashes Python is the one to
+// see) and one when it ends, with how long it took. Off: a debug line only,
+// and none for the Engine's own internal commands. A script that runs through
+// the command path is logged once, as the script.
 class PythonCommandLog {
 public:
-    PythonCommandLog(bool to_log, const char* kind, const std::string& text)
-        : to_log_(to_log), kind_(kind), start_(std::chrono::steady_clock::now()) {
+    PythonCommandLog(bool to_log, const char* kind, const std::string& text, bool internal = false)
+        : outer_(Depth()++ == 0), to_log_(to_log), kind_(kind), start_(std::chrono::steady_clock::now()) {
+        to_log_ = to_log_ && outer_;
         // The first line, at most 120 characters.
         summary_ = text.substr(0, text.find('\n'));
         if (summary_.size() > 120) summary_ = summary_.substr(0, 117) + "...";
         lines_ = 1 + static_cast<size_t>(std::count(text.begin(), text.end(), '\n'));
-        if (!to_log_) spdlog::debug("Python {}: {}", kind_, summary_);
+        if (to_log_) spdlog::info("Python {} started: {}", kind_, summary_);
+        else if (outer_ && !internal) spdlog::debug("Python {}: {}", kind_, summary_);
     }
     ~PythonCommandLog() {
+        --Depth();
         if (!to_log_) return;
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_).count();
         if (lines_ > 1) spdlog::info("Python {} took {:.1f} ms ({} lines): {}", kind_, ms, lines_, summary_);
@@ -383,6 +389,13 @@ public:
     PythonCommandLog& operator=(const PythonCommandLog&) = delete;
 
 private:
+    // How many of these are open on this thread: only the outermost logs.
+    static int& Depth() {
+        thread_local int depth = 0;
+        return depth;
+    }
+
+    bool outer_;
     bool to_log_;
     const char* kind_;
     std::chrono::steady_clock::time_point start_;
@@ -409,7 +422,7 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
 
     // Internal Variable Explorer commands skip the timeout below.
     bool is_internal = command.find("_cyxwiz_") != std::string::npos;
-    const PythonCommandLog command_log(verbose_logging_, "command", command);
+    const PythonCommandLog command_log(verbose_logging_, "command", command, is_internal);
 
     // Skip timeout for internal commands (fast operations)
     if (is_internal || console_timeout_seconds_ <= 0) {

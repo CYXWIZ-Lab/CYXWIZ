@@ -424,7 +424,8 @@ void EnrichSelectedDeviceIdentity(DeviceInfo& info) {
     // CUDA device without an id may be the machine's only card; any other
     // device without an id is not guessed.
     const bool cuda_without_id = info.type == DeviceType::CUDA && !info.hardware_uuid_known;
-    if (info.hardware_uuid_known || cuda_without_id) {
+    const bool nvidia = info.type == DeviceType::CUDA || (info.hardware_vendor_id_known && info.hardware_vendor_id == 0x10de);
+    if (nvidia && (info.hardware_uuid_known || cuda_without_id)) {
         const DeviceMemoryFree free_memory = ReadDeviceMemoryFree(cuda_without_id ? std::string() : info.hardware_uuid);
         if (free_memory.known) {
             info.memory_available = static_cast<size_t>(free_memory.free_bytes);

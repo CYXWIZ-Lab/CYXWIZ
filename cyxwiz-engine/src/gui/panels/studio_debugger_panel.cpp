@@ -2552,7 +2552,7 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
     if (layout.timed) {
         // The axis: time into the run, five marks.
         for (int k = 0; k <= 4; ++k) {
-            const float x = origin.x + label_w + area_w * static_cast<float>(k) / 4.0f;
+            const float x = origin.x + label_w + (area_w - 3.0f) * static_cast<float>(k) / 4.0f;  // less the narrowest bar
             const std::string text = TimelineTimeText(layout.start_ms + (layout.end_ms - layout.start_ms) * k / 4.0);
             const float text_w = ImGui::CalcTextSize(text.c_str()).x;
             draw->AddText(ImVec2(k == 4 ? x - text_w : (k == 0 ? x : x - text_w * 0.5f), origin.y),

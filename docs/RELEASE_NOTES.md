@@ -48,9 +48,9 @@ private Data Studio tickets (`tofix*/track*`).
   runs), the memory bars are named for what they measure (host tensors,
   with a peak per run), and the Crash view no longer reads a file every
   frame.
-  - Plugin SDK: new header `cyxwiz/device_memory.h`;
-    `ReleaseUnusedDeviceMemory` now returns what it gave back. Python:
-    `pycyxwiz.system`.
+  - Plugin SDK: new header `cyxwiz/device_memory.h`
+    (`FreeUnusedDeviceMemory` answers what it gave back;
+    `ReleaseUnusedDeviceMemory` is unchanged). Python: `pycyxwiz.system`.
 - **Tools > Model is one window** (guide in `docs/usage/model_tools.md`,
   example `examples/cyxgraph/model_tools`) with tabs Summary, Learning
   rate, Explain, Health and Projector; its menu items open it on a tab.

@@ -128,6 +128,14 @@ void TestCards() {
         Same(unknown.rows[0].second, "412 MB allocated" + kDot + "96.0 MB in use", "held is still exact");
         Same(unknown.rows[1].second, kNotReported, "device memory not reported");
     }
+    // The listing knows the total (OpenCL, oneAPI): it is shown, the free part is not guessed.
+    DeviceLabel with_total = card;
+    with_total.memory_total_known = true;
+    with_total.memory_total_bytes = 8ULL * kGB;
+    const Card total_only = DeviceCard(&intel, with_total);
+    Check(total_only.rows.size() == 2 && !total_only.has_meter, "a total without a free figure: no meter");
+    if (total_only.rows.size() == 2)
+        Same(total_only.rows[1].second, "8.00 GB total" + kDot + "free: not reported by this driver", "total shown, free not guessed");
 
     // Held bytes larger than the device's used bytes (two readings a moment apart).
     MonitorSample race = pc;
@@ -219,6 +227,9 @@ void TestReleased() {
     Same(ReleasedText(true, 0, kPythonNotStarted),
          "Nothing to free on the device: the Engine holds no memory it is not using. Python has not been started, so it holds nothing.",
          "Python not started");
+    Same(ReleasedText(true, 0, kPythonFailed),
+         "Nothing to free on the device: the Engine holds no memory it is not using. Python could not run its collection.",
+         "Python failed");
     Same(ReleasedText(true, 1 * kMB, 1), "Freed 1.00 MB of device memory the Engine was holding but not using. Python collected 1 object.",
          "one object");
 }

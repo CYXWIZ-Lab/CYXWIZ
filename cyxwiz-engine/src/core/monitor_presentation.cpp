@@ -158,7 +158,10 @@ Card DeviceCard(const MonitorSample* sample, const DeviceLabel& device) {
         card.meter_percent = 100.0 * static_cast<double>(total - free_bytes) / static_cast<double>(total);
         card.level = LevelOf(card.meter_percent);
     } else {
-        card.rows.emplace_back("Device memory", kNotReported);
+        card.rows.emplace_back("Device memory",
+                               device.memory_total_known && device.memory_total_bytes > 0
+                                   ? SizeText(device.memory_total_bytes) + " total \xC2\xB7 free: not reported by this driver"
+                                   : std::string(kNotReported));
         card.note = "This driver does not say how much device memory is free. What the Engine holds is still exact.";
     }
     return card;
@@ -320,6 +323,7 @@ std::string ReleasedText(bool device_ran, std::uint64_t freed_bytes, long long p
     else if (freed_bytes == 0) text = "Nothing to free on the device: the Engine holds no memory it is not using.";
     else text = "Freed " + SizeText(freed_bytes) + " of device memory the Engine was holding but not using.";
     if (python_objects == kPythonNotStarted) text += " Python has not been started, so it holds nothing.";
+    else if (python_objects == kPythonFailed) text += " Python could not run its collection.";
     else if (python_objects < 0) text += " Python is busy, so its collection was skipped.";
     else if (python_objects == 0) text += " Python had nothing to collect.";
     else text += " Python collected " + Count(python_objects) + (python_objects == 1 ? " object." : " objects.");

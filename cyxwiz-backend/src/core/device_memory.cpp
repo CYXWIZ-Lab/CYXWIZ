@@ -6,22 +6,19 @@
 #include <arrayfire.h>
 
 #include <algorithm>
-#include <atomic>
+#include <chrono>
 #include <cctype>
 #include <mutex>
 
 namespace cyxwiz {
 namespace {
 
-// The last reading, for watcher threads. Four counters written together under
-// a sequence number, so a reader never mixes two readings.
+// The last reading and when it was taken, for watcher threads. Readers and
+// writers are a few a second, so a mutex is enough.
 struct HeldSlot {
-    std::atomic<std::uint64_t> sequence{0};  // odd while being written
-    std::atomic<bool> known{false};
-    std::atomic<std::uint64_t> allocated{0};
-    std::atomic<std::uint64_t> in_use{0};
-    std::atomic<std::uint64_t> buffers{0};
-    std::atomic<std::uint64_t> buffers_in_use{0};
+    std::mutex mutex;
+    DeviceMemoryHeld held;
+    std::chrono::steady_clock::time_point taken{};
 };
 
 HeldSlot& Slot() {
@@ -29,21 +26,11 @@ HeldSlot& Slot() {
     return slot;
 }
 
-std::mutex& SlotWriteMutex() {
-    static std::mutex mutex;
-    return mutex;
-}
-
 void Remember(const DeviceMemoryHeld& held) {
-    std::lock_guard<std::mutex> lock(SlotWriteMutex());
     auto& slot = Slot();
-    slot.sequence.fetch_add(1, std::memory_order_acq_rel);
-    slot.known.store(held.known, std::memory_order_relaxed);
-    slot.allocated.store(held.allocated_bytes, std::memory_order_relaxed);
-    slot.in_use.store(held.in_use_bytes, std::memory_order_relaxed);
-    slot.buffers.store(held.buffers, std::memory_order_relaxed);
-    slot.buffers_in_use.store(held.buffers_in_use, std::memory_order_relaxed);
-    slot.sequence.fetch_add(1, std::memory_order_acq_rel);
+    std::lock_guard<std::mutex> lock(slot.mutex);
+    slot.held = held;
+    slot.taken = std::chrono::steady_clock::now();
 }
 
 // The NVIDIA management library (nvml.dll / libnvidia-ml.so.1), the source
@@ -157,16 +144,10 @@ DeviceMemoryHeld ReadDeviceMemoryHeld() {
 
 DeviceMemoryHeld LastDeviceMemoryHeld() {
     auto& slot = Slot();
-    DeviceMemoryHeld held;
-    for (int attempt = 0; attempt < 8; ++attempt) {
-        const auto before = slot.sequence.load(std::memory_order_acquire);
-        held.known = slot.known.load(std::memory_order_relaxed);
-        held.allocated_bytes = slot.allocated.load(std::memory_order_relaxed);
-        held.in_use_bytes = slot.in_use.load(std::memory_order_relaxed);
-        held.buffers = slot.buffers.load(std::memory_order_relaxed);
-        held.buffers_in_use = slot.buffers_in_use.load(std::memory_order_relaxed);
-        if ((before & 1U) == 0 && slot.sequence.load(std::memory_order_acquire) == before) return held;
-    }
+    std::lock_guard<std::mutex> lock(slot.mutex);
+    DeviceMemoryHeld held = slot.held;
+    if (held.known)
+        held.age_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - slot.taken).count();
     return held;
 }
 
@@ -189,7 +170,9 @@ DeviceMemoryFree ReadDeviceMemoryFree(const std::string& hardware_uuid) {
     return answer;
 }
 
-DeviceMemoryReleased ReleaseUnusedDeviceMemory() {
+void ReleaseUnusedDeviceMemory() { FreeUnusedDeviceMemory(); }
+
+DeviceMemoryReleased FreeUnusedDeviceMemory() {
     DeviceMemoryReleased released;
     if (!IsInitialized()) return released;
     try {

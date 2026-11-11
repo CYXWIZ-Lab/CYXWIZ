@@ -1237,7 +1237,7 @@ Checked by `cyxwiz-backend/python/tests/test_python_system.py`.
   `allocated_after`, `freed_bytes`.
 - `host_tensor_bytes()`, `host_tensor_peak_bytes()`,
   `reset_host_tensor_peak()`: main memory held by host tensors (the tensor
-  allocator; not the whole process).
+  allocator; not the whole process). A training run starts its own peak.
 
 For the machine's CPU and main memory use `psutil`.
 

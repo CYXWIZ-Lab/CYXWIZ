@@ -3,6 +3,7 @@
 #include "core/cloud_gateway_address.h"
 #include "common/server_address.h"
 
+#include <cmath>
 #include <fstream>
 #include <algorithm>
 #include <cctype>
@@ -436,7 +437,11 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             MonitorConfig loaded;
             loaded.tab = m.value("tab", loaded.tab);
             loaded.interval_seconds = std::clamp(m.value("interval_seconds", loaded.interval_seconds), 0.25, 60.0);
-            loaded.keep_seconds = std::clamp(m.value("keep_seconds", loaded.keep_seconds), 60.0, 3600.0);
+            // One of the three lengths the window offers; another value takes the nearest.
+            const double keep = m.value("keep_seconds", loaded.keep_seconds);
+            loaded.keep_seconds = 300.0;
+            for (const double offered : {900.0, 3600.0})
+                if (std::fabs(offered - keep) < std::fabs(loaded.keep_seconds - keep)) loaded.keep_seconds = offered;
             loaded.log_frame_rate = m.value("log_frame_rate", loaded.log_frame_rate);
             loaded.log_python_commands = m.value("log_python_commands", loaded.log_python_commands);
             loaded.frame_overlay = m.value("frame_overlay", loaded.frame_overlay);

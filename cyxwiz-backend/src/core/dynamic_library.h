@@ -17,8 +17,11 @@ namespace cyxwiz::detail {
 class DynamicLibrary {
 public:
 #ifdef _WIN32
+    // A driver library is opened from the Windows system folder only: a
+    // file of the same name beside a project or on PATH is never loaded.
     explicit DynamicLibrary(const wchar_t* name, bool already_loaded = false)
-        : handle_(already_loaded ? GetModuleHandleW(name) : LoadLibraryW(name)),
+        : handle_(already_loaded ? GetModuleHandleW(name)
+                                 : LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)),
           owns_(!already_loaded && handle_ != nullptr) {}
 
     ~DynamicLibrary() {

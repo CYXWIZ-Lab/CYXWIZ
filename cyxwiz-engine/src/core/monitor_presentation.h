@@ -53,6 +53,8 @@ struct DeviceLabel {
     std::string name;     // "NVIDIA GeForce GTX 1050 Ti"
     std::string backend;  // "CUDA"
     int device_id = 0;
+    bool memory_total_known = false;      // from the device listing (CUDA, OpenCL)
+    std::uint64_t memory_total_bytes = 0;
 };
 
 inline constexpr const char* kNotAvailable = "Not available";
@@ -110,6 +112,7 @@ std::string HistoryCsv(const std::vector<MonitorSample>& history);
 // kPythonNotStarted: no Python yet, so nothing to collect).
 inline constexpr long long kPythonBusy = -1;
 inline constexpr long long kPythonNotStarted = -3;
+inline constexpr long long kPythonFailed = -4;  // the collection could not run
 std::string ReleasedText(bool device_ran, std::uint64_t freed_bytes, long long python_objects);
 
 }  // namespace cyxwiz::monitor_view

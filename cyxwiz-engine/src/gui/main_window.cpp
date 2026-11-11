@@ -1208,11 +1208,11 @@ MainWindow::MainWindow()
         }
         scripting::ScriptingEngine::RunCallbacks callbacks;
         callbacks.on_complete = [done](const scripting::ExecutionResult& result) {
-            long long objects = 0;
+            long long objects = cyxwiz::monitor_view::kPythonFailed;
             try {
-                objects = result.success ? std::stoll(result.output) : 0;
+                if (result.success) objects = std::stoll(result.output);
             } catch (...) {
-                objects = 0;
+                objects = cyxwiz::monitor_view::kPythonFailed;
             }
             done(objects);
         };

@@ -41,12 +41,19 @@ TEST_CASE("Releasing unused device memory reports what it gave back", "[device_m
         af::array block = af::constant(2.0f, 1 << 21);  // 8 MB
         block.eval();
     }
-    const auto released = cyxwiz::ReleaseUnusedDeviceMemory();
+    const auto released = cyxwiz::FreeUnusedDeviceMemory();
     REQUIRE(released.ran);
     REQUIRE(released.freed_bytes() >= (8u << 20));
     REQUIRE(released.allocated_after == cyxwiz::ReadDeviceMemoryHeld().allocated_bytes);
     // Nothing left to give back.
-    REQUIRE(cyxwiz::ReleaseUnusedDeviceMemory().freed_bytes() == 0);
+    REQUIRE(cyxwiz::FreeUnusedDeviceMemory().freed_bytes() == 0);
+    // The call without an answer (the SDK's first form) frees the same way.
+    {
+        af::array block = af::constant(4.0f, 1 << 20);
+        block.eval();
+    }
+    cyxwiz::ReleaseUnusedDeviceMemory();
+    REQUIRE(cyxwiz::FreeUnusedDeviceMemory().freed_bytes() == 0);
 }
 
 TEST_CASE("Another thread sees the last reading without touching ArrayFire", "[device_memory]") {
@@ -62,6 +69,9 @@ TEST_CASE("Another thread sees the last reading without touching ArrayFire", "[d
     REQUIRE(seen.in_use_bytes == read.in_use_bytes);
     REQUIRE(seen.buffers == read.buffers);
     REQUIRE(seen.buffers_in_use == read.buffers_in_use);
+    REQUIRE(seen.age_seconds >= 0.0);
+    REQUIRE(seen.age_seconds < 5.0);  // just taken
+    REQUIRE(read.age_seconds == 0.0);  // a fresh reading has no age
 }
 
 TEST_CASE("The device's free memory is known or says who did not answer", "[device_memory]") {

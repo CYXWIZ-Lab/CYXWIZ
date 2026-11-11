@@ -43,7 +43,8 @@ Four cards:
     the device, and how much of that is in use. The rest is kept for reuse.
   - **Device memory**: free and total for every program, as the driver
     reports it. NVIDIA cards answer through the NVIDIA management library
-    (what `nvidia-smi` reads). Other drivers do not report it.
+    (what `nvidia-smi` reads). Other drivers do not report the free part;
+    the card then shows the total alone.
   - **Other programs**: the device's used memory less what the Engine holds
     (browsers, other training jobs, the desktop).
 - **This Engine**: the process's memory (its working set), its share of the
@@ -92,7 +93,9 @@ the table; it is not drawn as zero.
 unknown figure is an empty cell). **Clear history** starts the history again.
 
 While a training run owns the device, its own thread reports the device
-figures, so they stay live during the run.
+figures, so they stay live during the run. When nobody has reported for a
+few readings (the Engine minimised, for example), the device series has a
+gap instead of a flat line.
 
 ## Frames
 
@@ -121,7 +124,7 @@ on after a restart, and are also in **Preferences > General**.
 | Switch | What it does |
 | --- | --- |
 | Log Frame-rate Changes | One log line each time the pace changes, e.g. `Frame rate: 10 frames a second (idle: no input for a second)` |
-| Log Every Python Command | One log line per command, script or run sent to Python, when it ends, with its duration: `Python command took 3.2 ms: x = 1 + 1` |
+| Log Every Python Command | A log line when a command, script or run sent to Python starts and one when it ends, with its duration: `Python command took 3.2 ms: x = 1 + 1`. A command that never ends still shows its start |
 | Frame Time Overlay | A small panel at the top right with the two frame times and the three costliest windows; its link opens Monitor > Frames |
 
 ## Python
@@ -157,5 +160,6 @@ line per step.
 
 `cyxwiz/device_memory.h`: `ReadDeviceMemoryHeld`, `LastDeviceMemoryHeld`
 (the last reading, for a watcher thread: no device call),
-`ReadDeviceMemoryFree` and `ReleaseUnusedDeviceMemory`, which now answers
-what it gave back.
+`ReadDeviceMemoryFree` and `FreeUnusedDeviceMemory`, which answers what it
+gave back (`ReleaseUnusedDeviceMemory` in `cyxwiz.h` is the same call without
+the answer).
