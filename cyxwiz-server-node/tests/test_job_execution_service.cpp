@@ -90,6 +90,11 @@ public:
         // A verified node: its devices' route evidence is loaded, as the
         // daemon does at startup (admission refuses unverified routes).
         cyxwiz::test::InstallQualifiedRouteSnapshot();
+        // The daemon records the device it activates at startup; jobs train
+        // on that route whatever thread asks (NodeJobRoute).
+        if (const auto* device = cyxwiz::Device::GetCurrentDevice()) {
+            cyxwiz::Device::RecordProcessDevice(device->GetType(), device->GetDeviceId());
+        }
 
         // Create service instance
         service = std::make_unique<JobExecutionServiceImpl>();

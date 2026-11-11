@@ -148,6 +148,7 @@ $env:CYXWIZ_TEST_CENTRAL_JWT_SECRET = '<central server jwt.secret>'
 | Node never appears in the Engine's list | not registered yet (Apply in the GUI), or it cannot reach the central server address |
 | `--doctor` FAIL on a device route | the device's compute route is not verified on this machine; see the Engine's Compute Devices preferences |
 | Job refused "Device problem" / "Out of memory" | the node's admission check: the job does not fit or the route is not verified |
+| Job refused "compute route arrayfire_oneapi:0 is not verified" while `--doctor` lists another verified route (for example `arrayfire_opencl:0`) | a daemon older than 2026-11-11 checked the wrong route on Intel-only machines; update the node. Jobs are checked against, and train on, the route the daemon activated at startup (or the saved compute preference) |
 | Deployed model not loaded, log "the Server Node cannot run extension nodes yet" | the model has an extension node (a user's C++ plugin or Python node) whose code the node does not have; serve it from the Engine for now |
 | Daemon exits at start: "No P2P secret" or "P2P secret: ... can be read by other users; run chmod 600 on it" | give it the secret file (`--p2p-secret-file=`), readable by its owner only |
 | Daemon exits at start: "--p2p-secret= puts the secret where every user ... can read it" | write the secret to a file and pass `--p2p-secret-file=PATH` instead |

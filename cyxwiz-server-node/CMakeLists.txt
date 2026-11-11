@@ -537,6 +537,12 @@ if(CYXWIZ_BUILD_TESTS)
     target_compile_features(test_daemon_client_reconnect PRIVATE cxx_std_17)
     add_test(NAME test_daemon_client_reconnect COMMAND test_daemon_client_reconnect)
 
+    # Admission and the job thread use the route the process chose, on any thread
+    add_executable(test_node_job_route tests/test_node_job_route.cpp)
+    target_include_directories(test_node_job_route PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_node_job_route PRIVATE cyxwiz-training-core cyxwiz-backend Catch2::Catch2 Catch2::Catch2WithMain)
+    add_test(NAME test_node_job_route COMMAND test_node_job_route)
+
     # Mock Engine Client (standalone test tool)
     add_executable(mock_engine_client
         tests/mock_engine_client.cpp
