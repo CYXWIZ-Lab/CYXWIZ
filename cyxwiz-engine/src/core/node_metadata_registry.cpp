@@ -1936,17 +1936,25 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ImageEdges, NodeCategory::Preprocessing, "Image Edges", ICON_FA_DRAW_POLYGON,
-        {"image", "edges", "canny", "sobel", "laplacian", "scharr", "opencv", "once"}, 0, false,
+        {"image", "edges", "canny", "sobel", "laplacian", "scharr", "log", "dog", "gradient", "opencv", "once"}, 0,
+        false,
         "Turn every image into an edge map",
-        "Canny gives white edges on black; Sobel, Laplacian and Scharr give the edge strength. Colour images "
+        "Canny gives white edges on black; Sobel, Laplacian and Scharr give the edge strength. Sobel and Scharr "
+        "can give one direction (x: left-right changes, y: top-bottom) or the gradient's angle. LoG smooths "
+        "with sigma before the Laplacian; DoG is the difference of two blurs (sigma, sigma 2). Colour images "
         "are made grey first, so the output has one channel and the model's input becomes [H, W, 1]. " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
         "Resize -> Image Edges -> Normalize -> Conv2D",
         {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
         {{"Output", PinType::Tensor, true, "Edge maps [H, W, 1]"}},
-        {{"method", "enum", "canny", "Edge detector", {"canny", "sobel", "laplacian", "scharr"}, "", "Method"},
+        {{"method", "enum", "canny", "Edge detector", {"canny", "sobel", "laplacian", "scharr", "log", "dog"}, "",
+          "Method"},
+         {"direction", "enum", "magnitude", "Sobel and Scharr: both directions' size, one direction, or the angle",
+          {"magnitude", "x", "y", "angle"}, "", "Direction"},
          {"threshold1", "float", "50", "Canny: weak edge threshold (0 to 255 scale)", {}, ">=0", "Low threshold"},
          {"threshold2", "float", "150", "Canny: strong edge threshold, at least the low one", {}, ">=0", "High threshold"},
-         {"kernel_size", "int", "3", "Sobel: 1, 3, 5 or 7; Laplacian: odd up to 31; not used by Canny and Scharr", {}, ">0", "Kernel size"}},
+         {"kernel_size", "int", "3", "Sobel: 1, 3, 5 or 7; Laplacian and LoG: odd up to 31; not used by Canny, Scharr and DoG", {}, ">0", "Kernel size"},
+         {"sigma", "float", "1.0", "LoG: the smoothing before the Laplacian; DoG: the finer blur, in pixels", {}, ">0", "Sigma"},
+         {"sigma2", "float", "1.6", "DoG: the coarser blur, greater than sigma", {}, ">0", "Sigma 2"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ImageSmooth, NodeCategory::Preprocessing, "Image Smooth", ICON_FA_BRUSH,

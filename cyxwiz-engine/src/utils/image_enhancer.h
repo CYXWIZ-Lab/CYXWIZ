@@ -75,7 +75,19 @@ public:
         Canny,      // Canny edge detector (multi-stage, best general-purpose)
         Sobel,      // Sobel operator (gradient-based)
         Laplacian,  // Laplacian operator (second derivative)
-        Scharr      // Scharr operator (high-precision gradient)
+        Scharr,     // Scharr operator (high-precision gradient)
+        LoG,        // Laplacian of Gaussian: smooth with sigma, then the Laplacian
+        DoG         // Difference of Gaussians: blur(sigma) - blur(sigma2)
+    };
+
+    /**
+     * What a Sobel or Scharr gradient gives
+     */
+    enum class EdgeDirection {
+        Magnitude,  // 0.5 |gx| + 0.5 |gy|
+        X,          // |gx|: left-right changes (vertical edges)
+        Y,          // |gy|: top-bottom changes (horizontal edges)
+        Angle       // the gradient's direction, 0 to 360 degrees as 0 to 255
     };
 
     /**
@@ -96,7 +108,10 @@ public:
         EdgeDetectorType detector_type = EdgeDetectorType::Canny,
         float threshold1 = 50.0f,
         float threshold2 = 150.0f,
-        int kernel_size = 3
+        int kernel_size = 3,
+        EdgeDirection direction = EdgeDirection::Magnitude,
+        float sigma = 1.0f,
+        float sigma2 = 1.6f
     );
 
     /**

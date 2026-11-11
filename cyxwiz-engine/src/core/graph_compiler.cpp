@@ -7431,8 +7431,18 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
                                                    {{"canny", cyxwiz::CvEdgeMethod::Canny},
                                                     {"sobel", cyxwiz::CvEdgeMethod::Sobel},
                                                     {"laplacian", cyxwiz::CvEdgeMethod::Laplacian},
-                                                    {"scharr", cyxwiz::CvEdgeMethod::Scharr}},
+                                                    {"scharr", cyxwiz::CvEdgeMethod::Scharr},
+                                                    {"log", cyxwiz::CvEdgeMethod::LoG},
+                                                    {"dog", cyxwiz::CvEdgeMethod::DoG}},
                                                    s.edge_method, error) &&
+                ParseChoiceParam<cyxwiz::CvEdgeDirection>(p, "direction", "magnitude",
+                                                   {{"magnitude", cyxwiz::CvEdgeDirection::Magnitude},
+                                                    {"x", cyxwiz::CvEdgeDirection::X},
+                                                    {"y", cyxwiz::CvEdgeDirection::Y},
+                                                    {"angle", cyxwiz::CvEdgeDirection::Angle}},
+                                                   s.edge_direction, error) &&
+                ParseFloatParam(p, "sigma", 1.0f, s.edge_sigma, error) &&
+                ParseFloatParam(p, "sigma2", 1.6f, s.edge_sigma2, error) &&
                 ParseFloatParam(p, "threshold1", 50.0f, s.threshold1, error) &&
                 ParseFloatParam(p, "threshold2", 150.0f, s.threshold2, error) &&
                 ParseIntParam(p, "kernel_size", 3, s.edge_kernel, error));

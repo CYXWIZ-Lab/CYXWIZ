@@ -131,6 +131,78 @@ int main() {
         cv::addWeighted(ax, 0.5, ay, 0.5, 0, expected);
         Check(Worst(Run(s, rgb), expected) == 0, "Sobel magnitude");
         Check(CvImageStepText(s) == "Edges (Sobel 3)", "edges text");
+
+        // One direction, and the angle (1.10b).
+        const nlohmann::json magnitude_key = CvImageStepIdentity(s);
+        Check(!magnitude_key.contains("direction") && !magnitude_key.contains("sigma"),
+              "a set prepared before the direction setting keeps its key");
+        s.edge_direction = CvEdgeDirection::X;
+        Check(Worst(Run(s, rgb), ax) == 0, "Sobel x is |gx|");
+        Check(CvImageStepText(s) == "Edges (Sobel 3, x)", "direction in the text");
+        Check(CvImageStepIdentity(s) != magnitude_key, "another direction is another set");
+        s.edge_direction = CvEdgeDirection::Y;
+        Check(Worst(Run(s, rgb), ay) == 0, "Sobel y is |gy|");
+        s.edge_direction = CvEdgeDirection::Angle;
+        cv::Mat fx, fy, angle;
+        gx.convertTo(fx, CV_32F);
+        gy.convertTo(fy, CV_32F);
+        cv::phase(fx, fy, angle, true);
+        angle.convertTo(expected, CV_8U, 255.0 / 360.0);
+        Check(Worst(Run(s, rgb), expected) == 0, "Sobel angle: 0 to 360 degrees as 0 to 255");
+        {
+            // Brighter to the right: the gradient points along +x, angle 0; brighter downwards: 90 degrees = 64.
+            cv::Mat ramp_x(kH, kW, CV_8UC3), ramp_y(kH, kW, CV_8UC3);
+            for (int y = 0; y < kH; ++y)
+                for (int x = 0; x < kW; ++x) {
+                    ramp_x.at<cv::Vec3b>(y, x) = cv::Vec3b::all(static_cast<uchar>(x * 5));
+                    ramp_y.at<cv::Vec3b>(y, x) = cv::Vec3b::all(static_cast<uchar>(y * 5));
+                }
+            const auto right = Run(s, ramp_x), down = Run(s, ramp_y);
+            const size_t middle = static_cast<size_t>(kH / 2) * kW + kW / 2;
+            Check(right[middle] == 0 && down[middle] == 64, "the angle of a ramp to the right is 0, downwards 90 degrees");
+        }
+        s.edge_method = CvEdgeMethod::Scharr;
+        s.edge_direction = CvEdgeDirection::Y;
+        cv::Scharr(grey, gy, CV_16S, 0, 1);
+        cv::convertScaleAbs(gy, expected);
+        Check(Worst(Run(s, rgb), expected) == 0, "Scharr y");
+        Check(CvImageStepText(s) == "Edges (Scharr, y)", "Scharr text");
+        s.edge_method = CvEdgeMethod::Laplacian;
+        CvImageStep plain = Step(CvImageStepKind::Edges);
+        plain.edge_method = CvEdgeMethod::Laplacian;
+        Check(CvImageStepIdentity(s) == CvImageStepIdentity(plain) && CvImageStepText(s) == "Edges (Laplacian 3)",
+              "the Laplacian has no direction");
+
+        // LoG: smooth, then the Laplacian; DoG: one blur minus a wider one.
+        s = Step(CvImageStepKind::Edges);
+        s.edge_method = CvEdgeMethod::LoG;
+        s.edge_sigma = 1.4f;
+        s.edge_kernel = 5;
+        cv::Mat smooth, second;
+        cv::GaussianBlur(grey, smooth, cv::Size(0, 0), 1.4f);
+        cv::Laplacian(smooth, second, CV_16S, 5);
+        cv::convertScaleAbs(second, expected);
+        Check(Worst(Run(s, rgb), expected) == 0, "LoG is GaussianBlur then Laplacian");
+        Check(CvImageStepText(s) == "Edges (LoG 5, sigma 1.4)", "LoG text");
+        CvImageStep other = s;
+        other.edge_sigma = 2.0f;
+        Check(CvImageStepIdentity(s) != CvImageStepIdentity(other), "another sigma is another set");
+        s.edge_sigma = 0.0f;
+        Check(ValidateCvImageStep(s, kRgb) == "sigma must be greater than 0", "LoG sigma 0");
+        s = Step(CvImageStepKind::Edges);
+        s.edge_method = CvEdgeMethod::DoG;
+        cv::Mat grey_float, near_blur, far_blur;
+        grey.convertTo(grey_float, CV_32F);
+        cv::GaussianBlur(grey_float, near_blur, cv::Size(0, 0), 1.0);
+        cv::GaussianBlur(grey_float, far_blur, cv::Size(0, 0), 1.6f);
+        cv::convertScaleAbs(near_blur - far_blur, expected);
+        Check(Worst(Run(s, rgb), expected) == 0, "DoG is blur 1 minus blur 1.6");
+        Check(CvImageStepText(s) == "Edges (DoG 1 / 1.6)", "DoG text");
+        const cv::Mat flat(kH, kW, CV_8UC3, cv::Scalar(90, 90, 90));
+        const auto none = Run(s, flat);
+        Check(std::all_of(none.begin(), none.end(), [](uint8_t v) { return v == 0; }), "a flat image has no DoG");
+        s.edge_sigma2 = 0.8f;
+        Check(ValidateCvImageStep(s, kRgb) == "the second sigma must be greater than the first (1)", "DoG sigmas in order");
     }
     // Smooth: median on uint8, box and bilateral as the classes run them.
     {

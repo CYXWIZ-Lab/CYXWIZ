@@ -417,6 +417,25 @@ void CheckCompiler() {
     CheckRefused({kResize, {gui::NodeType::HorizontalFlip, "Flip", {}}, {gui::NodeType::ImageFilter, "Late filter", {}}},
                  "Late filter", "move it before Horizontal Flip", "a filter after a random step");
 
+    // Image Edges options (TOFIX178 1.10b): a direction, LoG and DoG.
+    const auto edges = Compile({kResize,
+                                {gui::NodeType::ImageEdges, "Sobel x", {{"method", "sobel"}, {"direction", "x"}}}});
+    Check(edges.is_valid && edges.image_cv_steps.size() == 1 &&
+              edges.image_cv_steps[0].edge_direction == cyxwiz::CvEdgeDirection::X &&
+              edges.input_shape == std::vector<size_t>({8, 8, 1}),
+          "Sobel x compiles to one channel; errors:\n" + Errors(edges));
+    const auto dog = Compile({kResize, {gui::NodeType::ImageEdges, "DoG", {{"method", "dog"}, {"sigma", "0.8"},
+                                                                        {"sigma2", "2"}}}});
+    Check(dog.is_valid && dog.image_cv_steps.size() == 1 && dog.image_cv_steps[0].edge_method == cyxwiz::CvEdgeMethod::DoG &&
+              dog.image_cv_steps[0].edge_sigma == 0.8f && dog.image_cv_steps[0].edge_sigma2 == 2.0f,
+          "DoG keeps its sigmas; errors:\n" + Errors(dog));
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "DoG backwards", {{"method", "dog"}, {"sigma", "2"}, {"sigma2", "1"}}}},
+                 "DoG backwards", "the second sigma must be greater than the first", "DoG sigmas the wrong way round");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "LoG 4", {{"method", "log"}, {"kernel_size", "4"}}}},
+                 "LoG 4", "kernel size must be odd, at most 31, for LoG", "an even LoG kernel");
+    CheckRefused({kResize, {gui::NodeType::ImageEdges, "Sideways", {{"method", "sobel"}, {"direction", "diagonal"}}}},
+                 "Sideways", "direction must be", "an unknown direction");
+
     // Normalize per channel (TOFIX178 1.4).
     const auto per_channel = Compile({kResize, {gui::NodeType::Normalize, "Normalize",
                                                 {{"statistics", "per_channel"},

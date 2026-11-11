@@ -294,11 +294,32 @@ bool ImageEnhancer::ApplyEdgeDetection(
     std::vector<float>& image_data,
     int width, int height, int channels,
     EdgeDetectorType detector_type,
-    float threshold1, float threshold2, int kernel_size
+    float threshold1, float threshold2, int kernel_size,
+    EdgeDirection direction, float sigma, float sigma2
 ) {
     if (!ValidateInput(image_data, width, height, channels)) {
         return false;
     }
+
+    // A gradient pair as the asked direction: |gx|, |gy|, their mean, or the angle.
+    const auto from_gradient = [direction](const cv::Mat& grad_x, const cv::Mat& grad_y, cv::Mat& edges) {
+        if (direction == EdgeDirection::X) {
+            cv::convertScaleAbs(grad_x, edges);
+        } else if (direction == EdgeDirection::Y) {
+            cv::convertScaleAbs(grad_y, edges);
+        } else if (direction == EdgeDirection::Angle) {
+            cv::Mat fx, fy, angle;
+            grad_x.convertTo(fx, CV_32F);
+            grad_y.convertTo(fy, CV_32F);
+            cv::phase(fx, fy, angle, true);  // degrees, 0 to 360
+            angle.convertTo(edges, CV_8U, 255.0 / 360.0);
+        } else {
+            cv::Mat abs_grad_x, abs_grad_y;
+            cv::convertScaleAbs(grad_x, abs_grad_x);
+            cv::convertScaleAbs(grad_y, abs_grad_y);
+            cv::addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0, edges);
+        }
+    };
 
     try {
         // Convert to grayscale if needed (edge detection works on single channel)
@@ -327,18 +348,9 @@ bool ImageEnhancer::ApplyEdgeDetection(
 
             case EdgeDetectorType::Sobel: {
                 cv::Mat grad_x, grad_y;
-                cv::Mat abs_grad_x, abs_grad_y;
-
-                // Sobel gradient in X and Y directions
                 cv::Sobel(gray, grad_x, CV_16S, 1, 0, kernel_size);
                 cv::Sobel(gray, grad_y, CV_16S, 0, 1, kernel_size);
-
-                // Convert to absolute values
-                cv::convertScaleAbs(grad_x, abs_grad_x);
-                cv::convertScaleAbs(grad_y, abs_grad_y);
-
-                // Combine gradients
-                cv::addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0, edges);
+                from_gradient(grad_x, grad_y, edges);
                 break;
             }
 
@@ -351,18 +363,28 @@ bool ImageEnhancer::ApplyEdgeDetection(
 
             case EdgeDetectorType::Scharr: {
                 cv::Mat grad_x, grad_y;
-                cv::Mat abs_grad_x, abs_grad_y;
-
-                // Scharr gradient in X and Y directions
                 cv::Scharr(gray, grad_x, CV_16S, 1, 0);
                 cv::Scharr(gray, grad_y, CV_16S, 0, 1);
+                from_gradient(grad_x, grad_y, edges);
+                break;
+            }
 
-                // Convert to absolute values
-                cv::convertScaleAbs(grad_x, abs_grad_x);
-                cv::convertScaleAbs(grad_y, abs_grad_y);
+            case EdgeDetectorType::LoG: {
+                // Smooth first, so the Laplacian answers to edges of that scale, not to noise.
+                cv::Mat smooth, laplacian;
+                cv::GaussianBlur(gray, smooth, cv::Size(0, 0), sigma);
+                cv::Laplacian(smooth, laplacian, CV_16S, kernel_size);
+                cv::convertScaleAbs(laplacian, edges);
+                break;
+            }
 
-                // Combine gradients
-                cv::addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0, edges);
+            case EdgeDetectorType::DoG: {
+                // The band between two blurs: detail finer than sigma2 and coarser than sigma.
+                cv::Mat grey_float, near_blur, far_blur;
+                gray.convertTo(grey_float, CV_32F);
+                cv::GaussianBlur(grey_float, near_blur, cv::Size(0, 0), sigma);
+                cv::GaussianBlur(grey_float, far_blur, cv::Size(0, 0), sigma2);
+                cv::convertScaleAbs(near_blur - far_blur, edges);
                 break;
             }
 

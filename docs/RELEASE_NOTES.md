@@ -129,6 +129,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Image Edges: one direction, the angle, LoG and DoG.** Sobel and Scharr
+  take `direction` (magnitude, x, y or angle); two new methods are `log`
+  (Laplacian of Gaussian, with `sigma`) and `dog` (Difference of Gaussians,
+  `sigma` and `sigma2`). Image sets prepared before stay valid.
 - **Image Filter node.** One fixed kernel over every image, done once when
   the images are prepared: a classic one (identity, box, sharpen, emboss,
   outline, Prewitt x / y, Roberts x / y, Kirsch and Robinson in eight

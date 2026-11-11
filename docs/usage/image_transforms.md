@@ -254,7 +254,7 @@ Horizontal Flip and Normalize run on each batch.
 | Image Contrast (CLAHE) | `clip_limit` (2.0), `tile_grid` (8), `colour` (lightness / each_channel) | Contrast Limited Adaptive Histogram Equalization on each tile. `lightness` changes only Lab L, so colours stay; `each_channel` equalizes R, G and B alone. | same |
 | Image Denoise | `strength` (10), `colour_strength` (10), `patch_size` (7, odd), `search_size` (21, odd) | Non-local means (`fastNlMeansDenoisingColored`; `fastNlMeansDenoising` for grey). Slow: about 45 ms an image at 64 x 64, so the compiler shows the time; it is spent once. | same |
 | Image Sharpen | `amount` (1.0), `radius` (1.0), `threshold` (0, from 0 to 1) | Unsharp mask: image + amount x (image - Gaussian blur of sigma `radius`). With a threshold, only pixels whose detail is above it change. | same |
-| Image Edges | `method` (canny / sobel / laplacian / scharr), `threshold1` / `threshold2` (50 / 150, Canny), `kernel_size` (3; Sobel 1, 3, 5 or 7; Laplacian odd up to 31) | Colour images are made grey first. Canny gives white edges on black; the others the edge strength. | one channel: `[H, W, 1]` |
+| Image Edges | `method` (canny / sobel / laplacian / scharr / log / dog), `threshold1` / `threshold2` (50 / 150, Canny), `kernel_size` (3; Sobel 1, 3, 5 or 7; Laplacian and LoG odd up to 31), `direction` (magnitude / x / y / angle, Sobel and Scharr), `sigma` (1.0, LoG and DoG), `sigma2` (1.6, DoG) | Colour images are made grey first. Canny gives white edges on black; the others the edge strength. See [Image Edges](#image-edges). | one channel: `[H, W, 1]` |
 | Image Smooth | `method` (box / median / bilateral), `kernel_size` (5, odd), `sigma_color` / `sigma_space` (75 / 75, bilateral) | Box averages, median takes the middle value (removes specks, keeps edges), bilateral mixes only similar colours. A Gaussian blur is Image Gaussian Blur, on the GPU. | same |
 | Image Warp | `method` (four_corners / three_points / log_polar / linear_polar), `source_points`, `target_points` (`0,0, 1,0, 1,1, 0,1`), `interpolation` (linear), `width` / `height` (0), `center_x` / `center_y` (0.5), `max_radius` (0.5), `inverse` | The same warp for every image. Points are `x, y` fractions of the image, top-left first, clockwise: four for four_corners, three for three_points. Polar warps unroll the image around the centre, so a rotation becomes a shift; they keep the size. | same, or `width` x `height` |
 | Image Pyramid | `operation` (down / up / detail), `levels` (1) | down: Gaussian smoothing then half the size, per level; up: double the size, per level; detail: the Laplacian level `levels - 1` halvings down (the image minus its smoothed copy). | down halves each side per level (rounding up); detail at level 1 keeps it |
@@ -281,6 +281,30 @@ Horizontal Flip and Normalize run on each batch.
   picked image, an OpenCV step as `56 x 56, once on the CPU`. The Properties
   panel's AS COMPILED card shows the step's input and output shapes.
 - Same result in training, validation and test.
+
+### Image Edges
+
+| `method` | What it computes | Settings it reads |
+| --- | --- | --- |
+| `canny` | thin white edges on black (two thresholds, 0 to 255 scale) | `threshold1`, `threshold2` |
+| `sobel` | the first derivative, smoothed | `kernel_size` (1, 3, 5 or 7), `direction` |
+| `scharr` | the same with a more accurate 3 x 3 kernel | `direction` |
+| `laplacian` | the second derivative: answers to any direction, and to noise | `kernel_size` |
+| `log` | Laplacian of Gaussian: a blur of `sigma` first, so it answers to edges of that scale and not to noise | `sigma`, `kernel_size` |
+| `dog` | Difference of Gaussians: blur `sigma` minus blur `sigma2`, the detail between the two scales (close to LoG when `sigma2` is 1.6 x `sigma`) | `sigma`, `sigma2` (greater than `sigma`) |
+
+`direction` (Sobel and Scharr):
+
+- `magnitude` (default): the mean of both directions' sizes, 0.5 |gx| + 0.5 |gy|.
+- `x`: |gx|, changes from left to right, so vertical edges light up.
+- `y`: |gy|, changes from top to bottom, so horizontal edges light up.
+- `angle`: the gradient's direction, 0 to 360 degrees stored as 0 to 255. 0 is
+  brighter to the right, 64 brighter downwards, 128 brighter to the left, 191
+  brighter upwards. Flat areas are 0. The value wraps (255 is next to 0), so
+  it suits looking at more than feeding a model.
+
+Strengths are stored as their size, cut at 255. Sets prepared before these
+settings existed keep their key and are not prepared again.
 
 ### Image Filter
 

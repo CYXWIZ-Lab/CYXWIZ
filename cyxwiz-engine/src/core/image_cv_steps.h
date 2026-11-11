@@ -24,7 +24,9 @@ namespace cyxwiz {
 
 enum class CvImageStepKind { Contrast, Denoise, Sharpen, Edges, Smooth, Warp, Pyramid, Filter };
 enum class CvContrastColour { Lightness, EachChannel };
-enum class CvEdgeMethod { Canny, Sobel, Laplacian, Scharr };
+enum class CvEdgeMethod { Canny, Sobel, Laplacian, Scharr, LoG, DoG };
+// Sobel and Scharr: both directions' mean size, one direction, or the angle.
+enum class CvEdgeDirection { Magnitude, X, Y, Angle };
 enum class CvSmoothMethod { Box, Median, Bilateral };
 enum class CvWarpMethod { FourCorners, ThreePoints, LogPolar, LinearPolar };
 enum class CvWarpInterpolation { Nearest, Linear, Cubic, Lanczos };
@@ -65,6 +67,9 @@ struct CvImageStep {
     float threshold1 = 50.0f;
     float threshold2 = 150.0f;
     int edge_kernel = 3;
+    CvEdgeDirection edge_direction = CvEdgeDirection::Magnitude;
+    float edge_sigma = 1.0f;   // LoG: the smoothing; DoG: the finer blur
+    float edge_sigma2 = 1.6f;  // DoG: the coarser blur
     // Smooth.
     CvSmoothMethod smooth_method = CvSmoothMethod::Median;
     int kernel_size = 5;

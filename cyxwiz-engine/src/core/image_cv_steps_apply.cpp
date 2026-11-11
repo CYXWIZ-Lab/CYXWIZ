@@ -33,6 +33,8 @@ ImageEnhancer::EdgeDetectorType ToEdge(CvEdgeMethod m) {
         case CvEdgeMethod::Sobel: return ImageEnhancer::EdgeDetectorType::Sobel;
         case CvEdgeMethod::Laplacian: return ImageEnhancer::EdgeDetectorType::Laplacian;
         case CvEdgeMethod::Scharr: return ImageEnhancer::EdgeDetectorType::Scharr;
+        case CvEdgeMethod::LoG: return ImageEnhancer::EdgeDetectorType::LoG;
+        case CvEdgeMethod::DoG: return ImageEnhancer::EdgeDetectorType::DoG;
     }
     return ImageEnhancer::EdgeDetectorType::Canny;
 }
@@ -76,7 +78,9 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
             break;
         case CvImageStepKind::Edges:
             ok = ImageEnhancer::ApplyEdgeDetection(x, w, h, c, ToEdge(s.edge_method), s.threshold1, s.threshold2,
-                                                   s.edge_kernel);
+                                                   s.edge_kernel,
+                                                   static_cast<ImageEnhancer::EdgeDirection>(s.edge_direction),
+                                                   s.edge_sigma, s.edge_sigma2);
             if (ok && c > 1) {  // the class repeats the edge map in each channel: keep one
                 for (size_t i = 0, n = static_cast<size_t>(w) * h; i < n; ++i) x[i] = x[i * c];
                 x.resize(static_cast<size_t>(w) * h);

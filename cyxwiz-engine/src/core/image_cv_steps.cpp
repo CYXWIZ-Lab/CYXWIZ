@@ -59,6 +59,8 @@ const char* EdgeName(CvEdgeMethod m) {
         case CvEdgeMethod::Sobel: return "Sobel";
         case CvEdgeMethod::Laplacian: return "Laplacian";
         case CvEdgeMethod::Scharr: return "Scharr";
+        case CvEdgeMethod::LoG: return "LoG";
+        case CvEdgeMethod::DoG: return "DoG";
     }
     return "edges";
 }
@@ -71,6 +73,20 @@ const char* WarpName(CvWarpMethod m) {
         case CvWarpMethod::LinearPolar: return "linear-polar";
     }
     return "warp";
+}
+
+bool Gradient(CvEdgeMethod m) { return m == CvEdgeMethod::Sobel || m == CvEdgeMethod::Scharr; }
+
+// ", x" for a Sobel or Scharr direction other than the magnitude.
+const char* EdgeDirectionSuffix(const CvImageStep& s) {
+    if (!Gradient(s.edge_method)) return "";
+    switch (s.edge_direction) {
+        case CvEdgeDirection::Magnitude: return "";
+        case CvEdgeDirection::X: return ", x";
+        case CvEdgeDirection::Y: return ", y";
+        case CvEdgeDirection::Angle: return ", angle";
+    }
+    return "";
 }
 
 bool Polar(CvWarpMethod m) { return m == CvWarpMethod::LogPolar || m == CvWarpMethod::LinearPolar; }
@@ -207,6 +223,13 @@ std::string ValidateCvImageStep(const CvImageStep& s, const image::ImageShape& i
                     return "kernel size must be 1, 3, 5 or 7 for Sobel";
             } else if (s.edge_method == CvEdgeMethod::Laplacian) {
                 if (!Odd(s.edge_kernel) || s.edge_kernel > 31) return "kernel size must be odd, at most 31, for Laplacian";
+            } else if (s.edge_method == CvEdgeMethod::LoG) {
+                if (!Odd(s.edge_kernel) || s.edge_kernel > 31) return "kernel size must be odd, at most 31, for LoG";
+                if (!(s.edge_sigma > 0.0f)) return "sigma must be greater than 0";
+            } else if (s.edge_method == CvEdgeMethod::DoG) {
+                if (!(s.edge_sigma > 0.0f)) return "sigma must be greater than 0";
+                if (!(s.edge_sigma2 > s.edge_sigma))
+                    return "the second sigma must be greater than the first (" + Number(s.edge_sigma) + ")";
             }
             return "";
         case CvImageStepKind::Filter: {
@@ -319,8 +342,13 @@ std::string CvImageStepText(const CvImageStep& s) {
         case CvImageStepKind::Edges:
             if (s.edge_method == CvEdgeMethod::Canny)
                 return "Edges (Canny " + Number(s.threshold1) + " / " + Number(s.threshold2) + ")";
-            if (s.edge_method == CvEdgeMethod::Scharr) return "Edges (Scharr)";
-            return std::string("Edges (") + EdgeName(s.edge_method) + " " + std::to_string(s.edge_kernel) + ")";
+            if (s.edge_method == CvEdgeMethod::Scharr) return std::string("Edges (Scharr") + EdgeDirectionSuffix(s) + ")";
+            if (s.edge_method == CvEdgeMethod::LoG)
+                return "Edges (LoG " + std::to_string(s.edge_kernel) + ", sigma " + Number(s.edge_sigma) + ")";
+            if (s.edge_method == CvEdgeMethod::DoG)
+                return "Edges (DoG " + Number(s.edge_sigma) + " / " + Number(s.edge_sigma2) + ")";
+            return std::string("Edges (") + EdgeName(s.edge_method) + " " + std::to_string(s.edge_kernel) +
+                   EdgeDirectionSuffix(s) + ")";
         case CvImageStepKind::Smooth: {
             const std::string k = std::to_string(s.kernel_size) + kTimes + std::to_string(s.kernel_size);
             if (s.smooth_method == CvSmoothMethod::Box) return "Box " + k;
@@ -379,6 +407,11 @@ nlohmann::json CvImageStepIdentity(const CvImageStep& s) {
             j["threshold1"] = f(s.threshold1);
             j["threshold2"] = f(s.threshold2);
             j["kernel"] = s.edge_kernel;
+            // Only where they are read, so the sets prepared before these settings keep their key.
+            if (Gradient(s.edge_method) && s.edge_direction != CvEdgeDirection::Magnitude)
+                j["direction"] = static_cast<int>(s.edge_direction);
+            if (s.edge_method == CvEdgeMethod::LoG || s.edge_method == CvEdgeMethod::DoG) j["sigma"] = f(s.edge_sigma);
+            if (s.edge_method == CvEdgeMethod::DoG) j["sigma2"] = f(s.edge_sigma2);
             break;
         case CvImageStepKind::Smooth:
             j["method"] = static_cast<int>(s.smooth_method);

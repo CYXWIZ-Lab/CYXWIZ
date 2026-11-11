@@ -1985,14 +1985,17 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::ImageEdges] = {
         "Image Edges",
-        "An edge map instead of the photo: Canny, Sobel, Laplacian or Scharr. The output has one channel.",
+        "An edge map instead of the photo: Canny, Sobel, Laplacian, Scharr, LoG or DoG. The output has one channel.",
         "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
         "Runs in training, validation and test.",
         {
-            {"method", "canny, sobel, laplacian or scharr"},
+            {"method", "canny, sobel, laplacian, scharr, log or dog"},
+            {"direction", "Sobel and Scharr: magnitude, x, y or angle"},
             {"threshold1", "Canny: weak edge threshold (0 to 255 scale)"},
             {"threshold2", "Canny: strong edge threshold"},
-            {"kernel_size", "Sobel: 1, 3, 5 or 7; Laplacian: odd up to 31"}
+            {"kernel_size", "Sobel: 1, 3, 5 or 7; Laplacian and LoG: odd up to 31"},
+            {"sigma", "LoG: smoothing before the Laplacian; DoG: the finer blur"},
+            {"sigma2", "DoG: the coarser blur"}
         },
         {
             "Shapes matter more than colour or texture",
