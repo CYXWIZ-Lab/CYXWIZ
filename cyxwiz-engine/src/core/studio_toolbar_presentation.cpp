@@ -160,9 +160,6 @@ GraphMenu GraphMenuFor(const GraphInputs& in, int selected) {
     if (selected == 0) {
         out.duplicate = Off("Select nodes first");
         out.remove = Off("Select nodes first");
-    } else if (!busy.empty()) {
-        out.duplicate = Off(busy);
-        out.remove = Off(busy);
     }
     return out;
 }

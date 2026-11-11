@@ -26,7 +26,7 @@ title when the Studio is moved out of the main window).
   - **Clear the canvas...**: asks first; Ctrl+Z brings the nodes back. The
     file changes only when you save.
   - While a run keeps the graph busy (training, a test, a pipeline, a Data
-    Input loading its data), Load, Clear and Delete stay in the menu, greyed,
+    Input loading its data), Load and Clear stay in the menu, greyed,
     with the reason under them ("Not while training is active ...").
 - **Save** is also on the bar.
 

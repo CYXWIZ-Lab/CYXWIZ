@@ -338,7 +338,9 @@ void ScriptEditorPanel::LoadGeneratedCode(const std::string& code, const std::st
     // Check if a tab with this filename already exists
     int existing_tab_index = -1;
     for (int i = 0; i < static_cast<int>(tabs_.size()); i++) {
-        if (tabs_[i]->filename == target_filename) {
+        // Only a generated tab not saved yet: a file the user opened or saved
+        // under the same name is theirs and is not replaced.
+        if (tabs_[i]->filename == target_filename && tabs_[i]->filepath.empty()) {
             existing_tab_index = i;
             break;
         }

@@ -173,8 +173,8 @@ int main() {
     g.locked = "training is active (including pause or cleanup)";
     gm = GraphMenuFor(g, 2);
     Check(!gm.load.enabled && gm.load.reason == "Not while training is active (including pause or cleanup)." &&
-              !gm.clear.enabled && gm.clear.reason == gm.load.reason && !gm.remove.enabled && gm.export_graph.enabled,
-          "a locked graph: no Load, Clear or Delete; Export still writes a copy");
+              !gm.clear.enabled && gm.clear.reason == gm.load.reason && gm.remove.enabled && gm.export_graph.enabled,
+          "a locked graph: no Load or Clear (they replace the graph); Delete and Export as with the keys");
     g = {};
     gm = GraphMenuFor(g, 0);
     Check(!gm.clear.enabled && gm.clear.reason == "The canvas is already empty." && !gm.export_graph.enabled,

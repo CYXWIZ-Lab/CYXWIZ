@@ -913,18 +913,21 @@ void NodeEditor::RenderEmptyCanvas() {
         starter_graphs_found_ = true;
     }
     const st::EmptyCanvas text;
-    // A small window of its own in the canvas centre (the canvas takes the
-    // clicks everywhere else, so a node can still be dropped around it).
-    ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(ImVec2(canvas_origin_.x + canvas_size_.x * 0.5f, canvas_origin_.y + canvas_size_.y * 0.45f),
-                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowBgAlpha(0.0f);
+    // Two small windows of their own in the canvas centre: the words take no
+    // input (a node dropped on them, a right-click or the wheel reach the
+    // canvas, as the hint says), only the row of buttons below them does.
+    const float centre_x = canvas_origin_.x + canvas_size_.x * 0.5f;
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                    ImGuiWindowFlags_NoMove;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    if (ImGui::Begin("##EmptyCanvas", nullptr, flags)) {
+    ::gui::NextWindowFollowsCurrent();
+    ImGui::SetNextWindowPos(ImVec2(centre_x, canvas_origin_.y + canvas_size_.y * 0.40f), ImGuiCond_Always,
+                            ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    float words_bottom = canvas_origin_.y + canvas_size_.y * 0.45f;
+    if (ImGui::Begin("##EmptyCanvas", nullptr, flags | ImGuiWindowFlags_NoInputs)) {
         const float wrap = std::min(canvas_size_.x - 48.0f, ImGui::GetFontSize() * 26.0f);
         const auto centred = [wrap](const char* line, const ImVec4& colour) {
             const float w = std::min(ImGui::CalcTextSize(line).x, wrap);
@@ -936,15 +939,17 @@ void NodeEditor::RenderEmptyCanvas() {
         ImGui::Dummy(ImVec2(wrap, 0.0f));
         centred(text.title, t.text_bright);
         centred(text.hint, t.text_dim);
-        ImGui::Spacing();
+        words_bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
+    }
+    ImGui::End();
+
+    ::gui::NextWindowFollowsCurrent();
+    ImGui::SetNextWindowPos(ImVec2(centre_x, words_bottom), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    if (ImGui::Begin("##EmptyCanvasActions", nullptr, flags)) {
         const char* search = ICON_FA_MAGNIFYING_GLASS " Search nodes";
         const char* panel = ICON_FA_CUBES " Open the Nodes panel";
         const char* example = ICON_FA_DIAGRAM_PROJECT " Open an example graph " ICON_FA_CHEVRON_DOWN;
-        const float sp = ImGui::GetStyle().ItemSpacing.x;
-        const float row = ui::ButtonWidth(search, ui::ButtonSize::Small) +
-                          (open_nodes_panel_callback_ ? ui::ButtonWidth(panel, ui::ButtonSize::Small) + sp : 0.0f) +
-                          (starter_graphs_.empty() ? 0.0f : ui::ButtonWidth(example, ui::ButtonSize::Small) + sp);
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (wrap - row) * 0.5f));
         if (ui::SecondaryButton(search)) {
             node_add_search_.just_activated = true;
             node_add_search_.is_active = true;

@@ -25,7 +25,6 @@ public:
         ContinueWithout        // Continue without a project
     };
 
-
     // Python status shown as a chip at the top right; clicking it calls
     // `on_click` (the application opens the Python dialog).
     struct PythonStatus {

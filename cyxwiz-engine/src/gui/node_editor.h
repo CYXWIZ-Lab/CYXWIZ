@@ -1276,8 +1276,6 @@ private:
     // Used by FindEmptyPosition() which may be called outside the editor scope
     std::map<int, ImVec2> cached_node_positions_;
 
-    // Save as Pattern dialog state
-
     // Auto-insert Flatten dialog state
     bool show_auto_insert_flatten_dialog_ = false;
     int pending_flatten_from_node_ = -1;
@@ -1314,8 +1312,6 @@ private:
     // executor reports step states, the recipe node shows their roll-up.
     std::map<int, std::vector<int>> recipe_step_ids_;
     void RollUpRecipeExecutionStates();
-
-    // Empty graph warning popup state
 
     // Search state (Ctrl+F for existing nodes)
     SearchState search_state_;
