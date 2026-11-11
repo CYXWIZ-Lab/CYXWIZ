@@ -575,6 +575,7 @@ struct TrainingConfiguration {
     float min_lr_ratio = 0.1f;          // decay floor as a fraction of learning_rate
     float grad_clip_norm = 0.0f;        // 0 = off
     std::string weight_decay_exclude = "none";  // none | norms_and_biases | norms_biases_embeddings
+    bool nesterov = false;              // SGD: Nesterov momentum
     // Scheduler node on the training optimizer (TOFIX140 A3). TrainingExecutor
     // attaches it unless a scheduler is configured on the executor directly.
     std::optional<TrainingSchedulerSpec> scheduler;

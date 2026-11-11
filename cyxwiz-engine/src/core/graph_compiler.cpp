@@ -2848,6 +2848,7 @@ void ExtractOptimizerConfiguration(const gui::MLNode& node,
     config.epsilon = 1e-8f;
     config.rmsprop_alpha = 0.99f;
     config.weight_decay = 0.0f;
+    config.nesterov = false;
 
     switch (node.type) {
         case gui::NodeType::SGD:
@@ -2942,12 +2943,21 @@ void ExtractOptimizerConfiguration(const gui::MLNode& node,
         case gui::NodeType::SGD:
             parse("momentum", config.momentum, 0.0f, true, 1.0f, false,
                   config.momentum);
-            if (node.parameters.count("weight_decay")) {
-                AddIssue(config, IssueLevel::Warning,
-                         "SGD weight_decay is not supported by the backend and "
-                         "will be ignored",
-                         node.id, node.name,
-                         errors::Compiler::UnsupportedTrainingNode);
+            parse("weight_decay", config.weight_decay, 0.0f, true,
+                  std::numeric_limits<float>::max(), true, config.weight_decay);
+            parse_choice("weight_decay_exclude", {"none", "norms_and_biases"}, config.weight_decay_exclude);
+            if (const auto it = node.parameters.find("nesterov"); it != node.parameters.end() && !it->second.empty()) {
+                if (it->second != "true" && it->second != "false") {
+                    AddIssue(config, IssueLevel::Error, "Invalid optimizer parameter 'nesterov': must be true or false",
+                             node.id, node.name, errors::Compiler::InvalidParameter);
+                }
+                config.nesterov = it->second == "true";
+            }
+            if (config.nesterov && !(config.momentum > 0.0f)) {
+                AddIssue(config, IssueLevel::Error,
+                         "Nesterov momentum looks ahead along the momentum: set momentum above 0 (0.9 is usual) "
+                         "or turn Nesterov off",
+                         node.id, node.name, errors::Compiler::InvalidParameter);
             }
             break;
         case gui::NodeType::Adam:

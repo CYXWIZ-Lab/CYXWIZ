@@ -321,6 +321,13 @@ void CheckRefusals() {
                              Penalty(gui::NodeType::L2Regularization, 12, {})},
                             0.0625),
                  "must sit between the training loss and the optimizer", "two chained penalties");
+    {
+        // The SGD node: Nesterov needs momentum (BuildGraph sets momentum 0).
+        Graph nesterov = BuildGraph({}, 0.0625);
+        for (auto& node : nesterov.nodes)
+            if (node.type == gui::NodeType::SGD) node.parameters["nesterov"] = "true";
+        CheckRefused(nesterov, "set momentum above 0", "Nesterov without momentum");
+    }
     CheckRefused(BuildGraph({Penalty(gui::NodeType::L1Regularization, 11, {{"lambda", "-1"}})}, 0.0625),
                  "must be a number from 0 to 1000000", "a negative lambda");
     CheckRefused(BuildGraph({Penalty(gui::NodeType::ElasticNet, 11, {{"l1_ratio", "2"}})}, 0.0625),
@@ -475,7 +482,13 @@ int main(int, char** argv) {
             penalties.push_back(
                 Penalty(NodeTypeNamed(c.at("node")), 11, c.at("parameters").get<std::map<std::string, std::string>>()));
         }
-        const auto config = CompileValid(BuildGraph(penalties, learning_rate), batch_size, name);
+        Graph graph = BuildGraph(penalties, learning_rate);
+        if (c.contains("optimizer"))  // the SGD node's own settings: momentum, Nesterov, weight decay
+            for (auto& node : graph.nodes)
+                if (node.type == gui::NodeType::SGD)
+                    for (const auto& [key, value] : c.at("optimizer").get<std::map<std::string, std::string>>())
+                        node.parameters[key] = value;
+        const auto config = CompileValid(graph, batch_size, name);
         CheckParameters(TrainAndRead(config, dataset, epochs, name), c.at("parameters_after"), tolerance,
                         name + ": trained parameters match torch");
     }

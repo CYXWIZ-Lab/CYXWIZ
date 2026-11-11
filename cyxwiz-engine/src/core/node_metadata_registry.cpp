@@ -3851,11 +3851,18 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::SGD, NodeCategory::Training, "SGD", ICON_FA_GRADUATION_CAP,
         {"sgd", "stochastic gradient descent", "optimizer", "optimization", "training"},
-        0, false, "Stochastic gradient descent with optional momentum", "", "",
+        0, false, "Stochastic gradient descent with momentum, Nesterov and weight decay", "", "",
         {{"Loss", PinType::Loss, true, "Scalar training loss used for backpropagation"}},
         {{"State", PinType::Optimizer, false, "Optional optimizer-state handle"}},
         {{"learning_rate", "float", "0.01", "Positive parameter-update step size", {}, ""},
          {"momentum", "float", "0.9", "Momentum coefficient in [0, 1)", {}, ""},
+         {"nesterov", "bool", "false", "Nesterov momentum: step along gradient + momentum x velocity (the look-ahead form). "
+          "Needs momentum above 0. The usual choice for CNNs trained with SGD.", {}, "", "Nesterov"},
+         {"weight_decay", "float", "0", "L2 weight decay added to the gradient (weight_decay x weight); 0.0001 to 0.0005 "
+          "is usual for CNNs. 0 = off.", {}, "0.0-1.0", "Weight Decay"},
+         {"weight_decay_exclude", "enum", "none", "Parameters that skip weight decay. norms_and_biases: every 1-D tensor - "
+          "biases and normalization scales. none: decay everything (torch.optim.SGD's default).",
+          {"none", "norms_and_biases"}, "", "Weight Decay Exclude", "Schedule", false, false},
          {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant"}, "",
           "LR Schedule", "Schedule", false, false},
          {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical).", {}, "0.0-0.99",

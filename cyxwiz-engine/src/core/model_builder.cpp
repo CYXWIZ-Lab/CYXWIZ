@@ -1777,6 +1777,8 @@ ResolvedOptimizerConfiguration ResolveOptimizerConfigurationImpl(
     switch (config.optimizer_type) {
         case gui::NodeType::SGD:
             out.momentum = config.momentum;
+            out.weight_decay = config.weight_decay;
+            out.nesterov = config.nesterov;
             break;
         case gui::NodeType::Adam:
         case gui::NodeType::NAdam:
@@ -1812,7 +1814,8 @@ std::unique_ptr<Optimizer> BuildOptimizerFromConfigImpl(
     switch (config.optimizer_type) {
         case gui::NodeType::SGD:
             return std::make_unique<SGDOptimizer>(
-                resolved.learning_rate, resolved.momentum.value());
+                resolved.learning_rate, resolved.momentum.value(),
+                resolved.weight_decay.value(), resolved.nesterov.value());
         case gui::NodeType::Adam:
             return std::make_unique<AdamOptimizer>(
                 resolved.learning_rate, resolved.beta1.value(),

@@ -2486,8 +2486,9 @@ bool TrainingExecutor::RunGenerationPreview(GenerationPreviewPoint point) {
 void TrainingExecutor::ConfigureWeightDecayExclusions() {
     if (config_.weight_decay_exclude == "none") return;
     auto* adam = dynamic_cast<AdamOptimizer*>(optimizer_.get());
-    if (!adam) {
-        throw std::runtime_error("TrainingExecutor: weight_decay_exclude needs the AdamW optimizer");
+    auto* sgd = dynamic_cast<SGDOptimizer*>(optimizer_.get());
+    if (!adam && !sgd) {
+        throw std::runtime_error("TrainingExecutor: weight_decay_exclude needs the AdamW or SGD optimizer");
     }
     // 1-D tensors are biases and normalization scales/shifts; embedding tables
     // are the Embedding and learned-position modules (SequentialModel names
@@ -2514,9 +2515,10 @@ void TrainingExecutor::ConfigureWeightDecayExclusions() {
         for (const auto& prefix : embedding_prefixes) embedding = embedding || name.rfind(prefix, 0) == 0;
         if (tensor.Shape().size() < 2 || embedding) excluded.insert(name);
     }
-    spdlog::info("TrainingExecutor: AdamW weight decay skips {} of {} parameter tensors ({})",
+    spdlog::info("TrainingExecutor: {} weight decay skips {} of {} parameter tensors ({})", adam ? "AdamW" : "SGD",
                  excluded.size(), total, config_.weight_decay_exclude);
-    adam->SetNoDecayParameters(std::move(excluded));
+    if (adam) adam->SetNoDecayParameters(std::move(excluded));
+    else sgd->SetNoDecayParameters(std::move(excluded));
 }
 
 void TrainingExecutor::EnableResumeCheckpoints(std::filesystem::path root, TrainingResumeIdentity identity,

@@ -129,6 +129,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **SGD: Nesterov momentum and weight decay.** The SGD node gains
+  `nesterov`, `weight_decay` and `weight_decay_exclude` (none /
+  norms_and_biases), with torch.optim.SGD's arithmetic. Before, a
+  `weight_decay` on SGD was ignored with a warning.
 - **Image Gabor node.** A bank of striped kernels over every image, done
   once when the images are prepared: one channel per orientation and
   wavelength (4 x 2 by default), as the energy of both phases or one phase.

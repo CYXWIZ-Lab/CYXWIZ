@@ -1259,7 +1259,9 @@ std::string NodeEditor::PyTorchOptimizerSetup() const {
     switch (node->type) {
         case NodeType::SGD:
             code += "    optimizer = optim.SGD(" + params + ", lr=" + lr + ", momentum=" +
-                    GetParamOrDefault(*node, "momentum", "0.9") + ")\n";
+                    GetParamOrDefault(*node, "momentum", "0.9") + ", weight_decay=" +
+                    GetParamOrDefault(*node, "weight_decay", "0") +
+                    (GetParamOrDefault(*node, "nesterov", "false") == "true" ? ", nesterov=True" : "") + ")\n";
             break;
         case NodeType::AdamW: {
             const std::string decay = GetParamOrDefault(*node, "weight_decay", "0.01");

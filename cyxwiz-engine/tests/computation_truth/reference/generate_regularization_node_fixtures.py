@@ -57,14 +57,33 @@ def penalty(node: str | None, params: dict[str, str], model: torch.nn.Module) ->
     raise ValueError(node)
 
 
-def case(name: str, node: str | None, params: dict[str, str]) -> dict[str, Any]:
+def sgd(model: torch.nn.Module, settings: dict[str, str]) -> torch.optim.Optimizer:
+    """The SGD node's settings as the graph stores them, as torch.optim.SGD."""
+    decay = float(settings.get("weight_decay", "0"))
+    options = {
+        "lr": LEARNING_RATE,
+        "momentum": float(settings.get("momentum", "0")),
+        "nesterov": settings.get("nesterov", "false") == "true",
+    }
+    if settings.get("weight_decay_exclude", "none") == "norms_and_biases":
+        # Every 1-D tensor (here the bias) takes no decay.
+        groups = [
+            {"params": [p for p in model.parameters() if p.dim() >= 2], "weight_decay": decay},
+            {"params": [p for p in model.parameters() if p.dim() < 2], "weight_decay": 0.0},
+        ]
+        return torch.optim.SGD(groups, **options)
+    return torch.optim.SGD(model.parameters(), weight_decay=decay, **options)
+
+
+def case(name: str, node: str | None, params: dict[str, str],
+         optimizer_settings: dict[str, str] | None = None) -> dict[str, Any]:
     model = torch.nn.Linear(2, 1)
     weight_name, bias_name = list(INITIAL)
     with torch.no_grad():
         # Engine [in, out] -> torch [out, in]
         model.weight.copy_(torch.tensor(INITIAL[weight_name]).reshape(2, 1).t())
         model.bias.copy_(torch.tensor(INITIAL[bias_name]))
-    optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
+    optimizer = sgd(model, optimizer_settings or {})
     x = torch.tensor([X0, X1]).t()
     y = torch.tensor(LABEL).reshape(-1, 1)
     for _ in range(EPOCHS):
@@ -79,6 +98,8 @@ def case(name: str, node: str | None, params: dict[str, str]) -> dict[str, Any]:
     if node is not None:
         result["node"] = node
         result["parameters"] = params
+    if optimizer_settings:
+        result["optimizer"] = optimizer_settings
     result["parameters_after"] = {
         weight_name: model.weight.detach().t().reshape(-1).tolist(),
         bias_name: model.bias.detach().tolist(),
@@ -107,6 +128,12 @@ def main() -> None:
             case("l1", "L1Regularization", {"lambda": "0.05"}),
             case("l2", "L2Regularization", {"lambda": "0.05"}),
             case("elastic_net", "ElasticNet", {"lambda": "0.1", "l1_ratio": "0.25"}),
+            # The SGD node's own settings (TOFIX178 1.7): weight decay, Nesterov, the exclusion.
+            case("sgd_weight_decay", None, {}, {"momentum": "0", "weight_decay": "0.1"}),
+            case("sgd_nesterov", None, {}, {"momentum": "0.9", "nesterov": "true"}),
+            case("sgd_nesterov_decay_no_bias", None, {},
+                 {"momentum": "0.9", "nesterov": "true", "weight_decay": "0.05",
+                  "weight_decay_exclude": "norms_and_biases"}),
         ],
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

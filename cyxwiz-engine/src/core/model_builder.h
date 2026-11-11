@@ -88,6 +88,7 @@ struct ResolvedOptimizerConfiguration {
     std::optional<float> epsilon;
     std::optional<float> rmsprop_alpha;
     std::optional<float> weight_decay;
+    std::optional<bool> nesterov;  // SGD
 };
 
 // Build SequentialModel + Loss + Optimizer from a TrainingConfiguration.

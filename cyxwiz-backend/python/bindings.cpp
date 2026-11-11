@@ -411,10 +411,12 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // SGD Optimizer
     py::class_<cyxwiz::SGDOptimizer, cyxwiz::Optimizer>(m, "SGD")
-        .def(py::init<double, double>(),
+        .def(py::init<double, double, double, bool>(),
              py::arg("learning_rate") = 0.01,
              py::arg("momentum") = 0.0,
-             "SGD optimizer with optional momentum")
+             py::arg("weight_decay") = 0.0,
+             py::arg("nesterov") = false,
+             "SGD optimizer with optional momentum, Nesterov momentum and L2 weight decay (torch.optim.SGD, dampening 0)")
         .def("step", &cyxwiz::SGDOptimizer::Step,
              py::arg("parameters"), py::arg("gradients"))
         .def("zero_grad", &cyxwiz::SGDOptimizer::ZeroGrad);

@@ -1344,10 +1344,14 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Stochastic Gradient Descent",
         "Classic optimizer. Simple but requires careful learning rate tuning. "
         "Add momentum for faster convergence.",
-        "weight = weight - lr * gradient.",
+        "g = gradient + weight_decay * weight; v = momentum * v + g; weight = weight - lr * v "
+        "(with Nesterov: lr * (g + momentum * v)). torch.optim.SGD, dampening 0.",
         {
             {"learning_rate", "Positive update step size (0.01 default)"},
-            {"momentum", "Momentum coefficient in [0, 1)"}
+            {"momentum", "Momentum coefficient in [0, 1)"},
+            {"nesterov", "Look-ahead momentum; needs momentum above 0"},
+            {"weight_decay", "L2 decay added to the gradient; 0 = off"},
+            {"weight_decay_exclude", "none, or norms_and_biases (1-D tensors skip the decay)"}
         },
         {
             "Use momentum >= 0.9 for better convergence",

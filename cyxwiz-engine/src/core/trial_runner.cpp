@@ -50,6 +50,7 @@ void TakeTrialSettings(const TrainingConfiguration& from, TrainingConfiguration&
     to.rmsprop_alpha = from.rmsprop_alpha;
     to.weight_decay = from.weight_decay;
     to.weight_decay_exclude = from.weight_decay_exclude;
+    to.nesterov = from.nesterov;
     to.lr_schedule = from.lr_schedule;
     to.warmup_ratio = from.warmup_ratio;
     to.min_lr_ratio = from.min_lr_ratio;
