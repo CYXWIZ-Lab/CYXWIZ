@@ -1,11 +1,11 @@
-// Memory panel: the Loaded data tab (TOFIX160 P1, approved mockup
+// Monitor window: the Loaded data tab (TOFIX160 P1, approved mockup
 // D:/bench157/loaded_data_mockup.html). Every dataset the Engine holds, its
 // memory (buffers shared by several names counted once, and marked), disk and
 // the file it reads, with the Arrow pool now and at its peak. The account
 // (DataRegistry::LoadedData) is rebuilt only when the dataset catalog reports
 // a change; the pool is read each frame (two counters).
 
-#include "memory_panel.h"
+#include "monitor_panel.h"
 
 #include "../../core/data_registry.h"
 #include "../icons.h"
@@ -30,9 +30,11 @@ std::string Thousands(int64_t n) {
     return n < 0 ? "-" + digits : digits;
 }
 
+std::string FormatBytes(uint64_t bytes) { return monitor_view::SizeText(bytes); }
+
 }  // namespace
 
-void MemoryPanel::RenderLoadedData() {
+void MonitorPanel::RenderLoadedData() {
     const ui::Tokens& t = ui::CurrentTokens();
     if (loaded_stale_) {
         loaded_ = DataRegistry::Instance().LoadedData();

@@ -73,8 +73,7 @@
 #include "panels/query_console.h"
 #include "panels/custom_node_editor.h"
 #include "panels/theme_editor.h"
-#include "panels/memory_panel.h"
-#include "panels/memory_monitor.h"
+#include "panels/monitor_panel.h"
 #include "panels/variable_explorer.h"
 #include "panels/plot_output_panel.h"
 #include "panels/export_dialog.h"
@@ -608,8 +607,7 @@ MainWindow::MainWindow()
     query_console_ = std::make_unique<cyxwiz::QueryConsolePanel>();
     custom_node_editor_ = std::make_unique<gui::CustomNodeEditorPanel>();
     theme_editor_ = std::make_unique<gui::ThemeEditorPanel>();
-    memory_panel_ = std::make_unique<cyxwiz::MemoryPanel>();
-    memory_monitor_ = std::make_unique<cyxwiz::MemoryMonitor>();
+    monitor_panel_ = std::make_unique<cyxwiz::MonitorPanel>();
     variable_explorer_ = std::make_unique<cyxwiz::VariableExplorerPanel>();
     variable_explorer_->SetScriptingEngine(scripting_engine_);
     table_viewer_->SetScriptingEngine(scripting_engine_.get());  // Data Viewer reads again (TOFIX133 P5)
@@ -1183,20 +1181,42 @@ MainWindow::MainWindow()
         }
     });
 
-    // Tools > Monitoring > Clear Cache: the prepared-data cache of this
-    // project, after the dashboard's confirmation. Garbage Collection:
-    // device buffers back to the driver and a Python gc pass (TOFIX129 G3).
+    // Tools > Monitoring (TOFIX129 D13): the Monitor window's tabs, its Clear
+    // caches dialog (every cache of Preferences > Storage, at any time) and
+    // Free unused memory, which says what it freed.
+    toolbar_->SetOpenMonitorCallback([this](const std::string& tab) {
+        if (monitor_panel_) monitor_panel_->Open(tab);
+    });
     toolbar_->SetClearCacheCallback([this]() {
-        if (training_plot_panel_) training_plot_panel_->RequestClearPreparedDataCache();
+        if (monitor_panel_) monitor_panel_->OpenClearCaches();
     });
     toolbar_->SetRunGCCallback([this]() {
-        cyxwiz::ReleaseUnusedDeviceMemory();
-        if (scripting_engine_ && !scripting_engine_->IsCommandRunning() && !scripting_engine_->IsScriptRunning()) {
-            scripting_engine_->ExecuteCommandAsync("import gc; gc.collect()");
-            spdlog::info("Garbage collection: device buffers released, Python gc.collect() requested");
-        } else {
-            spdlog::info("Garbage collection: device buffers released (Python busy, gc skipped)");
-        }
+        if (!monitor_panel_) return;
+        monitor_panel_->Open("system");  // the result shows there
+        monitor_panel_->FreeUnusedMemory();
+    });
+    monitor_panel_->SetOpenProfiler([this]() {
+        if (studio_debugger_panel_) studio_debugger_panel_->ShowRuntimeProfile();
+    });
+    // Python's own collection: the number of objects gc.collect() found.
+    monitor_panel_->SetCollectPython([this](std::function<void(long long)> done) {
+        if (!scripting_engine_ || !scripting_engine_->IsInitialized() || scripting_engine_->IsCommandRunning() ||
+            scripting_engine_->IsScriptRunning())
+            return false;
+        scripting::ScriptingEngine::RunCallbacks callbacks;
+        callbacks.on_complete = [done](const scripting::ExecutionResult& result) {
+            long long objects = 0;
+            try {
+                objects = result.success ? std::stoll(result.output) : 0;
+            } catch (...) {
+                objects = 0;
+            }
+            done(objects);
+        };
+        return scripting_engine_->ExecuteScriptAsync("import gc\nprint(gc.collect())", std::move(callbacks));
+    });
+    FrameMetrics::Instance().SetOpenMonitor([this]() {
+        if (monitor_panel_) monitor_panel_->Open("frames");
     });
 
     // File > Save: settings and layout, every open script, and the graph
@@ -1722,22 +1742,6 @@ MainWindow::MainWindow()
             studio_debugger_panel_->ShowRuntimeProfile();
             spdlog::info(
                 "Opened canonical Studio Debugger runtime profile");
-        }
-    });
-
-    // Set up Memory Monitor callback (System Monitor in Profile menu)
-    toolbar_->SetOpenMemoryMonitorCallback([this]() {
-        if (memory_monitor_) {
-            memory_monitor_->Toggle();
-            spdlog::info("Toggled Memory Monitor");
-        }
-    });
-
-    // Set up Memory Panel callback (Memory Visualization in Profile menu)
-    toolbar_->SetOpenMemoryPanelCallback([this]() {
-        if (memory_panel_) {
-            memory_panel_->Show();
-            spdlog::info("Opened Memory Visualization panel");
         }
     });
 
@@ -2467,10 +2471,8 @@ MainWindow::~MainWindow() {
     spdlog::info("~MainWindow: export_dialog_");
     export_dialog_.reset();
     // variable_explorer_ already reset at the beginning
-    spdlog::info("~MainWindow: memory_monitor_");
-    memory_monitor_.reset();
-    spdlog::info("~MainWindow: memory_panel_");
-    memory_panel_.reset();
+    spdlog::info("~MainWindow: monitor_panel_");
+    monitor_panel_.reset();
     spdlog::info("~MainWindow: theme_editor_");
     theme_editor_.reset();
     spdlog::info("~MainWindow: custom_node_editor_");
@@ -2847,8 +2849,7 @@ void MainWindow::Render() {
     TimedRender("query console", query_console_);
     TimedRender("custom node editor", custom_node_editor_);
     TimedRender("theme editor", theme_editor_);
-    TimedRender("memory", memory_panel_);
-    TimedRender("memory monitor", memory_monitor_);
+    TimedRender("Monitor", monitor_panel_);
     cyxwiz::VariablesView::PollAll(scripting_engine_.get());  // results for every Variables view
     TimedRender("variable explorer", variable_explorer_);
     TimedRender("plot output", plot_output_panel_);
@@ -3310,8 +3311,7 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (query_console_) query_console_->SetVisible(false);
     if (custom_node_editor_) custom_node_editor_->SetVisible(false);
     if (theme_editor_) theme_editor_->SetVisible(false);
-    if (memory_panel_) memory_panel_->SetVisible(false);
-    if (memory_monitor_) memory_monitor_->SetVisible(false);
+    if (monitor_panel_) monitor_panel_->SetVisible(false);
     if (variable_explorer_) variable_explorer_->SetVisible(false);
     if (plot_output_panel_) plot_output_panel_->SetVisible(false);
 

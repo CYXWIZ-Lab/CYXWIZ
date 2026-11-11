@@ -109,7 +109,7 @@ int main() {
     const std::set<std::string> dialog_openers = {
         "file.new_project", "file.open_project", "script.new", "script.open", "file.save_as", "file.import_model",
         "file.preferences", "edit.find", "edit.replace", "edit.find_in_files", "edit.replace_in_files",
-        "edit.go_to_line", "view.command_palette", "view.theme_editor", "nodes.custom_node_editor",
+        "edit.go_to_line", "view.command_palette", "view.theme_editor", "nodes.custom_node_editor", "tools.clear_cache",
         "train.optimizer_settings", "train.compare_test_results", "train.export_test_report",
         "train.load_checkpoint", "data.import", "data.create_custom", "deploy.connect", "deploy.deploy",
         "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin", "deploy.marketplace", "sim.load_mjcf",
@@ -132,7 +132,7 @@ int main() {
         "edit.toggle_line_comment", "edit.toggle_block_comment", "file.preferences",
         "view.panel", "view.save_layout", "view.reset_layout", "view.theme", "view.theme_editor",
         "view.studio_minimap", "view.script_minimap", "tools.idle_log", "tools.verbose_python", "view.fullscreen",
-        "tools.profiler", "tools.memory_panel", "tools.system_monitor",
+        "tools.profiler", "tools.monitor_system", "tools.monitor_memory", "tools.monitor_loaded_data", "tools.monitor_frames",
         "nodes.add_dense", "nodes.add_conv", "nodes.add_pooling", "nodes.add_dropout", "nodes.add_batchnorm",
         "nodes.add_attention", "nodes.group", "nodes.ungroup", "nodes.duplicate", "nodes.delete", "view.icon_pack",
         "nodes.custom_node_editor",

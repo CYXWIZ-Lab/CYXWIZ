@@ -93,8 +93,8 @@ public:
     void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
     void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
     void SetOpenProfilerCallback(std::function<void()> callback) { open_profiler_callback_ = callback; }
-    void SetOpenMemoryMonitorCallback(std::function<void()> callback) { open_memory_monitor_callback_ = callback; }
-    void SetOpenMemoryPanelCallback(std::function<void()> callback) { open_memory_panel_callback_ = callback; }
+    // Tools > Monitoring opens the Monitor window on a tab ("system", "memory", "loaded_data", "frames").
+    void SetOpenMonitorCallback(std::function<void(const std::string&)> callback) { open_monitor_callback_ = std::move(callback); }
     void SetOpenScriptCallback(std::function<void()> callback) { open_script_callback_ = callback; }
     void SetOpenScriptInEditorCallback(std::function<void(const std::string&)> callback) { open_script_in_editor_callback_ = callback; }
     void SetOpenPythonConsoleCallback(std::function<void()> callback) { open_python_console_callback_ = callback; }
@@ -424,8 +424,7 @@ private:
     std::function<void()> open_custom_node_editor_callback_;
     std::function<void()> open_theme_editor_callback_;
     std::function<void()> open_profiler_callback_;
-    std::function<void()> open_memory_monitor_callback_;
-    std::function<void()> open_memory_panel_callback_;
+    std::function<void(const std::string&)> open_monitor_callback_;
     std::function<void()> open_script_callback_;
     std::function<void(const std::string&)> open_script_in_editor_callback_;
     std::function<void()> open_python_console_callback_;

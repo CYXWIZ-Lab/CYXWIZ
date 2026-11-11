@@ -544,8 +544,12 @@ void ToolbarPanel::BuildActionHandlers() {
             if (open_utilities_callback_) open_utilities_callback_(tab);
         };
     call("tools.profiler", open_profiler_callback_);
-    call("tools.memory_panel", open_memory_panel_callback_);
-    call("tools.system_monitor", open_memory_monitor_callback_);
+    for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.monitor_system", "system"},
+                                  {"tools.monitor_memory", "memory"}, {"tools.monitor_loaded_data", "loaded_data"},
+                                  {"tools.monitor_frames", "frames"}})
+        h[id] = [this, tab = std::string(tab)](const std::string&) {
+            if (open_monitor_callback_) open_monitor_callback_(tab);
+        };
     call("tools.clear_cache", clear_cache_callback_);
     call("tools.gc", run_gc_callback_);
     h["tools.idle_log"] = [this](const std::string&) {

@@ -689,13 +689,16 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Tool(f, "tools.regex_tester", "Regex Tester")}));
         i.push_back(Sep());
         i.push_back(Sub("tools.monitoring", "Monitoring", "Watch time and memory use.",
-                        {Action(f, "tools.profiler", "Performance Profiler",
+                        {Action(f, "tools.monitor_system", "System",
+                                "The machine, the compute device and this Engine: CPU, memory, threads."),
+                         Action(f, "tools.monitor_memory", "Memory", "The Engine's memory over time."),
+                         Action(f, "tools.monitor_loaded_data", "Loaded Data", "Every dataset the Engine holds, in memory and on disk."),
+                         Action(f, "tools.monitor_frames", "Frames", "Frame times and the windows they go to."),
+                         Action(f, "tools.profiler", "Performance Profiler",
                                 "Opens the Studio Debugger on its runtime view."),
-                         Action(f, "tools.memory_panel", "Memory Visualization", "Opens the Memory panel."),
-                         Action(f, "tools.system_monitor", "System Monitor", "Opens the system monitor."),
                          Sep(),
-                         Action(f, "tools.clear_cache", "Clear Cache", "Removes the prepared-data cache of this project, after asking."),
-                         Action(f, "tools.gc", "Garbage Collection", "Returns unused device memory to the driver and runs a Python garbage collection.")}));
+                         Action(f, "tools.clear_cache", "Clear Caches...", "Lists the caches with their sizes and clears the ones you tick."),
+                         Action(f, "tools.gc", "Free Unused Memory", "Returns unused device memory to the driver, collects Python's garbage and says what was freed.")}));
         i.push_back(Sub("tools.diagnostics", "Diagnostics", "Extra logging for support.",
                         {Toggle(f, "tools.idle_log", "Log Idle Mode Transitions",
                                 "Logs when the Engine slows its frame rate to save power.", in.idle_log),

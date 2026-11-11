@@ -431,6 +431,20 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             spdlog::warn("Engine settings: the utilities defaults could not be read ({}); using the shipped ones", e.what());
         }
 
+        if (config.contains("monitor") && config["monitor"].is_object()) try {
+            const auto& m = config["monitor"];
+            MonitorConfig loaded;
+            loaded.tab = m.value("tab", loaded.tab);
+            loaded.interval_seconds = std::clamp(m.value("interval_seconds", loaded.interval_seconds), 0.25, 60.0);
+            loaded.keep_seconds = std::clamp(m.value("keep_seconds", loaded.keep_seconds), 60.0, 3600.0);
+            loaded.log_frame_rate = m.value("log_frame_rate", loaded.log_frame_rate);
+            loaded.log_python_commands = m.value("log_python_commands", loaded.log_python_commands);
+            loaded.frame_overlay = m.value("frame_overlay", loaded.frame_overlay);
+            monitor_ = loaded;
+        } catch (const std::exception& e) {
+            spdlog::warn("Engine settings: the monitor defaults could not be read ({}); using the shipped ones", e.what());
+        }
+
         data_budget_bytes_ = 0;
         if (config.contains("data") && config["data"].is_object())
             data_budget_bytes_ = config["data"].value("budget_bytes", uint64_t{0});
@@ -574,6 +588,14 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"json_indent", utilities_.json_indent},
             {"regex_ignore_case", utilities_.regex_ignore_case},
             {"regex_multiline", utilities_.regex_multiline}
+        };
+        config["monitor"] = {
+            {"tab", monitor_.tab},
+            {"interval_seconds", monitor_.interval_seconds},
+            {"keep_seconds", monitor_.keep_seconds},
+            {"log_frame_rate", monitor_.log_frame_rate},
+            {"log_python_commands", monitor_.log_python_commands},
+            {"frame_overlay", monitor_.frame_overlay}
         };
 
         // Recent projects
@@ -908,6 +930,19 @@ void EngineConfig::SetUtilities(const UtilitiesConfig& utilities) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(utilities_ == utilities)) {
         utilities_ = utilities;
+        modified_ = true;
+    }
+}
+
+MonitorConfig EngineConfig::GetMonitor() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return monitor_;
+}
+
+void EngineConfig::SetMonitor(const MonitorConfig& monitor) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(monitor_ == monitor)) {
+        monitor_ = monitor;
         modified_ = true;
     }
 }

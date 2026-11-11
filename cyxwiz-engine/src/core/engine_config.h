@@ -46,6 +46,19 @@ struct UtilitiesConfig {
     bool operator==(const UtilitiesConfig&) const = default;
 };
 
+// The user's defaults for Tools > Monitoring and Tools > Diagnostics
+// (Preferences > General, or "Save as my default" in the Monitor window).
+struct MonitorConfig {
+    std::string tab = "system";      // monitor_view::TabId
+    double interval_seconds = 1.0;   // between readings, 0.25 .. 60
+    double keep_seconds = 900.0;     // history kept: 300, 900 or 3600
+    bool log_frame_rate = false;     // one log line when the Engine slows or speeds its frames
+    bool log_python_commands = false;  // every command sent to Python, with its duration
+    bool frame_overlay = false;      // the frame time overlay
+
+    bool operator==(const MonitorConfig&) const = default;
+};
+
 /**
  * @brief Centralized configuration management for the CyxWiz Engine.
  *
@@ -206,6 +219,9 @@ public:
     UtilitiesConfig GetUtilities() const;
     void SetUtilities(const UtilitiesConfig& utilities);
 
+    MonitorConfig GetMonitor() const;
+    void SetMonitor(const MonitorConfig& monitor);
+
     // ===== Recent Projects =====
 
     // Get list of recent projects (up to 10)
@@ -268,6 +284,7 @@ private:
     uint64_t data_budget_bytes_ = 0;
     AppearanceConfig appearance_;
     UtilitiesConfig utilities_;
+    MonitorConfig monitor_;
 
     // Recent projects
     std::vector<std::string> recent_projects_;  // Recent project paths (max 10)

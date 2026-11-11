@@ -321,13 +321,6 @@ public:
         open_health_ = std::move(open_health);
     }
 
-    // Tools > Monitoring > Clear Cache: shows the panel and asks the same
-    // question as the dashboard card (TOFIX129 G3).
-    void RequestClearPreparedDataCache() {
-        SetVisible(true);
-        materialization_clear_confirm_ = true;
-    }
-
 private:
     std::function<HealthNotice()> health_notice_;
     std::function<void()> open_health_;

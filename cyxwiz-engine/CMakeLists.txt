@@ -664,9 +664,10 @@ set(ENGINE_SOURCES
     src/gui/panels/task_progress_panel.cpp
     src/gui/panels/custom_node_editor.cpp
     src/gui/panels/theme_editor.cpp
-    src/gui/panels/memory_panel.cpp
-    src/gui/panels/memory_panel_loaded_data.cpp
-    src/gui/panels/memory_monitor.cpp
+    src/gui/panels/monitor_panel.cpp
+    src/gui/panels/monitor_panel_loaded_data.cpp
+    src/gui/panels/monitor_panel_frames.cpp
+    src/core/frame_times.cpp
     src/gui/panels/pattern_browser.cpp
     src/gui/panels/variable_explorer.cpp
     src/gui/variables_view.cpp
@@ -943,8 +944,7 @@ set(ENGINE_HEADERS
     src/gui/panels/task_progress_panel.h
     src/gui/panels/custom_node_editor.h
     src/gui/panels/theme_editor.h
-    src/gui/panels/memory_panel.h
-    src/gui/panels/memory_monitor.h
+    src/gui/panels/monitor_panel.h
     src/gui/panels/pattern_browser.h
     src/gui/panels/export_dialog.h
     src/gui/panels/import_dialog.h
@@ -8123,6 +8123,11 @@ if(WIN32)
 endif()
 set_target_properties(test_monitor_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME MonitorPresentation COMMAND test_monitor_presentation)
+
+add_executable(test_frame_times tests/test_frame_times.cpp src/core/frame_times.cpp)
+target_include_directories(test_frame_times PRIVATE src)
+set_target_properties(test_frame_times PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME FrameTimes COMMAND test_frame_times)
 # The same figures against psutil (a skip where psutil is not installed).
 if(Python3_EXECUTABLE)
     add_test(NAME system_metrics_psutil
