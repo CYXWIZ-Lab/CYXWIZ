@@ -539,7 +539,8 @@ void AllocationPanel::RenderActionButtons() {
         ImGui::PopStyleColor(2);
     }
 
-    // Retry button (shown when connection failed)
+    // Retry (shown when connection failed) sends Apply again: the allocations
+    // with the signed-in user's token, the one way a node registers.
     if (show_retry_button_ && !is_connected_to_central_) {
         ImGui::SameLine();
 
@@ -548,7 +549,7 @@ void AllocationPanel::RenderActionButtons() {
 
         ImGui::BeginDisabled(IsCentralCallRunning());
         if (ImGui::Button(ICON_FA_ROTATE_RIGHT " Retry", ImVec2(100, 30))) {
-            RetryConnection();
+            ApplyAllocations();
         }
         ImGui::EndDisabled();
 
@@ -793,33 +794,6 @@ void AllocationPanel::ApplyAllocations() {
         });
 }
 
-void AllocationPanel::RetryConnection() {
-    if (!IsDaemonConnected() || !GetDaemonClient()) {
-        status_message_ = "Not connected to daemon";
-        return;
-    }
-
-    auto* daemon = GetDaemonClient();
-    StartCentralCall("Connecting to Central Server...", [daemon]() {
-        CentralCallOutcome outcome;
-        outcome.kind = CentralCallOutcome::Kind::Retry;
-        auto result = daemon->RetryConnection();
-        outcome.success = result.success;
-        outcome.connected = result.connected;
-        outcome.node_id = result.node_id;
-        outcome.message = result.message;
-        // Sync node_id with Web API so website shows Central Server ID
-        if (result.success && result.connected && !result.node_id.empty()) {
-            if (auth::AuthManager::Instance().SyncNodeIdWithWebApi(result.node_id)) {
-                spdlog::info("Node ID synced with Web API: {}", result.node_id);
-            } else {
-                spdlog::warn("Failed to sync node_id with Web API");
-            }
-        }
-        return outcome;
-    });
-}
-
 void AllocationPanel::DisconnectFromCentral() {
     if (!IsDaemonConnected() || !GetDaemonClient()) {
         status_message_ = "Not connected to daemon";
@@ -883,7 +857,7 @@ void AllocationPanel::FinishCentralCallIfDone() {
     } else if (outcome.kind == Kind::Apply && outcome.success) {
         status_message_ = "Allocations saved (offline mode)";
     } else {
-        status_message_ = (outcome.kind == Kind::Apply ? "Connection failed: " : "Retry failed: ") + outcome.message;
+        status_message_ = "Connection failed: " + outcome.message;
         show_retry_button_ = true;
         connection_failed_ = true;
     }

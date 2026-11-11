@@ -69,15 +69,14 @@ private:
     void LoadAllocations();
     void SaveAllocations();
     void ApplyAllocations();
-    void RetryConnection();
     void DisconnectFromCentral();
     std::string FormatMB(size_t mb) const;
 
-    // Apply, Retry and Disconnect wait on the daemon, which waits on Central
+    // Apply and Disconnect wait on the daemon, which waits on Central
     // Server and the web API: they run off the UI thread so the window keeps
     // drawing, and the status line shows the call in progress.
     struct CentralCallOutcome {
-        enum class Kind { Apply, Retry, Disconnect };
+        enum class Kind { Apply, Disconnect };
         Kind kind = Kind::Apply;
         bool success = false;
         bool connected = false;

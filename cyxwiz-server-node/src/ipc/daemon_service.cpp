@@ -847,55 +847,6 @@ grpc::Status DaemonServiceImpl::SetAllocations(
     return grpc::Status::OK;
 }
 
-grpc::Status DaemonServiceImpl::RetryConnection(
-    grpc::ServerContext* context,
-    const RetryConnectionRequest* request,
-    RetryConnectionResponse* response) {
-
-    spdlog::info("RetryConnection called");
-
-    if (!node_client_) {
-        response->set_success(false);
-        response->set_error_message("NodeClient not initialized");
-        response->set_connected_to_central(false);
-        return grpc::Status::OK;
-    }
-
-    // Check if JWT token is provided
-    if (request->jwt_token().empty()) {
-        response->set_success(false);
-        response->set_error_message("JWT token required for Central Server connection");
-        response->set_connected_to_central(false);
-        return grpc::Status::OK;
-    }
-
-    node_client_->SetAuthToken(request->jwt_token());
-
-    // Attempt registration
-    spdlog::info("Retrying connection to Central Server...");
-    if (node_client_->Register()) {
-        spdlog::info("Successfully registered with Central Server on retry");
-        node_client_->StartHeartbeat(10);
-
-        response->set_success(true);
-        response->set_connected_to_central(true);
-        response->set_node_id(node_client_->GetNodeId());
-
-        // Persist the Central Server node_id for future restarts
-        if (g_save_node_id_callback) {
-            g_save_node_id_callback(node_client_->GetNodeId(), node_id_);
-            spdlog::info("Persisted Central Server node_id: {}", node_client_->GetNodeId());
-        }
-    } else {
-        spdlog::warn("Failed to register with Central Server on retry");
-        response->set_success(false);
-        response->set_error_message("Failed to connect to Central Server. Please try again later.");
-        response->set_connected_to_central(false);
-    }
-
-    return grpc::Status::OK;
-}
-
 grpc::Status DaemonServiceImpl::DisconnectFromCentral(
     grpc::ServerContext* context,
     const DisconnectFromCentralRequest* request,

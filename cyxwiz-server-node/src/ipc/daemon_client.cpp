@@ -1579,41 +1579,6 @@ SetAllocationsResult DaemonClient::SetAllocations(
     return result;
 }
 
-RetryConnectionResult DaemonClient::RetryConnection() {
-    RetryConnectionResult result;
-
-    if (!connected_.load() || !stub_) {
-        result.message = "Not connected to daemon";
-        return result;
-    }
-
-    grpc::ClientContext context;
-    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));
-
-    RetryConnectionRequest request;
-    RetryConnectionResponse response;
-
-    auto status = stub_->stub->RetryConnection(&context, request, &response);
-    if (!status.ok()) {
-        result.message = "RPC failed: " + status.error_message();
-        spdlog::error("RetryConnection RPC failed: {}", status.error_message());
-        return result;
-    }
-
-    result.success = response.success();
-    result.message = response.error_message();
-    result.connected = response.connected_to_central();
-    result.node_id = response.node_id();
-
-    if (result.success) {
-        spdlog::info("RetryConnection succeeded: connected={}", result.connected);
-    } else {
-        spdlog::warn("RetryConnection failed: {}", result.message);
-    }
-
-    return result;
-}
-
 DisconnectResult DaemonClient::DisconnectFromCentral() {
     DisconnectResult result;
 

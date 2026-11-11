@@ -152,6 +152,7 @@ $env:CYXWIZ_TEST_CENTRAL_JWT_SECRET = '<central server jwt.secret>'
 | Daemon exits at start: "No P2P secret" or "P2P secret: ... can be read by other users; run chmod 600 on it" | give it the secret file (`--p2p-secret-file=`), readable by its owner only |
 | Daemon exits at start: "--p2p-secret= puts the secret where every user ... can read it" | write the secret to a file and pass `--p2p-secret-file=PATH` instead |
 | Daemon exits at start: "Failed to start NodeService gRPC server on 0.0.0.0:50055; is the port in use (another cyxwiz-server-daemon already running)?" | another daemon already owns the node's ports. One daemon per machine: stop the old one (by its PID) or keep using it. Before this check, macOS and Linux let a second daemon share the ports and the GUI talked to either one at random |
+| Apply fails with "Failed to connect to Central Server", daemon log "No route to host" | the machine cannot reach the server side (often right after waking from sleep). Check the network, then press Retry: Retry sends Apply again, with the allocations and your sign-in |
 
 ## Related
 

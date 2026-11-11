@@ -224,13 +224,6 @@ struct SetAllocationsResult {
     std::string node_id;
 };
 
-struct RetryConnectionResult {
-    bool success = false;
-    std::string message;
-    bool connected = false;
-    std::string node_id;
-};
-
 struct DisconnectResult {
     bool success = false;
     std::string message;
@@ -355,7 +348,6 @@ public:
     SetAllocationsResult SetAllocations(const std::vector<DeviceAllocationInfo>& allocations,
                                          const std::string& jwt_token,
                                          bool connect_to_central);
-    RetryConnectionResult RetryConnection();
     DisconnectResult DisconnectFromCentral();
 
 private:
