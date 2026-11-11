@@ -106,7 +106,7 @@ std::vector<const UnitDefinition*> UnitsOf(const std::string& category) {
 std::string CategoryNote(const std::string& category) {
     if (category == "length") return "Exact definitions: inch 0.0254 m, foot 0.3048 m, yard 0.9144 m, mile 1609.344 m, nautical mile 1852 m.";
     if (category == "mass") return "Pound 0.45359237 kg (exact); tonne 1000 kg, short ton 2000 lb, long ton 2240 lb.";
-    if (category == "temperature") return "Through kelvin: 0 \xC2\xB0""C = 273.15 K, \xC2\xB0""F and \xC2\xB0""R are 5/9 K. Below absolute zero is refused.";
+    if (category == "temperature") return "Through Celsius: \xC2\xB0""F = \xC2\xB0""C x 9/5 + 32, K = \xC2\xB0""C + 273.15, \xC2\xB0""R = K x 9/5. Below absolute zero is refused.";
     if (category == "time") return "A year here is 365 days.";
     if (category == "data") return "SI prefixes are powers of 1000 (kB, MB, GB); binary ones powers of 1024 (KiB, MiB, GiB).";
     if (category == "area") return "From the exact inch, foot, yard and mile; acre 4840 square yards.";

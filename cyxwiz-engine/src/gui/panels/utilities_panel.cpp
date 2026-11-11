@@ -598,7 +598,7 @@ void UtilitiesPanel::RenderRandom() {
     }
     std::vector<ui::KeyValue> rows;
     for (const auto& f : view::RandomFigures(r, digits_)) rows.push_back({f.label, f.value});
-    ui::KeyValueTable("##random_figures", rows, 2, true);
+    ui::KeyValueTable("##random_figures", rows, narrow ? 1 : 2, true);  // one pair per line when stacked
     std::string first;
     for (size_t i = 0; i < std::min<size_t>(5, r.values.size()); ++i) first += view::FormatNumber(r.values[i], digits_) + "   ";
     ImGui::TextColored(t.text_dim, "First values  %s", first.c_str());
