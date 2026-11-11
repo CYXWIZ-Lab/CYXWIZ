@@ -816,7 +816,7 @@ void CyxWizApp::Render() {
                 spdlog::debug("Project selected from start page");
                 startup_project_path_ = start_page_->GetSelectedProjectPath();
                 startup_project_from_command_line_ = false;
-                startup_graph_path_.clear();
+                if (!startup_graph_from_command_line_) startup_graph_path_.clear();  // as below
                 project_selected_ = true;
                 start_page_.reset();
 
@@ -831,7 +831,8 @@ void CyxWizApp::Render() {
             } else if (result == cyxwiz::StartPage::Result::ContinueWithout) {
                 spdlog::info("User chose to continue without project");
                 startup_project_path_ = "";  // No project
-                startup_graph_path_.clear();
+                // A graph named on the command line still opens (cyxwiz-engine graph.cyxgraph)
+                if (!startup_graph_from_command_line_) startup_graph_path_.clear();
                 project_selected_ = true;    // But allow main window to open
                 start_page_.reset();
 
