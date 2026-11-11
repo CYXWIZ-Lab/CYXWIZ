@@ -8,6 +8,12 @@
 #include <exception>
 #include <filesystem>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace cyxwiz {
 
 namespace {
@@ -96,17 +102,16 @@ bool TrialConfiguration(const TrialSetup& setup, const std::vector<TrialChange>&
     }
 
     TrainingConfiguration compiled = GraphCompiler{}.Compile(nodes, setup.links, /*allow_unloaded_data=*/true);
-    const auto first_error = std::find_if(compiled.issues.begin(), compiled.issues.end(),
-                                          [](const ValidationIssue& i) { return i.level == IssueLevel::Error; });
-    if (first_error != compiled.issues.end()) {
-        // A data finding (data not loaded here) is the launcher's, already settled.
-        const gui::MLNode* node = FindNode(nodes, first_error->node_id);
-        const bool data_node = node && (node->type == gui::NodeType::DataInput ||
-                                        node->type == gui::NodeType::DatasetInput);
-        if (!data_node) {
-            error = "the changed graph does not compile: " + first_error->message;
-            return false;
-        }
+    // A data finding (data not loaded here) is the launcher's, already settled;
+    // any other error is the changed graph's.
+    const auto graph_error = std::find_if(compiled.issues.begin(), compiled.issues.end(), [&](const ValidationIssue& i) {
+        if (i.level != IssueLevel::Error) return false;
+        const gui::MLNode* node = FindNode(nodes, i.node_id);
+        return !(node && (node->type == gui::NodeType::DataInput || node->type == gui::NodeType::DatasetInput));
+    });
+    if (graph_error != compiled.issues.end()) {
+        error = "the changed graph does not compile: " + graph_error->message;
+        return false;
     }
     TakeTrialSettings(compiled, out);
     return true;
@@ -131,7 +136,14 @@ TrialOutcome RunTrial(const TrialSetup& setup, const std::vector<TrialChange>& c
     // is kept as the project's model.
     static std::atomic<uint64_t> next{0};
     const std::filesystem::path scratch =
-        std::filesystem::temp_directory_path() / "cyxwiz_trials" / std::to_string(++next);
+        std::filesystem::temp_directory_path() / "cyxwiz_trials" /
+        (std::to_string(
+#ifdef _WIN32
+             _getpid()
+#else
+             getpid()
+#endif
+         ) + "_" + std::to_string(++next));
     struct RemoveAfter {
         std::filesystem::path path;
         ~RemoveAfter() {

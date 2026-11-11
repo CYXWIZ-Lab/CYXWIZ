@@ -569,6 +569,15 @@ void HyperparamSearchPanel::ApplyBest() {
     const TrialResult best = search_engine_->GetBestResult();
     if (best.trial_id < 0 || !best.completed) return;
     const auto changes = TrialChangesFor(search_engine_->GetConfig().space, best.parameters, best.categorical_params);
+    // Another graph may be on the canvas by now: every changed node must still be there with its setting.
+    const auto& canvas = node_editor_->GetNodes();
+    for (const auto& change : changes) {
+        const auto node = std::find_if(canvas.begin(), canvas.end(), [&](const gui::MLNode& n) { return n.id == change.node_id; });
+        if (node == canvas.end() || !node->parameters.count(change.property)) {
+            applied_note_ = "Nothing applied: the graph on the canvas is not the one this search ran on.";
+            return;
+        }
+    }
     node_editor_->ReplaceWithEditedGraph(sp::WithChanges(node_editor_->GetNodes(), changes), node_editor_->GetLinks());
     applied_note_ = "Trial " + std::to_string(best.trial_id + 1) +
                     "'s values are on the canvas (Ctrl+Z takes them back). Train the graph to get the model.";

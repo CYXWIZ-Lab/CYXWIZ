@@ -74,6 +74,7 @@ add_executable(cyxwiz-tests
     ../cyxwiz-engine/src/core/language_model_training.cpp
     ../cyxwiz-engine/src/gui/tensor_shape_inference_contract.cpp
     ../cyxwiz-engine/src/core/nas_evaluator.cpp
+    ../cyxwiz-engine/src/core/model_analyzer.cpp
     ../cyxwiz-engine/src/core/route_qualification_service.cpp
     ../cyxwiz-engine/src/core/route_recommendation.cpp
     ../cyxwiz-engine/src/inference/text_inference_input.cpp

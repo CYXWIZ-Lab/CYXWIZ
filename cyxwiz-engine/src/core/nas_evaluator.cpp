@@ -461,32 +461,32 @@ std::vector<int> NASEvaluator::FindTrainableLayers(const std::vector<gui::MLNode
     return indices;
 }
 
-std::vector<int> NASEvaluator::FindBodyLayers(const std::vector<gui::MLNode>& nodes,
-                                              const std::vector<gui::NodeLink>& links) {
+bool NASEvaluator::FeedsTrainableLayer(const std::vector<gui::MLNode>& nodes,
+                                       const std::vector<gui::NodeLink>& links, int node_id) {
     std::map<int, const gui::MLNode*> by_id;
     for (const auto& node : nodes) by_id[node.id] = &node;
-    std::vector<int> body;
-    for (const int index : FindTrainableLayers(nodes)) {
-        // Walk downstream; a trainable layer met on the way makes it body.
-        std::set<int> seen;
-        std::vector<int> frontier = {nodes[index].id};
-        bool feeds_trainable = false;
-        while (!frontier.empty() && !feeds_trainable) {
-            const int id = frontier.back();
-            frontier.pop_back();
-            for (const auto& link : links) {
-                if (link.from_node != id || !seen.insert(link.to_node).second) continue;
-                const auto next = by_id.find(link.to_node);
-                if (next == by_id.end()) continue;
-                if (IsTrainableLayer(next->second->type)) {
-                    feeds_trainable = true;
-                    break;
-                }
-                frontier.push_back(link.to_node);
-            }
+    // Walk downstream until a trainable layer is met.
+    std::set<int> seen;
+    std::vector<int> frontier = {node_id};
+    while (!frontier.empty()) {
+        const int id = frontier.back();
+        frontier.pop_back();
+        for (const auto& link : links) {
+            if (link.from_node != id || !seen.insert(link.to_node).second) continue;
+            const auto next = by_id.find(link.to_node);
+            if (next == by_id.end()) continue;
+            if (IsTrainableLayer(next->second->type)) return true;
+            frontier.push_back(link.to_node);
         }
-        if (feeds_trainable) body.push_back(index);
     }
+    return false;
+}
+
+std::vector<int> NASEvaluator::FindBodyLayers(const std::vector<gui::MLNode>& nodes,
+                                              const std::vector<gui::NodeLink>& links) {
+    std::vector<int> body;
+    for (const int index : FindTrainableLayers(nodes))
+        if (FeedsTrainableLayer(nodes, links, nodes[index].id)) body.push_back(index);
     return body;
 }
 
@@ -598,13 +598,13 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
 
                 // Modify units or filters
                 if (node.parameters.count("units")) {
-                    int current = std::stoi(node.parameters["units"]);
+                    const int current = std::max(1, std::atoi(node.parameters["units"].c_str()));
                     std::uniform_real_distribution<double> factor(0.5, 2.0);
                     int new_units = static_cast<int>(current * factor(rng));
                     new_units = std::max(16, std::min(1024, new_units));
                     node.parameters["units"] = std::to_string(new_units);
                 } else if (node.parameters.count("filters")) {
-                    int current = std::stoi(node.parameters["filters"]);
+                    const int current = std::max(1, std::atoi(node.parameters["filters"].c_str()));
                     std::uniform_real_distribution<double> factor(0.5, 2.0);
                     int new_filters = static_cast<int>(current * factor(rng));
                     new_filters = std::max(8, std::min(512, new_filters));
@@ -634,10 +634,12 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
         }
 
         case MutationType::ChangeActivation: {
-            // Find activation nodes and change one
+            // A hidden activation: one that still feeds a trainable layer. The
+            // output activation belongs to the head and the loss.
             std::vector<int> activation_indices;
             for (size_t i = 0; i < mutated_nodes.size(); i++) {
-                if (IsActivation(mutated_nodes[i].type)) {
+                if (IsActivation(mutated_nodes[i].type) &&
+                    FeedsTrainableLayer(mutated_nodes, mutated_links, mutated_nodes[i].id)) {
                     activation_indices.push_back(static_cast<int>(i));
                 }
             }
@@ -647,6 +649,7 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
                 int target_idx = activation_indices[dist(rng)];
 
                 gui::NodeType new_activation = GetRandomActivation(rng);
+                if (mutated_nodes[target_idx].type != new_activation) mutated_nodes[target_idx].parameters.clear();
                 mutated_nodes[target_idx].type = new_activation;
 
                 // Update name

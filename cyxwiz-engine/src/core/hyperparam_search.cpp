@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <limits>
 #include <sstream>
 
 namespace cyxwiz {
@@ -50,6 +51,17 @@ SearchParameter SearchParameter::Categorical(const std::string& name, const std:
 }
 
 // ===== SearchSpace Methods =====
+
+namespace {
+
+// A whole-number parameter's value on its grid: min + k * step, inside the range.
+float OnStep(const SearchParameter& p, float value) {
+    if (p.type != ParamType::Discrete || p.step <= 0) return value;
+    const float snapped = p.min_value + std::round((value - p.min_value) / p.step) * p.step;
+    return std::clamp(snapped > p.max_value ? snapped - p.step : snapped, p.min_value, p.max_value);
+}
+
+}  // namespace
 
 size_t SearchSpace::GetTotalCombinations() const {
     if (parameters.empty()) return 0;
@@ -183,7 +195,8 @@ void HyperparamSearch::Resume() {
 
 int HyperparamSearch::GetTotalTrials() const {
     if (config_.strategy == SearchStrategy::Grid) {
-        return static_cast<int>(config_.space.GetTotalCombinations());
+        return static_cast<int>(std::min<size_t>(config_.space.GetTotalCombinations(),
+                                                 static_cast<size_t>(std::numeric_limits<int>::max())));
     }
     return config_.max_trials;
 }
@@ -436,9 +449,9 @@ HyperparamSearch::SampleGrid(int trial_idx) {
                 params[param.name] = param.min_value + t * (param.max_value - param.min_value);
             }
 
-            if (param.type == ParamType::Discrete) {
-                params[param.name] = std::round(params[param.name] / param.step) * param.step;
-            }
+            // A whole-number parameter's grid is its own steps from the minimum.
+            if (param.type == ParamType::Discrete && param.step > 0)
+                params[param.name] = OnStep(param, param.min_value + static_cast<float>(idx) * param.step);
         }
     }
 
@@ -467,9 +480,7 @@ HyperparamSearch::SampleRandom() {
                 params[param.name] = param.min_value + t * (param.max_value - param.min_value);
             }
 
-            if (param.type == ParamType::Discrete && param.step > 0) {
-                params[param.name] = std::round(params[param.name] / param.step) * param.step;
-            }
+            params[param.name] = OnStep(param, params[param.name]);
         }
     }
 
@@ -488,11 +499,10 @@ double ToUnit(const SearchParameter& p, float value) {
 
 float FromUnit(const SearchParameter& p, double t) {
     const float u = static_cast<float>(std::clamp(t, 0.0, 1.0));
-    float value = p.type == ParamType::LogScale
+    const float value = p.type == ParamType::LogScale
         ? std::exp(std::log(p.min_value) + u * (std::log(p.max_value) - std::log(p.min_value)))
         : p.min_value + u * (p.max_value - p.min_value);
-    if (p.type == ParamType::Discrete && p.step > 0) value = std::round(value / p.step) * p.step;
-    return value;
+    return OnStep(p, value);
 }
 
 size_t OptionIndex(const SearchParameter& p, double t) {
@@ -596,7 +606,7 @@ double ExpectedImprovement(double mean, double sd, double best) {
 }
 
 std::string CsvField(const std::string& text) {
-    if (text.find_first_of(",\"\n") == std::string::npos) return text;
+    if (text.find_first_of(",\"\r\n") == std::string::npos) return text;
     std::string out = "\"";
     for (const char c : text) out += c == '"' ? std::string("\"\"") : std::string(1, c);
     return out + "\"";

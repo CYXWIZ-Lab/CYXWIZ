@@ -211,6 +211,9 @@ public:
     // all but the heads (a trainable layer with no trainable layer after it
     // sets the model's output size the loss expects). Hyperparameter Search
     // leaves the heads out the same way.
+    // Whether anything downstream of the node is a trainable layer.
+    static bool FeedsTrainableLayer(const std::vector<gui::MLNode>& nodes,
+                                    const std::vector<gui::NodeLink>& links, int node_id);
     static std::vector<int> FindBodyLayers(const std::vector<gui::MLNode>& nodes,
                                            const std::vector<gui::NodeLink>& links);
     // The model's nodes (layers, activations, merges, ...; not the data

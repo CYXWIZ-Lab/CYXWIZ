@@ -341,7 +341,7 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     layer_analysis.parameters = ComputeBatchNormParams(features);
                     layer_analysis.non_trainable_params = ComputeBatchNormNonTrainableParams(features);
                     int64_t spatial_size = 1;
-                    for (size_t i = 0; i < current_shape.size() - 1 && i < 2; ++i) {
+                    for (size_t i = 0; i + 1 < current_shape.size() && i < 2; ++i) {
                         spatial_size *= current_shape[i];
                     }
                     layer_analysis.flops = ComputeBatchNormFLOPs(features, spatial_size, batch_size);
