@@ -1142,8 +1142,7 @@ void NodeEditor::RenderMinimap() {
                                     ImGuiWindowFlags_NoScrollbar |
                                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
-                                    ImGuiWindowFlags_NoMove |  // We handle movement manually
-                                    ImGuiWindowFlags_NoFocusOnAppearing;  // the Studio keeps the focus
+                                    ImGuiWindowFlags_NoMove;  // We handle movement manually
 
 
     if (::gui::BeginCanvasOverlay("##MinimapWindow", minimap_pos.x, minimap_pos.y, minimap_size_.x, minimap_size_.y,
