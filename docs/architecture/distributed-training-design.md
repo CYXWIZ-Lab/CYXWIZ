@@ -1,6 +1,6 @@
 # Distributed training: engineering design
 
-Status: **design draft for owner review**. No code is written against it yet.
+Status: **design accepted 2026-11-12** (D1, D2, D3, D5, D7 as recommended; D4 and D6 open). No code is written against it yet.
 Ticket: TOFIX166 (parent TOFIX163). Last updated 2026-11-12.
 
 This page decides how CyxWiz trains one model on several server nodes. It
@@ -260,15 +260,15 @@ Design comes before code, and every stage is proven before the next.
 
 ## 9. Decisions for the owner
 
-| # | Decision | Recommendation |
+| # | Decision | Owner, 2026-11-12 |
 | --- | --- | --- |
-| D1 | The platform places jobs (user states the need); manual rental stays as a second path | Yes |
-| D2 | First algorithm: time-based DiLoCo rounds; pipeline (pooled memory) second | Yes |
-| D3 | The coordinator runs on the platform side (next to central), never on a user's node | Yes |
-| D4 | Pricing of a group: sum of node-hours shown up front, or a price per job | Owner (business) |
-| D5 | First target: Dell + Mac training one model, matched against the PyTorch oracle | Yes |
-| D6 | The unused backend DDP stack (single host, every-step sync, no auth): keep it as SDK API for same-host use, or remove it. It is not the base of this design. | Owner (it ships in the SDK headers) |
-| D7 | A node serves one job at a time while in a group | Yes (simpler admission; revisit later) |
+| D1 | The platform places jobs (user states the need); manual rental stays as a second path | Accepted |
+| D2 | First algorithm: time-based DiLoCo rounds; pipeline (pooled memory) second | Accepted |
+| D3 | The coordinator runs on the platform side (next to central), never on a user's node | Accepted |
+| D4 | Pricing of a group: sum of node-hours shown up front, or a price per job | Open (business; needed by phase 2) |
+| D5 | First target: Dell + Mac training one model, matched against the PyTorch oracle | Accepted |
+| D6 | The unused backend DDP stack (single host, every-step sync, no auth): keep it as SDK API for same-host use, or remove it. It is not the base of this design. | Open (it ships in the SDK headers) |
+| D7 | A node serves one job at a time while in a group | Accepted (revisit later) |
 
 ## 10. Phases
 
