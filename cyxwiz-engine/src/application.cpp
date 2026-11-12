@@ -1075,11 +1075,14 @@ void CyxWizApp::RebuildFontAtlas() {
 }
 
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
-    // Font configuration for crisp rendering (high quality)
+    // Glyphs are pixel-snapped and every line of text starts on a whole pixel,
+    // so oversampling buys nothing: at 3 x 2 the atlas was 4096 x 8192 (128 MB
+    // on the GPU), at 1 x 1 it is 2048 x 4096 with the same text (owner
+    // decision 2026-11-12, compared side by side). High-DPI screens raise
+    // RasterizerDensity instead.
     ImFontConfig font_config;
-    const bool needs_manual_oversampling = font_rasterizer_density_ <= 1.0f;
-    font_config.OversampleH = needs_manual_oversampling ? 3 : 1;
-    font_config.OversampleV = needs_manual_oversampling ? 2 : 1;
+    font_config.OversampleH = 1;
+    font_config.OversampleV = 1;
     font_config.PixelSnapH = true;
     font_config.RasterizerDensity = font_rasterizer_density_;
     // The text the Engine writes: Latin, Greek (σ λ), then punctuation (… – — ‘ ’ “ ”),
@@ -1197,21 +1200,27 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // Icon font glyph ranges (FontAwesome 6)
     static const ImWchar icon_ranges[] = { 0xe000, 0xf8ff, 0 };
 
-    // Tabler Icons glyph ranges (0xea00 - 0xf9ff)
-    static const ImWchar tabler_icon_ranges[] = { 0xea00, 0xf9ff, 0 };
+    // The other packs serve only the canvas's node icons (the Studio's icon
+    // pack choice): the atlas keeps the few dozen glyphs those use, not each
+    // pack's whole range (thousands of icons none of the Engine draws). The
+    // ranges must live until the atlas is built.
+    static const std::vector<ImWchar> tabler_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Tabler);
+    static const std::vector<ImWchar> remix_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Remix);
+    static const std::vector<ImWchar> lucide_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Lucide);
+    static const std::vector<ImWchar> iconoir_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Iconoir);
+    static const std::vector<ImWchar> phosphor_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Phosphor);
+    const ImWchar* tabler_icon_ranges = tabler_ranges.data();
+    const ImWchar* remix_icon_ranges = remix_ranges.data();
+    const ImWchar* lucide_icon_ranges = lucide_ranges.data();
+    const ImWchar* iconoir_icon_ranges = iconoir_ranges.data();
+    const ImWchar* phosphor_icon_ranges = phosphor_ranges.data();
 
-    // Additional icon pack glyph ranges (all use Private Use Area)
-    static const ImWchar remix_icon_ranges[] = { 0xea01, 0xf2ff, 0 };
-    static const ImWchar lucide_icon_ranges[] = { 0xe900, 0xefff, 0 };
-    static const ImWchar iconoir_icon_ranges[] = { 0xe900, 0xefff, 0 };
-    static const ImWchar phosphor_icon_ranges[] = { 0xe000, 0xf8ff, 0 };
-
-    // Icon font config (for merging) - high quality
+    // Icon font config (for merging), pixel-snapped like the text
     ImFontConfig icon_config;
     icon_config.MergeMode = true;
     icon_config.PixelSnapH = true;
-    icon_config.OversampleH = needs_manual_oversampling ? 3 : 1;
-    icon_config.OversampleV = needs_manual_oversampling ? 2 : 1;
+    icon_config.OversampleH = 1;
+    icon_config.OversampleV = 1;
     icon_config.RasterizerDensity = font_rasterizer_density_;
     icon_config.GlyphMinAdvanceX = base_font_size;  // Make icons monospaced
 
@@ -1360,6 +1369,8 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     spdlog::debug("Building font atlas...");
     spdlog::default_logger()->flush();  // Force flush before potential crash
     io.Fonts->Build();
-    spdlog::debug("Font atlas built successfully at {:.2f}x rasterizer density",
-                 font_rasterizer_density_);
+    spdlog::debug("Font atlas built: {} x {} px ({:.1f} MB as RGBA), {} fonts, {:.2f}x rasterizer density",
+                  io.Fonts->TexWidth, io.Fonts->TexHeight,
+                  static_cast<double>(io.Fonts->TexWidth) * io.Fonts->TexHeight * 4.0 / (1024.0 * 1024.0),
+                  io.Fonts->Fonts.Size, font_rasterizer_density_);
 }
