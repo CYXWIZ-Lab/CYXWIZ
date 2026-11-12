@@ -1570,7 +1570,7 @@ A node setting: Param(float, default=1.0, min=0.01, description="..."). type is 
 
 ## pycyxwiz.rl
 
-Plugin environments for reinforcement learning as Gymnasium environments: load_plugin(folder), environments(), Env(id, **settings) (a gymnasium.Env) and VectorEnv(id, num_envs, **settings) (a gymnasium VectorEnv with same-step autoreset). Stable-Baselines3, CleanRL or your own code then train on exactly the physics the Engine trains on. Needs numpy, gymnasium and the _cyxwiz_envs module built with the Engine; see docs/usage/rl_environments.md.
+Plugin environments for reinforcement learning as Gymnasium environments: load_plugin(folder), environments(), Env(id, **settings) (a gymnasium.Env) and VectorEnv(id, num_envs, **settings) (a gymnasium VectorEnv with same-step autoreset). Stable-Baselines3, CleanRL or your own code then train on exactly the physics the Engine trains on. Needs numpy, gymnasium 1.1 or newer (same-step autoreset) and the _cyxwiz_envs module built with the Engine; see docs/usage/rl_environments.md.
 
 ### Functions
 
