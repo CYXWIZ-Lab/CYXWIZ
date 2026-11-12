@@ -278,7 +278,11 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                         "idle (10 a second), not in front (30 a second), minimised.");
                         }
                         if (verbose_python_log_ptr_) {
-                            switched |= ImGui::Checkbox("Log every Python command##diag_python", verbose_python_log_ptr_);
+                            bool verbose = verbose_python_log_ptr_->load();
+                            if (ImGui::Checkbox("Log every Python command##diag_python", &verbose)) {
+                                verbose_python_log_ptr_->store(verbose);
+                                switched = true;
+                            }
                             ui::Tooltip("Each command the Engine sends to Python, with how long it took.");
                         }
                         if (frame_overlay_ptr_) {

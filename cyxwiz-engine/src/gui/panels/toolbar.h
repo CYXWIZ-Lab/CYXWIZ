@@ -11,6 +11,7 @@
 #include "../dialogs/new_file_dialog.h"
 #include "../dialogs/about_dialog.h"
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <set>
@@ -295,7 +296,7 @@ public:
 
     // Debug logging pointers (for View -> Developer Tools)
     void SetIdleLogPtr(bool* ptr) { idle_log_ptr_ = ptr; }
-    void SetVerbosePythonLogPtr(bool* ptr) { verbose_python_log_ptr_ = ptr; }
+    void SetVerbosePythonLogPtr(std::atomic<bool>* ptr) { verbose_python_log_ptr_ = ptr; }
     // Tools > Diagnostics: the three switches (frame-rate log, Python command
     // log, frame overlay) are the user's saved settings. Apply sets them from
     // the Engine settings once the pointers above are set; Save writes them
@@ -776,7 +777,7 @@ private:
 
     // Debug logging pointers
     bool* idle_log_ptr_ = nullptr;
-    bool* verbose_python_log_ptr_ = nullptr;
+    std::atomic<bool>* verbose_python_log_ptr_ = nullptr;  // read by Python worker threads
     std::function<std::string()> python_diagnostics_callback_;
 
     // Files preferences
