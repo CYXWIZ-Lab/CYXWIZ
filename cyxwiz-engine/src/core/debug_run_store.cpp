@@ -202,6 +202,12 @@ DebugReplayCompiledConfigSummary CompiledConfigSummaryFromJson(
     config.epsilon = j.value("epsilon", 0.0f);
     config.rmsprop_alpha = j.value("rmsprop_alpha", 0.0f);
     config.weight_decay = j.value("weight_decay", 0.0f);
+    config.weight_decay_exclude = j.value("weight_decay_exclude", "");
+    config.nesterov = j.value("nesterov", false);
+    config.lr_schedule = j.value("lr_schedule", "");
+    config.warmup_ratio = j.value("warmup_ratio", 0.0f);
+    config.min_lr_ratio = j.value("min_lr_ratio", 0.0f);
+    config.grad_clip_norm = j.value("grad_clip_norm", 0.0f);
     config.compiler_placement_fingerprint =
         j.value("compiler_placement_fingerprint", "");
     config.backend_placement_count =
@@ -407,6 +413,12 @@ DebugRunReplayCapsule MakeDebugRunReplayCapsule(
         compiled.epsilon = config->epsilon;
         compiled.rmsprop_alpha = config->rmsprop_alpha;
         compiled.weight_decay = config->weight_decay;
+        compiled.weight_decay_exclude = config->weight_decay_exclude;
+        compiled.nesterov = config->nesterov;
+        compiled.lr_schedule = config->lr_schedule;
+        compiled.warmup_ratio = config->warmup_ratio;
+        compiled.min_lr_ratio = config->min_lr_ratio;
+        compiled.grad_clip_norm = config->grad_clip_norm;
         compiled.compiler_placement_fingerprint =
             config->compiler_placement_fingerprint;
         compiled.backend_placement_count = config->backend_placements.size();
@@ -473,6 +485,12 @@ nlohmann::json DebugRunReplayCapsuleToJson(
             {"epsilon", config.epsilon},
             {"rmsprop_alpha", config.rmsprop_alpha},
             {"weight_decay", config.weight_decay},
+            {"weight_decay_exclude", config.weight_decay_exclude},
+            {"nesterov", config.nesterov},
+            {"lr_schedule", config.lr_schedule},
+            {"warmup_ratio", config.warmup_ratio},
+            {"min_lr_ratio", config.min_lr_ratio},
+            {"grad_clip_norm", config.grad_clip_norm},
             {"compiler_placement_fingerprint",
              config.compiler_placement_fingerprint},
             {"backend_placement_count", config.backend_placement_count},
