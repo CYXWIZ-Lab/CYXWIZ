@@ -405,6 +405,7 @@ set(ENGINE_SOURCES
     src/core/graph_compile_task.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/model_analyzer.cpp
     src/core/language_model_training.cpp
     src/core/model_converter.cpp
@@ -3132,6 +3133,7 @@ add_executable(test_extension_model_files
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -4397,6 +4399,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     tests/test_cyxmodel_layernorm_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -4437,6 +4440,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     tests/test_cyxmodel_mha_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -4477,6 +4481,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     tests/test_cyxmodel_transformer_encoder_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -4516,6 +4521,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     tests/test_cyxmodel_transformer_decoder_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -4555,6 +4561,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     tests/test_cyxmodel_causal_lm_generation_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -6866,6 +6873,20 @@ target_compile_definitions(test_cnn_graph_training PRIVATE
 )
 add_test(NAME cnn_graph_training_contract COMMAND test_cnn_graph_training)
 
+# ===== Test: weight files (PyTorch state-dict, safetensors) read without PyTorch (TOFIX178 1.9c) =====
+add_executable(test_weight_file
+    tests/test_weight_file.cpp
+    src/core/weight_file.cpp
+)
+target_compile_features(test_weight_file PRIVATE cxx_std_20)
+target_include_directories(test_weight_file PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_weight_file PRIVATE nlohmann_json::nlohmann_json)
+set_target_properties(test_weight_file PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+target_compile_definitions(test_weight_file PRIVATE
+    CYXWIZ_WEIGHT_FILE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/weight_files"
+)
+add_test(NAME weight_file_contract COMMAND test_weight_file)
+
 set(CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/branch_graph_pytorch.json"
 )
@@ -6875,6 +6896,7 @@ add_executable(test_branch_graph_training
     # Save / Export / Import of the graph model (TOFIX157)
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/inference/text_inference_input.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/tree_classification_utils.cpp
