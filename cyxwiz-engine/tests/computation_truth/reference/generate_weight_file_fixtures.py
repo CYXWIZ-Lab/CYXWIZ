@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Weight files written by PyTorch and safetensors, for the Engine's own reader (TOFIX178 1.9c).
+# TOFIX178 1.9c
+"""Weight files written by PyTorch and safetensors, for the Engine's own reader.
 
 The reader (cyxwiz-engine/src/core/weight_file.cpp) opens these without PyTorch. expected.json holds every
 tensor's name, shape, type and values as torch reports them, so the test compares value by value.
@@ -15,6 +16,9 @@ Files:
   hostile.pth           a pickle that asks to run os.system: refused, nothing runs
   legacy.pth            the pre-1.6 format: refused with what to do
   truncated.pth         the first half of tiny_state_dict.pth
+  deep.pth              a pickle nested 200,000 levels deep: refused, no stack overflow
+  expanded.pth          one stored value shown as a million (stride 0): refused, not expanded
+  overlap.safetensors   two entries on the same bytes: refused
 
 Run: python generate_weight_file_fixtures.py
 """
@@ -105,6 +109,17 @@ def main() -> None:
     with zipfile.ZipFile(out / "hostile.pth", "w", zipfile.ZIP_STORED) as archive:
         archive.writestr("archive/data.pkl", hostile)
         archive.writestr("archive/version", "3\n")
+
+    # A pickle nested 200,000 deep: must be refused without exhausting the stack.
+    deep = b"\x80\x02)" + b"\x85" * 200000 + b"."
+    with zipfile.ZipFile(out / "deep.pth", "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("archive/data.pkl", deep)
+    # One stored value presented as a million (stride 0): must not be expanded.
+    torch.save({"w": torch.zeros(1).expand(1000000)}, out / "expanded.pth")
+    # Two safetensors entries that claim the same bytes.
+    header = json.dumps({"a": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]},
+                         "b": {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]}}).encode()
+    (out / "overlap.safetensors").write_bytes(len(header).to_bytes(8, "little") + header + bytes(8))
 
     (out / "expected.json").write_text(json.dumps(expected, indent=1) + "\n", encoding="utf-8")
     sizes = {p.name: p.stat().st_size for p in sorted(out.iterdir())}

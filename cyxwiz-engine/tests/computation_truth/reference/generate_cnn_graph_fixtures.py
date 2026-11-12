@@ -109,7 +109,58 @@ def build() -> list[dict[str, Any]]:
     }
     return [residual, squeeze_excitation(),
             squeeze_excitation("squeeze_excitation_hard", 1791, 3, functional.hardswish, functional.hardsigmoid, False),
-            resnet_stem()]
+            resnet_stem(), flatten_head()]
+
+
+def flatten_head() -> dict[str, Any]:
+    """Conv 3->4 (3x3, padding 1) -> ReLU -> Flatten -> Head 144->2, as VGG and LeNet end. PyTorch flattens
+    [C, H, W] channels first and the Engine [H, W, C] channels last, so the Head's weight is written here with
+    its columns in the Engine's order; flatten_head.pth keeps PyTorch's order, which the Engine's weights
+    file loader has to reorder."""
+    torch.manual_seed(1911)
+    channels, size = 4, 6
+    params: dict[str, dict[str, torch.Tensor]] = {
+        "Stem conv": {"weights": torch.randn(channels, 3, 3, 3) * (2.0 / 27) ** 0.5, "bias": torch.randn(channels) * 0.1},
+        "Head": {"weight": torch.randn(2, channels * size * size) * 0.1, "bias": torch.randn(2) * 0.1},
+    }
+    for layer in params.values():
+        for tensor in layer.values():
+            tensor.requires_grad_(True)
+    torch.save({"Stem conv.weight": params["Stem conv"]["weights"].detach().clone(),
+                "Stem conv.bias": params["Stem conv"]["bias"].detach().clone(),
+                "Head.weight": params["Head"]["weight"].detach().clone(),
+                "Head.bias": params["Head"]["bias"].detach().clone()},
+               DEFAULT_OUTPUT.parent / "weight_files" / "flatten_head.pth")
+    x = (torch.randn(4, 3, size, size) * 0.8 + 0.2).requires_grad_(True)
+    features = functional.relu(functional.conv2d(x, params["Stem conv"]["weights"], params["Stem conv"]["bias"],
+                                                 stride=1, padding=1))
+    logits = functional.linear(features.flatten(1), params["Head"]["weight"], params["Head"]["bias"])
+    torch.manual_seed(19110)
+    grad_out = torch.randn_like(logits)
+    logits.backward(grad_out)
+
+    def channels_last(weight: torch.Tensor) -> torch.Tensor:
+        return weight.reshape(2, channels, size, size).permute(0, 2, 3, 1).reshape(2, -1)
+
+    head = params["Head"]
+    layers: dict[str, Any] = {
+        "Stem conv": {"weights": conv_weight(params["Stem conv"]["weights"]),
+                      "grad_weights": conv_weight(params["Stem conv"]["weights"].grad),
+                      "bias": plain(params["Stem conv"]["bias"]), "grad_bias": plain(params["Stem conv"]["bias"].grad)},
+        "Head": {"weight": plain(channels_last(head["weight"])), "grad_weight": plain(channels_last(head["weight"].grad)),
+                 "bias": plain(head["bias"]), "grad_bias": plain(head["bias"].grad)},
+    }
+    return {
+        "name": "flatten_head",
+        "tolerance": {"atol": 3e-4, "rtol": 3e-4},
+        "input": hwcn(x),
+        "layers": layers,
+        "state": {},
+        "state_after": {},
+        "output": plain(logits),
+        "grad_output": plain(grad_out),
+        "grad_input": hwcn(x.grad),
+    }
 
 
 def resnet_stem() -> dict[str, Any]:

@@ -34,7 +34,8 @@ struct WeightFile {
 };
 
 // False with the reason in `error` when the file cannot be used; `out` is
-// then left empty.
-bool Read(const std::filesystem::path& path, WeightFile& out, std::string& error);
+// then left empty. With load_values false only names, shapes and types are
+// read (the values stay empty): enough to say which layers would match.
+bool Read(const std::filesystem::path& path, WeightFile& out, std::string& error, bool load_values = true);
 
 }  // namespace cyxwiz::weight_file

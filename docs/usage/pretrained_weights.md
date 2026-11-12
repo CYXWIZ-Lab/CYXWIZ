@@ -52,8 +52,17 @@ file's names).
 | Dense | `weight`, `bias` |
 | Other layers | entries named as the Engine names the layer's parameters, with the same shapes |
 
-PyTorch's layouts are converted: convolution kernels are stored
-`[out, in, h, w]` in the file and `[h, w, in, out]` in the Engine.
+PyTorch's layouts are converted:
+
+- Convolution kernels are stored `[out, in, h, w]` in the file and
+  `[h, w, in, out]` in the Engine.
+- A Dense that reads a flattened feature map (Conv ... -> Flatten -> Dense, as
+  VGG and LeNet end) has its weight's columns reordered: PyTorch flattens
+  channels first, the Engine channels last. Only activations and Dropout may
+  sit between the Flatten and the Dense for this to be recognised.
+
+A tensor saved as an expanded view (one stored value repeated) is refused;
+save a plain copy of it.
 
 A layer loads only when **every** one of its parameters is in the file with
 the right shape. This is why the settings matter:

@@ -124,6 +124,24 @@ int main(int argc, char** argv) {
     CheckRefused("legacy.pth", "old format");
     CheckRefused("truncated.pth", "ZIP directory was not found");
     CheckRefused("missing.pth", "not found");
+    // Shapes meant to exhaust the stack or the memory.
+    CheckRefused("deep.pth", "no state-dict");
+    CheckRefused("expanded.pth", "repeats its stored values");
+    CheckRefused("overlap.safetensors", "overlap");
+    {
+        // Names, shapes and types without the values (what the dialog reads).
+        cyxwiz::weight_file::WeightFile full, names;
+        std::string error;
+        Check(cyxwiz::weight_file::Read(kFixtures / "tiny_state_dict.pth", full, error) &&
+                  cyxwiz::weight_file::Read(kFixtures / "tiny_state_dict.pth", names, error, false),
+              "the file is read with and without its values");
+        bool same = full.entries.size() == names.entries.size();
+        for (size_t i = 0; same && i < full.entries.size(); ++i) {
+            same = full.entries[i].name == names.entries[i].name && full.entries[i].shape == names.entries[i].shape &&
+                   full.entries[i].dtype == names.entries[i].dtype && names.entries[i].values.empty();
+        }
+        Check(same, "without values the names, shapes and types are the same and no value is held");
+    }
     {
         const auto other = std::filesystem::temp_directory_path() / "cyxwiz_weight_file_other.bin";
         std::ofstream(other, std::ios::binary) << "not a weight file at all";

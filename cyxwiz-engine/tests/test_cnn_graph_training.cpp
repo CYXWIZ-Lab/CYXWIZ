@@ -482,6 +482,79 @@ void CheckResNetStemAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
     std::cout << "ResNet stem (7x7 convolution without bias, ReLU6, padded max pool) matches PyTorch\n";
 }
 
+// A Dense that reads a flattened feature map (how VGG and LeNet end): the
+// graph matches PyTorch with the Engine's own column order, and a PyTorch
+// state-dict, whose columns are channel first, is reordered on loading.
+void CheckFlattenHeadAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
+    std::ifstream in(CYXWIZ_CNN_GRAPH_FIXTURE);
+    Check(in.good(), std::string("cannot open ") + CYXWIZ_CNN_GRAPH_FIXTURE);
+    const auto fixture = nlohmann::json::parse(in);
+    const auto& c = fixture.at("cases").at(4);
+    Check(c.at("name").get<std::string>() == "flatten_head", "fixture case 4 is flatten_head");
+
+    gui::MLNode data;
+    data.id = 1;
+    data.type = gui::NodeType::DataInput;
+    data.name = "Images";
+    data.outputs = {Pin(102, gui::PinType::Tensor, "Data", false), Pin(103, gui::PinType::Labels, "Labels", false)};
+    data.parameters = {{"dataset_name", "flatten_fixture"}, {"file_category", "image"},
+                       {"folder_path", "D:/tmp/flatten_fixture"}, {"image_layout", "0"}};
+    gui::MLNode loss;
+    loss.id = 40;
+    loss.type = gui::NodeType::CrossEntropyLoss;
+    loss.name = "Cross entropy";
+    loss.inputs = {Pin(4001, gui::PinType::Tensor, "Predictions", true), Pin(4002, gui::PinType::Labels, "Targets", true)};
+    loss.outputs = {Pin(4003, gui::PinType::Loss, "Loss", false)};
+    gui::MLNode adam;
+    adam.id = 41;
+    adam.type = gui::NodeType::Adam;
+    adam.name = "Adam";
+    adam.inputs = {Pin(4101, gui::PinType::Loss, "Loss", true)};
+    gui::MLNode output;
+    output.id = 42;
+    output.type = gui::NodeType::Output;
+    output.name = "Output";
+    output.parameters = {{"num_classes", "2"}};
+    const std::vector<gui::MLNode> nodes = {
+        data, Layer(2, gui::NodeType::Resize, "Resize 6", {{"width", "6"}, {"height", "6"}, {"mode", "exact"}}),
+        Layer(3, gui::NodeType::Conv2D, "Stem conv",
+              {{"filters", "4"}, {"kernel_size", "3"}, {"stride", "1"}, {"padding", "same"}}),
+        Layer(5, gui::NodeType::ReLU, "Stem ReLU"),
+        Layer(6, gui::NodeType::Flatten, "Flatten"),
+        Layer(33, gui::NodeType::Dense, "Head", {{"units", "2"}}), loss, adam, output};
+    std::vector<gui::NodeLink> links = {Link(1, 1, 2), Link(2, 2, 3), Link(3, 3, 5), Link(4, 5, 6), Link(5, 6, 33)};
+    gui::NodeLink to_loss = Link(17, 33, 40);
+    to_loss.to_pin = 4001;
+    gui::NodeLink labels;
+    labels.id = 18; labels.from_node = 1; labels.from_pin = 103; labels.to_node = 40; labels.to_pin = 4002;
+    gui::NodeLink to_adam;
+    to_adam.id = 19; to_adam.from_node = 40; to_adam.from_pin = 4003; to_adam.to_node = 41; to_adam.to_pin = 4101;
+    links.push_back(to_loss);
+    links.push_back(labels);
+    links.push_back(to_adam);
+    CheckGraphAgainstPyTorch(compiler, nodes, links, c);
+
+    const auto config = compiler.Compile(nodes, links, true);
+    auto fresh = cyxwiz::BuildExecutableFromConfig(config);
+    Check(config.is_valid && fresh.ok(), "flatten_head builds for the weights file");
+    cyxwiz::weight_match::Report report;
+    std::string error;
+    const auto weights = std::filesystem::path(CYXWIZ_WEIGHT_FILE_FIXTURES) / "flatten_head.pth";
+    Check(cyxwiz::StartFromWeightsFile(weights, *fresh.model, fresh.module_provenance, report, error),
+          "the Flatten graph starts from the weights file: " + error);
+    Check(report.loaded == 2 && report.fresh == 0, "both layers take their weights: " + report.Summary());
+    const auto loaded = fresh.model->GetParameters();
+    const auto head = loaded.find("layer" + std::to_string(LayerIndex(config, "Head")) + ".weight");
+    Check(head != loaded.end(), "the head's weight is set");
+    if (head != loaded.end())
+        CheckClose(head->second, c.at("layers").at("Head").at("weight"), c.at("tolerance"),
+                   "the head's columns are in the Engine's order");
+    fresh.model->SetTraining(true);
+    CheckClose(fresh.model->Forward(ReadTensor(c.at("input"))), c.at("output"), c.at("tolerance"),
+               "logits of the Flatten graph after starting from the weights file");
+    std::cout << "Dense after Flatten matches PyTorch, from the Engine's layout and from a PyTorch state-dict\n";
+}
+
 }  // namespace
 
 int main() {
@@ -903,6 +976,7 @@ int main() {
     CheckSqueezeExcitationAgainstPyTorch(compiler, 1, "squeeze_excitation_block", {{"reduction", "2"}});
     // The node's other choices: a typed width, Hardswish inside, a Hardsigmoid gate, no biases.
     CheckResNetStemAgainstPyTorch(compiler);
+    CheckFlattenHeadAgainstPyTorch(compiler);
     CheckSqueezeExcitationAgainstPyTorch(compiler, 2, "squeeze_excitation_hard",
                                          {{"width_mode", "exact"}, {"squeeze_channels", "3"}, {"inner_activation", "hardswish"},
                                           {"gate", "hardsigmoid"}, {"use_bias", "false"}});

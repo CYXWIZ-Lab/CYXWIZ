@@ -27,6 +27,10 @@ struct LayerSlot {
     std::string key_prefix;   // "layer7." (the model's parameter keys start with it)
     // The module's parameters, state included: key ("weights", "gamma", "running_mean") and shape.
     std::vector<std::pair<std::string, std::vector<size_t>>> parameters;
+    // The channel count of the feature map a Flatten hands this layer (0 when
+    // it reads no flattened map). PyTorch flattens [C, H, W] channels first,
+    // the Engine [H, W, C] channels last, so the weight's columns are reordered.
+    size_t flattened_channels = 0;
 };
 
 struct LayerRow {
@@ -43,7 +47,8 @@ struct UnusedEntry {
     std::string reason;  // "no node is named fc", "a counter, not a weight", ...
 };
 
-// A tensor to hand to the model: its parameter key and row-major values in the Engine's layout.
+// A tensor to hand to the model: its parameter key and row-major values in the
+// Engine's layout (no values when the file was read without them).
 struct LoadedTensor {
     std::string key;  // "layer7.weights"
     std::vector<size_t> shape;

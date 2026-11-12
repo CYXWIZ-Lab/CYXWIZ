@@ -138,7 +138,6 @@ struct TrainingMetrics {
     // Resume checkpoints (TOFIX118 P4e).
     std::string last_resume_checkpoint;  // newest complete one written by this run
     std::string initialized_from;        // warm-start checkpoint or weights file (model weights only)
-    std::string weights_file_summary;    // "40 of 41 layers take weights from the file; ..." when a weights file was used
     int resumed_after_epoch = 0;         // > 0: this run continued a checkpoint
     bool resume_exact = false;           // seeds and data order replay exactly
 };

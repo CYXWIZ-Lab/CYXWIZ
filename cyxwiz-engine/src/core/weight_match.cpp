@@ -59,6 +59,19 @@ std::vector<float> Permute(const std::vector<float>& values, const std::vector<s
     return out;
 }
 
+// A [out, C x S] weight whose columns PyTorch orders channel first (c x S + s)
+// reordered to the Engine's channel last (s x C + c).
+std::vector<float> ChannelsLastColumns(const std::vector<float>& values, size_t rows, size_t channels, size_t spatial) {
+    std::vector<float> out(values.size());
+    const size_t width = channels * spatial;
+    for (size_t r = 0; r < rows; ++r) {
+        for (size_t c = 0; c < channels; ++c) {
+            for (size_t s = 0; s < spatial; ++s) out[r * width + s * channels + c] = values[r * width + c * spatial + s];
+        }
+    }
+    return out;
+}
+
 std::string EntryText(const weight_file::Entry& entry) { return entry.name + " " + ShapeText(entry.shape); }
 
 // "[64] x 4" when every parameter has the same shape, else the shapes in order.
@@ -132,7 +145,19 @@ Report Match(const weight_file::WeightFile& file, const std::vector<LayerSlot>& 
             LoadedTensor tensor;
             tensor.key = layer.key_prefix + key;
             tensor.shape = shape;
-            tensor.values = axes.empty() ? entry.values : Permute(entry.values, entry.shape, axes);
+            const bool flattened_input = layer.flattened_channels > 1 && key == "weight" && shape.size() == 2 &&
+                                         shape[1] % layer.flattened_channels == 0 &&
+                                         shape[1] > layer.flattened_channels;
+            if (entry.values.empty()) {
+                // read without values: the report only
+            } else if (!axes.empty()) {
+                tensor.values = Permute(entry.values, entry.shape, axes);
+            } else if (flattened_input) {
+                tensor.values = ChannelsLastColumns(entry.values, shape[0], layer.flattened_channels,
+                                                    shape[1] / layer.flattened_channels);
+            } else {
+                tensor.values = entry.values;
+            }
             tensors.push_back(std::move(tensor));
             taken.push_back(name);
         }

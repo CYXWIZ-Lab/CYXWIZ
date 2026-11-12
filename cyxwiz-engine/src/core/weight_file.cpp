@@ -230,8 +230,11 @@ uint64_t ZipDataOffset(File& file, const ZipEntry& entry, const std::string& nam
 
 // ---- the pickle, read as data ----------------------------------------------
 
+// Values are owned by the Unpickler's arena and refer to each other by plain
+// pointer, so a deeply nested or self-referencing pickle is destroyed in one
+// flat pass (an owning chain would recurse once per level).
 struct Value;
-using ValuePtr = std::shared_ptr<Value>;
+using ValuePtr = Value*;
 
 struct Value {
     enum class Type { None, Bool, Int, Text, Sequence, Dict, Global, Storage, Tensor, Mark, Other } type = Type::None;
@@ -245,12 +248,6 @@ struct Value {
     uint64_t offset = 0;                                   // Tensor, in elements
     std::vector<uint64_t> shape, stride;                   // Tensor
 };
-
-ValuePtr Make(Value::Type type) {
-    auto value = std::make_shared<Value>();
-    value->type = type;
-    return value;
-}
 
 class Unpickler {
 public:
@@ -354,6 +351,12 @@ public:
     }
 
 private:
+    ValuePtr Make(Value::Type type) {
+        if (arena_.size() >= kMaxPickleObjects) Fail("the pickle is too large to be a state-dict");
+        arena_.push_back(std::make_unique<Value>());
+        arena_.back()->type = type;
+        return arena_.back().get();
+    }
     uint8_t Byte() {
         if (at_ >= bytes_.size()) Fail("the pickle ends early (the file is damaged)");
         return bytes_[at_++];
@@ -401,7 +404,7 @@ private:
     }
     ValuePtr Pop() {
         if (stack_.empty() || stack_.back()->type == Value::Type::Mark) Fail("the pickle is damaged");
-        auto value = std::move(stack_.back());
+        auto value = stack_.back();
         stack_.pop_back();
         return value;
     }
@@ -440,7 +443,7 @@ private:
     }
 
     // ('storage', <storage class>, key, location, element count)
-    static ValuePtr PersistentStorage(const ValuePtr& id) {
+    ValuePtr PersistentStorage(const ValuePtr& id) {
         if (id->type != Value::Type::Sequence || id->items.size() < 5 || id->items[0]->type != Value::Type::Text ||
             id->items[0]->text != "storage" || id->items[1]->type != Value::Type::Global ||
             id->items[2]->type != Value::Type::Text)
@@ -464,7 +467,7 @@ private:
     }
 
     // The constructors a state-dict uses. Nothing is called: each is rebuilt here.
-    static ValuePtr Construct(const Value& callable, const Value& arguments) {
+    ValuePtr Construct(const Value& callable, const Value& arguments) {
         if (callable.type != Value::Type::Global || arguments.type != Value::Type::Sequence)
             Fail("the pickle is damaged");
         const std::string& name = callable.text;
@@ -497,6 +500,7 @@ private:
     size_t steps_ = 0;
     std::vector<ValuePtr> stack_;
     std::vector<ValuePtr> memo_;
+    std::vector<std::unique_ptr<Value>> arena_;
 };
 
 bool HoldsTensors(const Value& dict) {
@@ -522,7 +526,7 @@ const Value& FindStateDict(const Value& root) {
 
 // A tensor's values in row-major order, whatever its strides.
 Entry MaterializeTensor(File& file, const std::map<std::string, ZipEntry>& zip, const std::string& folder,
-                        const std::string& name, const Value& tensor) {
+                        const std::string& name, const Value& tensor, bool load_values, uint64_t& budget) {
     Entry entry;
     entry.name = name;
     entry.dtype = tensor.kind->name;
@@ -544,13 +548,20 @@ Entry MaterializeTensor(File& file, const std::map<std::string, ZipEntry>& zip, 
         }
         if (last >= tensor.storage->storage_elements)
             Fail("the tensor '" + name + "' points outside its stored values (the file is damaged)");
+        // A view that repeats its values (stride 0) could ask for far more than is stored.
+        if (elements > tensor.storage->storage_elements)
+            Fail("the tensor '" + name + "' repeats its stored values (an expanded view); save a plain copy of it");
     }
     const std::string path = folder + "data/" + tensor.storage->text;
     const auto found = zip.find(path);
     if (found == zip.end()) Fail("the values of '" + name + "' are missing from the file (" + path + ")");
     if (CheckedMul(tensor.storage->storage_elements, item, "a tensor") > found->second.size)
         Fail("the values of '" + name + "' are shorter than its shape needs (the file is damaged)");
-    if (!entry.is_float || elements == 0) return entry;
+    if (!entry.is_float || elements == 0 || !load_values) return entry;
+    // Several names may share one storage, but together they cannot need more than the file holds twice over.
+    const uint64_t needed = elements * item;
+    if (needed > budget) Fail("the file's tensors ask for more values than the file holds (it is damaged)");
+    budget -= needed;
 
     const uint64_t data = ZipDataOffset(file, found->second, path);
     const uint64_t first = tensor.offset;
@@ -572,7 +583,7 @@ Entry MaterializeTensor(File& file, const std::map<std::string, ZipEntry>& zip, 
     return entry;
 }
 
-void ReadPyTorch(File& file, WeightFile& out) {
+void ReadPyTorch(File& file, WeightFile& out, bool load_values) {
     const auto zip = ReadZipDirectory(file);
     std::string pickle_path;
     for (const auto& [name, entry] : zip) {
@@ -593,16 +604,16 @@ void ReadPyTorch(File& file, WeightFile& out) {
     }
     const ZipEntry& pickle = zip.at(pickle_path);
     if (pickle.size > kMaxPickleBytes) Fail("the file's pickle is too large to be a state-dict");
-    const ValuePtr root_value =
-        Unpickler(file.ReadBytes(ZipDataOffset(file, pickle, pickle_path), pickle.size)).Run();
-    const Value& state = FindStateDict(*root_value);
+    Unpickler unpickler(file.ReadBytes(ZipDataOffset(file, pickle, pickle_path), pickle.size));
+    const Value& state = FindStateDict(*unpickler.Run());  // the values live as long as the unpickler
     out.format = "PyTorch state-dict";
+    uint64_t budget = CheckedMul(file.Size(), 2, "the file");
     for (const auto& [name, tensor] : state.pairs) {
-        out.entries.push_back(MaterializeTensor(file, zip, folder, name->text, *tensor));
+        out.entries.push_back(MaterializeTensor(file, zip, folder, name->text, *tensor, load_values, budget));
     }
 }
 
-void ReadSafetensors(File& file, WeightFile& out) {
+void ReadSafetensors(File& file, WeightFile& out, bool load_values) {
     if (file.Size() < 8) Fail("the file is too short to be a safetensors file");
     uint8_t size_bytes[8];
     file.Read(0, size_bytes, 8);
@@ -614,6 +625,7 @@ void ReadSafetensors(File& file, WeightFile& out) {
     if (!header.is_object()) Fail("the safetensors header is not valid JSON");
     const uint64_t data_start = 8 + header_size;
     const uint64_t data_size = file.Size() - data_start;
+    uint64_t budget = data_size;  // the format does not allow tensors to share bytes
     // File order is the order of the data, not of the header's keys.
     std::vector<std::pair<uint64_t, Entry>> ordered;
     for (const auto& [name, info] : header.items()) {
@@ -650,7 +662,9 @@ void ReadSafetensors(File& file, WeightFile& out) {
         if (begin > end || end > data_size || end - begin != bytes)
             Fail("the values of '" + name + "' do not fit its shape (the file is damaged)");
         if (bytes > kMaxTensorBytes) Fail("the tensor '" + name + "' is too large");
-        if (entry.is_float && elements) {
+        if (bytes > budget) Fail("the tensors overlap in the file, which the format does not allow (it is damaged)");
+        budget -= bytes;
+        if (entry.is_float && elements && load_values) {
             const auto raw = file.ReadBytes(data_start + begin, bytes);
             entry.values.resize(static_cast<size_t>(elements));
             for (uint64_t n = 0; n < elements; ++n)
@@ -665,7 +679,7 @@ void ReadSafetensors(File& file, WeightFile& out) {
 
 }  // namespace
 
-bool Read(const std::filesystem::path& path, WeightFile& out, std::string& error) {
+bool Read(const std::filesystem::path& path, WeightFile& out, std::string& error, bool load_values) {
     out = WeightFile{};
     error.clear();
     try {
@@ -678,9 +692,9 @@ bool Read(const std::filesystem::path& path, WeightFile& out, std::string& error
         std::transform(extension.begin(), extension.end(), extension.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (magic[0] == 'P' && magic[1] == 'K') {
-            ReadPyTorch(file, out);
+            ReadPyTorch(file, out, load_values);
         } else if (extension == ".safetensors") {
-            ReadSafetensors(file, out);
+            ReadSafetensors(file, out, load_values);
         } else if (magic[0] == 0x80) {
             Fail("the file is in PyTorch's old format (before 1.6). Load it in a current PyTorch and save the "
                  "state-dict again with torch.save");

@@ -1257,7 +1257,14 @@ void DataLoaderDialog::RenderWeightsCard(bool path_committed) {
         const std::string& root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
         if (!root.empty()) resolved = (fs::path(root) / resolved).lexically_normal().string();
     }
-    const std::string key = resolved + "|" + std::to_string(live ? live->ResultSerial() : 0);
+    // The file as it is now (size and write time) and the compile it is matched to.
+    std::string key = resolved + "|" + std::to_string(live ? live->ResultSerial() : 0);
+    if (has_path) {
+        std::error_code ec;
+        const auto size = fs::file_size(resolved, ec);
+        const auto written = ec ? fs::file_time_type{} : fs::last_write_time(resolved, ec);
+        if (!ec) key += "|" + std::to_string(size) + "|" + std::to_string(written.time_since_epoch().count());
+    }
     const bool typing = ImGui::IsAnyItemActive() && !path_committed;
     if (has_path && compiled && key != weights_probe_key_ && !typing && (!weights_probe_ || weights_probe_->done)) {
         weights_probe_key_ = key;
@@ -1268,10 +1275,11 @@ void DataLoaderDialog::RenderWeightsCard(bool path_committed) {
         weights_probe_ = probe;
         std::thread([probe, resolved, slots = live->WeightSlots()] {
             cyxwiz::weight_file::WeightFile file;
-            probe->ok = cyxwiz::weight_file::Read(resolved, file, probe->error);
+            // Names, shapes and types only: the card needs the words, not the values.
+            probe->ok = cyxwiz::weight_file::Read(resolved, file, probe->error, false);
             if (probe->ok) {
                 probe->report = cyxwiz::weight_match::Match(file, slots);
-                probe->report.tensors.clear();  // the card needs the words, not the values
+                probe->report.tensors.clear();
             }
             probe->done = true;
         }).detach();

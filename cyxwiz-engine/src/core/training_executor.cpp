@@ -1358,10 +1358,7 @@ void TrainingExecutor::Train(
         }
         initialized_from = source.lexically_normal().string();
         const std::string summary = report.Summary();
-        UpdateMetrics([&](TrainingMetrics& m) {
-            m.initialized_from = initialized_from;
-            m.weights_file_summary = summary;
-        });
+        UpdateMetrics([&](TrainingMetrics& m) { m.initialized_from = initialized_from; });
         spdlog::info("TrainingExecutor: started from {} ({}): {}; optimizer, schedule and epochs start fresh",
                      source.filename().string(), report.format, summary);
         for (const auto& row : report.layers) {
