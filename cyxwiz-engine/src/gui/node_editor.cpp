@@ -2,6 +2,7 @@
 #include "ui_tokens.h"
 #include "../core/pipeline_type_names.h"
 #include "node_editor.h"
+#include "../core/freeze_actions.h"
 #include "../core/live_graph_compile.h"
 #include "../core/graph_node_factory.h"
 #include "subgraph_presentation.h"
@@ -563,6 +564,7 @@ void NodeEditor::Render() {
 
         // Node description edit popup
         ShowNodeDescriptionEditPopup();
+        RenderFreezePopups();
         ShowRenamePopup();
         ShowCodegenErrorPopup();
 
@@ -668,6 +670,7 @@ void NodeEditor::Render() {
             // The Nodes panel's Recent; extension nodes share one type.
             if (pending.type != NodeType::PluginCustom) cyxwiz::NodeMetadataRegistry::Instance().RecordUsage(pending.type);
             MLNode node = CreateNode(pending.type, pending.name);
+            ApplyUserNodeDefaults(node);
             for (const auto& [key, value] : pending.initial_parameters) node.parameters[key] = value;
 
             nodes_.push_back(node);
@@ -694,6 +697,7 @@ void NodeEditor::Render() {
             // A node reading it, to its right (a kept test's Test Evaluation).
             if (pending.then_type && !node.outputs.empty()) {
                 MLNode then = CreateNode(*pending.then_type, pending.then_name);
+                ApplyUserNodeDefaults(then);
                 if (!then.inputs.empty()) {
                     links_.push_back({next_link_id_++, node.id, node.outputs.front().id, then.id, then.inputs.front().id,
                                       LinkType::TensorFlow});
@@ -1927,6 +1931,19 @@ void NodeEditor::RenderNodes() {
             );
             draw_list->AddText(font, scaled_icon_size, icon_text_pos,
                                ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(bg_color))), icon);
+
+            // A frozen layer: the box is dimmed and carries a snowflake mark.
+            if (cyxwiz::frozen::IsFrozen(node)) {
+                draw_list->AddRectFilled(icon_pos, icon_max, ui::ToU32(ui::WithAlpha(t.bg_window, 0.5f)), CORNER_RADIUS);
+                const float mark_size = ImGui::GetFontSize() * 0.85f;
+                const ImVec2 mark_text = font->CalcTextSizeA(mark_size, FLT_MAX, 0.0f, ICON_FA_SNOWFLAKE);
+                const float radius = mark_size * 0.72f;
+                const ImVec2 mark_centre(icon_max.x - 2.0f, icon_pos.y + 2.0f);
+                draw_list->AddCircleFilled(mark_centre, radius, ui::ToU32(t.bg_panel));
+                draw_list->AddText(font, mark_size,
+                                   ImVec2(mark_centre.x - mark_text.x * 0.5f, mark_centre.y - mark_text.y * 0.5f),
+                                   ui::ToU32(t.info), ICON_FA_SNOWFLAKE);
+            }
 
             // Drag handle: icon box only (keeps pin drag separate from node move)
             ImVec2 cursor_backup = ImGui::GetCursorScreenPos();

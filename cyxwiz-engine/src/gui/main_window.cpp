@@ -1820,6 +1820,9 @@ MainWindow::MainWindow()
             node_editor_->GroupSelectedNodes();
         }
     });
+    toolbar_->SetFreezeNodesCallback([this](const std::string& command) {
+        if (node_editor_) node_editor_->RunFreezeCommand(command);
+    });
     toolbar_->SetUngroupNodesCallback([this]() {
         if (node_editor_) {
             node_editor_->UngroupSelectedNodes();

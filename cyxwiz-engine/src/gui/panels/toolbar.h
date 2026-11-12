@@ -86,6 +86,8 @@ public:
     void SetDeleteNodesCallback(std::function<void()> cb) { delete_nodes_callback_ = cb; }
     void SetGroupNodesCallback(std::function<void()> cb) { group_nodes_callback_ = cb; }
     void SetUngroupNodesCallback(std::function<void()> cb) { ungroup_nodes_callback_ = cb; }
+    // Nodes > Freeze: the command is one of NodeEditor::RunFreezeCommand's.
+    void SetFreezeNodesCallback(std::function<void(const std::string&)> cb) { freeze_nodes_callback_ = cb; }
 
     // Icon pack selection callbacks
     void SetSetIconPackCallback(std::function<void(int)> cb) { set_icon_pack_callback_ = cb; }
@@ -362,6 +364,7 @@ private:
     void RenderStudioDebuggerPreferences();
     // Preferences > Nodes panel (toolbar_preferences_nodes_panel.cpp)
     void RenderNodesPanelPreferences();
+    void RenderTrainingPreferences();
     // Preferences > Search (toolbar_preferences_search.cpp)
     void RenderSearchPreferences();
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
@@ -440,6 +443,7 @@ private:
     std::function<void()> delete_nodes_callback_;
     std::function<void()> group_nodes_callback_;
     std::function<void()> ungroup_nodes_callback_;
+    std::function<void(const std::string&)> freeze_nodes_callback_;
 
     // Icon pack selection callbacks
     std::function<void(int)> set_icon_pack_callback_;

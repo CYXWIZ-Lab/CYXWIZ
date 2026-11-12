@@ -115,6 +115,28 @@ optimizer memory. Its weights are still saved in checkpoints and exports.
 The node's **As compiled** card shows a frozen layer's weights as
 "Weights: N frozen" instead of "Learnable parameters".
 
+On the canvas a frozen node is dimmed and carries a snowflake mark, and the
+line under the canvas reads "Trainable N · Frozen M" once anything is frozen.
+
+### Freezing many layers at once
+
+**Nodes > Freeze**, or right-click the canvas > **Actions > Freeze**:
+
+| Command | What it does |
+| --- | --- |
+| Freeze selected / Unfreeze selected | The selected nodes that hold weights. |
+| Freeze every layer loaded from the file | The layers the Data Loader's weights file fills (the "Loaded" rows of the match report). |
+| Freeze all but the head | Every layer with weights except the last one of the model. |
+| Freeze all but the last N layers... | Asks for N; layers are counted from the output back, and the last N are unfrozen. |
+| Unfreeze all | Every layer trains again. |
+
+Each command is one undo step. The last three need a graph that compiles
+without errors, because the order of the layers comes from the compiled
+model. The commands are not available while training runs.
+
+The default for a new BatchNorm node's **When frozen** is set in
+**Preferences > Training**.
+
 The usual two runs:
 
 1. Start from the weights file, freeze the layers that took weights, and train

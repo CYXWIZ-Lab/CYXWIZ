@@ -116,6 +116,14 @@ struct StudioDebuggerConfig {
     bool operator==(const StudioDebuggerConfig&) const = default;
 };
 
+// The user's defaults for training choices (Preferences > Training).
+struct TrainingDefaultsConfig {
+    // What a new BatchNorm node does with its running statistics when it is
+    // frozen: keep them (true) or keep updating them.
+    bool frozen_batchnorm_keeps_statistics = true;
+    bool operator==(const TrainingDefaultsConfig&) const = default;
+};
+
 /**
  * @brief Centralized configuration management for the CyxWiz Engine.
  *
@@ -253,6 +261,9 @@ public:
     StudioDebuggerConfig GetStudioDebugger() const;
     void SetStudioDebugger(const StudioDebuggerConfig& studio_debugger);
 
+    TrainingDefaultsConfig GetTrainingDefaults() const;
+    void SetTrainingDefaults(const TrainingDefaultsConfig& training_defaults);
+
     // ===== Runtime Observability =====
 
     std::vector<RuntimeLogSavedFilterConfig> GetRuntimeLogSavedFilters() const;
@@ -345,6 +356,7 @@ private:
     // Local Debug settings
     bool require_debug_before_train_ = false;
     StudioDebuggerConfig studio_debugger_;
+    TrainingDefaultsConfig training_defaults_;
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;

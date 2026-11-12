@@ -109,7 +109,7 @@ int main() {
     const std::set<std::string> dialog_openers = {
         "file.new_project", "file.open_project", "script.new", "script.open", "file.save_as", "file.import_model",
         "file.preferences", "edit.find", "edit.replace", "edit.find_in_files", "edit.replace_in_files",
-        "edit.go_to_line", "view.command_palette", "view.theme_editor", "nodes.custom_node_editor",
+        "edit.go_to_line", "view.command_palette", "view.theme_editor", "nodes.custom_node_editor", "nodes.freeze_but_last",
         "train.optimizer_settings", "train.compare_test_results", "train.export_test_report",
         "train.load_checkpoint", "data.import", "data.create_custom", "deploy.connect", "deploy.deploy",
         "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin", "deploy.marketplace", "sim.load_mjcf",
@@ -136,6 +136,8 @@ int main() {
         "nodes.add_dense", "nodes.add_conv", "nodes.add_pooling", "nodes.add_dropout", "nodes.add_batchnorm",
         "nodes.add_attention", "nodes.group", "nodes.ungroup", "nodes.duplicate", "nodes.delete", "view.icon_pack",
         "nodes.custom_node_editor",
+        "nodes.freeze_selected", "nodes.unfreeze_selected", "nodes.freeze_loaded", "nodes.freeze_but_head",
+        "nodes.freeze_but_last", "nodes.unfreeze_all",
         "train.compile", "train.local_debug", "train.start", "train.pause", "train.stop", "train.dashboard",
         "train.optimizer_settings",
         "sim.run", "sim.pause", "sim.stop", "sim.step", "sim.viewport", "sim.env_library", "sim.load_mjcf",

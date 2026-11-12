@@ -424,6 +424,13 @@ public:
 
     // Training state control
     void SetTrainingActive(bool active) { is_training_ = active; }
+
+    // Freezing layers (fine-tuning; node_editor_freeze.cpp). The commands of
+    // the Freeze menu: "selected", "unselected", "loaded" (every layer the
+    // Data Loader's weights file fills), "but_head", "but_last" (asks how
+    // many), "unfreeze_all".
+    void RunFreezeCommand(const std::string& command);
+    bool HasLayersWithWeights() const;
     bool IsTrainingActive() const { return is_training_; }
 
     // Unified Canvas Phase 2: Execution mode control
@@ -818,6 +825,20 @@ private:
     // The strip along the canvas bottom: the counts, the selection and what
     // the canvas is doing (graph locked, the mode); TOFIX178 UI-1.
     void RenderCanvasFooter();
+    void FreezeSelectedNodes(bool freeze);
+    void FreezeAllButLastLayers(size_t keep);
+    void FreezeLayersLoadedFromFile();
+    void UnfreezeAllLayers();
+    void ApplyFreeze(const std::function<size_t(std::vector<MLNode>&)>& action, const std::string& what,
+                     const std::string& nothing);
+    void RenderFreezeMenuItems();
+    void RenderFreezePopups();
+    std::string FrozenTotalsText() const;
+    // The user's saved defaults for a node just added from the palette.
+    void ApplyUserNodeDefaults(MLNode& node) const;
+    bool freeze_last_popup_ = false;
+    int freeze_keep_layers_ = 1;
+    std::string freeze_message_;
     static constexpr float kCanvasFooterHeight = 26.0f;
     int toolbar_fold_level_ = -1;  // the bar's last form, logged when it changes
     void HandleInteractions();

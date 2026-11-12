@@ -158,6 +158,12 @@ private Data Studio tickets (`tofix*/track*`).
   BatchNorm adds **When frozen**: keep its running statistics (default) or
   keep updating them. Both are checked against PyTorch with `requires_grad`
   off. The As compiled card shows "Weights: N frozen".
+- **Freezing from the canvas.** A frozen node is dimmed with a snowflake
+  mark, and the line under the canvas shows "Trainable N · Frozen M".
+  **Nodes > Freeze** (also in the canvas right-click menu under Actions)
+  freezes or unfreezes the selection, every layer loaded from the weights
+  file, all but the head, or all but the last N layers. **Preferences >
+  Training** sets what a new BatchNorm does with its statistics when frozen.
 - **Start training from a published weights file.** Data Loader >
   Checkpoints > **Start from** is now one choice: random weights, a
   checkpoint of an earlier run, or **a weights file** (a PyTorch state-dict

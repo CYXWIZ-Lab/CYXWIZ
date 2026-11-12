@@ -420,6 +420,12 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        training_defaults_ = TrainingDefaultsConfig{};
+        if (config.contains("training_defaults") && config["training_defaults"].is_object()) {
+            training_defaults_.frozen_batchnorm_keeps_statistics =
+                config["training_defaults"].value("frozen_batchnorm_keeps_statistics", true);
+        }
+
         studio_debugger_ = StudioDebuggerConfig{};
         if (config.contains("studio_debugger") && config["studio_debugger"].is_object()) {
             const auto& sd = config["studio_debugger"];
@@ -647,6 +653,10 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
             {"saved_filters", std::move(saved_runtime_filters)}
+        };
+
+        config["training_defaults"] = {
+            {"frozen_batchnorm_keeps_statistics", training_defaults_.frozen_batchnorm_keeps_statistics}
         };
 
         config["studio_debugger"] = {
@@ -1035,6 +1045,19 @@ void EngineConfig::SetStudioDebugger(const StudioDebuggerConfig& studio_debugger
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(studio_debugger_ == value)) {
         studio_debugger_ = value;
+        modified_ = true;
+    }
+}
+
+TrainingDefaultsConfig EngineConfig::GetTrainingDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return training_defaults_;
+}
+
+void EngineConfig::SetTrainingDefaults(const TrainingDefaultsConfig& training_defaults) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(training_defaults_ == training_defaults)) {
+        training_defaults_ = training_defaults;
         modified_ = true;
     }
 }

@@ -1322,6 +1322,11 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::EndTabItem();
                 }
 
+                if (ImGui::BeginTabItem(ICON_FA_GRADUATION_CAP " Training")) {
+                    RenderTrainingPreferences();
+                    ImGui::EndTabItem();
+                }
+
                 if (ImGui::BeginTabItem(ICON_FA_CUBES " Nodes panel")) {
                     RenderNodesPanelPreferences();
                     ImGui::EndTabItem();

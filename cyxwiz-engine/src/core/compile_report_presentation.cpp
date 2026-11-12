@@ -213,7 +213,7 @@ void AddConfig(Report& r, const ConfigFacts& c) {
                                            std::to_string(m.optimizer_tensors_per_parameter) + " per parameter)");
         if (m.state_elements > 0)
             memory.rows.emplace_back("Kept state", FormatCompiledBytes(m.state_bytes) +
-                                                       " (kept but not trained, such as BatchNorm running statistics)");
+                                                       " (kept but not trained: frozen layers and BatchNorm running statistics)");
         memory.rows.emplace_back("Activations", FormatCompiledBytes(m.activation_bytes) + " (batch " +
                                                     std::to_string(m.batch_size) +
                                                     ": each layer's output and what it keeps for the backward pass)");

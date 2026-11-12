@@ -430,6 +430,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_codegen.cpp
     src/gui/node_editor_connection.cpp
     src/gui/node_editor_context_menu.cpp
+    src/gui/node_editor_freeze.cpp
     src/gui/node_editor_io.cpp
     src/gui/node_editor_subgraph.cpp
     src/gui/subgraph_document.cpp
@@ -485,6 +486,7 @@ set(ENGINE_SOURCES
     src/core/properties_presentation.cpp
     src/core/layer_inside_presentation.cpp
     src/core/weight_report_presentation.cpp
+    src/core/freeze_actions.cpp
     src/core/node_presets.cpp
     src/core/menu_presentation.cpp
     src/core/extension_properties_presentation.cpp
@@ -570,6 +572,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_preferences_dialog.cpp
     src/gui/panels/toolbar_preferences_storage.cpp
     src/gui/panels/toolbar_preferences_studio_debugger.cpp
+    src/gui/panels/toolbar_preferences_training.cpp
     src/gui/panels/toolbar_preferences_nodes_panel.cpp
     src/gui/panels/toolbar_preferences_search.cpp
     src/gui/panels/toolbar_preferences_servers.cpp
@@ -7578,6 +7581,19 @@ set_target_properties(test_quality_analyzer_presentation PROPERTIES
 )
 add_test(NAME quality_analyzer_presentation COMMAND test_quality_analyzer_presentation)
 
+# ===== Test: the canvas Freeze actions and the Trainable / Frozen count (TOFIX178 1.9e) =====
+add_executable(test_freeze_actions
+    tests/test_freeze_actions.cpp
+    src/core/freeze_actions.cpp
+)
+target_compile_features(test_freeze_actions PRIVATE cxx_std_20)
+target_include_directories(test_freeze_actions PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_freeze_actions PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt)
+set_target_properties(test_freeze_actions PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME freeze_actions COMMAND test_freeze_actions)
+
 # ===== Test: the Data Loader dialog's weights file card and match report (TOFIX178 1.9d) =====
 add_executable(test_weight_report_presentation
     tests/test_weight_report_presentation.cpp
@@ -7620,6 +7636,7 @@ add_executable(test_properties_presentation
     src/core/properties_presentation.cpp
     src/core/layer_inside_presentation.cpp
     src/core/weight_report_presentation.cpp
+    src/core/freeze_actions.cpp
     src/core/compiled_node_presentation.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_truth.cpp

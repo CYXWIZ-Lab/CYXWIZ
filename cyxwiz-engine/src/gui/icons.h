@@ -196,6 +196,7 @@
 #define ICON_FA_CIRCLE_NODES        "\xee\x93\xa8"  // U+E4E8 - network nodes
 #define ICON_FA_CHART_SCATTER       "\xee\x94\xa4"  // U+E524 - scatter chart
 #define ICON_FA_FIRE                "\xef\x81\xad"  // U+F06D - fire
+#define ICON_FA_SNOWFLAKE           "\xef\x8b\x9c"  // U+F2DC - a frozen layer
 #define ICON_FA_DNA                 "\xef\x91\xb1"  // U+F471 - DNA
 #define ICON_FA_RANKING_STAR        "\xee\x95\xb0"  // U+E570 - ranking star (FA6 Pro alternative: use STAR)
 #define ICON_FA_TROPHY              "\xef\x82\x91"  // U+F091 - trophy

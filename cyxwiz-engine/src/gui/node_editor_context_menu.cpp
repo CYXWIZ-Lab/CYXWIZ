@@ -413,6 +413,12 @@ void NodeEditor::ShowContextMenu() {
         }
 
         ImGui::Separator();
+        if (ImGui::BeginMenu(ICON_FA_SNOWFLAKE " Freeze", HasLayersWithWeights())) {
+            RenderFreezeMenuItems();
+            ImGui::EndMenu();
+        }
+
+        ImGui::Separator();
         if (ImGui::MenuItem(ICON_FA_OBJECT_GROUP " Create Group", "Ctrl+G", false, has_selection)) {
             CreateGroupFromSelection("");
             ImGui::CloseCurrentPopup();

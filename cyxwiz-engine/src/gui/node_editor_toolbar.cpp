@@ -628,6 +628,11 @@ void NodeEditor::RenderCanvasFooter() {
             ImGui::SameLine(0.0f, 0.0f);
             ImGui::TextColored(t.accent_text, "%s", st::SelectionText(num_selected).c_str());
         }
+        // What a run will change, once any layer is frozen.
+        if (const std::string totals = FrozenTotalsText(); !totals.empty()) {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextColored(t.text_dim, " \xC2\xB7 %s", totals.c_str());
+        }
         const float doing_w = ImGui::CalcTextSize(doing.c_str()).x;
         ImGui::SameLine();
         const float x = ImGui::GetWindowWidth() - doing_w - 12.0f;
