@@ -1432,6 +1432,10 @@ public:
             type = cyxwiz::ModuleType::Mish;
             return true;
         }
+        if (name == "Hardswish") {
+            type = cyxwiz::ModuleType::Hardswish;
+            return true;
+        }
 
         // LeakyReLU: "LeakyReLU(slope=0.1)" format
         std::regex leaky_regex(R"(LeakyReLU\(slope=([0-9.]+)\))");
