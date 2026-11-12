@@ -4,6 +4,7 @@
 #include "hashing_output_stream.h"
 #include <cyxwiz/device.h>
 #include <cyxwiz/model_evaluation.h>
+#include <cyxwiz/utilities.h>
 #include "project_data_path.h"
 #include "sql_transform.h"
 #include "filter_condition.h"
@@ -68,11 +69,13 @@ namespace cyxwiz {
 
 namespace {
 
-// The column transforms that fit values on their input (TOFIX129 D2): they
-// share the fitted-state parameters, the saved-state path and the leakage guard.
+// The transforms that fit values on their input's Train rows (TOFIX129 D2,
+// D9): they share the fitted-state parameters, the saved-state path and the
+// leakage guard.
 bool IsFittedColumnTransform(const std::string& type) {
     return type == "StandardScaler" || type == "MinMaxScaler" || type == "RobustScaler" ||
-           type == "MaxAbsScaler" || type == "QuantileTransform" || type == "PowerTransform";
+           type == "MaxAbsScaler" || type == "QuantileTransform" || type == "PowerTransform" || type == "PCANode" ||
+           type == "TruncatedSVD" || type == "Whitening";
 }
 
 // The registry name of an operator node's result.
@@ -525,78 +528,15 @@ bool BuildRuleEngineCaseExpression(const std::shared_ptr<arrow::Table>& table,
     return true;
 }
 
-std::string NormalizeUnitName(std::string unit) {
-    unit = ToLowerAscii(TrimString(unit));
-    unit.erase(std::remove_if(unit.begin(), unit.end(),
-                              [](unsigned char c) { return std::isspace(c); }),
-               unit.end());
-    return unit;
+// A literal that reads back as exactly `v` in DuckDB SQL.
+std::string SqlDouble(double v) {
+    std::ostringstream oss;
+    oss << std::setprecision(17) << v;
+    return "CAST(" + oss.str() + " AS DOUBLE)";
 }
 
-bool UnitScaleToBase(const std::string& category,
-                     const std::string& unit,
-                     double& scale,
-                     std::string& error) {
-    const std::string normalized = NormalizeUnitName(unit);
-    const auto fail = [&]() {
-        error = "UnitConverter: unsupported " + category + " unit '" + unit + "'";
-        return false;
-    };
-
-    if (category == "length") {
-        if (normalized == "m" || normalized == "meter" || normalized == "meters") scale = 1.0;
-        else if (normalized == "km" || normalized == "kilometer" || normalized == "kilometers") scale = 1000.0;
-        else if (normalized == "cm" || normalized == "centimeter" || normalized == "centimeters") scale = 0.01;
-        else if (normalized == "mm" || normalized == "millimeter" || normalized == "millimeters") scale = 0.001;
-        else if (normalized == "ft" || normalized == "foot" || normalized == "feet") scale = 0.3048;
-        else if (normalized == "in" || normalized == "inch" || normalized == "inches") scale = 0.0254;
-        else if (normalized == "mi" || normalized == "mile" || normalized == "miles") scale = 1609.344;
-        else return fail();
-        return true;
-    }
-
-    if (category == "mass") {
-        if (normalized == "kg" || normalized == "kilogram" || normalized == "kilograms") scale = 1.0;
-        else if (normalized == "g" || normalized == "gram" || normalized == "grams") scale = 0.001;
-        else if (normalized == "mg" || normalized == "milligram" || normalized == "milligrams") scale = 0.000001;
-        else if (normalized == "lb" || normalized == "lbs" || normalized == "pound" || normalized == "pounds") scale = 0.45359237;
-        else if (normalized == "oz" || normalized == "ounce" || normalized == "ounces") scale = 0.028349523125;
-        else return fail();
-        return true;
-    }
-
-    if (category == "time") {
-        if (normalized == "s" || normalized == "sec" || normalized == "second" || normalized == "seconds") scale = 1.0;
-        else if (normalized == "min" || normalized == "minute" || normalized == "minutes") scale = 60.0;
-        else if (normalized == "h" || normalized == "hr" || normalized == "hour" || normalized == "hours") scale = 3600.0;
-        else if (normalized == "day" || normalized == "days" || normalized == "d") scale = 86400.0;
-        else return fail();
-        return true;
-    }
-
-    if (category == "area") {
-        if (normalized == "m2" || normalized == "m^2" || normalized == "sqm") scale = 1.0;
-        else if (normalized == "cm2" || normalized == "cm^2") scale = 0.0001;
-        else if (normalized == "ft2" || normalized == "ft^2" || normalized == "sqft") scale = 0.09290304;
-        else if (normalized == "acre" || normalized == "acres") scale = 4046.8564224;
-        else return fail();
-        return true;
-    }
-
-    if (category == "volume") {
-        if (normalized == "l" || normalized == "liter" || normalized == "liters") scale = 1.0;
-        else if (normalized == "ml" || normalized == "milliliter" || normalized == "milliliters") scale = 0.001;
-        else if (normalized == "m3" || normalized == "m^3") scale = 1000.0;
-        else if (normalized == "ft3" || normalized == "ft^3") scale = 28.316846592;
-        else if (normalized == "gal" || normalized == "gallon" || normalized == "gallons") scale = 3.785411784;
-        else return fail();
-        return true;
-    }
-
-    error = "UnitConverter: unsupported category '" + category + "'";
-    return false;
-}
-
+// The column converted from one unit to another of the shared table
+// (Utilities::Units, the Utilities window's too): to = from * a + b.
 bool BuildUnitConverterExpression(const std::string& category,
                                   const std::string& from_unit,
                                   const std::string& to_unit,
@@ -604,43 +544,32 @@ bool BuildUnitConverterExpression(const std::string& category,
                                   std::string& expression,
                                   std::string& error) {
     const std::string normalized_category = ToLowerAscii(TrimString(category));
-    if (normalized_category == "temperature") {
-        const std::string from = NormalizeUnitName(from_unit);
-        const std::string to = NormalizeUnitName(to_unit);
-        std::string celsius_expression;
-        if (from == "c" || from == "celsius") {
-            celsius_expression = quoted_column;
-        } else if (from == "f" || from == "fahrenheit") {
-            celsius_expression = "((" + quoted_column + " - 32.0) * 5.0 / 9.0)";
-        } else if (from == "k" || from == "kelvin") {
-            celsius_expression = "(" + quoted_column + " - 273.15)";
-        } else {
-            error = "UnitConverter: unsupported temperature unit '" + from_unit + "'";
-            return false;
-        }
-
-        if (to == "c" || to == "celsius") {
-            expression = celsius_expression;
-        } else if (to == "f" || to == "fahrenheit") {
-            expression = "((" + celsius_expression + ") * 9.0 / 5.0 + 32.0)";
-        } else if (to == "k" || to == "kelvin") {
-            expression = "((" + celsius_expression + ") + 273.15)";
-        } else {
-            error = "UnitConverter: unsupported temperature unit '" + to_unit + "'";
-            return false;
-        }
-        return true;
-    }
-
-    double from_scale = 1.0;
-    double to_scale = 1.0;
-    if (!UnitScaleToBase(normalized_category, from_unit, from_scale, error) ||
-        !UnitScaleToBase(normalized_category, to_unit, to_scale, error)) {
+    const auto categories = Utilities::GetUnitCategories();
+    if (std::find(categories.begin(), categories.end(), normalized_category) == categories.end()) {
+        error = "UnitConverter: unsupported category '" + category + "'";
         return false;
     }
-
-    expression = "((" + quoted_column + ") * " + std::to_string(from_scale) +
-                 " / " + std::to_string(to_scale) + ")";
+    const UnitDefinition* from = Utilities::FindUnit(from_unit, normalized_category);
+    const UnitDefinition* to = Utilities::FindUnit(to_unit, normalized_category);
+    if (!from || !to) {
+        error = "UnitConverter: unsupported " + normalized_category + " unit '" + (from ? to_unit : from_unit) + "'";
+        return false;
+    }
+    const std::string column = "CAST(" + quoted_column + " AS DOUBLE)";
+    if (normalized_category == "temperature") {
+        // Through Celsius with the defining constants, as Utilities::ConvertUnit:
+        // 0 C is 32 F exactly.
+        std::string celsius = column;
+        if (from->id == "kelvin") celsius = "(" + column + " - 273.15)";
+        if (from->id == "fahrenheit") celsius = "((" + column + " - 32.0) * 5.0 / 9.0)";
+        if (from->id == "rankine") celsius = "((" + column + " - 491.67) * 5.0 / 9.0)";
+        expression = celsius;
+        if (to->id == "kelvin") expression = "(" + celsius + " + 273.15)";
+        if (to->id == "fahrenheit") expression = "(" + celsius + " * 9.0 / 5.0 + 32.0)";
+        if (to->id == "rankine") expression = "((" + celsius + " + 273.15) * 9.0 / 5.0)";
+        return true;
+    }
+    expression = "(" + column + " * " + SqlDouble(from->scale / to->scale) + ")";
     return true;
 }
 
@@ -1876,56 +1805,7 @@ bool BuildCalculatorExpression(const std::string& formula,
     return true;
 }
 
-bool ParseSimpleJsonPath(const std::string& path,
-                         std::vector<std::string>& segments,
-                         std::string& error) {
-    segments.clear();
-    const std::string trimmed = TrimString(path);
-    if (trimmed.empty()) {
-        error = "JSONPathExtractor: path is required";
-        return false;
-    }
-    if (trimmed == "$") {
-        return true;
-    }
-    if (trimmed.rfind("$.", 0) != 0) {
-        error = "JSONPathExtractor: only simple $.field paths are supported";
-        return false;
-    }
-
-    std::stringstream tokens(trimmed.substr(2));
-    std::string token;
-    while (std::getline(tokens, token, '.')) {
-        token = TrimString(token);
-        if (token.empty() || token.find('[') != std::string::npos ||
-            token.find(']') != std::string::npos) {
-            error = "JSONPathExtractor: only dot-separated object fields are supported";
-            return false;
-        }
-        segments.push_back(token);
-    }
-    return true;
-}
-
-bool ExtractJsonPathValue(const nlohmann::json& document,
-                          const std::vector<std::string>& segments,
-                          nlohmann::json& value) {
-    const nlohmann::json* current = &document;
-    for (const auto& segment : segments) {
-        if (!current->is_object()) {
-            return false;
-        }
-        const auto it = current->find(segment);
-        if (it == current->end()) {
-            return false;
-        }
-        current = &(*it);
-    }
-    value = *current;
-    return true;
-}
-
-std::string JsonValueToDatasetString(const nlohmann::json& value) {
+std::string JsonValueToDatasetString(const nlohmann::ordered_json& value) {
     if (value.is_string()) {
         return value.get<std::string>();
     }
@@ -1945,6 +1825,7 @@ bool BuildRegexOptions(const std::string& flags,
             continue;
         }
         if (flag == 'm' || flag == 'M') {
+            options |= std::regex::multiline;  // ^ and $ at every line (C++17)
             continue;
         }
         error = "RegexTester: unsupported regex flag '" + std::string(1, flag) + "'";
@@ -3772,6 +3653,13 @@ bool PipelineExecutor::ValidatePipeline(const std::vector<Node>& nodes) {
             // A SQL step takes one input per name in its alias list (C2).
             required_input_count =
                 static_cast<int>(SqlStepInputAliases(node.parameters).size());
+        }
+        if (node.type == "LinearSolve") {
+            // Data, plus b when it is connected (else b's columns are in Data).
+            const bool b_linked = std::any_of(
+                node.input_links.begin(), node.input_links.end(),
+                [](const auto& link) { return link.target_pin_index == 1; });
+            required_input_count = b_linked ? 2 : 1;
         }
         if (node.type == "ClassicModelPredictor") {
             // Data, plus the Model input when it is connected (optional:
@@ -6313,6 +6201,9 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
                 saved->second = ResolveProjectDataPath(TrimString(saved->second), project_root_);
             }
         }
+    } else if (type == gui::NodeType::LinearSolve || type == gui::NodeType::LinearProjection) {
+        // The rows on pin 0; a second table on pin 1 (handed to the operator below).
+        input_dataset_name = GetInputDatasetForPin(node, ctx, 0);
     } else {
         input_dataset_name = GetInputDatasetName(node, ctx);
     }
@@ -6323,7 +6214,9 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
 
     auto& registry = DataRegistry::Instance();
     auto input_table = InputSchemaTable(input_dataset_name);
-    if (!input_table) {
+    // Sparse features (a vectorizer set to Sparse) go to a step that reads them (TOFIX129 D9).
+    const auto sparse_input = input_table ? nullptr : registry.GetSparseFeatureDataset(input_dataset_name);
+    if (!input_table && !sparse_input) {
         ReportError(node.type + ": input dataset '" + input_dataset_name + "' is not a table");
         return false;
     }
@@ -6343,6 +6236,20 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
     operator_context.cancellation_requested =
         [this]() { return cancel_requested_.load(); };
     op->SetExecutionContext(std::move(operator_context));
+    if (const int pin = op->SecondTablePin(); pin >= 0) {
+        const bool linked = std::any_of(node.input_links.begin(), node.input_links.end(),
+                                        [pin](const auto& link) { return link.target_pin_index == pin; });
+        std::shared_ptr<arrow::Table> second;
+        if (linked) {
+            const std::string name = GetInputDatasetForPin(node, ctx, pin);
+            second = name.empty() ? nullptr : InputSchemaTable(name);
+            if (!second) {
+                ReportError(node.type + ": its second input (pin " + std::to_string(pin + 1) + ") is not a table");
+                return false;
+            }
+        }
+        op->SetSecondTable(second);
+    }
     // The runtime memory guard (TOFIX178 S0-e2, as training's own preparation
     // had): a step whose process memory grows by the safe budget - the data
     // budget, at most 90% of the memory free when it starts - stops with the
@@ -6388,6 +6295,33 @@ bool PipelineExecutor::ExecutePipelineOperatorNode(
                         ? node.type + ": operator configuration failed"
                         : configure_error);
         return false;
+    }
+
+    if (sparse_input) {
+        if (!op->AcceptsSparseInput()) {
+            ReportError(node.type + ": its input is sparse features (a vectorizer set to Sparse), which this step cannot read: "
+                                    "set the vectorizer's Output format to Dense, or put Truncated SVD between them");
+            return false;
+        }
+        arrow::Result<std::shared_ptr<arrow::Table>> mapped;
+        try {
+            mapped = op->ApplySparseInput(*sparse_input);
+        } catch (const OperatorMemoryLimitReached& stop) {
+            ReportError(node.type + ": " + stop.message);
+            return false;
+        }
+        if (!mapped.ok()) {
+            ReportError(node.type + ": operator execution failed: " + mapped.status().ToString());
+            return false;
+        }
+        if (!registry.RegisterArrowTable(mapped.ValueOrDie(), output_dataset_name)) {
+            ReportError(node.type + ": failed to register operator output dataset");
+            return false;
+        }
+        ctx.node_results[node.id] = output_dataset_name;
+        ctx.output_dataset = output_dataset_name;
+        if (std::string outcome = op->OutcomeSummary(); !outcome.empty()) ctx.node_outcomes[node.id] = std::move(outcome);
+        return true;
     }
 
     std::string schema_error;
@@ -8283,11 +8217,15 @@ bool PipelineExecutor::ExecuteJSONPathExtractor(const Node& node, ExecutionConte
         return false;
     }
 
-    const std::string path = ParameterOrDefault(node.parameters, "path", "$");
-    std::vector<std::string> path_segments;
-    std::string path_error;
-    if (!ParseSimpleJsonPath(path, path_segments, path_error)) {
-        ReportError(path_error);
+    // The Utilities window's and pycyxwiz.utilities' path rule
+    // (Utilities::LookUpJSON): keys by dots, array items by [n], "$." allowed.
+    const std::string path = TrimString(ParameterOrDefault(node.parameters, "path", "$"));
+    if (path.empty()) {
+        ReportError("JSONPathExtractor: path is required");
+        return false;
+    }
+    if (const JSONLookup check = Utilities::LookUpJSON("{}", path); !check.path_valid) {
+        ReportError("JSONPathExtractor: " + check.error);
         return false;
     }
 
@@ -8361,18 +8299,14 @@ bool PipelineExecutor::ExecuteJSONPathExtractor(const Node& node, ExecutionConte
                 return false;
             }
 
-            nlohmann::json document;
-            try {
-                document = nlohmann::json::parse(json_text);
-            } catch (const std::exception& e) {
-                ReportError("JSONPathExtractor: invalid JSON at row " +
-                            std::to_string(row) + ": " + e.what());
+            const JSONLookup found = Utilities::LookUpJSON(json_text, path);
+            if (!found.parsed) {
+                ReportError("JSONPathExtractor: invalid JSON at row " + std::to_string(row));
                 return false;
             }
-
-            nlohmann::json value;
-            if (!ExtractJsonPathValue(document, path_segments, value) ||
-                value.is_null()) {
+            const nlohmann::ordered_json value =
+                found.found ? nlohmann::ordered_json::parse(found.value_json) : nlohmann::ordered_json();
+            if (value.is_null()) {
                 auto status = result_builder.AppendNull();
                 if (!status.ok()) {
                     ReportError("JSONPathExtractor: Failed to append null result");

@@ -312,6 +312,10 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "KMeansCluster",
         "KNNClassifier",
         "TSNENode",
+        "TruncatedSVD",
+        "Whitening",
+        "LinearSolve",
+        "PortfolioWeights",
         "UMAPNode",
         "LabelEncoder",
         "LinearRegressionNode",
@@ -3152,8 +3156,8 @@ int main(int argc, char** argv) {
     {
         std::ofstream csv(json_payload_csv_path);
         csv << "payload\n";
-        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Ada\"\"}}\"\n";
-        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Grace\"\"}}\"\n";
+        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Ada\"\",\"\"langs\"\":[\"\"C\"\",\"\"Lisp\"\"]}}\"\n";
+        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Grace\"\",\"\"langs\"\":[\"\"COBOL\"\"]}}\"\n";
     }
     {
         std::ofstream csv(decision_tree_csv_path);
@@ -7849,9 +7853,28 @@ int main(int argc, char** argv) {
           "UnitConverter output dataset is registered");
     auto converted_units_table = converted_units->GetArrowTable();
     Check(converted_units_table != nullptr, "UnitConverter output table exists");
-    Check(std::fabs(ReadNumericValue(converted_units_table, "x", 0) -
-                    3.28084) < 0.001,
-          "UnitConverter should convert meters to feet");
+    Check(std::fabs(ReadNumericValue(converted_units_table, "x", 0) - 1.0 / 0.3048) < 1e-12,
+          "UnitConverter should convert meters to feet exactly (1 ft = 0.3048 m)");
+
+    // Temperatures go through Celsius with the defining constants, as the
+    // Utilities window: x = 1 degC is 33.8 degF.
+    const std::string temperature_json =
+        R"({"nodes":[)"
+        R"({"id":643,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":644,"type":"UnitConverter","name":"Convert","parameters":{)"
+        R"("category":"temperature","from_unit":"celsius","to_unit":"fahrenheit"}})"
+        R"(],"links":[{"start_node":643,"end_node":644}]})";
+    cyxwiz::PipelineExecutor temperature_executor;
+    Check(temperature_executor.ExecutePipeline(temperature_json),
+          "UnitConverter should convert temperatures: " + temperature_executor.GetLastError());
+    auto converted_temperature = registry.GetArrowDataset("ds_unitconverter_644");
+    Check(converted_temperature != nullptr && converted_temperature->GetArrowTable() != nullptr,
+          "UnitConverter temperature output table exists");
+    if (converted_temperature != nullptr && converted_temperature->GetArrowTable() != nullptr)
+        Check(std::fabs(ReadNumericValue(converted_temperature->GetArrowTable(), "x", 0) - 33.8) < 1e-12,
+              "UnitConverter should convert 1 degC to 33.8 degF");
 
     const std::string calculator_json =
         R"({"nodes":[)"
@@ -7896,6 +7919,16 @@ int main(int argc, char** argv) {
           "JSONPathExtractor should extract first row value");
     Check(ReadStringValue(json_path_table, "value", 1) == "Grace",
           "JSONPathExtractor should extract second row value");
+
+    // Array items by [n], as Tools > Utilities > JSON; a row without one is empty.
+    std::string json_index_json = json_path_json;
+    json_index_json.replace(json_index_json.find("$.user.name"), 11, "user.langs[1]");
+    cyxwiz::PipelineExecutor json_index_executor;
+    Check(json_index_executor.ExecutePipeline(json_index_json),
+          "JSONPathExtractor should read an array item: " + json_index_executor.GetLastError());
+    auto json_index_table = registry.GetArrowDataset("ds_jsonpath_652")->GetArrowTable();
+    Check(ReadStringValue(json_index_table, "value", 0) == "Lisp", "JSONPathExtractor reads user.langs[1]");
+    Check(json_index_table->column(0)->null_count() == 1, "a row without langs[1] gives an empty cell");
 
     const std::string regex_tester_json =
         R"({"nodes":[)"

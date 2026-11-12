@@ -50,6 +50,7 @@
     "openxlsx",
     "libsndfile",
     "fftw3",
+    "highs",
     {
       "name": "arrow",
       "features": ["parquet", "csv", "json"]

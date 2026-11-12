@@ -9,14 +9,19 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 ## Contents
 
 - [pycyxwiz](#pycyxwiz)
+- [pycyxwiz.calculus](#pycyxwizcalculus)
 - [pycyxwiz.distributed](#pycyxwizdistributed)
 - [pycyxwiz.linalg](#pycyxwizlinalg)
+- [pycyxwiz.model](#pycyxwizmodel)
 - [pycyxwiz.nodes](#pycyxwiznodes)
+- [pycyxwiz.optimize](#pycyxwizoptimize)
 - [pycyxwiz.rl](#pycyxwizrl)
 - [pycyxwiz.signal](#pycyxwizsignal)
 - [pycyxwiz.stats](#pycyxwizstats)
+- [pycyxwiz.system](#pycyxwizsystem)
 - [pycyxwiz.text](#pycyxwiztext)
 - [pycyxwiz.timeseries](#pycyxwiztimeseries)
+- [pycyxwiz.utilities](#pycyxwizutilities)
 
 ## pycyxwiz
 
@@ -164,7 +169,7 @@ Derives from `Module`.
 | Member | What it does |
 |---|---|
 | `AudioProcessing(/, *args, **kwargs)` |  |
-| `add_noise(audio: AudioData, snr_db: float = 20.0) -> AudioData` |  |
+| `add_noise(audio: AudioData, snr_db: float = 20.0, seed: int = 42) -> AudioData` |  |
 | `compute_mel_spectrogram(audio: AudioData, config: MelConfig = MelConfig()) -> AudioFeatures` |  |
 | `compute_mfcc(audio: AudioData, config: MFCCConfig = MFCCConfig()) -> AudioFeatures` |  |
 | `compute_spectrogram(audio: AudioData, config: SpectrogramConfig = SpectrogramConfig()) -> AudioFeatures` |  |
@@ -1317,6 +1322,36 @@ Derives from `Layer`.
 | `unk_index` (property) |  |
 | `word_to_index(self: Vocabulary, word: str) -> int` | Get index for a word ([UNK] if not found) |
 
+## pycyxwiz.calculus
+
+Integrals, derivatives and curvature of a typed formula
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `curvature(formula: object, point: Sequence[float], variables: Sequence[str] \| None = None) -> dict` | The gradient, the Hessian and its eigenvalues (ascending) at a point, all exact: every eigenvalue above 0 curves up in every direction at this point |
+| `curvature_over_range(formula: object, x_range: tuple[float, float], y_range: tuple[float, float], per_side: int = 40, variables: Sequence[str] = ['x', 'y']) -> dict` | The Hessian's smallest eigenvalue on per_side x per_side points of a two-variable formula: how many points curve down in some direction (not convex there), and the first of them |
+| `derivative(formula: object, x: float, rule: str = 'central', h: float = 0.0, variable: str = 'x') -> dict` | f'(x) and f''(x): exact from the formula (None when it has no exact derivative, as with max or mod) and by differences with step h (0: the step that suits float64 for the rule) |
+| `gauss_legendre(n: int) -> tuple` | The n Gauss-Legendre nodes and weights on [-1, 1] (numpy.polynomial.legendre.leggauss) |
+| `integrate(formula: object, a: float, b: float, rule: str = 'adaptive', n: int = 100, epsabs: float = 1.49e-08, epsrel: float = 1.49e-08, limit: int = 50, variable: str = 'x') -> dict` | The integral of a formula of one variable from a to b (either may be +-inf with the adaptive rule). adaptive: Gauss-Kronrod 21 on bisected intervals, as scipy.integrate.quad, with its error estimate; trapezoid, midpoint, simpson: n equal intervals; gauss: n Gauss-Legendre points |
+| `step_errors(formula: object, x: float, h_from: float = 0.1, h_to: float = 1e-12, count: int = 45, variable: str = 'x') -> dict` | \|numerical f' - exact f'\| for the forward and central differences at `count` steps from h_from down to h_to, evenly spaced in log10 |
+
+### Classes
+
+### `Expression`
+
+A typed formula, such as '(1 - x)^2 + 100*(y - x^2)^2': + - * / % ^ (right associative; -x^2 is -(x^2)), pi e phi, sin cos tan asin acos atan sinh cosh tanh sqrt cbrt exp log ln log10 log2 abs floor ceil round sign factorial, and pow mod fmod min max atan2. Its variables are named in order; any other name is refused.
+
+| Member | What it does |
+|---|---|
+| `Expression(self: calculus.Expression, text: str, variables: Sequence[str] = ['x'], degrees: bool = False) -> None` |  |
+| `__repr__(self: calculus.Expression) -> str` | `repr(a)`. |
+| `derivative(self: calculus.Expression, variable: object = None) -> calculus.Expression` | The exact partial derivative by a variable (its name or index), simplified |
+| `evaluate_many(self: calculus.Expression, columns: Sequence[Sequence[float]]) -> list[float]` | The values at many points, a list of values per variable: on the device when it has float64, otherwise on the host. Points without a value give nan or inf |
+| `text` (property) |  |
+| `variables` (property) |  |
+
 ## pycyxwiz.distributed
 
 Distributed training support for data parallel training
@@ -1535,6 +1570,44 @@ Linear algebra functions (MATLAB-style)
 | `zeros(n: int) -> list[list[float]]` | Create square zero matrix |
 | `zeros(rows: int, cols: int) -> list[list[float]]` | Create zero matrix |
 
+## pycyxwiz.model
+
+The model's summary, learning rate range test, explanations and calibration (the Engine's Tools > Model and Results > Test > Calibration)
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `apply_isotonic(x: Sequence[float], y: Sequence[float], scores: Sequence[float]) -> list[float]` | The isotonic fit's probabilities of the scores: linear between fit_isotonic's points, clipped outside them. |
+| `apply_platt(a: float, b: float, scores: Sequence[float]) -> list[float]` | Platt's probabilities of the scores, from fit_platt's (a, b). |
+| `fit_isotonic(scores: Sequence[float], labels: Sequence[int]) -> tuple` | Isotonic regression of the label on the score, as scikit-learn's IsotonicRegression(out_of_bounds='clip'): the fitted points (x, y). |
+| `fit_platt(scores: Sequence[float], labels: Sequence[int]) -> tuple` | Platt's sigmoid 1 / (1 + exp(a s + b)) of a yes / no score, as scikit-learn's _sigmoid_calibration: (a, b). |
+| `fit_temperature(probabilities: object, truth: Sequence[int], rows: Sequence[int] \| None = None) -> dict` | One temperature T minimizing the mean negative log-likelihood of softmax(log p / T) over rows (all by default). It changes no prediction. |
+| `integrated_gradients(model: Sequential, x: object, baseline: object = None, target: int = -1, steps: int = 64) -> dict` | Integrated Gradients from baseline (zeros by default) in steps midpoint steps, all in one batch. attribution_sum is about score - baseline_score (the completeness check). |
+| `lr_range_test(model: Sequential, loss: Loss, optimizer: Optimizer, x: object, y: object, start: float = 1e-07, end: float = 10.0, steps: int = 100, batch_size: int = 64, smoothing: float = 0.05, stop_factor: float = 4.0) -> dict` | A learning rate range test (Smith 2017): trains on batches of x, y (in order, round again at the end; integer y, such as class indices for CrossEntropyLoss, stays integer) raising the optimizer's rate every step, then puts the model's weights and the optimizer's rate back (its moments stay changed: pass a new optimizer). Returns points, stop_reason and analysis. |
+| `reliability(confidence: Sequence[float], correct: Sequence[int], bins: int = 10) -> dict` | How often the model is right when it says p: equal bands of [0, 1] and the expected calibration error. |
+| `saliency(model: Sequential, x: object, target: int = -1) -> dict` | d score / d input for one sample (target -1 = the predicted class). Returns gradients, absolute (\|gradients\|, Captum's Saliency) and target, in x's shape with a batch of one. |
+| `smooth_grad(model: Sequential, x: object, target: int = -1, samples: int = 50, noise: float = 0.1, seed: int = 0) -> dict` | Saliency averaged over noisy copies of x (gradients is the average). |
+| `summary(model: Sequential, input_shape: Sequence[int], batch: int = 1) -> dict` | Each module's output shape, parameters and multiply-adds for one sample (as PyTorch's torch.utils.flop_counter counts FLOPs, halved). input_shape is one sample's shape. Returns a dict: rows (index, name, output, parameters, trainable, multiply_adds, counted, formula), parameters, multiply_adds, all_counted, parameter_bytes (float32). |
+| `with_temperature(probabilities: object, temperature: float) -> object` | Probabilities (a row or [rows, classes]) after a temperature. |
+
+### Classes
+
+### `LearningRateRange`
+
+The range test's rules without training: the rate of each step (start x (end / start)^(step / (steps - 1))), the smoothed loss, the stop once it passes stop_factor x its lowest. record() each step's loss.
+
+| Member | What it does |
+|---|---|
+| `LearningRateRange(self: model.LearningRateRange, start: float = 1e-07, end: float = 10.0, steps: int = 100, smoothing: float = 0.05, stop_factor: float = 4.0) -> None` | Rates from start to end over steps steps; smoothing weighs the newest loss in the running average |
+| `analyse(self: model.LearningRateRange) -> dict` | Where to train: lowest (index, rate, loss), steepest (the most negative slope of the smoothed loss against log10(rate) up to the lowest, numpy.gradient), lowest_over_ten, slopes |
+| `current_learning_rate` (property) | The rate for the next step |
+| `finished` (property) | True once the steps ran out or the loss blew up |
+| `learning_rate_at(self: model.LearningRateRange, step: int) -> float` | The rate of a step (0 = start) |
+| `points` (property) | Each step: learning_rate, loss, smoothed |
+| `record(self: model.LearningRateRange, loss: float) -> bool` | The loss of the step just taken at current_learning_rate; True when the test is over |
+| `stop_reason` (property) | Why the test ended, in words |
+
 ## pycyxwiz.nodes
 
 pycyxwiz.nodes: describe a Python module as a CyxWiz node (TOFIX125 P3). Two ways to write a node (Part C4): - Tier 1, @nodes.activation: write f(x) and its derivative df(x); the module, its forward and backward are generated. Output shape = input shape. - Tier 2, @nodes.node on a pycyxwiz.Module subclass: write forward and backward yourself, optionally build(input_shape) and output_shape. - A loss, @nodes.loss on a pycyxwiz.Loss subclass: forward(predictions, targets) gives one value, backward gives dLoss/dpredictions (P7). Settings are declared with nodes.Param as class attributes. A graph stores settings as text; create() converts and checks them. This file is compiled into pycyxwiz and installed as the submodule pycyxwiz.nodes when pycyxwiz is imported.
@@ -1567,6 +1640,19 @@ A node setting: Param(float, default=1.0, min=0.01, description="..."). type is 
 | `convert(self, value, check=True)` | A graph value (text, or already typed) as this Param's type. |
 | `describe(self)` | The setting's entry in node.json: name, type, default, validation, description, choices. |
 | `validation(self)` | The rule as ParameterDefinition writes it: "0.01-", "0-1", "a\|b". |
+
+## pycyxwiz.optimize
+
+Linear and quadratic programs (HiGHS) and the training optimizers' paths
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `follow(formula: object, start: Sequence[float], optimizer: str = 'adam', lr: float = 0.001, momentum: float = 0.0, steps: int = 1000, tolerance: float = 1e-08, variables: Sequence[str] \| None = None) -> dict` | The path of a training optimizer (the update rules training uses, in float32 as training) minimizing a formula from `start`, the gradient exact from the formula (momentum: SGD and RMSprop only). Ends early when \|grad f\| < tolerance or a value stops being finite (diverged, with the step). Returns points (the start, then one per step), values, gradient_norms, converged, diverged, diverged_at |
+| `linprog(c: Sequence[float], constraints: object = None, bounds: object = None, maximize: bool = False) -> dict` | Minimize (or maximize) c . x subject to the constraints, each (coefficients, '<=' / '>=' / '=', rhs[, name]), and the bounds (None: every x >= 0). Returns a dict: success, status ('optimal', 'infeasible', 'unbounded', 'failed'), message, x, fun, slack, binding and shadow_prices (per row: how much the best value changes when its rhs grows by 1), iterations |
+| `portfolio(means: Sequence[float], covariance: Sequence[Sequence[float]], target_return: float \| None = None, long_only: bool = True) -> dict` | The least risky mix of assets (Markowitz), as the Portfolio Weights node: minimize 0.5 w' C w with the weights summing to 1 (row 'Budget'), earning at least target_return a period (row 'Return'; None: the minimum-variance mix), and with long_only no weight below 0. means and covariance per period |
+| `qp(Q: Sequence[Sequence[float]], c: Sequence[float], constraints: object = None, bounds: object = None) -> dict` | Minimize 0.5 x' Q x + c . x subject to the constraints and the bounds (None: every x free). Q must be symmetric positive semidefinite, else status 'not convex' names its most negative eigenvalue. Returns the same dict as linprog |
 
 ## pycyxwiz.rl
 
@@ -1623,6 +1709,21 @@ Statistics and clustering functions
 | `roc(arg0: Sequence[int], arg1: Sequence[float]) -> dict` | ROC curve and AUC |
 | `silhouette(arg0: Sequence[Sequence[float]], arg1: Sequence[int]) -> float` | Silhouette score |
 | `tsne(data: Sequence[Sequence[float]], n_dims: int = 2, perplexity: int = 30) -> list[list[float]]` | t-SNE embedding |
+
+## pycyxwiz.system
+
+The Engine's memory: what it holds on the compute device, what the device has free, host tensors
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `device_memory_free(hardware_uuid: str = '') -> dict` | The device's own memory for every program: known, total_bytes, free_bytes, source. Asked from the NVIDIA management library by DeviceInfo.hardware_uuid ('' = the only card); a driver that does not answer gives known False and source 'Not reported by this driver'. Never a guess. |
+| `device_memory_held() -> dict` | What this process holds on its compute device (ArrayFire's memory manager): known, allocated_bytes (in use plus kept for reuse), in_use_bytes, buffers, buffers_in_use. known is False before initialize(). |
+| `host_tensor_bytes() -> int` | Bytes of main memory held by host tensors (the tensor allocator; not the whole process). |
+| `host_tensor_peak_bytes() -> int` | The highest host_tensor_bytes since the process started, since reset_host_tensor_peak(), or since the last training run started (a run starts its own peak). |
+| `release_unused_device_memory() -> dict` | Returns the device buffers kept for reuse to the driver; buffers in use stay. Answers ran, allocated_before, allocated_after and freed_bytes. ran is False before initialize(). |
+| `reset_host_tensor_peak() -> None` | Starts the host tensor peak again from the current value. |
 
 ## pycyxwiz.text
 
@@ -1686,3 +1787,26 @@ Time series analysis functions
 | `success` (property) |  |
 | `target_features` (property) |  |
 | `y` (property) |  |
+
+## pycyxwiz.utilities
+
+Tools > Utilities from Python: units, hashes, JSON, regex, seeded random values, UUIDs, the calculator
+
+### Functions
+
+| Function | What it does |
+|---|---|
+| `conversion_formula(from_unit: str, to_unit: str) -> str` | The conversion as text, e.g. '°F = °C x 1.8 + 32'. |
+| `convert(value: float, from_unit: str, to_unit: str) -> float` | value converted between two units of one category (exact definitions; below absolute zero is refused). |
+| `evaluate(expression: str, variables: Mapping[str, float] = {}, degrees: bool = False) -> float` | The value of an expression (the Calculator's parser, as calculus.Expression); variables by name. |
+| `find_unit(name: str, category: str = '') -> object` | A unit by id, label, symbol or alias, or None. |
+| `hash(data: object, algorithm: str = 'sha256') -> str` | The hex digest of text (UTF-8) or bytes: md5, sha1, sha256 or sha512 (OpenSSL). |
+| `hash_file(path: str, algorithm: str = 'sha256', progress: object = None) -> str` | The hex digest of a file read in 1 MB blocks; progress(done, total) returning False stops (ValueError 'Stopped'). |
+| `json_check(text: str, indent: int = 2) -> dict` | Whether text is JSON: formatted and minified text (keys in the document's order) and the counts, or the error's line and column (where Python's json puts it). |
+| `json_get(text: str, path: str) -> object` | The Python value at a path such as 'config.max_workers' or 'items[0].name' (KeyError when it is not there; ValueError when the text is not JSON or the path is malformed). |
+| `random(distribution: str, count: int, a: float = 0.0, b: float = 1.0, seed: int = -1) -> dict` | Seeded values (the same on every platform): uniform(a=low, b=high), normal(a=mean, b=sd), exponential(a=rate), poisson(a=mean), integers(a=low, b=high). Returns the values, mean, both SDs, median, quartiles, range and histogram edges / counts; seed -1 draws one (returned as 'seed'). |
+| `regex_find(pattern: str, text: str, ignore_case: bool = False, multiline: bool = False) -> list` | The matches (ECMAScript, C++ std::regex; \w and \b know ASCII letters): text, start / end in characters (as Python's re), line, column, groups. |
+| `regex_replace(pattern: str, text: str, replacement: str, ignore_case: bool = False, multiline: bool = False) -> str` | Every match replaced: $& the match, $1 .. $9 its groups (ECMAScript). |
+| `unit_categories() -> list[str]` | length, mass, temperature, time, data, area, volume, speed |
+| `units(category: str = '') -> list` | The unit table (id, label, symbol, category, scale, offset, aliases): base = value * scale + offset. |
+| `uuid4(count: int = 1) -> list[str]` | Version 4 UUIDs, every random bit from the operating system's random source. |

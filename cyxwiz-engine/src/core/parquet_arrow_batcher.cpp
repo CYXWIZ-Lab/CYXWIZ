@@ -3,6 +3,7 @@
 #include "label_column_resolver.h"
 #include "class_balance.h"
 #include "split_partitioning.h"
+#include "cyxwiz/portable_random.h"
 
 #include <arrow/array.h>
 #include <arrow/chunked_array.h>
@@ -479,7 +480,7 @@ void ParquetArrowBatcher::StartBalancedEpoch() {
             // draws, then each of its rows a uniform share of those.
             entry.extra_left = classes_left == 1
                 ? draws_left
-                : std::binomial_distribution<uint64_t>(draws_left, 1.0 / static_cast<double>(classes_left))(balance_rng_);
+                : cyxwiz::portable::Binomial(balance_rng_, draws_left, 1.0 / static_cast<double>(classes_left));
             draws_left -= entry.extra_left;
             --classes_left;
         } else if (balance_mode_ == "undersample") {
@@ -508,12 +509,11 @@ void ParquetArrowBatcher::BalanceCurrentGroupRows() {
         if (balance_mode_ == "weighted_sampler") {
             // This row's share of the class's draws left (with replacement).
             const uint64_t mine = entry.rows_left == 1 ? entry.extra_left
-                : std::binomial_distribution<uint64_t>(entry.extra_left,
-                                                       1.0 / static_cast<double>(entry.rows_left))(balance_rng_);
+                : cyxwiz::portable::Binomial(balance_rng_, entry.extra_left, 1.0 / static_cast<double>(entry.rows_left));
             copies += mine;
             entry.extra_left -= mine;
         } else if (entry.extra_left > 0 &&
-                   std::uniform_int_distribution<uint64_t>(0, entry.rows_left - 1)(balance_rng_) < entry.extra_left) {
+                   cyxwiz::portable::Below(balance_rng_, entry.rows_left) < entry.extra_left) {
             // One more copy for exactly extra_left of the class's rows, each
             // row as likely as any other (selection sampling).
             ++copies;
@@ -576,7 +576,7 @@ void ParquetArrowBatcher::AssignRowGroups() {
 void ParquetArrowBatcher::ShuffleEpochGroupOrder() {
     epoch_group_order_ = assigned_row_groups_;
     if (shuffle_) {
-        std::shuffle(epoch_group_order_.begin(), epoch_group_order_.end(), rng_);
+        cyxwiz::portable::Shuffle(epoch_group_order_.begin(), epoch_group_order_.end(), rng_);
     }
 }
 
@@ -644,7 +644,7 @@ bool ParquetArrowBatcher::LoadNextRowGroup() {
     }
     if (balancing_) BalanceCurrentGroupRows();
     if (shuffle_) {
-        std::shuffle(current_row_indices_.begin(), current_row_indices_.end(), rng_);
+        cyxwiz::portable::Shuffle(current_row_indices_.begin(), current_row_indices_.end(), rng_);
     }
     current_row_cursor_ = 0;
     current_group_position_++;

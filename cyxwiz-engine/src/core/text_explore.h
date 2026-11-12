@@ -183,7 +183,7 @@ SentimentAnswer RunSentiment(const std::string& table, const SentimentRequest& r
 struct TokensRequest {
     TextRequest base;
     int tokenizer = 1;          // cyxwiz::TokenizerType (the Tokenizer node's tokenizer_type; 1: Word)
-    int vocabulary = 10000;     // max_vocab_size
+    int vocabulary = 10000;     // max_vocab_size (1 or more, as the node takes it)
     int min_frequency = 2;      // min_word_freq
     int max_length = 256;
     int64_t row = -1;

@@ -107,6 +107,9 @@ void CheckFormatting() {
         {{"layer0.weight", 10}, {"layer2.layer0.forward.W_ih", 3}, {"layer2.layer1.forward.W_ih", 4}, {"other", 9}});
     Check(per_layer.at(0) == 10 && per_layer.at(2) == 7 && per_layer.size() == 2,
           "parameter names are summed per top-level layer index");
+    const auto norm = cyxwiz::CountParametersPerLayer(
+        {{"layer1.gamma", 16}, {"layer1.beta", 16}, {"layer1.running_mean", 16}, {"layer1.running_var", 16}});
+    Check(norm.at(1) == 32, "BatchNorm's running statistics are not learnable parameters (PyTorch buffers)");
 }
 
 void CheckNer() {

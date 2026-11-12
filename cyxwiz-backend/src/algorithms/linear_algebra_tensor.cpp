@@ -4,6 +4,7 @@
 #endif
 
 #include "cyxwiz/linear_algebra.h"
+#include "svd_device.h"
 #include <cmath>
 #include <string>
 #include <vector>
@@ -241,7 +242,7 @@ TensorResult LinearAlgebra::LeastSquares(const Tensor& A, const Tensor& b) {
             aB = af::moddims(aB, static_cast<dim_t>(rowsB), static_cast<dim_t>(1));
         }
 
-        af::array x = af::solve(aA, aB, AF_MAT_NONE);
+        af::array x = detail::LeastSquaresSvd(aA, aB);
         x.eval();
         if (b_was_vector) {
             af::array x_vec = af::moddims(x, static_cast<dim_t>(colsA));

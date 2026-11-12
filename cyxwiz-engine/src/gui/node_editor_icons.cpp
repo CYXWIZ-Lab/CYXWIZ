@@ -408,6 +408,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::CrossValidationNode:
                 return ICON_TI_COPY;
             case NodeType::RegressionMetricsNode:
+            case NodeType::PortfolioWeights:
             case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
@@ -606,6 +607,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::PortfolioWeights:
             case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
@@ -968,6 +970,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::PortfolioWeights:
             case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
@@ -1289,6 +1292,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::PortfolioWeights:
             case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
@@ -1610,6 +1614,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::PortfolioWeights:
             case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
@@ -2168,6 +2173,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::CrossValidationNode:
             return ICON_FA_COPY;
         case NodeType::RegressionMetricsNode:
+        case NodeType::PortfolioWeights:
         case NodeType::HypothesisTest:
         case NodeType::ClassificationMetricsNode:
         case NodeType::TestEvaluationNode:

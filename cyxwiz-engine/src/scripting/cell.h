@@ -8,6 +8,7 @@
 #include <random>
 #include "../gui/code_editor.h"
 #include "../core/language_results.h"
+#include "cyxwiz/portable_random.h"
 
 // Use GLAD for cross-platform OpenGL loading
 #include <glad/glad.h>
@@ -177,7 +178,7 @@ struct Cell {
     static std::string GenerateId() {
         static std::random_device rd;
         static std::mt19937 gen(rd());
-        static std::uniform_int_distribution<> dis(0, 15);
+        static const auto dis = [low = 0, high = 15](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
         static const char* hex = "0123456789abcdef";
 
         std::string id = "cell-";

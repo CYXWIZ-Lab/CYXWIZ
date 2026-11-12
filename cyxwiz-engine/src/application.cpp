@@ -1,4 +1,12 @@
+// gRPC (network/grpc_client.h) brings winsock2.h; ArrayFire's af/timing.h,
+// reached first through the device headers, brings windows.h, whose full
+// form includes the old winsock.h. The lean form leaves winsock.h out.
+#if defined(_WIN32) && !defined(WIN32_LEAN_AND_MEAN)
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include "application.h"
+#include "core/frame_pace.h"
 #include "gui/appearance_settings.h"
 #include "gui/main_window.h"
 #include "gui/node_editor.h"
@@ -674,35 +682,32 @@ void CyxWizApp::HandleInput() {
         is_idle_ = true;
     }
 
-    // Track state transitions for debugging
-    static bool was_idle = false;
-
     const bool focused = glfwGetWindowAttrib(window_, GLFW_FOCUSED) != 0;
+    const bool minimised = glfwGetWindowAttrib(window_, GLFW_ICONIFIED) != 0;
 
-    if (is_idle_ && !keep_full_rate) {
-        // Use wait with timeout for reduced CPU/GPU usage when idle
-        glfwWaitEventsTimeout(IDLE_FRAME_TIME);
+    // One decision for the frame (core/frame_pace.h). Every change is noted
+    // for Monitor > Frames and, when the switch is on, logged: idle, not in
+    // front and minimised alike.
+    const cyxwiz::FramePace pace = cyxwiz::PaceOf(minimised, is_idle_, keep_full_rate, focused);
+    if (pace != cyxwiz::CurrentFramePace()) {
+        cyxwiz::CurrentFramePaceSlot().store(pace, std::memory_order_relaxed);
+        if (log_idle_transitions_) spdlog::info("Frame rate: {}", cyxwiz::PaceText(pace));
+    }
 
-        if (!was_idle) {
-            if (log_idle_transitions_) {
-                spdlog::info("Entering IDLE mode (reduced GPU usage)");
-            }
-            was_idle = true;
-        }
-    } else if (!focused) {
-        // Another window has focus: 30 frames a second is plenty for a
-        // training chart in the background (TOFIX129 step 0.7).
-        glfwWaitEventsTimeout(UNFOCUSED_FRAME_TIME);
-        was_idle = false;
-    } else {
-        glfwPollEvents();
-
-        if (was_idle) {
-            if (log_idle_transitions_) {
-                spdlog::info("Exiting IDLE mode (full frame rate)");
-            }
-            was_idle = false;
-        }
+    switch (pace) {
+        case cyxwiz::FramePace::Idle:
+            // Use wait with timeout for reduced CPU/GPU usage when idle
+            glfwWaitEventsTimeout(IDLE_FRAME_TIME);
+            break;
+        case cyxwiz::FramePace::NotInFront:
+            // Another window has focus: 30 frames a second is plenty for a
+            // training chart in the background (TOFIX129 step 0.7).
+            glfwWaitEventsTimeout(UNFOCUSED_FRAME_TIME);
+            break;
+        case cyxwiz::FramePace::Minimised:  // the run loop waits and skips the frame
+        case cyxwiz::FramePace::Full:
+            glfwPollEvents();
+            break;
     }
 }
 
@@ -1077,10 +1082,10 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     font_config.OversampleV = needs_manual_oversampling ? 2 : 1;
     font_config.PixelSnapH = true;
     font_config.RasterizerDensity = font_rasterizer_density_;
-    // The text the Engine writes: Latin, then punctuation (… – — ‘ ’ “ ”),
-    // arrows (→) and maths signs (≤ ≥ ≈ −). ImGui's default stops at Latin-1,
-    // which drew those as "?".
-    static const ImWchar text_ranges[] = {0x0020, 0x017F, 0x2000, 0x206F, 0x2190, 0x21FF, 0x2200, 0x22FF, 0};
+    // The text the Engine writes: Latin, Greek (σ λ), then punctuation (… – — ‘ ’ “ ”),
+    // superscripts (⁻¹), arrows (→) and maths signs (≤ ≥ ≈ − ∞). ImGui's default stops
+    // at Latin-1, which drew those as "?".
+    static const ImWchar text_ranges[] = {0x0020, 0x017F, 0x0370, 0x03FF, 0x2000, 0x209F, 0x2190, 0x21FF, 0x2200, 0x22FF, 0};
     font_config.GlyphRanges = text_ranges;
 
     // Try multiple font paths (running from different directories)

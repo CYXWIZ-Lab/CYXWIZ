@@ -32,6 +32,34 @@ struct AppearanceConfig {
     bool operator==(const AppearanceConfig&) const = default;
 };
 
+// The user's defaults for Tools > Utilities (Preferences > General, or "Save
+// as my default" in the window); the shipped values are only the start.
+struct UtilitiesConfig {
+    std::string tab = "calculator";       // utilities_view::TabId
+    int digits = 10;                       // significant digits shown, 1 .. 17
+    bool degrees = false;                  // the Calculator's angle unit
+    std::string unit_category = "length";
+    std::string hash_algorithm = "sha256";
+    int json_indent = 2;
+    bool regex_ignore_case = false;
+    bool regex_multiline = false;
+
+    bool operator==(const UtilitiesConfig&) const = default;
+};
+
+// The user's defaults for Tools > Monitoring and Tools > Diagnostics
+// (Preferences > General, or "Save as my default" in the Monitor window).
+struct MonitorConfig {
+    std::string tab = "system";      // monitor_view::TabId
+    double interval_seconds = 1.0;   // between readings, 0.25 .. 60
+    double keep_seconds = 900.0;     // history kept: 300, 900 or 3600
+    bool log_frame_rate = false;     // one log line when the Engine slows or speeds its frames
+    bool log_python_commands = false;  // every command sent to Python, with its duration
+    bool frame_overlay = false;      // the frame time overlay
+
+    bool operator==(const MonitorConfig&) const = default;
+};
+
 /**
  * @brief Centralized configuration management for the CyxWiz Engine.
  *
@@ -228,6 +256,12 @@ public:
     AppearanceConfig GetAppearance() const;
     void SetAppearance(const AppearanceConfig& appearance);
 
+    UtilitiesConfig GetUtilities() const;
+    void SetUtilities(const UtilitiesConfig& utilities);
+
+    MonitorConfig GetMonitor() const;
+    void SetMonitor(const MonitorConfig& monitor);
+
     // ===== Recent Projects =====
 
     // Get list of recent projects (up to 10)
@@ -296,6 +330,8 @@ private:
     bool open_simulation_monitor_on_run_ = true;
     std::map<std::string, std::map<std::string, std::string>> plugin_settings_;
     AppearanceConfig appearance_;
+    UtilitiesConfig utilities_;
+    MonitorConfig monitor_;
 
     // Recent projects
     std::vector<std::string> recent_projects_;  // Recent project paths (max 10)

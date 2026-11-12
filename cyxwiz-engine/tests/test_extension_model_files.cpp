@@ -9,7 +9,7 @@
 // 6.3: the package manifest lists the extensions the model needs; a package
 // without its graph is refused; an installed extension that is not the one
 // the model was trained with imports with a warning.
-// 6.5: the Model Summary names an extension node and counts its parameters;
+// 6.5: the Model window's Summary names an extension node and counts its parameters;
 // a simulation node in generated code is a comment, never a layer.
 #include "../src/core/executable_model.h"
 #include "../src/core/extension_node_metadata.h"
@@ -17,7 +17,8 @@
 #include "../src/core/formats/cyxmodel_format.h"
 #include "../src/core/guarded_extension_module.h"
 #include "../src/core/graph_training_job.h"
-#include "../src/core/model_analyzer.h"
+#include "../src/core/model_builder.h"
+#include "../src/core/model_summary_presentation.h"
 #include "../src/core/model_exporter.h"
 #include "../src/plugin/interfaces/i_node_provider.h"
 #include "../src/core/model_importer.h"
@@ -282,37 +283,6 @@ int main() {
         Check(!cyxwiz::ExtensionCodeExportRefusal(dense), "a built-in node is not refused");
     }
 
-    std::cout << "the Model Summary names an extension node and counts its parameters\n";
-    {
-        gui::MLNode input;
-        input.id = 1;
-        input.type = gui::NodeType::DatasetInput;
-        input.name = "Data";
-        input.parameters = {{"height", "1"}, {"width", "1"}, {"channels", "3"}};
-        gui::MLNode scale = ExtensionNode(scale_id, false);
-        gui::MLNode gone = ExtensionNode("test.gone:Thing", true);
-        gone.id = 60;
-        gone.name = "Gone";
-        const std::vector<gui::MLNode> nodes = {input, scale, gone};
-        const std::vector<gui::NodeLink> links = {{1, 1, 0, 50, 0}, {2, 50, 0, 60, 0}};
-        cyxwiz::ModelAnalyzer analyzer;
-        const auto analysis = analyzer.AnalyzeGraph(nodes, links, 1);
-        const cyxwiz::LayerAnalysis* scale_row = nullptr;
-        const cyxwiz::LayerAnalysis* gone_row = nullptr;
-        for (const auto& layer : analysis.layers) {
-            if (layer.name == "My Scale") scale_row = &layer;
-            if (layer.name == "Gone") gone_row = &layer;
-        }
-        Check(scale_row && cyxwiz::GetLayerTypeName(*scale_row) == "Scale (" + scale_id + ")",
-              "the row says what it is: " + (scale_row ? cyxwiz::GetLayerTypeName(*scale_row) : "(no row)"));
-        Check(scale_row && scale_row->parameters == 1, "Scale's one learnable a is counted");
-        Check(scale_row && scale_row->output_shape == scale_row->input_shape, "its shape comes from its factory");
-        Check(gone_row && gone_row->parameters == 0 &&
-                  cyxwiz::GetLayerTypeName(*gone_row) == "Not installed (test.gone:Thing)",
-              "a node whose extension is not installed: " +
-                  (gone_row ? cyxwiz::GetLayerTypeName(*gone_row) : "(no row)"));
-    }
-
     std::cout << "a simulation node in generated code is a comment, never a layer\n";
     {
         SimulationProvider provider;
@@ -364,6 +334,46 @@ int main() {
         Check(!Contains(built_in.error_message, "extension node"),
               "a model of built-in layers is not refused for extension reasons" +
                   (built_in.success ? std::string() : " (" + built_in.error_message + ")"));
+    }
+
+    std::cout << "the Model window's Summary names an extension node and counts its parameters\n";
+    {
+        const fs::path root = CYXWIZ_SOURCE_ROOT;
+        const fs::path parquet = work / "summary_tokens.parquet";
+        Check(cyxwiz::test::WriteTokenWindows(root, parquet, 0, 8), "the summary's Parquet fixture is written");
+        cyxwiz::GraphTrainingJobRequest request;
+        request.graph_json = GraphWithScale(root).dump();
+        request.dataset_files["tiny_causal_lm_tokens"] = parquet.string();
+        cyxwiz::PreparedGraphJob prepared;
+        const auto refused = cyxwiz::PrepareGraphJob(request, prepared);
+        Check(refused.error.empty(), "the graph with Scale compiles" + (refused.error.empty() ? std::string() : ": " + refused.error));
+        auto built = cyxwiz::BuildExecutableFromConfig(prepared.config);
+        Check(built.ok(), "the graph with Scale builds: " + built.error_message);
+        if (built.ok()) {
+            std::vector<std::pair<std::string, long long>> named;
+            for (const auto& [name, tensor] : built.model->GetParameters())
+                named.emplace_back(name, static_cast<long long>(tensor.NumElements()));
+            cyxwiz::ModelSummaryInputs inputs;
+            inputs.state = cyxwiz::LiveCompileState::Compiled;
+            inputs.config = &prepared.config;
+            inputs.layer_parameters = cyxwiz::CountParametersPerLayer(named);
+            inputs.parameters_counted = true;
+            if (const auto metadata = cyxwiz::ResolveNodeMetadata(ExtensionNode(scale_id, false)))
+                inputs.type_labels[kExtensionNodeId] = metadata->name;
+            const auto summary = cyxwiz::BuildModelSummary(inputs);
+            const cyxwiz::ModelSummaryRow* scale_row = nullptr;
+            for (const auto& row : summary.rows)
+                if (row.node_id == kExtensionNodeId) scale_row = &row;
+            Check(scale_row && scale_row->name == "My Scale" && scale_row->kind == "Scale",
+                  "the row names the node and its extension type: " +
+                      (scale_row ? scale_row->name + " / " + scale_row->kind : std::string("(no row)")));
+            Check(scale_row && scale_row->parameters_known && scale_row->parameters == 1,
+                  "Scale's one learnable a is counted");
+            Check(scale_row && !scale_row->output_shape.empty(),
+                  "its shape comes from its factory: " + (scale_row ? scale_row->output : std::string("(no row)")));
+            Check(scale_row && !scale_row->multiply_adds.counted && summary.uncounted_layers == 1,
+                  "its multiply-adds are said to be not counted, not guessed");
+        }
     }
 
     std::cout << "a trained model with an extension node saves and imports with the same weights\n";

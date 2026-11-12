@@ -466,12 +466,17 @@ enum class NodeType {
     DataProfiler,       // Comprehensive data profiling
 
 
-    // ===== Linear Algebra Nodes (Phase 5 - Tool-to-Node Migration) =====
-    SVDNode,            // Singular Value Decomposition
-    QRDecomposition,    // QR matrix decomposition
-    CholeskyDecomposition, // Cholesky factorization
-    EigenDecomposition, // Eigenvalue/eigenvector decomposition
-    MatrixCalculator,   // General matrix operations
+    // ===== Retired linear algebra templates (TOFIX129 D9) =====
+    // Never implemented (no executor); Tools > Linear Algebra factors and
+    // solves matrices, and the Truncated SVD, Whitening, Linear Solve and
+    // Linear Projection steps (appended below) bring linear algebra into a
+    // graph. The slots stay so the numeric ids of the types after them do
+    // not move; nothing registers or creates these.
+    SVDNode,
+    QRDecomposition,
+    CholeskyDecomposition,
+    EigenDecomposition,
+    MatrixCalculator,
 
     // ===== Time Series Analysis Nodes (Phase 5) =====
     TimeSeriesDecomposition, // Trend/Seasonal/Residual decomposition
@@ -486,17 +491,26 @@ enum class NodeType {
     HypothesisTest,     // t-test, ANOVA, Chi-Square
     DistributionFitter, // Fit probability distributions
 
-    // ===== Deep Learning Interpretation Nodes (Phase 5) =====
-    GradCAMNode,        // Grad-CAM visualization
-    SaliencyMapNode,    // Gradient saliency maps
+    // ===== Retired interpretation templates (TOFIX129 D11) =====
+    // Never implemented (no executor); the Model window's Explain tab shows
+    // Grad-CAM, saliency and Integrated Gradients of the trained model. The
+    // slots stay so the numeric ids of the types after them do not move;
+    // nothing registers or creates these.
+    GradCAMNode,
+    SaliencyMapNode,
 
-    // ===== Optimization Nodes (Phase 5) =====
-    GradientDescentViz, // Visualize optimization paths
-    ConvexityAnalyzer,  // Analyze function convexity
-    LPSolver,           // Linear programming solver
-    QPSolver,           // Quadratic programming solver
-    NumericalDifferentiation, // Numerical derivatives
-    NumericalIntegration,     // Numerical integration
+    // ===== Retired optimization templates (TOFIX129 D10) =====
+    // Never implemented (no executor); Tools > Optimization and Calculus
+    // minimizes, integrates and differentiates typed formulas and solves
+    // programs, and the Portfolio Weights step (appended below) brings a
+    // program into a graph. The slots stay so the numeric ids of the types
+    // after them do not move; nothing registers or creates these.
+    GradientDescentViz,
+    ConvexityAnalyzer,
+    LPSolver,
+    QPSolver,
+    NumericalDifferentiation,
+    NumericalIntegration,
 
     // ===== Retired text templates (TOFIX129 D8) =====
     // Never implemented (no executor, not addable); Data Studio's Explore >
@@ -632,6 +646,16 @@ enum class NodeType {
     RandomPerspective,  // corners moved inwards at random
     GaussianNoise,      // N(mean, sigma) added to every pixel
     RandomGrayscale,    // gray in the same channels, at random
+
+    // ===== Appended linear algebra steps (TOFIX129 D9) =====
+    // Fitted on the Train rows, on the device (linear_algebra_operators.h).
+    TruncatedSVD,       // the k strongest directions of the uncentred columns (LSA)
+    Whitening,          // PCA or ZCA whitening: decorrelated, unit variance
+    LinearSolve,        // A x = b from table columns (b from a second table or the same)
+    LinearProjection,   // every row times a matrix from a second table
+
+    // ===== Appended optimization step (TOFIX129 D10) =====
+    PortfolioWeights,   // the least risky mix of assets from a returns table (a convex QP)
 
     // ===== Appended reinforcement learning (TOFIX195 S4.3) =====
     RLEnvironment,      // N copies of an environment from the environment registry

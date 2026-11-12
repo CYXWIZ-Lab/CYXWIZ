@@ -124,7 +124,6 @@ StepMemoryEstimate EstimateFirstStepMemory(const std::vector<gui::MLNode>& nodes
     }
     PipelineOperatorExecutionContext context;
     context.memory = memory_context;
-    context.stop_after_memory_preflight = true;
     op->SetExecutionContext(context);
     const auto snapshot = memory_context.snapshot_override.value_or(DetectMaterializationMemorySnapshot());
     op->SetProgressCallback([&out, first, snapshot, &memory_context](const PipelineOperatorProgress& event) {

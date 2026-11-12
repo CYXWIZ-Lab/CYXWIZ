@@ -13,6 +13,7 @@
 // Core components (order matters - no dependencies first)
 #include "memory_manager.h"
 #include "device.h"
+#include "device_memory.h"
 #include "tensor.h"
 #include "engine.h"
 
@@ -87,7 +88,8 @@ CYXWIZ_API bool IsInitialized();
 CYXWIZ_API void Shutdown();
 
 // Return unused device buffers to the driver (ArrayFire garbage collection).
-// Safe to call at any time.
+// Safe to call at any time. FreeUnusedDeviceMemory (device_memory.h) does the
+// same and answers what it gave back.
 CYXWIZ_API void ReleaseUnusedDeviceMemory();
 
 // Get version string

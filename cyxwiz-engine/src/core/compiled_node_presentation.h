@@ -82,7 +82,8 @@ std::string FormatCompiledBytes(unsigned long long bytes);
 std::string FormatCompiledShape(const std::vector<size_t>& shape);
 
 // Learnable parameters per compiled layer index from a built model's
-// parameter names ("layer<i>.<rest>" -> counts summed per i).
+// parameter names ("layer<i>.<rest>" -> counts summed per i); running
+// statistics of normalization layers are not counted.
 std::map<size_t, long long> CountParametersPerLayer(
     const std::vector<std::pair<std::string, long long>>& named_counts);
 

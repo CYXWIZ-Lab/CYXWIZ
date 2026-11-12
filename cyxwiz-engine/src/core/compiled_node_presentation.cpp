@@ -115,6 +115,10 @@ std::map<size_t, long long> CountParametersPerLayer(
     std::map<size_t, long long> per_layer;
     for (const auto& [name, count] : named_counts) {
         if (name.rfind("layer", 0) != 0) continue;
+        // Normalization running statistics are saved with the weights but
+        // not learned: PyTorch keeps them as buffers, not parameters.
+        const std::string leaf = name.substr(name.rfind('.') + 1);
+        if (leaf == "running_mean" || leaf == "running_var" || leaf == "num_batches_tracked") continue;
         size_t end = 5;
         while (end < name.size() && name[end] >= '0' && name[end] <= '9') ++end;
         if (end == 5) continue;

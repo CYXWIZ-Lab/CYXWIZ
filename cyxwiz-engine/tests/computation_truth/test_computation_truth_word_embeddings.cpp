@@ -712,6 +712,74 @@ int main(int, char** argv) {
     bad_pieces.max_n = 3;
     Check(!WordEmbeddings::TrainFastText({{"a", "b", "a", "b", "a", "b", "a", "b", "a", "b"}}, bad_pieces).success,
           "fastText: max_n below min_n is refused");
+    // One-word sentences: every epoch has kept words but no context pairs. The
+    // run is refused in words, not by ArrayFire on an empty draw.
+    const std::vector<std::vector<std::string>> lone_words = {{"a"}, {"b"}, {"a"}, {"b"}, {"a"}, {"b"}};
+    for (const bool cbow : {false, true}) {
+        const std::string how = cbow ? "CBOW" : "skip-gram";
+        cyxwiz::Word2VecOptions lone;
+        lone.cbow = cbow;
+        lone.min_count = 1;
+        lone.sample = 0.0;  // keep every word, so each epoch has words but no pairs
+        const auto lone_model = WordEmbeddings::TrainWord2Vec(lone_words, lone);
+        Check(!lone_model.success && lone_model.error_message.find("no training examples") != std::string::npos,
+              "word2vec " + how + ": one-word sentences: " + lone_model.error_message);
+        cyxwiz::FastTextOptions lone_ft;
+        lone_ft.cbow = cbow;
+        lone_ft.min_count = 1;
+        lone_ft.sample = 0.0;
+        const auto lone_ft_model = WordEmbeddings::TrainFastText(lone_words, lone_ft);
+        Check(!lone_ft_model.success && lone_ft_model.error_message.find("no training examples") != std::string::npos,
+              "fastText " + how + ": one-word sentences: " + lone_ft_model.error_message);
+    }
+    // Heavy down-sampling of a two-word corpus: some epochs keep a pair, some
+    // none. An empty epoch still counts: epoch_loss and on_epoch_loss keep one
+    // entry per epoch, so loss[i] is epoch i + 1.
+    const std::vector<std::vector<std::string>> pairs(30, std::vector<std::string>{"a", "b"});
+    for (const bool fast : {false, true}) {
+        const std::string name = fast ? "fastText" : "word2vec";
+        bool empty_seen = false;
+        for (unsigned seed = 1; seed <= 40 && !empty_seen; ++seed) {
+            std::vector<long long> examples;
+            const auto record = [&examples](int, double, long long n) { examples.push_back(n); };
+            std::vector<double> losses;
+            bool trained = false;
+            if (fast) {
+                cyxwiz::FastTextOptions o;
+                o.min_count = 1;
+                o.sample = 1e-2;
+                o.epochs = 12;
+                o.vector_size = 8;
+                o.bucket = 0;
+                o.seed = seed;
+                o.on_epoch_loss = record;
+                const auto m = WordEmbeddings::TrainFastText(pairs, o);
+                trained = m.success;
+                losses = m.epoch_loss;
+            } else {
+                cyxwiz::Word2VecOptions o;
+                o.min_count = 1;
+                o.sample = 1e-2;
+                o.epochs = 12;
+                o.vector_size = 8;
+                o.seed = seed;
+                o.on_epoch_loss = record;
+                const auto m = WordEmbeddings::TrainWord2Vec(pairs, o);
+                trained = m.success;
+                losses = m.epoch_loss;
+            }
+            if (!trained) continue;
+            Check(losses.size() == 12 && examples.size() == 12,
+                  name + ": one loss and one callback per epoch (" + std::to_string(losses.size()) + ", " +
+                      std::to_string(examples.size()) + ")");
+            for (size_t e = 0; e < examples.size(); ++e)
+                if (examples[e] == 0) {
+                    empty_seen = true;
+                    Check(e < losses.size() && losses[e] == 0.0, name + ": an empty epoch's loss is 0");
+                }
+        }
+        Check(empty_seen, name + ": a run with an empty epoch among trained ones");
+    }
     Check(!WordEmbeddings::CountCooccurrences({0, 7}, {0, 0}, 3, 2, &error).success,
           "a GloVe token outside the vocabulary is refused");
     cyxwiz::GloVeState two_words;

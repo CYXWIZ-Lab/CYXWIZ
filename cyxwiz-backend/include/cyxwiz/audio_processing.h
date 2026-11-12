@@ -117,9 +117,11 @@ public:
     // ==================== Augmentation ====================
 
     /**
-     * Add Gaussian noise
+     * Add Gaussian noise at a signal-to-noise ratio in dB. The noise is drawn
+     * from `seed` (cyxwiz::portable, the same on every platform): give each
+     * clip its own seed, or every clip gets the same noise.
      */
-    static AudioData AddNoise(const AudioData& audio, float snr_db = 20.0f);
+    static AudioData AddNoise(const AudioData& audio, float snr_db = 20.0f, uint32_t seed = 42);
 
     /**
      * Time stretch (change speed without changing pitch)

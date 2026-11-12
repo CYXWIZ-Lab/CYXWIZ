@@ -41,7 +41,8 @@ void NextWindowFollowsCurrent();
 // and in its OS window, and never over another window (a window of its own
 // came back on top whenever the owner's tab showed again). The owner's cursor
 // is kept. Always pair with EndCanvasOverlay, whatever Begin returned.
-// padding: the style's WindowPadding inside; border: a 1 px edge.
+// padding: the style's WindowPadding inside; border: a 1 px edge. A width or
+// height of 0 sizes the overlay to its content along that axis.
 bool BeginCanvasOverlay(const char* id, float x, float y, float width, float height, int window_flags,
                         bool padding = false, bool border = false);
 void EndCanvasOverlay();

@@ -5,6 +5,7 @@
 #include "class_balance.h"
 #include "data_budget.h"
 #include "device_data_budget.h"
+#include "cyxwiz/portable_random.h"
 
 #include <arrayfire.h>
 #include <arrow/api.h>
@@ -1105,7 +1106,7 @@ void ArrowDatasetBatcher::SetOneHotEncoding(size_t num_classes) {
 }
 
 void ArrowDatasetBatcher::ShuffleIndices() {
-    std::shuffle(indices_.begin(), indices_.end(), rng_);
+    cyxwiz::portable::Shuffle(indices_.begin(), indices_.end(), rng_);
 }
 
 void ArrowDatasetBatcher::RebuildBalancedIndices() {
@@ -1167,7 +1168,7 @@ void ArrowDatasetBatcher::RebuildBalancedIndices() {
     if (balance_mode_ == "undersample") {
         for (auto& entry : by_label) {
             auto rows = entry.second;
-            std::shuffle(rows.begin(), rows.end(), balance_rng_);
+            cyxwiz::portable::Shuffle(rows.begin(), rows.end(), balance_rng_);
             const size_t keep = std::min(target_count, rows.size());
             balanced.insert(balanced.end(), rows.begin(), rows.begin() + keep);
         }
@@ -1181,13 +1182,10 @@ void ArrowDatasetBatcher::RebuildBalancedIndices() {
         for (const auto& entry : by_label) {
             labels_order.push_back(entry.first);
         }
-        std::uniform_int_distribution<size_t> class_dist(
-            0, labels_order.size() - 1);
         balanced.reserve(total_samples);
         for (size_t i = 0; i < total_samples; ++i) {
-            auto& rows = by_label[labels_order[class_dist(balance_rng_)]];
-            std::uniform_int_distribution<size_t> row_dist(0, rows.size() - 1);
-            balanced.push_back(rows[row_dist(balance_rng_)]);
+            auto& rows = by_label[labels_order[cyxwiz::portable::Below(balance_rng_, labels_order.size())]];
+            balanced.push_back(rows[cyxwiz::portable::Below(balance_rng_, rows.size())]);
         }
     } else {
         if (balance_mode_ != "oversample") {
@@ -1196,7 +1194,7 @@ void ArrowDatasetBatcher::RebuildBalancedIndices() {
         }
         for (auto& entry : by_label) {
             auto rows = entry.second;
-            std::shuffle(rows.begin(), rows.end(), balance_rng_);
+            cyxwiz::portable::Shuffle(rows.begin(), rows.end(), balance_rng_);
             for (size_t i = 0; i < target_count; ++i) {
                 balanced.push_back(rows[i % rows.size()]);
             }

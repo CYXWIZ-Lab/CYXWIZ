@@ -15,6 +15,7 @@
 #include "classic_ml_svm_probability.h"
 
 #include "analysis_device.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -32,27 +33,6 @@ using namespace analysis_detail;
 namespace {
 
 constexpr int kFolds = 5;
-
-// libsvm's bounded_rand_int: a mt19937 draw mapped to [0, range) by Lemire's
-// method with rejection (scikit-learn's newrand.h).
-uint32_t BoundedRandInt(std::mt19937& generator, uint32_t range) {
-    uint32_t x = static_cast<uint32_t>(generator());
-    uint64_t m = static_cast<uint64_t>(x) * static_cast<uint64_t>(range);
-    uint32_t low = static_cast<uint32_t>(m);
-    if (low < range) {
-        uint32_t threshold = 0u - range;
-        if (threshold >= range) {
-            threshold -= range;
-            if (threshold >= range) threshold %= range;
-        }
-        while (low < threshold) {
-            x = static_cast<uint32_t>(generator());
-            m = static_cast<uint64_t>(x) * static_cast<uint64_t>(range);
-            low = static_cast<uint32_t>(m);
-        }
-    }
-    return static_cast<uint32_t>(m >> 32);
-}
 
 // Platt's negative log-likelihood of sigmoid (a, b) for targets t, written so no
 // exp overflows (sigmoid_train's fval).
@@ -155,12 +135,13 @@ bool ClassicML::FitSVCProbability(SVMModel& model, const ClassicMatrix& data, co
             std::fill(y.begin(), y.begin() + static_cast<long long>(first.size()), 1.0);
 
             // Every fold's SVM re-seeds libsvm's generator, so each pair shuffles
-            // from the seed itself.
+            // from the seed itself; Below on a 32-bit engine is libsvm's
+            // bounded_rand_int (Lemire with rejection), and the loop is libsvm's.
             std::mt19937 generator(seed);
             std::vector<int> perm(rows.size());
             std::iota(perm.begin(), perm.end(), 0);
             for (int i = 0; i < l; ++i) {
-                const int j = i + static_cast<int>(BoundedRandInt(generator, static_cast<uint32_t>(l - i)));
+                const int j = i + static_cast<int>(cyxwiz::portable::Below(generator, static_cast<uint32_t>(l - i)));
                 std::swap(perm[static_cast<size_t>(i)], perm[static_cast<size_t>(j)]);
             }
 

@@ -5,6 +5,8 @@
 #include "differencing_operator.h"
 #include "gradient_boosting_operator.h"
 #include "identity_operator.h"
+#include "linear_algebra_operators.h"
+#include "portfolio_operator.h"
 #include "pca_operator.h"
 #include "projection_operators.h"
 #include "preprocessing_operators.h"
@@ -83,12 +85,17 @@ void PipelineOperatorFactory::RegisterDefaults() {
     RegisterCreator(gui::NodeType::CountVectorizer, []() {
         return std::make_unique<CountVectorizerOperator>();
     });
-    // Tool-to-Node linear algebra: PCA (only Cat-1 fit from this block —
-    // SVD/QR/Cholesky/Eigen are multi-output decompositions better as
-    // Cat-2 introspection panels).
+    // Linear algebra steps fitted on the Train rows (TOFIX129 D9); the
+    // factorizations themselves are Tools > Linear Algebra.
     RegisterCreator(gui::NodeType::PCANode, []() {
         return std::make_unique<PCAOperator>();
     });
+    RegisterCreator(gui::NodeType::TruncatedSVD, []() { return std::make_unique<TruncatedSVDOperator>(); });
+    RegisterCreator(gui::NodeType::Whitening, []() { return std::make_unique<WhiteningOperator>(); });
+    RegisterCreator(gui::NodeType::LinearSolve, []() { return std::make_unique<LinearSolveOperator>(); });
+    RegisterCreator(gui::NodeType::LinearProjection, []() { return std::make_unique<LinearProjectionOperator>(); });
+    // The least risky mix of assets (TOFIX129 D10).
+    RegisterCreator(gui::NodeType::PortfolioWeights, []() { return std::make_unique<PortfolioWeightsOperator>(); });
     // t-SNE and UMAP embeddings (TOFIX129 D5), beside the input columns.
     RegisterCreator(gui::NodeType::TSNENode, []() {
         return std::make_unique<TSNEOperator>();

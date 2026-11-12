@@ -11,6 +11,7 @@
 
 #include <arrayfire.h>
 #include "../algorithms/arrayfire_host_values.h"
+#include "../algorithms/device_random.h"
 
 namespace cyxwiz {
 
@@ -45,7 +46,7 @@ af::array CreateFactoryArray(dim_t count, DataType dtype, FactoryKind kind, uint
         case FactoryKind::Ones: return af::constant(1.0, af::dim4(count), type);
         case FactoryKind::Random: return RandomArray(count, dtype, nullptr);
         case FactoryKind::RandomSeeded: {
-            af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, seed);
+            af::randomEngine engine = cyxwiz::DeviceRandomEngine(seed);
             af::array values = RandomArray(count, dtype, &engine);
             values.eval();  // draw before the local engine goes away
             return values;

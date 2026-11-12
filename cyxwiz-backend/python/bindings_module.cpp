@@ -234,6 +234,8 @@ public:
         return target_->BackwardInputs(grad_output);
     }
 
+    const Module& Target() const { return *target_; }
+
 private:
     py::object owner_;
     Module* target_;
@@ -504,6 +506,13 @@ void AddModuleToSequential(cyxwiz::SequentialModel& model, py::object module) {
     Module* target = module.cast<Module*>();
     model.AddModule(std::make_unique<PythonHeldModule>(std::move(module), target));
 }
+
+const Module& HeldModule(const Module& module) {
+    const auto* held = dynamic_cast<const PythonHeldModule*>(&module);
+    return held ? held->Target() : module;
+}
+
+bool IsPythonModule(const Module& module) { return dynamic_cast<const PythonModule*>(&HeldModule(module)) != nullptr; }
 
 void InstallNodesSubmodule(py::module_& m) {
     std::string source;

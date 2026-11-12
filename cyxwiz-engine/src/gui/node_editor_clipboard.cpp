@@ -1,4 +1,5 @@
 #include "node_editor.h"
+#include "../core/studio_toolbar_presentation.h"
 #include "subgraph_presentation.h"
 #include "properties.h"
 #include <imgui.h>
@@ -10,8 +11,7 @@
 
 namespace gui {
 
-void NodeEditor::SaveUndoState() {
-    // Create snapshot of current state
+GraphSnapshot NodeEditor::CaptureSnapshot() const {
     GraphSnapshot snapshot;
     snapshot.nodes = nodes_;
     snapshot.subgraphs = subgraphs_;
@@ -21,9 +21,13 @@ void NodeEditor::SaveUndoState() {
     snapshot.next_node_id = next_node_id_;
     snapshot.next_pin_id = next_pin_id_;
     snapshot.next_link_id = next_link_id_;
+    return snapshot;
+}
 
-    // Push to undo stack
-    undo_stack_.push_back(snapshot);
+void NodeEditor::SaveUndoState() { PushUndoSnapshot(CaptureSnapshot()); }
+
+void NodeEditor::PushUndoSnapshot(GraphSnapshot snapshot) {
+    undo_stack_.push_back(std::move(snapshot));
 
     // Limit stack size
     if (undo_stack_.size() > MAX_UNDO_LEVELS) {
@@ -44,16 +48,7 @@ void NodeEditor::Undo() {
     }
 
     // Save current state to redo stack
-    GraphSnapshot current;
-    current.nodes = nodes_;
-    current.subgraphs = subgraphs_;
-    current.positions = cached_node_positions_;
-    for (const auto& [id, pos] : pending_positions_) current.positions[id] = pos;
-    current.links = links_;
-    current.next_node_id = next_node_id_;
-    current.next_pin_id = next_pin_id_;
-    current.next_link_id = next_link_id_;
-    redo_stack_.push_back(current);
+    redo_stack_.push_back(CaptureSnapshot());
 
     // Restore previous state from undo stack
     GraphSnapshot previous = undo_stack_.back();
@@ -98,16 +93,7 @@ void NodeEditor::Redo() {
     }
 
     // Save current state to undo stack
-    GraphSnapshot current;
-    current.nodes = nodes_;
-    current.subgraphs = subgraphs_;
-    current.positions = cached_node_positions_;
-    for (const auto& [id, pos] : pending_positions_) current.positions[id] = pos;
-    current.links = links_;
-    current.next_node_id = next_node_id_;
-    current.next_pin_id = next_pin_id_;
-    current.next_link_id = next_link_id_;
-    undo_stack_.push_back(current);
+    undo_stack_.push_back(CaptureSnapshot());
 
     // Restore next state from redo stack
     GraphSnapshot next = redo_stack_.back();
@@ -401,9 +387,13 @@ void NodeEditor::PasteClipboard() {
                  clipboard_.nodes.size(), clipboard_.links.size());
 }
 
+// Copies the selection beside itself through the clipboard, then puts back
+// what the user had copied: Duplicate is not Copy.
 void NodeEditor::DuplicateSelection() {
+    const auto kept = clipboard_;
     CopySelection();
-    PasteClipboard();
+    if (clipboard_.valid) PasteClipboard();
+    clipboard_ = kept;
 }
 
 // ===== Keyboard Shortcuts =====
@@ -413,6 +403,8 @@ void NodeEditor::HandleKeyboardShortcuts() {
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         return;
     }
+    // A text field on a node has the keys: Ctrl+A, M, F ... are its typing.
+    if (ImGui::GetIO().WantTextInput) return;
 
     const bool ctrl = ImGui::GetIO().KeyCtrl;
     const bool shift = ImGui::GetIO().KeyShift;
@@ -456,9 +448,7 @@ void NodeEditor::HandleKeyboardShortcuts() {
     // Escape - Close search bar, context menu, or clear selection
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         if (search_state_.search_visible) {
-            search_state_.search_visible = false;
-            search_state_.matching_node_ids.clear();
-            search_state_.current_match_index = -1;
+            CloseFindBar();
         } else if (show_context_menu_) {
             show_context_menu_ = false;
         } else {
@@ -466,17 +456,10 @@ void NodeEditor::HandleKeyboardShortcuts() {
         }
     }
 
-    // Ctrl+F - Toggle search bar
+    // Ctrl+F - Open the find bar (or close it); it takes the keyboard
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_F)) {
-        search_state_.search_visible = !search_state_.search_visible;
-        if (search_state_.search_visible) {
-            // Focus the search input when opened
-            ImGui::SetKeyboardFocusHere();
-        } else {
-            // Clear search when closed
-            search_state_.matching_node_ids.clear();
-            search_state_.current_match_index = -1;
-        }
+        if (search_state_.search_visible) CloseFindBar();
+        else OpenFindBar();
     }
 
     // F3 - Navigate to next search match
@@ -501,16 +484,24 @@ void NodeEditor::HandleKeyboardShortcuts() {
     // Ctrl+S - Save the graph to its file (a name is asked the first time);
     // Ctrl+Shift+S - Save As a new file (the open one stays as it was).
     if (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        SaveCurrentGraph();
+        SaveFromStudio();
     }
     if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        ShowSaveDialog();
+        SaveAsFromStudio();
     }
 
     // Ctrl+Shift+U - Create subgraph from selection (Ctrl+Shift+S is Save As)
     if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_U) && selected_node_ids_.size() >= 2) {
         CreateSubgraphFromSelection("");
     }
+
+    // + and - zoom one step around the canvas centre (as View's - / +)
+    if (!ctrl && (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd)) &&
+        cyxwiz::studio_toolbar::ZoomIn(zoom_).enabled)
+        ZoomAroundCentre(1);
+    if (!ctrl && (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract)) &&
+        cyxwiz::studio_toolbar::ZoomOut(zoom_).enabled)
+        ZoomAroundCentre(-1);
 
     // M - Toggle minimap
     if (ImGui::IsKeyPressed(ImGuiKey_M) && !ctrl) {
@@ -555,7 +546,7 @@ void NodeEditor::FrameNodes(const std::vector<int>& node_ids) {
     constexpr float kMargin = 48.0f;
     const float fit_x = (canvas_size_.x - 2.0f * kMargin) / std::max(1.0f, max_x - min_x);
     const float fit_y = (canvas_size_.y - 2.0f * kMargin) / std::max(1.0f, max_y - min_y);
-    zoom_ = std::clamp(std::min({fit_x, fit_y, 1.0f}), ZOOM_MIN, ZOOM_MAX);
+    zoom_ = std::clamp(std::min({fit_x, fit_y, 1.0f}), cyxwiz::studio_toolbar::kZoomMin, cyxwiz::studio_toolbar::kZoomMax);
     CenterViewOn(ImVec2((min_x + max_x) * 0.5f, (min_y + max_y) * 0.5f));
 }
 

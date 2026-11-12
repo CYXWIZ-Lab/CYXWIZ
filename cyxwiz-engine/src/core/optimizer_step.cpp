@@ -24,6 +24,8 @@ float ApplyOptimizerStep(IExecutableModel& model, Optimizer& optimizer, std::map
         }
     }
 
+    if (settings.on_gradients) settings.on_gradients(gradients);
+
     float norm = -1.0f;
     if (settings.grad_clip_norm > 0.0f) norm = ClipGradientsByGlobalNorm(gradients, settings.grad_clip_norm);
 

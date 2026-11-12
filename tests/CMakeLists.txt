@@ -40,7 +40,6 @@ add_executable(cyxwiz-tests
     unit/test_model_evaluation.cpp
     unit/test_device.cpp
     unit/test_optimizer.cpp
-    unit/test_optimization.cpp
     unit/test_scheduler.cpp
     unit/test_flatten_layer.cpp
     unit/test_dropout_layer.cpp
@@ -60,6 +59,7 @@ add_executable(cyxwiz-tests
     unit/test_data_loader.cpp
     unit/test_training_dataloader.cpp
     unit/test_utilities.cpp
+    unit/test_device_memory.cpp
     unit/test_cyxmodel_format.cpp
     unit/test_text_inference_input.cpp
     unit/test_byte_bpe.cpp
@@ -68,12 +68,10 @@ add_executable(cyxwiz-tests
     unit/test_sequence_batcher.cpp
     unit/test_pipeline_runtime_capabilities.cpp
     unit/test_gui_tensor_shape_inference.cpp
-    unit/test_nas_architecture_validation.cpp
     ../cyxwiz-engine/src/core/formats/cyxmodel_format.cpp
     ../cyxwiz-engine/src/core/formats/cyxmodel_archive.cpp
     ../cyxwiz-engine/src/core/language_model_training.cpp
     ../cyxwiz-engine/src/gui/tensor_shape_inference_contract.cpp
-    ../cyxwiz-engine/src/core/nas_evaluator.cpp
     ../cyxwiz-engine/src/core/route_qualification_service.cpp
     ../cyxwiz-engine/src/core/route_recommendation.cpp
     ../cyxwiz-engine/src/inference/text_inference_input.cpp

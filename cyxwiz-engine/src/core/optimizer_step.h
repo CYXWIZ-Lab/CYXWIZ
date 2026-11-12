@@ -11,6 +11,7 @@
 #include <cyxwiz/optimizers/optimizer_base.h>
 #include <cyxwiz/tensor.h>
 
+#include <functional>
 #include <map>
 #include <string>
 
@@ -20,6 +21,9 @@ struct OptimizerStepSettings {
     float regularization_l1 = 0.0f;
     float regularization_l2 = 0.0f;
     float grad_clip_norm = 0.0f;  // 0: no clipping
+    // Sees the gradients after the penalty and before the clip, as torch's
+    // .grad (the training health checks).
+    std::function<void(const std::map<std::string, Tensor>&)> on_gradients;
 };
 
 // gradients: averaged over the batch, by parameter name (changed in place by

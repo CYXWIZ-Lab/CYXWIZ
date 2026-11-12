@@ -1,6 +1,7 @@
 #include "kaggle_dataset.h"
 #include "../image_formats.h"
 #include "../image_utils.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
@@ -308,7 +309,7 @@ bool KaggleDataset::CreateTitanicDataset() {
     // Generate synthetic data based on Titanic patterns
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+    const auto dis = [low = 0.0f, high = 1.0f](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
 
     for (int i = 0; i < 891; i++) { // 891 samples like original
         std::vector<float> features(6);
@@ -366,7 +367,7 @@ bool KaggleDataset::CreateIrisDataset() {
         // Add slight noise
         std::random_device rd;
         std::mt19937 gen(rd());
-        std::normal_distribution<float> noise(0.0f, 0.02f);
+        const auto noise = [mean = 0.0f, sd = 0.02f](auto& r) { return static_cast<float>(cyxwiz::portable::Normal(r, mean, sd)); };
         for (auto& f : features) {
             f += noise(gen);
             f = std::max(0.0f, std::min(1.0f, f));
@@ -388,7 +389,7 @@ bool KaggleDataset::CreateFashionMNISTDataset() {
     // Generate synthetic Fashion-MNIST-like data
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+    const auto dis = [low = 0.0f, high = 1.0f](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
 
     for (int i = 0; i < 1000; i++) {
         std::vector<float> sample(784);
@@ -428,7 +429,7 @@ bool KaggleDataset::CreateDigitsDataset() {
 
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+    const auto dis = [low = 0.0f, high = 1.0f](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
 
     for (int i = 0; i < 1797; i++) { // Same size as sklearn digits
         std::vector<float> sample(64);

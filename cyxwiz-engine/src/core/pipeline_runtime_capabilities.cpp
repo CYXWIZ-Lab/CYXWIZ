@@ -327,6 +327,11 @@ GetPipelineOperatorRuntimeCapabilities() {
         {"WordEmbeddings", gui::NodeType::WordEmbeddings},
         {"PCANode", gui::NodeType::PCANode},
         {"PCA", gui::NodeType::PCANode},
+        {"TruncatedSVD", gui::NodeType::TruncatedSVD},
+        {"Whitening", gui::NodeType::Whitening},
+        {"LinearSolve", gui::NodeType::LinearSolve},
+        {"LinearProjection", gui::NodeType::LinearProjection},
+        {"PortfolioWeights", gui::NodeType::PortfolioWeights},
         {"TSNENode", gui::NodeType::TSNENode},
         {"UMAPNode", gui::NodeType::UMAPNode},
         {"KMeansCluster", gui::NodeType::KMeansCluster},
@@ -836,6 +841,7 @@ GetPipelineInputArityRuntimeCapabilities() {
         {"RowAppender", 2},
         {"ColumnAppender", 2},
         {"RegressionModelPredictor", 2},
+        {"LinearProjection", 2},
     };
     return capabilities;
 }
@@ -847,6 +853,7 @@ GetPipelineRequiredParameterRuntimeCapabilities() {
         {"DataConvert", {"output_path"}},
         {"ParquetInput", {"file_path"}},
         {"RuleEngine", {"rules"}},
+        {"LinearSolve", {"b_cols"}},
         {"JSONPathExtractor", {"path"}},
         {"RegexTester", {"pattern"}},
         {"RegressionMetricsNode", {"actual_col", "predicted_col"}},
@@ -953,6 +960,18 @@ GetPipelineAllowedParameterValuesRuntimeCapabilities() {
         {"QuantileTransform", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
         {"QuantileTransform", "save_state", "false", {"true", "false"}},
         {"QuantileTransform", "state_overwrite", "false", {"true", "false"}},
+        {"PCANode", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"TruncatedSVD", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"TruncatedSVD", "save_state", "false", {"true", "false"}},
+        {"TruncatedSVD", "state_overwrite", "false", {"true", "false"}},
+        {"Whitening", "method", "pca", {"pca", "zca"}},
+        {"LinearSolve", "method", "auto", {"auto", "solve", "least_squares"}},
+        {"PortfolioWeights", "long_only", "true", {"true", "false"}},
+        {"Whitening", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
+        {"Whitening", "save_state", "false", {"true", "false"}},
+        {"Whitening", "state_overwrite", "false", {"true", "false"}},
+        {"PCANode", "save_state", "false", {"true", "false"}},
+        {"PCANode", "state_overwrite", "false", {"true", "false"}},
         {"PowerTransform", "operation_mode", "fit_transform", {"fit_transform", "transform_only"}},
         {"PowerTransform", "save_state", "false", {"true", "false"}},
         {"PowerTransform", "state_overwrite", "false", {"true", "false"}},
@@ -1096,6 +1115,8 @@ GetPipelineIntegerParameterRuntimeCapabilities() {
         {"NERSequenceBuilder", "max_vocab_size", 0, false},
         {"NERSequenceBuilder", "max_sequence_length", 0, false},
         {"PCANode", "n_components", 1, false},
+        {"TruncatedSVD", "n_components", 1, false},
+        {"Whitening", "n_components", 0, false},
         {"TSNENode", "perplexity", 1, false},
         {"TSNENode", "iterations", 250, false},
         {"UMAPNode", "n_neighbors", 2, false},
@@ -1147,6 +1168,7 @@ GetPipelineFloatParameterRuntimeCapabilities() {
         {"TimeSeriesSplit", "val_ratio", 0.0, 1.0},
         {"TimeSeriesSplit", "test_ratio", 0.0, 1.0},
         {"RobustScaler", "quantile_min", 0.0, 100.0},
+        {"Whitening", "epsilon", 0.0, 1e12},
         {"RobustScaler", "quantile_max", 0.0, 100.0},
         {"PowerTransform", "lambda", -10.0, 10.0},
         {"HypothesisTest", "alpha", 0.001, 0.5},
@@ -1852,7 +1874,6 @@ ResolvePipelineLegacyAliasDecision(const std::string& alias_type_name) {
 bool PipelineStepLearnsFromEveryRow(gui::NodeType type) {
     using gui::NodeType;
     switch (type) {
-        case NodeType::PCANode:
         case NodeType::KMeansCluster:
         case NodeType::DBSCANCluster:
         case NodeType::HierarchicalCluster:

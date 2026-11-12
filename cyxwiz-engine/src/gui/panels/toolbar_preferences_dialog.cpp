@@ -7,6 +7,7 @@
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
 #include "../../core/engine_config.h"
+#include "../../core/utilities_presentation.h"
 #include "../../core/data_budget.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/execution_device_preferences.h"
@@ -19,6 +20,7 @@
 #include "../../core/rl/policy_stress_test.h"
 #include "../../plugin/registries/plugin_preferences_registry.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 
 #include <algorithm>
 #include <cstring>
@@ -183,6 +185,135 @@ void ToolbarPanel::RenderPreferencesDialog() {
                                                cyxwiz::FormatDataBytes(cyxwiz::RequestedDataBudgetBytes()).c_str(),
                                                cyxwiz::FormatDataBytes(cyxwiz::DataBudgetBytes()).c_str());
                         ImGui::PopTextWrapPos();
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Tools > Utilities");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    {
+                        // The Utilities window's defaults (TOFIX129 D12), saved at
+                        // once; the window also has "Save as my default".
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        cyxwiz::core::UtilitiesConfig u = engine_config.GetUtilities();
+                        bool changed = false;
+                        const auto combo = [&changed](const char* label, std::string& value,
+                                                      const std::vector<std::pair<std::string, std::string>>& items) {
+                            std::string shown = value;
+                            for (const auto& [id, text] : items)
+                                if (id == value) shown = text;
+                            ImGui::SetNextItemWidth(180.0f);
+                            if (ImGui::BeginCombo(label, shown.c_str())) {
+                                for (const auto& [id, text] : items) {
+                                    if (ImGui::Selectable(text.c_str(), id == value)) {
+                                        value = id;
+                                        changed = true;
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+                        };
+                        std::vector<std::pair<std::string, std::string>> tabs;
+                        for (const auto tab : cyxwiz::utilities_view::kTabs)
+                            tabs.push_back({cyxwiz::utilities_view::TabId(tab), cyxwiz::utilities_view::TabLabel(tab)});
+                        combo("Opens on##util_tab", u.tab, tabs);
+                        ImGui::Text("Digits shown:");
+                        ImGui::SameLine();
+                        changed |= ui::NumberField("##util_digits", &u.digits, 1, 17, 1, 40.0f, "Significant digits (1 to 17)");
+                        changed |= ImGui::Checkbox("Calculator in degrees##util_degrees", &u.degrees);
+                        std::vector<std::pair<std::string, std::string>> categories;
+                        for (const auto& c : cyxwiz::Utilities::GetUnitCategories())
+                            categories.push_back({c, cyxwiz::utilities_view::CategoryLabel(c)});
+                        combo("Unit category##util_units", u.unit_category, categories);
+                        combo("Hash algorithm##util_hash", u.hash_algorithm,
+                              {{"md5", "MD5"}, {"sha1", "SHA-1"}, {"sha256", "SHA-256"}, {"sha512", "SHA-512"}});
+                        ImGui::Text("JSON indent:");
+                        ImGui::SameLine();
+                        changed |= ui::NumberField("##util_indent", &u.json_indent, 0, 8, 1, 36.0f);
+                        changed |= ImGui::Checkbox("Regex: ignore case##util_icase", &u.regex_ignore_case);
+                        changed |= ImGui::Checkbox("Regex: multiline##util_multiline", &u.regex_multiline);
+                        if (changed) {
+                            engine_config.SetUtilities(u);
+                            engine_config.Save();
+                        }
+                        ImGui::TextDisabled("Used when the Engine starts.");
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Tools > Monitoring and Diagnostics");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    {
+                        // The Monitor window's defaults (TOFIX129 D13), saved at
+                        // once; the window also has "Save as my default".
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        cyxwiz::core::MonitorConfig m = engine_config.GetMonitor();
+                        bool changed = false;
+                        ImGui::Text("Sample every:");
+                        ImGui::SameLine();
+                        ui::NumberFieldOptions interval;
+                        interval.min = 0.25;
+                        interval.max = 60.0;
+                        interval.step = 1.0;
+                        interval.format = "%.2g";
+                        interval.width = 56.0f;
+                        interval.hint = "Seconds between the Monitor window's readings";
+                        changed |= ui::NumberField("##monitor_interval", &m.interval_seconds, interval);
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("s");
+                        const std::pair<double, const char*> keeps[] = {{300.0, "5 min"}, {900.0, "15 min"}, {3600.0, "1 hour"}};
+                        const char* keep_shown = "15 min";
+                        for (const auto& [seconds, text] : keeps)
+                            if (m.keep_seconds == seconds) keep_shown = text;
+                        ImGui::SetNextItemWidth(160.0f);
+                        if (ImGui::BeginCombo("Keep readings for##monitor_keep", keep_shown)) {
+                            for (const auto& [seconds, text] : keeps)
+                                if (ImGui::Selectable(text, m.keep_seconds == seconds)) {
+                                    m.keep_seconds = seconds;
+                                    changed = true;
+                                }
+                            ImGui::EndCombo();
+                        }
+                        const std::pair<const char*, const char*> tabs[] = {
+                            {"system", "System"}, {"memory", "Memory"}, {"loaded_data", "Loaded data"}, {"frames", "Frames"}};
+                        const char* tab_shown = "System";
+                        for (const auto& [id, text] : tabs)
+                            if (m.tab == id) tab_shown = text;
+                        ImGui::SetNextItemWidth(160.0f);
+                        if (ImGui::BeginCombo("Monitor opens on##monitor_tab", tab_shown)) {
+                            for (const auto& [id, text] : tabs)
+                                if (ImGui::Selectable(text, m.tab == id)) {
+                                    m.tab = id;
+                                    changed = true;
+                                }
+                            ImGui::EndCombo();
+                        }
+                        if (changed) {
+                            engine_config.SetMonitor(m);
+                            engine_config.Save();
+                        }
+                        ImGui::TextDisabled("Used when the Engine starts.");
+
+                        // The Tools > Diagnostics switches: on at once, and kept.
+                        ImGui::Spacing();
+                        bool switched = false;
+                        if (idle_log_ptr_) {
+                            switched |= ImGui::Checkbox("Log frame-rate changes##diag_pace", idle_log_ptr_);
+                            ui::Tooltip("One log line when the Engine slows or speeds its frames:\n"
+                                        "idle (10 a second), not in front (30 a second), minimised.");
+                        }
+                        if (verbose_python_log_ptr_) {
+                            switched |= ImGui::Checkbox("Log every Python command##diag_python", verbose_python_log_ptr_);
+                            ui::Tooltip("Each command the Engine sends to Python, with how long it took.");
+                        }
+                        if (frame_overlay_ptr_) {
+                            switched |= ImGui::Checkbox("Frame time overlay##diag_overlay", frame_overlay_ptr_);
+                            ui::Tooltip("The whole frame time and the Engine's own interface-building time,\n"
+                                        "at the top right of the window. More in Tools > Monitoring > Frames.");
+                        }
+                        if (switched) SaveDiagnostics();
                     }
 
                     RenderPluginPreferences("General");

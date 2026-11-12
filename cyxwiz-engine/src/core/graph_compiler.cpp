@@ -662,9 +662,21 @@ void ValidateSparseFeatureTrainingContract(
     for (int node_id : sorted_ids) {
         if (training_path_ids.count(node_id) == 0) continue;
         const auto* node = FindNodeById(nodes, node_id);
-        if (node && RequestsSparseFeatureOutput(*node)) {
-            sparse_vectorizers.push_back(node);
+        if (!node || !RequestsSparseFeatureOutput(*node)) continue;
+        // A Truncated SVD after it reads the sparse features and gives dense
+        // columns (TOFIX129 D9): training then reads a table, not sparse batches.
+        // Only when it reads the vectorizer's output itself, and every training
+        // consumer of that output is one: anything between, or beside it, gets
+        // the sparse columns.
+        bool densified = false, other = false;
+        for (const auto& link : links) {
+            if (link.from_node != node->id || training_path_ids.count(link.to_node) == 0) continue;
+            const auto* next = FindNodeById(nodes, link.to_node);
+            if (next && next->type == gui::NodeType::TruncatedSVD) densified = true;
+            else other = true;
         }
+        densified = densified && !other;
+        if (!densified) sparse_vectorizers.push_back(node);
     }
     if (sparse_vectorizers.empty()) return;
 
@@ -3035,7 +3047,19 @@ void ValidateSingleDatasetSourceForSelectedLoss(
         return;
     }
 
-    const auto loss_ancestors = CollectAncestorNodeIds(selected_loss->id, links);
+    // A table into a step's parameter pin (Linear Projection's Matrix, Linear
+    // Solve's b; TOFIX129 D9) is that step's parameters, not training rows:
+    // the source behind it is not a second dataset source.
+    std::vector<gui::NodeLink> row_links;
+    for (const auto& link : links) {
+        const gui::MLNode* target = FindNodeById(nodes, link.to_node);
+        const char* parameter_pin = !target ? nullptr
+            : target->type == gui::NodeType::LinearProjection ? "Matrix"
+            : target->type == gui::NodeType::LinearSolve ? "b" : nullptr;
+        const auto* pin = parameter_pin ? FindInputPinByName(*target, parameter_pin) : nullptr;
+        if (!(pin && link.to_pin == pin->id)) row_links.push_back(link);
+    }
+    const auto loss_ancestors = CollectAncestorNodeIds(selected_loss->id, row_links);
     std::vector<const gui::MLNode*> selected_sources;
     for (const auto& node : nodes) {
         if (!IsDatasetSourceType(node.type) ||
@@ -3282,11 +3306,6 @@ bool ResolveReshapeTargetShape(const std::map<std::string, std::string>& params,
         error = "Reshape/View requires a non-empty shape parameter";
         return false;
     }
-    if (input_shape.empty()) {
-        error = "Reshape/View requires a known input shape";
-        return false;
-    }
-
     std::string shape_str = it->second;
     shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
     shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
@@ -3335,6 +3354,18 @@ bool ResolveReshapeTargetShape(const std::map<std::string, std::string>& params,
             return false;
         }
         known_product = next;
+    }
+
+    // Before the data is loaded the input is unknown: a full target shape is
+    // still the output (the element count is checked once the data comes);
+    // a -1 needs the input.
+    if (input_shape.empty()) {
+        if (infer_index >= 0) {
+            error = "Reshape/View with a -1 dimension needs a known input shape (load the data)";
+            return false;
+        }
+        target_shape.assign(dims.begin(), dims.end());
+        return true;
     }
 
     size_t input_elements = 0;
@@ -5422,6 +5453,7 @@ TrainingConfiguration GraphCompiler::Compile(
                 pin_shapes[node->outputs[0].id] = first;
                 pin_shapes[node->outputs[1].id] = second;
             }
+            config.graph_op_output_shapes[node->id] = {first, second};
             continue;
         }
 
@@ -5510,6 +5542,7 @@ TrainingConfiguration GraphCompiler::Compile(
                              errors::Compiler::TensorShapeMismatch);
                 }
                 record_outputs(*node, merged);
+                config.graph_op_output_shapes[node->id] = {merged};
             }
             continue;
         }
@@ -6486,6 +6519,49 @@ TrainingConfiguration GraphCompiler::Compile(
                      "End the Conv3D section with Flatten before Dense and the loss",
                      config.layers.back().node_id, config.layers.back().name,
                      errors::Compiler::TensorShapeMismatch);
+        }
+    }
+    // A layer stack that opens with a Reshape / View of the rows to [H, W, C]
+    // before a convolution or pooling reads each row as an image (a CSV of
+    // pixel columns: MNIST's 784 as 28 x 28 x 1). Rows are already in
+    // height, width, channel order, so the Reshape is the data's shape.
+    const bool layer_stack = config.graph_op_node_ids.empty() && config.multi_input_layer_node_ids.empty();
+    if (!config.HasErrors() && layer_stack && config.layers.size() >= 2) {
+        const CompiledLayer first = config.layers.front();
+        const gui::NodeType next = config.layers[1].type;
+        const auto elements = [](const std::vector<size_t>& shape) {
+            size_t n = shape.empty() ? 0 : 1;
+            for (size_t d : shape) n *= d;
+            return n;
+        };
+        // Before the data is loaded the rows' width is unknown; the data's
+        // compile checks it.
+        const bool rows_fit = first.input_shape.empty() ||
+                              (first.input_shape.size() == 1 && elements(first.input_shape) == elements(first.output_shape));
+        if ((first.type == gui::NodeType::Reshape || first.type == gui::NodeType::View) && rows_fit && first.output_shape.size() == 3 &&
+            (spatial::IsSpatialLayer(next) || spatial::IsGlobalPoolLayer(next))) {
+            config.input_shape = first.output_shape;
+            config.input_size = elements(first.output_shape);
+            config.layers.erase(config.layers.begin());
+            AddIssue(config, IssueLevel::Info,
+                     first.name + " reads each row of " + std::to_string(elements(first.output_shape)) + " values as a [" +
+                         ShapeListText(first.output_shape) + "] image (height, width, channel order)",
+                     first.node_id, first.name);
+        }
+    }
+    // A layer stack runs convolutions only in its opening image section: one
+    // further in (after a Dense, a Flatten) is refused here, not at Train.
+    if (!config.HasErrors() && layer_stack && !UsesSpatialSequentialInput(config)) {
+        for (const auto& layer : config.layers) {
+            const bool image_layer = layer.type == gui::NodeType::Conv2D || layer.type == gui::NodeType::DepthwiseConv2D ||
+                                     layer.type == gui::NodeType::ConvTranspose2D || layer.type == gui::NodeType::MaxPool2D ||
+                                     layer.type == gui::NodeType::AvgPool2D;
+            if (!image_layer) continue;
+            AddIssue(config, IssueLevel::Error,
+                     layer.name + " needs image-shaped rows from the start of the model: read an image dataset, or "
+                     "put a Reshape to [H, W, C] first (784 pixel columns: 28,28,1)",
+                     layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
+            break;
         }
     }
     if (!config.HasErrors()) {

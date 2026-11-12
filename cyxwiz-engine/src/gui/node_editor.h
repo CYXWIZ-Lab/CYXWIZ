@@ -1,5 +1,7 @@
 #pragma once
 
+#include "starter_graphs.h"
+
 #include <vector>
 #include <string>
 #include <map>
@@ -267,6 +269,10 @@ enum class NodeExecutionState {
 
 class NodeEditor {
 public:
+    // The window's id. Its title ("CyxWiz Studio · mnist_mlp •") follows the
+    // graph; everything that finds, docks or focuses the window uses this.
+    static constexpr const char* kWindowId = "###CyxWiz Studio";
+
     NodeEditor();
     ~NodeEditor();
 
@@ -294,6 +300,8 @@ public:
         require_debug_before_train_ = require_debug;
     }
     void SetOpenDebuggerCallback(std::function<void()> callback) { open_debugger_callback_ = std::move(callback); }
+    // Shows the Nodes panel (the empty canvas's "Open the Nodes panel").
+    void SetOpenNodesPanelCallback(std::function<void()> callback) { open_nodes_panel_callback_ = std::move(callback); }
 
     // Visibility control for sidebar integration
     bool* GetVisiblePtr() { return &show_window_; }
@@ -673,6 +681,9 @@ public:
     void SetNodePinState(int node_id, NodePinState state);
     void SetAllNodesPinState(NodePinState state);
     void ClearValidationState();
+    // Counts ClearValidationState calls: the live compile colours the pins
+    // again when they were cleared and its latest compile is of this graph.
+    uint64_t ValidationClears() const { return validation_clears_; }
     NodePinState GetNodePinState(int node_id) const;
     bool HasValidationState() const { return !node_pin_state_.empty(); }
 
@@ -770,6 +781,16 @@ public:
         request.branch = true;
         pending_steps_after_.push_back(std::move(request));
     }
+    // As RequestStepAfter (`branch` false) or RequestBranchAfter, and the
+    // result of `second_id` into the new node's second input (Linear Solve's
+    // b, Linear Projection's Matrix; Tools > Linear Algebra, TOFIX129 D9).
+    void RequestNodeAfter(int step_id, NodeType type, std::map<std::string, std::string> parameters, std::string name, bool branch,
+                          int second_id) {
+        PendingStepAfter request{step_id, type, false, std::move(name), {}, std::move(parameters)};
+        request.branch = branch;
+        request.second_source = second_id;
+        pending_steps_after_.push_back(std::move(request));
+    }
     // A guided step's checks as Check nodes right after it, in order (TOFIX148
     // D4; Prepare, the SQL Workbench and Properties): a collapsed recipe
     // holding the step opens first, since they are placed on the canvas.
@@ -817,6 +838,11 @@ private:
     size_t saved_fingerprint_ = 0;
     int fingerprint_baseline_frames_ = 2;  // take the baseline once a load settles
     double fingerprint_checked_at_ = -1.0;
+    // The unsaved check runs only when something may have changed the graph.
+    static bool UserInputEnded();
+    bool unsaved_check_due_ = true;
+    uint64_t unsaved_seen_revision_ = 0;
+    uint64_t unsaved_seen_generation_ = 0;
     bool unsaved_ = false;
     uint64_t graph_generation_ = 0;
     bool clear_confirm_requested_ = false;
@@ -828,8 +854,31 @@ private:
     // the canvas is doing (graph locked, the mode); TOFIX178 UI-1.
     void RenderCanvasFooter();
     static constexpr float kCanvasFooterHeight = 26.0f;
-    bool toolbar_two_rows_ = false;  // the bar is in its two-row form (logged on change)
-    int toolbar_fold_level_ = -1;  // the bar's last form, logged when it changes
+    int toolbar_fold_level_ = -1;  // the bar's last fold, logged when it changes
+    void CarryDockFromOldName();
+    bool dock_carried_ = false;
+    void DrawStudioDialogs();
+    // An empty canvas says how to start (TOFIX129 A3-3).
+    void RenderEmptyCanvas();
+    std::function<void()> open_nodes_panel_callback_;
+    std::vector<StarterGraph> starter_graphs_;  // found once, on the first empty canvas
+    bool starter_graphs_found_ = false;
+    void InsertFlatten();
+    // Save and Save As from the Studio on an empty canvas say why nothing was written.
+    bool save_refusal_pending_ = false;
+    // The bar's menus (TOFIX129 A3): drawn from the bar, or as sections of
+    // More when they fold into it.
+    void DrawEditItems(int selected);
+    void DrawViewItems();
+    void DrawCodeItems();
+    void DrawStepItems(bool compile, bool debug);
+    void DrawFrameworkItems();
+    // Zoom by one step around the canvas centre, so the view stays where it is.
+    void ZoomAroundCentre(int direction);
+    void SetModeFromBar(int mode);  // the mode chosen on the bar or in More
+    // The line under the bar after Generate or Save as .py (A3-4).
+    std::string code_result_;
+    bool code_result_ok_ = false;
     void HandleInteractions();
     void ShowContextMenu();
     void ConfigureNode(int node_id);
@@ -878,12 +927,20 @@ private:
                        const std::string& source_description);
     void ShowSaveDialog();
     void ShowLoadDialog();
-    void ExportCodeToFile();
-    void ShowExportDialog();
+    // The Studio's Save / Save As (bar, graph menu, Ctrl+S): on an empty canvas
+    // they say why nothing was written (File > Save saves the project quietly).
+    void SaveFromStudio();
+    void SaveAsFromStudio();
+    // Writes a copy of the graph file where the user picks; the open file stays.
+    void ExportGraphCopy();
 
-    // Code generation
-    void GeneratePythonCode();
-    void GenerateCodeForFramework(CodeFramework framework);
+    // Code generation (the bar's Code menu): into a Script Editor tab, or a
+    // .py file the user picks; either way the line under the bar says what
+    // was written where.
+    void GenerateCodeIntoEditor();
+    void SaveCodeAsPython();
+    // Why the graph cannot be turned into code now; empty when it can.
+    std::string CodeProblem();
     bool ValidateGraph(std::string& error_message);
 
     // Unified Canvas Phase 4.2: Helper for node type names
@@ -902,6 +959,14 @@ private:
 
     // Undo/Redo system
     void SaveUndoState();
+    GraphSnapshot CaptureSnapshot() const;
+    void PushUndoSnapshot(GraphSnapshot snapshot);
+    // A loaded graph starts its own history: undo never brings back the graph
+    // that was on the canvas before, under the new graph's file name.
+    void ForgetUndoHistory() {
+        undo_stack_.clear();
+        redo_stack_.clear();
+    }
     void Undo();
     void Redo();
     bool CanUndo() const { return !undo_stack_.empty(); }
@@ -932,7 +997,11 @@ private:
     void ShowSearchBar();
     void UpdateSearchResults();
     void NavigateToMatch(int direction);  // +1 = next, -1 = previous
-    void HighlightMatchingNodes();
+    void OpenFindBar();
+    void CloseFindBar();
+    bool search_focus_requested_ = false;  // the find field takes the keyboard next frame
+    // The grid point under a screen point (from the canvas origin, its panning and the zoom).
+    ImVec2 GridAt(ImVec2 screen) const;
 
     // Node add search (top-right search box for quick node creation)
     void ShowNodeAddSearch();
@@ -1036,6 +1105,7 @@ private:
 
     // Pin state (node_id → NodePinState). Set by Compile/Train, cleared on graph change.
     std::unordered_map<int, NodePinState> node_pin_state_;
+    uint64_t validation_clears_ = 0;
 
     // UI state
     bool show_context_menu_;
@@ -1117,6 +1187,10 @@ private:
     // reports no hovered node in the press frame (the press activates an
     // item), so a double-click is matched against this one.
     int node_under_press_ = -1;
+    // The graph as a left press on the canvas found it: an undo step when the
+    // press moved nodes (a node, a selection, a frame with its nodes).
+    std::optional<GraphSnapshot> press_snapshot_;
+    uint64_t press_snapshot_generation_ = 0;
     struct PendingSubgraphRequest {
         int subgraph_id = -1;
         SubgraphRequest request = SubgraphRequest::Expand;
@@ -1142,7 +1216,10 @@ private:
         std::map<std::string, std::string> parameters;  // over the node's defaults
         bool branch = false;  // RequestBranchAfter: a new reader, the step's links stay
         bool open_dialog = false;  // open the new node's dialog once it is added
+        int second_source = -1;    // the node whose result goes into the new node's second input
     };
+    // The link from `request.second_source`'s result into `step`'s second input (none when unset).
+    void LinkSecondInput(const PendingStepAfter& request, const MLNode& step);
     std::vector<PendingStepAfter> pending_steps_after_;
     static constexpr int kRemoveStep = -2;
     struct PendingStepMove {
@@ -1182,8 +1259,6 @@ private:
     float zoom_ = 1.0f;
     ImVec2 canvas_size_ = ImVec2(800.0f, 600.0f);  // the node canvas, read each frame
     ImVec2 canvas_origin_ = ImVec2(0.0f, 0.0f);    // its top-left corner on the screen
-    static constexpr float ZOOM_MIN = 0.25f;  // low enough for Fit to show a large graph whole
-    static constexpr float ZOOM_MAX = 2.0f;
 
     // Icon pack selection (for node icons)
     IconPack icon_pack_ = IconPack::FontAwesome;  // Default to FontAwesome
@@ -1217,11 +1292,6 @@ private:
     // Cached node positions (updated each frame inside BeginNodeEditor/EndNodeEditor scope)
     // Used by FindEmptyPosition() which may be called outside the editor scope
     std::map<int, ImVec2> cached_node_positions_;
-
-    // Save as Pattern dialog state
-    bool show_save_pattern_dialog_ = false;
-    char save_pattern_name_[256] = "";
-    char save_pattern_description_[1024] = "";
 
     // Auto-insert Flatten dialog state
     bool show_auto_insert_flatten_dialog_ = false;
@@ -1259,9 +1329,6 @@ private:
     // executor reports step states, the recipe node shows their roll-up.
     std::map<int, std::vector<int>> recipe_step_ids_;
     void RollUpRecipeExecutionStates();
-
-    // Empty graph warning popup state
-    bool show_empty_graph_warning_ = false;
 
     // Search state (Ctrl+F for existing nodes)
     SearchState search_state_;

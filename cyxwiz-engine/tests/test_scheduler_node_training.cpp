@@ -30,11 +30,20 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <random>
 #include <string>
 #include <variant>
 #include <vector>
 
 namespace {
+
+// A folder of this run's own: two runs at once (two sweeps, two worktrees)
+// must not share one, or each finds the other's resume checkpoints.
+const std::filesystem::path& RunTempDir() {
+    static const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                             ("cyxwiz_scheduler_node_training_" + std::to_string(std::random_device{}()));
+    return dir;
+}
 
 using json = nlohmann::json;
 
@@ -186,7 +195,7 @@ cyxwiz::TrainingConfiguration CompileValid(const Graph& graph, const std::string
     config.save_best_checkpoint = false;
     config.early_stopping_patience = 0;
     config.log_interval = 0;
-    config.checkpoint_dir = (std::filesystem::temp_directory_path() / "cyxwiz_scheduler_node_checkpoints").string();
+    config.checkpoint_dir = (RunTempDir() / "checkpoints").string();
     return config;
 }
 
@@ -391,7 +400,7 @@ int main(int, char** argv) {
     hooks.is_dataset_registered = [](const std::string&) { return false; };
     cyxwiz::SetGraphCompilerDatasetHooks(hooks);
 
-    const fs::path work_dir = fs::temp_directory_path() / "cyxwiz_scheduler_node_training";
+    const fs::path work_dir = RunTempDir();
     fs::remove_all(work_dir);
     fs::create_directories(work_dir);
     const cyxwiz::ScopedDebugRunRootOverrideForTesting debug_root(work_dir / "debug_runs");

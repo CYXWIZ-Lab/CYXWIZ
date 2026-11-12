@@ -1,5 +1,6 @@
 // api_key_manager.cpp - API key management implementation
 #include "api/api_key_manager.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <fstream>
@@ -39,7 +40,7 @@ std::string APIKeyManager::GenerateRandomString(size_t length) {
         // Fallback to std::random_device if OpenSSL fails
         std::random_device rd;
         std::mt19937 gen(rd());
-        std::uniform_int_distribution<size_t> dist(0, sizeof(charset) - 2);
+        const auto dist = [low = 0, high = sizeof(charset) - 2](auto& r) { return cyxwiz::portable::UniformInt<size_t>(r, low, high); };
         for (size_t i = 0; i < length; ++i) {
             result[i] = charset[dist(gen)];
         }
@@ -73,7 +74,7 @@ std::string APIKeyManager::GenerateUUID() {
         // Fallback
         std::random_device rd;
         std::mt19937 gen(rd());
-        std::uniform_int_distribution<unsigned int> dist(0, 255);
+        const auto dist = [low = 0, high = 255](auto& r) { return cyxwiz::portable::UniformInt<unsigned int>(r, low, high); };
         for (int i = 0; i < 16; ++i) {
             uuid_bytes[i] = static_cast<unsigned char>(dist(gen));
         }

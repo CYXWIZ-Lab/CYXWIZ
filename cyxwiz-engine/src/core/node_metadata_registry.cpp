@@ -361,7 +361,6 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
     InitializeLinearAlgebraNodes();
     InitializeTimeSeriesAnalysisNodes();
     InitializeStatisticsNodes();
-    InitializeInterpretationNodes();
     InitializeOptimizationNodes();
     InitializeAdditionalTextNodes();
     InitializeVisualizationNodes();
@@ -2162,7 +2161,7 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
     RegisterNode({NodeType::PCANode, NodeCategory::Analytics, "PCA", ICON_FA_COMPRESS,
         {"pca", "principal", "dimensionality"}, 0, false,
         "Project numeric features onto principal components",
-        "With Keep columns on, adds Float64 pc_0..pc_n beside the input columns (null on rows missing a feature); otherwise emits Float32 pc_0..pc_n alone for the rows with every feature, with the label passed through as Int32 y.", "",
+        "Fitted on the Train rows when a Data Split marks them (the means, deviations and components), then every row with all its features is projected. With Keep columns on, adds Float64 pc_0..pc_n beside the input columns (null on rows missing a feature); otherwise emits Float32 pc_0..pc_n alone for the rows with every feature, with the label as Int32 y and the split carried.", "",
         {{"Data", PinType::Dataset, true, "Input table containing numeric features"}},
         {{"Transformed", PinType::Dataset, true, "Input plus pc_* columns, or pc_* (and y) alone"}},
         {{"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns", {}, "", "Feature columns", "Columns"},
@@ -2170,7 +2169,11 @@ void NodeMetadataRegistry::InitializeAnalyticsNodes() {
          {"n_components", "int", "2", "Number of principal components", {}, "1-2147483647"},
          {"center", "bool", "true", "Subtract each feature mean before projection", {}, ""},
          {"scale", "bool", "false", "Scale each feature to unit variance before projection", {}, ""},
-         {"keep_columns", "bool", "false", "Keep the input columns and add pc_* beside them", {}, ""}},
+         {"keep_columns", "bool", "false", "Keep the input columns and add pc_* beside them", {}, ""},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Persist fitted values to an engine-managed project artifact for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TSNENode, NodeCategory::Analytics, "t-SNE", ICON_FA_DIAGRAM_PROJECT,
@@ -4938,11 +4941,14 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::JSONPathExtractor, NodeCategory::Utility, "JSONPath", ICON_FA_CODE_BRANCH,
-        {"json", "jsonpath", "extract"}, 0, false, "Extract data using JSONPath",
-        "Query JSON data using JSONPath expressions.", "",
+        {"json", "jsonpath", "extract"}, 0, false, "The value at a path in each row's JSON",
+        "Reads one value from the JSON text of each row: keys by dots, array items by [n] "
+        "(\"$.user.name\", \"items[0].price\"). A row without that value gives an empty cell; "
+        "text values lose their quotes, objects and arrays stay JSON. The same paths as "
+        "Tools > Utilities > JSON.", "",
         {{"JSON", PinType::Dataset, true, "JSON data"}},
         {{"Result", PinType::Dataset, true, "Extracted values"}},
-        {{"path", "string", "$.data[*].value", "JSONPath expression", {}, ""}},
+        {{"path", "string", "$.value", "Keys by dots, array items by [n], e.g. $.user.name or items[0].price", {}, ""}},
         NodeImplementationStatus::Implemented, 0});
 }
 
@@ -4950,45 +4956,64 @@ void NodeMetadataRegistry::InitializeUtilityNodes() {
 // Linear Algebra Nodes (Tool-to-Node Migration)
 // =============================================================================
 void NodeMetadataRegistry::InitializeLinearAlgebraNodes() {
-    RegisterNode({NodeType::SVDNode, NodeCategory::Analytics, "SVD", ICON_FA_TABLE_CELLS,
-        {"svd", "singular", "value", "decomposition", "matrix"}, 0, false,
-        "Singular Value Decomposition", "", "",
-        {{"Matrix", PinType::Dataset, true, "Matrix"}},
-        {{"U", PinType::Dataset, false, "U"}, {"S", PinType::Dataset, false, "S"}, {"V", PinType::Dataset, false, "V"}},
-        {},
-        NodeImplementationStatus::Template, 0});
+    // TOFIX129 D9: fitted on the Train rows, mapped on the device with the
+    // backend's LinearAlgebra (test_fit_on_train_rows against scikit-learn).
+    RegisterNode({NodeType::TruncatedSVD, NodeCategory::Analytics, "Truncated SVD", ICON_FA_COMPRESS,
+        {"svd", "truncated", "singular", "lsa", "latent", "semantic", "dimensionality", "reduce"}, 0, false,
+        "Reduce number columns to their k strongest directions",
+        "The singular value decomposition of the Train rows, uncentred (scikit-learn's TruncatedSVD): each row becomes x V_k, Float32 svd_0..svd_{k-1} alone (with the label as y and the split carried) or beside the input with Keep columns. Uncentred, so it suits word counts and TF-IDF columns (latent semantic analysis); for centred directions use PCA. Each component's largest weight is positive.", "",
+        {{"Data", PinType::Dataset, true, "Input table containing numeric features"}},
+        {{"Transformed", PinType::Dataset, true, "svd_* (and y), or the input with svd_* beside it"}},
+        {{"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns", {}, "", "Feature columns", "Columns"},
+         {"label_col", "string", "", "Optional label column passed through as y and excluded from automatic features", {}, "", "Label column", "Columns"},
+         {"n_components", "int", "2", "The directions kept", {}, "1-2147483647"},
+         {"keep_columns", "bool", "false", "Keep the input columns and add svd_* beside them", {}, ""},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Persist fitted values to an engine-managed project artifact for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
+        NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::QRDecomposition, NodeCategory::Analytics, "QR Decomposition", ICON_FA_TABLE_COLUMNS,
-        {"qr", "decomposition", "matrix", "orthogonal"}, 0, false,
-        "QR Matrix Decomposition", "", "",
-        {{"Matrix", PinType::Dataset, true, "Matrix"}},
-        {{"Q", PinType::Dataset, false, "Q"}, {"R", PinType::Dataset, false, "R"}},
-        {},
-        NodeImplementationStatus::Template, 0});
+    RegisterNode({NodeType::Whitening, NodeCategory::Analytics, "Whitening", ICON_FA_TABLE_CELLS,
+        {"whitening", "whiten", "zca", "pca", "decorrelate", "sphering", "covariance"}, 0, false,
+        "Decorrelate number columns and scale them to unit variance",
+        "Centred on the Train rows' means, then rotated onto the directions of their covariance and divided by each direction's standard deviation (n - 1). PCA whitening (scikit-learn's PCA(whiten=True)) outputs white_0.. for the n_components strongest directions (0: every one); ZCA rotates back onto the columns (<column>_white), the whitened data closest to the input. Epsilon is added to each variance before its root; a direction with no variance needs it above 0.", "",
+        {{"Data", PinType::Dataset, true, "Input table containing numeric features"}},
+        {{"Transformed", PinType::Dataset, true, "white_* or <column>_white (and y), or beside the input"}},
+        {{"feature_cols", "string", "", "Comma-separated numeric features; empty auto-detects numeric columns", {}, "", "Feature columns", "Columns"},
+         {"label_col", "string", "", "Optional label column passed through as y and excluded from automatic features", {}, "", "Label column", "Columns"},
+         {"method", "enum", "pca", "PCA whitening (directions) or ZCA (back onto the columns)", {"pca", "zca"}, "", "Method"},
+         {"n_components", "int", "0", "PCA whitening: the directions kept; 0 keeps every one", {}, "0-2147483647"},
+         {"epsilon", "float", "0", "Added to each variance before its square root", {}, ""},
+         {"keep_columns", "bool", "false", "Keep the input columns and add the whitened columns beside them", {}, ""},
+         {"operation_mode", "enum", "fit_transform", "Fit on this input or reuse values fitted on training data", {"fit_transform", "transform_only"}, "", "Mode", "Fitted preprocessing state"},
+         {"save_state", "bool", "false", "Persist fitted values to an engine-managed project artifact for validation, test, and inference", {}, "", "Save fitted state", "Fitted preprocessing state"},
+         {"state_path", "file", "", "Existing training .cyxstate.json artifact required by Transform Only", {}, "*.cyxstate.json", "State artifact path", "Fitted preprocessing state"},
+         {"state_overwrite", "bool", "false", "Allow replacing an existing state artifact", {}, "", "Allow state overwrite", "Fitted preprocessing state", false, true}},
+        NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::CholeskyDecomposition, NodeCategory::Analytics, "Cholesky", ICON_FA_SQUARE_ROOT_VARIABLE,
-        {"cholesky", "decomposition", "matrix", "positive", "definite"}, 0, false,
-        "Cholesky Decomposition", "", "",
-        {{"Matrix", PinType::Dataset, true, "Matrix"}},
-        {{"L", PinType::Dataset, false, "L"}},
-        {},
-        NodeImplementationStatus::Template, 0});
+    RegisterNode({NodeType::LinearSolve, NodeCategory::Analytics, "Linear Solve", ICON_FA_SQUARE_ROOT_VARIABLE,
+        {"solve", "linear", "system", "least", "squares", "lstsq", "ax=b", "matrix"}, 0, false,
+        "Solve A x = b from table columns",
+        "A is the A columns of the Data input; b is the b columns of the b input (a second table, lined up row by row: the same row count, no missing value) or of the same table. Square A of full rank: the one solution; otherwise least squares, the shortest of the best x (Method decides). Fitted on the Train rows when a Data Split marks them. Output: one row per column of A (column, then x_<b column>). Tools > Linear Algebra shows the same with its sentence and checks.", "",
+        {{"Data", PinType::Dataset, true, "The table holding A's columns"}, {"b", PinType::Dataset, false, "A second table holding b's columns, row for row with A"}},
+        {{"x", PinType::Dataset, true, "One row per column of A: column, x_<b column>"}},
+        {{"a_cols", "string", "", "Comma-separated columns of A; empty: every number column but b's", {}, "", "A columns", "Columns"},
+         {"b_cols", "string", "", "Comma-separated columns of b (in the b input, or in the same table)", {}, "", "b columns", "Columns", true},
+         {"method", "enum", "auto", "auto: the one solution for a square A of full rank, else least squares", {"auto", "solve", "least_squares"}, "", "Method"}},
+        NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::EigenDecomposition, NodeCategory::Analytics, "Eigenvalue", ICON_FA_CHART_LINE,
-        {"eigen", "eigenvalue", "eigenvector", "decomposition"}, 0, false,
-        "Eigenvalue Decomposition", "", "",
-        {{"Matrix", PinType::Dataset, true, "Matrix"}},
-        {{"Eigenvalues", PinType::Dataset, false, "Eigenvalues"}, {"Eigenvectors", PinType::Dataset, false, "Eigenvectors"}},
-        {},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::MatrixCalculator, NodeCategory::Analytics, "Matrix Calculator", ICON_FA_CALCULATOR,
-        {"matrix", "calculator", "operations", "multiply", "transpose", "inverse"}, 0, false,
-        "Matrix Operations", "", "",
-        {{"A", PinType::Dataset, true, "A"}, {"B", PinType::Dataset, false, "B"}},
-        {{"Result", PinType::Dataset, false, "Result"}},
-        {{"operation", "dropdown", "multiply", "Operation", {"multiply", "add", "subtract", "transpose", "inverse", "determinant"}, ""}},
-        NodeImplementationStatus::Template, 0});
+    RegisterNode({NodeType::LinearProjection, NodeCategory::Analytics, "Linear Projection", ICON_FA_TABLE_CELLS,
+        {"projection", "project", "matrix", "multiply", "loadings", "transform", "linear"}, 0, false,
+        "Multiply every row by a matrix from a second table",
+        "The Matrix input's number columns are the outputs; its rows weigh the data's columns, in order, or as its text column names them (a matrix exported from Tools > Linear Algebra or another run's loadings). The Matrix table is a parameter of this step, not training rows. Outputs Float32 columns named after the matrix's (with Prefix) alone, with the label as y and the split carried, or beside the input with Keep columns.", "",
+        {{"Data", PinType::Dataset, true, "Input table containing numeric features"}, {"Matrix", PinType::Dataset, true, "The matrix: one row per data column, one column per output"}},
+        {{"Transformed", PinType::Dataset, true, "The outputs (and y), or the input with them beside it"}},
+        {{"feature_cols", "string", "", "Comma-separated data columns, one per matrix row; empty: every number column but the label (or the matrix's names)", {}, "", "Feature columns", "Columns"},
+         {"label_col", "string", "", "Optional label column passed through as y", {}, "", "Label column", "Columns"},
+         {"prefix", "string", "", "Put before each output column's name", {}, "", "Prefix"},
+         {"keep_columns", "bool", "false", "Keep the input columns and add the outputs beside them", {}, ""}},
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================
@@ -5115,27 +5140,6 @@ void NodeMetadataRegistry::InitializeStatisticsNodes() {
 }
 
 // =============================================================================
-// Deep Learning Interpretation Nodes (Tool-to-Node Migration)
-// =============================================================================
-void NodeMetadataRegistry::InitializeInterpretationNodes() {
-    RegisterNode({NodeType::GradCAMNode, NodeCategory::Visualization, "Grad-CAM", ICON_FA_FIRE,
-        {"gradcam", "visualization", "cnn", "attention", "heatmap"}, 0, false,
-        "Grad-CAM Visualization", "", "",
-        {{"Model", PinType::Parameters, true, "Model"}, {"Image", PinType::Tensor, true, "Image"}},
-        {{"Heatmap", PinType::Tensor, false, "Heatmap"}},
-        {{"layer", "string", "", "Target layer", {}, ""}},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::SaliencyMapNode, NodeCategory::Visualization, "Saliency Map", ICON_FA_EYE,
-        {"saliency", "gradient", "visualization", "attention"}, 0, false,
-        "Gradient Saliency Maps", "", "",
-        {{"Model", PinType::Parameters, true, "Model"}, {"Image", PinType::Tensor, true, "Image"}},
-        {{"Saliency", PinType::Tensor, false, "Saliency"}},
-        {{"method", "dropdown", "vanilla", "Method", {"vanilla", "smoothgrad", "integrated"}, ""}},
-        NodeImplementationStatus::Template, 0});
-}
-
-// =============================================================================
 // Visualization Nodes — chart framework lives in
 // cyxwiz-engine/src/gui/visualization/. Register metadata here so nodes
 // show up in the Node Browser + search. BarChart is Cat 2 inspection
@@ -5187,53 +5191,16 @@ void NodeMetadataRegistry::InitializeVisualizationNodes() {
 // Optimization Nodes (Tool-to-Node Migration)
 // =============================================================================
 void NodeMetadataRegistry::InitializeOptimizationNodes() {
-    RegisterNode({NodeType::GradientDescentViz, NodeCategory::Visualization, "GD Visualizer", ICON_FA_CHART_LINE,
-        {"gradient", "descent", "optimizer", "visualize", "adam", "sgd"}, 0, false,
-        "Gradient Descent Visualizer", "", "",
-        {{"Function", PinType::Dataset, true, "Function"}},
-        {{"Path", PinType::Dataset, false, "Path"}},
-        {{"optimizer", "dropdown", "sgd", "Optimizer", {"sgd", "momentum", "adam", "rmsprop"}, ""}},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::ConvexityAnalyzer, NodeCategory::Analytics, "Convexity Analyzer", ICON_FA_MOUNTAIN,
-        {"convex", "hessian", "eigenvalue", "analysis"}, 0, false,
-        "Analyze Function Convexity", "", "",
-        {{"Function", PinType::Dataset, true, "Function"}},
-        {{"Analysis", PinType::Dataset, false, "Analysis"}},
-        {},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::LPSolver, NodeCategory::Analytics, "LP Solver", ICON_FA_CHART_PIE,
-        {"linear", "programming", "optimization", "simplex"}, 0, false,
-        "Linear Programming Solver", "", "",
-        {{"Objective", PinType::Dataset, true, "Objective"}, {"Constraints", PinType::Dataset, true, "Constraints"}},
-        {{"Solution", PinType::Dataset, false, "Solution"}},
-        {},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::QPSolver, NodeCategory::Analytics, "QP Solver", ICON_FA_SQUARE_POLL_VERTICAL,
-        {"quadratic", "programming", "optimization"}, 0, false,
-        "Quadratic Programming Solver", "", "",
-        {{"Objective", PinType::Dataset, true, "Objective"}, {"Constraints", PinType::Dataset, true, "Constraints"}},
-        {{"Solution", PinType::Dataset, false, "Solution"}},
-        {},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::NumericalDifferentiation, NodeCategory::Analytics, "Differentiation", ICON_FA_SUPERSCRIPT,
-        {"differentiation", "derivative", "gradient", "numerical"}, 0, false,
-        "Numerical Differentiation", "", "",
-        {{"Data", PinType::Dataset, true, "Data"}},
-        {{"Derivative", PinType::Dataset, false, "Derivative"}},
-        {{"method", "dropdown", "central", "Method", {"forward", "backward", "central"}, ""}},
-        NodeImplementationStatus::Template, 0});
-
-    RegisterNode({NodeType::NumericalIntegration, NodeCategory::Analytics, "Integration", ICON_FA_CHART_AREA,
-        {"integration", "integral", "trapezoid", "simpson", "numerical"}, 0, false,
-        "Numerical Integration", "", "",
-        {{"Data", PinType::Dataset, true, "Data"}},
-        {{"Integral", PinType::Dataset, false, "Integral"}},
-        {{"method", "dropdown", "trapezoid", "Method", {"trapezoid", "simpson", "romberg", "gaussian"}, ""}},
-        NodeImplementationStatus::Template, 0});
+    RegisterNode({NodeType::PortfolioWeights, NodeCategory::Analytics, "Portfolio Weights", ICON_FA_SQUARE_ROOT_VARIABLE,
+        {"portfolio", "markowitz", "weights", "allocation", "risk", "returns", "quadratic", "qp", "optimization"}, 0, false,
+        "The least risky mix of assets from a table of their returns",
+        "One column per asset, one row per period (returns). The means and the covariance come from the Train rows when a Data Split marks them, else every row; the weights minimize the variance of the mix with the weights summing to 1, earning at least Target return a period (empty: the minimum-variance mix), with no weight below 0 when Long only (a convex quadratic program, solved by HiGHS). Output: one row per asset: asset, weight, mean_return, sd, risk_share (its share of the mix's variance). Tools > Optimization and Calculus > Quadratic shows the same with its sentence.", "",
+        {{"Data", PinType::Dataset, true, "Returns: one column per asset, one row per period"}},
+        {{"Weights", PinType::Dataset, true, "One row per asset: asset, weight, mean_return, sd, risk_share"}},
+        {{"asset_cols", "string", "", "Comma-separated asset columns; empty: every number column", {}, "", "Asset columns", "Columns"},
+         {"target_return", "string", "", "The least mean return a period the mix must earn; empty: none (the minimum-variance mix)", {}, "", "Target return"},
+         {"long_only", "bool", "true", "No weight below 0 (no short positions)", {}, "", "Long only"}},
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

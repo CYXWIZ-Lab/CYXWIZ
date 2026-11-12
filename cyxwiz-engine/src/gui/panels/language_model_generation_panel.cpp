@@ -8,6 +8,7 @@
 #include "../../core/async_task_manager.h"
 #include "../../core/file_dialogs.h"
 #include "../../core/generation_preview_presentation.h"
+#include "../../core/test_manager.h"
 #include "../../core/training_manager.h"
 // Last: it opens cyxwiz::gui, which would hide ::gui from the headers above.
 #include "../editor_fonts.h"
@@ -128,13 +129,23 @@ void LanguageModelGenerationPanel::SetModel(std::shared_ptr<LoadedLanguageModel>
 std::string LanguageModelGenerationPanel::SendBlocker() const {
     if (!model_) return "Load a model first";
     if (run_ || raw_run_ || speed_run_) return "Generating; Stop first";
-    if (model_->source == "This session's model" && TrainingManager::Instance().IsTrainingActive())
-        return "Training is running on this model; generate when it ends";
+    if (model_->source == "This session's model") {
+        if (const auto busy = ActiveModelBusy(TrainingManager::Instance().IsTrainingActive(),
+                                              TestManager::Instance().IsTestingActive());
+            !busy.empty())
+            return busy + "; generate when it ends";
+    }
     auto check = settings_;
     check.enabled = true;
     check.prompts = {{"x", {}}};
     if (const auto problem = ValidateTrainingGenerationPreview(check); !problem.empty()) return problem;
     return {};
+}
+
+std::shared_ptr<ActiveModelUse> LanguageModelGenerationPanel::ClaimModel(std::string& why) const {
+    if (model_->source != "This session's model") return nullptr;
+    return ActiveModelUse::TryClaim("Generation", TrainingManager::Instance().IsTrainingActive(),
+                                    TestManager::Instance().IsTestingActive(), &why);
 }
 
 void LanguageModelGenerationPanel::Render() {
@@ -349,9 +360,16 @@ void LanguageModelGenerationPanel::RenderRawTokenIds() {
         prompt.rendered.text = decoded;
         const size_t wanted = static_cast<size_t>(settings_.max_new_tokens);
         prompt.new_tokens_fit = context == 0 ? wanted : std::min(wanted, context - ids.size());
+        std::string busy;
+        auto use = ClaimModel(busy);
+        if (!busy.empty()) {
+            raw_result_ = busy + "; generate when it ends";
+            return;
+        }
         auto model = model_;
         auto settings = settings_;
         auto state = std::make_shared<RunState>();
+        state->use = std::move(use);
         std::weak_ptr<const void> owner = state;
         raw_run_ = state;
         raw_result_.clear();
@@ -374,6 +392,7 @@ void LanguageModelGenerationPanel::RenderRawTokenIds() {
                     std::lock_guard<std::mutex> lock(state->mutex);
                     state->error = error;
                 }
+                state->use.reset();
                 state->done.store(true);
             },
             owner);
@@ -899,9 +918,17 @@ void LanguageModelGenerationPanel::StartSpeedMeasurement() {
         speed_failed_ = true;
         return;
     }
+    std::string busy;
+    auto use = ClaimModel(busy);
+    if (!busy.empty()) {
+        speed_text_ = busy + "; generate when it ends";
+        speed_failed_ = true;
+        return;
+    }
     auto model = model_;
     auto settings = settings_;
     auto state = std::make_shared<SpeedState>();
+    state->use = std::move(use);
     std::weak_ptr<const void> owner = state;
     speed_run_ = state;
     speed_text_.clear();
@@ -924,6 +951,7 @@ void LanguageModelGenerationPanel::StartSpeedMeasurement() {
                     state->failed = true;
                 }
             }
+            state->use.reset();
             state->done.store(true);
         },
         owner);
@@ -950,8 +978,16 @@ bool LanguageModelGenerationPanel::Start(const std::string& message, bool replac
         note_is_error_ = true;
         return false;
     }
+    std::string busy;
+    auto use = ClaimModel(busy);
+    if (!busy.empty()) {
+        note_ = busy + "; generate when it ends";
+        note_is_error_ = true;
+        return false;
+    }
     if (replace_last && !replies_.empty()) replies_.pop_back();
     auto state = std::make_shared<RunState>();
+    state->use = std::move(use);
     state->reply.message = message;
     state->max_new_tokens = static_cast<int>(prompt.new_tokens_fit);
     run_ = state;
@@ -990,6 +1026,7 @@ bool LanguageModelGenerationPanel::Start(const std::string& message, bool replac
                 std::lock_guard<std::mutex> lock(state->mutex);
                 state->error = error;
             }
+            state->use.reset();
             state->done.store(true);
         },
         owner);

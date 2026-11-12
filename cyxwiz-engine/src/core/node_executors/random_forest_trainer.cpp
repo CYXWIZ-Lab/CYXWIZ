@@ -1,4 +1,5 @@
 #include "random_forest_trainer.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -62,7 +63,7 @@ RandomForestModel RandomForestTrainer::Fit(
 
     std::vector<RandomForestTree> trees;
     trees.reserve(static_cast<size_t>(options_.n_estimators));
-    std::uniform_int_distribution<size_t> row_dist(0, features.size() - 1);
+    const auto row_dist = [low = 0, high = features.size() - 1](auto& r) { return cyxwiz::portable::UniformInt<size_t>(r, low, high); };
 
     for (int tree_index = 0; tree_index < options_.n_estimators; ++tree_index) {
         const uint32_t tree_seed = MixSeed(options_.seed, tree_index);
@@ -126,7 +127,7 @@ std::vector<size_t> RandomForestTrainer::SampleFeatureIndices(
     std::vector<size_t> indices(feature_count);
     std::iota(indices.begin(), indices.end(), 0);
     std::mt19937 rng(tree_seed ^ 0x85ebca6bu);
-    std::shuffle(indices.begin(), indices.end(), rng);
+    cyxwiz::portable::Shuffle(indices.begin(), indices.end(), rng);
     indices.resize(ResolveFeatureSubsetSize(feature_count));
     std::sort(indices.begin(), indices.end());
     return indices;

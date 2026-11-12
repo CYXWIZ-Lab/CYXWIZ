@@ -9,8 +9,13 @@
 // FinishClassifierMetrics, the device ROC / PR) through
 // core/test_results_presentation; this file only draws them.
 //
-// Sections: Overview, Confusion matrix, Classes, Curves, Threshold (the
-// positive class by name, a typed threshold, Best F1), Predictions, Plots
+// Sections: Overview, Confusion matrix, Classes, Errors (the mistakes by pair,
+// the most confident ones with their inputs, TOFIX129 D11), Curves,
+// Threshold (the positive class by name, a typed threshold, picked by Best
+// F1, a recall target or the cost of each error, precision / recall / F1 by
+// threshold; a confidence floor for several classes), Calibration
+// (reliability before and after a temperature, Platt or isotonic fit),
+// Predictions, Plots
 // (regression), By column value, Comparison. Export CSV / JSON, Keep as node,
 // Clear (asks first), Run test again.
 
@@ -19,11 +24,13 @@
 #include "../../core/test_executor.h"
 #include "../../core/test_predictions_metrics.h"
 #include "../../core/test_results_presentation.h"
+#include "../../core/threshold_calibration.h"
 
 #include <imgui.h>
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -41,16 +48,15 @@ ImVec4 TestToneColour(test_report::Tone tone);
 
 class TestView {
 public:
+    ~TestView();
     // A finished test (any thread). A failed run shows its message and keeps
     // the last successful results; it never becomes the run compared against.
     void SetResults(const TestingMetrics& results);
     bool HasResults() const;
     // The latest successful test's main score: accuracy, or MAE (regression).
     std::optional<double> LatestScore() const;
-    // What to show: a kept test (path), the latest test on its Comparison
-    // section (Train > Test > Compare test results), or A table... (Tools >
-    // Evaluation with no test yet).
-    void ShowKept(const std::string& path);
+    // What to show: the latest test on its Comparison section (Train > Test >
+    // Compare test results), or A table... (Tools > Evaluation with no test yet).
     void ShowComparison();
     void ShowTable();
     // Train > Test > Export test report: the shown run as JSON (a Save dialog).
@@ -70,6 +76,12 @@ public:
     std::function<void()> run_test;             // "Run test again"
     std::function<void()> keep;                 // "Keep as node..." (Results' dialog)
     std::function<std::string()> keep_blocker;  // why the latest test cannot be kept ("" when it can)
+    std::function<void(int)> explain_sample;    // opens a test sample in the Model window's Explain
+    // The model's kept threshold / calibration (TOFIX129 D11): what it is now
+    // (nullopt without a trained model), and keep a part of it ("" when kept,
+    // else why not; neither part: forget it).
+    std::function<std::optional<ModelDecision>()> kept_decision;
+    std::function<std::string(const ModelDecision&, bool threshold, bool calibration)> keep_decision;
 
 private:
     enum class Source { Latest, Kept, Table };
@@ -94,6 +106,12 @@ private:
     void RenderCurves(const TestingMetrics& m);
     void RenderThreshold(const TestingMetrics& m);
     void RenderPredictions(const TestingMetrics& m);
+    void RenderErrors(const TestingMetrics& m);
+    void RenderConfidenceFloor(const TestingMetrics& m);
+    void RenderCalibration(const TestingMetrics& m);
+    // The kept decision's line and Forget, under Threshold and Calibration.
+    void RenderKeptDecision(const TestingMetrics& m);
+    void ReleaseThumbnails();
     void RenderRegressionRows(const TestingMetrics& m);
     void RenderRegressionPlots(const TestingMetrics& m);
     void RenderComparison();
@@ -138,6 +156,16 @@ private:
     // The positive class's curves and threshold.
     int positive_ = -1;  // -1: class 1 of two, class 0 of more
     double threshold_ = 0.5;
+    double recall_target_ = 0.9;
+    double cost_fp_ = 1.0, cost_fn_ = 1.0;
+    double floor_ = 0.9;
+    // Calibration of the shown run.
+    int calibration_method_ = 0;  // yes / no: 0 Platt, 1 isotonic, 2 temperature
+    int calibration_view_ = 1;    // 0 before, 1 after
+    test_report::CalibrationReport calibration_;
+    std::string calibration_key_;
+    std::string keep_message_;
+    bool keep_failed_ = false;
     std::string curves_key_;
     ClassCurves curves_;
     std::string curves_error_;
@@ -150,6 +178,12 @@ private:
 
     std::string note_;
     bool note_failed_ = false;
+
+    // Errors.
+    int errors_pair_ = -1;                  // a (true, predicted) pair picked, or -1 for all
+    std::string errors_message_;
+    std::map<int, unsigned int> thumbnails_;  // sample -> texture of its kept input
+    uint64_t thumbnails_version_ = 0;
 };
 
 }  // namespace cyxwiz

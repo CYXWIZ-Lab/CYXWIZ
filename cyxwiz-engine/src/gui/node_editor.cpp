@@ -1,5 +1,6 @@
 #include "ui_buttons.h"
 #include "ui_tokens.h"
+#include "ui_widgets.h"
 #include "../core/pipeline_type_names.h"
 #include "node_editor.h"
 #include "../core/live_graph_compile.h"
@@ -10,7 +11,8 @@
 #include "../core/test_manager.h"
 #include "panels/script_editor.h"
 #include "properties.h"
-#include "patterns/pattern_library.h"
+#include "properties_parameter_rules.h"
+#include "../core/studio_toolbar_presentation.h"
 #include "icons.h"
 #include "../core/data_registry.h"
 #include "../core/training_input_preparation.h"
@@ -119,11 +121,12 @@ void NodeEditor::ShowNodes(std::vector<int> node_ids) {
 
 void NodeEditor::Raise() {
     show_window_ = true;
-    ::gui::BringToFront("CyxWiz Studio");
+    ::gui::BringToFront(kWindowId);
 }
 
 void NodeEditor::ClearValidationState() {
     node_pin_state_.clear();
+    ++validation_clears_;
 }
 
 NodeEditor::NodePinState NodeEditor::GetNodePinState(int node_id) const {
@@ -298,6 +301,17 @@ bool NodeEditor::CanReplaceGraph(const char* operation) {
     return false;
 }
 
+// The window's id was "CyxWiz Studio" before its title named the graph. When
+// a saved layout knows only that id, the window opens once where it was
+// docked instead of floating.
+void NodeEditor::CarryDockFromOldName() {
+    if (dock_carried_) return;
+    dock_carried_ = true;
+    if (ImGui::FindWindowSettingsByID(ImHashStr(kWindowId))) return;
+    if (const ImGuiWindowSettings* old = ImGui::FindWindowSettingsByID(ImHashStr("CyxWiz Studio")); old && old->DockId)
+        ImGui::SetNextWindowDockID(old->DockId, ImGuiCond_FirstUseEver);
+}
+
 void NodeEditor::Render() {
     simulation_session_.Poll();
     if (!simulation_session_.IsActive()) simulation_plugins_.clear();
@@ -350,9 +364,14 @@ void NodeEditor::Render() {
         pending_context_keep_view_ = false;
     }
 
-    ::gui::NextWindowMayLeave("CyxWiz Studio");
-    const bool expanded = ImGui::Begin("CyxWiz Studio", &show_window_);
-    ::gui::TabMenu("CyxWiz Studio", &show_window_);
+    // The tab names the graph and its unsaved mark (TOFIX129 A3-2); the id stays.
+    const std::string title =
+        cyxwiz::studio_toolbar::WindowTitle(current_file_path_.empty() ? std::string() : GetGraphStem(), unsaved_) +
+        kWindowId;
+    CarryDockFromOldName();
+    ::gui::NextWindowMayLeave(kWindowId);
+    const bool expanded = ImGui::Begin(title.c_str(), &show_window_);
+    ::gui::TabMenu(kWindowId, &show_window_);
     if (expanded) {
         ShowToolbar();
 
@@ -458,19 +477,15 @@ void NodeEditor::Render() {
             if (wheel != 0.0f) {
                 // Real zoom implementation - adjust zoom factor
                 float old_zoom = zoom_;
-                zoom_ = std::clamp(zoom_ + wheel * 0.1f, ZOOM_MIN, ZOOM_MAX);
+                zoom_ = std::clamp(zoom_ + wheel * cyxwiz::studio_toolbar::kZoomStep, cyxwiz::studio_toolbar::kZoomMin,
+                                   cyxwiz::studio_toolbar::kZoomMax);
 
                 // Zoom toward mouse position by adjusting panning
                 if (zoom_ != old_zoom) {
-                    ImVec2 panning = ImNodes::EditorContextGetPanning();
-                    ImVec2 editor_origin = ImGui::GetWindowPos();
-                    editor_origin.y += ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + 30.0f;
-                    editor_origin.x += ImGui::GetStyle().WindowPadding.x;
-
-                    ImVec2 mouse_rel = ImVec2(
-                        mouse_pos.x - editor_origin.x - panning.x,
-                        mouse_pos.y - editor_origin.y - panning.y
-                    );
+                    // The grid point under the pointer stays under it.
+                    const ImVec2 panning = ImNodes::EditorContextGetPanning();
+                    const ImVec2 mouse_rel(mouse_pos.x - canvas_origin_.x - panning.x,
+                                           mouse_pos.y - canvas_origin_.y - panning.y);
 
                     float zoom_factor = zoom_ / old_zoom;
                     ImNodes::EditorContextResetPanning(ImVec2(
@@ -484,18 +499,8 @@ void NodeEditor::Render() {
         // Handle right-click context menu (skip if mouse is over minimap)
         bool right_click_detected = false;
         if (ImNodes::IsEditorHovered() && !mouse_in_minimap_bounds && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            // Store mouse position for node placement in grid space
-            // The editor origin is at the window content region start
-            ImVec2 editor_origin = ImGui::GetWindowPos();
-            editor_origin.y += ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y + 30.0f;  // Account for title bar and toolbar
-            editor_origin.x += ImGui::GetStyle().WindowPadding.x;
-            ImVec2 panning = ImNodes::EditorContextGetPanning();
-
-            // Convert screen position to grid space
-            context_menu_pos_ = ImVec2(
-                (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                (mouse_pos.y - editor_origin.y - panning.y) / zoom_
-            );
+            // Where a node added from the menu goes: the grid point clicked.
+            context_menu_pos_ = GridAt(mouse_pos);
             right_click_detected = true;
         }
 
@@ -564,6 +569,34 @@ void NodeEditor::Render() {
         // A collapsed subgraph expands (TOFIX147).
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             node_under_press_ = is_node_hovered && !is_pin_hovered ? hovered_node_id : -1;
+        }
+
+        // Moving nodes is one undo step per drag: the graph as the press found
+        // it goes on the undo stack when, on release, a node is elsewhere (and
+        // the graph is still the same one: a load during the press is not undone).
+        const bool press_on_canvas =
+            ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                   ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&  // a node's drag button
+            ImGui::IsMouseHoveringRect(canvas_origin_, ImVec2(canvas_origin_.x + canvas_size_.x,
+                                                              canvas_origin_.y + canvas_size_.y));
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && press_on_canvas) {
+            press_snapshot_ = CaptureSnapshot();
+            press_snapshot_generation_ = graph_generation_;
+        }
+        if (press_snapshot_ && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            bool moved = false;
+            for (const auto& [id, pos] : cached_node_positions_) {
+                const auto before = press_snapshot_->positions.find(id);
+                if (before != press_snapshot_->positions.end() &&
+                    (std::abs(before->second.x - pos.x) > 0.5f || std::abs(before->second.y - pos.y) > 0.5f)) {
+                    moved = true;
+                    break;
+                }
+            }
+            if (moved && press_snapshot_generation_ == graph_generation_) {
+                PushUndoSnapshot(std::move(*press_snapshot_));
+            }
+            press_snapshot_.reset();
         }
         if (node_under_press_ >= 0 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             const int clicked = node_under_press_;
@@ -646,13 +679,7 @@ void NodeEditor::Render() {
                     auto* metadata = registry.GetMetadata(dropped_type);
                     std::string node_name = metadata ? metadata->name : "Node";
 
-                    // Calculate drop position in grid space (reuse mouse_pos from earlier)
-                    ImVec2 editor_origin = ImGui::GetWindowPos();
-                    ImVec2 panning = ImNodes::EditorContextGetPanning();
-                    ImVec2 drop_pos(
-                        (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                        (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_  // Offset for toolbar
-                    );
+                    const ImVec2 drop_pos = GridAt(mouse_pos);
 
                     // Queue node for addition
                     pending_nodes_.emplace_back(
@@ -669,11 +696,7 @@ void NodeEditor::Render() {
                 if (!CanAddNodeToGraph(NodeType::PluginCustom, type_id)) {
                     spdlog::warn("Blocked drag-drop graph add for extension node '{}'", type_id);
                 } else {
-                    ImVec2 editor_origin = ImGui::GetWindowPos();
-                    ImVec2 panning = ImNodes::EditorContextGetPanning();
-                    ImVec2 drop_pos(
-                        (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                        (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_);
+                    const ImVec2 drop_pos = GridAt(mouse_pos);
                     pending_nodes_.emplace_back(NodeType::PluginCustom, type_id, drop_pos);
                     spdlog::info("Drag-drop: Adding extension node {} at ({}, {})",
                                  type_id, drop_pos.x, drop_pos.y);
@@ -682,13 +705,7 @@ void NodeEditor::Render() {
 
             // Handle ANNOTATION drag-drop
             if (ImGui::AcceptDragDropPayload("ANNOTATION") != nullptr) {
-                // Calculate drop position in grid space
-                ImVec2 editor_origin = ImGui::GetWindowPos();
-                ImVec2 panning = ImNodes::EditorContextGetPanning();
-                ImVec2 drop_pos(
-                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_
-                );
+                const ImVec2 drop_pos = GridAt(mouse_pos);
 
                 // Add annotation at drop position
                 AddAnnotationAt(drop_pos);
@@ -697,13 +714,7 @@ void NodeEditor::Render() {
 
             // Handle STUDIO_FRAME drag-drop
             if (ImGui::AcceptDragDropPayload("STUDIO_FRAME") != nullptr) {
-                // Calculate drop position in grid space
-                ImVec2 editor_origin = ImGui::GetWindowPos();
-                ImVec2 panning = ImNodes::EditorContextGetPanning();
-                ImVec2 drop_pos(
-                    (mouse_pos.x - editor_origin.x - panning.x) / zoom_,
-                    (mouse_pos.y - editor_origin.y - panning.y - 50) / zoom_
-                );
+                const ImVec2 drop_pos = GridAt(mouse_pos);
 
                 // Add frame at drop position
                 AddFrameAt(drop_pos);
@@ -717,6 +728,7 @@ void NodeEditor::Render() {
         ImGui::SetWindowFontScale(1.0f);
 
         RenderCanvasFooter();
+        if (nodes_.empty() && pending_nodes_.empty()) RenderEmptyCanvas();
         // Render minimap overlay in bottom-right corner, above the footer
         if (show_minimap_) {
             RenderMinimap();
@@ -917,261 +929,159 @@ void NodeEditor::Render() {
 
     // Outside the Studio Begin/End body: inactive dock tabs skip that body.
     // Open in this render scope, not in the caller's asset-browser/menu scope.
+    DrawStudioDialogs();
+
+    // Plot nodes: result lane and their Plot windows (TOFIX134 P2).
+    RenderPlotNodes();
+}
+
+void NodeEditor::RenderEmptyCanvas() {
+    namespace st = cyxwiz::studio_toolbar;
+    const ui::Tokens& t = ui::CurrentTokens();
+    if (canvas_size_.x < 240.0f || canvas_size_.y < 160.0f) return;
+    if (!starter_graphs_found_) {
+        starter_graphs_ = FindStarterGraphs();
+        starter_graphs_found_ = true;
+    }
+    const st::EmptyCanvas text;
+    // Two small windows of their own in the canvas centre: the words take no
+    // input (a node dropped on them, a right-click or the wheel reach the
+    // canvas, as the hint says), only the row of buttons below them does.
+    const float centre_x = canvas_origin_.x + canvas_size_.x * 0.5f;
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                                   ImGuiWindowFlags_NoMove;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ::gui::NextWindowFollowsCurrent();
+    ImGui::SetNextWindowPos(ImVec2(centre_x, canvas_origin_.y + canvas_size_.y * 0.40f), ImGuiCond_Always,
+                            ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    float words_bottom = canvas_origin_.y + canvas_size_.y * 0.45f;
+    if (ImGui::Begin("##EmptyCanvas", nullptr, flags | ImGuiWindowFlags_NoInputs)) {
+        const float wrap = std::min(canvas_size_.x - 48.0f, ImGui::GetFontSize() * 26.0f);
+        const auto centred = [wrap](const char* line, const ImVec4& colour) {
+            const float w = std::min(ImGui::CalcTextSize(line).x, wrap);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (wrap - w) * 0.5f));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap);
+            ImGui::TextColored(colour, "%s", line);
+            ImGui::PopTextWrapPos();
+        };
+        ImGui::Dummy(ImVec2(wrap, 0.0f));
+        centred(text.title, t.text_bright);
+        centred(text.hint, t.text_dim);
+        words_bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
+    }
+    ImGui::End();
+
+    ::gui::NextWindowFollowsCurrent();
+    ImGui::SetNextWindowPos(ImVec2(centre_x, words_bottom), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    if (ImGui::Begin("##EmptyCanvasActions", nullptr, flags)) {
+        const char* search = ICON_FA_MAGNIFYING_GLASS " Search nodes";
+        const char* panel = ICON_FA_CUBES " Open the Nodes panel";
+        const char* example = ICON_FA_DIAGRAM_PROJECT " Open an example graph " ICON_FA_CHEVRON_DOWN;
+        if (ui::SecondaryButton(search)) {
+            node_add_search_.just_activated = true;
+            node_add_search_.is_active = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The box at the top right of the canvas: type a node's name");
+        if (open_nodes_panel_callback_) {
+            ImGui::SameLine();
+            if (ui::SecondaryButton(panel)) open_nodes_panel_callback_();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drag a node from it onto the canvas");
+        }
+        if (!starter_graphs_.empty()) {
+            ImGui::SameLine();
+            if (ui::SecondaryButton(example)) ImGui::OpenPopup("##example_graphs");
+            if (ImGui::BeginPopup("##example_graphs")) {
+                for (const auto& starter : starter_graphs_) {
+                    const std::string label = starter.icon + "  " + starter.title;
+                    if (ImGui::MenuItem(label.c_str()) && LoadGraph(starter.path)) {
+                        // A copy to work on: Save asks for a name instead of
+                        // overwriting the example next to the Engine.
+                        DetachFromFile();
+                        spdlog::info("Opened the example graph {}", starter.path);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", starter.description.c_str(), starter.path.c_str());
+                }
+                ImGui::EndPopup();
+            }
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
+// The Studio's notices and questions (TOFIX129 A3-8), on the shared dialog
+// helpers: one look, Escape cancels, the action on the right.
+void NodeEditor::DrawStudioDialogs() {
     if (graph_busy_dialog_pending_) {
         ImGui::OpenPopup("Graph busy##GraphReplacement");
         graph_busy_dialog_pending_ = false;
     }
-    ImGui::SetNextWindowSizeConstraints(ImVec2(360.0f, 0.0f), ImVec2(560.0f, FLT_MAX));
-    if (ImGui::BeginPopupModal("Graph busy##GraphReplacement", nullptr,
-                              ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
-        ImGui::TextUnformatted(graph_busy_message_.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        ImGui::TextUnformatted("The requested graph change was not applied.");
-        if (ImGui::Button("OK", ImVec2(100.0f, 0.0f))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SetItemDefaultFocus();
-        ImGui::EndPopup();
-    }
+    const std::string busy = graph_busy_message_ + "\n\nThe requested graph change was not applied.";
+    ui::MessageDialog("Graph busy##GraphReplacement", busy.c_str());
 
     if (pipeline_notice_pending_) {
         ImGui::OpenPopup("Pipeline##PipelineNotice");
         pipeline_notice_pending_ = false;
     }
-    ImGui::SetNextWindowSizeConstraints(ImVec2(360.0f, 0.0f), ImVec2(560.0f, FLT_MAX));
-    if (ImGui::BeginPopupModal("Pipeline##PipelineNotice", nullptr,
-                              ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 420.0f);
-        ImGui::TextUnformatted(pipeline_notice_.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        if (ImGui::Button("OK", ImVec2(100.0f, 0.0f))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SetItemDefaultFocus();
-        ImGui::EndPopup();
+    ui::MessageDialog("Pipeline##PipelineNotice", pipeline_notice_.c_str());
+
+    if (save_refusal_pending_) {
+        ImGui::OpenPopup("Nothing to save yet##SaveRefusal");
+        save_refusal_pending_ = false;
     }
+    ui::MessageDialog("Nothing to save yet##SaveRefusal", cyxwiz::studio_toolbar::SaveRefusal(0).c_str());
 
-    // Plot nodes: result lane and their Plot windows (TOFIX134 P2).
-    RenderPlotNodes();
-
-    // ===== Save as Pattern Dialog =====
-    if (show_save_pattern_dialog_) {
-        ImGui::OpenPopup("Save as Pattern");
-    }
-
-    if (ImGui::BeginPopupModal("Save as Pattern", &show_save_pattern_dialog_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Save selected nodes as a reusable pattern");
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::Text("Pattern Name:");
-        ImGui::SetNextItemWidth(300);
-        ImGui::InputText("##PatternName", save_pattern_name_, sizeof(save_pattern_name_));
-
-        ImGui::Spacing();
-        ImGui::Text("Description:");
-        ImGui::SetNextItemWidth(300);
-        ImGui::InputTextMultiline("##PatternDescription", save_pattern_description_,
-                                   sizeof(save_pattern_description_), ImVec2(300, 80));
-
-        ImGui::Spacing();
-        ImGui::TextDisabled("Selected nodes: %zu", selected_node_ids_.size());
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        bool name_valid = std::strlen(save_pattern_name_) > 0;
-
-        if (!name_valid) {
-            ImGui::BeginDisabled();
-        }
-
-        if (ImGui::Button("Save Pattern", ImVec2(140, 0))) {
-            // Get node positions from ImNodes and save
-            auto& library = patterns::PatternLibrary::Instance();
-            auto& pm = cyxwiz::ProjectManager::Instance();
-
-            // Build nodes with positions
-            std::vector<MLNode> nodes_with_pos;
-            for (int node_id : selected_node_ids_) {
-                for (auto& node : nodes_) {
-                    if (node.id == node_id) {
-                        MLNode node_copy = node;
-                        auto it = cached_node_positions_.find(node.id);
-                        ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-                        node_copy.initial_pos_x = pos.x;
-                        node_copy.initial_pos_y = pos.y;
-                        node_copy.has_initial_position = true;
-                        nodes_with_pos.push_back(node_copy);
-                        break;
-                    }
-                }
-            }
-
-            // Build project-specific save path: <project_root>/patterns/<name>.json
-            std::string save_path = pm.GetProjectRoot() + "/patterns/" + save_pattern_name_ + ".json";
-
-            bool success = library.SavePatternFromSelection(
-                nodes_with_pos,
-                links_,
-                selected_node_ids_,
-                save_pattern_name_,
-                save_pattern_description_,
-                patterns::PatternCategory::Custom,
-                save_path
-            );
-
-            if (success) {
-                spdlog::info("Pattern '{}' saved to project: {}", save_pattern_name_, save_path);
-            } else {
-                spdlog::error("Failed to save pattern '{}'", save_pattern_name_);
-            }
-
-            show_save_pattern_dialog_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (!name_valid) {
-            ImGui::EndDisabled();
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Button("Cancel", ImVec2(140, 0))) {
-            show_save_pattern_dialog_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
-
-    // ===== Empty Graph Warning Popup =====
-    if (show_empty_graph_warning_) {
-        ImGui::OpenPopup("Empty Graph Warning");
-    }
-
-    if (ImGui::BeginPopupModal("Empty Graph Warning", &show_empty_graph_warning_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(ui::CurrentTokens().warning, ICON_FA_TRIANGLE_EXCLAMATION);
-        ImGui::SameLine();
-        ImGui::Text("Cannot Save Empty Graph");
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::TextWrapped("The node graph is empty. Please add at least one node before saving.");
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        float button_width = 120.0f;
-        float window_width = ImGui::GetWindowWidth();
-        ImGui::SetCursorPosX((window_width - button_width) * 0.5f);
-
-        if (ImGui::Button("OK", ImVec2(button_width, 0))) {
-            show_empty_graph_warning_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
-
-    // Auto-Insert Flatten Dialog
+    // A 4-D output wired into a layer that takes (batch, features): offer a
+    // Flatten between them. Cancel leaves the graph as it was.
+    const MLNode* from = FindNodeById(pending_flatten_from_node_);
+    const MLNode* to = FindNodeById(pending_flatten_to_node_);
     if (show_auto_insert_flatten_dialog_) {
-        ImGui::OpenPopup("Shape Mismatch Detected");
+        ImGui::OpenPopup("###insert_flatten");
+        show_auto_insert_flatten_dialog_ = false;
     }
+    const std::string to_name = to ? to->name : std::string("This layer");
+    const std::string title = to_name + " needs a flat input###insert_flatten";
+    const std::string message =
+        (from ? from->name : std::string("The node before it")) +
+        " gives a 4-D output (batch, height, width, channels); " + to_name +
+        " takes a flat input (batch, features).\n\nInsert a Flatten between them? Ctrl+Z removes it.";
+    if (ui::ConfirmDialog(title.c_str(), message.c_str(), "Insert Flatten") == ui::DialogResult::Primary) InsertFlatten();
+}
 
-    if (ImGui::BeginPopupModal("Shape Mismatch Detected",
-                              &show_auto_insert_flatten_dialog_,
-                              ImGuiWindowFlags_AlwaysAutoResize)) {
+void NodeEditor::InsertFlatten() {
+    const MLNode* from_node = FindNodeById(pending_flatten_from_node_);
+    const MLNode* to_node = FindNodeById(pending_flatten_to_node_);
+    if (!from_node || !to_node) return;
+    // The state before the change, so Undo removes the Flatten.
+    SaveUndoState();
+    const std::string from_name = from_node->name, to_name = to_node->name;
+    MLNode flatten_node = CreateNode(NodeType::Flatten, "Flatten");
 
-        ImGui::TextColored(ui::CurrentTokens().warning,
-                         ICON_FA_TRIANGLE_EXCLAMATION " Shape Mismatch");
-        ImGui::Separator();
-        ImGui::Spacing();
+    // Midway between the two, from the positions cached while the canvas
+    // was drawn (ImNodes' own are only valid inside its scope).
+    const auto from_it = cached_node_positions_.find(pending_flatten_from_node_);
+    const auto to_it = cached_node_positions_.find(pending_flatten_to_node_);
+    const ImVec2 from_pos = from_it != cached_node_positions_.end() ? from_it->second : ImVec2(0, 0);
+    const ImVec2 to_pos = to_it != cached_node_positions_.end() ? to_it->second : from_pos;
+    const ImVec2 flatten_pos((from_pos.x + to_pos.x) / 2.0f, (from_pos.y + to_pos.y) / 2.0f);
 
-        // Find source and target nodes for display
-        MLNode* from_node = nullptr;
-        MLNode* to_node = nullptr;
-        for (auto& node : nodes_) {
-            if (node.id == pending_flatten_from_node_) from_node = &node;
-            if (node.id == pending_flatten_to_node_) to_node = &node;
-        }
+    // from_node / to_node point into nodes_: not used after this.
+    const int flatten_in = flatten_node.inputs[0].id;
+    const int flatten_out = flatten_node.outputs[0].id;
+    const int flatten_id = flatten_node.id;
+    nodes_.push_back(std::move(flatten_node));
+    pending_positions_[flatten_id] = flatten_pos;
+    pending_positions_frames_ = 3;  // Apply position for 3 frames
 
-        if (from_node && to_node) {
-            ImGui::Text("Source: %s (4D tensor output)", from_node->name.c_str());
-            ImGui::Text("Target: %s (expects 2D input)", to_node->name.c_str());
-        } else {
-            ImGui::Text("Connection requires shape transformation");
-        }
-
-        ImGui::Spacing();
-        ImGui::TextWrapped("Dense layers require flattened 2D input [batch, features]. "
-                        "The source node outputs a 4D tensor [batch, height, width, channels]. "
-                        "Insert a Flatten node to convert the shape?");
-        ImGui::Spacing();
-
-        // Button 1: Auto-Insert Flatten
-        if (ImGui::Button(ICON_FA_WAND_MAGIC_SPARKLES " Auto-Insert Flatten", ImVec2(210, 0))) {
-            if (from_node && to_node) {
-                // Create Flatten node
-                MLNode flatten_node = CreateNode(NodeType::Flatten, "Flatten");
-
-                // Calculate position at midpoint between nodes
-                ImVec2 from_pos = ImNodes::GetNodeGridSpacePos(from_node->id);
-                ImVec2 to_pos = ImNodes::GetNodeGridSpacePos(to_node->id);
-                ImVec2 flatten_pos = ImVec2(
-                    (from_pos.x + to_pos.x) / 2.0f,
-                    (from_pos.y + to_pos.y) / 2.0f
-                );
-
-                // Add to graph
-                nodes_.push_back(flatten_node);
-                pending_positions_[flatten_node.id] = flatten_pos;
-                pending_positions_frames_ = 3;  // Apply position for 3 frames
-
-                // Get flatten node's pin IDs
-                int flatten_in = flatten_node.inputs[0].id;
-                int flatten_out = flatten_node.outputs[0].id;
-
-                // Create connections: from → flatten → to
-                CreateLink(pending_flatten_from_pin_, flatten_in,
-                         pending_flatten_from_node_, flatten_node.id);
-                CreateLink(flatten_out, pending_flatten_to_pin_,
-                         flatten_node.id, pending_flatten_to_node_);
-
-                // Save undo state
-                SaveUndoState();
-
-                spdlog::info("Auto-inserted Flatten node between {} and {}",
-                           from_node->name, to_node->name);
-            }
-
-            show_auto_insert_flatten_dialog_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        // Button 2: Manual
-        if (ImGui::Button(ICON_FA_HAND " Manual", ImVec2(95, 0))) {
-            show_auto_insert_flatten_dialog_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine();
-
-        // Button 3: Cancel
-        if (ImGui::Button(ICON_FA_XMARK " Cancel", ImVec2(95, 0))) {
-            show_auto_insert_flatten_dialog_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
+    // from -> Flatten -> to
+    CreateLink(pending_flatten_from_pin_, flatten_in, pending_flatten_from_node_, flatten_id);
+    CreateLink(flatten_out, pending_flatten_to_pin_, flatten_id, pending_flatten_to_node_);
+    RebuildPinLookup();
+    spdlog::info("Inserted a Flatten node between {} and {} (Ctrl+Z removes it)", from_name, to_name);
 }
 
 // ShowToolbar: node_editor_toolbar.cpp (Studio nav, approved board 7).
@@ -1232,7 +1142,8 @@ void NodeEditor::RenderMinimap() {
                                     ImGuiWindowFlags_NoScrollbar |
                                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
-                                    ImGuiWindowFlags_NoMove;  // We handle movement manually
+                                    ImGuiWindowFlags_NoMove |  // We handle movement manually
+                                    ImGuiWindowFlags_NoFocusOnAppearing;  // the Studio keeps the focus
 
 
     if (::gui::BeginCanvasOverlay("##MinimapWindow", minimap_pos.x, minimap_pos.y, minimap_size_.x, minimap_size_.y,
@@ -1934,6 +1845,20 @@ void NodeEditor::RenderNodes() {
                     extension_style->outline_color, status);
             }
 
+            // A Find match (Ctrl+F): a ring in the warning tone, stronger on
+            // the current one, while the find bar is open.
+            if (search_state_.search_visible && !search_state_.matching_node_ids.empty()) {
+                const auto& ids = search_state_.matching_node_ids;
+                const auto hit = std::find(ids.begin(), ids.end(), node.id);
+                if (hit != ids.end()) {
+                    const bool current = static_cast<int>(hit - ids.begin()) == search_state_.current_match_index;
+                    const float pad = 3.0f * zoom_;
+                    draw_list->AddRect(ImVec2(icon_pos.x - pad, icon_pos.y - pad), ImVec2(icon_max.x + pad, icon_max.y + pad),
+                                       ui::ToU32(ui::WithAlpha(t.warning, current ? 1.0f : 0.55f)), CORNER_RADIUS + pad, 0,
+                                       current ? 3.0f : 2.0f);
+                }
+            }
+
             // A recipe and a visual group look alike otherwise; say which it is.
             if (node.type == NodeType::Subgraph) {
                 const bool recipe = IsPreparationRecipeNode(node.id);
@@ -2171,7 +2096,8 @@ void NodeEditor::RenderNodes() {
             case NodeType::TextTokenizer: {
                 const char* types[] = {"Whitespace", "Word", "Character", "Byte BPE"};
                 auto type_it = node.parameters.find("tokenizer_type");
-                int type_idx = type_it != node.parameters.end() ? std::stoi(type_it->second) : 1;
+                int type_idx = 1;  // a value that is not a number shows no type (it is not a crash)
+                if (type_it != node.parameters.end() && !properties_rules::TryParseIntStrict(type_it->second, type_idx)) type_idx = -1;
                 if (type_idx >= 0 && type_idx < 4) {
                     ImGui::TextColored(t.accent_text, "Type: %s", types[type_idx]);
                 }
@@ -2216,7 +2142,8 @@ void NodeEditor::RenderNodes() {
                 if (sf != node.parameters.end()) {
                     ImGui::TextColored(t.accent_text, "Scale: %sx", sf->second.c_str());
                 }
-                int m = mode != node.parameters.end() ? std::stoi(mode->second) : 0;
+                int m = 0;
+                if (mode != node.parameters.end() && !properties_rules::TryParseIntStrict(mode->second, m)) m = -1;
                 if (m >= 0 && m < 2) {
                     ImGui::TextColored(t.accent_text, "Mode: %s", modes[m]);
                 }
@@ -2927,7 +2854,11 @@ void NodeEditor::HandleInteractions() {
         last_selected_count = num_selected_nodes;
     }
 
-    if (num_selected_nodes > 0 && ImGui::IsKeyReleased(ImGuiKey_Delete)) {
+    // Only when the canvas has the keyboard: Delete in another panel's text
+    // field (or a field on a node) edits that text, not the graph.
+    const bool canvas_has_keys = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+                                 !ImGui::GetIO().WantTextInput;
+    if (num_selected_nodes > 0 && canvas_has_keys && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
         SaveUndoState();  // Save state before deleting nodes
 
         std::vector<int> selected_nodes(num_selected_nodes);
@@ -2952,98 +2883,84 @@ void NodeEditor::HandleInteractions() {
 
 // ===== Search Functionality =====
 
+ImVec2 NodeEditor::GridAt(ImVec2 screen) const {
+    const ImVec2 panning = ImNodes::EditorContextGetPanning();
+    return ImVec2((screen.x - canvas_origin_.x - panning.x) / zoom_, (screen.y - canvas_origin_.y - panning.y) / zoom_);
+}
+
+void NodeEditor::OpenFindBar() {
+    search_state_.search_visible = true;
+    search_focus_requested_ = true;
+}
+
+void NodeEditor::CloseFindBar() {
+    search_state_.search_visible = false;
+    search_state_.matching_node_ids.clear();
+    search_state_.current_match_index = -1;
+}
+
+// Find in the graph (Ctrl+F, View > Find in the graph): a bar in the canvas's
+// top-left corner (TOFIX129 A3-9). Matches have a ring on the canvas; Enter
+// or F3 goes to the next, Shift+Enter or Shift+F3 to the previous, Esc
+// closes, all while typing.
 void NodeEditor::ShowSearchBar() {
     if (!search_state_.search_visible) return;
+    const ui::Tokens& t = ui::CurrentTokens();
 
-    // Position the search bar at the top of the node editor window
-    ImVec2 window_pos = ImGui::GetWindowPos();
-    ImVec2 window_size = ImGui::GetWindowSize();
-    float bar_height = 40.0f;
-    float bar_width = 350.0f;
-
-    // Position at top-center of the window
-    ImVec2 bar_pos = ImVec2(
-        window_pos.x + (window_size.x - bar_width) * 0.5f,
-        window_pos.y + ImGui::GetFrameHeight() + 60.0f  // Below toolbar
-    );
-
-    // An overlay on the canvas, with the Studio window (the window's colour, a little see-through)
-    ImVec4 bar_bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
-    bar_bg.w *= 0.95f;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, bar_bg);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGui::GetStyle().WindowRounding);
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
-                             ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove |
-                             ImGuiWindowFlags_NoScrollbar |
-                             ImGuiWindowFlags_NoSavedSettings;
-
-    if (::gui::BeginCanvasOverlay("##NodeSearchBar", bar_pos.x, bar_pos.y, bar_width, bar_height, flags, true)) {
-        // Search icon
-        ImGui::Text(ICON_FA_MAGNIFYING_GLASS);
+    // An overlay on the canvas: a child of the Studio window, so it is drawn
+    // with it and never over another window
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_raised);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 4.0f));
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
+    // Sized to its content (width and height 0)
+    if (::gui::BeginCanvasOverlay("##NodeSearchBar", canvas_origin_.x + 12.0f, canvas_origin_.y + 12.0f, 0.0f, 0.0f,
+                                  flags, true)) {
+        const size_t matches = search_state_.matching_node_ids.size();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_dim, ICON_FA_MAGNIFYING_GLASS);
         ImGui::SameLine();
-
-        // Focus input if just opened
-        static bool was_visible = false;
-        if (!was_visible && search_state_.search_visible) {
+        if (search_focus_requested_) {
             ImGui::SetKeyboardFocusHere();
+            search_focus_requested_ = false;
         }
-        was_visible = search_state_.search_visible;
-
-        // Search input
-        ImGui::SetNextItemWidth(200.0f);
-        bool changed = ImGui::InputText("##SearchInput", search_state_.search_buffer,
-                                        sizeof(search_state_.search_buffer),
-                                        ImGuiInputTextFlags_AutoSelectAll);
-        if (changed) {
+        ImGui::SetNextItemWidth(std::min(ImGui::GetFontSize() * 14.0f, std::max(80.0f, canvas_size_.x - 200.0f)));
+        if (ImGui::InputTextWithHint("##SearchInput", "Find a node, type or setting", search_state_.search_buffer,
+                                     sizeof(search_state_.search_buffer)))
             UpdateSearchResults();
-        }
-
-        // Handle Enter key to navigate to next match
-        if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
-            if (ImGui::GetIO().KeyShift) {
-                NavigateToMatch(-1);
-            } else {
-                NavigateToMatch(1);
+        // The keys work while typing: the bar has the keyboard, not the canvas
+        // (the bar's own focus, not the Studio window's around it).
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
+            const bool shift = ImGui::GetIO().KeyShift;
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                CloseFindBar();
+            } else if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter) ||
+                       ImGui::IsKeyPressed(ImGuiKey_F3)) {
+                NavigateToMatch(shift ? -1 : 1);
+                search_focus_requested_ = true;  // Enter leaves the field: keep typing
             }
         }
 
-        // Match count
         ImGui::SameLine();
-        if (!search_state_.matching_node_ids.empty()) {
-            ImGui::Text("%d/%zu", search_state_.current_match_index + 1,
-                       search_state_.matching_node_ids.size());
-        } else if (strlen(search_state_.search_buffer) > 0) {
-            ImGui::TextColored(ui::CurrentTokens().caution, "No matches");
-        }
-
-        // Navigation buttons
+        ImGui::AlignTextToFramePadding();
+        if (matches > 0)
+            ImGui::TextColored(t.text_dim, "%d of %zu", search_state_.current_match_index + 1, matches);
+        else if (search_state_.search_buffer[0] != '\0')
+            ImGui::TextColored(t.caution, "No match");
+        const char* one = "Only one match";
         ImGui::SameLine();
-        if (ImGui::SmallButton(ICON_FA_CHEVRON_UP)) {
-            NavigateToMatch(-1);
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Previous (Shift+F3)");
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton(ICON_FA_CHEVRON_DOWN)) {
-            NavigateToMatch(1);
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Next (F3)");
-        }
-
-        // Close button
-        ImGui::SameLine();
-        if (ImGui::SmallButton(ICON_FA_XMARK)) {
-            search_state_.search_visible = false;
-            search_state_.matching_node_ids.clear();
-            search_state_.current_match_index = -1;
-        }
+        if (ui::GhostButton(ICON_FA_CHEVRON_UP "##find_prev", matches > 1, matches == 1 ? one : "No match")) NavigateToMatch(-1);
+        if (matches > 1 && ImGui::IsItemHovered()) ImGui::SetTooltip("Previous (Shift+F3, Shift+Enter)");
+        ImGui::SameLine(0.0f, 0.0f);
+        if (ui::GhostButton(ICON_FA_CHEVRON_DOWN "##find_next", matches > 1, matches == 1 ? one : "No match")) NavigateToMatch(1);
+        if (matches > 1 && ImGui::IsItemHovered()) ImGui::SetTooltip("Next (F3, Enter)");
+        ImGui::SameLine(0.0f, 0.0f);
+        if (ui::GhostButton(ICON_FA_XMARK "##find_close")) CloseFindBar();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close (Esc)");
     }
     ::gui::EndCanvasOverlay();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
 }
 
@@ -3131,29 +3048,17 @@ void NodeEditor::NavigateToMatch(int direction) {
     ImNodes::SelectNode(node_id);
     selected_node_id_ = node_id;
 
-    // Center viewport on the matched node
+    // Centre the match in the canvas at the zoom it is at.
     auto pos_it = cached_node_positions_.find(node_id);
     if (pos_it != cached_node_positions_.end()) {
-        ImVec2 node_pos = pos_it->second;
-
-        // Get the visible area size (approximately)
-        ImVec2 window_size = ImGui::GetWindowSize();
-        ImVec2 center_offset = ImVec2(window_size.x * 0.5f - 100.0f, window_size.y * 0.5f - 50.0f);
-
-        // Pan to center the node
-        ImNodes::EditorContextResetPanning(ImVec2(-node_pos.x + center_offset.x, -node_pos.y + center_offset.y));
+        const ImVec2 size = ImNodes::GetNodeDimensions(node_id);
+        CenterViewOn(ImVec2(pos_it->second.x + size.x * 0.5f / zoom_, pos_it->second.y + size.y * 0.5f / zoom_));
     }
 
     spdlog::debug("Navigated to match {}/{}: node {}",
                   search_state_.current_match_index + 1,
                   search_state_.matching_node_ids.size(),
                   node_id);
-}
-
-void NodeEditor::HighlightMatchingNodes() {
-    // This function can be called from RenderNodes to add visual highlighting
-    // For now, selection highlighting is handled by ImNodes automatically
-    // TODO: Add custom overlay drawing for matching but not selected nodes
 }
 
 // ===== Alignment and Distribution Tools =====
@@ -3413,16 +3318,13 @@ void NodeEditor::RenderAnnotations() {
     const ui::Tokens& t = ui::CurrentTokens();
 
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    ImVec2 editor_origin = ImGui::GetWindowPos();
     ImVec2 panning = ImNodes::EditorContextGetPanning();
     ImVec2 mouse_pos = ImGui::GetMousePos();
 
     for (auto& annotation : annotations_) {
-        // Convert grid position to screen position
-        ImVec2 screen_pos(
-            editor_origin.x + annotation.position.x * zoom_ + panning.x,
-            editor_origin.y + annotation.position.y * zoom_ + panning.y + 50.0f
-        );
+        // The note's grid point on screen, as a node's (canvas origin, panning, zoom)
+        ImVec2 screen_pos(canvas_origin_.x + annotation.position.x * zoom_ + panning.x,
+                          canvas_origin_.y + annotation.position.y * zoom_ + panning.y);
 
         float title_height = 24.0f * zoom_;
         float btn_size = 18.0f * zoom_;
@@ -3475,10 +3377,7 @@ void NodeEditor::RenderAnnotations() {
         // Handle dragging
         if (dragging_annotation_id_ == annotation.id && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             ImVec2 new_screen_pos(mouse_pos.x - annotation_drag_offset_.x, mouse_pos.y - annotation_drag_offset_.y);
-            annotation.position = ImVec2(
-                (new_screen_pos.x - editor_origin.x - panning.x) / zoom_,
-                (new_screen_pos.y - editor_origin.y - panning.y - 50.0f) / zoom_
-            );
+            annotation.position = GridAt(new_screen_pos);
             screen_pos = new_screen_pos;
             p_min = screen_pos;
             p_max = ImVec2(screen_pos.x + size.x, screen_pos.y + size.y);

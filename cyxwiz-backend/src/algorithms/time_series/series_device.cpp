@@ -3,6 +3,7 @@
 #endif
 
 #include "series_device.h"
+#include "cyxwiz/time_series.h"
 
 #include "../arrayfire_host_values.h"
 #include "cyxwiz/statistical_tests.h"
@@ -158,4 +159,31 @@ double Strength(const std::vector<double>& residual, const std::vector<double>& 
     return std::max(0.0, 1.0 - var(r) / vs);
 }
 
+std::vector<std::function<bool()>>& StopQueries() {
+    thread_local std::vector<std::function<bool()>> queries;
+    return queries;
+}
+
+bool StopRequested() {
+    const auto& queries = StopQueries();
+    return !queries.empty() && queries.back() && queries.back()();
+}
+
+int& GuardDepth() {
+    thread_local int depth = 0;
+    return depth;
+}
+
 }  // namespace cyxwiz::series_detail
+
+namespace cyxwiz {
+
+TimeSeriesStop::TimeSeriesStop(std::function<bool()> stop) {
+    series_detail::StopQueries().push_back(std::move(stop));
+}
+
+TimeSeriesStop::~TimeSeriesStop() {
+    series_detail::StopQueries().pop_back();
+}
+
+}  // namespace cyxwiz

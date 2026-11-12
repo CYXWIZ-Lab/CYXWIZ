@@ -4,13 +4,18 @@
 #include <cstdlib>
 #include "activation_codegen_contract.h"
 #include "panels/script_editor.h"
-#include "../core/async_task_manager.h"
+#include "../core/file_dialogs.h"
+#include "../core/project_manager.h"
+#include "../core/studio_toolbar_presentation.h"
 #include "../core/pipeline_runtime_capabilities.h"
 #include "../core/extension_node_metadata.h"
 #include "../core/extension_node_registry.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <ctime>
+#include <fstream>
 #include <sstream>
 #include <set>
 #include <map>
@@ -22,6 +27,35 @@
 namespace gui {
 
 namespace {
+
+// The local time now, for a generated file's header and the result line
+// (the time the code was generated, not when the Engine was built).
+std::string ClockText(const char* format) {
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char text[64] = {};
+    std::strftime(text, sizeof(text), format, &local);
+    return text;
+}
+
+const char* FrameworkName(CodeFramework framework) {
+    switch (framework) {
+        case CodeFramework::PyTorch: return "PyTorch";
+        case CodeFramework::TensorFlow: return "TensorFlow";
+        case CodeFramework::Keras: return "Keras";
+        case CodeFramework::PyCyxWiz: return "PyCyxWiz";
+    }
+    return "PyTorch";
+}
+
+int LineCount(const std::string& code) {
+    return static_cast<int>(std::count(code.begin(), code.end(), '\n')) + (code.empty() || code.back() == '\n' ? 0 : 1);
+}
 
 std::string TrimCopy(const std::string& value) {
     auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char ch) {
@@ -112,16 +146,11 @@ std::string BlockedCodegenConfiguration(
 
 } // namespace
 
-void NodeEditor::GeneratePythonCode() {
-    // Validate graph before generating code
-    std::string error_message;
-    if (!ValidateGraph(error_message)) {
-        spdlog::error("Graph validation failed: {}", error_message);
-        // TODO: Show error dialog to user
-        return;
-    }
-
-    GenerateCodeForFramework(selected_framework_);
+std::string NodeEditor::CodeProblem() {
+    if (nodes_.empty()) return "The canvas is empty. Add a node first.";
+    std::string error;
+    if (!ValidateGraph(error)) return error.empty() ? std::string("The graph is not complete.") : error;
+    return {};
 }
 
 std::string NodeEditor::GenerateCodeText(CodeFramework framework) {
@@ -140,95 +169,81 @@ std::string NodeEditor::GenerateCodeText(CodeFramework framework) {
     }
 }
 
-void NodeEditor::GenerateCodeForFramework(CodeFramework framework) {
-    spdlog::info("Generating code from node graph (async)...");
+namespace {
 
-    if (nodes_.empty()) {
-        spdlog::warn("No nodes in graph - cannot generate code");
-        return;
+// What Generate and Save as .py report.
+cyxwiz::studio_toolbar::CodeResult StartResult(CodeFramework framework) {
+    cyxwiz::studio_toolbar::CodeResult result;
+    result.framework = FrameworkName(framework);
+    result.at = ClockText("%H:%M");
+    return result;
+}
+
+}  // namespace
+
+// On the interface thread: the code is built from the graph as it is now, so
+// no worker reads the graph while it is being edited.
+void NodeEditor::GenerateCodeIntoEditor() {
+    namespace st = cyxwiz::studio_toolbar;
+    st::CodeResult result = StartResult(selected_framework_);
+    const std::string problem = CodeProblem();
+    const std::string code = problem.empty() ? GenerateCodeText(selected_framework_) : std::string();
+    st::CodeInputs in;
+    in.framework = result.framework;
+    in.graph = current_file_path_.empty() ? std::string() : GetGraphStem();
+    const std::string file_name = st::CodeMenuFor(in).file_name;
+    if (!problem.empty()) {
+        result.error = problem;
+    } else if (code.empty()) {
+        result.error = "the graph has a cycle, or no node in it writes " + result.framework + " code";
+    } else if (!script_editor_) {
+        result.error = "the Script Editor is not available";
+    } else {
+        script_editor_->LoadGeneratedCode(code, file_name);
+        script_editor_->SetVisible(true);
+        result.ok = true;
+        result.lines = LineCount(code);
+        result.where = file_name;
     }
+    code_result_ = st::CodeResultText(result);
+    code_result_ok_ = result.ok;
+    if (result.ok) spdlog::info("{}", code_result_);
+    else spdlog::warn("{}", code_result_);
+}
 
-    // Get topologically sorted node order (do this synchronously for validation)
-    std::vector<int> sorted_ids = TopologicalSort();
-    if (sorted_ids.empty()) {
-        spdlog::error("Failed to perform topological sort - graph may have cycles");
-        return;
-    }
-
-    // Determine framework name
-    std::string framework_name;
-    switch (framework) {
-        case CodeFramework::PyTorch: framework_name = "PyTorch"; break;
-        case CodeFramework::TensorFlow: framework_name = "TensorFlow"; break;
-        case CodeFramework::Keras: framework_name = "Keras"; break;
-        case CodeFramework::PyCyxWiz: framework_name = "PyCyxWiz"; break;
-        default: framework_name = "Unknown"; break;
-    }
-
-    // Store result for completion callback
-    auto result = std::make_shared<std::string>();
-    auto fw_name = std::make_shared<std::string>(framework_name);
-
-    // Capture script_editor_ for completion callback
-    auto script_editor = script_editor_;
-
-    // Run code generation async
-    cyxwiz::AsyncTaskManager::Instance().RunAsync(
-        "Generate " + framework_name + " Code",
-        [this, framework, sorted_ids, result, fw_name](cyxwiz::LambdaTask& task) {
-            task.ReportProgress(0.0f, "Starting code generation...");
-
-            std::string code;
-
-            // Generate code based on selected framework
-            task.ReportProgress(0.1f, "Generating " + *fw_name + " code...");
-
-            switch (framework) {
-                case CodeFramework::PyTorch:
-                    code = GeneratePyTorchCode(sorted_ids);
-                    break;
-                case CodeFramework::TensorFlow:
-                    code = GenerateTensorFlowCode(sorted_ids);
-                    break;
-                case CodeFramework::Keras:
-                    code = GenerateKerasCode(sorted_ids);
-                    break;
-                case CodeFramework::PyCyxWiz:
-                    code = GeneratePyCyxWizCode(sorted_ids);
-                    break;
-                default:
-                    task.MarkFailed("Unknown framework selected");
-                    return;
-            }
-
-            if (task.ShouldStop()) {
-                task.MarkFailed("Code generation cancelled");
-                return;
-            }
-
-            task.ReportProgress(0.9f, "Finalizing...");
-
-            // Store result
-            *result = std::move(code);
-
-            task.ReportProgress(1.0f, "Complete!");
-            spdlog::info("Generated {} code ({} lines)", *fw_name, std::count(result->begin(), result->end(), '\n'));
-        },
-        // Progress callback (optional - can be used for detailed UI updates)
-        nullptr,
-        // Completion callback - runs on main thread
-        [script_editor, result, fw_name](bool success, const std::string& error) {
-            if (success && script_editor) {
-                script_editor->LoadGeneratedCode(*result, fw_name->c_str());
-                script_editor->SetVisible(true);
-                spdlog::info("Code sent to Script Editor panel");
-            } else if (!success) {
-                spdlog::error("Code generation failed: {}", error);
-            } else {
-                spdlog::warn("Script Editor panel not available");
-            }
+void NodeEditor::SaveCodeAsPython() {
+    namespace st = cyxwiz::studio_toolbar;
+    st::CodeResult result = StartResult(selected_framework_);
+    result.to_file = true;
+    const std::string problem = CodeProblem();
+    const std::string code = problem.empty() ? GenerateCodeText(selected_framework_) : std::string();
+    if (!problem.empty() || code.empty()) {
+        result.error = problem.empty() ? "the graph has a cycle, or no node in it writes " + result.framework + " code"
+                                       : problem;
+    } else {
+        st::CodeInputs in;
+        in.framework = result.framework;
+        in.graph = current_file_path_.empty() ? std::string() : GetGraphStem();
+        const std::string file_name = st::CodeMenuFor(in).file_name;
+        auto& project = cyxwiz::ProjectManager::Instance();
+        const std::string start = project.HasActiveProject() ? project.GetScriptsPath() : std::string();
+        const std::string title = "Save " + result.framework + " code";
+        const auto path = cyxwiz::FileDialogs::SaveFile(title.c_str(), {{"Python", "py"}},
+                                                        start.empty() ? nullptr : start.c_str(), file_name.c_str());
+        if (!path) return;  // cancelled: nothing to report
+        std::ofstream file(*path, std::ios::binary | std::ios::trunc);
+        if (!file || !(file << code)) {
+            result.error = "cannot write " + *path;
+        } else {
+            result.ok = true;
+            result.lines = LineCount(code);
+            result.where = *path;
         }
-    );
+    }
+    code_result_ = st::CodeResultText(result);
+    code_result_ok_ = result.ok;
+    if (result.ok) spdlog::info("{}", code_result_);
+    else spdlog::warn("{}", code_result_);
 }
 
 // An RL graph: Environment, Policy Head, Value Head, PPO (TOFIX195 S4.3)
@@ -468,7 +483,7 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
 
     // Header
     code += "# Auto-generated PyTorch model from CyxWiz Node Editor\n";
-    code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
+    code += "# Generated at: " + ClockText("%Y-%m-%d %H:%M:%S") + "\n\n";
     code += "import torch\n";
     code += "import torch.nn as nn\n";
     code += "import torch.nn.functional as F\n";
@@ -1108,7 +1123,7 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
 
     // Header
     code += "# Auto-generated TensorFlow model from CyxWiz Node Editor\n";
-    code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
+    code += "# Generated at: " + ClockText("%Y-%m-%d %H:%M:%S") + "\n\n";
     code += "import tensorflow as tf\n";
     code += "from tensorflow.keras import layers, models, optimizers\n\n";
 
@@ -1256,7 +1271,7 @@ std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
 
     // Header
     code += "# Auto-generated Keras model from CyxWiz Node Editor\n";
-    code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
+    code += "# Generated at: " + ClockText("%Y-%m-%d %H:%M:%S") + "\n\n";
     code += "import tensorflow as tf\n";
     code += "from tensorflow import keras\n";
     code += "from tensorflow.keras import layers\n\n";
@@ -1351,7 +1366,7 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
 
     // Header
     code += "# Auto-generated PyCyxWiz model from CyxWiz Node Editor\n";
-    code += "# Generated at: " + std::string(__DATE__) + " " + std::string(__TIME__) + "\n\n";
+    code += "# Generated at: " + ClockText("%Y-%m-%d %H:%M:%S") + "\n\n";
     code += "import pycyxwiz as cx\n";
     code += "import numpy as np\n\n";
 

@@ -134,7 +134,7 @@ void ImageRecipeView::UpdatePreviews(const TrainingConfiguration& config, const 
     auto result = std::make_shared<Previews>();
     const image::ImageAugmentation steps = config.image_augmentation;
     const std::vector<CvImageStep> cv_steps = config.image_cv_steps;
-    const uint32_t seed = static_cast<uint32_t>(std::hash<std::string>{}(path));
+    const uint32_t seed = PreviewSeedOf(path);
     std::weak_ptr<int> alive = alive_;
     task_ = AsyncTaskManager::Instance().RunAsync(
         "Image recipe pictures",

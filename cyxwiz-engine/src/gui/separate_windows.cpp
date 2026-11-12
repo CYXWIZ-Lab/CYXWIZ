@@ -74,7 +74,9 @@ void RunFront(ImGuiContext& g) {
         return;
     }
     if (++g_front.frames > kFrontFrames) {
-        spdlog::debug("Window '{}' did not come to the front", g_front.name);
+        spdlog::debug("Window '{}' did not come to the front ({} has the focus{})", g_front.name,
+                      g.NavWindow ? g.NavWindow->Name : "no window",
+                      w && w->DockIsActive && !w->DockTabIsVisible ? ", its tab is hidden" : "");
         g_front = {};
         return;
     }
@@ -253,6 +255,8 @@ bool BeginCanvasOverlay(const char* id, float x, float y, float width, float hei
     ImGuiChildFlags child_flags = ImGuiChildFlags_None;
     if (padding) child_flags |= ImGuiChildFlags_AlwaysUseWindowPadding;
     if (border) child_flags |= ImGuiChildFlags_Borders;
+    if (width <= 0.0f) child_flags |= ImGuiChildFlags_AutoResizeX;
+    if (height <= 0.0f) child_flags |= ImGuiChildFlags_AutoResizeY;
     return ImGui::BeginChild(id, ImVec2(width, height), child_flags, window_flags);
 }
 

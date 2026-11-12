@@ -1,4 +1,5 @@
 #include "sentiment_analyzer_operator.h"
+#include "../gcc_diagnostics.h"
 #include "../profiler_trace.h"
 #include "materialization_memory_preflight.h"
 
@@ -62,6 +63,8 @@ bool SentimentAnalyzerOperator::Configure(
     return true;
 }
 
+// Arrow's builders inlined here: GCC -Warray-bounds false positive.
+CYXWIZ_GCC_IGNORE_BEGIN("-Warray-bounds")
 arrow::Result<std::shared_ptr<arrow::Table>>
 SentimentAnalyzerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     CYXWIZ_PROFILE_ZONE("CyxWiz SentimentAnalyzer Materializer");
@@ -174,5 +177,6 @@ SentimentAnalyzerOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
                    preflight_estimate.estimated_peak_bytes);
     return out;
 }
+CYXWIZ_GCC_IGNORE_END
 
 } // namespace cyxwiz

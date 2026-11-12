@@ -361,7 +361,8 @@ void NodeEditor::ShowNodeAddSearch() {
         ImGuiWindowFlags_NoScrollWithMouse |
         ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoDocking;
+        ImGuiWindowFlags_NoDocking |
+        ImGuiWindowFlags_NoFocusOnAppearing;  // the Studio keeps the focus when the canvas shows
 
     // Declare at function scope so it's accessible for the "close dropdown" check
     bool input_focused = false;

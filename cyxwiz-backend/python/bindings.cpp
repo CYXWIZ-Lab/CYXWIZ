@@ -21,6 +21,10 @@
 #include "cyxwiz/data_loader.h"
 #include "bindings_tensor.h"
 #include "bindings_module.h"
+#include "bindings_optimize.h"
+#include "bindings_utilities.h"
+#include "bindings_system.h"
+#include "bindings_model.h"
 // Distributed training
 #include "cyxwiz/distributed/process_group.h"
 #include "cyxwiz/distributed/cpu_backend.h"
@@ -2019,6 +2023,15 @@ PYBIND11_MODULE(pycyxwiz, m) {
        py::arg("text"));
 
     // ============================================================================
+    // CALCULUS AND OPTIMIZE SUBMODULES
+    // ============================================================================
+    // Tools > Optimization and Calculus from Python (TOFIX129 D10).
+    pycyxwiz_bindings::BindCalculus(m);
+    pycyxwiz_bindings::BindOptimize(m);
+    pycyxwiz_bindings::BindUtilities(m);
+    pycyxwiz_bindings::BindSystem(m);
+
+    // ============================================================================
     // TIME SERIES SUBMODULE
     // ============================================================================
     auto timeseries = m.def_submodule("timeseries", "Time series analysis functions");
@@ -2181,7 +2194,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def_static("compute_mfcc", &cyxwiz::AudioProcessing::ComputeMFCC,
                     py::arg("audio"), py::arg("config") = cyxwiz::MFCCConfig{})
         .def_static("add_noise", &cyxwiz::AudioProcessing::AddNoise,
-                    py::arg("audio"), py::arg("snr_db") = 20.0f)
+                    py::arg("audio"), py::arg("snr_db") = 20.0f, py::arg("seed") = 42u)
         .def_static("time_stretch", &cyxwiz::AudioProcessing::TimeStretch,
                     py::arg("audio"), py::arg("rate") = 1.0f)
         .def_static("pitch_shift", &cyxwiz::AudioProcessing::PitchShift,
@@ -3255,6 +3268,7 @@ Example queries:
        "Update an RL metric on the dashboard (thread-safe)");
 
     // pycyxwiz.nodes: last, so the classes it uses are bound (TOFIX125 P3).
+    pycyxwiz_bindings::BindModelTools(m);
     pycyxwiz_bindings::InstallNodesSubmodule(m);
     pycyxwiz_bindings::InstallRlSubmodule(m);
 }

@@ -13,6 +13,7 @@
 #include <optional>
 #include <filesystem>
 #include <algorithm>
+#include <chrono>
 #include <iterator>
 #include <sstream>
 
@@ -358,6 +359,52 @@ scripting::PythonProjectSwitch ScriptingEngine::SwitchPythonToProject(std::strin
     return result;
 }
 
+namespace {
+
+// Tools > Diagnostics > Log Every Python Command: a line when a command,
+// script or run starts (a command that hangs or crashes Python is the one to
+// see) and one when it ends, with how long it took. Off: a debug line only,
+// and none for the Engine's own internal commands. A script that runs through
+// the command path is logged once, as the script.
+class PythonCommandLog {
+public:
+    PythonCommandLog(bool to_log, const char* kind, const std::string& text, bool internal = false)
+        : outer_(Depth()++ == 0), to_log_(to_log), kind_(kind), start_(std::chrono::steady_clock::now()) {
+        to_log_ = to_log_ && outer_;
+        // The first line, at most 120 characters.
+        summary_ = text.substr(0, text.find('\n'));
+        if (summary_.size() > 120) summary_ = summary_.substr(0, 117) + "...";
+        lines_ = 1 + static_cast<size_t>(std::count(text.begin(), text.end(), '\n'));
+        if (to_log_) spdlog::info("Python {} started: {}", kind_, summary_);
+        else if (outer_ && !internal) spdlog::debug("Python {}: {}", kind_, summary_);
+    }
+    ~PythonCommandLog() {
+        --Depth();
+        if (!to_log_) return;
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_).count();
+        if (lines_ > 1) spdlog::info("Python {} took {:.1f} ms ({} lines): {}", kind_, ms, lines_, summary_);
+        else spdlog::info("Python {} took {:.1f} ms: {}", kind_, ms, summary_);
+    }
+    PythonCommandLog(const PythonCommandLog&) = delete;
+    PythonCommandLog& operator=(const PythonCommandLog&) = delete;
+
+private:
+    // How many of these are open on this thread: only the outermost logs.
+    static int& Depth() {
+        thread_local int depth = 0;
+        return depth;
+    }
+
+    bool outer_;
+    bool to_log_;
+    const char* kind_;
+    std::chrono::steady_clock::time_point start_;
+    std::string summary_;
+    size_t lines_ = 1;
+};
+
+}  // namespace
+
 ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
     ExecutionResult result;
     result.success = false;
@@ -373,11 +420,9 @@ ExecutionResult ScriptingEngine::ExecuteCommand(const std::string& command) {
         InitializeMatlabAliases();
     }
 
-    // Debug: log commands (optionally skip internal Variable Explorer commands)
+    // Internal Variable Explorer commands skip the timeout below.
     bool is_internal = command.find("_cyxwiz_") != std::string::npos;
-    if (verbose_logging_ || !is_internal) {
-        spdlog::info("Executing command: [{}] (length={})", command, command.length());
-    }
+    const PythonCommandLog command_log(verbose_logging_, "command", command, is_internal);
 
     // Skip timeout for internal commands (fast operations)
     if (is_internal || console_timeout_seconds_ <= 0) {
@@ -981,6 +1026,7 @@ bool ScriptingEngine::IsSafeForNewCommand() const {
 }
 
 ExecutionResult ScriptingEngine::ExecuteScript(const std::string& script) {
+    const PythonCommandLog command_log(verbose_logging_, "script", script);
     std::string init_error;
     if (!EnsurePythonInitialized(&init_error)) {
         ExecutionResult result;
@@ -1612,6 +1658,7 @@ bool ScriptingEngine::DropNotebookNamespace(const std::string& key) {
 }
 
 ExecutionResult ScriptingEngine::ExecuteWithStreaming(const std::string& script, const RunCallbacks& callbacks) {
+    const PythonCommandLog command_log(verbose_logging_, "run", script);
     const OutputCallback& on_output = callbacks.on_output;
     ExecutionResult result;
     result.success = false;

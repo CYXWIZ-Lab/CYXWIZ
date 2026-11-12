@@ -79,6 +79,13 @@ public:
     // Opens Explore > Profile on a dataset (a dashboard's "Edit roles").
     void ShowProfile(const std::string& dataset_name);
 
+    // Adds the node `type` (an import name) after the node whose result is
+    // `dataset` (`step`) or as a branch reading it, with `second_dataset`'s
+    // node into its second input when given (Tools > Linear Algebra's Add as
+    // a step / Keep as a node). Returns what happened, for the caller to show.
+    std::string AddNodeReading(const std::string& dataset, const std::string& type, const std::string& name,
+                               std::map<std::string, std::string> parameters, bool step, const std::string& second_dataset = {});
+
     // Opens an Explore tab on a dataset, at a column when given (Data >
     // Explore, Profile's missing counts).
     void ShowExplore(const std::string& dataset_name, ExploreTab tab, const std::string& column = {});

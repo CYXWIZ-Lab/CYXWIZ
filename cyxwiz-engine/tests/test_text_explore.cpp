@@ -230,7 +230,9 @@ int main() {
     text::EmbeddingsRequest sample = er;
     sample.sample_words = 20;
     const text::EmbeddingsAnswer es = text::RunEmbeddings("corpus", sample, run, missing);
-    Check(es.ok() && es.sampled && es.rows_used >= 2 && es.rows_used < 9 && es.words_read >= 20, "embeddings: a sample of the rows");
+    Check(es.ok() && es.sampled && es.rows_used >= 2 && es.rows_used < 9 && es.words_read >= 20,
+          "embeddings: a sample of the rows (" + es.error + ", rows " + std::to_string(es.rows_used) + ", words " +
+              std::to_string(es.words_read) + ")");
     Contains(text_view::EmbeddingsSentence(es, "", {}), "Learned from " + std::to_string(es.rows_used) + " of the column's 9 rows", "sample sentence");
     // CBOW trains too, and the node gets the architecture.
     text::EmbeddingsRequest cbow = er;
@@ -257,6 +259,9 @@ int main() {
     const auto kp = text::NodeParameters(k.request);
     Check(kp.at("tokenizer_type") == "1" && kp.at("max_length") == "10" && kp.at("min_word_freq") == "2" && kp.at("max_vocab_size") == "10000",
           "Tokenizer node parameters");
+    text::TokensRequest no_cap = k.request;
+    no_cap.vocabulary = 0;
+    Check(text::NodeParameters(no_cap).at("max_vocab_size") == "1", "Tokenizer node parameters: a vocabulary of 1 or more, as the node takes it");
     er.method = "glove";
     er.window = 0;
     er.epochs = 0;

@@ -4,6 +4,7 @@
 // state and with which chord. This file only builds the state snapshot,
 // draws the model and maps action ids to the handlers the rest of the Engine
 // already registers on ToolbarPanel.
+#include "../../core/engine_config.h"
 #include "toolbar.h"
 
 #include "../appearance_settings.h"
@@ -492,15 +493,13 @@ void ToolbarPanel::BuildActionHandlers() {
     call("data.feature_scaling", open_feature_scaling_callback_);
 
     // Tools
-    call("tools.model_summary", open_model_summary_callback_);
-    call("tools.flops", open_model_summary_callback_);
-    call("tools.architecture_diagram", open_architecture_diagram_callback_);
-    call("tools.lr_finder", open_lr_finder_callback_);
-    call("tools.gradcam", open_gradcam_callback_);
-    call("tools.saliency", open_gradcam_callback_);
-    call("tools.nas", open_nas_callback_);
-    call("tools.architecture_suggestions", open_nas_callback_);
-    call("tools.dnn_inference", open_dnn_inference_callback_);
+    for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.model_summary", "summary"},
+                                  {"tools.flops", "summary"}, {"tools.lr_finder", "learning_rate"},
+                                  {"tools.gradcam", "explain"}, {"tools.saliency", "explain"},
+                                  {"tools.model_health", "health"}, {"tools.projector", "projector"}})
+        h[id] = [this, tab = std::string(tab)](const std::string&) {
+            if (open_model_callback_) open_model_callback_(tab);
+        };
     call("tools.cross_validation", open_cross_validation_callback_);
     call("tools.confusion_matrix", open_confusion_matrix_callback_);
     call("tools.roc_auc", open_roc_auc_callback_);
@@ -517,22 +516,22 @@ void ToolbarPanel::BuildActionHandlers() {
     call("tools.hypothesis_test", open_hypothesis_test_callback_);
     call("tools.regression", open_regression_callback_);
     call("tools.distribution_fitter", open_distribution_fitter_callback_);
-    call("tools.matrix_calculator", open_matrix_calculator_callback_);
-    call("tools.eigen", open_eigen_decomp_callback_);
-    call("tools.svd", open_svd_callback_);
-    call("tools.qr", open_qr_callback_);
-    call("tools.cholesky", open_cholesky_callback_);
+    for (const auto& [id, operation] : {std::pair<const char*, const char*>{"tools.matrix_calculator", "multiply"},
+                                        {"tools.eigen", "eigen"}, {"tools.svd", "svd"}, {"tools.qr", "qr"}, {"tools.cholesky", "cholesky"}})
+        h[id] = [this, operation = std::string(operation)](const std::string&) {
+            if (open_linear_algebra_callback_) open_linear_algebra_callback_(operation);
+        };
     call("tools.fft", open_fft_callback_);
     call("tools.spectrogram", open_spectrogram_callback_);
     call("tools.filter_designer", open_filter_designer_callback_);
     call("tools.convolution", open_convolution_callback_);
     call("tools.wavelet", open_wavelet_callback_);
-    call("tools.gradient_descent", open_gradient_descent_callback_);
-    call("tools.convexity", open_convexity_callback_);
-    call("tools.lp", open_lp_callback_);
-    call("tools.qp", open_qp_callback_);
-    call("tools.differentiation", open_differentiation_callback_);
-    call("tools.integration", open_integration_callback_);
+    for (const auto& [id, operation] : {std::pair<const char*, const char*>{"tools.gradient_descent", "optimizers"},
+                                        {"tools.convexity", "curvature"}, {"tools.lp", "linear"}, {"tools.qp", "quadratic"},
+                                        {"tools.differentiation", "derivative"}, {"tools.integration", "integral"}})
+        h[id] = [this, operation = std::string(operation)](const std::string&) {
+            if (open_optimization_callback_) open_optimization_callback_(operation);
+        };
     call("tools.decomposition", open_decomposition_callback_);
     call("tools.acf_pacf", open_acf_pacf_callback_);
     call("tools.stationarity", open_stationarity_callback_);
@@ -544,29 +543,38 @@ void ToolbarPanel::BuildActionHandlers() {
     call("tools.embeddings", open_embeddings_callback_);
     call("tools.sentiment", open_sentiment_callback_);
     call("tools.language_model", open_language_model_generation_callback_);
-    call("tools.calculator", open_calculator_callback_);
-    call("tools.unit_converter", open_unit_converter_callback_);
-    call("tools.random_generator", open_random_generator_callback_);
-    call("tools.hash_generator", open_hash_generator_callback_);
-    call("tools.json_viewer", open_json_viewer_callback_);
-    call("tools.regex_tester", open_regex_tester_callback_);
+    for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.calculator", "calculator"},
+                                  {"tools.unit_converter", "units"}, {"tools.random_generator", "random"},
+                                  {"tools.hash_generator", "hash"}, {"tools.json_viewer", "json"},
+                                  {"tools.regex_tester", "regex"}})
+        h[id] = [this, tab = std::string(tab)](const std::string&) {
+            if (open_utilities_callback_) open_utilities_callback_(tab);
+        };
     call("tools.profiler", open_profiler_callback_);
-    call("tools.memory_panel", open_memory_panel_callback_);
-    call("tools.system_monitor", open_memory_monitor_callback_);
+    for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.monitor_system", "system"},
+                                  {"tools.monitor_memory", "memory"}, {"tools.monitor_loaded_data", "loaded_data"},
+                                  {"tools.monitor_frames", "frames"}})
+        h[id] = [this, tab = std::string(tab)](const std::string&) {
+            if (open_monitor_callback_) open_monitor_callback_(tab);
+        };
     call("tools.clear_cache", clear_cache_callback_);
     call("tools.gc", run_gc_callback_);
     h["tools.idle_log"] = [this](const std::string&) {
         if (!idle_log_ptr_) return;
         *idle_log_ptr_ = !*idle_log_ptr_;
-        spdlog::info("Idle mode logging {}", *idle_log_ptr_ ? "ENABLED" : "DISABLED");
+        spdlog::info("Frame-rate changes are {} logged", *idle_log_ptr_ ? "now" : "no longer");
+        SaveDiagnostics();
     };
     h["tools.frame_overlay"] = [this](const std::string&) {
-        if (frame_overlay_ptr_) *frame_overlay_ptr_ = !*frame_overlay_ptr_;
+        if (!frame_overlay_ptr_) return;
+        *frame_overlay_ptr_ = !*frame_overlay_ptr_;
+        SaveDiagnostics();
     };
     h["tools.verbose_python"] = [this](const std::string&) {
         if (!verbose_python_log_ptr_) return;
         *verbose_python_log_ptr_ = !*verbose_python_log_ptr_;
-        spdlog::info("Verbose Python logging {}", *verbose_python_log_ptr_ ? "ENABLED" : "DISABLED");
+        spdlog::info("Python commands are {} logged", *verbose_python_log_ptr_ ? "now" : "no longer");
+        SaveDiagnostics();
     };
 
     // Script
@@ -625,6 +633,23 @@ void ToolbarPanel::BuildActionHandlers() {
         spdlog::info("User signed out");
         if (on_logout_callback_) on_logout_callback_();
     };
+}
+
+void ToolbarPanel::ApplySavedDiagnostics() {
+    const core::MonitorConfig saved = core::EngineConfig::Instance().GetMonitor();
+    if (idle_log_ptr_) *idle_log_ptr_ = saved.log_frame_rate;
+    if (verbose_python_log_ptr_) *verbose_python_log_ptr_ = saved.log_python_commands;
+    if (frame_overlay_ptr_) *frame_overlay_ptr_ = saved.frame_overlay;
+}
+
+void ToolbarPanel::SaveDiagnostics() {
+    auto& config = core::EngineConfig::Instance();
+    core::MonitorConfig saved = config.GetMonitor();
+    if (idle_log_ptr_) saved.log_frame_rate = *idle_log_ptr_;
+    if (verbose_python_log_ptr_) saved.log_python_commands = *verbose_python_log_ptr_;
+    if (frame_overlay_ptr_) saved.frame_overlay = *frame_overlay_ptr_;
+    config.SetMonitor(saved);
+    if (!config.Save()) spdlog::warn("The diagnostics switches could not be saved to the Engine settings");
 }
 
 }  // namespace cyxwiz

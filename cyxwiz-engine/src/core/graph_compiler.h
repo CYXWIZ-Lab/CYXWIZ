@@ -6,6 +6,8 @@
 #include "metric_learning_graph_contract.h"
 #include "metric_learning_batch.h"
 #include "training_parameter_contract.h"
+#include "learning_rate_range_test.h"
+#include "model_decision.h"
 #include "training_scheduler_controller.h"
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
@@ -418,6 +420,9 @@ struct TrainingConfiguration {
     // The compiler leaves this empty until a node group is deliberately
     // exposed. Focused backend tests may populate it directly.
     std::vector<int> graph_op_node_ids;
+    // Each graph op's output sample shapes by node id (one per output pin),
+    // from the compiler's shape walk; the Model window's Summary lists them.
+    std::map<int, std::vector<std::vector<size_t>>> graph_op_output_shapes;
     // Layers with several inputs (Cross Attention): the graph runtime runs
     // them, so the model is built as a graph even without graph ops.
     std::vector<int> multi_input_layer_node_ids;
@@ -582,6 +587,13 @@ struct TrainingConfiguration {
     // attaches it unless a scheduler is configured on the executor directly.
     std::optional<TrainingSchedulerSpec> scheduler;
     int scheduler_node_id = -1;
+    // A learning rate range test instead of a training (the Model window,
+    // TOFIX129 D11): the rate rises every optimizer step, no validation, no
+    // checkpoints, and the trained model in use is kept.
+    LearningRateRangeSettings learning_rate_range;
+    // The trained model's threshold and calibration, kept from Results >
+    // Test (TOFIX129 D11): Test applies it; checkpoints and packages carry it.
+    ModelDecision decision;
     // Regularization node between the loss and the optimizer (TOFIX140 A4):
     // penalty = l1 x sum(|w|) + l2 x sum(w^2) over every trainable parameter.
     float regularization_l1 = 0.0f;

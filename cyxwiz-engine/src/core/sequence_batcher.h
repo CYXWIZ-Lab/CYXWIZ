@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dataset_batcher.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -159,13 +160,13 @@ public:
         }
         if (split_mode_) {
             if (current_phase_ == BatcherPhase::Train && config_.shuffle) {
-                std::shuffle(active_indices.begin(), active_indices.end(), rng_);
+                cyxwiz::portable::Shuffle(active_indices.begin(), active_indices.end(), rng_);
             }
             return;
         }
 
         if (config_.shuffle) {
-            std::shuffle(active_indices.begin(), active_indices.end(), rng_);
+            cyxwiz::portable::Shuffle(active_indices.begin(), active_indices.end(), rng_);
         }
     }
 

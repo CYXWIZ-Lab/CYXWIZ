@@ -3,6 +3,7 @@
 #include "core/cloud_gateway_address.h"
 #include "common/server_address.h"
 
+#include <cmath>
 #include <fstream>
 #include <algorithm>
 #include <cctype>
@@ -421,6 +422,42 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             appearance_ = loaded;
         }
 
+        if (config.contains("utilities") && config["utilities"].is_object()) try {
+            const auto& u = config["utilities"];
+            UtilitiesConfig loaded;
+            loaded.tab = u.value("tab", loaded.tab);
+            loaded.digits = std::clamp(u.value("digits", loaded.digits), 1, 17);
+            loaded.degrees = u.value("degrees", loaded.degrees);
+            loaded.unit_category = u.value("unit_category", loaded.unit_category);
+            loaded.hash_algorithm = u.value("hash_algorithm", loaded.hash_algorithm);
+            loaded.json_indent = std::clamp(u.value("json_indent", loaded.json_indent), 0, 8);
+            loaded.regex_ignore_case = u.value("regex_ignore_case", loaded.regex_ignore_case);
+            loaded.regex_multiline = u.value("regex_multiline", loaded.regex_multiline);
+            utilities_ = loaded;
+        } catch (const std::exception& e) {
+            // A hand-edited value of the wrong type: the shipped defaults, and
+            // the rest of the file still loads.
+            spdlog::warn("Engine settings: the utilities defaults could not be read ({}); using the shipped ones", e.what());
+        }
+
+        if (config.contains("monitor") && config["monitor"].is_object()) try {
+            const auto& m = config["monitor"];
+            MonitorConfig loaded;
+            loaded.tab = m.value("tab", loaded.tab);
+            loaded.interval_seconds = std::clamp(m.value("interval_seconds", loaded.interval_seconds), 0.25, 60.0);
+            // One of the three lengths the window offers; another value takes the nearest.
+            const double keep = m.value("keep_seconds", loaded.keep_seconds);
+            loaded.keep_seconds = 300.0;
+            for (const double offered : {900.0, 3600.0})
+                if (std::fabs(offered - keep) < std::fabs(loaded.keep_seconds - keep)) loaded.keep_seconds = offered;
+            loaded.log_frame_rate = m.value("log_frame_rate", loaded.log_frame_rate);
+            loaded.log_python_commands = m.value("log_python_commands", loaded.log_python_commands);
+            loaded.frame_overlay = m.value("frame_overlay", loaded.frame_overlay);
+            monitor_ = loaded;
+        } catch (const std::exception& e) {
+            spdlog::warn("Engine settings: the monitor defaults could not be read ({}); using the shipped ones", e.what());
+        }
+
         data_budget_bytes_ = 0;
         if (config.contains("data") && config["data"].is_object())
             data_budget_bytes_ = config["data"].value("budget_bytes", uint64_t{0});
@@ -596,6 +633,24 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"code_font_scale", appearance_.code_font_scale},
             {"sidebar_left", appearance_.sidebar_left},
             {"custom_theme_file", appearance_.custom_theme_file}
+        };
+        config["utilities"] = {
+            {"tab", utilities_.tab},
+            {"digits", utilities_.digits},
+            {"degrees", utilities_.degrees},
+            {"unit_category", utilities_.unit_category},
+            {"hash_algorithm", utilities_.hash_algorithm},
+            {"json_indent", utilities_.json_indent},
+            {"regex_ignore_case", utilities_.regex_ignore_case},
+            {"regex_multiline", utilities_.regex_multiline}
+        };
+        config["monitor"] = {
+            {"tab", monitor_.tab},
+            {"interval_seconds", monitor_.interval_seconds},
+            {"keep_seconds", monitor_.keep_seconds},
+            {"log_frame_rate", monitor_.log_frame_rate},
+            {"log_python_commands", monitor_.log_python_commands},
+            {"frame_overlay", monitor_.frame_overlay}
         };
 
         // Recent projects
@@ -917,6 +972,32 @@ void EngineConfig::SetAppearance(const AppearanceConfig& appearance) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(appearance_ == appearance)) {
         appearance_ = appearance;
+        modified_ = true;
+    }
+}
+
+UtilitiesConfig EngineConfig::GetUtilities() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return utilities_;
+}
+
+void EngineConfig::SetUtilities(const UtilitiesConfig& utilities) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(utilities_ == utilities)) {
+        utilities_ = utilities;
+        modified_ = true;
+    }
+}
+
+MonitorConfig EngineConfig::GetMonitor() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return monitor_;
+}
+
+void EngineConfig::SetMonitor(const MonitorConfig& monitor) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(monitor_ == monitor)) {
+        monitor_ = monitor;
         modified_ = true;
     }
 }

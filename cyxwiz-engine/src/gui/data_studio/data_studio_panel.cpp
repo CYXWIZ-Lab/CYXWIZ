@@ -519,10 +519,41 @@ const studio::GraphNode* DataStudioPanel::NodeMaking(const std::string& table) c
     return nullptr;
 }
 
+std::string DataStudioPanel::AddNodeReading(const std::string& dataset, const std::string& type, const std::string& name,
+                                            std::map<std::string, std::string> parameters, bool step, const std::string& second_dataset) {
+    if (!node_editor_) return "No graph is open.";
+    const auto node_type = ::gui::ResolveNodeTypeImportName(type);
+    if (!node_type) return "No node of type " + type + ".";
+    RefreshView();  // the graph as it is now (Data Studio may be closed)
+    const studio::GraphNode* from = NodeOfDataset(dataset);
+    if (!from) return "\"" + dataset + "\" is not a table of this graph's nodes: pick a Data Input's table or a node result.";
+    int second_id = -1;
+    std::string second_name;
+    if (!second_dataset.empty()) {
+        const studio::GraphNode* second = NodeOfDataset(second_dataset);
+        if (!second) return "\"" + second_dataset + "\" is not a table of this graph's nodes: pick a Data Input's table or a node result.";
+        second_id = second->id;
+        second_name = second->name;
+    }
+    const std::string from_name = from->name;
+    node_editor_->RequestNodeAfter(from->id, *node_type, std::move(parameters), name, !step, second_id);
+    return "Added the node \"" + name + "\" " + (step ? "after" : "reading") + " \"" + from_name + "\"" +
+           (second_id >= 0 ? ", with \"" + second_name + "\" into its second input" : std::string()) +
+           " (Ctrl+Z on the canvas undoes it). " + (step ? explore_view::StepAddedNote() : explore_view::BranchAddedNote());
+}
+
 const studio::GraphNode* DataStudioPanel::NodeOfDataset(const std::string& dataset) const {
     if (const studio::GraphNode* n = NodeMaking(dataset)) return n;
+    // A registry name, or the name the table is shown and queried by (Tools >
+    // Linear Algebra's table list): a label can name several registry entries.
+    if (dataset.empty()) return nullptr;
     for (const auto& n : graph_nodes_)
-        if (n.type == ::gui::NodeType::DataInput && !dataset.empty() && n.dataset_name == dataset) return &n;
+        if (n.type == ::gui::NodeType::DataInput && n.dataset_name == dataset) return &n;
+    for (const auto& e : DatasetCatalog::Instance().List()) {
+        if (e.Shown() != dataset) continue;
+        for (const auto& n : graph_nodes_)
+            if (n.type == ::gui::NodeType::DataInput && !n.dataset_name.empty() && n.dataset_name == e.name) return &n;
+    }
     return nullptr;
 }
 

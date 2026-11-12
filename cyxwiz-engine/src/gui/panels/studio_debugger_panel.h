@@ -222,6 +222,7 @@ private:
     StudioDebuggerRunMode run_mode_ = StudioDebuggerRunMode::FullWorkflow;
     int selected_sample_index_ = 0;
     std::string selected_runtime_event_key_;
+    std::chrono::steady_clock::time_point last_run_lookup_{};  // the Crash view's last look on disk
     std::optional<DebugTraceRecord> run_comparison_trace_;
     std::string run_comparison_baseline_id_;
     std::string run_comparison_current_id_;

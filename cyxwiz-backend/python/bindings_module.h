@@ -40,4 +40,9 @@ void InstallRlSubmodule(pybind11::module_& m);
 // built in, without taking it from Python.
 void AddModuleToSequential(cyxwiz::SequentialModel& model, pybind11::object module);
 
+// The module itself: Sequential.add wraps a module Python also holds.
+const cyxwiz::Module& HeldModule(const cyxwiz::Module& module);
+// True for a module written in Python (a pycyxwiz.Module subclass).
+bool IsPythonModule(const cyxwiz::Module& module);
+
 }  // namespace pycyxwiz_bindings

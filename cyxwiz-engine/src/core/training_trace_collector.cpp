@@ -54,21 +54,14 @@ void PopulateMemorySnapshot(TrainingTraceEvent& event) {
         event.process_memory_source = process.source;
     }
 
-    if (cyxwiz::IsInitialized()) {
-        try {
-            size_t alloc_bytes = 0;
-            size_t alloc_buffers = 0;
-            size_t lock_bytes = 0;
-            size_t lock_buffers = 0;
-            af::deviceMemInfo(
-                &alloc_bytes, &alloc_buffers, &lock_bytes, &lock_buffers);
-            event.af_allocated_bytes = static_cast<uint64_t>(alloc_bytes);
-            event.af_alloc_buffers = static_cast<uint64_t>(alloc_buffers);
-            event.af_locked_bytes = static_cast<uint64_t>(lock_bytes);
-            event.af_lock_buffers = static_cast<uint64_t>(lock_buffers);
-        } catch (...) {
-            // Memory tracing must never affect training.
-        }
+    // Read on this (the computing) thread; the Monitor window reads the
+    // remembered answer from its own thread.
+    const DeviceMemoryHeld held = ReadDeviceMemoryHeld();
+    if (held.known) {
+        event.af_allocated_bytes = held.allocated_bytes;
+        event.af_alloc_buffers = held.buffers;
+        event.af_locked_bytes = held.in_use_bytes;
+        event.af_lock_buffers = held.buffers_in_use;
     }
 }
 
@@ -245,6 +238,7 @@ nlohmann::json EventToJson(const TrainingTraceEvent& event) {
         {"validation_loss", event.validation_loss},
         {"validation_accuracy", event.validation_accuracy},
         {"duration_ms", event.duration_ms},
+        {"run_ms", event.run_ms},
         {"cpu_allocated_bytes", event.cpu_allocated_bytes},
         {"cpu_peak_bytes", event.cpu_peak_bytes},
         {"af_allocated_bytes", event.af_allocated_bytes},
@@ -341,6 +335,7 @@ TrainingTraceEvent EventFromJson(const nlohmann::json& j) {
     event.validation_loss = j.value("validation_loss", 0.0f);
     event.validation_accuracy = j.value("validation_accuracy", 0.0f);
     event.duration_ms = j.value("duration_ms", 0.0f);
+    event.run_ms = j.value("run_ms", -1.0);
     event.cpu_allocated_bytes = j.value("cpu_allocated_bytes", uint64_t{0});
     event.cpu_peak_bytes = j.value("cpu_peak_bytes", uint64_t{0});
     event.af_allocated_bytes = j.value("af_allocated_bytes", uint64_t{0});
@@ -643,8 +638,19 @@ TrainingTraceCollector& TrainingTraceCollector::Instance() {
     return collector;
 }
 
+double TrainingTraceCollector::RunMsLocked() const {
+    const long long now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const long long started = run_started_ns_.load(std::memory_order_relaxed);
+    using Ticks = std::chrono::steady_clock::duration;
+    return std::chrono::duration<double, std::milli>(Ticks(now - started)).count();
+}
+
 void TrainingTraceCollector::StartRun(const std::string& run_id) {
     std::lock_guard<std::mutex> lock(mutex_);
+    run_started_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
+    // The host-tensor peak shown with the run is this run's, not the highest
+    // since the Engine started.
+    MemoryManager::ResetPeak();
     run_id_ = run_id;
     randomness_ = TrainingRandomness{};
     status_ = "running";
@@ -736,6 +742,7 @@ void TrainingTraceCollector::RecordStage(TrainingTraceStage stage,
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = CrashRunRecorder::StageName(stage);
     event.thread_id = ThreadIdString();
@@ -807,6 +814,7 @@ void TrainingTraceCollector::RecordRuntimeEvent(const std::string& stage,
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = stage.empty() ? "RuntimeEvent" : stage;
     event.thread_id = ThreadIdString();
@@ -853,6 +861,7 @@ void TrainingTraceCollector::RecordPinMemoryTransferStatus(
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = "DataLoader.PinMemoryTransfer";
     event.thread_id = ThreadIdString();
@@ -895,6 +904,7 @@ void TrainingTraceCollector::RecordArrayFireHostSync(
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = "ArrayFire.HostSync";
     event.thread_id = ThreadIdString();
@@ -973,6 +983,7 @@ void TrainingTraceCollector::RecordExecutionDeviceContext(
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = "ExecutionDeviceContext.Bind";
     event.thread_id = ThreadIdString();
@@ -1045,6 +1056,7 @@ void TrainingTraceCollector::RecordPlacementPlan(
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = "TrainingExecutor.PlacementPlan";
     event.thread_id = ThreadIdString();
@@ -1093,6 +1105,7 @@ void TrainingTraceCollector::RecordTaskProgress(
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = task_stage.empty() ? "TaskProgress" : task_stage;
     event.thread_id = ThreadIdString();
@@ -1166,6 +1179,7 @@ void TrainingTraceCollector::RecordValidationMetrics(
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = "ValidationCompleted";
     event.thread_id = ThreadIdString();
@@ -1199,6 +1213,7 @@ void TrainingTraceCollector::RecordCheckpointSaved(
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = is_best_checkpoint ? "BestCheckpointUpdated" : "CheckpointSaved";
     event.thread_id = ThreadIdString();
@@ -1230,6 +1245,7 @@ void TrainingTraceCollector::RecordCheckpointRestored(
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = "CheckpointRestored";
     event.thread_id = ThreadIdString();
@@ -1266,6 +1282,7 @@ void TrainingTraceCollector::RecordHeldOutTestMetrics(
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = "HeldOutTestCompleted";
     event.thread_id = ThreadIdString();
@@ -1302,6 +1319,7 @@ void TrainingTraceCollector::RecordTerminalEvent(
 
     TrainingTraceEvent event;
     event.timestamp = NowLocal();
+    event.run_ms = RunMsLocked();
     event.run_id = run_id_;
     event.stage = terminal_status == "early_stopped"
         ? "EarlyStopped"
