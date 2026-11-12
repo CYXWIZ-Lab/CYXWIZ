@@ -210,6 +210,7 @@ bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
     // Update next IDs
     next_node_id_ = next_id;
     next_link_id_ = link_id;
+    ForgetUndoHistory();
 
     std::string name = j.value("name", "Imported Pattern");
     spdlog::info("Loaded pattern '{}' as graph ({} nodes, {} links)",
@@ -703,6 +704,7 @@ bool NodeEditor::LoadGraphJson(const nlohmann::json& graph_json,
         execution_mode_ = loaded_execution_mode;
         SetWorkflowDescription(loaded_workflow_description);
         RebuildPinLookup();
+        ForgetUndoHistory();
 
         spdlog::info(
             "Graph loaded from {} ({} nodes, {} links, execution mode {})",

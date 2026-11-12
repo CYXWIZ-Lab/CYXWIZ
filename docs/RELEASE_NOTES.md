@@ -38,6 +38,11 @@ private Data Studio tickets (`tofix*/track*`).
   - Clear and Load wait while the graph is busy, and say why.
   - Nodes, notes and frames dropped on the canvas land under the pointer.
     Notes in saved graphs show a little higher than before.
+  - A graph opened from the start page, the Asset Browser or the command
+    line comes to the front instead of staying behind the Script Editor.
+  - Ctrl+Z right after Load no longer brings back the previous canvas
+    under the loaded graph's name (Save would have written it over the
+    loaded file).
 - **A seed repeats on every operating system and device** (guide in
   `docs/usage/seeds_and_reproducibility.md`). Splits, folds, batch order,
   balancing, augmentation, samples and weight initialisation draw the same

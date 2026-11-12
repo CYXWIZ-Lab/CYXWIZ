@@ -955,6 +955,12 @@ private:
 
     // Undo/Redo system
     void SaveUndoState();
+    // A loaded graph starts its own history: undo never brings back the graph
+    // that was on the canvas before, under the new graph's file name.
+    void ForgetUndoHistory() {
+        undo_stack_.clear();
+        redo_stack_.clear();
+    }
     void Undo();
     void Redo();
     bool CanUndo() const { return !undo_stack_.empty(); }

@@ -19,7 +19,9 @@ title when the Studio is moved out of the main window).
     so: *Nothing to save yet*, "The canvas is empty. Add a node, then save."
   - **Save As...** (Ctrl+Shift+S): writes a new file and the open graph
     moves to it.
-  - **Load...**: opens another graph in place of this one.
+  - **Load...**: opens another graph in place of this one. The loaded graph
+    starts its own undo history: Ctrl+Z does not bring back the graph that
+    was on the canvas before.
   - **Export a copy of the graph...**: writes a copy where you choose; the
     open graph stays on its own file.
   - **Custom Node Editor**.
@@ -33,6 +35,10 @@ title when the Studio is moved out of the main window).
 A starter opened from the start page, a pattern template and an imported
 model open as *Untitled graph*: Save asks for a name, so the example files
 next to the Engine are never overwritten.
+
+A graph opened from the start page, the Asset Browser or the command line
+(`cyxwiz-engine graph.cyxgraph`) brings the Studio's tab to the front, even
+when the Script Editor tab was in front.
 
 Ctrl+S and Ctrl+Shift+S save the graph while the canvas is focused (in the
 Script Editor they save the script); see Preferences > Shortcuts.
