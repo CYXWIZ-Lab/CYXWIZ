@@ -636,7 +636,22 @@ void NodeEditor::ShowToolbar() {
     if (show_more) {
         gap();
         if (ui::GhostButton(more_label, true, nullptr, true)) ImGui::OpenPopup("##more_popup");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("What does not fit on the bar at this width");
+        // While Compile is in More its state stays on the bar: a dot in its
+        // colour on More's corner (over the button, so no width changes).
+        const bool compile_folded = fold.compile_in_more && w.compile > 0.0f;
+        if (compile_folded) {
+            const ImVec2 lo = ImGui::GetItemRectMin();
+            const ImVec2 hi = ImGui::GetItemRectMax();
+            const float r = std::max(3.0f, ImGui::GetFontSize() * 0.2f);
+            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(hi.x - r - 2.0f, lo.y + r + 2.0f), r,
+                                                        ui::ToU32(tone(compile_chip.tone)));
+        }
+        if (ImGui::IsItemHovered()) {
+            if (compile_folded)
+                ImGui::SetTooltip("What does not fit on the bar at this width\nCompile: %s", compile_chip.headline.c_str());
+            else
+                ImGui::SetTooltip("What does not fit on the bar at this width");
+        }
     }
     if (ImGui::BeginPopup("##more_popup")) {
         if (fold.debug_in_more && w.debug > 0.0f) {

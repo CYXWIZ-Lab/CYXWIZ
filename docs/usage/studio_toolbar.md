@@ -236,6 +236,11 @@ comes back as it widens:
 Train (or a run's line with Pause / Resume and Stop) and a running
 pipeline's progress always stay on the bar.
 
+While Compile is in **More**, a dot on **More**'s corner keeps its state in
+sight: green when the graph compiles, red when it does not, grey before the
+first compile. Hover **More** for Compile's line ("Compile: Not ready to
+train: 2 errors").
+
 ## The canvas footer
 
 Along the canvas bottom: the node and link counts, the selection ("2
