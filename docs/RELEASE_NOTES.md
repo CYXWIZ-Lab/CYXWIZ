@@ -148,6 +148,14 @@ private Data Studio tickets (`tofix*/track*`).
   Swish), the gate (Sigmoid, Hardsigmoid) and bias. Properties lists the
   six steps inside the node with their outputs and weights ("Inside this
   layer").
+- **ReLU6 activation node.** `min(max(x, 0), 6)` (torch.nn.ReLU6), the
+  activation of MobileNetV1 and MobileNetV2; also `pycyxwiz.relu6`, `ReLU6`
+  and `ReLU6Module`.
+- **Bias switch on the convolution nodes.** Conv2D, Depthwise Conv2D, Conv1D,
+  Conv3D and ConvTranspose2D have a **Bias** setting (on by default). Off is
+  what a convolution followed by BatchNorm uses in ResNet and MobileNet.
+- **Padding on MaxPool2D and AvgPool2D.** A **Padding** setting (0 by
+  default, at most half the pool size), as `torch.nn.MaxPool2d(padding=...)`.
 - **Hardsigmoid activation node.** `relu6(x + 3) / 6` (torch.nn.Hardsigmoid),
   a sigmoid made of straight pieces; also `pycyxwiz.hardsigmoid`,
   `Hardsigmoid` and `HardsigmoidModule`.

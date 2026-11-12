@@ -2787,7 +2787,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"stride", "int", "1", "Spatial step between kernel applications", {}, "1-1048576",
           "Stride", "Convolution", true, false},
          {"padding", "enum", "same", "'same' keeps the size at stride 1 (odd kernels); 'valid' adds none",
-          {"same", "valid"}, "", "Padding", "Convolution", true, false}},
+          {"same", "valid"}, "", "Padding", "Convolution", true, false},
+         {"use_bias", "bool", "true", "Adds a learned value per output channel. Turn it off when a BatchNorm "
+          "follows (the BatchNorm's shift does the same job), as torchvision's ResNet and MobileNet do", {}, "",
+          "Bias", "Convolution", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv1D, NodeCategory::Layers, "Conv1D", ICON_FA_BORDER_ALL,
@@ -2811,7 +2814,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Stride", "Convolution", true, false},
          {"padding", "enum", "same", "same: (kernel_size - 1) / 2 zeros each side (odd kernels), keeps L at "
           "stride 1; valid: none",
-          {"same", "valid"}, "", "Padding", "Convolution", true, false}},
+          {"same", "valid"}, "", "Padding", "Convolution", true, false},
+         {"use_bias", "bool", "true", "Adds a learned value per output channel. Turn it off when a BatchNorm "
+          "follows (the BatchNorm's shift does the same job), as torchvision's ResNet and MobileNet do", {}, "",
+          "Bias", "Convolution", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv3D, NodeCategory::Layers, "Conv3D", ICON_FA_BORDER_ALL,
@@ -2835,7 +2841,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"stride", "int", "1", "Step between kernel applications on each axis", {}, "1-1048576",
           "Stride", "Convolution", true, false},
          {"padding", "enum", "same", "'same' keeps the size at stride 1 (odd kernels); 'valid' adds none",
-          {"same", "valid"}, "", "Padding", "Convolution", true, false}},
+          {"same", "valid"}, "", "Padding", "Convolution", true, false},
+         {"use_bias", "bool", "true", "Adds a learned value per output channel. Turn it off when a BatchNorm "
+          "follows (the BatchNorm's shift does the same job), as torchvision's ResNet and MobileNet do", {}, "",
+          "Bias", "Convolution", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DepthwiseConv2D, NodeCategory::Layers,
@@ -2855,7 +2864,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"padding", "enum", "same", "same: (kernel_size - 1) / 2 zeros each side (odd kernels); valid: none",
           {"same", "valid"}, "", "Padding", "Convolution", true, false},
          {"depth_multiplier", "int", "1", "Output channels per input channel (M)", {}, "1-1048576",
-          "Depth Multiplier", "Convolution", true, false}},
+          "Depth Multiplier", "Convolution", true, false},
+         {"use_bias", "bool", "true", "Adds a learned value per output channel. Turn it off when a BatchNorm "
+          "follows (the BatchNorm's shift does the same job), as torchvision's ResNet and MobileNet do", {}, "",
+          "Bias", "Convolution", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LSTM, NodeCategory::Recurrent, "LSTM", ICON_FA_REPEAT,
@@ -3265,7 +3277,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"pool_size", "int", "2", "Square pooling-window size", {}, "1-1048576",
           "Pool Size", "Pooling", true, false},
          {"stride", "int", "2", "Spatial pooling stride", {}, "1-1048576",
-          "Stride", "Pooling", true, false}},
+          "Stride", "Pooling", true, false},
+         {"padding", "int", "0", "Cells added on every side before pooling, at most half the pool size "
+          "(torch padding). ResNet's first pool is size 3, stride 2, padding 1", {}, "0-524288",
+          "Padding", "Pooling", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AvgPool2D, NodeCategory::Pooling, "AvgPool2D", ICON_FA_COMPRESS,
@@ -3279,7 +3294,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"pool_size", "int", "2", "Square pooling-window size", {}, "1-1048576",
           "Pool Size", "Pooling", true, false},
          {"stride", "int", "2", "Spatial pooling stride", {}, "1-1048576",
-          "Stride", "Pooling", true, false}},
+          "Stride", "Pooling", true, false},
+         {"padding", "int", "0", "Cells added on every side before pooling, at most half the pool size "
+          "(torch padding). ResNet's first pool is size 3, stride 2, padding 1", {}, "0-524288",
+          "Padding", "Pooling", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GlobalMaxPool, NodeCategory::Pooling, "Global Max Pool", ICON_FA_COMPRESS,
@@ -3337,7 +3355,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"padding", "int", "1", "Symmetric input padding", {}, "0-1048576",
           "Padding", "Transposed Convolution", true, false},
          {"output_padding", "int", "1", "Extra size on one side of the output (smaller than the stride)", {}, "0-1048576",
-          "Output Padding", "Transposed Convolution", true, false}},
+          "Output Padding", "Transposed Convolution", true, false},
+         {"use_bias", "bool", "true", "Adds a learned value per output channel. Turn it off when a BatchNorm "
+          "follows (the BatchNorm's shift does the same job), as torchvision's ResNet and MobileNet do", {}, "",
+          "Bias", "Transposed Convolution", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Upsample, NodeCategory::Upsampling, "Upsample", ICON_FA_EXPAND,

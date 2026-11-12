@@ -108,7 +108,57 @@ def build() -> list[dict[str, Any]]:
         "grad_input": hwcn(x.grad),
     }
     return [residual, squeeze_excitation(),
-            squeeze_excitation("squeeze_excitation_hard", 1791, 3, functional.hardswish, functional.hardsigmoid, False)]
+            squeeze_excitation("squeeze_excitation_hard", 1791, 3, functional.hardswish, functional.hardsigmoid, False),
+            resnet_stem()]
+
+
+def resnet_stem() -> dict[str, Any]:
+    """ResNet's opening, with ReLU6 in place of ReLU so that node is checked too: Conv 3->8, 7x7, stride 2,
+    padding 3, no bias -> BatchNorm -> ReLU6 -> MaxPool 3, stride 2, padding 1 -> global average pool ->
+    Head 8->2. The convolution has no bias entry: the node's Bias setting is off."""
+    torch.manual_seed(1909)
+    params: dict[str, dict[str, torch.Tensor]] = {
+        "Stem conv": {"weights": torch.randn(8, 3, 7, 7) * (2.0 / 147) ** 0.5},
+        "Stem BN": {"gamma": torch.randn(8) * 0.3 + 4.0, "beta": torch.randn(8) * 0.5 + 2.0},
+        "Head": {"weight": torch.randn(2, 8) * 0.25, "bias": torch.randn(2) * 0.1},
+    }
+    running = {"Stem BN": {"running_mean": torch.randn(8) * 0.2, "running_var": torch.rand(8) + 0.5}}
+    for layer in params.values():
+        for tensor in layer.values():
+            tensor.requires_grad_(True)
+    before = {name: {k: plain(v) for k, v in stats.items()} for name, stats in running.items()}
+    x = (torch.randn(4, 3, 16, 16) * 0.8 + 0.2).requires_grad_(True)
+    stem = functional.conv2d(x, params["Stem conv"]["weights"], None, stride=2, padding=3)
+    stem = functional.relu6(functional.batch_norm(stem, running["Stem BN"]["running_mean"],
+                                                  running["Stem BN"]["running_var"], params["Stem BN"]["gamma"],
+                                                  params["Stem BN"]["beta"], training=True, momentum=0.1, eps=1e-5))
+    capped = float((stem == 6.0).float().mean())
+    floored = float((stem == 0.0).float().mean())
+    assert capped > 0.02 and floored > 0.02, (capped, floored)  # both ends of ReLU6 are exercised
+    pooled = functional.max_pool2d(stem, kernel_size=3, stride=2, padding=1)
+    logits = functional.linear(pooled.mean(dim=(2, 3)), params["Head"]["weight"], params["Head"]["bias"])
+    torch.manual_seed(19090)
+    grad_out = torch.randn_like(logits)
+    logits.backward(grad_out)
+    layers: dict[str, Any] = {}
+    for name, layer in params.items():
+        entry: dict[str, Any] = {}
+        for key, tensor in layer.items():
+            writer = conv_weight if key == "weights" else plain
+            entry[key] = writer(tensor)
+            entry["grad_" + key] = writer(tensor.grad)
+        layers[name] = entry
+    return {
+        "name": "resnet_stem",
+        "tolerance": {"atol": 3e-4, "rtol": 3e-4},
+        "input": hwcn(x),
+        "layers": layers,
+        "state": before,
+        "state_after": {name: {k: plain(v) for k, v in stats.items()} for name, stats in running.items()},
+        "output": plain(logits),
+        "grad_output": plain(grad_out),
+        "grad_input": hwcn(x.grad),
+    }
 
 
 def squeeze_excitation(case_name: str = "squeeze_excitation_block", seed: int = 1787, squeeze: int = 4,

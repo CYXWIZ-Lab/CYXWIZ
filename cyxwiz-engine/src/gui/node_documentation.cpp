@@ -372,7 +372,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"filters", "Number of output channels/filters"},
             {"kernel_size", "Size of the sliding window"},
             {"stride", "Step size between kernel applications"},
-            {"padding", "Zero-padding added to both sides"}
+            {"padding", "Zero-padding added to both sides"},
+            {"use_bias", "A learned value per output channel; off when a BatchNorm follows"}
         },
         {
             "Use padding='same' to preserve sequence length",
@@ -390,7 +391,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"filters", "Number of output channels/filters"},
             {"kernel_size", "Size of the 2D kernel (e.g., 3 for 3x3)"},
             {"stride", "Step size (e.g., 2 for downsampling)"},
-            {"padding", "Zero-padding around the input"}
+            {"padding", "Zero-padding around the input"},
+            {"use_bias", "A learned value per output channel; off when a BatchNorm follows"}
         },
         {
             "3x3 kernels are most common and efficient",
@@ -412,7 +414,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"filters", "Number of output channels"},
             {"kernel_size", "Cubic kernel size (3 means 3x3x3)"},
             {"stride", "Step size on every axis"},
-            {"padding", "'same' keeps D, H and W at stride 1 (odd kernels); 'valid' adds none"}
+            {"padding", "'same' keeps D, H and W at stride 1 (odd kernels); 'valid' adds none"},
+            {"use_bias", "A learned value per output channel; off when a BatchNorm follows"}
         },
         {
             "A k x k x k kernel has C x k^3 weights per filter: start with few filters",
@@ -432,7 +435,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"kernel_size", "Square kernel size k"},
             {"stride", "Step size s"},
             {"padding", "same ((k-1)/2, odd k) or valid (0)"},
-            {"depth_multiplier", "Output channels per input channel M"}
+            {"depth_multiplier", "Output channels per input channel M"},
+            {"use_bias", "A learned value per output channel; off when a BatchNorm follows"}
         },
         {
             "Follow with 1x1 Conv2D (pointwise) for full depthwise separable conv",
@@ -450,7 +454,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             {"pool_size", "Size of the pooling window (e.g., 2 for 2x2)"},
             {"stride", "Step between windows (default: same as pool_size)"},
-            {"padding", "Padding mode"}
+            {"padding", "Cells added on every side first, at most half the pool size (0 = none)"}
         },
         {
             "Preserves strong activations, good for detecting features",
@@ -467,7 +471,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             {"pool_size", "Size of the pooling window"},
             {"stride", "Step between windows"},
-            {"padding", "Padding mode"}
+            {"padding", "Zero cells added on every side first, counted in the average; at most half the pool size"}
         },
         {
             "Better for regression tasks where all values matter",

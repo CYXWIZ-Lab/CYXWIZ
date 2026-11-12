@@ -17,9 +17,9 @@ The Resize node sets the input shape (`[height, width, 3]`); the Properties
 
 | Node | Output shape | PyTorch |
 | --- | --- | --- |
-| Conv2D (`filters`, `kernel_size`, `stride`, `padding`: a number, `same` or `valid`) | `[floor((H + 2p - k) / s) + 1, ..., filters]` | `nn.Conv2d` |
+| Conv2D (`filters`, `kernel_size`, `stride`, `padding`: a number, `same` or `valid`, `use_bias`) | `[floor((H + 2p - k) / s) + 1, ..., filters]` | `nn.Conv2d` |
 | Depthwise Conv2D (`kernel_size`, `stride`, `padding`, `depth_multiplier` M) | same formula, `C x M` channels; channel `c*M + m` sees only input channel `c` | `nn.Conv2d(C, C*M, k, groups=C)` |
-| MaxPool2D / AvgPool2D (`pool_size`, `stride`) | same formula, channels kept | `nn.MaxPool2d` / `nn.AvgPool2d` |
+| MaxPool2D / AvgPool2D (`pool_size`, `stride`, `padding`: at most half the pool size) | same formula, channels kept | `nn.MaxPool2d` / `nn.AvgPool2d` |
 | ConvTranspose2D | `(H - 1) x s - 2p + k + output_padding` | `nn.ConvTranspose2d` |
 | BatchNorm (`eps`, `momentum`) | unchanged; one mean and variance per channel over the batch and every pixel | `nn.BatchNorm2d` (after Flatten the same node is `nn.BatchNorm1d`) |
 | GroupNorm, InstanceNorm | unchanged | `nn.GroupNorm` / `nn.InstanceNorm2d` |
@@ -53,7 +53,21 @@ existed train the same.
 
 **Hardswish** (`x * relu6(x + 3) / 6`) is the activation those
 small models pair it with, and **Hardsigmoid** (`relu6(x + 3) / 6`) the cheap
-sigmoid MobileNetV3 uses as its gate.
+sigmoid MobileNetV3 uses as its gate. **ReLU6** (`min(max(x, 0), 6)`) is the
+activation of MobileNetV1 and MobileNetV2.
+
+## Settings a published network needs
+
+- **Bias** on Conv2D, Depthwise Conv2D, Conv1D, Conv3D and ConvTranspose2D is
+  on by default. Turn it off for a convolution that a BatchNorm follows:
+  torchvision's ResNet and MobileNet are built that way (`bias=False`), and
+  their weight files have no bias for those layers.
+- **Padding** on MaxPool2D and AvgPool2D adds cells on every side before
+  pooling (at most half the pool size). ResNet's first pool is size 3,
+  stride 2, padding 1. AvgPool2D counts the added zeros in its average, as
+  `torch.nn.AvgPool2d` does by default.
+- Conv2D with `same` padding gives ResNet's paddings: 3 for the 7 x 7
+  convolution, 1 for 3 x 3, 0 for 1 x 1.
 
 ## Ending the convolution section
 

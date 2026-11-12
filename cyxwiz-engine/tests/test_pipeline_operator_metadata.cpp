@@ -1549,12 +1549,13 @@ void CheckConv2DReferenceContract(
     Check(HasInputType(meta, "Input", gui::PinType::Tensor) &&
               HasOutputType(meta, "Output", gui::PinType::Tensor),
           "Conv2D metadata should preserve its saved-graph pin contract");
-    Check(meta->parameters.size() == 4,
+    Check(meta->parameters.size() == 5,
           "Conv2D metadata should expose only its preserved layer fields");
     Check(ParameterMatches(meta, "filters", "int", "32") &&
               ParameterMatches(meta, "kernel_size", "int", "3") &&
               ParameterMatches(meta, "stride", "int", "1") &&
-              ParameterMatches(meta, "padding", "enum", "same"),
+              ParameterMatches(meta, "padding", "enum", "same") &&
+              ParameterMatches(meta, "use_bias", "bool", "true"),
           "Conv2D metadata defaults should match the preserved graph contract");
     Check(!HasParameter(meta, "activation"),
           "Conv2D must not advertise an unexecuted inline activation");
@@ -1574,11 +1575,12 @@ void CheckConvolutionPoolingFamilyContract(
     for (const auto type : {gui::NodeType::Conv1D,
                             gui::NodeType::Conv3D}) {
         const auto* meta = metadata.GetMetadata(type);
-        Check(meta->parameters.size() == 4 &&
+        Check(meta->parameters.size() == 5 &&
                   ParameterMatches(meta, "filters", "int", "32") &&
                   ParameterMatches(meta, "kernel_size", "int", "3") &&
                   ParameterMatches(meta, "stride", "int", "1") &&
                   ParameterMatches(meta, "padding", "enum", "same") &&
+                  ParameterMatches(meta, "use_bias", "bool", "true") &&
                   !HasParameter(meta, "activation"),
               "convolution contract keeps exactly its saved fields: " +
                   TypeId(type));
@@ -1586,7 +1588,8 @@ void CheckConvolutionPoolingFamilyContract(
 
     const auto* depthwise =
         metadata.GetMetadata(gui::NodeType::DepthwiseConv2D);
-    Check(depthwise->parameters.size() == 4 &&
+    Check(depthwise->parameters.size() == 5 &&
+              ParameterMatches(depthwise, "use_bias", "bool", "true") &&
               !HasParameter(depthwise, "filters") &&
               ParameterMatches(depthwise, "kernel_size", "int", "3") &&
               ParameterMatches(depthwise, "stride", "int", "1") &&
@@ -1598,11 +1601,12 @@ void CheckConvolutionPoolingFamilyContract(
     for (const auto type : {gui::NodeType::MaxPool2D,
                             gui::NodeType::AvgPool2D}) {
         const auto* meta = metadata.GetMetadata(type);
-        Check(meta->parameters.size() == 2 &&
+        Check(meta->parameters.size() == 3 &&
                   ParameterMatches(meta, "pool_size", "int", "2") &&
                   ParameterMatches(meta, "stride", "int", "2") &&
+                  ParameterMatches(meta, "padding", "int", "0") &&
                   !HasParameter(meta, "kernel_size"),
-              "pooling metadata must use the saved pool_size/stride contract: " +
+              "pooling metadata must use the saved pool_size/stride/padding contract: " +
                   TypeId(type));
     }
 
@@ -1627,15 +1631,16 @@ void CheckBlockedUpsamplingFamilyContract(
 
     const auto* transpose =
         metadata.GetMetadata(gui::NodeType::ConvTranspose2D);
-    Check(transpose->parameters.size() == 6 &&
+    Check(transpose->parameters.size() == 7 &&
               ParameterMatches(transpose, "in_channels", "int", "64") &&
               ParameterMatches(transpose, "out_channels", "int", "32") &&
               ParameterMatches(transpose, "kernel_size", "int", "3") &&
               ParameterMatches(transpose, "stride", "int", "2") &&
               ParameterMatches(transpose, "padding", "int", "1") &&
               ParameterMatches(transpose, "output_padding", "int", "1") &&
+              ParameterMatches(transpose, "use_bias", "bool", "true") &&
               !HasParameter(transpose, "filters"),
-          "ConvTranspose2D metadata must preserve its six saved fields");
+          "ConvTranspose2D metadata must preserve its seven saved fields");
 
     const auto* upsample = metadata.GetMetadata(gui::NodeType::Upsample);
     Check(upsample->parameters.size() == 2 &&

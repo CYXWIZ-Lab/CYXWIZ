@@ -44,6 +44,7 @@ struct Geometry {
     int stride = 1;
     int padding = 0;
     int output_padding = 0;  // ConvTranspose2D only
+    bool use_bias = true;    // the convolutions; off when a BatchNorm follows (torch bias=False)
     int groups = 1;          // GroupNorm only
 };
 
@@ -104,6 +105,14 @@ inline int ResolvePadding(const Params& params, int kernel) {
     return ParseIntParam(params, "padding", 0);
 }
 
+// A convolution's "use_bias": on unless the node says false.
+inline bool ResolveUseBias(const Params& params) {
+    const auto it = params.find("use_bias");
+    if (it == params.end() || it->second.empty() || it->second == "true") return true;
+    if (it->second == "false") return false;
+    throw std::invalid_argument("use_bias must be true or false");
+}
+
 // Layers that change or need the [H,W,C] layout.
 inline bool IsSpatialLayer(gui::NodeType type) {
     switch (type) {
@@ -149,6 +158,7 @@ inline bool IsShapePreservingLayer(gui::NodeType type) {
         case gui::NodeType::Mish:
         case gui::NodeType::Hardswish:
         case gui::NodeType::Hardsigmoid:
+        case gui::NodeType::ReLU6:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Dropout:
@@ -170,6 +180,7 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
             g.kernel = ParseIntParam(params, "kernel_size", 3);
             g.stride = ParseIntParam(params, "stride", 1);
             g.padding = ResolvePadding(params, g.kernel);
+            g.use_bias = ResolveUseBias(params);
             break;
         case gui::NodeType::DepthwiseConv2D:
             // torch Conv2d(C, C x M, k, groups=C): C x M output channels
@@ -179,6 +190,7 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
             g.kernel = ParseIntParam(params, "kernel_size", 3);
             g.stride = ParseIntParam(params, "stride", 1);
             g.padding = ResolvePadding(params, g.kernel);
+            g.use_bias = ResolveUseBias(params);
             break;
         case gui::NodeType::MaxPool2D:
         case gui::NodeType::AvgPool2D:
@@ -186,6 +198,10 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
             g.stride = ParseIntParam(params, "stride", g.kernel);
             if (g.stride <= 0) g.stride = g.kernel;
             g.padding = ResolvePadding(params, g.kernel);
+            // torch.nn.MaxPool2d / AvgPool2d: pad at most half the window.
+            if (g.kernel > 0 && g.padding > g.kernel / 2)
+                throw std::invalid_argument("padding " + std::to_string(g.padding) + " is more than half the pool size " +
+                                            std::to_string(g.kernel));
             break;
         case gui::NodeType::ConvTranspose2D:
             g.channels_out = ParseIntParam(params, "out_channels", 32);
@@ -193,6 +209,7 @@ inline Geometry ResolveGeometry(gui::NodeType type, const Params& params, size_t
             g.stride = ParseIntParam(params, "stride", 2);
             g.padding = ParseIntParam(params, "padding", 1);
             g.output_padding = ParseIntParam(params, "output_padding", 1);
+            g.use_bias = ResolveUseBias(params);
             break;
         case gui::NodeType::AdaptiveAvgPool:
             AdaptiveOutputSize(params);

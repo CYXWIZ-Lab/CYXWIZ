@@ -1227,13 +1227,13 @@ bool BuildSequential(
                 }
                 switch (layer_cfg.type) {
                     case gui::NodeType::Conv2D:
-                        model.Add<Conv2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding, true);
+                        model.Add<Conv2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding, g.use_bias);
                         CYXWIZ_BUILDER_INFO("  [{}] Conv2D({} -> {}, k={}, s={}, p={})", i, channels,
                                             g.channels_out, g.kernel, g.stride, g.padding);
                         break;
                     case gui::NodeType::DepthwiseConv2D:
                         model.Add<DepthwiseConv2DModule>(channels, g.depth_multiplier, g.kernel, g.stride,
-                                                         g.padding, true);
+                                                         g.padding, g.use_bias);
                         CYXWIZ_BUILDER_INFO("  [{}] DepthwiseConv2D({} x {}, k={}, s={}, p={})", i, channels,
                                             g.depth_multiplier, g.kernel, g.stride, g.padding);
                         break;
@@ -1247,7 +1247,7 @@ bool BuildSequential(
                         break;
                     case gui::NodeType::ConvTranspose2D:
                         model.Add<ConvTranspose2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding,
-                                                         g.output_padding, true);
+                                                         g.output_padding, g.use_bias);
                         CYXWIZ_BUILDER_INFO("  [{}] ConvTranspose2D({} -> {}, k={}, s={}, p={}, op={})", i, channels,
                                             g.channels_out, g.kernel, g.stride, g.padding, g.output_padding);
                         break;
@@ -1345,7 +1345,7 @@ bool BuildSequential(
                 }
                 auto conv = std::make_unique<Conv3DModule>(in_shape[0], in_shape[1], in_shape[2], in_shape[3],
                                                            static_cast<size_t>(g.channels_out), g.kernel,
-                                                           g.stride, g.padding, true);
+                                                           g.stride, g.padding, g.use_bias);
                 const auto out_shape = conv->OutputSample();
                 if (out_shape != layer_cfg.output_shape) {
                     throw std::runtime_error("Conv3D at index " + std::to_string(i) +
@@ -1376,7 +1376,7 @@ bool BuildSequential(
                 }
                 const auto g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[1]);
                 model.Add<Conv1DModule>(static_cast<int>(in_shape[1]), g.channels_out, g.kernel,
-                                        g.stride, g.padding, 1, true);
+                                        g.stride, g.padding, 1, g.use_bias);
                 CYXWIZ_BUILDER_INFO("  [{}] Conv1D({} -> {}, k={}, s={}, p={}) on [L={}, C={}]", i,
                                     in_shape[1], g.channels_out, g.kernel, g.stride, g.padding,
                                     in_shape[0], in_shape[1]);
