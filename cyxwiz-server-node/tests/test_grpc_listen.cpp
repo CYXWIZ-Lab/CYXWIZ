@@ -17,8 +17,7 @@ using UnimplementedService = cyxwiz::daemon::DaemonService::Service;
 TEST_CASE("a second server cannot listen on a port another one owns", "[grpc_listen]") {
     int port = 0;
     grpc::ServerBuilder first;
-    first.AddChannelArgument(GRPC_ARG_ALLOW_REUSEPORT, 0);
-    first.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    ListenExclusively(first, "127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
     UnimplementedService first_service;
     first.RegisterService(&first_service);
     auto first_server = first.BuildAndStart();
@@ -39,8 +38,7 @@ TEST_CASE("a second server cannot listen on a port another one owns", "[grpc_lis
 TEST_CASE("the port is free again once its server stops", "[grpc_listen]") {
     int port = 0;
     grpc::ServerBuilder first;
-    first.AddChannelArgument(GRPC_ARG_ALLOW_REUSEPORT, 0);
-    first.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    ListenExclusively(first, "127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
     UnimplementedService first_service;
     first.RegisterService(&first_service);
     auto first_server = first.BuildAndStart();

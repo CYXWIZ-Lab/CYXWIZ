@@ -103,11 +103,13 @@ public:
         // Jobs train with the shared core; Central Server is not running.
         service->Initialize(executor, "localhost:50051", "test_node", "test_p2p_secret");
 
-        // Start server
-        REQUIRE(service->StartServer("127.0.0.1:50053"));  // Use different port for tests
+        // Start server on any free port: a fixed one collides with a node
+        // running on the same machine (its daemon listens on 50052-50054)
+        REQUIRE(service->StartServer("127.0.0.1:0"));
+        REQUIRE(service->BoundPort() > 0);
 
         // Create client channel
-        channel = grpc::CreateChannel("127.0.0.1:50053",
+        channel = grpc::CreateChannel("127.0.0.1:" + std::to_string(service->BoundPort()),
                                      grpc::InsecureChannelCredentials());
         stub = JobExecutionService::NewStub(channel);
 
@@ -198,13 +200,16 @@ TEST_CASE("JobExecutionService - Server Startup", "[p2p][service]") {
     test_service->Initialize(nullptr, "localhost:50051", "test_node_startup", "test_p2p_secret");
 
     SECTION("Server starts successfully") {
-        REQUIRE(test_service->StartServer("127.0.0.1:50054"));
+        REQUIRE(test_service->StartServer("127.0.0.1:0"));
+        CHECK(test_service->BoundPort() > 0);
         test_service->StopServer();
+        CHECK(test_service->BoundPort() == 0);
     }
 
     SECTION("Server rejects duplicate start") {
-        REQUIRE(test_service->StartServer("127.0.0.1:50055"));
-        REQUIRE_FALSE(test_service->StartServer("127.0.0.1:50055"));
+        REQUIRE(test_service->StartServer("127.0.0.1:0"));
+        const std::string bound = "127.0.0.1:" + std::to_string(test_service->BoundPort());
+        REQUIRE_FALSE(test_service->StartServer(bound));
         test_service->StopServer();
     }
 }

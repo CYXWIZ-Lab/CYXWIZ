@@ -53,8 +53,12 @@ public:
         node_client_ = std::move(client);
     }
 
-    // Start the P2P server on the specified port
+    // Start the P2P server on the specified port (":0" picks a free one;
+    // BoundPort() then says which)
     bool StartServer(const std::string& listen_address = "0.0.0.0:50052");
+
+    // The port the running server listens on; 0 when it is not running.
+    int BoundPort() const { return bound_port_; }
 
     // Stop the P2P server
     void StopServer();
@@ -233,6 +237,7 @@ private:
     // Server management
     std::unique_ptr<grpc::Server> server_;
     std::atomic<bool> is_running_{false};
+    int bound_port_ = 0;
 
     // Dependencies
     std::shared_ptr<cyxwiz::servernode::JobExecutor> job_executor_;

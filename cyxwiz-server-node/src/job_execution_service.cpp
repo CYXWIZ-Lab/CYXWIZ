@@ -97,7 +97,9 @@ bool JobExecutionServiceImpl::StartServer(const std::string& listen_address) {
 
     try {
         grpc::ServerBuilder builder;
-        cyxwiz::servernode::core::ListenExclusively(builder, listen_address, grpc::InsecureServerCredentials());
+        int selected_port = 0;
+        cyxwiz::servernode::core::ListenExclusively(builder, listen_address, grpc::InsecureServerCredentials(),
+                                                    &selected_port);
         builder.RegisterService(this);
 
         // Set max message size for large model transfers
@@ -110,8 +112,9 @@ bool JobExecutionServiceImpl::StartServer(const std::string& listen_address) {
             return false;
         }
 
+        bound_port_ = selected_port;
         is_running_ = true;
-        spdlog::info("JobExecutionService listening on {}", listen_address);
+        spdlog::info("JobExecutionService listening on {} (port {})", listen_address, bound_port_);
         return true;
     } catch (const std::exception& e) {
         spdlog::error("Failed to start JobExecutionService: {}", e.what());
@@ -136,6 +139,7 @@ void JobExecutionServiceImpl::StopServer() {
 
     server_->Shutdown();
     is_running_ = false;
+    bound_port_ = 0;
     spdlog::info("JobExecutionService stopped");
 }
 
