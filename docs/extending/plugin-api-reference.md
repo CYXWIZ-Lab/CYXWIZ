@@ -399,7 +399,8 @@ void RunCommand(const std::string& id) override {
 
 A plugin's own defaults belong in the Engine's **Preferences** dialog, next
 to the Engine's: the MuJoCo plugin puts the Viewport's (the camera a policy
-playback starts with, the live numbers, the Record defaults) at the end of
+playback starts with, the live numbers, the Record defaults, the Stress
+panel's choices and the Scene options) at the end of
 **Preferences > Simulation** this way. Needs `UIModify`.
 
 | Member | Contract |

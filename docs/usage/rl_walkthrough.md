@@ -107,8 +107,8 @@ by default, so the plain task stays Gymnasium's.
 
 The draws come from the run's seed, so a run repeats exactly. While it
 trains, the RL Training Dashboard shows **Difficulty** (the curriculum's
-level) and **Falls** (episodes that ended early or upside down) beside the
-return.
+level) beside the return; every MuJoCo task also shows **Falls** (of the last
+100 episodes, those that ended early or upside down).
 
 **Look ahead or not.** HalfCheetah observes only its own joints: without
 Look ahead it is blind to a step or a block until it hits it, and can learn
@@ -118,7 +118,8 @@ policy observes, so it trains a new policy from the start, and that policy
 plays only with Look ahead on (its saved settings bring it along).
 
 A saved policy keeps all of these settings: **Play policy** plays it in the
-conditions it trained in, and the Stress panel can still change the ground.
+conditions it trained in (a curriculum starts again from its easiest ground),
+and the Stress panel can still change the ground.
 
 ## After training: watch, save, reopen
 
@@ -158,7 +159,9 @@ pushes. The policies' own random physics and curriculum are off for the test;
 each keeps its own Look ahead. The chart shows the mean return by difficulty,
 the table each level's mean return and falls (an episode that ended early or
 upside down). **Watch** plays that level's first episode again in the Play
-tab. **Export CSV** saves the table in the project's exports folder.
+tab, and the MuJoCo Viewport shows it. **Export CSV** saves the table in the
+project's exports folder. **Keep these as the default** saves the disturbance,
+levels and episodes; Preferences > Simulation > Policy playback holds them too.
 
 The example `examples/cyxgraph/rl/ppo_half_cheetah_robust.cyxgraph` trains
 HalfCheetah with the four grounds, a curriculum, pushes, varied friction and

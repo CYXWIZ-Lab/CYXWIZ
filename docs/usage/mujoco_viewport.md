@@ -144,6 +144,7 @@ policy** whenever you want to watch it: no training run is needed. See
 - Typed joint and actuator values, keyframes and physics options are
   planned (the Inspect panel), as are a timeline to scrub a played episode
   and side-by-side policies.
-- Training with pushes and rough ground, and a stress test that compares
-  two saved policies by difficulty, are being built.
+- Training with pushes and rough ground, and the stress test that compares
+  two saved policies by difficulty, are in the
+  [RL walkthrough](rl_walkthrough.md) (Robustness, and Stress test).
 - Recording to MP4 needs the Engine's media support (not in this build).
