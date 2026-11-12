@@ -503,9 +503,10 @@ void RenderViewportPreferences(PluginContext& ctx) {
         field("##pref_size1", &st.object.size[1], L::kSizeMin, L::kSizeMax, 0.0, "%.2f m", 56.0f, "Width (capsule, cylinder: diameter)");
         ImGui::SameLine();
         field("##pref_size2", &st.object.size[2], L::kSizeMin, L::kSizeMax, 0.0, "%.2f m", 56.0f, "Height (box)");
-        ImGui::SameLine();
+        label("Mass");
         field("##pref_mass", &st.object.mass, L::kMassMin, L::kMassMax, 0.5, "%.1f kg", 64.0f);
         ImGui::SameLine();
+        label("speed");
         field("##pref_speed", &st.how.speed, L::kSpeedMin, L::kSpeedMax, 1.0, "%.1f m/s", 64.0f);
         label("From");
         field("##pref_around", &st.how.around, L::kAroundMin, L::kAroundMax, 15.0, "%.0f deg", 64.0f,
