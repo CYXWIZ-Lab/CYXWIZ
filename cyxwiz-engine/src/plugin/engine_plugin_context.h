@@ -6,6 +6,8 @@
 #include "plugin_context.h"
 
 #include <atomic>
+#include <functional>
+#include <map>
 #include <mutex>
 
 namespace cyxwiz::plugin {
@@ -50,6 +52,20 @@ public:
     // plugins load; hosts without windows leave it null.
     static void SetUi(PluginUi* ui) { ui_ = ui; }
 
+    std::filesystem::path GetProjectDir() const override;
+    std::string GetSetting(const std::string& key, const std::string& fallback = {}) const override;
+    void SetSetting(const std::string& key, const std::string& value) override;
+    // Engine side: where the project folder and the saved settings come from.
+    // Hosts that set nothing (tools, tests) have no project and keep settings
+    // in memory for the session. Set before plugins load.
+    struct HostServices {
+        std::function<std::filesystem::path()> project_dir;
+        // (plugin id, key, value out): false when never set
+        std::function<bool(const std::string&, const std::string&, std::string&)> get_setting;
+        std::function<void(const std::string&, const std::string&, const std::string&)> set_setting;
+    };
+    static void SetHostServices(HostServices services) { services_ = std::move(services); }
+
     // Whether the plugin may do `action` (declared in plugin.json, and
     // approved when the permission is dangerous); logs the refusal.
     bool CheckPermission(PluginPermission required, const char* action) const;
@@ -69,6 +85,9 @@ private:
     AssistantContextSnapshot assistant_context_;
     mutable std::mutex assistant_context_mutex_;
     static inline PluginUi* ui_ = nullptr;
+    static inline HostServices services_;
+    mutable std::mutex settings_mutex_;
+    std::map<std::string, std::string> session_settings_;  // without the host's settings store
     static inline std::atomic<long long> full_rate_requested_at_{0};  // steady clock, ns
 };
 

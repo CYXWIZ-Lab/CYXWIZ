@@ -105,6 +105,7 @@ set(CYXWIZ_PLUGIN_SDK_HEADERS
     plugin/interfaces/i_simulation_provider.h
     plugin/interfaces/i_environment_provider.h
     plugin/interfaces/i_panel_provider.h
+    plugin/interfaces/i_preferences_provider.h
     plugin/interfaces/i_tensor_node_provider.h
     plugin/interfaces/i_training_hook.h
     core/extension_node_contract.h
@@ -130,6 +131,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/CyxWizPluginSDK.cmake)
 add_library(cyxwiz-plugin-host STATIC
     src/plugin/registries/plugin_panel_registry.cpp
     src/plugin/registries/plugin_command_registry.cpp
+    src/plugin/registries/plugin_preferences_registry.cpp
     src/plugin/registries/plugin_simulation_registry.cpp
     src/plugin/registries/plugin_environment_registry.cpp
     src/plugin/builtin/classic_control_environments.cpp

@@ -8,6 +8,8 @@
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_panel_registry.h"
 #include "../src/plugin/registries/plugin_command_registry.h"
+#include "../src/plugin/registries/plugin_preferences_registry.h"
+#include "../src/plugin/engine_plugin_context.h"
 #include "../src/plugin/registries/plugin_simulation_registry.h"
 #include "../src/plugin/registries/plugin_environment_registry.h"
 #include "../src/plugin/builtin/classic_control_environments.h"
@@ -18,6 +20,7 @@
 #include <memory>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -103,6 +106,76 @@ void CheckCommandRegistry() {
     Check(!commands.Run("com.example.sim:missing"), "an unknown command does not run");
     commands.RemoveByPlugin("com.example.sim");
     Check(commands.GetCount() == 0 && !commands.Run("com.example.sim:go"), "removing the plugin removes its commands");
+}
+
+// A plugin's Preferences sections (plugin API 1.4)
+class FakePreferences final : public cyxwiz::plugin::IPreferencesProvider {
+public:
+    std::vector<std::string> drawn;
+    std::vector<cyxwiz::plugin::PluginPreferencesSection> GetPreferenceSections() override {
+        return {{"viewer", "Simulation", "My Viewer", "How it starts."}, {"odd", "Nowhere", "Odd one", ""}};
+    }
+    void RenderPreferences(const std::string& id) override {
+        if (id == "odd") throw std::runtime_error("broken");
+        drawn.push_back(id);
+    }
+};
+
+void CheckPreferencesRegistry() {
+    auto& preferences = cyxwiz::plugin::PluginPreferencesRegistry::Instance();
+    FakePreferences fake;
+    for (const auto& section : fake.GetPreferenceSections()) preferences.Register("com.example.sim", section, &fake);
+    preferences.Register("com.example.sim", fake.GetPreferenceSections()[0], &fake);  // a duplicate is skipped
+    const std::vector<std::string> tabs = {"General", "Simulation"};
+    const auto simulation = preferences.SectionsFor("Simulation", tabs, "General");
+    const auto general = preferences.SectionsFor("General", tabs, "General");
+    Check(preferences.GetCount() == 2 && simulation.size() == 1 && simulation[0].key == "com.example.sim:viewer" &&
+              simulation[0].section.title == "My Viewer" && simulation[0].section.hint == "How it starts.",
+          "a section is listed in the tab it names");
+    Check(general.size() == 1 && general[0].section.title == "Odd one", "a tab the Engine does not have puts it in General");
+    Check(preferences.Render("com.example.sim:viewer") && fake.drawn == std::vector<std::string>{"viewer"},
+          "the section draws");
+    Check(!preferences.Render("com.example.sim:odd"), "a section that throws is reported, the dialog goes on");
+    Check(!preferences.Render("com.example.sim:missing"), "an unknown section does not draw");
+    preferences.RemoveByPlugin("com.example.sim");
+    Check(preferences.GetCount() == 0 && preferences.SectionsFor("Simulation", tabs, "General").empty(),
+          "removing the plugin removes its sections");
+}
+
+// A plugin's settings and the project folder (plugin API 1.4): kept for the
+// session without a host's store, else read and written through it
+void CheckPluginSettings() {
+    using cyxwiz::plugin::EnginePluginContext;
+    EnginePluginContext::SetHostServices({});
+    EnginePluginContext a("com.example.a", "1.0.0", {1, 4, 0}, nullptr);
+    EnginePluginContext b("com.example.b", "1.0.0", {1, 4, 0}, nullptr);
+    Check(a.GetProjectDir().empty(), "no project without the host's services");
+    Check(a.GetSetting("speed", "1") == "1", "a key never set gives the fallback");
+    a.SetSetting("speed", "2");
+    Check(a.GetSetting("speed", "1") == "2" && b.GetSetting("speed", "1") == "1",
+          "a setting is kept per plugin for the session");
+
+    std::map<std::string, std::string> store;
+    EnginePluginContext::SetHostServices({
+        [] { return std::filesystem::path("D:/projects/demo"); },
+        [&store](const std::string& plugin, const std::string& key, std::string& value) {
+            const auto it = store.find(plugin + "/" + key);
+            if (it == store.end()) return false;
+            value = it->second;
+            return true;
+        },
+        [&store](const std::string& plugin, const std::string& key, const std::string& value) {
+            store[plugin + "/" + key] = value;
+        },
+    });
+    Check(a.GetProjectDir() == std::filesystem::path("D:/projects/demo"), "the project folder comes from the host");
+    a.SetSetting("camera", "follow");
+    Check(store.at("com.example.a/camera") == "follow" && a.GetSetting("camera") == "follow" &&
+              b.GetSetting("camera", "track") == "track",
+          "the host stores each plugin's settings under its id");
+    a.SetSetting("", "ignored");
+    Check(store.size() == 1, "an empty key is not stored");
+    EnginePluginContext::SetHostServices({});
 }
 
 // A plugin whose nodes run in graph simulations (plugin API 1.4)
@@ -364,6 +437,8 @@ void CheckBuiltinCartPole() {
 
 int main() {
     CheckCommandRegistry();
+    CheckPreferencesRegistry();
+    CheckPluginSettings();
     CheckSimulationRegistry();
     CheckEnvironmentRegistry();
     CheckBuiltinCartPole();

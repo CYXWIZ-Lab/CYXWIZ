@@ -7,6 +7,7 @@
 #include "../core/extension_node_registry.h"
 #include "registries/plugin_panel_registry.h"
 #include "registries/plugin_command_registry.h"
+#include "registries/plugin_preferences_registry.h"
 #include "registries/plugin_simulation_registry.h"
 #include "registries/plugin_environment_registry.h"
 #include "registries/plugin_data_loader_registry.h"
@@ -395,6 +396,22 @@ bool PluginManager::InitializePlugin(const std::string& plugin_id) {
             }
         }
 
+        // Register the Preferences sections (plugin API 1.4, with crash isolation)
+        auto* preferences_provider = static_cast<IPreferencesProvider*>(instance->QueryInterface("IPreferencesProvider"));
+        if (preferences_provider && !permitted(PluginPermission::UIModify, "IPreferencesProvider")) preferences_provider = nullptr;
+        if (auto* p = preferences_provider) {
+            auto reg_result = security::SafeExecute(plugin_id, "RegisterPreferences", [&]() {
+                const auto sections = p->GetPreferenceSections();
+                for (const auto& section : sections) PluginPreferencesRegistry::Instance().Register(plugin_id, section, p);
+                spdlog::info("PluginManager: Registered {} Preferences sections for '{}'", sections.size(), plugin_id);
+            });
+            if (reg_result.crashed) {
+                plugin->state = PluginState::Failed;
+                plugin->error_message = reg_result.error_message;
+                return false;
+            }
+        }
+
         // Register the nodes that run in a graph simulation (plugin API 1.4, with crash isolation)
         auto* simulation_provider = static_cast<ISimulationProvider*>(instance->QueryInterface("ISimulationProvider"));
         if (simulation_provider && !permitted(PluginPermission::UIModify, "ISimulationProvider")) simulation_provider = nullptr;
@@ -710,6 +727,7 @@ void PluginManager::RemoveRegistrations(const std::string& plugin_id) {
     ExtensionNodeRegistry::Instance().RemoveByProvider(plugin_id);
     PluginPanelRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginCommandRegistry::Instance().RemoveByPlugin(plugin_id);
+    PluginPreferencesRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginSimulationRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginEnvironmentRegistry::Instance().RemoveByPlugin(plugin_id);
     PluginDataLoaderRegistry::Instance().RemoveByPlugin(plugin_id);

@@ -16,6 +16,7 @@
 #include "../../core/training_trace_collector.h"
 #include "../../core/window_manager.h"
 #include "../../core/rl_playback_presentation.h"
+#include "../../plugin/registries/plugin_preferences_registry.h"
 #include "../ui_tokens.h"
 
 #include <algorithm>
@@ -24,6 +25,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <cyxwiz/cyxwiz.h>
 #include <imgui.h>
@@ -31,6 +33,30 @@
 
 namespace cyxwiz {
 namespace {
+
+// The Preferences tabs a plugin section can name (IPreferencesProvider); any
+// other title puts the section in General.
+const std::vector<std::string> kPluginPreferenceTabs = {"General", "Editor", "Files", "Python", "Simulation"};
+
+// The plugins' sections at the end of a tab (plugin API 1.4): the heading,
+// its hint, then what the plugin draws.
+void RenderPluginPreferences(const char* tab) {
+    auto& registry = plugin::PluginPreferencesRegistry::Instance();
+    for (const auto& entry : registry.SectionsFor(tab, kPluginPreferenceTabs, "General")) {
+        ImGui::PushID(entry.key.c_str());
+        ImGui::Spacing();
+        ImGui::Spacing();
+        ImGui::TextUnformatted(entry.section.title.c_str());
+        if (!entry.section.hint.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", entry.section.hint.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::Spacing();
+        registry.Render(entry.key);
+        ImGui::PopID();
+    }
+}
 
 const char* ArrayFireBackendDisplayName(DeviceType type) {
     switch (type) {
@@ -158,6 +184,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::PopTextWrapPos();
                     }
 
+                    RenderPluginPreferences("General");
                     ImGui::EndTabItem();
                 }
 
@@ -234,6 +261,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::TextDisabled("Line numbers are always shown. Current line is highlighted.");
                     ImGui::TextDisabled("These settings will be saved with your project.");
 
+                    RenderPluginPreferences("Editor");
                     ImGui::EndTabItem();
                 }
 
@@ -283,6 +311,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Checkbox("Trim trailing whitespace on save", &files_trim_trailing_whitespace_);
                     ImGui::Checkbox("Insert final newline on save", &files_insert_final_newline_);
 
+                    RenderPluginPreferences("Files");
                     ImGui::EndTabItem();
                 }
 
@@ -361,6 +390,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::EndPopup();
                     }
 
+                    RenderPluginPreferences("Python");
                     ImGui::EndTabItem();
                 }
 
@@ -450,6 +480,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         }
                         ImGui::EndTable();
                     }
+                    RenderPluginPreferences("Simulation");
                     ImGui::EndTabItem();
                 }
 

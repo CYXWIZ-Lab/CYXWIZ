@@ -4,6 +4,7 @@
 #include <string>
 #include <mutex>
 #include <filesystem>
+#include <map>
 #include <vector>
 
 namespace cyxwiz::core {
@@ -195,6 +196,11 @@ public:
     bool OpenSimulationMonitorOnRun() const;
     void SetOpenSimulationMonitorOnRun(bool open);
 
+    // Plugins' own settings (PluginContext::GetSetting / SetSetting), by
+    // plugin id then key. False when the plugin never set the key.
+    bool PluginSetting(const std::string& plugin_id, const std::string& key, std::string& value) const;
+    void SetPluginSetting(const std::string& plugin_id, const std::string& key, const std::string& value);
+
     // Policy playback of a trained RL policy (Preferences > Simulation): the
     // Policy Playback panel starts from these.
     // Best actions (true, the default) or sampled as in training.
@@ -277,6 +283,7 @@ private:
     int policy_playback_speed_ = 0;
     bool play_policy_after_training_ = false;
     bool open_simulation_monitor_on_run_ = true;
+    std::map<std::string, std::map<std::string, std::string>> plugin_settings_;
     AppearanceConfig appearance_;
 
     // Recent projects

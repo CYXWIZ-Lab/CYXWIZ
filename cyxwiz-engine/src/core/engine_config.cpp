@@ -426,6 +426,15 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             open_simulation_monitor_on_run_ = simulation.value("open_monitor_on_run", true);
         }
 
+        plugin_settings_.clear();
+        if (config.contains("plugin_settings") && config["plugin_settings"].is_object()) {
+            for (const auto& [plugin_id, values] : config["plugin_settings"].items()) {
+                if (!values.is_object()) continue;
+                for (const auto& [key, value] : values.items())
+                    if (value.is_string()) plugin_settings_[plugin_id][key] = value.get<std::string>();
+            }
+        }
+
         policy_playback_best_ = true;
         policy_playback_speed_ = 0;
         play_policy_after_training_ = false;
@@ -555,6 +564,7 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
         config["data"] = {{"budget_bytes", data_budget_bytes_}};
         config["simulation"] = {{"rate_hz", simulation_rate_hz_},
                                 {"open_monitor_on_run", open_simulation_monitor_on_run_}};
+        if (!plugin_settings_.empty()) config["plugin_settings"] = plugin_settings_;
         config["policy_playback"] = {{"best_actions", policy_playback_best_},
                                      {"speed", policy_playback_speed_},
                                      {"play_after_training", play_policy_after_training_}};
@@ -944,6 +954,25 @@ void EngineConfig::SetOpenSimulationMonitorOnRun(bool open) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (open_simulation_monitor_on_run_ != open) {
         open_simulation_monitor_on_run_ = open;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::PluginSetting(const std::string& plugin_id, const std::string& key, std::string& value) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto plugin = plugin_settings_.find(plugin_id);
+    if (plugin == plugin_settings_.end()) return false;
+    const auto it = plugin->second.find(key);
+    if (it == plugin->second.end()) return false;
+    value = it->second;
+    return true;
+}
+
+void EngineConfig::SetPluginSetting(const std::string& plugin_id, const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& stored = plugin_settings_[plugin_id][key];
+    if (stored != value) {
+        stored = value;
         modified_ = true;
     }
 }
