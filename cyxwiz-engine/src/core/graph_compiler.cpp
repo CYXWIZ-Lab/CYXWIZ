@@ -5142,6 +5142,8 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.checkpoint_dir = loader_node->parameters.at("checkpoint_dir");
             if (loader_node->parameters.count("initialize_from_checkpoint"))
                 config.initialize_from_checkpoint = loader_node->parameters.at("initialize_from_checkpoint");
+            if (loader_node->parameters.count("initialize_from_weights_file"))
+                config.initialize_from_weights_file = loader_node->parameters.at("initialize_from_weights_file");
         } catch (const std::exception& e) {
             spdlog::warn("GraphCompiler: DataLoader param parse error ({}) - using defaults", e.what());
         }
@@ -8729,6 +8731,7 @@ void ResolveProjectRelativePaths(TrainingConfiguration& config, const std::strin
         }
     }
     absolute(config.initialize_from_checkpoint);
+    absolute(config.initialize_from_weights_file);
 }
 
 } // namespace cyxwiz

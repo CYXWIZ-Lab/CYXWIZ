@@ -1290,7 +1290,14 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"checkpoint_dir", "directory", "", "Checkpoint output directory", {}, "", "", "Checkpoint", false, true},
          {"initialize_from_checkpoint", "directory", "",
           "A checkpoint folder from an earlier run (for example checkpoints/<run>/train-<id>/best). Its weights become this model's starting point (warm start): every layer starts from the trained values and keeps training on this run's data (full fine-tuning; no layers are frozen). Only the weights are loaded: the optimizer, learning-rate schedule, epochs and random seed start fresh. Layer names and shapes, and for language models the tokenizer, must match the checkpoint exactly, or the run stops with the reason and the model is left untouched. New checkpoints record this folder as initialized_from. Empty = start from random weights.",
-          {}, "", "Start from", "Checkpoint", false, true}},
+          {}, "", "Start from", "Checkpoint", false, true},
+         {"initialize_from_weights_file", "file", "",
+          "A published weight file: a PyTorch state-dict (.pth, .pt) or a .safetensors file. A layer takes the "
+          "entries named after its node (node conv1 takes conv1.weight), with PyTorch's layouts converted. A layer "
+          "the file has no fitting weights for starts fresh, and the run says which; the run stops only when no "
+          "layer matches. The file is read as data and never run. Optimizer, schedule, epochs and seed start "
+          "fresh. Use this or Start from, not both. Empty = not used.",
+          {}, "", "Start from weights file", "Checkpoint", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     // DataSplit is a graph-level training configuration node. It has a

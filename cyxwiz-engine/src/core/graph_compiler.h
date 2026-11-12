@@ -487,6 +487,9 @@ struct TrainingConfiguration {
     int early_stopping_patience = 5;    // stop after this many non-improving epochs
     std::string checkpoint_dir;         // optional override, defaults to run-local path
     std::string initialize_from_checkpoint; // warm start: model weights only (TOFIX143)
+    // A published weight file (.pth / .pt state-dict, .safetensors): layers named
+    // as the file's entries start from its weights, the others start fresh.
+    std::string initialize_from_weights_file;
     PinMemoryTransferStatus pin_memory_transfer;
 
     // Preprocessing — tabular config (backward-compatible)

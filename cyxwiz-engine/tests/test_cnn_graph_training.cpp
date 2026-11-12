@@ -3,6 +3,7 @@
 // MaxPool2D -> Flatten -> Dense 2 -> CrossEntropy, Adam. The compiler must
 // give every layer the PyTorch shapes, ModelBuilder must build the modules,
 // and a forward pass on an HWC-flattened batch must produce [N, 2] logits.
+#include "core/weight_start.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/model_builder.h"
@@ -11,6 +12,7 @@
 #include "../src/gui/loaders/data_loader.h"
 #include "computation_truth/test_device_selection.h"
 
+#include <filesystem>
 #include <nlohmann/json.hpp>
 
 #include <cmath>
@@ -387,6 +389,96 @@ void CheckResNetStemAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
         said_why = said_why || issue.message.find("more than half the pool size") != std::string::npos;
     }
     Check(!refused.is_valid && said_why, "padding 2 on a pool of size 3 is refused with the reason");
+
+    // The same weights arrive from a PyTorch state-dict named after the nodes:
+    // layouts converted, running statistics included, and the model then gives
+    // PyTorch's logits.
+    const std::filesystem::path weights = std::filesystem::path(CYXWIZ_WEIGHT_FILE_FIXTURES) / "resnet_stem.pth";
+    {
+        auto fresh = cyxwiz::BuildExecutableFromConfig(config);
+        Check(fresh.ok(), "resnet_stem builds for the weights file");
+        cyxwiz::weight_match::Report report;
+        std::string error;
+        const bool started = cyxwiz::StartFromWeightsFile(weights, *fresh.model, fresh.module_provenance, report, error);
+        Check(started, "the graph starts from the weights file: " + error);
+        Check(report.loaded == 3 && report.fresh == 0, "all three layers take their weights: " + report.Summary());
+        Check(report.unused.size() == 2, "two entries are left over");
+        bool counter = false, other = false;
+        for (const auto& unused : report.unused) {
+            counter = counter || (unused.name.rfind("Stem BN.num_batches_tracked", 0) == 0 &&
+                                  unused.reason.find("counter") != std::string::npos);
+            other = other || (unused.name.rfind("aux.weight", 0) == 0 && unused.reason == "no node is named aux");
+        }
+        Check(counter && other, "the left-over entries say why: BatchNorm's counter, and a layer the graph lacks");
+        const auto loaded = fresh.model->GetParameters();
+        for (const auto& [layer_name, layer] : c.at("layers").items()) {
+            const std::string prefix = "layer" + std::to_string(LayerIndex(config, layer_name)) + ".";
+            for (const auto& [key, value] : layer.items()) {
+                if (key.rfind("grad_", 0) == 0) continue;
+                const auto it = loaded.find(prefix + key);
+                Check(it != loaded.end(), "weights file: " + prefix + key + " is set");
+                if (it != loaded.end()) CheckClose(it->second, value, c.at("tolerance"), "weights file " + layer_name + " " + key);
+            }
+        }
+        for (const auto& [key, value] : c.at("state").at("Stem BN").items()) {
+            const auto it = loaded.find("layer" + std::to_string(LayerIndex(config, "Stem BN")) + "." + key);
+            Check(it != loaded.end(), "weights file: Stem BN " + key + " is set");
+            if (it != loaded.end()) CheckClose(it->second, value, c.at("tolerance"), "weights file Stem BN " + key);
+        }
+        fresh.model->SetTraining(true);
+        CheckClose(fresh.model->Forward(ReadTensor(c.at("input"))), c.at("output"), c.at("tolerance"),
+                   "logits after starting from the weights file");
+    }
+    // A head with another class count starts fresh and keeps its own weights;
+    // the rest still loads.
+    {
+        auto three = nodes;
+        for (auto& node : three) {
+            if (node.name == "Head") node.parameters["units"] = "3";
+            if (node.type == gui::NodeType::Output) node.parameters["num_classes"] = "3";
+        }
+        const auto config3 = compiler.Compile(three, links, true);
+        auto other = cyxwiz::BuildExecutableFromConfig(config3);
+        Check(config3.is_valid && other.ok(), "the three-class graph builds");
+        const std::string head = "layer" + std::to_string(LayerIndex(config3, "Head")) + ".weight";
+        const cyxwiz::Tensor before = other.model->GetParameters().at(head).Clone();
+        cyxwiz::weight_match::Report report;
+        std::string error;
+        Check(cyxwiz::StartFromWeightsFile(weights, *other.model, other.module_provenance, report, error),
+              "a graph with another head still starts from the file: " + error);
+        Check(report.loaded == 2 && report.fresh == 1, "two layers load, the head starts fresh: " + report.Summary());
+        bool head_row = false;
+        for (const auto& row : report.layers) {
+            head_row = head_row || (row.node_name == "Head" && !row.loaded &&
+                                    row.reason == "shape differs: the file has [2], the graph [3]");  // its bias is looked at first
+        }
+        Check(head_row, "the report says the head's shape differs");
+        Check(report.Summary().find("2 of 3 layers take weights from the file; 1 starts fresh: Head") == 0,
+              "the summary names the fresh layer: " + report.Summary());
+        const cyxwiz::Tensor after = other.model->GetParameters().at(head);
+        bool unchanged = before.Shape() == after.Shape();
+        for (size_t i = 0; unchanged && i < before.NumElements(); ++i)
+            unchanged = before.ReadData<float>()[i] == after.ReadData<float>()[i];
+        Check(unchanged, "the fresh head keeps the weights it was built with");
+    }
+    // No layer matches (other node names): refused, the model untouched.
+    {
+        auto renamed = nodes;
+        for (auto& node : renamed) {
+            if (node.name == "Stem conv") node.name = "First conv";
+            if (node.name == "Stem BN") node.name = "First BN";
+            if (node.name == "Head") node.name = "Classifier";
+        }
+        const auto config_renamed = compiler.Compile(renamed, links, true);
+        auto other = cyxwiz::BuildExecutableFromConfig(config_renamed);
+        Check(config_renamed.is_valid && other.ok(), "the renamed graph builds");
+        cyxwiz::weight_match::Report report;
+        std::string error;
+        Check(!cyxwiz::StartFromWeightsFile(weights, *other.model, other.module_provenance, report, error) &&
+                  error.find("no layer of this graph matches the file") == 0,
+              "a file that matches no layer is refused: " + error);
+        Check(report.loaded == 0 && report.fresh == 3, "the report still lists the three layers");
+    }
     std::cout << "ResNet stem (7x7 convolution without bias, ReLU6, padded max pool) matches PyTorch\n";
 }
 

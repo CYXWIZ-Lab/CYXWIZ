@@ -10,6 +10,7 @@
 #include "metric_learning_evaluation.h"
 #include "metric_learning_sampling.h"
 #include "checkpoint_manager.h"
+#include "weight_start.h"
 #include "layer_capture_store.h"
 #include "sequence_arrow_batcher.h"
 #include "crash_run_recorder.h"
@@ -1339,6 +1340,34 @@ void TrainingExecutor::Train(
         spdlog::info("TrainingExecutor: initialized model weights from {} (source epoch {}, val_loss {}); "
                      "optimizer, schedule and epochs start fresh", initialized_from, loaded->epoch, loaded->val_loss);
         TrainingTraceCollector::Instance().RecordRuntimeEvent("WarmStart", initialized_from);
+    }
+    // A published weight file: matched by node name; layers without fitting
+    // weights start fresh. Optimizer, schedule, data order and epochs start fresh.
+    if (!config_.initialize_from_weights_file.empty()) {
+        if (!resume_from_.empty() || !config_.initialize_from_checkpoint.empty()) {
+            fail_run("weights_file_failed: a run starts from a weights file, starts from a checkpoint or resumes "
+                     "one; choose one");
+            return;
+        }
+        const std::filesystem::path source = std::filesystem::absolute(config_.initialize_from_weights_file);
+        weight_match::Report report;
+        std::string weights_error;
+        if (!StartFromWeightsFile(source, *model_, module_provenance_, report, weights_error)) {
+            fail_run("weights_file_failed: " + source.filename().string() + ": " + weights_error);
+            return;
+        }
+        initialized_from = source.lexically_normal().string();
+        const std::string summary = report.Summary();
+        UpdateMetrics([&](TrainingMetrics& m) {
+            m.initialized_from = initialized_from;
+            m.weights_file_summary = summary;
+        });
+        spdlog::info("TrainingExecutor: started from {} ({}): {}; optimizer, schedule and epochs start fresh",
+                     source.filename().string(), report.format, summary);
+        for (const auto& row : report.layers) {
+            if (!row.loaded) spdlog::debug("TrainingExecutor: {} ({}) starts fresh: {}", row.node_name, row.type_label, row.reason);
+        }
+        TrainingTraceCollector::Instance().RecordRuntimeEvent("WeightsFile", initialized_from + ": " + summary);
     }
     checkpoint_manager->SetProvenance(tokenizer_sha256,
                                       static_cast<int>(config_.sequence_batch.enabled ? config_.input_size : 0),

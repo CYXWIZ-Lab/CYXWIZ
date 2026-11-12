@@ -127,6 +127,19 @@ def resnet_stem() -> dict[str, Any]:
         for tensor in layer.values():
             tensor.requires_grad_(True)
     before = {name: {k: plain(v) for k, v in stats.items()} for name, stats in running.items()}
+    # The same weights as a PyTorch state-dict named after the graph's nodes, for the Engine's
+    # "Start from weights file": saved before the forward pass moves the running statistics. It also
+    # holds what a real file has and the graph does not take: BatchNorm's counter and another layer.
+    state = {"Stem conv.weight": params["Stem conv"]["weights"].detach().clone(),
+             "Stem BN.weight": params["Stem BN"]["gamma"].detach().clone(),
+             "Stem BN.bias": params["Stem BN"]["beta"].detach().clone(),
+             "Stem BN.running_mean": running["Stem BN"]["running_mean"].clone(),
+             "Stem BN.running_var": running["Stem BN"]["running_var"].clone(),
+             "Stem BN.num_batches_tracked": torch.tensor(7),
+             "Head.weight": params["Head"]["weight"].detach().clone(),
+             "Head.bias": params["Head"]["bias"].detach().clone(),
+             "aux.weight": torch.zeros(3, 2)}
+    torch.save(state, DEFAULT_OUTPUT.parent / "weight_files" / "resnet_stem.pth")
     x = (torch.randn(4, 3, 16, 16) * 0.8 + 0.2).requires_grad_(True)
     stem = functional.conv2d(x, params["Stem conv"]["weights"], None, stride=2, padding=3)
     stem = functional.relu6(functional.batch_norm(stem, running["Stem BN"]["running_mean"],
