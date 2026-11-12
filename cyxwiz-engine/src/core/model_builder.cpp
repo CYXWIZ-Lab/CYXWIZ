@@ -1,6 +1,7 @@
 #include "extension_node_registry.h"
 #include "guarded_extension_module.h"
 #include "model_builder.h"
+#include "frozen_layers.h"
 #include "dense_activation_configuration_policy.h"
 #include "error_codes.h"
 #include "graph_executable_model.h"
@@ -1737,6 +1738,24 @@ bool BuildSequential(
             default:
                 spdlog::warn("  [{}] Unknown layer type: {}", i, static_cast<int>(layer_cfg.type));
                 break;
+        }
+
+        // The node's Frozen setting: its modules keep their weights while the
+        // rest trains; a BatchNorm also keeps its running statistics unless
+        // the node says to keep updating them.
+        if (ParseBoolParam(layer_cfg, frozen::kFrozen, false)) {
+            const bool keep_statistics =
+                ParseStringParam(layer_cfg, frozen::kStatistics, frozen::kStatisticsKeep) != frozen::kStatisticsUpdate;
+            size_t frozen_modules = 0;
+            for (size_t module_index = module_count_before; module_index < model.Size(); ++module_index) {
+                Module* module = model.GetModule(module_index);
+                if (!module || !module->HasParameters()) continue;
+                module->SetTrainable(false);
+                ++frozen_modules;
+                if (auto* norm = dynamic_cast<BatchNormModule*>(module)) norm->SetKeepStatisticsWhenFrozen(keep_statistics);
+                if (auto* norm = dynamic_cast<BatchNorm2DModule*>(module)) norm->SetKeepStatisticsWhenFrozen(keep_statistics);
+            }
+            if (frozen_modules) CYXWIZ_BUILDER_INFO("  [{}] {} is frozen", i, layer_cfg.name);
         }
 
         if (provenance) {

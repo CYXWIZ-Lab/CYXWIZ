@@ -109,7 +109,50 @@ def build() -> list[dict[str, Any]]:
     }
     return [residual, squeeze_excitation(),
             squeeze_excitation("squeeze_excitation_hard", 1791, 3, functional.hardswish, functional.hardsigmoid, False),
-            resnet_stem(), flatten_head()]
+            resnet_stem(), flatten_head(),
+            frozen_stem("frozen_stem_keep", 1912, True), frozen_stem("frozen_stem_update", 1913, False)]
+
+
+def frozen_stem(case_name: str, seed: int, keep_statistics: bool) -> dict[str, Any]:
+    """Fine-tuning's first run: the resnet_stem graph with its convolution and BatchNorm frozen
+    (requires_grad off) and the Head training. keep_statistics = the BatchNorm also runs on its running
+    statistics (module.eval(), the Engine's default for a frozen BatchNorm); otherwise it normalises with
+    the batch and its running statistics move, as PyTorch does when only requires_grad is off. The frozen
+    layers carry no grad_ entries: the Engine must report none for them."""
+    torch.manual_seed(seed)
+    conv_weight_ = torch.randn(8, 3, 7, 7) * (2.0 / 147) ** 0.5
+    gamma = torch.randn(8) * 0.3 + 4.0
+    beta = torch.randn(8) * 0.5 + 2.0
+    head = {"weight": (torch.randn(2, 8) * 0.25).requires_grad_(True), "bias": (torch.randn(2) * 0.1).requires_grad_(True)}
+    running = {"Stem BN": {"running_mean": torch.randn(8) * 0.2, "running_var": torch.rand(8) + 0.5}}
+    before = {name: {k: plain(v) for k, v in stats.items()} for name, stats in running.items()}
+    x = (torch.randn(4, 3, 16, 16) * 0.8 + 0.2).requires_grad_(True)
+    stem = functional.conv2d(x, conv_weight_, None, stride=2, padding=3)
+    stem = functional.relu6(functional.batch_norm(stem, running["Stem BN"]["running_mean"],
+                                                  running["Stem BN"]["running_var"], gamma, beta,
+                                                  training=not keep_statistics, momentum=0.1, eps=1e-5))
+    pooled = functional.max_pool2d(stem, kernel_size=3, stride=2, padding=1)
+    logits = functional.linear(pooled.mean(dim=(2, 3)), head["weight"], head["bias"])
+    torch.manual_seed(seed * 10)
+    grad_out = torch.randn_like(logits)
+    logits.backward(grad_out)
+    layers: dict[str, Any] = {
+        "Stem conv": {"weights": conv_weight(conv_weight_)},
+        "Stem BN": {"gamma": plain(gamma), "beta": plain(beta)},
+        "Head": {"weight": plain(head["weight"]), "grad_weight": plain(head["weight"].grad),
+                 "bias": plain(head["bias"]), "grad_bias": plain(head["bias"].grad)},
+    }
+    return {
+        "name": case_name,
+        "tolerance": {"atol": 3e-4, "rtol": 3e-4},
+        "input": hwcn(x),
+        "layers": layers,
+        "state": before,
+        "state_after": {name: {k: plain(v) for k, v in stats.items()} for name, stats in running.items()},
+        "output": plain(logits),
+        "grad_output": plain(grad_out),
+        "grad_input": hwcn(x.grad),
+    }
 
 
 def flatten_head() -> dict[str, Any]:

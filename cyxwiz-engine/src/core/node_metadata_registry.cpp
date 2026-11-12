@@ -1,4 +1,5 @@
 #include "node_metadata_registry.h"
+#include "frozen_layers.h"
 #include "data_convert_formats.h"
 #include "pipeline_runtime_capabilities.h"
 #include "training_parameter_contract.h"
@@ -368,6 +369,31 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
 
     InitializeKNIMENodes();
     InitializeUtilityNodes();
+    AddFrozenSettings();
+}
+
+// Freezing is the same setting on every layer node that holds weights, so it
+// is added in one place rather than written into each node's list.
+void NodeMetadataRegistry::AddFrozenSettings() {
+    for (auto& [type, metadata] : metadata_) {
+        if (!frozen::LayerNodeHoldsWeights(type)) continue;
+        metadata.parameters.push_back(
+            {frozen::kFrozen, "bool", "false",
+             "Keeps this layer's weights as they are while the rest of the model trains: no gradient step, no "
+             "weight decay, no optimizer memory. Use it on layers that start from a weights file (fine-tuning), "
+             "then turn it off to train them too",
+             {}, "", "Frozen", "Fine-tuning", false, false});
+        if (!frozen::LayerNodeHasFrozenStatistics(type)) continue;
+        ParameterDefinition statistics{
+            frozen::kStatistics, "enum", frozen::kStatisticsKeep,
+            "What a frozen BatchNorm does with its running mean and variance. Keep its statistics: it normalises "
+            "with the loaded values, as in evaluation (usual for fine-tuning on small data). Keep updating "
+            "statistics: the weights stay but the statistics follow the new data, as PyTorch does when only "
+            "requires_grad is off",
+            {frozen::kStatisticsKeep, frozen::kStatisticsUpdate}, "", "When frozen", "Fine-tuning", false, false};
+        statistics.enum_labels = {"Keep its statistics", "Keep updating statistics"};
+        metadata.parameters.push_back(std::move(statistics));
+    }
 }
 
 void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {

@@ -96,7 +96,32 @@ A run stops at the start, with the reason, when the file cannot be read or
 **no** layer matches. The training log has one line with the summary, and
 checkpoints of the run record the file they started from.
 
-## Layers with weights that stay as loaded
+## Freezing: layers that stay as loaded
 
-A layer's weights can be kept unchanged while the rest trains (freezing). The
-setting for it on the layer nodes is not available yet.
+Every layer node that holds weights has a **Frozen** setting in Properties
+(group Fine-tuning; off by default). A frozen layer keeps its weights while
+the rest of the model trains: it gets no gradient step, no weight decay and no
+optimizer memory. Its weights are still saved in checkpoints and exports.
+
+**BatchNorm** also has **When frozen**:
+
+- **Keep its statistics** (default): the layer normalises with its loaded
+  running mean and variance, as in evaluation. This is the usual choice for
+  fine-tuning on a small dataset.
+- **Keep updating statistics**: the weights stay, but the running mean and
+  variance keep following the new data. This is what PyTorch does when only
+  `requires_grad` is turned off.
+
+The node's **As compiled** card shows a frozen layer's weights as
+"Weights: N frozen" instead of "Learnable parameters".
+
+The usual two runs:
+
+1. Start from the weights file, freeze the layers that took weights, and train
+   the new head.
+2. Turn **Frozen** off, set **Start from** to **A checkpoint of an earlier
+   run** (the first run's best checkpoint), lower the learning rate, and train
+   everything.
+
+Embedding keeps its own **Freeze Loaded Weights** setting for a table loaded
+from a file.

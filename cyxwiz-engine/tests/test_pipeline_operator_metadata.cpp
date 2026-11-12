@@ -1549,7 +1549,7 @@ void CheckConv2DReferenceContract(
     Check(HasInputType(meta, "Input", gui::PinType::Tensor) &&
               HasOutputType(meta, "Output", gui::PinType::Tensor),
           "Conv2D metadata should preserve its saved-graph pin contract");
-    Check(meta->parameters.size() == 5,
+    Check(meta->parameters.size() == 6,
           "Conv2D metadata should expose only its preserved layer fields");
     Check(ParameterMatches(meta, "filters", "int", "32") &&
               ParameterMatches(meta, "kernel_size", "int", "3") &&
@@ -1575,7 +1575,7 @@ void CheckConvolutionPoolingFamilyContract(
     for (const auto type : {gui::NodeType::Conv1D,
                             gui::NodeType::Conv3D}) {
         const auto* meta = metadata.GetMetadata(type);
-        Check(meta->parameters.size() == 5 &&
+        Check(meta->parameters.size() == 6 &&
                   ParameterMatches(meta, "filters", "int", "32") &&
                   ParameterMatches(meta, "kernel_size", "int", "3") &&
                   ParameterMatches(meta, "stride", "int", "1") &&
@@ -1588,7 +1588,7 @@ void CheckConvolutionPoolingFamilyContract(
 
     const auto* depthwise =
         metadata.GetMetadata(gui::NodeType::DepthwiseConv2D);
-    Check(depthwise->parameters.size() == 5 &&
+    Check(depthwise->parameters.size() == 6 &&
               ParameterMatches(depthwise, "use_bias", "bool", "true") &&
               !HasParameter(depthwise, "filters") &&
               ParameterMatches(depthwise, "kernel_size", "int", "3") &&
@@ -1631,7 +1631,7 @@ void CheckBlockedUpsamplingFamilyContract(
 
     const auto* transpose =
         metadata.GetMetadata(gui::NodeType::ConvTranspose2D);
-    Check(transpose->parameters.size() == 7 &&
+    Check(transpose->parameters.size() == 8 &&
               ParameterMatches(transpose, "in_channels", "int", "64") &&
               ParameterMatches(transpose, "out_channels", "int", "32") &&
               ParameterMatches(transpose, "kernel_size", "int", "3") &&
@@ -1668,7 +1668,7 @@ void CheckBlockedNormalizationFamilyContract(
     }
 
     const auto* group = metadata.GetMetadata(gui::NodeType::GroupNorm);
-    Check(group->parameters.size() == 4 &&
+    Check(group->parameters.size() == 5 &&
               ParameterMatches(group, "num_groups", "int", "32") &&
               ParameterMatches(group, "num_channels", "int", "256") &&
               ParameterMatches(group, "eps", "float", "1e-5") &&
@@ -1677,7 +1677,7 @@ void CheckBlockedNormalizationFamilyContract(
           "GroupNorm metadata must match its backend constructor and canonical fields");
 
     const auto* instance = metadata.GetMetadata(gui::NodeType::InstanceNorm);
-    Check(instance->parameters.size() == 3 &&
+    Check(instance->parameters.size() == 4 &&
               ParameterMatches(instance, "num_features", "int", "64") &&
               ParameterMatches(instance, "eps", "float", "1e-5") &&
               ParameterMatches(instance, "affine", "bool", "false") &&
@@ -1724,7 +1724,7 @@ void CheckAttentionFamilyContract(
           "Cross Attention inputs: Query, Key, Value (torch nn.MultiheadAttention(q, k, v))");
     Check(cross->outputs.size() == 1 && cross->outputs[0].name == "Output" && cross->outputs[0].required,
           "Cross Attention output: the attention result");
-    Check(cross->parameters.size() == 4 &&
+    Check(cross->parameters.size() == 5 &&
               ParameterMatches(cross, "embed_dim", "int", "512") &&
               ParameterMatches(cross, "num_heads", "int", "8") &&
               ParameterMatches(cross, "dropout", "float", "0.0") &&
@@ -1740,7 +1740,7 @@ void CheckAttentionFamilyContract(
     Check(linear->inputs.size() == 1 && linear->inputs[0].name == "Input" && linear->inputs[0].required &&
               linear->outputs.size() == 1 && linear->outputs[0].name == "Output" && linear->outputs[0].required,
           "Linear Attention: one sequence in, one out (self-attention)");
-    Check(linear->parameters.size() == 6 &&
+    Check(linear->parameters.size() == 7 &&
               ParameterMatches(linear, "embed_dim", "int", "512") &&
               ParameterMatches(linear, "num_heads", "int", "8") &&
               ParameterMatches(linear, "feature_map", "enum", "elu") &&
@@ -1767,7 +1767,7 @@ void CheckImplementedRecurrentConfigurationContract(
                   meta->outputs[1].name == "Hidden" && !meta->outputs[1].required,
               "recurrent pins must preserve saved order and optional Hidden compatibility: " +
                   TypeId(type));
-        Check(meta->parameters.size() == 6 &&
+        Check(meta->parameters.size() == 7 &&
                   ParameterMatches(meta, "input_size", "int", "0") &&
                   ParameterMatches(meta, "hidden_size", "int", "256") &&
                   ParameterMatches(meta, "num_layers", "int", "1") &&
@@ -1797,7 +1797,7 @@ void CheckImplementedRecurrentConfigurationContract(
               rnn->outputs[1].description.find("does not route") !=
                   std::string::npos,
           "RNN pins must match the recurrent pin contract");
-    Check(rnn->parameters.size() == 7 &&
+    Check(rnn->parameters.size() == 8 &&
               ParameterMatches(rnn, "input_size", "int", "0") &&
               ParameterMatches(rnn, "hidden_size", "int", "256") &&
               ParameterMatches(rnn, "num_layers", "int", "1") &&

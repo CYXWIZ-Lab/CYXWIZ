@@ -555,6 +555,107 @@ void CheckFlattenHeadAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
     std::cout << "Dense after Flatten matches PyTorch, from the Engine's layout and from a PyTorch state-dict\n";
 }
 
+// Frozen layers against PyTorch (requires_grad off): the stem's convolution
+// and BatchNorm are frozen by their node setting and the Head trains. With
+// "keep" the BatchNorm runs on its running statistics; with "update" it
+// normalises with the batch and its statistics move.
+void CheckFrozenStemAgainstPyTorch(cyxwiz::GraphCompiler& compiler, size_t case_index, const std::string& case_name,
+                                   const std::string& statistics) {
+    std::ifstream in(CYXWIZ_CNN_GRAPH_FIXTURE);
+    Check(in.good(), std::string("cannot open ") + CYXWIZ_CNN_GRAPH_FIXTURE);
+    const auto fixture = nlohmann::json::parse(in);
+    const auto& c = fixture.at("cases").at(case_index);
+    Check(c.at("name").get<std::string>() == case_name, "fixture case " + std::to_string(case_index) + " is " + case_name);
+
+    gui::MLNode data;
+    data.id = 1;
+    data.type = gui::NodeType::DataInput;
+    data.name = "Images";
+    data.outputs = {Pin(102, gui::PinType::Tensor, "Data", false), Pin(103, gui::PinType::Labels, "Labels", false)};
+    data.parameters = {{"dataset_name", "frozen_fixture"}, {"file_category", "image"},
+                       {"folder_path", "D:/tmp/frozen_fixture"}, {"image_layout", "0"}};
+    gui::MLNode loss;
+    loss.id = 40;
+    loss.type = gui::NodeType::CrossEntropyLoss;
+    loss.name = "Cross entropy";
+    loss.inputs = {Pin(4001, gui::PinType::Tensor, "Predictions", true), Pin(4002, gui::PinType::Labels, "Targets", true)};
+    loss.outputs = {Pin(4003, gui::PinType::Loss, "Loss", false)};
+    gui::MLNode adam;
+    adam.id = 41;
+    adam.type = gui::NodeType::Adam;
+    adam.name = "Adam";
+    adam.inputs = {Pin(4101, gui::PinType::Loss, "Loss", true)};
+    gui::MLNode output;
+    output.id = 42;
+    output.type = gui::NodeType::Output;
+    output.name = "Output";
+    output.parameters = {{"num_classes", "2"}};
+    const std::vector<gui::MLNode> nodes = {
+        data, Layer(2, gui::NodeType::Resize, "Resize 16", {{"width", "16"}, {"height", "16"}, {"mode", "exact"}}),
+        Layer(3, gui::NodeType::Conv2D, "Stem conv",
+              {{"filters", "8"}, {"kernel_size", "7"}, {"stride", "2"}, {"padding", "same"}, {"use_bias", "false"},
+               {"frozen", "true"}}),
+        Layer(4, gui::NodeType::BatchNorm, "Stem BN",
+              {{"eps", "1e-5"}, {"momentum", "0.1"}, {"frozen", "true"}, {"frozen_statistics", statistics}}),
+        Layer(5, gui::NodeType::ReLU6, "Stem ReLU6"),
+        Layer(6, gui::NodeType::MaxPool2D, "Stem pool", {{"pool_size", "3"}, {"stride", "2"}, {"padding", "1"}}),
+        Layer(32, gui::NodeType::GlobalAvgPool, "GAP"),
+        Layer(33, gui::NodeType::Dense, "Head", {{"units", "2"}}), loss, adam, output};
+    std::vector<gui::NodeLink> links = {Link(1, 1, 2), Link(2, 2, 3), Link(3, 3, 4), Link(4, 4, 5),
+                                        Link(5, 5, 6), Link(6, 6, 32), Link(7, 32, 33)};
+    gui::NodeLink to_loss = Link(17, 33, 40);
+    to_loss.to_pin = 4001;
+    gui::NodeLink labels;
+    labels.id = 18; labels.from_node = 1; labels.from_pin = 103; labels.to_node = 40; labels.to_pin = 4002;
+    gui::NodeLink to_adam;
+    to_adam.id = 19; to_adam.from_node = 40; to_adam.from_pin = 4003; to_adam.to_node = 41; to_adam.to_pin = 4101;
+    links.push_back(to_loss);
+    links.push_back(labels);
+    links.push_back(to_adam);
+    // Logits, the input gradient, the Head's gradients and the running
+    // statistics after the step (unchanged with "keep", moved with "update").
+    CheckGraphAgainstPyTorch(compiler, nodes, links, c);
+
+    // The frozen layers report no gradient and one optimizer step leaves them
+    // bit for bit as they were, while the Head moves by lr x its gradient.
+    const auto config = compiler.Compile(nodes, links, true);
+    auto built = cyxwiz::BuildExecutableFromConfig(config);
+    Check(config.is_valid && built.ok(), case_name + " builds again");
+    const std::string conv = "layer" + std::to_string(LayerIndex(config, "Stem conv")) + ".";
+    const std::string norm = "layer" + std::to_string(LayerIndex(config, "Stem BN")) + ".";
+    const std::string head = "layer" + std::to_string(LayerIndex(config, "Head")) + ".";
+    const std::set<std::string> frozen_names = {conv + "weights", norm + "gamma", norm + "beta",
+                                                norm + "running_mean", norm + "running_var"};
+    Check(built.model->GetFrozenParameterNames() == frozen_names, case_name + ": the frozen parameters are the stem's");
+    built.model->SetTraining(true);
+    built.model->Forward(ReadTensor(c.at("input")));
+    built.model->Backward(ReadTensor(c.at("grad_output")));
+    for (const auto& [name, gradient] : built.model->GetGradients())
+        Check(name.rfind(head, 0) == 0, case_name + ": a gradient only for the Head, got " + name);
+    const auto values = [](const cyxwiz::Tensor& tensor) {
+        const float* data = tensor.ReadData<float>();
+        return std::vector<float>(data, data + tensor.NumElements());
+    };
+    std::map<std::string, std::vector<float>> before;
+    for (const auto& [name, tensor] : built.model->GetParameters()) before[name] = values(tensor);
+    const auto head_gradient = values(built.model->GetGradients().at(head + "weight"));
+    cyxwiz::SGDOptimizer optimizer(0.5);
+    built.model->UpdateParameters(&optimizer);
+    bool frozen_same = true, head_moved = true;
+    for (const auto& [name, tensor] : built.model->GetParameters()) {
+        const auto now = values(tensor);
+        // "update" lets the running statistics move in the forward pass; that happened before `before` was taken.
+        if (frozen_names.count(name)) frozen_same = frozen_same && now == before.at(name);
+        if (name == head + "weight") {
+            for (size_t i = 0; i < now.size(); ++i)
+                head_moved = head_moved && std::abs(now[i] - (before.at(name)[i] - 0.5f * head_gradient[i])) < 1e-6f;
+        }
+    }
+    Check(frozen_same, case_name + ": an optimizer step leaves the frozen layers bit for bit");
+    Check(head_moved, case_name + ": the Head moves by the learning rate times its gradient");
+    std::cout << "Frozen stem (" << case_name << ") matches PyTorch with requires_grad off\n";
+}
+
 }  // namespace
 
 int main() {
@@ -977,6 +1078,8 @@ int main() {
     // The node's other choices: a typed width, Hardswish inside, a Hardsigmoid gate, no biases.
     CheckResNetStemAgainstPyTorch(compiler);
     CheckFlattenHeadAgainstPyTorch(compiler);
+    CheckFrozenStemAgainstPyTorch(compiler, 5, "frozen_stem_keep", "keep");
+    CheckFrozenStemAgainstPyTorch(compiler, 6, "frozen_stem_update", "update");
     CheckSqueezeExcitationAgainstPyTorch(compiler, 2, "squeeze_excitation_hard",
                                          {{"width_mode", "exact"}, {"squeeze_channels", "3"}, {"inner_activation", "hardswish"},
                                           {"gate", "hardsigmoid"}, {"use_bias", "false"}});

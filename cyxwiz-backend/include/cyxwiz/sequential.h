@@ -1531,7 +1531,19 @@ public:
     size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
     std::vector<std::string> GetStateNames() const override { return {"running_mean", "running_var"}; }
 
+    // A frozen BatchNorm can also keep its running statistics: with this on,
+    // a frozen module runs as in evaluation while the model trains (what
+    // fine-tuning on small data wants). Off, the default, is PyTorch's
+    // behaviour when only requires_grad is off: the weights stay and the
+    // statistics keep following the data.
+    void SetKeepStatisticsWhenFrozen(bool keep) { keep_statistics_when_frozen_ = keep; }
+    bool KeepsStatisticsWhenFrozen() const { return keep_statistics_when_frozen_; }
+    void SetTraining(bool training) override {
+        Module::SetTraining(training && !(keep_statistics_when_frozen_ && !IsTrainable()));
+    }
+
 private:
+    bool keep_statistics_when_frozen_ = false;
     size_t num_features_;
     float eps_;
     float momentum_;
@@ -1659,7 +1671,19 @@ public:
     size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
     std::vector<std::string> GetStateNames() const override { return {"running_mean", "running_var"}; }
 
+    // A frozen BatchNorm can also keep its running statistics: with this on,
+    // a frozen module runs as in evaluation while the model trains (what
+    // fine-tuning on small data wants). Off, the default, is PyTorch's
+    // behaviour when only requires_grad is off: the weights stay and the
+    // statistics keep following the data.
+    void SetKeepStatisticsWhenFrozen(bool keep) { keep_statistics_when_frozen_ = keep; }
+    bool KeepsStatisticsWhenFrozen() const { return keep_statistics_when_frozen_; }
+    void SetTraining(bool training) override {
+        Module::SetTraining(training && !(keep_statistics_when_frozen_ && !IsTrainable()));
+    }
+
 private:
+    bool keep_statistics_when_frozen_ = false;
     std::unique_ptr<BatchNorm2DLayer> layer_;
     int num_features_;
     float eps_;

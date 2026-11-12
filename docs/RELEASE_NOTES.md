@@ -152,6 +152,12 @@ private Data Studio tickets (`tofix*/track*`).
   Swish), the gate (Sigmoid, Hardsigmoid) and bias. Properties lists the
   six steps inside the node with their outputs and weights ("Inside this
   layer").
+- **Frozen layers.** Every layer node with weights (Dense, the convolutions,
+  the normalisations, Squeeze-Excitation, recurrent and attention layers) has
+  a **Frozen** setting: the layer keeps its weights while the rest trains.
+  BatchNorm adds **When frozen**: keep its running statistics (default) or
+  keep updating them. Both are checked against PyTorch with `requires_grad`
+  off. The As compiled card shows "Weights: N frozen".
 - **Start training from a published weights file.** Data Loader >
   Checkpoints > **Start from** is now one choice: random weights, a
   checkpoint of an earlier run, or **a weights file** (a PyTorch state-dict

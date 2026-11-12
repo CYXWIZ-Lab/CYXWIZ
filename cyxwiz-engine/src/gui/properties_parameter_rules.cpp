@@ -1,3 +1,4 @@
+#include "../core/frozen_layers.h"
 #include "properties_parameter_rules.h"
 #include "../core/normalize_statistics.h"
 #include <algorithm>
@@ -119,6 +120,12 @@ bool ShouldHideGenericParameter(
         if (param.name == "mean" || param.name == "std") return !same;
         if (param.name == "channel_mean" || param.name == "channel_std") return same;
         if (param.name == "statistics_source") return true;  // shown under the channel rows
+    }
+
+    if (param.name == cyxwiz::frozen::kStatistics) {
+        // What a frozen BatchNorm does with its statistics: only asked of a frozen node.
+        const auto it = node.parameters.find(cyxwiz::frozen::kFrozen);
+        return it == node.parameters.end() || it->second != "true";
     }
 
     if (type == NodeType::SqueezeExcitation) {

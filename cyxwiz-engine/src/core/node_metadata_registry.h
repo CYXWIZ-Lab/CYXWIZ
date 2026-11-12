@@ -190,6 +190,7 @@ private:
 
     // Initialize utility nodes
     void InitializeUtilityNodes();
+    void AddFrozenSettings();
 
     // Tool-to-Node Migration (Phase 5)
     void InitializeLinearAlgebraNodes();
