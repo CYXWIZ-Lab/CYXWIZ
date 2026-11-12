@@ -23,7 +23,7 @@ std::string Format(double v, const char* fmt = "%.4g") {
     return buf;
 }
 
-// One KPI card: label, value, a muted detail line.
+// One KPI card: label, value, a muted detail (it wraps: a narrow card hides nothing).
 void Card(const char* id, const char* label, const std::string& value, const std::string& detail, float width) {
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
@@ -34,7 +34,9 @@ void Card(const char* id, const char* label, const std::string& value, const std
         ui::FontScope big(ui::Font::Heading);
         ImGui::TextUnformatted(value.c_str());
     }
+    ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_dim, "%s", detail.c_str());
+    ImGui::PopTextWrapPos();
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
