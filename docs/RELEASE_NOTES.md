@@ -7,6 +7,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **"Start from" works on graphs with branches.** Starting a run from a
+  checkpoint, and leaving normalisation, bias and embedding weights out of
+  weight decay, needed a plain layer stack; both now work on residual and
+  other branched graphs.
 - **Saved defaults for the layer views' choices.** Top images (Channels,
   Ranked by), Embedding (Method, Colour by) and Unit weights (Order) each
   have a **Save as my default** link beside their controls, and

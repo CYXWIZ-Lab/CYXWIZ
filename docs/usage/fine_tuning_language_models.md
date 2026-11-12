@@ -91,6 +91,8 @@ resolved against the project, like Data Input paths.
   windows. New checkpoints record `tokenizer_sha256`; for older ones the run's
   generation previews are used. If neither exists, the run stops rather than
   guessing.
+- It works for a plain layer stack and for a graph with branches (residual
+  blocks).
 - **Start from** and **Resume** are different: Resume continues the same run;
   Start from begins a new run. Using both is refused.
 - New checkpoints record where the run started (`initialized_from`) and the

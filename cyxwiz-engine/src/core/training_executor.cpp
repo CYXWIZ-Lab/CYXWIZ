@@ -1326,14 +1326,10 @@ void TrainingExecutor::Train(
             fail_run("warm_start_failed: a run either resumes a checkpoint or starts from one, not both");
             return;
         }
-        SequentialModel* sequential = model_->AsSequentialModel();
-        if (!sequential) {
-            fail_run("warm_start_failed: starting from a checkpoint needs a sequential model");
-            return;
-        }
+        // Any executable model: a layer stack or a graph with branches.
         const std::filesystem::path source = std::filesystem::absolute(config_.initialize_from_checkpoint);
         std::string warm_error;
-        const auto loaded = LoadWarmStartCheckpoint(source, *sequential, tokenizer_sha256, warm_error);
+        const auto loaded = LoadWarmStartCheckpoint(source, *model_, tokenizer_sha256, warm_error);
         if (!loaded) {
             fail_run("warm_start_failed: " + warm_error);
             return;
@@ -2491,18 +2487,14 @@ void TrainingExecutor::ConfigureWeightDecayExclusions() {
         throw std::runtime_error("TrainingExecutor: weight_decay_exclude needs the AdamW or SGD optimizer");
     }
     // 1-D tensors are biases and normalization scales/shifts; embedding tables
-    // are the Embedding and learned-position modules (SequentialModel names
-    // parameters "layer<i>.<name>").
+    // are the Embedding and learned-position modules (parameters are named
+    // "layer<i>.<name>" by module index, in a layer stack and in a graph with
+    // branches alike).
     std::set<std::string> excluded;
     std::set<std::string> embedding_prefixes;
     if (config_.weight_decay_exclude == "norms_biases_embeddings") {
-        SequentialModel* sequential = model_->AsSequentialModel();
-        if (!sequential) {
-            throw std::runtime_error(
-                "TrainingExecutor: weight_decay_exclude=norms_biases_embeddings needs a sequential model");
-        }
-        for (size_t i = 0; i < sequential->Size(); ++i) {
-            Module* module = sequential->GetModule(i);
+        for (size_t i = 0; i < model_->LayerCount(); ++i) {
+            Module* module = model_->LayerModule(i);
             if (dynamic_cast<EmbeddingModule*>(module) || dynamic_cast<LearnedPositionalEmbeddingModule*>(module)) {
                 embedding_prefixes.insert("layer" + std::to_string(i) + ".");
             }
