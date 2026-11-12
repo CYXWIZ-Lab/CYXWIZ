@@ -269,6 +269,25 @@ void CheckReference() {
     cartpole.normalize_observations = true;
     Check(!cyxwiz::rl::FindPpoReference(text.str(), "CartPole-v1", 8, cartpole).has_value(),
           "normalised observations have no reference");
+
+    // HalfCheetah's reference normalises (VecNormalize), as its tuned settings do
+    cyxwiz::rl::PpoConfig cheetah;
+    cheetah.n_steps = 512;
+    cheetah.batch_size = 64;
+    cheetah.n_epochs = 20;
+    cheetah.learning_rate = 2.0633e-05f;
+    cheetah.gamma = 0.98f;
+    cheetah.gae_lambda = 0.92f;
+    cheetah.loss.clip_range = 0.1f;
+    cheetah.loss.ent_coef = 0.000401762f;
+    cheetah.loss.vf_coef = 0.58096f;
+    cheetah.max_grad_norm = 0.8f;
+    cheetah.normalize_observations = cheetah.normalize_rewards = true;
+    Check(cyxwiz::rl::FindPpoReference(text.str(), "HalfCheetah-v5", 1, cheetah).has_value(),
+          "HalfCheetah's normalised run has its normalised reference");
+    cheetah.normalize_rewards = false;
+    Check(!cyxwiz::rl::FindPpoReference(text.str(), "HalfCheetah-v5", 1, cheetah).has_value(),
+          "a run normalising only the observations has none");
 }
 
 }  // namespace
