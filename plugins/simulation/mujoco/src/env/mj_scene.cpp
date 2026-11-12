@@ -14,6 +14,8 @@ constexpr const char* kGroundName = "cyx_stress_ground";
 constexpr const char* kGroundMaterial = "cyx_stress_ground_material";
 constexpr double kParkY = 1000.0;  // object slots wait this far to the side (out of sight), one 3 m apart
 constexpr float kObjectRgba[4] = {0.91f, 0.69f, 0.29f, 1.0f};
+// The stress ground's colour: sand, so it stands out from the model's own floor
+constexpr float kGroundRgba[4] = {0.95f, 0.72f, 0.45f, 1.0f};
 
 // The model's floor: a plane on the world body (the first one)
 struct Floor {
@@ -56,17 +58,14 @@ void TouchLikeFloor(mjsGeom* geom, const mjModel* m, const Floor& floor, int mas
     geom->gap = m->geom_gap[g];
 }
 
-// The ground's look: the floor's texture laid at the floor's period (texuniform
-// keeps the squares the same size on every face); the floor's colour without one
-void LookLikeFloor(mjSpec* spec, mjsGeom* geom, const mjModel* m, const Floor& floor) {
+// The ground's look: sand-coloured, so it is plain where it starts and how it
+// rises; with the floor's texture laid at half the floor's period (finer squares
+// show the bumps and slopes; texuniform keeps them the same size on every face)
+void LookLikeGround(mjSpec* spec, mjsGeom* geom, const mjModel* m, const Floor& floor) {
     mjs_setString(geom->material, "");
-    if (floor.geom < 0) {
-        const float grey[4] = {0.55f, 0.6f, 0.55f, 1.0f};
-        std::copy(grey, grey + 4, geom->rgba);
-        return;
-    }
+    std::copy(kGroundRgba, kGroundRgba + 4, geom->rgba);
+    if (floor.geom < 0) return;
     const int g = floor.geom;
-    for (int i = 0; i < 4; ++i) geom->rgba[i] = m->geom_rgba[4 * g + i];
     const int mat = m->geom_matid[g];
     if (mat < 0) return;
     const int tex = m->mat_texid[mat * mjNTEXROLE + mjTEXROLE_RGB];
@@ -74,7 +73,7 @@ void LookLikeFloor(mjSpec* spec, mjsGeom* geom, const mjModel* m, const Floor& f
     if (!mjs_findElement(spec, mjOBJ_MATERIAL, kGroundMaterial)) {
         mjsMaterial* material = mjs_addMaterial(spec, nullptr);
         mjs_setName(material->element, kGroundMaterial);
-        for (int i = 0; i < 4; ++i) material->rgba[i] = m->mat_rgba[4 * mat + i];
+        std::copy(kGroundRgba, kGroundRgba + 4, material->rgba);
         material->reflectance = 0.0f;  // a mirror finish looks wrong on bumps
         if (tex_name && mjs_setInStringVec(material->textures, mjTEXROLE_RGB, tex_name)) {
             // One texture repeat spans `period` m of the floor
@@ -83,7 +82,7 @@ void LookLikeFloor(mjSpec* spec, mjsGeom* geom, const mjModel* m, const Floor& f
             if (repeat > 0.0)
                 period = m->mat_texuniform[mat] ? 1.0 / repeat : 2.0 * m->geom_size[3 * g] / repeat;
             material->texuniform = 1;
-            material->texrepeat[0] = material->texrepeat[1] = static_cast<float>(1.0 / period);
+            material->texrepeat[0] = material->texrepeat[1] = static_cast<float>(2.0 / period);
         }
     }
     mjs_setString(geom->material, kGroundMaterial);
@@ -342,7 +341,7 @@ mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjR
             geom->pos[1] = start[1];
             geom->pos[2] = floor.z;
             TouchLikeFloor(geom, plain, floor, mask);
-            LookLikeFloor(spec.get(), geom, plain, floor);
+            LookLikeGround(spec.get(), geom, plain, floor);
         }
     }
     const std::vector<MjGroundBox> boxes = GroundBoxes(scene.ground);
@@ -358,7 +357,7 @@ mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjR
         geom->pos[1] = start[1];
         geom->pos[2] = floor.z + box.height / 2.0;
         TouchLikeFloor(geom, plain, floor, mask);
-        LookLikeFloor(spec.get(), geom, plain, floor);
+        LookLikeGround(spec.get(), geom, plain, floor);
     }
 
     // The object slots: free bodies after everything else, parked to the side
