@@ -208,10 +208,8 @@ NodeEditor::NodeEditor()
             spdlog::info("PPO stopped: its environment's plugin {} is stopping", plugin_id);
             rl_run_->StopAndWait();
         }
-        if (rl_playback_->Policy() && owned(rl_playback_->Policy()->config.environment_key)) {
-            spdlog::info("Policy playback stopped: its environment's plugin {} is stopping", plugin_id);
-            rl_playback_->Stop();
-        }
+        // Its playback and its stress test (each steps its own copies)
+        rl_playback_->StopIfUses(owned);
     });
 
     // An RL graph's Environment names an environment of the plugin

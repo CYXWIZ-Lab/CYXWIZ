@@ -19,16 +19,17 @@ PolicyPlayback::~PolicyPlayback() { Stop(); }
 
 bool PolicyPlayback::Start(std::shared_ptr<TrainedPolicy> policy, PlaybackSpeed speed, bool best, std::string& error) {
     Stop();
-    if (!policy || !policy->policy) {
-        error = "There is no trained policy to play.";
-        return false;
-    }
-    policy_ = std::move(policy);
+    // SetConditions is for this Start only, whether it starts or not
     has_conditions_ = pending_conditions_;
     settings_ = std::move(pending_settings_);
     first_seed_ = pending_seed_;
     pending_conditions_ = false;
     pending_settings_.clear();
+    if (!policy || !policy->policy) {
+        error = "There is no trained policy to play.";
+        return false;
+    }
+    policy_ = std::move(policy);
     stop_ = false;
     paused_ = false;
     new_episode_ = false;

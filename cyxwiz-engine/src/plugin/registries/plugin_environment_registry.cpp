@@ -176,6 +176,7 @@ bool PluginEnvironmentRegistry::Find(const std::string& key, Environment& out) c
 bool PluginEnvironmentRegistry::Describe(const std::string& key, const std::map<std::string, std::string>& settings,
                                          Environment& out, std::string& error) const {
     IEnvironmentProvider* provider = nullptr;
+    std::shared_ptr<void> lease;
     {
         std::lock_guard lock(mutex_);
         const auto it = environments_.find(key);
@@ -185,6 +186,7 @@ bool PluginEnvironmentRegistry::Describe(const std::string& key, const std::map<
         }
         out = it->second.environment;
         provider = it->second.provider;
+        lease = it->second.library_lease;  // the library stays loaded while the plugin is called
     }
     PluginEnvironmentInfo described;
     std::string reason;

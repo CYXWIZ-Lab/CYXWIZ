@@ -57,7 +57,20 @@ bool PolicyPlaybackPanel::Play(std::shared_ptr<rl::TrainedPolicy> policy, std::s
     return true;
 }
 
-void PolicyPlaybackPanel::Stop() { playback_.Stop(); }
+void PolicyPlaybackPanel::Stop() {
+    playback_.Stop();
+    stress_.Stop();
+}
+
+void PolicyPlaybackPanel::StopIfUses(const std::function<bool(const std::string& environment_key)>& uses) {
+    if (const auto policy = playback_.Policy(); policy && uses(policy->config.environment_key)) playback_.Stop();
+    for (const auto& [name, policy] : tested_) {
+        if (policy && uses(policy->config.environment_key)) {
+            stress_.Stop();
+            break;
+        }
+    }
+}
 
 void PolicyPlaybackPanel::LookUpViewTitle(const std::string& environment_key) {
     // Kept once found; an environment without one (yet: its plugin may load later) is asked again
@@ -138,7 +151,9 @@ void PolicyPlaybackPanel::Render() {
         return;
     }
     if (ImGui::BeginTabBar("##playback_tabs")) {
-        if (ImGui::BeginTabItem("Play")) {
+        const ImGuiTabItemFlags play_flags = select_play_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+        select_play_ = false;
+        if (ImGui::BeginTabItem("Play", nullptr, play_flags)) {
             RenderPlay(policy);
             ImGui::EndTabItem();
         }
@@ -290,7 +305,9 @@ void PolicyPlaybackPanel::WatchLevel(const std::shared_ptr<rl::TrainedPolicy>& p
     start_error_.clear();
     if (!playback_.Start(policy, playback_.Speed(), true, start_error_)) spdlog::error("Policy playback: {}", start_error_);
     view_opened_ = false;
-    file_name_ = policy == compare_policy_ ? compare_name_ : stress_policy_name_;
+    select_play_ = true;  // the Play tab, which opens the plugin's view
+    for (const auto& [name, tested] : tested_)
+        if (tested == policy) file_name_ = name;
 }
 
 void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPolicy>& policy) {
@@ -347,9 +364,15 @@ void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPoli
         ImGui::TextColored(t.text_dim, "%s", pb::PolicySource(compare_name_, compare_policy_->steps).c_str());
     }
 
-    static const char* kKinds[] = {"Rough", "Slopes", "Steps", "Obstacles", "Kicks"};
+    if (!stress_defaults_read_) {
+        stress_defaults_read_ = true;
+        const auto d = core::EngineConfig::Instance().PolicyStressTestDefaults();
+        stress_kind_ = d.kind;
+        stress_levels_ = d.levels;
+        stress_episodes_ = d.episodes;
+    }
     label("Disturbance");
-    ui::SegmentedControl("##stress_kind", kKinds, rl::kStressKindCount, &stress_kind_);
+    ui::SegmentedControl("##stress_kind", rl::StressKindNames(), rl::kStressKindCount, &stress_kind_);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("A ground at the level's difficulty, or pushes every 1.5 s of up to 4 m/s times the difficulty");
     label("Levels");
@@ -358,6 +381,13 @@ void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPoli
     ImGui::TextColored(t.text_dim, "episodes a level");
     ImGui::SameLine();
     ui::NumberField("##stress_episodes", &stress_episodes_, 1, 100, 1, 60.0f);
+    ImGui::SameLine();
+    if (ui::LinkButton("Keep these as the default")) {
+        auto& config = core::EngineConfig::Instance();
+        config.SetPolicyStressTestDefaults({stress_kind_, stress_levels_, stress_episodes_});
+        config.Save();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Preferences > Simulation keeps them too");
     ImGui::Spacing();
     if (running) {
         if (ui::DangerButton(ICON_FA_STOP " Stop test", true, nullptr, ui::ButtonSize::Regular)) stress_.Stop();
@@ -370,6 +400,7 @@ void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPoli
         stress_policy_name_ = file_name_.empty() ? std::string("this session's run") : file_name_;
         policies.push_back({stress_policy_name_, policy});
         if (compare_policy_) policies.push_back({compare_name_, compare_policy_});
+        tested_ = policies;
         rl::StressTestSpec spec;
         spec.kind = static_cast<rl::StressKind>(stress_kind_);
         spec.levels = stress_levels_;
@@ -399,7 +430,8 @@ void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPoli
         // The return axis follows the results as levels come in
         ImPlot::SetupAxes("difficulty", "mean return", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
         ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, 1.0, ImPlotCond_Always);
-        for (const auto& r : snap.results) {
+        for (size_t p = 0; p < snap.results.size(); ++p) {
+            const auto& r = snap.results[p];
             std::vector<double> x, y;
             for (const auto& l : r.levels) {
                 x.push_back(l.difficulty);
@@ -407,7 +439,9 @@ void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPoli
             }
             if (x.empty()) continue;
             ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3.0f);
-            ImPlot::PlotLine(r.name.c_str(), x.data(), y.data(), static_cast<int>(x.size()));
+            // The column's index keeps two policies of the same file name apart
+            const std::string series = r.name + "##policy" + std::to_string(p);
+            ImPlot::PlotLine(series.c_str(), x.data(), y.data(), static_cast<int>(x.size()));
         }
         ImPlot::EndPlot();
     }
@@ -441,7 +475,8 @@ void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPoli
                 ImGui::TableNextColumn();
                 if (l < r.levels.size() && !running) {
                     ImGui::PushID(static_cast<int>(p * 100 + l));
-                    if (ui::LinkButton("Watch")) WatchLevel(p == 0 ? stress_policy_ : compare_policy_, static_cast<int>(l));
+                    if (ui::LinkButton("Watch") && p < tested_.size() && tested_[p].second)
+                        WatchLevel(tested_[p].second, static_cast<int>(l));
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play this level's first episode again in the Play tab");
                     ImGui::PopID();
                 }

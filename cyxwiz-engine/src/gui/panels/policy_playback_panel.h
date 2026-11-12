@@ -8,8 +8,11 @@
 #include "../../core/rl/policy_playback.h"
 #include "../../core/rl/policy_stress_test.h"
 
+#include <functional>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -18,7 +21,10 @@ public:
     // Plays `policy` from the Preferences defaults and shows the panel.
     // file_name: where it was loaded from (empty: this session's run).
     bool Play(std::shared_ptr<rl::TrainedPolicy> policy, std::string file_name, std::string& error);
+    // Stops the playback and a stress test that runs
     void Stop();
+    // Stops whichever of them steps an environment `uses` owns (its plugin is stopping)
+    void StopIfUses(const std::function<bool(const std::string& environment_key)>& uses);
     // The policy shown (null before the first Play)
     std::shared_ptr<rl::TrainedPolicy> Policy() const { return playback_.Policy(); }
 
@@ -52,13 +58,19 @@ private:
     rl::PolicyStressTest stress_;
     std::shared_ptr<rl::TrainedPolicy> stress_policy_;  // the one under test (kept: playback may switch)
     std::string stress_policy_name_;
+    // The policies of the last test, in its columns' order (Watch plays these,
+    // whatever the Compare with field holds now)
+    std::vector<std::pair<std::string, std::shared_ptr<rl::TrainedPolicy>>> tested_;
     char compare_path_[512] = "";
     std::shared_ptr<rl::TrainedPolicy> compare_policy_;
     std::string compare_name_;
     std::string compare_error_;
+    // From Preferences > Simulation, read when the tab is first drawn
+    bool stress_defaults_read_ = false;
     int stress_kind_ = 0;
     int stress_levels_ = 5;
     int stress_episodes_ = 10;
+    bool select_play_ = false;  // Watch shows the Play tab
     std::string stress_note_;  // where the CSV went, or why the test did not start
     bool stress_note_failed_ = false;
 };

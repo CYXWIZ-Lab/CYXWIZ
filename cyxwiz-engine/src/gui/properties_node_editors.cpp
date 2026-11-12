@@ -19,6 +19,8 @@
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <chrono>
+#include <map>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
@@ -201,6 +203,39 @@ std::vector<cyxwiz::rl_graph::ListedEnvironment> ListedEnvironments() {
     return out;
 }
 
+// The environment as a node's settings make it (the plugin's DescribeEnvironment),
+// asked again when the settings change or every 2 s, not every frame
+bool DescribedEnvironment(const std::string& key, const std::map<std::string, std::string>& settings,
+                          cyxwiz::plugin::PluginEnvironmentRegistry::Environment& out, std::string& error) {
+    struct Cached {
+        std::string key;
+        std::map<std::string, std::string> settings;
+        std::chrono::steady_clock::time_point at;
+        bool ok = false;
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment;
+        std::string error;
+    };
+    static std::vector<Cached> cache;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = cache.begin(); it != cache.end(); ++it) {
+        if (it->key != key || it->settings != settings) continue;
+        if (now - it->at < std::chrono::seconds(2)) {
+            out = it->environment;
+            error = it->error;
+            return it->ok;
+        }
+        cache.erase(it);
+        break;
+    }
+    Cached entry{key, settings, now};
+    entry.ok = cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Describe(key, settings, entry.environment, entry.error);
+    if (cache.size() >= 16) cache.erase(cache.begin());
+    cache.push_back(entry);
+    out = entry.environment;
+    error = entry.error;
+    return entry.ok;
+}
+
 void FactRows(const std::vector<cyxwiz::rl_graph::Fact>& facts) {
     for (const auto& f : facts) properties_rows::ReadOnly(f.label.c_str(), f.value, "");
 }
@@ -357,8 +392,8 @@ bool RenderEnvironment(MLNode& node) {
         // As the node's settings make it: an extra observation changes what it observes
         cyxwiz::plugin::PluginEnvironmentRegistry::Environment described;
         std::string reason;
-        const bool ok = cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Describe(
-            env->key, cyxwiz::rl_graph::StoredSettings(node.parameters), described, reason);
+        const bool ok =
+            DescribedEnvironment(env->key, cyxwiz::rl_graph::StoredSettings(node.parameters), described, reason);
         FactRows(cyxwiz::rl_graph::EnvironmentFacts(ok ? described.info : env->info));
         if (!ok && !reason.empty()) properties_rows::Note(reason.c_str());
     }
@@ -388,8 +423,7 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
                                        ParamOr(*env_node, "environment"), env);
     // As its Environment's settings make it (the observation it feeds the networks)
     if (known)
-        cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Describe(
-            env.key, cyxwiz::rl_graph::StoredSettings(env_node->parameters), env, describe_error);
+        DescribedEnvironment(env.key, cyxwiz::rl_graph::StoredSettings(env_node->parameters), env, describe_error);
     properties_rows::Rows rows("##rl_facts");
     if (!rows.ok) return;
     if (node.type == NodeType::ValueHead) {

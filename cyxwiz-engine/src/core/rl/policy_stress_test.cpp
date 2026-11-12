@@ -14,15 +14,14 @@
 
 namespace cyxwiz::rl {
 
+const char* const* StressKindNames() {
+    static const char* const kNames[kStressKindCount] = {"Rough", "Slopes", "Steps", "Obstacles", "Kicks"};
+    return kNames;
+}
+
 const char* StressKindName(StressKind kind) {
-    switch (kind) {
-        case StressKind::Rough: return "Rough";
-        case StressKind::Slopes: return "Slopes";
-        case StressKind::Steps: return "Steps";
-        case StressKind::Obstacles: return "Obstacles";
-        case StressKind::Kicks: return "Kicks";
-    }
-    return "Rough";
+    const int i = static_cast<int>(kind);
+    return i >= 0 && i < kStressKindCount ? StressKindNames()[i] : StressKindNames()[0];
 }
 
 bool SupportsStress(const plugin::PluginEnvironmentInfo& info) {
@@ -168,6 +167,11 @@ void PolicyStressTest::Run() {
                 if (!batch) return fail(policies_[p].first + ": " + error);
                 const size_t obs_size = static_cast<size_t>(batch->ObservationSize());
                 const size_t act_size = static_cast<size_t>(batch->ActionSize());
+                if (obs_size != policy.config.observation_size ||
+                    act_size != static_cast<size_t>(policy.config.environment.action_size))
+                    return fail(policies_[p].first + " was trained on " + std::to_string(policy.config.observation_size) +
+                                " observed values; the environment now gives " + std::to_string(obs_size) +
+                                ": its plugin or settings changed since.");
                 std::vector<float> obs(n * obs_size), final_obs(n * obs_size), rewards(n);
                 std::vector<uint8_t> terminated(n), truncated(n);
                 const plugin::PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(),
@@ -196,8 +200,11 @@ void PolicyStressTest::Run() {
                 }
                 if (stop_) break;
                 result.returns = returns;
-                // Ended early (the task's end) or upside down (the batch counts those)
-                result.falls = std::max(terminated_count, std::min(n, FallsFromStats(*batch, n)));
+                // A copy that ended early starts again and may end again before the others finish,
+                // so the batch's own count covers more than the test's episodes: then the early
+                // endings are the falls. When none ended early, every copy ended once, together,
+                // and the batch's count (ended early or upside down) is exactly theirs.
+                result.falls = terminated_count > 0 ? terminated_count : std::min(n, FallsFromStats(*batch, n));
                 std::lock_guard<std::mutex> lock(mutex_);
                 snapshot_.results[p].levels.push_back(std::move(result));
                 ++snapshot_.done;
@@ -213,7 +220,12 @@ void PolicyStressTest::Run() {
 std::string StressResultsCsv(const std::vector<StressPolicyResult>& results, int episodes) {
     std::ostringstream csv;
     csv << "difficulty";
-    for (const auto& r : results) csv << ",\"" << r.name << " mean return\",\"" << r.name << " falls\"";
+    const auto quoted = [](std::string text) {  // CSV: a quote inside a field is doubled
+        for (size_t at = text.find('"'); at != std::string::npos; at = text.find('"', at + 2)) text.insert(at, 1, '"');
+        return text;
+    };
+    for (const auto& r : results)
+        csv << ",\"" << quoted(r.name) << " mean return\",\"" << quoted(r.name) << " falls\"";
     csv << ",episodes\n";
     size_t levels = 0;
     for (const auto& r : results) levels = std::max(levels, r.levels.size());

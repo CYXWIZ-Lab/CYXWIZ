@@ -50,6 +50,13 @@ struct AppearanceConfig {
  *   auto& config = EngineConfig::Instance();
  *   std::string central = config.GetCentralServerAddress();
  */
+// How the Policy Playback panel's Stress test starts (Preferences > Simulation)
+struct PolicyStressDefaults {
+    int kind = 0;       // rl::StressKind: 0 Rough, 1 Slopes, 2 Steps, 3 Obstacles, 4 Kicks
+    int levels = 5;     // 2 to 21
+    int episodes = 10;  // a level, 1 to 100
+};
+
 class EngineConfig {
 public:
     static EngineConfig& Instance();
@@ -212,6 +219,9 @@ public:
     // Play the policy when a PPO run finishes. Off by default.
     bool PlayPolicyAfterTraining() const;
     void SetPlayPolicyAfterTraining(bool play);
+    // The Stress test's disturbance, levels and episodes (clamped to their ranges)
+    PolicyStressDefaults PolicyStressTestDefaults() const;
+    void SetPolicyStressTestDefaults(PolicyStressDefaults defaults);
 
     // ===== Appearance (Engine-wide) =====
 
@@ -282,6 +292,7 @@ private:
     bool policy_playback_best_ = true;
     int policy_playback_speed_ = 0;
     bool play_policy_after_training_ = false;
+    PolicyStressDefaults policy_stress_defaults_;
     bool open_simulation_monitor_on_run_ = true;
     std::map<std::string, std::map<std::string, std::string>> plugin_settings_;
     AppearanceConfig appearance_;

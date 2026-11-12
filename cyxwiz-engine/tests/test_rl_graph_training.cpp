@@ -244,6 +244,39 @@ void CheckCartPole() {
           "a missing file is refused with the reason: " + load_error);
 }
 
+// A stress test of a trained policy, run whole and stopped early
+void CheckStressRun(const std::shared_ptr<cyxwiz::rl::TrainedPolicy>& policy) {
+    using namespace cyxwiz::rl;
+    Check(SupportsStress(policy->config.environment), "a MuJoCo task takes the stress test's settings");
+    StressTestSpec spec;
+    spec.kind = StressKind::Kicks;
+    spec.levels = 2;
+    spec.episodes = 2;
+    PolicyStressTest test;
+    std::string error;
+    Check(test.Start({{"a", policy}, {"b", policy}}, spec, error), "the stress test starts: " + error);
+    for (int i = 0; i < 6000 && test.Get().state == PolicyStressTest::State::Running; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const auto done = test.Get();
+    Check(done.state == PolicyStressTest::State::Finished, "it finishes: " + done.message);
+    bool shaped = done.results.size() == 2 && done.done == 4 && done.total == 4;
+    for (const auto& r : done.results) {
+        shaped = shaped && r.levels.size() == 2;
+        for (const auto& level : r.levels)
+            shaped = shaped && level.returns.size() == 2 && level.falls >= 0 && level.falls <= 2;
+    }
+    Check(shaped, "a result for each policy and level: two returns, at most two falls");
+    // The same policy, the same seeds: the same returns
+    Check(shaped && done.results[0].levels[1].returns == done.results[1].levels[1].returns,
+          "both columns meet the same kicks");
+
+    spec.levels = 21;
+    spec.episodes = 100;
+    Check(test.Start({{"a", policy}}, spec, error), "a long stress test starts: " + error);
+    test.Stop();
+    Check(test.Get().state == PolicyStressTest::State::Stopped, "Stop ends it");
+}
+
 void CheckContinuous(const std::filesystem::path& plugin) {
     auto& manager = cyxwiz::plugin::PluginManager::Instance();
     std::string error;
@@ -264,8 +297,13 @@ void CheckContinuous(const std::filesystem::path& plugin) {
         cyxwiz::rl::RLTrainingRun run;
         SelectCpu();
         Check(run.Start(config, rl_graph_test::Json(g), error), "the InvertedPendulum run starts: " + error);
-        Wait(run, 300.0);
+        const auto updates = Wait(run, 300.0);
         Check(run.GetState() == cyxwiz::rl::RLTrainingRun::State::Finished, "it finishes: " + run.Message());
+        // The batch's own numbers reach the dashboard with each update
+        bool falls_reported = false;
+        for (const auto& m : updates)
+            for (const auto& stat : m.environment_stats) falls_reported = falls_reported || stat.label == "Falls";
+        Check(falls_reported, "the environment's Falls reaches the update metrics");
         const auto trained = run.Trained();
         Check(trained != nullptr && trained->normalizer != nullptr && trained->log_std.NumElements() == 1,
               "it keeps a Gaussian policy with its observation statistics");
@@ -276,6 +314,7 @@ void CheckContinuous(const std::filesystem::path& plugin) {
             for (const float a : actions) bounded = bounded && a >= info.action_low[0] && a <= info.action_high[0];
             Check(bounded, "sampled actions stay within the bounds");
             CheckSaveAndLoad(*trained, "cyxwiz_rl_pendulum_policy_test.cyxmodel");
+            CheckStressRun(trained);
         }
     }
     manager.UnloadPlugin("com.cyxwiz.simulation.mujoco");

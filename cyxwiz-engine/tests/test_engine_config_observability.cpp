@@ -51,6 +51,24 @@ int main() {
     Check(config.SimulationRateHz() == 120 && !config.OpenSimulationMonitorOnRun(),
           "the tick rate and the open-on-run choice survive a round trip");
 
+    // A plugin's own settings, and the Stress test's defaults (kept in range)
+    config.SetPluginSetting("com.example.sim", "viewport.stress", "{\"kick\":1.5}");
+    config.SetPolicyStressTestDefaults({3, 50, 0});
+    const auto clamped = config.PolicyStressTestDefaults();
+    Check(clamped.kind == 3 && clamped.levels == 21 && clamped.episodes == 1, "the stress test defaults stay in range");
+    config.SetPolicyStressTestDefaults({4, 7, 12});
+    Check(config.Save(path), "plugin settings and stress test defaults should persist");
+    config.SetPluginSetting("com.example.sim", "viewport.stress", "changed");
+    config.SetPolicyStressTestDefaults({});
+    Check(config.Load(path), "plugin settings and stress test defaults should reload");
+    std::string stored;
+    Check(config.PluginSetting("com.example.sim", "viewport.stress", stored) && stored == "{\"kick\":1.5}",
+          "a plugin's setting survives a round trip");
+    Check(!config.PluginSetting("com.example.sim", "never.set", stored), "a key the plugin never set is not there");
+    const auto reloaded = config.PolicyStressTestDefaults();
+    Check(reloaded.kind == 4 && reloaded.levels == 7 && reloaded.episodes == 12,
+          "the stress test defaults survive a round trip");
+
     std::error_code error;
     std::filesystem::remove(path, error);
     Check(!error, "temporary test config should be removable");

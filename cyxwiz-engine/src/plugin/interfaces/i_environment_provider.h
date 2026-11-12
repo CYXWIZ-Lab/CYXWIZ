@@ -124,12 +124,13 @@ public:
     // (the Engine then draws what it can, or says there is no view).
     virtual bool ShowCopy(int /*copy*/) { return false; }
 
-    // Optional: numbers about the copies so far (a curriculum's level, how
-    // many episodes ended in a fall), read between steps for the dashboard.
-    virtual std::vector<PluginEnvironmentStat> Stats() const { return {}; }
-
     // Frees the batch inside the plugin's own module.
     virtual void Release() = 0;
+
+    // Optional: numbers about the copies so far (a curriculum's level, how
+    // many episodes ended in a fall), read between steps for the dashboard.
+    // Declared last, so the order of the earlier functions stays as it was.
+    virtual std::vector<PluginEnvironmentStat> Stats() const { return {}; }
 
 protected:
     ~IEnvironmentBatch() = default;
@@ -146,10 +147,17 @@ public:
 
     virtual std::vector<PluginEnvironmentInfo> GetEnvironments() = 0;
 
+    // count copies of environment `id`. Settings it does not name keep their
+    // defaults; a value it cannot use is an error, not a silent default.
+    virtual PluginEnvironmentCreateResult CreateEnvironments(const std::string& id,
+                                                             const std::map<std::string, std::string>& settings,
+                                                             int count) = 0;
+
     // Environment `id` as it is with these settings: what it observes may
     // follow them (an extra observation switched on). Default: as
     // GetEnvironments lists it. False with error: no such environment, or the
-    // settings are not valid.
+    // settings are not valid. Declared last, so the order of the earlier
+    // functions stays as it was.
     virtual bool DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& /*settings*/,
                                      PluginEnvironmentInfo& info, std::string& error) {
         for (const auto& listed : GetEnvironments()) {
@@ -161,12 +169,6 @@ public:
         error = "No environment " + id + ".";
         return false;
     }
-
-    // count copies of environment `id`. Settings it does not name keep their
-    // defaults; a value it cannot use is an error, not a silent default.
-    virtual PluginEnvironmentCreateResult CreateEnvironments(const std::string& id,
-                                                             const std::map<std::string, std::string>& settings,
-                                                             int count) = 0;
 };
 
 } // namespace cyxwiz::plugin

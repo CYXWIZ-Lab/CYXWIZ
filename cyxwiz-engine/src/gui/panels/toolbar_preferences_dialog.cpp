@@ -16,6 +16,7 @@
 #include "../../core/training_trace_collector.h"
 #include "../../core/window_manager.h"
 #include "../../core/rl_playback_presentation.h"
+#include "../../core/rl/policy_stress_test.h"
 #include "../../plugin/registries/plugin_preferences_registry.h"
 #include "../ui_tokens.h"
 
@@ -476,6 +477,27 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         bool play_after = engine_config.PlayPolicyAfterTraining();
                         if (ImGui::Checkbox("Play the policy when a PPO run finishes (off by default)", &play_after)) {
                             engine_config.SetPlayPolicyAfterTraining(play_after);
+                            engine_config.Save();
+                        }
+                        // The Stress test tab: its disturbance, levels and episodes
+                        auto stress = engine_config.PolicyStressTestDefaults();
+                        bool stress_changed = false;
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Stress test");
+                        ImGui::TableNextColumn();
+                        stress_changed |= ui::SegmentedControl("##pref_stress_kind", cyxwiz::rl::StressKindNames(),
+                                                               cyxwiz::rl::kStressKindCount, &stress.kind);
+                        stress_changed |= ui::NumberField("##pref_stress_levels", &stress.levels, 2, 21, 1, 60.0f,
+                                                          "Difficulty 0 to 1 in this many levels");
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("levels,");
+                        ImGui::SameLine();
+                        stress_changed |= ui::NumberField("##pref_stress_episodes", &stress.episodes, 1, 100, 1, 60.0f);
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("episodes a level");
+                        if (stress_changed) {
+                            engine_config.SetPolicyStressTestDefaults(stress);
                             engine_config.Save();
                         }
                         ImGui::EndTable();

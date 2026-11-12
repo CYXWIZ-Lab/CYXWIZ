@@ -25,6 +25,8 @@ namespace cyxwiz::rl {
 enum class StressKind { Rough = 0, Slopes, Steps, Obstacles, Kicks };
 constexpr int kStressKindCount = 5;
 const char* StressKindName(StressKind kind);  // "Rough"
+// Every name, in StressKind order (the choices of a segmented control)
+const char* const* StressKindNames();
 
 struct StressTestSpec {
     StressKind kind = StressKind::Rough;
