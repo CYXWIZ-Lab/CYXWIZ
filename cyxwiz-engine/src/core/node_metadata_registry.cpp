@@ -1174,6 +1174,7 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::Mish, NodeCategory::Activation, "Mish", {"activation"}},
         {NodeType::Hardswish, NodeCategory::Activation, "Hardswish", {"activation"}},
         {NodeType::Hardsigmoid, NodeCategory::Activation, "Hardsigmoid", {"activation"}},
+        {NodeType::ReLU6, NodeCategory::Activation, "ReLU6", {"activation"}},
         {NodeType::Parameter, NodeCategory::Utility, "Parameter", {"parameter", "constant"}},
         {NodeType::SineWave, NodeCategory::Signal, "Sine Wave", {"signal", "sine", "wave"}},
         {NodeType::StepSignal, NodeCategory::Signal, "Step Signal", {"signal", "step"}},
@@ -3717,6 +3718,16 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
         {"mish", "activation"}, 0, false, "Mish activation", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Activated"}},
+        {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ReLU6, NodeCategory::Activation, "ReLU6", ICON_FA_BOLT,
+        {"relu6", "relu 6", "capped relu", "activation", "mobilenet"}, 0, false,
+        "ReLU6 activation: min(max(x, 0), 6)",
+        "ReLU with a ceiling: 0 below 0, x up to 6, 6 above. "
+        "MobileNetV1 and MobileNetV2 use it after every convolution. Same as torch.nn.ReLU6.",
+        "Conv2D -> BatchNorm -> ReLU6",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "A value between 0 and 6"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Hardsigmoid, NodeCategory::Activation, "Hardsigmoid", ICON_FA_BOLT,

@@ -1175,6 +1175,12 @@ bool BuildSequential(
                 break;
             }
 
+            case gui::NodeType::ReLU6: {
+                model.Add<ReLU6Module>();
+                CYXWIZ_BUILDER_INFO("  [{}] ReLU6", i);
+                break;
+            }
+
             case gui::NodeType::Softmax: {
                 model.Add<SoftmaxModule>();
                 CYXWIZ_BUILDER_INFO("  [{}] Softmax", i);

@@ -182,8 +182,8 @@ int main() {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
         // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring) +
         // WordEmbeddings (TOFIX152) + Max-Abs Scaler, Quantile Transform and
-        // Power Transform (TOFIX129 D2) + Hardswish and Hardsigmoid (TOFIX178 1.7).
-        Check(covered.size() == 83,
+        // Power Transform (TOFIX129 D2) + Hardswish and Hardsigmoid (TOFIX178 1.7) + ReLU6 (TOFIX178 1.9).
+        Check(covered.size() == 84,
               "tofix48 baseline should record each specialized truth-covered node");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::RNN),
               "RNN should be in specialized truth coverage");
@@ -229,7 +229,8 @@ int main() {
                   gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Swish) &&
                   gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Mish) &&
                   gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Hardswish) &&
-                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Hardsigmoid),
+                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Hardsigmoid) &&
+                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::ReLU6),
               "all executable activation variants should have specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::BatchNorm),
               "BatchNorm should be in specialized truth coverage");

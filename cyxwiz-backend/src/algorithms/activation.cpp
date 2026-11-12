@@ -108,6 +108,8 @@ std::unique_ptr<Activation> CreateActivation(ActivationType type, float alpha) {
             return std::make_unique<HardswishActivation>();
         case ActivationType::Hardsigmoid:
             return std::make_unique<HardsigmoidActivation>();
+        case ActivationType::ReLU6:
+            return std::make_unique<ReLU6Activation>();
         case ActivationType::SELU:
             return std::make_unique<SELUActivation>();
         case ActivationType::PReLU:
@@ -524,6 +526,33 @@ Tensor HardsigmoidActivation::Backward(const Tensor& grad_output, const Tensor& 
         return AfToTensor(grad_out * mask_mid / 6.0f);
     } catch (const af::exception& e) {
         ThrowActivationDeviceError("Hardsigmoid::Backward", e);
+    }
+}
+
+
+// ============================================================================
+// ReLU6 Implementation
+// ============================================================================
+
+Tensor ReLU6Activation::Forward(const Tensor& input) {
+    try {
+        af::array x = TensorToAf(input);
+        // 0 at and below 0, 6 at and above 6, x between.
+        return AfToTensor(af::min(af::max(x, 0.0f), 6.0f));
+    } catch (const af::exception& e) {
+        ThrowActivationDeviceError("ReLU6::Forward", e);
+    }
+}
+
+Tensor ReLU6Activation::Backward(const Tensor& grad_output, const Tensor& input) {
+    try {
+        af::array grad_out = TensorToAf(grad_output);
+        af::array x = TensorToAf(input);
+        // 1 strictly between 0 and 6, 0 elsewhere (as torch).
+        af::array mask_mid = ((x > 0.0f) && (x < 6.0f)).as(af::dtype::f32);
+        return AfToTensor(grad_out * mask_mid);
+    } catch (const af::exception& e) {
+        ThrowActivationDeviceError("ReLU6::Backward", e);
     }
 }
 

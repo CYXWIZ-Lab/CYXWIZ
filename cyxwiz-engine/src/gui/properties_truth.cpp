@@ -2875,6 +2875,7 @@ const std::vector<NodeType>& SpecializedTruthCoverageNodeTypes() {
         NodeType::Mish,
         NodeType::Hardswish,
         NodeType::Hardsigmoid,
+        NodeType::ReLU6,
         NodeType::Flatten,
         NodeType::Reshape,
         NodeType::View,

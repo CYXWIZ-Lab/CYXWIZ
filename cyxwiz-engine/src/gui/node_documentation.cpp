@@ -208,6 +208,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::Mish:
         case NodeType::Hardswish:
         case NodeType::Hardsigmoid:
+        case NodeType::ReLU6:
         case NodeType::Sigmoid:
         case NodeType::Tanh:
         case NodeType::Softmax:
@@ -978,6 +979,18 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "Used in EfficientNet and modern CNNs",
             "Slightly more expensive than ReLU"
+        },
+        "Activation"
+    };
+
+    docs_[NodeType::ReLU6] = {
+        "ReLU6",
+        "f(x) = min(max(x, 0), 6): ReLU that stops rising at 6.",
+        "Keeps activations in a small range, which suits low-precision and mobile networks.",
+        {},
+        {
+            "MobileNetV1 and MobileNetV2 blocks (Conv2D -> BatchNorm -> ReLU6)",
+            "A pretrained network whose weights were trained with ReLU6"
         },
         "Activation"
     };

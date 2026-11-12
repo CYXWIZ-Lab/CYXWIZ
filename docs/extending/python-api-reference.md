@@ -47,6 +47,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 | `oneapi_available() -> bool` | Check if oneAPI is available |
 | `opencl_available() -> bool` | Check if OpenCL is available |
 | `relu(input: Tensor) -> Tensor` | Apply ReLU activation: f(x) = max(0, x) |
+| `relu6(input: Tensor) -> Tensor` | Apply ReLU6 activation: min(max(x, 0), 6) |
 | `rl_is_paused() -> bool` | Check if RL training is paused |
 | `rl_set_metric_callback(callback: object) -> None` | Set a callback function(name: str, value: float) for RL metric updates |
 | `rl_set_paused(value: bool) -> None` | Set RL training pause flag |
@@ -64,7 +65,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 
 ### Enumerations
 
-- `ActivationType`: `ReLU`, `Sigmoid`, `Tanh`, `Softmax`, `LeakyReLU`, `ELU`, `GELU`, `Swish`, `SiLU`, `Mish`, `Hardswish`, `Hardsigmoid`, `SELU`, `PReLU`, `SquaredReLU`, `GELUExact`
+- `ActivationType`: `ReLU`, `Sigmoid`, `Tanh`, `Softmax`, `LeakyReLU`, `ELU`, `GELU`, `Swish`, `SiLU`, `Mish`, `Hardswish`, `Hardsigmoid`, `ReLU6`, `SELU`, `PReLU`, `SquaredReLU`, `GELUExact`
 - `BPEInitialUnit`: `Byte`, `UnicodeCharacter`
 - `ByteBPEPiecePolicy`: `WhitespaceV1`, `LeadingSpaceV2`
 - `DataType`: `Float32`, `Float64`, `Int32`, `Int64`, `UInt8`
@@ -994,6 +995,24 @@ Derives from `Layer`.
 | `reset_state(self: RNN) -> None` | Reset hidden state |
 | `set_parameters(self: RNN, params: Mapping[str, Tensor]) -> None` | Set RNN parameters |
 
+### `ReLU6`
+
+Derives from `Activation`.
+
+| Member | What it does |
+|---|---|
+| `ReLU6(self: ReLU6) -> None` | Create ReLU6 activation |
+| `backward(self: ReLU6, arg0: Tensor, arg1: Tensor) -> Tensor` |  |
+| `forward(self: ReLU6, arg0: Tensor) -> Tensor` |  |
+
+### `ReLU6Module`
+
+Derives from `Module`.
+
+| Member | What it does |
+|---|---|
+| `ReLU6Module(self: ReLU6Module) -> None` | Create a ReLU6 module |
+
 ### `ReLUModule`
 
 Derives from `Module`.
@@ -1057,6 +1076,7 @@ Sequential model container for building neural networks
 | `add_linear(self: Sequential, in_features: int, out_features: int, use_bias: bool = True) -> None` | Add a Linear layer |
 | `add_mish(self: Sequential) -> None` | Add a Mish activation |
 | `add_relu(self: Sequential) -> None` | Add a ReLU activation |
+| `add_relu6(self: Sequential) -> None` | Add a ReLU6 activation |
 | `add_sigmoid(self: Sequential) -> None` | Add a Sigmoid activation |
 | `add_softmax(self: Sequential, dim: int = -1) -> None` | Add a Softmax activation |
 | `add_swish(self: Sequential) -> None` | Add a Swish activation |

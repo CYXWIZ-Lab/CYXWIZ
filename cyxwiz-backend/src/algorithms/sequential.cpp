@@ -608,6 +608,9 @@ std::unique_ptr<Module> CreateModule(
         case ModuleType::Hardsigmoid:
             return std::make_unique<HardsigmoidModule>();
 
+        case ModuleType::ReLU6:
+            return std::make_unique<ReLU6Module>();
+
         default:
             spdlog::error("CreateModule: Unknown module type {}", static_cast<int>(type));
             return nullptr;

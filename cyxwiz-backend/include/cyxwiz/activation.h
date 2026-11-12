@@ -29,7 +29,8 @@ enum class ActivationType {
     PReLU,     // Parametric ReLU (learnable alpha)
     SquaredReLU,  // relu(x)^2 (Primer, So et al. 2021)
     GELUExact,    // x * Phi(x) with erf (torch GELU(approximate="none")); GELU above is the tanh form
-    Hardsigmoid   // relu6(x + 3) / 6 (torch.nn.Hardsigmoid)
+    Hardsigmoid,  // relu6(x + 3) / 6 (torch.nn.Hardsigmoid)
+    ReLU6         // min(max(x, 0), 6) (torch.nn.ReLU6)
 };
 
 // ============================================================================
@@ -199,6 +200,19 @@ public:
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output, const Tensor& input) override;
     std::string GetName() const override { return "Hardsigmoid"; }
+};
+
+// ============================================================================
+// ReLU6 - min(max(x, 0), 6): ReLU with a ceiling of 6 (torch.nn.ReLU6)
+// ============================================================================
+
+class CYXWIZ_API ReLU6Activation : public Activation {
+public:
+    ReLU6Activation() = default;
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output, const Tensor& input) override;
+    std::string GetName() const override { return "ReLU6"; }
 };
 
 // ============================================================================

@@ -1017,6 +1017,7 @@ std::string Executor::nodeTypeToString(gui::NodeType type) const {
         {gui::NodeType::Mish, "Mish"},
         {gui::NodeType::Hardswish, "Hardswish"},
         {gui::NodeType::Hardsigmoid, "Hardsigmoid"},
+        {gui::NodeType::ReLU6, "ReLU6"},
         {gui::NodeType::Sigmoid, "Sigmoid"},
         {gui::NodeType::Tanh, "Tanh"},
         {gui::NodeType::Softmax, "Softmax"},

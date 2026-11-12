@@ -1404,6 +1404,11 @@ PYBIND11_MODULE(pycyxwiz, m) {
         return act.Forward(x);
     }, py::arg("input"), "Apply Hardsigmoid activation: relu6(x + 3) / 6");
 
+    m.def("relu6", [](const cyxwiz::Tensor& x) {
+        cyxwiz::ReLU6Activation act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply ReLU6 activation: min(max(x, 0), 6)");
+
     // Layer-like functional operations
     m.def("flatten", [](const cyxwiz::Tensor& x) {
         cyxwiz::FlattenLayer layer;
@@ -2131,6 +2136,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("Mish", cyxwiz::ActivationType::Mish)
         .value("Hardswish", cyxwiz::ActivationType::Hardswish)
         .value("Hardsigmoid", cyxwiz::ActivationType::Hardsigmoid)
+        .value("ReLU6", cyxwiz::ActivationType::ReLU6)
         .value("SELU", cyxwiz::ActivationType::SELU)
         .value("PReLU", cyxwiz::ActivationType::PReLU)
         .value("SquaredReLU", cyxwiz::ActivationType::SquaredReLU)
@@ -2225,6 +2231,12 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def(py::init<>(), "Create Hardsigmoid activation")
         .def("forward", &cyxwiz::HardsigmoidActivation::Forward)
         .def("backward", &cyxwiz::HardsigmoidActivation::Backward);
+
+    // ReLU6 Activation
+    py::class_<cyxwiz::ReLU6Activation, cyxwiz::Activation>(m, "ReLU6")
+        .def(py::init<>(), "Create ReLU6 activation")
+        .def("forward", &cyxwiz::ReLU6Activation::Forward)
+        .def("backward", &cyxwiz::ReLU6Activation::Backward);
 
     // SELU Activation (Scaled Exponential Linear Unit)
     py::class_<cyxwiz::SELUActivation, cyxwiz::Activation>(m, "SELU")
@@ -2360,6 +2372,10 @@ PYBIND11_MODULE(pycyxwiz, m) {
     py::class_<cyxwiz::HardsigmoidModule, cyxwiz::Module>(m, "HardsigmoidModule")
         .def(py::init<>(), "Create a Hardsigmoid module");
 
+    // ReLU6Module (ModuleType::ReLU6 is not listed in the enum above, for the same reason as Hardsigmoid)
+    py::class_<cyxwiz::ReLU6Module, cyxwiz::Module>(m, "ReLU6Module")
+        .def(py::init<>(), "Create a ReLU6 module");
+
     // Deterministic sinusoidal positional encoding used by Studio Transformer graphs.
     py::class_<cyxwiz::PositionalEncodingModule, cyxwiz::Module>(
         m, "PositionalEncoding")
@@ -2467,6 +2483,10 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("add_hardsigmoid", [](cyxwiz::SequentialModel& self) {
             self.Add<cyxwiz::HardsigmoidModule>();
         }, "Add a Hardsigmoid activation")
+
+        .def("add_relu6", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::ReLU6Module>();
+        }, "Add a ReLU6 activation")
 
         // Core methods
         .def("forward", &cyxwiz::SequentialModel::Forward,
