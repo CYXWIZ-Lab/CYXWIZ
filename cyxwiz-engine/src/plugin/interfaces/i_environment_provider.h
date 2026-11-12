@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz::plugin {
@@ -54,6 +55,16 @@ struct PluginEnvironmentStat {
     std::string label;
     std::string value;
     std::string note;
+};
+
+// How the plugin's view names the copy it shows (IEnvironmentBatch::
+// LabelShownCopy), each part optional: the line under the task's name
+// ("Preview of update 1,580"), the view's status ("Training preview"), and
+// rows put first in its live numbers ({"Networks of", "update 1,580"}).
+struct PluginShownCopyLabel {
+    std::string subtitle;
+    std::string status;
+    std::vector<std::pair<std::string, std::string>> rows;
 };
 
 struct PluginEnvironmentInfo {
@@ -131,6 +142,11 @@ public:
     // many episodes ended in a fall), read between steps for the dashboard.
     // Declared last, so the order of the earlier functions stays as it was.
     virtual std::vector<PluginEnvironmentStat> Stats() const { return {}; }
+
+    // Optional: how the view names the copy ShowCopy shows (the Engine's
+    // training preview, or a training copy). ShowCopy starts it empty: the
+    // view's own words. Declared last, like Stats.
+    virtual void LabelShownCopy(const PluginShownCopyLabel& /*label*/) {}
 
 protected:
     ~IEnvironmentBatch() = default;

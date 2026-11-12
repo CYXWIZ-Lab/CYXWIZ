@@ -117,6 +117,11 @@ std::vector<PluginEnvironmentStat> EnvironmentBatch::Stats() const {
     return stats;
 }
 
+void EnvironmentBatch::LabelShownCopy(const PluginShownCopyLabel& label) {
+    auto* batch = batch_;
+    security::SafeExecute(plugin_id_, "LabelEnvironmentCopy", [&label, batch]() { batch->LabelShownCopy(label); });
+}
+
 PluginEnvironmentRegistry::PluginEnvironmentRegistry() {
     auto& builtin = ClassicControlEnvironments();
     for (const auto& info : builtin.GetEnvironments()) Register(kBuiltinEnvironmentProviderId, info, &builtin, nullptr);

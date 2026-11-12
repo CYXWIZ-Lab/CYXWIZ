@@ -164,6 +164,7 @@ private:
     std::string restore_path_;
     std::string restore_title_;
     std::string restore_subtitle_;
+    std::string shown_as_ = "policy playback";  // what the last shown copy was (its status, lower case)
 
     // The Viewport's Stress panel (TOFIX212 P4): its requests go to the played
     // copy (the view slot), or act on the Viewport's own run here

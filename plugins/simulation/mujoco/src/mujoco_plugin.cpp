@@ -217,6 +217,7 @@ void MuJoCoPlugin::SyncPlayback() {
     MjViewportPanel::PlaybackNumbers numbers;
     MjScene scene;
     std::string stress_message;
+    std::string subtitle;  // under the title: "Policy playback", or the Engine's words
     {
         std::lock_guard<std::mutex> lock(view_slot_->mutex);
         active = view_slot_->owner != nullptr;
@@ -236,6 +237,12 @@ void MuJoCoPlugin::SyncPlayback() {
             numbers.has_last_return = view_slot_->has_last_return;
             numbers.last_return = view_slot_->last_return;
             numbers.action = view_slot_->action;
+            numbers.status = view_slot_->label.status;
+            // What the view says once it ends: "From the last training preview"
+            shown_as_ = numbers.status.empty() ? std::string("policy playback") : numbers.status;
+            for (auto& ch : shown_as_) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            numbers.rows = view_slot_->label.rows;
+            subtitle = view_slot_->label.subtitle.empty() ? "Policy playback" : view_slot_->label.subtitle;
             // A changed scene is built first: its state is then applied, even unchanged
             if (view_slot_->version != shown_version_ || (scene != env_manager_.Scene() && !SceneFailed(scene))) {
                 shown_version_ = view_slot_->version;
@@ -262,7 +269,7 @@ void MuJoCoPlugin::SyncPlayback() {
         if (scene != env_manager_.Scene() && !SceneFailed(scene)) MirrorPlaybackScene(scene);
         if (!stress_message.empty()) viewport_panel_.StressFailed(stress_message);
         // Also when the played model was open already (a second playback)
-        if (viewport_panel_.ModelSubtitle() != "Policy playback") viewport_panel_.SetModelLabel(title, "Policy playback");
+        if (viewport_panel_.ModelSubtitle() != subtitle) viewport_panel_.SetModelLabel(title, subtitle);
         viewport_panel_.SetPlayback(true, title + " \xC2\xB7 copy " + std::to_string(copy));
         viewport_panel_.SetPlaybackNumbers(std::move(numbers));
         if (!state.empty()) {
@@ -278,10 +285,13 @@ void MuJoCoPlugin::SyncPlayback() {
         playback_ = false;
         failed_scene_.reset();
         viewport_panel_.SetPlayback(false);
-        if (!restore_path_.empty() && restore_path_ != loaded_mjcf_path_ && LoadEnvironment(restore_path_))
+        // The model open before comes back with its own words (also when it was the played one)
+        const bool back = !restore_path_.empty() &&
+                          (restore_path_ == loaded_mjcf_path_ || LoadEnvironment(restore_path_));
+        if (back)
             viewport_panel_.SetModelLabel(restore_title_, restore_subtitle_);
         else if (restore_path_.empty())  // nothing before it: the played model stays
-            viewport_panel_.SetModelLabel(viewport_panel_.ModelTitle(), "From the last policy playback");
+            viewport_panel_.SetModelLabel(viewport_panel_.ModelTitle(), "From the last " + shown_as_);
     }
 }
 

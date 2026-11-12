@@ -39,6 +39,7 @@ public:
     std::string LastError() const override { return error_; }
     bool ShowCopy(int copy) override;
     std::vector<PluginEnvironmentStat> Stats() const override;
+    void LabelShownCopy(const PluginShownCopyLabel& label) override;
     void Release() override { delete this; }
 
     int Threads() const { return pool_ ? pool_->Threads() : 1; }
