@@ -7,6 +7,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Safetensors import reads each tensor's type.** Importing a
+  `.safetensors` model took every tensor for float32. Float16 and float64
+  tensors are now converted, integer tensors are skipped with a warning, and a
+  header whose sizes do not fit the file is refused with the reason.
 - **Frozen layers are kept in checkpoints and exports.** A frozen layer (today
   an Embedding with **Freeze Loaded Weights**) was left out of the model's
   parameter list, so checkpoints, exported models and "Start from" lost its

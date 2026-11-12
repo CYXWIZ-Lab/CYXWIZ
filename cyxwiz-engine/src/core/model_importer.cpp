@@ -6,6 +6,7 @@
 #include "error_codes.h"
 #include "graph_compiler.h"
 #include "model_builder.h"
+#include "weight_file.h"
 #include <cyxwiz/sequential.h>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
@@ -982,58 +983,32 @@ ImportResult ModelImporter::ImportSafetensors(
     if (progress_cb) progress_cb(0, 3, "Reading safetensors file...");
 
     try {
-        std::ifstream file(input_path, std::ios::binary);
-        if (!file) {
+        // The shared weight-file reader checks the header, the offsets and
+        // each tensor's type; float tensors arrive as float32.
+        weight_file::WeightFile file;
+        std::string read_error;
+        if (!weight_file::Read(input_path, file, read_error)) {
             result.success = false;
-            result.error_message = "Failed to open file: " + input_path;
+            result.error_message = "Safetensors import failed: " + read_error;
             last_error_ = result.error_message;
             return result;
         }
 
-        // Read header size
-        uint64_t header_size = 0;
-        file.read(reinterpret_cast<char*>(&header_size), 8);
-
-        // Read header JSON
-        std::string header_str(header_size, '\0');
-        file.read(&header_str[0], header_size);
-
-        auto header = nlohmann::json::parse(header_str);
-
         if (progress_cb) progress_cb(1, 3, "Parsing tensor metadata...");
 
-        // Parse tensor metadata
         std::map<std::string, std::vector<uint8_t>> weights;
         std::map<std::string, std::vector<int64_t>> weight_shapes;
-        std::map<std::string, TensorDType> weight_dtypes;
-
-        // Calculate data start position
-        size_t data_start = 8 + header_size;
-
-        for (auto& [name, info] : header.items()) {
-            if (name == "__metadata__") continue;
-
-            // Get shape
-            std::vector<int64_t> shape;
-            for (const auto& dim : info["shape"]) {
-                shape.push_back(dim.get<int64_t>());
+        for (const auto& entry : file.entries) {
+            if (!entry.is_float) {
+                result.warnings.push_back("Tensor '" + entry.name + "' is " + entry.dtype +
+                                          ", not a float tensor; it was not loaded");
+                continue;
             }
-            weight_shapes[name] = shape;
-
-            // Get data offsets
-            auto offsets = info["data_offsets"];
-            size_t start_offset = offsets[0].get<size_t>();
-            size_t end_offset = offsets[1].get<size_t>();
-            size_t tensor_size = end_offset - start_offset;
-
-            // Read tensor data
-            file.seekg(data_start + start_offset);
-            std::vector<uint8_t> tensor_data(tensor_size);
-            file.read(reinterpret_cast<char*>(tensor_data.data()), tensor_size);
-
-            weights[name] = std::move(tensor_data);
-
-            result.layer_names.push_back(name);
+            std::vector<uint8_t> bytes(entry.values.size() * sizeof(float));
+            if (!bytes.empty()) std::memcpy(bytes.data(), entry.values.data(), bytes.size());
+            weights[entry.name] = std::move(bytes);
+            weight_shapes[entry.name] = std::vector<int64_t>(entry.shape.begin(), entry.shape.end());
+            result.layer_names.push_back(entry.name);
         }
 
         if (progress_cb) progress_cb(2, 3, "Loading weights into model...");
@@ -1046,11 +1021,8 @@ ImportResult ModelImporter::ImportSafetensors(
         }
 
         // Get metadata if available
-        if (header.contains("__metadata__")) {
-            auto& meta = header["__metadata__"];
-            if (meta.contains("model_name")) {
-                result.model_name = meta["model_name"];
-            }
+        if (const auto name = file.metadata.find("model_name"); name != file.metadata.end()) {
+            result.model_name = name->second;
         }
 
         if (progress_cb) progress_cb(3, 3, "Import complete!");
