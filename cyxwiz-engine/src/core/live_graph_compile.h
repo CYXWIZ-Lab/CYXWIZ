@@ -13,6 +13,7 @@
 #include "compiled_node_presentation.h"
 #include "graph_compiler.h"
 #include "model_memory_estimate.h"
+#include "weight_match.h"
 
 #include <chrono>
 #include <cstdint>
@@ -43,6 +44,9 @@ public:
     const TrainingConfiguration* Config() const { return result_ ? &result_->config : nullptr; }
     const std::map<size_t, long long>& LayerParameters() const;
     bool ParametersCounted() const { return result_ && result_->parameters_counted; }
+    // The built model's layers that hold weights, by node name (available
+    // once counted): what a weights file is matched against.
+    const std::vector<weight_match::LayerSlot>& WeightSlots() const;
     // A training step's memory for the built model (available once counted).
     const ModelMemoryEstimate& Memory() const;
     bool ParametersCounting() const { return pending_.valid(); }
@@ -82,6 +86,7 @@ private:
         uint64_t revision = 0;
         TrainingConfiguration config;
         std::map<size_t, long long> layer_parameters;
+        std::vector<weight_match::LayerSlot> weight_slots;
         ModelMemoryEstimate memory;
         bool parameters_counted = false;
         // Counting was asked for (it may still have failed). A compile made

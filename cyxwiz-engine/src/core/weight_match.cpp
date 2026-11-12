@@ -106,7 +106,7 @@ Report Match(const weight_file::WeightFile& file, const std::vector<LayerSlot>& 
             const std::string name = layer.node_name + "." + FileSuffix(key);
             const auto found = by_name.find(name);
             if (found == by_name.end()) {
-                if (row.reason.empty()) row.reason = "not in the file (" + name + ")";
+                if (row.reason.empty()) row.reason = "the file has no " + name;
                 continue;
             }
             const weight_file::Entry& entry = *found->second;
@@ -136,6 +136,8 @@ Report Match(const weight_file::WeightFile& file, const std::vector<LayerSlot>& 
             tensors.push_back(std::move(tensor));
             taken.push_back(name);
         }
+        // Nothing of this layer is in the file: say that, not which entry was looked for first.
+        if (row.file_entries.empty()) row.reason = "not in the file";
         row.loaded = row.reason.empty();
         if (row.loaded) {
             ++report.loaded;

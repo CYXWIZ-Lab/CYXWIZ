@@ -484,6 +484,7 @@ set(ENGINE_SOURCES
     src/core/model_open_presentation.cpp
     src/core/properties_presentation.cpp
     src/core/layer_inside_presentation.cpp
+    src/core/weight_report_presentation.cpp
     src/core/node_presets.cpp
     src/core/menu_presentation.cpp
     src/core/extension_properties_presentation.cpp
@@ -7577,6 +7578,19 @@ set_target_properties(test_quality_analyzer_presentation PROPERTIES
 )
 add_test(NAME quality_analyzer_presentation COMMAND test_quality_analyzer_presentation)
 
+# ===== Test: the Data Loader dialog's weights file card and match report (TOFIX178 1.9d) =====
+add_executable(test_weight_report_presentation
+    tests/test_weight_report_presentation.cpp
+    src/core/weight_report_presentation.cpp
+    src/core/weight_match.cpp
+)
+target_compile_features(test_weight_report_presentation PRIVATE cxx_std_20)
+target_include_directories(test_weight_report_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_weight_report_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME weight_report_presentation COMMAND test_weight_report_presentation)
+
 # ===== Test: Word Embeddings dialog view model (TOFIX152) =====
 add_executable(test_word_embeddings_presentation
     tests/test_word_embeddings_presentation.cpp
@@ -7605,6 +7619,7 @@ add_executable(test_properties_presentation
     tests/test_properties_presentation.cpp
     src/core/properties_presentation.cpp
     src/core/layer_inside_presentation.cpp
+    src/core/weight_report_presentation.cpp
     src/core/compiled_node_presentation.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_truth.cpp

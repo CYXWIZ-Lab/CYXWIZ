@@ -2,6 +2,7 @@
 
 #include "extension_node_registry.h"
 #include "model_builder.h"
+#include "weight_start.h"
 
 #include <cyxwiz/device.h>
 #include <spdlog/spdlog.h>
@@ -133,6 +134,7 @@ void LiveGraphCompile::Update(const std::vector<gui::MLNode>& nodes,
                         named.emplace_back(name, static_cast<long long>(tensor.NumElements()));
                     }
                     result->layer_parameters = CountParametersPerLayer(named);
+                    result->weight_slots = ::cyxwiz::WeightSlots(*built.model, built.module_provenance);
                     result->memory = EstimateTrainingMemory(built, result->config.input_shape,
                                                             result->config.batch_size);
                     if (const auto selected = Device::GetProcessDevice()) {
@@ -160,6 +162,11 @@ LiveCompileState LiveGraphCompile::State() const {
 const std::map<size_t, long long>& LiveGraphCompile::LayerParameters() const {
     static const std::map<size_t, long long> empty;
     return result_ ? result_->layer_parameters : empty;
+}
+
+const std::vector<weight_match::LayerSlot>& LiveGraphCompile::WeightSlots() const {
+    static const std::vector<weight_match::LayerSlot> empty;
+    return result_ ? result_->weight_slots : empty;
 }
 
 const ModelMemoryEstimate& LiveGraphCompile::Memory() const {

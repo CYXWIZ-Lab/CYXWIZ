@@ -152,6 +152,14 @@ private Data Studio tickets (`tofix*/track*`).
   Swish), the gate (Sigmoid, Hardsigmoid) and bias. Properties lists the
   six steps inside the node with their outputs and weights ("Inside this
   layer").
+- **Start training from a published weights file.** Data Loader >
+  Checkpoints > **Start from** is now one choice: random weights, a
+  checkpoint of an earlier run, or **a weights file** (a PyTorch state-dict
+  `.pth` / `.pt`, or `.safetensors`). Layers are matched by node name and
+  PyTorch's layouts are converted; a layer the file has no fitting weights
+  for starts fresh. The dialog shows what the file gives the graph before
+  training, with a match report per layer. PyTorch is not needed and the
+  file is never run. See docs/usage/pretrained_weights.md.
 - **ReLU6 activation node.** `min(max(x, 0), 6)` (torch.nn.ReLU6), the
   activation of MobileNetV1 and MobileNetV2; also `pycyxwiz.relu6`, `ReLU6`
   and `ReLU6Module`.
