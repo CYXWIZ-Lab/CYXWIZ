@@ -1,5 +1,7 @@
 # Training a policy (PPO)
 
+New to it? [Train, play and export a policy](rl_walkthrough.md) walks through the three examples step by step.
+
 The Engine trains reinforcement learning policies itself, from a graph on
 the canvas: no Python, no Stable-Baselines3. The algorithm is PPO, written
 to match Stable-Baselines3's PPO (its loss, gradients, advantage estimates,
@@ -45,7 +47,7 @@ SB3's.
 | | Learning rate (`learning_rate`, Adam with eps 1e-5) | 0.0003 |
 | | Clip range (`clip_range`), Value clip (`clip_range_vf`, 0 off) | 0.2, 0 |
 | | Entropy weight (`ent_coef`), Value weight (`vf_coef`) | 0, 0.5 |
-| | Max gradient norm (`max_grad_norm`, over both networks) | 0.5 |
+| | Max gradient norm (`max_grad_norm`, over both networks; as PyTorch's `clip_grad_norm_`: a NaN norm is not refused and makes the step NaN) | 0.5 |
 | | Normalise advantages (`normalize_advantage`) | on |
 | Normalise | Observations, Rewards: running statistics as SB3's VecNormalize (clip 10) | off |
 
@@ -86,11 +88,18 @@ Where the run actually trains is shown on every surface:
 - Policy Playback's source line (`policy from this session's run (67,584 steps) · on CPU`):
   a trained policy acts on the device it trained on.
 
-Small networks (every hidden layer at most 256 units, such as the 64-64
-pattern) usually train faster on the CPU: each environment step runs many
-small GPU operations, and some graphics drivers struggle under that load.
-When the chosen device is a GPU, Compile adds an Info line saying so and the
-dashboard repeats it; the Engine never switches devices for you. While a PPO
+On an NVIDIA GPU with the CUDA GPU pack, PPO runs its networks as fused
+kernels and trains several times faster than on the CPU, when both networks
+fit them: Dense layers (at most 8, each at most 256 units) with ReLU, Leaky
+ReLU, ELU, SELU, GELU, Swish, Tanh or Sigmoid between them. Otherwise (other
+layers such as Dropout or LayerNorm, OpenCL, oneAPI, or CUDA without the
+pack) it runs layer by layer, and small networks
+(every hidden layer at most 256 units, such as the 64-64 pattern) usually
+train faster on the CPU: each environment step runs many small GPU
+operations, and some graphics drivers struggle under that load. Only then
+does Compile add an Info line saying so, and the dashboard repeats it once
+the run reports how it computes; the Engine never switches devices for you.
+See [Why small networks are slow on a GPU](gpu_providers.md#why-small-networks-are-slow-on-a-gpu-and-what-cyxwiz-does-about-it). While a PPO
 run is active, the device choices in Preferences are disabled until it ends,
 and a second training run (Train on a model graph) is refused. A run on a GPU
 that another training run (another Engine, a tool) is using waits for it:
@@ -131,7 +140,8 @@ keeps its trained policy until the next Train.
   - The panel shows the episode, its step and return, the last returns and
     the action, with Pause / Resume, New episode and Stop.
   - **View > Panels > Policy Playback** (or its sidebar icon) shows or hides
-    the panel. Closing it stops the playback.
+    the panel. Closing it stops the playback; it starts closed at each launch
+    (nothing plays yet).
 - **Where you see it:**
   - **MuJoCo task:** the **MuJoCo Viewport** opens and shows the copy being
     played. Its own Run / Step / Reset are off while it does ("Policy playback
@@ -177,6 +187,7 @@ On 2026-11-09 with the tuned settings:
 |---|---|---|
 | CartPole-v1, mean return 475 | 69,376 steps (test_ppo_trainer); 88,320 from the graph (test_rl_graph_training) | 59,648 / 64,256 / 72,192 |
 | InvertedPendulum-v5, mean return 950 | 122,880 steps | 120,832 / 135,168 / 161,792 |
+| HalfCheetah-v5, final mean return after 1,000,000 steps (2026-11-11, seeds 1-3, CUDA) | 4,675.9 / 5,087.8 / 3,787.0 | 2,973.2 / 4,651.1 / 4,660.6 |
 
 ## Not yet
 

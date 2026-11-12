@@ -27,6 +27,8 @@ To write your own nodes in Python or C++, see
 | [Graph simulation](graph_simulation.md) | Run Sim, the Simulation menu and the Simulation Monitor |
 | [Environments for reinforcement learning](rl_environments.md) | Plugin environments (MuJoCo tasks), their settings, and `pycyxwiz.rl` for Gymnasium and Stable-Baselines3 |
 | [Training a policy (PPO)](rl_training.md) | The RL graph (Environment, layers, Policy / Value Head, PPO), its settings, Train and the RL Training Dashboard |
+| [The MuJoCo Viewport](mujoco_viewport.md) | The 3D view: run a model, cameras (follow a body, the model's cameras), View options, live numbers, screenshots and recordings |
+| [Train, play and export a policy](rl_walkthrough.md) | Step by step: CartPole, InvertedPendulum and HalfCheetah from Studio, playing and saving the policy, export, and what a real robot needs |
 
 ## Data
 
@@ -76,6 +78,7 @@ To write your own nodes in Python or C++, see
 | [Linear Attention](linear_attention.md) | Self-attention with linear cost |
 | [Regularization nodes](regularization.md) | Penalties on the model's parameters |
 | [Learning-rate schedulers](lr_schedulers.md) | Changing the learning rate during training |
+| [Gradient clipping](gradient_clipping.md) | Limiting how far one step can move the weights (as PyTorch's clip_grad_norm_) |
 | [Metric learning](metric_learning.md) | Pairs and triplets |
 | [Sentiment text classification](sentiment_text_classification.md) | The example text classification graphs |
 

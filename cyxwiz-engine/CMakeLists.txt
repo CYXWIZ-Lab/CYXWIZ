@@ -105,6 +105,7 @@ set(CYXWIZ_PLUGIN_SDK_HEADERS
     plugin/interfaces/i_simulation_provider.h
     plugin/interfaces/i_environment_provider.h
     plugin/interfaces/i_panel_provider.h
+    plugin/interfaces/i_preferences_provider.h
     plugin/interfaces/i_tensor_node_provider.h
     plugin/interfaces/i_training_hook.h
     core/extension_node_contract.h
@@ -130,6 +131,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/CyxWizPluginSDK.cmake)
 add_library(cyxwiz-plugin-host STATIC
     src/plugin/registries/plugin_panel_registry.cpp
     src/plugin/registries/plugin_command_registry.cpp
+    src/plugin/registries/plugin_preferences_registry.cpp
     src/plugin/registries/plugin_simulation_registry.cpp
     src/plugin/registries/plugin_environment_registry.cpp
     src/plugin/builtin/classic_control_environments.cpp
@@ -303,6 +305,7 @@ set(ENGINE_SOURCES
     src/core/rl/rl_training_run.cpp
     src/core/rl/trained_policy.cpp
     src/core/rl/policy_playback.cpp
+    src/core/rl/policy_stress_test.cpp
     src/core/rl_playback_presentation.cpp
     src/core/rl_device_presentation.cpp
     src/gui/panels/policy_playback_panel.cpp
@@ -7557,6 +7560,26 @@ add_custom_target(copy_test_computation_truth_ppo_fixture
 add_dependencies(test_computation_truth_ppo copy_test_computation_truth_ppo_fixture)
 add_test(NAME ppo_pytorch_parity COMMAND test_computation_truth_ppo)
 
+# ===== Test: gradient clipping (host, device, fused Adam) vs torch clip_grad_norm_ + Adam (TOFIX206) =====
+set(CYXWIZ_GRADIENT_CLIPPING_PYTORCH_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/gradient_clipping_pytorch.json")
+add_executable(test_computation_truth_gradient_clipping tests/test_computation_truth_gradient_clipping.cpp)
+target_link_libraries(test_computation_truth_gradient_clipping PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json)
+target_include_directories(test_computation_truth_gradient_clipping PRIVATE ${CMAKE_SOURCE_DIR}/cyxwiz-backend/src)
+target_compile_definitions(test_computation_truth_gradient_clipping PRIVATE
+    CYXWIZ_GRADIENT_CLIPPING_FIXTURE="${CYXWIZ_GRADIENT_CLIPPING_PYTORCH_FIXTURE}" NOMINMAX)
+add_custom_target(copy_test_computation_truth_gradient_clipping_fixture
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:test_computation_truth_gradient_clipping>/computation_truth_fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CYXWIZ_GRADIENT_CLIPPING_PYTORCH_FIXTURE}"
+        "$<TARGET_FILE_DIR:test_computation_truth_gradient_clipping>/computation_truth_fixtures/gradient_clipping_pytorch.json"
+    SOURCES "${CYXWIZ_GRADIENT_CLIPPING_PYTORCH_FIXTURE}"
+    VERBATIM
+)
+add_dependencies(test_computation_truth_gradient_clipping copy_test_computation_truth_gradient_clipping_fixture)
+add_test(NAME gradient_clipping_pytorch_parity COMMAND test_computation_truth_gradient_clipping)
+
 # ===== Test: observation/reward normalisation vs Stable-Baselines3's VecNormalize (TOFIX195 S4.3a) =====
 add_executable(test_computation_truth_vec_normalize
     tests/test_computation_truth_vec_normalize.cpp
@@ -7595,6 +7618,7 @@ add_test(NAME rl_graph_compile COMMAND test_rl_graph_compile)
 add_executable(test_rl_graph_training
     tests/test_rl_graph_training.cpp
     src/core/rl/rl_training_run.cpp
+    src/core/rl/policy_stress_test.cpp
     src/core/rl/trained_policy.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp

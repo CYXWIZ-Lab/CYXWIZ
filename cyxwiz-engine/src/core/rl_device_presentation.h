@@ -37,17 +37,22 @@ Chip DeviceChip(const RunDevice& device);
 std::string ToolbarSuffix(const RunDevice& device);
 
 // The dashboard's note under the header: the fallback explained, else the
-// small-network advice when it applies, else empty
+// small-network advice when it applies, else empty. compute_path: how the
+// run computes, as its updates report it ("" before the first update). The
+// advice is for the layer-by-layer path only: a run on the fused
+// small-network kernels has none of the launch cost it warns about, and
+// before the first update it is not known yet.
 std::string DashboardNote(const RunDevice& device, const std::vector<int>& policy_units,
-                          const std::vector<int>& value_units);
+                          const std::vector<int>& value_units, const std::string& compute_path);
 
 // Small networks: every hidden layer of both networks has at most 256 units
 bool SmallNetworks(const std::vector<int>& policy_units, const std::vector<int>& value_units);
 // "64-64", or "64-64 and 128-128" when the networks differ
 std::string Widths(const std::vector<int>& policy_units, const std::vector<int>& value_units);
-// Compile's Info line when the chosen route is a GPU (backend_word "CUDA") and
-// the networks are small; empty otherwise
+// Compile's Info line when the chosen route is a GPU (backend_word "CUDA"),
+// the networks are small and the device's provider will not run them as
+// fused kernels (fused_expected); empty otherwise
 std::string CompileAdvice(const std::string& backend_word, const std::vector<int>& policy_units,
-                          const std::vector<int>& value_units);
+                          const std::vector<int>& value_units, bool fused_expected);
 
 }  // namespace cyxwiz::rl_device

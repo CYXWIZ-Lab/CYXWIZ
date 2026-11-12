@@ -87,6 +87,10 @@ View Build(const Inputs& in) {
     } else if (StartsWith(in.environment_key, kBuiltinProvider) && in.environment_id == "CartPole-v1") {
         v.view = ViewKind::CartPole;
         v.view_note = "Drawn from the copy's state: cart position and pole angle.";
+    } else if (!in.view_title.empty()) {
+        // A view of its own that shows nothing now (stopped, or not started)
+        v.view = ViewKind::None;
+        v.view_note = "The " + in.view_title + " shows the copy while the policy plays.";
     } else {
         v.view = ViewKind::None;
         v.view_note = "This environment has no view: the numbers and the returns show how the policy does.";

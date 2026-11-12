@@ -63,6 +63,28 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
         ImGui::End();
         return;
     }
+    if (!defaults_loaded_) {  // the saved choices, once per session
+        defaults_ = LoadViewportDefaults(*ctx_);
+        live_numbers_ = defaults_.live_numbers;
+        stress_ = defaults_.stress;
+        defaults_loaded_ = true;
+    }
+
+    // A finished recording: say where it went
+    MjRecorder::Result result;
+    if (recorder_.TakeResult(result)) {
+        if (result.ok) {
+            std::string text = "Saved " + result.path.filename().string() + " in the project's exports (" +
+                               std::to_string(result.frames) + " frames";
+            if (result.dropped > 0) text += ", " + std::to_string(result.dropped) + " skipped";
+            text += ")";
+            ctx_->LogInfo("Viewport recording saved: " + result.path.string());
+            Notify(text);
+        } else {
+            ctx_->LogWarn("Viewport recording failed: " + result.error);
+            Notify(result.error, true);
+        }
+    }
 
     if (!env.IsLoaded()) {
         RenderEmpty();
@@ -70,10 +92,44 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
         ctx_->GetUi()->EmptyState("The 3D view could not start",
                                   "The model is loaded, but its renderer did not start. The log has the reason.");
     } else {
+        if (scene_pending_ || camera_default_pending_) defaults_ = LoadViewportDefaults(*ctx_);
+        if (scene_pending_) {
+            scene_pending_ = false;
+            ApplyScene(defaults_.scene, renderer);
+        }
+        if (camera_default_pending_) {
+            camera_default_pending_ = false;
+            ApplyStartCamera(env.GetModel(), env.GetData(), renderer);
+        }
         RenderControls(env, renderer);
-        RenderScene(env, renderer);
-        RenderEpisodeStrip(env);
+        WatchStress(env);
+        if (stress_.panel_open) {
+            // The scene and the Stress panel side by side
+            constexpr float kStressWidth = 390.0f;
+            const ImVec2 avail = ImGui::GetContentRegionAvail();
+            const float spacing = ImGui::GetStyle().ItemSpacing.x;
+            const float scene_w = std::max(10.0f, avail.x - kStressWidth - spacing);
+            constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+            ImGui::BeginChild("##scene_area", ImVec2(scene_w, avail.y), ImGuiChildFlags_None, kFlags);
+            RenderScene(env, renderer);
+            RenderEpisodeStrip(env);
+            ImGui::EndChild();
+            ImGui::SameLine();
+            const UiColors colors = ctx_->GetUi()->Colors();
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ToImVec4(colors.bg_panel));
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
+            ImGui::BeginChild("##stress_panel", ImVec2(kStressWidth, avail.y), ImGuiChildFlags_AlwaysUseWindowPadding);
+            RenderStressPanel(env);
+            ImGui::EndChild();
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+        } else {
+            RenderScene(env, renderer);
+            RenderEpisodeStrip(env);
+        }
     }
+    RenderRecordDialog(env);
 
     ImGui::End();
 }
@@ -164,10 +220,15 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     const float button_h = ui->ButtonHeight(UiButtonSize::Regular);
     const float row_h = std::max(ImGui::GetItemRectSize().y, button_h);
     float line_y = row_y;
+    // The next item on this line, or at the start of a new line below when it
+    // does not fit (the items are placed by hand, so the wrap is too: ImGui's
+    // own NewLine goes by the last item's height, not the row's)
     auto next = [&](float width, float height) {
-        const float before = ImGui::GetCursorPosY();
-        SameLineIfFits(width);
-        if (ImGui::GetCursorPosY() > before) line_y = ImGui::GetCursorPosY();  // wrapped
+        ImGui::SameLine();
+        if (ImGui::GetContentRegionAvail().x < width) {
+            line_y += row_h + ImGui::GetStyle().ItemSpacing.y;
+            ImGui::SetCursorPosX(ImGui::GetCursorStartPos().x);
+        }
         ImGui::SetCursorPosY(line_y + (row_h - height) * 0.5f);
     };
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
@@ -214,56 +275,57 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
         if (exec->GetRealtimeFactor() != want) exec->SetRealtimeFactor(want);
     }
 
-    // Status and the View menu, at the right edge
-    const char* status = graph      ? "Driven by the graph run"
+    // The camera and Record menus, the status and the View menu, at the right edge
+    const std::string camera = CameraLabel(env.GetModel(), renderer);
+    const bool recording = recorder_.IsRecording();
+    const bool finishing = recorder_.IsFinishing();
+    const char* record = recording ? "Stop recording" : finishing ? "Saving..." : "Record";
+    char recording_status[96] = "";
+    if (recording) {
+        const int seconds = static_cast<int>(recorder_.Seconds());
+        std::snprintf(recording_status, sizeof(recording_status), "Recording %d:%02d \xC2\xB7 %d frames",
+                      seconds / 60, seconds % 60, recorder_.Frames());
+    }
+    const char* status = recording  ? recording_status
+                         : graph    ? "Driven by the graph run"
                          : playback ? "Policy playback"
                          : running  ? "Running"
                          : paused   ? "Paused"
                                     : "Stopped";
-    const UiColor& tone = graph || playback || paused ? colors.accent_text : running ? colors.success : colors.pending;
+    const UiColor& tone = recording                     ? colors.error
+                          : graph || playback || paused ? colors.accent_text
+                          : running                     ? colors.success
+                                                        : colors.pending;
+    const float camera_w = ui->ButtonWidth(camera.c_str(), UiButtonSize::Regular);
+    const float record_w = ui->ButtonWidth(record, UiButtonSize::Regular);
     const float pill_w = ui->StatusPillWidth(status);
     const float view_w = ui->ButtonWidth("View", UiButtonSize::Regular);
-    const float right_w = pill_w + spacing + view_w;
-    next(right_w, field_h);
+    const char* stress = stress_.panel_open ? "Hide Stress" : "Stress";
+    const float stress_w = ui->ButtonWidth(stress, UiButtonSize::Regular);
+    const float right_w = camera_w + record_w + pill_w + view_w + stress_w + spacing * 4;
+    next(right_w, button_h);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - right_w));
+    if (ui->SecondaryButton(camera.c_str())) ImGui::OpenPopup("mujoco_camera_menu");
+    RenderCameraMenu(env, renderer);
+    next(record_w, button_h);
+    if (recording) {
+        if (ui->DangerButton(record)) recorder_.Stop();
+    } else if (ui->SecondaryButton(record, !finishing, "The last recording is still being written.")) {
+        ImGui::OpenPopup("mujoco_record_menu");
+    }
+    RenderRecordMenu(env, renderer);
+    next(pill_w, field_h);
     ui->StatusPill("##status", status, tone);
-    if (busy && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", busy);
+    if (busy && !recording && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", busy);
     next(view_w, button_h);
     if (ui->SecondaryButton("View")) ImGui::OpenPopup("mujoco_view_menu");
     RenderViewMenu(env, renderer);
+    next(stress_w, button_h);
+    if (ui->SecondaryButton(stress)) stress_.panel_open = !stress_.panel_open;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Kick the robot, throw objects at it, change the ground: does the policy cope?");
 
     ImGui::SetCursorPosY(line_y + row_h + ImGui::GetStyle().ItemSpacing.y);
-}
-
-void MjViewportPanel::RenderViewMenu(MjEnvManager& env, MjRenderer& renderer) {
-    if (!ImGui::BeginPopup("mujoco_view_menu")) return;
-    ImGui::TextDisabled("Show in the scene");
-    struct VisItem {
-        const char* label;
-        int flag;
-    };
-    static constexpr VisItem kItems[] = {
-        {"Contact points", mjVIS_CONTACTPOINT},
-        {"Contact forces", mjVIS_CONTACTFORCE},
-        {"Joints", mjVIS_JOINT},
-        {"Actuators", mjVIS_ACTUATOR},
-    };
-    // Ticking an option keeps the menu open, to set several
-    ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
-    for (const auto& item : kItems) {
-        const bool on = renderer.VisFlag(item.flag);
-        if (ImGui::MenuItem(item.label, nullptr, on)) renderer.SetVisFlag(item.flag, !on);
-    }
-    const bool wireframe = renderer.Wireframe();
-    if (ImGui::MenuItem("Wireframe", nullptr, wireframe)) renderer.SetWireframe(!wireframe);
-    ImGui::Separator();
-    const bool drawing = renderer.IsEnabled();
-    if (ImGui::MenuItem("Draw the scene", nullptr, drawing)) renderer.SetEnabled(!drawing);
-    ImGui::PopItemFlag();
-    if (ImGui::MenuItem("Reset camera")) renderer.ResetCamera(env.GetModel());
-    ImGui::Separator();
-    ImGui::TextDisabled("Render size %d x %d", renderer.GetWidth(), renderer.GetHeight());
-    ImGui::EndPopup();
 }
 
 // =============================================================================
@@ -317,18 +379,30 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
     }
 
     const unsigned int tex_id = renderer.RenderFrame(env.GetModel(), env.GetData());
+    if (tex_id != 0) RecordFrame(env, renderer);
 
     // The scene takes the mouse: dragging orbits or pans the camera instead of
     // moving the window
+    ImGui::SetNextItemAllowOverlap();  // the throw dial on top of it takes its own clicks
     ImGui::InvisibleButton("##scene", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     const ImVec2 p0 = ImGui::GetItemRectMin();
     const ImVec2 p1 = ImGui::GetItemRectMax();
     ImGuiIO& io = ImGui::GetIO();
-    if (ImGui::IsItemActive()) {
+    // Ctrl+drag a body: a spring pull (the Stress panel's push) instead of the camera
+    HandlePush(env, renderer, ImGui::IsItemActive(), (io.MousePos.x - p0.x) / std::max(1.0f, p1.x - p0.x),
+               (io.MousePos.y - p0.y) / std::max(1.0f, p1.y - p0.y), std::max(1.0f, p1.y - p0.y));
+    if (ImGui::IsItemActive() && !pushing_) {
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) renderer.RotateCamera(io.MouseDelta.x, io.MouseDelta.y);
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) renderer.PanCamera(io.MouseDelta.x, io.MouseDelta.y);
     }
     if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) renderer.ZoomCamera(io.MouseWheel);
+    // Double-click a body to follow it
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        const float x = (io.MousePos.x - p0.x) / std::max(1.0f, p1.x - p0.x);
+        const float y = (io.MousePos.y - p0.y) / std::max(1.0f, p1.y - p0.y);
+        const int body = renderer.BodyAt(env.GetModel(), env.GetData(), x, y);
+        if (body > 0) renderer.FollowBody(env.GetModel(), env.GetData(), body);
+    }
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (tex_id != 0) {
@@ -402,13 +476,91 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
         x += ImGui::CalcTextSize(part.text.c_str()).x + gap;
     }
 
-    const char* hint = "Drag to orbit  |  Right-drag to pan  |  Scroll to zoom";
-    const ImVec2 hint_size = ImGui::CalcTextSize(hint);
+    // The camera hint at the bottom right, or a notice for a few seconds
+    const bool noticing = !notice_.empty() && std::chrono::steady_clock::now() < notice_until_;
+    std::string hint;
+    if (noticing) {
+        hint = notice_;
+    } else {
+        switch (renderer.GetCameraMode()) {
+            case MjRenderer::CameraMode::Free:
+                hint = "Drag to orbit  |  Right-drag to pan  |  Scroll to zoom  |  Double-click a body to follow it";
+                break;
+            case MjRenderer::CameraMode::FollowBody:
+                hint = "Following a body: drag to orbit  |  Scroll to zoom  |  Camera > Free to pan";
+                break;
+            case MjRenderer::CameraMode::ModelCamera:
+                hint = "The model's own camera: Camera > Free or Follow to move the view";
+                break;
+        }
+    }
+    if (pushing_ && !noticing) hint = "Pushing: release the mouse to let go";
+    const ImVec2 hint_size = ImGui::CalcTextSize(hint.c_str());
     const float hint_x = p1.x - margin - hint_size.x - pad * 2;
     if (hint_x > box0.x + width + pad * 2 + gap) {  // only when it does not cover the speed
         dl->AddRectFilled(ImVec2(hint_x, box0.y), ImVec2(p1.x - margin, p1.y - margin),
                           ToU32(colors.bg_window, 0.85f), 6.0f);
-        dl->AddText(ImVec2(hint_x + pad, box0.y + pad), ToU32(colors.text_dim), hint);
+        const UiColor& tone = noticing ? (notice_failed_ ? colors.caution : colors.success) : colors.text_dim;
+        dl->AddText(ImVec2(hint_x + pad, box0.y + pad), ToU32(tone), hint.c_str());
+    }
+    if (playback_ && live_numbers_) RenderLiveNumbers(p0.x, p0.y, env.Scene().ground);
+    if (stress_.panel_open) RenderThrowDial(p1.x, p0.y);
+}
+
+// The played episode's numbers at the top left of the scene
+void MjViewportPanel::RenderLiveNumbers(float scene_left, float scene_top, const MjGround& ground) {
+    const UiColors colors = ctx_->GetUi()->Colors();
+    struct Row {
+        const char* label;
+        std::string value;
+    };
+    std::vector<Row> rows;
+    char buf[64];
+    rows.push_back({"Episode", std::to_string(numbers_.episode)});
+    if (numbers_.max_steps > 0) std::snprintf(buf, sizeof(buf), "%d / %d", numbers_.step, numbers_.max_steps);
+    else std::snprintf(buf, sizeof(buf), "%d", numbers_.step);
+    rows.push_back({"Step", buf});
+    std::snprintf(buf, sizeof(buf), "%.1f", numbers_.episode_return);
+    rows.push_back({"Return", buf});
+    if (numbers_.has_last_return) {
+        std::snprintf(buf, sizeof(buf), "%.1f", numbers_.last_return);
+        rows.push_back({"Last episode", buf});
+    }
+    if (!numbers_.action.empty()) {
+        constexpr size_t kShown = 8;
+        std::string action;
+        for (size_t i = 0; i < std::min(kShown, numbers_.action.size()); ++i) {
+            std::snprintf(buf, sizeof(buf), "%s%.2f", i ? "  " : "", numbers_.action[i]);
+            action += buf;
+        }
+        if (numbers_.action.size() > kShown)
+            action += "  ... (" + std::to_string(numbers_.action.size()) + " values)";
+        rows.push_back({"Action", action});
+    }
+    if (ground.kind != MjGroundKind::Flat) {
+        std::snprintf(buf, sizeof(buf), "%s \xC2\xB7 difficulty %.2f", GroundName(ground.kind), ground.difficulty);
+        rows.push_back({"Ground", buf});
+    }
+
+    const float pad = 8.0f;
+    const float margin = 12.0f;
+    const float gap = 14.0f;
+    const float line_h = ImGui::GetTextLineHeightWithSpacing();
+    float label_w = 0.0f, value_w = 0.0f;
+    for (const auto& row : rows) {
+        label_w = std::max(label_w, ImGui::CalcTextSize(row.label).x);
+        value_w = std::max(value_w, ImGui::CalcTextSize(row.value.c_str()).x);
+    }
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 box0(scene_left + margin, scene_top + margin);
+    const ImVec2 box1(box0.x + pad * 2 + label_w + gap + value_w,
+                      box0.y + pad * 2 + line_h * static_cast<float>(rows.size()) - ImGui::GetStyle().ItemSpacing.y);
+    dl->AddRectFilled(box0, box1, ToU32(colors.bg_window, 0.85f), 6.0f);
+    float y = box0.y + pad;
+    for (const auto& row : rows) {
+        dl->AddText(ImVec2(box0.x + pad, y), ToU32(colors.text_dim), row.label);
+        dl->AddText(ImVec2(box0.x + pad + label_w + gap, y), ToU32(colors.text), row.value.c_str());
+        y += line_h;
     }
 }
 
@@ -444,6 +596,8 @@ void MjViewportPanel::RenderEpisodeStrip(MjEnvManager& env) {
     item("Episode reward", value);
     std::snprintf(value, sizeof(value), "%.4g s", snap.model_step);
     item("Model step", value);
+    const MjGround& ground = env.Scene().ground;
+    if (ground.kind != MjGroundKind::Flat) item("Ground", DescribeGround(ground).c_str());
 }
 
 } // namespace cyxwiz::plugin::mujoco

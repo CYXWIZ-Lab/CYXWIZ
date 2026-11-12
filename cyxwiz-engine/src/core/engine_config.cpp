@@ -120,6 +120,14 @@ std::filesystem::path GetExecutableDir() {
 #endif
 }
 
+// The Stress test's defaults within the panel's ranges
+PolicyStressDefaults ClampStressDefaults(PolicyStressDefaults d) {
+    d.kind = std::clamp(d.kind, 0, 4);  // the five disturbances of rl::StressKind
+    d.levels = std::clamp(d.levels, 2, 21);
+    d.episodes = std::clamp(d.episodes, 1, 100);
+    return d;
+}
+
 }  // namespace
 
 std::filesystem::path ExecutableDirectory() { return GetExecutableDir(); }
@@ -463,14 +471,28 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             open_simulation_monitor_on_run_ = simulation.value("open_monitor_on_run", true);
         }
 
+        plugin_settings_.clear();
+        if (config.contains("plugin_settings") && config["plugin_settings"].is_object()) {
+            for (const auto& [plugin_id, values] : config["plugin_settings"].items()) {
+                if (!values.is_object()) continue;
+                for (const auto& [key, value] : values.items())
+                    if (value.is_string()) plugin_settings_[plugin_id][key] = value.get<std::string>();
+            }
+        }
+
         policy_playback_best_ = true;
         policy_playback_speed_ = 0;
         play_policy_after_training_ = false;
+        policy_stress_defaults_ = {};
         if (config.contains("policy_playback") && config["policy_playback"].is_object()) {
             const auto& playback = config["policy_playback"];
             policy_playback_best_ = playback.value("best_actions", true);
             policy_playback_speed_ = std::clamp(playback.value("speed", 0), 0, 2);
             play_policy_after_training_ = playback.value("play_after_training", false);
+            const PolicyStressDefaults d;
+            policy_stress_defaults_ = ClampStressDefaults({playback.value("stress_kind", d.kind),
+                                                           playback.value("stress_levels", d.levels),
+                                                           playback.value("stress_episodes", d.episodes)});
         }
 
         runtime_log_saved_filters_.clear();
@@ -592,9 +614,13 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
         config["data"] = {{"budget_bytes", data_budget_bytes_}};
         config["simulation"] = {{"rate_hz", simulation_rate_hz_},
                                 {"open_monitor_on_run", open_simulation_monitor_on_run_}};
+        if (!plugin_settings_.empty()) config["plugin_settings"] = plugin_settings_;
         config["policy_playback"] = {{"best_actions", policy_playback_best_},
                                      {"speed", policy_playback_speed_},
-                                     {"play_after_training", play_policy_after_training_}};
+                                     {"play_after_training", play_policy_after_training_},
+                                     {"stress_kind", policy_stress_defaults_.kind},
+                                     {"stress_levels", policy_stress_defaults_.levels},
+                                     {"stress_episodes", policy_stress_defaults_.episodes}};
         config["observability"] = {
             {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
@@ -1029,6 +1055,25 @@ void EngineConfig::SetOpenSimulationMonitorOnRun(bool open) {
     }
 }
 
+bool EngineConfig::PluginSetting(const std::string& plugin_id, const std::string& key, std::string& value) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto plugin = plugin_settings_.find(plugin_id);
+    if (plugin == plugin_settings_.end()) return false;
+    const auto it = plugin->second.find(key);
+    if (it == plugin->second.end()) return false;
+    value = it->second;
+    return true;
+}
+
+void EngineConfig::SetPluginSetting(const std::string& plugin_id, const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& stored = plugin_settings_[plugin_id][key];
+    if (stored != value) {
+        stored = value;
+        modified_ = true;
+    }
+}
+
 bool EngineConfig::PolicyPlaybackBestActions() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return policy_playback_best_;
@@ -1052,6 +1097,21 @@ void EngineConfig::SetPolicyPlaybackSpeed(int speed) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (policy_playback_speed_ != speed) {
         policy_playback_speed_ = speed;
+        modified_ = true;
+    }
+}
+
+PolicyStressDefaults EngineConfig::PolicyStressTestDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return policy_stress_defaults_;
+}
+
+void EngineConfig::SetPolicyStressTestDefaults(PolicyStressDefaults defaults) {
+    defaults = ClampStressDefaults(defaults);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (defaults.kind != policy_stress_defaults_.kind || defaults.levels != policy_stress_defaults_.levels ||
+        defaults.episodes != policy_stress_defaults_.episodes) {
+        policy_stress_defaults_ = defaults;
         modified_ = true;
     }
 }

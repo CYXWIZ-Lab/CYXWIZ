@@ -29,9 +29,9 @@ namespace {
 
 double Value(const MjTaskValues& values, const char* key) { return values.at(key); }
 
-void SetState(const mjModel* m, mjData* d, const double* qpos, const double* qvel) {
-    for (int i = 0; i < m->nq; ++i) d->qpos[i] = qpos[i];
-    for (int i = 0; i < m->nv; ++i) d->qvel[i] = qvel[i];
+void SetState(const mjModel* m, mjData* d, const std::vector<double>& qpos, const std::vector<double>& qvel) {
+    for (size_t i = 0; i < qpos.size(); ++i) d->qpos[i] = qpos[i];
+    for (size_t i = 0; i < qvel.size(); ++i) d->qvel[i] = qvel[i];
     mj_forward(m, d);
 }
 
@@ -45,22 +45,22 @@ class InvertedPendulum final : public MjTask {
 public:
     explicit InvertedPendulum(const MjTaskValues& values)
         : frame_skip_(static_cast<int>(Value(values, "frame_skip"))), noise_(Value(values, "reset_noise_scale")) {}
-    int ObservationSize(const mjModel* m) const override { return static_cast<int>(m->nq + m->nv); }
+    int ObservationSize(const mjModel* m) const override { return static_cast<int>(Nq(m) + Nv(m)); }
     void Observe(const mjModel* m, const mjData* d, float* out) const override {
-        for (int i = 0; i < m->nq; ++i) *out++ = static_cast<float>(d->qpos[i]);
-        for (int i = 0; i < m->nv; ++i) *out++ = static_cast<float>(d->qvel[i]);
+        for (int i = 0; i < Nq(m); ++i) *out++ = static_cast<float>(d->qpos[i]);
+        for (int i = 0; i < Nv(m); ++i) *out++ = static_cast<float>(d->qvel[i]);
     }
     void ResetState(const mjModel* m, mjData* d, MjRandom& random) const override {
-        std::vector<double> qpos(m->nq), qvel(m->nv);
-        for (int i = 0; i < m->nq; ++i) qpos[i] = m->qpos0[i] + random.Uniform(-noise_, noise_);
-        for (int i = 0; i < m->nv; ++i) qvel[i] = random.Uniform(-noise_, noise_);
-        SetState(m, d, qpos.data(), qvel.data());
+        std::vector<double> qpos(Nq(m)), qvel(Nv(m));
+        for (int i = 0; i < Nq(m); ++i) qpos[i] = m->qpos0[i] + random.Uniform(-noise_, noise_);
+        for (int i = 0; i < Nv(m); ++i) qvel[i] = random.Uniform(-noise_, noise_);
+        SetState(m, d, qpos, qvel);
     }
     MjTaskStep Step(const mjModel* m, mjData* d, const float*) const override {
         StepFrames(m, d, frame_skip_);
         bool finite = true;
-        for (int i = 0; i < m->nq; ++i) finite = finite && std::isfinite(d->qpos[i]);
-        for (int i = 0; i < m->nv; ++i) finite = finite && std::isfinite(d->qvel[i]);
+        for (int i = 0; i < Nq(m); ++i) finite = finite && std::isfinite(d->qpos[i]);
+        for (int i = 0; i < Nv(m); ++i) finite = finite && std::isfinite(d->qvel[i]);
         MjTaskStep step;
         step.terminated = !finite || std::abs(d->qpos[1]) > 0.2;
         step.reward = step.terminated ? 0.0 : 1.0;
@@ -87,16 +87,16 @@ public:
           forward_weight_(Value(values, "forward_reward_weight")),
           ctrl_weight_(Value(values, "ctrl_cost_weight")) {}
     // The x position is left out of the observation (Gymnasium's default)
-    int ObservationSize(const mjModel* m) const override { return static_cast<int>(m->nq - 1 + m->nv); }
+    int ObservationSize(const mjModel* m) const override { return static_cast<int>(Nq(m) - 1 + Nv(m)); }
     void Observe(const mjModel* m, const mjData* d, float* out) const override {
-        for (int i = 1; i < m->nq; ++i) *out++ = static_cast<float>(d->qpos[i]);
-        for (int i = 0; i < m->nv; ++i) *out++ = static_cast<float>(d->qvel[i]);
+        for (int i = 1; i < Nq(m); ++i) *out++ = static_cast<float>(d->qpos[i]);
+        for (int i = 0; i < Nv(m); ++i) *out++ = static_cast<float>(d->qvel[i]);
     }
     void ResetState(const mjModel* m, mjData* d, MjRandom& random) const override {
-        std::vector<double> qpos(m->nq), qvel(m->nv);
-        for (int i = 0; i < m->nq; ++i) qpos[i] = m->qpos0[i] + random.Uniform(-noise_, noise_);
-        for (int i = 0; i < m->nv; ++i) qvel[i] = noise_ * random.Normal();
-        SetState(m, d, qpos.data(), qvel.data());
+        std::vector<double> qpos(Nq(m)), qvel(Nv(m));
+        for (int i = 0; i < Nq(m); ++i) qpos[i] = m->qpos0[i] + random.Uniform(-noise_, noise_);
+        for (int i = 0; i < Nv(m); ++i) qvel[i] = noise_ * random.Normal();
+        SetState(m, d, qpos, qvel);
     }
     MjTaskStep Step(const mjModel* m, mjData* d, const float* action) const override {
         const double x_before = d->qpos[0];

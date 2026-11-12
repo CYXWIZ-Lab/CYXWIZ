@@ -8,6 +8,8 @@
 #include "../src/plugin/plugin_manager.h"
 #include "../src/plugin/registries/plugin_panel_registry.h"
 #include "../src/plugin/registries/plugin_command_registry.h"
+#include "../src/plugin/registries/plugin_preferences_registry.h"
+#include "../src/plugin/engine_plugin_context.h"
 #include "../src/plugin/registries/plugin_simulation_registry.h"
 #include "../src/plugin/registries/plugin_environment_registry.h"
 #include "../src/plugin/builtin/classic_control_environments.h"
@@ -18,6 +20,7 @@
 #include <memory>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -103,6 +106,76 @@ void CheckCommandRegistry() {
     Check(!commands.Run("com.example.sim:missing"), "an unknown command does not run");
     commands.RemoveByPlugin("com.example.sim");
     Check(commands.GetCount() == 0 && !commands.Run("com.example.sim:go"), "removing the plugin removes its commands");
+}
+
+// A plugin's Preferences sections (plugin API 1.4)
+class FakePreferences final : public cyxwiz::plugin::IPreferencesProvider {
+public:
+    std::vector<std::string> drawn;
+    std::vector<cyxwiz::plugin::PluginPreferencesSection> GetPreferenceSections() override {
+        return {{"viewer", "Simulation", "My Viewer", "How it starts."}, {"odd", "Nowhere", "Odd one", ""}};
+    }
+    void RenderPreferences(const std::string& id) override {
+        if (id == "odd") throw std::runtime_error("broken");
+        drawn.push_back(id);
+    }
+};
+
+void CheckPreferencesRegistry() {
+    auto& preferences = cyxwiz::plugin::PluginPreferencesRegistry::Instance();
+    FakePreferences fake;
+    for (const auto& section : fake.GetPreferenceSections()) preferences.Register("com.example.sim", section, &fake);
+    preferences.Register("com.example.sim", fake.GetPreferenceSections()[0], &fake);  // a duplicate is skipped
+    const std::vector<std::string> tabs = {"General", "Simulation"};
+    const auto simulation = preferences.SectionsFor("Simulation", tabs, "General");
+    const auto general = preferences.SectionsFor("General", tabs, "General");
+    Check(preferences.GetCount() == 2 && simulation.size() == 1 && simulation[0].key == "com.example.sim:viewer" &&
+              simulation[0].section.title == "My Viewer" && simulation[0].section.hint == "How it starts.",
+          "a section is listed in the tab it names");
+    Check(general.size() == 1 && general[0].section.title == "Odd one", "a tab the Engine does not have puts it in General");
+    Check(preferences.Render("com.example.sim:viewer") && fake.drawn == std::vector<std::string>{"viewer"},
+          "the section draws");
+    Check(!preferences.Render("com.example.sim:odd"), "a section that throws is reported, the dialog goes on");
+    Check(!preferences.Render("com.example.sim:missing"), "an unknown section does not draw");
+    preferences.RemoveByPlugin("com.example.sim");
+    Check(preferences.GetCount() == 0 && preferences.SectionsFor("Simulation", tabs, "General").empty(),
+          "removing the plugin removes its sections");
+}
+
+// A plugin's settings and the project folder (plugin API 1.4): kept for the
+// session without a host's store, else read and written through it
+void CheckPluginSettings() {
+    using cyxwiz::plugin::EnginePluginContext;
+    EnginePluginContext::SetHostServices({});
+    EnginePluginContext a("com.example.a", "1.0.0", {1, 4, 0}, nullptr);
+    EnginePluginContext b("com.example.b", "1.0.0", {1, 4, 0}, nullptr);
+    Check(a.GetProjectDir().empty(), "no project without the host's services");
+    Check(a.GetSetting("speed", "1") == "1", "a key never set gives the fallback");
+    a.SetSetting("speed", "2");
+    Check(a.GetSetting("speed", "1") == "2" && b.GetSetting("speed", "1") == "1",
+          "a setting is kept per plugin for the session");
+
+    std::map<std::string, std::string> store;
+    EnginePluginContext::SetHostServices({
+        [] { return std::filesystem::path("D:/projects/demo"); },
+        [&store](const std::string& plugin, const std::string& key, std::string& value) {
+            const auto it = store.find(plugin + "/" + key);
+            if (it == store.end()) return false;
+            value = it->second;
+            return true;
+        },
+        [&store](const std::string& plugin, const std::string& key, const std::string& value) {
+            store[plugin + "/" + key] = value;
+        },
+    });
+    Check(a.GetProjectDir() == std::filesystem::path("D:/projects/demo"), "the project folder comes from the host");
+    a.SetSetting("camera", "follow");
+    Check(store.at("com.example.a/camera") == "follow" && a.GetSetting("camera") == "follow" &&
+              b.GetSetting("camera", "track") == "track",
+          "the host stores each plugin's settings under its id");
+    a.SetSetting("", "ignored");
+    Check(store.size() == 1, "an empty key is not stored");
+    EnginePluginContext::SetHostServices({});
 }
 
 // A plugin whose nodes run in graph simulations (plugin API 1.4)
@@ -209,6 +282,9 @@ public:
         return true;
     }
     std::string LastError() const override { return error_; }
+    std::vector<cyxwiz::plugin::PluginEnvironmentStat> Stats() const override {
+        return {{"Level", std::to_string(steps_.empty() ? 0 : steps_[0]), "steps of copy 0"}};
+    }
     void Release() override {
         ++*releases_;
         delete this;
@@ -243,6 +319,20 @@ public:
         line.action_high = {1.0f};
         line.max_episode_steps = 3;
         line.settings = {{"speed", "Speed", "0.5", "How far one action moves the point"}};
+        cyxwiz::plugin::PluginEnvironmentSetting wide;  // a flag in a section: it widens the observation
+        wide.key = "wide";
+        wide.label = "Wide";
+        wide.default_value = "0";
+        wide.kind = cyxwiz::plugin::PluginSettingKind::Flag;
+        wide.section = "More";
+        line.settings.push_back(wide);
+        cyxwiz::plugin::PluginEnvironmentSetting colours;
+        colours.key = "colours";
+        colours.label = "Colours";
+        colours.kind = cyxwiz::plugin::PluginSettingKind::Choices;
+        colours.options = {{"red", "Red"}, {"blue", "Blue"}};
+        colours.section = "More";
+        line.settings.push_back(colours);
         auto liar = line;  // its copies report another observation size
         liar.id = "Liar-v0";
         auto blind = line;  // observes nothing: not added
@@ -256,12 +346,30 @@ public:
         coin.action_count = 1;
         return {line, liar, blind, coin};
     }
+    bool DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& settings,
+                             cyxwiz::plugin::PluginEnvironmentInfo& info, std::string& error) override {
+        for (const auto& listed : GetEnvironments()) {
+            if (listed.id != id) continue;
+            info = listed;
+            const auto wide = settings.find("wide");
+            if (wide != settings.end() && wide->second != "0" && wide->second != "1") {
+                error = "Wide is 1 or 0.";
+                return false;
+            }
+            if (wide != settings.end() && wide->second == "1") info.observation_size = 2;
+            return true;
+        }
+        error = "No " + id;
+        return false;
+    }
     cyxwiz::plugin::PluginEnvironmentCreateResult CreateEnvironments(
         const std::string& id, const std::map<std::string, std::string>& settings, int count) override {
         last_settings = settings;
         const auto speed = settings.find("speed");
         if (speed != settings.end() && speed->second == "fast") return {nullptr, "Speed must be a number."};
-        return {new FakeLine(count, id == "Liar-v0" ? 2 : 1, &releases), {}};
+        const auto wide = settings.find("wide");
+        const bool is_wide = wide != settings.end() && wide->second == "1";
+        return {new FakeLine(count, id == "Liar-v0" || is_wide ? 2 : 1, &releases), {}};
     }
 };
 
@@ -276,8 +384,25 @@ void CheckEnvironmentRegistry() {
     Check(environments.GetCount() == 3, "the two usable environments are registered once, beside the built-in one");
     cyxwiz::plugin::PluginEnvironmentRegistry::Environment found;
     Check(environments.Find("com.example.env:Line-v0", found) && found.info.max_episode_steps == 3 &&
-              found.info.settings.size() == 1 && found.info.settings[0].default_value == "0.5",
+              found.info.settings.size() == 3 && found.info.settings[0].default_value == "0.5",
           "the environment's info and settings are kept");
+    Check(found.info.settings[1].kind == cyxwiz::plugin::PluginSettingKind::Flag && found.info.settings[1].section == "More" &&
+              found.info.settings[2].options.size() == 2 && found.info.settings[2].options[1].label == "Blue",
+          "a setting's kind, section and options are kept");
+    {
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment described;
+        std::string why;
+        Check(environments.Describe("com.example.env:Line-v0", {{"wide", "1"}}, described, why) &&
+                  described.info.observation_size == 2,
+              "the description follows the settings (a wider observation)");
+        Check(!environments.Describe("com.example.env:Line-v0", {{"wide", "maybe"}}, described, why) &&
+                  why == "Wide is 1 or 0.",
+              "settings the plugin cannot describe are refused with its reason");
+        auto wide_batch = environments.Create("com.example.env:Line-v0", {{"wide", "1"}}, 2, why);
+        Check(wide_batch && wide_batch->ObservationSize() == 2, "a batch is checked against its described size: " + why);
+        Check(wide_batch && !wide_batch->Stats().empty() && wide_batch->Stats()[0].label == "Level",
+              "the batch's stats reach the Engine");
+    }
     Check(!environments.Find("com.example.env:Blind-v0", found) && !environments.Find("com.example.env:Coin-v0", found),
           "an environment that observes nothing or has one choice is not added");
 
@@ -288,7 +413,7 @@ void CheckEnvironmentRegistry() {
     Check(!environments.Create("com.example.env:Line-v0", {{"speed", "fast"}}, 2, error) &&
               error == "Speed must be a number.",
           "the plugin's refusal is the error");
-    Check(!environments.Create("com.example.env:Liar-v0", {}, 2, error) && fake.releases == 1 &&
+    Check(!environments.Create("com.example.env:Liar-v0", {}, 2, error) && fake.releases == 2 &&
               error.find("do not match") != std::string::npos,
           "copies that do not match their description are refused and released");
 
@@ -320,7 +445,7 @@ void CheckEnvironmentRegistry() {
     library.reset();
     Check(!library_alive.expired(), "a live batch keeps the plugin's library loaded");
     batch.reset();
-    Check(fake.releases == 2 && library_alive.expired(), "dropping the batch releases it, then the library");
+    Check(fake.releases == 3 && library_alive.expired(), "dropping the batch releases it, then the library");
 }
 
 // The Engine's own CartPole-v1 (Gymnasium's classic control), with no plugin
@@ -364,6 +489,8 @@ void CheckBuiltinCartPole() {
 
 int main() {
     CheckCommandRegistry();
+    CheckPreferencesRegistry();
+    CheckPluginSettings();
     CheckSimulationRegistry();
     CheckEnvironmentRegistry();
     CheckBuiltinCartPole();

@@ -18,6 +18,8 @@
 #include "../src/core/execution_device_preferences.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/training_trace_collector.h"
+#include <cyxwiz/neural_provider.h>
+#include "../src/core/rl/policy_stress_test.h"
 #include "../src/core/rl/rl_training_run.h"
 #include "../src/core/rl/trained_policy.h"
 #include "../src/plugin/plugin_manager.h"
@@ -160,6 +162,29 @@ void CheckCartPole() {
     const auto config = Compile(g);
     if (!config) return;
 
+    // Compile's prediction of the fused small-network kernels: never on the
+    // CPU; on CUDA exactly when a provider serves CUDA; not for a layer
+    // wider than the kernels take
+    Check(!cyxwiz::FusedNetworksExpected(*config, cyxwiz::DeviceType::CPU, 0), "no fused kernels on the CPU");
+    const bool cuda_provider = !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
+    Check(cyxwiz::FusedNetworksExpected(*config, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+          "CartPole's 64-64 networks are expected fused on CUDA exactly when a provider serves CUDA");
+    auto wide = *config;
+    wide.policy_layers.front().units = 300;
+    Check(!cyxwiz::FusedNetworksExpected(wide, cyxwiz::DeviceType::CUDA, 0), "a 300-unit layer is not expected fused");
+    if (cuda_provider) {
+        auto mixed = *config;  // two LeakyReLU slopes in one network: FusedMlp refuses them
+        for (auto& layer : mixed.policy_layers)
+            if (layer.type != gui::NodeType::Dense) layer.type = gui::NodeType::LeakyReLU;
+        mixed.policy_layers.back().negative_slope = 0.2f;
+        Check(!cyxwiz::FusedNetworksExpected(mixed, cyxwiz::DeviceType::CUDA, 0),
+              "LeakyReLU layers with different slopes are not expected fused");
+        auto huge = *config;  // a minibatch past the backward's rows
+        huge.ppo.batch_size = 70000;
+        Check(!cyxwiz::FusedNetworksExpected(huge, cyxwiz::DeviceType::CUDA, 0),
+              "a minibatch past the backward's 65,536 rows is not expected fused");
+    }
+
     cyxwiz::rl::RLTrainingRun run;
     std::string error;
     const auto start = std::chrono::steady_clock::now();
@@ -219,6 +244,39 @@ void CheckCartPole() {
           "a missing file is refused with the reason: " + load_error);
 }
 
+// A stress test of a trained policy, run whole and stopped early
+void CheckStressRun(const std::shared_ptr<cyxwiz::rl::TrainedPolicy>& policy) {
+    using namespace cyxwiz::rl;
+    Check(SupportsStress(policy->config.environment), "a MuJoCo task takes the stress test's settings");
+    StressTestSpec spec;
+    spec.kind = StressKind::Kicks;
+    spec.levels = 2;
+    spec.episodes = 2;
+    PolicyStressTest test;
+    std::string error;
+    Check(test.Start({{"a", policy}, {"b", policy}}, spec, error), "the stress test starts: " + error);
+    for (int i = 0; i < 6000 && test.Get().state == PolicyStressTest::State::Running; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const auto done = test.Get();
+    Check(done.state == PolicyStressTest::State::Finished, "it finishes: " + done.message);
+    bool shaped = done.results.size() == 2 && done.done == 4 && done.total == 4;
+    for (const auto& r : done.results) {
+        shaped = shaped && r.levels.size() == 2;
+        for (const auto& level : r.levels)
+            shaped = shaped && level.returns.size() == 2 && level.falls >= 0 && level.falls <= 2;
+    }
+    Check(shaped, "a result for each policy and level: two returns, at most two falls");
+    // The same policy, the same seeds: the same returns
+    Check(shaped && done.results[0].levels[1].returns == done.results[1].levels[1].returns,
+          "both columns meet the same kicks");
+
+    spec.levels = 21;
+    spec.episodes = 100;
+    Check(test.Start({{"a", policy}}, spec, error), "a long stress test starts: " + error);
+    test.Stop();
+    Check(test.Get().state == PolicyStressTest::State::Stopped, "Stop ends it");
+}
+
 void CheckContinuous(const std::filesystem::path& plugin) {
     auto& manager = cyxwiz::plugin::PluginManager::Instance();
     std::string error;
@@ -239,8 +297,13 @@ void CheckContinuous(const std::filesystem::path& plugin) {
         cyxwiz::rl::RLTrainingRun run;
         SelectCpu();
         Check(run.Start(config, rl_graph_test::Json(g), error), "the InvertedPendulum run starts: " + error);
-        Wait(run, 300.0);
+        const auto updates = Wait(run, 300.0);
         Check(run.GetState() == cyxwiz::rl::RLTrainingRun::State::Finished, "it finishes: " + run.Message());
+        // The batch's own numbers reach the dashboard with each update
+        bool falls_reported = false;
+        for (const auto& m : updates)
+            for (const auto& stat : m.environment_stats) falls_reported = falls_reported || stat.label == "Falls";
+        Check(falls_reported, "the environment's Falls reaches the update metrics");
         const auto trained = run.Trained();
         Check(trained != nullptr && trained->normalizer != nullptr && trained->log_std.NumElements() == 1,
               "it keeps a Gaussian policy with its observation statistics");
@@ -251,6 +314,7 @@ void CheckContinuous(const std::filesystem::path& plugin) {
             for (const float a : actions) bounded = bounded && a >= info.action_low[0] && a <= info.action_high[0];
             Check(bounded, "sampled actions stay within the bounds");
             CheckSaveAndLoad(*trained, "cyxwiz_rl_pendulum_policy_test.cyxmodel");
+            CheckStressRun(trained);
         }
     }
     manager.UnloadPlugin("com.cyxwiz.simulation.mujoco");
@@ -377,8 +441,41 @@ void CheckGpuPolicy() {
 
 }  // namespace
 
+// The stress test's conditions (board 6): its settings over the policy's own,
+// levels, seeds, the CSV, and refusing an environment without grounds
+void CheckStressTestConditions() {
+    using namespace cyxwiz::rl;
+    const std::map<std::string, std::string> own{{"look_ahead", "1"}, {"grounds", "rough,steps"}, {"curriculum", "1500"},
+                                                 {"friction_percent", "20"}, {"frame_skip", "5"}};
+    auto steps = StressSettings(own, StressKind::Steps, 0.75);
+    Check(steps["grounds"] == "steps" && steps["difficulty_from"] == "0.75" && steps["difficulty_to"] == "0.75" &&
+              steps["curriculum"] == "0" && steps["friction_percent"] == "0" && steps["push_every"] == "0" &&
+              steps["look_ahead"] == "1" && steps["frame_skip"] == "5",
+          "a ground level: that ground at that difficulty, no random physics, the policy's own Look ahead kept");
+    auto kicks = StressSettings(own, StressKind::Kicks, 0.5);
+    Check(kicks["grounds"].empty() && kicks["push_every"] == "1.5" && kicks["push_speed"] == "2",
+          "kicks: no ground, a push every 1.5 s of up to 4 m/s times the difficulty");
+    Check(StressSettings(own, StressKind::Kicks, 0.0)["push_every"] == "0", "kicks at 0: none");
+    StressTestSpec spec;
+    spec.levels = 5;
+    Check(StressDifficulty(spec, 0) == 0.0 && StressDifficulty(spec, 4) == 1.0 && StressDifficulty(spec, 1) == 0.25,
+          "five levels: 0, 0.25 ... 1");
+    Check(StressSeed(spec, 2) == StressSeed(spec, 2) && StressSeed(spec, 1) != StressSeed(spec, 2), "a seed a level");
+    StressPolicyResult a{"walk", {{0.0, {100.0, 300.0}, 0}, {1.0, {10.0, 30.0}, 2}}};
+    StressPolicyResult b{"robust", {{0.0, {200.0, 200.0}, 0}}};
+    Check(StressResultsCsv({a, b}, 2) ==
+              "difficulty,\"walk mean return\",\"walk falls\",\"robust mean return\",\"robust falls\",episodes\n"
+              "0,200.00,0,200.00,0,2\n1,20.00,2,,,2\n",
+          "the CSV: a row a level, each policy's mean return and falls");
+    cyxwiz::plugin::PluginEnvironmentRegistry::Environment cartpole;
+    Check(cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find("cyxwiz.builtin:CartPole-v1", cartpole) &&
+              !SupportsStress(cartpole.info),
+          "CartPole has no grounds or pushes: no stress test");
+}
+
 int main(int argc, char** argv) {
-    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>&,
+                                      cyxwiz::plugin::PluginEnvironmentInfo& info, std::string&) {
         cyxwiz::plugin::PluginEnvironmentRegistry::Environment e;
         if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(key, e)) return false;
         info = e.info;
@@ -386,6 +483,7 @@ int main(int argc, char** argv) {
     });
     // Routes certified as the installer's qualification would certify them
     cyxwiz::test::InstallQualifiedRouteSnapshot();
+    CheckStressTestConditions();
     CheckDevice();
     CheckStopAndFailure();
     CheckCartPole();

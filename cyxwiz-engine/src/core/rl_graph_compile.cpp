@@ -3,6 +3,7 @@
 #include "rl_graph_presentation.h"
 
 #include <cyxwiz/error_codes.h>
+#include <cyxwiz/neural_provider.h>
 
 #include <algorithm>
 #include <cmath>
@@ -16,9 +17,10 @@ namespace {
 std::mutex g_lookup_mutex;
 RLEnvironmentLookup g_lookup;
 
-bool LookupEnvironment(const std::string& key, plugin::PluginEnvironmentInfo& info) {
+bool LookupEnvironment(const std::string& key, const std::map<std::string, std::string>& settings,
+                       plugin::PluginEnvironmentInfo& info, std::string& error) {
     std::lock_guard<std::mutex> lock(g_lookup_mutex);
-    return g_lookup && g_lookup(key, info);
+    return g_lookup && g_lookup(key, settings, info, error);
 }
 
 std::string Param(const gui::MLNode& node, const char* key, const char* fallback) {
@@ -45,6 +47,76 @@ std::vector<int> HiddenUnits(const std::vector<CompiledLayer>& layers) {
     for (const auto& layer : layers)
         if (layer.units > 0) units.push_back(layer.units);
     return units;
+}
+
+namespace {
+
+// A network's chain as an MLP request (the hidden layers, then its output
+// layer), or false when a layer has no fused form
+bool MlpChain(const std::vector<CompiledLayer>& layers, size_t inputs, size_t outputs, size_t& count,
+              size_t (&widths)[NeuralOpRequest::kMaxMlpLayers + 1],
+              NeuralActivation (&acts)[NeuralOpRequest::kMaxMlpLayers], float& slope, float& alpha) {
+    count = 0;
+    bool has_slope = false, has_alpha = false;  // one of each per network, as FusedMlp takes them
+    widths[0] = inputs;
+    for (const auto& layer : layers) {
+        if (layer.type == gui::NodeType::Dense) {
+            if (count == NeuralOpRequest::kMaxMlpLayers) return false;
+            widths[++count] = static_cast<size_t>(std::max(layer.units, 0));
+            acts[count - 1] = NeuralActivation::None;
+            continue;
+        }
+        if (count == 0 || acts[count - 1] != NeuralActivation::None) return false;  // an activation after a Dense
+        switch (layer.type) {
+            case gui::NodeType::ReLU: acts[count - 1] = NeuralActivation::Relu; break;
+            case gui::NodeType::Tanh: acts[count - 1] = NeuralActivation::Tanh; break;
+            case gui::NodeType::Sigmoid: acts[count - 1] = NeuralActivation::Sigmoid; break;
+            case gui::NodeType::GELU: acts[count - 1] = NeuralActivation::Gelu; break;
+            case gui::NodeType::Swish: acts[count - 1] = NeuralActivation::Swish; break;
+            case gui::NodeType::SELU: acts[count - 1] = NeuralActivation::Selu; break;
+            case gui::NodeType::ELU:
+                if (has_alpha && layer.alpha != alpha) return false;
+                acts[count - 1] = NeuralActivation::Elu;
+                alpha = layer.alpha;
+                has_alpha = true;
+                break;
+            case gui::NodeType::LeakyReLU:
+                if (has_slope && layer.negative_slope != slope) return false;
+                acts[count - 1] = NeuralActivation::LeakyRelu;
+                slope = layer.negative_slope;
+                has_slope = true;
+                break;
+            default: return false;
+        }
+    }
+    if (count == NeuralOpRequest::kMaxMlpLayers) return false;
+    widths[++count] = outputs;  // the head's output layer
+    acts[count - 1] = NeuralActivation::None;
+    return true;
+}
+
+}  // namespace
+
+bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType platform, int device_id) {
+    if (platform == DeviceType::CPU) return false;
+    for (const auto* layers : {&config.policy_layers, &config.value_layers}) {
+        NeuralOpRequest r;
+        r.op = NeuralOp::MlpForward;
+        r.target.platform = platform;
+        r.target.device_id = device_id;
+        r.device_resident = true;
+        r.dtype = DataType::Float32;
+        r.batch = 1;
+        const size_t outputs = layers == &config.policy_layers ? std::max<size_t>(config.policy_outputs, 1) : 1;
+        if (!MlpChain(*layers, std::max<size_t>(config.observation_size, 1), outputs, r.mlp_layers, r.mlp_widths,
+                      r.mlp_activations, r.mlp_negative_slope, r.mlp_elu_alpha))
+            return false;
+        if (!NeuralProviderRegistry::Instance().FindSupporting(r)) return false;
+        r.op = NeuralOp::MlpBackward;  // the minibatch's backward, with its row limit
+        r.batch = static_cast<size_t>(std::max(config.ppo.batch_size, 1));
+        if (!NeuralProviderRegistry::Instance().FindSupporting(r)) return false;
+    }
+    return true;
 }
 
 bool IsRLGraphNode(gui::NodeType type) {
@@ -128,7 +200,13 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
         }
         if (rl->copies < 1 || rl->copies > 1024)
             error("Copies must be a whole number from 1 to 1024", env, errors::Compiler::InvalidParameter);
-        if (!LookupEnvironment(rl->environment_key, rl->environment)) {
+        std::string settings_error;
+        const bool found =
+            LookupEnvironment(rl->environment_key, rl->environment_settings, rl->environment, settings_error);
+        if (!found && !settings_error.empty()) {  // known, but its settings are not valid
+            error(settings_error, env, errors::Compiler::InvalidParameter);
+            env = nullptr;
+        } else if (!found) {
             const size_t colon = rl->environment_key.find(':');
             const std::string id = colon == std::string::npos ? rl->environment_key : rl->environment_key.substr(colon + 1);
             const std::string provider = colon == std::string::npos ? "" : rl->environment_key.substr(0, colon);

@@ -311,7 +311,8 @@ void CheckImageSplitCard() {
 
 // An RL graph (TOFIX195 S4.3): what each node is in the PPO run, no data or shapes
 void CheckRlGraph() {
-    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>&,
+                                      cyxwiz::plugin::PluginEnvironmentInfo& info, std::string&) {
         if (key != "cyxwiz.builtin:CartPole-v1") return false;
         info.id = "CartPole-v1";
         info.observation_size = 4;

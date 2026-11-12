@@ -16,6 +16,7 @@
 #include "plugin/interfaces/i_command_provider.h"
 #include "plugin/interfaces/i_simulation_provider.h"
 #include "plugin/interfaces/i_environment_provider.h"
+#include "plugin/interfaces/i_preferences_provider.h"
 #include "plugin/plugin_ui.h"
 
 #include "mj_env_manager.h"
@@ -27,8 +28,11 @@
 #include "env/mj_view_slot.h"
 #include "rl/observation_filter.h"
 
+#include <optional>
+
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <memory>
 #include <string>
 
@@ -41,7 +45,8 @@ class MuJoCoPlugin : public IPlugin,
                      public INodeProvider,
                      public ICommandProvider,
                      public ISimulationProvider,
-                     public IEnvironmentProvider {
+                     public IEnvironmentProvider,
+                     public IPreferencesProvider {
 public:
     MuJoCoPlugin() = default;
     ~MuJoCoPlugin() override = default;
@@ -64,8 +69,13 @@ public:
         if (std::string(name) == "ICommandProvider") return static_cast<ICommandProvider*>(this);
         if (std::string(name) == "ISimulationProvider") return static_cast<ISimulationProvider*>(this);
         if (std::string(name) == "IEnvironmentProvider") return static_cast<IEnvironmentProvider*>(this);
+        if (std::string(name) == "IPreferencesProvider") return static_cast<IPreferencesProvider*>(this);
         return nullptr;
     }
+
+    // ===== IPreferencesProvider: the Viewport's saved choices =====
+    std::vector<PluginPreferencesSection> GetPreferenceSections() override;
+    void RenderPreferences(const std::string& section_id) override;
 
     // ===== ISimulationProvider: graph runs =====
     // A graph run with a MuJoCo Plant holds the physics: the viewport's own
@@ -78,6 +88,10 @@ public:
     // Gymnasium's MuJoCo tasks (env/mj_task.h); each batch has its own
     // model and copies, apart from the viewport's model.
     std::vector<PluginEnvironmentInfo> GetEnvironments() override;
+    // As the settings make it: Look ahead adds to the observation (from the
+    // listed description, kept: the Engine asks while it draws Properties)
+    bool DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& settings,
+                             PluginEnvironmentInfo& info, std::string& error) override;
     PluginEnvironmentCreateResult CreateEnvironments(const std::string& id,
                                                      const std::map<std::string, std::string>& settings,
                                                      int count) override;
@@ -150,6 +164,19 @@ private:
     std::string restore_path_;
     std::string restore_title_;
     std::string restore_subtitle_;
+
+    // The Viewport's Stress panel (TOFIX212 P4): its requests go to the played
+    // copy (the view slot), or act on the Viewport's own run here
+    void ForwardStressRequests();
+    // The played copy's scene in the Viewport's model (the same build as the batch's)
+    void MirrorPlaybackScene(const MjScene& scene);
+    bool SceneFailed(const MjScene& scene) const;  // the played scene did not build here
+    std::optional<MjScene> failed_scene_;
+    MjStressRun local_stress_;
+    // The tasks' listed descriptions (GetEnvironments), for DescribeEnvironment
+    std::mutex described_mutex_;
+    std::map<std::string, PluginEnvironmentInfo> described_;
+    int local_episodes_seen_ = 0;
 };
 
 } // namespace cyxwiz::plugin::mujoco

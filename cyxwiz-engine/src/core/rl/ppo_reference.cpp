@@ -66,9 +66,10 @@ std::optional<PpoReference> FindPpoReference(const std::string& json_text, const
                               Same(Setting(p, "clip_range", 0.2), c.loss.clip_range) &&
                               Same(Setting(p, "ent_coef", 0.0), c.loss.ent_coef) &&
                               Same(Setting(p, "vf_coef", 0.5), c.loss.vf_coef) &&
-                              Same(Setting(p, "max_grad_norm", 0.5), c.max_grad_norm) &&
-                              !c.normalize_observations && !c.normalize_rewards;
-            if (!same) continue;
+                              Same(Setting(p, "max_grad_norm", 0.5), c.max_grad_norm);
+            // The reference's VecNormalize (observations and rewards together), as the run's
+            const bool normalize = task.value("normalize", false);
+            if (!same || c.normalize_observations != normalize || c.normalize_rewards != normalize) continue;
             PpoReference ref;
             for (const auto& run : task.at("runs")) {
                 std::vector<std::pair<double, double>> curve;

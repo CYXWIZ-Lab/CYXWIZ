@@ -1,7 +1,8 @@
 // The MuJoCo plugin's environments for reinforcement learning (src/env):
 // what they describe, how settings are read, same-step autoreset, the same
 // runs for one seed on any number of threads, steps a second, and showing one
-// copy in the viewport (ShowCopy publishes its physics state).
+// copy in the viewport (ShowCopy publishes its physics state), and the
+// Viewport's Stress panel: its scenes and its requests to the shown copy.
 //
 //   test_mujoco_environments [--trajectory <file.json>]
 //
@@ -11,12 +12,15 @@
 
 #include "env/mj_env_batch.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -34,6 +38,14 @@ using namespace cyxwiz::plugin;
 using namespace cyxwiz::plugin::mujoco;
 
 std::string ModelPath(const MjTaskSpec& spec) { return std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/" + spec.model_file; }
+
+// The model file with the scene added, and its own sizes (null with the reason)
+mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjRobotSize& robot, std::string& error) {
+    MjSceneBuilder builder;
+    if (!builder.Load(model_path, error)) return nullptr;
+    robot = builder.Robot();
+    return builder.Build(scene, error);
+}
 
 struct Rollout {
     std::vector<float> obs, rewards, final_obs;
@@ -105,7 +117,8 @@ void CheckDescriptions() {
     Check(std::abs(cheetah.step_seconds - 0.05) < 1e-9, "a cheetah step is 0.05 s (5 x 0.01 s)");
     bool has_threads = false;
     for (const auto& setting : cheetah.settings) has_threads = has_threads || setting.key == "threads";
-    Check(cheetah.settings.size() == 6 && has_threads, "the cheetah's four settings and the two of every batch");
+    Check(cheetah.settings.size() == 6 + RobustnessSettings().size() && has_threads,
+          "the cheetah's four settings, the two of every batch and the robustness section");
 }
 
 void CheckSettings() {
@@ -261,6 +274,430 @@ void WriteTrajectories(const std::string& path) {
     file << "\n}\n";
 }
 
+// The Stress panel's scene (env/mj_scene.h): an empty scene is the model file
+// as it is; a scene's objects come after the robot, which keeps its masses.
+void CheckScenes() {
+    for (const auto& spec : MjTasks()) {
+        const std::string path = ModelPath(spec);
+        char load_error[1000] = "";
+        mjModel* file = mj_loadXML(path.c_str(), nullptr, load_error, sizeof(load_error));
+        MjRobotSize robot;
+        std::string error;
+        mjModel* built = CompileMjScene(path, MjScene{}, robot, error);
+        Check(file && built, spec.id + ": the model loads both ways: " + error);
+        if (!file || !built) continue;
+        Check(robot.nq == file->nq && robot.nv == file->nv && robot.nbody == file->nbody,
+              spec.id + ": with no scene the robot is the whole file");
+        Check(built->nq == file->nq && built->nv == file->nv && built->ngeom == file->ngeom &&
+                  built->nbody == file->nbody,
+              spec.id + ": an empty scene adds nothing");
+        mjData* a = mj_makeData(file);
+        mjData* b = mj_makeData(built);
+        MjRandom random(5);
+        bool same = true;
+        for (int s = 0; s < 200; ++s) {
+            for (int u = 0; u < file->nu; ++u) a->ctrl[u] = b->ctrl[u] = random.Uniform(-1.0, 1.0);
+            mj_step(file, a);
+            mj_step(built, b);
+            for (int i = 0; i < file->nq; ++i) same = same && a->qpos[i] == b->qpos[i];
+        }
+        Check(same, spec.id + ": an empty scene steps exactly as the model file, value for value");
+        mj_deleteData(a);
+        mj_deleteData(b);
+        mj_deleteModel(file);
+        mj_deleteModel(built);
+    }
+
+    const MjTaskSpec& spec = *FindMjTask("HalfCheetah-v5");
+    const std::string path = ModelPath(spec);
+    char load_error[1000] = "";
+    mjModel* plain = mj_loadXML(path.c_str(), nullptr, load_error, sizeof(load_error));
+    MjScene scene;
+    scene.ground = MjGround{MjGroundKind::Rough, 0.5, 3};
+    scene.objects = {MjThrownObject{MjShape::Ball, {0.2, 0.0, 0.0}, 2.0},
+                     MjThrownObject{MjShape::Box, {0.3, 0.3, 0.3}, 5.0}};
+    MjRobotSize robot;
+    std::string error;
+    mjModel* m = CompileMjScene(path, scene, robot, error);
+    Check(plain && m, "HalfCheetah with Rough ground and two objects builds: " + error);
+    if (plain && m) {
+        Check(robot.nq == plain->nq && robot.nv == plain->nv && robot.nbody == plain->nbody,
+              "the robot's slice is the model file's");
+        Check(m->nq == plain->nq + 14 && m->nv == plain->nv + 12 && m->nbody == plain->nbody + 2,
+              "two free objects come after the robot");
+        bool masses = true;
+        for (int body = 1; body < plain->nbody; ++body)
+            masses = masses && std::abs(m->body_mass[body] - plain->body_mass[body]) < 1e-12;
+        Check(masses, "the robot keeps the masses of its file (the file rescales to 14 kg)");
+        Check(std::abs(m->body_mass[plain->nbody] - 2.0) < 1e-12 && std::abs(m->body_mass[plain->nbody + 1] - 5.0) < 1e-12,
+              "each object has the mass asked for");
+        Check(m->nhfield == 1 && mj_name2id(m, mjOBJ_GEOM, "cyx_stress_ground") >= 0, "Rough is one heightfield");
+        Check(m->stat.extent == plain->stat.extent && m->stat.meaninertia == plain->stat.meaninertia &&
+                  m->stat.center[0] == plain->stat.center[0],
+              "the statistics stay the robot's (the view's near plane, the solver's scale)");
+        mj_deleteModel(m);
+    }
+    // Every shape, its geom and its mass and inertia
+    MjScene shapes;
+    shapes.objects = {MjThrownObject{MjShape::Box, {0.6, 0.15, 0.1}, 3.0},
+                      MjThrownObject{MjShape::Capsule, {0.5, 0.1, 0.0}, 1.0},
+                      MjThrownObject{MjShape::Cylinder, {0.4, 0.2, 0.0}, 4.0}};
+    mjModel* sm = CompileMjScene(path, shapes, robot, error);
+    Check(sm != nullptr, "a box, a capsule and a cylinder build: " + error);
+    if (sm && plain) {
+        const int box = static_cast<int>(plain->nbody), capsule = box + 1, cylinder = box + 2;
+        const auto geom = [&](int body) { return sm->body_geomadr[body]; };
+        Check(sm->geom_type[geom(box)] == mjGEOM_BOX && std::abs(sm->geom_size[3 * geom(box)] - 0.3) < 1e-12 &&
+                  std::abs(sm->geom_size[3 * geom(box) + 1] - 0.075) < 1e-12 &&
+                  std::abs(sm->geom_size[3 * geom(box) + 2] - 0.05) < 1e-12,
+              "a box 0.60 x 0.15 x 0.10 m: half sizes 0.3, 0.075, 0.05");
+        Check(sm->geom_type[geom(capsule)] == mjGEOM_CAPSULE && std::abs(sm->geom_size[3 * geom(capsule)] - 0.05) < 1e-12 &&
+                  std::abs(sm->geom_size[3 * geom(capsule) + 1] - 0.2) < 1e-12,
+              "a capsule 0.5 m end to end, 0.1 m across: radius 0.05, a 0.4 m middle");
+        Check(sm->geom_type[geom(cylinder)] == mjGEOM_CYLINDER &&
+                  std::abs(sm->geom_size[3 * geom(cylinder)] - 0.1) < 1e-12 &&
+                  std::abs(sm->geom_size[3 * geom(cylinder) + 1] - 0.2) < 1e-12,
+              "a cylinder 0.4 m long, 0.2 m across");
+        const double* inertia = sm->body_inertia + 3 * box;
+        Check(std::abs(sm->body_mass[box] - 3.0) < 1e-12 &&
+                  std::abs(inertia[0] - 3.0 * (0.15 * 0.15 + 0.1 * 0.1) / 12.0) < 1e-12 &&
+                  std::abs(inertia[2] - 3.0 * (0.6 * 0.6 + 0.15 * 0.15) / 12.0) < 1e-12,
+              "the box's mass and inertia are exact");
+        Check(std::abs(sm->body_inertia[3 * cylinder + 2] - 0.5 * 4.0 * 0.1 * 0.1) < 1e-12,
+              "the cylinder's inertia about its axis is m r^2 / 2");
+        mj_deleteModel(sm);
+    }
+    MjScene stubby;  // as long as it is wide: random throws make these from the default 0.2 x 0.2
+    stubby.objects = {MjThrownObject{MjShape::Capsule, {0.2, 0.2, 0.0}, 1.0}};
+    mjModel* stub = CompileMjScene(path, stubby, robot, error);
+    Check(stub != nullptr, "a capsule no longer than it is wide still builds: " + error);
+    if (stub) mj_deleteModel(stub);
+    MjScene stairs;
+    stairs.ground = MjGround{MjGroundKind::Steps, 1.0, 5};
+    mjModel* s = CompileMjScene(path, stairs, robot, error);
+    Check(s && plain && s->ngeom == plain->ngeom + static_cast<int>(GroundBoxes(stairs.ground).size()) && s->nq == plain->nq,
+          "Steps: one box a step, no state added");
+    if (s) mj_deleteModel(s);
+    if (plain) mj_deleteModel(plain);
+}
+
+// A HalfCheetah playback batch of one copy, shown, reset and stepped once
+struct StressedCheetah {
+    std::shared_ptr<MjViewSlot> view = std::make_shared<MjViewSlot>();
+    IEnvironmentBatch* batch = nullptr;
+    std::vector<float> obs = std::vector<float>(17), final_obs = std::vector<float>(17);
+    float reward = 0.0f;
+    uint8_t terminated = 0, truncated = 0;
+
+    explicit StressedCheetah(std::map<std::string, std::string> settings = {}) {
+        std::string error;
+        batch = MjEnvBatch::Create(*FindMjTask("HalfCheetah-v5"), ModelPath(*FindMjTask("HalfCheetah-v5")), settings, 1,
+                                   view, error);
+        Check(batch != nullptr, "a HalfCheetah batch: " + error);
+        if (!batch) return;
+        batch->ShowCopy(0);
+        batch->Reset(11, obs.data());
+        Step();
+    }
+    ~StressedCheetah() {
+        if (batch) batch->Release();
+    }
+    void Ask(const MjStressRequest& request) {
+        std::lock_guard<std::mutex> lock(view->mutex);
+        view->requests.push_back(request);
+    }
+    void Step() {
+        const std::vector<float> still(6, 0.0f);
+        const PluginEnvironmentStepBuffers out{obs.data(), &reward, &terminated, &truncated, final_obs.data()};
+        Check(batch->Step(still.data(), out), "step: " + batch->LastError());
+    }
+    // The shown copy's state in a model built from the view's scene
+    double BodyX(int body_from_robot_end) { return BodyPos(body_from_robot_end)[0]; }
+    std::array<double, 3> BodyPos(int body_from_robot_end, double* spin = nullptr) {
+        MjRobotSize robot;
+        std::string error;
+        mjModel* m = CompileMjScene(view->model_path, view->scene, robot, error);
+        if (!m) return {0.0, 0.0, 0.0};
+        mjData* d = mj_makeData(m);
+        std::array<double, 3> pos{0.0, 0.0, 0.0};
+        if (static_cast<size_t>(mj_stateSize(m, mjSTATE_FULLPHYSICS)) == view->state.size()) {
+            mj_setState(m, d, view->state.data(), mjSTATE_FULLPHYSICS);
+            mj_forward(m, d);
+            const int body = body_from_robot_end < 0 ? 1 : robot.nbody + body_from_robot_end;
+            for (int i = 0; i < 3; ++i) pos[i] = d->xpos[3 * body + i];
+            if (spin && body_from_robot_end >= 0) {
+                const int dof = m->jnt_dofadr[m->body_jntadr[body]];
+                *spin = std::sqrt(d->qvel[dof + 3] * d->qvel[dof + 3] + d->qvel[dof + 4] * d->qvel[dof + 4] +
+                                  d->qvel[dof + 5] * d->qvel[dof + 5]);
+            }
+        }
+        mj_deleteData(d);
+        mj_deleteModel(m);
+        return pos;
+    }
+};
+
+// The Stress panel's requests reach the copy a playback shows
+void CheckStressRequests() {
+    constexpr int kRootxSpeed = 8;  // HalfCheetah observes qpos[1:] (8 values), then qvel: rootx first
+    {
+        StressedCheetah left, kicked;
+        kicked.Ask(MjStressRequest::MakeKick({2.0, 0.0, 0.0}, 0.0));
+        left.Step();
+        kicked.Step();
+        Check(kicked.obs[kRootxSpeed] - left.obs[kRootxSpeed] > 1.5, "a forward kick of 2 m/s speeds the root up");
+        StressedCheetah up;
+        up.Ask(MjStressRequest::MakeKick({0.0, 0.0, 2.0}, 0.0));
+        up.Step();
+        Check(up.obs[kRootxSpeed + 1] - left.obs[kRootxSpeed + 1] > 1.0, "an up kick lifts it");
+        // The same 2 m/s as a push held 0.2 s (4 steps of 0.05 s): slower to build, then about the same
+        StressedCheetah timed, still;
+        timed.Ask(MjStressRequest::MakeKick({2.0, 0.0, 0.0}, 0.2));
+        timed.Step();
+        still.Step();
+        const double after_one = timed.obs[kRootxSpeed] - still.obs[kRootxSpeed];
+        for (int i = 0; i < 3; ++i) {
+            timed.Step();
+            still.Step();
+        }
+        const double after_four = timed.obs[kRootxSpeed] - still.obs[kRootxSpeed];
+        Check(after_one > 0.2 && after_one < 1.2 && after_four > 1.2,
+              "a push over 0.2 s builds the speed over its four steps");
+        timed.Step();
+        still.Step();
+        Check(std::abs((timed.obs[kRootxSpeed] - still.obs[kRootxSpeed]) - after_four) < 1.0,
+              "and stops pushing when its time is up");
+    }
+    {
+        StressedCheetah pushed, left;
+        const mjtNum force[6] = {300.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        pushed.Ask(MjStressRequest::MakePush(1, force));
+        for (int i = 0; i < 3; ++i) {
+            pushed.Step();
+            left.Step();
+        }
+        Check(pushed.obs[kRootxSpeed] - left.obs[kRootxSpeed] > 0.5, "a held push keeps pulling the torso");
+        pushed.Ask(MjStressRequest::MakeEndPush());
+        pushed.Step();
+        Check(std::isfinite(pushed.obs[kRootxSpeed]), "letting go");
+    }
+    {
+        StressedCheetah c;
+        c.Ask(MjStressRequest::MakeThrow(MjThrownObject{MjShape::Ball, {0.2, 0.0, 0.0}, 2.0}, MjThrow{}));
+        c.Step();
+        Check(c.view->scene.objects.size() == 1, "a throw adds an object slot to the scene the view is told of");
+        const double start_gap = c.BodyX(0) - c.BodyX(-1);
+        Check(start_gap > 2.0 && start_gap < 3.5, "the ball starts about 3 m ahead of the torso");
+        bool obs_finite = true;
+        for (float v : c.obs) obs_finite = obs_finite && std::isfinite(v);
+        Check(obs_finite, "the robot still observes 17 numbers, all finite");
+        double closest = start_gap;
+        for (int i = 0; i < 15; ++i) {
+            c.Step();
+            closest = std::min(closest, std::abs(c.BodyX(0) - c.BodyX(-1)));
+        }
+        Check(closest < 0.8, "the ball reaches the cheetah");
+        MjThrow above;
+        above.up = 90.0;
+        c.Ask(MjStressRequest::MakeThrow(MjThrownObject{MjShape::Ball, {0.2, 0.0, 0.0}, 2.0}, above));
+        c.Step();
+        Check(c.view->scene.objects.size() == 2, "a second throw while the first is out takes a new slot");
+    }
+    {
+        // From the left (around 90) and turned and spinning: it starts beside the robot, spinning
+        StressedCheetah c;
+        MjThrow left;
+        left.around = 90.0;
+        left.distance = 2.0;
+        left.quat = {0.7071067811865476, 0.0, 0.7071067811865476, 0.0};
+        left.spin = {0.0, 0.0, 5.0};
+        c.Ask(MjStressRequest::MakeThrow(MjThrownObject{MjShape::Capsule, {0.5, 0.1, 0.0}, 1.0}, left));
+        c.Step();
+        double spin = 0.0;
+        const std::array<double, 3> object = c.BodyPos(0, &spin);
+        const std::array<double, 3> torso = c.BodyPos(-1);
+        Check(object[1] - torso[1] > 1.0 && std::abs(object[0] - torso[0]) < 1.0,
+              "a throw from the left starts beside the robot, not ahead of it");
+        Check(spin > 3.0, "a tumbling object leaves spinning");
+    }
+    {
+        StressedCheetah c({{"max_episode_steps", "5"}});
+        const MjGround rough{MjGroundKind::Rough, 0.5, 3};
+        c.Ask(MjStressRequest::MakeGround(rough, false));
+        c.Step();
+        Check(c.view->scene.ground.kind == MjGroundKind::Flat, "a ground for the next episode waits");
+        for (int i = 0; i < 3; ++i) c.Step();
+        Check(c.truncated == 1 && c.view->scene.ground == rough && c.view->episode == 2,
+              "it comes in when the episode ends at its step limit");
+        const MjGround steps{MjGroundKind::Steps, 0.3, 2};
+        c.Ask(MjStressRequest::MakeGround(steps, true));
+        c.Step();
+        Check(c.truncated == 1 && c.terminated == 0 && c.view->scene.ground == steps && c.view->episode == 3 &&
+                  !c.view->last_ended_by_task,
+              "a ground now: the episode is cut (truncated) and the next starts on it");
+        Check(c.view->step == 0, "the new episode starts at step 0");
+    }
+}
+
+// Training for robustness (board 5): settings, a ground per copy and episode,
+// factors, pushes, the curriculum, Look ahead and the stats
+MjEnvBatch* CheetahBatch(const std::map<std::string, std::string>& settings, int count, std::string& error) {
+    const MjTaskSpec& spec = *FindMjTask("HalfCheetah-v5");
+    return MjEnvBatch::Create(spec, ModelPath(spec), settings, count, nullptr, error);
+}
+
+void CheckRobustnessSettings() {
+    MjRobustness r;
+    std::string error;
+    Check(ReadMjRobustness({}, r, error) && !r.Any(), "nothing set: no robustness (the plain task)");
+    Check(ReadMjRobustness({{"grounds", "rough,steps"}, {"difficulty_from", "0.2"}, {"difficulty_to", "0.6"},
+                            {"curriculum", "3000"}, {"push_every", "2"}, {"push_speed", "1"}, {"friction_percent", "20"},
+                            {"mass_percent", "10"}, {"motor_percent", "5"}, {"look_ahead", "1"}},
+                           r, error) &&
+              r.grounds.size() == 2 && r.difficulty_from == 0.2 && r.difficulty_to == 0.6 && r.curriculum_mark == 3000.0 &&
+              r.push_every == 2.0 && r.friction_percent == 20.0 && r.look_ahead && r.PerCopyModels(),
+          "every robustness setting reads: " + error);
+    Check(!ReadMjRobustness({{"grounds", "lava"}}, r, error) && error.find("lava") != std::string::npos,
+          "an unknown ground is refused");
+    Check(!ReadMjRobustness({{"difficulty_from", "0.8"}, {"difficulty_to", "0.2"}}, r, error), "from above to is refused");
+    Check(!ReadMjRobustness({{"mass_percent", "95"}}, r, error), "a factor beyond 90 % is refused");
+    Check(!ReadMjRobustness({{"look_ahead", "yes"}}, r, error), "a flag is 1 or 0");
+
+    const MjTaskSpec& spec = *FindMjTask("HalfCheetah-v5");
+    PluginEnvironmentInfo listed, described;
+    Check(DescribeMjTask(spec, ModelPath(spec), listed, error), "HalfCheetah describes itself");
+    bool has_section = false;
+    for (const auto& s : listed.settings) has_section = has_section || s.section == "Robustness (training)";
+    Check(has_section, "the robustness settings are listed under their section");
+    Check(DescribeMjTaskWith(spec, listed, {{"look_ahead", "1"}}, described, error) &&
+              described.observation_size == listed.observation_size + kLookAheadCount,
+          "Look ahead adds its 10 heights to the observation");
+    Check(DescribeMjTaskWith(spec, listed, {}, described, error) && described.observation_size == listed.observation_size,
+          "without it the observation is the task's");
+    Check(!DescribeMjTaskWith(spec, listed, {{"grounds", "lava"}}, described, error), "bad settings are refused");
+}
+
+void CheckRobustBatches() {
+    std::string error;
+    {
+        std::unique_ptr<MjEnvBatch, void (*)(MjEnvBatch*)> plain(CheetahBatch({}, 3, error),
+                                                                [](MjEnvBatch* b) { b->Release(); });
+        std::vector<float> obs(3 * 17);
+        Check(plain && plain->Reset(1, obs.data()), "a plain batch: " + error);
+        if (plain)
+            Check(plain->ModelOf(0) == plain->ModelOf(1) && plain->ModelOf(1) == plain->ModelOf(2) &&
+                      plain->Stats().empty(),
+                  "without robustness all copies share one model, and no Difficulty or Falls before an episode ends");
+    }
+    const std::map<std::string, std::string> grounds{{"grounds", "rough,steps"}, {"difficulty_from", "0.3"},
+                                                     {"difficulty_to", "0.7"}, {"max_episode_steps", "5"}};
+    std::unique_ptr<MjEnvBatch, void (*)(MjEnvBatch*)> a(CheetahBatch(grounds, 4, error), [](MjEnvBatch* b) { b->Release(); });
+    std::unique_ptr<MjEnvBatch, void (*)(MjEnvBatch*)> b(CheetahBatch(grounds, 4, error), [](MjEnvBatch* b) { b->Release(); });
+    Check(a && b, "batches with grounds: " + error);
+    if (!a || !b) return;
+    std::vector<float> obs(4 * 17), final_obs(4 * 17), rewards(4);
+    std::vector<uint8_t> terminated(4), truncated(4);
+    a->Reset(9, obs.data());
+    b->Reset(9, obs.data());
+    bool kinds = true, same = true, differ = false;
+    for (int i = 0; i < 4; ++i) {
+        const MjGround& g = a->SceneOf(i).ground;
+        kinds = kinds && (g.kind == MjGroundKind::Rough || g.kind == MjGroundKind::Steps) && g.difficulty >= 0.3 &&
+                g.difficulty <= 0.7;
+        same = same && g == b->SceneOf(i).ground;
+        if (i) differ = differ || g != a->SceneOf(0).ground;
+    }
+    Check(kinds, "each copy plays a chosen ground with a difficulty from 0.3 to 0.7");
+    Check(same, "the same seed gives each copy the same ground");
+    Check(differ && a->ModelOf(0) != a->ModelOf(1), "copies get grounds of their own");
+    const MjGround first = a->SceneOf(0).ground;
+    const PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(), truncated.data(),
+                                           final_obs.data()};
+    const std::vector<float> still(4 * 6, 0.0f);
+    for (int s = 0; s < 5; ++s) a->Step(still.data(), out);
+    Check(truncated[0] == 1 && a->SceneOf(0).ground != first, "the next episode draws a new ground");
+    bool reported = false;
+    for (const auto& stat : a->Stats()) reported = reported || (stat.label == "Difficulty" || stat.label == "Falls");
+    Check(reported, "the batch reports its difficulty and falls");
+
+    // Factors: each episode's model scaled within the ranges
+    std::unique_ptr<MjEnvBatch, void (*)(MjEnvBatch*)> f(
+        CheetahBatch({{"friction_percent", "50"}, {"mass_percent", "30"}, {"motor_percent", "20"}}, 3, error),
+        [](MjEnvBatch* b) { b->Release(); });
+    Check(f != nullptr, "a batch with factors: " + error);
+    if (f) {
+        std::vector<float> fobs(3 * 17);
+        f->Reset(4, fobs.data());
+        bool in_range = true, varied = false;
+        for (int i = 0; i < 3; ++i) {
+            // bthigh: gear 120 and gain 1 in the file; the gear stays, the gain scales
+            const mjModel* fm = f->ModelOf(i);
+            const double gain = fm->actuator_gainprm[0];
+            in_range = in_range && gain >= 0.8 - 1e-9 && gain <= 1.2 + 1e-9 && fm->actuator_gear[0] == 120.0;
+            varied = varied || std::abs(gain - 1.0) > 1e-6;
+        }
+        Check(in_range && varied, "motor strength varies within +/- 20 %");
+    }
+
+    // Pushes: the same seed with and without them parts the root's speed
+    std::unique_ptr<MjEnvBatch, void (*)(MjEnvBatch*)> pushed(
+        CheetahBatch({{"push_every", "0.1"}, {"push_speed", "3"}}, 1, error), [](MjEnvBatch* b) { b->Release(); });
+    std::unique_ptr<MjEnvBatch, void (*)(MjEnvBatch*)> left(CheetahBatch({}, 1, error), [](MjEnvBatch* b) { b->Release(); });
+    Check(pushed && left, "batches for pushes: " + error);
+    if (pushed && left) {
+        std::vector<float> po(17), lo(17), pf(17), lf(17), pr(1), lr(1);
+        std::vector<uint8_t> pt(1), ptr(1), lt(1), ltr(1);
+        pushed->Reset(2, po.data());
+        left->Reset(2, lo.data());
+        const PluginEnvironmentStepBuffers pout{po.data(), pr.data(), pt.data(), ptr.data(), pf.data()};
+        const PluginEnvironmentStepBuffers lout{lo.data(), lr.data(), lt.data(), ltr.data(), lf.data()};
+        const std::vector<float> zero(6, 0.0f);
+        double apart = 0.0;
+        for (int s = 0; s < 20; ++s) {
+            pushed->Step(zero.data(), pout);
+            left->Step(zero.data(), lout);
+            for (int k = 8; k < 11; ++k) apart = std::max(apart, static_cast<double>(std::abs(po[k] - lo[k])));
+        }
+        Check(apart > 0.3, "pushes change the robot's motion");
+    }
+
+    // Look ahead: 10 more values, the ground's height ahead of the root
+    std::unique_ptr<MjEnvBatch, void (*)(MjEnvBatch*)> look(
+        CheetahBatch({{"look_ahead", "1"}, {"grounds", "steps"}, {"difficulty_from", "1"}, {"difficulty_to", "1"}}, 2,
+                     error),
+        [](MjEnvBatch* b) { b->Release(); });
+    Check(look && look->ObservationSize() == 17 + kLookAheadCount, "Look ahead observes 27 values: " + error);
+    if (look) {
+        std::vector<float> lobs(2 * 27);
+        look->Reset(6, lobs.data());
+        bool match = true;
+        for (int i = 0; i < 2; ++i)
+            for (int k = 0; k < kLookAheadCount; ++k)
+                match = match && std::abs(lobs[static_cast<size_t>(i) * 27 + 17 + k] -
+                                          static_cast<float>(look->ProfileOf(i).At(look->RootX(i) + 0.2 * (k + 1)))) < 1e-6f;
+        Check(match, "the heights are the copy's ground ahead of its root");
+        Check(look->ProfileOf(0).At(look->ProfileOf(0).x0 + look->ProfileOf(0).boxes.front().x0 + 0.01) ==
+                  look->ProfileOf(0).boxes.front().height,
+              "the profile reads a step's height on the step");
+    }
+
+    // The curriculum: the level rises by 0.1 when the mean of recent returns passes the mark
+    MjRobustness r;
+    r.grounds = {MjGroundKind::Rough};
+    r.difficulty_from = 0.0;
+    r.difficulty_to = 0.25;
+    r.curriculum_mark = 100.0;
+    MjCurriculum curriculum;
+    curriculum.Start(r, 1);  // judged on 20 episodes
+    for (int e = 0; e < 19; ++e) curriculum.Finished(150.0);
+    Check(curriculum.Level() == 0.0 && curriculum.Rising(), "19 good episodes are not yet enough");
+    Check(curriculum.Finished(150.0) && std::abs(curriculum.Level() - 0.1) < 1e-12, "the 20th raises it by 0.1");
+    for (int e = 0; e < 20; ++e) curriculum.Finished(50.0);
+    Check(std::abs(curriculum.Level() - 0.1) < 1e-12, "poor episodes do not raise it");
+    for (int e = 0; e < 40; ++e) curriculum.Finished(500.0);
+    Check(std::abs(curriculum.Level() - 0.25) < 1e-12 && !curriculum.Rising(), "it stops at 'to'");
+}
+
 }  // namespace
 
 // ShowCopy: the shown copy's physics state reaches the view slot after Reset
@@ -306,6 +743,45 @@ void CheckShowCopy() {
     if (plain) plain->Release();
 }
 
+// The shown copy's live numbers (the Viewport's overlay during playback):
+// episode, step, the episode's return so far, the last action, and the
+// return of the episode before once one ends.
+void CheckLiveNumbers() {
+    const MjTaskSpec& spec = *FindMjTask("InvertedPendulum-v5");
+    std::string error;
+    auto view = std::make_shared<MjViewSlot>();
+    IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), {{"max_episode_steps", "5"}}, 2, view, error);
+    Check(batch != nullptr, "a batch with a view: " + error);
+    if (!batch) return;
+    Check(batch->ShowCopy(1), "copy 1 is shown");
+    Check(std::abs(view->step_seconds - 0.04) < 1e-9, "the view knows a step is 0.04 s (2 x 0.02 s)");
+    std::vector<float> obs(2 * 4), final_obs(2 * 4), rewards(2);
+    std::vector<uint8_t> terminated(2), truncated(2);
+    const PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(), truncated.data(),
+                                           final_obs.data()};
+    batch->Reset(3, obs.data());
+    Check(view->episode == 1 && view->step == 0 && view->max_steps == 5 && view->action.empty() &&
+              view->episode_return == 0.0 && !view->has_last_return,
+          "after Reset: episode 1, step 0 of 5, no action yet");
+    double sum = 0.0;
+    for (int s = 0; s < 4; ++s) {
+        const float actions[2] = {0.0f, 0.1f * static_cast<float>(s + 1)};
+        batch->Step(actions, out);
+        sum += rewards[1];
+    }
+    Check(view->episode == 1 && view->step == 4 && std::abs(view->episode_return - sum) < 1e-9,
+          "four steps in: step 4 and the four rewards of copy 1 summed");
+    Check(view->action.size() == 1 && std::abs(view->action[0] - 0.4f) < 1e-6f, "the last action of copy 1");
+    const float last[2] = {0.0f, 0.0f};
+    batch->Step(last, out);  // the fifth step ends the episode (the step limit)
+    sum += rewards[1];
+    Check(truncated[1] == 1, "the fifth step is cut at the limit");
+    Check(view->episode == 2 && view->step == 0 && view->episode_return == 0.0 && view->has_last_return &&
+              std::abs(view->last_return - sum) < 1e-9,
+          "the next episode starts at step 0; the ended one's return is kept");
+    batch->Release();
+}
+
 int main(int argc, char** argv) {
     std::string trajectory;
     for (int i = 1; i + 1 < argc; ++i) {
@@ -316,6 +792,11 @@ int main(int argc, char** argv) {
     CheckAutoreset();
     CheckDeterminism();
     CheckShowCopy();
+    CheckLiveNumbers();
+    CheckScenes();
+    CheckStressRequests();
+    CheckRobustnessSettings();
+    CheckRobustBatches();
     ReportSpeed();
     if (!trajectory.empty()) WriteTrajectories(trajectory);
     if (failures == 0) std::printf("test_mujoco_environments: all checks passed\n");

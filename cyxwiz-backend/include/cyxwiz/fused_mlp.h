@@ -5,7 +5,7 @@
 // A SequentialModel that is a small chain of Dense layers and activations,
 // run as whole-network kernels on the active device's neural provider
 // (NeuralOp::MlpForward / MlpBackward): one launch forward, two backward,
-// instead of several per layer (TOFIX206 3.2). The model keeps its
+// instead of several per layer. The model keeps its
 // parameters; each call reads them, so optimizer steps on the model apply.
 // Gradients are named as the model names them ("layer<i>.weight").
 

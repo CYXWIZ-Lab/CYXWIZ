@@ -64,6 +64,7 @@ public:
     void SetPpoDevice(std::string chip, std::string tooltip, bool fallback, std::string note);
     // How the run computes (fused kernels or ArrayFire operations), shown with the chip's route
     void SetPpoComputePath(std::string path) { device_compute_path_ = std::move(path); }
+    void SetPpoNote(std::string note) { device_note_ = std::move(note); }
     void AddPpoUpdate(const rl::PpoUpdateMetrics& m);
     void EndPpoRun(const std::string& outcome, bool failed);
 

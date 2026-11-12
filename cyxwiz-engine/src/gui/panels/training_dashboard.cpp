@@ -23,7 +23,7 @@ std::string Format(double v, const char* fmt = "%.4g") {
     return buf;
 }
 
-// One KPI card: label, value, a muted detail line.
+// One KPI card: label, value, a muted detail (it wraps: a narrow card hides nothing).
 void Card(const char* id, const char* label, const std::string& value, const std::string& detail, float width) {
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
@@ -34,7 +34,9 @@ void Card(const char* id, const char* label, const std::string& value, const std
         ui::FontScope big(ui::Font::Heading);
         ImGui::TextUnformatted(value.c_str());
     }
+    ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_dim, "%s", detail.c_str());
+    ImGui::PopTextWrapPos();
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
@@ -351,6 +353,15 @@ void TrainingDashboardPanel::RenderKpis() {
         ImGui::SameLine();
         Card("##kpi_speed", "Speed", last_update_ ? Format(last_update_->steps_per_second, "%.0f") : "-",
              "steps per second", w);
+        // The environment's own numbers (a curriculum's difficulty, falls) on a row of their own
+        if (last_update_ && !last_update_->environment_stats.empty()) {
+            const auto& stats = last_update_->environment_stats;
+            for (size_t i = 0; i < stats.size(); ++i) {
+                if (i % static_cast<size_t>(cards) != 0) ImGui::SameLine();
+                const std::string id = "##kpi_env_" + std::to_string(i);
+                Card(id.c_str(), stats[i].label.c_str(), stats[i].value, stats[i].note, w);
+            }
+        }
     }
 }
 

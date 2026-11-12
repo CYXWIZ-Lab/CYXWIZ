@@ -81,6 +81,9 @@ struct PpoUpdateMetrics {
     // (<provider>)" or "ArrayFire operations (<why>)", and ", optimizers per
     // tensor" when the joint Adam pass did not apply
     std::string compute_path;
+    // The environment batch's own numbers at this update (a curriculum's
+    // level, how many episodes fell; IEnvironmentBatch::Stats), for the dashboard
+    std::vector<plugin::PluginEnvironmentStat> environment_stats;
 };
 
 // Stable-Baselines3's MlpPolicy initialisation (ortho_init): every weight

@@ -2299,7 +2299,8 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     step_settings.grad_clip_norm = config_.grad_clip_norm;
     if (health_) step_settings.on_gradients = [this](const std::map<std::string, Tensor>& g) { health_->OnStep(g); };
     const float norm = ApplyOptimizerStep(*model_, *optimizer_, averaged_grads, step_settings);
-    if (norm >= 0.0f) UpdateMetrics([norm](TrainingMetrics& m) { m.grad_norm = norm; });
+    // With clipping on, the norm as computed: NaN and infinite ones too (they are not refused)
+    if (step_settings.grad_clip_norm > 0.0f) UpdateMetrics([norm](TrainingMetrics& m) { m.grad_norm = norm; });
     TrainingProfileStageFence();
     const auto optimizer_ms = std::chrono::duration<float, std::milli>(
         std::chrono::steady_clock::now() - optimizer_start).count();

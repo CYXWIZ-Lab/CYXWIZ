@@ -153,6 +153,8 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
     // Nothing may step the old model while it is replaced: the executor stops
     // first, and the graph simulation's EvaluateNode waits on the physics lock.
     sim_executor_.Stop();
+    local_stress_ = MjStressRun{};
+    viewport_panel_.ResetStress();
     {
         std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         if (!env_manager_.LoadModel(mjcf_path)) {
@@ -166,6 +168,13 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
 
     // Wire simulation executor and viewport
     sim_executor_.SetEnvManager(&env_manager_);
+    // The Viewport's stress requests act on simulated time: the pushes before
+    // every step, and an ended episode waits while its new ground is built
+    sim_executor_.SetStepHooks({[this](const mjModel* m, mjData* d) { ApplyPushes(local_stress_, m, d); },
+                                [this] {
+                                    EndTimedPush(local_stress_);
+                                    return local_stress_.next_ground.has_value();
+                                }});
     viewport_panel_.SetSimExecutor(&sim_executor_);
 
     // NOTE: Renderer is NOT initialized here. It will be lazily initialized
@@ -205,14 +214,30 @@ void MuJoCoPlugin::SyncPlayback() {
     std::vector<mjtNum> state;
     int copy = 0;
     bool active = false;
+    MjViewportPanel::PlaybackNumbers numbers;
+    MjScene scene;
+    std::string stress_message;
     {
         std::lock_guard<std::mutex> lock(view_slot_->mutex);
         active = view_slot_->owner != nullptr;
         if (active) {
+            scene = view_slot_->scene;
+            stress_message = std::move(view_slot_->stress_message);
+            view_slot_->stress_message.clear();
+            numbers.last_ended_by_task = view_slot_->last_ended_by_task;
             path = view_slot_->model_path;
             title = view_slot_->title;
             copy = view_slot_->copy;
-            if (view_slot_->version != shown_version_) {
+            numbers.episode = view_slot_->episode;
+            numbers.step = view_slot_->step;
+            numbers.max_steps = view_slot_->max_steps;
+            numbers.step_seconds = view_slot_->step_seconds;
+            numbers.episode_return = view_slot_->episode_return;
+            numbers.has_last_return = view_slot_->has_last_return;
+            numbers.last_return = view_slot_->last_return;
+            numbers.action = view_slot_->action;
+            // A changed scene is built first: its state is then applied, even unchanged
+            if (view_slot_->version != shown_version_ || (scene != env_manager_.Scene() && !SceneFailed(scene))) {
                 shown_version_ = view_slot_->version;
                 state = view_slot_->state;
             }
@@ -231,11 +256,15 @@ void MuJoCoPlugin::SyncPlayback() {
                 spdlog::warn("[MuJoCo] Policy playback: the model {} did not load", path);
                 return;
             }
-            viewport_panel_.SetModelLabel(title, "Policy playback");
             state.clear();
             shown_version_ = 0;  // apply the latest state next frame, after the renderer starts
         }
+        if (scene != env_manager_.Scene() && !SceneFailed(scene)) MirrorPlaybackScene(scene);
+        if (!stress_message.empty()) viewport_panel_.StressFailed(stress_message);
+        // Also when the played model was open already (a second playback)
+        if (viewport_panel_.ModelSubtitle() != "Policy playback") viewport_panel_.SetModelLabel(title, "Policy playback");
         viewport_panel_.SetPlayback(true, title + " \xC2\xB7 copy " + std::to_string(copy));
+        viewport_panel_.SetPlaybackNumbers(std::move(numbers));
         if (!state.empty()) {
             std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
             const mjModel* m = env_manager_.GetModel();
@@ -247,6 +276,7 @@ void MuJoCoPlugin::SyncPlayback() {
         }
     } else if (playback_) {
         playback_ = false;
+        failed_scene_.reset();
         viewport_panel_.SetPlayback(false);
         if (!restore_path_.empty() && restore_path_ != loaded_mjcf_path_ && LoadEnvironment(restore_path_))
             viewport_panel_.SetModelLabel(restore_title_, restore_subtitle_);
@@ -268,14 +298,96 @@ void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
             spdlog::warn("[MuJoCo] Renderer initialization failed — viewport disabled");
         } else {
             renderer_.ResetCamera(env_manager_.GetModel());
+            viewport_panel_.OnRendererReady();
         }
     }
 
     if (panel_id == "mujoco_viewport") {
         viewport_panel_.Render(env_manager_, renderer_, visible);
+        ForwardStressRequests();
     } else if (panel_id == "mujoco_env_browser") {
         browser_panel_.Render(env_library_, env_manager_, visible);
     }
+}
+
+bool MuJoCoPlugin::SceneFailed(const MjScene& scene) const { return failed_scene_ && *failed_scene_ == scene; }
+
+void MuJoCoPlugin::MirrorPlaybackScene(const MjScene& scene) {
+    bool built = false;
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        std::string error;
+        built = env_manager_.ChangeScene(scene, error);
+        if (!built) spdlog::warn("[MuJoCo] Policy playback: the stress scene did not build here: {}", error);
+    }
+    // Not tried again until the played copy's scene changes
+    if (built) failed_scene_.reset();
+    else failed_scene_ = scene;
+    if (built && renderer_.IsInitialized() && !renderer_.ChangeModel(env_manager_.GetModel()))
+        renderer_needs_init_ = true;  // start the renderer again for the new model
+}
+
+void MuJoCoPlugin::ForwardStressRequests() {
+    std::vector<MjStressRequest> requests = viewport_panel_.TakeStressRequests();
+    if (playback_) {  // the played copy applies them at its next step
+        if (requests.empty()) return;
+        std::lock_guard<std::mutex> lock(view_slot_->mutex);
+        if (view_slot_->owner)
+            view_slot_->requests.insert(view_slot_->requests.end(), requests.begin(), requests.end());
+        return;
+    }
+    if (!env_manager_.IsLoaded() || viewport_panel_.IsGraphSimActive()) return;
+
+    // The Viewport's own run: the same requests on its model, under the physics lock
+    bool rebuilt = false;
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        local_stress_.scene = env_manager_.Scene();
+        local_stress_.robot = env_manager_.Robot();
+        const MjStressHost host{[this] { return env_manager_.GetModel(); },
+                                [this] { return env_manager_.GetMutableData(); },
+                                [this, &rebuilt](const MjScene& scene, std::string& error) {
+                                    if (!env_manager_.ChangeScene(scene, error)) return false;
+                                    rebuilt = true;
+                                    return true;
+                                },
+                                env_manager_.GetModel()->opt.timestep * env_manager_.GetFrameSkip()};
+        // A new episode starts on the ground waiting for it
+        const auto start_episode = [&](bool reset) {
+            if (reset) env_manager_.Reset();
+            EndTimedPush(local_stress_);
+            StartNextGround(local_stress_, host);
+        };
+        if (sim_executor_.HoldsEpisode()) start_episode(true);  // the run waits for it
+        else if (env_manager_.GetEpisodeCount() != local_episodes_seen_) start_episode(false);  // Reset, or no ground waited
+        if (!requests.empty()) ApplyStressRequests(requests, local_stress_, host);
+        if (local_stress_.cut_episode) {  // a ground "now": a new episode on it
+            local_stress_.cut_episode = false;
+            start_episode(true);
+        }
+        local_episodes_seen_ = env_manager_.GetEpisodeCount();
+        sim_executor_.ContinueEpisode();
+        // The pushes are applied by the run before each step (its step hook)
+    }
+    if (rebuilt && renderer_.IsInitialized() && !renderer_.ChangeModel(env_manager_.GetModel()))
+        renderer_needs_init_ = true;
+    if (!local_stress_.message.empty()) {
+        viewport_panel_.StressFailed(local_stress_.message);
+        local_stress_.message.clear();
+    }
+}
+
+// =============================================================================
+// IPreferencesProvider: the Viewport's section in Preferences > Simulation
+// =============================================================================
+
+std::vector<PluginPreferencesSection> MuJoCoPlugin::GetPreferenceSections() {
+    return {{"viewport", "Simulation", "MuJoCo Viewport",
+             "How the Viewport starts. Changing these in the Viewport does not change them here."}};
+}
+
+void MuJoCoPlugin::RenderPreferences(const std::string& section_id) {
+    if (section_id == "viewport" && ctx_) RenderViewportPreferences(*ctx_);
 }
 
 // =============================================================================
@@ -546,12 +658,39 @@ std::vector<PluginEnvironmentInfo> MuJoCoPlugin::GetEnvironments() {
     for (const auto& task : MjTasks()) {
         PluginEnvironmentInfo info;
         std::string error;
-        if (DescribeMjTask(task, (std::filesystem::path(assets_dir_) / task.model_file).string(), info, error))
+        if (DescribeMjTask(task, (std::filesystem::path(assets_dir_) / task.model_file).string(), info, error)) {
+            {
+                std::lock_guard<std::mutex> lock(described_mutex_);
+                described_[task.id] = info;
+            }
             environments.push_back(std::move(info));
-        else if (ctx_)
+        } else if (ctx_) {
             ctx_->LogWarn("MuJoCo Simulation: " + task.id + " is not offered: " + error);
+        }
     }
     return environments;
+}
+
+bool MuJoCoPlugin::DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& settings,
+                                       PluginEnvironmentInfo& info, std::string& error) {
+    const MjTaskSpec* task = FindMjTask(id);
+    if (!task) {
+        error = "The MuJoCo plugin has no environment '" + id + "'.";
+        return false;
+    }
+    PluginEnvironmentInfo listed;
+    {
+        std::lock_guard<std::mutex> lock(described_mutex_);
+        const auto it = described_.find(id);
+        if (it != described_.end()) listed = it->second;
+    }
+    if (listed.id.empty()) {
+        if (!DescribeMjTask(*task, (std::filesystem::path(assets_dir_) / task->model_file).string(), listed, error))
+            return false;
+        std::lock_guard<std::mutex> lock(described_mutex_);
+        described_[id] = listed;
+    }
+    return DescribeMjTaskWith(*task, listed, settings, info, error);
 }
 
 PluginEnvironmentCreateResult MuJoCoPlugin::CreateEnvironments(const std::string& id,

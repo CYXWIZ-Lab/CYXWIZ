@@ -1,5 +1,6 @@
 #include "cyxwiz/layers/linear.h"
 #include "../arrayfire_backend_utils.h"
+#include "../device_random.h"
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -428,7 +429,7 @@ Tensor OrthogonalWeights(size_t rows, size_t cols, float gain) {
         const bool wide = rows < cols;
         const dim_t m = static_cast<dim_t>(wide ? cols : rows);
         const dim_t k = static_cast<dim_t>(wide ? rows : cols);
-        const af::array a = af::randn(m, k, f32);
+        const af::array a = cyxwiz::DeviceNormal(af::dim4(m, k), f32);  // the same on every device
         af::array q, r, tau;
         af::qr(q, r, tau, a);
         const af::seq first_k(static_cast<double>(k));

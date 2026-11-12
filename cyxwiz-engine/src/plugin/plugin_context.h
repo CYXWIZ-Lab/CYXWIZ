@@ -91,6 +91,18 @@ public:
     // 10 frames a second.
     virtual void RequestFullFrameRate() = 0;
 
+    // === Project and settings (plugin API 1.4) ===
+    // The open project's folder (it holds exports/, models/ ...); empty when
+    // no project is open.
+    virtual std::filesystem::path GetProjectDir() const = 0;
+
+    // The user's settings for this plugin, kept by the Engine between
+    // sessions (with its own settings). GetSetting returns `fallback` for a
+    // key never set; SetSetting saves at once. Values are text: write
+    // numbers and switches as text ("1.5", "on") and read them back.
+    virtual std::string GetSetting(const std::string& key, const std::string& fallback = {}) const = 0;
+    virtual void SetSetting(const std::string& key, const std::string& value) = 0;
+
 protected:
     PluginContext() = default;
     PluginContext(const PluginContext&) = delete;

@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 20)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/MuJoCoSdk.cmake)
 find_package(httplib CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
+# PNG writing and frame scaling for the Viewport's screenshots and recordings
+find_package(Stb REQUIRED)
 
 # =============================================================================
 # Plugin DLL
@@ -18,6 +20,11 @@ add_library(mujoco_plugin SHARED
     src/mj_env_browser_panel.cpp
     src/mj_renderer.cpp
     src/mj_viewport_panel.cpp
+    src/mj_viewport_menus.cpp
+    src/mj_viewport_stress.cpp
+    src/mj_viewport_settings.cpp
+    src/mj_recorder.cpp
+    src/mj_gif_writer.cpp
     src/mj_mjcf_parser.cpp
     src/mj_simulation_executor.cpp
     src/mj_menagerie_downloader.cpp
@@ -25,10 +32,14 @@ add_library(mujoco_plugin SHARED
     src/rl/observation_filter.cpp
     src/env/mj_task.cpp
     src/env/mj_env_batch.cpp
+    src/env/mj_scene.cpp
+    src/env/mj_stress.cpp
+    src/env/mj_robustness.cpp
 )
 
 target_include_directories(mujoco_plugin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${Stb_INCLUDE_DIR}
 )
 
 # cyxwiz-plugin-sdk is headers only; this plugin logs, draws and reads JSON,
@@ -82,6 +93,9 @@ add_executable(test_mujoco_environments
     tests/test_mujoco_environments.cpp
     src/env/mj_task.cpp
     src/env/mj_env_batch.cpp
+    src/env/mj_scene.cpp
+    src/env/mj_stress.cpp
+    src/env/mj_robustness.cpp
 )
 target_include_directories(test_mujoco_environments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_mujoco_environments PRIVATE cyxwiz-plugin-sdk mujoco::mujoco)
@@ -91,6 +105,24 @@ add_custom_command(TARGET test_mujoco_environments POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_RUNTIME}" "$<TARGET_FILE_DIR:test_mujoco_environments>/"
     COMMENT "Copying the MuJoCo runtime next to test_mujoco_environments")
 add_test(NAME mujoco_environments COMMAND test_mujoco_environments)
+
+# The Viewport's GIF writer (decoded back), recorder, saved choices and the
+# Stress panel's grounds and event log
+add_executable(test_mujoco_viewport
+    tests/test_mujoco_viewport.cpp
+    src/mj_gif_writer.cpp
+    src/mj_recorder.cpp
+    src/mj_viewport_settings.cpp
+    src/env/mj_task.cpp
+    src/env/mj_scene.cpp
+    src/env/mj_stress.cpp
+)
+target_include_directories(test_mujoco_viewport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${Stb_INCLUDE_DIR})
+target_link_libraries(test_mujoco_viewport PRIVATE cyxwiz-plugin-sdk mujoco::mujoco nlohmann_json::nlohmann_json)
+add_custom_command(TARGET test_mujoco_viewport POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_RUNTIME}" "$<TARGET_FILE_DIR:test_mujoco_viewport>/"
+    COMMENT "Copying the MuJoCo runtime next to test_mujoco_viewport")
+add_test(NAME mujoco_viewport COMMAND test_mujoco_viewport)
 # The Gymnasium replay needs CYXWIZ_RL_ORACLE_PYTHON (cyxwiz-engine) to have
 # mujoco of the plugin's version too (the Engine's python-embed does).
 if(CYXWIZ_RL_ORACLE_PYTHON)

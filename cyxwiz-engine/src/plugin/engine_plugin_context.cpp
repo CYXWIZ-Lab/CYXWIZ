@@ -105,6 +105,28 @@ bool EnginePluginContext::ShowPanel(const std::string& panel_id) {
 
 void EnginePluginContext::RequestFullFrameRate() { KeepFullFrameRate(); }
 
+std::filesystem::path EnginePluginContext::GetProjectDir() const {
+    return services_.project_dir ? services_.project_dir() : std::filesystem::path{};
+}
+
+std::string EnginePluginContext::GetSetting(const std::string& key, const std::string& fallback) const {
+    std::string value;
+    if (services_.get_setting) return services_.get_setting(plugin_id_, key, value) ? value : fallback;
+    std::lock_guard lock(settings_mutex_);
+    const auto it = session_settings_.find(key);
+    return it != session_settings_.end() ? it->second : fallback;
+}
+
+void EnginePluginContext::SetSetting(const std::string& key, const std::string& value) {
+    if (key.empty()) return;
+    if (services_.set_setting) {
+        services_.set_setting(plugin_id_, key, value);
+        return;
+    }
+    std::lock_guard lock(settings_mutex_);
+    session_settings_[key] = value;
+}
+
 void EnginePluginContext::KeepFullFrameRate() {
     full_rate_requested_at_.store(std::chrono::steady_clock::now().time_since_epoch().count());
 }

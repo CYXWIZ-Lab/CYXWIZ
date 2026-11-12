@@ -1084,7 +1084,9 @@ extern "C" __global__ void cyxwiz_adam_apply(AdamTable t, const float* __restric
     if (max_norm > 0.0f) {
       float sum = 0.0f;
       for (int b = 0; b < partials; ++b) sum += partial[b];
-      scale = fminf(max_norm / (sqrtf(sum) + 1e-6f), 1.0f);
+      // As torch's clip_grad_norm_: coef clamped at 1, a NaN kept (fminf would turn NaN into 1)
+      const float coef = max_norm / (sqrtf(sum) + 1e-6f);
+      scale = coef >= 1.0f ? 1.0f : coef;
     }
     scale_sh = scale;
   }

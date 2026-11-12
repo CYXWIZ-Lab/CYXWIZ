@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -46,6 +47,10 @@ public:
     // Stops a playback that runs, then plays `policy`. False with the reason
     // when there is no policy.
     bool Start(std::shared_ptr<TrainedPolicy> policy, PlaybackSpeed speed, bool best, std::string& error);
+    // The next Start plays in these conditions instead of the policy's own:
+    // environment settings and the first episode's seed (a stress test's level,
+    // to watch its first episode again). Used once.
+    void SetConditions(std::map<std::string, std::string> settings, uint64_t first_seed);
     void Pause();
     void Resume();
     void NewEpisode();
@@ -65,6 +70,12 @@ private:
     void Run();
 
     std::shared_ptr<TrainedPolicy> policy_;
+    bool has_conditions_ = false;  // for this Start (SetConditions)
+    std::map<std::string, std::string> settings_;
+    uint64_t first_seed_ = 0;
+    bool pending_conditions_ = false;  // for the next Start
+    std::map<std::string, std::string> pending_settings_;
+    uint64_t pending_seed_ = 0;
     std::thread worker_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> paused_{false};

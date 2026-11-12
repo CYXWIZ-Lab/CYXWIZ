@@ -29,7 +29,8 @@ struct Inputs {
     std::vector<double> returns;   // finished episodes, oldest first
     std::vector<float> action;
     bool shown_in_view = false;
-    std::string view_title;        // the plugin view's window title ("MuJoCo Viewport"); empty: unknown
+    // the plugin view's window title ("MuJoCo Viewport"); empty: the environment has no view
+    std::string view_title;
 };
 
 struct View {

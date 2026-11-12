@@ -3774,7 +3774,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
-         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. The norm is shown in the training log.", {}, "0.0-1000000.0",
+         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. Language-model (sequence) training shows the norm in its training log.", {}, "0.0-1000000.0",
           "Gradient Clip Norm", "Schedule", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -3791,7 +3791,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
-         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. The norm is shown in the training log.", {}, "0.0-1000000.0",
+         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. Language-model (sequence) training shows the norm in its training log.", {}, "0.0-1000000.0",
           "Gradient Clip Norm", "Schedule", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -3811,7 +3811,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
-         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. The norm is shown in the training log.", {}, "0.0-1000000.0",
+         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. Language-model (sequence) training shows the norm in its training log.", {}, "0.0-1000000.0",
           "Gradient Clip Norm", "Schedule", false, false},
          {"weight_decay_exclude", "enum", "none", "Parameters that skip weight decay. norms_and_biases (standard for transformers): every 1-D tensor - biases and normalization scales. norms_biases_embeddings: also token and learned-position embedding tables. none: decay everything (previous behaviour).", {"none", "norms_and_biases", "norms_biases_embeddings"}, "",
           "Weight Decay Exclude", "Schedule", false, false}},
@@ -3832,7 +3832,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
-         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. The norm is shown in the training log.", {}, "0.0-1000000.0",
+         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. Language-model (sequence) training shows the norm in its training log.", {}, "0.0-1000000.0",
           "Gradient Clip Norm", "Schedule", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -3849,7 +3849,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
-         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. The norm is shown in the training log.", {}, "0.0-1000000.0",
+         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. Language-model (sequence) training shows the norm in its training log.", {}, "0.0-1000000.0",
           "Gradient Clip Norm", "Schedule", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
@@ -3868,7 +3868,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
-         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. The norm is shown in the training log.", {}, "0.0-1000000.0",
+         {"grad_clip_norm", "float", "0", "Clip gradients by their global L2 norm before each update (1.0 is the usual LLM value); 0 = off. Language-model (sequence) training shows the norm in its training log.", {}, "0.0-1000000.0",
           "Gradient Clip Norm", "Schedule", false, false}},
         NodeImplementationStatus::Implemented, 0});
 

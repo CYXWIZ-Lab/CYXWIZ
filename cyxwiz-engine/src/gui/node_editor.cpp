@@ -211,17 +211,19 @@ NodeEditor::NodeEditor()
             spdlog::info("PPO stopped: its environment's plugin {} is stopping", plugin_id);
             rl_run_->StopAndWait();
         }
-        if (rl_playback_->Policy() && owned(rl_playback_->Policy()->config.environment_key)) {
-            spdlog::info("Policy playback stopped: its environment's plugin {} is stopping", plugin_id);
-            rl_playback_->Stop();
-        }
+        // Its playback and its stress test (each steps its own copies)
+        rl_playback_->StopIfUses(owned);
     });
 
     // An RL graph's Environment names an environment of the plugin
     // environment registry: the compiler finds it there (TOFIX195 S4.3)
-    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>& settings,
+                                      cyxwiz::plugin::PluginEnvironmentInfo& info, std::string& error) {
+        auto& registry = cyxwiz::plugin::PluginEnvironmentRegistry::Instance();
         cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment;
-        if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(key, environment)) return false;
+        if (!registry.Find(key, environment)) return false;
+        // As the node's settings make it (an extra observation switched on)
+        if (!registry.Describe(key, settings, environment, error)) return false;
         info = environment.info;
         return true;
     });
@@ -1126,14 +1128,11 @@ void NodeEditor::RenderMinimap() {
     // Calculate minimap position (always use fixed corner position)
     ImVec2 minimap_pos = getCornerPos(minimap_position_);
 
-    // Set next window position and create a floating window for the minimap
-    ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(minimap_pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(minimap_size_, ImGuiCond_Always);
+    // The minimap: an overlay on the canvas, with the Studio window
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg,
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg,
                           ui::WithAlpha(t.bg_panel, 0.94f));
     ImGui::PushStyleColor(ImGuiCol_TitleBg, t.bg_bar);
     ImGui::PushStyleColor(ImGuiCol_TitleBgActive, t.bg_bar);
@@ -1147,7 +1146,8 @@ void NodeEditor::RenderMinimap() {
                                     ImGuiWindowFlags_NoFocusOnAppearing;  // the Studio keeps the focus
 
 
-    if (ImGui::Begin("##MinimapWindow", &show_minimap_, window_flags)) {
+    if (::gui::BeginCanvasOverlay("##MinimapWindow", minimap_pos.x, minimap_pos.y, minimap_size_.x, minimap_size_.y,
+                                  window_flags, false, true)) {
         // Draw subtle grid pattern on background
         ImDrawList* bg_draw_list = ImGui::GetWindowDrawList();
         ImVec2 win_pos = ImGui::GetWindowPos();
@@ -1541,8 +1541,8 @@ void NodeEditor::RenderMinimap() {
             arrow_color
         );
     }
-    }  // End ImGui::Begin("##MinimapWindow")
-    ImGui::End();
+    }  // End the minimap overlay
+    ::gui::EndCanvasOverlay();
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar(3);
 }
@@ -2907,16 +2907,16 @@ void NodeEditor::ShowSearchBar() {
     if (!search_state_.search_visible) return;
     const ui::Tokens& t = ui::CurrentTokens();
 
-    ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(ImVec2(canvas_origin_.x + 12.0f, canvas_origin_.y + 12.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, t.bg_raised);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    // An overlay on the canvas: a child of the Studio window, so it is drawn
+    // with it and never over another window
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_raised);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 4.0f));
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
-                                   ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
-    if (ImGui::Begin("##NodeSearchBar", nullptr, flags)) {
+                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
+    // Sized to its content (width and height 0)
+    if (::gui::BeginCanvasOverlay("##NodeSearchBar", canvas_origin_.x + 12.0f, canvas_origin_.y + 12.0f, 0.0f, 0.0f,
+                                  flags, true)) {
         const size_t matches = search_state_.matching_node_ids.size();
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(t.text_dim, ICON_FA_MAGNIFYING_GLASS);
@@ -2929,8 +2929,9 @@ void NodeEditor::ShowSearchBar() {
         if (ImGui::InputTextWithHint("##SearchInput", "Find a node, type or setting", search_state_.search_buffer,
                                      sizeof(search_state_.search_buffer)))
             UpdateSearchResults();
-        // The keys work while typing: the bar has the keyboard, not the canvas.
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        // The keys work while typing: the bar has the keyboard, not the canvas
+        // (the bar's own focus, not the Studio window's around it).
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) {
             const bool shift = ImGui::GetIO().KeyShift;
             if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                 CloseFindBar();
@@ -2958,8 +2959,8 @@ void NodeEditor::ShowSearchBar() {
         if (ui::GhostButton(ICON_FA_XMARK "##find_close")) CloseFindBar();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close (Esc)");
     }
-    ImGui::End();
-    ImGui::PopStyleVar(3);
+    ::gui::EndCanvasOverlay();
+    ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
 }
 
@@ -4196,6 +4197,8 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     rl_device_suffix_.clear();
     rl_device_tooltip_.clear();
     rl_device_shown_ = false;
+    rl_run_device_ = {};
+    rl_compute_path_.clear();
 
     if (!rl_dashboard_) rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
     cyxwiz::TrainingDashboardPanel::PpoRunInfo info;
@@ -4262,7 +4265,9 @@ void NodeEditor::PollRLTraining() {
             const auto chip = cyxwiz::rl_device::DeviceChip(device);
             rl_dashboard_->SetPpoDevice(chip.text, chip.tooltip, chip.fallback,
                                         cyxwiz::rl_device::DashboardNote(device, cyxwiz::HiddenUnits(c.policy_layers),
-                                                                         cyxwiz::HiddenUnits(c.value_layers)));
+                                                                         cyxwiz::HiddenUnits(c.value_layers),
+                                                                         rl_compute_path_));
+            rl_run_device_ = device;
             rl_device_suffix_ = cyxwiz::rl_device::ToolbarSuffix(device);
             rl_device_tooltip_ = chip.tooltip;
             if (rl_status_ == "PPO starting" || rl_status_ == "PPO waiting for the GPU")
@@ -4271,7 +4276,17 @@ void NodeEditor::PollRLTraining() {
     }
     for (const auto& m : rl_run_->TakeUpdates()) {
         rl_dashboard_->AddPpoUpdate(m);
-        if (!m.compute_path.empty()) rl_dashboard_->SetPpoComputePath(m.compute_path);
+        if (!m.compute_path.empty() && m.compute_path != rl_compute_path_) {
+            // How the run computes, now known (or changed by a fallback): the note follows it
+            rl_compute_path_ = m.compute_path;
+            rl_dashboard_->SetPpoComputePath(m.compute_path);
+            if (rl_run_device_.valid && rl_run_->Config()) {
+                const auto& c = *rl_run_->Config();
+                rl_dashboard_->SetPpoNote(cyxwiz::rl_device::DashboardNote(rl_run_device_, cyxwiz::HiddenUnits(c.policy_layers),
+                                                                           cyxwiz::HiddenUnits(c.value_layers),
+                                                                           rl_compute_path_));
+            }
+        }
         rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
                      cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" + rl_device_suffix_;
     }

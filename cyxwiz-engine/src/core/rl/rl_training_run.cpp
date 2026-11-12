@@ -187,7 +187,9 @@ void RLTrainingRun::Run() {
         std::vector<PpoUpdateMetrics> history;
         std::string traced_path;  // how the run computes, in its trace at the start and on each change
         const bool ok = trainer.Train(
-            [this, &history, &traced_path](const PpoUpdateMetrics& m) {
+            [this, &history, &traced_path, &batch](const PpoUpdateMetrics& update) {
+                PpoUpdateMetrics m = update;
+                m.environment_stats = batch->Stats();  // between rollouts: the batch is not stepping
                 if (m.compute_path != traced_path) {
                     // Falling back from the fused kernels mid-run is worth a look (a warning)
                     const bool fell_back = !traced_path.empty();

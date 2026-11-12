@@ -8,6 +8,7 @@
 #include "mj_env_manager.h"
 #include <mutex>
 #include <atomic>
+#include <functional>
 #include <thread>
 
 namespace cyxwiz::plugin::mujoco {
@@ -22,6 +23,15 @@ enum class SimState {
     Running,
     Paused,
     Stepping  // Single-step mode
+};
+
+// Run by the step loop under the physics lock (the Viewport's stress requests)
+struct MjStepHooks {
+    // Before every step: the pushes on the model
+    std::function<void(const mjModel* m, mjData* d)> before_step;
+    // An episode ended: true holds the next one until ContinueEpisode (its
+    // ground is built on the UI thread first); false starts it at once
+    std::function<bool()> episode_ended;
 };
 
 // Simulation metrics exposed to UI
@@ -44,6 +54,12 @@ public:
     // --- Lifecycle ---
     // Bind to an environment manager (must already have model loaded)
     void SetEnvManager(MjEnvManager* env) { env_ = env; }
+    // Set before the first start (the step loop reads them without a lock)
+    void SetStepHooks(MjStepHooks hooks) { hooks_ = std::move(hooks); }
+    // An ended episode waits (episode_ended said so). Read and cleared under
+    // the physics lock; ContinueEpisode after the caller started the next one.
+    bool HoldsEpisode() const { return held_.load(); }
+    void ContinueEpisode() { held_ = false; }
 
     // --- Manual Control Mode ---
     void StartManualControl();
@@ -67,6 +83,8 @@ private:
     void ExecuteOneStep();
 
     MjEnvManager* env_ = nullptr;
+    MjStepHooks hooks_;
+    std::atomic<bool> held_{false};
 
     std::atomic<SimMode> mode_{SimMode::Stopped};
     std::atomic<SimState> state_{SimState::Idle};

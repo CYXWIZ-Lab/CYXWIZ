@@ -14,6 +14,7 @@
 
 #include "../arrayfire_host_materialization.h"
 #include "../arrayfire_indexed.h"
+#include "../device_random.h"
 
 // Windows headers define these; ArrayFire's min/max must win.
 #ifdef max
@@ -322,8 +323,9 @@ Tensor SampleGaussian(const Tensor& mean, const Tensor& log_std, uint64_t seed) 
     const dim_t rows = static_cast<dim_t>(mean.Shape()[0]);
     const dim_t act = static_cast<dim_t>(mean.Shape()[1]);
     Require(log_std.NumElements() == static_cast<size_t>(act), "PPO: one log standard deviation per action");
-    af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, seed);
-    const af::array noise = af::randn(af::dim4(rows, act), f32, engine);
+    // The same noise on every device for a seed (af::randn differs between them)
+    af::randomEngine engine = cyxwiz::DeviceRandomEngine(seed);
+    const af::array noise = cyxwiz::DeviceNormal(af::dim4(rows, act), f32, engine);
     const af::array std_dev = af::tile(af::exp(af::moddims(Array(log_std), 1, act)), static_cast<unsigned>(rows), 1);
     return Make(Array(mean) + noise * std_dev, {static_cast<size_t>(rows), static_cast<size_t>(act)});
 }
@@ -332,7 +334,7 @@ Tensor SampleCategorical(const Tensor& logits, uint64_t seed) {
     Require(logits.Shape().size() == 2, "PPO: logits must be [B, K]");
     const dim_t rows = static_cast<dim_t>(logits.Shape()[0]);
     const dim_t classes = static_cast<dim_t>(logits.Shape()[1]);
-    af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, seed);
+    af::randomEngine engine = cyxwiz::DeviceRandomEngine(seed);
     // Gumbel-max: argmax(log p - log(-log u)) is a draw from p
     const af::array u = af::clamp(af::randu(af::dim4(rows, classes), f32, engine), 1e-20, 1.0 - 1e-7);
     af::array best_value, best_index;

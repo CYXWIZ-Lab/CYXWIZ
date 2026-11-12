@@ -1,6 +1,7 @@
 #include "policy_playback_panel.h"
 
 #include "../../core/engine_config.h"
+#include "../../core/project_manager.h"
 #include "../../core/execution_device_preferences.h"
 #include "../../core/rl_device_presentation.h"
 #include "../../core/rl_playback_presentation.h"
@@ -8,14 +9,21 @@
 #include "../../plugin/registries/plugin_environment_registry.h"
 #include "../../plugin/registries/plugin_panel_registry.h"
 #include "../icons.h"
+#include "../plot/plot_style.h"
 #include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include "../ui_tokens.h"
 
 #include <imgui.h>
+#include <implot.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 
 namespace cyxwiz {
 
@@ -49,7 +57,33 @@ bool PolicyPlaybackPanel::Play(std::shared_ptr<rl::TrainedPolicy> policy, std::s
     return true;
 }
 
-void PolicyPlaybackPanel::Stop() { playback_.Stop(); }
+void PolicyPlaybackPanel::Stop() {
+    playback_.Stop();
+    stress_.Stop();
+}
+
+void PolicyPlaybackPanel::StopIfUses(const std::function<bool(const std::string& environment_key)>& uses) {
+    if (const auto policy = playback_.Policy(); policy && uses(policy->config.environment_key)) playback_.Stop();
+    for (const auto& [name, policy] : tested_) {
+        if (policy && uses(policy->config.environment_key)) {
+            stress_.Stop();
+            break;
+        }
+    }
+}
+
+void PolicyPlaybackPanel::LookUpViewTitle(const std::string& environment_key) {
+    // Kept once found; an environment without one (yet: its plugin may load later) is asked again
+    if (environment_key == view_title_key_ && !view_title_.empty()) return;
+    view_title_key_ = environment_key;
+    view_title_.clear();
+    plugin::PluginEnvironmentRegistry::Environment env;
+    if (!plugin::PluginEnvironmentRegistry::Instance().Find(environment_key, env) || env.info.view_panel_id.empty())
+        return;
+    // The view's own title, from the plugin that registered it
+    for (const auto& panel : plugin::PluginPanelRegistry::Instance().GetAllPanels())
+        if (panel.panel_id == env.info.view_panel_id) view_title_ = panel.title;
+}
 
 void PolicyPlaybackPanel::ShowPluginView() {
     const auto policy = playback_.Policy();
@@ -58,9 +92,6 @@ void PolicyPlaybackPanel::ShowPluginView() {
     if (!plugin::PluginEnvironmentRegistry::Instance().Find(policy->config.environment_key, env) ||
         env.info.view_panel_id.empty())
         return;
-    // The view's own title, from the plugin that registered it (looked up once)
-    for (const auto& panel : plugin::PluginPanelRegistry::Instance().GetAllPanels())
-        if (panel.panel_id == env.info.view_panel_id) view_title_ = panel.title;
     plugin::PluginPanelRegistry::Instance().ShowPanel(env.plugin_id, env.info.view_panel_id);
 }
 
@@ -119,6 +150,24 @@ void PolicyPlaybackPanel::Render() {
         ImGui::End();
         return;
     }
+    if (ImGui::BeginTabBar("##playback_tabs")) {
+        const ImGuiTabItemFlags play_flags = select_play_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+        select_play_ = false;
+        if (ImGui::BeginTabItem("Play", nullptr, play_flags)) {
+            RenderPlay(policy);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Stress test")) {
+            RenderStressTest(policy);
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+    ImGui::End();
+}
+
+void PolicyPlaybackPanel::RenderPlay(const std::shared_ptr<rl::TrainedPolicy>& policy) {
+    const ui::Tokens& t = ui::CurrentTokens();
     const auto s = playback_.Get();
     pb::Inputs in;
     in.status = ToStatus(s.state);
@@ -134,6 +183,7 @@ void PolicyPlaybackPanel::Render() {
     in.returns = s.returns;
     in.action = s.action;
     in.shown_in_view = s.shown_in_view;
+    LookUpViewTitle(policy->config.environment_key);
     in.view_title = view_title_;
     const pb::View v = pb::Build(in);
     // The copy moves: draw every frame (the plugin's view too)
@@ -244,7 +294,222 @@ void PolicyPlaybackPanel::Render() {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Real time: the environment's own step time. The defaults are in Preferences > Simulation.");
     ImGui::EndGroup();
-    ImGui::End();
+}
+
+void PolicyPlaybackPanel::WatchLevel(const std::shared_ptr<rl::TrainedPolicy>& policy, int level) {
+    // The level's first episode again: copy 0 of its batch draws from (seed, 0) alone
+    const auto& spec = stress_.Spec();
+    playback_.SetConditions(
+        rl::StressSettings(policy->config.environment_settings, spec.kind, rl::StressDifficulty(spec, level)),
+        rl::StressSeed(spec, level));
+    start_error_.clear();
+    if (!playback_.Start(policy, playback_.Speed(), true, start_error_)) spdlog::error("Policy playback: {}", start_error_);
+    view_opened_ = false;
+    select_play_ = true;  // the Play tab, which opens the plugin's view
+    for (const auto& [name, tested] : tested_)
+        if (tested == policy) file_name_ = name;
+}
+
+void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPolicy>& policy) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const auto snap = stress_.Get();
+    const bool running = snap.state == rl::PolicyStressTest::State::Running;
+    const float label_w = 120.0f;
+    const auto label = [&](const char* text) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_dim, "%s", text);
+        ImGui::SameLine(label_w + ImGui::GetCursorStartPos().x);
+    };
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim,
+                       "Plays N episodes at each difficulty of one disturbance, with the policy's best actions, and "
+                       "compares it with a second saved policy. Each level has its own seed, so both policies meet the "
+                       "same grounds and the same pushes.");
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+
+    label("Policy");
+    ImGui::TextUnformatted(stress_policy_ == policy || !stress_policy_ ? pb::PolicySource(file_name_, policy->steps).c_str()
+                                                                       : stress_policy_name_.c_str());
+    label("Compare with");
+    ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x - 2.0f * ui::ButtonWidth("Clear", ui::ButtonSize::Regular) - 20.0f));
+    ImGui::InputTextWithHint("##compare_path", "a saved .cyxmodel (optional)", compare_path_, sizeof(compare_path_));
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Load", compare_path_[0] != '\0' && !running, "Type the path of a saved policy first.",
+                            ui::ButtonSize::Regular)) {
+        compare_error_.clear();
+        std::string error;
+        std::unique_ptr<rl::TrainedPolicy> loaded = rl::LoadTrainedPolicy(compare_path_, error);
+        if (!loaded) {
+            compare_error_ = error;
+            compare_policy_.reset();
+        } else if (loaded->config.environment_key != policy->config.environment_key) {
+            compare_error_ = "It plays " + loaded->config.environment.id + ", not " + policy->config.environment.id + ".";
+            compare_policy_.reset();
+        } else {
+            compare_policy_ = std::move(loaded);
+            compare_name_ = std::filesystem::path(compare_path_).filename().string();
+        }
+    }
+    if (compare_policy_) {
+        ImGui::SameLine();
+        if (ui::LinkButton("Clear")) compare_policy_.reset();
+    }
+    if (!compare_error_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.error, "%s", compare_error_.c_str());
+        ImGui::PopTextWrapPos();
+    } else if (compare_policy_) {
+        ImGui::SetCursorPosX(label_w + ImGui::GetCursorStartPos().x);
+        ImGui::TextColored(t.text_dim, "%s", pb::PolicySource(compare_name_, compare_policy_->steps).c_str());
+    }
+
+    if (!stress_defaults_read_) {
+        stress_defaults_read_ = true;
+        const auto d = core::EngineConfig::Instance().PolicyStressTestDefaults();
+        stress_kind_ = d.kind;
+        stress_levels_ = d.levels;
+        stress_episodes_ = d.episodes;
+    }
+    label("Disturbance");
+    ui::SegmentedControl("##stress_kind", rl::StressKindNames(), rl::kStressKindCount, &stress_kind_);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("A ground at the level's difficulty, or pushes every 1.5 s of up to 4 m/s times the difficulty");
+    label("Levels");
+    ui::NumberField("##stress_levels", &stress_levels_, 2, 21, 1, 60.0f, "Difficulty 0 to 1 in this many levels");
+    ImGui::SameLine();
+    ImGui::TextColored(t.text_dim, "episodes a level");
+    ImGui::SameLine();
+    ui::NumberField("##stress_episodes", &stress_episodes_, 1, 100, 1, 60.0f);
+    ImGui::SameLine();
+    if (ui::LinkButton("Keep these as the default")) {
+        auto& config = core::EngineConfig::Instance();
+        config.SetPolicyStressTestDefaults({stress_kind_, stress_levels_, stress_episodes_});
+        config.Save();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Preferences > Simulation keeps them too");
+    ImGui::Spacing();
+    if (running) {
+        if (ui::DangerButton(ICON_FA_STOP " Stop test", true, nullptr, ui::ButtonSize::Regular)) stress_.Stop();
+        ImGui::SameLine();
+        ImGui::TextColored(t.text_dim, "%d of %d levels", snap.done, snap.total);
+        plugin::EnginePluginContext::KeepFullFrameRate();
+    } else if (ui::PrimaryButton("Run test", true, nullptr, ui::ButtonSize::Regular)) {
+        std::vector<std::pair<std::string, std::shared_ptr<rl::TrainedPolicy>>> policies;
+        stress_policy_ = policy;
+        stress_policy_name_ = file_name_.empty() ? std::string("this session's run") : file_name_;
+        policies.push_back({stress_policy_name_, policy});
+        if (compare_policy_) policies.push_back({compare_name_, compare_policy_});
+        tested_ = policies;
+        rl::StressTestSpec spec;
+        spec.kind = static_cast<rl::StressKind>(stress_kind_);
+        spec.levels = stress_levels_;
+        spec.episodes = stress_episodes_;
+        std::string error;
+        playback_.Stop();  // one user of the networks at a time
+        stress_note_failed_ = !stress_.Start(std::move(policies), spec, error);
+        stress_note_ = stress_note_failed_ ? error : std::string();
+    }
+    if (snap.state == rl::PolicyStressTest::State::Failed) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.error, "%s", snap.message.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    if (!stress_note_.empty()) ImGui::TextColored(stress_note_failed_ ? t.error : t.success, "%s", stress_note_.c_str());
+    if (snap.results.empty() || snap.results[0].levels.empty()) return;
+
+    // The chart: mean return by difficulty, one line a policy
+    const auto& spec = stress_.Spec();
+    ImGui::Spacing();
+    ImGui::Text("Mean return by difficulty");
+    ImGui::SameLine();
+    ImGui::TextColored(t.text_dim, "\xC2\xB7 %s \xC2\xB7 %d episodes a level", rl::StressKindName(spec.kind), spec.episodes);
+    const float chart_h = std::max(180.0f, ImGui::GetContentRegionAvail().y * 0.5f);
+    ImPlot::PushColormap(plot::SeriesColormap());
+    if (ImPlot::BeginPlot("##stress_chart", ImVec2(-1, chart_h))) {
+        // The return axis follows the results as levels come in
+        ImPlot::SetupAxes("difficulty", "mean return", ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, 1.0, ImPlotCond_Always);
+        for (size_t p = 0; p < snap.results.size(); ++p) {
+            const auto& r = snap.results[p];
+            std::vector<double> x, y;
+            for (const auto& l : r.levels) {
+                x.push_back(l.difficulty);
+                y.push_back(l.MeanReturn());
+            }
+            if (x.empty()) continue;
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 3.0f);
+            // The column's index keeps two policies of the same file name apart
+            const std::string series = r.name + "##policy" + std::to_string(p);
+            ImPlot::PlotLine(series.c_str(), x.data(), y.data(), static_cast<int>(x.size()));
+        }
+        ImPlot::EndPlot();
+    }
+    ImPlot::PopColormap();
+
+    // The table: each level, each policy's mean return and falls, and Watch
+    const int columns = 1 + 3 * static_cast<int>(snap.results.size());
+    if (ImGui::BeginTable("##stress_table", columns, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Difficulty");
+        for (const auto& r : snap.results) {
+            ImGui::TableSetupColumn((r.name + " return").c_str());
+            ImGui::TableSetupColumn("falls");
+            ImGui::TableSetupColumn("##watch");
+        }
+        ImGui::TableHeadersRow();
+        size_t levels = 0;
+        for (const auto& r : snap.results) levels = std::max(levels, r.levels.size());
+        for (size_t l = 0; l < levels; ++l) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%.2f", rl::StressDifficulty(spec, static_cast<int>(l)));
+            for (size_t p = 0; p < snap.results.size(); ++p) {
+                const auto& r = snap.results[p];
+                ImGui::TableNextColumn();
+                if (l < r.levels.size()) ImGui::Text("%.1f", r.levels[l].MeanReturn());
+                ImGui::TableNextColumn();
+                if (l < r.levels.size()) {
+                    const auto& lv = r.levels[l];
+                    ImGui::TextColored(lv.falls > 0 ? t.caution : t.text, "%d / %zu", lv.falls, lv.returns.size());
+                }
+                ImGui::TableNextColumn();
+                if (l < r.levels.size() && !running) {
+                    ImGui::PushID(static_cast<int>(p * 100 + l));
+                    if (ui::LinkButton("Watch") && p < tested_.size() && tested_[p].second)
+                        WatchLevel(tested_[p].second, static_cast<int>(l));
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play this level's first episode again in the Play tab");
+                    ImGui::PopID();
+                }
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "A fall: the episode ended early, or the robot ended upside down. Watch plays the "
+                                   "level's first episode again (Play tab).");
+    ImGui::PopTextWrapPos();
+    if (!running && ui::SecondaryButton("Export CSV", true, nullptr, ui::ButtonSize::Regular)) {
+        const std::string root = ProjectManager::Instance().GetProjectRoot();
+        if (root.empty()) {
+            stress_note_failed_ = true;
+            stress_note_ = "Open a project first: the CSV goes into its exports folder.";
+        } else {
+            const auto folder = std::filesystem::path(root) / "exports";
+            std::error_code ec;
+            std::filesystem::create_directories(folder, ec);
+            char stamp[32];
+            const std::time_t now = std::time(nullptr);
+            std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", std::localtime(&now));
+            std::string kind = rl::StressKindName(spec.kind);
+            for (char& c : kind) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            const auto path = folder / ("stress_" + kind + "_" + stamp + ".csv");
+            std::ofstream out(path, std::ios::binary);
+            out << rl::StressResultsCsv(snap.results, spec.episodes);
+            stress_note_failed_ = !out.good();
+            stress_note_ = stress_note_failed_ ? "The CSV could not be written to " + path.string()
+                                               : "Saved " + path.filename().string() + " in the project's exports";
+        }
+    }
 }
 
 }  // namespace cyxwiz

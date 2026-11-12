@@ -19,6 +19,7 @@ void MjSimulationExecutor::StartManualControl() {
     }
 
     should_stop_ = false;
+    held_ = false;
     mode_ = SimMode::ManualControl;
     state_ = SimState::Running;
 
@@ -89,6 +90,13 @@ void MjSimulationExecutor::ManualControlLoop() {
     float schedule_rtf = realtime_factor_.load();
 
     while (!should_stop_) {
+        // An ended episode waits for its ground: no step until the UI starts the next one
+        if (held_.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            schedule_start = clock::now();
+            scheduled_steps = 0;
+            continue;
+        }
         // Paused — wait for resume or single-step
         if (state_ == SimState::Paused) {
             if (do_single_step_.exchange(false)) {
@@ -146,11 +154,17 @@ void MjSimulationExecutor::ExecuteOneStep() {
     double sim_time = 0.0;
     {
         std::lock_guard phys_lock(env_->GetPhysicsMutex());
-        const mjData* d = env_->GetData();
+        if (held_.load()) return;
+        mjData* d = env_->GetMutableData();
         if (!d) return;
+        if (hooks_.before_step) hooks_.before_step(env_->GetModel(), d);
         const std::vector<float> no_action(static_cast<size_t>(env_->GetActionDim()), 0.0f);
         const StepResult result = env_->Step(no_action);
-        if (result.terminated || result.truncated) env_->Reset();
+        if (result.terminated || result.truncated) {
+            if (hooks_.episode_ended && hooks_.episode_ended()) held_ = true;
+            else env_->Reset();
+        }
+        d = env_->GetMutableData();  // the same state (a scene change runs on the UI thread)
         sim_time = d->time;
     }
 

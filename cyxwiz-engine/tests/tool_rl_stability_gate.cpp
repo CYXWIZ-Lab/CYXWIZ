@@ -84,7 +84,8 @@ int main(int argc, char** argv) {
     if (const char* off = std::getenv("CYXWIZ_GATE_NO_PROVIDERS"); off && off[0] == '1')
         cyxwiz::SetNeuralProvidersDisabledForTesting(true);
     const bool mujoco = task != "CartPole-v1";
-    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>&,
+                                      cyxwiz::plugin::PluginEnvironmentInfo& info, std::string&) {
         cyxwiz::plugin::PluginEnvironmentRegistry::Environment e;
         if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(key, e)) return false;
         info = e.info;

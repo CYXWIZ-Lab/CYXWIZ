@@ -3320,9 +3320,11 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Training
     add("Training", ICON_FA_CHART_LINE, training_plot_panel_, "Training");
     add("Studio Debugger", ICON_FA_BUG, studio_debugger_panel_, "Training");
-    if (node_editor_)  // its window belongs to the Studio (it plays a policy trained there)
+    // Its window belongs to the Studio (it plays a policy trained there). Not remembered between
+    // sessions: no policy plays at launch, so it would open empty
+    if (node_editor_)
         dock_style.RegisterPanel("Policy Playback", ICON_FA_PLAY, node_editor_->GetPolicyPlaybackVisiblePtr(), nullptr,
-                                 "Training", "");
+                                 "Training", "", false);
     add("Tasks", ICON_FA_HOURGLASS_HALF, task_progress_panel_, "Training");
 
     // Network
@@ -5383,7 +5385,8 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
             const std::string advice = route.route_available
                 ? cyxwiz::rl_device::CompileAdvice(
                       cyxwiz::rl_device::BackendWord(cyxwiz::ExecutionDeviceSelectionBackendName(route.type)),
-                      cyxwiz::HiddenUnits(config.rl->policy_layers), cyxwiz::HiddenUnits(config.rl->value_layers))
+                      cyxwiz::HiddenUnits(config.rl->policy_layers), cyxwiz::HiddenUnits(config.rl->value_layers),
+                      cyxwiz::FusedNetworksExpected(*config.rl, route.type, route.device_id))
                 : std::string();
             if (!advice.empty()) {
                 cyxwiz::ValidationIssue issue;

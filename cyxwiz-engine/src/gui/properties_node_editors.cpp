@@ -19,10 +19,13 @@
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <chrono>
+#include <map>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -200,8 +203,146 @@ std::vector<cyxwiz::rl_graph::ListedEnvironment> ListedEnvironments() {
     return out;
 }
 
+// The environment as a node's settings make it (the plugin's DescribeEnvironment),
+// asked again when the settings change or every 2 s, not every frame
+bool DescribedEnvironment(const std::string& key, const std::map<std::string, std::string>& settings,
+                          cyxwiz::plugin::PluginEnvironmentRegistry::Environment& out, std::string& error) {
+    struct Cached {
+        std::string key;
+        std::map<std::string, std::string> settings;
+        std::chrono::steady_clock::time_point at;
+        bool ok = false;
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment;
+        std::string error;
+    };
+    static std::vector<Cached> cache;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = cache.begin(); it != cache.end(); ++it) {
+        if (it->key != key || it->settings != settings) continue;
+        if (now - it->at < std::chrono::seconds(2)) {
+            out = it->environment;
+            error = it->error;
+            return it->ok;
+        }
+        cache.erase(it);
+        break;
+    }
+    Cached entry{key, settings, now};
+    entry.ok = cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Describe(key, settings, entry.environment, entry.error);
+    if (cache.size() >= 16) cache.erase(cache.begin());
+    cache.push_back(entry);
+    out = entry.environment;
+    error = entry.error;
+    return entry.ok;
+}
+
 void FactRows(const std::vector<cyxwiz::rl_graph::Fact>& facts) {
     for (const auto& f : facts) properties_rows::ReadOnly(f.label.c_str(), f.value, "");
+}
+
+// One plugin setting of an Environment node (stored as setting.<key>), drawn
+// by its kind: a typed number, a checkbox, a segmented choice or chips
+bool RenderEnvironmentSetting(MLNode& node, const cyxwiz::plugin::PluginEnvironmentSetting& s) {
+    using cyxwiz::plugin::PluginSettingKind;
+    const std::string key = cyxwiz::rl_graph::kSettingPrefix + s.key;
+    const std::string value = ParamOr(node, key.c_str(), s.default_value.c_str());
+    bool edited = false;
+    properties_rows::Label(s.label.c_str(), false, s.description.c_str());
+    ImGui::PushID(key.c_str());
+    switch (s.kind) {
+        case PluginSettingKind::Flag: {
+            bool on = value == "1";
+            if (ImGui::Checkbox("##v", &on)) {
+                node.parameters[key] = on ? "1" : "0";
+                edited = true;
+            }
+            break;
+        }
+        case PluginSettingKind::Choice: {
+            std::vector<const char*> labels;
+            int selected = -1;
+            for (size_t i = 0; i < s.options.size(); ++i) {
+                labels.push_back(s.options[i].label.c_str());
+                if (s.options[i].value == value) selected = static_cast<int>(i);
+            }
+            if (!labels.empty() &&
+                cyxwiz::ui::SegmentedControl("##v", labels.data(), static_cast<int>(labels.size()), &selected) &&
+                selected >= 0) {
+                node.parameters[key] = s.options[static_cast<size_t>(selected)].value;
+                edited = true;
+            }
+            break;
+        }
+        case PluginSettingKind::Choices: {
+            // Chips that wrap at the cell's edge; the value is the chosen ones joined by ","
+            std::set<std::string> chosen;
+            for (size_t start = 0; start <= value.size();) {
+                const size_t comma = value.find(',', start);
+                const std::string part = value.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                if (!part.empty()) chosen.insert(part);
+                if (comma == std::string::npos) break;
+                start = comma + 1;
+            }
+            const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+            for (size_t i = 0; i < s.options.size(); ++i) {
+                const auto& option = s.options[i];
+                if (i > 0) {
+                    ImGui::SameLine();
+                    if (ImGui::GetCursorScreenPos().x + cyxwiz::ui::FilterChipWidth(option.label.c_str(), "") > right)
+                        ImGui::NewLine();
+                }
+                ImGui::PushID(static_cast<int>(i));
+                const bool on = chosen.count(option.value) > 0;
+                if (cyxwiz::ui::FilterChip("##chip", option.label.c_str(), "", on)) {
+                    if (on) chosen.erase(option.value);
+                    else chosen.insert(option.value);
+                    std::string joined;
+                    for (const auto& o : s.options)  // the plugin's order
+                        if (chosen.count(o.value)) joined += (joined.empty() ? "" : ",") + o.value;
+                    node.parameters[key] = joined;
+                    edited = true;
+                }
+                ImGui::PopID();
+            }
+            break;
+        }
+        case PluginSettingKind::Number: {
+            char* end = nullptr;
+            double v = std::strtod(value.c_str(), &end);
+            if (value.empty() || !end || *end != '\0') {  // not a number: typed as text
+                char buf[256] = {};
+                std::strncpy(buf, value.c_str(), sizeof(buf) - 1);
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                if (ImGui::InputText("##v", buf, sizeof(buf))) {
+                    node.parameters[key] = buf;
+                    edited = true;
+                }
+                break;
+            }
+            // A typed number (owner rule: no drag or slider inputs); the unit after it
+            std::string unit;
+            for (const char c : s.unit) unit += c == '%' ? std::string("%%") : std::string(1, c);
+            const std::string format = unit.empty() ? "%.6g" : "%.6g " + unit;
+            cyxwiz::ui::NumberFieldOptions options;
+            if (s.min < s.max) {
+                options.min = s.min;
+                options.max = s.max;
+            }
+            options.step = std::floor(v) == v ? 1.0 : 0.0;
+            options.format = format.c_str();
+            options.width = 96.0f;
+            if (cyxwiz::ui::NumberField("##v", &v, options)) {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%.6g", v);
+                node.parameters[key] = buf;
+                edited = true;
+            }
+            break;
+        }
+    }
+    ImGui::PopID();
+    properties_rows::Status(key.c_str());
+    return edited;
 }
 
 // Environment: the environment list, its facts, the copies and the plugin's
@@ -247,34 +388,23 @@ bool RenderEnvironment(MLNode& node) {
         properties_rows::Note("No loaded plugin offers this environment: load its plugin in Plugin Manager.");
         return edited;
     }
-    FactRows(cyxwiz::rl_graph::EnvironmentFacts(env->info));
-    for (const auto& s : env->info.settings) {
-        const std::string key = kSettingPrefix + s.key;
-        const std::string value = ParamOr(node, key.c_str(), s.default_value.c_str());
-        char* end = nullptr;
-        const double number = std::strtod(value.c_str(), &end);
-        properties_rows::Label(s.label.c_str(), false, s.description.c_str());
-        ImGui::PushID(key.c_str());
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        if (!value.empty() && end && *end == '\0') {
-            double v = number;
-            const double step = std::floor(number) == number ? 1.0 : 0.01;
-            if (ImGui::InputDouble("##v", &v, step, step * 10.0, "%.6g")) {
-                char buf[32];
-                std::snprintf(buf, sizeof(buf), "%.6g", v);
-                node.parameters[key] = buf;
-                edited = true;
-            }
-        } else {
-            char buf[256] = {};
-            std::strncpy(buf, value.c_str(), sizeof(buf) - 1);
-            if (ImGui::InputText("##v", buf, sizeof(buf))) {
-                node.parameters[key] = buf;
-                edited = true;
-            }
-        }
-        ImGui::PopID();
-        properties_rows::Status(key.c_str());
+    {
+        // As the node's settings make it: an extra observation changes what it observes
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment described;
+        std::string reason;
+        const bool ok =
+            DescribedEnvironment(env->key, cyxwiz::rl_graph::StoredSettings(node.parameters), described, reason);
+        FactRows(cyxwiz::rl_graph::EnvironmentFacts(ok ? described.info : env->info));
+        if (!ok && !reason.empty()) properties_rows::Note(reason.c_str());
+    }
+    // The main settings first, then each section under its heading, in the plugin's order
+    std::vector<std::string> sections{""};
+    for (const auto& s : env->info.settings)
+        if (std::find(sections.begin(), sections.end(), s.section) == sections.end()) sections.push_back(s.section);
+    for (const auto& section : sections) {
+        properties_rows::Section(section.c_str());
+        for (const auto& s : env->info.settings)
+            if (s.section == section && RenderEnvironmentSetting(node, s)) edited = true;
     }
     return edited;
 }
@@ -288,8 +418,12 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
     const auto& links = editor.GetLinks();
     const MLNode* env_node = cyxwiz::rl_graph::UpstreamEnvironment(nodes, links, node.id);
     cyxwiz::plugin::PluginEnvironmentRegistry::Environment env;
+    std::string describe_error;
     const bool known = env_node && cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(
                                        ParamOr(*env_node, "environment"), env);
+    // As its Environment's settings make it (the observation it feeds the networks)
+    if (known)
+        DescribedEnvironment(env.key, cyxwiz::rl_graph::StoredSettings(env_node->parameters), env, describe_error);
     properties_rows::Rows rows("##rl_facts");
     if (!rows.ok) return;
     if (node.type == NodeType::ValueHead) {

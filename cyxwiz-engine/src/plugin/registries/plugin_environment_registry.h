@@ -38,6 +38,8 @@ public:
     // Shows one copy in the plugin's own view (-1: stop showing). False when
     // the environment has no picture, or the plugin failed (error says why).
     bool ShowCopy(int copy, std::string& error);
+    // The batch's own numbers for the dashboard (none when it has none or fails)
+    std::vector<PluginEnvironmentStat> Stats() const;
 
 private:
     friend class PluginEnvironmentRegistry;
@@ -72,11 +74,15 @@ public:
 
     std::vector<Environment> Environments() const;
     bool Find(const std::string& key, Environment& out) const;
+    // The environment as these settings make it (what it observes may follow
+    // them; IEnvironmentProvider::DescribeEnvironment). False with the reason.
+    bool Describe(const std::string& key, const std::map<std::string, std::string>& settings, Environment& out,
+                  std::string& error) const;
     size_t GetCount() const;
 
     // count copies of the environment. Null with the reason when the key is
     // unknown, the plugin refuses or crashes, or the batch it returns does
-    // not match what it said the environment is.
+    // not match what it describes for these settings.
     std::unique_ptr<EnvironmentBatch> Create(const std::string& key, const std::map<std::string, std::string>& settings,
                                              int count, std::string& error);
 

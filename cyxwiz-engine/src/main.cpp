@@ -6,6 +6,8 @@
 #include "plugin/plugin_data_formats.h"
 #include "plugin/plugin_session.h"
 #include "plugin/engine_plugin_context.h"
+#include "core/engine_config.h"
+#include "core/project_manager.h"
 #include "gui/plugin_ui_kit.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
@@ -492,6 +494,22 @@ int main(int argc, char** argv) {
             cyxwiz::plugin::InstallPluginDataFormats();
             // Plugin panels draw the Engine's widgets (plugin API 1.4).
             cyxwiz::plugin::EnginePluginContext::SetUi(&cyxwiz::ui::PluginUiKit());
+            // The open project's folder and the plugins' saved settings (plugin API 1.4)
+            cyxwiz::plugin::EnginePluginContext::SetHostServices({
+                [] {
+                    auto& projects = cyxwiz::ProjectManager::Instance();
+                    return projects.HasActiveProject() ? std::filesystem::path(projects.GetProjectRoot())
+                                                       : std::filesystem::path{};
+                },
+                [](const std::string& plugin_id, const std::string& key, std::string& value) {
+                    return cyxwiz::core::EngineConfig::Instance().PluginSetting(plugin_id, key, value);
+                },
+                [](const std::string& plugin_id, const std::string& key, const std::string& value) {
+                    auto& config = cyxwiz::core::EngineConfig::Instance();
+                    config.SetPluginSetting(plugin_id, key, value);
+                    config.Save();
+                },
+            });
             cyxwiz::plugin::LoadStartupPlugins(pm);
         }
 
