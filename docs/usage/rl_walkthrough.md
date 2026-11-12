@@ -1,0 +1,160 @@
+# Train, play and export a policy: CartPole, InvertedPendulum, HalfCheetah
+
+A step-by-step guide to the three reinforcement-learning examples that ship
+with the Engine:
+
+- **CartPole**: the Engine's own environment, no plugin needed.
+- **InvertedPendulum** and **HalfCheetah**: MuJoCo physics, from the MuJoCo
+  Simulation plugin.
+
+It covers training each one from Studio, watching the trained policy,
+saving it, and what it takes to use a policy outside the Engine (export, and
+real robots). For every setting and panel, see
+[Training a policy (PPO)](rl_training.md); for the environments themselves,
+[Environments for reinforcement learning](rl_environments.md).
+
+## Before you start
+
+- **A device.** Training runs on the device chosen in **Preferences >
+  Devices**. On an NVIDIA GPU with the **CUDA GPU pack**, PPO runs its small
+  networks as fused GPU kernels and trains several times faster than on the
+  CPU (see [What runs where on a GPU](gpu_providers.md)). On the CPU every
+  example still trains; it just takes longer.
+- **The MuJoCo Simulation plugin** (InvertedPendulum and HalfCheetah only).
+  Open **Apps > Plugin Manager**:
+  - if the plugin is already in the Engine's `plugins` folder, click
+    **Refresh**;
+  - otherwise click **Install...** and choose the plugin's folder (the one
+    holding `plugin.json`).
+
+  The Plugin Manager then lists *MuJoCo Simulation* as initialised, and the
+  Console says `Registered 2 environments for 'com.cyxwiz.simulation.mujoco'`.
+  A plugin loaded this way stays loaded for the session.
+- **The examples** are in `examples/cyxgraph/rl/`. Open one with **File >
+  Open** (or start the Engine with the file as its argument).
+
+Times below were measured on an NVIDIA GeForce GTX 1050 Ti with the CUDA GPU
+pack.
+
+## 1. CartPole (built in)
+
+Keep a pole upright on a moving cart by pushing it left or right. An episode
+ends when the pole falls or after 500 steps, so the best score is 500.
+
+1. Open `ppo_cartpole.cyxgraph`. The graph is the PPO (MLP) pattern: an
+   **Environment** node, a policy network and a value network (two Dense
+   layers of 64 with Tanh each), a **Policy Head**, a **Value Head** and the
+   **PPO** node with settings tuned for CartPole (8 environment copies).
+2. **Train > Start Training** (F5). The **RL Training Dashboard** opens:
+   the episode reward climbs along the Stable-Baselines3 reference curve
+   drawn under it.
+3. The run stops by itself when the last 100 episodes average 475.
+   Measured: 475.9 after 74,496 steps, about 8 seconds on the GPU.
+4. **Play policy** on the dashboard. The **Policy Playback** panel draws the
+   cart and pole and plays the trained policy; each episode now lasts the
+   full 500 steps.
+
+## 2. InvertedPendulum (MuJoCo)
+
+The same task in 3D physics: a hinged pole on a cart pushed by a force.
+Episodes last up to 1,000 steps (best score 1,000).
+
+1. Load the MuJoCo plugin (see *Before you start*).
+2. Open `ppo_inverted_pendulum.cyxgraph` (4 environment copies, 64-64 Tanh,
+   tuned settings).
+3. **Train** (F5). The run stops when the last 100 episodes average 950.
+   Measured: 965.4 after about 120,000 steps, about 30 seconds on the GPU.
+4. **Play policy**. The **MuJoCo Viewport** opens by itself and shows the
+   pendulum balancing. While it plays, the Viewport's own Run / Step / Reset
+   are off; **Stop** in Policy Playback gives the Viewport back its scene.
+
+## 3. HalfCheetah (MuJoCo)
+
+A two-dimensional cheetah with six motorised joints learns to run forward.
+There is no "solved" score: the reward is the forward speed minus a small
+cost for the effort, summed over 1,000 steps.
+
+1. Load the MuJoCo plugin.
+2. Open `ppo_half_cheetah.cyxgraph`: one copy, two layers of 256 with ReLU,
+   observation and reward normalisation, and the RL Zoo settings for
+   HalfCheetah. It runs all 1,000,000 steps (no target stop).
+3. **Train** (F5). Measured: about 8-13 minutes on the GPU (over an hour on
+   the CPU), ending at a mean return of about 3,800-5,100 depending on the
+   seed (4,675.9 with seed 1). Stable-Baselines3 with the same settings ends
+   at 2,970-4,660.
+4. **Play policy**. The MuJoCo Viewport shows the cheetah running. It runs
+   fast, so it soon leaves the starting view: drag in the Viewport to orbit
+   and scroll to zoom out (a camera that follows the cheetah is planned).
+
+## After training: watch, save, reopen
+
+The trained policy stays in the Engine until the next Train.
+
+- **Play policy** again at any time, from the dashboard or from **Play**
+  under *Trained policy* in the PPO node's Properties. In Policy Playback:
+  - **Best** takes the policy's most likely action; **Sampled** draws
+    actions as training did.
+  - **Real time**, **x4** or **As fast as possible**.
+  - **Pause**, **New episode**, **Stop**.
+- **Save policy...** writes one `.cyxmodel` file (by default
+  `<project>/exports/<graph name>.cyxmodel`). It holds the RL graph, both
+  networks, the optimizer states and `rl/policy.json`: the environment, its
+  settings and the observation-normalisation statistics the policy expects.
+- **Later:** **File > Open Model File...** on that file and **Play policy**
+  plays it without touching the open graph; **Open its graph** opens the
+  graph it was trained with. Or open the graph and use **Load policy...** in
+  the PPO node's Properties. A MuJoCo policy needs the MuJoCo plugin loaded.
+
+## Export: using a policy outside the Engine
+
+**Today:**
+
+- The `.cyxmodel` file is the Engine's format: it reopens and plays in any
+  CyxWiz Engine with the same plugin.
+- **Code Gen** writes the same training as a Python script: in the Studio,
+  pick **Code Gen** mode, then **Generate** (an RL graph always gives the
+  Stable-Baselines3 script, whichever framework is selected). The script
+  trains Stable-Baselines3's PPO on the Engine's own environments
+  (`pycyxwiz.rl`, the same physics), with the graph's layers and settings,
+  and saves the model as `ppo_<environment>` (and, when it normalises, as
+  HalfCheetah does, the observation statistics as
+  `ppo_<environment>_vecnormalize.pkl`). Stable-Baselines3 documents how to
+  export a saved policy to ONNX or TorchScript (its "Exporting models"
+  guide); apply the saved normalisation to every observation before the
+  exported policy sees it.
+
+**Planned:** exporting an Engine-trained policy straight to ONNX, and
+continuing training from a saved policy.
+
+## Using a policy on a real robot
+
+The three examples are simulator benchmarks: there is no physical
+HalfCheetah, and these policies are not meant to drive hardware as they are.
+What a policy learns is a mapping from *this simulator's observations* to
+*this simulator's actuator commands*. To run a policy on a real machine:
+
+1. **Train on a model of that machine.** The robot's own MuJoCo model (MJCF;
+   the MuJoCo Menagerie has models of many real robots), with its real
+   joints, masses and actuator limits, and a reward for the behaviour you
+   want.
+2. **Match the observation.** The robot's controller has to build exactly
+   the vector the policy was trained on: the same sensor readings, in the same
+   order and units, normalised with the saved statistics.
+3. **Match the action.** The robot's actuators must accept the same
+   commands (for example joint torques in [-1, 1] scaled to the motors), sent
+   at the same control rate as the simulator's step (0.05 s for HalfCheetah).
+4. **Close the reality gap.** A real robot differs from its model (friction,
+   delays, sensor noise). The usual remedies are randomising those quantities
+   during training, adding latency to the simulated observations, and
+   testing first with the robot held or tethered, under a hardware safety
+   stop.
+5. **Run the policy in the robot's control loop**: read the sensors, build
+   and normalise the observation, run the exported policy (ONNX Runtime and
+   TorchScript run on most robot computers), clamp the action to safe limits,
+   send it, repeat at the control rate.
+
+What the Engine covers today: step 1 for its own tasks only (the plugin's
+environments are fixed; training on your own robot model is planned), the
+observation statistics for step 2 (in the saved policy), and steps 4-5 through
+the Stable-Baselines3 script and its export. Training on a custom MuJoCo
+robot model and direct ONNX export are on the roadmap.

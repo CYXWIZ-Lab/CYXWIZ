@@ -27,6 +27,7 @@ To write your own nodes in Python or C++, see
 | [Graph simulation](graph_simulation.md) | Run Sim, the Simulation menu and the Simulation Monitor |
 | [Environments for reinforcement learning](rl_environments.md) | Plugin environments (MuJoCo tasks), their settings, and `pycyxwiz.rl` for Gymnasium and Stable-Baselines3 |
 | [Training a policy (PPO)](rl_training.md) | The RL graph (Environment, layers, Policy / Value Head, PPO), its settings, Train and the RL Training Dashboard |
+| [Train, play and export a policy](rl_walkthrough.md) | Step by step: CartPole, InvertedPendulum and HalfCheetah from Studio, playing and saving the policy, export, and what a real robot needs |
 
 ## Data
 

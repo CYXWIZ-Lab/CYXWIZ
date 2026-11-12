@@ -1,5 +1,7 @@
 # Training a policy (PPO)
 
+New to it? [Train, play and export a policy](rl_walkthrough.md) walks through the three examples step by step.
+
 The Engine trains reinforcement learning policies itself, from a graph on
 the canvas: no Python, no Stable-Baselines3. The algorithm is PPO, written
 to match Stable-Baselines3's PPO (its loss, gradients, advantage estimates,
@@ -138,7 +140,8 @@ keeps its trained policy until the next Train.
   - The panel shows the episode, its step and return, the last returns and
     the action, with Pause / Resume, New episode and Stop.
   - **View > Panels > Policy Playback** (or its sidebar icon) shows or hides
-    the panel. Closing it stops the playback.
+    the panel. Closing it stops the playback; it starts closed at each launch
+    (nothing plays yet).
 - **Where you see it:**
   - **MuJoCo task:** the **MuJoCo Viewport** opens and shows the copy being
     played. Its own Run / Step / Reset are off while it does ("Policy playback
@@ -184,6 +187,7 @@ On 2026-11-09 with the tuned settings:
 |---|---|---|
 | CartPole-v1, mean return 475 | 69,376 steps (test_ppo_trainer); 88,320 from the graph (test_rl_graph_training) | 59,648 / 64,256 / 72,192 |
 | InvertedPendulum-v5, mean return 950 | 122,880 steps | 120,832 / 135,168 / 161,792 |
+| HalfCheetah-v5, final mean return after 1,000,000 steps (2026-11-11, seeds 1-3, CUDA) | 4,675.9 / 5,087.8 / 3,787.0 | 2,973.2 / 4,651.1 / 4,660.6 |
 
 ## Not yet
 
