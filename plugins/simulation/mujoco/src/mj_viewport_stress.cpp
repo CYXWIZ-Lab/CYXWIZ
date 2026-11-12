@@ -35,6 +35,8 @@ void MjViewportPanel::ResetStress() {
     ground_asked_ = false;
     shown_ground_known_ = false;
     next_auto_kick_ = -1.0;
+    next_auto_throw_ = -1.0;
+    stress_episode_ = -1;
 }
 
 std::string MjViewportPanel::StressBlocked(MjEnvManager& env) const {
@@ -89,22 +91,86 @@ void MjViewportPanel::WatchStress(MjEnvManager& env) {
     }
     if (ground_asked_ && asked_ground_ == ground) ground_asked_ = false;
 
-    // Automatic kicks while the scene moves, in simulated time
-    const bool moving = playback_ || GetRunState().running;
+    // Every episode draws its random kicks and throws from the same stream (the
+    // ground's seed), so the same choices give the same disturbances again
     const bool restarted = time < last_watch_time_;  // an episode's reset sends the clock back
     last_watch_time_ = time;
-    if (!stress_.auto_disturb || !moving || !StressBlocked(env).empty() ||
-        RobotRootBody(env.GetModel(), env.Robot()) < 0) {
+    if (episode != stress_episode_ || restarted) {
+        stress_episode_ = episode;
+        stress_random_ = MjRandom(stress_.ground.seed);
         next_auto_kick_ = -1.0;
-        return;
+        next_auto_throw_ = -1.0;
     }
-    if (next_auto_kick_ < 0.0 || restarted) next_auto_kick_ = time + stress_.auto_seconds;
-    if (time >= next_auto_kick_) {
-        const MjKick kick = static_cast<MjKick>(auto_random_.Next() % 3);
-        Queue(MjStressRequest::MakeKick(kick, stress_.kick_speed), env,
-              "Auto " + LowerFirst(DescribeKick(kick, stress_.kick_speed)));
-        next_auto_kick_ = time + stress_.auto_seconds;
+
+    // Automatic kicks and throws while the scene moves, in simulated time
+    const bool moving = playback_ || GetRunState().running;
+    const bool can = moving && StressBlocked(env).empty();
+    const bool has_root = RobotRootBody(env.GetModel(), env.Robot()) >= 0;
+    if (!stress_.auto_disturb || !can || !has_root) {
+        next_auto_kick_ = -1.0;
+    } else {
+        if (next_auto_kick_ < 0.0) next_auto_kick_ = time + stress_.auto_seconds;
+        if (time >= next_auto_kick_) {
+            const int way = static_cast<int>(stress_random_.Next() % 4);
+            const std::array<double, 3> dv = KickVelocity(way);
+            Queue(MjStressRequest::MakeKick(dv, stress_.kick_seconds), env,
+                  "Auto " + LowerFirst(DescribeKick(dv, stress_.kick_seconds)));
+            next_auto_kick_ = time + stress_.auto_seconds;
+        }
     }
+    if (!stress_.auto_throw || !can) {
+        next_auto_throw_ = -1.0;
+    } else {
+        if (next_auto_throw_ < 0.0) next_auto_throw_ = time + stress_.auto_throw_seconds;
+        if (time >= next_auto_throw_) {
+            QueueThrow(env, true);
+            next_auto_throw_ = time + stress_.auto_throw_seconds;
+        }
+    }
+}
+
+std::array<double, 3> MjViewportPanel::KickVelocity(int way) {
+    const double s = stress_.kick_speed;
+    switch (way) {
+        case 0: return {-s, 0.0, 0.0};
+        case 1: return {s, 0.0, 0.0};
+        case 2: return {0.0, 0.0, s};
+        default: {
+            using L = StressLimits;
+            const std::array<double, 3> d =
+                Direction(stress_random_.Uniform(0.0, 360.0), stress_random_.Uniform(0.0, L::kRandomKickUpMax));
+            return {s * d[0], s * d[1], s * d[2]};
+        }
+    }
+}
+
+void MjViewportPanel::QueueThrow(MjEnvManager& env, bool random) {
+    using L = StressLimits;
+    MjThrownObject object = stress_.object;
+    MjThrow how = stress_.how;
+    if (stress_.any_shape)
+        object.shape = static_cast<MjShape>(stress_random_.Next() % kShapeCount);
+    if (random) {
+        // Vary the object and come from anywhere around, level to steep
+        const double size = stress_random_.Uniform(stress_.size_low, stress_.size_high);
+        for (double& s : object.size) s = std::clamp(s * size, L::kSizeMin, L::kSizeMax);
+        object.mass = std::clamp(object.mass * stress_random_.Uniform(stress_.mass_low, stress_.mass_high),
+                                 L::kMassMin, L::kMassMax);
+        how.around = stress_random_.Uniform(0.0, 360.0);
+        how.up = stress_random_.Uniform(0.0, L::kRandomUpMax);
+    }
+    if (stress_.tumble) {
+        // A uniformly random turn (Shoemake) and a spin of 2-8 rad/s about a random axis
+        const double u1 = stress_random_.Uniform(), u2 = stress_random_.Uniform(), u3 = stress_random_.Uniform();
+        constexpr double kTwoPi = 6.28318530717958647692;
+        how.quat = {std::sqrt(u1) * std::cos(kTwoPi * u3), std::sqrt(1.0 - u1) * std::sin(kTwoPi * u2),
+                    std::sqrt(1.0 - u1) * std::cos(kTwoPi * u2), std::sqrt(u1) * std::sin(kTwoPi * u3)};
+        const std::array<double, 3> axis =
+            Direction(stress_random_.Uniform(0.0, 360.0), stress_random_.Uniform(-90.0, 90.0));
+        const double rate = stress_random_.Uniform(2.0, 8.0);
+        how.spin = {axis[0] * rate, axis[1] * rate, axis[2] * rate};
+    }
+    Queue(MjStressRequest::MakeThrow(object, how), env, (random ? "Auto " : "") + DescribeThrow(object, how));
 }
 
 void MjViewportPanel::HandlePush(MjEnvManager& env, MjRenderer& renderer, bool scene_active, float x, float y,
@@ -135,6 +201,45 @@ void MjViewportPanel::HandlePush(MjEnvManager& env, MjRenderer& renderer, bool s
     if (body > 0) stress_requests_.push_back(MjStressRequest::MakePush(body, force));
 }
 
+void MjViewportPanel::RenderThrowDial(float right, float top) {
+    const UiColors colors = ctx_->GetUi()->Colors();
+    constexpr float kRadius = 52.0f;
+    constexpr float kPad = 10.0f;
+    constexpr float kMargin = 12.0f;
+    const float line_h = ImGui::GetTextLineHeightWithSpacing();
+    const ImVec2 box0(right - kMargin - kPad * 2 - kRadius * 2, top + kMargin);
+    const ImVec2 box1(right - kMargin, box0.y + kPad * 2 + line_h + kRadius * 2 + line_h);
+    const ImVec2 centre(box0.x + kPad + kRadius, box0.y + kPad + line_h + kRadius);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(box0, box1, ToU32(colors.bg_window, 0.85f), 6.0f);
+    dl->AddText(ImVec2(box0.x + kPad, box0.y + kPad), ToU32(colors.text_dim), "Throw from");
+    dl->AddCircle(centre, kRadius, ToU32(colors.text_dim, 0.6f), 48, 1.5f);
+    dl->AddCircle(centre, kRadius * 0.5f, ToU32(colors.text_dim, 0.3f), 32, 1.0f);
+    // Top-down: the robot runs to the right (+x); +y (left of the run) is up
+    dl->AddLine(ImVec2(centre.x - 14.0f, centre.y), ImVec2(centre.x + 14.0f, centre.y), ToU32(colors.text), 5.0f);
+    const std::array<double, 3> from = Direction(stress_.how.around, stress_.how.up);
+    const float reach = kRadius * static_cast<float>(std::hypot(from[0], from[1]));
+    const float angle = static_cast<float>(stress_.how.around * 3.14159265358979323846 / 180.0);
+    const ImVec2 dot(centre.x + std::cos(angle) * reach, centre.y - std::sin(angle) * reach);
+    dl->AddLine(dot, centre, ToU32(colors.accent), 2.0f);
+    dl->AddCircleFilled(dot, 6.0f, ToU32(colors.accent));
+    char text[48];
+    std::snprintf(text, sizeof(text), "%.0f\xC2\xB0, up %.0f\xC2\xB0", stress_.how.around, stress_.how.up);
+    dl->AddText(ImVec2(box0.x + kPad, centre.y + kRadius + 4.0f), ToU32(colors.text_dim), text);
+
+    // Click or drag on the dial: the direction around (the angle up stays typed)
+    const ImVec2 saved = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorScreenPos(ImVec2(centre.x - kRadius, centre.y - kRadius));
+    ImGui::InvisibleButton("##throw_dial", ImVec2(kRadius * 2, kRadius * 2));
+    if (ImGui::IsItemActive()) {
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const double degrees = std::atan2(-(mouse.y - centre.y), mouse.x - centre.x) * 180.0 / 3.14159265358979323846;
+        stress_.how.around = std::round(std::fmod(degrees + 360.0, 360.0));
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click or drag to throw from that side");
+    ImGui::SetCursorScreenPos(saved);
+}
+
 void MjViewportPanel::RenderStressPanel(MjEnvManager& env) {
     PluginUi* ui = ctx_->GetUi();
     const UiColors colors = ui->Colors();
@@ -157,6 +262,11 @@ void MjViewportPanel::RenderStressPanel(MjEnvManager& env) {
         ImGui::TextUnformatted(text);
         ImGui::SameLine(kLabel);
     };
+    auto between = [&](const char* text) {  // a word between fields on one line
+        ImGui::SameLine();
+        ImGui::TextColored(ToImVec4(colors.text_dim), "%s", text);
+        ImGui::SameLine();
+    };
     auto hint = [&](const char* text) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(ToImVec4(colors.text_dim), "%s", text);
@@ -166,59 +276,107 @@ void MjViewportPanel::RenderStressPanel(MjEnvManager& env) {
     ImGui::TextColored(ToImVec4(colors.text_bright), "Stress");
     hint(playback_ ? "Acts on the copy the policy plays." : "Acts on this Viewport's run.");
 
-    // Push: a sudden kick, or a pull while the mouse is held
+    // Push: a sudden kick, a push held for a time, or a pull while the mouse is held
     section("Push");
     label("Kick");
-    ui->NumberField("##kick_speed", &stress_.kick_speed, L::kKickMin, L::kKickMax, 0.5, "%.2f m/s", 80.0f,
+    ui->NumberField("##kick_speed", &stress_.kick_speed, L::kKickMin, L::kKickMax, 0.5, "%.2f m/s", 64.0f,
                     "How much the robot's velocity changes");
-    struct KickButton {
-        const char* label;
-        MjKick kick;
-    };
-    constexpr KickButton kKicks[] = {{"Kick back", MjKick::Back}, {"Kick forward", MjKick::Forward}, {"Up", MjKick::Up}};
-    bool first = true;
-    for (const auto& button : kKicks) {
-        if (!first) SameLineIfFits(ui->ButtonWidth(button.label, UiButtonSize::Regular) + spacing);
-        first = false;
-        if (ui->SecondaryButton(button.label, can_kick, kick_why))
-            Queue(MjStressRequest::MakeKick(button.kick, stress_.kick_speed), env,
-                  DescribeKick(button.kick, stress_.kick_speed));
+    between("over");
+    ui->NumberField("##kick_seconds", &stress_.kick_seconds, L::kSecondsMin, L::kSecondsMax, 0.1, "%.2f s", 52.0f,
+                    "0: a sudden kick. More: a push held that long (0.2 s in Geijtenbeek et al. 2013)");
+    static const char* kKicks[] = {"Kick back", "Kick forward", "Up", "Any way"};
+    for (int way = 0; way < 4; ++way) {
+        if (way) SameLineIfFits(ui->ButtonWidth(kKicks[way], UiButtonSize::Regular) + spacing);
+        if (ui->SecondaryButton(kKicks[way], can_kick, kick_why)) {
+            const std::array<double, 3> dv = KickVelocity(way);
+            Queue(MjStressRequest::MakeKick(dv, stress_.kick_seconds), env, DescribeKick(dv, stress_.kick_seconds));
+        }
     }
-    hint("Or Ctrl+drag a body in the scene: a spring pull while the mouse is down.");
+    hint("Any way: a random direction. Or Ctrl+drag a body in the scene: a spring pull while the mouse is down.");
 
     // Throw an object at the robot
     section("Throw");
     label("Object");
-    static const char* kObjects[] = {"Ball", "Box"};
-    int object = stress_.object.ball ? 0 : 1;
-    if (ui->SegmentedControl("##object", kObjects, 2, &object)) stress_.object.ball = object == 0;
+    static const char* kShapes[] = {"Ball", "Box", "Capsule", "Cylinder", "Any"};
+    int shape = stress_.any_shape ? kShapeCount : static_cast<int>(stress_.object.shape);
+    if (ui->SegmentedControl("##shape", kShapes, kShapeCount + 1, &shape)) {
+        stress_.any_shape = shape == kShapeCount;
+        if (!stress_.any_shape) stress_.object.shape = static_cast<MjShape>(shape);
+    }
+    const int sizes = stress_.any_shape ? 3 : ShapeSizes(stress_.object.shape);
     label("Size");
-    ui->NumberField("##size", &stress_.object.size, L::kSizeMin, L::kSizeMax, 0.05, "%.2f m", 80.0f,
-                    "A ball's diameter or a box's edge");
+    static const char* kSizeIds[] = {"##size0", "##size1", "##size2"};
+    for (int i = 0; i < sizes; ++i) {
+        if (i) between("\xC3\x97");
+        ui->NumberField(kSizeIds[i], &stress_.object.size[i], L::kSizeMin, L::kSizeMax, 0.0, "%.2f", 48.0f);
+    }
+    between("m");
+    ImGui::NewLine();
+    const char* size_hint = stress_.any_shape                                 ? "Ball: the first as diameter. Box: length \xC3\x97 width \xC3\x97 height. Capsule, cylinder: length \xC3\x97 diameter."
+                            : stress_.object.shape == MjShape::Ball           ? "Diameter."
+                            : stress_.object.shape == MjShape::Box            ? "Length \xC3\x97 width \xC3\x97 height."
+                                                                              : "Length (end to end) \xC3\x97 diameter.";
+    hint(size_hint);
     label("Mass");
     ui->NumberField("##mass", &stress_.object.mass, L::kMassMin, L::kMassMax, 0.5, "%.1f kg", 80.0f);
     label("Speed");
-    ui->NumberField("##throw_speed", &stress_.throw_speed, L::kSpeedMin, L::kSpeedMax, 1.0, "%.1f m/s", 80.0f);
+    ui->NumberField("##throw_speed", &stress_.how.speed, L::kSpeedMin, L::kSpeedMax, 1.0, "%.1f m/s", 80.0f);
     label("From");
-    static const char* kFrom[] = {"Ahead", "Behind", "Above"};
-    int from = static_cast<int>(stress_.from);
-    if (ui->SegmentedControl("##from", kFrom, 3, &from)) stress_.from = static_cast<MjThrowFrom>(from);
-    if (ui->PrimaryButton("Throw", can, why))
-        Queue(MjStressRequest::MakeThrow(stress_.object, stress_.from, stress_.throw_speed), env,
-              DescribeThrow(stress_.object, stress_.from, stress_.throw_speed));
+    struct Preset {
+        double around, up;
+    };
+    static const char* kFrom[] = {"Ahead", "Behind", "Left", "Right", "Above"};
+    constexpr Preset kPresets[] = {{0, 0}, {180, 0}, {90, 0}, {270, 0}, {0, 90}};
+    int from = -1;
+    for (int i = 0; i < 5; ++i) {
+        const bool above = kPresets[i].up >= 90.0 && stress_.how.up >= 90.0;
+        if (above || (stress_.how.around == kPresets[i].around && stress_.how.up == kPresets[i].up)) from = i;
+    }
+    if (ui->SegmentedControl("##from", kFrom, 5, &from) && from >= 0) {
+        stress_.how.around = kPresets[from].around;
+        stress_.how.up = kPresets[from].up;
+    }
+    label("Angle");
+    ui->NumberField("##around", &stress_.how.around, L::kAroundMin, L::kAroundMax, 15.0, "%.0f\xC2\xB0", 48.0f,
+                    "Around the robot: 0 ahead, 90 left, 180 behind, 270 right (or drag the dial on the scene)");
+    between("up");
+    ui->NumberField("##up", &stress_.how.up, L::kUpMin, L::kUpMax, 15.0, "%.0f\xC2\xB0", 48.0f,
+                    "Above level: 90 is straight above");
+    label("Distance");
+    ui->NumberField("##distance", &stress_.how.distance, L::kDistanceMin, L::kDistanceMax, 0.5, "%.1f m", 80.0f);
+    ImGui::Checkbox("Tumble: start turned and spinning", &stress_.tumble);
+    if (ui->PrimaryButton("Throw", can, why)) QueueThrow(env, false);
     hint("Aimed at where the robot will be when it arrives. Thrown objects stay in the scene until the episode "
-         "ends; four can be out at once.");
+         "ends; eight can be out at once.");
 
-    // Random kicks at an interval
+    // Random kicks and throws at an interval
     section("Auto disturb");
     ImGui::BeginDisabled(!can_kick);
     ImGui::AlignTextToFramePadding();
     ImGui::Checkbox("A random kick every", &stress_.auto_disturb);
     ImGui::SameLine();
-    ui->NumberField("##auto_seconds", &stress_.auto_seconds, L::kAutoMin, L::kAutoMax, 0.5, "%.1f s", 64.0f,
+    ui->NumberField("##auto_seconds", &stress_.auto_seconds, L::kAutoMin, L::kAutoMax, 0.5, "%.1f s", 56.0f,
                     "Simulated seconds between kicks");
     ImGui::EndDisabled();
-    hint("Back, forward or up at the kick speed above, while the scene moves.");
+    ImGui::BeginDisabled(!can);
+    ImGui::AlignTextToFramePadding();
+    ImGui::Checkbox("A random throw every", &stress_.auto_throw);
+    ImGui::SameLine();
+    ui->NumberField("##auto_throw_seconds", &stress_.auto_throw_seconds, L::kAutoMin, L::kAutoMax, 0.5, "%.1f s",
+                    56.0f, "Simulated seconds between throws");
+    label("Size \xC3\x97");
+    ui->NumberField("##size_low", &stress_.size_low, L::kFactorMin, L::kFactorMax, 0.0, "%.2f", 48.0f);
+    between("to");
+    ui->NumberField("##size_high", &stress_.size_high, L::kFactorMin, L::kFactorMax, 0.0, "%.2f", 48.0f);
+    label("Mass \xC3\x97");
+    ui->NumberField("##mass_low", &stress_.mass_low, L::kFactorMin, L::kFactorMax, 0.0, "%.2f", 48.0f);
+    between("to");
+    ui->NumberField("##mass_high", &stress_.mass_high, L::kFactorMin, L::kFactorMax, 0.0, "%.2f", 48.0f);
+    ImGui::EndDisabled();
+    stress_.size_high = std::max(stress_.size_high, stress_.size_low);
+    stress_.mass_high = std::max(stress_.mass_high, stress_.mass_low);
+    hint("Kicks: back, forward, up or any way, at the kick above. Throws: the object above scaled by these factors "
+         "(any shape when Any), from any side, level to 60\xC2\xB0 up. The ground's seed repeats them each episode.");
 
     // The ground
     section("Ground");

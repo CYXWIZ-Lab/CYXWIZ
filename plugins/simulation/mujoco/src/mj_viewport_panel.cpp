@@ -105,7 +105,7 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
         WatchStress(env);
         if (stress_.panel_open) {
             // The scene and the Stress panel side by side
-            constexpr float kStressWidth = 360.0f;
+            constexpr float kStressWidth = 390.0f;
             const ImVec2 avail = ImGui::GetContentRegionAvail();
             const float spacing = ImGui::GetStyle().ItemSpacing.x;
             const float scene_w = std::max(10.0f, avail.x - kStressWidth - spacing);
@@ -383,6 +383,7 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
 
     // The scene takes the mouse: dragging orbits or pans the camera instead of
     // moving the window
+    ImGui::SetNextItemAllowOverlap();  // the throw dial on top of it takes its own clicks
     ImGui::InvisibleButton("##scene", avail, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     const ImVec2 p0 = ImGui::GetItemRectMin();
     const ImVec2 p1 = ImGui::GetItemRectMax();
@@ -503,6 +504,7 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
         dl->AddText(ImVec2(hint_x + pad, box0.y + pad), ToU32(tone), hint.c_str());
     }
     if (playback_ && live_numbers_) RenderLiveNumbers(p0.x, p0.y, env.Scene().ground);
+    if (stress_.panel_open) RenderThrowDial(p1.x, p0.y);
 }
 
 // The played episode's numbers at the top left of the scene

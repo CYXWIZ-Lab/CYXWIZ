@@ -12,6 +12,7 @@
 
 #include <mujoco/mujoco.h>
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -33,16 +34,46 @@ struct MjGround {
     bool operator!=(const MjGround& o) const { return !(*this == o); }
 };
 
-// An object to throw: a ball (size = diameter) or a cube (size = edge).
+enum class MjShape { Ball, Box, Capsule, Cylinder };
+constexpr int kShapeCount = 4;
+const char* ShapeName(MjShape shape);  // "Box"
+// The sizes a shape uses: a ball 1 (diameter), a box 3 (length, width,
+// height along its x, y, z), a capsule or cylinder 2 (length end to end and
+// diameter, along its z)
+int ShapeSizes(MjShape shape);
+
+// An object to throw. Sizes a shape does not use are ignored (and compare equal).
 struct MjThrownObject {
-    bool ball = true;
-    double size = 0.2;  // m
-    double mass = 2.0;  // kg
-    bool operator==(const MjThrownObject& o) const { return ball == o.ball && size == o.size && mass == o.mass; }
+    MjShape shape = MjShape::Ball;
+    std::array<double, 3> size{0.2, 0.2, 0.2};  // m
+    double mass = 2.0;                          // kg
+    bool operator==(const MjThrownObject& o) const {
+        if (shape != o.shape || mass != o.mass) return false;
+        for (int i = 0; i < ShapeSizes(shape); ++i)
+            if (size[i] != o.size[i]) return false;
+        return true;
+    }
     bool operator!=(const MjThrownObject& o) const { return !(*this == o); }
 };
 
-constexpr int kMaxThrownObjects = 4;
+// How an object is thrown: from `distance` m away in the direction `around`
+// degrees (from +x, the way the robot runs, towards +y: 0 ahead, 90 left, 180
+// behind, 270 right) and `up` degrees above level, at `speed`; turned by
+// `quat` and spinning at `spin` rad/s (world axes) when it leaves.
+struct MjThrow {
+    double around = 0.0;
+    double up = 0.0;
+    double distance = 3.0;
+    double speed = 6.0;
+    std::array<double, 4> quat{1.0, 0.0, 0.0, 0.0};
+    std::array<double, 3> spin{0.0, 0.0, 0.0};
+    bool operator==(const MjThrow&) const = default;
+};
+
+// The unit vector `around` degrees from +x towards +y and `up` degrees above level
+std::array<double, 3> Direction(double around, double up);
+
+constexpr int kMaxThrownObjects = 8;
 constexpr double kGroundLength = 300.0;  // m of ground along the run
 constexpr double kGroundStart = 2.0;     // m ahead of the robot's start
 constexpr double kGroundHalfWidth = 2.0;
@@ -85,16 +116,18 @@ int RobotRootBody(const mjModel* m, const MjRobotSize& robot);
 // The robot's root upside down (its up axis points below the horizon)
 bool RobotFlipped(const mjModel* m, const mjData* d, const MjRobotSize& robot);
 
-// A sudden velocity change of the robot's root: back or forward along +x
-// (the way Gymnasium's runners go), or up. Hinge joints of the root are left.
-enum class MjKick { Back, Forward, Up };
-void KickRobot(const mjModel* m, mjData* d, const MjRobotSize& robot, MjKick kick, double speed);
+// A sudden velocity change `dv` (world, m/s) of the robot's root: a free
+// joint takes all of it, a slide joint the part along its axis; hinge joints
+// of the root are left.
+void KickRobot(const mjModel* m, mjData* d, const MjRobotSize& robot, const std::array<double, 3>& dv);
+// The robot's mass (its root's subtree), for a kick spread over time as a force
+double RobotMass(const mjModel* m, const MjRobotSize& robot);
 
-// Puts object slot `slot` 3 m ahead of or behind the robot, or 2.5 m above it,
-// and sends it at `speed` to where the robot will be when it arrives (its
-// velocity times the flight time, gravity allowed for). False: no such slot.
-enum class MjThrowFrom { Ahead, Behind, Above };
-bool ThrowObject(const mjModel* m, mjData* d, const MjRobotSize& robot, int slot, MjThrowFrom from, double speed);
+// Puts object slot `slot` where `how` says, turned and spinning as it says,
+// and sends it at its speed to where the robot will be when it arrives (the
+// robot's velocity times the flight time, gravity allowed for). False: no
+// such slot.
+bool ThrowObject(const mjModel* m, mjData* d, const MjRobotSize& robot, int slot, const MjThrow& how);
 
 // The slot a throw of `object` uses in `scene`: a slot holding the same
 // object, else a new slot, else the slot after `last_slot` is replaced.

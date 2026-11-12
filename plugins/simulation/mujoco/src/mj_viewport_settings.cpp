@@ -53,13 +53,8 @@ void ReadNumber(const nlohmann::json& j, const char* key, double low, double hig
     if (v >= low && v <= high) value = v;
 }
 
-const char* FromKey(MjThrowFrom from) {
-    switch (from) {
-        case MjThrowFrom::Behind: return "behind";
-        case MjThrowFrom::Above: return "above";
-        case MjThrowFrom::Ahead: break;
-    }
-    return "ahead";
+void ReadBool(const nlohmann::json& j, const char* key, bool& value) {
+    if (j.contains(key) && j[key].is_boolean()) value = j[key].get<bool>();
 }
 
 }  // namespace
@@ -68,13 +63,22 @@ std::string EncodeStress(const StressOptions& s) {
     nlohmann::json j;
     j["panel_open"] = s.panel_open;
     j["kick_speed"] = s.kick_speed;
-    j["object"] = s.object.ball ? "ball" : "box";
-    j["size"] = s.object.size;
+    j["kick_seconds"] = s.kick_seconds;
+    j["shape"] = ShapeName(s.object.shape);
+    j["size"] = {s.object.size[0], s.object.size[1], s.object.size[2]};
     j["mass"] = s.object.mass;
-    j["throw_speed"] = s.throw_speed;
-    j["from"] = FromKey(s.from);
+    j["any_shape"] = s.any_shape;
+    j["throw_speed"] = s.how.speed;
+    j["around"] = s.how.around;
+    j["up"] = s.how.up;
+    j["distance"] = s.how.distance;
+    j["tumble"] = s.tumble;
     j["auto_disturb"] = s.auto_disturb;
     j["auto_seconds"] = s.auto_seconds;
+    j["auto_throw"] = s.auto_throw;
+    j["auto_throw_seconds"] = s.auto_throw_seconds;
+    j["size_range"] = {s.size_low, s.size_high};
+    j["mass_range"] = {s.mass_low, s.mass_high};
     j["ground"] = GroundName(s.ground.kind);
     j["difficulty"] = s.ground.difficulty;
     j["seed"] = s.ground.seed;
@@ -87,18 +91,46 @@ StressOptions DecodeStress(const std::string& text) {
     if (text.empty()) return s;
     const nlohmann::json j = nlohmann::json::parse(text, nullptr, false);
     if (!j.is_object()) return s;
-    if (j.contains("panel_open") && j["panel_open"].is_boolean()) s.panel_open = j["panel_open"].get<bool>();
-    if (j.contains("auto_disturb") && j["auto_disturb"].is_boolean()) s.auto_disturb = j["auto_disturb"].get<bool>();
+    ReadBool(j, "panel_open", s.panel_open);
+    ReadBool(j, "auto_disturb", s.auto_disturb);
+    ReadBool(j, "any_shape", s.any_shape);
+    ReadBool(j, "tumble", s.tumble);
+    ReadBool(j, "auto_throw", s.auto_throw);
     ReadNumber(j, "kick_speed", L::kKickMin, L::kKickMax, s.kick_speed);
-    if (j.contains("object") && j["object"].is_string()) s.object.ball = j["object"].get<std::string>() != "box";
-    ReadNumber(j, "size", L::kSizeMin, L::kSizeMax, s.object.size);
-    ReadNumber(j, "mass", L::kMassMin, L::kMassMax, s.object.mass);
-    ReadNumber(j, "throw_speed", L::kSpeedMin, L::kSpeedMax, s.throw_speed);
-    if (j.contains("from") && j["from"].is_string()) {
-        const std::string from = j["from"].get<std::string>();
-        s.from = from == "behind" ? MjThrowFrom::Behind : from == "above" ? MjThrowFrom::Above : MjThrowFrom::Ahead;
+    ReadNumber(j, "kick_seconds", L::kSecondsMin, L::kSecondsMax, s.kick_seconds);
+    if (j.contains("shape") && j["shape"].is_string()) {
+        const std::string name = j["shape"].get<std::string>();
+        for (int k = 0; k < kShapeCount; ++k)
+            if (name == ShapeName(static_cast<MjShape>(k))) s.object.shape = static_cast<MjShape>(k);
     }
+    if (j.contains("size") && j["size"].is_array() && j["size"].size() == 3) {
+        std::array<double, 3> size = s.object.size;
+        bool ok = true;
+        for (size_t i = 0; i < 3; ++i) {
+            ok = ok && j["size"][i].is_number();
+            if (ok) size[i] = j["size"][i].get<double>();
+            ok = ok && size[i] >= L::kSizeMin && size[i] <= L::kSizeMax;
+        }
+        if (ok) s.object.size = size;
+    }
+    ReadNumber(j, "mass", L::kMassMin, L::kMassMax, s.object.mass);
+    ReadNumber(j, "throw_speed", L::kSpeedMin, L::kSpeedMax, s.how.speed);
+    ReadNumber(j, "around", L::kAroundMin, L::kAroundMax, s.how.around);
+    ReadNumber(j, "up", L::kUpMin, L::kUpMax, s.how.up);
+    ReadNumber(j, "distance", L::kDistanceMin, L::kDistanceMax, s.how.distance);
     ReadNumber(j, "auto_seconds", L::kAutoMin, L::kAutoMax, s.auto_seconds);
+    ReadNumber(j, "auto_throw_seconds", L::kAutoMin, L::kAutoMax, s.auto_throw_seconds);
+    const auto read_range = [&j](const char* key, double& low, double& high) {
+        if (!j.contains(key) || !j[key].is_array() || j[key].size() != 2) return;
+        if (!j[key][0].is_number() || !j[key][1].is_number()) return;
+        const double a = j[key][0].get<double>(), b = j[key][1].get<double>();
+        if (a >= L::kFactorMin && b <= L::kFactorMax && a <= b) {
+            low = a;
+            high = b;
+        }
+    };
+    read_range("size_range", s.size_low, s.size_high);
+    read_range("mass_range", s.mass_low, s.mass_high);
     if (j.contains("ground") && j["ground"].is_string()) {
         const std::string name = j["ground"].get<std::string>();
         for (const MjGroundKind kind : {MjGroundKind::Flat, MjGroundKind::Rough, MjGroundKind::Slopes,

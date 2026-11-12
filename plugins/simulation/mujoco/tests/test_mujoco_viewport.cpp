@@ -446,18 +446,27 @@ void CheckGrounds() {
 // Which object slot a throw takes
 void CheckObjectSlots() {
     MjScene scene;
-    const MjThrownObject ball{true, 0.2, 2.0};
-    const MjThrownObject box{false, 0.3, 5.0};
+    const MjThrownObject ball{MjShape::Ball, {0.2, 0.0, 0.0}, 2.0};
+    const MjThrownObject box{MjShape::Box, {0.3, 0.3, 0.3}, 5.0};
     Check(PickObjectSlot(scene, ball, -1) == 0 && scene.objects.size() == 1, "the first throw makes slot 0");
     Check(PickObjectSlot(scene, ball, 0) == 1 && scene.objects.size() == 2,
           "the same ball again while the first may still be out: a second slot");
     Check(PickObjectSlot(scene, ball, 1) == 0 && scene.objects.size() == 2, "then the two balls take turns");
     Check(PickObjectSlot(scene, box, 0) == 2 && PickObjectSlot(scene, box, 2) == 3 && scene.objects.size() == 4,
-          "a box takes new slots up to four");
-    const MjThrownObject heavy{true, 0.4, 9.0};
-    const int replaced = PickObjectSlot(scene, heavy, 3);
-    Check(replaced == 0 && scene.objects.size() == 4 && scene.objects[0] == heavy,
-          "with four out, a new object replaces the slot after the last one thrown");
+          "a box takes new slots");
+    for (int i = 4; i < kMaxThrownObjects; ++i)
+        PickObjectSlot(scene, MjThrownObject{MjShape::Cylinder, {0.1 * i, 0.1, 0.0}, 1.0}, i - 1);
+    Check(scene.objects.size() == static_cast<size_t>(kMaxThrownObjects), "up to eight slots");
+    const MjThrownObject heavy{MjShape::Ball, {0.4, 0.0, 0.0}, 9.0};
+    const int replaced = PickObjectSlot(scene, heavy, kMaxThrownObjects - 1);
+    Check(replaced == 0 && scene.objects.size() == static_cast<size_t>(kMaxThrownObjects) && scene.objects[0] == heavy,
+          "with eight out, a new object replaces the slot after the last one thrown");
+    Check((MjThrownObject{MjShape::Ball, {0.2, 0.5, 0.9}, 2.0}) == ball, "sizes a ball does not use do not count");
+    Check((MjThrownObject{MjShape::Capsule, {0.5, 0.1, 0.0}, 1.0}) != (MjThrownObject{MjShape::Cylinder, {0.5, 0.1, 0.0}, 1.0}),
+          "the shape counts");
+    const std::array<double, 3> left = Direction(90.0, 0.0), above = Direction(0.0, 90.0);
+    Check(std::abs(left[1] - 1.0) < 1e-12 && std::abs(left[0]) < 1e-12 && std::abs(above[2] - 1.0) < 1e-12,
+          "around 90 is +y (left of the run), up 90 is straight above");
 }
 
 // What the Stress panel says happened
@@ -502,9 +511,19 @@ void CheckStressLog() {
     log.Clear();
     Check(log.Events().empty(), "Clear empties it");
 
-    Check(DescribeKick(MjKick::Up, 1.5) == "Kick 1.5 m/s up" &&
-              DescribeThrow(MjThrownObject{false, 0.3, 5.0}, MjThrowFrom::Above, 4.0) ==
-                  "Box 0.30 m, 5.0 kg at 4.0 m/s from above" &&
+    MjThrow above;
+    above.up = 90.0;
+    above.speed = 4.0;
+    MjThrow angled;
+    angled.around = 40.0;
+    angled.up = 25.0;
+    Check(DescribeKick({0.0, 0.0, 1.5}, 0.0) == "Kick 1.5 m/s up" &&
+              DescribeKick({-1.5, 0.0, 0.0}, 0.2) == "Push 1.5 m/s back over 0.20 s" &&
+              DescribeKick({0.0, 2.0, 0.0}, 0.0) == "Kick 2.0 m/s at 90\xC2\xB0, up 0\xC2\xB0" &&
+              DescribeThrow(MjThrownObject{MjShape::Box, {0.6, 0.15, 0.1}, 3.0}, angled) ==
+                  "Box 0.60\xC3\x97" "0.15\xC3\x97" "0.10 m, 3.0 kg at 6.0 m/s from 40\xC2\xB0, up 25\xC2\xB0" &&
+              DescribeThrow(MjThrownObject{MjShape::Ball, {0.3, 0.0, 0.0}, 5.0}, above) ==
+                  "Ball 0.30 m, 5.0 kg at 4.0 m/s from above" &&
               DescribeGround(MjGround{MjGroundKind::Steps, 0.25, 9}) == "Steps 0.25, seed 9" &&
               DescribeGround(MjGround{}) == "Flat",
           "the event wording");
@@ -518,16 +537,28 @@ void CheckStressSettings() {
     ViewportDefaults d;
     d.stress.panel_open = true;
     d.stress.kick_speed = 3.0;
-    d.stress.object = MjThrownObject{false, 0.5, 8.0};
-    d.stress.throw_speed = 9.0;
-    d.stress.from = MjThrowFrom::Above;
+    d.stress.kick_seconds = 0.2;
+    d.stress.object = MjThrownObject{MjShape::Capsule, {0.5, 0.1, 0.3}, 8.0};
+    d.stress.any_shape = true;
+    d.stress.how.speed = 9.0;
+    d.stress.how.around = 135.0;
+    d.stress.how.up = 30.0;
+    d.stress.how.distance = 4.5;
+    d.stress.tumble = true;
+    d.stress.auto_throw = true;
+    d.stress.auto_throw_seconds = 2.0;
+    d.stress.size_low = 0.8;
+    d.stress.size_high = 1.5;
+    d.stress.mass_low = 0.25;
+    d.stress.mass_high = 4.0;
     d.stress.auto_disturb = true;
     d.stress.auto_seconds = 2.5;
     d.stress.ground = MjGround{MjGroundKind::Obstacles, 0.75, 1234};
     SaveViewportDefaults(ctx, d);
     Check(LoadViewportDefaults(ctx).stress == d.stress, "the Stress panel's choices read back");
     const StressOptions odd =
-        DecodeStress(R"({"kick_speed": 99, "size": 0, "from": "sideways", "ground": "Lava", "difficulty": 2})");
+        DecodeStress(R"({"kick_speed": 99, "size": [0, 1, 1], "shape": "Torus", "up": 120, "ground": "Lava",
+                         "difficulty": 2, "size_range": [2, 1]})");
     Check(odd == StressOptions{}, "values out of range or unknown keep their defaults");
     Check(DecodeStress("not json") == StressOptions{}, "broken text gives the defaults");
 }

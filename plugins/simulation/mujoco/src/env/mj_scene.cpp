@@ -94,6 +94,60 @@ void Normalise(double v[3]) {
     if (n > 0.0) for (int i = 0; i < 3; ++i) v[i] /= n;
 }
 
+// The object's geom: MuJoCo's sizes from ours (half extents, radius, half length)
+void ShapeGeom(const MjThrownObject& object, mjsGeom* geom) {
+    const auto& s = object.size;
+    switch (object.shape) {
+        case MjShape::Ball:
+            geom->type = mjGEOM_SPHERE;
+            geom->size[0] = s[0] / 2.0;
+            break;
+        case MjShape::Box:
+            geom->type = mjGEOM_BOX;
+            for (int i = 0; i < 3; ++i) geom->size[i] = s[i] / 2.0;
+            break;
+        case MjShape::Capsule:  // length end to end: the cylinder between the caps is length - diameter
+            geom->type = mjGEOM_CAPSULE;
+            geom->size[0] = s[1] / 2.0;
+            geom->size[1] = std::max(0.0, (s[0] - s[1]) / 2.0);
+            break;
+        case MjShape::Cylinder:
+            geom->type = mjGEOM_CYLINDER;
+            geom->size[0] = s[1] / 2.0;
+            geom->size[1] = s[0] / 2.0;
+            break;
+    }
+}
+
+// The object's principal inertia (a capsule as its cylinder, a little high)
+std::array<double, 3> ShapeInertia(const MjThrownObject& object) {
+    const auto& s = object.size;
+    const double m = object.mass;
+    switch (object.shape) {
+        case MjShape::Ball: {
+            const double r = s[0] / 2.0;
+            return {0.4 * m * r * r, 0.4 * m * r * r, 0.4 * m * r * r};
+        }
+        case MjShape::Box:
+            return {m * (s[1] * s[1] + s[2] * s[2]) / 12.0, m * (s[0] * s[0] + s[2] * s[2]) / 12.0,
+                    m * (s[0] * s[0] + s[1] * s[1]) / 12.0};
+        case MjShape::Capsule:
+        case MjShape::Cylinder: {
+            const double r = s[1] / 2.0;
+            const double side = m * (3.0 * r * r + s[0] * s[0]) / 12.0;
+            return {side, side, 0.5 * m * r * r};
+        }
+    }
+    return {m, m, m};
+}
+
+// Half the object's largest size: how high it rests when parked
+double ShapeReach(const MjThrownObject& object) {
+    double reach = 0.0;
+    for (int i = 0; i < ShapeSizes(object.shape); ++i) reach = std::max(reach, object.size[i] / 2.0);
+    return reach;
+}
+
 // The robot's root velocity in the world (its free or slide joints)
 void RootVelocity(const mjModel* m, const mjData* d, int root, double v[3]) {
     v[0] = v[1] = v[2] = 0.0;
@@ -119,6 +173,33 @@ double Height(const MjGround& ground) {
 }
 
 }  // namespace
+
+const char* ShapeName(MjShape shape) {
+    switch (shape) {
+        case MjShape::Ball: return "Ball";
+        case MjShape::Box: return "Box";
+        case MjShape::Capsule: return "Capsule";
+        case MjShape::Cylinder: return "Cylinder";
+    }
+    return "Ball";
+}
+
+int ShapeSizes(MjShape shape) {
+    switch (shape) {
+        case MjShape::Ball: return 1;
+        case MjShape::Box: return 3;
+        case MjShape::Capsule:
+        case MjShape::Cylinder: return 2;
+    }
+    return 1;
+}
+
+std::array<double, 3> Direction(double around, double up) {
+    constexpr double kDeg = 3.14159265358979323846 / 180.0;
+    const double a = around * kDeg;
+    const double u = up * kDeg;
+    return {std::cos(u) * std::cos(a), std::cos(u) * std::sin(a), std::sin(u)};
+}
 
 const char* GroundName(MjGroundKind kind) {
     switch (kind) {
@@ -289,12 +370,11 @@ mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjR
         mjs_setName(body->element, name.c_str());
         body->pos[0] = start[0];
         body->pos[1] = start[1] + kParkY + 3.0 * static_cast<double>(i);
-        body->pos[2] = floor.z + object.size / 2.0;
+        body->pos[2] = floor.z + ShapeReach(object);
         mjs_addFreeJoint(body);
         mjsGeom* geom = mjs_addGeom(body, nullptr);
         mjs_setName(geom->element, name.c_str());
-        geom->type = object.ball ? mjGEOM_SPHERE : mjGEOM_BOX;
-        geom->size[0] = geom->size[1] = geom->size[2] = object.size / 2.0;
+        ShapeGeom(object, geom);
         geom->mass = object.mass;
         TouchLikeFloor(geom, plain, floor, mask);
         mjs_setString(geom->material, "");
@@ -323,10 +403,9 @@ mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjR
         for (size_t i = 0; i < object_count; ++i) {
             const int b = static_cast<int>(plain->nbody) + static_cast<int>(i);
             const MjThrownObject& object = scene.objects[i];
-            const double a = object.size / 2.0;
-            const double inertia = object.ball ? 0.4 * object.mass * a * a : object.mass * object.size * object.size / 6.0;
+            const std::array<double, 3> inertia = ShapeInertia(object);
             m->body_mass[b] = object.mass;
-            for (int k = 0; k < 3; ++k) m->body_inertia[3 * b + k] = inertia;
+            for (int k = 0; k < 3; ++k) m->body_inertia[3 * b + k] = inertia[k];
             for (int k = 0; k < 3; ++k) m->body_ipos[3 * b + k] = 0.0;
             m->body_iquat[4 * b] = 1.0;
             for (int k = 1; k < 4; ++k) m->body_iquat[4 * b + k] = 0.0;
@@ -359,13 +438,14 @@ bool RobotFlipped(const mjModel* m, const mjData* d, const MjRobotSize& robot) {
     return d->xmat[9 * root + 8] < 0.0;
 }
 
-void KickRobot(const mjModel* m, mjData* d, const MjRobotSize& robot, MjKick kick, double speed) {
+double RobotMass(const mjModel* m, const MjRobotSize& robot) {
+    const int root = RobotRootBody(m, robot);
+    return root < 0 ? 0.0 : m->body_subtreemass[root];
+}
+
+void KickRobot(const mjModel* m, mjData* d, const MjRobotSize& robot, const std::array<double, 3>& dv) {
     const int root = RobotRootBody(m, robot);
     if (root < 0) return;
-    double dv[3] = {0.0, 0.0, 0.0};
-    if (kick == MjKick::Back) dv[0] = -speed;
-    else if (kick == MjKick::Forward) dv[0] = speed;
-    else dv[2] = speed;
     for (int j = m->body_jntadr[root]; j < m->body_jntadr[root] + m->body_jntnum[root]; ++j) {
         const int dof = m->jnt_dofadr[j];
         if (m->jnt_type[j] == mjJNT_FREE) {
@@ -377,7 +457,7 @@ void KickRobot(const mjModel* m, mjData* d, const MjRobotSize& robot, MjKick kic
     }
 }
 
-bool ThrowObject(const mjModel* m, mjData* d, const MjRobotSize& robot, int slot, MjThrowFrom from, double speed) {
+bool ThrowObject(const mjModel* m, mjData* d, const MjRobotSize& robot, int slot, const MjThrow& how) {
     const int body = robot.nbody + slot;
     if (slot < 0 || body >= m->nbody || m->body_jntnum[body] < 1) return false;
     const int joint = m->body_jntadr[body];
@@ -388,11 +468,11 @@ bool ThrowObject(const mjModel* m, mjData* d, const MjRobotSize& robot, int slot
     double velocity[3];
     RootVelocity(m, d, root, velocity);
 
-    double spawn[3] = {target[0], target[1], target[2]};
-    if (from == MjThrowFrom::Ahead) spawn[0] += 3.0;
-    else if (from == MjThrowFrom::Behind) spawn[0] -= 3.0;
-    else spawn[2] += 2.5;
-    speed = std::max(speed, 0.1);
+    const std::array<double, 3> from = Direction(how.around, how.up);
+    const double distance = std::max(how.distance, 0.5);
+    double spawn[3];
+    for (int i = 0; i < 3; ++i) spawn[i] = target[i] + from[i] * distance;
+    const double speed = std::max(how.speed, 0.1);
     // Lead the robot: where it will be when the object arrives
     double aim[3] = {target[0], target[1], target[2]};
     double flight = 0.0;
@@ -407,11 +487,18 @@ bool ThrowObject(const mjModel* m, mjData* d, const MjRobotSize& robot, int slot
     const int qpos = m->jnt_qposadr[joint];
     const int dof = m->jnt_dofadr[joint];
     for (int i = 0; i < 3; ++i) d->qpos[qpos + i] = spawn[i];
-    d->qpos[qpos + 3] = 1.0;
-    for (int i = 4; i < 7; ++i) d->qpos[qpos + i] = 0.0;
+    double quat[4] = {how.quat[0], how.quat[1], how.quat[2], how.quat[3]};
+    if (mju_normalize4(quat) < 1e-9) quat[0] = 1.0;
+    for (int i = 0; i < 4; ++i) d->qpos[qpos + 3 + i] = quat[i];
     for (int i = 0; i < 3; ++i) d->qvel[dof + i] = direction[i] * speed;
     d->qvel[dof + 2] += 0.5 * gravity * flight;  // it falls that much on the way
-    for (int i = 3; i < 6; ++i) d->qvel[dof + i] = 0.0;
+    // A free joint's angular velocity is in the body's own frame: the world spin turned into it
+    mjtNum spin_world[3] = {how.spin[0], how.spin[1], how.spin[2]};
+    mjtNum spin_local[3];
+    mjtNum inverse[4];
+    mju_negQuat(inverse, quat);
+    mju_rotVecQuat(spin_local, spin_world, inverse);
+    for (int i = 0; i < 3; ++i) d->qvel[dof + 3 + i] = spin_local[i];
     return true;
 }
 

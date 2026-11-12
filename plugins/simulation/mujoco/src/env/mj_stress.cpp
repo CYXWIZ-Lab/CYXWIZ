@@ -1,24 +1,24 @@
 #include "mj_stress.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace cyxwiz::plugin::mujoco {
 
-MjStressRequest MjStressRequest::MakeKick(MjKick kick, double speed) {
+MjStressRequest MjStressRequest::MakeKick(const std::array<double, 3>& dv, double seconds) {
     MjStressRequest r;
     r.kind = Kind::Kick;
-    r.kick = kick;
-    r.speed = speed;
+    r.dv = dv;
+    r.seconds = seconds;
     return r;
 }
 
-MjStressRequest MjStressRequest::MakeThrow(const MjThrownObject& object, MjThrowFrom from, double speed) {
+MjStressRequest MjStressRequest::MakeThrow(const MjThrownObject& object, const MjThrow& how) {
     MjStressRequest r;
     r.kind = Kind::Throw;
     r.object = object;
-    r.from = from;
-    r.speed = speed;
+    r.how = how;
     return r;
 }
 
@@ -47,9 +47,23 @@ MjStressRequest MjStressRequest::MakeGround(const MjGround& ground, bool now) {
 void ApplyStressRequests(std::vector<MjStressRequest>& requests, MjStressRun& run, const MjStressHost& host) {
     for (const MjStressRequest& request : requests) {
         switch (request.kind) {
-            case MjStressRequest::Kind::Kick:
-                KickRobot(host.model(), host.data(), run.robot, request.kick, request.speed);
+            case MjStressRequest::Kind::Kick: {
+                const mjModel* m = host.model();
+                const int root = RobotRootBody(m, run.robot);
+                if (request.seconds <= 0.0 || host.step_seconds <= 0.0 || root < 0) {
+                    KickRobot(m, host.data(), run.robot, request.dv);
+                    break;
+                }
+                // The same change of velocity as a force held for whole steps: F = M dv / time
+                const double steps = std::max(1.0, std::round(request.seconds / host.step_seconds));
+                const double time = steps * host.step_seconds;
+                const double mass = RobotMass(m, run.robot);
+                EndTimedPush(run);
+                run.timed_body = root;
+                for (int i = 0; i < 3; ++i) run.timed_force[i] = mass * request.dv[i] / time;
+                run.timed_until = host.data()->time + time - 0.5 * host.step_seconds;
                 break;
+            }
             case MjStressRequest::Kind::Throw: {
                 MjScene next = run.scene;
                 const int slot = PickObjectSlot(next, request.object, run.last_slot);
@@ -61,7 +75,7 @@ void ApplyStressRequests(std::vector<MjStressRequest>& requests, MjStressRun& ru
                     }
                     run.scene = next;
                 }
-                if (ThrowObject(host.model(), host.data(), run.robot, slot, request.from, request.speed))
+                if (ThrowObject(host.model(), host.data(), run.robot, slot, request.how))
                     run.last_slot = slot;
                 break;
             }
@@ -101,23 +115,76 @@ bool StartNextGround(MjStressRun& run, const MjStressHost& host) {
     return true;
 }
 
-void ApplyHeldPush(const MjStressRun& run, const mjModel* m, mjData* d) {
+void EndTimedPush(MjStressRun& run) {
+    run.timed_body = -1;
+    run.timed_force = {0.0, 0.0, 0.0};
+    run.timed_until = 0.0;
+}
+
+void ApplyPushes(MjStressRun& run, const mjModel* m, mjData* d) {
+    if (run.timed_body >= 0 && run.timed_body < m->nbody) {
+        mjtNum* f = d->xfrc_applied + 6 * run.timed_body;
+        if (d->time < run.timed_until) {
+            for (int i = 0; i < 3; ++i) f[i] = run.timed_force[i];
+        } else {
+            for (int i = 0; i < 3; ++i) f[i] = 0.0;
+            EndTimedPush(run);
+        }
+    }
     if (run.push_body < 0 || run.push_body >= m->nbody) return;
     std::copy(run.push_force, run.push_force + 6, d->xfrc_applied + 6 * run.push_body);
 }
 
-std::string DescribeKick(MjKick kick, double speed) {
-    char text[64];
-    std::snprintf(text, sizeof(text), "Kick %.1f m/s %s", speed,
-                  kick == MjKick::Back ? "back" : kick == MjKick::Forward ? "forward" : "up");
+namespace {
+
+// "40°, up 25°", or the named direction it matches
+std::string DirectionText(double around, double up) {
+    char text[48];
+    around = std::fmod(std::fmod(around, 360.0) + 360.0, 360.0);
+    if (up >= 89.5) return "above";
+    if (std::abs(up) < 0.5) {
+        if (around < 0.5 || around > 359.5) return "ahead";
+        if (std::abs(around - 180.0) < 0.5) return "behind";
+        if (std::abs(around - 90.0) < 0.5) return "the left";
+        if (std::abs(around - 270.0) < 0.5) return "the right";
+    }
+    std::snprintf(text, sizeof(text), "%.0f\xC2\xB0, up %.0f\xC2\xB0", around, up);
     return text;
 }
 
-std::string DescribeThrow(const MjThrownObject& object, MjThrowFrom from, double speed) {
+}  // namespace
+
+std::string DescribeKick(const std::array<double, 3>& dv, double seconds) {
+    const double speed = std::sqrt(dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]);
+    std::string way;
+    if (speed <= 0.0) way = "nowhere";
+    else if (dv[0] < 0.0 && dv[1] == 0.0 && dv[2] == 0.0) way = "back";
+    else if (dv[0] > 0.0 && dv[1] == 0.0 && dv[2] == 0.0) way = "forward";
+    else if (dv[2] > 0.0 && dv[0] == 0.0 && dv[1] == 0.0) way = "up";
+    else {
+        const double around = std::atan2(dv[1], dv[0]) * 180.0 / 3.14159265358979323846;
+        const double up = std::asin(std::clamp(dv[2] / speed, -1.0, 1.0)) * 180.0 / 3.14159265358979323846;
+        char text[48];
+        std::snprintf(text, sizeof(text), "at %.0f\xC2\xB0, up %.0f\xC2\xB0", std::fmod(around + 360.0, 360.0), up);
+        way = text;
+    }
     char text[96];
-    std::snprintf(text, sizeof(text), "%s %.2f m, %.1f kg at %.1f m/s from %s", object.ball ? "Ball" : "Box",
-                  object.size, object.mass, speed,
-                  from == MjThrowFrom::Ahead ? "ahead" : from == MjThrowFrom::Behind ? "behind" : "above");
+    if (seconds > 0.0) std::snprintf(text, sizeof(text), "Push %.1f m/s %s over %.2f s", speed, way.c_str(), seconds);
+    else std::snprintf(text, sizeof(text), "Kick %.1f m/s %s", speed, way.c_str());
+    return text;
+}
+
+std::string DescribeThrow(const MjThrownObject& object, const MjThrow& how) {
+    char size[64];
+    const auto& s = object.size;
+    switch (ShapeSizes(object.shape)) {
+        case 1: std::snprintf(size, sizeof(size), "%.2f m", s[0]); break;
+        case 2: std::snprintf(size, sizeof(size), "%.2f\xC3\x97%.2f m", s[0], s[1]); break;
+        default: std::snprintf(size, sizeof(size), "%.2f\xC3\x97%.2f\xC3\x97%.2f m", s[0], s[1], s[2]); break;
+    }
+    char text[160];
+    std::snprintf(text, sizeof(text), "%s %s, %.1f kg at %.1f m/s from %s", ShapeName(object.shape), size, object.mass,
+                  how.speed, DirectionText(how.around, how.up).c_str());
     return text;
 }
 

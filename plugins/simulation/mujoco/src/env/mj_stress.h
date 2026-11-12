@@ -21,17 +21,17 @@ namespace cyxwiz::plugin::mujoco {
 struct MjStressRequest {
     enum class Kind { Kick, Throw, Push, EndPush, Ground };
     Kind kind = Kind::Kick;
-    MjKick kick = MjKick::Back;          // Kick
-    double speed = 0.0;                  // Kick and Throw, m/s
+    std::array<double, 3> dv{0.0, 0.0, 0.0};  // Kick: the velocity change (world, m/s)
+    double seconds = 0.0;                // Kick: spread over this long as a push; 0: at once
     MjThrownObject object;               // Throw
-    MjThrowFrom from = MjThrowFrom::Ahead;
+    MjThrow how;
     int body = -1;                       // Push: the body and its force and torque (xfrc_applied)
     mjtNum force[6] = {0, 0, 0, 0, 0, 0};
     MjGround ground;                     // Ground
     bool now = false;                    // Ground: start a new episode on it now, not at the next one
 
-    static MjStressRequest MakeKick(MjKick kick, double speed);
-    static MjStressRequest MakeThrow(const MjThrownObject& object, MjThrowFrom from, double speed);
+    static MjStressRequest MakeKick(const std::array<double, 3>& dv, double seconds);
+    static MjStressRequest MakeThrow(const MjThrownObject& object, const MjThrow& how);
     static MjStressRequest MakePush(int body, const mjtNum force[6]);
     static MjStressRequest MakeEndPush();
     static MjStressRequest MakeGround(const MjGround& ground, bool now);
@@ -44,6 +44,9 @@ struct MjStressRun {
     int last_slot = -1;                  // the object slot thrown last
     int push_body = -1;                  // a body held by Ctrl+drag, and its force
     mjtNum push_force[6] = {0, 0, 0, 0, 0, 0};
+    int timed_body = -1;                 // a kick spread over time: the root, its force, until when
+    std::array<double, 3> timed_force{0.0, 0.0, 0.0};
+    double timed_until = 0.0;            // simulated time
     std::optional<MjGround> next_ground; // for the next episode
     bool cut_episode = false;            // start a new episode now (Ground "now")
     std::string message;                 // why the last request could not be done; empty: done
@@ -56,6 +59,7 @@ struct MjStressHost {
     std::function<const mjModel*()> model;
     std::function<mjData*()> data;
     std::function<bool(const MjScene& scene, std::string& error)> rebuild;
+    double step_seconds = 0.0;  // one environment step (a timed kick lasts whole steps)
 };
 
 // Applies and empties `requests`, in order. Kicks, throws and pushes act on
@@ -68,12 +72,16 @@ void ApplyStressRequests(std::vector<MjStressRequest>& requests, MjStressRun& ru
 // with run.message set when it does not build (the ground stays as it was).
 bool StartNextGround(MjStressRun& run, const MjStressHost& host);
 
-// The held push on the copy: set before every step (an episode's reset clears it)
-void ApplyHeldPush(const MjStressRun& run, const mjModel* m, mjData* d);
+// The pushes on the copy, set before every step: the held Ctrl+drag push, and
+// a timed kick until its time is up (then its force is taken off)
+void ApplyPushes(MjStressRun& run, const mjModel* m, mjData* d);
+// A new episode: a timed kick does not carry over
+void EndTimedPush(MjStressRun& run);
 
-// "Kick 1.5 m/s back", "Ball 2.0 kg from ahead", "Rough 0.40, seed 7"
-std::string DescribeKick(MjKick kick, double speed);
-std::string DescribeThrow(const MjThrownObject& object, MjThrowFrom from, double speed);
+// "Kick 1.5 m/s back", "Push 1.5 m/s back over 0.2 s", "Push 1.5 m/s at 40°, up
+// 10°"; "Box 0.60×0.15×0.10 m, 3.0 kg at 6.0 m/s from 40°, up 25°"; "Rough 0.40, seed 7"
+std::string DescribeKick(const std::array<double, 3>& dv, double seconds);
+std::string DescribeThrow(const MjThrownObject& object, const MjThrow& how);
 std::string DescribeGround(const MjGround& ground);
 
 // What happened after each disturbance. Fed every frame with the shown copy's

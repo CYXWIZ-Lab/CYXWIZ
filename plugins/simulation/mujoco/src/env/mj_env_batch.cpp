@@ -139,7 +139,8 @@ void MjEnvBatch::Publish(const SteppedCopy* step) {
 
 MjStressHost MjEnvBatch::StressHost() {
     return {[this] { return static_cast<const mjModel*>(model_); }, [this] { return data_[shown_copy_]; },
-            [this](const MjScene& scene, std::string& error) { return Rebuild(scene, error); }};
+            [this](const MjScene& scene, std::string& error) { return Rebuild(scene, error); },
+            model_->opt.timestep * task_->FrameSkip()};
 }
 
 void MjEnvBatch::ApplyStress() {
@@ -151,7 +152,7 @@ void MjEnvBatch::ApplyStress() {
         requests.swap(view_->requests);
     }
     if (!requests.empty()) ApplyStressRequests(requests, stress_, StressHost());
-    ApplyHeldPush(stress_, model_, data_[shown_copy_]);
+    ApplyPushes(stress_, model_, data_[shown_copy_]);
 }
 
 bool MjEnvBatch::Rebuild(const MjScene& scene, std::string& error) {
@@ -186,7 +187,10 @@ void MjEnvBatch::StartCopy(int copy, float* observation) {
 }
 
 bool MjEnvBatch::Reset(uint64_t seed, float* observations) {
-    if (shown_copy_ >= 0) StartNextGround(stress_, StressHost());
+    if (shown_copy_ >= 0) {
+        EndTimedPush(stress_);
+        StartNextGround(stress_, StressHost());
+    }
     for (int i = 0; i < count_; ++i) random_[i] = MjRandom(MjRandom::CopySeed(seed, i));
     const auto start = [this, observations](int i) {
         StartCopy(i, observations + static_cast<size_t>(i) * observation_size_);
@@ -247,7 +251,10 @@ bool MjEnvBatch::Step(const float* actions, const PluginEnvironmentStepBuffers& 
                 ended = true;
             }
         }
-        if (ended) StartNextGround(stress_, StressHost());
+        if (ended) {
+            EndTimedPush(stress_);  // the new episode starts without it
+            StartNextGround(stress_, StressHost());
+        }
         const SteppedCopy stepped{actions + static_cast<size_t>(c) * action_size_, out.rewards[c], ended,
                                   out.terminated[c] != 0};
         Publish(&stepped);

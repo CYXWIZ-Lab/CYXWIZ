@@ -337,18 +337,21 @@ void MuJoCoPlugin::ForwardStressRequests() {
                                     if (!env_manager_.ChangeScene(scene, error)) return false;
                                     rebuilt = true;
                                     return true;
-                                }};
+                                },
+                                env_manager_.GetModel()->opt.timestep * env_manager_.GetFrameSkip()};
         if (!requests.empty()) ApplyStressRequests(requests, local_stress_, host);
         const int episodes = env_manager_.GetEpisodeCount();
         if (local_stress_.cut_episode) {  // a ground "now": a new episode on it
             local_stress_.cut_episode = false;
             env_manager_.Reset();
+            EndTimedPush(local_stress_);
             StartNextGround(local_stress_, host);
         } else if (episodes != local_episodes_seen_) {  // an episode ended: the ground waiting for it
+            EndTimedPush(local_stress_);
             StartNextGround(local_stress_, host);
         }
         local_episodes_seen_ = episodes;
-        ApplyHeldPush(local_stress_, env_manager_.GetModel(), env_manager_.GetMutableData());
+        ApplyPushes(local_stress_, env_manager_.GetModel(), env_manager_.GetMutableData());
     }
     if (rebuilt && renderer_.IsInitialized() && !renderer_.ChangeModel(env_manager_.GetModel()))
         renderer_needs_init_ = true;

@@ -54,17 +54,23 @@ struct SceneOptions {
     bool operator==(const SceneOptions&) const = default;
 };
 
-// The Stress panel's choices: the panel shown, the kick, the object to throw,
-// the automatic kicks and the ground the panel offers (not the ground in use:
-// every model starts on its own floor)
+// The Stress panel's choices: the panel shown, the kick, the object to throw
+// and how, the automatic kicks and throws, and the ground the panel offers
+// (not the ground in use: every model starts on its own floor)
 struct StressOptions {
     bool panel_open = false;
-    double kick_speed = 1.5;  // m/s
-    MjThrownObject object;    // a 0.2 m ball of 2 kg
-    double throw_speed = 6.0; // m/s
-    MjThrowFrom from = MjThrowFrom::Ahead;
+    double kick_speed = 1.5;    // m/s
+    double kick_seconds = 0.0;  // 0: a sudden kick; more: a push held that long
+    MjThrownObject object;      // a 0.2 m ball of 2 kg
+    bool any_shape = false;     // each throw picks a shape at random (with these sizes)
+    MjThrow how;                // from ahead, level, 3 m away, at 6 m/s
+    bool tumble = false;        // thrown turned and spinning
     bool auto_disturb = false;
     double auto_seconds = 3.0;  // a random kick this often, in simulated seconds
+    bool auto_throw = false;
+    double auto_throw_seconds = 1.5;  // a random throw this often
+    double size_low = 0.5, size_high = 2.0;  // random throws scale the sizes by a factor in this range
+    double mass_low = 0.5, mass_high = 3.0;  // and the mass
     MjGround ground{MjGroundKind::Rough, 0.4, 7};
 
     bool operator==(const StressOptions&) const = default;
@@ -73,10 +79,17 @@ struct StressOptions {
 // Limits of the Stress panel's typed fields (the panel and the saved text)
 struct StressLimits {
     static constexpr double kKickMin = 0.1, kKickMax = 20.0;
+    static constexpr double kSecondsMin = 0.0, kSecondsMax = 2.0;
     static constexpr double kSizeMin = 0.05, kSizeMax = 2.0;
     static constexpr double kMassMin = 0.1, kMassMax = 200.0;
     static constexpr double kSpeedMin = 0.5, kSpeedMax = 40.0;
+    static constexpr double kAroundMin = 0.0, kAroundMax = 360.0;
+    static constexpr double kUpMin = -10.0, kUpMax = 90.0;
+    static constexpr double kDistanceMin = 0.5, kDistanceMax = 10.0;
     static constexpr double kAutoMin = 0.5, kAutoMax = 120.0;
+    static constexpr double kFactorMin = 0.1, kFactorMax = 5.0;
+    static constexpr double kRandomUpMax = 60.0;  // random throws come from level up to this
+    static constexpr double kRandomKickUpMax = 45.0;
 };
 
 struct ViewportDefaults {

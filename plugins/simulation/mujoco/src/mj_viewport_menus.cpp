@@ -465,55 +465,85 @@ void RenderViewportPreferences(PluginContext& ctx) {
         // The Stress panel: shown or not, and what it offers first
         using L = StressLimits;
         StressOptions& st = d.stress;
+        const auto label = [](const char* text) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", text);
+            ImGui::SameLine();
+        };
+        const auto field = [&](const char* id, double* value, double low, double high, double step, const char* format,
+                               float width, const char* hint = nullptr) {
+            changed |= ui->NumberField(id, value, low, high, step, format, width, hint);
+        };
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("Stress panel");
         ImGui::TableNextColumn();
         if (ImGui::Checkbox("Show it beside the scene when the Viewport starts", &st.panel_open)) changed = true;
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("Kick");
+        label("Kick");
+        field("##pref_kick", &st.kick_speed, L::kKickMin, L::kKickMax, 0.5, "%.2f m/s", 80.0f);
         ImGui::SameLine();
-        changed |= ui->NumberField("##pref_kick", &st.kick_speed, L::kKickMin, L::kKickMax, 0.5, "%.2f m/s", 80.0f);
+        label("over");
+        field("##pref_kick_seconds", &st.kick_seconds, L::kSecondsMin, L::kSecondsMax, 0.1, "%.2f s", 64.0f,
+              "0: a sudden kick");
         ImGui::SameLine();
         if (ImGui::Checkbox("A random kick every", &st.auto_disturb)) changed = true;
         ImGui::SameLine();
-        changed |= ui->NumberField("##pref_auto", &st.auto_seconds, L::kAutoMin, L::kAutoMax, 0.5, "%.1f s", 64.0f);
-        static const char* kObjects[] = {"Ball", "Box"};
-        int object = st.object.ball ? 0 : 1;
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("Throw");
-        ImGui::SameLine();
-        if (ui->SegmentedControl("##pref_object", kObjects, 2, &object)) {
-            st.object.ball = object == 0;
+        field("##pref_auto", &st.auto_seconds, L::kAutoMin, L::kAutoMax, 0.5, "%.1f s", 64.0f);
+        static const char* kShapes[] = {"Ball", "Box", "Capsule", "Cylinder", "Any"};
+        int shape = st.any_shape ? kShapeCount : static_cast<int>(st.object.shape);
+        label("Throw");
+        if (ui->SegmentedControl("##pref_shape", kShapes, kShapeCount + 1, &shape)) {
+            st.any_shape = shape == kShapeCount;
+            if (!st.any_shape) st.object.shape = static_cast<MjShape>(shape);
             changed = true;
         }
         ImGui::SameLine();
-        changed |= ui->NumberField("##pref_size", &st.object.size, L::kSizeMin, L::kSizeMax, 0.05, "%.2f m", 72.0f);
+        field("##pref_size0", &st.object.size[0], L::kSizeMin, L::kSizeMax, 0.0, "%.2f m", 56.0f, "Length (ball: diameter)");
         ImGui::SameLine();
-        changed |= ui->NumberField("##pref_mass", &st.object.mass, L::kMassMin, L::kMassMax, 0.5, "%.1f kg", 72.0f);
+        field("##pref_size1", &st.object.size[1], L::kSizeMin, L::kSizeMax, 0.0, "%.2f m", 56.0f, "Width (capsule, cylinder: diameter)");
         ImGui::SameLine();
-        changed |= ui->NumberField("##pref_speed", &st.throw_speed, L::kSpeedMin, L::kSpeedMax, 1.0, "%.1f m/s", 72.0f);
-        static const char* kFrom[] = {"Ahead", "Behind", "Above"};
-        int from = static_cast<int>(st.from);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("From");
+        field("##pref_size2", &st.object.size[2], L::kSizeMin, L::kSizeMax, 0.0, "%.2f m", 56.0f, "Height (box)");
         ImGui::SameLine();
-        if (ui->SegmentedControl("##pref_from", kFrom, 3, &from)) {
-            st.from = static_cast<MjThrowFrom>(from);
-            changed = true;
-        }
+        field("##pref_mass", &st.object.mass, L::kMassMin, L::kMassMax, 0.5, "%.1f kg", 64.0f);
+        ImGui::SameLine();
+        field("##pref_speed", &st.how.speed, L::kSpeedMin, L::kSpeedMax, 1.0, "%.1f m/s", 64.0f);
+        label("From");
+        field("##pref_around", &st.how.around, L::kAroundMin, L::kAroundMax, 15.0, "%.0f deg", 64.0f,
+              "Around the robot: 0 ahead, 90 left, 180 behind, 270 right");
+        ImGui::SameLine();
+        label("up");
+        field("##pref_up", &st.how.up, L::kUpMin, L::kUpMax, 15.0, "%.0f deg", 64.0f, "Above level: 90 straight above");
+        ImGui::SameLine();
+        label("at");
+        field("##pref_distance", &st.how.distance, L::kDistanceMin, L::kDistanceMax, 0.5, "%.1f m", 64.0f);
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Tumble", &st.tumble)) changed = true;
+        if (ImGui::Checkbox("A random throw every", &st.auto_throw)) changed = true;
+        ImGui::SameLine();
+        field("##pref_auto_throw", &st.auto_throw_seconds, L::kAutoMin, L::kAutoMax, 0.5, "%.1f s", 64.0f);
+        ImGui::SameLine();
+        label("size x");
+        field("##pref_size_low", &st.size_low, L::kFactorMin, L::kFactorMax, 0.0, "%.2f", 48.0f);
+        ImGui::SameLine();
+        label("to");
+        field("##pref_size_high", &st.size_high, L::kFactorMin, L::kFactorMax, 0.0, "%.2f", 48.0f);
+        ImGui::SameLine();
+        label("mass x");
+        field("##pref_mass_low", &st.mass_low, L::kFactorMin, L::kFactorMax, 0.0, "%.2f", 48.0f);
+        ImGui::SameLine();
+        label("to");
+        field("##pref_mass_high", &st.mass_high, L::kFactorMin, L::kFactorMax, 0.0, "%.2f", 48.0f);
+        if (st.size_high < st.size_low) st.size_high = st.size_low;
+        if (st.mass_high < st.mass_low) st.mass_high = st.mass_low;
         static const char* kGrounds[] = {"Flat", "Rough", "Slopes", "Steps", "Obstacles"};
         int ground = static_cast<int>(st.ground.kind);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("Ground offered");
-        ImGui::SameLine();
+        label("Ground offered");
         if (ui->SegmentedControl("##pref_ground", kGrounds, 5, &ground)) {
             st.ground.kind = static_cast<MjGroundKind>(ground);
             changed = true;
         }
         ImGui::SameLine();
-        changed |= ui->NumberField("##pref_difficulty", &st.ground.difficulty, 0.0, 1.0, 0.1, "%.2f", 64.0f,
-                                   "Difficulty, 0 to 1");
+        field("##pref_difficulty", &st.ground.difficulty, 0.0, 1.0, 0.1, "%.2f", 64.0f, "Difficulty, 0 to 1");
         double seed = static_cast<double>(st.ground.seed);
         ImGui::SameLine();
         if (ui->NumberField("##pref_seed", &seed, 0.0, 1.0e9, 1.0, "%.0f", 64.0f, "Seed")) {

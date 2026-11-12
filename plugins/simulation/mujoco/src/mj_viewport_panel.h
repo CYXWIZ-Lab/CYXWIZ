@@ -146,6 +146,13 @@ private:
         int episode = 1;
     };
     StressClock ShownClock(MjEnvManager& env) const;
+    // A kick's velocity change: 0 back, 1 forward, 2 up, 3 any way (random)
+    std::array<double, 3> KickVelocity(int way);
+    // A throw of the panel's object as the panel says; random: varied by the
+    // auto-throw ranges, from any side
+    void QueueThrow(MjEnvManager& env, bool random);
+    // The top-down dial on the scene that sets where throws come from
+    void RenderThrowDial(float right, float top);
     void Queue(MjStressRequest request, MjEnvManager& env, std::string what);
     void LogStress(MjEnvManager& env, std::string what);  // an event to watch, at the shown copy's time
     // The menus and the Record dialog (mj_viewport_menus.cpp)
@@ -219,8 +226,10 @@ private:
     MjGround shown_ground_;          // the ground of the episode shown last frame
     bool shown_ground_known_ = false;
     double next_auto_kick_ = -1.0;   // simulated time of the next automatic kick; -1: not scheduled
+    double next_auto_throw_ = -1.0;  // and throw
     double last_watch_time_ = 0.0;
-    MjRandom auto_random_{0x5EED};
+    int stress_episode_ = -1;        // the episode the random stream was seeded for
+    MjRandom stress_random_{7};      // random kicks, throws and tumbles: seeded by the ground seed each episode
 
     // Resize debouncing — only apply after user stops resizing
     int pending_w_ = 0;

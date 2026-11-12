@@ -12,6 +12,7 @@
 
 #include "env/mj_env_batch.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -304,7 +305,8 @@ void CheckScenes() {
     mjModel* plain = mj_loadXML(path.c_str(), nullptr, load_error, sizeof(load_error));
     MjScene scene;
     scene.ground = MjGround{MjGroundKind::Rough, 0.5, 3};
-    scene.objects = {MjThrownObject{true, 0.2, 2.0}, MjThrownObject{false, 0.3, 5.0}};
+    scene.objects = {MjThrownObject{MjShape::Ball, {0.2, 0.0, 0.0}, 2.0},
+                     MjThrownObject{MjShape::Box, {0.3, 0.3, 0.3}, 5.0}};
     MjRobotSize robot;
     std::string error;
     mjModel* m = CompileMjScene(path, scene, robot, error);
@@ -325,6 +327,36 @@ void CheckScenes() {
                   m->stat.center[0] == plain->stat.center[0],
               "the statistics stay the robot's (the view's near plane, the solver's scale)");
         mj_deleteModel(m);
+    }
+    // Every shape, its geom and its mass and inertia
+    MjScene shapes;
+    shapes.objects = {MjThrownObject{MjShape::Box, {0.6, 0.15, 0.1}, 3.0},
+                      MjThrownObject{MjShape::Capsule, {0.5, 0.1, 0.0}, 1.0},
+                      MjThrownObject{MjShape::Cylinder, {0.4, 0.2, 0.0}, 4.0}};
+    mjModel* sm = CompileMjScene(path, shapes, robot, error);
+    Check(sm != nullptr, "a box, a capsule and a cylinder build: " + error);
+    if (sm && plain) {
+        const int box = static_cast<int>(plain->nbody), capsule = box + 1, cylinder = box + 2;
+        const auto geom = [&](int body) { return sm->body_geomadr[body]; };
+        Check(sm->geom_type[geom(box)] == mjGEOM_BOX && std::abs(sm->geom_size[3 * geom(box)] - 0.3) < 1e-12 &&
+                  std::abs(sm->geom_size[3 * geom(box) + 1] - 0.075) < 1e-12 &&
+                  std::abs(sm->geom_size[3 * geom(box) + 2] - 0.05) < 1e-12,
+              "a box 0.60 x 0.15 x 0.10 m: half sizes 0.3, 0.075, 0.05");
+        Check(sm->geom_type[geom(capsule)] == mjGEOM_CAPSULE && std::abs(sm->geom_size[3 * geom(capsule)] - 0.05) < 1e-12 &&
+                  std::abs(sm->geom_size[3 * geom(capsule) + 1] - 0.2) < 1e-12,
+              "a capsule 0.5 m end to end, 0.1 m across: radius 0.05, a 0.4 m middle");
+        Check(sm->geom_type[geom(cylinder)] == mjGEOM_CYLINDER &&
+                  std::abs(sm->geom_size[3 * geom(cylinder)] - 0.1) < 1e-12 &&
+                  std::abs(sm->geom_size[3 * geom(cylinder) + 1] - 0.2) < 1e-12,
+              "a cylinder 0.4 m long, 0.2 m across");
+        const double* inertia = sm->body_inertia + 3 * box;
+        Check(std::abs(sm->body_mass[box] - 3.0) < 1e-12 &&
+                  std::abs(inertia[0] - 3.0 * (0.15 * 0.15 + 0.1 * 0.1) / 12.0) < 1e-12 &&
+                  std::abs(inertia[2] - 3.0 * (0.6 * 0.6 + 0.15 * 0.15) / 12.0) < 1e-12,
+              "the box's mass and inertia are exact");
+        Check(std::abs(sm->body_inertia[3 * cylinder + 2] - 0.5 * 4.0 * 0.1 * 0.1) < 1e-12,
+              "the cylinder's inertia about its axis is m r^2 / 2");
+        mj_deleteModel(sm);
     }
     MjScene stairs;
     stairs.ground = MjGround{MjGroundKind::Steps, 1.0, 5};
@@ -366,22 +398,28 @@ struct StressedCheetah {
         Check(batch->Step(still.data(), out), "step: " + batch->LastError());
     }
     // The shown copy's state in a model built from the view's scene
-    double BodyX(int body_from_robot_end) {
+    double BodyX(int body_from_robot_end) { return BodyPos(body_from_robot_end)[0]; }
+    std::array<double, 3> BodyPos(int body_from_robot_end, double* spin = nullptr) {
         MjRobotSize robot;
         std::string error;
         mjModel* m = CompileMjScene(view->model_path, view->scene, robot, error);
-        if (!m) return 0.0;
+        if (!m) return {0.0, 0.0, 0.0};
         mjData* d = mj_makeData(m);
-        double x = 0.0;
+        std::array<double, 3> pos{0.0, 0.0, 0.0};
         if (static_cast<size_t>(mj_stateSize(m, mjSTATE_FULLPHYSICS)) == view->state.size()) {
             mj_setState(m, d, view->state.data(), mjSTATE_FULLPHYSICS);
             mj_forward(m, d);
             const int body = body_from_robot_end < 0 ? 1 : robot.nbody + body_from_robot_end;
-            x = d->xpos[3 * body];
+            for (int i = 0; i < 3; ++i) pos[i] = d->xpos[3 * body + i];
+            if (spin && body_from_robot_end >= 0) {
+                const int dof = m->jnt_dofadr[m->body_jntadr[body]];
+                *spin = std::sqrt(d->qvel[dof + 3] * d->qvel[dof + 3] + d->qvel[dof + 4] * d->qvel[dof + 4] +
+                                  d->qvel[dof + 5] * d->qvel[dof + 5]);
+            }
         }
         mj_deleteData(d);
         mj_deleteModel(m);
-        return x;
+        return pos;
     }
 };
 
@@ -390,14 +428,31 @@ void CheckStressRequests() {
     constexpr int kRootxSpeed = 8;  // HalfCheetah observes qpos[1:] (8 values), then qvel: rootx first
     {
         StressedCheetah left, kicked;
-        kicked.Ask(MjStressRequest::MakeKick(MjKick::Forward, 2.0));
+        kicked.Ask(MjStressRequest::MakeKick({2.0, 0.0, 0.0}, 0.0));
         left.Step();
         kicked.Step();
         Check(kicked.obs[kRootxSpeed] - left.obs[kRootxSpeed] > 1.5, "a forward kick of 2 m/s speeds the root up");
         StressedCheetah up;
-        up.Ask(MjStressRequest::MakeKick(MjKick::Up, 2.0));
+        up.Ask(MjStressRequest::MakeKick({0.0, 0.0, 2.0}, 0.0));
         up.Step();
         Check(up.obs[kRootxSpeed + 1] - left.obs[kRootxSpeed + 1] > 1.0, "an up kick lifts it");
+        // The same 2 m/s as a push held 0.2 s (4 steps of 0.05 s): slower to build, then about the same
+        StressedCheetah timed, still;
+        timed.Ask(MjStressRequest::MakeKick({2.0, 0.0, 0.0}, 0.2));
+        timed.Step();
+        still.Step();
+        const double after_one = timed.obs[kRootxSpeed] - still.obs[kRootxSpeed];
+        for (int i = 0; i < 3; ++i) {
+            timed.Step();
+            still.Step();
+        }
+        const double after_four = timed.obs[kRootxSpeed] - still.obs[kRootxSpeed];
+        Check(after_one > 0.2 && after_one < 1.2 && after_four > 1.2,
+              "a push over 0.2 s builds the speed over its four steps");
+        timed.Step();
+        still.Step();
+        Check(std::abs((timed.obs[kRootxSpeed] - still.obs[kRootxSpeed]) - after_four) < 1.0,
+              "and stops pushing when its time is up");
     }
     {
         StressedCheetah pushed, left;
@@ -414,7 +469,7 @@ void CheckStressRequests() {
     }
     {
         StressedCheetah c;
-        c.Ask(MjStressRequest::MakeThrow(MjThrownObject{true, 0.2, 2.0}, MjThrowFrom::Ahead, 6.0));
+        c.Ask(MjStressRequest::MakeThrow(MjThrownObject{MjShape::Ball, {0.2, 0.0, 0.0}, 2.0}, MjThrow{}));
         c.Step();
         Check(c.view->scene.objects.size() == 1, "a throw adds an object slot to the scene the view is told of");
         const double start_gap = c.BodyX(0) - c.BodyX(-1);
@@ -428,9 +483,28 @@ void CheckStressRequests() {
             closest = std::min(closest, std::abs(c.BodyX(0) - c.BodyX(-1)));
         }
         Check(closest < 0.8, "the ball reaches the cheetah");
-        c.Ask(MjStressRequest::MakeThrow(MjThrownObject{true, 0.2, 2.0}, MjThrowFrom::Above, 6.0));
+        MjThrow above;
+        above.up = 90.0;
+        c.Ask(MjStressRequest::MakeThrow(MjThrownObject{MjShape::Ball, {0.2, 0.0, 0.0}, 2.0}, above));
         c.Step();
         Check(c.view->scene.objects.size() == 2, "a second throw while the first is out takes a new slot");
+    }
+    {
+        // From the left (around 90) and turned and spinning: it starts beside the robot, spinning
+        StressedCheetah c;
+        MjThrow left;
+        left.around = 90.0;
+        left.distance = 2.0;
+        left.quat = {0.7071067811865476, 0.0, 0.7071067811865476, 0.0};
+        left.spin = {0.0, 0.0, 5.0};
+        c.Ask(MjStressRequest::MakeThrow(MjThrownObject{MjShape::Capsule, {0.5, 0.1, 0.0}, 1.0}, left));
+        c.Step();
+        double spin = 0.0;
+        const std::array<double, 3> object = c.BodyPos(0, &spin);
+        const std::array<double, 3> torso = c.BodyPos(-1);
+        Check(object[1] - torso[1] > 1.0 && std::abs(object[0] - torso[0]) < 1.0,
+              "a throw from the left starts beside the robot, not ahead of it");
+        Check(spin > 3.0, "a tumbling object leaves spinning");
     }
     {
         StressedCheetah c({{"max_episode_steps", "5"}});
