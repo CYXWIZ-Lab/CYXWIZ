@@ -49,7 +49,8 @@ enum class ModuleType {
     TransformerDecoder,
     LayerNorm,
     MultiHeadAttention,
-    Hardswish
+    Hardswish,
+    Hardsigmoid
 };
 
 enum class TensorUnaryOp {
@@ -1466,6 +1467,22 @@ public:
 
 private:
     std::unique_ptr<HardswishActivation> activation_;
+};
+
+/**
+ * @brief Wrapper for Hardsigmoid activation: relu6(x + 3) / 6 (torch.nn.Hardsigmoid)
+ */
+class CYXWIZ_API HardsigmoidModule : public Module {
+public:
+    IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::PositionWise; }
+    HardsigmoidModule();
+
+    Tensor Forward(const Tensor& input) override;
+    Tensor Backward(const Tensor& grad_output) override;
+    std::string GetName() const override { return "Hardsigmoid"; }
+
+private:
+    std::unique_ptr<HardsigmoidActivation> activation_;
 };
 
 /**

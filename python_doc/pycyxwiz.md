@@ -374,7 +374,7 @@ value = loss.forward(pred, target)
 
 ### 3.4 Activations
 Enum:
-- `ActivationType`: `ReLU`, `Sigmoid`, `Tanh`, `Softmax`, `LeakyReLU`, `ELU`, `GELU`, `Swish`, `SiLU`, `Mish`, `Hardswish`, `SELU`, `PReLU`
+- `ActivationType`: `ReLU`, `Sigmoid`, `Tanh`, `Softmax`, `LeakyReLU`, `ELU`, `GELU`, `Swish`, `SiLU`, `Mish`, `Hardswish`, `SELU`, `PReLU`, `Hardsigmoid`
 
 Factory:
 - `create_activation(type, alpha=0.01)`
@@ -390,6 +390,7 @@ Activation classes:
 - `Softmax(axis=-1)`
 - `Mish()`
 - `Hardswish()`
+- `Hardsigmoid()`
 - `SELU()`
 - `PReLU(num_parameters=1, init=0.25)`
 

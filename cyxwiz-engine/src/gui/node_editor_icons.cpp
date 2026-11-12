@@ -92,6 +92,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::Swish:
             case NodeType::Mish:
             case NodeType::Hardswish:
+            case NodeType::Hardsigmoid:
                 return ICON_TI_BOLT;
             case NodeType::Sigmoid:
                 return ICON_TI_ACTIVITY;
@@ -545,6 +546,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::Swish:
             case NodeType::Mish:
             case NodeType::Hardswish:
+            case NodeType::Hardsigmoid:
                 return ICON_RI_FLASHLIGHT;
             case NodeType::Sigmoid:
             case NodeType::Spectrogram:
@@ -926,6 +928,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::Swish:
             case NodeType::Mish:
             case NodeType::Hardswish:
+            case NodeType::Hardsigmoid:
                 return ICON_LU_ZAP;
             case NodeType::Sigmoid:
             case NodeType::Spectrogram:
@@ -1251,6 +1254,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::Swish:
             case NodeType::Mish:
             case NodeType::Hardswish:
+            case NodeType::Hardsigmoid:
                 return ICON_IO_FLASH;
             case NodeType::Sigmoid:
             case NodeType::Spectrogram:
@@ -1576,6 +1580,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::Swish:
             case NodeType::Mish:
             case NodeType::Hardswish:
+            case NodeType::Hardsigmoid:
                 return ICON_PH_LIGHTNING;
             case NodeType::Sigmoid:
             case NodeType::Spectrogram:
@@ -1849,6 +1854,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::Swish:
         case NodeType::Mish:
         case NodeType::Hardswish:
+        case NodeType::Hardsigmoid:
             return ICON_FA_BOLT;
         case NodeType::Sigmoid:
             return ICON_FA_SIGNAL;

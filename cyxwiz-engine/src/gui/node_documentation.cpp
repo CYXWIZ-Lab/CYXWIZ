@@ -207,6 +207,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::Swish:
         case NodeType::Mish:
         case NodeType::Hardswish:
+        case NodeType::Hardsigmoid:
         case NodeType::Sigmoid:
         case NodeType::Tanh:
         case NodeType::Softmax:
@@ -972,6 +973,18 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "Used in EfficientNet and modern CNNs",
             "Slightly more expensive than ReLU"
+        },
+        "Activation"
+    };
+
+    docs_[NodeType::Hardsigmoid] = {
+        "Hardsigmoid",
+        "f(x) = relu6(x + 3) / 6: a sigmoid made of straight pieces. 0 below -3, 1 above 3.",
+        "Cheaper than Sigmoid, with nearly the same shape.",
+        {},
+        {
+            "The gate of MobileNetV3's Squeeze-Excitation blocks",
+            "A value between 0 and 1 where Sigmoid is too slow"
         },
         "Activation"
     };

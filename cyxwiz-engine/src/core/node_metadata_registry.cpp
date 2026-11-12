@@ -1173,6 +1173,7 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::Swish, NodeCategory::Activation, "Swish", {"activation"}},
         {NodeType::Mish, NodeCategory::Activation, "Mish", {"activation"}},
         {NodeType::Hardswish, NodeCategory::Activation, "Hardswish", {"activation"}},
+        {NodeType::Hardsigmoid, NodeCategory::Activation, "Hardsigmoid", {"activation"}},
         {NodeType::Parameter, NodeCategory::Utility, "Parameter", {"parameter", "constant"}},
         {NodeType::SineWave, NodeCategory::Signal, "Sine Wave", {"signal", "sine", "wave"}},
         {NodeType::StepSignal, NodeCategory::Signal, "Step Signal", {"signal", "step"}},
@@ -3694,6 +3695,16 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
         {"mish", "activation"}, 0, false, "Mish activation", "", "",
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Activated"}},
+        {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Hardsigmoid, NodeCategory::Activation, "Hardsigmoid", ICON_FA_BOLT,
+        {"hardsigmoid", "hard sigmoid", "h-sigmoid", "activation", "gate", "mobilenet"}, 0, false,
+        "Hardsigmoid activation: relu6(x + 3) / 6",
+        "A sigmoid made of straight pieces: 0 below -3, 1 above 3, (x + 3) / 6 between. "
+        "Cheap to compute; MobileNetV3 uses it as the gate of its Squeeze-Excitation blocks. Same as torch.nn.Hardsigmoid.",
+        "Dense -> Hardsigmoid",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "A value between 0 and 1"}},
         {}, NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Hardswish, NodeCategory::Activation, "Hardswish", ICON_FA_BOLT,

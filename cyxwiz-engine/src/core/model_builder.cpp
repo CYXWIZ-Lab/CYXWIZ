@@ -1169,6 +1169,12 @@ bool BuildSequential(
                 break;
             }
 
+            case gui::NodeType::Hardsigmoid: {
+                model.Add<HardsigmoidModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Hardsigmoid", i);
+                break;
+            }
+
             case gui::NodeType::Softmax: {
                 model.Add<SoftmaxModule>();
                 CYXWIZ_BUILDER_INFO("  [{}] Softmax", i);

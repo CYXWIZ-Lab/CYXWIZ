@@ -220,4 +220,21 @@ Tensor HardswishModule::Backward(const Tensor& grad_output) {
     return activation_->Backward(grad_output, input_cache_);
 }
 
+// ============================================================================
+// HardsigmoidModule Implementation
+// ============================================================================
+
+HardsigmoidModule::HardsigmoidModule() {
+    activation_ = std::make_unique<HardsigmoidActivation>();
+}
+
+Tensor HardsigmoidModule::Forward(const Tensor& input) {
+    input_cache_ = input.Clone();
+    return activation_->Forward(input);
+}
+
+Tensor HardsigmoidModule::Backward(const Tensor& grad_output) {
+    return activation_->Backward(grad_output, input_cache_);
+}
+
 } // namespace cyxwiz

@@ -36,7 +36,8 @@ every channel of the map by its value. Put it after a convolution block
 `reduction` 16 is the paper's value; use 4 where the layer has few channels
 (the hidden width is never below 1). It adds about `2 x C x C / reduction`
 parameters. **Hardswish** (`x * relu6(x + 3) / 6`) is the activation those
-small models pair it with.
+small models pair it with, and **Hardsigmoid** (`relu6(x + 3) / 6`) the cheap
+sigmoid MobileNetV3 uses as its gate.
 
 ## Ending the convolution section
 

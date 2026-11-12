@@ -635,6 +635,7 @@ enum class NodeType {
 
     // ===== Appended layers =====
     SqueezeExcitation,  // each channel of a feature map scaled by a learned gate (SE block)
+    Hardsigmoid,        // relu6(x + 3) / 6 (torch.nn.Hardsigmoid)
 
     // Special sentinel value
     Unknown

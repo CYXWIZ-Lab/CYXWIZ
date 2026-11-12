@@ -81,6 +81,9 @@ inline ActivationCodegenResult BuildActivationCodegen(
             case NodeType::Hardswish:
                 result.expression = "F.hardswish(" + input_expression + ")";
                 break;
+            case NodeType::Hardsigmoid:
+                result.expression = "F.hardsigmoid(" + input_expression + ")";
+                break;
             case NodeType::SELU:
                 result.expression = "F.selu(" + input_expression + ")";
                 break;
@@ -128,6 +131,9 @@ inline ActivationCodegenResult BuildActivationCodegen(
             case NodeType::Hardswish:
                 result.expression = input_expression + " * tf.nn.relu6(" + input_expression + " + 3.0) / 6.0";
                 break;
+            case NodeType::Hardsigmoid:
+                result.expression = "tf.nn.relu6(" + input_expression + " + 3.0) / 6.0";
+                break;
             case NodeType::SELU:
                 result.expression = "tf.nn.selu(" + input_expression + ")";
                 break;
@@ -172,6 +178,9 @@ inline ActivationCodegenResult BuildActivationCodegen(
             case NodeType::Hardswish:
                 result.expression = "cx.hardswish(" + input_expression + ")";
                 break;
+            case NodeType::Hardsigmoid:
+                result.expression = "cx.hardsigmoid(" + input_expression + ")";
+                break;
             case NodeType::SELU:
                 result.expression = "cx.SELU().forward(" + input_expression + ")";
                 break;
@@ -214,6 +223,9 @@ inline ActivationCodegenResult BuildActivationCodegen(
             break;
         case NodeType::Hardswish:
             result.expression = "layers.Lambda(lambda x: x * tf.nn.relu6(x + 3.0) / 6.0)";
+            break;
+        case NodeType::Hardsigmoid:
+            result.expression = "layers.Lambda(lambda x: tf.nn.relu6(x + 3.0) / 6.0)";
             break;
         case NodeType::SELU:
             result.expression = "layers.Activation('selu')";

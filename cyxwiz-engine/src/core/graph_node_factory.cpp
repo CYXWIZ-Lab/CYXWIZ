@@ -83,7 +83,8 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::GELU:
         case NodeType::Swish:
         case NodeType::Mish:
-        case NodeType::Hardswish: {
+        case NodeType::Hardswish:
+        case NodeType::Hardsigmoid: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }

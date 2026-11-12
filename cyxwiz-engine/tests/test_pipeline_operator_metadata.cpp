@@ -932,6 +932,7 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
         gui::NodeType::Swish,
         gui::NodeType::Mish,
         gui::NodeType::Hardswish,
+        gui::NodeType::Hardsigmoid,
         gui::NodeType::Resize,  // TOFIX140 A1: the image input shape comes from it
         gui::NodeType::PReLU,   // TOFIX140 A2
         gui::NodeType::SELU,    // TOFIX140 A2
@@ -3495,6 +3496,7 @@ void CheckDenseActivationCodegenContract() {
         gui::NodeType::Swish,
         gui::NodeType::Mish,
         gui::NodeType::Hardswish,
+        gui::NodeType::Hardsigmoid,
         gui::NodeType::Sigmoid,
         gui::NodeType::Tanh,
         gui::NodeType::Softmax,
@@ -5166,6 +5168,7 @@ int main() {
         gui::NodeType::Swish,
         gui::NodeType::Mish,
         gui::NodeType::Hardswish,
+        gui::NodeType::Hardsigmoid,
         gui::NodeType::MSELoss,
         gui::NodeType::CrossEntropyLoss,
         gui::NodeType::BCELoss,
@@ -5296,6 +5299,7 @@ int main() {
         gui::NodeType::Swish,
         gui::NodeType::Mish,
         gui::NodeType::Hardswish,
+        gui::NodeType::Hardsigmoid,
         gui::NodeType::MSELoss,
         gui::NodeType::CrossEntropyLoss,
         gui::NodeType::BCELoss,
@@ -5586,6 +5590,7 @@ int main() {
         gui::NodeType::Swish,
         gui::NodeType::Mish,
         gui::NodeType::Hardswish,
+        gui::NodeType::Hardsigmoid,
         gui::NodeType::Sigmoid,
         gui::NodeType::Tanh,
         gui::NodeType::Softmax,
@@ -5670,6 +5675,7 @@ int main() {
         {gui::NodeType::Swish, "activation"},
         {gui::NodeType::Mish, "activation"},
         {gui::NodeType::Hardswish, "activation"},
+        {gui::NodeType::Hardsigmoid, "activation"},
         {gui::NodeType::MSELoss, "loss"},
         {gui::NodeType::CrossEntropyLoss, "loss"},
         {gui::NodeType::BCELoss, "loss"},

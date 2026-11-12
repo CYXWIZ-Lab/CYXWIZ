@@ -579,6 +579,9 @@ std::unique_ptr<Module> CreateModule(
         case ModuleType::Hardswish:
             return std::make_unique<HardswishModule>();
 
+        case ModuleType::Hardsigmoid:
+            return std::make_unique<HardsigmoidModule>();
+
         default:
             spdlog::error("CreateModule: Unknown module type {}", static_cast<int>(type));
             return nullptr;

@@ -446,6 +446,8 @@ GetPipelineFailClosedRuntimeCapabilities() {
          gui::NodeType::Mish, std::nullopt, false},
         {"Hardswish", "Hardswish is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
          gui::NodeType::Hardswish, std::nullopt, false},
+        {"Hardsigmoid", "Hardsigmoid is a training model activation node; PipelineExecutor tensor activation execution is not implemented",
+         gui::NodeType::Hardsigmoid, std::nullopt, false},
         {"MSELoss", "MSELoss is a training loss node; PipelineExecutor loss execution is not implemented",
          gui::NodeType::MSELoss, std::nullopt, false},
         {"CrossEntropyLoss", "CrossEntropyLoss is a training loss node; PipelineExecutor loss execution is not implemented",
@@ -1381,6 +1383,8 @@ GetPipelineSupportedTrainingRoleCapabilities() {
         {gui::NodeType::Mish, PipelineTrainingSupportRole::Activation,
          "compiled and built as a training activation"},
         {gui::NodeType::Hardswish, PipelineTrainingSupportRole::Activation,
+         "compiled and built as a training activation"},
+        {gui::NodeType::Hardsigmoid, PipelineTrainingSupportRole::Activation,
          "compiled and built as a training activation"},
 
         {gui::NodeType::MSELoss, PipelineTrainingSupportRole::Loss,

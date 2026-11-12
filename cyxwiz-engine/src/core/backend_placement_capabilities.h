@@ -93,6 +93,7 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::Swish: return "Swish";
         case gui::NodeType::Mish: return "Mish";
         case gui::NodeType::Hardswish: return "Hardswish";
+        case gui::NodeType::Hardsigmoid: return "Hardsigmoid";
         case gui::NodeType::Sigmoid: return "Sigmoid";
         case gui::NodeType::Tanh: return "Tanh";
         case gui::NodeType::Softmax: return "Softmax";
@@ -178,6 +179,7 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
         case gui::NodeType::Hardswish:
+        case gui::NodeType::Hardsigmoid:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:

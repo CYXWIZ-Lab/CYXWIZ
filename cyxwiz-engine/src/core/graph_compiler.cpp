@@ -8139,6 +8139,7 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
         case gui::NodeType::Hardswish:
+        case gui::NodeType::Hardsigmoid:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:
