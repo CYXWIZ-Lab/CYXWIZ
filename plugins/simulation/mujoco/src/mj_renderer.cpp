@@ -8,6 +8,8 @@
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace cyxwiz::plugin::mujoco {
@@ -188,6 +190,8 @@ unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data) {
                         mjCAT_ALL, &scn_);
     }
 
+    if (endless_floor_) MoveFloorUnderView(model);
+
     // Render to offscreen buffer
     mjrRect viewport = {0, 0, width_, height_};
     mjr_setBuffer(mjFB_OFFSCREEN, &con_);
@@ -221,6 +225,38 @@ unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data) {
     return display_texture_;
 }
 
+void MjRenderer::MoveFloorUnderView(const mjModel* model) {
+    const mjvGLCamera head = mjv_averageCamera(&scn_.camera[0], &scn_.camera[1]);
+    for (int i = 0; i < scn_.ngeom; ++i) {
+        mjvGeom& g = scn_.geoms[i];
+        if (g.type != mjGEOM_PLANE || g.objtype != mjOBJ_GEOM || g.objid < 0 || g.objid >= model->ngeom) continue;
+        if (model->geom_bodyid[g.objid] != 0 || g.mat[8] < 0.999f) continue;  // level and part of the world only
+        if (g.size[0] <= 0.0f || g.size[1] <= 0.0f) continue;                  // drawn endless already
+        // Where the view is: ahead of the camera by half the floor's size
+        float fx = head.forward[0], fy = head.forward[1];
+        const float flat = std::sqrt(fx * fx + fy * fy);
+        if (flat > 1e-6f) {
+            fx /= flat;
+            fy /= flat;
+        }
+        const float target[2] = {head.pos[0] + fx * 0.5f * g.size[0], head.pos[1] + fy * 0.5f * g.size[1]};
+        // One texture repeat along each side, so the moved floor looks the same
+        float period[2] = {2.0f * g.size[0], 2.0f * g.size[1]};
+        const int mat = model->geom_matid[g.objid];
+        if (mat >= 0) {
+            for (int a = 0; a < 2; ++a) {
+                const float repeat = model->mat_texrepeat[2 * mat + a];
+                if (repeat > 0.0f)
+                    period[a] = model->mat_texuniform[mat] ? 1.0f / repeat : 2.0f * g.size[a] / repeat;
+            }
+        }
+        for (int a = 0; a < 2; ++a) {
+            const float shift = target[a] - static_cast<float>(model->geom_pos[3 * g.objid + a]);
+            g.pos[a] = static_cast<float>(model->geom_pos[3 * g.objid + a]) + std::round(shift / period[a]) * period[a];
+        }
+    }
+}
+
 // =============================================================================
 // Camera Controls
 // =============================================================================
@@ -241,6 +277,7 @@ void MjRenderer::ZoomCamera(float dz) {
 }
 
 void MjRenderer::PanCamera(float dx, float dy) {
+    if (cam_.type != mjCAMERA_FREE) return;  // a following camera re-centres on its body
     // Pan by adjusting lookat position
     double azimuth_rad = cam_.azimuth * M_PI / 180.0;
     cam_.lookat[0] += (-dx * cos(azimuth_rad) - dy * sin(azimuth_rad)) * 0.01;
@@ -261,9 +298,82 @@ void MjRenderer::ResetCamera(const mjModel* model) {
     }
 }
 
-void MjRenderer::TrackBody(int body_id) {
+MjRenderer::CameraMode MjRenderer::GetCameraMode() const {
+    if (cam_.type == mjCAMERA_TRACKING) return CameraMode::FollowBody;
+    if (cam_.type == mjCAMERA_FIXED) return CameraMode::ModelCamera;
+    return CameraMode::Free;
+}
+
+int MjRenderer::CameraTarget() const {
+    if (cam_.type == mjCAMERA_TRACKING) return cam_.trackbodyid;
+    if (cam_.type == mjCAMERA_FIXED) return cam_.fixedcamid;
+    return -1;
+}
+
+// Leaving a model camera: the free or following camera starts from the view
+// it showed (the last frame's head pose), not from where it was before
+void MjRenderer::KeepModelCameraView(bool aim) {
+    if (cam_.type != mjCAMERA_FIXED || scn_.camera[0].frustum_near <= 0.0f) return;
+    const mjvGLCamera head = mjv_averageCamera(&scn_.camera[0], &scn_.camera[1]);
+    const float* f = head.forward;
+    cam_.azimuth = std::atan2(f[1], f[0]) * 180.0 / M_PI;
+    cam_.elevation = std::asin(std::clamp(f[2], -1.0f, 1.0f)) * 180.0 / M_PI;
+    if (!aim) return;
+    const double distance = cam_.distance > 0.0 ? cam_.distance : 2.0;
+    for (int i = 0; i < 3; ++i) cam_.lookat[i] = head.pos[i] + f[i] * distance;
+}
+
+void MjRenderer::UseFreeCamera() {
+    KeepModelCameraView(true);
+    cam_.type = mjCAMERA_FREE;  // otherwise lookat, angle and distance stay where they are
+}
+
+void MjRenderer::FollowBody(const mjModel* model, const mjData* data, int body_id) {
+    KeepModelCameraView(false);  // the body comes into the centre; the angle stays
     cam_.type = mjCAMERA_TRACKING;
     cam_.trackbodyid = body_id;
+    if (!model || !data || body_id <= 0 || body_id >= model->nbody) return;
+    // The subtree's reach: its geoms' distance from its centre of mass plus their size
+    double radius = 0.0;
+    const auto measure = [&] {
+        const mjtNum* com = data->subtree_com + 3 * body_id;
+        for (int g = 0; g < model->ngeom; ++g) {
+            int b = model->geom_bodyid[g];
+            while (b > 0 && b != body_id) b = model->body_parentid[b];
+            if (b != body_id) continue;
+            const mjtNum* p = data->geom_xpos + 3 * g;
+            const double dx = p[0] - com[0], dy = p[1] - com[1], dz = p[2] - com[2];
+            radius = std::max(radius, std::sqrt(dx * dx + dy * dy + dz * dz) + model->geom_rbound[g]);
+        }
+    };
+    if (physics_mutex_) {
+        std::lock_guard<std::mutex> phys_lock(*physics_mutex_);
+        measure();
+    } else {
+        measure();
+    }
+    if (radius > 0.0) cam_.distance = std::clamp(4.0 * radius, 0.5, 100.0);
+}
+
+void MjRenderer::UseModelCamera(int camera_id) {
+    cam_.type = mjCAMERA_FIXED;
+    cam_.fixedcamid = camera_id;
+}
+
+int MjRenderer::BodyAt(const mjModel* model, const mjData* data, float x, float y) {
+    if (!initialized_ || !model || !data || width_ < 1 || height_ < 1) return -1;
+    mjtNum point[3];
+    int geom = -1, flex = -1, skin = -1;
+    const mjtNum aspect = static_cast<mjtNum>(width_) / height_;
+    int body = -1;
+    // The scene is the last frame's; the model state is read under the physics lock
+    if (physics_mutex_) {
+        std::lock_guard<std::mutex> phys_lock(*physics_mutex_);
+        body = mjv_select(model, data, &opt_, aspect, x, 1.0 - y, &scn_, point, &geom, &flex, &skin);
+    } else {
+        body = mjv_select(model, data, &opt_, aspect, x, 1.0 - y, &scn_, point, &geom, &flex, &skin);
+    }
+    return body > 0 ? body : -1;
 }
 
 // =============================================================================

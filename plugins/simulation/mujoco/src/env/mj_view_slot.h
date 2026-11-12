@@ -22,6 +22,16 @@ struct MjViewSlot {
     std::string title;            // the task's name ("Inverted Pendulum")
     int copy = 0;
     std::vector<mjtNum> state;    // mj_getState(mjSTATE_FULLPHYSICS)
+    // The shown copy's episode since it was shown (the Viewport's live
+    // numbers): episode 1 starts at ShowCopy or Reset
+    int episode = 1;
+    int step = 0;                 // steps into the episode
+    int max_steps = 0;            // 0: no limit
+    double step_seconds = 0.0;    // simulated time of one environment step (model step x frame skip)
+    double episode_return = 0.0;  // rewards summed over this episode
+    bool has_last_return = false;
+    double last_return = 0.0;     // the episode before
+    std::vector<float> action;    // the last action given (empty before the first step)
     uint64_t version = 0;         // grows with every published state
 };
 

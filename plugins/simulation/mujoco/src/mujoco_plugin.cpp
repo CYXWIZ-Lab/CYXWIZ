@@ -205,6 +205,7 @@ void MuJoCoPlugin::SyncPlayback() {
     std::vector<mjtNum> state;
     int copy = 0;
     bool active = false;
+    MjViewportPanel::PlaybackNumbers numbers;
     {
         std::lock_guard<std::mutex> lock(view_slot_->mutex);
         active = view_slot_->owner != nullptr;
@@ -212,6 +213,14 @@ void MuJoCoPlugin::SyncPlayback() {
             path = view_slot_->model_path;
             title = view_slot_->title;
             copy = view_slot_->copy;
+            numbers.episode = view_slot_->episode;
+            numbers.step = view_slot_->step;
+            numbers.max_steps = view_slot_->max_steps;
+            numbers.step_seconds = view_slot_->step_seconds;
+            numbers.episode_return = view_slot_->episode_return;
+            numbers.has_last_return = view_slot_->has_last_return;
+            numbers.last_return = view_slot_->last_return;
+            numbers.action = view_slot_->action;
             if (view_slot_->version != shown_version_) {
                 shown_version_ = view_slot_->version;
                 state = view_slot_->state;
@@ -231,11 +240,13 @@ void MuJoCoPlugin::SyncPlayback() {
                 spdlog::warn("[MuJoCo] Policy playback: the model {} did not load", path);
                 return;
             }
-            viewport_panel_.SetModelLabel(title, "Policy playback");
             state.clear();
             shown_version_ = 0;  // apply the latest state next frame, after the renderer starts
         }
+        // Also when the played model was open already (a second playback)
+        if (viewport_panel_.ModelSubtitle() != "Policy playback") viewport_panel_.SetModelLabel(title, "Policy playback");
         viewport_panel_.SetPlayback(true, title + " \xC2\xB7 copy " + std::to_string(copy));
+        viewport_panel_.SetPlaybackNumbers(std::move(numbers));
         if (!state.empty()) {
             std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
             const mjModel* m = env_manager_.GetModel();
@@ -268,6 +279,7 @@ void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
             spdlog::warn("[MuJoCo] Renderer initialization failed — viewport disabled");
         } else {
             renderer_.ResetCamera(env_manager_.GetModel());
+            viewport_panel_.OnRendererReady();
         }
     }
 
@@ -276,6 +288,19 @@ void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
     } else if (panel_id == "mujoco_env_browser") {
         browser_panel_.Render(env_library_, env_manager_, visible);
     }
+}
+
+// =============================================================================
+// IPreferencesProvider: the Viewport's section in Preferences > Simulation
+// =============================================================================
+
+std::vector<PluginPreferencesSection> MuJoCoPlugin::GetPreferenceSections() {
+    return {{"viewport", "Simulation", "MuJoCo Viewport",
+             "How the Viewport starts. Changing these in the Viewport does not change them here."}};
+}
+
+void MuJoCoPlugin::RenderPreferences(const std::string& section_id) {
+    if (section_id == "viewport" && ctx_) RenderViewportPreferences(*ctx_);
 }
 
 // =============================================================================

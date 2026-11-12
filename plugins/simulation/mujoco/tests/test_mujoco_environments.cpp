@@ -306,6 +306,45 @@ void CheckShowCopy() {
     if (plain) plain->Release();
 }
 
+// The shown copy's live numbers (the Viewport's overlay during playback):
+// episode, step, the episode's return so far, the last action, and the
+// return of the episode before once one ends.
+void CheckLiveNumbers() {
+    const MjTaskSpec& spec = *FindMjTask("InvertedPendulum-v5");
+    std::string error;
+    auto view = std::make_shared<MjViewSlot>();
+    IEnvironmentBatch* batch = MjEnvBatch::Create(spec, ModelPath(spec), {{"max_episode_steps", "5"}}, 2, view, error);
+    Check(batch != nullptr, "a batch with a view: " + error);
+    if (!batch) return;
+    Check(batch->ShowCopy(1), "copy 1 is shown");
+    Check(std::abs(view->step_seconds - 0.04) < 1e-9, "the view knows a step is 0.04 s (2 x 0.02 s)");
+    std::vector<float> obs(2 * 4), final_obs(2 * 4), rewards(2);
+    std::vector<uint8_t> terminated(2), truncated(2);
+    const PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(), truncated.data(),
+                                           final_obs.data()};
+    batch->Reset(3, obs.data());
+    Check(view->episode == 1 && view->step == 0 && view->max_steps == 5 && view->action.empty() &&
+              view->episode_return == 0.0 && !view->has_last_return,
+          "after Reset: episode 1, step 0 of 5, no action yet");
+    double sum = 0.0;
+    for (int s = 0; s < 4; ++s) {
+        const float actions[2] = {0.0f, 0.1f * static_cast<float>(s + 1)};
+        batch->Step(actions, out);
+        sum += rewards[1];
+    }
+    Check(view->episode == 1 && view->step == 4 && std::abs(view->episode_return - sum) < 1e-9,
+          "four steps in: step 4 and the four rewards of copy 1 summed");
+    Check(view->action.size() == 1 && std::abs(view->action[0] - 0.4f) < 1e-6f, "the last action of copy 1");
+    const float last[2] = {0.0f, 0.0f};
+    batch->Step(last, out);  // the fifth step ends the episode (the step limit)
+    sum += rewards[1];
+    Check(truncated[1] == 1, "the fifth step is cut at the limit");
+    Check(view->episode == 2 && view->step == 0 && view->episode_return == 0.0 && view->has_last_return &&
+              std::abs(view->last_return - sum) < 1e-9,
+          "the next episode starts at step 0; the ended one's return is kept");
+    batch->Release();
+}
+
 int main(int argc, char** argv) {
     std::string trajectory;
     for (int i = 1; i + 1 < argc; ++i) {
@@ -316,6 +355,7 @@ int main(int argc, char** argv) {
     CheckAutoreset();
     CheckDeterminism();
     CheckShowCopy();
+    CheckLiveNumbers();
     ReportSpeed();
     if (!trajectory.empty()) WriteTrajectories(trajectory);
     if (failures == 0) std::printf("test_mujoco_environments: all checks passed\n");

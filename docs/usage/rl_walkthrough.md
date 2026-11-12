@@ -82,9 +82,11 @@ cost for the effort, summed over 1,000 steps.
    the CPU), ending at a mean return of about 3,800-5,100 depending on the
    seed (4,675.9 with seed 1). Stable-Baselines3 with the same settings ends
    at 2,970-4,660.
-4. **Play policy**. The MuJoCo Viewport shows the cheetah running. It runs
-   fast, so it soon leaves the starting view: drag in the Viewport to orbit
-   and scroll to zoom out (a camera that follows the cheetah is planned).
+4. **Play policy**. The MuJoCo Viewport shows the cheetah running, seen
+   through the model's **track** camera, which runs beside it; the top left
+   of the scene shows the episode, step, return and action. **Record >
+   Record video...** saves a GIF of the run in the project's exports folder
+   ([The MuJoCo Viewport](mujoco_viewport.md)).
 
 ## After training: watch, save, reopen
 

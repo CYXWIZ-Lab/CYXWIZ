@@ -16,6 +16,7 @@
 #include "plugin/interfaces/i_command_provider.h"
 #include "plugin/interfaces/i_simulation_provider.h"
 #include "plugin/interfaces/i_environment_provider.h"
+#include "plugin/interfaces/i_preferences_provider.h"
 #include "plugin/plugin_ui.h"
 
 #include "mj_env_manager.h"
@@ -41,7 +42,8 @@ class MuJoCoPlugin : public IPlugin,
                      public INodeProvider,
                      public ICommandProvider,
                      public ISimulationProvider,
-                     public IEnvironmentProvider {
+                     public IEnvironmentProvider,
+                     public IPreferencesProvider {
 public:
     MuJoCoPlugin() = default;
     ~MuJoCoPlugin() override = default;
@@ -64,8 +66,13 @@ public:
         if (std::string(name) == "ICommandProvider") return static_cast<ICommandProvider*>(this);
         if (std::string(name) == "ISimulationProvider") return static_cast<ISimulationProvider*>(this);
         if (std::string(name) == "IEnvironmentProvider") return static_cast<IEnvironmentProvider*>(this);
+        if (std::string(name) == "IPreferencesProvider") return static_cast<IPreferencesProvider*>(this);
         return nullptr;
     }
+
+    // ===== IPreferencesProvider: the Viewport's saved choices =====
+    std::vector<PluginPreferencesSection> GetPreferenceSections() override;
+    void RenderPreferences(const std::string& section_id) override;
 
     // ===== ISimulationProvider: graph runs =====
     // A graph run with a MuJoCo Plant holds the physics: the viewport's own

@@ -16,6 +16,7 @@
 
 #include <mujoco/mujoco.h>
 #include <mutex>
+#include <vector>
 
 struct GLFWwindow;  // Forward declare — avoid pulling in GLFW headers
 
@@ -48,24 +49,63 @@ public:
     // Returns 0 if rendering is disabled or not initialized.
     unsigned int RenderFrame(const mjModel* model, const mjData* data);
 
-    // Camera controls (called from ImGui mouse input)
+    // Camera controls (called from ImGui mouse input). Orbit and zoom move
+    // the free and the following camera; pan moves the free camera only (a
+    // following camera keeps its body in the centre); a model camera stays
+    // where the model puts it.
     void RotateCamera(float dx, float dy);
     void ZoomCamera(float dz);
     void PanCamera(float dx, float dy);
+    // The free camera, aimed at the whole model
     void ResetCamera(const mjModel* model);
-    void TrackBody(int body_id);
+
+    // The camera the scene is seen through
+    enum class CameraMode { Free, FollowBody, ModelCamera };
+    CameraMode GetCameraMode() const;
+    // The followed body or the model camera's id; -1 for the free camera
+    int CameraTarget() const;
+    // The free camera from where the view is now
+    void UseFreeCamera();
+    // Follows a body (its subtree's centre of mass) from the current angle, at
+    // a distance that frames the body and what hangs from it
+    void FollowBody(const mjModel* model, const mjData* data, int body_id);
+    // One of the model's own <camera> elements
+    void UseModelCamera(int camera_id);
+
+    // The body under a point of the last frame (0..1 from the left and from
+    // the top); -1 for none or the floor and sky (the world body)
+    int BodyAt(const mjModel* model, const mjData* data, float x, float y);
 
     // Render settings
     void SetResolution(int width, int height);
     int GetWidth() const { return width_; }
     int GetHeight() const { return height_; }
 
-    // Visualization options: an mjtVisFlag (contact points, forces, joints,
-    // actuators) and the wireframe render flag
+    // Visualization options (the View menu): an mjtVisFlag (contacts, joints,
+    // centre of mass ...), an mjtRndFlag (wireframe, shadows, sky ...), the
+    // frames and labels drawn, and the geom and site groups shown (0..5)
     bool VisFlag(int flag) const { return opt_.flags[flag] != 0; }
     void SetVisFlag(int flag, bool on) { opt_.flags[flag] = on ? 1 : 0; }
-    bool Wireframe() const { return scn_.flags[mjRND_WIREFRAME] != 0; }
-    void SetWireframe(bool on) { scn_.flags[mjRND_WIREFRAME] = on ? 1 : 0; }
+    bool RenderFlag(int flag) const { return scn_.flags[flag] != 0; }
+    void SetRenderFlag(int flag, bool on) { scn_.flags[flag] = on ? 1 : 0; }
+    int Frames() const { return opt_.frame; }
+    void SetFrames(int frame) { opt_.frame = frame; }
+    int Labels() const { return opt_.label; }
+    void SetLabels(int label) { opt_.label = label; }
+    bool GeomGroup(int group) const { return opt_.geomgroup[group] != 0; }
+    void SetGeomGroup(int group, bool on) { opt_.geomgroup[group] = on ? 1 : 0; }
+    bool SiteGroup(int group) const { return opt_.sitegroup[group] != 0; }
+    void SetSiteGroup(int group, bool on) { opt_.sitegroup[group] = on ? 1 : 0; }
+
+    // An endless floor: a model's level floor plane is drawn where the camera
+    // looks, moved in whole texture repeats so its pattern stays put (a plane
+    // collides everywhere; the model draws only its own size)
+    bool EndlessFloor() const { return endless_floor_; }
+    void SetEndlessFloor(bool on) { endless_floor_ = on; }
+
+    // The last frame's pixels: RGB, bottom row first, GetWidth() x GetHeight()
+    // (empty before the first frame)
+    const std::vector<unsigned char>& LastFrame() const { return pixel_buffer_; }
 
     const mjvCamera& GetCamera() const { return cam_; }
     const mjvOption& GetOption() const { return opt_; }
@@ -74,6 +114,8 @@ public:
     void SetPhysicsMutex(std::mutex* mtx) { physics_mutex_ = mtx; }
 
 private:
+    void KeepModelCameraView(bool aim);
+    void MoveFloorUnderView(const mjModel* model);
     bool CreateCompatContext(GLFWwindow* main_window);
     void MakeMainContextCurrent();
     void MakeCompatContextCurrent();
@@ -100,6 +142,7 @@ private:
     int height_ = 480;
     bool initialized_ = false;
     bool enabled_ = true;
+    bool endless_floor_ = true;
     bool resolution_changed_ = false;
     std::mutex* physics_mutex_ = nullptr;
 };

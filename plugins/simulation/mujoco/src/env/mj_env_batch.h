@@ -41,8 +41,15 @@ private:
     MjEnvBatch() = default;
 
     void StartCopy(int copy, float* observation);
-    // The shown copy's state into the view slot (after Reset and Step)
-    void Publish();
+    // The shown copy's state into the view slot (after Reset and Step), with
+    // its episode numbers; step: the actions and results just stepped (null
+    // after Reset)
+    struct SteppedCopy {
+        const float* action = nullptr;
+        float reward = 0.0f;
+        bool episode_ended = false;
+    };
+    void Publish(const SteppedCopy* step);
 
     mjModel* model_ = nullptr;
     std::vector<mjData*> data_;

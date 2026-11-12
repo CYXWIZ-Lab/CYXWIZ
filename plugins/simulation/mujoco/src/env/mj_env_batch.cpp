@@ -84,12 +84,19 @@ bool MjEnvBatch::ShowCopy(int copy) {
     view_->title = title_;
     view_->copy = copy;
     view_->state.clear();
+    view_->episode = 1;
+    view_->step = 0;
+    view_->max_steps = max_episode_steps_;
+    view_->step_seconds = model_->opt.timestep * task_->FrameSkip();
+    view_->episode_return = 0.0;
+    view_->has_last_return = false;
+    view_->action.clear();
     ++view_->version;
     shown_copy_ = copy;
     return true;
 }
 
-void MjEnvBatch::Publish() {
+void MjEnvBatch::Publish(const SteppedCopy* step) {
     if (shown_copy_ < 0) return;
     std::lock_guard<std::mutex> lock(view_->mutex);
     if (view_->owner != this) {  // another batch took the view
@@ -98,6 +105,23 @@ void MjEnvBatch::Publish() {
     }
     view_->state.resize(static_cast<size_t>(mj_stateSize(model_, mjSTATE_FULLPHYSICS)));
     mj_getState(model_, data_[shown_copy_], view_->state.data(), mjSTATE_FULLPHYSICS);
+    if (!step) {  // a new start
+        view_->episode = 1;
+        view_->episode_return = 0.0;
+        view_->has_last_return = false;
+        view_->action.clear();
+    } else {
+        view_->action.assign(step->action, step->action + action_size_);
+        view_->episode_return += step->reward;
+        if (step->episode_ended) {  // the copy started its next episode in Step
+            view_->last_return = view_->episode_return;
+            view_->has_last_return = true;
+            view_->episode_return = 0.0;
+            ++view_->episode;
+        }
+    }
+    view_->step = steps_[shown_copy_];
+    view_->max_steps = max_episode_steps_;
     ++view_->version;
 }
 
@@ -118,7 +142,7 @@ bool MjEnvBatch::Reset(uint64_t seed, float* observations) {
     else for (int i = 0; i < count_; ++i) start(i);
     started_ = true;
     error_.clear();
-    Publish();
+    Publish(nullptr);
     return true;
 }
 
@@ -155,7 +179,12 @@ bool MjEnvBatch::Step(const float* actions, const PluginEnvironmentStepBuffers& 
     if (pool_) pool_->Run(count_, step);
     else for (int i = 0; i < count_; ++i) step(i);
     error_.clear();
-    Publish();
+    if (shown_copy_ >= 0) {
+        const int c = shown_copy_;
+        const SteppedCopy stepped{actions + static_cast<size_t>(c) * action_size_, out.rewards[c],
+                                  out.terminated[c] != 0 || out.truncated[c] != 0};
+        Publish(&stepped);
+    }
     return true;
 }
 
