@@ -25,6 +25,8 @@ bool PolicyPlayback::Start(std::shared_ptr<TrainedPolicy> policy, PlaybackSpeed 
     first_seed_ = pending_seed_;
     pending_conditions_ = false;
     pending_settings_.clear();
+    episode_start_ = std::move(pending_episode_start_);
+    pending_episode_start_ = nullptr;
     if (!policy || !policy->policy) {
         error = "There is no trained policy to play.";
         return false;
@@ -49,6 +51,8 @@ void PolicyPlayback::SetConditions(std::map<std::string, std::string> settings, 
     pending_settings_ = std::move(settings);
     pending_seed_ = first_seed;
 }
+
+void PolicyPlayback::SetEpisodeStart(EpisodeStart hook) { pending_episode_start_ = std::move(hook); }
 
 void PolicyPlayback::Pause() {
     paused_ = true;
@@ -106,6 +110,13 @@ void PolicyPlayback::Run() {
         uint8_t terminated = 0, truncated = 0;
         const plugin::PluginEnvironmentStepBuffers out{obs.data(), &reward, &terminated, &truncated,
                                                        final_obs.data()};
+        // Before every episode: the hook may change the networks and the view's label
+        const auto episode_starts = [this, &p, &batch, shown]() {
+            if (!episode_start_) return;
+            const auto label = episode_start_(p);
+            if (label && shown) batch->LabelShownCopy(*label);
+        };
+        episode_starts();
         uint64_t episode_seed = has_conditions_ ? first_seed_ : p.config.ppo.seed + 1000;
         if (!batch->Reset(episode_seed, obs.data(), error)) return fail(error);
         {
@@ -123,6 +134,7 @@ void PolicyPlayback::Run() {
                 continue;
             }
             if (new_episode_.exchange(false)) {
+                episode_starts();
                 if (!batch->Reset(++episode_seed, obs.data(), error)) return fail(error);
                 std::lock_guard<std::mutex> lock(mutex_);
                 ++snapshot_.episode;
@@ -132,6 +144,7 @@ void PolicyPlayback::Run() {
             }
             const auto action = PolicyActions(p, obs, 1, best_, ++sample_seed);
             if (!batch->Step(action.data(), out, error)) return fail(error);
+            if (terminated || truncated) episode_starts();  // the copy started its next episode in Step
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 ++snapshot_.step;

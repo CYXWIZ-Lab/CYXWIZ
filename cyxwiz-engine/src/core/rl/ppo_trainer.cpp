@@ -126,6 +126,18 @@ bool PpoTrainer::TakeTrained(PpoTrainedState& out, std::string& error) {
     return true;
 }
 
+bool PpoTrainer::CopyPolicy(PpoPolicyCopy& out, std::string& error) {
+    if (!policy_ || !normalizer_) {
+        error = "PPO has no policy to copy yet.";
+        return false;
+    }
+    out.parameters.clear();
+    for (const auto& [name, tensor] : policy_->GetParameters()) out.parameters[name] = tensor.Clone();
+    out.log_std = log_std_.NumElements() > 0 ? log_std_.Clone() : Tensor();
+    out.normalizer = std::make_unique<VecNormalize>(*normalizer_);
+    return true;
+}
+
 bool PpoTrainer::CheckSetup(std::string& error) const {
     const auto& info = environment_.info;
     if (!policy_ || !value_) error = "PPO needs a policy network and a value network.";

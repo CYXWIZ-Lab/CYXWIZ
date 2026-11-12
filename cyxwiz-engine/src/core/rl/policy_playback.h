@@ -11,9 +11,11 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -51,6 +53,13 @@ public:
     // environment settings and the first episode's seed (a stress test's level,
     // to watch its first episode again). Used once.
     void SetConditions(std::map<std::string, std::string> settings, uint64_t first_seed);
+    // Called on the playback's thread before every episode (the first one
+    // too), never while an action is computed: it may change the policy's
+    // networks (a training run's preview) and give the plugin's view a new
+    // label (nullopt: the label stays). For the next Start only, like
+    // SetConditions.
+    using EpisodeStart = std::function<std::optional<plugin::PluginShownCopyLabel>(TrainedPolicy& policy)>;
+    void SetEpisodeStart(EpisodeStart hook);
     void Pause();
     void Resume();
     void NewEpisode();
@@ -71,6 +80,8 @@ private:
 
     std::shared_ptr<TrainedPolicy> policy_;
     bool has_conditions_ = false;  // for this Start (SetConditions)
+    EpisodeStart episode_start_;   // for this Start (SetEpisodeStart)
+    EpisodeStart pending_episode_start_;
     std::map<std::string, std::string> settings_;
     uint64_t first_seed_ = 0;
     bool pending_conditions_ = false;  // for the next Start

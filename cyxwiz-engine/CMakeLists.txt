@@ -306,6 +306,7 @@ set(ENGINE_SOURCES
     src/core/rl/trained_policy.cpp
     src/core/rl/policy_playback.cpp
     src/core/rl/policy_stress_test.cpp
+    src/core/rl/training_watch.cpp
     src/core/rl_playback_presentation.cpp
     src/core/rl_device_presentation.cpp
     src/gui/panels/policy_playback_panel.cpp
@@ -7619,7 +7620,10 @@ add_executable(test_rl_graph_training
     tests/test_rl_graph_training.cpp
     src/core/rl/rl_training_run.cpp
     src/core/rl/policy_stress_test.cpp
+    src/core/rl/policy_playback.cpp
+    src/core/rl/training_watch.cpp
     src/core/rl/trained_policy.cpp
+    src/core/rl_playback_presentation.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
     src/plugin/plugin_manager.cpp
@@ -7642,6 +7646,7 @@ add_executable(cyxwiz-rl-stability-gate
     tests/tool_rl_stability_gate.cpp
     src/core/rl/rl_training_run.cpp
     src/core/rl/trained_policy.cpp
+    src/core/rl_playback_presentation.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
     src/plugin/plugin_manager.cpp

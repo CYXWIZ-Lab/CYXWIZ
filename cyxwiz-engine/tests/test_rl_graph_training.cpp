@@ -21,6 +21,7 @@
 #include <cyxwiz/neural_provider.h>
 #include "../src/core/rl/policy_stress_test.h"
 #include "../src/core/rl/rl_training_run.h"
+#include "../src/core/rl/training_watch.h"
 #include "../src/core/rl/trained_policy.h"
 #include "../src/plugin/plugin_manager.h"
 #include "../src/core/rl_graph_compile.h"
@@ -29,6 +30,7 @@
 #include "route_qualification_test_fixture.h"
 #include "rl_graph_test_support.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -244,6 +246,84 @@ void CheckCartPole() {
           "a missing file is refused with the reason: " + load_error);
 }
 
+// Watching a run (TOFIX212 P5): with the preview on, the run copies its
+// networks for the preview, the last copy is the trained networks, and the
+// run learns exactly what it learns unwatched (same seed, same updates)
+void CheckWatchLeavesTrainingAlone() {
+    rl_graph_test::Ids id{};
+    auto g = rl_graph_test::Pattern(id);
+    g.At(id.ppo).parameters["n_steps"] = "64";
+    g.At(id.ppo).parameters["total_timesteps"] = "1024";
+    const auto config = Compile(g);
+    if (!config) return;
+    struct Outcome {
+        std::vector<cyxwiz::rl::PpoUpdateMetrics> updates;
+        std::shared_ptr<cyxwiz::rl::TrainedPolicy> trained, preview;
+        int preview_update = 0;
+    };
+    const auto train = [&config](bool watch) {
+        Outcome o;
+        cyxwiz::rl::RLTrainingRun run;
+        std::string error;
+        SelectCpu();
+        run.SetWatch(watch ? cyxwiz::rl::RLTrainingRun::Watch::Preview : cyxwiz::rl::RLTrainingRun::Watch::Off, 1);
+        Check(run.Start(config, "", error), "a short run starts: " + error);
+        o.updates = Wait(run, 300.0);
+        o.trained = run.Trained();
+        o.preview = run.PreviewPolicy();
+        long long steps = 0;
+        if (o.preview) run.RefreshPreview(*o.preview, o.preview_update, steps);
+        return o;
+    };
+    const Outcome plain = train(false);
+    const Outcome watched = train(true);
+    Check(!plain.preview, "no preview networks when nobody watches");
+    bool same = plain.updates.size() == watched.updates.size() && !plain.updates.empty();
+    for (size_t i = 0; same && i < plain.updates.size(); ++i)
+        same = plain.updates[i].policy_loss == watched.updates[i].policy_loss &&
+               plain.updates[i].value_loss == watched.updates[i].value_loss;
+    Check(same, "watching does not change what the run learns");
+    Check(watched.preview != nullptr && watched.preview_update == static_cast<int>(watched.updates.size()),
+          "the preview's last copy is of the last update");
+    if (watched.preview && watched.trained) {
+        const cyxwiz::rl::PolicyDeviceScope on_its_device(*watched.trained);
+        auto trained = watched.trained->policy->GetParameters();
+        auto copied = watched.preview->policy->GetParameters();
+        bool equal = !trained.empty() && trained.size() == copied.size();
+        for (auto& [name, tensor] : trained) {
+            if (!equal) break;
+            const auto it = copied.find(name);
+            equal = it != copied.end() && it->second.NumElements() == tensor.NumElements();
+            if (!equal) break;
+            const float* a = tensor.ReadData<float>();
+            const float* b = it->second.ReadData<float>();
+            for (size_t k = 0; equal && k < tensor.NumElements(); ++k) equal = a[k] == b[k];
+        }
+        Check(equal, "the preview plays the trained networks after the last copy");
+    }
+}
+
+// The preview plays in the plugin's view while the run trains, and stops with it
+void CheckWatchInView(const std::shared_ptr<const cyxwiz::RLTrainingConfiguration>& config) {
+    cyxwiz::rl::RLTrainingRun run;
+    cyxwiz::rl::TrainingWatch watch;
+    std::string error;
+    SelectCpu();
+    Check(run.Start(config, "", error), "a watched run starts: " + error);
+    bool previewed = false;
+    int update = 0;
+    for (int i = 0; i < 6000 && run.Active(); ++i) {
+        watch.Update(&run, cyxwiz::rl::RLTrainingRun::Watch::Preview, 1);
+        const auto s = watch.Get();
+        previewed = previewed || s.previewing;
+        update = std::max(update, s.networks_update);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    watch.Update(&run, cyxwiz::rl::RLTrainingRun::Watch::Preview, 1);
+    Check(previewed && update > 0, "the preview played the run's networks while it trained");
+    Check(!watch.Get().previewing, "the preview stops when the run ends");
+}
+
 // A stress test of a trained policy, run whole and stopped early
 void CheckStressRun(const std::shared_ptr<cyxwiz::rl::TrainedPolicy>& policy) {
     using namespace cyxwiz::rl;
@@ -316,6 +396,9 @@ void CheckContinuous(const std::filesystem::path& plugin) {
             CheckSaveAndLoad(*trained, "cyxwiz_rl_pendulum_policy_test.cyxmodel");
             CheckStressRun(trained);
         }
+        auto longer = std::make_shared<cyxwiz::RLTrainingConfiguration>(*config);
+        longer->ppo.total_timesteps = 2560;  // long enough to watch a few updates
+        CheckWatchInView(longer);
     }
     manager.UnloadPlugin("com.cyxwiz.simulation.mujoco");
 }
@@ -484,6 +567,7 @@ int main(int argc, char** argv) {
     // Routes certified as the installer's qualification would certify them
     cyxwiz::test::InstallQualifiedRouteSnapshot();
     CheckStressTestConditions();
+    CheckWatchLeavesTrainingAlone();
     CheckDevice();
     CheckStopAndFailure();
     CheckCartPole();

@@ -68,6 +68,14 @@ int main() {
     const auto reloaded = config.PolicyStressTestDefaults();
     Check(reloaded.kind == 4 && reloaded.levels == 7 && reloaded.episodes == 12,
           "the stress test defaults survive a round trip");
+    // Watching a PPO run (Preferences > Simulation), kept in range
+    config.SetWatchTraining(7, 0);
+    Check(config.WatchTrainingMode() == 2 && config.WatchTrainingEvery() == 1, "the watch default stays in range");
+    config.SetWatchTraining(1, 25);
+    Check(config.Save(path), "the watch default should persist");
+    config.SetWatchTraining(0, 20);
+    Check(config.Load(path), "the watch default should reload");
+    Check(config.WatchTrainingMode() == 1 && config.WatchTrainingEvery() == 25, "the watch default survives a round trip");
 
     std::error_code error;
     std::filesystem::remove(path, error);

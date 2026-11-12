@@ -48,6 +48,7 @@ struct RLTrainingConfiguration;
 }  // namespace cyxwiz
 namespace cyxwiz::rl {
 class RLTrainingRun;
+class TrainingWatch;
 struct TrainedPolicy;
 }
 
@@ -1453,6 +1454,11 @@ private:
     void RenderDashboardWindows();
     // The Engine's PPO run of an RL graph (TOFIX195 S4.3), started by Train
     std::unique_ptr<cyxwiz::rl::RLTrainingRun> rl_run_;
+    // Watching the run while it trains (TOFIX212 P5): the dashboard's choice.
+    // Declared after rl_run_, so it stops before the run goes.
+    std::unique_ptr<cyxwiz::rl::TrainingWatch> rl_watch_;
+    int rl_watch_mode_ = 0;
+    int rl_watch_every_ = 20;
     bool rl_run_reported_ = true;  // its end is on the dashboard
     std::string rl_status_ = "PPO starting";  // the toolbar's line while it runs
     cyxwiz::rl_device::RunDevice rl_run_device_;  // the run's device, once its preflight is done

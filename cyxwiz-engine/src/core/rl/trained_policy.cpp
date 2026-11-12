@@ -182,30 +182,24 @@ bool OptimizerStates(const std::map<std::string, std::vector<uint8_t>>& files,
     return true;
 }
 
-// ArrayFire arrays belong to the backend that made them: work on a policy's
-// networks happens on its device, whatever this thread was on; the thread's
-// device comes back after (and nothing changes when it already matches).
-class PolicyDeviceScope {
-public:
-    explicit PolicyDeviceScope(const TrainedPolicy& p) : PolicyDeviceScope(p.device_type, p.device_id) {}
-    PolicyDeviceScope(DeviceType type, int id) {
-        const auto* current = Device::GetCurrentDevice();
-        if (current && current->GetType() == type && current->GetDeviceId() == id) return;
-        if (current) previous_ = std::make_pair(current->GetType(), current->GetDeviceId());
-        const auto activation = Device(type, id).ActivateExact(false);
-        if (!activation.success) throw std::runtime_error("the policy's device did not start: " + activation.message);
-        switched_ = true;
-    }
-    ~PolicyDeviceScope() {
-        if (switched_ && previous_) Device(previous_->first, previous_->second).ActivateExact(false);
-    }
-    PolicyDeviceScope(const PolicyDeviceScope&) = delete;
-    PolicyDeviceScope& operator=(const PolicyDeviceScope&) = delete;
+}  // namespace
 
-private:
-    std::optional<std::pair<DeviceType, int>> previous_;
-    bool switched_ = false;
-};
+PolicyDeviceScope::PolicyDeviceScope(const TrainedPolicy& p) : PolicyDeviceScope(p.device_type, p.device_id) {}
+
+PolicyDeviceScope::PolicyDeviceScope(DeviceType type, int id) {
+    const auto* current = Device::GetCurrentDevice();
+    if (current && current->GetType() == type && current->GetDeviceId() == id) return;
+    if (current) previous_ = std::make_pair(current->GetType(), current->GetDeviceId());
+    const auto activation = Device(type, id).ActivateExact(false);
+    if (!activation.success) throw std::runtime_error("the policy's device did not start: " + activation.message);
+    switched_ = true;
+}
+
+PolicyDeviceScope::~PolicyDeviceScope() {
+    if (switched_ && previous_) Device(previous_->first, previous_->second).ActivateExact(false);
+}
+
+namespace {
 
 // The parameters of `model` from the package's "<prefix><name>" weights
 bool SetWeights(IExecutableModel& model, const std::string& prefix,

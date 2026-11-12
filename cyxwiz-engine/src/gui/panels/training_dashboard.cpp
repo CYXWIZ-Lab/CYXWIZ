@@ -1,8 +1,11 @@
 #include "training_dashboard.h"
 
+#include "../../core/engine_config.h"
 #include "../../core/plot/plot_prepare.h"
+#include "../../core/rl_playback_presentation.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
 
@@ -34,15 +37,33 @@ void Card(const char* id, const char* label, const std::string& value, const std
         ui::FontScope big(ui::Font::Heading);
         ImGui::TextUnformatted(value.c_str());
     }
+    // Room for three lines of detail: a note that grows by a line as its
+    // number gets longer ("best 810.3") does not move what is below the cards
+    const float detail_top = ImGui::GetCursorPosY();
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_dim, "%s", detail.c_str());
     ImGui::PopTextWrapPos();
+    const float three_lines = 3.0f * ImGui::GetTextLineHeightWithSpacing();
+    const float used = ImGui::GetCursorPosY() - detail_top;
+    const float missing = three_lines - used - ImGui::GetStyle().ItemSpacing.y;
+    if (missing > 0.0f) ImGui::Dummy(ImVec2(0.0f, missing));
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
 }
 
 constexpr const char* kReferenceColumn = "SB3 reference";
+
+// The preview card's label and value rows
+void FactRow(const char* label, const std::string& value) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::TableNextColumn();
+    ImGui::TextColored(t.text_dim, "%s", label);
+    ImGui::TableNextColumn();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(value.c_str());
+    ImGui::PopTextWrapPos();
+}
 
 }  // namespace
 
@@ -129,6 +150,9 @@ void TrainingDashboardPanel::BeginPpoRun(PpoRunInfo info, PpoRunControls control
     controls_ = std::move(controls);
     training_ = true;
     visible_ = true;
+    const auto& config = core::EngineConfig::Instance();
+    watch_ = config.WatchTrainingMode();
+    watch_every_ = config.WatchTrainingEvery();
 }
 
 void TrainingDashboardPanel::SetPpoDevice(std::string chip, std::string tooltip, bool fallback, std::string note) {
@@ -195,6 +219,7 @@ void TrainingDashboardPanel::Render() {
     ImGui::Spacing();
     RenderKpis();
     ImGui::Spacing();
+    if (run_ && training_.load()) RenderWatch();
 
     if (ImGui::BeginTabBar("##rl_tabs")) {
         if (ImGui::BeginTabItem("Episodes")) {
@@ -315,6 +340,60 @@ void TrainingDashboardPanel::RenderRunHeader() {
         ImGui::TextColored(device_fallback_ ? t.caution : t.text_dim, "%s", device_note_.c_str());
         ImGui::PopTextWrapPos();
     }
+}
+
+void TrainingDashboardPanel::RenderWatch() {
+    if (!controls_.watch || !controls_.watch_view) return;
+    const ui::Tokens& t = ui::CurrentTokens();
+    namespace pb = rl_playback;
+    const auto view = controls_.watch_view();
+    ImGui::TextColored(t.text_dim, "Watch progress");
+    if (!view.unavailable.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "%s", view.unavailable.c_str());
+        ImGui::PopTextWrapPos();
+        controls_.watch(0, watch_every_);
+        ImGui::Spacing();
+        return;
+    }
+    ui::SegmentedControl("##watch_progress", pb::kWatchChoices, pb::kWatchChoiceCount, &watch_);
+    if (watch_ == 1) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text_dim, "Take the networks every");
+        ImGui::SameLine();
+        ui::NumberField("##watch_every", &watch_every_, 1, 1000, 1, 60.0f, "Updates between two copies of the networks");
+        ImGui::SameLine();
+        ImGui::TextColored(t.text_dim, "updates");
+        ImGui::SameLine();
+        if (ui::SecondaryButton("Now") && controls_.watch_now) controls_.watch_now();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Take the networks at the next update");
+        // The preview card: which networks it plays, its episodes, how it plays
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_card);
+        ImGui::BeginChild("##watch_card", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        if (ImGui::BeginTable("##watch_facts", 2, ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("##l", ImGuiTableColumnFlags_WidthFixed);
+            ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
+            FactRow("Preview of", view.preview_of);
+            FactRow("Its episodes", view.episodes);
+            FactRow("Plays", "best actions, real time, the run's own ground and settings");
+            ImGui::EndTable();
+        }
+        if (!view.message.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.error, "%s", view.message.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+    }
+    controls_.watch(watch_, watch_every_);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_dim, "%s Preferences > Simulation keeps the default.", pb::kWatchHint);
+    ImGui::PopTextWrapPos();
+    if (watch_ != 0 && controls_.show_view && ui::SecondaryButton(view.view_label.c_str())) controls_.show_view();
+    ImGui::Spacing();
 }
 
 void TrainingDashboardPanel::RenderKpis() {

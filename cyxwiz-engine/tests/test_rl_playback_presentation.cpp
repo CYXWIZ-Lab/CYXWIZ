@@ -112,10 +112,28 @@ void CheckLines() {
 
 }  // namespace
 
+// Watch progress (TOFIX212 P5): the view's label and the dashboard's lines
+void CheckWatch() {
+    const auto preview = PreviewLabel(1580);
+    Check(preview.subtitle == "Preview of update 1,580" && preview.status == "Training preview" &&
+              preview.rows.size() == 1 && preview.rows[0].first == "Networks of" &&
+              preview.rows[0].second == "update 1,580",
+          "the preview's label names its update");
+    const auto copy = TrainingCopyLabel(0);
+    Check(copy.subtitle == "Training copy 0" && copy.status == "Training" && copy.rows.empty(),
+          "the raw training copy's label");
+    Check(PreviewOf(0, 0) == "waiting for the next update", "before the first networks");
+    Check(PreviewOf(1580, 810240) == "update 1,580 (810,240 steps)", "the networks' update and steps");
+    Check(PreviewEpisodes(0, false, 0.0, 0) == "none played yet", "no episodes yet");
+    Check(PreviewEpisodes(3, true, 1912.44, 1560) == "3 played \xC2\xB7 last return 1912.4 (update 1,560)",
+          "episodes, the last return and the networks that played it");
+}
+
 int main() {
     CheckCartPole();
     CheckMuJoCo();
     CheckLines();
+    CheckWatch();
     if (failures == 0) std::printf("test_rl_playback_presentation: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

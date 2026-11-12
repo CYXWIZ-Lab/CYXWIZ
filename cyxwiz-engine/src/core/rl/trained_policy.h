@@ -19,7 +19,9 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz::rl {
@@ -43,6 +45,23 @@ struct TrainedPolicy {
     // Save runs on the GUI thread, and a forward pass changes the layers'
     // caches and the weights' device layout (PolicyActions, SaveTrainedPolicy)
     mutable std::mutex in_use;
+};
+
+// ArrayFire arrays belong to the backend that made them: work on a policy's
+// networks happens on its device, whatever this thread was on; the thread's
+// device comes back after (and nothing changes when it already matches).
+// Throws when the device does not start.
+class PolicyDeviceScope {
+public:
+    explicit PolicyDeviceScope(const TrainedPolicy& p);
+    PolicyDeviceScope(DeviceType type, int id);
+    ~PolicyDeviceScope();
+    PolicyDeviceScope(const PolicyDeviceScope&) = delete;
+    PolicyDeviceScope& operator=(const PolicyDeviceScope&) = delete;
+
+private:
+    std::optional<std::pair<DeviceType, int>> previous_;
+    bool switched_ = false;
 };
 
 // The two networks of a compiled RL graph: its layers plus each head's output

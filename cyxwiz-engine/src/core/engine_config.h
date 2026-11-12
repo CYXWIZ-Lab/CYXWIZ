@@ -250,6 +250,12 @@ public:
     // The Stress test's disturbance, levels and episodes (clamped to their ranges)
     PolicyStressDefaults PolicyStressTestDefaults() const;
     void SetPolicyStressTestDefaults(PolicyStressDefaults defaults);
+    // Watching a PPO run while it trains (the RL Training Dashboard): 0 off
+    // (the default), 1 live preview, 2 raw training copy; the preview takes the
+    // networks every N updates (20 by default, 1 to 1000)
+    int WatchTrainingMode() const;
+    int WatchTrainingEvery() const;
+    void SetWatchTraining(int mode, int every_updates);
 
     // ===== Appearance (Engine-wide) =====
 
@@ -327,6 +333,8 @@ private:
     int policy_playback_speed_ = 0;
     bool play_policy_after_training_ = false;
     PolicyStressDefaults policy_stress_defaults_;
+    int watch_training_mode_ = 0;
+    int watch_training_every_ = 20;
     bool open_simulation_monitor_on_run_ = true;
     std::map<std::string, std::map<std::string, std::string>> plugin_settings_;
     AppearanceConfig appearance_;

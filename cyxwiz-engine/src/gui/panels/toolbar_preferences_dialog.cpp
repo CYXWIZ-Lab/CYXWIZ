@@ -631,6 +631,27 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             engine_config.SetPolicyStressTestDefaults(stress);
                             engine_config.Save();
                         }
+                        // Watching a PPO run while it trains (the RL Training Dashboard)
+                        int watch_mode = engine_config.WatchTrainingMode();
+                        int watch_every = engine_config.WatchTrainingEvery();
+                        bool watch_changed = false;
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Watch training");
+                        ImGui::TableNextColumn();
+                        watch_changed |= ui::SegmentedControl("##pref_watch_training",
+                                                              cyxwiz::rl_playback::kWatchChoices,
+                                                              cyxwiz::rl_playback::kWatchChoiceCount, &watch_mode);
+                        ImGui::TextDisabled("every");
+                        ImGui::SameLine();
+                        watch_changed |= ui::NumberField("##pref_watch_every", &watch_every, 1, 1000, 1, 60.0f,
+                                                         "Updates between two copies of the networks");
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("updates (the live preview takes the networks)");
+                        if (watch_changed) {
+                            engine_config.SetWatchTraining(watch_mode, watch_every);
+                            engine_config.Save();
+                        }
                         ImGui::EndTable();
                     }
                     RenderPluginPreferences("Simulation");

@@ -1,6 +1,7 @@
 #include "rl_training_run.h"
 
 #include "../../plugin/registries/plugin_environment_registry.h"
+#include "../rl_playback_presentation.h"
 #include "../run_execution_device.h"
 #include "../training_trace_collector.h"
 #include "algorithms/arrayfire_backend_utils.h"
@@ -35,6 +36,8 @@ bool RLTrainingRun::Start(std::shared_ptr<const RLTrainingConfiguration> config,
         message_.clear();
         trained_.reset();
         device_ = {};
+        preview_.reset();
+        preview_next_.reset();
     }
     config_ = std::move(config);
     graph_json_ = std::move(graph_json);
@@ -86,6 +89,73 @@ ExecutionDeviceContext RLTrainingRun::Device() const {
 std::shared_ptr<TrainedPolicy> RLTrainingRun::Trained() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return trained_;
+}
+
+void RLTrainingRun::SetWatch(Watch watch, int every_updates) {
+    watch_ = static_cast<int>(watch);
+    watch_every_ = std::max(1, every_updates);
+}
+
+void RLTrainingRun::TakeNetworksNow() { take_now_ = true; }
+
+std::shared_ptr<TrainedPolicy> RLTrainingRun::PreviewPolicy() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return preview_;
+}
+
+bool RLTrainingRun::RefreshPreview(TrainedPolicy& policy, int& update, long long& steps) {
+    std::unique_ptr<PreviewNetworks> next;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!preview_next_ || preview_next_->update <= update) return false;
+        next = std::move(preview_next_);
+    }
+    const std::lock_guard<std::mutex> in_use(policy.in_use);
+    const PolicyDeviceScope on_its_device(policy);  // the copies live on the run's device
+    policy.policy->SetParameters(next->copy.parameters);
+    policy.log_std = next->copy.log_std;
+    policy.normalizer = std::move(next->copy.normalizer);
+    policy.steps = next->steps;
+    update = next->update;
+    steps = next->steps;
+    return true;
+}
+
+void RLTrainingRun::CopyForPreview(PpoTrainer& trainer, const RLTrainingConfiguration& c, int update,
+                                   long long steps) {
+    auto next = std::make_unique<PreviewNetworks>();
+    std::string error;
+    if (!trainer.CopyPolicy(next->copy, error)) {
+        spdlog::warn("PPO preview: {}", error);
+        return;
+    }
+    next->update = update;
+    next->steps = steps;
+    std::shared_ptr<TrainedPolicy> made;
+    if (!PreviewPolicy()) {
+        // Its own networks, on this run's device. Training draws nothing more
+        // from the default random engine once its networks are built (its
+        // sampling and minibatch order have their own), so building these here
+        // does not change what training does.
+        std::unique_ptr<IExecutableModel> policy, value;
+        if (!BuildRLNetworks(c, policy, value, error)) {
+            spdlog::warn("PPO preview: {}", error);
+            return;
+        }
+        made = std::make_shared<TrainedPolicy>();
+        made->config = c;
+        made->policy = std::move(policy);
+        made->value = std::move(value);
+        made->log_std = next->copy.log_std;
+        made->normalizer = std::make_unique<VecNormalize>(*next->copy.normalizer);
+        if (const auto* active = cyxwiz::Device::GetCurrentDevice()) {
+            made->device_type = active->GetType();
+            made->device_id = active->GetDeviceId();
+        }
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (made) preview_ = std::move(made);
+    preview_next_ = std::move(next);
 }
 
 std::vector<PpoUpdateMetrics> RLTrainingRun::TakeUpdates() {
@@ -186,10 +256,30 @@ void RLTrainingRun::Run() {
         spdlog::info("PPO: training on {} x {} for {} steps", c.environment.id, c.copies, c.ppo.total_timesteps);
         std::vector<PpoUpdateMetrics> history;
         std::string traced_path;  // how the run computes, in its trace at the start and on each change
+        int last_watch = static_cast<int>(Watch::Off);
+        bool raw_shown = false;
         const bool ok = trainer.Train(
-            [this, &history, &traced_path, &batch](const PpoUpdateMetrics& update) {
+            [this, &history, &traced_path, &batch, &trainer, &c, &last_watch, &raw_shown](const PpoUpdateMetrics& update) {
                 PpoUpdateMetrics m = update;
                 m.environment_stats = batch->Stats();  // between rollouts: the batch is not stepping
+                // Watching (P5), between rollouts too
+                const int watch = watch_.load();
+                if (watch != last_watch) {  // the training copy in the plugin's view, or not
+                    std::string show_error;
+                    if (watch == static_cast<int>(Watch::RawCopy)) {
+                        raw_shown = batch->ShowCopy(0, show_error);
+                        if (raw_shown) batch->LabelShownCopy(rl_playback::TrainingCopyLabel(0));
+                    } else if (raw_shown) {
+                        batch->ShowCopy(-1, show_error);
+                        raw_shown = false;
+                    }
+                    if (!show_error.empty()) spdlog::warn("PPO: {}", show_error);
+                }
+                const bool preview = watch == static_cast<int>(Watch::Preview);
+                const bool due = take_now_.exchange(false) || (preview && last_watch != watch) ||
+                                 (preview && update.update % std::max(1, watch_every_.load()) == 0);
+                last_watch = watch;
+                if (preview && due) CopyForPreview(trainer, c, update.update, update.timesteps);
                 if (m.compute_path != traced_path) {
                     // Falling back from the fused kernels mid-run is worth a look (a warning)
                     const bool fell_back = !traced_path.empty();
@@ -205,6 +295,10 @@ void RLTrainingRun::Run() {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             trainer_ = nullptr;
+        }
+        if (raw_shown) {  // the view no longer follows the training
+            std::string show_error;
+            batch->ShowCopy(-1, show_error);
         }
         if (!ok) return fail(error);
         // The policy stays for playback and Save (a run stopped before its
