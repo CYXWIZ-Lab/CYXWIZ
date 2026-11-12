@@ -462,6 +462,68 @@ void RenderViewportPreferences(PluginContext& ctx) {
             changed = true;
         }
 
+        // The Stress panel: shown or not, and what it offers first
+        using L = StressLimits;
+        StressOptions& st = d.stress;
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Stress panel");
+        ImGui::TableNextColumn();
+        if (ImGui::Checkbox("Show it beside the scene when the Viewport starts", &st.panel_open)) changed = true;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Kick");
+        ImGui::SameLine();
+        changed |= ui->NumberField("##pref_kick", &st.kick_speed, L::kKickMin, L::kKickMax, 0.5, "%.2f m/s", 80.0f);
+        ImGui::SameLine();
+        if (ImGui::Checkbox("A random kick every", &st.auto_disturb)) changed = true;
+        ImGui::SameLine();
+        changed |= ui->NumberField("##pref_auto", &st.auto_seconds, L::kAutoMin, L::kAutoMax, 0.5, "%.1f s", 64.0f);
+        static const char* kObjects[] = {"Ball", "Box"};
+        int object = st.object.ball ? 0 : 1;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Throw");
+        ImGui::SameLine();
+        if (ui->SegmentedControl("##pref_object", kObjects, 2, &object)) {
+            st.object.ball = object == 0;
+            changed = true;
+        }
+        ImGui::SameLine();
+        changed |= ui->NumberField("##pref_size", &st.object.size, L::kSizeMin, L::kSizeMax, 0.05, "%.2f m", 72.0f);
+        ImGui::SameLine();
+        changed |= ui->NumberField("##pref_mass", &st.object.mass, L::kMassMin, L::kMassMax, 0.5, "%.1f kg", 72.0f);
+        ImGui::SameLine();
+        changed |= ui->NumberField("##pref_speed", &st.throw_speed, L::kSpeedMin, L::kSpeedMax, 1.0, "%.1f m/s", 72.0f);
+        static const char* kFrom[] = {"Ahead", "Behind", "Above"};
+        int from = static_cast<int>(st.from);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("From");
+        ImGui::SameLine();
+        if (ui->SegmentedControl("##pref_from", kFrom, 3, &from)) {
+            st.from = static_cast<MjThrowFrom>(from);
+            changed = true;
+        }
+        static const char* kGrounds[] = {"Flat", "Rough", "Slopes", "Steps", "Obstacles"};
+        int ground = static_cast<int>(st.ground.kind);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Ground offered");
+        ImGui::SameLine();
+        if (ui->SegmentedControl("##pref_ground", kGrounds, 5, &ground)) {
+            st.ground.kind = static_cast<MjGroundKind>(ground);
+            changed = true;
+        }
+        ImGui::SameLine();
+        changed |= ui->NumberField("##pref_difficulty", &st.ground.difficulty, 0.0, 1.0, 0.1, "%.2f", 64.0f,
+                                   "Difficulty, 0 to 1");
+        double seed = static_cast<double>(st.ground.seed);
+        ImGui::SameLine();
+        if (ui->NumberField("##pref_seed", &seed, 0.0, 1.0e9, 1.0, "%.0f", 64.0f, "Seed")) {
+            st.ground.seed = static_cast<uint64_t>(seed);
+            changed = true;
+        }
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Every model starts on its own floor; the panel offers this ground for an episode.");
+        ImGui::PopTextWrapPos();
+
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("Scene options");

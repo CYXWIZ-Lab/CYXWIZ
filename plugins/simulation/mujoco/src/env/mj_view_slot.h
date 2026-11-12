@@ -6,6 +6,8 @@
 // applies the latest state each frame. The plugin and its batches share it
 // through shared_ptr, so a batch that outlives the plugin still holds it.
 
+#include "mj_stress.h"
+
 #include <mujoco/mujoco.h>
 
 #include <cstdint>
@@ -32,6 +34,14 @@ struct MjViewSlot {
     bool has_last_return = false;
     double last_return = 0.0;     // the episode before
     std::vector<float> action;    // the last action given (empty before the first step)
+    bool last_ended_by_task = false;  // the episode before ended by the task's own end, not the step limit
+    // The Viewport's Stress panel (TOFIX212 P4): requests for the shown copy,
+    // applied at the batch's next Step; the scene the copy runs in (when it
+    // differs from the Viewport's, the Viewport builds the same model before it
+    // applies the state); why a request could not be done (the Viewport takes it)
+    std::vector<MjStressRequest> requests;
+    MjScene scene;
+    std::string stress_message;
     uint64_t version = 0;         // grows with every published state
 };
 

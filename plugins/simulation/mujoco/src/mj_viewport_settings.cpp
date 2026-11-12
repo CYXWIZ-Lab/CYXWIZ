@@ -6,6 +6,8 @@
 #include <mujoco/mujoco.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+
 namespace cyxwiz::plugin::mujoco {
 namespace {
 
@@ -14,6 +16,7 @@ constexpr const char* kLiveNumbers = "viewport.live_numbers";
 constexpr const char* kRecordFormat = "viewport.record_format";
 constexpr const char* kRecordLength = "viewport.record_length";
 constexpr const char* kScene = "viewport.scene";
+constexpr const char* kStress = "viewport.stress";
 
 // The switches of SceneOptions by their saved names
 struct Switch {
@@ -43,7 +46,69 @@ void ReadGroups(const nlohmann::json& j, const char* key, std::array<bool, 6>& g
     for (size_t i = 0; i < groups.size(); ++i) groups[i] = text[i] == '1';
 }
 
+// A saved number in [low, high], else the default
+void ReadNumber(const nlohmann::json& j, const char* key, double low, double high, double& value) {
+    if (!j.contains(key) || !j[key].is_number()) return;
+    const double v = j[key].get<double>();
+    if (v >= low && v <= high) value = v;
+}
+
+const char* FromKey(MjThrowFrom from) {
+    switch (from) {
+        case MjThrowFrom::Behind: return "behind";
+        case MjThrowFrom::Above: return "above";
+        case MjThrowFrom::Ahead: break;
+    }
+    return "ahead";
+}
+
 }  // namespace
+
+std::string EncodeStress(const StressOptions& s) {
+    nlohmann::json j;
+    j["panel_open"] = s.panel_open;
+    j["kick_speed"] = s.kick_speed;
+    j["object"] = s.object.ball ? "ball" : "box";
+    j["size"] = s.object.size;
+    j["mass"] = s.object.mass;
+    j["throw_speed"] = s.throw_speed;
+    j["from"] = FromKey(s.from);
+    j["auto_disturb"] = s.auto_disturb;
+    j["auto_seconds"] = s.auto_seconds;
+    j["ground"] = GroundName(s.ground.kind);
+    j["difficulty"] = s.ground.difficulty;
+    j["seed"] = s.ground.seed;
+    return j.dump();
+}
+
+StressOptions DecodeStress(const std::string& text) {
+    using L = StressLimits;
+    StressOptions s;
+    if (text.empty()) return s;
+    const nlohmann::json j = nlohmann::json::parse(text, nullptr, false);
+    if (!j.is_object()) return s;
+    if (j.contains("panel_open") && j["panel_open"].is_boolean()) s.panel_open = j["panel_open"].get<bool>();
+    if (j.contains("auto_disturb") && j["auto_disturb"].is_boolean()) s.auto_disturb = j["auto_disturb"].get<bool>();
+    ReadNumber(j, "kick_speed", L::kKickMin, L::kKickMax, s.kick_speed);
+    if (j.contains("object") && j["object"].is_string()) s.object.ball = j["object"].get<std::string>() != "box";
+    ReadNumber(j, "size", L::kSizeMin, L::kSizeMax, s.object.size);
+    ReadNumber(j, "mass", L::kMassMin, L::kMassMax, s.object.mass);
+    ReadNumber(j, "throw_speed", L::kSpeedMin, L::kSpeedMax, s.throw_speed);
+    if (j.contains("from") && j["from"].is_string()) {
+        const std::string from = j["from"].get<std::string>();
+        s.from = from == "behind" ? MjThrowFrom::Behind : from == "above" ? MjThrowFrom::Above : MjThrowFrom::Ahead;
+    }
+    ReadNumber(j, "auto_seconds", L::kAutoMin, L::kAutoMax, s.auto_seconds);
+    if (j.contains("ground") && j["ground"].is_string()) {
+        const std::string name = j["ground"].get<std::string>();
+        for (const MjGroundKind kind : {MjGroundKind::Flat, MjGroundKind::Rough, MjGroundKind::Slopes,
+                                        MjGroundKind::Steps, MjGroundKind::Obstacles})
+            if (name == GroundName(kind)) s.ground.kind = kind;
+    }
+    ReadNumber(j, "difficulty", 0.0, 1.0, s.ground.difficulty);
+    if (j.contains("seed") && j["seed"].is_number_unsigned()) s.ground.seed = j["seed"].get<uint64_t>();
+    return s;
+}
 
 std::string EncodeScene(const SceneOptions& scene) {
     nlohmann::json j;
@@ -98,6 +163,7 @@ ViewportDefaults LoadViewportDefaults(const PluginContext& ctx) {
                                                                     : MjRecorder::Format::Gif;
     d.record_until_stop = ctx.GetSetting(kRecordLength, "episode") == "stop";
     d.scene = DecodeScene(ctx.GetSetting(kScene));
+    d.stress = DecodeStress(ctx.GetSetting(kStress));
     return d;
 }
 
@@ -107,6 +173,7 @@ void SaveViewportDefaults(PluginContext& ctx, const ViewportDefaults& d) {
     ctx.SetSetting(kRecordFormat, d.record_format == MjRecorder::Format::PngFrames ? "png" : "gif");
     ctx.SetSetting(kRecordLength, d.record_until_stop ? "stop" : "episode");
     ctx.SetSetting(kScene, EncodeScene(d.scene));
+    ctx.SetSetting(kStress, EncodeStress(d.stress));
 }
 
 SceneOptions ReadScene(const MjRenderer& r) {

@@ -5,6 +5,7 @@
 
 #include "mj_gif_writer.h"
 #include "mj_recorder.h"
+#include "env/mj_stress.h"
 #include "mj_viewport_settings.h"
 
 #include "plugin/plugin_context.h"
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -399,6 +401,137 @@ void CheckSettings() {
           "camera keys read back, unknown ones give the track camera");
 }
 
+// The Stress panel's grounds: seeded, scaled by difficulty, along the run
+void CheckGrounds() {
+    double spacing = 0.0;
+    Check(GroundHeights(MjGround{}, spacing).empty() && GroundBoxes(MjGround{}).empty(), "Flat adds nothing");
+
+    const MjGround rough{MjGroundKind::Rough, 0.5, 3};
+    const std::vector<double> bumps = GroundHeights(rough, spacing);
+    Check(spacing == 0.4 && bumps.size() == static_cast<size_t>(kGroundLength / 0.4) + 1, "Rough: a bump every 0.4 m");
+    const double top = *std::max_element(bumps.begin(), bumps.end());
+    Check(bumps.front() == 0.0 && top <= 0.02 + 0.13 * 0.5 + 1e-12 && top > 0.04, "Rough 0.5: bumps up to 8.5 cm");
+    double again_spacing = 0.0;
+    Check(GroundHeights(rough, again_spacing) == bumps, "the same seed gives the same ground");
+    Check(GroundHeights(MjGround{MjGroundKind::Rough, 0.5, 4}, again_spacing) != bumps, "another seed another");
+    const std::vector<double> gentle = GroundHeights(MjGround{MjGroundKind::Rough, 0.0, 3}, again_spacing);
+    Check(*std::max_element(gentle.begin(), gentle.end()) <= 0.02 + 1e-12, "difficulty 0: bumps up to 2 cm");
+
+    const std::vector<double> hills = GroundHeights(MjGround{MjGroundKind::Slopes, 1.0, 3}, spacing);
+    double steepest = 0.0;
+    for (size_t i = 1; i < hills.size(); ++i) steepest = std::max(steepest, std::abs(hills[i] - hills[i - 1]) / spacing);
+    Check(spacing == 0.1 && *std::min_element(hills.begin(), hills.end()) >= 0.0 &&
+              steepest <= std::tan(0.35) + 1e-9 && steepest > std::tan(0.35) * 0.9,
+          "Slopes 1.0: hills at up to 0.35 rad, never below the floor");
+
+    const MjGround steps{MjGroundKind::Steps, 1.0, 5};
+    const std::vector<MjGroundBox> stairs = GroundBoxes(steps);
+    bool whole_steps = !stairs.empty();
+    for (const auto& box : stairs) {
+        const double level = box.height / 0.15;
+        whole_steps = whole_steps && std::abs(level - std::round(level)) < 1e-9 && level >= 1.0 && box.x1 > box.x0 &&
+                      box.x1 <= kGroundLength;
+    }
+    Check(whole_steps, "Steps 1.0: boxes of whole 15 cm steps, inside the ground");
+
+    const std::vector<MjGroundBox> blocks = GroundBoxes(MjGround{MjGroundKind::Obstacles, 0.0, 5});
+    bool apart = blocks.size() > 30;
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        apart = apart && blocks[i].height <= 0.05 + 1e-12 && blocks[i].height >= 0.025 - 1e-12;
+        if (i) apart = apart && blocks[i].x0 - blocks[i - 1].x1 >= 2.0;
+    }
+    Check(apart, "Obstacles 0.0: blocks up to 5 cm, at least 2 m apart");
+}
+
+// Which object slot a throw takes
+void CheckObjectSlots() {
+    MjScene scene;
+    const MjThrownObject ball{true, 0.2, 2.0};
+    const MjThrownObject box{false, 0.3, 5.0};
+    Check(PickObjectSlot(scene, ball, -1) == 0 && scene.objects.size() == 1, "the first throw makes slot 0");
+    Check(PickObjectSlot(scene, ball, 0) == 1 && scene.objects.size() == 2,
+          "the same ball again while the first may still be out: a second slot");
+    Check(PickObjectSlot(scene, ball, 1) == 0 && scene.objects.size() == 2, "then the two balls take turns");
+    Check(PickObjectSlot(scene, box, 0) == 2 && PickObjectSlot(scene, box, 2) == 3 && scene.objects.size() == 4,
+          "a box takes new slots up to four");
+    const MjThrownObject heavy{true, 0.4, 9.0};
+    const int replaced = PickObjectSlot(scene, heavy, 3);
+    Check(replaced == 0 && scene.objects.size() == 4 && scene.objects[0] == heavy,
+          "with four out, a new object replaces the slot after the last one thrown");
+}
+
+// What the Stress panel says happened
+void CheckStressLog() {
+    MjStressLog log;
+    log.Add(1.0, 1, "Kick 1.5 m/s back");
+    log.Observe(2.0, 1, false, false);
+    Check(log.Events().front().outcome == MjStressLog::Outcome::Watching, "watched for 3 s");
+    log.Observe(4.1, 1, false, false);
+    Check(log.Events().front().outcome == MjStressLog::Outcome::StayedUp &&
+              MjStressLog::OutcomeText(log.Events().front()) == "stayed up",
+          "upright 3 s later: stayed up");
+
+    log.Add(5.0, 1, "Ball 0.20 m, 2.0 kg at 6.0 m/s from ahead");
+    log.Observe(5.5, 1, true, false);
+    Check(log.Events().front().outcome == MjStressLog::Outcome::Flipped &&
+              MjStressLog::OutcomeText(log.Events().front()) == "flipped over at 5.50 s",
+          "upside down: flipped over, with the time");
+
+    log.Add(6.0, 1, "Kick 3.0 m/s up");
+    log.Observe(6.4, 1, false, false);
+    log.Observe(0.0, 2, false, true);
+    Check(log.Events().front().outcome == MjStressLog::Outcome::Fell &&
+              MjStressLog::OutcomeText(log.Events().front()) == "fell at 6.40 s, episode ended",
+          "the episode ended by the task: fell, at the episode's last time");
+
+    log.Add(1.0, 2, "Kick 1.5 m/s forward");
+    log.Observe(1.2, 2, false, false);
+    log.Observe(0.0, 3, false, false);
+    Check(log.Events().front().outcome == MjStressLog::Outcome::StayedUp, "cut at the step limit: stayed up");
+
+    log.Add(0.5, 3, "Kick 1.5 m/s back");
+    log.EndEpisodeByUser();
+    Check(log.Events().front().outcome == MjStressLog::Outcome::NewEpisode, "the user started a new episode");
+    log.Note(0.6, 3, "Rough 0.40, seed 7: from the next episode");
+    log.Observe(9.0, 3, false, false);
+    Check(log.Events().front().outcome == MjStressLog::Outcome::Note &&
+              MjStressLog::OutcomeText(log.Events().front()).empty(),
+          "a note has nothing to watch");
+    for (int i = 0; i < 80; ++i) log.Add(1.0, 4, "Kick");
+    Check(log.Events().size() == MjStressLog::kKept, "the log keeps the last 50");
+    log.Clear();
+    Check(log.Events().empty(), "Clear empties it");
+
+    Check(DescribeKick(MjKick::Up, 1.5) == "Kick 1.5 m/s up" &&
+              DescribeThrow(MjThrownObject{false, 0.3, 5.0}, MjThrowFrom::Above, 4.0) ==
+                  "Box 0.30 m, 5.0 kg at 4.0 m/s from above" &&
+              DescribeGround(MjGround{MjGroundKind::Steps, 0.25, 9}) == "Steps 0.25, seed 9" &&
+              DescribeGround(MjGround{}) == "Flat",
+          "the event wording");
+}
+
+void CheckStressSettings() {
+    SettingsContext ctx;
+    const StressOptions fresh = LoadViewportDefaults(ctx).stress;
+    Check(fresh == StressOptions{} && !fresh.panel_open && fresh.ground.kind == MjGroundKind::Rough,
+          "nothing saved: the panel closed, a 1.5 m/s kick, a 0.2 m 2 kg ball, Rough 0.40 offered");
+    ViewportDefaults d;
+    d.stress.panel_open = true;
+    d.stress.kick_speed = 3.0;
+    d.stress.object = MjThrownObject{false, 0.5, 8.0};
+    d.stress.throw_speed = 9.0;
+    d.stress.from = MjThrowFrom::Above;
+    d.stress.auto_disturb = true;
+    d.stress.auto_seconds = 2.5;
+    d.stress.ground = MjGround{MjGroundKind::Obstacles, 0.75, 1234};
+    SaveViewportDefaults(ctx, d);
+    Check(LoadViewportDefaults(ctx).stress == d.stress, "the Stress panel's choices read back");
+    const StressOptions odd =
+        DecodeStress(R"({"kick_speed": 99, "size": 0, "from": "sideways", "ground": "Lava", "difficulty": 2})");
+    Check(odd == StressOptions{}, "values out of range or unknown keep their defaults");
+    Check(DecodeStress("not json") == StressOptions{}, "broken text gives the defaults");
+}
+
 }  // namespace
 
 int main() {
@@ -410,6 +543,10 @@ int main() {
     CheckGifColours(dir);
     CheckRecorder(dir);
     CheckSettings();
+    CheckGrounds();
+    CheckObjectSlots();
+    CheckStressLog();
+    CheckStressSettings();
     std::filesystem::remove_all(dir, ec);
     if (failures == 0) std::printf("test_mujoco_viewport: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

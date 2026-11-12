@@ -153,6 +153,8 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
     // Nothing may step the old model while it is replaced: the executor stops
     // first, and the graph simulation's EvaluateNode waits on the physics lock.
     sim_executor_.Stop();
+    local_stress_ = MjStressRun{};
+    viewport_panel_.ResetStress();
     {
         std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         if (!env_manager_.LoadModel(mjcf_path)) {
@@ -206,10 +208,16 @@ void MuJoCoPlugin::SyncPlayback() {
     int copy = 0;
     bool active = false;
     MjViewportPanel::PlaybackNumbers numbers;
+    MjScene scene;
+    std::string stress_message;
     {
         std::lock_guard<std::mutex> lock(view_slot_->mutex);
         active = view_slot_->owner != nullptr;
         if (active) {
+            scene = view_slot_->scene;
+            stress_message = std::move(view_slot_->stress_message);
+            view_slot_->stress_message.clear();
+            numbers.last_ended_by_task = view_slot_->last_ended_by_task;
             path = view_slot_->model_path;
             title = view_slot_->title;
             copy = view_slot_->copy;
@@ -221,7 +229,8 @@ void MuJoCoPlugin::SyncPlayback() {
             numbers.has_last_return = view_slot_->has_last_return;
             numbers.last_return = view_slot_->last_return;
             numbers.action = view_slot_->action;
-            if (view_slot_->version != shown_version_) {
+            // A changed scene is built first: its state is then applied, even unchanged
+            if (view_slot_->version != shown_version_ || scene != env_manager_.Scene()) {
                 shown_version_ = view_slot_->version;
                 state = view_slot_->state;
             }
@@ -243,6 +252,8 @@ void MuJoCoPlugin::SyncPlayback() {
             state.clear();
             shown_version_ = 0;  // apply the latest state next frame, after the renderer starts
         }
+        if (scene != env_manager_.Scene()) MirrorPlaybackScene(scene);
+        if (!stress_message.empty()) viewport_panel_.StressFailed(stress_message);
         // Also when the played model was open already (a second playback)
         if (viewport_panel_.ModelSubtitle() != "Policy playback") viewport_panel_.SetModelLabel(title, "Policy playback");
         viewport_panel_.SetPlayback(true, title + " \xC2\xB7 copy " + std::to_string(copy));
@@ -285,8 +296,65 @@ void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
 
     if (panel_id == "mujoco_viewport") {
         viewport_panel_.Render(env_manager_, renderer_, visible);
+        ForwardStressRequests();
     } else if (panel_id == "mujoco_env_browser") {
         browser_panel_.Render(env_library_, env_manager_, visible);
+    }
+}
+
+void MuJoCoPlugin::MirrorPlaybackScene(const MjScene& scene) {
+    bool built = false;
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        std::string error;
+        built = env_manager_.ChangeScene(scene, error);
+        if (!built) spdlog::warn("[MuJoCo] Policy playback: the stress scene did not build here: {}", error);
+    }
+    if (built && renderer_.IsInitialized() && !renderer_.ChangeModel(env_manager_.GetModel()))
+        renderer_needs_init_ = true;  // start the renderer again for the new model
+}
+
+void MuJoCoPlugin::ForwardStressRequests() {
+    std::vector<MjStressRequest> requests = viewport_panel_.TakeStressRequests();
+    if (playback_) {  // the played copy applies them at its next step
+        if (requests.empty()) return;
+        std::lock_guard<std::mutex> lock(view_slot_->mutex);
+        if (view_slot_->owner)
+            view_slot_->requests.insert(view_slot_->requests.end(), requests.begin(), requests.end());
+        return;
+    }
+    if (!env_manager_.IsLoaded() || viewport_panel_.IsGraphSimActive()) return;
+
+    // The Viewport's own run: the same requests on its model, under the physics lock
+    bool rebuilt = false;
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        local_stress_.scene = env_manager_.Scene();
+        local_stress_.robot = env_manager_.Robot();
+        const MjStressHost host{[this] { return env_manager_.GetModel(); },
+                                [this] { return env_manager_.GetMutableData(); },
+                                [this, &rebuilt](const MjScene& scene, std::string& error) {
+                                    if (!env_manager_.ChangeScene(scene, error)) return false;
+                                    rebuilt = true;
+                                    return true;
+                                }};
+        if (!requests.empty()) ApplyStressRequests(requests, local_stress_, host);
+        const int episodes = env_manager_.GetEpisodeCount();
+        if (local_stress_.cut_episode) {  // a ground "now": a new episode on it
+            local_stress_.cut_episode = false;
+            env_manager_.Reset();
+            StartNextGround(local_stress_, host);
+        } else if (episodes != local_episodes_seen_) {  // an episode ended: the ground waiting for it
+            StartNextGround(local_stress_, host);
+        }
+        local_episodes_seen_ = episodes;
+        ApplyHeldPush(local_stress_, env_manager_.GetModel(), env_manager_.GetMutableData());
+    }
+    if (rebuilt && renderer_.IsInitialized() && !renderer_.ChangeModel(env_manager_.GetModel()))
+        renderer_needs_init_ = true;
+    if (!local_stress_.message.empty()) {
+        viewport_panel_.StressFailed(local_stress_.message);
+        local_stress_.message.clear();
     }
 }
 

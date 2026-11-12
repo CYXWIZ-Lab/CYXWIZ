@@ -19,6 +19,7 @@ loaded (**Plugin Manager**, MuJoCo Simulation).
 | **Record** | A screenshot or a recording (below); **Stop recording** while one runs |
 | Status | Running, Paused, Stopped, Policy playback, Driven by the graph run, or Recording with its length and frames |
 | **View** | What the scene shows (below) |
+| **Stress** / **Hide Stress** | The Stress panel beside the scene: kick the robot, throw objects at it, change the ground (below) |
 
 On a narrow Viewport the row wraps; nothing is hidden.
 
@@ -95,6 +96,27 @@ has the full path.
 MP4 needs the Engine's media support, which is not in this build: record
 PNG frames and join them with a video editor or ffmpeg.
 
+## Stress: does the policy cope?
+
+A trained policy has only seen the plain task. The Stress panel (**Stress** in
+the control row) disturbs the copy the policy plays, or the Viewport's own
+run, so you can watch whether it copes. Every value is a typed field.
+
+| Section | What it does |
+| --- | --- |
+| **Push** | **Kick back** / **Kick forward** / **Up** change the robot's velocity at once by the typed **Kick** (m/s): back and forward along +x, the way Gymnasium's runners go. **Ctrl+drag** a body in the scene pulls it with a spring while the mouse is down (MuJoCo's own perturbation) |
+| **Throw** | A **Ball** (size = diameter) or a **Box** (size = edge) of the typed mass and speed, from 3 m **Ahead**, 3 m **Behind** or 2.5 m **Above** the robot, aimed at where the robot will be when it arrives. Thrown objects stay in the scene until the episode ends; four can be out at once |
+| **Auto disturb** | A kick back, forward or up at random, every typed number of simulated seconds while the scene moves |
+| **Ground** | **Flat**, **Rough** (random bumps up to 2-15 cm), **Slopes** (hills up to 3-20 degrees), **Steps** (flights of 3-5 steps of 2-15 cm) or **Obstacles** (blocks of 5-30 cm, 2-5 m apart); the heights grow with **Difficulty** (0 to 1); the same **Seed** gives the same ground. It runs along +x from 2 m ahead of the start, for 300 m. **Next episode** puts it in when the episode ends; **Now (new episode)** cuts the episode (counted as cut, not as a fall) and starts one on it |
+| **Events** | Each disturbance with its simulated time, and what followed within 3 s: **stayed up**, **flipped over** (the robot's root upside down) or **fell** (the task ended the episode) |
+
+During playback the live numbers show the **Ground** when it is not flat.
+**Keep these as the default** saves the panel's choices for next time.
+
+The policy plays on: a disturbance never changes what it observes (the
+robot's own joints), only what happens to it. HalfCheetah never ends an
+episode by itself, so for it a fall shows as **flipped over**.
+
 ## Preferences > Simulation > MuJoCo Viewport
 
 | Setting | Default |
@@ -103,9 +125,11 @@ PNG frames and join them with a video editor or ffmpeg.
 | **Live numbers** | On |
 | **Record video** | GIF, until the episode ends |
 | **Scene options** | MuJoCo's; **Use MuJoCo's** resets options kept from the View menu |
+| **Stress panel** | Closed; a 1.5 m/s kick, no random kicks (every 3 s when on), a 0.2 m 2 kg ball at 6 m/s from ahead, Rough 0.40 seed 7 offered |
 
 Changing a choice in the Viewport does not change these, except **View >
-Keep these as the default**.
+Keep these as the default** and the Stress panel's **Keep these as the
+default**.
 
 ## Watch again without training again
 
@@ -117,10 +141,9 @@ policy** whenever you want to watch it: no training run is needed. See
 ## Limits
 
 - The Viewport shows one copy of a training run's environments (the first).
-- Selecting a body to push it, typed joint and actuator values, keyframes
-  and physics options are planned (the Inspect panel), as are a timeline to
-  scrub a played episode and side-by-side policies.
-- Testing how a policy copes with what it did not train on (pushes, thrown
-  objects, rough or uneven ground, slopes) is not in the Engine yet; it is
-  being designed.
+- Typed joint and actuator values, keyframes and physics options are
+  planned (the Inspect panel), as are a timeline to scrub a played episode
+  and side-by-side policies.
+- Training with pushes and rough ground, and a stress test that compares
+  two saved policies by difficulty, are being built.
 - Recording to MP4 needs the Engine's media support (not in this build).

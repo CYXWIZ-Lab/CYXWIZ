@@ -21,6 +21,7 @@ add_library(mujoco_plugin SHARED
     src/mj_renderer.cpp
     src/mj_viewport_panel.cpp
     src/mj_viewport_menus.cpp
+    src/mj_viewport_stress.cpp
     src/mj_viewport_settings.cpp
     src/mj_recorder.cpp
     src/mj_gif_writer.cpp
@@ -31,6 +32,8 @@ add_library(mujoco_plugin SHARED
     src/rl/observation_filter.cpp
     src/env/mj_task.cpp
     src/env/mj_env_batch.cpp
+    src/env/mj_scene.cpp
+    src/env/mj_stress.cpp
 )
 
 target_include_directories(mujoco_plugin PRIVATE
@@ -89,6 +92,8 @@ add_executable(test_mujoco_environments
     tests/test_mujoco_environments.cpp
     src/env/mj_task.cpp
     src/env/mj_env_batch.cpp
+    src/env/mj_scene.cpp
+    src/env/mj_stress.cpp
 )
 target_include_directories(test_mujoco_environments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_mujoco_environments PRIVATE cyxwiz-plugin-sdk mujoco::mujoco)
@@ -99,12 +104,16 @@ add_custom_command(TARGET test_mujoco_environments POST_BUILD
     COMMENT "Copying the MuJoCo runtime next to test_mujoco_environments")
 add_test(NAME mujoco_environments COMMAND test_mujoco_environments)
 
-# The Viewport's GIF writer (decoded back), recorder and saved choices
+# The Viewport's GIF writer (decoded back), recorder, saved choices and the
+# Stress panel's grounds and event log
 add_executable(test_mujoco_viewport
     tests/test_mujoco_viewport.cpp
     src/mj_gif_writer.cpp
     src/mj_recorder.cpp
     src/mj_viewport_settings.cpp
+    src/env/mj_task.cpp
+    src/env/mj_scene.cpp
+    src/env/mj_stress.cpp
 )
 target_include_directories(test_mujoco_viewport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${Stb_INCLUDE_DIR})
 target_link_libraries(test_mujoco_viewport PRIVATE cyxwiz-plugin-sdk mujoco::mujoco nlohmann_json::nlohmann_json)

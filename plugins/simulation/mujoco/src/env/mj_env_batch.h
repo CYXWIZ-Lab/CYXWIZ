@@ -5,6 +5,7 @@
 // small worker pool. It holds nothing of the plugin object, so it outlives
 // the plugin's shutdown safely.
 
+#include "mj_stress.h"
 #include "mj_task.h"
 #include "mj_view_slot.h"
 #include "mj_worker_pool.h"
@@ -48,8 +49,15 @@ private:
         const float* action = nullptr;
         float reward = 0.0f;
         bool episode_ended = false;
+        bool terminated = false;  // ended by the task's own end
     };
     void Publish(const SteppedCopy* step);
+    // The Stress panel's requests for the shown copy, taken from the view slot
+    // and applied before a step; then the held push
+    void ApplyStress();
+    MjStressHost StressHost();  // the shown copy
+    // The same model file with another scene, every copy's state carried over
+    bool Rebuild(const MjScene& scene, std::string& error);
 
     mjModel* model_ = nullptr;
     std::vector<mjData*> data_;
@@ -67,6 +75,8 @@ private:
     std::string model_path_;
     std::string title_;
     int shown_copy_ = -1;
+    // The Stress panel's run on the shown copy (TOFIX212 P4)
+    MjStressRun stress_;
 };
 
 // The environment's description for IEnvironmentProvider::GetEnvironments,

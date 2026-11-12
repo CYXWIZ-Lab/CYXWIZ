@@ -5,6 +5,8 @@
 // Manages mjModel + mjData lifecycle and provides a Gymnasium-compatible
 // step/reset interface for reinforcement learning environments.
 
+#include "env/mj_scene.h"
+
 #include <mujoco/mujoco.h>
 
 #include <string>
@@ -45,7 +47,14 @@ public:
     MjEnvManager& operator=(MjEnvManager&& other) noexcept;
 
     // --- Lifecycle ---
-    bool LoadModel(const std::string& mjcf_path);
+    // The model file with a stress scene added (env/mj_scene.h; none: the file as it is)
+    bool LoadModel(const std::string& mjcf_path, const MjScene& scene = {});
+    // The same model file with another scene, the state carried over. The
+    // caller holds the physics lock. False with the reason: the model is kept.
+    bool ChangeScene(const MjScene& scene, std::string& error);
+    const MjScene& Scene() const { return scene_; }
+    const MjRobotSize& Robot() const { return robot_; }
+    const std::string& ModelPath() const { return model_path_; }
     bool LoadModelFromString(const std::string& xml);
     void Close();
     bool IsLoaded() const { return model_ != nullptr; }
@@ -72,6 +81,8 @@ public:
     // --- Episode statistics ---
     float GetEpisodeReward() const { return episode_reward_; }
     int GetEpisodeCount() const { return episode_count_; }
+    // The last episode ended by its termination, not its step limit
+    bool LastEpisodeTerminated() const { return last_terminated_; }
 
     // --- Raw MuJoCo access (for renderer) ---
     const mjModel* GetModel() const { return model_; }
@@ -89,6 +100,11 @@ private:
     mjModel* model_ = nullptr;
     mjData* data_ = nullptr;
     mutable std::mutex physics_mutex_;
+
+    std::string model_path_;
+    MjScene scene_;
+    MjRobotSize robot_;
+    bool last_terminated_ = false;
 
     int max_episode_steps_ = 1000;
     int frame_skip_ = 1;

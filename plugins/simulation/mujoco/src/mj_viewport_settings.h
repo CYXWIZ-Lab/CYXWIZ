@@ -5,6 +5,7 @@
 // options. No ImGui here: the panel and the Preferences section both use it,
 // and the tests check it.
 
+#include "env/mj_scene.h"
 #include "mj_recorder.h"
 
 #include <array>
@@ -53,17 +54,45 @@ struct SceneOptions {
     bool operator==(const SceneOptions&) const = default;
 };
 
+// The Stress panel's choices: the panel shown, the kick, the object to throw,
+// the automatic kicks and the ground the panel offers (not the ground in use:
+// every model starts on its own floor)
+struct StressOptions {
+    bool panel_open = false;
+    double kick_speed = 1.5;  // m/s
+    MjThrownObject object;    // a 0.2 m ball of 2 kg
+    double throw_speed = 6.0; // m/s
+    MjThrowFrom from = MjThrowFrom::Ahead;
+    bool auto_disturb = false;
+    double auto_seconds = 3.0;  // a random kick this often, in simulated seconds
+    MjGround ground{MjGroundKind::Rough, 0.4, 7};
+
+    bool operator==(const StressOptions&) const = default;
+};
+
+// Limits of the Stress panel's typed fields (the panel and the saved text)
+struct StressLimits {
+    static constexpr double kKickMin = 0.1, kKickMax = 20.0;
+    static constexpr double kSizeMin = 0.05, kSizeMax = 2.0;
+    static constexpr double kMassMin = 0.1, kMassMax = 200.0;
+    static constexpr double kSpeedMin = 0.5, kSpeedMax = 40.0;
+    static constexpr double kAutoMin = 0.5, kAutoMax = 120.0;
+};
+
 struct ViewportDefaults {
     PlaybackCamera playback_camera = PlaybackCamera::ModelTrack;
     bool live_numbers = true;  // episode, step, return and action on the scene during playback
     MjRecorder::Format record_format = MjRecorder::Format::Gif;
     bool record_until_stop = false;  // false: until the episode ends
     SceneOptions scene;              // what View shows when the Viewport starts
+    StressOptions stress;            // the Stress panel when the Viewport starts
 };
 
 // Saved text <-> values. Unknown or broken text gives the default.
 std::string EncodeScene(const SceneOptions& scene);
 SceneOptions DecodeScene(const std::string& text);
+std::string EncodeStress(const StressOptions& stress);
+StressOptions DecodeStress(const std::string& text);
 const char* PlaybackCameraKey(PlaybackCamera camera);
 PlaybackCamera PlaybackCameraFromKey(const std::string& key);
 

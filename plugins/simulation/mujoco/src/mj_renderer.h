@@ -40,6 +40,11 @@ public:
     // Release all resources (MuJoCo context, GL texture, hidden window).
     void Shutdown();
 
+    // The same model file with another stress scene (a ground, thrown
+    // objects): the scene and the render context are made again for it; the
+    // camera and the View options stay. Call from the main thread.
+    bool ChangeModel(const mjModel* model);
+
     bool IsInitialized() const { return initialized_; }
     bool IsEnabled() const { return enabled_; }
     void SetEnabled(bool enabled) { enabled_ = enabled; }
@@ -75,6 +80,18 @@ public:
     // The body under a point of the last frame (0..1 from the left and from
     // the top); -1 for none or the floor and sky (the world body)
     int BodyAt(const mjModel* model, const mjData* data, float x, float y);
+
+    // Ctrl+drag pulls a body with a spring (MuJoCo's perturbation, as in its
+    // own viewer). StartPush: the body under a point of the last frame (as
+    // BodyAt), false for none. MovePush: the mouse's travel over the frame
+    // height. PushForce: the pull for the body's state now, written into
+    // data->xfrc_applied and `force`; the held body, -1 when none.
+    bool StartPush(const mjModel* model, mjData* data, float x, float y);
+    void MovePush(const mjModel* model, const mjData* data, float dx, float dy);
+    int PushForce(const mjModel* model, mjData* data, mjtNum force[6]);
+    void EndPush();
+    bool IsPushing() const { return pert_.select > 0; }
+    int PushedBody() const { return pert_.select; }
 
     // Render settings
     void SetResolution(int width, int height);
@@ -127,6 +144,7 @@ private:
     mjvOption opt_{};
     mjvScene scn_{};
     mjrContext con_{};
+    mjvPerturb pert_{};  // the Ctrl+drag pull, drawn with the scene while held
 
     // Hidden GLFW window for compatibility context
     GLFWwindow* compat_window_ = nullptr;

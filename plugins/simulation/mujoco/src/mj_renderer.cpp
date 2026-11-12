@@ -52,6 +52,7 @@ bool MjRenderer::Initialize(const mjModel* model, int width, int height,
     mjv_defaultOption(&opt_);
     mjv_defaultScene(&scn_);
     mjr_defaultContext(&con_);
+    mjv_defaultPerturb(&pert_);
 
     // Enable headlight for consistent scene lighting
     scn_.enabletransform = 0;
@@ -183,10 +184,10 @@ unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data) {
     // Update abstract scene (lock physics mutex to prevent concurrent mjData access)
     if (physics_mutex_) {
         std::lock_guard<std::mutex> phys_lock(*physics_mutex_);
-        mjv_updateScene(model, const_cast<mjData*>(data), &opt_, nullptr, &cam_,
+        mjv_updateScene(model, const_cast<mjData*>(data), &opt_, IsPushing() ? &pert_ : nullptr, &cam_,
                         mjCAT_ALL, &scn_);
     } else {
-        mjv_updateScene(model, const_cast<mjData*>(data), &opt_, nullptr, &cam_,
+        mjv_updateScene(model, const_cast<mjData*>(data), &opt_, IsPushing() ? &pert_ : nullptr, &cam_,
                         mjCAT_ALL, &scn_);
     }
 
@@ -374,6 +375,87 @@ int MjRenderer::BodyAt(const mjModel* model, const mjData* data, float x, float 
         body = mjv_select(model, data, &opt_, aspect, x, 1.0 - y, &scn_, point, &geom, &flex, &skin);
     }
     return body > 0 ? body : -1;
+}
+
+bool MjRenderer::StartPush(const mjModel* model, mjData* data, float x, float y) {
+    EndPush();
+    if (!initialized_ || !model || !data || width_ < 1 || height_ < 1) return false;
+    mjtNum point[3];
+    int geom = -1, flex = -1, skin = -1;
+    const mjtNum aspect = static_cast<mjtNum>(width_) / height_;
+    std::unique_lock<std::mutex> phys_lock;
+    if (physics_mutex_) phys_lock = std::unique_lock<std::mutex>(*physics_mutex_);
+    const int body = mjv_select(model, data, &opt_, aspect, x, 1.0 - y, &scn_, point, &geom, &flex, &skin);
+    if (body <= 0) return false;
+    // Held at the picked point, in the body's frame
+    mjtNum offset[3];
+    mju_sub3(offset, point, data->xpos + 3 * body);
+    mju_mulMatTVec(pert_.localpos, data->xmat + 9 * body, offset, 3, 3);
+    pert_.select = body;
+    pert_.flexselect = -1;
+    pert_.skinselect = -1;
+    pert_.active = mjPERT_TRANSLATE;
+    mjv_initPerturb(model, data, &scn_, &pert_);
+    return true;
+}
+
+void MjRenderer::MovePush(const mjModel* model, const mjData* data, float dx, float dy) {
+    if (!IsPushing() || !model || !data) return;
+    std::unique_lock<std::mutex> phys_lock;
+    if (physics_mutex_) phys_lock = std::unique_lock<std::mutex>(*physics_mutex_);
+    mjv_movePerturb(model, data, mjMOUSE_MOVE_V, dx, dy, &scn_, &pert_);
+}
+
+int MjRenderer::PushForce(const mjModel* model, mjData* data, mjtNum force[6]) {
+    if (!IsPushing() || !model || !data || pert_.select >= model->nbody) return -1;
+    std::unique_lock<std::mutex> phys_lock;
+    if (physics_mutex_) phys_lock = std::unique_lock<std::mutex>(*physics_mutex_);
+    const int body = pert_.select;
+    mju_zero(data->xfrc_applied + 6 * body, 6);
+    mjv_applyPerturbForce(model, data, &pert_);
+    mju_copy(force, data->xfrc_applied + 6 * body, 6);
+    return body;
+}
+
+void MjRenderer::EndPush() {
+    pert_.select = 0;
+    pert_.active = 0;
+}
+
+bool MjRenderer::ChangeModel(const mjModel* model) {
+    if (!initialized_ || !model) return false;
+    EndPush();
+    MakeCompatContextCurrent();
+    // The View's flags live in the scene: kept across the new scene
+    mjtByte flags[mjNRNDFLAG];
+    std::copy(scn_.flags, scn_.flags + mjNRNDFLAG, flags);
+    const mjtByte enabletransform = scn_.enabletransform;
+    mjr_freeContext(&con_);
+    mjv_freeScene(&scn_);
+    mjv_defaultScene(&scn_);
+    mjv_makeScene(model, &scn_, 2000);
+    std::copy(flags, flags + mjNRNDFLAG, scn_.flags);
+    scn_.enabletransform = enabletransform;
+    mjr_defaultContext(&con_);
+    mjr_makeContext(model, &con_, mjFONTSCALE_150);
+    const bool made = con_.currentBuffer != -1;
+    if (made) {
+        mjr_resizeOffscreen(width_, height_, &con_);
+        if (con_.offWidth > 0 && con_.offHeight > 0) {
+            width_ = std::min(width_, con_.offWidth);
+            height_ = std::min(height_, con_.offHeight);
+        }
+        pixel_buffer_.resize(static_cast<size_t>(width_) * height_ * 3);
+    } else {
+        spdlog::error("[MjRenderer] mjr_makeContext failed for the changed model");
+    }
+    MakeMainContextCurrent();
+    if (!made) {
+        Shutdown();
+        return false;
+    }
+    resolution_changed_ = true;  // the display texture follows the offscreen size
+    return true;
 }
 
 // =============================================================================

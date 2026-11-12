@@ -1,7 +1,8 @@
 // The MuJoCo plugin's environments for reinforcement learning (src/env):
 // what they describe, how settings are read, same-step autoreset, the same
 // runs for one seed on any number of threads, steps a second, and showing one
-// copy in the viewport (ShowCopy publishes its physics state).
+// copy in the viewport (ShowCopy publishes its physics state), and the
+// Viewport's Stress panel: its scenes and its requests to the shown copy.
 //
 //   test_mujoco_environments [--trajectory <file.json>]
 //
@@ -16,7 +17,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -261,6 +264,193 @@ void WriteTrajectories(const std::string& path) {
     file << "\n}\n";
 }
 
+// The Stress panel's scene (env/mj_scene.h): an empty scene is the model file
+// as it is; a scene's objects come after the robot, which keeps its masses.
+void CheckScenes() {
+    for (const auto& spec : MjTasks()) {
+        const std::string path = ModelPath(spec);
+        char load_error[1000] = "";
+        mjModel* file = mj_loadXML(path.c_str(), nullptr, load_error, sizeof(load_error));
+        MjRobotSize robot;
+        std::string error;
+        mjModel* built = CompileMjScene(path, MjScene{}, robot, error);
+        Check(file && built, spec.id + ": the model loads both ways: " + error);
+        if (!file || !built) continue;
+        Check(robot.nq == file->nq && robot.nv == file->nv && robot.nbody == file->nbody,
+              spec.id + ": with no scene the robot is the whole file");
+        Check(built->nq == file->nq && built->nv == file->nv && built->ngeom == file->ngeom &&
+                  built->nbody == file->nbody,
+              spec.id + ": an empty scene adds nothing");
+        mjData* a = mj_makeData(file);
+        mjData* b = mj_makeData(built);
+        MjRandom random(5);
+        bool same = true;
+        for (int s = 0; s < 200; ++s) {
+            for (int u = 0; u < file->nu; ++u) a->ctrl[u] = b->ctrl[u] = random.Uniform(-1.0, 1.0);
+            mj_step(file, a);
+            mj_step(built, b);
+            for (int i = 0; i < file->nq; ++i) same = same && a->qpos[i] == b->qpos[i];
+        }
+        Check(same, spec.id + ": an empty scene steps exactly as the model file, value for value");
+        mj_deleteData(a);
+        mj_deleteData(b);
+        mj_deleteModel(file);
+        mj_deleteModel(built);
+    }
+
+    const MjTaskSpec& spec = *FindMjTask("HalfCheetah-v5");
+    const std::string path = ModelPath(spec);
+    char load_error[1000] = "";
+    mjModel* plain = mj_loadXML(path.c_str(), nullptr, load_error, sizeof(load_error));
+    MjScene scene;
+    scene.ground = MjGround{MjGroundKind::Rough, 0.5, 3};
+    scene.objects = {MjThrownObject{true, 0.2, 2.0}, MjThrownObject{false, 0.3, 5.0}};
+    MjRobotSize robot;
+    std::string error;
+    mjModel* m = CompileMjScene(path, scene, robot, error);
+    Check(plain && m, "HalfCheetah with Rough ground and two objects builds: " + error);
+    if (plain && m) {
+        Check(robot.nq == plain->nq && robot.nv == plain->nv && robot.nbody == plain->nbody,
+              "the robot's slice is the model file's");
+        Check(m->nq == plain->nq + 14 && m->nv == plain->nv + 12 && m->nbody == plain->nbody + 2,
+              "two free objects come after the robot");
+        bool masses = true;
+        for (int body = 1; body < plain->nbody; ++body)
+            masses = masses && std::abs(m->body_mass[body] - plain->body_mass[body]) < 1e-12;
+        Check(masses, "the robot keeps the masses of its file (the file rescales to 14 kg)");
+        Check(std::abs(m->body_mass[plain->nbody] - 2.0) < 1e-12 && std::abs(m->body_mass[plain->nbody + 1] - 5.0) < 1e-12,
+              "each object has the mass asked for");
+        Check(m->nhfield == 1 && mj_name2id(m, mjOBJ_GEOM, "cyx_stress_ground") >= 0, "Rough is one heightfield");
+        Check(m->stat.extent == plain->stat.extent && m->stat.meaninertia == plain->stat.meaninertia &&
+                  m->stat.center[0] == plain->stat.center[0],
+              "the statistics stay the robot's (the view's near plane, the solver's scale)");
+        mj_deleteModel(m);
+    }
+    MjScene stairs;
+    stairs.ground = MjGround{MjGroundKind::Steps, 1.0, 5};
+    mjModel* s = CompileMjScene(path, stairs, robot, error);
+    Check(s && plain && s->ngeom == plain->ngeom + static_cast<int>(GroundBoxes(stairs.ground).size()) && s->nq == plain->nq,
+          "Steps: one box a step, no state added");
+    if (s) mj_deleteModel(s);
+    if (plain) mj_deleteModel(plain);
+}
+
+// A HalfCheetah playback batch of one copy, shown, reset and stepped once
+struct StressedCheetah {
+    std::shared_ptr<MjViewSlot> view = std::make_shared<MjViewSlot>();
+    IEnvironmentBatch* batch = nullptr;
+    std::vector<float> obs = std::vector<float>(17), final_obs = std::vector<float>(17);
+    float reward = 0.0f;
+    uint8_t terminated = 0, truncated = 0;
+
+    explicit StressedCheetah(std::map<std::string, std::string> settings = {}) {
+        std::string error;
+        batch = MjEnvBatch::Create(*FindMjTask("HalfCheetah-v5"), ModelPath(*FindMjTask("HalfCheetah-v5")), settings, 1,
+                                   view, error);
+        Check(batch != nullptr, "a HalfCheetah batch: " + error);
+        if (!batch) return;
+        batch->ShowCopy(0);
+        batch->Reset(11, obs.data());
+        Step();
+    }
+    ~StressedCheetah() {
+        if (batch) batch->Release();
+    }
+    void Ask(const MjStressRequest& request) {
+        std::lock_guard<std::mutex> lock(view->mutex);
+        view->requests.push_back(request);
+    }
+    void Step() {
+        const std::vector<float> still(6, 0.0f);
+        const PluginEnvironmentStepBuffers out{obs.data(), &reward, &terminated, &truncated, final_obs.data()};
+        Check(batch->Step(still.data(), out), "step: " + batch->LastError());
+    }
+    // The shown copy's state in a model built from the view's scene
+    double BodyX(int body_from_robot_end) {
+        MjRobotSize robot;
+        std::string error;
+        mjModel* m = CompileMjScene(view->model_path, view->scene, robot, error);
+        if (!m) return 0.0;
+        mjData* d = mj_makeData(m);
+        double x = 0.0;
+        if (static_cast<size_t>(mj_stateSize(m, mjSTATE_FULLPHYSICS)) == view->state.size()) {
+            mj_setState(m, d, view->state.data(), mjSTATE_FULLPHYSICS);
+            mj_forward(m, d);
+            const int body = body_from_robot_end < 0 ? 1 : robot.nbody + body_from_robot_end;
+            x = d->xpos[3 * body];
+        }
+        mj_deleteData(d);
+        mj_deleteModel(m);
+        return x;
+    }
+};
+
+// The Stress panel's requests reach the copy a playback shows
+void CheckStressRequests() {
+    constexpr int kRootxSpeed = 8;  // HalfCheetah observes qpos[1:] (8 values), then qvel: rootx first
+    {
+        StressedCheetah left, kicked;
+        kicked.Ask(MjStressRequest::MakeKick(MjKick::Forward, 2.0));
+        left.Step();
+        kicked.Step();
+        Check(kicked.obs[kRootxSpeed] - left.obs[kRootxSpeed] > 1.5, "a forward kick of 2 m/s speeds the root up");
+        StressedCheetah up;
+        up.Ask(MjStressRequest::MakeKick(MjKick::Up, 2.0));
+        up.Step();
+        Check(up.obs[kRootxSpeed + 1] - left.obs[kRootxSpeed + 1] > 1.0, "an up kick lifts it");
+    }
+    {
+        StressedCheetah pushed, left;
+        const mjtNum force[6] = {300.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        pushed.Ask(MjStressRequest::MakePush(1, force));
+        for (int i = 0; i < 3; ++i) {
+            pushed.Step();
+            left.Step();
+        }
+        Check(pushed.obs[kRootxSpeed] - left.obs[kRootxSpeed] > 0.5, "a held push keeps pulling the torso");
+        pushed.Ask(MjStressRequest::MakeEndPush());
+        pushed.Step();
+        Check(std::isfinite(pushed.obs[kRootxSpeed]), "letting go");
+    }
+    {
+        StressedCheetah c;
+        c.Ask(MjStressRequest::MakeThrow(MjThrownObject{true, 0.2, 2.0}, MjThrowFrom::Ahead, 6.0));
+        c.Step();
+        Check(c.view->scene.objects.size() == 1, "a throw adds an object slot to the scene the view is told of");
+        const double start_gap = c.BodyX(0) - c.BodyX(-1);
+        Check(start_gap > 2.0 && start_gap < 3.5, "the ball starts about 3 m ahead of the torso");
+        bool obs_finite = true;
+        for (float v : c.obs) obs_finite = obs_finite && std::isfinite(v);
+        Check(obs_finite, "the robot still observes 17 numbers, all finite");
+        double closest = start_gap;
+        for (int i = 0; i < 15; ++i) {
+            c.Step();
+            closest = std::min(closest, std::abs(c.BodyX(0) - c.BodyX(-1)));
+        }
+        Check(closest < 0.8, "the ball reaches the cheetah");
+        c.Ask(MjStressRequest::MakeThrow(MjThrownObject{true, 0.2, 2.0}, MjThrowFrom::Above, 6.0));
+        c.Step();
+        Check(c.view->scene.objects.size() == 2, "a second throw while the first is out takes a new slot");
+    }
+    {
+        StressedCheetah c({{"max_episode_steps", "5"}});
+        const MjGround rough{MjGroundKind::Rough, 0.5, 3};
+        c.Ask(MjStressRequest::MakeGround(rough, false));
+        c.Step();
+        Check(c.view->scene.ground.kind == MjGroundKind::Flat, "a ground for the next episode waits");
+        for (int i = 0; i < 3; ++i) c.Step();
+        Check(c.truncated == 1 && c.view->scene.ground == rough && c.view->episode == 2,
+              "it comes in when the episode ends at its step limit");
+        const MjGround steps{MjGroundKind::Steps, 0.3, 2};
+        c.Ask(MjStressRequest::MakeGround(steps, true));
+        c.Step();
+        Check(c.truncated == 1 && c.terminated == 0 && c.view->scene.ground == steps && c.view->episode == 3 &&
+                  !c.view->last_ended_by_task,
+              "a ground now: the episode is cut (truncated) and the next starts on it");
+        Check(c.view->step == 0, "the new episode starts at step 0");
+    }
+}
+
 }  // namespace
 
 // ShowCopy: the shown copy's physics state reaches the view slot after Reset
@@ -356,6 +546,8 @@ int main(int argc, char** argv) {
     CheckDeterminism();
     CheckShowCopy();
     CheckLiveNumbers();
+    CheckScenes();
+    CheckStressRequests();
     ReportSpeed();
     if (!trajectory.empty()) WriteTrajectories(trajectory);
     if (failures == 0) std::printf("test_mujoco_environments: all checks passed\n");

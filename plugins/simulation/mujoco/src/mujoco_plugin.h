@@ -157,6 +157,14 @@ private:
     std::string restore_path_;
     std::string restore_title_;
     std::string restore_subtitle_;
+
+    // The Viewport's Stress panel (TOFIX212 P4): its requests go to the played
+    // copy (the view slot), or act on the Viewport's own run here
+    void ForwardStressRequests();
+    // The played copy's scene in the Viewport's model (the same build as the batch's)
+    void MirrorPlaybackScene(const MjScene& scene);
+    MjStressRun local_stress_;
+    int local_episodes_seen_ = 0;
 };
 
 } // namespace cyxwiz::plugin::mujoco

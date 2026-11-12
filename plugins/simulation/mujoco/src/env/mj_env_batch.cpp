@@ -36,9 +36,11 @@ MjEnvBatch* MjEnvBatch::Create(const MjTaskSpec& spec, const std::string& model_
     if (!ReadMjTaskValues(spec, settings, values, error)) return nullptr;
 
     std::unique_ptr<MjEnvBatch> batch(new MjEnvBatch());
-    batch->model_ = LoadModel(model_path, error);
+    // Through the stress scene's builder: with no scene it is the model file as it is
+    batch->model_ = CompileMjScene(model_path, MjScene{}, batch->stress_.robot, error);
     if (!batch->model_) return nullptr;
     batch->task_ = spec.create(values);
+    batch->task_->SetRobot(batch->stress_.robot.nq, batch->stress_.robot.nv);
     batch->count_ = count;
     batch->view_ = std::move(view);
     batch->model_path_ = model_path;
@@ -91,6 +93,10 @@ bool MjEnvBatch::ShowCopy(int copy) {
     view_->episode_return = 0.0;
     view_->has_last_return = false;
     view_->action.clear();
+    view_->last_ended_by_task = false;
+    view_->requests.clear();
+    view_->scene = stress_.scene;
+    view_->stress_message.clear();
     ++view_->version;
     shown_copy_ = copy;
     return true;
@@ -114,6 +120,7 @@ void MjEnvBatch::Publish(const SteppedCopy* step) {
         view_->action.assign(step->action, step->action + action_size_);
         view_->episode_return += step->reward;
         if (step->episode_ended) {  // the copy started its next episode in Step
+            view_->last_ended_by_task = step->terminated;
             view_->last_return = view_->episode_return;
             view_->has_last_return = true;
             view_->episode_return = 0.0;
@@ -122,7 +129,52 @@ void MjEnvBatch::Publish(const SteppedCopy* step) {
     }
     view_->step = steps_[shown_copy_];
     view_->max_steps = max_episode_steps_;
+    view_->scene = stress_.scene;
+    if (!stress_.message.empty()) {
+        view_->stress_message = std::move(stress_.message);
+        stress_.message.clear();
+    }
     ++view_->version;
+}
+
+MjStressHost MjEnvBatch::StressHost() {
+    return {[this] { return static_cast<const mjModel*>(model_); }, [this] { return data_[shown_copy_]; },
+            [this](const MjScene& scene, std::string& error) { return Rebuild(scene, error); }};
+}
+
+void MjEnvBatch::ApplyStress() {
+    if (shown_copy_ < 0) return;
+    std::vector<MjStressRequest> requests;
+    {
+        std::lock_guard<std::mutex> lock(view_->mutex);
+        if (view_->owner != this) return;
+        requests.swap(view_->requests);
+    }
+    if (!requests.empty()) ApplyStressRequests(requests, stress_, StressHost());
+    ApplyHeldPush(stress_, model_, data_[shown_copy_]);
+}
+
+bool MjEnvBatch::Rebuild(const MjScene& scene, std::string& error) {
+    MjRobotSize robot;
+    mjModel* model = CompileMjScene(model_path_, scene, robot, error);
+    if (!model) return false;
+    std::vector<mjData*> data;
+    for (int i = 0; i < count_; ++i) {
+        mjData* d = mj_makeData(model);
+        if (!d) {
+            for (mjData* made : data) mj_deleteData(made);
+            mj_deleteModel(model);
+            error = "MuJoCo could not make the state of copy " + std::to_string(i) + " (out of memory?).";
+            return false;
+        }
+        CopySceneState(model_, data_[i], model, d, stress_.robot);
+        data.push_back(d);
+    }
+    for (mjData* d : data_) mj_deleteData(d);
+    mj_deleteModel(model_);
+    model_ = model;
+    data_ = std::move(data);
+    return true;
 }
 
 void MjEnvBatch::StartCopy(int copy, float* observation) {
@@ -134,6 +186,7 @@ void MjEnvBatch::StartCopy(int copy, float* observation) {
 }
 
 bool MjEnvBatch::Reset(uint64_t seed, float* observations) {
+    if (shown_copy_ >= 0) StartNextGround(stress_, StressHost());
     for (int i = 0; i < count_; ++i) random_[i] = MjRandom(MjRandom::CopySeed(seed, i));
     const auto start = [this, observations](int i) {
         StartCopy(i, observations + static_cast<size_t>(i) * observation_size_);
@@ -158,6 +211,7 @@ bool MjEnvBatch::Step(const float* actions, const PluginEnvironmentStepBuffers& 
             return false;
         }
     }
+    ApplyStress();
     const auto step = [this, actions, &out](int i) {
         mjData* d = data_[i];
         const float* action = actions + static_cast<size_t>(i) * action_size_;
@@ -181,8 +235,21 @@ bool MjEnvBatch::Step(const float* actions, const PluginEnvironmentStepBuffers& 
     error_.clear();
     if (shown_copy_ >= 0) {
         const int c = shown_copy_;
-        const SteppedCopy stepped{actions + static_cast<size_t>(c) * action_size_, out.rewards[c],
-                                  out.terminated[c] != 0 || out.truncated[c] != 0};
+        bool ended = out.terminated[c] != 0 || out.truncated[c] != 0;
+        if (stress_.cut_episode) {  // the user asked for a new episode on another ground: cut this one
+            stress_.cut_episode = false;
+            if (!ended) {
+                float* observation = out.observations + static_cast<size_t>(c) * observation_size_;
+                std::copy(observation, observation + observation_size_,
+                          out.final_observations + static_cast<size_t>(c) * observation_size_);
+                out.truncated[c] = 1;
+                StartCopy(c, observation);
+                ended = true;
+            }
+        }
+        if (ended) StartNextGround(stress_, StressHost());
+        const SteppedCopy stepped{actions + static_cast<size_t>(c) * action_size_, out.rewards[c], ended,
+                                  out.terminated[c] != 0};
         Publish(&stepped);
     }
     return true;

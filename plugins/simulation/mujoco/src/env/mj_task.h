@@ -57,6 +57,21 @@ public:
     // ctrl is set; advance frame_skip model steps and score the step.
     virtual MjTaskStep Step(const mjModel* m, mjData* d, const float* action) const = 0;
     virtual int FrameSkip() const = 0;
+
+    // The robot's slice of the state: the model file's nq and nv. A stress
+    // scene's thrown objects come after it (env/mj_scene.h); unset: all of it.
+    void SetRobot(int nq, int nv) {
+        nq_ = nq;
+        nv_ = nv;
+    }
+
+protected:
+    int Nq(const mjModel* m) const { return nq_ >= 0 ? nq_ : static_cast<int>(m->nq); }
+    int Nv(const mjModel* m) const { return nv_ >= 0 ? nv_ : static_cast<int>(m->nv); }
+
+private:
+    int nq_ = -1;
+    int nv_ = -1;
 };
 
 // A setting of a task: a number, at least `min`, whole when `integer`.
