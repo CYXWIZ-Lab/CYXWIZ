@@ -28,6 +28,8 @@
 #include "env/mj_view_slot.h"
 #include "rl/observation_filter.h"
 
+#include <optional>
+
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -168,6 +170,8 @@ private:
     void ForwardStressRequests();
     // The played copy's scene in the Viewport's model (the same build as the batch's)
     void MirrorPlaybackScene(const MjScene& scene);
+    bool SceneFailed(const MjScene& scene) const;  // the played scene did not build here
+    std::optional<MjScene> failed_scene_;
     MjStressRun local_stress_;
     // The tasks' listed descriptions (GetEnvironments), for DescribeEnvironment
     std::mutex described_mutex_;

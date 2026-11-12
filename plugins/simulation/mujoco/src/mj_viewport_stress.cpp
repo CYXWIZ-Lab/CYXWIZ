@@ -50,8 +50,8 @@ MjViewportPanel::StressClock MjViewportPanel::ShownClock(MjEnvManager& env) cons
     {
         std::lock_guard phys_lock(env.GetPhysicsMutex());
         if (const mjData* d = env.GetData()) clock.time = d->time;
+        clock.episode = playback_ ? numbers_.episode : env.GetEpisodeCount() + 1;
     }
-    clock.episode = playback_ ? numbers_.episode : env.GetEpisodeCount() + 1;
     return clock;
 }
 
@@ -69,6 +69,8 @@ void MjViewportPanel::WatchStress(MjEnvManager& env) {
     if (!env.IsLoaded()) return;
     bool flipped = false;
     double time = 0.0;
+    int episode = 0;
+    bool ended_by_task = false;
     {
         std::lock_guard phys_lock(env.GetPhysicsMutex());
         const mjModel* m = env.GetModel();
@@ -76,9 +78,9 @@ void MjViewportPanel::WatchStress(MjEnvManager& env) {
         if (!m || !d) return;
         flipped = RobotFlipped(m, d, env.Robot());
         time = d->time;
+        episode = playback_ ? numbers_.episode : env.GetEpisodeCount() + 1;
+        ended_by_task = playback_ ? numbers_.last_ended_by_task : env.LastEpisodeTerminated();
     }
-    const int episode = playback_ ? numbers_.episode : env.GetEpisodeCount() + 1;
-    const bool ended_by_task = playback_ ? numbers_.last_ended_by_task : env.LastEpisodeTerminated();
     stress_log_.Observe(time, episode, flipped, ended_by_task);
 
     // A new ground came in with an episode: say so in the events

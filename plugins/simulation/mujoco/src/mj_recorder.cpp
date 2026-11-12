@@ -90,6 +90,7 @@ bool MjRecorder::Start(const std::filesystem::path& target, Format format, std::
         target_ = target;
         queue_.clear();
         stop_asked_ = false;
+        worker_finished_ = false;
         dropped_ = 0;
         first_time_ = 0.0;
         last_time_ = -1.0;
@@ -127,9 +128,9 @@ void MjRecorder::AddFrame(const std::vector<unsigned char>& rgb_bottom_up, int w
 
 void MjRecorder::Stop() {
     if (!recording_.exchange(false)) return;
-    finishing_ = true;
     {
         std::lock_guard lock(mutex_);
+        if (!worker_finished_) finishing_ = true;  // the worker may have finished on a write error
         stop_asked_ = true;
     }
     wake_.notify_one();
@@ -158,9 +159,10 @@ void MjRecorder::Finish(bool ok, std::string error) {
         result_.error = std::move(error);
         result_ready_ = true;
         queue_.clear();
+        worker_finished_ = true;
+        finishing_ = false;
     }
     recording_ = false;
-    finishing_ = false;
 }
 
 void MjRecorder::Run() {

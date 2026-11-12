@@ -303,7 +303,15 @@ bool MjSceneBuilder::Load(const std::string& model_path, std::string& error) {
     mj_forward(plain, d);
     if (root >= 0) for (int i = 0; i < 3; ++i) start_[i] = d->xpos[3 * root + i];
     mj_deleteData(d);
-    floor_z_ = FindFloor(plain).z;
+    return true;
+}
+
+bool RefreshConstants(mjModel* m, const mjStatistic& stat) {
+    mjData* d = mj_makeData(m);
+    if (!d) return false;
+    mj_setConst(m, d);
+    mj_deleteData(d);
+    m->stat = stat;
     return true;
 }
 
@@ -401,8 +409,7 @@ mjModel* MjSceneBuilder::Build(const MjScene& scene, std::string& error) const {
     // The model's statistics stay the robot's: MuJoCo sizes the view from them
     // (300 m of ground would push the camera's near plane past the robot) and
     // scales the solver by the mean inertia
-    const auto keep_statistics = [&] { m->stat = plain->stat; };
-    keep_statistics();
+    m->stat = plain->stat;
     if (object_count > 0) {
         // A model may rescale its masses to a total (settotalmass): the robot keeps
         // the masses of its own file, each object the mass asked for
@@ -422,24 +429,13 @@ mjModel* MjSceneBuilder::Build(const MjScene& scene, std::string& error) const {
             m->body_iquat[4 * b] = 1.0;
             for (int k = 1; k < 4; ++k) m->body_iquat[4 * b + k] = 0.0;
         }
-        mjData* d = mj_makeData(m);
-        if (!d) {
+        if (!RefreshConstants(m, plain->stat)) {
             mj_deleteModel(m);
             error = "MuJoCo could not make a state for the stress scene (out of memory?).";
             return nullptr;
         }
-        mj_setConst(m, d);
-        mj_deleteData(d);
-        keep_statistics();
     }
     return m;
-}
-
-mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjRobotSize& robot, std::string& error) {
-    MjSceneBuilder builder;
-    if (!builder.Load(model_path, error)) return nullptr;
-    robot = builder.Robot();
-    return builder.Build(scene, error);
 }
 
 double MjGroundProfile::At(double x) const {

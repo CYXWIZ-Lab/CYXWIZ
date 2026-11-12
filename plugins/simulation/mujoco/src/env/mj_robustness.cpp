@@ -193,8 +193,16 @@ void ApplyFactors(const MjEpisodeDraw& draw, const MjRobotSize& robot, mjModel* 
             for (int i = 0; i < 3; ++i) m->body_inertia[3 * b + i] *= draw.mass;
         }
     }
-    if (draw.motor != 1.0)
-        for (int a = 0; a < m->nu; ++a) m->actuator_gear[6 * a] *= draw.motor;  // 6 gear values an actuator; the first scales it
+    if (draw.motor != 1.0) {
+        // The force is gain * control + bias: both scale (a muscle's own model is left as it is)
+        for (int a = 0; a < m->nu; ++a) {
+            const int gain = m->actuator_gaintype[a];
+            if (gain != mjGAIN_FIXED && gain != mjGAIN_AFFINE) continue;
+            for (int k = 0; k < 3; ++k) m->actuator_gainprm[mjNGAIN * a + k] *= draw.motor;
+            if (m->actuator_biastype[a] == mjBIAS_AFFINE)
+                for (int k = 0; k < 3; ++k) m->actuator_biasprm[mjNBIAS * a + k] *= draw.motor;
+        }
+    }
 }
 
 void MjCurriculum::Start(const MjRobustness& r, int copies) {

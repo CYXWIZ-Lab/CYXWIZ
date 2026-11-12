@@ -39,6 +39,14 @@ using namespace cyxwiz::plugin::mujoco;
 
 std::string ModelPath(const MjTaskSpec& spec) { return std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/" + spec.model_file; }
 
+// The model file with the scene added, and its own sizes (null with the reason)
+mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjRobotSize& robot, std::string& error) {
+    MjSceneBuilder builder;
+    if (!builder.Load(model_path, error)) return nullptr;
+    robot = builder.Robot();
+    return builder.Build(scene, error);
+}
+
 struct Rollout {
     std::vector<float> obs, rewards, final_obs;
     std::vector<uint8_t> terminated, truncated;
@@ -579,7 +587,7 @@ void CheckRobustBatches() {
         if (plain)
             Check(plain->ModelOf(0) == plain->ModelOf(1) && plain->ModelOf(1) == plain->ModelOf(2) &&
                       plain->Stats().empty(),
-                  "without robustness all copies share one model and report nothing");
+                  "without robustness all copies share one model, and no Difficulty or Falls before an episode ends");
     }
     const std::map<std::string, std::string> grounds{{"grounds", "rough,steps"}, {"difficulty_from", "0.3"},
                                                      {"difficulty_to", "0.7"}, {"max_episode_steps", "5"}};
@@ -622,9 +630,11 @@ void CheckRobustBatches() {
         f->Reset(4, fobs.data());
         bool in_range = true, varied = false;
         for (int i = 0; i < 3; ++i) {
-            const double gear = f->ModelOf(i)->actuator_gear[0] / 120.0;  // bthigh's gear is 120 in the file
-            in_range = in_range && gear >= 0.8 - 1e-9 && gear <= 1.2 + 1e-9;
-            varied = varied || std::abs(gear - 1.0) > 1e-6;
+            // bthigh: gear 120 and gain 1 in the file; the gear stays, the gain scales
+            const mjModel* fm = f->ModelOf(i);
+            const double gain = fm->actuator_gainprm[0];
+            in_range = in_range && gain >= 0.8 - 1e-9 && gain <= 1.2 + 1e-9 && fm->actuator_gear[0] == 120.0;
+            varied = varied || std::abs(gain - 1.0) > 1e-6;
         }
         Check(in_range && varied, "motor strength varies within +/- 20 %");
     }

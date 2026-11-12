@@ -12,9 +12,8 @@ MjEnvManager::~MjEnvManager() {
 MjEnvManager::MjEnvManager(MjEnvManager&& other) noexcept
     : model_(other.model_),
       data_(other.data_),
-      model_path_(std::move(other.model_path_)),
+      builder_(std::move(other.builder_)),
       scene_(std::move(other.scene_)),
-      robot_(other.robot_),
       last_terminated_(other.last_terminated_),
       max_episode_steps_(other.max_episode_steps_),
       frame_skip_(other.frame_skip_),
@@ -38,9 +37,8 @@ MjEnvManager& MjEnvManager::operator=(MjEnvManager&& other) noexcept {
         Close();
         model_ = other.model_;
         data_ = other.data_;
-        model_path_ = std::move(other.model_path_);
+        builder_ = std::move(other.builder_);
         scene_ = std::move(other.scene_);
-        robot_ = other.robot_;
         last_terminated_ = other.last_terminated_;
         max_episode_steps_ = other.max_episode_steps_;
         frame_skip_ = other.frame_skip_;
@@ -72,12 +70,12 @@ bool MjEnvManager::LoadModel(const std::string& path, const MjScene& wanted) {
     Close();
 
     std::string error;
-    model_ = CompileMjScene(mjcf_path, scene, robot_, error);
+    if (builder_.Load(mjcf_path, error)) model_ = builder_.Build(scene, error);
     if (!model_) {
         spdlog::error("[MuJoCo] Failed to load model '{}': {}", mjcf_path, error);
+        builder_ = {};
         return false;
     }
-    model_path_ = mjcf_path;
     scene_ = scene;
 
     data_ = mj_makeData(model_);
@@ -98,8 +96,7 @@ bool MjEnvManager::ChangeScene(const MjScene& scene, std::string& error) {
         error = "No model is open.";
         return false;
     }
-    MjRobotSize robot;
-    mjModel* model = CompileMjScene(model_path_, scene, robot, error);
+    mjModel* model = builder_.Build(scene, error);
     if (!model) return false;
     mjData* data = mj_makeData(model);
     if (!data) {
@@ -107,7 +104,7 @@ bool MjEnvManager::ChangeScene(const MjScene& scene, std::string& error) {
         error = "MuJoCo could not make the model's state (out of memory?).";
         return false;
     }
-    CopySceneState(model_, data_, model, data, robot_);
+    CopySceneState(model_, data_, model, data, builder_.Robot());
     mj_deleteData(data_);
     mj_deleteModel(model_);
     model_ = model;
@@ -137,7 +134,7 @@ void MjEnvManager::Close() {
     episode_reward_ = 0.0f;
     last_terminated_ = false;
     scene_ = MjScene{};
-    model_path_.clear();
+    builder_ = {};
 }
 
 // =============================================================================
@@ -237,7 +234,7 @@ std::vector<float> MjEnvManager::GetObservation() const {
 int MjEnvManager::GetObservationDim() const {
     if (!model_) return 0;
     // Default observation: the robot's qpos + qvel (not a stress scene's objects) + sensor data
-    return static_cast<int>(robot_.nq + robot_.nv + model_->nsensordata);
+    return static_cast<int>(builder_.Robot().nq + builder_.Robot().nv + model_->nsensordata);
 }
 
 int MjEnvManager::GetActionDim() const {
@@ -289,15 +286,15 @@ std::vector<float> MjEnvManager::ComputeDefaultObservation() const {
     if (!model_ || !data_) return {};
 
     std::vector<float> obs;
-    obs.reserve(robot_.nq + robot_.nv + model_->nsensordata);
+    obs.reserve(builder_.Robot().nq + builder_.Robot().nv + model_->nsensordata);
 
     // Joint positions (the robot's: a stress scene's objects come after them)
-    for (int i = 0; i < robot_.nq; ++i) {
+    for (int i = 0; i < builder_.Robot().nq; ++i) {
         obs.push_back(static_cast<float>(data_->qpos[i]));
     }
 
     // Joint velocities
-    for (int i = 0; i < robot_.nv; ++i) {
+    for (int i = 0; i < builder_.Robot().nv; ++i) {
         obs.push_back(static_cast<float>(data_->qvel[i]));
     }
 

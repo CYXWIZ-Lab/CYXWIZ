@@ -45,7 +45,6 @@ public:
     bool IsFinishing() const { return finishing_.load(); }
     int Frames() const { return frames_.load(); }       // taken so far
     double Seconds() const;                              // simulated time recorded
-    Format GetFormat() const { return format_; }
 
     struct Result {
         bool ok = false;
@@ -79,6 +78,7 @@ private:
     std::condition_variable wake_;
     std::deque<Frame> queue_;
     bool stop_asked_ = false;
+    bool worker_finished_ = false;  // Finish ran (guarded by mutex_)
     std::atomic<bool> recording_{false};
     std::atomic<bool> finishing_{false};
     std::atomic<int> frames_{0};

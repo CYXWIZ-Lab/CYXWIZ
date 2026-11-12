@@ -108,20 +108,18 @@ public:
     bool Loaded() const { return plain_ != nullptr; }
     const MjRobotSize& Robot() const { return robot_; }
     double StartX() const { return start_[0]; }  // the robot's root at rest: the ground starts kGroundStart ahead
-    double FloorZ() const { return floor_z_; }
 
 private:
     std::shared_ptr<mjSpec> spec_;
     std::shared_ptr<mjModel> plain_;
     MjRobotSize robot_;
     double start_[3] = {0.0, 0.0, 0.0};
-    double floor_z_ = 0.0;
 };
 
-// The model file with the scene added; null with the reason when it does not
-// load. robot: the model file's own sizes. An empty scene gives the same model
-// as mj_loadXML.
-mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjRobotSize& robot, std::string& error);
+// After masses or inertias changed: the constants derived from them again,
+// the statistics kept as `stat` (MuJoCo sizes the view and scales the solver
+// from them). False when MuJoCo could not make a state (out of memory).
+bool RefreshConstants(mjModel* m, const mjStatistic& stat);
 
 // The ground's heights along the run, for the heightfield kinds (Rough,
 // Slopes): one sample every `spacing` m from the ground's start; empty for the

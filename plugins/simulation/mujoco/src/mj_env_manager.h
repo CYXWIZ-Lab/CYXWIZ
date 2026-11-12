@@ -53,8 +53,7 @@ public:
     // caller holds the physics lock. False with the reason: the model is kept.
     bool ChangeScene(const MjScene& scene, std::string& error);
     const MjScene& Scene() const { return scene_; }
-    const MjRobotSize& Robot() const { return robot_; }
-    const std::string& ModelPath() const { return model_path_; }
+    const MjRobotSize& Robot() const { return builder_.Robot(); }
     bool LoadModelFromString(const std::string& xml);
     void Close();
     bool IsLoaded() const { return model_ != nullptr; }
@@ -101,9 +100,8 @@ private:
     mjData* data_ = nullptr;
     mutable std::mutex physics_mutex_;
 
-    std::string model_path_;
+    MjSceneBuilder builder_;  // the model file, parsed once; each scene builds on it
     MjScene scene_;
-    MjRobotSize robot_;
     bool last_terminated_ = false;
 
     int max_episode_steps_ = 1000;

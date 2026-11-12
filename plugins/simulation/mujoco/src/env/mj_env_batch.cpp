@@ -130,7 +130,6 @@ bool MjEnvBatch::ShowCopy(int copy) {
 
 std::vector<PluginEnvironmentStat> MjEnvBatch::Stats() const {
     std::vector<PluginEnvironmentStat> stats;
-    if (!robust_.Any()) return stats;
     char value[32], note[96];
     if (!robust_.grounds.empty()) {
         std::snprintf(value, sizeof(value), "%.2f", curriculum_.Level());
@@ -219,15 +218,10 @@ bool MjEnvBatch::BuildCopy(int copy, const MjScene& scene, std::string& error) {
         if (!model) return false;
         if (!SameDraw(draw, MjEpisodeDraw{})) {
             ApplyFactors(draw, builder_.Robot(), model.get());
-            if (draw.mass != 1.0) {  // the derived masses and inertias follow
-                mjData* scratch = mj_makeData(model.get());
-                if (!scratch) {
-                    error = "MuJoCo could not make a state for copy " + std::to_string(copy) + " (out of memory?).";
-                    return false;
-                }
-                mj_setConst(model.get(), scratch);
-                mj_deleteData(scratch);
-                model->stat = base_->stat;  // the view and the solver's scale stay the robot's
+            // The derived masses and inertias follow; the view and the solver's scale stay the robot's
+            if (draw.mass != 1.0 && !RefreshConstants(model.get(), base_->stat)) {
+                error = "MuJoCo could not make a state for copy " + std::to_string(copy) + " (out of memory?).";
+                return false;
             }
         }
     }
@@ -253,21 +247,24 @@ bool MjEnvBatch::NewEpisode(int copy) {
     const bool stress_ground = copy == shown_copy_ && stress_.next_ground.has_value();
     if (!robust_.PerCopyModels() && !stress_ground) return false;
     MjScene scene = scenes_[c];
+    const MjEpisodeDraw before = draws_[c];
     if (robust_.PerCopyModels()) {
         draws_[c] = DrawEpisode(robust_, curriculum_.Level(), random_[c]);
         if (!robust_.grounds.empty()) scene.ground = draws_[c].ground;
     }
-    if (stress_ground) {  // the Stress panel's ground wins for the shown copy
-        scene.ground = *stress_.next_ground;
-        stress_.next_ground.reset();
-    }
     std::string error;
-    if (!BuildCopy(copy, scene, error)) {
-        if (copy == shown_copy_) stress_.message = error;
-        error_ = error;
-        return false;
+    if (stress_ground) {  // the Stress panel's ground wins for the shown copy
+        MjScene stressed = scene;
+        stressed.ground = *stress_.next_ground;
+        stress_.next_ground.reset();
+        if (BuildCopy(copy, stressed, error)) return true;
+        stress_.message = error;  // the panel says why; the episode goes on without that ground
+        if (!robust_.PerCopyModels()) return false;
     }
-    return true;
+    if (BuildCopy(copy, scene, error)) return true;
+    draws_[c] = before;  // the copy keeps the model and the factors it has
+    error_ = error;
+    return false;
 }
 
 void MjEnvBatch::StartCopy(int copy, float* observation) {
@@ -389,6 +386,7 @@ bool MjEnvBatch::Step(const float* actions, const PluginEnvironmentStepBuffers& 
         fell_[c] = 0;
         if (i == shown_copy_) EndTimedPush(stress_);  // the new episode starts without it
         if (NewEpisode(i)) ObserveCopy(i, out.observations + c * observation_size_);
+        else if (!error_.empty()) return false;
     }
     if (shown_copy_ >= 0) {
         const size_t c = static_cast<size_t>(shown_copy_);
