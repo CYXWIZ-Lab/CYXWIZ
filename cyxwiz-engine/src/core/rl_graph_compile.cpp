@@ -17,9 +17,10 @@ namespace {
 std::mutex g_lookup_mutex;
 RLEnvironmentLookup g_lookup;
 
-bool LookupEnvironment(const std::string& key, plugin::PluginEnvironmentInfo& info) {
+bool LookupEnvironment(const std::string& key, const std::map<std::string, std::string>& settings,
+                       plugin::PluginEnvironmentInfo& info, std::string& error) {
     std::lock_guard<std::mutex> lock(g_lookup_mutex);
-    return g_lookup && g_lookup(key, info);
+    return g_lookup && g_lookup(key, settings, info, error);
 }
 
 std::string Param(const gui::MLNode& node, const char* key, const char* fallback) {
@@ -199,7 +200,13 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
         }
         if (rl->copies < 1 || rl->copies > 1024)
             error("Copies must be a whole number from 1 to 1024", env, errors::Compiler::InvalidParameter);
-        if (!LookupEnvironment(rl->environment_key, rl->environment)) {
+        std::string settings_error;
+        const bool found =
+            LookupEnvironment(rl->environment_key, rl->environment_settings, rl->environment, settings_error);
+        if (!found && !settings_error.empty()) {  // known, but its settings are not valid
+            error(settings_error, env, errors::Compiler::InvalidParameter);
+            env = nullptr;
+        } else if (!found) {
             const size_t colon = rl->environment_key.find(':');
             const std::string id = colon == std::string::npos ? rl->environment_key : rl->environment_key.substr(colon + 1);
             const std::string provider = colon == std::string::npos ? "" : rl->environment_key.substr(0, colon);

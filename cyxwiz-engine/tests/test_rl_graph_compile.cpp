@@ -293,7 +293,8 @@ void CheckReference() {
 }  // namespace
 
 int main() {
-    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>&,
+                                      cyxwiz::plugin::PluginEnvironmentInfo& info, std::string&) {
         if (key != "cyxwiz.builtin:CartPole-v1") return false;
         info = CartPole();
         return true;

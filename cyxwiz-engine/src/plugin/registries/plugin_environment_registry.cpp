@@ -27,8 +27,19 @@ PluginEnvironmentInfo CopyInfo(const PluginEnvironmentInfo& in) {
     out.step_seconds = in.step_seconds;
     out.view_panel_id = std::string(in.view_panel_id.c_str());
     for (const auto& setting : in.settings) {
-        out.settings.push_back({std::string(setting.key.c_str()), std::string(setting.label.c_str()),
-                                std::string(setting.default_value.c_str()), std::string(setting.description.c_str())});
+        PluginEnvironmentSetting copy;
+        copy.key = std::string(setting.key.c_str());
+        copy.label = std::string(setting.label.c_str());
+        copy.default_value = std::string(setting.default_value.c_str());
+        copy.description = std::string(setting.description.c_str());
+        copy.kind = setting.kind;
+        for (const auto& option : setting.options)
+            copy.options.push_back({std::string(option.value.c_str()), std::string(option.label.c_str())});
+        copy.section = std::string(setting.section.c_str());
+        copy.min = setting.min;
+        copy.max = setting.max;
+        copy.unit = std::string(setting.unit.c_str());
+        out.settings.push_back(std::move(copy));
     }
     return out;
 }
@@ -95,6 +106,17 @@ bool EnvironmentBatch::ShowCopy(int copy, std::string& error) {
     return shown;
 }
 
+std::vector<PluginEnvironmentStat> EnvironmentBatch::Stats() const {
+    std::vector<PluginEnvironmentStat> stats;
+    auto* batch = batch_;
+    const auto result = security::SafeExecute(plugin_id_, "EnvironmentStats", [&stats, batch]() {
+        for (const auto& s : batch->Stats())
+            stats.push_back({std::string(s.label.c_str()), std::string(s.value.c_str()), std::string(s.note.c_str())});
+    });
+    if (!result.success) return {};
+    return stats;
+}
+
 PluginEnvironmentRegistry::PluginEnvironmentRegistry() {
     auto& builtin = ClassicControlEnvironments();
     for (const auto& info : builtin.GetEnvironments()) Register(kBuiltinEnvironmentProviderId, info, &builtin, nullptr);
@@ -151,6 +173,44 @@ bool PluginEnvironmentRegistry::Find(const std::string& key, Environment& out) c
     return true;
 }
 
+bool PluginEnvironmentRegistry::Describe(const std::string& key, const std::map<std::string, std::string>& settings,
+                                         Environment& out, std::string& error) const {
+    IEnvironmentProvider* provider = nullptr;
+    {
+        std::lock_guard lock(mutex_);
+        const auto it = environments_.find(key);
+        if (it == environments_.end()) {
+            error = "The environment " + key + " is not available: its plugin is not loaded, or it no longer offers it.";
+            return false;
+        }
+        out = it->second.environment;
+        provider = it->second.provider;
+    }
+    PluginEnvironmentInfo described;
+    std::string reason;
+    bool ok = false;
+    const std::string id = out.info.id;
+    const auto result = security::SafeExecute(out.plugin_id, "DescribeEnvironment", [&]() {
+        ok = provider->DescribeEnvironment(id, settings, described, reason);
+    });
+    if (!result.success) {
+        error = "The plugin " + out.plugin_id + " failed to describe " + out.info.name + ": " + result.error_message;
+        return false;
+    }
+    if (!ok) {
+        error = std::string(reason.c_str());
+        return false;
+    }
+    described = CopyInfo(described);
+    if (const std::string problem = InfoProblem(described); !problem.empty() || described.id != id) {
+        error = "The plugin " + out.plugin_id + " described " + out.info.name + " wrongly: " +
+                (problem.empty() ? std::string("another id") : problem);
+        return false;
+    }
+    out.info = std::move(described);
+    return true;
+}
+
 size_t PluginEnvironmentRegistry::GetCount() const {
     std::lock_guard lock(mutex_);
     return environments_.size();
@@ -164,6 +224,9 @@ std::unique_ptr<EnvironmentBatch> PluginEnvironmentRegistry::Create(const std::s
         return nullptr;
     }
     std::unique_ptr<EnvironmentBatch> batch(new EnvironmentBatch());
+    // What these settings make of it: the batch is checked against this
+    Environment described;
+    if (!Describe(key, settings, described, error)) return nullptr;
     IEnvironmentProvider* provider = nullptr;
     {
         std::lock_guard lock(mutex_);
@@ -174,7 +237,7 @@ std::unique_ptr<EnvironmentBatch> PluginEnvironmentRegistry::Create(const std::s
         }
         batch->key_ = key;
         batch->plugin_id_ = it->second.environment.plugin_id;
-        batch->info_ = it->second.environment.info;
+        batch->info_ = described.info;
         batch->library_lease_ = it->second.library_lease;
         provider = it->second.provider;
     }

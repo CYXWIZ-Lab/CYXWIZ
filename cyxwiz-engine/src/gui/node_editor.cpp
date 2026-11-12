@@ -216,9 +216,13 @@ NodeEditor::NodeEditor()
 
     // An RL graph's Environment names an environment of the plugin
     // environment registry: the compiler finds it there (TOFIX195 S4.3)
-    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>& settings,
+                                      cyxwiz::plugin::PluginEnvironmentInfo& info, std::string& error) {
+        auto& registry = cyxwiz::plugin::PluginEnvironmentRegistry::Instance();
         cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment;
-        if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(key, environment)) return false;
+        if (!registry.Find(key, environment)) return false;
+        // As the node's settings make it (an extra observation switched on)
+        if (!registry.Describe(key, settings, environment, error)) return false;
         info = environment.info;
         return true;
     });

@@ -28,7 +28,7 @@ SDK installs, with the types it declares, is listed in
 | `plugin/interfaces/i_command_provider.h` | `ICommandProvider`, `PluginCommandInfo`, `PluginCommandState` (menu commands, API 1.4) |
 | `plugin/interfaces/i_preferences_provider.h` | `IPreferencesProvider`, `PluginPreferencesSection` (settings in Preferences, API 1.4) |
 | `plugin/interfaces/i_simulation_provider.h` | `ISimulationProvider`, `PluginSimulationNodeInfo`, `PluginSimulationGraphNode`, `PluginSimulationBeginResult` (graph simulation runs, API 1.4) |
-| `plugin/interfaces/i_environment_provider.h` | `IEnvironmentProvider`, `IEnvironmentBatch`, `PluginEnvironmentInfo`, `PluginEnvironmentSetting`, `PluginEnvironmentStepBuffers`, `PluginEnvironmentCreateResult` (environments for reinforcement learning, API 1.4) |
+| `plugin/interfaces/i_environment_provider.h` | `IEnvironmentProvider`, `IEnvironmentBatch`, `PluginEnvironmentInfo`, `PluginEnvironmentSetting`, `PluginSettingKind`, `PluginSettingOption`, `PluginEnvironmentStat`, `PluginEnvironmentStepBuffers`, `PluginEnvironmentCreateResult` (environments for reinforcement learning, API 1.4) |
 | `plugin/interfaces/i_training_hook.h` | `ITrainingHook`, `TrainingContext` |
 | `plugin/interfaces/arrow_c_stream.h` | `ArrowSchema`, `ArrowArray`, `ArrowArrayStream` (the Arrow C data and C stream interfaces) |
 | `plugin/interfaces/i_data_provider.h` | `IDataProvider`, `PluginDataLoaderInfo` |
@@ -465,8 +465,19 @@ The MuJoCo plugin offers its tasks this way. Needs `Training`.
 
 | Member | Contract |
 |---|---|
-| `std::vector<PluginEnvironmentInfo> GetEnvironments()` | Asked once when the plugin starts. Each: `id` (unique in your plugin), `name`, `description`, `category`, `observation_size`, the action space (continuous: `action_size` with `action_low` / `action_high` per value; discrete: `discrete_actions`, `action_size` 1 and `action_count` choices), `max_episode_steps` (0 = no limit), `step_seconds` (simulated time of one step), `view_panel_id` (your panel that shows a copy, see `ShowCopy`; empty: none) and `settings` (key, label, default, description). An environment that observes nothing, takes no action, has bounds that do not match its action size, or one discrete choice, is not added (the log says why) |
-| `PluginEnvironmentCreateResult CreateEnvironments(const std::string& id, const std::map<std::string, std::string>& settings, int count)` | `count` copies of environment `id`. Settings you are not given keep their defaults; a value you cannot use is an error (`{nullptr, "why and what to do"}`), never a silent default. The batch must report the count and sizes you described, or the Engine releases it and refuses it |
+| `std::vector<PluginEnvironmentInfo> GetEnvironments()` | Asked once when the plugin starts. Each: `id` (unique in your plugin), `name`, `description`, `category`, `observation_size`, the action space (continuous: `action_size` with `action_low` / `action_high` per value; discrete: `discrete_actions`, `action_size` 1 and `action_count` choices), `max_episode_steps` (0 = no limit), `step_seconds` (simulated time of one step), `view_panel_id` (your panel that shows a copy, see `ShowCopy`; empty: none) and `settings` (below). An environment that observes nothing, takes no action, has bounds that do not match its action size, or one discrete choice, is not added (the log says why) |
+| `bool DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& settings, PluginEnvironmentInfo& info, std::string& error)` | Optional (default: the environment as `GetEnvironments` lists it). The environment as these settings make it, when what it observes follows them (the MuJoCo plugin's Look ahead adds 10 values). The Engine asks while it draws the Environment node and before it creates copies, so answer from what you already know (no file loading). False with `error` for settings you cannot use |
+| `PluginEnvironmentCreateResult CreateEnvironments(const std::string& id, const std::map<std::string, std::string>& settings, int count)` | `count` copies of environment `id`. Settings you are not given keep their defaults; a value you cannot use is an error (`{nullptr, "why and what to do"}`), never a silent default. The batch must report the count and sizes `DescribeEnvironment` gives for these settings, or the Engine releases it and refuses it |
+
+A `PluginEnvironmentSetting` is one setting on the Environment node: `key`,
+`label`, `default_value` and `description`, and how the Engine draws it.
+Every value travels as text.
+
+| Field | Meaning |
+|---|---|
+| `kind` | `Number` (default): a typed number field, kept within `min` .. `max` when `min < max`, with `unit` after the value ("m/s", "%"). `Flag`: a checkbox, "1" or "0". `Choice`: one of `options` as a segmented control, its `value`. `Choices`: any of `options` as chips, their values joined by "," (empty: none) |
+| `options` | For `Choice` and `Choices`: `{value, label}` pairs, in the order shown |
+| `section` | Settings with the same section are drawn together under it as a heading, after the main ones (empty) |
 
 The `IEnvironmentBatch` you return:
 
@@ -476,6 +487,7 @@ The `IEnvironmentBatch` you return:
 | `bool Reset(uint64_t seed, float* observations)` | Starts every copy and writes `[count x observation_size]`. Copy `i`'s randomness comes from `(seed, i)` alone, so one seed gives the same runs on any number of threads |
 | `bool Step(const float* actions, const PluginEnvironmentStepBuffers& out)` | `actions` is `[count x action_size]` (discrete: the choice's index as a float). Advance every copy one step and write `observations`, `rewards`, `terminated` (a terminal state) and `truncated` (the step limit). A copy whose episode ends starts its next episode in the same call: its row of `final_observations` gets the observation it ended on, and its row of `observations` the first one of the next episode. Rows of copies that did not end are left alone in `final_observations`. Return false with `LastError()` when a step fails |
 | `std::string LastError()` | Why the last `Reset` or `Step` failed |
+| `std::vector<PluginEnvironmentStat> Stats()` | Optional (default: none). Numbers about the copies so far, `{label, value, note}` ("Difficulty", "0.35", "curriculum, rising"); the RL Training Dashboard shows them as cards beside the return, read once per update between steps |
 | `bool ShowCopy(int copy)` | Optional (default: false, no picture). Name the panel that shows it in `PluginEnvironmentInfo::view_panel_id`; the Engine opens that panel when it plays a policy. Show copy `copy` in your own view as later `Reset`s and `Step`s move it, until `ShowCopy(-1)` or `Release`; the Engine calls it to play a trained policy. Return false for a copy out of range. The batch must still not use your plugin object: share a small state object with your view instead (the MuJoCo plugin publishes the copy's `mj_getState` into a slot its viewport reads) |
 | `void Release()` | Free the batch in your own module (`delete this`) |
 

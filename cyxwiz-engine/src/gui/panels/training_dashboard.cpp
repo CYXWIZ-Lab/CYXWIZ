@@ -351,6 +351,15 @@ void TrainingDashboardPanel::RenderKpis() {
         ImGui::SameLine();
         Card("##kpi_speed", "Speed", last_update_ ? Format(last_update_->steps_per_second, "%.0f") : "-",
              "steps per second", w);
+        // The environment's own numbers (a curriculum's difficulty, falls) on a row of their own
+        if (last_update_ && !last_update_->environment_stats.empty()) {
+            const auto& stats = last_update_->environment_stats;
+            for (size_t i = 0; i < stats.size(); ++i) {
+                if (i % static_cast<size_t>(cards) != 0) ImGui::SameLine();
+                const std::string id = "##kpi_env_" + std::to_string(i);
+                Card(id.c_str(), stats[i].label.c_str(), stats[i].value, stats[i].note, w);
+            }
+        }
     }
 }
 

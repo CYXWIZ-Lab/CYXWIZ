@@ -21,12 +21,39 @@
 
 namespace cyxwiz::plugin {
 
+// How the Engine draws a setting on the Environment node (plugin API 1.4).
+// Every value travels as text:
+//   Number   a typed number ("5", "0.1"), kept within [min, max] when min < max
+//   Flag     "1" on, "0" off (a checkbox)
+//   Choice   one option's value (a segmented control)
+//   Choices  option values joined by "," ("rough,slopes"; empty: none), as chips
+enum class PluginSettingKind { Number, Flag, Choice, Choices };
+
+struct PluginSettingOption {
+    std::string value;  // what the plugin reads ("rough")
+    std::string label;  // what the user sees ("Rough")
+};
+
 // A setting the environment takes, as a graph node parameter would be.
 struct PluginEnvironmentSetting {
     std::string key;            // "frame_skip"
     std::string label;          // "Frame skip"
     std::string default_value;  // "5"
     std::string description;    // what it changes
+    PluginSettingKind kind = PluginSettingKind::Number;
+    std::vector<PluginSettingOption> options;  // Choice and Choices
+    std::string section;        // drawn under this heading with the others of it; empty: the main list
+    double min = 0.0;           // Number: the range a typed value is kept in, when min < max
+    double max = 0.0;
+    std::string unit;           // Number: shown after the value ("m/s", "%")
+};
+
+// A number the batch reports while it runs, shown on the RL Training
+// Dashboard beside the return ("Difficulty", "0.35", "curriculum, rising").
+struct PluginEnvironmentStat {
+    std::string label;
+    std::string value;
+    std::string note;
 };
 
 struct PluginEnvironmentInfo {
@@ -97,6 +124,10 @@ public:
     // (the Engine then draws what it can, or says there is no view).
     virtual bool ShowCopy(int /*copy*/) { return false; }
 
+    // Optional: numbers about the copies so far (a curriculum's level, how
+    // many episodes ended in a fall), read between steps for the dashboard.
+    virtual std::vector<PluginEnvironmentStat> Stats() const { return {}; }
+
     // Frees the batch inside the plugin's own module.
     virtual void Release() = 0;
 
@@ -114,6 +145,22 @@ public:
     virtual ~IEnvironmentProvider() = default;
 
     virtual std::vector<PluginEnvironmentInfo> GetEnvironments() = 0;
+
+    // Environment `id` as it is with these settings: what it observes may
+    // follow them (an extra observation switched on). Default: as
+    // GetEnvironments lists it. False with error: no such environment, or the
+    // settings are not valid.
+    virtual bool DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& /*settings*/,
+                                     PluginEnvironmentInfo& info, std::string& error) {
+        for (const auto& listed : GetEnvironments()) {
+            if (listed.id == id) {
+                info = listed;
+                return true;
+            }
+        }
+        error = "No environment " + id + ".";
+        return false;
+    }
 
     // count copies of environment `id`. Settings it does not name keep their
     // defaults; a value it cannot use is an error, not a silent default.

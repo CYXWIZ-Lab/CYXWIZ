@@ -158,6 +158,13 @@ void Note(const char* text) {
     ImGui::PopTextWrapPos();
 }
 
+void Section(const char* title) {
+    if (!title || !title[0]) return;
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    cyxwiz::ui::SettingsSection(title);
+}
+
 void Status(const char* key) {
     if (!g_frame.view) return;
     const Truth* truth = cyxwiz::properties_view::FindTruth(g_frame.view->truths, key ? key : "");

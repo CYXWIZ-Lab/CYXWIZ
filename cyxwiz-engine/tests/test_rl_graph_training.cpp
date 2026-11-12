@@ -402,7 +402,8 @@ void CheckGpuPolicy() {
 }  // namespace
 
 int main(int argc, char** argv) {
-    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, cyxwiz::plugin::PluginEnvironmentInfo& info) {
+    cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>&,
+                                      cyxwiz::plugin::PluginEnvironmentInfo& info, std::string&) {
         cyxwiz::plugin::PluginEnvironmentRegistry::Environment e;
         if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(key, e)) return false;
         info = e.info;

@@ -282,6 +282,9 @@ public:
         return true;
     }
     std::string LastError() const override { return error_; }
+    std::vector<cyxwiz::plugin::PluginEnvironmentStat> Stats() const override {
+        return {{"Level", std::to_string(steps_.empty() ? 0 : steps_[0]), "steps of copy 0"}};
+    }
     void Release() override {
         ++*releases_;
         delete this;
@@ -316,6 +319,20 @@ public:
         line.action_high = {1.0f};
         line.max_episode_steps = 3;
         line.settings = {{"speed", "Speed", "0.5", "How far one action moves the point"}};
+        cyxwiz::plugin::PluginEnvironmentSetting wide;  // a flag in a section: it widens the observation
+        wide.key = "wide";
+        wide.label = "Wide";
+        wide.default_value = "0";
+        wide.kind = cyxwiz::plugin::PluginSettingKind::Flag;
+        wide.section = "More";
+        line.settings.push_back(wide);
+        cyxwiz::plugin::PluginEnvironmentSetting colours;
+        colours.key = "colours";
+        colours.label = "Colours";
+        colours.kind = cyxwiz::plugin::PluginSettingKind::Choices;
+        colours.options = {{"red", "Red"}, {"blue", "Blue"}};
+        colours.section = "More";
+        line.settings.push_back(colours);
         auto liar = line;  // its copies report another observation size
         liar.id = "Liar-v0";
         auto blind = line;  // observes nothing: not added
@@ -329,12 +346,30 @@ public:
         coin.action_count = 1;
         return {line, liar, blind, coin};
     }
+    bool DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& settings,
+                             cyxwiz::plugin::PluginEnvironmentInfo& info, std::string& error) override {
+        for (const auto& listed : GetEnvironments()) {
+            if (listed.id != id) continue;
+            info = listed;
+            const auto wide = settings.find("wide");
+            if (wide != settings.end() && wide->second != "0" && wide->second != "1") {
+                error = "Wide is 1 or 0.";
+                return false;
+            }
+            if (wide != settings.end() && wide->second == "1") info.observation_size = 2;
+            return true;
+        }
+        error = "No " + id;
+        return false;
+    }
     cyxwiz::plugin::PluginEnvironmentCreateResult CreateEnvironments(
         const std::string& id, const std::map<std::string, std::string>& settings, int count) override {
         last_settings = settings;
         const auto speed = settings.find("speed");
         if (speed != settings.end() && speed->second == "fast") return {nullptr, "Speed must be a number."};
-        return {new FakeLine(count, id == "Liar-v0" ? 2 : 1, &releases), {}};
+        const auto wide = settings.find("wide");
+        const bool is_wide = wide != settings.end() && wide->second == "1";
+        return {new FakeLine(count, id == "Liar-v0" || is_wide ? 2 : 1, &releases), {}};
     }
 };
 
@@ -349,8 +384,25 @@ void CheckEnvironmentRegistry() {
     Check(environments.GetCount() == 3, "the two usable environments are registered once, beside the built-in one");
     cyxwiz::plugin::PluginEnvironmentRegistry::Environment found;
     Check(environments.Find("com.example.env:Line-v0", found) && found.info.max_episode_steps == 3 &&
-              found.info.settings.size() == 1 && found.info.settings[0].default_value == "0.5",
+              found.info.settings.size() == 3 && found.info.settings[0].default_value == "0.5",
           "the environment's info and settings are kept");
+    Check(found.info.settings[1].kind == cyxwiz::plugin::PluginSettingKind::Flag && found.info.settings[1].section == "More" &&
+              found.info.settings[2].options.size() == 2 && found.info.settings[2].options[1].label == "Blue",
+          "a setting's kind, section and options are kept");
+    {
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment described;
+        std::string why;
+        Check(environments.Describe("com.example.env:Line-v0", {{"wide", "1"}}, described, why) &&
+                  described.info.observation_size == 2,
+              "the description follows the settings (a wider observation)");
+        Check(!environments.Describe("com.example.env:Line-v0", {{"wide", "maybe"}}, described, why) &&
+                  why == "Wide is 1 or 0.",
+              "settings the plugin cannot describe are refused with its reason");
+        auto wide_batch = environments.Create("com.example.env:Line-v0", {{"wide", "1"}}, 2, why);
+        Check(wide_batch && wide_batch->ObservationSize() == 2, "a batch is checked against its described size: " + why);
+        Check(wide_batch && !wide_batch->Stats().empty() && wide_batch->Stats()[0].label == "Level",
+              "the batch's stats reach the Engine");
+    }
     Check(!environments.Find("com.example.env:Blind-v0", found) && !environments.Find("com.example.env:Coin-v0", found),
           "an environment that observes nothing or has one choice is not added");
 
@@ -361,7 +413,7 @@ void CheckEnvironmentRegistry() {
     Check(!environments.Create("com.example.env:Line-v0", {{"speed", "fast"}}, 2, error) &&
               error == "Speed must be a number.",
           "the plugin's refusal is the error");
-    Check(!environments.Create("com.example.env:Liar-v0", {}, 2, error) && fake.releases == 1 &&
+    Check(!environments.Create("com.example.env:Liar-v0", {}, 2, error) && fake.releases == 2 &&
               error.find("do not match") != std::string::npos,
           "copies that do not match their description are refused and released");
 
@@ -393,7 +445,7 @@ void CheckEnvironmentRegistry() {
     library.reset();
     Check(!library_alive.expired(), "a live batch keeps the plugin's library loaded");
     batch.reset();
-    Check(fake.releases == 2 && library_alive.expired(), "dropping the batch releases it, then the library");
+    Check(fake.releases == 3 && library_alive.expired(), "dropping the batch releases it, then the library");
 }
 
 // The Engine's own CartPole-v1 (Gymnasium's classic control), with no plugin

@@ -38,9 +38,14 @@ struct RLTrainingConfiguration {
     int ppo_node_id = -1;
 };
 
-// How the compiler finds an environment by key. The Engine sets the plugin
-// environment registry's lookup; unset, no environment is known.
-using RLEnvironmentLookup = std::function<bool(const std::string& key, plugin::PluginEnvironmentInfo& info)>;
+// How the compiler finds an environment by key, as the Environment node's
+// settings make it (its observation size may follow them). The Engine sets the
+// plugin environment registry's lookup; unset, no environment is known. False
+// with an empty error: no such environment; with an error: the settings are
+// not valid (the plugin's reason).
+using RLEnvironmentLookup =
+    std::function<bool(const std::string& key, const std::map<std::string, std::string>& settings,
+                       plugin::PluginEnvironmentInfo& info, std::string& error)>;
 void SetRLEnvironmentLookup(RLEnvironmentLookup lookup);
 
 // True for the node types of an RL graph
