@@ -19,6 +19,7 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/training_trace_collector.h"
 #include <cyxwiz/neural_provider.h>
+#include "../src/core/rl/policy_stress_test.h"
 #include "../src/core/rl/rl_training_run.h"
 #include "../src/core/rl/trained_policy.h"
 #include "../src/plugin/plugin_manager.h"
@@ -401,6 +402,38 @@ void CheckGpuPolicy() {
 
 }  // namespace
 
+// The stress test's conditions (board 6): its settings over the policy's own,
+// levels, seeds, the CSV, and refusing an environment without grounds
+void CheckStressTestConditions() {
+    using namespace cyxwiz::rl;
+    const std::map<std::string, std::string> own{{"look_ahead", "1"}, {"grounds", "rough,steps"}, {"curriculum", "1500"},
+                                                 {"friction_percent", "20"}, {"frame_skip", "5"}};
+    auto steps = StressSettings(own, StressKind::Steps, 0.75);
+    Check(steps["grounds"] == "steps" && steps["difficulty_from"] == "0.75" && steps["difficulty_to"] == "0.75" &&
+              steps["curriculum"] == "0" && steps["friction_percent"] == "0" && steps["push_every"] == "0" &&
+              steps["look_ahead"] == "1" && steps["frame_skip"] == "5",
+          "a ground level: that ground at that difficulty, no random physics, the policy's own Look ahead kept");
+    auto kicks = StressSettings(own, StressKind::Kicks, 0.5);
+    Check(kicks["grounds"].empty() && kicks["push_every"] == "1.5" && kicks["push_speed"] == "2",
+          "kicks: no ground, a push every 1.5 s of up to 4 m/s times the difficulty");
+    Check(StressSettings(own, StressKind::Kicks, 0.0)["push_every"] == "0", "kicks at 0: none");
+    StressTestSpec spec;
+    spec.levels = 5;
+    Check(StressDifficulty(spec, 0) == 0.0 && StressDifficulty(spec, 4) == 1.0 && StressDifficulty(spec, 1) == 0.25,
+          "five levels: 0, 0.25 ... 1");
+    Check(StressSeed(spec, 2) == StressSeed(spec, 2) && StressSeed(spec, 1) != StressSeed(spec, 2), "a seed a level");
+    StressPolicyResult a{"walk", {{0.0, {100.0, 300.0}, 0}, {1.0, {10.0, 30.0}, 2}}};
+    StressPolicyResult b{"robust", {{0.0, {200.0, 200.0}, 0}}};
+    Check(StressResultsCsv({a, b}, 2) ==
+              "difficulty,\"walk mean return\",\"walk falls\",\"robust mean return\",\"robust falls\",episodes\n"
+              "0,200.00,0,200.00,0,2\n1,20.00,2,,,2\n",
+          "the CSV: a row a level, each policy's mean return and falls");
+    cyxwiz::plugin::PluginEnvironmentRegistry::Environment cartpole;
+    Check(cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find("cyxwiz.builtin:CartPole-v1", cartpole) &&
+              !SupportsStress(cartpole.info),
+          "CartPole has no grounds or pushes: no stress test");
+}
+
 int main(int argc, char** argv) {
     cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>&,
                                       cyxwiz::plugin::PluginEnvironmentInfo& info, std::string&) {
@@ -411,6 +444,7 @@ int main(int argc, char** argv) {
     });
     // Routes certified as the installer's qualification would certify them
     cyxwiz::test::InstallQualifiedRouteSnapshot();
+    CheckStressTestConditions();
     CheckDevice();
     CheckStopAndFailure();
     CheckCartPole();

@@ -139,6 +139,31 @@ The trained policy stays in the Engine until the next Train.
   graph it was trained with. Or open the graph and use **Load policy...** in
   the PPO node's Properties. A MuJoCo policy needs the MuJoCo plugin loaded.
 
+## Stress test: how much does a policy take?
+
+Policy Playback's **Stress test** tab plays a policy on harder and harder
+conditions and measures it, alone or against a second saved policy (a MuJoCo
+task; the built-in CartPole has no grounds or pushes).
+
+1. **Compare with**: type the path of a saved `.cyxmodel` and **Load** it
+   (optional). It must play the same environment.
+2. **Disturbance**: Rough, Slopes, Steps, Obstacles (that ground at each
+   level's difficulty) or Kicks (a push every 1.5 s of up to 4 m/s times the
+   difficulty).
+3. **Levels** (difficulty 0 to 1) and **episodes a level**, then **Run test**.
+
+Each level's episodes run side by side with the policy's best actions. A
+level has its own seed, so both policies meet the same grounds and the same
+pushes. The policies' own random physics and curriculum are off for the test;
+each keeps its own Look ahead. The chart shows the mean return by difficulty,
+the table each level's mean return and falls (an episode that ended early or
+upside down). **Watch** plays that level's first episode again in the Play
+tab. **Export CSV** saves the table in the project's exports folder.
+
+The example `examples/cyxgraph/rl/ppo_half_cheetah_robust.cyxgraph` trains
+HalfCheetah with the four grounds, a curriculum, pushes, varied friction and
+mass, and Look ahead: compare its saved policy with the flat-ground one.
+
 ## Export: using a policy outside the Engine
 
 **Today:**

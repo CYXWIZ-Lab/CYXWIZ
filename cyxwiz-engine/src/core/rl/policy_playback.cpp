@@ -24,6 +24,11 @@ bool PolicyPlayback::Start(std::shared_ptr<TrainedPolicy> policy, PlaybackSpeed 
         return false;
     }
     policy_ = std::move(policy);
+    has_conditions_ = pending_conditions_;
+    settings_ = std::move(pending_settings_);
+    first_seed_ = pending_seed_;
+    pending_conditions_ = false;
+    pending_settings_.clear();
     stop_ = false;
     paused_ = false;
     new_episode_ = false;
@@ -36,6 +41,12 @@ bool PolicyPlayback::Start(std::shared_ptr<TrainedPolicy> policy, PlaybackSpeed 
     }
     worker_ = std::thread(&PolicyPlayback::Run, this);
     return true;
+}
+
+void PolicyPlayback::SetConditions(std::map<std::string, std::string> settings, uint64_t first_seed) {
+    pending_conditions_ = true;
+    pending_settings_ = std::move(settings);
+    pending_seed_ = first_seed;
 }
 
 void PolicyPlayback::Pause() {
@@ -79,8 +90,8 @@ void PolicyPlayback::Run() {
         // The device is in use while it plays: Preferences > Devices waits, as for a training
         const ScopedActiveExecutionDeviceContext in_use;
         std::string error;
-        auto batch = plugin::PluginEnvironmentRegistry::Instance().Create(p.config.environment_key,
-                                                                          p.config.environment_settings, 1, error);
+        auto batch = plugin::PluginEnvironmentRegistry::Instance().Create(
+            p.config.environment_key, has_conditions_ ? settings_ : p.config.environment_settings, 1, error);
         if (!batch) return fail(error);
         const auto& info = batch->Info();
         std::string show_error;
@@ -94,7 +105,7 @@ void PolicyPlayback::Run() {
         uint8_t terminated = 0, truncated = 0;
         const plugin::PluginEnvironmentStepBuffers out{obs.data(), &reward, &terminated, &truncated,
                                                        final_obs.data()};
-        uint64_t episode_seed = p.config.ppo.seed + 1000;
+        uint64_t episode_seed = has_conditions_ ? first_seed_ : p.config.ppo.seed + 1000;
         if (!batch->Reset(episode_seed, obs.data(), error)) return fail(error);
         {
             std::lock_guard<std::mutex> lock(mutex_);

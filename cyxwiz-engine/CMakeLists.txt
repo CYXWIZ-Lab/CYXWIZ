@@ -299,6 +299,7 @@ set(ENGINE_SOURCES
     src/core/rl/rl_training_run.cpp
     src/core/rl/trained_policy.cpp
     src/core/rl/policy_playback.cpp
+    src/core/rl/policy_stress_test.cpp
     src/core/rl_playback_presentation.cpp
     src/core/rl_device_presentation.cpp
     src/gui/panels/policy_playback_panel.cpp
@@ -7407,6 +7408,7 @@ add_test(NAME rl_graph_compile COMMAND test_rl_graph_compile)
 add_executable(test_rl_graph_training
     tests/test_rl_graph_training.cpp
     src/core/rl/rl_training_run.cpp
+    src/core/rl/policy_stress_test.cpp
     src/core/rl/trained_policy.cpp
     src/core/formats/cyxmodel_format.cpp
     src/core/formats/cyxmodel_archive.cpp
