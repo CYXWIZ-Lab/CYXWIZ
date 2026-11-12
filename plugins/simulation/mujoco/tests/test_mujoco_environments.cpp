@@ -358,6 +358,11 @@ void CheckScenes() {
               "the cylinder's inertia about its axis is m r^2 / 2");
         mj_deleteModel(sm);
     }
+    MjScene stubby;  // as long as it is wide: random throws make these from the default 0.2 x 0.2
+    stubby.objects = {MjThrownObject{MjShape::Capsule, {0.2, 0.2, 0.0}, 1.0}};
+    mjModel* stub = CompileMjScene(path, stubby, robot, error);
+    Check(stub != nullptr, "a capsule no longer than it is wide still builds: " + error);
+    if (stub) mj_deleteModel(stub);
     MjScene stairs;
     stairs.ground = MjGround{MjGroundKind::Steps, 1.0, 5};
     mjModel* s = CompileMjScene(path, stairs, robot, error);

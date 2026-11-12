@@ -108,7 +108,8 @@ void ShapeGeom(const MjThrownObject& object, mjsGeom* geom) {
         case MjShape::Capsule:  // length end to end: the cylinder between the caps is length - diameter
             geom->type = mjGEOM_CAPSULE;
             geom->size[0] = s[1] / 2.0;
-            geom->size[1] = std::max(0.0, (s[0] - s[1]) / 2.0);
+            // MuJoCo needs a middle: a capsule no longer than it is wide keeps 1 mm (it is then a ball)
+            geom->size[1] = std::max(0.0005, (s[0] - s[1]) / 2.0);
             break;
         case MjShape::Cylinder:
             geom->type = mjGEOM_CYLINDER;
