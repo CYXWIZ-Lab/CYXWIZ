@@ -30,6 +30,7 @@
 
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <memory>
 #include <string>
 
@@ -85,6 +86,10 @@ public:
     // Gymnasium's MuJoCo tasks (env/mj_task.h); each batch has its own
     // model and copies, apart from the viewport's model.
     std::vector<PluginEnvironmentInfo> GetEnvironments() override;
+    // As the settings make it: Look ahead adds to the observation (from the
+    // listed description, kept: the Engine asks while it draws Properties)
+    bool DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& settings,
+                             PluginEnvironmentInfo& info, std::string& error) override;
     PluginEnvironmentCreateResult CreateEnvironments(const std::string& id,
                                                      const std::map<std::string, std::string>& settings,
                                                      int count) override;
@@ -164,6 +169,9 @@ private:
     // The played copy's scene in the Viewport's model (the same build as the batch's)
     void MirrorPlaybackScene(const MjScene& scene);
     MjStressRun local_stress_;
+    // The tasks' listed descriptions (GetEnvironments), for DescribeEnvironment
+    std::mutex described_mutex_;
+    std::map<std::string, PluginEnvironmentInfo> described_;
     int local_episodes_seen_ = 0;
 };
 

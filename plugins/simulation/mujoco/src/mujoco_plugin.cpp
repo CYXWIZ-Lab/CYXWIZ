@@ -642,12 +642,39 @@ std::vector<PluginEnvironmentInfo> MuJoCoPlugin::GetEnvironments() {
     for (const auto& task : MjTasks()) {
         PluginEnvironmentInfo info;
         std::string error;
-        if (DescribeMjTask(task, (std::filesystem::path(assets_dir_) / task.model_file).string(), info, error))
+        if (DescribeMjTask(task, (std::filesystem::path(assets_dir_) / task.model_file).string(), info, error)) {
+            {
+                std::lock_guard<std::mutex> lock(described_mutex_);
+                described_[task.id] = info;
+            }
             environments.push_back(std::move(info));
-        else if (ctx_)
+        } else if (ctx_) {
             ctx_->LogWarn("MuJoCo Simulation: " + task.id + " is not offered: " + error);
+        }
     }
     return environments;
+}
+
+bool MuJoCoPlugin::DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& settings,
+                                       PluginEnvironmentInfo& info, std::string& error) {
+    const MjTaskSpec* task = FindMjTask(id);
+    if (!task) {
+        error = "The MuJoCo plugin has no environment '" + id + "'.";
+        return false;
+    }
+    PluginEnvironmentInfo listed;
+    {
+        std::lock_guard<std::mutex> lock(described_mutex_);
+        const auto it = described_.find(id);
+        if (it != described_.end()) listed = it->second;
+    }
+    if (listed.id.empty()) {
+        if (!DescribeMjTask(*task, (std::filesystem::path(assets_dir_) / task->model_file).string(), listed, error))
+            return false;
+        std::lock_guard<std::mutex> lock(described_mutex_);
+        described_[id] = listed;
+    }
+    return DescribeMjTaskWith(*task, listed, settings, info, error);
 }
 
 PluginEnvironmentCreateResult MuJoCoPlugin::CreateEnvironments(const std::string& id,

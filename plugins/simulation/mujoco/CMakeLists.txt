@@ -34,6 +34,7 @@ add_library(mujoco_plugin SHARED
     src/env/mj_env_batch.cpp
     src/env/mj_scene.cpp
     src/env/mj_stress.cpp
+    src/env/mj_robustness.cpp
 )
 
 target_include_directories(mujoco_plugin PRIVATE
@@ -94,6 +95,7 @@ add_executable(test_mujoco_environments
     src/env/mj_env_batch.cpp
     src/env/mj_scene.cpp
     src/env/mj_stress.cpp
+    src/env/mj_robustness.cpp
 )
 target_include_directories(test_mujoco_environments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(test_mujoco_environments PRIVATE cyxwiz-plugin-sdk mujoco::mujoco)

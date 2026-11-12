@@ -88,6 +88,38 @@ cost for the effort, summed over 1,000 steps.
    Record video...** saves a GIF of the run in the project's exports folder
    ([The MuJoCo Viewport](mujoco_viewport.md)).
 
+## 4. Training for rough ground, pushes and obstacles (MuJoCo)
+
+A policy trained on Gymnasium's flat floor has never met a bump, a step or a
+push: the Viewport's **Stress** panel shows it stalling at the first step
+([The MuJoCo Viewport](mujoco_viewport.md)). The Environment node's
+**Robustness (training)** section trains it for them. Everything there is off
+by default, so the plain task stays Gymnasium's.
+
+| Setting | What it does |
+| --- | --- |
+| **Ground** | Chips: Flat, Rough, Slopes, Steps, Obstacles. Each episode of each copy picks one of the chosen grounds; none chosen keeps the model's own floor |
+| **Difficulty from / to** | The range of the grounds' difficulty (0 gentle, 1 hard) |
+| **Curriculum mark** | A mean return. Training starts at the easiest ground; each time the mean return of recent episodes passes the mark, the hardest ground drawn rises by 0.1, up to **to**. 0: the whole range from the start |
+| **Push every / up to** | A push in a random direction every so many simulated seconds (varied by half), up to the speed given |
+| **Friction / Mass / Motor strength ±** | Each episode scales them by a factor drawn within the percentage |
+| **Look ahead** | The ground's height 0.2 to 2.0 m ahead (10 values) joins what the robot observes |
+
+The draws come from the run's seed, so a run repeats exactly. While it
+trains, the RL Training Dashboard shows **Difficulty** (the curriculum's
+level) and **Falls** (episodes that ended early or upside down) beside the
+return.
+
+**Look ahead or not.** HalfCheetah observes only its own joints: without
+Look ahead it is blind to a step or a block until it hits it, and can learn
+to cope with rough ground, slopes, small steps and pushes but rarely with
+tall steps or blocks. Look ahead lets it see them coming. It changes what the
+policy observes, so it trains a new policy from the start, and that policy
+plays only with Look ahead on (its saved settings bring it along).
+
+A saved policy keeps all of these settings: **Play policy** plays it in the
+conditions it trained in, and the Stress panel can still change the ground.
+
 ## After training: watch, save, reopen
 
 The trained policy stays in the Engine until the next Train.

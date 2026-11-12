@@ -278,36 +278,48 @@ std::vector<MjGroundBox> GroundBoxes(const MjGround& ground) {
     return boxes;
 }
 
-mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjRobotSize& robot, std::string& error) {
+bool MjSceneBuilder::Load(const std::string& model_path, std::string& error) {
     char parse_error[1000] = "";
-    std::unique_ptr<mjSpec, void (*)(mjSpec*)> spec(
-        mj_parseXML(model_path.c_str(), nullptr, parse_error, sizeof(parse_error)), mj_deleteSpec);
-    if (!spec) {
+    spec_.reset(mj_parseXML(model_path.c_str(), nullptr, parse_error, sizeof(parse_error)), mj_deleteSpec);
+    if (!spec_) {
         error = "The model " + model_path + " did not load: " + parse_error;
-        return nullptr;
+        return false;
     }
-    mjModel* plain = mj_compile(spec.get(), nullptr);
-    if (!plain) {
-        error = "The model " + model_path + " did not load: " + mjs_getError(spec.get());
-        return nullptr;
+    plain_.reset(mj_compile(spec_.get(), nullptr), mj_deleteModel);
+    if (!plain_) {
+        error = "The model " + model_path + " did not load: " + mjs_getError(spec_.get());
+        spec_.reset();
+        return false;
     }
-    robot = {static_cast<int>(plain->nq), static_cast<int>(plain->nv), static_cast<int>(plain->nbody)};
-    if (scene.Empty()) return plain;
-    std::unique_ptr<mjModel, void (*)(mjModel*)> plain_owner(plain, mj_deleteModel);
+    const mjModel* plain = plain_.get();
+    robot_ = {static_cast<int>(plain->nq), static_cast<int>(plain->nv), static_cast<int>(plain->nbody)};
+    // Where the robot starts: the ground starts ahead of it
+    const int root = RobotRootBody(plain, robot_);
+    mjData* d = mj_makeData(plain);
+    if (!d) {
+        error = "MuJoCo could not make a state for " + model_path + " (out of memory?).";
+        return false;
+    }
+    mj_forward(plain, d);
+    if (root >= 0) for (int i = 0; i < 3; ++i) start_[i] = d->xpos[3 * root + i];
+    mj_deleteData(d);
+    floor_z_ = FindFloor(plain).z;
+    return true;
+}
 
-    // Where the robot starts, and the floor the ground lies on
-    const int root = RobotRootBody(plain, robot);
-    double start[3] = {0.0, 0.0, 0.0};
-    {
-        mjData* d = mj_makeData(plain);
-        if (!d) {
-            error = "MuJoCo could not make a state for " + model_path + " (out of memory?).";
-            return nullptr;
-        }
-        mj_forward(plain, d);
-        if (root >= 0) for (int i = 0; i < 3; ++i) start[i] = d->xpos[3 * root + i];
-        mj_deleteData(d);
+mjModel* MjSceneBuilder::Build(const MjScene& scene, std::string& error) const {
+    if (!plain_) {
+        error = "No model is loaded.";
+        return nullptr;
     }
+    const mjModel* plain = plain_.get();
+    if (scene.Empty()) return mj_copyModel(nullptr, plain);  // the file as it is
+    std::unique_ptr<mjSpec, void (*)(mjSpec*)> spec(mj_copySpec(spec_.get()), mj_deleteSpec);
+    if (!spec) {
+        error = "MuJoCo could not copy the model (out of memory?).";
+        return nullptr;
+    }
+    const double* start = start_;
     const Floor floor = FindFloor(plain);
     const int mask = ContactMask(plain);
     mjsBody* world = mjs_findBody(spec.get(), "world");
@@ -421,6 +433,36 @@ mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjR
         keep_statistics();
     }
     return m;
+}
+
+mjModel* CompileMjScene(const std::string& model_path, const MjScene& scene, MjRobotSize& robot, std::string& error) {
+    MjSceneBuilder builder;
+    if (!builder.Load(model_path, error)) return nullptr;
+    robot = builder.Robot();
+    return builder.Build(scene, error);
+}
+
+double MjGroundProfile::At(double x) const {
+    const double along = x - x0;
+    if (along < 0.0) return 0.0;
+    if (!heights.empty() && spacing > 0.0) {
+        const double at = along / spacing;
+        const size_t i = static_cast<size_t>(at);
+        if (i + 1 >= heights.size()) return 0.0;
+        const double t = at - static_cast<double>(i);
+        return heights[i] + (heights[i + 1] - heights[i]) * t;  // the heightfield slopes between samples
+    }
+    for (const auto& box : boxes)
+        if (along >= box.x0 && along < box.x1) return box.height;
+    return 0.0;
+}
+
+MjGroundProfile GroundProfile(const MjGround& ground, double start_x) {
+    MjGroundProfile profile;
+    profile.x0 = start_x + kGroundStart;
+    profile.heights = GroundHeights(ground, profile.spacing);
+    profile.boxes = GroundBoxes(ground);
+    return profile;
 }
 
 int RobotRootBody(const mjModel* m, const MjRobotSize& robot) {

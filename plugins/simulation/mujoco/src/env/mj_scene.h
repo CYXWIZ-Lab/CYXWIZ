@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -95,6 +96,28 @@ struct MjRobotSize {
 
 const char* GroundName(MjGroundKind kind);  // "Rough"
 
+// Builds the model file with a scene, again and again: the file is parsed and
+// compiled once, each scene builds on a copy of it (a training batch builds a
+// ground per copy and per episode).
+class MjSceneBuilder {
+public:
+    bool Load(const std::string& model_path, std::string& error);
+    // The model with the scene; null with the reason. An empty scene gives the
+    // same model as mj_loadXML. The caller deletes it (mj_deleteModel).
+    mjModel* Build(const MjScene& scene, std::string& error) const;
+    bool Loaded() const { return plain_ != nullptr; }
+    const MjRobotSize& Robot() const { return robot_; }
+    double StartX() const { return start_[0]; }  // the robot's root at rest: the ground starts kGroundStart ahead
+    double FloorZ() const { return floor_z_; }
+
+private:
+    std::shared_ptr<mjSpec> spec_;
+    std::shared_ptr<mjModel> plain_;
+    MjRobotSize robot_;
+    double start_[3] = {0.0, 0.0, 0.0};
+    double floor_z_ = 0.0;
+};
+
 // The model file with the scene added; null with the reason when it does not
 // load. robot: the model file's own sizes. An empty scene gives the same model
 // as mj_loadXML.
@@ -110,6 +133,19 @@ struct MjGroundBox {
 };
 std::vector<double> GroundHeights(const MjGround& ground, double& spacing);
 std::vector<MjGroundBox> GroundBoxes(const MjGround& ground);
+
+// The ground's height above the floor along x (world), exactly as built: the
+// heightfield sloping between its samples, the boxes flat on top. For the
+// Look ahead observation.
+struct MjGroundProfile {
+    double x0 = 0.0;  // where the ground starts
+    double spacing = 0.0;
+    std::vector<double> heights;
+    std::vector<MjGroundBox> boxes;
+    double At(double x) const;
+};
+// The profile of `ground` for a robot that starts at start_x
+MjGroundProfile GroundProfile(const MjGround& ground, double start_x);
 
 // The body the robot moves by (the first body under the world with joints)
 int RobotRootBody(const mjModel* m, const MjRobotSize& robot);
