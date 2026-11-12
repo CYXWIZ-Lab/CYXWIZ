@@ -11,8 +11,7 @@
 
 namespace gui {
 
-void NodeEditor::SaveUndoState() {
-    // Create snapshot of current state
+GraphSnapshot NodeEditor::CaptureSnapshot() const {
     GraphSnapshot snapshot;
     snapshot.nodes = nodes_;
     snapshot.subgraphs = subgraphs_;
@@ -22,9 +21,13 @@ void NodeEditor::SaveUndoState() {
     snapshot.next_node_id = next_node_id_;
     snapshot.next_pin_id = next_pin_id_;
     snapshot.next_link_id = next_link_id_;
+    return snapshot;
+}
 
-    // Push to undo stack
-    undo_stack_.push_back(snapshot);
+void NodeEditor::SaveUndoState() { PushUndoSnapshot(CaptureSnapshot()); }
+
+void NodeEditor::PushUndoSnapshot(GraphSnapshot snapshot) {
+    undo_stack_.push_back(std::move(snapshot));
 
     // Limit stack size
     if (undo_stack_.size() > MAX_UNDO_LEVELS) {
@@ -45,16 +48,7 @@ void NodeEditor::Undo() {
     }
 
     // Save current state to redo stack
-    GraphSnapshot current;
-    current.nodes = nodes_;
-    current.subgraphs = subgraphs_;
-    current.positions = cached_node_positions_;
-    for (const auto& [id, pos] : pending_positions_) current.positions[id] = pos;
-    current.links = links_;
-    current.next_node_id = next_node_id_;
-    current.next_pin_id = next_pin_id_;
-    current.next_link_id = next_link_id_;
-    redo_stack_.push_back(current);
+    redo_stack_.push_back(CaptureSnapshot());
 
     // Restore previous state from undo stack
     GraphSnapshot previous = undo_stack_.back();
@@ -99,16 +93,7 @@ void NodeEditor::Redo() {
     }
 
     // Save current state to undo stack
-    GraphSnapshot current;
-    current.nodes = nodes_;
-    current.subgraphs = subgraphs_;
-    current.positions = cached_node_positions_;
-    for (const auto& [id, pos] : pending_positions_) current.positions[id] = pos;
-    current.links = links_;
-    current.next_node_id = next_node_id_;
-    current.next_pin_id = next_pin_id_;
-    current.next_link_id = next_link_id_;
-    undo_stack_.push_back(current);
+    undo_stack_.push_back(CaptureSnapshot());
 
     // Restore next state from redo stack
     GraphSnapshot next = redo_stack_.back();

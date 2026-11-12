@@ -126,6 +126,7 @@ void NodeEditor::Raise() {
 
 void NodeEditor::ClearValidationState() {
     node_pin_state_.clear();
+    ++validation_clears_;
 }
 
 NodeEditor::NodePinState NodeEditor::GetNodePinState(int node_id) const {
@@ -566,6 +567,34 @@ void NodeEditor::Render() {
         // A collapsed subgraph expands (TOFIX147).
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             node_under_press_ = is_node_hovered && !is_pin_hovered ? hovered_node_id : -1;
+        }
+
+        // Moving nodes is one undo step per drag: the graph as the press found
+        // it goes on the undo stack when, on release, a node is elsewhere (and
+        // the graph is still the same one: a load during the press is not undone).
+        const bool press_on_canvas =
+            ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                   ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&  // a node's drag button
+            ImGui::IsMouseHoveringRect(canvas_origin_, ImVec2(canvas_origin_.x + canvas_size_.x,
+                                                              canvas_origin_.y + canvas_size_.y));
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && press_on_canvas) {
+            press_snapshot_ = CaptureSnapshot();
+            press_snapshot_generation_ = graph_generation_;
+        }
+        if (press_snapshot_ && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            bool moved = false;
+            for (const auto& [id, pos] : cached_node_positions_) {
+                const auto before = press_snapshot_->positions.find(id);
+                if (before != press_snapshot_->positions.end() &&
+                    (std::abs(before->second.x - pos.x) > 0.5f || std::abs(before->second.y - pos.y) > 0.5f)) {
+                    moved = true;
+                    break;
+                }
+            }
+            if (moved && press_snapshot_generation_ == graph_generation_) {
+                PushUndoSnapshot(std::move(*press_snapshot_));
+            }
+            press_snapshot_.reset();
         }
         if (node_under_press_ >= 0 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             const int clicked = node_under_press_;

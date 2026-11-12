@@ -3084,8 +3084,15 @@ void MainWindow::UpdateLiveCompile() {
     const bool training = cyxwiz::TrainingManager::Instance().IsTrainingActive();
     live_compile_->project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
     live_compile_->Update(node_editor_->GetNodes(), node_editor_->GetLinks(), !training);
-    if (live_compile_->ResultSerial() == live_compile_serial_seen_ || !live_compile_->Config()) return;
+    // A new compile colours the pins; so does the last one when the canvas
+    // cleared its colours (an undo that only moved nodes) and that compile is
+    // of the graph as it is now.
+    const bool new_result = live_compile_->ResultSerial() != live_compile_serial_seen_;
+    const bool colours_cleared =
+        node_editor_->ValidationClears() != live_compile_clears_seen_ && live_compile_->UpToDate();
+    if ((!new_result && !colours_cleared) || !live_compile_->Config()) return;
     live_compile_serial_seen_ = live_compile_->ResultSerial();
+    live_compile_clears_seen_ = node_editor_->ValidationClears();
     // Pins and links show this compile, as the Compile button does.
     node_editor_->SetAllNodesPinState(NodeEditor::NodePinState::CompilePassed);
     for (const auto& issue : live_compile_->Config()->issues) {

@@ -344,6 +344,7 @@ private:
     // COMPILED card, link colours and tooltips follow it.
     std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
     uint64_t live_compile_serial_seen_ = 0;
+    uint64_t live_compile_clears_seen_ = 0;  // the node editor's ValidationClears when its pins were last coloured
     // Scopes the dataset catalog subscription that recompiles the graph when a
     // dataset is added, replaced or removed (declared after live_compile_, so
     // it goes first).

@@ -43,6 +43,8 @@ private Data Studio tickets (`tofix*/track*`).
   - Ctrl+Z right after Load no longer brings back the previous canvas
     under the loaded graph's name (Save would have written it over the
     loaded file).
+  - Moving nodes is an undo step (one per drag); after an undo the links
+    keep their compile colours instead of turning grey.
 - **A seed repeats on every operating system and device** (guide in
   `docs/usage/seeds_and_reproducibility.md`). Splits, folds, batch order,
   balancing, augmentation, samples and weight initialisation draw the same

@@ -48,6 +48,9 @@ Script Editor they save the script); see Preferences > Shortcuts.
 - **Edit**: **Select all** (Ctrl+A), **Duplicate** (Ctrl+D) and **Delete
   selected** (Delete). Without a selection Duplicate and Delete are greyed
   with "Select nodes first" under them.
+- **Undo** (Ctrl+Z) and **Redo** (Ctrl+Y or Ctrl+Shift+Z) on the canvas also
+  take back moving nodes: one step per drag, whether it moved one node, a
+  selection or a frame with its nodes.
 - **View · 100%** (the zoom on the button): **Zoom** with **-** and **+**
   (greyed at 25% and 200%, with the reason on hover; the view keeps its
   centre), **Zoom to 100%**, **Fit all nodes** (F), **Minimap** (M) and

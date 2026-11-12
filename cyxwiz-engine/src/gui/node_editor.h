@@ -680,6 +680,9 @@ public:
     void SetNodePinState(int node_id, NodePinState state);
     void SetAllNodesPinState(NodePinState state);
     void ClearValidationState();
+    // Counts ClearValidationState calls: the live compile colours the pins
+    // again when they were cleared and its latest compile is of this graph.
+    uint64_t ValidationClears() const { return validation_clears_; }
     NodePinState GetNodePinState(int node_id) const;
     bool HasValidationState() const { return !node_pin_state_.empty(); }
 
@@ -955,6 +958,8 @@ private:
 
     // Undo/Redo system
     void SaveUndoState();
+    GraphSnapshot CaptureSnapshot() const;
+    void PushUndoSnapshot(GraphSnapshot snapshot);
     // A loaded graph starts its own history: undo never brings back the graph
     // that was on the canvas before, under the new graph's file name.
     void ForgetUndoHistory() {
@@ -1099,6 +1104,7 @@ private:
 
     // Pin state (node_id → NodePinState). Set by Compile/Train, cleared on graph change.
     std::unordered_map<int, NodePinState> node_pin_state_;
+    uint64_t validation_clears_ = 0;
 
     // UI state
     bool show_context_menu_;
@@ -1180,6 +1186,10 @@ private:
     // reports no hovered node in the press frame (the press activates an
     // item), so a double-click is matched against this one.
     int node_under_press_ = -1;
+    // The graph as a left press on the canvas found it: an undo step when the
+    // press moved nodes (a node, a selection, a frame with its nodes).
+    std::optional<GraphSnapshot> press_snapshot_;
+    uint64_t press_snapshot_generation_ = 0;
     struct PendingSubgraphRequest {
         int subgraph_id = -1;
         SubgraphRequest request = SubgraphRequest::Expand;
