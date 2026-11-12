@@ -2579,6 +2579,9 @@ bool MainWindow::OpenGraphInNodeEditor(const std::string& path) {
     }
 
     node_editor_->Show();
+    // The graph just opened is what the user looks at next, even when another
+    // tab of the Studio's dock (the Script Editor) was in front.
+    ::gui::BringToFront(gui::NodeEditor::kWindowId);
     spdlog::info("Opened graph in Node Editor: {}", std::filesystem::path(path).filename().string());
     return true;
 }

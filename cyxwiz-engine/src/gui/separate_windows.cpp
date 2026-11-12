@@ -74,7 +74,9 @@ void RunFront(ImGuiContext& g) {
         return;
     }
     if (++g_front.frames > kFrontFrames) {
-        spdlog::debug("Window '{}' did not come to the front", g_front.name);
+        spdlog::debug("Window '{}' did not come to the front ({} has the focus{})", g_front.name,
+                      g.NavWindow ? g.NavWindow->Name : "no window",
+                      w && w->DockIsActive && !w->DockTabIsVisible ? ", its tab is hidden" : "");
         g_front = {};
         return;
     }
