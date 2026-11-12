@@ -36,6 +36,16 @@ void NextWindowStaysInMain();
 // is in a window of its own. Called between the owner's Begin and End.
 void NextWindowFollowsCurrent();
 
+// An overlay on the current window's canvas (minimap, search box, its result
+// list): a child window of it at `screen_pos`, so it is drawn with that window
+// and in its OS window, and never over another window (a window of its own
+// came back on top whenever the owner's tab showed again). The owner's cursor
+// is kept. Always pair with EndCanvasOverlay, whatever Begin returned.
+// padding: the style's WindowPadding inside; border: a 1 px edge.
+bool BeginCanvasOverlay(const char* id, float x, float y, float width, float height, int window_flags,
+                        bool padding = false, bool border = false);
+void EndCanvasOverlay();
+
 // Every frame from the main window's dock space: where "Dock back" returns
 // a window to.
 void SetMainDockSpace(unsigned int dockspace_id);

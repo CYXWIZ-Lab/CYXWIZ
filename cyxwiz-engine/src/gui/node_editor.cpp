@@ -1216,14 +1216,11 @@ void NodeEditor::RenderMinimap() {
     // Calculate minimap position (always use fixed corner position)
     ImVec2 minimap_pos = getCornerPos(minimap_position_);
 
-    // Set next window position and create a floating window for the minimap
-    ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(minimap_pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(minimap_size_, ImGuiCond_Always);
+    // The minimap: an overlay on the canvas, with the Studio window
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg,
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg,
                           ui::WithAlpha(t.bg_panel, 0.94f));
     ImGui::PushStyleColor(ImGuiCol_TitleBg, t.bg_bar);
     ImGui::PushStyleColor(ImGuiCol_TitleBgActive, t.bg_bar);
@@ -1236,7 +1233,8 @@ void NodeEditor::RenderMinimap() {
                                     ImGuiWindowFlags_NoMove;  // We handle movement manually
 
 
-    if (ImGui::Begin("##MinimapWindow", &show_minimap_, window_flags)) {
+    if (::gui::BeginCanvasOverlay("##MinimapWindow", minimap_pos.x, minimap_pos.y, minimap_size_.x, minimap_size_.y,
+                                  window_flags, false, true)) {
         // Draw subtle grid pattern on background
         ImDrawList* bg_draw_list = ImGui::GetWindowDrawList();
         ImVec2 win_pos = ImGui::GetWindowPos();
@@ -1630,8 +1628,8 @@ void NodeEditor::RenderMinimap() {
             arrow_color
         );
     }
-    }  // End ImGui::Begin("##MinimapWindow")
-    ImGui::End();
+    }  // End the minimap overlay
+    ::gui::EndCanvasOverlay();
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar(3);
 }
@@ -2967,10 +2965,11 @@ void NodeEditor::ShowSearchBar() {
         window_pos.y + ImGui::GetFrameHeight() + 60.0f  // Below toolbar
     );
 
-    ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(bar_pos);
-    ImGui::SetNextWindowSize(ImVec2(bar_width, bar_height));
-    ImGui::SetNextWindowBgAlpha(0.95f);
+    // An overlay on the canvas, with the Studio window (the window's colour, a little see-through)
+    ImVec4 bar_bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+    bar_bg.w *= 0.95f;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, bar_bg);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, ImGui::GetStyle().WindowRounding);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
                              ImGuiWindowFlags_NoResize |
@@ -2978,7 +2977,7 @@ void NodeEditor::ShowSearchBar() {
                              ImGuiWindowFlags_NoScrollbar |
                              ImGuiWindowFlags_NoSavedSettings;
 
-    if (ImGui::Begin("##NodeSearchBar", nullptr, flags)) {
+    if (::gui::BeginCanvasOverlay("##NodeSearchBar", bar_pos.x, bar_pos.y, bar_width, bar_height, flags, true)) {
         // Search icon
         ImGui::Text(ICON_FA_MAGNIFYING_GLASS);
         ImGui::SameLine();
@@ -3041,7 +3040,9 @@ void NodeEditor::ShowSearchBar() {
             search_state_.current_match_index = -1;
         }
     }
-    ImGui::End();
+    ::gui::EndCanvasOverlay();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
 }
 
 void NodeEditor::UpdateSearchResults() {
