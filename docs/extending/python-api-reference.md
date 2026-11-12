@@ -1138,7 +1138,7 @@ Derives from `Module`.
 
 | Member | What it does |
 |---|---|
-| `SqueezeExcitation(self: SqueezeExcitation, channels: int, squeeze_channels: int) -> None` | Squeeze-and-Excitation: scale each channel of a feature map [H,W,C,N] by a learned gate (torchvision.ops.SqueezeExcitation with ReLU and Sigmoid) |
+| `SqueezeExcitation(self: SqueezeExcitation, channels: int, squeeze_channels: int, activation: ActivationType = ActivationType.ReLU, gate: ActivationType = ActivationType.Sigmoid, bias: bool = True) -> None` | Squeeze-and-Excitation: scale each channel of a feature map [H,W,C,N] by a learned gate (torchvision.ops.SqueezeExcitation). activation: ActivationType.ReLU, Hardswish or Swish; gate: ActivationType.Sigmoid or Hardsigmoid |
 
 ### `StepResult`
 

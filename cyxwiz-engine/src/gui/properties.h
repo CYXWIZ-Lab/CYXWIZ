@@ -111,6 +111,7 @@ private:
     void RenderNodeProperties(MLNode& node);  // the custom and fallback editors
     void RenderAdvanced(MLNode& node);
     // The cards (properties_compiled_card.cpp, properties_sequence_fusion.cpp).
+    void RenderInsideLayer();
     void RenderCompiledCard(MLNode& node);
     void RenderFusionCard(MLNode& node);
     // Node executor integration (K-Means)
@@ -142,6 +143,7 @@ private:
     // Section and disclosure state
     bool section_settings_open_ = true;
     bool section_advanced_open_ = false;
+    bool section_inside_open_ = true;
     std::set<int> settings_details_open_;   // node ids with the rows' provenance shown
     std::set<int> fusion_details_open_;     // Concatenate ids with Details shown
     std::set<int> compiled_details_open_;   // node ids with AS COMPILED Details shown

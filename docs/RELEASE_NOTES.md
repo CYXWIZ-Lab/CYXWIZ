@@ -131,7 +131,11 @@ private Data Studio tickets (`tofix*/track*`).
 
 - **Squeeze-Excitation node.** Scales each channel of a feature map by a
   learned gate (mean over the map, Dense - ReLU - Dense - Sigmoid), as
-  torchvision's SqueezeExcitation; one setting, `reduction`.
+  torchvision's SqueezeExcitation. Settings: the hidden width (channels /
+  reduction or an exact number), the inner activation (ReLU, Hardswish,
+  Swish), the gate (Sigmoid, Hardsigmoid) and bias. Properties lists the
+  six steps inside the node with their outputs and weights ("Inside this
+  layer").
 - **Hardsigmoid activation node.** `relu6(x + 3) / 6` (torch.nn.Hardsigmoid),
   a sigmoid made of straight pieces; also `pycyxwiz.hardsigmoid`,
   `Hardsigmoid` and `HardsigmoidModule`.

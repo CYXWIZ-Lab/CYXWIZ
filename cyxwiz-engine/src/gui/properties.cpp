@@ -379,6 +379,7 @@ void Properties::Render() {
 void Properties::RenderGenericSections(MLNode& node) {
     RenderHeader(node);
     RenderSettings(node);
+    RenderInsideLayer();
     RenderCompiledCard(node);
     RenderFusionCard(node);
     RenderAdvanced(node);
@@ -629,6 +630,66 @@ void Properties::RenderSettings(MLNode& node) {
         }
         cyxwiz::ui::Tooltip("Where each setting's value comes from and what the rules say about it");
     }
+    ImGui::Spacing();
+}
+
+// "Inside this layer": the steps of a composite layer node (core/layer_inside_presentation).
+void Properties::RenderInsideLayer() {
+    const auto& inside = view_.inside;
+    if (!inside.applies) return;
+    if (!Section("Inside this layer", section_inside_open_)) return;
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    cyxwiz::ui::BeginCard("inside_layer_card");
+    if (ImGui::BeginTable("##inside", 4, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("##n", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("00").x);
+        ImGui::TableSetupColumn("##step", ImGuiTableColumnFlags_WidthStretch, 2.2f);
+        ImGui::TableSetupColumn("##output", ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        // Numbers do not wrap: the column is as wide as its widest one.
+        float weights_width = std::max(ImGui::CalcTextSize("Weights").x, ImGui::CalcTextSize(inside.total.c_str()).x);
+        for (const auto& step : inside.steps) weights_width = std::max(weights_width, ImGui::CalcTextSize(step.weights.c_str()).x);
+        ImGui::TableSetupColumn("##weights", ImGuiTableColumnFlags_WidthFixed, weights_width);
+        const auto right = [](const ImVec4& colour, const std::string& text) {
+            const float room = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(text.c_str()).x;
+            if (room > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + room);
+            ImGui::TextColored(colour, "%s", text.c_str());
+        };
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TableNextColumn();
+        ImGui::TextColored(t.text_dim, "Step");
+        ImGui::TableNextColumn();
+        ImGui::TextColored(t.text_dim, "Output");
+        ImGui::TableNextColumn();
+        right(t.text_dim, "Weights");
+        int number = 0;
+        for (const auto& step : inside.steps) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.text_dim, "%d", ++number);
+            ImGui::TableNextColumn();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(step.name.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::TableNextColumn();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(step.output.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::TableNextColumn();
+            if (!step.weights.empty()) right(t.text, step.weights);
+        }
+        if (!inside.total.empty()) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(t.text_dim, "Total");
+            ImGui::TableNextColumn();
+            ImGui::TableNextColumn();
+            right(t.text, inside.total);
+        }
+        ImGui::EndTable();
+    }
+    Wrapped(t.text_dim, inside.note);
+    cyxwiz::ui::EndCard();
     ImGui::Spacing();
 }
 

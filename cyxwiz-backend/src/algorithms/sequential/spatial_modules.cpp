@@ -310,14 +310,24 @@ std::string GlobalAvgPool2DModule::GetName() const {
     return "GlobalAvgPool2D";
 }
 
-SqueezeExcitationModule::SqueezeExcitationModule(size_t channels, size_t squeeze_channels)
-    : channels_(channels), squeeze_channels_(squeeze_channels) {
+SqueezeExcitationModule::SqueezeExcitationModule(size_t channels, size_t squeeze_channels,
+                                                 SqueezeExcitationOptions options)
+    : channels_(channels), squeeze_channels_(squeeze_channels), options_(options) {
     if (channels_ == 0 || squeeze_channels_ == 0) {
         throw std::invalid_argument("SqueezeExcitation requires at least one channel and one squeeze channel");
     }
+    if (options_.activation != ActivationType::ReLU && options_.activation != ActivationType::Hardswish &&
+        options_.activation != ActivationType::Swish) {
+        throw std::invalid_argument("SqueezeExcitation activation must be ReLU, Hardswish or Swish");
+    }
+    if (options_.gate != ActivationType::Sigmoid && options_.gate != ActivationType::Hardsigmoid) {
+        throw std::invalid_argument("SqueezeExcitation gate must be Sigmoid or Hardsigmoid");
+    }
     pool_ = std::make_unique<GlobalAvgPool2DLayer>();
-    reduce_ = std::make_unique<LinearModule>(channels_, squeeze_channels_);
-    expand_ = std::make_unique<LinearModule>(squeeze_channels_, channels_);
+    reduce_ = std::make_unique<LinearModule>(channels_, squeeze_channels_, options_.use_bias);
+    expand_ = std::make_unique<LinearModule>(squeeze_channels_, channels_, options_.use_bias);
+    activation_ = CreateActivation(options_.activation);
+    gate_activation_ = CreateActivation(options_.gate);
 }
 
 Tensor SqueezeExcitationModule::Over(const std::vector<size_t>& shape) const {
@@ -332,8 +342,8 @@ Tensor SqueezeExcitationModule::Forward(const Tensor& input) {
     input_cache_ = input;
     // Squeeze: each channel's mean [C,N] as rows [N,C]; excite: one value per channel in (0, 1).
     reduce_out_ = reduce_->Forward(pool_->Forward(input).Transpose());
-    expand_out_ = expand_->Forward(relu_.Forward(reduce_out_));
-    gate_ = sigmoid_.Forward(expand_out_);
+    expand_out_ = expand_->Forward(activation_->Forward(reduce_out_));
+    gate_ = gate_activation_->Forward(expand_out_);
     return input * Over(shape);
 }
 
@@ -344,8 +354,8 @@ Tensor SqueezeExcitationModule::Backward(const Tensor& grad_output) {
     // The map reaches the output directly (times the gate) and through the gate.
     const Tensor direct = grad_output * Over(grad_output.Shape());
     const Tensor to_gate = (grad_output * input_cache_).Sum(0, false).Sum(0, false).Transpose();  // [N,C]
-    const Tensor to_reduced = expand_->Backward(sigmoid_.Backward(to_gate, expand_out_));
-    const Tensor to_pooled = reduce_->Backward(relu_.Backward(to_reduced, reduce_out_));
+    const Tensor to_reduced = expand_->Backward(gate_activation_->Backward(to_gate, expand_out_));
+    const Tensor to_pooled = reduce_->Backward(activation_->Backward(to_reduced, reduce_out_));
     return direct + pool_->Backward(to_pooled.Transpose());
 }
 
@@ -380,8 +390,13 @@ size_t SqueezeExcitationModule::BackwardWorkingElementsPerSample(const std::vect
 }
 
 std::string SqueezeExcitationModule::GetName() const {
-    return "SqueezeExcitation(channels=" + std::to_string(channels_) +
-        ", squeeze=" + std::to_string(squeeze_channels_) + ")";
+    // The paper's block keeps its short name; other choices are named.
+    std::string name = "SqueezeExcitation(channels=" + std::to_string(channels_) +
+        ", squeeze=" + std::to_string(squeeze_channels_);
+    if (options_.activation != ActivationType::ReLU) name += ", activation=" + activation_->GetName();
+    if (options_.gate != ActivationType::Sigmoid) name += ", gate=" + gate_activation_->GetName();
+    if (!options_.use_bias) name += ", bias=off";
+    return name + ")";
 }
 
 GlobalMaxPool2DModule::GlobalMaxPool2DModule()

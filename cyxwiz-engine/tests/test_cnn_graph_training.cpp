@@ -250,12 +250,13 @@ void CheckGraphAgainstPyTorch(cyxwiz::GraphCompiler& compiler, const std::vector
 
 // The Squeeze-Excitation node after a stem, against PyTorch: its gate's two
 // Linear layers are the node's reduce_* and expand_* parameters.
-void CheckSqueezeExcitationAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
+void CheckSqueezeExcitationAgainstPyTorch(cyxwiz::GraphCompiler& compiler, size_t case_index, const std::string& case_name,
+                                          const std::map<std::string, std::string>& se_settings) {
     std::ifstream in(CYXWIZ_CNN_GRAPH_FIXTURE);
     Check(in.good(), std::string("cannot open ") + CYXWIZ_CNN_GRAPH_FIXTURE);
     const auto fixture = nlohmann::json::parse(in);
-    const auto& c = fixture.at("cases").at(1);
-    Check(c.at("name").get<std::string>() == "squeeze_excitation_block", "the second fixture case is the Squeeze-Excitation node");
+    const auto& c = fixture.at("cases").at(case_index);
+    Check(c.at("name").get<std::string>() == case_name, "fixture case " + std::to_string(case_index) + " is " + case_name);
 
     gui::MLNode data;
     data.id = 1;
@@ -286,7 +287,7 @@ void CheckSqueezeExcitationAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
               {{"filters", "8"}, {"kernel_size", "3"}, {"stride", "1"}, {"padding", "1"}}),
         Layer(4, gui::NodeType::BatchNorm, "Stem BN", {{"eps", "1e-5"}, {"momentum", "0.1"}}),
         Layer(5, gui::NodeType::ReLU, "Stem ReLU"),
-        Layer(10, gui::NodeType::SqueezeExcitation, "SE", {{"reduction", "2"}}),
+        Layer(10, gui::NodeType::SqueezeExcitation, "SE", se_settings),
         Layer(32, gui::NodeType::GlobalAvgPool, "GAP"),
         Layer(33, gui::NodeType::Dense, "Head", {{"units", "2"}}), loss, adam, output};
     std::vector<gui::NodeLink> links = {Link(1, 1, 2), Link(2, 2, 3), Link(3, 3, 4), Link(4, 4, 5),
@@ -301,7 +302,7 @@ void CheckSqueezeExcitationAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
     links.push_back(labels);
     links.push_back(to_adam);
     CheckGraphAgainstPyTorch(compiler, nodes, links, c);
-    std::cout << "Squeeze-Excitation node matches PyTorch: logits, input and " << c.at("layers").size()
+    std::cout << "Squeeze-Excitation node (" << case_name << ") matches PyTorch: logits, input and " << c.at("layers").size()
               << " layers' gradients\n";
 }
 
@@ -723,7 +724,11 @@ int main() {
     }
 
     CheckResidualCnnAgainstPyTorch(compiler);
-    CheckSqueezeExcitationAgainstPyTorch(compiler);
+    CheckSqueezeExcitationAgainstPyTorch(compiler, 1, "squeeze_excitation_block", {{"reduction", "2"}});
+    // The node's other choices: a typed width, Hardswish inside, a Hardsigmoid gate, no biases.
+    CheckSqueezeExcitationAgainstPyTorch(compiler, 2, "squeeze_excitation_hard",
+                                         {{"width_mode", "exact"}, {"squeeze_channels", "3"}, {"inner_activation", "hardswish"},
+                                          {"gate", "hardsigmoid"}, {"use_bias", "false"}});
     std::cout << "CNN graph compiles, builds and runs forward: " << parameters << " parameters\n";
     return 0;
 }

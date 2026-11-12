@@ -3012,18 +3012,40 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Affine", "Normalization", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::SqueezeExcitation, NodeCategory::Normalization, "Squeeze-Excitation", ICON_FA_SCALE_BALANCED,
-        {"squeeze", "excitation", "se", "se block", "channel attention", "attention", "gate", "mobilenet", "senet"}, 0, false,
-        "Scale each channel of a feature map by a learned gate",
-        "Squeeze: each channel's mean over the map. Excite: Dense(C -> C / reduction) - ReLU - Dense(-> C) - Sigmoid gives "
-        "one value between 0 and 1 per channel, and the map is multiplied by it. The model learns which channels matter "
-        "for each image. Same as torchvision.ops.SqueezeExcitation; the channel count comes from the layer before it.",
-        "Conv2D -> BatchNorm -> ReLU -> Squeeze-Excitation -> ...",
-        {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
-        {{"Output", PinType::Tensor, true, "The feature map with each channel scaled, same shape."}},
-        {{"reduction", "int", "16", "The gate's hidden width is C / reduction (at least 1). 16 is the paper's value; "
-          "4 is usual for small models", {}, "1-1024", "Reduction"}},
-        NodeImplementationStatus::Implemented, 0});
+    {
+        // One node, six steps inside; Properties lists them under "Inside this layer".
+        ParameterDefinition width_mode{"width_mode", "enum", "reduction",
+                                       "How the gate's hidden width is set: the channels divided by Reduction, or "
+                                       "a number you type (pretrained MobileNetV3 uses widths no reduction gives)",
+                                       {"reduction", "exact"}, "", "Hidden width"};
+        width_mode.enum_labels = {"Channels / reduction", "Exact number"};
+        ParameterDefinition inner{"inner_activation", "enum", "relu",
+                                  "The activation between the two Dense steps",
+                                  {"relu", "hardswish", "swish"}, "", "Inner activation"};
+        inner.enum_labels = {"ReLU", "Hardswish", "Swish"};
+        ParameterDefinition gate{"gate", "enum", "sigmoid",
+                                 "What turns the last Dense step into one value between 0 and 1 per channel. "
+                                 "Hardsigmoid is MobileNetV3's",
+                                 {"sigmoid", "hardsigmoid"}, "", "Gate"};
+        gate.enum_labels = {"Sigmoid", "Hardsigmoid"};
+        RegisterNode({NodeType::SqueezeExcitation, NodeCategory::Normalization, "Squeeze-Excitation", ICON_FA_SCALE_BALANCED,
+            {"squeeze", "excitation", "se", "se block", "channel attention", "attention", "gate", "mobilenet", "senet"}, 0, false,
+            "Scale each channel of a feature map by a learned gate",
+            "Squeeze: each channel's mean over the map. Excite: Dense(C -> hidden width) - activation - Dense(-> C) - gate "
+            "gives one value between 0 and 1 per channel, and the map is multiplied by it. The model learns which "
+            "channels matter for each image. With the defaults (ReLU, Sigmoid) it is the paper's block; same as "
+            "torchvision.ops.SqueezeExcitation. The channel count comes from the layer before it.",
+            "Conv2D -> BatchNorm -> ReLU -> Squeeze-Excitation -> ...",
+            {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
+            {{"Output", PinType::Tensor, true, "The feature map with each channel scaled, same shape."}},
+            {width_mode,
+             {"reduction", "int", "16", "The gate's hidden width is C / reduction (at least 1). 16 is the paper's value; "
+              "4 is usual for small models", {}, "1-1024", "Reduction"},
+             {"squeeze_channels", "int", "8", "The gate's hidden width, as typed", {}, "1-65536", "Width"},
+             inner, gate,
+             {"use_bias", "bool", "true", "A bias on both Dense steps", {}, "", "Bias"}},
+            NodeImplementationStatus::Implemented, 0});
+    }
 
     RegisterNode({NodeType::InstanceNorm, NodeCategory::Normalization, "InstanceNorm", ICON_FA_SCALE_BALANCED,
         {"instancenorm", "instance normalization", "style transfer", "channels"}, 0, false,

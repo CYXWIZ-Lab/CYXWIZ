@@ -2337,9 +2337,20 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // Squeeze-and-Excitation on [H,W,C,N]
     py::class_<cyxwiz::SqueezeExcitationModule, cyxwiz::Module>(m, "SqueezeExcitation")
-        .def(py::init<size_t, size_t>(), py::arg("channels"), py::arg("squeeze_channels"),
+        .def(py::init([](size_t channels, size_t squeeze_channels, cyxwiz::ActivationType activation,
+                         cyxwiz::ActivationType gate, bool bias) {
+                 cyxwiz::SqueezeExcitationOptions options;
+                 options.activation = activation;
+                 options.gate = gate;
+                 options.use_bias = bias;
+                 return std::make_unique<cyxwiz::SqueezeExcitationModule>(channels, squeeze_channels, options);
+             }),
+             py::arg("channels"), py::arg("squeeze_channels"),
+             py::arg("activation") = cyxwiz::ActivationType::ReLU,
+             py::arg("gate") = cyxwiz::ActivationType::Sigmoid, py::arg("bias") = true,
              "Squeeze-and-Excitation: scale each channel of a feature map [H,W,C,N] by a learned gate "
-             "(torchvision.ops.SqueezeExcitation with ReLU and Sigmoid)");
+             "(torchvision.ops.SqueezeExcitation). activation: ActivationType.ReLU, Hardswish or Swish; "
+             "gate: ActivationType.Sigmoid or Hardsigmoid");
 
     // HardswishModule
     py::class_<cyxwiz::HardswishModule, cyxwiz::Module>(m, "HardswishModule")

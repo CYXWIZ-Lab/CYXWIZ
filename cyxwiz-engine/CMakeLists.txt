@@ -482,6 +482,7 @@ set(ENGINE_SOURCES
     src/core/model_export_presentation.cpp
     src/core/model_open_presentation.cpp
     src/core/properties_presentation.cpp
+    src/core/layer_inside_presentation.cpp
     src/core/node_presets.cpp
     src/core/menu_presentation.cpp
     src/core/extension_properties_presentation.cpp
@@ -7580,6 +7581,7 @@ add_test(NAME word_vector_runs COMMAND test_word_vector_runs)
 add_executable(test_properties_presentation
     tests/test_properties_presentation.cpp
     src/core/properties_presentation.cpp
+    src/core/layer_inside_presentation.cpp
     src/core/compiled_node_presentation.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_truth.cpp

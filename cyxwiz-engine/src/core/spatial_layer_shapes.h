@@ -23,9 +23,19 @@ namespace cyxwiz::spatial {
 using Params = std::map<std::string, std::string>;
 
 // The resolved geometry of a convolution or pooling layer.
-// Squeeze-Excitation's hidden width: C / reduction, at least 1. Throws when
-// the reduction is below 1. (Defined after ParseIntParam.)
-inline size_t SqueezeChannels(size_t channels, const Params& params);
+// A Squeeze-Excitation node's settings as they resolve for C channels.
+struct SqueezeExcitationSettings {
+    size_t squeeze = 1;                     // the gate's hidden width
+    bool exact_width = false;               // typed (squeeze_channels), not C / reduction
+    int reduction = 16;                     // read in reduction mode only
+    std::string inner_activation = "relu";  // relu | hardswish | swish
+    std::string gate = "sigmoid";           // sigmoid | hardsigmoid
+    bool use_bias = true;
+};
+
+// Throws std::invalid_argument with the reason when a setting is refused.
+// (Defined after ParseIntParam.)
+inline SqueezeExcitationSettings ResolveSqueezeExcitation(size_t channels, const Params& params);
 
 struct Geometry {
     int channels_out = 0;    // Conv2D filters / ConvTranspose2D out_channels / Depthwise C x M; 0 = keeps C
@@ -50,10 +60,35 @@ inline int ParseIntParam(const Params& params, const char* key, int fallback) {
     }
 }
 
-inline size_t SqueezeChannels(size_t channels, const Params& params) {
-    const int reduction = ParseIntParam(params, "reduction", 16);
-    if (reduction < 1) throw std::invalid_argument("reduction must be 1 or more");
-    return std::max<size_t>(1, channels / static_cast<size_t>(reduction));
+inline SqueezeExcitationSettings ResolveSqueezeExcitation(size_t channels, const Params& params) {
+    const auto text = [&params](const char* key, const char* fallback) {
+        const auto it = params.find(key);
+        return it == params.end() || it->second.empty() ? std::string(fallback) : it->second;
+    };
+    SqueezeExcitationSettings settings;
+    const std::string mode = text("width_mode", "reduction");
+    if (mode != "reduction" && mode != "exact") throw std::invalid_argument("width_mode must be reduction or exact");
+    settings.exact_width = mode == "exact";
+    if (settings.exact_width) {
+        const int width = ParseIntParam(params, "squeeze_channels", 8);
+        if (width < 1) throw std::invalid_argument("squeeze_channels must be 1 or more");
+        settings.squeeze = static_cast<size_t>(width);
+    } else {
+        settings.reduction = ParseIntParam(params, "reduction", 16);
+        if (settings.reduction < 1) throw std::invalid_argument("reduction must be 1 or more");
+        settings.squeeze = std::max<size_t>(1, channels / static_cast<size_t>(settings.reduction));
+    }
+    settings.inner_activation = text("inner_activation", "relu");
+    if (settings.inner_activation != "relu" && settings.inner_activation != "hardswish" &&
+        settings.inner_activation != "swish")
+        throw std::invalid_argument("inner_activation must be relu, hardswish or swish");
+    settings.gate = text("gate", "sigmoid");
+    if (settings.gate != "sigmoid" && settings.gate != "hardsigmoid")
+        throw std::invalid_argument("gate must be sigmoid or hardsigmoid");
+    const std::string bias = text("use_bias", "true");
+    if (bias != "true" && bias != "false") throw std::invalid_argument("use_bias must be true or false");
+    settings.use_bias = bias == "true";
+    return settings;
 }
 
 // "same" keeps the sample size at stride 1 ((k-1)/2 each side, odd kernels);
@@ -251,7 +286,7 @@ inline std::vector<size_t> SampleShapeAfter(gui::NodeType type, const Params& pa
         case gui::NodeType::InstanceNorm:
             return in;
         case gui::NodeType::SqueezeExcitation:
-            SqueezeChannels(in[2], params);  // validates the reduction
+            ResolveSqueezeExcitation(in[2], params);  // validates the settings
             return in;
         case gui::NodeType::AdaptiveAvgPool: {
             const size_t size = static_cast<size_t>(AdaptiveOutputSize(params));

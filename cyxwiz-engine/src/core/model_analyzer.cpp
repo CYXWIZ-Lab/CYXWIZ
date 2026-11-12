@@ -337,14 +337,17 @@ ModelAnalysis ModelAnalyzer::AnalyzeGraph(
                     break;
                 }
                 case gui::NodeType::SqueezeExcitation: {
-                    // Linear(C -> S) and Linear(S -> C), with biases; S = C / reduction, at least 1.
+                    // Linear(C -> S) and Linear(S -> C), each with a bias unless switched off.
                     const int64_t channels = current_shape.size() >= 3 ? current_shape[2] : (current_shape.empty() ? 1 : current_shape.back());
-                    int64_t squeeze = 1;  // a reduction the compiler refuses counts as the smallest gate
+                    int64_t squeeze = 1;  // settings the compiler refuses count as the smallest gate
+                    bool bias = true;
                     try {
-                        squeeze = static_cast<int64_t>(spatial::SqueezeChannels(static_cast<size_t>(std::max<int64_t>(1, channels)), node->parameters));
+                        const auto settings = spatial::ResolveSqueezeExcitation(static_cast<size_t>(std::max<int64_t>(1, channels)), node->parameters);
+                        squeeze = static_cast<int64_t>(settings.squeeze);
+                        bias = settings.use_bias;
                     } catch (const std::invalid_argument&) {
                     }
-                    layer_analysis.parameters = 2 * channels * squeeze + squeeze + channels;
+                    layer_analysis.parameters = 2 * channels * squeeze + (bias ? squeeze + channels : 0);
                     layer_analysis.flops = static_cast<int64_t>(batch_size) * 4 * channels * squeeze;
                     break;
                 }

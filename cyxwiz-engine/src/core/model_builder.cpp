@@ -1260,15 +1260,23 @@ bool BuildSequential(
                         break;
                     }
                     case gui::NodeType::SqueezeExcitation: {
-                        size_t squeeze = 1;
+                        spatial::SqueezeExcitationSettings settings;
                         try {
-                            squeeze = spatial::SqueezeChannels(static_cast<size_t>(channels), layer_cfg.parameters);
+                            settings = spatial::ResolveSqueezeExcitation(static_cast<size_t>(channels), layer_cfg.parameters);
                         } catch (const std::invalid_argument& error) {
                             throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) +
                                                      ": " + error.what());
                         }
-                        model.Add<SqueezeExcitationModule>(static_cast<size_t>(channels), squeeze);
-                        CYXWIZ_BUILDER_INFO("  [{}] SqueezeExcitation(channels={}, squeeze={})", i, channels, squeeze);
+                        SqueezeExcitationOptions options;
+                        options.activation = settings.inner_activation == "hardswish" ? ActivationType::Hardswish
+                                             : settings.inner_activation == "swish" ? ActivationType::Swish
+                                                                                    : ActivationType::ReLU;
+                        options.gate = settings.gate == "hardsigmoid" ? ActivationType::Hardsigmoid : ActivationType::Sigmoid;
+                        options.use_bias = settings.use_bias;
+                        model.Add<SqueezeExcitationModule>(static_cast<size_t>(channels), settings.squeeze, options);
+                        CYXWIZ_BUILDER_INFO("  [{}] SqueezeExcitation(channels={}, squeeze={}, activation={}, gate={}, bias={})",
+                                            i, channels, settings.squeeze, settings.inner_activation, settings.gate,
+                                            settings.use_bias);
                         break;
                     }
                     default:

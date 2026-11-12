@@ -23,7 +23,7 @@ The Resize node sets the input shape (`[height, width, 3]`); the Properties
 | ConvTranspose2D | `(H - 1) x s - 2p + k + output_padding` | `nn.ConvTranspose2d` |
 | BatchNorm (`eps`, `momentum`) | unchanged; one mean and variance per channel over the batch and every pixel | `nn.BatchNorm2d` (after Flatten the same node is `nn.BatchNorm1d`) |
 | GroupNorm, InstanceNorm | unchanged | `nn.GroupNorm` / `nn.InstanceNorm2d` |
-| Squeeze-Excitation (`reduction` r) | unchanged; each channel is multiplied by a learned value between 0 and 1 | `torchvision.ops.SqueezeExcitation(C, C // r)` |
+| Squeeze-Excitation (`reduction` r or an exact hidden width, inner activation, gate, bias) | unchanged; each channel is multiplied by a learned value between 0 and 1 | `torchvision.ops.SqueezeExcitation(C, C // r)`; with the Hardsigmoid gate, MobileNetV3's block |
 | Adaptive Avg Pool (`output_size` s) | `[s, s, C]` for any H, W (cell i averages rows `floor(i*H/s)` to `ceil((i+1)*H/s) - 1`) | `nn.AdaptiveAvgPool2d(s)` |
 | Upsample, PixelShuffle | scaled | `nn.Upsample` / `nn.PixelShuffle` |
 | Activations, Dropout | unchanged | PReLU only with one shared slope (`num_parameters` 1) |
@@ -35,7 +35,23 @@ every channel of the map by its value. Put it after a convolution block
 (Conv2D - BatchNorm - activation), as SENet, MobileNetV3 and EfficientNet do.
 `reduction` 16 is the paper's value; use 4 where the layer has few channels
 (the hidden width is never below 1). It adds about `2 x C x C / reduction`
-parameters. **Hardswish** (`x * relu6(x + 3) / 6`) is the activation those
+parameters.
+
+Its other settings, all in Properties:
+
+- **Hidden width**: channels / Reduction (default), or an exact number. Pretrained
+  MobileNetV3 uses widths no reduction gives (32 for 120 channels).
+- **Inner activation**: ReLU (default), Hardswish or Swish, between the two Dense steps.
+- **Gate**: Sigmoid (default) or Hardsigmoid, the gate MobileNetV3 uses.
+- **Bias**: on (default) or off, for both Dense steps.
+
+The node is one box on the canvas with six steps inside. **Inside this layer** in
+Properties lists them in order (mean over the map, Dense, activation, Dense, gate,
+multiply) with each step's output for one image and the weights of the two Dense
+steps. The defaults are the paper's block, so graphs saved before these settings
+existed train the same.
+
+**Hardswish** (`x * relu6(x + 3) / 6`) is the activation those
 small models pair it with, and **Hardsigmoid** (`relu6(x + 3) / 6`) the cheap
 sigmoid MobileNetV3 uses as its gate.
 

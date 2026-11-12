@@ -574,9 +574,14 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Squeeze-Excitation",
         "Scales each channel of a feature map by a learned value between 0 and 1, worked out from the "
         "channels' means: the model learns which channels matter for each image.",
-        "mean over the map -> Dense(C / reduction) -> ReLU -> Dense(C) -> Sigmoid -> multiply.",
+        "mean over the map -> Dense(hidden width) -> activation -> Dense(C) -> gate -> multiply.",
         {
-            {"reduction", "The gate's hidden width is C / reduction, at least 1"}
+            {"width_mode", "Hidden width from the channels / Reduction, or a typed number"},
+            {"reduction", "The gate's hidden width is C / reduction, at least 1"},
+            {"squeeze_channels", "The hidden width, when typed"},
+            {"inner_activation", "ReLU, Hardswish or Swish between the two Dense steps"},
+            {"gate", "Sigmoid or Hardsigmoid: one value between 0 and 1 per channel"},
+            {"use_bias", "A bias on both Dense steps"}
         },
         {
             "After a convolution block, before the next one (SENet, MobileNetV3, EfficientNet)",

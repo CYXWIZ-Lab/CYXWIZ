@@ -553,16 +553,26 @@ private:
 };
 
 /**
- * @brief Squeeze-and-Excitation on `[H,W,C,N]` (torchvision.ops.SqueezeExcitation
- * with ReLU and Sigmoid): each channel's mean over the map goes through
- * Linear(C -> squeeze) - ReLU - Linear(squeeze -> C) - Sigmoid, and the map is
- * multiplied by that one value per sample and channel. The output has the
- * input's shape. Parameters: reduce_weight [squeeze, C], reduce_bias [squeeze],
- * expand_weight [C, squeeze], expand_bias [C].
+ * @brief The choices inside a Squeeze-and-Excitation block. The defaults are
+ * the paper's block; MobileNetV3 uses ReLU with a Hardsigmoid gate.
+ */
+struct SqueezeExcitationOptions {
+    ActivationType activation = ActivationType::ReLU;  // between the two Linear layers: ReLU, Hardswish or Swish
+    ActivationType gate = ActivationType::Sigmoid;     // the value per channel: Sigmoid or Hardsigmoid
+    bool use_bias = true;                              // both Linear layers
+};
+
+/**
+ * @brief Squeeze-and-Excitation on `[H,W,C,N]` (torchvision.ops.SqueezeExcitation):
+ * each channel's mean over the map goes through Linear(C -> squeeze) -
+ * activation - Linear(squeeze -> C) - gate, and the map is multiplied by that
+ * one value per sample and channel. The output has the input's shape.
+ * Parameters: reduce_weight [squeeze, C], expand_weight [C, squeeze] and, with
+ * bias, reduce_bias [squeeze], expand_bias [C].
  */
 class CYXWIZ_API SqueezeExcitationModule : public Module {
 public:
-    SqueezeExcitationModule(size_t channels, size_t squeeze_channels);
+    SqueezeExcitationModule(size_t channels, size_t squeeze_channels, SqueezeExcitationOptions options = {});
 
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
@@ -581,12 +591,13 @@ private:
     std::unique_ptr<GlobalAvgPool2DLayer> pool_;
     std::unique_ptr<LinearModule> reduce_;
     std::unique_ptr<LinearModule> expand_;
-    ReLUActivation relu_;
-    SigmoidActivation sigmoid_;
+    std::unique_ptr<Activation> activation_;
+    std::unique_ptr<Activation> gate_activation_;
     size_t channels_;
     size_t squeeze_channels_;
-    Tensor reduce_out_;  // before the ReLU
-    Tensor expand_out_;  // before the Sigmoid
+    SqueezeExcitationOptions options_;
+    Tensor reduce_out_;  // before the activation
+    Tensor expand_out_;  // before the gate
     Tensor gate_;        // [N,C]
 };
 

@@ -255,6 +255,80 @@ int main() {
     Check(ShortLabel("Training", "Training") == "Training", "never strip the whole label");
     Check(ShortLabel("Units", "") == "Units", "no group, no change");
 
+    // ---- Squeeze-Excitation: the steps inside, and the row of the chosen width mode ----
+    {
+        NodeMetadata meta(gui::NodeType::SqueezeExcitation, gui::NodeCategory::Normalization, "Squeeze-Excitation", "S");
+        meta.parameters = {ParameterDefinition("width_mode", "enum", "reduction", "", {"reduction", "exact"}, "", "Hidden width"),
+                           Param("reduction", "int", "16", "Reduction", ""),
+                           Param("squeeze_channels", "int", "8", "Width", "")};
+        auto se = MakeNode(22, gui::NodeType::SqueezeExcitation, "SE 32");
+        se.parameters["reduction"] = "4";
+        std::vector<gui::MLNode> nodes{se};
+        std::vector<gui::NodeLink> links;
+        TrainingConfiguration config;
+        CompiledLayer layer;
+        layer.type = gui::NodeType::SqueezeExcitation;
+        layer.node_id = 22;
+        layer.input_shape = {32, 32, 32};
+        layer.output_shape = {32, 32, 32};
+        config.layers.push_back(layer);
+        CompiledNodeInputs compiled;
+        compiled.state = LiveCompileState::Compiled;
+        compiled.config = &config;
+        Inputs in;
+        in.node = &nodes[0];
+        in.metadata = &meta;
+        in.nodes = &nodes;
+        in.links = &links;
+        in.compiled = &compiled;
+
+        View v = Build(in);
+        Check(v.inside.applies && v.inside.steps.size() == 6, "SE: six steps inside");
+        Check(v.inside.steps[0].name == "Mean over the map" && v.inside.steps[0].output == "[32]" &&
+                  v.inside.steps[0].weights.empty(), "SE step 1: the mean, no weights");
+        Check(v.inside.steps[1].name == "Dense 32 to 8" && v.inside.steps[1].output == "[8]" &&
+                  v.inside.steps[1].weights == "264", "SE step 2: Dense 32 to 8, 264 weights: " + v.inside.steps[1].weights);
+        Check(v.inside.steps[2].name == "ReLU" && v.inside.steps[4].name == "Sigmoid", "SE: the default activation and gate");
+        Check(v.inside.steps[3].name == "Dense 8 to 32" && v.inside.steps[3].weights == "288", "SE step 4: 288 weights");
+        Check(v.inside.steps[5].output == "[32, 32, 32]" && v.inside.total == "552", "SE: the map's shape and 552 in all");
+        Check(v.inside.note == "Hidden width 8 = 32 channels / reduction 4. Shapes are for one sample.", "SE note: " + v.inside.note);
+        Check(FindRow(v, "reduction") && !FindRow(v, "squeeze_channels"), "reduction mode shows Reduction, not Width");
+
+        nodes[0].parameters["width_mode"] = "exact";
+        nodes[0].parameters["squeeze_channels"] = "12";
+        nodes[0].parameters["inner_activation"] = "hardswish";
+        nodes[0].parameters["gate"] = "hardsigmoid";
+        nodes[0].parameters["use_bias"] = "false";
+        v = Build(in);
+        Check(v.inside.steps[1].name == "Dense 32 to 12" && v.inside.steps[1].weights == "384" &&
+                  v.inside.steps[2].name == "Hardswish" && v.inside.steps[4].name == "Hardsigmoid" && v.inside.total == "768",
+              "SE exact width 12, no bias: 384 + 384");
+        Check(v.inside.note == "Hidden width 12, typed. No biases. Shapes are for one sample.", "SE exact note: " + v.inside.note);
+        Check(!FindRow(v, "reduction") && FindRow(v, "squeeze_channels"), "exact mode shows Width, not Reduction");
+
+        nodes[0].parameters["reduction"] = "many";
+        v = Build(in);
+        Check(v.inside.total == "768", "a typed width does not read the hidden Reduction");
+
+        nodes[0].parameters["gate"] = "tanh";
+        v = Build(in);
+        Check(v.inside.applies && v.inside.total.empty() &&
+                  v.inside.note == "These settings do not compile: gate must be sigmoid or hardsigmoid.",
+              "SE refused gate: " + v.inside.note);
+
+        nodes[0].parameters.clear();
+        in.compiled = nullptr;
+        v = Build(in);
+        Check(v.inside.applies && v.inside.steps.size() == 6 && v.inside.steps[1].output.empty() && v.inside.total.empty() &&
+                  v.inside.note == "Sizes appear when the graph compiles.", "SE before a compile: names only");
+
+        auto dense = MakeNode(4, gui::NodeType::Dense, "Dense");
+        std::vector<gui::MLNode> other{dense};
+        in.node = &other[0];
+        in.nodes = &other;
+        Check(!Build(in).inside.applies, "a plain layer has no steps inside");
+    }
+
     // ---- Empty state ----------------------------------------------------------
     {
         TrainingConfiguration config;

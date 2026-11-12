@@ -121,6 +121,14 @@ bool ShouldHideGenericParameter(
         if (param.name == "statistics_source") return true;  // shown under the channel rows
     }
 
+    if (type == NodeType::SqueezeExcitation) {
+        // Reduction or the typed width: the row the chosen mode reads.
+        const auto it = node.parameters.find("width_mode");
+        const bool exact = it != node.parameters.end() && it->second == "exact";
+        if (param.name == "reduction") return exact;
+        if (param.name == "squeeze_channels") return !exact;
+    }
+
     if (type == NodeType::AdvancedAugment) {
         // Only the chosen method's fields (TOFIX178 1.6b).
         static const std::map<std::string, std::set<std::string>> fields = {
