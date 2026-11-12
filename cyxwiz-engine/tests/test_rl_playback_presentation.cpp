@@ -85,7 +85,12 @@ void CheckMuJoCo() {
     Check(v.source_line == "policy from InvertedPendulum.cyxmodel (122,880 steps)", "a file's source line");
 
     in.shown_in_view = false;
-    Check(Build(in).view == ViewKind::None, "a copy with no picture: no view");
+    const View stopped = Build(in);
+    Check(stopped.view == ViewKind::None && stopped.view_note == "The MuJoCo Viewport shows the copy while the policy plays.",
+          "a stopped copy of an environment with a view: no picture now, and where it shows");
+    Inputs viewless = in;
+    viewless.view_title.clear();
+    Check(Build(viewless).view_note.rfind("This environment has no view", 0) == 0, "an environment without a view says so");
     in.status = Status::Failed;
     in.message = "the environment is gone";
     const View f = Build(in);

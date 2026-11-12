@@ -51,6 +51,19 @@ bool PolicyPlaybackPanel::Play(std::shared_ptr<rl::TrainedPolicy> policy, std::s
 
 void PolicyPlaybackPanel::Stop() { playback_.Stop(); }
 
+void PolicyPlaybackPanel::LookUpViewTitle(const std::string& environment_key) {
+    // Kept once found; an environment without one (yet: its plugin may load later) is asked again
+    if (environment_key == view_title_key_ && !view_title_.empty()) return;
+    view_title_key_ = environment_key;
+    view_title_.clear();
+    plugin::PluginEnvironmentRegistry::Environment env;
+    if (!plugin::PluginEnvironmentRegistry::Instance().Find(environment_key, env) || env.info.view_panel_id.empty())
+        return;
+    // The view's own title, from the plugin that registered it
+    for (const auto& panel : plugin::PluginPanelRegistry::Instance().GetAllPanels())
+        if (panel.panel_id == env.info.view_panel_id) view_title_ = panel.title;
+}
+
 void PolicyPlaybackPanel::ShowPluginView() {
     const auto policy = playback_.Policy();
     if (!policy) return;
@@ -58,9 +71,6 @@ void PolicyPlaybackPanel::ShowPluginView() {
     if (!plugin::PluginEnvironmentRegistry::Instance().Find(policy->config.environment_key, env) ||
         env.info.view_panel_id.empty())
         return;
-    // The view's own title, from the plugin that registered it (looked up once)
-    for (const auto& panel : plugin::PluginPanelRegistry::Instance().GetAllPanels())
-        if (panel.panel_id == env.info.view_panel_id) view_title_ = panel.title;
     plugin::PluginPanelRegistry::Instance().ShowPanel(env.plugin_id, env.info.view_panel_id);
 }
 
@@ -134,6 +144,7 @@ void PolicyPlaybackPanel::Render() {
     in.returns = s.returns;
     in.action = s.action;
     in.shown_in_view = s.shown_in_view;
+    LookUpViewTitle(policy->config.environment_key);
     in.view_title = view_title_;
     const pb::View v = pb::Build(in);
     // The copy moves: draw every frame (the plugin's view too)
