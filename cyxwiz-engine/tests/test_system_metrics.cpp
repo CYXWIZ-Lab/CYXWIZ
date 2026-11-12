@@ -16,9 +16,17 @@
 #include <thread>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #include <process.h>
 #define CYXWIZ_GETPID _getpid
 #else
+#include <ctime>
 #include <unistd.h>
 #define CYXWIZ_GETPID getpid
 #endif
@@ -37,6 +45,32 @@ void Check(bool ok, const std::string& what) {
 }
 
 bool Near(double a, double b, double tolerance) { return std::fabs(a - b) <= tolerance; }
+
+// The process's CPU time in seconds, read independently of the probe (on
+// POSIX std::clock is process CPU time; on Windows it is wall time).
+double ProcessCpuSeconds() {
+#ifdef _WIN32
+    FILETIME created, exited, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return 0.0;
+    const auto ticks = [](const FILETIME& t) {
+        return (static_cast<unsigned long long>(t.dwHighDateTime) << 32) | t.dwLowDateTime;
+    };
+    return static_cast<double>(ticks(kernel) + ticks(user)) * 1e-7;
+#else
+    return static_cast<double>(std::clock()) / CLOCKS_PER_SEC;
+#endif
+}
+
+// Waits until ready() holds or the deadline passes; the seconds waited.
+template <typename Ready>
+double WaitFor(Ready ready, double deadline_seconds) {
+    const auto start = std::chrono::steady_clock::now();
+    while (!ready()) {
+        if (std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() > deadline_seconds) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
 
 using namespace cyxwiz;
 using namespace cyxwiz::system_metrics;
@@ -87,6 +121,8 @@ void TestLinuxText() {
 void TestLiveReading() {
     Probe probe;
     const Sample first = probe.Read();
+    const double cpu_before = ProcessCpuSeconds();
+    const auto wall_before = std::chrono::steady_clock::now();
     Check(!first.cpu_known && !first.process_cpu_known, "the first reading has no CPU percentages");
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
     Check(first.cores > 0, "cores are known");
@@ -97,18 +133,28 @@ void TestLiveReading() {
           "process memory is between 1 MB and the machine's total");
     Check(first.threads_known && first.threads >= 1, "the process has at least one thread");
 
-    // Burn one core for a moment: the process's share must show it.
+    // Burn one core for a moment: the probe's share must match the CPU time
+    // the process really used (read on its own), whatever else the machine
+    // runs at the time (a busy machine gives the loop less than a core).
     const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
     volatile double sink = 0.0;
     while (std::chrono::steady_clock::now() < until) sink = sink + std::sqrt(sink + 1.0);
+    const double cpu_used = ProcessCpuSeconds() - cpu_before;
+    const double wall_spent = std::chrono::duration<double>(std::chrono::steady_clock::now() - wall_before).count();
     const Sample second = probe.Read();
     Check(second.cpu_known && second.cpu_percent >= 0.0 && second.cpu_percent <= 100.0, "machine CPU is 0..100 %");
     Check(second.process_cpu_known, "process CPU is known on the second reading");
     if (second.process_cpu_known && second.cores > 0) {
         const double one_core = 100.0 / second.cores;
-        Check(second.process_cpu_percent > 0.4 * one_core && second.process_cpu_percent <= 100.0,
-              "a busy loop shows as about one core: " + std::to_string(second.process_cpu_percent) + " % of " +
-                  std::to_string(second.cores) + " cores");
+        const double expected = wall_spent > 0.0 ? 100.0 * cpu_used / wall_spent / second.cores : 0.0;
+        // Windows counts CPU time in 15.6 ms ticks: a half of the expected
+        // share plus a tick's worth is the tolerance.
+        const double tolerance = 0.5 * expected + 100.0 * 0.016 / wall_spent / second.cores;
+        Check(expected > 0.0 && second.process_cpu_percent > 0.0 && second.process_cpu_percent <= 100.0 &&
+                  Near(second.process_cpu_percent, expected, tolerance),
+              "a busy loop's share matches the CPU time used: " + std::to_string(second.process_cpu_percent) +
+                  " % read, " + std::to_string(expected) + " % used (one core is " + std::to_string(one_core) +
+                  " % of " + std::to_string(second.cores) + ")");
     }
 
     // Threads are counted.
@@ -135,9 +181,12 @@ void TestSampler() {
     sampler.Start(0.01, 1.0);  // both below their limits
     Check(Near(sampler.interval(), MonitorSampler::kMinInterval, 1e-12) && Near(sampler.keep(), MonitorSampler::kMinKeep, 1e-12),
           "settings are held to their limits");
-    std::this_thread::sleep_for(std::chrono::milliseconds(1400));
+    // At 0.25 s: three readings come in about 0.75 s; a busy machine may take
+    // longer, never more readings than the time allows.
+    const double waited = WaitFor([&sampler] { return sampler.size() >= 3; }, 10.0);
     const auto history = sampler.History();
-    Check(history.size() >= 3 && history.size() <= 7, "about five readings in 1.4 s at 0.25 s: " + std::to_string(history.size()));
+    Check(history.size() >= 3 && static_cast<double>(history.size()) <= waited / 0.25 + 2.0,
+          "readings every 0.25 s: " + std::to_string(history.size()) + " in " + std::to_string(waited) + " s");
     Check(!history.empty() && history.front().seconds >= 0.2, "the first reading is a full interval after the start");
     bool ordered = true, extra = true;
     for (size_t i = 0; i < history.size(); ++i) {
@@ -161,7 +210,7 @@ void TestSampler() {
     Check(sampler.size() == after_stop, "nothing is read after Stop");
     const auto before_restart = sampler.History();
     sampler.Start(0.25, 60.0);
-    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    WaitFor([&sampler, &before_restart] { return sampler.size() > before_restart.size(); }, 10.0);
     const auto after_restart = sampler.History();
     Check(after_restart.size() > before_restart.size(), "a stopped sampler starts again");
     bool still_ordered = true;
