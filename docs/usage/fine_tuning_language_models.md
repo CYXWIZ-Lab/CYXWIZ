@@ -92,7 +92,7 @@ resolved against the project, like Data Input paths.
   generation previews are used. If neither exists, the run stops rather than
   guessing.
 - It works for a plain layer stack and for a graph with branches (residual
-  blocks).
+  blocks). Frozen layers are saved in checkpoints with the rest.
 - **Start from** and **Resume** are different: Resume continues the same run;
   Start from begins a new run. Using both is refused.
 - New checkpoints record where the run started (`initialized_from`) and the

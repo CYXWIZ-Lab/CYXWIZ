@@ -1068,15 +1068,17 @@ Sequential model container for building neural networks
 | `freeze_layer(self: Sequential, layer_idx: int) -> None` | Freeze a specific layer by index |
 | `freeze_up_to(self: Sequential, layer_idx: int) -> None` | Freeze all layers up to (not including) the given index |
 | `get_description(self: Sequential) -> str` | Get model description |
+| `get_frozen_parameter_names(self: Sequential) -> set[str]` | Names of the parameters that belong to frozen layers |
 | `get_gradients(self: Sequential) -> dict[str, Tensor]` | Get all parameter gradients |
 | `get_name(self: Sequential) -> str` | Get model name |
-| `get_parameters(self: Sequential) -> dict[str, Tensor]` | Get all trainable parameters |
+| `get_parameters(self: Sequential) -> dict[str, Tensor]` | Get every parameter of the model, frozen layers included |
+| `get_trainable_parameters(self: Sequential) -> dict[str, Tensor]` | Get the parameters of the layers that are not frozen |
 | `is_layer_trainable(self: Sequential, layer_idx: int) -> bool` | Check if a layer is trainable |
 | `load(self: Sequential, path: str) -> bool` | Load model weights from file |
 | `save(self: Sequential, path: str) -> bool` | Save model to file |
 | `set_description(self: Sequential, description: str) -> None` | Set model description |
 | `set_name(self: Sequential, name: str) -> None` | Set model name |
-| `set_parameters(self: Sequential, params: Mapping[str, Tensor]) -> None` | Set all trainable parameters |
+| `set_parameters(self: Sequential, params: Mapping[str, Tensor]) -> None` | Set parameters by name |
 | `set_training(self: Sequential, training: bool) -> None` | Set training mode for all modules |
 | `size(self: Sequential) -> int` | Get number of modules |
 | `summary(self: Sequential) -> None` | Print model summary |

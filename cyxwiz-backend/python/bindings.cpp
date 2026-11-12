@@ -2476,10 +2476,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
              py::arg("grad_output"),
              "Backward pass through all layers (reverse order)")
         .def("get_parameters", &cyxwiz::SequentialModel::GetParameters,
-             "Get all trainable parameters")
+             "Get every parameter of the model, frozen layers included")
+        .def("get_trainable_parameters", &cyxwiz::SequentialModel::GetTrainableParameters,
+             "Get the parameters of the layers that are not frozen")
+        .def("get_frozen_parameter_names", &cyxwiz::SequentialModel::GetFrozenParameterNames,
+             "Names of the parameters that belong to frozen layers")
         .def("set_parameters", &cyxwiz::SequentialModel::SetParameters,
              py::arg("params"),
-             "Set all trainable parameters")
+             "Set parameters by name")
         .def("get_gradients", &cyxwiz::SequentialModel::GetGradients,
              "Get all parameter gradients")
         .def("update_parameters", &cyxwiz::SequentialModel::UpdateParameters,

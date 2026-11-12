@@ -139,6 +139,46 @@ int main() {
             Require(manager.LoadCheckpoint(*bn_model(), nullptr, "best").has_value(),
                     "a checkpoint without the running statistics loads");
         }
+        // A frozen layer stays part of the model: saved and loaded with the
+        // rest, never stepped (weight decay included), and without a gradient.
+        {
+            auto frozen = Model(3);
+            const size_t all = frozen->GetParameters().size();
+            frozen->FreezeLayer(0);
+            const auto frozen_names = frozen->GetFrozenParameterNames();
+            Require(!frozen_names.empty(), "the frozen layer's parameters are named");
+            for (const auto& name : frozen_names) Require(name.rfind("layer0.", 0) == 0, "frozen name " + name);
+            Require(frozen->GetParameters().size() == all, "a frozen layer stays in the model's parameters");
+            Require(frozen->GetTrainableParameters().size() == all - frozen_names.size(),
+                    "the optimizer is handed the other layers only");
+
+            const std::vector<float> rows{0.5f, -1.0f, 2.0f, 0.25f, -0.75f, 1.5f, 0.0f, 3.0f};
+            const std::vector<float> ones(4, 1.0f);
+            AdamWOptimizer optimizer(0.05, 0.9, 0.999, 1e-8, 0.1);
+            const auto frozen_before = Weights(*frozen);
+            for (int step = 0; step < 3; ++step) {
+                frozen->Forward(Tensor({2, 4}, rows.data()));
+                frozen->Backward(Tensor({2, 2}, ones.data()));
+                for (const auto& [name, gradient] : frozen->GetGradients())
+                    Require(!frozen_names.count(name), "no gradient is reported for " + name);
+                frozen->UpdateParameters(&optimizer);
+            }
+            const auto after = Weights(*frozen);
+            bool others_moved = false;
+            for (const auto& [name, values] : after) {
+                if (frozen_names.count(name)) Require(values == frozen_before.at(name), name + " is unchanged, bit for bit");
+                else others_moved = others_moved || values != frozen_before.at(name);
+            }
+            Require(others_moved, "the layers that are not frozen still train");
+
+            const fs::path frozen_run = run.parent_path() / "train-frozen";
+            CheckpointManager manager(frozen_run.string());
+            Require(!manager.SaveCheckpoint(*frozen, nullptr, TrainingMetrics{}, "best").empty(), "save frozen model");
+            auto reloaded = Model(3);
+            Require(manager.LoadCheckpoint(*reloaded, nullptr, "best").has_value(),
+                    "the checkpoint loads into a model with nothing frozen: " + manager.GetLastError());
+            Require(Weights(*reloaded) == after, "the checkpoint holds the frozen layer's weights too");
+        }
         fs::remove_all(run.parent_path());
         std::cout << "Warm start checkpoint passed: " << checks << " checks\n";
         return 0;

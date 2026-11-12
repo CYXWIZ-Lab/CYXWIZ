@@ -1723,13 +1723,21 @@ public:
     bool SupportsSparseCsrInput() const;
 
     /**
-     * @brief Get all trainable parameters
+     * @brief Get every parameter the model holds, frozen layers included
+     *        (what a checkpoint or an export must keep)
      * @return Map of "layer_idx.param_name" -> tensor
      */
     std::map<std::string, Tensor> GetParameters();
 
     /**
-     * @brief Set all trainable parameters
+     * @brief Get the parameters of the layers that are not frozen (what the
+     *        optimizer steps; state such as running statistics is included)
+     * @return Map of "layer_idx.param_name" -> tensor
+     */
+    std::map<std::string, Tensor> GetTrainableParameters();
+
+    /**
+     * @brief Set parameters by name
      * @param params Map of "layer_idx.param_name" -> tensor
      */
     void SetParameters(const std::map<std::string, Tensor>& params);
@@ -1743,6 +1751,10 @@ public:
     // The "layerN.name" keys of GetParameters() that are state, not trained
     // (Module::GetStateNames).
     std::set<std::string> GetStateParameterNames() const;
+
+    // The "layerN.name" keys of GetParameters() that belong to frozen layers:
+    // kept and saved, never stepped, and no gradient is reported for them.
+    std::set<std::string> GetFrozenParameterNames() const;
 
     /**
      * @brief Apply optimizer to all parameters

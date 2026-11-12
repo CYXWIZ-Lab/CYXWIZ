@@ -58,6 +58,11 @@ public:
     // The GetParameters() keys that are state, not trained (BatchNorm's
     // running statistics): no gradient is expected for them.
     virtual std::set<std::string> GetStateParameterNames() const { return {}; }
+    // GetParameters() without the frozen layers: what the optimizer steps.
+    virtual std::map<std::string, Tensor> GetTrainableParameters() { return GetParameters(); }
+    // The GetParameters() keys of frozen layers: kept and saved, never
+    // stepped, and no gradient is expected for them.
+    virtual std::set<std::string> GetFrozenParameterNames() const { return {}; }
     virtual void UpdateParameters(Optimizer* optimizer) = 0;
     // Layers that hold parameters (graph operations such as Add are not counted).
     virtual size_t LayerCount() const = 0;
@@ -100,6 +105,8 @@ public:
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
     std::set<std::string> GetStateParameterNames() const override { return model_->GetStateParameterNames(); }
+    std::map<std::string, Tensor> GetTrainableParameters() override { return model_->GetTrainableParameters(); }
+    std::set<std::string> GetFrozenParameterNames() const override { return model_->GetFrozenParameterNames(); }
     void UpdateParameters(Optimizer* optimizer) override;
     size_t LayerCount() const override { return model_->Size(); }
     Module* LayerModule(size_t module_index) override { return model_->GetModule(module_index); }

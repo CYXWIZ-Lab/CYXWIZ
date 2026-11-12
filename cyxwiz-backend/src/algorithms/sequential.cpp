@@ -253,17 +253,31 @@ void SequentialModel::BackwardSparseCsr(
 std::map<std::string, Tensor> SequentialModel::GetParameters() {
     std::map<std::string, Tensor> all_params;
 
+    // Frozen layers are part of the model: a checkpoint, an export or a
+    // comparison that left them out would lose their weights.
     for (size_t i = 0; i < modules_.size(); ++i) {
-        // Skip frozen layers - their parameters won't be updated
-        if (modules_[i]->HasParameters() && modules_[i]->IsTrainable()) {
-            auto params = modules_[i]->GetParameters();
-            for (auto& [key, tensor] : params) {
-                all_params["layer" + std::to_string(i) + "." + key] = tensor;
-            }
+        if (!modules_[i]->HasParameters()) continue;
+        auto params = modules_[i]->GetParameters();
+        for (auto& [key, tensor] : params) {
+            all_params["layer" + std::to_string(i) + "." + key] = tensor;
         }
     }
 
     return all_params;
+}
+
+std::map<std::string, Tensor> SequentialModel::GetTrainableParameters() {
+    std::map<std::string, Tensor> trainable;
+
+    for (size_t i = 0; i < modules_.size(); ++i) {
+        if (!modules_[i]->HasParameters() || !modules_[i]->IsTrainable()) continue;
+        auto params = modules_[i]->GetParameters();
+        for (auto& [key, tensor] : params) {
+            trainable["layer" + std::to_string(i) + "." + key] = tensor;
+        }
+    }
+
+    return trainable;
 }
 
 void SequentialModel::SetParameters(const std::map<std::string, Tensor>& params) {
@@ -310,8 +324,19 @@ std::set<std::string> SequentialModel::GetStateParameterNames() const {
     std::set<std::string> names;
     // The same modules GetParameters reports.
     for (size_t i = 0; i < modules_.size(); ++i) {
-        if (!modules_[i]->HasParameters() || !modules_[i]->IsTrainable()) continue;
+        if (!modules_[i]->HasParameters()) continue;
         for (const auto& name : modules_[i]->GetStateNames()) names.insert("layer" + std::to_string(i) + "." + name);
+    }
+    return names;
+}
+
+std::set<std::string> SequentialModel::GetFrozenParameterNames() const {
+    std::set<std::string> names;
+    for (size_t i = 0; i < modules_.size(); ++i) {
+        if (!modules_[i]->HasParameters() || modules_[i]->IsTrainable()) continue;
+        for (const auto& [key, tensor] : modules_[i]->GetParameters()) {
+            names.insert("layer" + std::to_string(i) + "." + key);
+        }
     }
     return names;
 }
@@ -322,7 +347,8 @@ void SequentialModel::UpdateParameters(Optimizer* optimizer) {
         return;
     }
 
-    auto params = GetParameters();
+    // Frozen layers are neither stepped nor written back.
+    auto params = GetTrainableParameters();
     auto grads = GetGradients();
 
     optimizer->Step(params, grads);

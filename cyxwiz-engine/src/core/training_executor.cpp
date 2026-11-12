@@ -2342,7 +2342,8 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
         TrainingTraceStage::UpdateParameters, epoch, batch_num,
         total_batches, batch_loss, current_acc);
 
-    auto params = model_->GetParameters();
+    // Frozen layers are neither stepped nor written back.
+    auto params = model_->GetTrainableParameters();
     // Regularization node (TOFIX140 A4): the gradient of
     // l1 x sum(|w|) + l2 x sum(w^2), once per step and before clipping, as
     // torch's backward of loss + penalty gives it.
@@ -2501,7 +2502,7 @@ void TrainingExecutor::ConfigureWeightDecayExclusions() {
         }
     }
     size_t total = 0;
-    for (const auto& [name, tensor] : model_->GetParameters()) {
+    for (const auto& [name, tensor] : model_->GetTrainableParameters()) {
         ++total;
         bool embedding = false;
         for (const auto& prefix : embedding_prefixes) embedding = embedding || name.rfind(prefix, 0) == 0;

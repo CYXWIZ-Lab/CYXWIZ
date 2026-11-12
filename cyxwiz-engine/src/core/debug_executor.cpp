@@ -426,12 +426,17 @@ DebugResult DebugExecutor::Run() {
         auto params = model_->GetParameters();
         auto grads  = model_->GetGradients();
         const auto state_names = model_->GetStateParameterNames();
+        const auto frozen_names = model_->GetFrozenParameterNames();
 
         // Track which layers produced any grad so we can warn on
         // dead subgraphs (learnable layer with every grad == 0).
         std::map<int, bool> layer_any_nonzero;
 
         for (const auto& [param_name, param_tensor] : params) {
+            if (frozen_names.count(param_name)) {
+                ++result.frozen_tensors;
+                continue;
+            }
             if (state_names.count(param_name)) {
                 ++result.state_tensors;
                 continue;
@@ -567,11 +572,12 @@ DebugResult DebugExecutor::Run() {
         result.success = !has_error;
         spdlog::info("DebugExecutor: reached={} success={} forward={:.2f}ms "
                      "backward={:.2f}ms loss={:.4f} "
-                     "params_with_grad={} params_missing_grad={} state={} issues={}",
+                     "params_with_grad={} params_missing_grad={} state={} frozen={} issues={}",
                      StageName(result.reached), result.success,
                      result.forward_total_ms, result.backward_total_ms,
                      result.loss_value,
                      result.params_with_grad, result.params_missing_grad, result.state_tensors,
+                     result.frozen_tensors,
                      result.issues.size());
     } catch (const std::exception& e) {
         result.failure_summary =

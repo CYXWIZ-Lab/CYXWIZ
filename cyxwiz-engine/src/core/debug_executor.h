@@ -125,6 +125,9 @@ struct DebugResult {
     // State the layers keep beside their weights (BatchNorm's running
     // statistics): no gradient is expected, so these are not in grad_norms.
     size_t state_tensors = 0;
+    // Weights of frozen layers: kept as they are, so no gradient is expected
+    // and they are not in grad_norms either.
+    size_t frozen_tensors = 0;
 
     // What every layer held (SetLayerCapture); null when capture is off.
     std::shared_ptr<const LayerCapture> layer_capture;

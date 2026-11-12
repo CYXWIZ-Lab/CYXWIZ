@@ -24,7 +24,7 @@ struct ModelMemoryEstimate {
     int batch_size = 0;
 
     uint64_t trained_elements = 0;       // learnable parameters
-    uint64_t state_elements = 0;         // kept, not trained (BatchNorm running statistics)
+    uint64_t state_elements = 0;         // kept, not trained (BatchNorm running statistics, frozen layers)
     size_t optimizer_tensors_per_parameter = 0;
     // Per sample: the input, every layer's output and the modules' caches.
     uint64_t activation_elements_per_sample = 0;

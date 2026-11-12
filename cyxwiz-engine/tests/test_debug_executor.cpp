@@ -1673,9 +1673,14 @@ void TestBuildSequentialTextEmbeddingWeights() {
         std::exit(1);
     }
 
-    auto params = built.model->GetParameters();
-    ExpectTrue(params.count("layer0.weight") == 0,
-               "frozen pretrained embedding should not expose trainable layer0.weight");
+    // A frozen table stays part of the model (a checkpoint keeps it); it is
+    // only left out of what the optimizer steps.
+    ExpectTrue(built.model->GetParameters().count("layer0.weight") == 1,
+               "a frozen pretrained embedding table stays in the model's parameters");
+    ExpectTrue(built.model->GetTrainableParameters().count("layer0.weight") == 0,
+               "a frozen pretrained embedding table is not handed to the optimizer");
+    ExpectTrue(built.model->GetFrozenParameterNames().count("layer0.weight") == 1,
+               "a frozen pretrained embedding table is named as frozen");
 }
 
 // TOFIX152: the layer also reads word vectors as text (a Word Embeddings

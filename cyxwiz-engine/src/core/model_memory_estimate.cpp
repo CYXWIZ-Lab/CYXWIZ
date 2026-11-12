@@ -25,9 +25,12 @@ ModelMemoryEstimate EstimateTrainingMemory(BuiltExecutableModel& built,
     if (!built.ok()) return out;
     out.batch_size = std::max(1, batch_size);
 
+    // A frozen layer is held like state: no gradient and no optimizer state.
     const std::set<std::string> state = built.model->GetStateParameterNames();
+    const std::set<std::string> frozen = built.model->GetFrozenParameterNames();
     for (const auto& [name, tensor] : built.model->GetParameters()) {
-        (state.count(name) ? out.state_elements : out.trained_elements) += tensor.NumElements();
+        const bool kept = state.count(name) || frozen.count(name);
+        (kept ? out.state_elements : out.trained_elements) += tensor.NumElements();
     }
     out.optimizer_tensors_per_parameter = built.optimizer ? built.optimizer->StateTensorsPerParameter() : 0;
 

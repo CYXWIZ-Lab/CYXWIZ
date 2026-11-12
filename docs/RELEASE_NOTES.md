@@ -7,6 +7,14 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Frozen layers are kept in checkpoints and exports.** A frozen layer (today
+  an Embedding with **Freeze Loaded Weights**) was left out of the model's
+  parameter list, so checkpoints, exported models and "Start from" lost its
+  weights. It is now saved and loaded with the rest; only the optimizer skips
+  it. A checkpoint written before by a model with a frozen layer lacks those
+  weights and no longer loads: train or save it again. In `pycyxwiz`,
+  `SequentialModel.get_parameters()` returns frozen layers too;
+  `get_trainable_parameters()` and `get_frozen_parameter_names()` are new.
 - **"Start from" works on graphs with branches.** Starting a run from a
   checkpoint, and leaving normalisation, bias and embedding weights out of
   weight decay, needed a plain layer stack; both now work on residual and
