@@ -48,7 +48,7 @@ MenuInputs SampleInputs() {
          "MuJoCo Simulation", true},
         {"sim.plugin:load", "Simulation", "model", "Load MJCF Model...", "Opens a model file.", true, "", false, false,
          "MuJoCo Simulation", false},
-        {"other.plugin:sync", "Robots", "", "Sync Robots", "Syncs the robots.", true, "", false, false}};
+        {"other.plugin:sync", "Robots", "", "Sync Robots", "Syncs the robots.", true, "", false, false, "", false}};
     in.loaded_plugins = {{"com.cyxwiz.examples.activation-nodes", "Example Activation Nodes", "2 nodes", true},
                          {"com.cyxwiz.simulation.mujoco", "MuJoCo Simulation", "2 windows, 5 nodes", true},
                          {"com.example.viewer", "Viewer", "1 window", false}};

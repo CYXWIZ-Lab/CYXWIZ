@@ -62,7 +62,8 @@ struct Fixture {
             "cpu",
             "base-v1",
             root / "source",
-            {{std::string(CurrentEngineExecutableName()), 1, kHash}}};
+            {{std::string(CurrentEngineExecutableName()), 1, kHash}},
+            ""};
   }
   ActiveRuntimeState Active() const {
     ActiveRuntimeState state;
