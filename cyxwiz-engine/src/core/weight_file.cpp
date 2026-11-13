@@ -280,16 +280,7 @@ public:
                 case 'K': PushInt(Byte()); break;                            // BININT1
                 case 'M': PushInt(Number<uint16_t>()); break;                // BININT2
                 case 'J': PushInt(Number<int32_t>()); break;                 // BININT
-                case 0x8a: {                                                 // LONG1
-                    const size_t count = Byte();
-                    if (count <= 8) {
-                        PushInt(Long(count));
-                    } else {
-                        Skip(count);  // wider than any size (the old format's magic number)
-                        Push(Make(Value::Type::Other));
-                    }
-                    break;
-                }
+                case 0x8a: PushInt(Long(Byte())); break;                     // LONG1
                 case 'G': Skip(8); Push(Make(Value::Type::Other)); break;    // BINFLOAT (a checkpoint's own numbers)
                 case 'X': PushText(Number<uint32_t>()); break;               // BINUNICODE
                 case 0x8c: PushText(Byte()); break;                          // SHORT_BINUNICODE
@@ -651,7 +642,8 @@ void ReadPyTorch(File& file, WeightFile& out, bool load_values) {
         const std::string path = folder + "data/" + key;
         const auto found = zip.find(path);
         if (found == zip.end()) Fail("the values of '" + tensor_name + "' are missing from the file (" + path + ")");
-        return Stored{ZipDataOffset(file, found->second, path), found->second.size};
+        // The offset needs the entry's local header; a names-only read never uses it.
+        return Stored{load_values ? ZipDataOffset(file, found->second, path) : 0, found->second.size};
     };
     for (const auto& [name, tensor] : state.pairs) {
         out.entries.push_back(MaterializeTensor(file, locate, name->text, *tensor, load_values, budget));

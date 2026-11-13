@@ -15,6 +15,9 @@ Files:
   whole_model.pth       torch.save(module): refused, it is not a state-dict
   hostile.pth           a pickle that asks to run os.system: refused, nothing runs
   legacy.pth            the dict of tiny_state_dict.pth in the format before PyTorch 1.6
+  mobilenet_legacy.pth  torchvision's MobileNetV2 (width 0.25, seeded) in that format, and
+  mobilenet_new.pth     the same dict in the current format: the reader must give the same tensors
+  truncated_legacy.pth  the first half of mobilenet_legacy.pth
   truncated.pth         the first half of tiny_state_dict.pth
   deep.pth              a pickle nested 200,000 levels deep: refused, no stack overflow
   expanded.pth          one stored value shown as a million (stride 0): refused, not expanded
@@ -32,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torchvision
 from safetensors.torch import save_file
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "fixtures" / "weight_files"
@@ -100,6 +104,12 @@ def main() -> None:
 
     torch.save(torch.nn.Linear(2, 2), out / "whole_model.pth")
     torch.save(state, out / "legacy.pth", _use_new_zipfile_serialization=False)
+    torch.manual_seed(19093)
+    mobile = torchvision.models.mobilenet_v2(width_mult=0.25, num_classes=10).state_dict()
+    torch.save(mobile, out / "mobilenet_legacy.pth", _use_new_zipfile_serialization=False)
+    torch.save(mobile, out / "mobilenet_new.pth")
+    data = (out / "mobilenet_legacy.pth").read_bytes()
+    (out / "truncated_legacy.pth").write_bytes(data[: len(data) // 2])
     expected["files"]["legacy.pth"] = describe(state)
     data = (out / "tiny_state_dict.pth").read_bytes()
     (out / "truncated.pth").write_bytes(data[: len(data) // 2])

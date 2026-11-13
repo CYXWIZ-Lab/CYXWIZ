@@ -121,7 +121,7 @@ def thin(name: str, build: Callable[[], nn.Module], seed: int) -> None:
                 module.running_mean.copy_(torch.randn_like(module.running_mean) * 0.2)
                 module.running_var.copy_(torch.rand_like(module.running_var) + 0.5)
     classes = model.state_dict()[[k for k in model.state_dict() if k.endswith(".weight")][-1]].shape[0]
-    torch_to_cyxgraph.network_graph(model, classes, "").write(
+    torch_to_cyxgraph.network_graph(model, classes).write(
         FIXTURES / f"{name}.cyxgraph", f"{name}: compared with PyTorch in tests (generate_pretrained_network_fixtures.py)")
     torch.save(model.state_dict(), FIXTURES / "weight_files" / f"{name}.pth")
     x = torch.randn(2, 3, 64, 64) * 0.8 + 0.1
@@ -146,7 +146,7 @@ def imagenet(folder: Path) -> None:
         model = build()
         model.load_state_dict(torch.load(path, weights_only=True))
         model.eval()
-        torch_to_cyxgraph.network_graph(model, 1000, "").write(
+        torch_to_cyxgraph.network_graph(model, 1000).write(
             FIXTURES / f"{name}_imagenet.cyxgraph", f"{name} with 1000 classes: checked against {file_name}")
         torch.manual_seed(19180)
         x = torch.randn(2, 3, 64, 64) * 0.8 + 0.1

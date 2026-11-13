@@ -5,7 +5,7 @@
 The network is traced with torch.fx, and each module becomes the node the Engine has for it:
 Conv2d (Conv2D, or Depthwise Conv2D when each channel has its own kernels), BatchNorm2d, ReLU, ReLU6,
 Hardswish, Hardsigmoid, SiLU (Swish), MaxPool2d, AdaptiveAvgPool2d(1) (Global Avg Pool, which also
-flattens), Linear (Dense), Dropout and torchvision.ops.SqueezeExcitation. An addition of two branches
+flattens), Flatten, Linear (Dense), Dropout and torchvision.ops.SqueezeExcitation. An addition of two branches
 becomes an Add node. Every node that holds weights is named after its module (conv1, layer1.0.bn1,
 features.3.block.1), so the network's state-dict fills the graph by name. Anything else is refused with
 the module's name, so a graph never differs silently from the network.
@@ -95,6 +95,8 @@ def module_node(name: str, module: nn.Module) -> tuple[str, dict[str, str]] | No
     if isinstance(module, nn.Conv2d):
         if square(module.dilation, "dilation", name) != 1:
             raise Refused(f"{name}: dilated convolutions have no Engine node")
+        if module.padding_mode != "zeros":
+            raise Refused(f"{name}: {module.padding_mode} padding has no Engine node (it pads with zeros)")
         kernel = square(module.kernel_size, "kernel", name)
         settings = {"kernel_size": str(kernel), "stride": str(square(module.stride, "stride", name)),
                     "padding": padding_of(kernel, square(module.padding, "padding", name)),
@@ -105,6 +107,8 @@ def module_node(name: str, module: nn.Module) -> tuple[str, dict[str, str]] | No
             return "DepthwiseConv2D", {**settings, "depth_multiplier": str(module.out_channels // module.in_channels)}
         raise Refused(f"{name}: a grouped convolution ({module.groups} groups) has no Engine node")
     if isinstance(module, nn.BatchNorm2d):
+        if not module.affine or not module.track_running_stats:
+            raise Refused(f"{name}: BatchNorm without its scale and shift or its running statistics has no Engine node")
         return "BatchNorm", {"eps": number(module.eps), "momentum": number(module.momentum)}
     for kind, node in ACTIVATIONS.items():
         if type(module) is kind:
@@ -120,6 +124,8 @@ def module_node(name: str, module: nn.Module) -> tuple[str, dict[str, str]] | No
             raise Refused(f"{name}: only a pool to 1 x 1 has an Engine node (Global Avg Pool)")
         return "GlobalAvgPool", {}
     if isinstance(module, nn.Linear):
+        if module.bias is None:
+            raise Refused(f"{name}: a Linear layer without bias has no Engine node (Dense always adds one)")
         return "Dense", {"units": str(module.out_features)}
     if isinstance(module, nn.Dropout):
         return "Dropout", {"rate": number(module.p)}
@@ -132,8 +138,10 @@ def module_node(name: str, module: nn.Module) -> tuple[str, dict[str, str]] | No
         return "SqueezeExcitation", {"width_mode": "exact", "squeeze_channels": str(module.fc1.out_channels),
                                      "inner_activation": inner, "gate": gate,
                                      "use_bias": "true" if module.fc1.bias is not None else "false"}
-    if isinstance(module, (nn.Identity, nn.Flatten)):
+    if isinstance(module, nn.Identity):
         return None
+    if isinstance(module, nn.Flatten):
+        return "Flatten", {}
     raise Refused(f"{name}: {type(module).__name__} has no Engine node")
 
 
@@ -152,28 +160,40 @@ def convert(model: nn.Module) -> tuple[list[dict[str, Any]], list[tuple[int, int
 
     def add(kind: str, name: str, settings: dict[str, str], sources: list[int]) -> int:
         count = used_names.get(name, 0)
+        if count and kind in HOLDS_WEIGHTS:
+            raise Refused(f"{name}: the module is used twice; an Engine node cannot share its weights with another")
         used_names[name] = count + 1
         unique = name if count == 0 else f"{name}_{count}"  # a module called twice (BasicBlock's relu)
         group = ".".join(name.split(".")[:2]) if "." in name else name
         nodes.append({"index": len(nodes) + 1, "type": kind, "name": unique, "settings": settings, "group": group})
+        kinds[len(nodes)] = kind
         for pin, source in enumerate(sources):
             links.append((source, len(nodes), pin))
         return len(nodes)
 
+    kinds = {0: "input"}
     for node in graph.nodes:
         if node.op == "placeholder":
+            if produced:
+                raise Refused(f"{node.target}: a second input has no place in the graph (one image input)")
             produced[node] = 0
         elif node.op == "call_module":
             source = produced[node.args[0]]
             made = module_node(node.target, modules[node.target])
+            if made is not None and made[0] == "Flatten" and kinds[source] == "GlobalAvgPool":
+                made = None  # Global Avg Pool already gives one value per channel
             produced[node] = source if made is None else add(made[0], node.target, made[1], [source])
         elif node.op == "call_function" and node.target in (operator.add, operator.iadd, torch.add):
-            a, b = (produced[arg] for arg in node.args[:2])
+            if node.kwargs or len(node.args) != 2 or not all(isinstance(arg, fx.Node) for arg in node.args):
+                raise Refused(f"{node.name}: only the sum of two branches has an Engine node (Add)")
+            a, b = (produced[arg] for arg in node.args)
             owner = node.meta.get("nn_module_stack")
             scope = list(owner.values())[-1][0] if owner else ""
             produced[node] = add("Add", f"{scope}.add" if scope else "add", {}, [a, b])
         elif node.op == "call_function" and node.target is torch.flatten:
-            produced[node] = produced[node.args[0]]  # Global Avg Pool already gives one value per channel
+            source = produced[node.args[0]]
+            # Global Avg Pool already gives one value per channel; a feature map needs a Flatten node.
+            produced[node] = source if kinds[source] == "GlobalAvgPool" else add("Flatten", "flatten", {}, [source])
         elif node.op == "call_function" and node.target is nn.functional.adaptive_avg_pool2d:
             if square(node.args[1], "output size", "adaptive_avg_pool2d") != 1:
                 raise Refused("adaptive_avg_pool2d: only a pool to 1 x 1 has an Engine node")
@@ -257,7 +277,7 @@ def scratch_nodes() -> dict[str, dict[str, Any]]:
     return {n["name"]: n for n in json.loads(SCRATCH.read_text(encoding="utf-8"))["nodes"]}
 
 
-def network_graph(model: nn.Module, classes: int, description: str) -> Graph:
+def network_graph(model: nn.Module, classes: int) -> Graph:
     """A test graph: Images -> Split -> Loader -> Resize 64 -> the network -> Cross entropy -> Adam -> Output."""
     template = scratch_nodes()
     graph = Graph()
@@ -283,7 +303,7 @@ def network_graph(model: nn.Module, classes: int, description: str) -> Graph:
     return graph
 
 
-def finetune_example(model: nn.Module, weights_file: str, description: str) -> Graph:
+def finetune_example(model: nn.Module, weights_file: str) -> Graph:
     """cats vs dogs: the data and training nodes of the from-scratch example, the network frozen, a one-logit head."""
     template = scratch_nodes()
     graph = Graph()
@@ -318,7 +338,7 @@ def finetune_example(model: nn.Module, weights_file: str, description: str) -> G
 
 def main() -> None:
     import torchvision
-    finetune_example(torchvision.models.resnet18(), "weights/resnet18-f37072fd.pth", "").write(
+    finetune_example(torchvision.models.resnet18(), "weights/resnet18-f37072fd.pth").write(
         ROOT / "examples" / "cyxgraph" / "cats_dogs_resnet18_finetune.cyxgraph",
         "Cats vs dogs by fine-tuning ResNet-18 from torchvision's ImageNet weights: the backbone frozen, a new head")
 

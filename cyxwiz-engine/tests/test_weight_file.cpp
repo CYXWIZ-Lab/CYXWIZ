@@ -125,6 +125,23 @@ int main(int argc, char** argv) {
     CheckRefused("whole_model.pth", "plain state-dict");
     CheckRefused("truncated.pth", "ZIP directory was not found");
     CheckRefused("missing.pth", "not found");
+    // The old format at the size of a network: the same tensors as the current format.
+    {
+        cyxwiz::weight_file::WeightFile old_format, new_format;
+        std::string error;
+        Check(cyxwiz::weight_file::Read(kFixtures / "mobilenet_legacy.pth", old_format, error),
+              "a MobileNetV2 state-dict in the old format is read: " + error);
+        Check(cyxwiz::weight_file::Read(kFixtures / "mobilenet_new.pth", new_format, error),
+              "the same state-dict in the current format is read: " + error);
+        bool same = !old_format.entries.empty() && old_format.entries.size() == new_format.entries.size();
+        for (size_t i = 0; same && i < old_format.entries.size(); ++i) {
+            const auto& a = old_format.entries[i];
+            const auto& b = new_format.entries[i];
+            same = a.name == b.name && a.shape == b.shape && a.dtype == b.dtype && a.values == b.values;
+        }
+        Check(same, "both formats give the same " + std::to_string(new_format.entries.size()) + " tensors, value for value");
+    }
+    CheckRefused("truncated_legacy.pth", "ends before");
     // Shapes meant to exhaust the stack or the memory.
     CheckRefused("deep.pth", "no state-dict");
     CheckRefused("expanded.pth", "repeats its stored values");
