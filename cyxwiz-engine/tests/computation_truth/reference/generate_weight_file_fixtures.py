@@ -14,7 +14,7 @@ Files:
   tiny.safetensors      safetensors with metadata, float16 and an int64 tensor
   whole_model.pth       torch.save(module): refused, it is not a state-dict
   hostile.pth           a pickle that asks to run os.system: refused, nothing runs
-  legacy.pth            the pre-1.6 format: refused with what to do
+  legacy.pth            the dict of tiny_state_dict.pth in the format before PyTorch 1.6
   truncated.pth         the first half of tiny_state_dict.pth
   deep.pth              a pickle nested 200,000 levels deep: refused, no stack overflow
   expanded.pth          one stored value shown as a million (stride 0): refused, not expanded
@@ -100,6 +100,7 @@ def main() -> None:
 
     torch.save(torch.nn.Linear(2, 2), out / "whole_model.pth")
     torch.save(state, out / "legacy.pth", _use_new_zipfile_serialization=False)
+    expected["files"]["legacy.pth"] = describe(state)
     data = (out / "tiny_state_dict.pth").read_bytes()
     (out / "truncated.pth").write_bytes(data[: len(data) // 2])
 

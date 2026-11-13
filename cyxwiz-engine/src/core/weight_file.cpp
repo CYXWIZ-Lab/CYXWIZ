@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -26,6 +27,12 @@ constexpr size_t kMaxRank = 16;
 
 struct Failure : std::runtime_error {
     using std::runtime_error::runtime_error;
+};
+
+// The bytes ran out inside a pickle: either the file is damaged or (old
+// format) more of the file has to be read.
+struct EndOfData : Failure {
+    EndOfData() : Failure("the pickle ends early (the file is damaged)") {}
 };
 
 [[noreturn]] void Fail(const std::string& why) { throw Failure(why); }
@@ -244,6 +251,7 @@ struct Value {
     std::vector<std::pair<ValuePtr, ValuePtr>> pairs;      // Dict, in file order
     const Kind* kind = nullptr;                            // Storage, Tensor
     uint64_t storage_elements = 0;                         // Storage
+    uint64_t storage_offset = 0;                           // Storage: elements into the stored key (old views)
     ValuePtr storage;                                      // Tensor
     uint64_t offset = 0;                                   // Tensor, in elements
     std::vector<uint64_t> shape, stride;                   // Tensor
@@ -252,6 +260,11 @@ struct Value {
 class Unpickler {
 public:
     explicit Unpickler(std::vector<uint8_t> bytes) : bytes_(std::move(bytes)) {}
+
+    // Bytes consumed by Run (where the next pickle in the file starts).
+    size_t Consumed() const { return at_; }
+    // Storage key -> element type, for every storage the pickle referred to.
+    const std::map<std::string, const Kind*>& StorageKinds() const { return storage_kinds_; }
 
     ValuePtr Run() {
         while (true) {
@@ -267,7 +280,16 @@ public:
                 case 'K': PushInt(Byte()); break;                            // BININT1
                 case 'M': PushInt(Number<uint16_t>()); break;                // BININT2
                 case 'J': PushInt(Number<int32_t>()); break;                 // BININT
-                case 0x8a: PushInt(Long(Byte())); break;                     // LONG1
+                case 0x8a: {                                                 // LONG1
+                    const size_t count = Byte();
+                    if (count <= 8) {
+                        PushInt(Long(count));
+                    } else {
+                        Skip(count);  // wider than any size (the old format's magic number)
+                        Push(Make(Value::Type::Other));
+                    }
+                    break;
+                }
                 case 'G': Skip(8); Push(Make(Value::Type::Other)); break;    // BINFLOAT (a checkpoint's own numbers)
                 case 'X': PushText(Number<uint32_t>()); break;               // BINUNICODE
                 case 0x8c: PushText(Byte()); break;                          // SHORT_BINUNICODE
@@ -358,23 +380,23 @@ private:
         return arena_.back().get();
     }
     uint8_t Byte() {
-        if (at_ >= bytes_.size()) Fail("the pickle ends early (the file is damaged)");
+        if (at_ >= bytes_.size()) throw EndOfData();
         return bytes_[at_++];
     }
     void Skip(size_t count) {
-        if (count > bytes_.size() - at_) Fail("the pickle ends early (the file is damaged)");
+        if (count > bytes_.size() - at_) throw EndOfData();
         at_ += count;
     }
     template <typename T>
     T Number() {
-        if (sizeof(T) > bytes_.size() - at_) Fail("the pickle ends early (the file is damaged)");
+        if (sizeof(T) > bytes_.size() - at_) throw EndOfData();
         const T value = Little<T>(&bytes_[at_]);
         at_ += sizeof(T);
         return value;
     }
     int64_t Long(size_t count) {
         if (count > 8) Fail("the pickle holds a number too large for a tensor size");
-        if (count > bytes_.size() - at_) Fail("the pickle ends early (the file is damaged)");
+        if (count > bytes_.size() - at_) throw EndOfData();
         uint64_t value = 0;
         for (size_t i = 0; i < count; ++i) value |= static_cast<uint64_t>(bytes_[at_ + i]) << (8 * i);
         if (count && count < 8 && (bytes_[at_ + count - 1] & 0x80u)) value |= ~uint64_t{0} << (8 * count);
@@ -384,7 +406,7 @@ private:
     std::string Line() {
         const size_t start = at_;
         while (at_ < bytes_.size() && bytes_[at_] != '\n') ++at_;
-        if (at_ >= bytes_.size()) Fail("the pickle ends early (the file is damaged)");
+        if (at_ >= bytes_.size()) throw EndOfData();
         std::string line(reinterpret_cast<const char*>(&bytes_[start]), at_ - start);
         ++at_;
         return line;
@@ -396,7 +418,7 @@ private:
         Push(std::move(value));
     }
     void PushText(uint64_t length) {
-        if (length > bytes_.size() - at_) Fail("the pickle ends early (the file is damaged)");
+        if (length > bytes_.size() - at_) throw EndOfData();
         auto value = Make(Value::Type::Text);
         value->text.assign(reinterpret_cast<const char*>(&bytes_[at_]), static_cast<size_t>(length));
         at_ += static_cast<size_t>(length);
@@ -442,7 +464,7 @@ private:
         return static_cast<uint64_t>(value.integer);
     }
 
-    // ('storage', <storage class>, key, location, element count)
+    // ('storage', <storage class>, key, location, element count[, view metadata])
     ValuePtr PersistentStorage(const ValuePtr& id) {
         if (id->type != Value::Type::Sequence || id->items.size() < 5 || id->items[0]->type != Value::Type::Text ||
             id->items[0]->text != "storage" || id->items[1]->type != Value::Type::Global ||
@@ -455,6 +477,15 @@ private:
         if (!storage->kind) Fail("the file uses a tensor type this reader does not know (" + global + ")");
         storage->text = id->items[2]->text;
         storage->storage_elements = Count(*id->items[4], "a storage size");
+        // Old format: (view key, offset, size) when the storage is a part of a larger one.
+        if (id->items.size() >= 6 && id->items[5]->type == Value::Type::Sequence) {
+            const auto& view = id->items[5]->items;
+            if (view.size() != 3 || view[0]->type != Value::Type::Text) Fail("the pickle is damaged (a storage view)");
+            storage->storage_offset = Count(*view[1], "a storage view offset");
+            storage->storage_elements = Count(*view[2], "a storage view size");
+        }
+        const auto [known, inserted] = storage_kinds_.emplace(storage->text, storage->kind);
+        if (!inserted && known->second != storage->kind) Fail("the pickle is damaged (a storage with two types)");
         return storage;
     }
 
@@ -501,6 +532,7 @@ private:
     std::vector<ValuePtr> stack_;
     std::vector<ValuePtr> memo_;
     std::vector<std::unique_ptr<Value>> arena_;
+    std::map<std::string, const Kind*> storage_kinds_;
 };
 
 bool HoldsTensors(const Value& dict) {
@@ -525,8 +557,15 @@ const Value& FindStateDict(const Value& root) {
 }
 
 // A tensor's values in row-major order, whatever its strides.
-Entry MaterializeTensor(File& file, const std::map<std::string, ZipEntry>& zip, const std::string& folder,
-                        const std::string& name, const Value& tensor, bool load_values, uint64_t& budget) {
+// Where a storage key's raw values are in the file, and how many bytes there are.
+struct Stored {
+    uint64_t offset = 0;
+    uint64_t size = 0;
+};
+using LocateStorage = std::function<Stored(const std::string& key, const std::string& tensor_name)>;
+
+Entry MaterializeTensor(File& file, const LocateStorage& locate, const std::string& name, const Value& tensor,
+                        bool load_values, uint64_t& budget) {
     Entry entry;
     entry.name = name;
     entry.dtype = tensor.kind->name;
@@ -552,10 +591,10 @@ Entry MaterializeTensor(File& file, const std::map<std::string, ZipEntry>& zip, 
         if (elements > tensor.storage->storage_elements)
             Fail("the tensor '" + name + "' repeats its stored values (an expanded view); save a plain copy of it");
     }
-    const std::string path = folder + "data/" + tensor.storage->text;
-    const auto found = zip.find(path);
-    if (found == zip.end()) Fail("the values of '" + name + "' are missing from the file (" + path + ")");
-    if (CheckedMul(tensor.storage->storage_elements, item, "a tensor") > found->second.size)
+    const Stored stored = locate(tensor.storage->text, name);
+    const uint64_t base = tensor.storage->storage_offset;
+    if (base > std::numeric_limits<uint64_t>::max() - tensor.storage->storage_elements ||
+        CheckedMul(base + tensor.storage->storage_elements, item, "a tensor") > stored.size)
         Fail("the values of '" + name + "' are shorter than its shape needs (the file is damaged)");
     if (!entry.is_float || elements == 0 || !load_values) return entry;
     // Several names may share one storage, but together they cannot need more than the file holds twice over.
@@ -563,7 +602,7 @@ Entry MaterializeTensor(File& file, const std::map<std::string, ZipEntry>& zip, 
     if (needed > budget) Fail("the file's tensors ask for more values than the file holds (it is damaged)");
     budget -= needed;
 
-    const uint64_t data = ZipDataOffset(file, found->second, path);
+    const uint64_t data = stored.offset + base * item;
     const uint64_t first = tensor.offset;
     const auto bytes = file.ReadBytes(data + first * item, (last - first + 1) * item);
     entry.values.resize(static_cast<size_t>(elements));
@@ -608,8 +647,93 @@ void ReadPyTorch(File& file, WeightFile& out, bool load_values) {
     const Value& state = FindStateDict(*unpickler.Run());  // the values live as long as the unpickler
     out.format = "PyTorch state-dict";
     uint64_t budget = CheckedMul(file.Size(), 2, "the file");
+    const LocateStorage locate = [&](const std::string& key, const std::string& tensor_name) {
+        const std::string path = folder + "data/" + key;
+        const auto found = zip.find(path);
+        if (found == zip.end()) Fail("the values of '" + tensor_name + "' are missing from the file (" + path + ")");
+        return Stored{ZipDataOffset(file, found->second, path), found->second.size};
+    };
     for (const auto& [name, tensor] : state.pairs) {
-        out.entries.push_back(MaterializeTensor(file, zip, folder, name->text, *tensor, load_values, budget));
+        out.entries.push_back(MaterializeTensor(file, locate, name->text, *tensor, load_values, budget));
+    }
+}
+
+// One pickle starting at `offset`: read from a growing prefix of the file, so
+// a small pickle in front of large stored values costs a small read.
+std::unique_ptr<Unpickler> PickleAt(File& file, uint64_t offset, ValuePtr& value) {
+    if (offset >= file.Size()) Fail("the file ends before its contents do (truncated or damaged)");
+    uint64_t length = std::min<uint64_t>(file.Size() - offset, 1u << 20);
+    while (true) {
+        auto unpickler = std::make_unique<Unpickler>(file.ReadBytes(offset, length));
+        try {
+            value = unpickler->Run();
+            return unpickler;
+        } catch (const EndOfData&) {
+            if (length == file.Size() - offset || length >= kMaxPickleBytes) throw;
+            length = std::min<uint64_t>({file.Size() - offset, length * 4, kMaxPickleBytes});
+        }
+    }
+}
+
+// The format torch.save wrote before PyTorch 1.6: five pickles in a row (a
+// magic number, the protocol, the machine's sizes, the object, the storage
+// keys), then each storage's element count and raw values in key order.
+void ReadPyTorchOld(File& file, WeightFile& out, bool load_values) {
+    static const uint8_t kMagic[] = {0x80, 0x02, 0x8a, 0x0a, 0x6c, 0xfc, 0x9c, 0x46, 0xf9, 0x20, 0x6a, 0xa8, 0x50, 0x19, 0x2e};
+    uint8_t head[sizeof(kMagic)] = {};
+    if (file.Size() < sizeof(kMagic)) Fail("the file is too short to be a PyTorch file");
+    file.Read(0, head, sizeof(head));
+    if (std::memcmp(head, kMagic, sizeof(kMagic)) != 0)
+        Fail("the file starts as a pickle but is not one torch.save wrote (no PyTorch magic number)");
+    uint64_t at = sizeof(kMagic);
+    ValuePtr value = nullptr;
+    auto protocol = PickleAt(file, at, value);
+    if (value->type != Value::Type::Int || value->integer != 1001)
+        Fail("the file is in an old PyTorch format this reader does not know (protocol " +
+             (value->type == Value::Type::Int ? std::to_string(value->integer) : std::string("?")) + ")");
+    at += protocol->Consumed();
+    auto system = PickleAt(file, at, value);
+    if (value->type == Value::Type::Dict) {
+        for (const auto& [key, flag] : value->pairs) {
+            if (key->type == Value::Type::Text && key->text == "little_endian" && flag->type == Value::Type::Bool &&
+                flag->integer == 0)
+                Fail("the file was saved on a big-endian machine, which this reader does not convert");
+        }
+    }
+    at += system->Consumed();
+    ValuePtr root = nullptr;
+    auto object = PickleAt(file, at, root);
+    const Value& state = FindStateDict(*root);
+    at += object->Consumed();
+    ValuePtr key_list = nullptr;
+    auto keys = PickleAt(file, at, key_list);
+    if (key_list->type != Value::Type::Sequence) Fail("the file is damaged (its storage keys are missing)");
+    at += keys->Consumed();
+    // Each storage: its element count (8 bytes), then its values.
+    std::map<std::string, Stored> storages;
+    const auto& kinds = object->StorageKinds();
+    for (const ValuePtr key : key_list->items) {
+        if (key->type != Value::Type::Text) Fail("the file is damaged (a storage key is not text)");
+        const auto kind = kinds.find(key->text);
+        if (kind == kinds.end()) Fail("the file is damaged (storage " + key->text + " has no type)");
+        uint8_t count_bytes[8];
+        file.Read(at, count_bytes, 8);
+        const uint64_t count = Little<uint64_t>(count_bytes);
+        const uint64_t bytes = CheckedMul(count, kind->second->bytes, "a storage");
+        if (at + 8 > file.Size() || bytes > file.Size() - at - 8)
+            Fail("the file ends before its stored values do (truncated or damaged)");
+        storages[key->text] = Stored{at + 8, bytes};
+        at += 8 + bytes;
+    }
+    out.format = "PyTorch state-dict (format before PyTorch 1.6)";
+    uint64_t budget = CheckedMul(file.Size(), 2, "the file");
+    const LocateStorage locate = [&](const std::string& key, const std::string& tensor_name) {
+        const auto found = storages.find(key);
+        if (found == storages.end()) Fail("the values of '" + tensor_name + "' are missing from the file");
+        return found->second;
+    };
+    for (const auto& [name, tensor] : state.pairs) {
+        out.entries.push_back(MaterializeTensor(file, locate, name->text, *tensor, load_values, budget));
     }
 }
 
@@ -696,8 +820,7 @@ bool Read(const std::filesystem::path& path, WeightFile& out, std::string& error
         } else if (extension == ".safetensors") {
             ReadSafetensors(file, out, load_values);
         } else if (magic[0] == 0x80) {
-            Fail("the file is in PyTorch's old format (before 1.6). Load it in a current PyTorch and save the "
-                 "state-dict again with torch.save");
+            ReadPyTorchOld(file, out, load_values);
         } else {
             Fail("the file is neither a PyTorch state-dict (.pth, .pt) nor a .safetensors file");
         }

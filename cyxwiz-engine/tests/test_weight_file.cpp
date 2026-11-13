@@ -108,6 +108,8 @@ int main(int argc, char** argv) {
     CheckFile(expected, "tiny_state_dict.pth", "PyTorch state-dict");
     CheckFile(expected, "protocol4.pth", "PyTorch state-dict");
     CheckFile(expected, "checkpoint.pth", "PyTorch state-dict");
+    // The same dict in the format before PyTorch 1.6 (older published weights use it).
+    CheckFile(expected, "legacy.pth", "PyTorch state-dict (format before PyTorch 1.6)");
     CheckFile(expected, "tiny.safetensors", "safetensors");
     {
         cyxwiz::weight_file::WeightFile file;
@@ -121,7 +123,6 @@ int main(int argc, char** argv) {
     // os.system: the name is only ever text here, so nothing runs.
     CheckRefused("hostile.pth", "'os.system' object, not a plain state-dict");
     CheckRefused("whole_model.pth", "plain state-dict");
-    CheckRefused("legacy.pth", "old format");
     CheckRefused("truncated.pth", "ZIP directory was not found");
     CheckRefused("missing.pth", "not found");
     // Shapes meant to exhaust the stack or the memory.

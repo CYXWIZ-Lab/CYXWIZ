@@ -3,6 +3,8 @@
 // Reads the tensors of a published weight file without PyTorch:
 //   - a PyTorch state-dict (.pth / .pt) as torch.save writes it since 1.6: a
 //     ZIP with one pickle and one raw file per tensor;
+//   - the same in the format before 1.6 (pickles in a row, then the raw
+//     values), which older published weights use;
 //   - a .safetensors file.
 // The pickle is read as data only. The reader knows the few opcodes and the
 // few constructors a state-dict uses (ordered dict, tensor rebuild, storage
@@ -28,7 +30,7 @@ struct Entry {
 };
 
 struct WeightFile {
-    std::string format;          // "PyTorch state-dict" or "safetensors"
+    std::string format;          // "PyTorch state-dict", its pre-1.6 form, or "safetensors"
     std::vector<Entry> entries;  // in file order
     std::map<std::string, std::string> metadata;  // safetensors "__metadata__" text values
 };
