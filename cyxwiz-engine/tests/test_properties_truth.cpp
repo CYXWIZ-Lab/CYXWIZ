@@ -1034,6 +1034,36 @@ int main() {
     }
 
     {
+        // Freezing: a mark on Frozen for every layer with weights, and on
+        // When frozen for BatchNorm; an unknown statistics value is flagged.
+        auto conv = MakeNode(31, gui::NodeType::Conv2D, "conv1");
+        conv.parameters["frozen"] = "true";
+        auto report = gui::properties_truth::ResolveNodeTruth(conv);
+        const auto* frozen = FindProperty(report, "frozen");
+        Check(frozen != nullptr && frozen->effective_value == "true" &&
+                  HasStatus(*frozen, gui::properties_truth::TruthStatus::OK) &&
+                  FindProperty(report, "frozen_statistics") == nullptr,
+              "Conv2D truth marks Frozen and has no When frozen");
+        auto norm = MakeNode(32, gui::NodeType::BatchNorm, "bn1");
+        norm.parameters["frozen"] = "true";
+        norm.parameters["frozen_statistics"] = "update";
+        report = gui::properties_truth::ResolveNodeTruth(norm);
+        const auto* statistics = FindProperty(report, "frozen_statistics");
+        Check(statistics != nullptr && statistics->effective_value == "update" &&
+                  HasStatus(*statistics, gui::properties_truth::TruthStatus::OK),
+              "BatchNorm truth marks When frozen");
+        norm.parameters["frozen_statistics"] = "sometimes";
+        report = gui::properties_truth::ResolveNodeTruth(norm);
+        statistics = FindProperty(report, "frozen_statistics");
+        Check(statistics != nullptr &&
+                  HasStatus(*statistics, gui::properties_truth::TruthStatus::Unsupported),
+              "an unknown When frozen value is flagged");
+        auto relu = MakeNode(33, gui::NodeType::ReLU, "relu");
+        Check(FindProperty(gui::properties_truth::ResolveNodeTruth(relu), "frozen") == nullptr,
+              "a layer without weights has no Frozen truth");
+    }
+
+    {
         auto embedding = MakeNode(21, gui::NodeType::Embedding, "Embedding");
         embedding.parameters["num_embeddings"] = "32";
         embedding.parameters["embedding_dim"] = "6";
