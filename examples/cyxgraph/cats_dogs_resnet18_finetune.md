@@ -16,7 +16,8 @@ Data Input -> Quality Analyzer -> Split 80/10/10 -> Loader (batch 64, 3 epochs,
 Every layer node is named as torchvision names the layer (`conv1`, `bn1`,
 `layer1.0.conv1`, `layer2.0.downsample.0`, `fc`), so the weight file fills the
 graph by name. The convolutions have **Bias** off, as torchvision's do. The
-graph is written by `scripts/examples/make_resnet18_graphs.py`.
+graph is written by `scripts/examples/torch_to_cyxgraph.py` from
+`torchvision.models.resnet18()`.
 
 ## Data and weights
 

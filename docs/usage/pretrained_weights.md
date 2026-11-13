@@ -32,8 +32,8 @@ fresh.
 PyTorch does not need to be installed. The file is read as data and nothing in
 it is ever run: a file that holds anything other than tensors (a whole pickled
 model, an optimizer, or code) is refused with the reason. Files in PyTorch's
-format from before version 1.6 are refused; load them in a current PyTorch and
-save the state-dict again.
+format from before version 1.6 are read too; older published weights use it
+(torchvision's MobileNetV2 file, for one).
 
 Float16 and float64 tensors are converted to float32. Integer tensors (such as
 BatchNorm's `num_batches_tracked` counter) are not weights and are left out.
@@ -44,6 +44,25 @@ BatchNorm's `num_batches_tracked` counter) are not weights and are left out.
 ResNet-18 with every node named as torchvision names the layer. Started from
 `resnet18-f37072fd.pth` with the backbone frozen, three epochs on cats vs dogs
 gave 86.29 % test accuracy; its README has the steps and the numbers.
+
+## Networks checked against PyTorch
+
+The Engine's tests build these networks from canvas nodes, start them from
+torchvision's published ImageNet files, and compare their outputs with
+torchvision's:
+
+| Network | File | Layers with weights |
+| --- | --- | --- |
+| ResNet-18 | `resnet18-f37072fd.pth` | 41 |
+| MobileNetV2 | `mobilenet_v2-b0353104.pth` | 105 |
+| MobileNetV3 small | `mobilenet_v3_small-047dcff4.pth` | 79 |
+
+Their graphs are written by `scripts/examples/torch_to_cyxgraph.py`, which
+turns a PyTorch network into canvas nodes named as PyTorch names its modules,
+so the network's weight file fills the graph by name. It handles convolutions
+(depthwise too), BatchNorm, ReLU, ReLU6, Hardswish, Hardsigmoid, SiLU, max and
+global average pooling, Linear, Dropout, Squeeze-Excitation and residual
+additions, and refuses anything else with the module's name.
 
 ## How layers are matched
 
@@ -56,6 +75,7 @@ file's names).
 | --- | --- |
 | Conv2D, Depthwise Conv2D, ConvTranspose2D, Conv1D | `weight`, and `bias` when the node's **Bias** is on |
 | BatchNorm | `weight`, `bias`, `running_mean`, `running_var` |
+| Squeeze-Excitation | `fc1.weight`, `fc1.bias`, `fc2.weight`, `fc2.bias` (as torchvision's `SqueezeExcitation`) |
 | Dense | `weight`, `bias` |
 | Other layers | entries named as the Engine names the layer's parameters, with the same shapes |
 

@@ -658,11 +658,11 @@ void CheckFrozenStemAgainstPyTorch(cyxwiz::GraphCompiler& compiler, size_t case_
     std::cout << "Frozen stem (" << case_name << ") matches PyTorch with requires_grad off\n";
 }
 
-// A whole ResNet-18 graph, as scripts/examples/make_resnet18_graphs.py writes
-// it (torchvision's layer names, convolutions without bias, the padded first
-// pool), filled from a PyTorch state-dict and compared with PyTorch's logits.
-// Returns false when the graph or the weights could not be used.
-bool CheckResNet18Graph(cyxwiz::GraphCompiler& compiler, const std::filesystem::path& graph_path,
+// A whole published network as scripts/examples/torch_to_cyxgraph.py writes it
+// (nodes named as PyTorch names its modules), filled from a PyTorch
+// state-dict and compared with PyTorch's logits. Returns false when the graph
+// or the weights could not be used.
+bool CheckNetworkGraph(cyxwiz::GraphCompiler& compiler, const std::filesystem::path& graph_path,
                         const std::filesystem::path& weights, const nlohmann::json& expected, const std::string& label,
                         bool training_mode_too) {
     std::ifstream in(graph_path, std::ios::binary);
@@ -690,8 +690,10 @@ bool CheckResNet18Graph(cyxwiz::GraphCompiler& compiler, const std::filesystem::
         const bool started = cyxwiz::StartFromWeightsFile(weights, *built.model, built.module_provenance, report, load_error);
         Check(started, label + ": starts from " + weights.filename().string() + ": " + load_error);
         if (!started) return false;
-        // 20 convolutions, 20 BatchNorm and fc: every one of them filled by name.
-        Check(report.loaded == 41 && report.fresh == 0, label + ": all 41 layers take their weights: " + report.Summary());
+        // Every layer with weights is filled by name.
+        const size_t layers = expected.at("layers_with_weights").get<size_t>();
+        Check(report.loaded == layers && report.fresh == 0,
+              label + ": all " + std::to_string(layers) + " layers take their weights: " + report.Summary());
         for (const auto& unused : report.unused)
             Check(unused.reason.find("counter") != std::string::npos, label + ": left over: " + unused.name + " (" + unused.reason + ")");
         built.model->SetTraining(training);
@@ -703,28 +705,41 @@ bool CheckResNet18Graph(cyxwiz::GraphCompiler& compiler, const std::filesystem::
     return !training_mode_too || run(true, "output_train");
 }
 
-void CheckResNet18AgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
+// ResNet-18, MobileNetV2 and MobileNetV3 small against PyTorch.
+void CheckPublishedNetworksAgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
     const std::filesystem::path fixtures = std::filesystem::path(CYXWIZ_WEIGHT_FILE_FIXTURES).parent_path();
     const auto read = [](const std::filesystem::path& path) {
         std::ifstream in(path);
         Check(in.good(), "cannot open " + path.string());
         return nlohmann::json::parse(in);
     };
-    // Always: the network an eighth as wide, with weights PyTorch wrote.
-    if (CheckResNet18Graph(compiler, fixtures / "resnet18_thin.cyxgraph", fixtures / "weight_files" / "resnet18_thin.pth",
-                           read(fixtures / "resnet18_pytorch.json"), "thin ResNet-18", true))
-        std::cout << "ResNet-18 graph (an eighth as wide) matches PyTorch in evaluation and in training mode\n";
-
-    // With the published file at hand: the full network against torchvision.
-    const char* published = std::getenv("CYXWIZ_RESNET18_WEIGHTS");
-    if (!published || !*published) {
-        std::cout << "ResNet-18 with the published ImageNet weights: skipped (set CYXWIZ_RESNET18_WEIGHTS to "
-                     "resnet18-f37072fd.pth to run it)\n";
+    const char* const networks[] = {"resnet18", "mobilenet_v2", "mobilenet_v3_small"};
+    // Always: small versions of each, with weights PyTorch wrote.
+    for (const char* network : networks) {
+        const std::string name = std::string(network) + "_thin";
+        if (CheckNetworkGraph(compiler, fixtures / (name + ".cyxgraph"), fixtures / "weight_files" / (name + ".pth"),
+                              read(fixtures / (name + "_pytorch.json")), name, true))
+            std::cout << name << " graph matches PyTorch in evaluation and in training mode\n";
+    }
+    // With the published files at hand: the full networks against torchvision.
+    const char* folder = std::getenv("CYXWIZ_PRETRAINED_WEIGHTS_DIR");
+    if (!folder || !*folder) {
+        std::cout << "Networks with the published ImageNet weights: skipped (set CYXWIZ_PRETRAINED_WEIGHTS_DIR to a "
+                     "folder with resnet18-f37072fd.pth, mobilenet_v2-b0353104.pth and "
+                     "mobilenet_v3_small-047dcff4.pth to run them)\n";
         return;
     }
-    if (CheckResNet18Graph(compiler, fixtures / "resnet18_imagenet.cyxgraph", published,
-                           read(fixtures / "resnet18_imagenet_pytorch.json"), "ImageNet ResNet-18", false))
-        std::cout << "ResNet-18 graph with the published ImageNet weights matches torchvision's logits\n";
+    for (const char* network : networks) {
+        const std::string name = std::string(network) + "_imagenet";
+        const auto expected = read(fixtures / (name + "_pytorch.json"));
+        const auto weights = std::filesystem::path(folder) / expected.at("weights_file").get<std::string>();
+        if (!std::filesystem::exists(weights)) {
+            std::cout << name << ": skipped, " << weights.string() << " not found\n";
+            continue;
+        }
+        if (CheckNetworkGraph(compiler, fixtures / (name + ".cyxgraph"), weights, expected, name, false))
+            std::cout << name << " graph with the published weights matches torchvision's logits\n";
+    }
 }
 
 }  // namespace
@@ -1151,7 +1166,7 @@ int main() {
     CheckFlattenHeadAgainstPyTorch(compiler);
     CheckFrozenStemAgainstPyTorch(compiler, 5, "frozen_stem_keep", "keep");
     CheckFrozenStemAgainstPyTorch(compiler, 6, "frozen_stem_update", "update");
-    CheckResNet18AgainstPyTorch(compiler);
+    CheckPublishedNetworksAgainstPyTorch(compiler);
     CheckSqueezeExcitationAgainstPyTorch(compiler, 2, "squeeze_excitation_hard",
                                          {{"width_mode", "exact"}, {"squeeze_channels", "3"}, {"inner_activation", "hardswish"},
                                           {"gate", "hardsigmoid"}, {"use_bias", "false"}});

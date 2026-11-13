@@ -6,7 +6,7 @@
  "execution_mode": 0,
  "framework": 0,
  "version": "2.1",
- "workflow_description": "ResNet-18 an eighth as wide, 10 classes: compared with PyTorch in tests",
+ "workflow_description": "resnet18_thin: compared with PyTorch in tests (generate_pretrained_network_fixtures.py)",
  "nodes": [
   {
    "category": 0,
@@ -21,13 +21,13 @@
     "audio_layout": "0",
     "configured": "false",
     "data_loaded": "false",
-    "dataset_name": "resnet18_fixture",
+    "dataset_name": "network_fixture",
     "decimal_point": ".",
     "delimiter": ",",
     "file_category": "image",
     "file_path": "",
     "file_type": "auto",
-    "folder_path": "D:/tmp/resnet18_fixture",
+    "folder_path": "D:/tmp/network_fixture",
     "force_disk_backed": "false",
     "has_header": "true",
     "image_layout": "0",
@@ -107,21 +107,19 @@
    "type": 2,
    "name": "conv1",
    "pos_x": 160.0,
-   "pos_y": 720.0,
-   "category": 6
+   "pos_y": 720.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 6,
    "type": 10,
    "name": "bn1",
-   "pos_x": 380.0,
-   "pos_y": 720.0,
-   "category": 9
+   "pos_x": 160.0,
+   "pos_y": 1140.0
   },
   {
    "description": "",
@@ -129,9 +127,8 @@
    "id": 7,
    "type": 29,
    "name": "relu",
-   "pos_x": 600.0,
-   "pos_y": 720.0,
-   "category": 7
+   "pos_x": 160.0,
+   "pos_y": 1560.0
   },
   {
    "description": "",
@@ -143,8 +140,8 @@
    "id": 8,
    "type": 5,
    "name": "maxpool",
-   "pos_x": 820.0,
-   "pos_y": 720.0
+   "pos_x": 160.0,
+   "pos_y": 1980.0
   },
   {
    "description": "",
@@ -159,21 +156,19 @@
    "type": 2,
    "name": "layer1.0.conv1",
    "pos_x": 160.0,
-   "pos_y": 1140.0,
-   "category": 6
+   "pos_y": 2400.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 10,
    "type": 10,
    "name": "layer1.0.bn1",
    "pos_x": 380.0,
-   "pos_y": 1140.0,
-   "category": 9
+   "pos_y": 2400.0
   },
   {
    "description": "",
@@ -182,8 +177,7 @@
    "type": 29,
    "name": "layer1.0.relu",
    "pos_x": 600.0,
-   "pos_y": 1140.0,
-   "category": 7
+   "pos_y": 2400.0
   },
   {
    "description": "",
@@ -198,21 +192,19 @@
    "type": 2,
    "name": "layer1.0.conv2",
    "pos_x": 820.0,
-   "pos_y": 1140.0,
-   "category": 6
+   "pos_y": 2400.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 13,
    "type": 10,
    "name": "layer1.0.bn2",
    "pos_x": 1040.0,
-   "pos_y": 1140.0,
-   "category": 9
+   "pos_y": 2400.0
   },
   {
    "description": "",
@@ -221,17 +213,16 @@
    "type": 47,
    "name": "layer1.0.add",
    "pos_x": 1260.0,
-   "pos_y": 1140.0
+   "pos_y": 2400.0
   },
   {
    "description": "",
    "parameters": {},
    "id": 15,
    "type": 29,
-   "name": "layer1.0.out",
+   "name": "layer1.0.relu_1",
    "pos_x": 1480.0,
-   "pos_y": 1140.0,
-   "category": 7
+   "pos_y": 2400.0
   },
   {
    "description": "",
@@ -246,21 +237,19 @@
    "type": 2,
    "name": "layer1.1.conv1",
    "pos_x": 160.0,
-   "pos_y": 1560.0,
-   "category": 6
+   "pos_y": 2820.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 17,
    "type": 10,
    "name": "layer1.1.bn1",
    "pos_x": 380.0,
-   "pos_y": 1560.0,
-   "category": 9
+   "pos_y": 2820.0
   },
   {
    "description": "",
@@ -269,8 +258,7 @@
    "type": 29,
    "name": "layer1.1.relu",
    "pos_x": 600.0,
-   "pos_y": 1560.0,
-   "category": 7
+   "pos_y": 2820.0
   },
   {
    "description": "",
@@ -285,21 +273,19 @@
    "type": 2,
    "name": "layer1.1.conv2",
    "pos_x": 820.0,
-   "pos_y": 1560.0,
-   "category": 6
+   "pos_y": 2820.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 20,
    "type": 10,
    "name": "layer1.1.bn2",
    "pos_x": 1040.0,
-   "pos_y": 1560.0,
-   "category": 9
+   "pos_y": 2820.0
   },
   {
    "description": "",
@@ -308,17 +294,16 @@
    "type": 47,
    "name": "layer1.1.add",
    "pos_x": 1260.0,
-   "pos_y": 1560.0
+   "pos_y": 2820.0
   },
   {
    "description": "",
    "parameters": {},
    "id": 22,
    "type": 29,
-   "name": "layer1.1.out",
+   "name": "layer1.1.relu_1",
    "pos_x": 1480.0,
-   "pos_y": 1560.0,
-   "category": 7
+   "pos_y": 2820.0
   },
   {
    "description": "",
@@ -333,21 +318,19 @@
    "type": 2,
    "name": "layer2.0.conv1",
    "pos_x": 160.0,
-   "pos_y": 1980.0,
-   "category": 6
+   "pos_y": 3240.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 24,
    "type": 10,
    "name": "layer2.0.bn1",
    "pos_x": 380.0,
-   "pos_y": 1980.0,
-   "category": 9
+   "pos_y": 3240.0
   },
   {
    "description": "",
@@ -356,8 +339,7 @@
    "type": 29,
    "name": "layer2.0.relu",
    "pos_x": 600.0,
-   "pos_y": 1980.0,
-   "category": 7
+   "pos_y": 3240.0
   },
   {
    "description": "",
@@ -372,21 +354,19 @@
    "type": 2,
    "name": "layer2.0.conv2",
    "pos_x": 820.0,
-   "pos_y": 1980.0,
-   "category": 6
+   "pos_y": 3240.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 27,
    "type": 10,
    "name": "layer2.0.bn2",
    "pos_x": 1040.0,
-   "pos_y": 1980.0,
-   "category": 9
+   "pos_y": 3240.0
   },
   {
    "description": "",
@@ -400,22 +380,20 @@
    "id": 28,
    "type": 2,
    "name": "layer2.0.downsample.0",
-   "pos_x": 820.0,
-   "pos_y": 2150.0,
-   "category": 6
+   "pos_x": 1260.0,
+   "pos_y": 3240.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 29,
    "type": 10,
    "name": "layer2.0.downsample.1",
-   "pos_x": 1040.0,
-   "pos_y": 2150.0,
-   "category": 9
+   "pos_x": 1480.0,
+   "pos_y": 3240.0
   },
   {
    "description": "",
@@ -423,18 +401,17 @@
    "id": 30,
    "type": 47,
    "name": "layer2.0.add",
-   "pos_x": 1260.0,
-   "pos_y": 1980.0
+   "pos_x": 1700.0,
+   "pos_y": 3240.0
   },
   {
    "description": "",
    "parameters": {},
    "id": 31,
    "type": 29,
-   "name": "layer2.0.out",
-   "pos_x": 1480.0,
-   "pos_y": 1980.0,
-   "category": 7
+   "name": "layer2.0.relu_1",
+   "pos_x": 1920.0,
+   "pos_y": 3240.0
   },
   {
    "description": "",
@@ -449,21 +426,19 @@
    "type": 2,
    "name": "layer2.1.conv1",
    "pos_x": 160.0,
-   "pos_y": 2400.0,
-   "category": 6
+   "pos_y": 3660.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 33,
    "type": 10,
    "name": "layer2.1.bn1",
    "pos_x": 380.0,
-   "pos_y": 2400.0,
-   "category": 9
+   "pos_y": 3660.0
   },
   {
    "description": "",
@@ -472,8 +447,7 @@
    "type": 29,
    "name": "layer2.1.relu",
    "pos_x": 600.0,
-   "pos_y": 2400.0,
-   "category": 7
+   "pos_y": 3660.0
   },
   {
    "description": "",
@@ -488,21 +462,19 @@
    "type": 2,
    "name": "layer2.1.conv2",
    "pos_x": 820.0,
-   "pos_y": 2400.0,
-   "category": 6
+   "pos_y": 3660.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 36,
    "type": 10,
    "name": "layer2.1.bn2",
    "pos_x": 1040.0,
-   "pos_y": 2400.0,
-   "category": 9
+   "pos_y": 3660.0
   },
   {
    "description": "",
@@ -511,17 +483,16 @@
    "type": 47,
    "name": "layer2.1.add",
    "pos_x": 1260.0,
-   "pos_y": 2400.0
+   "pos_y": 3660.0
   },
   {
    "description": "",
    "parameters": {},
    "id": 38,
    "type": 29,
-   "name": "layer2.1.out",
+   "name": "layer2.1.relu_1",
    "pos_x": 1480.0,
-   "pos_y": 2400.0,
-   "category": 7
+   "pos_y": 3660.0
   },
   {
    "description": "",
@@ -536,21 +507,19 @@
    "type": 2,
    "name": "layer3.0.conv1",
    "pos_x": 160.0,
-   "pos_y": 2820.0,
-   "category": 6
+   "pos_y": 4080.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 40,
    "type": 10,
    "name": "layer3.0.bn1",
    "pos_x": 380.0,
-   "pos_y": 2820.0,
-   "category": 9
+   "pos_y": 4080.0
   },
   {
    "description": "",
@@ -559,8 +528,7 @@
    "type": 29,
    "name": "layer3.0.relu",
    "pos_x": 600.0,
-   "pos_y": 2820.0,
-   "category": 7
+   "pos_y": 4080.0
   },
   {
    "description": "",
@@ -575,21 +543,19 @@
    "type": 2,
    "name": "layer3.0.conv2",
    "pos_x": 820.0,
-   "pos_y": 2820.0,
-   "category": 6
+   "pos_y": 4080.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 43,
    "type": 10,
    "name": "layer3.0.bn2",
    "pos_x": 1040.0,
-   "pos_y": 2820.0,
-   "category": 9
+   "pos_y": 4080.0
   },
   {
    "description": "",
@@ -603,22 +569,20 @@
    "id": 44,
    "type": 2,
    "name": "layer3.0.downsample.0",
-   "pos_x": 820.0,
-   "pos_y": 2990.0,
-   "category": 6
+   "pos_x": 1260.0,
+   "pos_y": 4080.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 45,
    "type": 10,
    "name": "layer3.0.downsample.1",
-   "pos_x": 1040.0,
-   "pos_y": 2990.0,
-   "category": 9
+   "pos_x": 1480.0,
+   "pos_y": 4080.0
   },
   {
    "description": "",
@@ -626,18 +590,17 @@
    "id": 46,
    "type": 47,
    "name": "layer3.0.add",
-   "pos_x": 1260.0,
-   "pos_y": 2820.0
+   "pos_x": 1700.0,
+   "pos_y": 4080.0
   },
   {
    "description": "",
    "parameters": {},
    "id": 47,
    "type": 29,
-   "name": "layer3.0.out",
-   "pos_x": 1480.0,
-   "pos_y": 2820.0,
-   "category": 7
+   "name": "layer3.0.relu_1",
+   "pos_x": 1920.0,
+   "pos_y": 4080.0
   },
   {
    "description": "",
@@ -652,21 +615,19 @@
    "type": 2,
    "name": "layer3.1.conv1",
    "pos_x": 160.0,
-   "pos_y": 3240.0,
-   "category": 6
+   "pos_y": 4500.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 49,
    "type": 10,
    "name": "layer3.1.bn1",
    "pos_x": 380.0,
-   "pos_y": 3240.0,
-   "category": 9
+   "pos_y": 4500.0
   },
   {
    "description": "",
@@ -675,8 +636,7 @@
    "type": 29,
    "name": "layer3.1.relu",
    "pos_x": 600.0,
-   "pos_y": 3240.0,
-   "category": 7
+   "pos_y": 4500.0
   },
   {
    "description": "",
@@ -691,21 +651,19 @@
    "type": 2,
    "name": "layer3.1.conv2",
    "pos_x": 820.0,
-   "pos_y": 3240.0,
-   "category": 6
+   "pos_y": 4500.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 52,
    "type": 10,
    "name": "layer3.1.bn2",
    "pos_x": 1040.0,
-   "pos_y": 3240.0,
-   "category": 9
+   "pos_y": 4500.0
   },
   {
    "description": "",
@@ -714,17 +672,16 @@
    "type": 47,
    "name": "layer3.1.add",
    "pos_x": 1260.0,
-   "pos_y": 3240.0
+   "pos_y": 4500.0
   },
   {
    "description": "",
    "parameters": {},
    "id": 54,
    "type": 29,
-   "name": "layer3.1.out",
+   "name": "layer3.1.relu_1",
    "pos_x": 1480.0,
-   "pos_y": 3240.0,
-   "category": 7
+   "pos_y": 4500.0
   },
   {
    "description": "",
@@ -739,21 +696,19 @@
    "type": 2,
    "name": "layer4.0.conv1",
    "pos_x": 160.0,
-   "pos_y": 3660.0,
-   "category": 6
+   "pos_y": 4920.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 56,
    "type": 10,
    "name": "layer4.0.bn1",
    "pos_x": 380.0,
-   "pos_y": 3660.0,
-   "category": 9
+   "pos_y": 4920.0
   },
   {
    "description": "",
@@ -762,8 +717,7 @@
    "type": 29,
    "name": "layer4.0.relu",
    "pos_x": 600.0,
-   "pos_y": 3660.0,
-   "category": 7
+   "pos_y": 4920.0
   },
   {
    "description": "",
@@ -778,21 +732,19 @@
    "type": 2,
    "name": "layer4.0.conv2",
    "pos_x": 820.0,
-   "pos_y": 3660.0,
-   "category": 6
+   "pos_y": 4920.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 59,
    "type": 10,
    "name": "layer4.0.bn2",
    "pos_x": 1040.0,
-   "pos_y": 3660.0,
-   "category": 9
+   "pos_y": 4920.0
   },
   {
    "description": "",
@@ -806,22 +758,20 @@
    "id": 60,
    "type": 2,
    "name": "layer4.0.downsample.0",
-   "pos_x": 820.0,
-   "pos_y": 3830.0,
-   "category": 6
+   "pos_x": 1260.0,
+   "pos_y": 4920.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 61,
    "type": 10,
    "name": "layer4.0.downsample.1",
-   "pos_x": 1040.0,
-   "pos_y": 3830.0,
-   "category": 9
+   "pos_x": 1480.0,
+   "pos_y": 4920.0
   },
   {
    "description": "",
@@ -829,18 +779,17 @@
    "id": 62,
    "type": 47,
    "name": "layer4.0.add",
-   "pos_x": 1260.0,
-   "pos_y": 3660.0
+   "pos_x": 1700.0,
+   "pos_y": 4920.0
   },
   {
    "description": "",
    "parameters": {},
    "id": 63,
    "type": 29,
-   "name": "layer4.0.out",
-   "pos_x": 1480.0,
-   "pos_y": 3660.0,
-   "category": 7
+   "name": "layer4.0.relu_1",
+   "pos_x": 1920.0,
+   "pos_y": 4920.0
   },
   {
    "description": "",
@@ -855,21 +804,19 @@
    "type": 2,
    "name": "layer4.1.conv1",
    "pos_x": 160.0,
-   "pos_y": 4080.0,
-   "category": 6
+   "pos_y": 5340.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 65,
    "type": 10,
    "name": "layer4.1.bn1",
    "pos_x": 380.0,
-   "pos_y": 4080.0,
-   "category": 9
+   "pos_y": 5340.0
   },
   {
    "description": "",
@@ -878,8 +825,7 @@
    "type": 29,
    "name": "layer4.1.relu",
    "pos_x": 600.0,
-   "pos_y": 4080.0,
-   "category": 7
+   "pos_y": 5340.0
   },
   {
    "description": "",
@@ -894,21 +840,19 @@
    "type": 2,
    "name": "layer4.1.conv2",
    "pos_x": 820.0,
-   "pos_y": 4080.0,
-   "category": 6
+   "pos_y": 5340.0
   },
   {
    "description": "",
    "parameters": {
-    "eps": "0.00001",
+    "eps": "1e-05",
     "momentum": "0.1"
    },
    "id": 68,
    "type": 10,
    "name": "layer4.1.bn2",
    "pos_x": 1040.0,
-   "pos_y": 4080.0,
-   "category": 9
+   "pos_y": 5340.0
   },
   {
    "description": "",
@@ -917,38 +861,36 @@
    "type": 47,
    "name": "layer4.1.add",
    "pos_x": 1260.0,
-   "pos_y": 4080.0
+   "pos_y": 5340.0
   },
   {
    "description": "",
    "parameters": {},
    "id": 70,
    "type": 29,
-   "name": "layer4.1.out",
+   "name": "layer4.1.relu_1",
    "pos_x": 1480.0,
-   "pos_y": 4080.0,
-   "category": 7
+   "pos_y": 5340.0
   },
   {
+   "description": "",
+   "parameters": {},
    "id": 71,
    "type": 8,
    "name": "avgpool",
-   "description": "",
-   "parameters": {},
    "pos_x": 160.0,
-   "pos_y": 4500.0
+   "pos_y": 5760.0
   },
   {
-   "id": 72,
-   "type": 0,
-   "name": "fc",
    "description": "",
    "parameters": {
     "units": "10"
    },
-   "pos_x": 380.0,
-   "pos_y": 4500.0,
-   "category": 6
+   "id": 72,
+   "type": 0,
+   "name": "fc",
+   "pos_x": 160.0,
+   "pos_y": 6180.0
   },
   {
    "description": "",
@@ -956,8 +898,8 @@
    "id": 73,
    "type": 73,
    "name": "Cross entropy",
-   "pos_x": 600.0,
-   "pos_y": 4500.0
+   "pos_x": 160.0,
+   "pos_y": 6600.0
   },
   {
    "description": "",
@@ -965,8 +907,8 @@
    "id": 74,
    "type": 81,
    "name": "Adam",
-   "pos_x": 820.0,
-   "pos_y": 4500.0
+   "pos_x": 380.0,
+   "pos_y": 6600.0
   },
   {
    "id": 75,
@@ -976,8 +918,8 @@
    "parameters": {
     "num_classes": "10"
    },
-   "pos_x": 1040.0,
-   "pos_y": 4500.0,
+   "pos_x": 600.0,
+   "pos_y": 6600.0,
    "category": 15
   }
  ],
@@ -1817,21 +1759,48 @@
  "groups": [
   {
    "id": 1,
-   "name": "Stem (8 channels)",
-   "description": "conv1 7x7 stride 2 without bias - bn1 - ReLU - max pool 3, stride 2, padding 1",
+   "name": "conv1",
+   "description": "",
    "node_ids": [
-    5,
-    6,
-    7,
-    8
+    5
    ],
    "collapsed": false,
    "padding": 20.0
   },
   {
    "id": 2,
-   "name": "layer1.0 (8 channels)",
-   "description": "Two 3x3 Conv - BatchNorm; the block's input is added back, then ReLU",
+   "name": "bn1",
+   "description": "",
+   "node_ids": [
+    6
+   ],
+   "collapsed": false,
+   "padding": 20.0
+  },
+  {
+   "id": 3,
+   "name": "relu",
+   "description": "",
+   "node_ids": [
+    7
+   ],
+   "collapsed": false,
+   "padding": 20.0
+  },
+  {
+   "id": 4,
+   "name": "maxpool",
+   "description": "",
+   "node_ids": [
+    8
+   ],
+   "collapsed": false,
+   "padding": 20.0
+  },
+  {
+   "id": 5,
+   "name": "layer1.0",
+   "description": "",
    "node_ids": [
     9,
     10,
@@ -1845,9 +1814,9 @@
    "padding": 20.0
   },
   {
-   "id": 3,
-   "name": "layer1.1 (8 channels)",
-   "description": "Two 3x3 Conv - BatchNorm; the block's input is added back, then ReLU",
+   "id": 6,
+   "name": "layer1.1",
+   "description": "",
    "node_ids": [
     16,
     17,
@@ -1861,9 +1830,9 @@
    "padding": 20.0
   },
   {
-   "id": 4,
-   "name": "layer2.0 (16 channels)",
-   "description": "Two 3x3 Conv - BatchNorm; the block's input is added back, then ReLU; the skip is a 1x1 stride-2 Conv - BatchNorm",
+   "id": 7,
+   "name": "layer2.0",
+   "description": "",
    "node_ids": [
     23,
     24,
@@ -1879,9 +1848,9 @@
    "padding": 20.0
   },
   {
-   "id": 5,
-   "name": "layer2.1 (16 channels)",
-   "description": "Two 3x3 Conv - BatchNorm; the block's input is added back, then ReLU",
+   "id": 8,
+   "name": "layer2.1",
+   "description": "",
    "node_ids": [
     32,
     33,
@@ -1895,9 +1864,9 @@
    "padding": 20.0
   },
   {
-   "id": 6,
-   "name": "layer3.0 (32 channels)",
-   "description": "Two 3x3 Conv - BatchNorm; the block's input is added back, then ReLU; the skip is a 1x1 stride-2 Conv - BatchNorm",
+   "id": 9,
+   "name": "layer3.0",
+   "description": "",
    "node_ids": [
     39,
     40,
@@ -1913,9 +1882,9 @@
    "padding": 20.0
   },
   {
-   "id": 7,
-   "name": "layer3.1 (32 channels)",
-   "description": "Two 3x3 Conv - BatchNorm; the block's input is added back, then ReLU",
+   "id": 10,
+   "name": "layer3.1",
+   "description": "",
    "node_ids": [
     48,
     49,
@@ -1929,9 +1898,9 @@
    "padding": 20.0
   },
   {
-   "id": 8,
-   "name": "layer4.0 (64 channels)",
-   "description": "Two 3x3 Conv - BatchNorm; the block's input is added back, then ReLU; the skip is a 1x1 stride-2 Conv - BatchNorm",
+   "id": 11,
+   "name": "layer4.0",
+   "description": "",
    "node_ids": [
     55,
     56,
@@ -1947,9 +1916,9 @@
    "padding": 20.0
   },
   {
-   "id": 9,
-   "name": "layer4.1 (64 channels)",
-   "description": "Two 3x3 Conv - BatchNorm; the block's input is added back, then ReLU",
+   "id": 12,
+   "name": "layer4.1",
+   "description": "",
    "node_ids": [
     64,
     65,
@@ -1958,6 +1927,26 @@
     68,
     69,
     70
+   ],
+   "collapsed": false,
+   "padding": 20.0
+  },
+  {
+   "id": 13,
+   "name": "avgpool",
+   "description": "",
+   "node_ids": [
+    71
+   ],
+   "collapsed": false,
+   "padding": 20.0
+  },
+  {
+   "id": 14,
+   "name": "fc",
+   "description": "",
+   "node_ids": [
+    72
    ],
    "collapsed": false,
    "padding": 20.0

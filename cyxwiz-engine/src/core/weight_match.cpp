@@ -12,6 +12,13 @@ std::string FileSuffix(const std::string& key) {
     if (key == "weights") return "weight";  // the convolutions
     if (key == "gamma") return "weight";    // the normalisations
     if (key == "beta") return "bias";
+    // Squeeze-Excitation: torchvision.ops.SqueezeExcitation's two 1x1
+    // convolutions (fc1 squeezes, fc2 expands); their [out, in, 1, 1] kernels
+    // arrive as the node's [out, in] weights.
+    if (key == "reduce_weight") return "fc1.weight";
+    if (key == "reduce_bias") return "fc1.bias";
+    if (key == "expand_weight") return "fc2.weight";
+    if (key == "expand_bias") return "fc2.bias";
     return key;                             // weight, bias, running_mean, running_var
 }
 

@@ -164,6 +164,11 @@ private Data Studio tickets (`tofix*/track*`).
   freezes or unfreezes the selection, every layer loaded from the weights
   file, all but the head, or all but the last N layers. **Preferences >
   Training** sets what a new BatchNorm does with its statistics when frozen.
+- **MobileNetV2 and MobileNetV3 checked against PyTorch.** Built from canvas
+  nodes and started from torchvision's published ImageNet files, both give
+  torchvision's outputs, as ResNet-18 does. Squeeze-Excitation takes
+  torchvision's `fc1` / `fc2` weights by name, and weight files in PyTorch's
+  format from before 1.6 (torchvision's MobileNetV2 file) are read.
 - **ResNet-18 fine-tuning example.** `cats_dogs_resnet18_finetune.cyxgraph`
   is torchvision's ResNet-18 node for node, started from the published
   ImageNet weights with the backbone frozen (86.29 % test accuracy on cats vs
