@@ -226,7 +226,7 @@ public:
     // Verbose logging (includes internal Variable Explorer commands)
     void SetVerboseLogging(bool enable) { verbose_logging_ = enable; }
     bool IsVerboseLogging() const { return verbose_logging_; }
-    bool* GetVerboseLoggingPtr() { return &verbose_logging_; }
+    std::atomic<bool>* GetVerboseLoggingPtr() { return &verbose_logging_; }
 
     // Console timeout configuration (for interactive commands)
     void SetConsoleTimeout(double seconds) { console_timeout_seconds_ = seconds; }
@@ -285,7 +285,9 @@ private:
     std::string language_error_;
     std::unique_ptr<PythonSandbox> sandbox_;
     bool sandbox_enabled_;
-    bool verbose_logging_{false};  // Tools > Diagnostics > Log Every Python Command: each command with its duration
+    // Tools > Diagnostics > Log Every Python Command: each command with its
+    // duration. Atomic: the menu sets it, worker threads running Python read it.
+    std::atomic<bool> verbose_logging_{false};
     double console_timeout_seconds_{30.0};  // Console command timeout (default 30s)
 
     // ========== Async execution state ==========

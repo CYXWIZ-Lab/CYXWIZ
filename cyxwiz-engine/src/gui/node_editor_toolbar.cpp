@@ -130,6 +130,9 @@ void NodeEditor::UpdateUnsavedState() {
         unsaved_check_due_ = true;
     }
     if (!unsaved_check_due_) return;
+    // Positions an undo, redo or paste hands over land in the next frames:
+    // the graph is compared once they are on the canvas.
+    if (pending_positions_frames_ > 0) return;
     const double now = ImGui::GetTime();
     if (now - fingerprint_checked_at_ < 0.5) return;
     fingerprint_checked_at_ = now;

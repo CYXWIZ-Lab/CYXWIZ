@@ -572,8 +572,9 @@ void ToolbarPanel::BuildActionHandlers() {
     };
     h["tools.verbose_python"] = [this](const std::string&) {
         if (!verbose_python_log_ptr_) return;
-        *verbose_python_log_ptr_ = !*verbose_python_log_ptr_;
-        spdlog::info("Python commands are {} logged", *verbose_python_log_ptr_ ? "now" : "no longer");
+        const bool on = !verbose_python_log_ptr_->load();
+        verbose_python_log_ptr_->store(on);
+        spdlog::info("Python commands are {} logged", on ? "now" : "no longer");
         SaveDiagnostics();
     };
 

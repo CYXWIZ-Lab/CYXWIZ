@@ -75,6 +75,13 @@ enum class IconPack {
     Phosphor        // Phosphor Icons - flexible icon family with multiple weights
 };
 
+// The canvas icon of a node type in an icon pack (the Studio's Icon pack choice).
+const char* NodeIconFor(IconPack pack, NodeType type);
+// The codepoints NodeIconFor uses from a pack, as ImGui glyph ranges (pairs, 0
+// at the end). The font atlas keeps only these from the extra packs instead
+// of their whole ranges (thousands of icons at every size).
+std::vector<ImWchar> NodeIconGlyphRanges(IconPack pack);
+
 struct DataBoundaryMigrationResult {
     bool success = false;
     int nodes_migrated = 0;

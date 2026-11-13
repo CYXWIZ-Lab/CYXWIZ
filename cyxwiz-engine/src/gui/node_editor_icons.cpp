@@ -10,12 +10,30 @@
 #include "IconsIconoir.h"
 #include "IconsPhosphor.h"
 
+#include <imgui_internal.h>  // ImTextCharFromUtf8
+
 namespace gui {
 
 // ========== Icon Implementation ==========
-const char* NodeEditor::GetNodeIcon(NodeType type) {
+const char* NodeEditor::GetNodeIcon(NodeType type) { return NodeIconFor(icon_pack_, type); }
+
+std::vector<ImWchar> NodeIconGlyphRanges(IconPack pack) {
+    ImFontGlyphRangesBuilder builder;
+    for (int t = 0; t <= static_cast<int>(NodeType::Unknown); ++t) {
+        const char* icon = NodeIconFor(pack, static_cast<NodeType>(t));
+        if (!icon || !*icon) continue;
+        unsigned int codepoint = 0;
+        ImTextCharFromUtf8(&codepoint, icon, nullptr);
+        if (codepoint != 0) builder.AddChar(static_cast<ImWchar>(codepoint));
+    }
+    ImVector<ImWchar> ranges;
+    builder.BuildRanges(&ranges);
+    return std::vector<ImWchar>(ranges.begin(), ranges.end());
+}
+
+const char* NodeIconFor(IconPack pack, NodeType type) {
     // Check if Tabler icon pack is selected
-    if (icon_pack_ == IconPack::Tabler) {
+    if (pack == IconPack::Tabler) {
         switch (type) {
             // Data Pipeline
             case NodeType::DatasetInput:
@@ -444,7 +462,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
     }
 
     // Remix Icon pack
-    if (icon_pack_ == IconPack::Remix) {
+    if (pack == IconPack::Remix) {
         switch (type) {
             // Data Pipeline
             case NodeType::DatasetInput:
@@ -791,7 +809,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
     }
 
     // Lucide Icon pack
-    if (icon_pack_ == IconPack::Lucide) {
+    if (pack == IconPack::Lucide) {
         switch (type) {
             // Data Pipeline
             case NodeType::DatasetInput:
@@ -1113,7 +1131,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
     }
 
     // Iconoir Icon pack
-    if (icon_pack_ == IconPack::Iconoir) {
+    if (pack == IconPack::Iconoir) {
         switch (type) {
             // Data Pipeline
             case NodeType::DatasetInput:
@@ -1435,7 +1453,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
     }
 
     // Phosphor Icon pack
-    if (icon_pack_ == IconPack::Phosphor) {
+    if (pack == IconPack::Phosphor) {
         switch (type) {
             // Data Pipeline
             case NodeType::DatasetInput:

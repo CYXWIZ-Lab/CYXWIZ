@@ -47,6 +47,12 @@ private Data Studio tickets (`tofix*/track*`).
     keep their compile colours instead of turning grey.
   - When Compile folds into **More**, a dot in Compile's colour on **More**
     keeps its state on the bar.
+  - Undoing back to the saved layout clears the unsaved dot (positions are
+    saved to a hundredth of a grid unit).
+- **The font atlas uses a quarter of the GPU memory** (32 MB instead of
+  128 MB): glyphs are no longer oversampled (they are pixel-snapped, so it
+  bought nothing), and the five extra icon packs keep only the node icons
+  the canvas draws.
 - **A seed repeats on every operating system and device** (guide in
   `docs/usage/seeds_and_reproducibility.md`). Splits, folds, batch order,
   balancing, augmentation, samples and weight initialisation draw the same
