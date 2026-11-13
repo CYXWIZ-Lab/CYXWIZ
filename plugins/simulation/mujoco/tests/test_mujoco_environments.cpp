@@ -783,6 +783,7 @@ void CheckGhostCopy() {
     ghost->Reset(5, ghost_obs.data());
     Check(!view->ghost.state.empty() && view->ghost.state == view->state,
           "on the same seed the ghost starts where the played copy starts");
+    Check(view->published == 1 && view->ghost.published == 1, "each Reset is one published state");
     const PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(), truncated.data(),
                                            final_obs.data()};
     const PluginEnvironmentStepBuffers ghost_out{ghost_obs.data(), ghost_rewards.data(), terminated.data(),
@@ -791,8 +792,11 @@ void CheckGhostCopy() {
     const uint64_t shown_version = view->version;
     for (int s = 0; s < 4; ++s) {
         played->Step(push.data(), out);
+        Check(view->published == view->ghost.published + 1,
+              "between the two steps the ghost is one state behind (the Viewport waits)");
         ghost->Step(still.data(), ghost_out);
     }
+    Check(view->published == view->ghost.published && view->published == 5, "after both, the counts match");
     Check(view->ghost.step == 4 && view->step == 4 && view->version == shown_version + 4,
           "both publish every step, each into its own part");
     Check(view->ghost.state != view->state, "other actions, another state");

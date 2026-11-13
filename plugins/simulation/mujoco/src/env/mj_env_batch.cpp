@@ -125,6 +125,7 @@ bool MjEnvBatch::ShowCopy(int copy) {
     view_->stress_message.clear();
     view_->label = {};  // the view's own words until the Engine labels the copy
     ++view_->version;
+    view_->published = 0;
     shown_copy_ = copy;
     stress_.scene = scenes_[static_cast<size_t>(copy)];
     return true;
@@ -162,6 +163,7 @@ bool MjEnvBatch::ShowCopyAsGhost(int copy, const std::string& name) {
     ghost.has_last_return = false;
     ghost.last_return = 0.0;
     ++ghost.version;
+    ghost.published = 0;
     ghost_copy_ = copy;
     return true;
 }
@@ -221,6 +223,7 @@ void MjEnvBatch::Publish(const SteppedCopy* step) {
         stress_.message.clear();
     }
     ++view_->version;
+    ++view_->published;
 }
 
 void MjEnvBatch::PublishGhost(const SteppedCopy* step) {
@@ -251,6 +254,7 @@ void MjEnvBatch::PublishGhost(const SteppedCopy* step) {
     ghost.step = steps_[c];
     ghost.scene = scenes_[c];
     ++ghost.version;
+    ++ghost.published;
 }
 
 MjStressHost MjEnvBatch::StressHost() {

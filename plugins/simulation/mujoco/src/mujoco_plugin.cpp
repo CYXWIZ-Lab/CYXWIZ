@@ -243,6 +243,9 @@ void MuJoCoPlugin::SyncPlayback() {
         std::lock_guard<std::mutex> lock(view_slot_->mutex);
         active = view_slot_->owner != nullptr;
         const MjGhostView& g = view_slot_->ghost;
+        // The ghost publishes right after the played copy: while its state of
+        // this step is still to come, the frame keeps the last pair
+        if (active && g.owner != nullptr && view_slot_->published == g.published + 1) return;
         ghost.active = active && g.owner != nullptr;
         if (ghost.active) {
             ghost.name = g.name;

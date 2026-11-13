@@ -34,6 +34,7 @@ struct MjGhostView {
     bool has_last_return = false;
     double last_return = 0.0;
     uint64_t version = 0;         // grows with every published state
+    uint64_t published = 0;       // states published since ShowCopyAsGhost (Reset and Step)
 };
 
 struct MjViewSlot {
@@ -65,6 +66,10 @@ struct MjViewSlot {
     // a training copy); empty: "Policy playback"
     PluginShownCopyLabel label;
     uint64_t version = 0;         // grows with every published state
+    // States published since ShowCopy (Reset and Step). The Engine steps a
+    // ghost right after the shown copy: one more here than the ghost's means
+    // the ghost's state of that step is still to come
+    uint64_t published = 0;
     MjGhostView ghost;            // a second policy beside it (ShowCopyAsGhost)
 };
 
