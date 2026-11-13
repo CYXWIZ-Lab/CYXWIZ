@@ -6261,6 +6261,14 @@ void MainWindow::DetectKeyboardContext() {
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow)) {
         // Get the focused window name
         ImGuiWindow* focused = ImGui::GetCurrentContext()->NavWindow;
+        // An open menu (the main menu bar or a popup) takes focus while it is
+        // open; the panel the user worked in keeps the context, so the menu's
+        // commands for that panel (Nodes > Duplicate, Freeze, ...) stay
+        // available.
+        if (focused && (focused->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu) ||
+                        std::string(focused->Name ? focused->Name : "").find("##MainMenuBar") != std::string::npos)) {
+            return;
+        }
         if (focused) {
             std::string window_name = focused->Name ? focused->Name : "";
 
