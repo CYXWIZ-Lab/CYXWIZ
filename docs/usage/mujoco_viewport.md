@@ -146,6 +146,15 @@ model, it shows and changes nothing.
   the project in `mujoco/keyframes/<model file>.json`, so they come back next
   time; a keyframe saved for another version of the model file is refused with
   the reason. A model file's own `<key>` elements are listed too.
+- **Physics** (the Viewport's own run): the **timestep** (with the
+  environment's frame skip beside it), the **integrator** (Euler, RK4,
+  Implicit, Implicit fast), the **solver** (PGS, CG, Newton) and its
+  iterations, **gravity** (x, y, z), and switches for contacts, joint limits,
+  friction loss, actuation, gravity, springs, dampers, warm start and energy.
+  The line beside **Back to the model file's values** says what differs from
+  the file. The options stay through a Stress ground and a Reload; opening
+  another model file starts with its own. A played policy keeps its
+  environment's physics.
 - **Reload the model file** reads the file again (after editing it on disk),
   keeping the camera and the scene; the state starts over. A file that does not
   build any more leaves the model as it was and says why.
@@ -175,8 +184,8 @@ policy** whenever you want to watch it: no training run is needed. See
 ## Limits
 
 - The Viewport shows one copy of a training run's environments (the first).
-- Physics options, a timeline to scrub a played episode, live plots and a
-  second policy as a ghost are being built (Inspect's next part).
+- A timeline to scrub a played episode, live plots and a second policy as a
+  ghost are being built.
 - Training with pushes and rough ground, and the stress test that compares
   two saved policies by difficulty, are in the
   [RL walkthrough](rl_walkthrough.md) (Robustness, and Stress test).

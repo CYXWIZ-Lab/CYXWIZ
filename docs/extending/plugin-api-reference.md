@@ -343,6 +343,7 @@ the kit only inside `RenderPanel`, on the UI thread). Declare
 | `bool SearchField(id, buffer, size, hint, width)` | A search box with its icon |
 | `void EmptyState(title, hint)` | The centred message of an empty panel; put its actions after it |
 | `std::string OpenFileDialog(title, filter_name, extensions)` | The system's open-file dialog; empty when cancelled |
+| `bool ToggleChip(id, label, bool* on)`, `float ToggleChipWidth(label)` | A pill that turns a choice on or off (API 1.4): accent text when on, dimmed when off; flips `*on` and returns true when clicked |
 
 <!-- not compiled: a sketch; the full panel is plugins/simulation/mujoco/src/mj_viewport_panel.cpp -->
 ```cpp
