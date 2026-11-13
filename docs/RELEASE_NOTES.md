@@ -571,6 +571,15 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- The node icon packs (View > Node Icon Pack: Tabler, Remix, Lucide, Iconoir,
+  Phosphor) drew the right icons only by chance: most nodes showed "?",
+  nothing, or a Font Awesome icon. Each pack now draws the icons it names,
+  from a font of its own.
+- Font Awesome icons that showed the wrong picture or nothing: the circle of
+  nodes (an envelope before), circle pause (an exit arrow), share, compare,
+  ranking, left-right arrows, the poll chart, the rockslide (a money
+  transfer), the Cosine LR node (empty) and the Scatter item of a table
+  column's Plot menu (a ventilator mask, now dots).
 - The Calculator bound a leading minus tighter than `^`, so `-2^2` gave 4 and
   `exp(-x^2)` gave exp(x^2). It now reads formulas through the same parser
   as the Optimization and Calculus window: `-2^2` is -4.

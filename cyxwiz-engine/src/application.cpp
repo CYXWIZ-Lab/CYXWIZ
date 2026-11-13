@@ -36,6 +36,7 @@
 #include "core/python_detector.h"
 #include "core/texture_manager.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>  // for _exit()
@@ -1062,6 +1063,7 @@ void CyxWizApp::RebuildFontAtlas() {
     io.FontDefault = nullptr;
     cyxwiz::gui::ClearEditorMonoFonts();
     cyxwiz::ui::ClearFonts();
+    gui::ClearNodeIconFonts();
     font_regular_ = nullptr;
     font_medium_ = nullptr;
     font_bold_ = nullptr;
@@ -1188,32 +1190,8 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // FontAwesome icon font
     std::string fa_solid = font_base_path + "fa-solid-900.ttf";
 
-    // Tabler Icons font (POC for node icon themes)
-    std::string tabler_icons = font_base_path + "tabler-icons.ttf";
-
-    // Additional icon packs
-    std::string remix_icons = font_base_path + "remixicon.ttf";
-    std::string lucide_icons = font_base_path + "lucide.ttf";
-    std::string iconoir_icons = font_base_path + "iconoir.ttf";
-    std::string phosphor_icons = font_base_path + "phosphor.ttf";
-
     // Icon font glyph ranges (FontAwesome 6)
     static const ImWchar icon_ranges[] = { 0xe000, 0xf8ff, 0 };
-
-    // The other packs serve only the canvas's node icons (the Studio's icon
-    // pack choice): the atlas keeps the few dozen glyphs those use, not each
-    // pack's whole range (thousands of icons none of the Engine draws). The
-    // ranges must live until the atlas is built.
-    static const std::vector<ImWchar> tabler_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Tabler);
-    static const std::vector<ImWchar> remix_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Remix);
-    static const std::vector<ImWchar> lucide_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Lucide);
-    static const std::vector<ImWchar> iconoir_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Iconoir);
-    static const std::vector<ImWchar> phosphor_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Phosphor);
-    const ImWchar* tabler_icon_ranges = tabler_ranges.data();
-    const ImWchar* remix_icon_ranges = remix_ranges.data();
-    const ImWchar* lucide_icon_ranges = lucide_ranges.data();
-    const ImWchar* iconoir_icon_ranges = iconoir_ranges.data();
-    const ImWchar* phosphor_icon_ranges = phosphor_ranges.data();
 
     // Icon font config (for merging), pixel-snapped like the text
     ImFontConfig icon_config;
@@ -1234,36 +1212,6 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
             if (std::filesystem::exists(fa_solid)) {
                 io.Fonts->AddFontFromFileTTF(fa_solid.c_str(), base_font_size - 1.0f, &icon_config, icon_ranges);
                 spdlog::debug("Merged FontAwesome icons into regular font");
-            }
-
-            // Merge Tabler icons into regular font (POC for node icon themes)
-            if (std::filesystem::exists(tabler_icons)) {
-                io.Fonts->AddFontFromFileTTF(tabler_icons.c_str(), base_font_size - 1.0f, &icon_config, tabler_icon_ranges);
-                spdlog::debug("Merged Tabler icons into regular font");
-            }
-
-            // Merge Remix icons into regular font
-            if (std::filesystem::exists(remix_icons)) {
-                io.Fonts->AddFontFromFileTTF(remix_icons.c_str(), base_font_size - 1.0f, &icon_config, remix_icon_ranges);
-                spdlog::debug("Merged Remix icons into regular font");
-            }
-
-            // Merge Lucide icons into regular font
-            if (std::filesystem::exists(lucide_icons)) {
-                io.Fonts->AddFontFromFileTTF(lucide_icons.c_str(), base_font_size - 1.0f, &icon_config, lucide_icon_ranges);
-                spdlog::debug("Merged Lucide icons into regular font");
-            }
-
-            // Merge Iconoir icons into regular font
-            if (std::filesystem::exists(iconoir_icons)) {
-                io.Fonts->AddFontFromFileTTF(iconoir_icons.c_str(), base_font_size - 1.0f, &icon_config, iconoir_icon_ranges);
-                spdlog::debug("Merged Iconoir icons into regular font");
-            }
-
-            // Merge Phosphor icons into regular font
-            if (std::filesystem::exists(phosphor_icons)) {
-                io.Fonts->AddFontFromFileTTF(phosphor_icons.c_str(), base_font_size - 1.0f, &icon_config, phosphor_icon_ranges);
-                spdlog::debug("Merged Phosphor icons into regular font");
             }
         }
     }
@@ -1364,6 +1312,28 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Regular, font_regular_);
     cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Medium, font_medium_);
     cyxwiz::ui::RegisterFont(cyxwiz::ui::Font::Bold, font_bold_);
+
+    // The other icon packs (the Studio's Node Icon Pack choice) draw only the
+    // canvas's node icons, each with a font of its own: merged into the
+    // interface font after Font Awesome, every codepoint the two share showed
+    // Font Awesome's glyph. The atlas keeps the few dozen glyphs a pack's node
+    // icons use, not its whole range; the ranges live until the atlas is built.
+    static const std::array<gui::IconPack, 5> extra_packs = {
+        gui::IconPack::Tabler, gui::IconPack::Remix, gui::IconPack::Lucide,
+        gui::IconPack::Iconoir, gui::IconPack::Phosphor};
+    static std::array<std::vector<ImWchar>, extra_packs.size()> pack_ranges;
+    ImFontConfig pack_config = icon_config;
+    pack_config.MergeMode = false;
+    for (size_t i = 0; i < extra_packs.size(); ++i) {
+        const gui::IconPack pack = extra_packs[i];
+        const std::string file = font_base_path + gui::NodeIconFontFile(pack);
+        if (!std::filesystem::exists(file)) continue;
+        if (pack_ranges[i].empty()) pack_ranges[i] = gui::NodeIconGlyphRanges(pack);
+        ImFont* pack_font = io.Fonts->AddFontFromFileTTF(file.c_str(), base_font_size - 1.0f, &pack_config,
+                                                         pack_ranges[i].data());
+        gui::RegisterNodeIconFont(pack, pack_font);
+        if (pack_font) spdlog::debug("Loaded node icon pack font {}", gui::NodeIconFontFile(pack));
+    }
 
     // Build font atlas
     spdlog::debug("Building font atlas...");

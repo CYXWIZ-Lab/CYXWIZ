@@ -4098,7 +4098,7 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"gamma", "float", "0.1", "Factor applied at each decay", {}, "0.0-1000000.0", "Gamma", "Schedule"}},
         NodeImplementationStatus::Implemented, 0});
 
-    RegisterNode({NodeType::CosineAnnealing, NodeCategory::Training, "Cosine LR", ICON_FA_WAVE_SINE,
+    RegisterNode({NodeType::CosineAnnealing, NodeCategory::Training, "Cosine LR", ICON_FA_WAVE_SQUARE,
         {"cosine", "annealing", "scheduler", "learning rate"}, 0, false,
         "Anneals the learning rate along a cosine to eta_min over T_max epochs",
         "torch.optim.lr_scheduler.CosineAnnealingLR: lr = eta_min + (learning_rate - eta_min) x (1 + cos(pi x epoch / T_max)) / 2, stepped after each completed epoch.", "",
