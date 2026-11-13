@@ -67,6 +67,13 @@ update. **Raw training copy** shows copy 0 of the training as it learns
 (**Training copy 0**); the Stress panel is off for it (a disturbance would
 change what training learns). See the [RL walkthrough](rl_walkthrough.md) (While it trains).
 
+With a second policy playing beside it as a ghost (Policy Playback: **Compare
+with**, then **Show as a ghost**), the scene draws the ghost see-through and
+tinted, and the numbers get a **Played** and a **Ghost** column: **Policy**
+(each one's name), **Episode**, **Step**, **Return** and **Last episode**. A
+step back on the timeline shows both where they were, with that step's numbers. See the
+[RL walkthrough](rl_walkthrough.md) (Compare two policies side by side).
+
 ## Record
 
 **Record > Screenshot (PNG)** saves the scene as it is now.
@@ -155,6 +162,10 @@ model, it shows and changes nothing.
   the file. The options stay through a Stress ground and a Reload; opening
   another model file starts with its own. A played policy keeps its
   environment's physics.
+- **Compare**: the ghost's name while a second policy plays beside the
+  played one (Policy Playback: **Compare with**, then **Show as a ghost**),
+  or why it is not drawn (it plays another model file or ground). Choosing
+  and removing it is done in Policy Playback.
 - **Reload the model file** reads the file again (after editing it on disk),
   keeping the camera and the scene; the state starts over. A file that does not
   build any more leaves the model as it was and says why.
@@ -175,8 +186,9 @@ episode a policy is playing (a new episode starts it again).
 - **Run**, **Resume** or **Step** from a step back goes on from the shown
   step: the kept steps after it are dropped, so you can try again from just
   before a fall, for example after a kick from the Stress panel.
-- While a policy plays, a step back holds the scene on that step; the policy
-  plays on, and **Back to live** shows it again.
+- While a policy plays, a step back holds the scene on that step, and the live
+  numbers show that step (a ghost's too); the policy plays on, and **Back to
+  live** shows it again.
 - The red marks on the track are the Stress panel's **fell** and **flipped
   over** events, at the step they happened.
 
@@ -218,7 +230,7 @@ policy** whenever you want to watch it: no training run is needed. See
 ## Limits
 
 - The Viewport shows one copy of a training run's environments (the first).
-- A second policy shown as a ghost beside the first is being built.
+- The Stress panel acts on the played policy only, not on a ghost.
 - The timeline keeps at most 100,000 steps of the Viewport's own run and
   20,000 of a played episode.
 - Training with pushes and rough ground, and the stress test that compares

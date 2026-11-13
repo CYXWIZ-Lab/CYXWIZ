@@ -160,6 +160,8 @@ The trained policy stays in the Engine until the next Train.
     actions as training did.
   - **Real time**, **x4** or **As fast as possible**.
   - **Pause**, **New episode**, **Stop**.
+  - **Compare with** and **Show as a ghost**: a second saved policy of the
+    same environment plays beside this one (below).
 - **Save policy...** writes one `.cyxmodel` file (by default
   `<project>/exports/<graph name>.cyxmodel`). It holds the RL graph, both
   networks, the optimizer states and `rl/policy.json`: the environment, its
@@ -169,6 +171,30 @@ The trained policy stays in the Engine until the next Train.
   graph it was trained with. Or open the graph and use **Load policy...** in
   the PPO node's Properties. A MuJoCo policy needs the MuJoCo plugin loaded.
 
+## Compare two policies side by side: the ghost
+
+In Policy Playback's **Play** tab, type the path of a second saved
+`.cyxmodel` in **Compare with**, **Load** it (it must play the same
+environment), then **Show as a ghost**. The playback starts again with both
+policies on the same seed and in the same conditions, stepped together: the
+MuJoCo Viewport draws the second one see-through, tinted, in the same scene,
+and its live numbers get a **Ghost** column beside **Played** (the policy,
+episode, step and return). The line beside the button gives the ghost's
+episode, step and return in the Engine too (the built-in CartPole has no
+view: the numbers only).
+
+- Each policy keeps what it observes: a ghost trained with **Look ahead**
+  gets it while the played one does not, on the same ground.
+- **New episode** starts both again together. When one of them ends an
+  episode early (a fall), each goes on with its own next episode: the step
+  counts show it.
+- The Viewport's **Stress** panel acts on the played policy only; on a new
+  ground the ghost is not drawn until both play the same one (Inspect >
+  Compare says why).
+- **Remove the ghost** stops it while the policy plays on. The ghost stays on
+  for later plays of a policy of the same environment, including **Watch** in
+  the Stress test.
+
 ## Stress test: how much does a policy take?
 
 Policy Playback's **Stress test** tab plays a policy on harder and harder
@@ -176,7 +202,8 @@ conditions and measures it, alone or against a second saved policy (a MuJoCo
 task; the built-in CartPole has no grounds or pushes).
 
 1. **Compare with**: type the path of a saved `.cyxmodel` and **Load** it
-   (optional). It must play the same environment.
+   (optional). It must play the same environment. The Play tab shares it
+   (Show as a ghost).
 2. **Disturbance**: Rough, Slopes, Steps, Obstacles (that ground at each
    level's difficulty) or Kicks (a push every 1.5 s of up to 4 m/s times the
    difficulty).
