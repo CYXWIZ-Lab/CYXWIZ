@@ -9,7 +9,7 @@ project and your account at the right end.
 | --- | --- |
 | File | Projects (new, open, recent, close, **Show Project Folder**), windows, scripts, Save / Save As / Save All, model files, Preferences, Restart, Exit |
 | Edit | Undo and Redo, the clipboard, find and replace (in the file or across files), line and text tools for the Script Editor |
-| View | Command Palette (Ctrl+P), panels, layouts, a window of its own, themes, the node icon pack, minimaps, **Full Screen** (F11) |
+| View | Command Palette (Ctrl+P), panels, layouts, a window of its own, themes, the node icon pack (kept for the next launch, also in Preferences > Appearance), minimaps, **Full Screen** (F11) |
 | Nodes | Add a layer, group and ungroup, duplicate, delete, the Custom Node Editor |
 | Train | Compile (F7), Local Debug (F6), Start (F5), Pause, Stop, Test, Evaluate, the dashboard, optimizer settings, hyperparameter search |
 | Data | Import, custom datasets, statistics, Explore and Transform shortcuts into Data Studio |

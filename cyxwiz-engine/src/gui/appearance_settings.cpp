@@ -19,12 +19,16 @@ namespace gui {
 namespace {
 
 bool g_font_rebuild_requested = false;
+// The pack the canvas draws with, read for every node every frame: kept here
+// instead of reading the Engine settings each time.
+int g_node_icon_pack = cyxwiz::appearance::kDefaultNodeIconPack;
 
 cyxwiz::core::AppearanceConfig Normalized(cyxwiz::core::AppearanceConfig config) {
     config.theme_preset = cyxwiz::appearance::NormalizeThemePreset(
         config.theme_preset, static_cast<int>(ThemePreset::COUNT));
     config.ui_text_px = cyxwiz::appearance::NormalizeUiTextPx(config.ui_text_px);
     config.code_font_scale = cyxwiz::appearance::NormalizeCodeScale(config.code_font_scale);
+    config.node_icon_pack = cyxwiz::appearance::NormalizeNodeIconPack(config.node_icon_pack);
     return config;
 }
 
@@ -61,10 +65,12 @@ void ApplyStartupAppearance() {
     }
     cyxwiz::gui::g_code_font_scale = config.code_font_scale;
     ApplySidebar(config.sidebar_left);
-    spdlog::debug("Appearance: theme {}, interface {} px, code scale {:.1f}, sidebar {}",
+    g_node_icon_pack = config.node_icon_pack;
+    spdlog::debug("Appearance: theme {}, interface {} px, code scale {:.1f}, sidebar {}, node icons {}",
                  Theme::GetPresetName(static_cast<ThemePreset>(config.theme_preset)),
                  config.ui_text_px, config.code_font_scale,
-                 config.sidebar_left ? "left" : "right");
+                 config.sidebar_left ? "left" : "right",
+                 cyxwiz::appearance::kNodeIconPacks[static_cast<size_t>(config.node_icon_pack)]);
 }
 
 ThemePreset CurrentThemePreset() { return GetTheme().GetCurrentPreset(); }
@@ -107,12 +113,22 @@ void SetSidebarOnLeft(bool left) {
     Store(config);
 }
 
+int NodeIconPack() { return g_node_icon_pack; }
+
+void SetNodeIconPack(int pack) {
+    auto config = Current();
+    config.node_icon_pack = cyxwiz::appearance::NormalizeNodeIconPack(pack);
+    g_node_icon_pack = config.node_icon_pack;
+    Store(config);
+}
+
 void ResetAppearance() {
     const auto before = Current();
     const cyxwiz::core::AppearanceConfig defaults;
     GetTheme().ApplyPreset(static_cast<ThemePreset>(defaults.theme_preset));
     cyxwiz::gui::g_code_font_scale = defaults.code_font_scale;
     ApplySidebar(defaults.sidebar_left);
+    g_node_icon_pack = defaults.node_icon_pack;
     Store(defaults);
     if (before.ui_text_px != defaults.ui_text_px)
         g_font_rebuild_requested = true;

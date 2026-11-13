@@ -32,6 +32,13 @@ int main() {
     Check(NormalizeThemePreset(3, 19) == 3 && NormalizeThemePreset(-1, 19) == 0 &&
               NormalizeThemePreset(40, 19) == 0,
           "theme preset range");
+    Check(kNodeIconPacks.size() == 6 && kDefaultNodeIconPack == 0 &&
+              std::string(kNodeIconPacks[kDefaultNodeIconPack]) == "Font Awesome (default)",
+          "node icon packs, Font Awesome first and the default");
+    Check(NormalizeNodeIconPack(1) == 1 && NormalizeNodeIconPack(5) == 5, "saved pack kept");
+    Check(NormalizeNodeIconPack(-1) == 0 && NormalizeNodeIconPack(6) == 0 &&
+              NormalizeNodeIconPack(99) == 0,
+          "a saved pack out of range falls back to Font Awesome");
     Check(!IsLightBackground(0.059f, 0.075f, 0.098f), "CyxWiz Dark window is dark");
     Check(IsLightBackground(0.96f, 0.96f, 0.97f), "light window");
     Check(Luminance(1, 1, 1) > 0.99f && Luminance(0, 0, 0) < 0.01f, "luminance ends");

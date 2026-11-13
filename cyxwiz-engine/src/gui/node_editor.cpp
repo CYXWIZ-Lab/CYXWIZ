@@ -3,6 +3,7 @@
 #include "ui_widgets.h"
 #include "../core/pipeline_type_names.h"
 #include "node_editor.h"
+#include "appearance_settings.h"
 #include "../core/live_graph_compile.h"
 #include "../core/graph_node_factory.h"
 #include "subgraph_presentation.h"
@@ -1893,7 +1894,7 @@ void NodeEditor::RenderNodes() {
 
             // Draw centered icon (55% of box height, like Node Browser)
             const char* icon = GetNodeIcon(node.type);
-            ImFont* font = NodeIconFont(icon_pack_);
+            ImFont* font = NodeIconFont(static_cast<IconPack>(NodeIconPack()));
             if (!font) font = ImGui::GetFont();
             float scaled_icon_size = ICON_BOX_SIZE * 0.55f;
             ImVec2 icon_text_size = font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);

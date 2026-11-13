@@ -1,5 +1,5 @@
 // Preferences > Appearance (tofix121): Engine-wide theme, interface and code
-// text sizes, sidebar side, and a live preview. Every change applies at once
+// text sizes, sidebar side, the canvas's node icon pack, and a live preview. Every change applies at once
 // and is saved through gui/appearance_settings.
 
 #include "toolbar.h"
@@ -260,6 +260,32 @@ void ToolbarPanel::RenderAppearancePreferences() {
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("The column of panel icons");
+
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Node icons");
+        ImGui::TableNextColumn();
+        {
+            const auto& packs = cyxwiz::appearance::kNodeIconPacks;
+            const int current = ::gui::NodeIconPack();
+            ImGui::SetNextItemWidth(ImGui::CalcTextSize("Font Awesome (default)").x +
+                                    ImGui::GetFrameHeight() + 24.0f);
+            if (ImGui::BeginCombo("##node_icon_pack", packs[static_cast<size_t>(current)])) {
+                for (int i = 0; i < static_cast<int>(packs.size()); ++i) {
+                    if (ImGui::Selectable(packs[static_cast<size_t>(i)], i == current))
+                        ::gui::SetNodeIconPack(i);
+                    if (i == current)
+                        ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Also View > Node Icon Pack");
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("On the canvas's nodes");
+        }
         ImGui::EndTable();
     }
 
@@ -267,7 +293,8 @@ void ToolbarPanel::RenderAppearancePreferences() {
     if (ui::LinkButton("Reset appearance to defaults"))
         ::gui::ResetAppearance();
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("CyxWiz Dark, 15 px interface text, 16 px code text, sidebar on the right");
+        ImGui::SetTooltip("CyxWiz Dark, 15 px interface text, 16 px code text, sidebar on the right, "
+                          "Font Awesome node icons");
     ImGui::EndChild();
 
     if (side_by_side)

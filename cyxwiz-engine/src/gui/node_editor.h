@@ -76,6 +76,7 @@ enum class IconPack {
 };
 
 // The canvas icon of a node type in an icon pack (the Studio's Icon pack choice).
+// The pack in use is an appearance setting (appearance_settings NodeIconPack).
 const char* NodeIconFor(IconPack pack, NodeType type);
 // The codepoints NodeIconFor uses from a pack, as ImGui glyph ranges (pairs, 0
 // at the end). The font atlas keeps only these from the extra packs instead
@@ -331,10 +332,6 @@ public:
     bool* GetShowMinimapPtr() { return &show_minimap_; }
     // Policy Playback's window, for View > Panels (it says how to get a policy when none plays)
     bool* GetPolicyPlaybackVisiblePtr();
-
-    // Icon pack selection (for node icons)
-    void SetIconPack(IconPack pack) { icon_pack_ = pack; }
-    IconPack GetIconPack() const { return icon_pack_; }
 
     // Access to graph data for compilation
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
@@ -1278,9 +1275,6 @@ private:
     float zoom_ = 1.0f;
     ImVec2 canvas_size_ = ImVec2(800.0f, 600.0f);  // the node canvas, read each frame
     ImVec2 canvas_origin_ = ImVec2(0.0f, 0.0f);    // its top-left corner on the screen
-
-    // Icon pack selection (for node icons)
-    IconPack icon_pack_ = IconPack::FontAwesome;  // Default to FontAwesome
 
     // Minimap state
     bool show_minimap_ = true;

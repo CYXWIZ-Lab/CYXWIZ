@@ -295,6 +295,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- The node icon pack you choose is kept: View > Node Icon Pack and the new
+  Node icons row of Preferences > Appearance set it, the next launch starts
+  with it, and Reset appearance goes back to Font Awesome.
 - The node icon packs (View > Node Icon Pack: Tabler, Remix, Lucide, Iconoir,
   Phosphor) drew the right icons only by chance: most nodes showed "?",
   nothing, or a Font Awesome icon. Each pack now draws the icons it names,

@@ -39,6 +39,14 @@ int CodeScaleIndex(float scale);
 // Theme preset index kept in range (count = number of presets).
 int NormalizeThemePreset(int preset, int count);
 
+// The canvas's node icon packs (View > Node Icon Pack, Preferences >
+// Appearance), in the order of gui::IconPack.
+inline constexpr std::array<const char*, 6> kNodeIconPacks = {
+    "Font Awesome (default)", "Tabler Icons", "Remix Icon", "Lucide Icons", "Iconoir", "Phosphor Icons"};
+inline constexpr int kDefaultNodeIconPack = 0;
+// A saved pack index out of range falls back to the default.
+int NormalizeNodeIconPack(int pack);
+
 // Relative luminance of an sRGB colour (0 black .. 1 white); a window
 // background above 0.5 is a light theme.
 float Luminance(float r, float g, float b);

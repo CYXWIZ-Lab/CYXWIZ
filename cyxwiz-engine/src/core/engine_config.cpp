@@ -425,6 +425,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.code_font_scale = look.value("code_font_scale", loaded.code_font_scale);
             loaded.sidebar_left = look.value("sidebar_left", loaded.sidebar_left);
             loaded.custom_theme_file = look.value("custom_theme_file", std::string());
+            loaded.node_icon_pack = look.value("node_icon_pack", loaded.node_icon_pack);
             appearance_ = loaded;
         }
 
@@ -652,7 +653,8 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"ui_text_px", appearance_.ui_text_px},
             {"code_font_scale", appearance_.code_font_scale},
             {"sidebar_left", appearance_.sidebar_left},
-            {"custom_theme_file", appearance_.custom_theme_file}
+            {"custom_theme_file", appearance_.custom_theme_file},
+            {"node_icon_pack", appearance_.node_icon_pack}
         };
         config["utilities"] = {
             {"tab", utilities_.tab},

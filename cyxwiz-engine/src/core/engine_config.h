@@ -28,6 +28,7 @@ struct AppearanceConfig {
     float code_font_scale = 1.3f;  // code text: 1.0/1.3/1.6/2.0 = 14/16/20/24 px
     bool sidebar_left = false;     // tool sidebar on the left
     std::string custom_theme_file; // saved Theme Editor theme applied over the preset
+    int node_icon_pack = 0;        // the canvas's node icons: gui::IconPack index (0 = Font Awesome)
 
     bool operator==(const AppearanceConfig&) const = default;
 };
