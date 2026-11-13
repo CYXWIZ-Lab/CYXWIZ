@@ -161,7 +161,9 @@ void MjSimulationExecutor::ExecuteOneStep() {
         std::vector<float> action = controls_;  // held controls, else zeros
         action.resize(static_cast<size_t>(env_->GetActionDim()), 0.0f);
         const StepResult result = env_->Step(action);
-        if (result.terminated || result.truncated) {
+        const bool ended = result.terminated || result.truncated;
+        if (hooks_.after_step) hooks_.after_step(env_->GetModel(), d, result.reward, ended);
+        if (ended) {
             if (hooks_.episode_ended && hooks_.episode_ended()) held_ = true;
             else env_->Reset();
         }

@@ -26,6 +26,7 @@
 #include "mj_viewport_panel.h"
 #include "mj_env_browser_panel.h"
 #include "env/mj_view_slot.h"
+#include "env/mj_history.h"
 #include "rl/observation_filter.h"
 
 #include <optional>
@@ -165,6 +166,11 @@ private:
     std::string restore_title_;
     std::string restore_subtitle_;
     MjScene restore_scene_;  // the scene of the model open before a playback
+    // The timeline's steps (guarded by the physics lock): the own run's last
+    // 30 s, or the played episode; the played return before this state
+    MjHistory history_;
+    int history_episode_ = 0;
+    double history_return_ = 0.0;
     std::string shown_as_ = "policy playback";  // what the last shown copy was (its status, lower case)
 
     // The Viewport's Stress panel (TOFIX212 P4): its requests go to the played

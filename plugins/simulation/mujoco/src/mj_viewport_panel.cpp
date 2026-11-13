@@ -27,7 +27,9 @@ struct SceneSnapshot {
     float episode_reward = 0.0f;
 };
 
-SceneSnapshot Snapshot(MjEnvManager& env) {
+// `shown`: the timeline's step back (-1: live), whose own numbers replace
+// the live run's
+SceneSnapshot Snapshot(MjEnvManager& env, const MjHistory* history, long long shown) {
     SceneSnapshot s;
     std::lock_guard phys_lock(env.GetPhysicsMutex());
     if (const mjData* d = env.GetData()) s.time = d->time;
@@ -36,6 +38,12 @@ SceneSnapshot Snapshot(MjEnvManager& env) {
     s.episode_step = env.GetCurrentStep();
     s.max_episode_steps = env.GetMaxEpisodeSteps();
     s.episode_reward = env.GetEpisodeReward();
+    if (history && shown >= 0 && static_cast<size_t>(shown) < history->Size()) {
+        const MjHistoryEntry& e = history->At(static_cast<size_t>(shown));
+        s.episode = e.episode;
+        s.episode_step = e.step;
+        s.episode_reward = static_cast<float>(e.episode_return);
+    }
     return s;
 }
 
@@ -43,6 +51,7 @@ SceneSnapshot Snapshot(MjEnvManager& env) {
 
 void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visible) {
     if (!visible || !*visible) return;
+    current_env_ = &env;
 
     // A model file the user picked: loaded before this frame's ImGui calls,
     // since loading switches GL contexts.
@@ -68,6 +77,7 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
         live_numbers_ = defaults_.live_numbers;
         stress_ = defaults_.stress;
         inspect_ = defaults_.inspect;
+        timeline_ = defaults_.timeline;
         if (inspect_.panel_open && stress_.panel_open) inspect_.panel_open = false;  // one side panel
         defaults_loaded_ = true;
     }
@@ -105,6 +115,10 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
         }
         RenderControls(env, renderer);
         WatchStress(env);
+        if (history_) {  // the strips under the scene take room only when there is something kept
+            std::lock_guard phys_lock(env.GetPhysicsMutex());
+            has_history_ = !history_->Empty();
+        }
         if (stress_.panel_open || inspect_.panel_open) {
             // The scene and the Stress or Inspect panel side by side
             constexpr float kStressWidth = 390.0f;
@@ -114,6 +128,8 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
             constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
             ImGui::BeginChild("##scene_area", ImVec2(scene_w, avail.y), ImGuiChildFlags_None, kFlags);
             RenderScene(env, renderer);
+            RenderTimeline(env);
+            RenderPlots(env);
             RenderEpisodeStrip(env);
             ImGui::EndChild();
             ImGui::SameLine();
@@ -129,6 +145,8 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
             ImGui::PopStyleColor();
         } else {
             RenderScene(env, renderer);
+            RenderTimeline(env);
+            RenderPlots(env);
             RenderEpisodeStrip(env);
         }
     }
@@ -156,6 +174,7 @@ MjViewportPanel::RunState MjViewportPanel::GetRunState() const {
 void MjViewportPanel::RunOrResume() {
     const RunState s = GetRunState();
     if (!s.can_drive || s.running) return;
+    if (Scrubbing() && current_env_) GoOnFromShownStep(*current_env_);
     if (s.paused) sim_executor_->Resume();
     else sim_executor_->StartManualControl();
 }
@@ -167,6 +186,7 @@ void MjViewportPanel::PauseRun() {
 void MjViewportPanel::StepOnce() {
     const RunState s = GetRunState();
     if (!s.can_drive) return;
+    if (Scrubbing() && current_env_) GoOnFromShownStep(*current_env_);
     if (s.running) sim_executor_->Pause();
     sim_executor_->SingleStep();
 }
@@ -372,9 +392,9 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
     PluginUi* ui = ctx_->GetUi();
     const UiColors colors = ui->Colors();
 
-    // Room for the episode strip below the scene
+    // Room for the timeline, the plots and the episode strip below the scene
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    avail.y -= ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    avail.y -= ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y + StripsHeight();
     if (avail.x < 10.0f || avail.y < 10.0f) return;
 
     // Debounced resize — avoid expensive MuJoCo context recreation every frame
@@ -444,7 +464,7 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
 
     // Overlays: time, steps and achieved speed at the bottom left, the camera
     // hint at the bottom right
-    const SceneSnapshot snap = Snapshot(env);
+    const SceneSnapshot snap = Snapshot(env, history_, scrub_index_);
     const RunState rs = GetRunState();
     const bool graph = rs.graph;
     const bool active = rs.active;
@@ -462,12 +482,17 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
     char buf[128];
     std::snprintf(buf, sizeof(buf), "Time %.2f s", snap.time);
     parts.push_back({buf, ToU32(colors.text)});
-    if (active) {
+    if (Scrubbing()) {  // a step back: its own step, not the run's count
+        std::snprintf(buf, sizeof(buf), "Episode %d step %d", snap.episode, snap.episode_step);
+        parts.push_back({buf, ToU32(colors.text)});
+    } else if (active) {
         std::snprintf(buf, sizeof(buf), "Step %lld",
                       static_cast<long long>(sim_executor_->GetMetrics().step_count));
         parts.push_back({buf, ToU32(colors.text)});
     }
-    if (running || graph) {
+    if (Scrubbing()) {
+        parts.push_back({"A step back", ToU32(colors.accent_text)});
+    } else if (running || graph) {
         const double asked = unlimited_ || graph ? 0.0 : speed_;
         if (achieved_speed_ <= 0.0) {
             std::snprintf(buf, sizeof(buf), "Starting...");
@@ -603,7 +628,7 @@ void MjViewportPanel::RenderEpisodeStrip(MjEnvManager& env) {
         ImGui::TextColored(ToImVec4(colors.text), "%s", playback_label_.c_str());
         return;
     }
-    const SceneSnapshot snap = Snapshot(env);
+    const SceneSnapshot snap = Snapshot(env, history_, scrub_index_);
     char value[64];
     bool first = true;
     auto item = [&](const char* label, const char* text) {

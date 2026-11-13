@@ -8,6 +8,7 @@
 #include "env/mj_stress.h"
 #include "env/mj_inspect.h"
 #include "env/mj_physics.h"
+#include "env/mj_history.h"
 #include "mj_env_manager.h"
 #include "mj_viewport_settings.h"
 
@@ -679,6 +680,63 @@ void CheckPhysics() {
           "opening a model file starts with its own physics");
 }
 
+// The timeline's history (P3b, P3c): its length in simulated time across
+// episodes, the plots' window, going on from a step back, a state put back,
+// and the plots' saved choices
+void CheckHistory() {
+    MjHistory history;
+    history.SetLimit(1.0, 1000);
+    auto entry = [](int episode, int step, double time) {
+        MjHistoryEntry e;
+        e.episode = episode;
+        e.step = step;
+        e.time = time;
+        return e;
+    };
+    for (int i = 0; i <= 30; ++i) history.Add(entry(1, i, 0.1 * i));
+    Check(history.Size() == 11 && history.At(0).step == 20 && history.Newest().step == 30,
+          "1 s kept at 0.1 s a step: the last 11 steps");
+    history.Add(entry(2, 0, 0.0));  // a new episode starts its clock again: no time between them
+    history.Add(entry(2, 1, 0.1));
+    Check(history.Size() == 12 && history.At(0).step == 21, "the time counts over episodes");
+    Check(history.CountWithin(0.5) == 2, "the plots' window stays in the newest episode");
+    history.TruncateAfter(3);
+    Check(history.Size() == 4 && history.Newest().step == 24, "going on from a step back drops what followed");
+    history.Add(entry(1, 25, 2.5));
+    Check(history.Newest().step == 25, "and it grows again from there");
+    MjHistory capped;
+    capped.SetLimit(0.0, 5);
+    for (int i = 0; i < 9; ++i) capped.Add(entry(1, i, 0.1 * i));
+    Check(capped.Size() == 5 && capped.At(0).step == 4, "no time limit: the count caps it (a played episode)");
+
+    const std::string path = std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/half_cheetah.xml";
+    mjModel* m = mj_loadXML(path.c_str(), nullptr, nullptr, 0);
+    if (!m) return;
+    mjData* d = mj_makeData(m);
+    d->qpos[3] = 0.4;
+    d->ctrl[0] = 0.6;
+    mj_forward(m, d);
+    const MjHistoryEntry kept = MjHistory::Capture(m, d, 3, 17, 1.25, 1);
+    Check(kept.episode == 3 && kept.step == 17 && kept.reward == 1.25 && kept.controls.size() == 6 &&
+              kept.sensors.empty(),
+          "a step keeps its episode, step, reward and controls (HalfCheetah has no sensors)");
+    mj_resetData(m, d);
+    Check(MjHistory::Apply(m, d, kept) && d->qpos[3] == 0.4 && d->ctrl[0] == 0.6, "a step back puts them back");
+    MjHistoryEntry wrong = kept;
+    wrong.state.pop_back();
+    Check(!MjHistory::Apply(m, d, wrong), "a state of another model is not put back");
+    mj_deleteData(d);
+    mj_deleteModel(m);
+
+    SettingsContext ctx;
+    Check(LoadViewportDefaults(ctx).timeline == TimelineOptions{}, "nothing saved: plots hidden, reward and joint");
+    ViewportDefaults saved;
+    saved.timeline = TimelineOptions{true, kPlotSpeed | kPlotControls};
+    SaveViewportDefaults(ctx, saved);
+    Check(LoadViewportDefaults(ctx).timeline == saved.timeline, "the plots' choices read back");
+    Check(DecodeTimeline(R"({"signals": 4096})") == TimelineOptions{}, "unknown signals keep the defaults");
+}
+
 }  // namespace
 
 int main() {
@@ -696,6 +754,7 @@ int main() {
     CheckStressSettings();
     CheckInspect(dir);
     CheckPhysics();
+    CheckHistory();
     std::filesystem::remove_all(dir, ec);
     if (failures == 0) std::printf("test_mujoco_viewport: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

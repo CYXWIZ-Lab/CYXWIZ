@@ -30,6 +30,10 @@ enum class SimState {
 struct MjStepHooks {
     // Before every step: the pushes on the model
     std::function<void(const mjModel* m, mjData* d)> before_step;
+    // After every step, before an ended episode starts again: the state the
+    // step reached, its reward and whether it ended the episode (the timeline
+    // records it)
+    std::function<void(const mjModel* m, const mjData* d, double reward, bool ended)> after_step;
     // An episode ended: true holds the next one until ContinueEpisode (its
     // ground is built on the UI thread first); false starts it at once
     std::function<bool()> episode_ended;

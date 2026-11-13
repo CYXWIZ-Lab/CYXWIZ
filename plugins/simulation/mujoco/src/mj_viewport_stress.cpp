@@ -31,6 +31,8 @@ std::string LowerFirst(std::string text) {
 
 void MjViewportPanel::ResetStress() {
     selected_body_ = -1;
+    scrub_index_ = -1;  // the kept steps belong to the old model
+    resume_after_scrub_ = false;
     typed_controls_.clear();
     keyframes_model_.clear();  // read again for the model
     if (sim_executor_) sim_executor_->SetHeldControls({});  // the executor is stopped here

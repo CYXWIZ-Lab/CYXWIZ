@@ -170,11 +170,27 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
     sim_executor_.SetEnvManager(&env_manager_);
     // The Viewport's stress requests act on simulated time: the pushes before
     // every step, and an ended episode waits while its new ground is built
-    sim_executor_.SetStepHooks({[this](const mjModel* m, mjData* d) { ApplyPushes(local_stress_, m, d); },
-                                [this] {
-                                    EndTimedPush(local_stress_);
-                                    return local_stress_.next_ground.has_value();
-                                }});
+    MjStepHooks hooks;
+    hooks.before_step = [this](const mjModel* m, mjData* d) { ApplyPushes(local_stress_, m, d); };
+    hooks.after_step = [this](const mjModel* m, const mjData* d, double reward, bool ended) {  // the timeline
+        // An ended episode is counted already: its last step keeps its number
+        const int episode = env_manager_.GetEpisodeCount() + (ended ? 0 : 1);
+        MjHistoryEntry entry = MjHistory::Capture(m, d, episode, env_manager_.GetCurrentStep(), reward,
+                                                  RobotRootBody(m, env_manager_.Robot()));
+        entry.episode_return = env_manager_.GetEpisodeReward();
+        history_.Add(std::move(entry));
+    };
+    hooks.episode_ended = [this] {
+        EndTimedPush(local_stress_);
+        return local_stress_.next_ground.has_value();
+    };
+    sim_executor_.SetStepHooks(std::move(hooks));
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        history_.Clear();
+        history_.SetLimit(30.0, 100000);  // the own run: the last 30 s
+    }
+    viewport_panel_.SetHistory(&history_);
     viewport_panel_.SetSimExecutor(&sim_executor_);
     viewport_panel_.SetReloadModel([this](std::string& error) { return ReloadModel(error); });
 
@@ -256,6 +272,12 @@ void MuJoCoPlugin::SyncPlayback() {
         if (viewport_panel_.IsGraphSimActive()) return;  // the graph run keeps its model
         if (!playback_) {
             playback_ = true;
+            {
+                std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+                history_.Clear();
+                history_.SetLimit(0.0, 20000);  // the played episode, whole
+            }
+            history_episode_ = 0;
             restore_path_ = loaded_mjcf_path_;
             restore_scene_ = env_manager_.Scene();
             restore_title_ = viewport_panel_.ModelTitle();
@@ -274,19 +296,42 @@ void MuJoCoPlugin::SyncPlayback() {
         // Also when the played model was open already (a second playback)
         if (viewport_panel_.ModelSubtitle() != subtitle) viewport_panel_.SetModelLabel(title, subtitle);
         viewport_panel_.SetPlayback(true, title + " \xC2\xB7 copy " + std::to_string(copy));
+        const int shown_episode = numbers.episode;
+        const int shown_step = numbers.step;
+        const double shown_return = numbers.episode_return;
+        const std::vector<float> shown_action = numbers.action;
         viewport_panel_.SetPlaybackNumbers(std::move(numbers));
-        if (!state.empty()) {
+        if (!state.empty() && !viewport_panel_.Scrubbing()) {  // a step back shown: the live one waits
             std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
             const mjModel* m = env_manager_.GetModel();
             mjData* d = env_manager_.GetMutableData();
             if (m && d && static_cast<size_t>(mj_stateSize(m, mjSTATE_FULLPHYSICS)) == state.size()) {
                 mj_setState(m, d, state.data(), mjSTATE_FULLPHYSICS);
+                for (int i = 0; i < m->nu && static_cast<size_t>(i) < shown_action.size(); ++i)
+                    d->ctrl[i] = shown_action[i];
                 mj_forward(m, d);
+                // The timeline keeps the played episode (a new one starts it again)
+                if (shown_episode != history_episode_) {
+                    history_.Clear();
+                    history_episode_ = shown_episode;
+                    history_return_ = 0.0;
+                }
+                MjHistoryEntry entry = MjHistory::Capture(m, d, shown_episode, shown_step,
+                                                          shown_return - history_return_,
+                                                          RobotRootBody(m, env_manager_.Robot()));
+                entry.episode_return = shown_return;
+                history_.Add(std::move(entry));
+                history_return_ = shown_return;
             }
         }
     } else if (playback_) {
         playback_ = false;
         failed_scene_.reset();
+        {
+            std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+            history_.Clear();
+            history_.SetLimit(30.0, 100000);
+        }
         viewport_panel_.SetPlayback(false);
         // The model open before comes back with its own words (also when it was the played one)
         const bool back = !restore_path_.empty() &&
@@ -338,6 +383,7 @@ bool MuJoCoPlugin::ReloadModel(std::string& error) {
         std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         if (!env_manager_.Reload(error)) return false;
         local_stress_ = MjStressRun{};
+        history_.Clear();
     }
     local_episodes_seen_ = 0;
     viewport_panel_.ResetStress();
@@ -382,6 +428,7 @@ void MuJoCoPlugin::ForwardStressRequests() {
                                 [this] { return env_manager_.GetMutableData(); },
                                 [this, &rebuilt](const MjScene& scene, std::string& error) {
                                     if (!env_manager_.ChangeScene(scene, error)) return false;
+                                    history_.Clear();  // the kept states are of the other scene
                                     rebuilt = true;
                                     return true;
                                 },

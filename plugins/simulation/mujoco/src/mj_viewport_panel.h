@@ -16,6 +16,7 @@
 #include "mj_env_manager.h"
 #include "mj_recorder.h"
 #include "env/mj_inspect.h"
+#include "env/mj_history.h"
 #include "mj_viewport_settings.h"
 
 #include <atomic>
@@ -48,6 +49,12 @@ public:
     void SetContext(PluginContext* ctx) { ctx_ = ctx; }
     void SetOpenModel(OpenModelFn fn) { open_model_ = std::move(fn); }
     void SetReloadModel(ReloadModelFn fn) { reload_model_ = std::move(fn); }
+    // The steps the plugin keeps for the timeline and plots (guarded by the
+    // physics lock)
+    void SetHistory(MjHistory* history) { history_ = history; }
+    // A kept step is shown instead of the live one: a played copy's new
+    // states are not applied meanwhile
+    bool Scrubbing() const { return scrub_index_ >= 0; }
 
     // Render the panel. Call each frame from IPanelProvider::RenderPanel.
     // |env| and |renderer| must be valid. |visible| controls panel open state.
@@ -152,6 +159,13 @@ private:
     std::string InspectBlocked(MjEnvManager& env) const;
     // The held controls to the run (under the physics lock)
     void ApplyHeldControls(MjEnvManager& env);
+    // The timeline and plots (mj_viewport_timeline.cpp), under the scene
+    void RenderTimeline(MjEnvManager& env);
+    void RenderPlots(MjEnvManager& env);
+    float StripsHeight() const;  // what they take below the scene
+    void ShowHistoryEntry(MjEnvManager& env, size_t index);  // a step back (pauses the own run)
+    void BackToLive(MjEnvManager& env);
+    void GoOnFromShownStep(MjEnvManager& env);  // Run or Step while a step back is shown
     // The Stress panel (mj_viewport_stress.cpp)
     void RenderStressPanel(MjEnvManager& env);
     // Why the Stress panel cannot act now; empty: it can
@@ -205,6 +219,13 @@ private:
     std::vector<MjKeyframe> keyframes_;   // saved for keyframes_model_ (in the project)
     std::string keyframes_model_;
     char keyframe_name_[64] = "";
+    // Timeline and plots
+    MjHistory* history_ = nullptr;
+    MjEnvManager* current_env_ = nullptr;  // the model Render last drew
+    bool has_history_ = false;  // read at the frame's start
+    long long scrub_index_ = -1;  // the kept step shown; -1: live
+    bool resume_after_scrub_ = false;
+    TimelineOptions timeline_;
     MjSimulationExecutor* sim_executor_ = nullptr;
     std::string model_title_;
     std::string model_subtitle_;
