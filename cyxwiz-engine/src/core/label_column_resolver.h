@@ -2,10 +2,12 @@
 
 #include <arrow/type.h>
 
+#include <algorithm>
 #include <memory>
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -65,10 +67,13 @@ inline bool IsNumericBatchFeatureType(
     }
 }
 
+// `excluded`: columns the Data Input's roles keep out of the features (ID,
+// Group, Weight, Ignore ...; TrainingConfiguration::excluded_feature_columns).
 inline size_t CountNumericBatchFeatureColumns(
     const std::shared_ptr<arrow::Schema>& schema,
     int label_column_index = -1,
-    std::string_view partition_column = {}) {
+    std::string_view partition_column = {},
+    const std::vector<std::string>& excluded = {}) {
     if (!schema) return 0;
     size_t count = 0;
     for (int i = 0; i < schema->num_fields(); ++i) {
@@ -80,6 +85,7 @@ inline size_t CountNumericBatchFeatureColumns(
             (!partition_column.empty() && name == partition_column)) {
             continue;
         }
+        if (std::find(excluded.begin(), excluded.end(), name) != excluded.end()) continue;
         if (IsNumericBatchFeatureType(field->type())) {
             ++count;
         }

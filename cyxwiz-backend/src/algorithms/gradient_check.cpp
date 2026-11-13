@@ -6,6 +6,7 @@
 #include <map>
 #include <random>
 #include <stdexcept>
+#include "cyxwiz/portable_random.h"
 
 namespace cyxwiz {
 
@@ -21,7 +22,7 @@ Tensor FromHost(const std::vector<size_t>& shape, const std::vector<float>& valu
 }
 
 std::vector<float> Random(size_t count, float range, std::mt19937& rng) {
-    std::uniform_real_distribution<float> dist(-range, range);
+    const auto dist = [low = -range, high = range](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
     std::vector<float> values(count);
     for (auto& v : values) {
         v = dist(rng);
@@ -162,7 +163,7 @@ GradientCheckResult CheckLossGradients(
             if (targets == LossCheckTargets::OneHot) {
                 const size_t width = shape.back();
                 t.assign(count, 0.0f);
-                std::uniform_int_distribution<size_t> pick(0, width - 1);
+                const auto pick = [low = 0, high = width - 1](auto& r) { return cyxwiz::portable::UniformInt<size_t>(r, low, high); };
                 for (size_t row = 0; row < count / width; ++row) t[row * width + pick(rng)] = 1.0f;
             } else {
                 t = Random(count, 1.0f, rng);

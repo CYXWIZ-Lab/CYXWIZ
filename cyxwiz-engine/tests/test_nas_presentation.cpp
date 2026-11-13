@@ -5,6 +5,7 @@
 
 #include "core/nas_presentation.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -47,6 +48,61 @@ MLNode Node(int id, NodeType type, const char* name, std::map<std::string, std::
 
 NodeLink Link(int id, int from, int to) { return {id, from, from * 10 + 1, to, to * 10}; }
 
+// The chain as the canvas holds a training graph, for the scorer's compile:
+// the Data Input gives Data and Labels (no input pin), the model's last layer
+// (or the Output node's place) feeds a CrossEntropy loss with the labels, and
+// Adam takes the loss.
+std::pair<std::vector<MLNode>, std::vector<NodeLink>> Trainable(std::vector<MLNode> nodes, std::vector<NodeLink> links) {
+    std::set<int> outputs;
+    for (const auto& n : nodes)
+        if (n.type == NodeType::Output) outputs.insert(n.id);
+    int head = -1;
+    for (const auto& l : links)
+        if (outputs.count(l.to_node)) head = l.from_node;
+    nodes.erase(std::remove_if(nodes.begin(), nodes.end(), [&](const MLNode& n) { return outputs.count(n.id) > 0; }),
+                nodes.end());
+    links.erase(std::remove_if(links.begin(), links.end(), [&](const NodeLink& l) { return outputs.count(l.to_node) > 0; }),
+                links.end());
+    if (head < 0) {  // no Output node: the layer nothing reads from
+        std::set<int> read;
+        for (const auto& l : links) read.insert(l.from_node);
+        for (const auto& n : nodes)
+            if (!read.count(n.id) && n.type != NodeType::DataInput) head = n.id;
+    }
+    gui::NodePin labels;
+    for (auto& n : nodes) {
+        if (n.type != NodeType::DataInput) continue;
+        n.inputs.clear();
+        labels.id = n.id * 10 + 2;
+        labels.type = gui::PinType::Labels;
+        n.outputs.push_back(labels);
+        if (!n.parameters.count("label_column")) n.parameters["label_column"] = "label";
+    }
+    MLNode loss;
+    loss.id = 90;
+    loss.type = NodeType::CrossEntropyLoss;
+    loss.name = "CrossEntropy";
+    gui::NodePin predictions, targets, loss_out;
+    predictions.id = 900; predictions.is_input = true;
+    targets.id = 902; targets.is_input = true; targets.type = gui::PinType::Labels;
+    loss_out.id = 901; loss_out.type = gui::PinType::Loss;
+    loss.inputs = {predictions, targets};
+    loss.outputs = {loss_out};
+    MLNode adam;
+    adam.id = 91;
+    adam.type = NodeType::Adam;
+    adam.name = "Adam";
+    gui::NodePin loss_in;
+    loss_in.id = 910; loss_in.is_input = true; loss_in.type = gui::PinType::Loss;
+    adam.inputs = {loss_in};
+    nodes.push_back(loss);
+    nodes.push_back(adam);
+    links.push_back({900, head, head * 10 + 1, 90, 900});
+    links.push_back({901, 1, 12, 90, 902});
+    links.push_back({902, 90, 901, 91, 910});
+    return {nodes, links};
+}
+
 }  // namespace
 
 int main() {
@@ -55,7 +111,7 @@ int main() {
     // links.
     std::vector<MLNode> nodes = {
         Node(6, NodeType::Dense, "Dense 3", {{"units", "10"}}),
-        Node(1, NodeType::DatasetInput, "Input"),
+        Node(1, NodeType::DataInput, "Input", {{"shape", "[784]"}}),
         Node(2, NodeType::Dense, "Dense 1", {{"units", "128"}}),
         Node(3, NodeType::ReLU, "ReLU 1"),
         Node(4, NodeType::Dense, "Dense 2", {{"units", "64"}}),
@@ -69,15 +125,14 @@ int main() {
     compiled.input_shape = {784};
     compiled.output_size = 10;
     const auto shape = np::ReadShape(compiled);
-    Check(shape.ok && shape.input_shape == std::vector<size_t>({1, 784}), "features: [1, 784]");
+    Check(shape.ok, "features read from the compile");
     Check(shape.text == "784 features in, 10 classes out", "shape text: " + shape.text);
     Check(shape.task == "classification", "a classifier");
     TrainingConfiguration images;
     images.input_shape = {28, 28, 1};
     images.output_size = 10;
     const auto image_shape = np::ReadShape(images);
-    Check(image_shape.input_shape == std::vector<size_t>({1, 1, 28, 28}) && image_shape.task == "image_classification",
-          "images: [1, C, H, W]");
+    Check(image_shape.task == "image_classification", "images");
     Check(image_shape.text == "28 x 28 x 1 images in, 10 classes out", "image text: " + image_shape.text);
     TrainingConfiguration numbers;
     numbers.input_shape = {8};
@@ -94,7 +149,7 @@ int main() {
           "head note: " + np::HeadNote(nodes, links, shape));
 
     // The score card.
-    const auto score = NASEvaluator::ScoreArchitecture(nodes, links, shape.input_shape);
+    const auto score = NASEvaluator::ScoreArchitecture(Trainable(nodes, links).first, Trainable(nodes, links).second);
     Check(np::ScoreSummary(score, nodes, links) ==
               "Parameters 109,386 \xC2\xB7 model layers: 3x Dense, 2x ReLU \xC2\xB7 no skip connections",
           "summary: " + np::ScoreSummary(score, nodes, links));
@@ -146,7 +201,7 @@ int main() {
         config.population_size = 12;
         config.generations = 6;
         int rounds_seen = 0;
-        const auto result = NASEvaluator::EvolveArchitecture(nodes, links, shape.input_shape, config,
+        const auto result = NASEvaluator::EvolveArchitecture(Trainable(nodes, links).first, Trainable(nodes, links).second, config,
                                                              [&](int, const ArchitectureScore&) { return ++rounds_seen < 2; });
         Check(result.success && result.stopped && result.total_generations == 2, "stopped after round 2");
         Check(!result.ranked.empty() && result.ranked.size() <= static_cast<size_t>(kNASRanked), "ranked versions kept");
@@ -169,8 +224,6 @@ int main() {
     trained.regression = true;
     trained.val_mae = 0.5f;
     Check(np::AccuracyText(trained) == "MAE 0.5", "regression shows MAE");
-    Check(np::SuggestionsIntro(shape, 5) == "Five small models for 784 features and 10 classes.",
-          "suggestions: " + np::SuggestionsIntro(shape, 5));
 
     // The saved defaults: set on a search, read back, saved and reloaded,
     // clamped.

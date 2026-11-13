@@ -1287,6 +1287,13 @@ void PlotView::DrawPlot(ImVec2 size) {
             ImPlot::PopPlotClipRect();
             break;
         }
+        // Returned above (Image, PairPlot, 3D, Network, Tree) or drawn by the switch below.
+        case Kind::Image: case Kind::PairPlot: case Kind::Network: case Kind::Tree:
+        case Kind::Scatter3D: case Kind::Line3D: case Kind::Surface: case Kind::Mesh:
+        case Kind::Confusion: case Kind::Roc: case Kind::PrCurve: case Kind::Calibration: case Kind::Residuals:
+        case Kind::LearningCurve: case Kind::Importance:
+        case Kind::MapPoints: case Kind::MapRegions: case Kind::Sankey: case Kind::Treemap:
+            break;
     }
 
     // P2b group 4: model results.
@@ -2201,6 +2208,10 @@ void PlotView::DrawHover() {
                        std::isfinite(v) ? Value(v) : std::string("no rows here"));
             break;
         }
+        // Drawn without an ImPlot area, so never hovered here.
+        case Kind::Image: case Kind::PairPlot: case Kind::Network: case Kind::Tree:
+        case Kind::Scatter3D: case Kind::Line3D: case Kind::Surface: case Kind::Mesh:
+            break;
     }
     if (shown) ImGui::EndTooltip();
 }

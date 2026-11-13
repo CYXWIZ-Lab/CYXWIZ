@@ -96,7 +96,7 @@
     },
     {
       "id": 5,
-      "type": 367,
+      "type": 376,
       "name": "Image Filter (typed sharpen)",
       "description": "",
       "parameters": {

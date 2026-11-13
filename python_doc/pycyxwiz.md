@@ -6,6 +6,7 @@ PyCyxWiz is the Python binding for the CyxWiz backend (ArrayFire-accelerated mat
 - Tensors with CPU/GPU acceleration
 - Neural network layers, losses, optimizers, and sequential models
 - MATLAB-style numerical submodules (linear algebra, signal processing, statistics, time series)
+- Integrals, derivatives and curvature of typed formulas; linear and quadratic programs; optimizer paths
 - Audio preprocessing
 - Tokenization utilities
 - Reinforcement learning helpers
@@ -59,6 +60,7 @@ The binding is a compiled native extension built via pybind11 from `cyxwiz-backe
 - `pycyxwiz.signal`
 - `pycyxwiz.stats`
 - `pycyxwiz.timeseries`
+- `pycyxwiz.text`
 - `pycyxwiz.distributed`
 
 The binding is a thin layer over the C++ API. Prefer:
@@ -948,10 +950,18 @@ FFT and convolution:
 - `spectrogram(x, window_size=256, hop_size=128, sample_rate=1.0, window='hann')`
 
 Filters:
-- `lowpass(cutoff, fs, order=4)` -> `{'b':..., 'a':...}`
-- `highpass(cutoff, fs, order=4)`
-- `bandpass(low, high, fs, order=4)`
+- `lowpass(cutoff, fs, taps=31)` -> `{'b':..., 'a':...}` (scipy.signal.firwin; `taps` means taps, odd for highpass / bandstop)
+- `highpass(cutoff, fs, taps=31)`
+- `bandpass(low, high, fs, taps=31)`
+- `bandstop(low, high, fs, taps=31)`
 - `filter(x, b, a)`
+
+Spectra, wavelets and peaks:
+- `spectrum(x, sample_rate=1.0, window='hann', remove_mean=True)` -> frequencies, amplitude, psd
+- `welch(x, sample_rate=1.0, nperseg=256, window='hann')` -> frequencies, psd
+- `wavedec(x, wavelet='db4', level=3)` -> approximation, details (details[0] is the finest)
+- `denoise(x, wavelet='db4', level=3, threshold=0.0, soft=True)` -> denoised, sigma, threshold
+- `findpeaks_prominence(x, prominence, distance=1)` -> indices, values, prominences
 
 Signal generation:
 - `sine(freq, fs, n, amp=1.0, phase=0.0)`
@@ -963,7 +973,7 @@ Signal generation:
 import pycyxwiz.signal as sp
 
 x = sp.sine(freq=10, fs=200, n=2000)
-f = sp.lowpass(cutoff=20, fs=200, order=4)
+f = sp.lowpass(cutoff=20, fs=200, taps=31)
 y = sp.filter(x, f["b"], f["a"])
 ```
 
@@ -1003,6 +1013,251 @@ res = st.kmeans(data, k=2)
 print(res["labels"])
 print(res["centroids"])
 ```
+
+---
+
+### 6.4 `pycyxwiz.calculus` and `pycyxwiz.optimize`
+
+What Tools > Optimization and Calculus works out, from Python. Formulas are
+typed text, read once into a `calculus.Expression`; derivatives are exact
+(differentiated from the formula). Every number below is checked against
+sympy, scipy, numpy and torch by `cyxwiz-backend/python/tests/test_python_optimize.py`.
+
+`pycyxwiz.calculus`:
+- `Expression(text, variables=["x"], degrees=False)`: `f(*values)`, `f.evaluate_many(columns)` (on the device when it has float64, else on the host), `f.derivative(variable=None)` -> `Expression`, `str(f)`, `.variables`, `.text`. A bad formula, an unknown name ("Unknown name 'z' at 5") or a division by zero at a point raises `ValueError`.
+- `integrate(formula, a, b, rule="adaptive", n=100, epsabs=1.49e-8, epsrel=1.49e-8, limit=50, variable="x")` -> dict `value`, `error` (the adaptive estimate; `None` for the fixed rules), `converged`, `evaluations`, `intervals`. `adaptive` is Gauss-Kronrod 21 on bisected intervals as `scipy.integrate.quad` (infinite bounds allowed); `trapezoid`, `midpoint`, `simpson` (even `n`) and `gauss` (n Gauss-Legendre points) take finite bounds.
+- `derivative(formula, x, rule="central", h=0.0, variable="x")` -> dict `first`, `second` (exact; `None` when the formula uses max, mod, ...), `first_formula`, `second_formula`, `numerical_first`, `numerical_second`, `step`, `second_step`. `h=0` picks the step that suits float64 for the rule.
+- `step_errors(formula, x, h_from=0.1, h_to=1e-12, count=45, variable="x")` -> dict `steps`, `forward_error`, `central_error`: how the difference error falls, then rises, as h shrinks.
+- `curvature(formula, point, variables=None)` -> dict `gradient`, `hessian`, `eigenvalues` (ascending), at that point.
+- `curvature_over_range(formula, x_range, y_range, per_side=40, variables=["x", "y"])` -> dict `points`, `negative_points`, `positive_points`, `first_negative`.
+- `gauss_legendre(n)` -> `(nodes, weights)` on [-1, 1].
+
+`pycyxwiz.optimize` (programs solved by HiGHS, the solver scipy's `linprog` uses):
+- `linprog(c, constraints=None, bounds=None, maximize=False)`: each constraint is `(coefficients, "<=" | ">=" | "=", rhs)` or with a name as a fourth item; bounds `None` means every x >= 0, one `(low, high)` pair applies to every variable, else one pair per variable (`None` for no limit).
+- `qp(Q, c, constraints=None, bounds=None)`: minimize 0.5 x'Qx + c.x (bounds `None`: every x free). A Q that is not positive semidefinite comes back as `"not convex"` naming its most negative eigenvalue.
+- `portfolio(means, covariance, target_return=None, long_only=True)`: the least risky mix of assets, as the Portfolio Weights node (rows `Budget` and `Return`).
+- All three return a dict: `success`, `status` (`"optimal"`, `"infeasible"`, `"unbounded"`, `"not convex"`, `"failed"`), `message` (why not, in words), `x`, `fun` (`None` unless optimal), `slack`, `binding`, `shadow_prices` (per row: how much the best value changes when that row's rhs grows by 1), `iterations`.
+- `follow(formula, start, optimizer="adam", lr=0.001, momentum=0.0, steps=1000, tolerance=1e-8, variables=None)`: the path of a training optimizer (`sgd`, `adam`, `adamw`, `nadam`, `rmsprop`, `adagrad`; float32 as in training; `momentum` for SGD and RMSprop only) with the exact gradient -> dict `points`, `values`, `gradient_norms`, `converged`, `diverged`, `diverged_at`. Ctrl+C stops it.
+
+**Use case: integrals and derivatives**
+```python
+import math
+import pycyxwiz.calculus as calc
+
+print(calc.integrate("sin(x)", 0, math.pi))
+# {'value': 1.9999999999999998, 'error': 2.22e-14, 'converged': True, 'evaluations': 21, 'intervals': 1}
+print(calc.integrate("exp(-x^2)", -math.inf, math.inf)["value"])        # 1.7724538509055163 (sqrt(pi))
+print(calc.integrate("sin(x)", 0, math.pi, rule="simpson", n=10)["value"])  # 2.0001095173150043
+
+d = calc.derivative("x^3 - 2*x", -1.5)
+print(d["first"], d["second"], d["first_formula"])   # 4.75 -9.0 3*x^2 - 2
+print(d["numerical_first"], d["step"])               # 4.750000000067225 9.08e-06
+
+rosenbrock = "(1 - x)^2 + 100*(y - x^2)^2"
+print(calc.curvature(rosenbrock, [0, 1])["eigenvalues"])   # [-398.0, 200.0]: a saddle here
+print(calc.curvature_over_range(rosenbrock, (-2, 2), (-1, 3))["negative_points"])  # 672 of 1600: not convex
+```
+
+**Use case: a linear program with its shadow prices**
+```python
+import pycyxwiz.optimize as opt
+
+# Two products earn 3 and 2 a unit; machine hours x + y <= 4, labour x + 2y <= 6.
+r = opt.linprog([3, 2], [([1, 1], "<=", 4, "Machine"), ([1, 2], "<=", 6, "Labour")], maximize=True)
+print(r["x"], r["fun"])               # [4.0, 0.0] 12.0
+print(r["shadow_prices"], r["binding"])   # [3.0, 0.0] [True, False]: one more machine hour earns 3
+
+print(opt.linprog([1, 1], [([1, 1], "<=", -1)])["message"])
+# No point satisfies every constraint and bound together
+```
+
+**Use case: a portfolio and an optimizer path**
+```python
+import pycyxwiz.optimize as opt
+
+covariance = [[0.04, 0.006, 0.002], [0.006, 0.09, 0.009], [0.002, 0.009, 0.0225]]
+r = opt.portfolio([0.06, 0.12, 0.08], covariance, target_return=0.08)
+print([round(w, 4) for w in r["x"]])   # [0.2735, 0.1368, 0.5897]
+
+path = opt.follow("(1 - x)^2 + 100*(y - x^2)^2", [-2, 2], "adam", lr=0.01, steps=1000)
+print(path["points"][-1], path["values"][-1])   # [-1.5059, 2.2735] 6.2829: still in the valley
+print(opt.follow("(1 - x)^2 + 100*(y - x^2)^2", [-2, 2], "sgd", lr=0.01)["diverged_at"])  # 4
+```
+
+### 6.5 `pycyxwiz.model`
+
+What Tools > Model and Results > Test > Calibration work out, from Python, on
+the same SDK code as the Engine. Inputs are numpy arrays (any number type,
+strided views too) or nested lists; arrays come back as nested lists, so
+numpy is not needed. Every number is checked against PyTorch and
+scikit-learn by `cyxwiz-backend/python/tests/test_python_model.py`.
+
+- `summary(model, input_shape, batch=1)`: runs one batch of zeros and
+  returns a dict `rows` (each module: `index`, `name`, `output` shape,
+  `parameters`, `trainable`, `multiply_adds`, `counted`, `formula`),
+  `parameters`, `multiply_adds`, `all_counted`, `parameter_bytes`.
+  Multiply-adds are counted as `torch.utils.flop_counter` counts FLOPs,
+  halved; a module written in Python is not counted (`counted` False).
+- `lr_range_test(model, loss, optimizer, x, y, start=1e-7, end=10, steps=100,
+  batch_size=64, smoothing=0.05, stop_factor=4)`: trains on batches of `x`
+  and `y` (in order; integer `y` stays integer, as CrossEntropyLoss reads
+  class indices) raising the rate every step, stops once the smoothed loss
+  passes `stop_factor` x its lowest, then puts the model's weights and the
+  optimizer's rate back. The optimizer's moments stay changed: pass a new
+  one. Returns `points` (`learning_rate`, `loss`, `smoothed`),
+  `stop_reason` and `analysis` (`lowest`, `lowest_rate`, `lowest_loss`,
+  `steepest`, `steepest_rate`, `lowest_over_ten`, `slopes`).
+- `LearningRateRange(start, end, steps, smoothing, stop_factor)`: the same
+  rules without training, for your own loop: `current_learning_rate`,
+  `record(loss)` (True when over), `finished`, `stop_reason`, `points`,
+  `analyse()`.
+- `saliency(model, x, target=-1)`, `smooth_grad(model, x, target=-1,
+  samples=50, noise=0.1, seed=0)`: d score / d input for one sample
+  (`target` -1: the predicted class) -> `gradients`, `absolute`, `target`.
+- `integrated_gradients(model, x, baseline=None, target=-1, steps=64)`: from
+  `baseline` (zeros) in midpoint steps -> `attributions`, `target`,
+  `steps`, `score`, `baseline_score`, `attribution_sum` (about `score -
+  baseline_score`).
+- `reliability(confidence, correct, bins=10)` -> `bins` (`low`, `high`,
+  `count`, `confidence`, `accuracy`), `ece`, `rows`.
+- `fit_temperature(probabilities, truth, rows=None)` -> `temperature`,
+  `nll_before`, `nll_after`; `with_temperature(probabilities, temperature)`.
+- `fit_platt(scores, labels)` -> `(a, b)`; `apply_platt(a, b, scores)`.
+- `fit_isotonic(scores, labels)` -> `(x, y)`; `apply_isotonic(x, y, scores)`.
+
+Grad-CAM needs a convolution, and a Python `Sequential` cannot hold one yet;
+the Engine's Model > Explain has it.
+
+**Use case: summary, range test, training, explanation and calibration**
+(`examples/python/model_tools.py`, a network of 4 -> 32 -> 3 on three
+made-up classes of 200 points)
+```python
+import numpy as np
+import pycyxwiz as cx
+mt = cx.model
+
+model = cx.Sequential()
+model.add_linear(4, 32)
+model.add_relu()
+model.add_linear(32, 3)
+
+s = mt.summary(model, [4])
+print(s["parameters"], s["multiply_adds"])   # 259 224
+print(s["rows"][0]["formula"])                 # 4 · 32 = 128
+
+test = mt.lr_range_test(model, cx.CrossEntropyLoss(), cx.Adam(learning_rate=1e-3),
+                        x_train, y_train, start=1e-5, end=10.0, batch_size=32)
+print(len(test["points"]), test["analysis"]["steepest_rate"])   # 97 0.0187 (lowest loss 0.626 at 0.534)
+
+# ... 30 epochs of Adam at 0.0187: test accuracy 0.830 on 200 rows
+
+ig = mt.integrated_gradients(model, x_test[2], steps=64)   # row 2: a 0 read as 2
+print([round(v, 3) for v in ig["attributions"]])   # [-1.943, 1.879, 2.272, -0.344]
+print(ig["attribution_sum"], ig["score"] - ig["baseline_score"])   # 1.864 1.872
+
+fit = mt.fit_temperature(probabilities, y_test.tolist(), rows=list(range(0, 200, 2)))
+print(fit["temperature"])   # 1.283: calibration error 0.0724 -> 0.0562 on the odd rows
+```
+
+### 6.6 `pycyxwiz.utilities`
+
+The six tabs of Tools > Utilities (docs/usage/utilities.md), on the same SDK
+code as the Engine. Checked against `hashlib`, `json`, `re`, numpy and the
+exact unit definitions by
+`cyxwiz-backend/python/tests/test_python_utilities.py`.
+
+- `evaluate(expression, variables={}, degrees=False)`: the Calculator's
+  value (the parser of `calculus.Expression`).
+- `unit_categories()`, `units(category="")` (dicts: `id`, `label`, `symbol`,
+  `category`, `scale`, `offset`, `aliases`; base = value * scale + offset),
+  `find_unit(name, category="")` (or None), `convert(value, from_unit,
+  to_unit)`, `conversion_formula(from_unit, to_unit)`. Units are found by id,
+  label or alias in any case, or by symbol as written (`"km/h"`, `"metres"`,
+  `"MiB"`, `"qt"`; `"Mb"` is not `"MB"`). kB is 1000 bytes, KiB 1024;
+  temperatures go through Celsius (0 °C is 32 °F exactly); below absolute
+  zero raises.
+- `hash(data, algorithm="sha256")`: text (UTF-8), bytes, bytearray or
+  memoryview; md5, sha1, sha256, sha512 (anything else raises ValueError).
+  `hash_file(path, algorithm="sha256", progress=None)`: read in 1 MB blocks;
+  `progress(done, total)` returning False stops (ValueError "Stopped"); any
+  other return, None included, goes on.
+- `json_check(text, indent=2)`: `valid`; then `formatted`, `minified` (keys
+  in the document's order), `keys`, `depth`, `objects`, `arrays`, `strings`,
+  `numbers`, `bools`, `nulls`; or `line`, `column` (where Python's json puts
+  the error) and `error`. `json_get(text, path)`: the Python value at
+  `"config.max_workers"`, `"items[0].name"` or `"$.a.b"` (KeyError when it
+  is not there; ValueError when the text is not JSON or the path is malformed,
+  such as `"a..b"`). `"$"` names the root only at the start: `"$oid"` is a key.
+- `regex_find(pattern, text, ignore_case=False, multiline=False)`: dicts
+  `text`, `start`, `end` (characters, as `re`), `line`, `column`, `groups`.
+  `regex_replace(pattern, text, replacement, ...)`: `$&` the match, `$1`
+  .. `$9` the groups. ECMAScript: `\w` and `\b` know ASCII letters only.
+- `random(distribution, count, a=0, b=1, seed=-1)`: uniform (a low, b high),
+  normal (a mean, b sd), exponential (a rate), poisson (a mean, at most
+  1e9), integers (a low, b high: whole numbers that fit a 32-bit int).
+  Returns `values`, `seed`, `mean`, `sd_sample`,
+  `sd_population`, `median`, `q1`, `q3`, `min`, `max`, `edges`, `counts`.
+  One seed draws the same values on every platform; seed -1 draws a seed
+  and returns it.
+- `uuid4(count=1)`: version 4 UUIDs from the operating system's random
+  source.
+
+From `examples/python/utilities.py`:
+
+```python
+import pycyxwiz as cx
+u = cx.utilities
+u.convert(100, "km/h", "knot")                    # 53.99568034557235
+u.conversion_formula("celsius", "fahrenheit")     # '°F = °C x 1.8 + 32'
+u.json_check('{\n  "name": "CyxWiz",\n  "version": "1.0.0"\n  "gpu": true\n}')   # line 4, column 3
+[m["text"] for m in u.regex_find(r"^\w+", text, multiline=True)]   # ['John', 'Jane', 'Support']
+r = u.random("normal", 1000, 10, 2, seed=42)
+r["mean"], r["sd_sample"], r["median"]            # 9.9239, 2.0449, 9.9598
+u.random("integers", 6000, 1, 6, seed=7)["counts"]   # [1045, 986, 975, 996, 989, 1009]
+```
+
+### 6.7 `pycyxwiz.system`
+
+The Engine's memory figures, as Tools > Monitoring shows them
+(docs/usage/monitoring.md), on the SDK header `cyxwiz/device_memory.h`.
+Checked by `cyxwiz-backend/python/tests/test_python_system.py`.
+
+- `device_memory_held()`: what this process holds on its compute device
+  (ArrayFire's memory manager). Dict: `known` (False before `initialize()`),
+  `allocated_bytes` (in use plus kept for reuse), `in_use_bytes`, `buffers`,
+  `buffers_in_use`.
+- `device_memory_free(hardware_uuid="")`: the device's own memory for every
+  program. Dict: `known`, `total_bytes`, `free_bytes`, `source`. NVIDIA cards
+  answer through the NVIDIA management library, by
+  `DeviceInfo.hardware_uuid` (`""`: the machine's only card). A driver that
+  does not report gives `known` False and `source` "Not reported by this
+  driver"; nothing is guessed. `get_available_devices()` now fills
+  `memory_available` for a card that answers.
+- `release_unused_device_memory()`: returns the buffers kept for reuse to
+  the driver (buffers in use stay). Dict: `ran`, `allocated_before`,
+  `allocated_after`, `freed_bytes`.
+- `host_tensor_bytes()`, `host_tensor_peak_bytes()`,
+  `reset_host_tensor_peak()`: main memory held by host tensors (the tensor
+  allocator; not the whole process). A training run starts its own peak.
+
+For the machine's CPU and main memory use `psutil`.
+
+```python
+import pycyxwiz as cx
+s = cx.system
+
+cx.initialize()
+batch = cx.Tensor.random([4096, 1024], seed=1)       # 16 MB of float32
+h = s.device_memory_held()
+h["allocated_bytes"], h["in_use_bytes"]                # 16777216, 16777216
+del batch
+s.device_memory_held()["in_use_bytes"]                 # 0 (still allocated: kept for reuse)
+s.release_unused_device_memory()["freed_bytes"]        # 16777216
+f = s.device_memory_free()
+f["known"], f["source"]                                # True, 'NVIDIA management library' (a GTX 1050 Ti)
+```
+
+The example `examples/python/system_memory.py` prints these steps.
 
 ---
 
@@ -1083,10 +1338,49 @@ Usage notes:
 
 ---
 
-## 9. Tokenization
+## 9. Text and Tokenization
+
+### 9.1 Words, terms and sentiment (`pycyxwiz.text`)
+
+The rules Data Studio's Explore > Text and the text nodes use, checked against
+Python, scikit-learn, NLTK and vaderSentiment (`test_python_text.py`):
+
+- `words(text)` -> `list[str]`: lower-cased runs of letters and digits of any
+  script, two or more long, an apostrophe between two kept ("don't"; a
+  typographic apostrophe reads as one). Python: each match of
+  `re.finditer(r"[^\W_]+(?:'[^\W_]+)*", text)`, lower-cased character by
+  character (`str.lower` of each), kept when two or more long.
+  scikit-learn's default `token_pattern` splits "don't" into "don".
+- `terms(text, stop_words="english", ngram_range=(1, 1))` -> `list[str]`: the
+  terms the TF-IDF and Count Vectorizer nodes count: the words, the English stop
+  words left out first (`stop_words="english"`; `"none"` or `None` keeps them),
+  then the word n-grams joined by one space, the shortest first. A bad
+  `stop_words` or `ngram_range` raises `ValueError`.
+- `english_stop_words()` -> `list[str]`: scikit-learn's `ENGLISH_STOP_WORDS`
+  (318) and their contractions (54), sorted.
+- `stem(word)` -> `str`: the Porter (1980) stem, lower-cased first (NLTK's
+  `PorterStemmer(mode="ORIGINAL_ALGORITHM")`).
+- `vader(text)` -> `dict` with `neg`, `neu`, `pos`, `compound` as
+  vaderSentiment 3.3.2's `polarity_scores` gives them, but unrounded
+  (vaderSentiment rounds `neg` / `neu` / `pos` to 3 places and `compound` to 4),
+  and `words`: each word or emoticon with its valence after the rules.
+
+```python
+import pycyxwiz.text as tx
+
+tx.words("I don't feel like myself.")        # ["don't", 'feel', 'like', 'myself']
+tx.terms("not good at all", stop_words=None, ngram_range=(1, 2))
+# ['not', 'good', 'at', 'all', 'not good', 'good at', 'at all']
+tx.stem("feeling")                           # 'feel'
+tx.vader("The food was not good.")["compound"]  # -0.3412...
+```
+
+### 9.2 Tokenizers
 
 Enum:
-- `TokenizerType`: `Whitespace`, `Word`, `Character`
+- `TokenizerType`: `Whitespace`, `Word`, `Character` (byte level), `ByteBPE`,
+  `WordPiece`, `SentencePieceBPE`, `SentencePieceUnigram` (the two
+  SentencePiece types need the optional SentencePiece provider)
 
 `Vocabulary`:
 - `build_from_documents(documents, min_freq=1, max_vocab_size=-1, lowercase=True)`
@@ -1163,12 +1457,12 @@ if rb.can_sample(32):
 RL dashboard bridge:
 - `rl_set_metric_callback(callback)`
 - `rl_update_metric(name, value)`
-- `rl_should_stop()` / `rl_set_stop(value)`
-- `rl_is_paused()` / `rl_set_paused(value)`
 
 Usage notes:
 - `rl_set_metric_callback` allows Python RL loops to stream metrics into the engine UI.
-- `rl_should_stop()` and `rl_is_paused()` can be polled inside training loops.
+- The Engine registers its own callback when it runs a script, so `rl_update_metric` from a
+  script in the Script Editor reaches the RL Training Dashboard. The Engine's own PPO (Train on
+  an RL graph) reports there directly and has Pause / Stop on the dashboard.
 
 ### 10.1 Callback Call Flow (`rl_set_metric_callback` / `rl_update_metric`)
 
@@ -1187,12 +1481,10 @@ Important behavior:
 - Callback registration is global (latest registration replaces prior one).
 - If no callback is set, `rl_update_metric` is a no-op.
 - Callback exceptions propagate back to the `rl_update_metric` caller.
-- Pause/stop flags are independent atomics: use `rl_should_stop()` and `rl_is_paused()` in your loop.
 
 Recommended usage pattern:
 
 ```python
-import time
 import pycyxwiz as cx
 
 def on_metric(name: str, value: float):
@@ -1202,12 +1494,6 @@ def on_metric(name: str, value: float):
 cx.rl_set_metric_callback(on_metric)
 
 for step in range(100000):
-    if cx.rl_should_stop():
-        break
-
-    while cx.rl_is_paused():
-        time.sleep(0.05)
-
     # ... training step ...
     reward = 1.23
     cx.rl_update_metric("episode_reward", reward)

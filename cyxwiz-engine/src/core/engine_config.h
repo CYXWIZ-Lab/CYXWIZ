@@ -4,6 +4,7 @@
 #include <string>
 #include <mutex>
 #include <filesystem>
+#include <map>
 #include <vector>
 
 namespace cyxwiz::core {
@@ -124,6 +125,34 @@ struct TrainingDefaultsConfig {
     bool operator==(const TrainingDefaultsConfig&) const = default;
 };
 
+// The user's defaults for Tools > Utilities (Preferences > General, or "Save
+// as my default" in the window); the shipped values are only the start.
+struct UtilitiesConfig {
+    std::string tab = "calculator";       // utilities_view::TabId
+    int digits = 10;                       // significant digits shown, 1 .. 17
+    bool degrees = false;                  // the Calculator's angle unit
+    std::string unit_category = "length";
+    std::string hash_algorithm = "sha256";
+    int json_indent = 2;
+    bool regex_ignore_case = false;
+    bool regex_multiline = false;
+
+    bool operator==(const UtilitiesConfig&) const = default;
+};
+
+// The user's defaults for Tools > Monitoring and Tools > Diagnostics
+// (Preferences > General, or "Save as my default" in the Monitor window).
+struct MonitorConfig {
+    std::string tab = "system";      // monitor_view::TabId
+    double interval_seconds = 1.0;   // between readings, 0.25 .. 60
+    double keep_seconds = 900.0;     // history kept: 300, 900 or 3600
+    bool log_frame_rate = false;     // one log line when the Engine slows or speeds its frames
+    bool log_python_commands = false;  // every command sent to Python, with its duration
+    bool frame_overlay = false;      // the frame time overlay
+
+    bool operator==(const MonitorConfig&) const = default;
+};
+
 /**
  * @brief Centralized configuration management for the CyxWiz Engine.
  *
@@ -142,6 +171,13 @@ struct TrainingDefaultsConfig {
  *   auto& config = EngineConfig::Instance();
  *   std::string central = config.GetCentralServerAddress();
  */
+// How the Policy Playback panel's Stress test starts (Preferences > Simulation)
+struct PolicyStressDefaults {
+    int kind = 0;       // rl::StressKind: 0 Rough, 1 Slopes, 2 Steps, 3 Obstacles, 4 Kicks
+    int levels = 5;     // 2 to 21
+    int episodes = 10;  // a level, 1 to 100
+};
+
 class EngineConfig {
 public:
     static EngineConfig& Instance();
@@ -173,6 +209,13 @@ public:
     // empty (development).
     std::string GetServerAddress() const;
     void SetServerAddress(const std::string& address);
+
+    // The server's private CA (a PEM file, a test server's ca.crt), for an
+    // https:// server whose certificate no public authority signed; empty
+    // means the system's trusted roots. Saved with the server address and
+    // applied to every connection at once (cyxwiz-protocol SetServerCaFile).
+    std::string GetServerCaFile() const;
+    void SetServerCaFile(const std::string& path);
 
     // The per-service keys as saved, for Preferences > Servers; the getters
     // below give the addresses in effect. An empty gateway follows central.
@@ -282,6 +325,44 @@ public:
     uint64_t DataBudgetBytes() const;
     void SetDataBudgetBytes(uint64_t bytes);
 
+    // ===== Simulation (graph runs, Preferences > Simulation) =====
+
+    static constexpr int kMinSimulationRateHz = 1;
+    static constexpr int kMaxSimulationRateHz = 1000;
+    static constexpr int kDefaultSimulationRateHz = 60;
+    // Ticks a second of the next graph run, kept within 1..1000.
+    int SimulationRateHz() const;
+    void SetSimulationRateHz(int hz);
+    // Show the Simulation Monitor when a graph run starts. On by default.
+    bool OpenSimulationMonitorOnRun() const;
+    void SetOpenSimulationMonitorOnRun(bool open);
+
+    // Plugins' own settings (PluginContext::GetSetting / SetSetting), by
+    // plugin id then key. False when the plugin never set the key.
+    bool PluginSetting(const std::string& plugin_id, const std::string& key, std::string& value) const;
+    void SetPluginSetting(const std::string& plugin_id, const std::string& key, const std::string& value);
+
+    // Policy playback of a trained RL policy (Preferences > Simulation): the
+    // Policy Playback panel starts from these.
+    // Best actions (true, the default) or sampled as in training.
+    bool PolicyPlaybackBestActions() const;
+    void SetPolicyPlaybackBestActions(bool best);
+    // 0 real time (the default), 1 four times faster, 2 as fast as possible
+    int PolicyPlaybackSpeed() const;
+    void SetPolicyPlaybackSpeed(int speed);
+    // Play the policy when a PPO run finishes. Off by default.
+    bool PlayPolicyAfterTraining() const;
+    void SetPlayPolicyAfterTraining(bool play);
+    // The Stress test's disturbance, levels and episodes (clamped to their ranges)
+    PolicyStressDefaults PolicyStressTestDefaults() const;
+    void SetPolicyStressTestDefaults(PolicyStressDefaults defaults);
+    // Watching a PPO run while it trains (the RL Training Dashboard): 0 off
+    // (the default), 1 live preview, 2 raw training copy; the preview takes the
+    // networks every N updates (20 by default, 1 to 1000)
+    int WatchTrainingMode() const;
+    int WatchTrainingEvery() const;
+    void SetWatchTraining(int mode, int every_updates);
+
     // ===== Appearance (Engine-wide) =====
 
     AppearanceConfig GetAppearance() const;
@@ -298,6 +379,12 @@ public:
     void SetSearchDefaults(const HyperparamSearchDefaults& defaults);
     ArchitectureSearchDefaults GetArchitectureSearchDefaults() const;
     void SetArchitectureSearchDefaults(const ArchitectureSearchDefaults& defaults);
+
+    UtilitiesConfig GetUtilities() const;
+    void SetUtilities(const UtilitiesConfig& utilities);
+
+    MonitorConfig GetMonitor() const;
+    void SetMonitor(const MonitorConfig& monitor);
 
     // ===== Recent Projects =====
 
@@ -334,6 +421,7 @@ private:
 
     // Server addresses
     std::string server_address_;  // servers.cyxwiz; empty = the keys below
+    std::string server_ca_file_;  // servers.ca_file; empty = the system's roots
     std::string central_server_address_;
     std::string cloud_gateway_address_;  // as configured; empty = derived
     std::string auth_api_url_;
@@ -361,10 +449,21 @@ private:
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;
     uint64_t data_budget_bytes_ = 0;
+    int simulation_rate_hz_ = kDefaultSimulationRateHz;
+    bool policy_playback_best_ = true;
+    int policy_playback_speed_ = 0;
+    bool play_policy_after_training_ = false;
+    PolicyStressDefaults policy_stress_defaults_;
+    int watch_training_mode_ = 0;
+    int watch_training_every_ = 20;
+    bool open_simulation_monitor_on_run_ = true;
+    std::map<std::string, std::map<std::string, std::string>> plugin_settings_;
     AppearanceConfig appearance_;
     NodesPanelConfig nodes_panel_;
     HyperparamSearchDefaults search_defaults_;
     ArchitectureSearchDefaults architecture_search_defaults_;
+    UtilitiesConfig utilities_;
+    MonitorConfig monitor_;
 
     // Recent projects
     std::vector<std::string> recent_projects_;  // Recent project paths (max 10)

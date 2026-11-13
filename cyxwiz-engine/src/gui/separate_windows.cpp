@@ -74,7 +74,9 @@ void RunFront(ImGuiContext& g) {
         return;
     }
     if (++g_front.frames > kFrontFrames) {
-        spdlog::debug("Window '{}' did not come to the front", g_front.name);
+        spdlog::debug("Window '{}' did not come to the front ({} has the focus{})", g_front.name,
+                      g.NavWindow ? g.NavWindow->Name : "no window",
+                      w && w->DockIsActive && !w->DockTabIsVisible ? ", its tab is hidden" : "");
         g_front = {};
         return;
     }
@@ -241,6 +243,29 @@ void NextWindowMayLeave(const char* name) {
 void NextWindowStaysInMain() { ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID); }
 
 void NextWindowFollowsCurrent() { ImGui::SetNextWindowViewport(ImGui::GetWindowViewport()->ID); }
+
+namespace {
+std::vector<ImVec2> g_overlay_cursors;  // the owners' cursors, one per open overlay
+}  // namespace
+
+bool BeginCanvasOverlay(const char* id, float x, float y, float width, float height, int window_flags, bool padding,
+                        bool border) {
+    g_overlay_cursors.push_back(ImGui::GetCursorScreenPos());
+    ImGui::SetCursorScreenPos(ImVec2(x, y));
+    ImGuiChildFlags child_flags = ImGuiChildFlags_None;
+    if (padding) child_flags |= ImGuiChildFlags_AlwaysUseWindowPadding;
+    if (border) child_flags |= ImGuiChildFlags_Borders;
+    if (width <= 0.0f) child_flags |= ImGuiChildFlags_AutoResizeX;
+    if (height <= 0.0f) child_flags |= ImGuiChildFlags_AutoResizeY;
+    return ImGui::BeginChild(id, ImVec2(width, height), child_flags, window_flags);
+}
+
+void EndCanvasOverlay() {
+    ImGui::EndChild();
+    if (g_overlay_cursors.empty()) return;
+    ImGui::SetCursorScreenPos(g_overlay_cursors.back());
+    g_overlay_cursors.pop_back();
+}
 
 void SetMainDockSpace(unsigned int dockspace_id) { g_main_dockspace = dockspace_id; }
 

@@ -4,6 +4,7 @@
 #include "plot_image.h"
 #include "world_map.h"
 #include "../series_decimation.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <array>
@@ -214,7 +215,7 @@ void PrepareScatter(Prepared& p, const SourceColumn* xcol, const std::vector<con
     const std::vector<size_t> all_rows = rows;
     if (rows.size() > kMaxScatterPoints) {
         std::mt19937_64 rng(0x5eed);
-        std::shuffle(rows.begin(), rows.end(), rng);
+        cyxwiz::portable::Shuffle(rows.begin(), rows.end(), rng);
         rows.resize(kMaxScatterPoints);
         std::sort(rows.begin(), rows.end());
         p.label = {DataLabel::State::Sampled, rows.size(), total};
@@ -1383,7 +1384,7 @@ void SampleRows(Prepared& p, const std::vector<const SourceColumn*>& ys, const G
     const size_t total = rows.size();
     if (rows.size() > cap) {
         std::mt19937_64 rng(0x5eed);
-        std::shuffle(rows.begin(), rows.end(), rng);
+        cyxwiz::portable::Shuffle(rows.begin(), rows.end(), rng);
         rows.resize(cap);
         std::sort(rows.begin(), rows.end());
     }
@@ -1720,7 +1721,7 @@ void PrepareResiduals(Prepared& p, const SourceColumn* actual, const SourceColum
         std::vector<size_t> rows(s.x.size());
         std::iota(rows.begin(), rows.end(), 0);
         std::mt19937_64 rng(0x5eed);
-        std::shuffle(rows.begin(), rows.end(), rng);
+        cyxwiz::portable::Shuffle(rows.begin(), rows.end(), rng);
         rows.resize(kMaxScatterPoints);
         std::sort(rows.begin(), rows.end());
         std::vector<double> xs, ys;
@@ -2108,7 +2109,7 @@ void PrepareXYZ(Prepared& p, const SourceColumn* xcol, const SourceColumn* ycol,
             p.label = {DataLabel::State::Reduced, rows.size(), total};
         } else {
             std::mt19937_64 rng(0x5eed);
-            std::shuffle(rows.begin(), rows.end(), rng);
+            cyxwiz::portable::Shuffle(rows.begin(), rows.end(), rng);
             rows.resize(kMax3DPoints);
             std::sort(rows.begin(), rows.end());
             p.label = {DataLabel::State::Sampled, rows.size(), total};
@@ -2476,7 +2477,7 @@ void PrepareMesh(Prepared& p, const SourceColumn* xcol, const SourceColumn* ycol
     const size_t total = rows.size();
     if (rows.size() > kMaxMeshPoints) {
         std::mt19937_64 rng(0x5eed);
-        std::shuffle(rows.begin(), rows.end(), rng);
+        cyxwiz::portable::Shuffle(rows.begin(), rows.end(), rng);
         rows.resize(kMaxMeshPoints);
         std::sort(rows.begin(), rows.end());
         p.label = {DataLabel::State::Sampled, rows.size(), total};

@@ -135,6 +135,7 @@ int AdfAutolag(const std::vector<double>& x, const std::vector<double>& xdiff, i
     int best = 0;
     icbest = NAN;
     for (int lag = 0; lag <= max_lags; ++lag) {
+        series_detail::ThrowIfStopped();
         const int pcount = fixed + lag;
         std::vector<double> L(static_cast<size_t>(pcount) * static_cast<size_t>(pcount), 0.0);
         bool ok = true;
@@ -185,70 +186,72 @@ std::string Short(double p) {
 }  // namespace
 
 StationarityResult TimeSeries::ADFTest(const std::vector<double>& data, int max_lags, const std::string& regression, bool autolag) {
-    StationarityResult r;
-    r.regression = regression;
-    if (regression != "c" && regression != "ct" && regression != "ctt" && regression != "n") {
-        r.error_message = "regression must be \"c\", \"ct\", \"ctt\" or \"n\"";
-        return r;
-    }
-    if (const std::string refusal = series_detail::SeriesRefusal(data, 8, "The ADF test"); !refusal.empty()) {
-        r.error_message = refusal;
-        return r;
-    }
-    const int n = static_cast<int>(data.size());
-    if (*std::max_element(data.begin(), data.end()) == *std::min_element(data.begin(), data.end())) {
-        r.error_message = "The series has the same value in every row";
-        return r;
-    }
-    const int ntrend = TrendTerms(regression);
-    if (max_lags < 0) {
-        max_lags = static_cast<int>(std::ceil(12.0 * std::pow(n / 100.0, 0.25)));
-        max_lags = std::min(n / 2 - ntrend - 1, max_lags);
+    return series_detail::UnlessStopped<StationarityResult>([&]() -> StationarityResult {
+        StationarityResult r;
+        r.regression = regression;
+        if (regression != "c" && regression != "ct" && regression != "ctt" && regression != "n") {
+            r.error_message = "regression must be \"c\", \"ct\", \"ctt\" or \"n\"";
+            return r;
+        }
+        if (const std::string refusal = series_detail::SeriesRefusal(data, 8, "The ADF test"); !refusal.empty()) {
+            r.error_message = refusal;
+            return r;
+        }
+        const int n = static_cast<int>(data.size());
+        if (*std::max_element(data.begin(), data.end()) == *std::min_element(data.begin(), data.end())) {
+            r.error_message = "The series has the same value in every row";
+            return r;
+        }
+        const int ntrend = TrendTerms(regression);
         if (max_lags < 0) {
-            r.error_message = "The series is too short for the ADF test";
+            max_lags = static_cast<int>(std::ceil(12.0 * std::pow(n / 100.0, 0.25)));
+            max_lags = std::min(n / 2 - ntrend - 1, max_lags);
+            if (max_lags < 0) {
+                r.error_message = "The series is too short for the ADF test";
+                return r;
+            }
+        } else if (max_lags > n / 2 - ntrend - 1) {
+            r.error_message = "max_lags must be below n / 2 - 1 - (trend terms)";
             return r;
         }
-    } else if (max_lags > n / 2 - ntrend - 1) {
-        r.error_message = "max_lags must be below n / 2 - 1 - (trend terms)";
+        std::vector<double> xdiff(static_cast<size_t>(n - 1));
+        for (int i = 0; i + 1 < n; ++i) xdiff[static_cast<size_t>(i)] = data[static_cast<size_t>(i + 1)] - data[static_cast<size_t>(i)];
+        int used = max_lags;
+        double icbest = NAN;
+        if (autolag) {
+            // Every lag length on the same rows (those left after max_lags); the
+            // smallest AIC wins. One device pass for every lag (AdfAutolag); a lag
+            // that makes the design collinear ends the search.
+            const int nobs = n - 1 - max_lags;
+            try {
+                used = AdfAutolag(data, xdiff, max_lags, nobs, regression, icbest);
+            } catch (const af::exception& e) {
+                r.error_message = std::string("The ADF lag search failed on the ArrayFire device: ") + e.what();
+                return r;
+            }
+            if (std::isnan(icbest)) {
+                r.error_message = "The ADF regression failed: the series is a deterministic pattern";
+                return r;
+            }
+        }
+        const int nobs = n - 1 - used;
+        const LinearFit fit = AdfRegression(data, xdiff, used, nobs, regression);
+        if (!fit.ok) {
+            r.error_message = "The ADF regression failed: " + fit.error;
+            return r;
+        }
+        r.adf_statistic = fit.t[ntrend >= 1 ? 1 : 0];
+        r.adf_pvalue = mackinnon::PValue(r.adf_statistic, regression);
+        double crit[3];
+        mackinnon::CriticalValues(regression, nobs, crit);
+        r.adf_critical = {{"1%", crit[0]}, {"5%", crit[1]}, {"10%", crit[2]}};
+        r.adf_stationary = r.adf_pvalue < 0.05;
+        r.adf_lags = used;
+        r.adf_nobs = nobs;
+        r.adf_icbest = autolag ? icbest : fit.aic;
+        r.success = true;
         return r;
-    }
-    std::vector<double> xdiff(static_cast<size_t>(n - 1));
-    for (int i = 0; i + 1 < n; ++i) xdiff[static_cast<size_t>(i)] = data[static_cast<size_t>(i + 1)] - data[static_cast<size_t>(i)];
-    int used = max_lags;
-    double icbest = NAN;
-    if (autolag) {
-        // Every lag length on the same rows (those left after max_lags); the
-        // smallest AIC wins. One device pass for every lag (AdfAutolag); a lag
-        // that makes the design collinear ends the search.
-        const int nobs = n - 1 - max_lags;
-        try {
-            used = AdfAutolag(data, xdiff, max_lags, nobs, regression, icbest);
-        } catch (const af::exception& e) {
-            r.error_message = std::string("The ADF lag search failed on the ArrayFire device: ") + e.what();
-            return r;
-        }
-        if (std::isnan(icbest)) {
-            r.error_message = "The ADF regression failed: the series is a deterministic pattern";
-            return r;
-        }
-    }
-    const int nobs = n - 1 - used;
-    const LinearFit fit = AdfRegression(data, xdiff, used, nobs, regression);
-    if (!fit.ok) {
-        r.error_message = "The ADF regression failed: " + fit.error;
-        return r;
-    }
-    r.adf_statistic = fit.t[ntrend >= 1 ? 1 : 0];
-    r.adf_pvalue = mackinnon::PValue(r.adf_statistic, regression);
-    double crit[3];
-    mackinnon::CriticalValues(regression, nobs, crit);
-    r.adf_critical = {{"1%", crit[0]}, {"5%", crit[1]}, {"10%", crit[2]}};
-    r.adf_stationary = r.adf_pvalue < 0.05;
-    r.adf_lags = used;
-    r.adf_nobs = nobs;
-    r.adf_icbest = autolag ? icbest : fit.aic;
-    r.success = true;
-    return r;
+    });
 }
 
 StationarityResult TimeSeries::KPSSTest(const std::vector<double>& data, const std::string& regression, int nlags) {
@@ -345,75 +348,77 @@ StationarityResult TimeSeries::KPSSTest(const std::vector<double>& data, const s
 }
 
 StationarityResult TimeSeries::TestStationarity(const std::vector<double>& data, int max_lags, const std::string& regression) {
-    StationarityResult r = ADFTest(data, max_lags, regression, true);
-    if (!r.success) return r;
-    const StationarityResult kpss = KPSSTest(data, regression == "ct" ? "ct" : "c", -1);
-    if (!kpss.success) {
-        r.success = false;
-        r.error_message = kpss.error_message;
+    return series_detail::UnlessStopped<StationarityResult>([&]() -> StationarityResult {
+        StationarityResult r = ADFTest(data, max_lags, regression, true);
+        if (!r.success) return r;
+        const StationarityResult kpss = KPSSTest(data, regression == "ct" ? "ct" : "c", -1);
+        if (!kpss.success) {
+            r.success = false;
+            r.error_message = kpss.error_message;
+            return r;
+        }
+        r.kpss_statistic = kpss.kpss_statistic;
+        r.kpss_pvalue = kpss.kpss_pvalue;
+        r.kpss_critical = kpss.kpss_critical;
+        r.kpss_stationary = kpss.kpss_stationary;
+        r.kpss_lags = kpss.kpss_lags;
+        r.is_stationary = r.adf_stationary && r.kpss_stationary;
+
+        // The order of differencing: the smallest d (up to 2) at which the series is
+        // stationary enough: KPSS does not reject stationarity at 5% and ADF does not
+        // keep a unit root (p below 0.10). KPSS alone (Hyndman's ndiffs) misses some
+        // random walks; both at 5% over-differences series like the airline one.
+        const auto enough = [](double adf_p, double kpss_p) { return kpss_p >= 0.05 && adf_p < 0.10; };
+        r.suggested_differencing = enough(r.adf_pvalue, r.kpss_pvalue) ? 0 : -1;
+        std::vector<double> series = data;
+        for (int d = 1; d <= 2 && r.suggested_differencing < 0; ++d) {
+            series = Difference(series, 1);
+            const StationarityResult adf = ADFTest(series, -1, "c", true);
+            const StationarityResult k = KPSSTest(series, "c", -1);
+            if (!adf.success || !k.success) break;
+            StationarityResult::Differenced diff;
+            diff.d = d;
+            diff.adf_statistic = adf.adf_statistic;
+            diff.adf_pvalue = adf.adf_pvalue;
+            diff.kpss_statistic = k.kpss_statistic;
+            diff.kpss_pvalue = k.kpss_pvalue;
+            diff.stationary = enough(adf.adf_pvalue, k.kpss_pvalue);
+            r.differenced.push_back(diff);
+            if (diff.stationary) r.suggested_differencing = d;
+        }
+
+        const int window = std::max(10, static_cast<int>(data.size()) / 10);
+        try {
+            series_detail::Rolling(data, window, r.rolling_mean, r.rolling_std);
+            r.rolling_window = window;
+        } catch (const af::exception& e) {
+            r.success = false;
+            r.error_message = std::string("The rolling statistics failed on the ArrayFire device: ") + e.what();
+            return r;
+        }
+
+        const std::string around = regression == "ct" ? "a trend" : "its mean";
+        if (r.is_stationary) {
+            r.analysis = "Stationary around " + around + ": ADF rejects a unit root (p " + Short(r.adf_pvalue) + ") and KPSS does not reject stationarity (p " +
+                         Short(r.kpss_pvalue) + ").";
+        } else if (r.adf_stationary && !r.kpss_stationary) {
+            r.analysis = "The tests disagree: ADF rejects a unit root (p " + Short(r.adf_pvalue) + ") but KPSS rejects stationarity (p " + Short(r.kpss_pvalue) +
+                         "); the series may be stationary around a trend, or changing slowly.";
+        } else if (!r.adf_stationary && r.kpss_stationary) {
+            r.analysis = "The tests disagree: KPSS does not reject stationarity (p " + Short(r.kpss_pvalue) + ") but ADF cannot reject a unit root (p " +
+                         Short(r.adf_pvalue) + "); the series is short, or the test has little power here.";
+        } else {
+            r.analysis = "Not stationary: ADF cannot reject a unit root (p " + Short(r.adf_pvalue) + ") and KPSS rejects stationarity (p " + Short(r.kpss_pvalue) + ").";
+        }
+        if (r.suggested_differencing > 0) {
+            const StationarityResult::Differenced& chosen = r.differenced.back();
+            r.analysis += std::string(" ") + (r.suggested_differencing == 1 ? "One difference makes" : "Two differences make") + " it stationary enough (KPSS p " +
+                          Short(chosen.kpss_pvalue) + ", ADF p " + Short(chosen.adf_pvalue) + ").";
+        } else if (r.suggested_differencing < 0) {
+            r.analysis += " Two differences still do not make it stationary.";
+        }
         return r;
-    }
-    r.kpss_statistic = kpss.kpss_statistic;
-    r.kpss_pvalue = kpss.kpss_pvalue;
-    r.kpss_critical = kpss.kpss_critical;
-    r.kpss_stationary = kpss.kpss_stationary;
-    r.kpss_lags = kpss.kpss_lags;
-    r.is_stationary = r.adf_stationary && r.kpss_stationary;
-
-    // The order of differencing: the smallest d (up to 2) at which the series is
-    // stationary enough: KPSS does not reject stationarity at 5% and ADF does not
-    // keep a unit root (p below 0.10). KPSS alone (Hyndman's ndiffs) misses some
-    // random walks; both at 5% over-differences series like the airline one.
-    const auto enough = [](double adf_p, double kpss_p) { return kpss_p >= 0.05 && adf_p < 0.10; };
-    r.suggested_differencing = enough(r.adf_pvalue, r.kpss_pvalue) ? 0 : -1;
-    std::vector<double> series = data;
-    for (int d = 1; d <= 2 && r.suggested_differencing < 0; ++d) {
-        series = Difference(series, 1);
-        const StationarityResult adf = ADFTest(series, -1, "c", true);
-        const StationarityResult k = KPSSTest(series, "c", -1);
-        if (!adf.success || !k.success) break;
-        StationarityResult::Differenced diff;
-        diff.d = d;
-        diff.adf_statistic = adf.adf_statistic;
-        diff.adf_pvalue = adf.adf_pvalue;
-        diff.kpss_statistic = k.kpss_statistic;
-        diff.kpss_pvalue = k.kpss_pvalue;
-        diff.stationary = enough(adf.adf_pvalue, k.kpss_pvalue);
-        r.differenced.push_back(diff);
-        if (diff.stationary) r.suggested_differencing = d;
-    }
-
-    const int window = std::max(10, static_cast<int>(data.size()) / 10);
-    try {
-        series_detail::Rolling(data, window, r.rolling_mean, r.rolling_std);
-        r.rolling_window = window;
-    } catch (const af::exception& e) {
-        r.success = false;
-        r.error_message = std::string("The rolling statistics failed on the ArrayFire device: ") + e.what();
-        return r;
-    }
-
-    const std::string around = regression == "ct" ? "a trend" : "its mean";
-    if (r.is_stationary) {
-        r.analysis = "Stationary around " + around + ": ADF rejects a unit root (p " + Short(r.adf_pvalue) + ") and KPSS does not reject stationarity (p " +
-                     Short(r.kpss_pvalue) + ").";
-    } else if (r.adf_stationary && !r.kpss_stationary) {
-        r.analysis = "The tests disagree: ADF rejects a unit root (p " + Short(r.adf_pvalue) + ") but KPSS rejects stationarity (p " + Short(r.kpss_pvalue) +
-                     "); the series may be stationary around a trend, or changing slowly.";
-    } else if (!r.adf_stationary && r.kpss_stationary) {
-        r.analysis = "The tests disagree: KPSS does not reject stationarity (p " + Short(r.kpss_pvalue) + ") but ADF cannot reject a unit root (p " +
-                     Short(r.adf_pvalue) + "); the series is short, or the test has little power here.";
-    } else {
-        r.analysis = "Not stationary: ADF cannot reject a unit root (p " + Short(r.adf_pvalue) + ") and KPSS rejects stationarity (p " + Short(r.kpss_pvalue) + ").";
-    }
-    if (r.suggested_differencing > 0) {
-        const StationarityResult::Differenced& chosen = r.differenced.back();
-        r.analysis += std::string(" ") + (r.suggested_differencing == 1 ? "One difference makes" : "Two differences make") + " it stationary enough (KPSS p " +
-                      Short(chosen.kpss_pvalue) + ", ADF p " + Short(chosen.adf_pvalue) + ").";
-    } else if (r.suggested_differencing < 0) {
-        r.analysis += " Two differences still do not make it stationary.";
-    }
-    return r;
+    });
 }
 
 std::vector<double> TimeSeries::Difference(const std::vector<double>& data, int order) {

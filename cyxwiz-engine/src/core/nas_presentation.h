@@ -20,9 +20,8 @@ static_assert(core::kArchitectureSearchMaxTrain == kNASRanked, "Train the best N
 // The model's input and output, read from the compiled graph.
 struct GraphShape {
     bool ok = false;
-    std::vector<size_t> input_shape;  // batch first, as NASEvaluator takes it ([1, 784], [1, C, H, W])
     int outputs = 0;
-    std::string task;  // "classification", "regression" or "image_classification" (suggestions)
+    std::string task;  // "classification", "regression" or "image_classification" (the score column)
     std::string text;  // "784 features in, 10 classes out"
     std::string inputs_text;   // "784 features"
     std::string outputs_text;  // "10 classes"
@@ -68,8 +67,6 @@ std::string LayersText(const std::vector<gui::MLNode>& nodes, const std::vector<
 std::string LossText(const TrialScore& score);
 std::string AccuracyText(const TrialScore& score);
 
-// "Five small models for 784 features and 10 classes."
-std::string SuggestionsIntro(const GraphShape& shape, size_t count);
 
 // The saved defaults (Preferences > Search) set on a search, and read back.
 void ApplyDefaults(NASSearchConfig& config, int& train_best, const core::ArchitectureSearchDefaults& defaults);

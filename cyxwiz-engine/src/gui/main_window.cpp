@@ -60,6 +60,8 @@
 #include "panels/toolbar.h"
 #include "panels/asset_browser.h"
 #include "panels/training_dashboard.h"
+#include "../core/rl_device_presentation.h"
+#include "../core/rl_graph_compile.h"
 #include "panels/training_plot_panel.h"
 #include "panels/script_editor.h"
 #include "panels/table_viewer.h"
@@ -73,59 +75,33 @@
 #include "panels/query_console.h"
 #include "panels/custom_node_editor.h"
 #include "panels/theme_editor.h"
-#include "panels/memory_panel.h"
-#include "panels/memory_monitor.h"
+#include "panels/monitor_panel.h"
 #include "panels/variable_explorer.h"
 #include "panels/plot_output_panel.h"
 #include "panels/export_dialog.h"
 #include "panels/import_dialog.h"
 #include "panels/deployment_dialog.h"
-#include "panels/model_summary_panel.h"
-#include "panels/architecture_diagram.h"
-#include "panels/lr_finder_panel.h"
+#include "panels/model_panel.h"
 #include "panels/studio_debugger_panel.h"
 #include "../core/studio_debugger_presentation.h"
-#include "panels/gradcam_panel.h"
 #include "panels/feature_importance_panel.h"
-#include "panels/nas_panel.h"
 #include "panels/hyperparam_search_panel.h"
+#include "panels/nas_panel.h"
 #include "panels/serving_panel.h"
-#include "panels/dnn_inference_panel.h"
-#include "panels/matrix_calculator_panel.h"
-#include "panels/eigen_decomp_panel.h"
-#include "panels/svd_panel.h"
-#include "panels/qr_panel.h"
-#include "panels/cholesky_panel.h"
-#include "panels/fft_panel.h"
-#include "panels/spectrogram_panel.h"
-#include "panels/filter_designer_panel.h"
-#include "panels/convolution_panel.h"
-#include "panels/wavelet_panel.h"
-#include "panels/gradient_descent_panel.h"
-#include "panels/convexity_panel.h"
-#include "panels/lp_panel.h"
-#include "panels/qp_panel.h"
-#include "panels/differentiation_panel.h"
-#include "panels/integration_panel.h"
+#include "panels/linear_algebra_panel.h"
+#include "panels/optimization_panel.h"
 #include "data_studio/folds_view.h"
 #include "data_studio/series_view.h"
+#include "data_studio/signal_view.h"
 #include "../core/node_executors/training_evaluation_operator.h"
-#include "panels/tokenization_panel.h"
-#include "panels/word_frequency_panel.h"
-#include "panels/tfidf_panel.h"
-#include "panels/embeddings_panel.h"
-#include "panels/sentiment_panel.h"
+#include "data_studio/text_view.h"
 #include "panels/language_model_generation_panel.h"
 // Utilities panels (Phase 12)
-#include "panels/calculator_panel.h"
-#include "panels/unit_converter_panel.h"
-#include "panels/random_generator_panel.h"
-#include "panels/hash_generator_panel.h"
-#include "panels/json_viewer_panel.h"
-#include "panels/regex_tester_panel.h"
+#include "panels/utilities_panel.h"
 #include "panels/cloud_browser.h"
 #include "panels/node_browser_panel.h"
 #include "panels/node_info_panel.h"
+#include "panels/simulation_monitor_panel.h"
 #include "../core/node_metadata.h"
 #include "panels/cloud_dataset_manager.h"
 #include "panels/plugin_manager_panel.h"
@@ -178,6 +154,7 @@
 #include "../core/training_executor.h"
 #include "../core/training_manager.h"
 #include "../core/test_manager.h"
+#include "../core/active_model_use.h"
 #include "../core/test_predictions_metrics.h"
 #include "../core/test_predictions_table.h"
 #include "../core/graph_compile_task.h"
@@ -568,10 +545,17 @@ MainWindow::MainWindow()
     // Initialize scripting engine (shared resource)
     scripting_engine_ = std::make_shared<scripting::ScriptingEngine>();
     console_->SetScriptingEngine(scripting_engine_);
+    // The assistant's view of the workspace is built when a command is sent,
+    // on the UI thread: building it reads the training trace and the last run
+    // from disk, far too slow for every frame.
     console_->SetAssistantCommandHandler(
         [](const cyxwiz::plugin::AssistantCommandRequest& request) {
             return cyxwiz::plugin::PluginManager::Instance()
                 .RunAssistantCommand(request);
+        },
+        [this]() {
+            cyxwiz::plugin::PluginManager::Instance().SetAssistantContextSnapshotForAll(
+                BuildAssistantContextSnapshot(node_editor_.get(), studio_debugger_panel_.get()));
         });
 
     // New panel system
@@ -642,8 +626,7 @@ MainWindow::MainWindow()
     query_console_ = std::make_unique<cyxwiz::QueryConsolePanel>();
     custom_node_editor_ = std::make_unique<gui::CustomNodeEditorPanel>();
     theme_editor_ = std::make_unique<gui::ThemeEditorPanel>();
-    memory_panel_ = std::make_unique<cyxwiz::MemoryPanel>();
-    memory_monitor_ = std::make_unique<cyxwiz::MemoryMonitor>();
+    monitor_panel_ = std::make_unique<cyxwiz::MonitorPanel>();
     variable_explorer_ = std::make_unique<cyxwiz::VariableExplorerPanel>();
     variable_explorer_->SetScriptingEngine(scripting_engine_);
     table_viewer_->SetScriptingEngine(scripting_engine_.get());  // Data Viewer reads again (TOFIX133 P5)
@@ -660,20 +643,26 @@ MainWindow::MainWindow()
     deployment_dialog_ = std::make_unique<cyxwiz::DeploymentDialog>();
     studio_debugger_panel_ = std::make_unique<cyxwiz::StudioDebuggerPanel>();
 
-    // Model Analysis panels (Phase 2)
-    model_summary_panel_ = std::make_unique<cyxwiz::ModelSummaryPanel>();
-    model_summary_panel_->SetNodeEditor(node_editor_.get());
-
-    architecture_diagram_ = std::make_unique<cyxwiz::ArchitectureDiagram>();
-    architecture_diagram_->SetNodeEditor(node_editor_.get());
-
-    lr_finder_panel_ = std::make_unique<cyxwiz::LRFinderPanel>();
-    lr_finder_panel_->SetNodeEditor(node_editor_.get());
+    // Tools > Model (TOFIX129 D11)
+    model_panel_ = std::make_unique<cyxwiz::ModelPanel>();
+    model_panel_->SetNodeEditor(node_editor_.get());
+    model_panel_->SetStartRangeTest([this](const cyxwiz::LearningRateRangeSettings& settings) {
+        return StartLearningRateRangeTest(settings);
+    });
+    model_panel_->SetSendToProjection([this](std::shared_ptr<arrow::Table> table, const std::string& name) {
+        cyxwiz::DataRegistry::Instance().RegisterArrowTable(std::move(table), name);
+        if (data_studio_panel_) data_studio_panel_->ShowExplore(name, cyxwiz::DataStudioPanel::ExploreTab::Projection);
+    });
+    training_plot_panel_->SetHealthNotice(
+        [this]() {
+            const cyxwiz::HealthView view = model_panel_->CurrentHealth();
+            return cyxwiz::TrainingPlotPanel::HealthNotice{view.has_health && view.warning, "Health: " + view.headline};
+        },
+        [this]() { model_panel_->Open("health"); });
 
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    gradcam_panel_ = std::make_unique<cyxwiz::GradCAMPanel>();
     feature_importance_panel_ = std::make_unique<cyxwiz::FeatureImportancePanel>();
     feature_importance_panel_->SetLoadCheckpointCallback([this]() { LoadCheckpointForTesting(); });
     nas_panel_ = std::make_unique<cyxwiz::NASPanel>();
@@ -686,50 +675,23 @@ MainWindow::MainWindow()
         },
                                                [this]() { return marked_launch_.has_value(); });
     serving_panel_ = std::make_unique<cyxwiz::ServingPanel>();
-    dnn_inference_panel_ = std::make_unique<cyxwiz::DNNInferencePanel>();
 
     // Clustering panels (Phase 6A)
 
     // Model Evaluation panels (Phase 6B)
 
     // Linear Algebra panels (Phase 7)
-    matrix_calculator_panel_ = std::make_unique<cyxwiz::MatrixCalculatorPanel>();
-    eigen_decomp_panel_ = std::make_unique<cyxwiz::EigenDecompPanel>();
-    svd_panel_ = std::make_unique<cyxwiz::SVDPanel>();
-    qr_panel_ = std::make_unique<cyxwiz::QRPanel>();
-    cholesky_panel_ = std::make_unique<cyxwiz::CholeskyPanel>();
+    linear_algebra_panel_ = std::make_unique<cyxwiz::LinearAlgebraPanel>();
 
-    // Signal Processing panels (Phase 8)
-    fft_panel_ = std::make_unique<cyxwiz::FFTPanel>();
-    spectrogram_panel_ = std::make_unique<cyxwiz::SpectrogramPanel>();
-    filter_designer_panel_ = std::make_unique<cyxwiz::FilterDesignerPanel>();
-    convolution_panel_ = std::make_unique<cyxwiz::ConvolutionPanel>();
-    wavelet_panel_ = std::make_unique<cyxwiz::WaveletPanel>();
+    // Tools > Optimization and Calculus: one window (TOFIX129 D10)
+    optimization_panel_ = std::make_unique<cyxwiz::OptimizationPanel>();
 
-    // Optimization & Calculus panels (Phase 9)
-    gradient_descent_panel_ = std::make_unique<cyxwiz::GradientDescentPanel>();
-    convexity_panel_ = std::make_unique<cyxwiz::ConvexityPanel>();
-    lp_panel_ = std::make_unique<cyxwiz::LPPanel>();
-    qp_panel_ = std::make_unique<cyxwiz::QPPanel>();
-    differentiation_panel_ = std::make_unique<cyxwiz::DifferentiationPanel>();
-    integration_panel_ = std::make_unique<cyxwiz::IntegrationPanel>();
-
-    // Text Processing panels (Phase 11)
-    tokenization_panel_ = std::make_unique<cyxwiz::TokenizationPanel>();
-    word_frequency_panel_ = std::make_unique<cyxwiz::WordFrequencyPanel>();
-    tfidf_panel_ = std::make_unique<cyxwiz::TFIDFPanel>();
-    embeddings_panel_ = std::make_unique<cyxwiz::EmbeddingsPanel>();
-    sentiment_panel_ = std::make_unique<cyxwiz::SentimentPanel>();
+    // Text: Language Model Generation (the data tools are Explore > Text, TOFIX129 D8)
     language_model_generation_panel_ =
         std::make_unique<cyxwiz::LanguageModelGenerationPanel>();
 
-    // Utilities panels (Phase 12)
-    calculator_panel_ = std::make_unique<cyxwiz::CalculatorPanel>();
-    unit_converter_panel_ = std::make_unique<cyxwiz::UnitConverterPanel>();
-    random_generator_panel_ = std::make_unique<cyxwiz::RandomGeneratorPanel>();
-    hash_generator_panel_ = std::make_unique<cyxwiz::HashGeneratorPanel>();
-    json_viewer_panel_ = std::make_unique<cyxwiz::JSONViewerPanel>();
-    regex_tester_panel_ = std::make_unique<cyxwiz::RegexTesterPanel>();
+    // Tools > Utilities: one window with six tabs (TOFIX129 D12).
+    utilities_panel_ = std::make_unique<cyxwiz::UtilitiesPanel>();
     
     // Cloud panels (DataStream)
     cloud_browser_panel_ = std::make_unique<gui::CloudBrowserPanel>();
@@ -766,6 +728,15 @@ MainWindow::MainWindow()
     node_browser_panel_ = std::make_unique<gui::NodeBrowserPanel>();
     node_browser_panel_->SetNodeEditor(node_editor_.get());
     node_info_panel_ = std::make_unique<cyxwiz::NodeInfoPanel>();
+    // The graph run's window; a run shows it when Preferences > Simulation says so.
+    simulation_monitor_panel_ = std::make_unique<cyxwiz::SimulationMonitorPanel>();
+    simulation_monitor_panel_->SetNodeEditor(node_editor_.get());
+    if (node_editor_) {
+        node_editor_->SetSimulationStartedCallback([this]() {
+            if (cyxwiz::core::EngineConfig::Instance().OpenSimulationMonitorOnRun())
+                simulation_monitor_panel_->ShowAndFocus();
+        });
+    }
     // Connect Node Browser hover to Info Panel
     if (node_browser_panel_ && node_info_panel_) {
         // Hover previews a node; a click keeps it in the Info panel.
@@ -809,6 +780,13 @@ MainWindow::MainWindow()
 
     // Data Studio's Show graph, Open dialog and Add Data Input bring the
     // CyxWiz Studio tab to the front (a node is added when Studio draws).
+    linear_algebra_panel_->SetAddToGraph([this](const std::string& a, const std::string& b, const cyxwiz::linalg::HandOff& h) {
+        return data_studio_panel_->AddNodeReading(a, h.type, h.name, h.parameters, h.step, b);
+    });
+    // Optimization and Calculus: a portfolio from a returns table, kept as a node (a branch).
+    optimization_panel_->SetAddToGraph([this](const std::string& table, const cyxwiz::optcalc::GraphHandOff& h) {
+        return data_studio_panel_->AddNodeReading(table, h.type, h.name, h.parameters, false, "");
+    });
     data_studio_panel_->SetOpenNodeEditorCallback([this]() {
         if (node_editor_) {
             node_editor_->Raise();
@@ -1066,6 +1044,11 @@ MainWindow::MainWindow()
     node_editor_->SetOpenDebuggerCallback([this]() {
         if (studio_debugger_panel_) studio_debugger_panel_->Show();
     });
+    node_editor_->SetOpenNodesPanelCallback([this]() {
+        if (!node_browser_panel_) return;
+        node_browser_panel_->SetVisible(true);
+        ::gui::BringToFront("Nodes");
+    });
 
     if (studio_debugger_panel_) {
         // Every mode but Runtime Trace compiles the graph, and the compile
@@ -1204,7 +1187,7 @@ MainWindow::MainWindow()
         cyxwiz::StudioDebuggerPanel::CanvasLinks links;
         links.show_canvas = [this]() {
             if (node_editor_) node_editor_->Show();
-            ImGui::SetWindowFocus("CyxWiz Studio");
+            ImGui::SetWindowFocus(gui::NodeEditor::kWindowId);
         };
         links.show_compile_report = [this]() { CompileGraphAndReport(); };
         links.train = [this]() {
@@ -1251,8 +1234,8 @@ MainWindow::MainWindow()
 
     node_editor_->SetTrainCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
         this->StartTrainingFromGraph(nodes, links);
-        // Show Training Dashboard when training starts
-        if (training_plot_panel_) {
+        // Show Training Dashboard when training starts (an RL run has its own)
+        if (training_plot_panel_ && !compile_result_rl_) {  // an RL graph has its own dashboard, started or refused
             training_plot_panel_->SetVisible(true);
         }
     });
@@ -1295,14 +1278,6 @@ MainWindow::MainWindow()
         if (node_editor_) node_editor_->AddDataInputAndConfigure();
     });
 
-    // Tokenize - opens existing TokenizationPanel
-    toolbar_->SetTokenizeDatasetCallback([this]() {
-        if (tokenization_panel_) {
-            tokenization_panel_->SetVisible(true);
-            spdlog::info("Opened Tokenization panel");
-        }
-    });
-
     toolbar_->SetAugmentDatasetCallback([this]() {
         if (node_editor_) {
             node_editor_->Show();
@@ -1331,7 +1306,7 @@ MainWindow::MainWindow()
             auto nodes = node_editor_->GetNodes();
             auto links = node_editor_->GetLinks();
             StartTrainingFromGraph(nodes, links);
-            if (training_plot_panel_) {
+            if (training_plot_panel_ && !compile_result_rl_) {  // an RL graph has its own dashboard, started or refused
                 training_plot_panel_->SetVisible(true);
             }
             spdlog::info("Started training from Train menu");
@@ -1347,20 +1322,45 @@ MainWindow::MainWindow()
         }
     });
 
-    // Tools > Monitoring > Clear Cache: the prepared-data cache of this
-    // project, after the dashboard's confirmation. Garbage Collection:
-    // device buffers back to the driver and a Python gc pass (TOFIX129 G3).
+    // Tools > Monitoring (TOFIX129 D13): the Monitor window's tabs, its Clear
+    // caches dialog (every cache of Preferences > Storage, at any time) and
+    // Free unused memory, which says what it freed.
+    toolbar_->SetOpenMonitorCallback([this](const std::string& tab) {
+        if (monitor_panel_) monitor_panel_->Open(tab);
+    });
     toolbar_->SetClearCacheCallback([this]() {
-        if (training_plot_panel_) training_plot_panel_->RequestClearPreparedDataCache();
+        if (monitor_panel_) monitor_panel_->OpenClearCaches();
     });
     toolbar_->SetRunGCCallback([this]() {
-        cyxwiz::ReleaseUnusedDeviceMemory();
-        if (scripting_engine_ && !scripting_engine_->IsCommandRunning() && !scripting_engine_->IsScriptRunning()) {
-            scripting_engine_->ExecuteCommandAsync("import gc; gc.collect()");
-            spdlog::info("Garbage collection: device buffers released, Python gc.collect() requested");
-        } else {
-            spdlog::info("Garbage collection: device buffers released (Python busy, gc skipped)");
+        if (!monitor_panel_) return;
+        monitor_panel_->Open("system");  // the result shows there
+        monitor_panel_->FreeUnusedMemory();
+    });
+    monitor_panel_->SetOpenProfiler([this]() {
+        if (studio_debugger_panel_) studio_debugger_panel_->ShowRuntimeProfile();
+    });
+    // Python's own collection: the number of objects gc.collect() found.
+    monitor_panel_->SetCollectPython([this](std::function<void(long long)> done) {
+        if (!scripting_engine_ || scripting_engine_->IsCommandRunning() || scripting_engine_->IsScriptRunning()) return false;
+        if (!scripting_engine_->IsInitialized()) {
+            // Python starts on first use; before that it holds nothing.
+            done(cyxwiz::monitor_view::kPythonNotStarted);
+            return true;
         }
+        scripting::ScriptingEngine::RunCallbacks callbacks;
+        callbacks.on_complete = [done](const scripting::ExecutionResult& result) {
+            long long objects = cyxwiz::monitor_view::kPythonFailed;
+            try {
+                if (result.success) objects = std::stoll(result.output);
+            } catch (...) {
+                objects = cyxwiz::monitor_view::kPythonFailed;
+            }
+            done(objects);
+        };
+        return scripting_engine_->ExecuteScriptAsync("import gc\nprint(gc.collect())", std::move(callbacks));
+    });
+    FrameMetrics::Instance().SetOpenMonitor([this]() {
+        if (monitor_panel_) monitor_panel_->Open("frames");
     });
 
     // File > Save: settings and layout, every open script, and the graph
@@ -1435,6 +1435,52 @@ MainWindow::MainWindow()
     if (cyxwiz::TestView* test = data_studio_panel_ ? data_studio_panel_->GetTestView() : nullptr) {
         test->run_test = [this]() {
             if (node_editor_) StartTestingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+        };
+        test->explain_sample = [this](int sample) {
+            if (model_panel_) model_panel_->ExplainSample(sample);
+        };
+        // Results > Test's Keep: merges a threshold or a calibration into the
+        // model's kept decision; an empty part with neither forgets it.
+        test->kept_decision = []() -> std::optional<cyxwiz::ModelDecision> {
+            const auto info = cyxwiz::TrainingManager::Instance().GetActiveModelInfo();
+            if (!info.evaluation_config) return std::nullopt;
+            return info.evaluation_config->decision;
+        };
+        test->keep_decision = [](const cyxwiz::ModelDecision& part, bool threshold, bool calibration) -> std::string {
+            auto& training = cyxwiz::TrainingManager::Instance();
+            const auto info = training.GetActiveModelInfo();
+            if (!info.evaluation_config) return "There is no trained model in use.";
+            cyxwiz::ModelDecision decision = info.evaluation_config->decision;
+            decision.scores = cyxwiz::DecisionScoresForLoss(info.evaluation_config->loss_type);
+            if (!threshold && !calibration) decision = cyxwiz::ModelDecision{};
+            if (threshold) {
+                // Platt and isotonic calibrate one class's score: a threshold
+                // for another class would re-target them.
+                const bool one_class_fit = decision.calibration == cyxwiz::ModelDecision::Calibration::Platt ||
+                                           decision.calibration == cyxwiz::ModelDecision::Calibration::Isotonic;
+                if (one_class_fit && part.has_threshold && part.positive != decision.positive)
+                    return "The kept calibration is for class " + std::to_string(decision.positive) +
+                           ": keep a threshold for that class, or Forget the calibration first.";
+                decision.has_threshold = part.has_threshold;
+                decision.threshold = part.threshold;
+                decision.positive = part.positive;
+            }
+            if (calibration) {
+                // A threshold kept before was picked on the uncalibrated scores
+                // (perhaps for another class): it no longer fits; pick it again
+                // after the next Test.
+                if (part.calibration != cyxwiz::ModelDecision::Calibration::None) decision.has_threshold = false;
+                decision.calibration = part.calibration;
+                decision.temperature = part.temperature;
+                decision.platt_a = part.platt_a;
+                decision.platt_b = part.platt_b;
+                decision.isotonic_x = part.isotonic_x;
+                decision.isotonic_y = part.isotonic_y;
+                if (part.calibration != cyxwiz::ModelDecision::Calibration::None &&
+                    part.calibration != cyxwiz::ModelDecision::Calibration::Temperature)
+                    decision.positive = part.positive;
+            }
+            return training.SetActiveModelDecision(decision);
         };
     }
     // Results > Cross-validation / Learning curve train the open graph again (TOFIX129 D4).
@@ -1616,6 +1662,16 @@ MainWindow::MainWindow()
     // File > Open Model File...: reads a model file and opens its graph.
     toolbar_->SetImportModelCallback([this]() {
         if (import_dialog_) import_dialog_->Open();
+    });
+
+    // A trained RL policy plays without touching the open graph (TOFIX195 S5)
+    import_dialog_->SetPlayPolicyCallback([this](const std::string& input_path, std::string& error) {
+        if (!node_editor_) {
+            error = "Studio is not ready.";
+            return false;
+        }
+        if (!node_editor_->LoadRLPolicy(input_path, error)) return false;
+        return node_editor_->PlayRLPolicy(error);
     });
 
     import_dialog_->SetOpenGraphCallback(
@@ -1846,22 +1902,6 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Memory Monitor callback (System Monitor in Profile menu)
-    toolbar_->SetOpenMemoryMonitorCallback([this]() {
-        if (memory_monitor_) {
-            memory_monitor_->Toggle();
-            spdlog::info("Toggled Memory Monitor");
-        }
-    });
-
-    // Set up Memory Panel callback (Memory Visualization in Profile menu)
-    toolbar_->SetOpenMemoryPanelCallback([this]() {
-        if (memory_panel_) {
-            memory_panel_->Show();
-            spdlog::info("Opened Memory Visualization panel");
-        }
-    });
-
     // Set up Compute Device selection callback (Preferences -> Device tab)
     toolbar_->SetComputeDeviceChangedCallback(
         [](cyxwiz::DeviceType type,
@@ -1908,32 +1948,9 @@ MainWindow::MainWindow()
         });
     }
 
-    // Set up Model Analysis callbacks (Tools menu - Phase 2)
-    toolbar_->SetOpenModelSummaryCallback([this]() {
-        if (model_summary_panel_) {
-            model_summary_panel_->Toggle();
-            if (model_summary_panel_->IsVisible()) {
-                model_summary_panel_->RefreshAnalysis();
-            }
-            spdlog::info("Toggled Model Summary panel");
-        }
-    });
-
-    toolbar_->SetOpenArchitectureDiagramCallback([this]() {
-        if (architecture_diagram_) {
-            architecture_diagram_->Toggle();
-            if (architecture_diagram_->IsVisible()) {
-                architecture_diagram_->RefreshDiagram();
-            }
-            spdlog::info("Toggled Architecture Diagram panel");
-        }
-    });
-
-    toolbar_->SetOpenLRFinderCallback([this]() {
-        if (lr_finder_panel_) {
-            lr_finder_panel_->Toggle();
-            spdlog::info("Toggled Learning Rate Finder panel");
-        }
+    // Tools > Model opens the Model window on a tab (TOFIX129 D11).
+    toolbar_->SetOpenModelCallback([this](const std::string& tab) {
+        if (model_panel_) model_panel_->Open(tab);
     });
 
     // Data > Explore and Tools > Statistics > Summary Statistics / Distribution
@@ -1976,24 +1993,10 @@ MainWindow::MainWindow()
 
     // Advanced Tools callbacks (Phase 5)
 
-    toolbar_->SetOpenGradCAMCallback([this]() {
-        if (gradcam_panel_) {
-            gradcam_panel_->Toggle();
-            spdlog::info("Toggled Grad-CAM panel");
-        }
-    });
-
     toolbar_->SetOpenFeatureImportanceCallback([this]() {
         if (feature_importance_panel_) {
             feature_importance_panel_->Toggle();
             spdlog::info("Toggled Feature Importance panel");
-        }
-    });
-
-    toolbar_->SetOpenNASCallback([this]() {
-        if (nas_panel_) {
-            nas_panel_->Toggle();
-            spdlog::info("Toggled Neural Architecture Search panel");
         }
     });
 
@@ -2004,6 +2007,13 @@ MainWindow::MainWindow()
         }
     });
 
+    toolbar_->SetOpenNASCallback([this]() {
+        if (nas_panel_) {
+            nas_panel_->Toggle();
+            spdlog::info("Toggled Neural Architecture Search panel");
+        }
+    });
+
     toolbar_->SetShowPluginNodesCallback([this](const std::string& plugin_id) {
         if (node_browser_panel_) node_browser_panel_->ShowPluginNodes(plugin_id);
     });
@@ -2011,13 +2021,6 @@ MainWindow::MainWindow()
         if (serving_panel_) {
             serving_panel_->Toggle();
             spdlog::info("Toggled Model Serving panel");
-        }
-    });
-
-    toolbar_->SetOpenDNNInferenceCallback([this]() {
-        if (dnn_inference_panel_) {
-            dnn_inference_panel_->Toggle();
-            spdlog::info("Toggled DNN Inference panel");
         }
     });
 
@@ -2078,110 +2081,27 @@ MainWindow::MainWindow()
         if (data_studio_panel_) data_studio_panel_->AddTransformStep(gui::NodeType::StandardScaler, {}, true);
     });
 
-    // Linear Algebra callbacks (Phase 7)
-    toolbar_->SetOpenMatrixCalculatorCallback([this]() {
-        if (matrix_calculator_panel_) {
-            matrix_calculator_panel_->Toggle();
-            spdlog::info("Toggled Matrix Calculator panel");
-        }
+    // Tools > Linear Algebra opens the one Linear Algebra window on that
+    // operation (TOFIX129 D9).
+    toolbar_->SetOpenLinearAlgebraCallback([this](const std::string& operation) {
+        if (linear_algebra_panel_) linear_algebra_panel_->Open(operation);
     });
 
-    toolbar_->SetOpenEigenDecompCallback([this]() {
-        if (eigen_decomp_panel_) {
-            eigen_decomp_panel_->Toggle();
-            spdlog::info("Toggled Eigen Decomposition panel");
-        }
-    });
+    // Tools > Signal Processing opens Data Studio's Explore tab Signal on that
+    // look, for the data in use (TOFIX129 D7); the Convolution Calculator is
+    // the Filter look in Kernel mode.
+    const auto open_signal = [this](cyxwiz::SignalView::Look look, bool kernel) {
+        if (data_studio_panel_) data_studio_panel_->ShowSignal(look, kernel);
+    };
+    toolbar_->SetOpenFFTCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Spectrum, false); });
+    toolbar_->SetOpenSpectrogramCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Spectrogram, false); });
+    toolbar_->SetOpenFilterDesignerCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Filter, false); });
+    toolbar_->SetOpenConvolutionCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Filter, true); });
+    toolbar_->SetOpenWaveletCallback([open_signal]() { open_signal(cyxwiz::SignalView::Look::Wavelet, false); });
 
-    toolbar_->SetOpenSVDCallback([this]() {
-        if (svd_panel_) {
-            svd_panel_->Toggle();
-            spdlog::info("Toggled SVD panel");
-        }
-    });
-
-    toolbar_->SetOpenQRCallback([this]() {
-        if (qr_panel_) {
-            qr_panel_->Toggle();
-            spdlog::info("Toggled QR Decomposition panel");
-        }
-    });
-
-    toolbar_->SetOpenCholeskyCallback([this]() {
-        if (cholesky_panel_) {
-            cholesky_panel_->Toggle();
-            spdlog::info("Toggled Cholesky Decomposition panel");
-        }
-    });
-
-    // Signal Processing callbacks (Phase 8)
-    toolbar_->SetOpenFFTCallback([this]() {
-        if (fft_panel_) {
-            fft_panel_->Toggle();
-            spdlog::info("Toggled FFT panel");
-        }
-    });
-    toolbar_->SetOpenSpectrogramCallback([this]() {
-        if (spectrogram_panel_) {
-            spectrogram_panel_->Toggle();
-            spdlog::info("Toggled Spectrogram panel");
-        }
-    });
-    toolbar_->SetOpenFilterDesignerCallback([this]() {
-        if (filter_designer_panel_) {
-            filter_designer_panel_->Toggle();
-            spdlog::info("Toggled Filter Designer panel");
-        }
-    });
-    toolbar_->SetOpenConvolutionCallback([this]() {
-        if (convolution_panel_) {
-            convolution_panel_->Toggle();
-            spdlog::info("Toggled Convolution panel");
-        }
-    });
-    toolbar_->SetOpenWaveletCallback([this]() {
-        if (wavelet_panel_) {
-            wavelet_panel_->Toggle();
-            spdlog::info("Toggled Wavelet Transform panel");
-        }
-    });
-
-    // Optimization & Calculus callbacks (Phase 9)
-    toolbar_->SetOpenGradientDescentCallback([this]() {
-        if (gradient_descent_panel_) {
-            gradient_descent_panel_->Toggle();
-            spdlog::info("Toggled Gradient Descent panel");
-        }
-    });
-    toolbar_->SetOpenConvexityCallback([this]() {
-        if (convexity_panel_) {
-            convexity_panel_->Toggle();
-            spdlog::info("Toggled Convexity Analyzer panel");
-        }
-    });
-    toolbar_->SetOpenLPCallback([this]() {
-        if (lp_panel_) {
-            lp_panel_->Toggle();
-            spdlog::info("Toggled Linear Programming panel");
-        }
-    });
-    toolbar_->SetOpenQPCallback([this]() {
-        if (qp_panel_) {
-            qp_panel_->Toggle();
-            spdlog::info("Toggled Quadratic Programming panel");
-        }
-    });
-    toolbar_->SetOpenDifferentiationCallback([this]() {
-        if (differentiation_panel_) {
-            differentiation_panel_->Toggle();
-            spdlog::info("Toggled Numerical Differentiation panel");
-        }
-    });
-    toolbar_->SetOpenIntegrationCallback([this]() {
-        if (integration_panel_) {
-            integration_panel_->Toggle();
-            spdlog::info("Toggled Numerical Integration panel");
-        }
+    // Tools > Optimization and Calculus opens the window on an operation (TOFIX129 D10).
+    toolbar_->SetOpenOptimizationCallback([this](const std::string& operation) {
+        if (optimization_panel_) optimization_panel_->Open(operation);
     });
 
     // Tools > Time Series opens Data Studio's Explore tabs Series (on that
@@ -2197,37 +2117,16 @@ MainWindow::MainWindow()
         if (data_studio_panel_) data_studio_panel_->ShowForecast();
     });
 
-    // Text Processing callbacks (Phase 11)
-    toolbar_->SetOpenTokenizationCallback([this]() {
-        if (tokenization_panel_) {
-            tokenization_panel_->SetVisible(true);
-            spdlog::info("Opened Tokenization panel");
-        }
-    });
-    toolbar_->SetOpenWordFrequencyCallback([this]() {
-        if (word_frequency_panel_) {
-            word_frequency_panel_->SetVisible(true);
-            spdlog::info("Opened Word Frequency panel");
-        }
-    });
-    toolbar_->SetOpenTFIDFCallback([this]() {
-        if (tfidf_panel_) {
-            tfidf_panel_->SetVisible(true);
-            spdlog::info("Opened TF-IDF panel");
-        }
-    });
-    toolbar_->SetOpenEmbeddingsCallback([this]() {
-        if (embeddings_panel_) {
-            embeddings_panel_->SetVisible(true);
-            spdlog::info("Opened Embeddings panel");
-        }
-    });
-    toolbar_->SetOpenSentimentCallback([this]() {
-        if (sentiment_panel_) {
-            sentiment_panel_->SetVisible(true);
-            spdlog::info("Opened Sentiment Analysis panel");
-        }
-    });
+    // Tools > Text (and Data > Tokenization) opens Data Studio's Explore tab
+    // Text on that look, for the data in use (TOFIX129 D8).
+    const auto open_text = [this](cyxwiz::TextView::Look look) {
+        if (data_studio_panel_) data_studio_panel_->ShowText(look);
+    };
+    toolbar_->SetOpenTokenizationCallback([open_text]() { open_text(cyxwiz::TextView::Look::Tokens); });
+    toolbar_->SetOpenWordFrequencyCallback([open_text]() { open_text(cyxwiz::TextView::Look::Words); });
+    toolbar_->SetOpenTFIDFCallback([open_text]() { open_text(cyxwiz::TextView::Look::Terms); });
+    toolbar_->SetOpenEmbeddingsCallback([open_text]() { open_text(cyxwiz::TextView::Look::Embeddings); });
+    toolbar_->SetOpenSentimentCallback([open_text]() { open_text(cyxwiz::TextView::Look::Sentiment); });
     toolbar_->SetOpenLanguageModelGenerationCallback([this]() {
         if (language_model_generation_panel_) {
             language_model_generation_panel_->SetVisible(true);
@@ -2235,42 +2134,9 @@ MainWindow::MainWindow()
         }
     });
 
-    // Utilities panel callbacks (Phase 12)
-    toolbar_->SetOpenCalculatorCallback([this]() {
-        if (calculator_panel_) {
-            calculator_panel_->SetVisible(true);
-            spdlog::info("Opened Calculator panel");
-        }
-    });
-    toolbar_->SetOpenUnitConverterCallback([this]() {
-        if (unit_converter_panel_) {
-            unit_converter_panel_->SetVisible(true);
-            spdlog::info("Opened Unit Converter panel");
-        }
-    });
-    toolbar_->SetOpenRandomGeneratorCallback([this]() {
-        if (random_generator_panel_) {
-            random_generator_panel_->SetVisible(true);
-            spdlog::info("Opened Random Generator panel");
-        }
-    });
-    toolbar_->SetOpenHashGeneratorCallback([this]() {
-        if (hash_generator_panel_) {
-            hash_generator_panel_->SetVisible(true);
-            spdlog::info("Opened Hash Generator panel");
-        }
-    });
-    toolbar_->SetOpenJSONViewerCallback([this]() {
-        if (json_viewer_panel_) {
-            json_viewer_panel_->SetVisible(true);
-            spdlog::info("Opened JSON Viewer panel");
-        }
-    });
-    toolbar_->SetOpenRegexTesterCallback([this]() {
-        if (regex_tester_panel_) {
-            regex_tester_panel_->SetVisible(true);
-            spdlog::info("Opened Regex Tester panel");
-        }
+    // Tools > Utilities opens the window on a tab (TOFIX129 D12).
+    toolbar_->SetOpenUtilitiesCallback([this](const std::string& tab) {
+        if (utilities_panel_) utilities_panel_->Open(tab);
     });
 
     // Set minimap visibility pointers for View -> Minimaps menu
@@ -2343,7 +2209,20 @@ MainWindow::MainWindow()
             s.script_open = script_editor_->HasEditableScript();
             s.script_running = script_editor_->IsScriptRunning();
         }
+        if (node_editor_ && node_editor_->HasSimulationNodes()) {
+            s.simulation_graph = true;
+            s.simulation_graph_name = node_editor_->GetGraphStem();
+            const auto c = node_editor_->GetSimulationCommands();
+            for (const auto* view : {&c.run, &c.pause, &c.step, &c.stop, &c.clear})
+                s.simulation_commands.push_back({cyxwiz::simulation::ActionId(view->command), view->label, view->hint,
+                                                 view->enabled, view->disabled_reason});
+        }
         return s;
+    });
+    toolbar_->SetSimulationCommandCallback([this](const std::string& action_id) {
+        cyxwiz::simulation::Command command;
+        if (node_editor_ && cyxwiz::simulation::CommandFromActionId(action_id, command))
+            node_editor_->RunSimulationCommand(command);
     });
 
     // Set up Open Python Console callback
@@ -2748,60 +2627,12 @@ MainWindow::~MainWindow() {
     // NOW reset MainWindow's scripting_engine_ - it should be the last reference
     spdlog::info("~MainWindow: scripting_engine_");
     scripting_engine_.reset();
-    spdlog::info("~MainWindow: regex_tester_panel_");
-    regex_tester_panel_.reset();
-    spdlog::info("~MainWindow: json_viewer_panel_");
-    json_viewer_panel_.reset();
-    spdlog::info("~MainWindow: hash_generator_panel_");
-    hash_generator_panel_.reset();
-    spdlog::info("~MainWindow: random_generator_panel_");
-    random_generator_panel_.reset();
-    spdlog::info("~MainWindow: unit_converter_panel_");
-    unit_converter_panel_.reset();
-    spdlog::info("~MainWindow: calculator_panel_");
-    calculator_panel_.reset();
-    spdlog::info("~MainWindow: sentiment_panel_");
-    sentiment_panel_.reset();
-    spdlog::info("~MainWindow: embeddings_panel_");
-    embeddings_panel_.reset();
-    spdlog::info("~MainWindow: tfidf_panel_");
-    tfidf_panel_.reset();
-    spdlog::info("~MainWindow: word_frequency_panel_");
-    word_frequency_panel_.reset();
-    spdlog::info("~MainWindow: tokenization_panel_");
-    tokenization_panel_.reset();
-    spdlog::info("~MainWindow: integration_panel_");
-    integration_panel_.reset();
-    spdlog::info("~MainWindow: differentiation_panel_");
-    differentiation_panel_.reset();
-    spdlog::info("~MainWindow: qp_panel_");
-    qp_panel_.reset();
-    spdlog::info("~MainWindow: lp_panel_");
-    lp_panel_.reset();
-    spdlog::info("~MainWindow: convexity_panel_");
-    convexity_panel_.reset();
-    spdlog::info("~MainWindow: gradient_descent_panel_");
-    gradient_descent_panel_.reset();
-    spdlog::info("~MainWindow: wavelet_panel_");
-    wavelet_panel_.reset();
-    spdlog::info("~MainWindow: convolution_panel_");
-    convolution_panel_.reset();
-    spdlog::info("~MainWindow: filter_designer_panel_");
-    filter_designer_panel_.reset();
-    spdlog::info("~MainWindow: spectrogram_panel_");
-    spectrogram_panel_.reset();
-    spdlog::info("~MainWindow: fft_panel_");
-    fft_panel_.reset();
-    spdlog::info("~MainWindow: cholesky_panel_");
-    cholesky_panel_.reset();
-    spdlog::info("~MainWindow: qr_panel_");
-    qr_panel_.reset();
-    spdlog::info("~MainWindow: svd_panel_");
-    svd_panel_.reset();
-    spdlog::info("~MainWindow: eigen_decomp_panel_");
-    eigen_decomp_panel_.reset();
-    spdlog::info("~MainWindow: matrix_calculator_panel_");
-    matrix_calculator_panel_.reset();
+    spdlog::info("~MainWindow: utilities_panel_");
+    utilities_panel_.reset();
+    spdlog::info("~MainWindow: optimization_panel_");
+    optimization_panel_.reset();
+    spdlog::info("~MainWindow: linear_algebra_panel_");
+    linear_algebra_panel_.reset();
     spdlog::info("~MainWindow: serving_panel_");
     serving_panel_.reset();
     spdlog::info("~MainWindow: hyperparam_search_panel_");
@@ -2810,14 +2641,8 @@ MainWindow::~MainWindow() {
     nas_panel_.reset();
     spdlog::info("~MainWindow: feature_importance_panel_");
     feature_importance_panel_.reset();
-    spdlog::info("~MainWindow: gradcam_panel_");
-    gradcam_panel_.reset();
-    spdlog::info("~MainWindow: lr_finder_panel_");
-    lr_finder_panel_.reset();
-    spdlog::info("~MainWindow: architecture_diagram_");
-    architecture_diagram_.reset();
-    spdlog::info("~MainWindow: model_summary_panel_");
-    model_summary_panel_.reset();
+    spdlog::info("~MainWindow: model_panel_");
+    model_panel_.reset();
     spdlog::info("~MainWindow: deployment_dialog_");
     deployment_dialog_.reset();
     spdlog::info("~MainWindow: import_dialog_");
@@ -2825,10 +2650,8 @@ MainWindow::~MainWindow() {
     spdlog::info("~MainWindow: export_dialog_");
     export_dialog_.reset();
     // variable_explorer_ already reset at the beginning
-    spdlog::info("~MainWindow: memory_monitor_");
-    memory_monitor_.reset();
-    spdlog::info("~MainWindow: memory_panel_");
-    memory_panel_.reset();
+    spdlog::info("~MainWindow: monitor_panel_");
+    monitor_panel_.reset();
     spdlog::info("~MainWindow: theme_editor_");
     theme_editor_.reset();
     spdlog::info("~MainWindow: custom_node_editor_");
@@ -2865,9 +2688,12 @@ MainWindow::~MainWindow() {
     spdlog::info("~MainWindow: all panels destroyed");
 }
 
+// The application's frame-rate log switch is the last of the three
+// Diagnostics switches to arrive: all three then take their saved values.
 void MainWindow::SetIdleLogPtr(bool* ptr) {
     if (toolbar_) {
         toolbar_->SetIdleLogPtr(ptr);
+        toolbar_->ApplySavedDiagnostics();
     }
 }
 
@@ -2882,6 +2708,9 @@ bool MainWindow::OpenGraphInNodeEditor(const std::string& path) {
     }
 
     node_editor_->Show();
+    // The graph just opened is what the user looks at next, even when another
+    // tab of the Studio's dock (the Script Editor) was in front.
+    ::gui::BringToFront(gui::NodeEditor::kWindowId);
     spdlog::info("Opened graph in Node Editor: {}", std::filesystem::path(path).filename().string());
     return true;
 }
@@ -3165,13 +2994,6 @@ void MainWindow::Render() {
     UpdateLiveCompile();
     UpdateLocalDebugStatus();
 
-    auto& plugin_manager = cyxwiz::plugin::PluginManager::Instance();
-    if (plugin_manager.GetPluginCount() > 0) {
-        plugin_manager.SetAssistantContextSnapshotForAll(
-            BuildAssistantContextSnapshot(
-                node_editor_.get(), studio_debugger_panel_.get()));
-    }
-
     // Check if we need to connect P2PClient to monitoring panel
     if (!monitoring_job_id_.empty() && job_manager_ && p2p_training_panel_) {
         auto p2p_client = job_manager_->GetP2PClient(monitoring_job_id_);
@@ -3205,8 +3027,7 @@ void MainWindow::Render() {
     TimedRender("query console", query_console_);
     TimedRender("custom node editor", custom_node_editor_);
     TimedRender("theme editor", theme_editor_);
-    TimedRender("memory", memory_panel_);
-    TimedRender("memory monitor", memory_monitor_);
+    TimedRender("Monitor", monitor_panel_);
     cyxwiz::VariablesView::PollAll(scripting_engine_.get());  // results for every Variables view
     TimedRender("variable explorer", variable_explorer_);
     TimedRender("plot output", plot_output_panel_);
@@ -3216,66 +3037,32 @@ void MainWindow::Render() {
     TimedRender("studio debugger", studio_debugger_panel_);
 
     // Render Model Analysis panels (Phase 2)
-    TimedRender("model summary", model_summary_panel_);
-    TimedRender("architecture diagram", architecture_diagram_);
-    TimedRender("lr finder", lr_finder_panel_);
+    TimedRender("model", model_panel_);
 
     // Render Statistics panels (Phase 4)
 
     // Render Advanced Tools panels (Phase 5)
-    TimedRender("gradcam", gradcam_panel_);
     TimedRender("feature importance", feature_importance_panel_);
     TimedRender("nas", nas_panel_);
     TimedRender("hyperparam search", hyperparam_search_panel_);
     TimedRender("serving", serving_panel_);
-    TimedRender("dnn inference", dnn_inference_panel_);
 
-    // Render Clustering panels (Phase 6A)
-
-    // Render Model Evaluation panels (Phase 6B)
-
-    // Linear Algebra panels (Phase 7)
-    TimedRender("matrix calculator", matrix_calculator_panel_);
-    TimedRender("eigen decomp", eigen_decomp_panel_);
-    TimedRender("svd", svd_panel_);
-    TimedRender("qr", qr_panel_);
-    TimedRender("cholesky", cholesky_panel_);
-
-    // Signal Processing panels (Phase 8)
-    TimedRender("fft", fft_panel_);
-    TimedRender("spectrogram", spectrogram_panel_);
-    TimedRender("filter designer", filter_designer_panel_);
-    TimedRender("convolution", convolution_panel_);
-    TimedRender("wavelet", wavelet_panel_);
+    TimedRender("linear algebra", linear_algebra_panel_);
 
     // Optimization & Calculus panels (Phase 9)
-    TimedRender("gradient descent", gradient_descent_panel_);
-    TimedRender("convexity", convexity_panel_);
-    TimedRender("lp", lp_panel_);
-    TimedRender("qp", qp_panel_);
-    TimedRender("differentiation", differentiation_panel_);
-    TimedRender("integration", integration_panel_);
+    TimedRender("optimization", optimization_panel_);
 
-    // Text Processing panels (Phase 11)
-    TimedRender("tokenization", tokenization_panel_);
-    TimedRender("word frequency", word_frequency_panel_);
-    TimedRender("tfidf", tfidf_panel_);
-    TimedRender("embeddings", embeddings_panel_);
-    TimedRender("sentiment", sentiment_panel_);
+    // Text: Language Model Generation
     TimedRender("language model generation", language_model_generation_panel_);
 
-    // Render Utilities panels (Phase 12)
-    TimedRender("calculator", calculator_panel_);
-    TimedRender("unit converter", unit_converter_panel_);
-    TimedRender("random generator", random_generator_panel_);
-    TimedRender("hash generator", hash_generator_panel_);
-    TimedRender("json viewer", json_viewer_panel_);
-    TimedRender("regex tester", regex_tester_panel_);
+    // Tools > Utilities (TOFIX129 D12)
+    TimedRender("utilities", utilities_panel_);
     
     // Cloud panels
     TimedRender("cloud browser", cloud_browser_panel_);
     TimedRender("node browser", node_browser_panel_);
     TimedRender("node info", node_info_panel_);
+    TimedRender("simulation monitor", simulation_monitor_panel_);
     TimedRender("cloud dataset manager", cloud_dataset_manager_panel_);
 
     // Plugin Manager panel
@@ -3284,8 +3071,11 @@ void MainWindow::Render() {
     // Data Studio panel (Phase 1 Week 1)
     TimedRender("data studio", data_studio_panel_);
 
-    // Render plugin-provided panels
-    cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();
+    // Render plugin-provided panels (one line in the frame overlay)
+    {
+        PanelTimer timer("plugin panels");
+        cyxwiz::plugin::PluginPanelRegistry::Instance().RenderAllVisible();
+    }
 
     // Render permission approval dialogs
     cyxwiz::plugin::PluginManager::Instance().RenderPermissionDialogs();
@@ -3424,8 +3214,15 @@ void MainWindow::UpdateLiveCompile() {
     const bool training = cyxwiz::TrainingManager::Instance().IsTrainingActive();
     live_compile_->project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
     live_compile_->Update(node_editor_->GetNodes(), node_editor_->GetLinks(), !training);
-    if (live_compile_->ResultSerial() == live_compile_serial_seen_ || !live_compile_->Config()) return;
+    // A new compile colours the pins; so does the last one when the canvas
+    // cleared its colours (an undo that only moved nodes) and that compile is
+    // of the graph as it is now.
+    const bool new_result = live_compile_->ResultSerial() != live_compile_serial_seen_;
+    const bool colours_cleared =
+        node_editor_->ValidationClears() != live_compile_clears_seen_ && live_compile_->UpToDate();
+    if ((!new_result && !colours_cleared) || !live_compile_->Config()) return;
     live_compile_serial_seen_ = live_compile_->ResultSerial();
+    live_compile_clears_seen_ = node_editor_->ValidationClears();
     // Pins and links show this compile, as the Compile button does.
     node_editor_->SetAllNodesPinState(NodeEditor::NodePinState::CompilePassed);
     for (const auto& issue : live_compile_->Config()->issues) {
@@ -3484,7 +3281,7 @@ void MainWindow::RenderDockSpace() {
         // only the tab focused while it updates, so this starts after a few
         // frames and focuses one window per frame, CyxWiz Studio last.
         if (front_tabs_countdown_ > 0) {
-            static constexpr const char* kFrontTabs[] = {"Asset Browser", "Console", "Data Studio", "CyxWiz Studio"};
+            static constexpr const char* kFrontTabs[] = {"Asset Browser", "Console", "Data Studio", gui::NodeEditor::kWindowId};
             constexpr int kCount = static_cast<int>(sizeof(kFrontTabs) / sizeof(kFrontTabs[0]));
             --front_tabs_countdown_;
             if (front_tabs_countdown_ < kCount) {
@@ -3578,7 +3375,7 @@ void MainWindow::BuildInitialDockLayout() {
     // Dock windows to their designated areas
     // Window names must EXACTLY match the names in ImGui::Begin() calls in each panel
     ImGui::DockBuilderDockWindow("Asset Browser", dock_id_left);
-    ImGui::DockBuilderDockWindow("CyxWiz Studio", dock_id_center_left);
+    ImGui::DockBuilderDockWindow(gui::NodeEditor::kWindowId, dock_id_center_left);
     ImGui::DockBuilderDockWindow("Script Editor", dock_id_center_left); // Tabbed with CyxWiz Studio
     ImGui::DockBuilderDockWindow("Data Studio", dock_id_center_right); // Beside CyxWiz Studio
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
@@ -3600,6 +3397,7 @@ void MainWindow::BuildInitialDockLayout() {
                              "P2P Training Progress"})
         ImGui::DockBuilderDockWindow(name, dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("###StudioDebuggerPanel", dock_id_bottom_right);
+    ImGui::DockBuilderDockWindow("Simulation Monitor", dock_id_bottom_right);
 
     // Finish the docking layout
     ImGui::DockBuilderFinish(dockspace_id);
@@ -3639,6 +3437,7 @@ void MainWindow::RegisterPanelsWithSidebar() {
     add("Script Editor", ICON_FA_CODE, script_editor_, "Workspace");
     add("Console", ICON_FA_TERMINAL, console_, "Workspace");
     add("Viewport", ICON_FA_CUBE, viewport_, "Workspace");
+    add("Simulation Monitor", ICON_FA_WAVE_SQUARE, simulation_monitor_panel_, "Workspace");
 
     // Data
     add("Data Studio", ICON_FA_WAND_MAGIC_SPARKLES, data_studio_panel_, "Data");
@@ -3651,6 +3450,11 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Training
     add("Training", ICON_FA_CHART_LINE, training_plot_panel_, "Training");
     add("Studio Debugger", ICON_FA_BUG, studio_debugger_panel_, "Training");
+    // Its window belongs to the Studio (it plays a policy trained there). Not remembered between
+    // sessions: no policy plays at launch, so it would open empty
+    if (node_editor_)
+        dock_style.RegisterPanel("Policy Playback", ICON_FA_PLAY, node_editor_->GetPolicyPlaybackVisiblePtr(), nullptr,
+                                 "Training", "", false);
     add("Tasks", ICON_FA_HOURGLASS_HALF, task_progress_panel_, "Training");
 
     // Network
@@ -3704,64 +3508,31 @@ void MainWindow::SetDefaultPanelVisibility(bool force) {
     if (query_console_) query_console_->SetVisible(false);
     if (custom_node_editor_) custom_node_editor_->SetVisible(false);
     if (theme_editor_) theme_editor_->SetVisible(false);
-    if (memory_panel_) memory_panel_->SetVisible(false);
-    if (memory_monitor_) memory_monitor_->SetVisible(false);
+    if (monitor_panel_) monitor_panel_->SetVisible(false);
     if (variable_explorer_) variable_explorer_->SetVisible(false);
     if (plot_output_panel_) plot_output_panel_->SetVisible(false);
 
     // Model Analysis panels (Phase 2)
-    if (model_summary_panel_) model_summary_panel_->SetVisible(false);
-    if (architecture_diagram_) architecture_diagram_->SetVisible(false);
-    if (lr_finder_panel_) lr_finder_panel_->SetVisible(false);
+    if (model_panel_) model_panel_->SetVisible(false);
 
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    if (gradcam_panel_) gradcam_panel_->SetVisible(false);
     if (feature_importance_panel_) feature_importance_panel_->SetVisible(false);
     if (nas_panel_) nas_panel_->SetVisible(false);
 
     // Clustering panels (Phase 6A)
 
-    // Model Evaluation panels (Phase 6B)
-
-    // Linear Algebra panels (Phase 7)
-    if (matrix_calculator_panel_) matrix_calculator_panel_->SetVisible(false);
-    if (eigen_decomp_panel_) eigen_decomp_panel_->SetVisible(false);
-    if (svd_panel_) svd_panel_->SetVisible(false);
-    if (qr_panel_) qr_panel_->SetVisible(false);
-    if (cholesky_panel_) cholesky_panel_->SetVisible(false);
-
-    // Signal Processing panels (Phase 8)
-    if (fft_panel_) fft_panel_->SetVisible(false);
-    if (spectrogram_panel_) spectrogram_panel_->SetVisible(false);
-    if (filter_designer_panel_) filter_designer_panel_->SetVisible(false);
-    if (convolution_panel_) convolution_panel_->SetVisible(false);
-    if (wavelet_panel_) wavelet_panel_->SetVisible(false);
+    if (linear_algebra_panel_) linear_algebra_panel_->SetVisible(false);
 
     // Optimization & Calculus panels (Phase 9)
-    if (gradient_descent_panel_) gradient_descent_panel_->SetVisible(false);
-    if (convexity_panel_) convexity_panel_->SetVisible(false);
-    if (lp_panel_) lp_panel_->SetVisible(false);
-    if (qp_panel_) qp_panel_->SetVisible(false);
-    if (differentiation_panel_) differentiation_panel_->SetVisible(false);
-    if (integration_panel_) integration_panel_->SetVisible(false);
+    if (optimization_panel_) optimization_panel_->SetVisible(false);
 
-    // Text Processing panels (Phase 11)
-    if (tokenization_panel_) tokenization_panel_->SetVisible(false);
-    if (word_frequency_panel_) word_frequency_panel_->SetVisible(false);
-    if (tfidf_panel_) tfidf_panel_->SetVisible(false);
-    if (embeddings_panel_) embeddings_panel_->SetVisible(false);
-    if (sentiment_panel_) sentiment_panel_->SetVisible(false);
+    // Text: Language Model Generation
     if (language_model_generation_panel_) language_model_generation_panel_->SetVisible(false);
 
-    // Utilities panels (Phase 12)
-    if (calculator_panel_) calculator_panel_->SetVisible(false);
-    if (unit_converter_panel_) unit_converter_panel_->SetVisible(false);
-    if (random_generator_panel_) random_generator_panel_->SetVisible(false);
-    if (hash_generator_panel_) hash_generator_panel_->SetVisible(false);
-    if (json_viewer_panel_) json_viewer_panel_->SetVisible(false);
-    if (regex_tester_panel_) regex_tester_panel_->SetVisible(false);
+    // Tools > Utilities (TOFIX129 D12)
+    if (utilities_panel_) utilities_panel_->SetVisible(false);
     
     // Cloud panels (hidden by default - access via sidebar/view menu)
     if (cloud_browser_panel_) cloud_browser_panel_->SetVisible(false);
@@ -3985,6 +3756,28 @@ void MainWindow::EndMarkedLaunch(const std::string& why) {
     if (not_started) not_started(why);
 }
 
+std::string MainWindow::StartLearningRateRangeTest(const cyxwiz::LearningRateRangeSettings& settings) {
+    if (!node_editor_) return "No graph is open.";
+    if (const std::string blocked = LaunchBlocker(); !blocked.empty()) return blocked + ".";
+    // The graph's own training path with the rate rising every step; one
+    // epoch at least per step, the test ends itself.
+    auto engine = MakeEngineGraphTrainingDispatch(cyxwiz::DataRegistry::Instance(), cyxwiz::TrainingManager::Instance());
+    ::gui::GraphTrainingDispatch dispatch =
+        [engine = std::move(engine), settings](cyxwiz::TrainingConfiguration config, const std::string& dataset_name,
+                                               const std::string& label_column, int, int batch_size,
+                                               std::weak_ptr<cyxwiz::TrainingPlotPanel>, std::function<void(bool)> done) {
+            config.learning_rate_range = settings;
+            config.learning_rate_range.enabled = true;
+            return engine(std::move(config), dataset_name, label_column, std::max(1, settings.steps), batch_size, {},
+                          std::move(done));
+        };
+    marked_launch_ = MarkedLaunch{"Learning rate range test", std::move(dispatch), [this](const std::string& why) {
+                                      if (model_panel_) model_panel_->RangeLaunchEnded(why);
+                                  }};
+    StartTrainingFromGraph(node_editor_->GetNodes(), node_editor_->GetLinks());
+    return "";
+}
+
 std::string MainWindow::LaunchBlocker(SearchRunner starting) const {
     if (!node_editor_) return "No graph is open";
     if (folds_task_) return "A cross-validation or learning curve is running";
@@ -4182,6 +3975,11 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         spdlog::warn("Train: wait for Run Test preparation/evaluation or cancel it first");
         return;
     }
+    // One training at a time, whatever its kind: a PPO run holds the device
+    if (node_editor_ && node_editor_->IsRLTrainingActive()) {
+        spdlog::warn("Train: a PPO run is training; stop it first");
+        return;
+    }
     // A reopened project keeps each Data Input's settings, not its loaded
     // data: load what training needs first, then train.
     if (const std::string loading = StartDataInputLoads(nodes, links); !loading.empty()) {
@@ -4219,6 +4017,19 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
         if (!compile_result_success_) {
             ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked);
             spdlog::error("StartTrainingFromGraph: blocked - graph has errors");
+            return;
+        }
+
+        // An RL graph trains with the Engine's PPO (TOFIX195 S4.3): no data,
+        // no Local Debug, its own dashboard
+        if (compile_result_rl_) {
+            if (cyxwiz::TrainingManager::Instance().IsTrainingActive()) {
+                spdlog::warn("Train: a model is training; stop it first");
+                return;
+            }
+            std::string error;
+            if (!node_editor_ || !node_editor_->StartRLTraining(compile_result_rl_, error))
+                spdlog::error("Train: {}", error.empty() ? "the node editor is not available" : error);
             return;
         }
 
@@ -4521,6 +4332,20 @@ void MainWindow::LocalDebugGraphAndReport() {
         compile_result_backend_placements_.clear();
         compile_result_issues_ = {{cyxwiz::IssueLevel::Error, -1, "",
                                    "The node editor or the Studio Debugger is not available.",
+                                   cyxwiz::errors::Ui::InvalidWorkflowState}};
+        ShowCompileReport(cyxwiz::compile_report::Mode::DebugBlocked);
+        return;
+    }
+
+    // An RL graph has no batch to debug: Train runs its PPO (TOFIX195 S4.3)
+    const auto& graph = node_editor_->GetNodes();
+    if (std::any_of(graph.begin(), graph.end(), [](const MLNode& n) { return cyxwiz::IsRLGraphNode(n.type); })) {
+        compile_result_success_ = false;
+        compile_result_has_config_ = false;
+        compile_result_backend_placements_.clear();
+        compile_result_issues_ = {{cyxwiz::IssueLevel::Info, -1, "",
+                                   "Local Debug runs one batch of a model trained on data. An RL graph has no batch: "
+                                   "Train runs its PPO, and the RL Training Dashboard shows each update.",
                                    cyxwiz::errors::Ui::InvalidWorkflowState}};
         ShowCompileReport(cyxwiz::compile_report::Mode::DebugBlocked);
         return;
@@ -5854,6 +5679,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
     compile_result_has_config_ = false;
     compile_result_backend_placements_.clear();
     compile_result_success_ = false;
+    compile_result_rl_.reset();
     if (properties_) {
         properties_->ClearBackendPlacementFacts();
     }
@@ -5865,9 +5691,28 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         compile_result_issues_ = config.issues;
         compile_result_backend_placements_ = config.backend_placements;
         compile_result_success_ = config.is_valid;
+        compile_result_rl_ = config.rl;
         // Launch readiness (data columns, device qualification, row limits):
         // reported by Compile, and therefore also before Train starts.
-        if (config.is_valid) {
+        // An RL graph on a GPU route with small networks: advice, never a switch (TOFIX206)
+        if (config.is_valid && config.rl) {
+            const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
+            const std::string advice = route.route_available
+                ? cyxwiz::rl_device::CompileAdvice(
+                      cyxwiz::rl_device::BackendWord(cyxwiz::ExecutionDeviceSelectionBackendName(route.type)),
+                      cyxwiz::HiddenUnits(config.rl->policy_layers), cyxwiz::HiddenUnits(config.rl->value_layers),
+                      cyxwiz::FusedNetworksExpected(*config.rl, route.type, route.device_id))
+                : std::string();
+            if (!advice.empty()) {
+                cyxwiz::ValidationIssue issue;
+                issue.level = cyxwiz::IssueLevel::Info;
+                issue.node_id = config.rl->ppo_node_id;
+                issue.node_name = "PPO";
+                issue.message = advice;
+                compile_result_issues_.push_back(std::move(issue));
+            }
+        }
+        if (config.is_valid && !config.rl) {
             const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
             for (auto& issue : gui::CheckGraphLaunchReadiness(
                      nodes, config, cyxwiz::DataRegistry::Instance(), &route)) {
@@ -6024,6 +5869,10 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
             "Another test preparation, training run or test is active. Wait for it to finish.");
         return;
     }
+    if (const auto busy = cyxwiz::ActiveModelBusy(false, false); !busy.empty()) {
+        ShowOperationError("Cannot run test", busy + ". Wait for it to finish.");
+        return;
+    }
     auto model = training.GetActiveModel();
     if (!model) {
         ShowOperationError("Cannot run test",
@@ -6046,6 +5895,10 @@ void MainWindow::StartTestingFromGraph(const std::vector<MLNode>& nodes, const s
                 HashGraphStructure(node_editor_->GetNodes(), node_editor_->GetLinks()) != fingerprint) {
                 ShowOperationError("Cannot run test",
                     "The graph or model changed while the test was being prepared. Run Test again.");
+                return;
+            }
+            if (const auto busy = cyxwiz::ActiveModelBusy(false, false); !busy.empty()) {
+                ShowOperationError("Cannot run test", busy + ". Run Test again when it has finished.");
                 return;
             }
             try { StartTestingWithConfig(nodes, links, std::move(config)); }
@@ -6187,6 +6040,9 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
         config.split_seed = trained.split_seed;
         config.image_excluded_files = trained.image_excluded_files;
     }
+    // The threshold / calibration kept with the model (Results > Test).
+    config.decision = active_model_info.evaluation_config ? active_model_info.evaluation_config->decision
+                                                          : cyxwiz::ModelDecision{};
 
     const int test_batch_size = config.batch_size;
     auto& registry = cyxwiz::DataRegistry::Instance();

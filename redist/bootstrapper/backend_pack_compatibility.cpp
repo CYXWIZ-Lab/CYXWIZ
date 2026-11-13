@@ -254,6 +254,29 @@ BackendPackCompatibilityDecision EvaluateBackendPackCompatibility(
     return decision;
   }
 
+  if (manifest.kind == BackendPackManifestKind::PluginPack) {
+    // A plugin pack runs on its companion base; it has no ArrayFire runtime,
+    // device or route to verify.
+    decision.verification_requirement =
+        BackendPackVerificationRequirement::NotRequired;
+    if (context.base_pack_id.empty()) {
+      SetUnknown(decision, BackendPackCompatibilityRule::InsufficientFacts,
+                 BackendPackRemediation::InstallMatchingBase);
+      return decision;
+    }
+    if (manifest.companion_base_id != context.base_pack_id) {
+      SetIncompatible(decision, BackendPackCompatibilityRule::CompanionBase,
+                      BackendPackRemediation::InstallMatchingBase);
+      return decision;
+    }
+    decision.eligibility = BackendPackEligibility::Compatible;
+    decision.rule = BackendPackCompatibilityRule::CompleteMatch;
+    decision.remediation = BackendPackRemediation::None;
+    decision.install_recommendation =
+        Availability(decision.catalog_support, decision.eligibility, true);
+    return decision;
+  }
+
   if (context.runtime_set_id.empty() || context.base_pack_id.empty() ||
       context.arrayfire_abi.empty()) {
     SetUnknown(decision, BackendPackCompatibilityRule::InsufficientFacts,

@@ -25,6 +25,28 @@ struct ActiveRuntimeState {
     std::vector<ActivePackState> packs;
 };
 
+// runtime/active-plugins.json: the active plugin packs, kept apart from
+// active-runtime.json so plugin activation never changes the ArrayFire runtime
+// identity, its generation, loader paths or route evidence (TOFIX195).
+inline constexpr const char* kActivePluginsFileName = "active-plugins.json";
+
+struct ActivePluginPackState {
+    std::string plugin_id;
+    std::string pack_id;
+};
+
+struct ActivePluginsState {
+    // The base the plugins were activated with; plugins of another base are inactive.
+    std::string base_pack_id;
+    std::vector<ActivePluginPackState> plugins;
+};
+
+struct ActivePluginPack {
+    std::string plugin_id;
+    std::string pack_id;
+    std::filesystem::path directory;
+};
+
 struct ActiveRuntime {
     std::string runtime_set_id;
     std::uint64_t generation = 0;
@@ -52,6 +74,31 @@ bool ResolveRuntimeState(
     const std::filesystem::path& runtime_root,
     const ActiveRuntimeState& state,
     ActiveRuntime& output,
+    std::string& error);
+
+// A missing file is an empty state (no plugin pack was ever activated).
+bool LoadActivePluginsState(
+    const std::filesystem::path& path,
+    ActivePluginsState& output,
+    std::string& error);
+bool SaveActivePluginsStateAtomic(
+    const std::filesystem::path& path,
+    const ActivePluginsState& state,
+    std::string& error);
+// runtime_root/plugins/<plugin-id>/<pack-id>
+std::filesystem::path PluginPackDirectory(
+    const std::filesystem::path& runtime_root,
+    const std::string& plugin_id,
+    const std::string& pack_id);
+// The active plugin packs of the active base. Entries recorded for another base
+// are inactive and skipped; an entry whose folder is missing, escapes the runtime
+// root or has no plugin.json is skipped and described in `skipped`. Fails only
+// when active-plugins.json itself is unreadable or invalid.
+bool ResolveActivePluginPacks(
+    const std::filesystem::path& runtime_root,
+    const std::string& active_base_pack_id,
+    std::vector<ActivePluginPack>& output,
+    std::vector<std::string>& skipped,
     std::string& error);
 
 void AppendBootstrapDiagnostic(

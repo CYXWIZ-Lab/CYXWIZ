@@ -86,6 +86,7 @@ struct PanelVisibility {
     std::function<void()> on_toggle;  // Optional callback
     std::string group;          // Workspace, Data, Training, Network, Extensions (sidebar and View > Panels)
     std::string shortcut;       // printed in the tooltip and View > Panels when set
+    bool remembered = true;     // its open state is kept between sessions (panel_memory)
 };
 
 /**
@@ -116,7 +117,7 @@ public:
     // Register panels for sidebar toggles
     void RegisterPanel(const std::string& name, const std::string& icon, bool* visible_ptr,
                        std::function<void()> on_toggle = nullptr, const std::string& group = "",
-                       const std::string& shortcut = "");
+                       const std::string& shortcut = "", bool remembered = true);
     void UnregisterPanel(const std::string& name);
     void ClearPanels();
 

@@ -386,29 +386,34 @@ private:
 };
 
 /**
- * OutlierDetectorOperator — annotate rows with is_outlier bool.
+ * OutlierDetectorOperator — flag, clip or drop the rows an outlier rule
+ * finds (TOFIX129 D7a G2: the step Explore > Outliers adds).
  *
- * Adds an `is_outlier` int32 column (0/1) flagging rows where ANY
- * of the selected feature columns trip the IQR or Z-score threshold.
- * Does NOT filter rows — filtering would break alignment with other
- * pipeline data. Users who want to drop outliers should chain a
- * DataSplit node keyed on `is_outlier`.
- *
- * The existing node has action="remove"/"clip"/"flag"; this
- * operator ships only "flag" semantics. Row-deletion and value-
- * clipping variants are deferred to tofix.
+ * Each selected column's bounds are learned from the Train rows when the
+ * pipeline run marked them (TrainRowsOf; every row otherwise), with the
+ * backend's DataTransform::OutlierBoundsOf: IQR, Z-score (population std)
+ * or Modified Z (median and MAD, the rule Explore draws). Then every row is
+ * tested against those bounds, and a row is an outlier when ANY selected
+ * column puts it outside its bounds. The action decides what happens:
+ *   flag   — adds an `is_outlier` int32 column (0/1), rows unchanged;
+ *   clip   — each selected value is clamped into its column's bounds (the
+ *            column becomes float64), no column added;
+ *   remove — the outlier rows are dropped (the partition column stays with
+ *            the rows that remain, so a Data Split still reads it).
  *
  * Params:
- *   columns    (optional, csv) — empty = auto-detect numeric.
+ *   columns    (optional, csv) — empty or "all" = auto-detect numeric.
  *   label_col  (optional)      — excluded from auto-detect.
- *   method     (default "iqr") — "iqr" or "zscore".
- *   threshold  (default 1.5)   — IQR multiplier or Z-score threshold.
+ *   method     (default "iqr") — "iqr", "zscore" or "modified_z".
+ *   threshold  (default 1.5)   — the rule's factor (IQR multiple, z, modified z).
+ *   action     (default "flag") — "flag", "clip" or "remove".
  */
 class OutlierDetectorOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "OutlierDetector"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
-    bool LearnsFromEveryRow() const override { return true; }
+    // The bounds come from the Train rows (TrainRowsOf), like the scalers.
+    bool LearnsFromEveryRow() const override { return false; }
 
     bool Configure(const std::map<std::string, std::string>& params,
                    std::string& error) override;
@@ -424,6 +429,7 @@ private:
     std::string label_col_;
     std::string method_ = "iqr";
     double threshold_ = 1.5;
+    std::string action_ = "flag";
     PipelineOperatorProgressCallback progress_callback_;
 };
 

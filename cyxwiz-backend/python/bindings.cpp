@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <filesystem>
 #include <cstdlib>
@@ -20,6 +21,10 @@
 #include "cyxwiz/data_loader.h"
 #include "bindings_tensor.h"
 #include "bindings_module.h"
+#include "bindings_optimize.h"
+#include "bindings_utilities.h"
+#include "bindings_system.h"
+#include "bindings_model.h"
 // Distributed training
 #include "cyxwiz/distributed/process_group.h"
 #include "cyxwiz/distributed/cpu_backend.h"
@@ -1812,20 +1817,69 @@ PYBIND11_MODULE(pycyxwiz, m) {
         );
     }, "Compute spectrogram (STFT)", py::arg("x"), py::arg("window_size") = 256, py::arg("hop_size") = 128, py::arg("sample_rate") = 1.0, py::arg("window") = "hann");
 
-    signal.def("lowpass", [](double cutoff, double fs, int order) {
-        auto result = cyxwiz::SignalProcessing::DesignLowpass(cutoff, fs, order);
+    // The FIR designs follow scipy.signal.firwin (TOFIX129 D7): `taps` is the
+    // number of coefficients; a failed design raises with the reason.
+    signal.def("lowpass", [](double cutoff, double fs, int taps) {
+        auto result = cyxwiz::SignalProcessing::DesignLowpass(cutoff, fs, taps);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return py::dict("b"_a = result.b, "a"_a = result.a);
-    }, "Design lowpass filter", py::arg("cutoff"), py::arg("fs"), py::arg("order") = 4);
+    }, "Design a windowed-sinc lowpass FIR filter (scipy.signal.firwin)", py::arg("cutoff"), py::arg("fs"), py::arg("taps") = 31);
 
-    signal.def("highpass", [](double cutoff, double fs, int order) {
-        auto result = cyxwiz::SignalProcessing::DesignHighpass(cutoff, fs, order);
+    signal.def("highpass", [](double cutoff, double fs, int taps) {
+        auto result = cyxwiz::SignalProcessing::DesignHighpass(cutoff, fs, taps);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return py::dict("b"_a = result.b, "a"_a = result.a);
-    }, "Design highpass filter", py::arg("cutoff"), py::arg("fs"), py::arg("order") = 4);
+    }, "Design a windowed-sinc highpass FIR filter (odd taps)", py::arg("cutoff"), py::arg("fs"), py::arg("taps") = 31);
 
-    signal.def("bandpass", [](double low, double high, double fs, int order) {
-        auto result = cyxwiz::SignalProcessing::DesignBandpass(low, high, fs, order);
+    signal.def("bandpass", [](double low, double high, double fs, int taps) {
+        auto result = cyxwiz::SignalProcessing::DesignBandpass(low, high, fs, taps);
+        if (!result.success) throw std::runtime_error(result.error_message);
         return py::dict("b"_a = result.b, "a"_a = result.a);
-    }, "Design bandpass filter", py::arg("low"), py::arg("high"), py::arg("fs"), py::arg("order") = 4);
+    }, "Design a windowed-sinc bandpass FIR filter", py::arg("low"), py::arg("high"), py::arg("fs"), py::arg("taps") = 31);
+
+    signal.def("bandstop", [](double low, double high, double fs, int taps) {
+        auto result = cyxwiz::SignalProcessing::DesignBandstop(low, high, fs, taps);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict("b"_a = result.b, "a"_a = result.a);
+    }, "Design a windowed-sinc bandstop FIR filter (odd taps)", py::arg("low"), py::arg("high"), py::arg("fs"), py::arg("taps") = 31);
+
+    signal.def("spectrum", [](const std::vector<double>& x, double sample_rate, const std::string& window, bool remove_mean) {
+        auto result = cyxwiz::SignalProcessing::Spectrum(x, sample_rate, window, remove_mean);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict("frequencies"_a = result.frequencies, "amplitude"_a = result.amplitude, "psd"_a = result.psd);
+    }, "One-sided amplitude spectrum and power density (periodic window, mean removed)",
+       py::arg("x"), py::arg("sample_rate") = 1.0, py::arg("window") = "hann", py::arg("remove_mean") = true);
+
+    signal.def("welch", [](const std::vector<double>& x, double sample_rate, int nperseg, const std::string& window) {
+        auto result = cyxwiz::SignalProcessing::Welch(x, sample_rate, nperseg, window);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict("frequencies"_a = result.frequencies, "psd"_a = result.psd, "segments"_a = result.segments);
+    }, "Welch power density (scipy.signal.welch)", py::arg("x"), py::arg("sample_rate") = 1.0, py::arg("nperseg") = 256, py::arg("window") = "hann");
+
+    signal.def("wavedec", [](const std::vector<double>& x, const std::string& wavelet, int level) {
+        auto result = cyxwiz::SignalProcessing::DWT(x, wavelet, level);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict("approximation"_a = result.approximation, "details"_a = result.details, "max_level"_a = result.max_levels);
+    }, "Discrete wavelet transform (pywt.wavedec, symmetric mode); details[0] is the finest level",
+       py::arg("x"), py::arg("wavelet") = "db4", py::arg("level") = 3);
+
+    signal.def("denoise", [](const std::vector<double>& x, const std::string& wavelet, int level, double threshold, bool soft) {
+        auto result = cyxwiz::SignalProcessing::WaveletDenoise(x, wavelet, level, threshold, soft);
+        if (!result.success) throw std::runtime_error(result.error_message);
+        return py::dict("denoised"_a = result.denoised, "sigma"_a = result.sigma, "threshold"_a = result.threshold);
+    }, "Wavelet denoising at the universal threshold (threshold <= 0) or a given one",
+       py::arg("x"), py::arg("wavelet") = "db4", py::arg("level") = 3, py::arg("threshold") = 0.0, py::arg("soft") = true);
+
+    signal.def("findpeaks_prominence", [](const std::vector<double>& x, double prominence, int distance) {
+        auto peaks = cyxwiz::SignalProcessing::FindPeaksByProminence(x, prominence, distance);
+        std::vector<int> indices;
+        std::vector<double> prominences;
+        for (const auto& p : peaks) {
+            indices.push_back(p.index);
+            prominences.push_back(p.prominence);
+        }
+        return py::dict("indices"_a = indices, "prominences"_a = prominences);
+    }, "Peaks by prominence and distance (scipy.signal.find_peaks)", py::arg("x"), py::arg("prominence"), py::arg("distance") = 1);
 
     signal.def("filter", [](const std::vector<double>& x, const std::vector<double>& b, const std::vector<double>& a) {
         cyxwiz::FilterCoefficients coeffs;
@@ -1941,6 +1995,58 @@ PYBIND11_MODULE(pycyxwiz, m) {
             "auc"_a = result.auc
         );
     }, "ROC curve and AUC");
+
+    // ============================================================================
+    // TEXT SUBMODULE
+    // ============================================================================
+    // The rules Data Studio's Text tab and the text nodes use (TOFIX129 D8),
+    // checked against Python, scikit-learn, NLTK and vaderSentiment.
+    auto text = m.def_submodule("text", "Words, terms, stop words, Porter stems and VADER sentiment");
+
+    text.def("words", &cyxwiz::TextProcessing::Words,
+             "The words of a text: lower-cased runs of letters and digits, two or more long, an apostrophe between "
+             "two kept (Python: re.finditer(r\"[^\\W_]+(?:'[^\\W_]+)*\", text), lower-cased)",
+             py::arg("text"));
+
+    text.def("terms", [](const std::string& value, const std::optional<std::string>& stop_words, std::pair<int, int> ngram_range) {
+        if (stop_words && *stop_words != "english" && *stop_words != "none")
+            throw std::invalid_argument("stop_words must be 'english', 'none' or None");
+        if (ngram_range.first < 1 || ngram_range.second < ngram_range.first)
+            throw std::invalid_argument("ngram_range must be (min, max) with 1 <= min <= max");
+        return cyxwiz::TextProcessing::Terms(value, stop_words && *stop_words == "english", ngram_range.first, ngram_range.second);
+    }, "The terms of a text as the TF-IDF and Count Vectorizer nodes count them: the words, the English stop words "
+       "left out first when asked, then the word n-grams joined by a space",
+       py::arg("text"), py::arg("stop_words") = "english", py::arg("ngram_range") = std::make_pair(1, 1));
+
+    text.def("english_stop_words", []() {
+        const auto& stop = cyxwiz::TextProcessing::GetStopwords();
+        return std::vector<std::string>(stop.begin(), stop.end());
+    }, "The English stop words, sorted: scikit-learn's ENGLISH_STOP_WORDS (318) and their contractions");
+
+    text.def("stem", &cyxwiz::TextProcessing::Stem,
+             "The Porter (1980) stem of a word, lower-cased first (NLTK's PorterStemmer(mode='ORIGINAL_ALGORITHM'))",
+             py::arg("word"));
+
+    text.def("vader", [](const std::string& value) {
+        const auto scores = cyxwiz::TextProcessing::Vader(value);
+        return py::dict(
+            "neg"_a = scores.negative,
+            "neu"_a = scores.neutral,
+            "pos"_a = scores.positive,
+            "compound"_a = scores.compound,
+            "words"_a = scores.words
+        );
+    }, "VADER sentiment as vaderSentiment 3.3.2's polarity_scores, unrounded, with each word's valence after the rules",
+       py::arg("text"));
+
+    // ============================================================================
+    // CALCULUS AND OPTIMIZE SUBMODULES
+    // ============================================================================
+    // Tools > Optimization and Calculus from Python (TOFIX129 D10).
+    pycyxwiz_bindings::BindCalculus(m);
+    pycyxwiz_bindings::BindOptimize(m);
+    pycyxwiz_bindings::BindUtilities(m);
+    pycyxwiz_bindings::BindSystem(m);
 
     // ============================================================================
     // TIME SERIES SUBMODULE
@@ -2105,7 +2211,7 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def_static("compute_mfcc", &cyxwiz::AudioProcessing::ComputeMFCC,
                     py::arg("audio"), py::arg("config") = cyxwiz::MFCCConfig{})
         .def_static("add_noise", &cyxwiz::AudioProcessing::AddNoise,
-                    py::arg("audio"), py::arg("snr_db") = 20.0f)
+                    py::arg("audio"), py::arg("snr_db") = 20.0f, py::arg("seed") = 42u)
         .def_static("time_stretch", &cyxwiz::AudioProcessing::TimeStretch,
                     py::arg("audio"), py::arg("rate") = 1.0f)
         .def_static("pitch_shift", &cyxwiz::AudioProcessing::PitchShift,
@@ -3206,8 +3312,9 @@ Example queries:
     // =========================================================================
     // RL Training Dashboard Bridge
     // =========================================================================
-    // These functions allow Python RL training scripts (SB3) to stream metrics
-    // back to the C++ TrainingDashboardPanel and check pause/stop state.
+    // A Python RL script (SB3, CleanRL, your own) streams its metrics to the
+    // Engine's RL Training Dashboard. The Engine's own PPO (Train on an RL
+    // graph) reports there directly.
 
     // The callback holds a Python object, so it is never destroyed by a static
     // destructor: at process exit the module's statics go after the embedding
@@ -3216,8 +3323,6 @@ Example queries:
     // under the GIL; a call works on its own copy.
     using RLMetricCallback = std::function<void(const std::string&, float)>;
     static auto* s_rl_metric_callback = new RLMetricCallback();
-    static std::atomic<bool> s_rl_stop_requested{false};
-    static std::atomic<bool> s_rl_paused{false};
 
     m.def("rl_set_metric_callback", [](py::object callback) {
         if (callback.is_none()) {
@@ -3240,22 +3345,8 @@ Example queries:
     }, py::arg("name"), py::arg("value"),
        "Update an RL metric on the dashboard (thread-safe)");
 
-    m.def("rl_should_stop", []() -> bool {
-        return s_rl_stop_requested.load();
-    }, "Check if stop was requested for RL training");
-
-    m.def("rl_is_paused", []() -> bool {
-        return s_rl_paused.load();
-    }, "Check if RL training is paused");
-
-    m.def("rl_set_stop", [](bool val) {
-        s_rl_stop_requested.store(val);
-    }, py::arg("value"), "Set RL training stop flag");
-
-    m.def("rl_set_paused", [](bool val) {
-        s_rl_paused.store(val);
-    }, py::arg("value"), "Set RL training pause flag");
-
     // pycyxwiz.nodes: last, so the classes it uses are bound (TOFIX125 P3).
+    pycyxwiz_bindings::BindModelTools(m);
     pycyxwiz_bindings::InstallNodesSubmodule(m);
+    pycyxwiz_bindings::InstallRlSubmodule(m);
 }

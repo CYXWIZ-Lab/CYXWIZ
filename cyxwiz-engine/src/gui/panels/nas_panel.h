@@ -33,7 +33,7 @@ bool ArchitectureSearchFields(NASSearchConfig& config, int* train_best);
  * step with its score, applied to the canvas (Ctrl+Z undoes) or dropped;
  * an evolutionary search on the quick score whose best versions can be
  * trained the way Train does (Train's checks and data preparation, then
- * core/trial_runner) and applied; suggestions added beside the graph.
+ * core/trial_runner) and applied.
  */
 class NASPanel {
 public:
@@ -96,7 +96,6 @@ private:
     void RenderChange();
     void RenderSearch();
     void RenderVersions();
-    void RenderSuggestions();
 
     bool visible_ = false;
     gui::NodeEditor* node_editor_ = nullptr;
@@ -143,8 +142,6 @@ private:
     std::string not_started_;
     std::string versions_note_;
 
-    // Start from a suggestion.
-    std::vector<NASCandidate> suggestions_;
 };
 
 } // namespace cyxwiz

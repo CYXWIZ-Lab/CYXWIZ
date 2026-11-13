@@ -41,6 +41,7 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -928,6 +929,54 @@ void TestBatchRowIds(
               "an Arrow test run keeps the test rows");
         Check(arrow_metrics.source_dataset == arrow_dataset->GetName(),
               "an Arrow test run names its table");
+        // Explain's inputs (TOFIX129 D11): every wrong sample and the first
+        // ones, one model-input row each.
+        {
+            std::set<int> kept;
+            bool widths = true;
+            for (const auto& input : arrow_metrics.kept_inputs) {
+                kept.insert(input.sample);
+                widths = widths && input.values.size() == 2;
+            }
+            bool all_wrong_kept = true;
+            for (size_t i = 0; i < arrow_metrics.predictions.size(); ++i) {
+                const bool wrong = arrow_metrics.predictions[i] != arrow_metrics.ground_truth[i];
+                const bool first = static_cast<int>(i) < cyxwiz::TestingMetrics::kKeptFirstSamples;
+                if ((wrong || first) && kept.count(static_cast<int>(i)) == 0) all_wrong_kept = false;
+                if (!wrong && !first && kept.count(static_cast<int>(i)) == 1) all_wrong_kept = false;
+            }
+            Check(!arrow_metrics.kept_inputs.empty() && widths && all_wrong_kept,
+                  "a test keeps the inputs of its wrong and first samples for Explain");
+        }
+        // A kept decision (TOFIX129 D11): a threshold of 0 for class 1 calls
+        // every row class 1, and the test says it used it.
+        {
+            auto decided = config;
+            decided.decision.has_threshold = true;
+            decided.decision.positive = 1;
+            decided.decision.threshold = 0.0;
+            cyxwiz::TestExecutor kept_test(decided, arrow_dataset, "label", cyxwiz::TestDatasetScope::ConfiguredTestSplit);
+            const auto kept_metrics = run_test(kept_test);
+            const bool all_positive = std::all_of(kept_metrics.predictions.begin(), kept_metrics.predictions.end(),
+                                                  [](int p) { return p == 1; });
+            Check(!kept_metrics.predictions.empty() && all_positive &&
+                      kept_metrics.decision_applied == "threshold 0 for class 1" && !kept_metrics.decision_calibrated,
+                  "a kept threshold decides the test's predictions: " + kept_metrics.decision_applied);
+        }
+        // Projector's layer features: the one Linear layer's output (its
+        // logits, no activation after it) for every sample.
+        {
+            const auto& features = arrow_metrics.layer_features;
+            Check(features.size() == 1 && features[0].layer == 0 && features[0].width == 2 &&
+                      features[0].values.size() == 2 * arrow_metrics.predictions.size(),
+                  "a test records each layer's features of every sample for the Projector");
+            bool argmax_matches = !features.empty();
+            for (size_t i = 0; argmax_matches && i < arrow_metrics.predictions.size(); ++i) {
+                const float a = features[0].values[2 * i], b = features[0].values[2 * i + 1];
+                argmax_matches = (b > a ? 1 : 0) == arrow_metrics.predictions[i] || a == b;
+            }
+            Check(argmax_matches, "the recorded logits give the test's predictions");
+        }
         cyxwiz::TestExecutor parquet_test(config, parquet_dataset, "label",
                                           cyxwiz::TestDatasetScope::ConfiguredTestSplit);
         const auto parquet_metrics = run_test(parquet_test);

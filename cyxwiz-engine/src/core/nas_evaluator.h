@@ -110,7 +110,6 @@ struct NASSearchResult {
  * Provides tools for:
  * - Evaluating architecture complexity and efficiency
  * - Mutating architectures for search
- * - Generating architecture suggestions
  * - Simple evolutionary architecture search
  */
 class NASEvaluator {
@@ -119,17 +118,18 @@ public:
      * Score an architecture without training
      *
      * Evaluates based on parameter count, FLOPs, depth, and other heuristics.
+     * Parameters and multiply-adds come from the graph compiled as the canvas
+     * compiles it (the Model window's one counter, model_summary_presentation):
+     * a graph that does not compile is not scored (success false, why).
      *
-     * @param nodes The node graph
+     * @param nodes The node graph (with its data source)
      * @param links The connections
-     * @param input_shape Input shape [batch, channels, height, width] or [batch, features]
      * @param config Scoring configuration (optional)
      * @return ArchitectureScore with all metrics
      */
     static ArchitectureScore ScoreArchitecture(
         const std::vector<gui::MLNode>& nodes,
         const std::vector<gui::NodeLink>& links,
-        const std::vector<size_t>& input_shape,
         const NASSearchConfig& config = NASSearchConfig()
     );
 
@@ -150,31 +150,13 @@ public:
     );
 
     /**
-     * Generate architecture suggestions based on task type
-     *
-     * @param task_type "classification", "regression", "image_classification", etc.
-     * @param input_shape Input shape
-     * @param output_size Number of output classes/values
-     * @param num_suggestions Number of architectures to generate
-     * @return Vector of (nodes, links) pairs
-     */
-    static std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>>
-    SuggestArchitectures(
-        const std::string& task_type,
-        const std::vector<size_t>& input_shape,
-        int output_size,
-        int num_suggestions = 5
-    );
-
-    /**
      * Run evolutionary architecture search
      *
-     * Note: This does NOT train models - it uses heuristic scoring only.
-     * For actual NAS, you'd need to train candidate architectures.
+     * Scores without training (ScoreArchitecture); the panel then trains
+     * the best ones through Train (core/trial_runner).
      *
      * @param initial_nodes Starting architecture
      * @param initial_links Starting links
-     * @param input_shape Input shape
      * @param config Search configuration
      * @param progress_callback Optional callback (round just scored, its
      *        best); returning false stops the search after that round
@@ -183,7 +165,6 @@ public:
     static NASSearchResult EvolveArchitecture(
         const std::vector<gui::MLNode>& initial_nodes,
         const std::vector<gui::NodeLink>& initial_links,
-        const std::vector<size_t>& input_shape,
         const NASSearchConfig& config = NASSearchConfig(),
         std::function<bool(int, const ArchitectureScore&)> progress_callback = nullptr
     );

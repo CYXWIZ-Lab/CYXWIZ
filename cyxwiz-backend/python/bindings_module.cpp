@@ -18,6 +18,7 @@ namespace py = pybind11;
 
 namespace {
 #include "pycyxwiz_nodes_source.inc"
+#include "pycyxwiz_rl_source.inc"
 }  // namespace
 
 namespace pycyxwiz_bindings {
@@ -305,6 +306,8 @@ public:
     std::vector<Tensor> BackwardInputs(const Tensor& grad_output) override {
         return target_->BackwardInputs(grad_output);
     }
+
+    const Module& Target() const { return *target_; }
 
 private:
     py::object owner_;
@@ -599,6 +602,13 @@ void AddModuleToSequential(cyxwiz::SequentialModel& model, py::object module) {
     model.AddModule(std::make_unique<PythonHeldModule>(std::move(module), target));
 }
 
+const Module& HeldModule(const Module& module) {
+    const auto* held = dynamic_cast<const PythonHeldModule*>(&module);
+    return held ? held->Target() : module;
+}
+
+bool IsPythonModule(const Module& module) { return dynamic_cast<const PythonModule*>(&HeldModule(module)) != nullptr; }
+
 void InstallNodesSubmodule(py::module_& m) {
     std::string source;
     for (const char* const* piece = kPycyxwizNodesSource; *piece != nullptr; ++piece) source += *piece;
@@ -607,6 +617,14 @@ void InstallNodesSubmodule(py::module_& m) {
     scope["_cyx"] = m;
     py::exec(source, scope);
     py::module_::import("sys").attr("modules")["pycyxwiz.nodes"] = nodes;
+}
+
+void InstallRlSubmodule(py::module_& m) {
+    std::string source;
+    for (const char* const* piece = kPycyxwizRlSource; *piece != nullptr; ++piece) source += *piece;
+    py::module_ rl = m.def_submodule("rl", "Plugin environments as Gymnasium environments");
+    py::exec(source, rl.attr("__dict__"));
+    py::module_::import("sys").attr("modules")["pycyxwiz.rl"] = rl;
 }
 
 }  // namespace pycyxwiz_bindings

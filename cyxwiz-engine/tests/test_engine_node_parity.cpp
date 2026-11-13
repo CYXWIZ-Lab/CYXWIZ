@@ -209,7 +209,7 @@ int main() {
           "validation ran on a real partition");
     Check(Same(engine_val_loss, node_val_loss, 1e-5f), "same validation loss per epoch");
 
-    std::cout << "the checkpoint keeps its tokenizer (TOFIX159)\n";
+    std::cout << "the checkpoint keeps its tokenizer\n";
     {
         fs::path best;
         for (const auto& entry : fs::recursive_directory_iterator(work / "engine_checkpoints", ec))

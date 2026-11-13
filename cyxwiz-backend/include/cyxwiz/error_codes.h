@@ -19,6 +19,7 @@ inline constexpr const char* TextNotTokenized = "CW-C-0203";
 inline constexpr const char* ImageNotResized = "CW-C-0204";
 inline constexpr const char* AudioFeaturesMissing = "CW-C-0205";
 inline constexpr const char* LearnsFromEveryRow = "CW-C-0206";
+inline constexpr const char* ColumnRolesKeepOut = "CW-C-0207";  // the Data Input's roles keep columns out of the features
 inline constexpr const char* TensorShapeMismatch = "CW-C-0301";
 inline constexpr const char* LabelOutputShapeMismatch = "CW-C-0302";
 inline constexpr const char* InvalidParameter = "CW-C-0401";
@@ -118,7 +119,7 @@ struct DiagnosticCodeDescriptor {
     const char* symbolic_name;
 };
 
-inline constexpr std::array<DiagnosticCodeDescriptor, 72> DiagnosticCodeCatalog{{
+inline constexpr std::array<DiagnosticCodeDescriptor, 73> DiagnosticCodeCatalog{{
     {Compiler::GenericIssue, "Compiler.GenericIssue"},
     {Compiler::MissingTrainingPathNode, "Compiler.MissingTrainingPathNode"},
     {Compiler::UnsupportedTrainingNode, "Compiler.UnsupportedTrainingNode"},
@@ -129,6 +130,7 @@ inline constexpr std::array<DiagnosticCodeDescriptor, 72> DiagnosticCodeCatalog{
     {Compiler::ImageNotResized, "Compiler.ImageNotResized"},
     {Compiler::AudioFeaturesMissing, "Compiler.AudioFeaturesMissing"},
     {Compiler::LearnsFromEveryRow, "Compiler.LearnsFromEveryRow"},
+    {Compiler::ColumnRolesKeepOut, "Compiler.ColumnRolesKeepOut"},
     {Compiler::TensorShapeMismatch, "Compiler.TensorShapeMismatch"},
     {Compiler::LabelOutputShapeMismatch, "Compiler.LabelOutputShapeMismatch"},
     {Compiler::InvalidParameter, "Compiler.InvalidParameter"},

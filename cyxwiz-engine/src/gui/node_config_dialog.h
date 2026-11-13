@@ -30,6 +30,7 @@
 #include "data_preview_table_renderer.h"
 #include "hdf5_source_inspector.h"
 #include "hdf5_loaded_source_verifier.h"
+#include "hdf5_apply_loader.h"
 #include "loaders/data_loader.h"
 #include "../core/data_convert_service.h"
 #include "../core/data_convert_task.h"
@@ -233,21 +234,27 @@ public:
     void Apply() override;
     void Reset() override;
     ImVec2 GetDefaultSize() const override { return ImVec2(1120, 760); }
-    bool IsBusy() const override { return is_loading_async_ || hdf5_loaded_source_.Busy(); }
+    bool IsBusy() const override {
+        return is_loading_async_ || hdf5_loaded_source_.Busy() || hdf5_apply_.Busy();
+    }
     bool CanApply() const override {
         if (CloudSourceChosen()) return cloud_can_apply_;
-        return !IsHdf5Source();
+        return !IsHdf5Source() || !hdf5_inspector_.Selection().data_path.empty();
     }
     const char* ApplyBlockedReason() const override {
         if (IsBusy()) return "Wait for the load to finish";
         if (CloudSourceChosen()) return cloud_can_apply_ ? nullptr : cloud_apply_blocked_reason_.c_str();
-        if (IsHdf5Source()) return "An HDF5 file can be inspected here; loading it is not built yet";
+        if (IsHdf5Source() && hdf5_inspector_.Selection().data_path.empty())
+            return "Choose the dataset to load in the HDF5 hierarchy";
         return nullptr;
     }
     // Train loads a Data Input a reopened project has not loaded through a
     // dialog it never shows (the same Apply as OK): the load's result is
     // taken here each frame, as RenderContent does for a shown dialog.
-    void PollLoad() { PollAsyncLoadResult(); }
+    void PollLoad() {
+        PollAsyncLoadResult();
+        PollHdf5Apply();
+    }
     const std::string& LoadMessage() const { return apply_status_message_; }
 
 protected:
@@ -326,6 +333,12 @@ private:
     std::map<std::string, std::string> hdf5_restore_parameters_;
     void BeginHdf5LoadedSourceVerification();
     void PollHdf5LoadedSourceVerification();
+    // Apply of an HDF5 source (data_input_dialog_hdf5_apply.cpp, TOFIX189).
+    Hdf5ApplyLoader hdf5_apply_;
+    std::map<std::string, std::string> hdf5_apply_parameters_;  // the node's settings when it started
+    std::string hdf5_previous_dataset_name_;
+    void BeginHdf5Apply();
+    void PollHdf5Apply();
     bool BuildHdf5RestoreRequest(cyxwiz::Hdf5RegisteredSourceRequest& request,
                                std::string& error) const;
     std::string hdf5_source_path_;
@@ -399,7 +412,6 @@ private:
     char sheet_range_[64] = {};
     bool json_lines_ = false;
     char json_path_[128] = {};
-    char hdf5_dataset_[128] = "data";
 
     // STATE: Image options
     ImageLayout image_layout_ = ImageLayout::ClassSubdirs;

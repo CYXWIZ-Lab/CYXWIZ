@@ -2,41 +2,52 @@
 
 // MuJoCo Simulation Plugin for CyxWiz Engine
 //
-// Phase 1: Core physics wrapper + training hook integration
-// Phase 2: 3D viewport rendering via IPanelProvider
-// Phase 3: Node editor integration via INodeProvider
-//
 // - IPlugin lifecycle: initialize/shutdown MuJoCo
-// - ITrainingHook: log RL metrics (episode reward, length, success rate)
-// - IPanelProvider: MuJoCo 3D viewport panel
-// - INodeProvider: RL simulation nodes for visual pipeline editor
+// - IPanelProvider: MuJoCo 3D viewport and Environment Library panels
+// - INodeProvider: simulation nodes for the node editor
 
 #include <imgui.h>
 #include "plugin/plugin_types.h"
 #include "mj_simulation_executor.h"
 #include "mj_menagerie_downloader.h"
 #include "plugin/plugin_context.h"
-#include "plugin/interfaces/i_training_hook.h"
 #include "plugin/interfaces/i_panel_provider.h"
 #include "plugin/interfaces/i_node_provider.h"
+#include "plugin/interfaces/i_command_provider.h"
+#include "plugin/interfaces/i_simulation_provider.h"
+#include "plugin/interfaces/i_environment_provider.h"
+#include "plugin/interfaces/i_preferences_provider.h"
+#include "plugin/plugin_ui.h"
 
 #include "mj_env_manager.h"
+#include "mj_graph_clock.h"
 #include "mj_env_library.h"
 #include "mj_renderer.h"
 #include "mj_viewport_panel.h"
 #include "mj_env_browser_panel.h"
+#include "env/mj_view_slot.h"
+#include "env/mj_history.h"
+#include "rl/observation_filter.h"
 
+#include <optional>
+
+#include <cstdint>
+#include <map>
+#include <mutex>
+#include <memory>
 #include <string>
-#include <limits>
 
 struct GLFWwindow;  // Forward declare
 
 namespace cyxwiz::plugin::mujoco {
 
 class MuJoCoPlugin : public IPlugin,
-                     public ITrainingHook,
                      public IPanelProvider,
-                     public INodeProvider {
+                     public INodeProvider,
+                     public ICommandProvider,
+                     public ISimulationProvider,
+                     public IEnvironmentProvider,
+                     public IPreferencesProvider {
 public:
     MuJoCoPlugin() = default;
     ~MuJoCoPlugin() override = default;
@@ -49,27 +60,51 @@ public:
 
     const PluginManifest& GetManifest() const override { return manifest_; }
     PluginPermissionFlags GetRequiredPermissions() const override {
-        return static_cast<uint32_t>(PluginPermission::Training) |
-               static_cast<uint32_t>(PluginPermission::UIModify);
+        return PluginPermission::UIModify | PluginPermission::Training;
     }
     PluginState GetState() const override { return state_; }
     void SetImGuiContext(void* ctx) override { ImGui::SetCurrentContext(static_cast<ImGuiContext*>(ctx)); }
     void* QueryInterface(const char* name) override {
         if (std::string(name) == "IPanelProvider") return static_cast<IPanelProvider*>(this);
         if (std::string(name) == "INodeProvider") return static_cast<INodeProvider*>(this);
-        if (std::string(name) == "ITrainingHook") return static_cast<ITrainingHook*>(this);
+        if (std::string(name) == "ICommandProvider") return static_cast<ICommandProvider*>(this);
+        if (std::string(name) == "ISimulationProvider") return static_cast<ISimulationProvider*>(this);
+        if (std::string(name) == "IEnvironmentProvider") return static_cast<IEnvironmentProvider*>(this);
+        if (std::string(name) == "IPreferencesProvider") return static_cast<IPreferencesProvider*>(this);
         return nullptr;
     }
 
-    // ===== ITrainingHook =====
-    void OnTrainingStart(TrainingContext& ctx) override;
-    void OnTrainingEnd(TrainingContext& ctx) override;
-    void OnEpochEnd(TrainingContext& ctx) override;
-    bool ShouldStopEarly(const TrainingContext& ctx) override;
+    // ===== IPreferencesProvider: the Viewport's saved choices =====
+    std::vector<PluginPreferencesSection> GetPreferenceSections() override;
+    void RenderPreferences(const std::string& section_id) override;
+
+    // ===== ISimulationProvider: graph runs =====
+    // A graph run with a MuJoCo Plant holds the physics: the viewport's own
+    // run cannot start meanwhile, and the graph run is refused while it goes.
+    std::vector<PluginSimulationNodeInfo> GetSimulationNodes() override;
+    PluginSimulationBeginResult BeginGraphRun(const std::vector<PluginSimulationGraphNode>& nodes) override;
+    void EndGraphRun() override;
+
+    // ===== IEnvironmentProvider: tasks for reinforcement learning =====
+    // Gymnasium's MuJoCo tasks (env/mj_task.h); each batch has its own
+    // model and copies, apart from the viewport's model.
+    std::vector<PluginEnvironmentInfo> GetEnvironments() override;
+    // As the settings make it: Look ahead adds to the observation (from the
+    // listed description, kept: the Engine asks while it draws Properties)
+    bool DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& settings,
+                             PluginEnvironmentInfo& info, std::string& error) override;
+    PluginEnvironmentCreateResult CreateEnvironments(const std::string& id,
+                                                     const std::map<std::string, std::string>& settings,
+                                                     int count) override;
 
     // ===== IPanelProvider =====
     std::vector<PluginPanelInfo> GetPanels() override;
     void RenderPanel(const std::string& panel_id, bool* visible) override;
+
+    // ===== ICommandProvider: the Simulation menu =====
+    std::vector<PluginCommandInfo> GetCommands() override;
+    PluginCommandState GetCommandState(const std::string& command_id) override;
+    void RunCommand(const std::string& command_id) override;
 
     // ===== INodeProvider =====
     std::vector<PluginNodeTypeInfo> GetNodeTypes() override;
@@ -94,7 +129,6 @@ public:
     MjSimulationExecutor& GetSimExecutor() { return sim_executor_; }
 
     void SetMainWindow(GLFWwindow* window) { main_window_ = window; }
-    void SetGraphSimActive(bool active) { viewport_panel_.SetGraphSimActive(active); }
 
 private:
     PluginManifest manifest_;
@@ -109,13 +143,52 @@ private:
     MjEnvBrowserPanel browser_panel_;
 
     GLFWwindow* main_window_ = nullptr;
+    PluginContext* ctx_ = nullptr;  // from OnLoad until OnUnload
 
-    // RL training config
-    std::string current_env_id_;
     std::string loaded_mjcf_path_;  // Path of the currently loaded MJCF model
-    float reward_threshold_ = std::numeric_limits<float>::max();
+    std::string assets_dir_;        // the plugin's assets folder (task models)
+
+    // Observation Filter running normalisation, one per settings (see EvaluateNode)
+    std::map<std::string, rl::ObservationFilter> obs_filters_;
+    // The graph run's clock: the Plant keeps the physics on it
+    MjGraphClock graph_clock_;
     bool viewport_visible_ = true;
     bool renderer_needs_init_ = false;
+
+    // Policy playback (TOFIX195 S5.2): a training copy the Engine shows here.
+    // Batches publish into the slot; each frame the viewport follows it.
+    void SyncPlayback();
+    std::shared_ptr<MjViewSlot> view_slot_ = std::make_shared<MjViewSlot>();
+    uint64_t shown_version_ = 0;
+    uint64_t ghost_version_ = 0;  // the ghost's state last taken from the view slot
+    bool playback_ = false;
+    // What the viewport showed before playback, given back when it ends
+    std::string restore_path_;
+    std::string restore_title_;
+    std::string restore_subtitle_;
+    MjScene restore_scene_;  // the scene of the model open before a playback
+    // The timeline's steps (guarded by the physics lock): the own run's last
+    // 30 s, or the played episode; the played return before this state
+    MjHistory history_;
+    int history_episode_ = 0;
+    double history_return_ = 0.0;
+    std::string shown_as_ = "policy playback";  // what the last shown copy was (its status, lower case)
+
+    // The Viewport's Stress panel (TOFIX212 P4): its requests go to the played
+    // copy (the view slot), or act on the Viewport's own run here
+    void ForwardStressRequests();
+    // The played copy's scene in the Viewport's model (the same build as the batch's)
+    void MirrorPlaybackScene(const MjScene& scene);
+    // Inspect's Reload: the open model file read again, the camera and the
+    // scene kept; false with the reason (the model stays as it was)
+    bool ReloadModel(std::string& error);
+    bool SceneFailed(const MjScene& scene) const;  // the played scene did not build here
+    std::optional<MjScene> failed_scene_;
+    MjStressRun local_stress_;
+    // The tasks' listed descriptions (GetEnvironments), for DescribeEnvironment
+    std::mutex described_mutex_;
+    std::map<std::string, PluginEnvironmentInfo> described_;
+    int local_episodes_seen_ = 0;
 };
 
 } // namespace cyxwiz::plugin::mujoco

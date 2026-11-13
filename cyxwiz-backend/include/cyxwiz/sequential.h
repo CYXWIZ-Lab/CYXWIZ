@@ -5,6 +5,7 @@
 #include "api_export.h"
 #include "tensor.h"
 #include "layer.h"
+#include "model_cost.h"
 #include "activation.h"
 #include "optimizer.h"
 #include "layers/linear.h"
@@ -245,6 +246,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<Conv1DLayer> layer_;
@@ -277,6 +281,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<Conv2DLayer> layer_;
@@ -305,6 +312,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<DepthwiseConv2DLayer> layer_;
@@ -336,6 +346,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<ConvTranspose2DLayer> layer_;
@@ -373,6 +386,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
     // The [D', H', W', F] sample each output row holds.
     std::vector<size_t> OutputSample() const { return {out_depth_, out_height_, out_width_, filters_}; }
@@ -546,6 +562,9 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<LinearLayer> layer_;
@@ -582,6 +601,9 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
     // Backward holds the gate laid over the map and two products of the map's size.
     size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
 
@@ -629,6 +651,9 @@ public:
     std::map<std::string, Tensor> GetGradients() override;
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     LinearModule linear_;
@@ -810,6 +835,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     // Batch-first LSTMLayer; a bidirectional one builds its forward and
@@ -855,6 +883,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     // Same layout and key translation as LSTMModule.
@@ -889,6 +920,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     // Same layout and key translation as LSTMModule.
@@ -929,6 +963,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     std::unique_ptr<TransformerEncoderLayer> layer_;
@@ -969,6 +1006,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
     IncrementalDecoding GetIncrementalDecoding() const override { return IncrementalDecoding::Stateful; }
     Tensor ForwardIncremental(const Tensor& input, size_t position_offset) override;
     void ResetIncrementalState() override;
@@ -1021,6 +1061,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
     // Only causal attention can decode incrementally.
     IncrementalDecoding GetIncrementalDecoding() const override {
         return options_.causal ? IncrementalDecoding::Stateful : IncrementalDecoding::Unsupported;
@@ -1094,6 +1137,9 @@ public:
     bool HasParameters() const override { return true; }
     std::string GetName() const override;
     size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override;
+    // Its sizes for the multiply-add counter (cyxwiz/model_cost.h), for one
+    // sample's input and output shapes.
+    LayerCostInput CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const;
 
 private:
     Tensor Project(const Tensor& rows, const std::string& name) const;
@@ -1378,6 +1424,7 @@ public:
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
     std::string GetName() const override;
+    float NegativeSlope() const { return negative_slope_; }
 
 private:
     std::unique_ptr<LeakyReLUActivation> activation_;
@@ -1395,6 +1442,7 @@ public:
     Tensor Forward(const Tensor& input) override;
     Tensor Backward(const Tensor& grad_output) override;
     std::string GetName() const override;
+    float Alpha() const { return alpha_; }
 
 private:
     std::unique_ptr<ELUActivation> activation_;
@@ -1825,6 +1873,14 @@ public:
     void SetTraining(bool training);
 
     /**
+     * @brief Called after each module's forward pass with its index, the
+     * module and its output (training-health statistics, interpretability).
+     * Pass an empty function to stop.
+     */
+    using ForwardObserver = std::function<void(size_t, const Module&, const Tensor&)>;
+    void SetForwardObserver(ForwardObserver observer) { forward_observer_ = std::move(observer); }
+
+    /**
      * @brief Get number of modules
      */
     size_t Size() const { return modules_.size(); }
@@ -1920,6 +1976,7 @@ public:
 private:
     std::vector<std::unique_ptr<Module>> modules_;
     std::vector<Tensor> intermediate_outputs_;  // Cached for backward pass
+    ForwardObserver forward_observer_;
     std::string model_name_;
     std::string model_description_;
 };

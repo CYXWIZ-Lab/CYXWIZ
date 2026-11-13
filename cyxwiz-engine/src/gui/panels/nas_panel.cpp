@@ -139,9 +139,6 @@ void NASPanel::Render() {
             ImGui::Spacing();
             ImGui::Spacing();
             RenderSearch();
-            ImGui::Spacing();
-            ImGui::Spacing();
-            RenderSuggestions();
         }
         ImGui::EndChild();
     }
@@ -155,7 +152,6 @@ void NASPanel::ReadGraph() {
     read_problem_.clear();
     steps_.clear();
     change_note_.clear();
-    suggestions_.clear();
     if (!IsTraining() && !searching_) {
         std::lock_guard<std::mutex> lock(mutex_);
         result_ = {};
@@ -193,7 +189,7 @@ void NASPanel::ReadGraph() {
 }
 
 void NASPanel::Rescore() {
-    score_ = NASEvaluator::ScoreArchitecture(nodes_, links_, shape_.input_shape, search_config_);
+    score_ = NASEvaluator::ScoreArchitecture(nodes_, links_, search_config_);
 }
 
 void NASPanel::Mutate(MutationType type) {
@@ -264,10 +260,10 @@ void NASPanel::StartSearch() {
     search_round_ = 0;
     search_best_ = 0.0;
     search_thread_ = std::make_unique<std::thread>(
-        [this, nodes = nodes_, links = links_, input_shape = shape_.input_shape, config = search_config_]() {
+        [this, nodes = nodes_, links = links_, config = search_config_]() {
             NASSearchResult result;
             try {
-                result = NASEvaluator::EvolveArchitecture(nodes, links, input_shape, config,
+                result = NASEvaluator::EvolveArchitecture(nodes, links, config,
                                                           [this](int round, const ArchitectureScore& best) {
                                                               search_round_ = round + 1;
                                                               search_best_ = best.overall_score;
@@ -614,56 +610,6 @@ void NASPanel::RenderVersions() {
                                    : versions_note_,
             t.text_dim);
     ui::EndCard();
-}
-
-void NASPanel::RenderSuggestions() {
-    const ui::Tokens& t = ui::CurrentTokens();
-    Heading("Start from a suggestion");
-    Wrapped(np::SuggestionsIntro(shape_, 5) +
-                " A suggestion is added beside the graph; link it to your data, or delete the old model, before "
-                "training.",
-            t.text_dim);
-    ImGui::Spacing();
-    if (suggestions_.empty()) {
-        if (ui::SecondaryButton("Show suggestions", true, nullptr, ui::ButtonSize::Regular)) {
-            for (auto& [nodes, links] :
-                 NASEvaluator::SuggestArchitectures(shape_.task, shape_.input_shape, shape_.outputs, 5)) {
-                ArchitectureScore score = NASEvaluator::ScoreArchitecture(nodes, links, shape_.input_shape, search_config_);
-                suggestions_.push_back({std::move(nodes), std::move(links), std::move(score)});
-            }
-        }
-        return;
-    }
-    if (!ImGui::BeginTable("##nas_suggestions", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) return;
-    const char* add = "Add beside the graph";
-    ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("00").x);
-    ImGui::TableSetupColumn("layers", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-    ImGui::TableSetupColumn("quick", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("quick 0").x);
-    ImGui::TableSetupColumn("parameters", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("parameters").x);
-    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize(add).x + 4.0f);
-    ImGui::TableHeadersRow();
-    for (size_t i = 0; i < suggestions_.size(); ++i) {
-        const NASCandidate& suggestion = suggestions_[i];
-        ImGui::PushID(static_cast<int>(i));
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextColored(t.text_dim, "%zu", i + 1);
-        ImGui::TableNextColumn();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(np::LayersText(suggestion.nodes, suggestion.links).c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(np::ScoreText(suggestion.score.overall_score).c_str());
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(np::Grouped(suggestion.score.total_params).c_str());
-        ImGui::TableNextColumn();
-        if (ui::InlineLink(add) && node_editor_) {
-            node_editor_->InsertPattern(suggestion.nodes, suggestion.links);
-            spdlog::info("Architecture search: suggestion {} added beside the graph", i + 1);
-        }
-        ImGui::PopID();
-    }
-    ImGui::EndTable();
 }
 
 } // namespace cyxwiz

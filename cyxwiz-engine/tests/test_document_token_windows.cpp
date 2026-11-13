@@ -7,6 +7,7 @@ static void Require(bool value,const char* expression) { ++checks; if(!value) th
 #define REQUIRE_FALSE(...) REQUIRE(!(__VA_ARGS__))
 #define INFO(message) std::cout << message << '\n'
 #include "core/node_executors/text_tokenizer_operator.h"
+#include "core/gcc_diagnostics.h"
 #include "core/sequence_arrow_batcher.h"
 #include "core/arrow_dataset.h"
 #include <arrow/api.h>
@@ -98,8 +99,11 @@ void CheckReloadAndTargets() {
         auto scalar=std::static_pointer_cast<arrow::ListScalar>(table->GetColumnByName("token_ids")->GetScalar(row).ValueOrDie());
         auto original=std::static_pointer_cast<arrow::Int64Array>(scalar->value);
         REQUIRE(invalid_ids.Append().ok());
+        // Arrow's builders inlined in this loop: GCC -Warray-bounds false positive (TOFIX187).
+        CYXWIZ_GCC_IGNORE_BEGIN("-Warray-bounds")
         for(int64_t i=0;i<original->length();++i)
             REQUIRE(value_builder->Append(row==0 && i==0 ? 260 : original->Value(i)).ok());
+        CYXWIZ_GCC_IGNORE_END
     }
     auto invalid_table=table->SetColumn(table->schema()->GetFieldIndex("token_ids"),
         table->schema()->GetFieldByName("token_ids"),

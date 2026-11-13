@@ -149,7 +149,7 @@
     },
     {
       "id": 10,
-      "type": 369,
+      "type": 378,
       "name": "Hardswish 16",
       "description": "",
       "parameters": {},
@@ -187,7 +187,7 @@
     },
     {
       "id": 13,
-      "type": 369,
+      "type": 378,
       "name": "Hardswish 32",
       "description": "",
       "parameters": {},
@@ -197,7 +197,7 @@
     },
     {
       "id": 22,
-      "type": 370,
+      "type": 379,
       "name": "SE 32",
       "description": "",
       "parameters": {
@@ -237,7 +237,7 @@
     },
     {
       "id": 16,
-      "type": 369,
+      "type": 378,
       "name": "Hardswish 64",
       "description": "",
       "parameters": {},
@@ -247,7 +247,7 @@
     },
     {
       "id": 23,
-      "type": 370,
+      "type": 379,
       "name": "SE 64",
       "description": "",
       "parameters": {

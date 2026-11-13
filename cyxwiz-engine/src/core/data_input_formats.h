@@ -35,8 +35,9 @@ inline constexpr std::array<SourceFormatCapability, 12> kSourceFormats{{
     {4, "parquet", "Parquet", {"parquet"}, {"parquet", "pq"}, true, SourcePreview::RegisteredDataset},
     {5, "excel", "Excel", {"excel"}, {"xlsx", "xls"}, false, SourcePreview::Unsupported,
      SourceDependency::None, "Tabular Excel loading is not supported yet"},
-    {6, "hdf5", "HDF5", {"hdf5", "h5", "hdf"}, {"h5", "hdf5", "hdf"}, false, SourcePreview::Hdf5Inspection,
-     SourceDependency::Hdf5, "Tabular HDF5 loading is not supported yet; conversion and hierarchy inspection are separate capabilities"},
+    // Loads through its own path (hdf5_source_load_task): one numeric dataset, optional labels.
+    {6, "hdf5", "HDF5", {"hdf5", "h5", "hdf"}, {"h5", "hdf5", "hdf"}, true, SourcePreview::Hdf5Inspection,
+     SourceDependency::Hdf5},
     {7, "feather", "Feather", {"feather"}, {"feather", "fea"}, true, SourcePreview::RegisteredDataset},
     {8, "arrow", "Arrow / IPC", {"arrow", "ipc"}, {"arrow", "ipc"}, true, SourcePreview::RegisteredDataset},
     {9, "txt", "TXT", {"txt"}, {"txt"}, false, SourcePreview::Unsupported,
@@ -56,6 +57,11 @@ static constexpr bool kHdf5BuildAvailable =
 
 inline bool BuildAvailable(const SourceFormatCapability& format, bool hdf5_available) {
     return format.dependency != SourceDependency::Hdf5 || hdf5_available;
+}
+
+// Data Input can load it in this build.
+inline bool Runnable(const SourceFormatCapability& format) {
+    return format.executable && BuildAvailable(format, kHdf5BuildAvailable);
 }
 
 inline const SourceFormatCapability* FindFormat(int id) {
@@ -90,7 +96,7 @@ inline std::string ResolveFormat(const std::string& name, const std::string& pat
     const auto normalized = NormalizeDataInputFormat(name);
     if (normalized != "auto") return normalized;
     const auto* format = DetectFormat(path);
-    if (format && format->executable) return format->name;
+    if (format && Runnable(*format)) return format->name;
     if (!path.empty()) {
         if (auto external = DetectExternalFormat(path); !external.empty()) return external;
     }
@@ -103,7 +109,7 @@ inline bool IsExecutable(const std::string& name) {
         return FindExternalFormat(name, external);
     }
     const auto* format = FindFormat(name);
-    return format && format->executable;
+    return format && Runnable(*format);
 }
 
 inline const char* UnsupportedReason(const std::string& name, bool hdf5_available) {
@@ -119,7 +125,7 @@ inline const char* UnsupportedReason(const std::string& name, bool hdf5_availabl
 inline std::vector<const char*> AllowedNames() {
     std::vector<const char*> names;
     for (const auto& format : kSourceFormats) {
-        if (!format.executable) continue;
+        if (!Runnable(format)) continue;
         for (const char* alias : format.aliases) if (alias) names.push_back(alias);
     }
     return names;
@@ -138,7 +144,7 @@ inline std::string ExtensionFilter(const SourceFormatCapability& format) {
 inline std::string ExtensionFilter() {
     std::string result;
     for (const auto& format : kSourceFormats) {
-        if (!format.executable) continue;
+        if (!Runnable(format)) continue;
         const auto extensions = ExtensionFilter(format);
         if (extensions.empty()) continue;
         if (!result.empty()) result += ',';

@@ -225,6 +225,7 @@ void NodeEditor::ClearGraph() {
     if (!CanReplaceGraph("clear the graph")) return;
     SaveUndoState();
     ++graph_generation_;
+    simulation_session_.ClearHistory();  // node ids of the next graph are not this one's Scopes
     ClearValidationState();  // Graph changed — stale compile results
 
     // IMPORTANT: Clear every properties/dialog node reference BEFORE clearing

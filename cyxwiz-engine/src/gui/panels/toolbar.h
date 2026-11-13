@@ -5,12 +5,14 @@
 #include "python_settings_panel.h"
 #include "auth/auth_client.h"
 #include "common/server_address_view.h"
+#include "common/server_ca_view.h"
 #include "../../core/backend_pack_manager_model.h"
 #include "../../core/menu_presentation.h"
 #include "../dialogs/create_project_dialog.h"
 #include "../dialogs/new_file_dialog.h"
 #include "../dialogs/about_dialog.h"
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <set>
@@ -61,7 +63,6 @@ public:
     void SetDeployToServerCallback(std::function<void()> callback) { deploy_to_server_callback_ = callback; }
     void SetImportDatasetCallback(std::function<void()> callback) { import_dataset_callback_ = callback; }
     void SetCreateCustomDatasetCallback(std::function<void()> callback) { create_custom_dataset_callback_ = callback; }
-    void SetTokenizeDatasetCallback(std::function<void()> callback) { tokenize_dataset_callback_ = callback; }
     void SetAugmentDatasetCallback(std::function<void()> callback) { augment_dataset_callback_ = callback; }
     void SetDatasetStatisticsCallback(std::function<void()> callback) { dataset_statistics_callback_ = callback; }
     void SetCompileGraphCallback(std::function<void()> callback) { compile_graph_callback_ = callback; }
@@ -96,8 +97,8 @@ public:
     void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
     void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
     void SetOpenProfilerCallback(std::function<void()> callback) { open_profiler_callback_ = callback; }
-    void SetOpenMemoryMonitorCallback(std::function<void()> callback) { open_memory_monitor_callback_ = callback; }
-    void SetOpenMemoryPanelCallback(std::function<void()> callback) { open_memory_panel_callback_ = callback; }
+    // Tools > Monitoring opens the Monitor window on a tab ("system", "memory", "loaded_data", "frames").
+    void SetOpenMonitorCallback(std::function<void(const std::string&)> callback) { open_monitor_callback_ = std::move(callback); }
     void SetOpenScriptCallback(std::function<void()> callback) { open_script_callback_ = callback; }
     void SetOpenScriptInEditorCallback(std::function<void(const std::string&)> callback) { open_script_in_editor_callback_ = callback; }
     void SetOpenPythonConsoleCallback(std::function<void()> callback) { open_python_console_callback_ = callback; }
@@ -112,8 +113,16 @@ public:
         menu::TrainingState training = menu::TrainingState::Idle;
         bool script_open = false;
         bool script_running = false;
+        // The open graph's simulation run (Simulation menu)
+        bool simulation_graph = false;
+        std::string simulation_graph_name;
+        std::vector<menu::SimulationCommandEntry> simulation_commands;
     };
     void SetMenuStateProvider(std::function<MenuStateSnapshot()> provider) { menu_state_provider_ = provider; }
+    // Simulation menu: a graph run command by its action id ("simulation.run")
+    void SetSimulationCommandCallback(std::function<void(const std::string&)> callback) {
+        simulation_command_callback_ = std::move(callback);
+    }
     void SetFrameOverlayPtr(bool* ptr) { frame_overlay_ptr_ = ptr; }
     // One sentence about the hovered menu item, for the status bar. Empty
     // when no menu item is hovered this frame.
@@ -204,9 +213,8 @@ public:
     void SetConvertDirToBinaryCallback(std::function<void()> cb) { convert_dir_to_binary_callback_ = cb; }
 
     // Model Analysis callbacks (Phase 2)
-    void SetOpenModelSummaryCallback(std::function<void()> cb) { open_model_summary_callback_ = cb; }
-    void SetOpenArchitectureDiagramCallback(std::function<void()> cb) { open_architecture_diagram_callback_ = cb; }
-    void SetOpenLRFinderCallback(std::function<void()> cb) { open_lr_finder_callback_ = cb; }
+    // Tools > Model: the Model window on a tab ("summary", "learning_rate", "explain", "health", "projector").
+    void SetOpenModelCallback(std::function<void(const std::string&)> cb) { open_model_callback_ = std::move(cb); }
 
     // Data Science callbacks (Phase 3)
     void SetOpenCorrelationMatrixCallback(std::function<void()> cb) { open_correlation_matrix_callback_ = cb; }
@@ -221,14 +229,12 @@ public:
 
     // Advanced Tools callbacks (Phase 5)
     void SetOpenDimReductionCallback(std::function<void()> cb) { open_dim_reduction_callback_ = cb; }
-    void SetOpenGradCAMCallback(std::function<void()> cb) { open_gradcam_callback_ = cb; }
     void SetOpenFeatureImportanceCallback(std::function<void()> cb) { open_feature_importance_callback_ = cb; }
-    void SetOpenNASCallback(std::function<void()> cb) { open_nas_callback_ = cb; }
     void SetOpenHyperparamSearchCallback(std::function<void()> cb) { open_hyperparam_search_callback_ = cb; }
+    void SetOpenNASCallback(std::function<void()> cb) { open_nas_callback_ = cb; }
     void SetOpenServingCallback(std::function<void()> cb) { open_serving_callback_ = cb; }
     // Apps > a loaded plugin: show its nodes in the Node Browser (TOFIX125).
     void SetShowPluginNodesCallback(std::function<void(const std::string&)> cb) { show_plugin_nodes_callback_ = std::move(cb); }
-    void SetOpenDNNInferenceCallback(std::function<void()> cb) { open_dnn_inference_callback_ = cb; }
 
     // Clustering callbacks (Phase 6A)
     void SetOpenKMeansCallback(std::function<void()> cb) { open_kmeans_callback_ = cb; }
@@ -252,11 +258,8 @@ public:
     void SetOpenFeatureScalingCallback(std::function<void()> cb) { open_feature_scaling_callback_ = cb; }
 
     // Linear Algebra callbacks (Phase 7)
-    void SetOpenMatrixCalculatorCallback(std::function<void()> cb) { open_matrix_calculator_callback_ = cb; }
-    void SetOpenEigenDecompCallback(std::function<void()> cb) { open_eigen_decomp_callback_ = cb; }
-    void SetOpenSVDCallback(std::function<void()> cb) { open_svd_callback_ = cb; }
-    void SetOpenQRCallback(std::function<void()> cb) { open_qr_callback_ = cb; }
-    void SetOpenCholeskyCallback(std::function<void()> cb) { open_cholesky_callback_ = cb; }
+    // Tools > Linear Algebra: the operation to open the window on ("multiply", "eigen", "svd", "qr", "cholesky").
+    void SetOpenLinearAlgebraCallback(std::function<void(const std::string&)> cb) { open_linear_algebra_callback_ = std::move(cb); }
 
     // Signal Processing callbacks (Phase 8)
     void SetOpenFFTCallback(std::function<void()> cb) { open_fft_callback_ = cb; }
@@ -266,12 +269,8 @@ public:
     void SetOpenWaveletCallback(std::function<void()> cb) { open_wavelet_callback_ = cb; }
 
     // Optimization & Calculus callbacks (Phase 9)
-    void SetOpenGradientDescentCallback(std::function<void()> cb) { open_gradient_descent_callback_ = cb; }
-    void SetOpenConvexityCallback(std::function<void()> cb) { open_convexity_callback_ = cb; }
-    void SetOpenLPCallback(std::function<void()> cb) { open_lp_callback_ = cb; }
-    void SetOpenQPCallback(std::function<void()> cb) { open_qp_callback_ = cb; }
-    void SetOpenDifferentiationCallback(std::function<void()> cb) { open_differentiation_callback_ = cb; }
-    void SetOpenIntegrationCallback(std::function<void()> cb) { open_integration_callback_ = cb; }
+    // Tools > Optimization and Calculus: the window on an operation ("optimizers", "linear", ...).
+    void SetOpenOptimizationCallback(std::function<void(const std::string&)> cb) { open_optimization_callback_ = std::move(cb); }
 
     // Time Series Analysis callbacks (Phase 10)
     void SetOpenDecompositionCallback(std::function<void()> cb) { open_decomposition_callback_ = cb; }
@@ -288,13 +287,8 @@ public:
     void SetOpenSentimentCallback(std::function<void()> cb) { open_sentiment_callback_ = cb; }
     void SetOpenLanguageModelGenerationCallback(std::function<void()> cb) { open_language_model_generation_callback_ = cb; }
 
-    // Utilities callbacks (Phase 12)
-    void SetOpenCalculatorCallback(std::function<void()> cb) { open_calculator_callback_ = cb; }
-    void SetOpenUnitConverterCallback(std::function<void()> cb) { open_unit_converter_callback_ = cb; }
-    void SetOpenRandomGeneratorCallback(std::function<void()> cb) { open_random_generator_callback_ = cb; }
-    void SetOpenHashGeneratorCallback(std::function<void()> cb) { open_hash_generator_callback_ = cb; }
-    void SetOpenJSONViewerCallback(std::function<void()> cb) { open_json_viewer_callback_ = cb; }
-    void SetOpenRegexTesterCallback(std::function<void()> cb) { open_regex_tester_callback_ = cb; }
+    // Tools > Utilities: opens the one window on a tab (TOFIX129 D12).
+    void SetOpenUtilitiesCallback(std::function<void(const std::string&)> cb) { open_utilities_callback_ = std::move(cb); }
 
     // Export/Import callbacks
     void SetExportModelCallback(std::function<void(int)> callback) { export_model_callback_ = callback; }  // int = format index
@@ -306,7 +300,13 @@ public:
 
     // Debug logging pointers (for View -> Developer Tools)
     void SetIdleLogPtr(bool* ptr) { idle_log_ptr_ = ptr; }
-    void SetVerbosePythonLogPtr(bool* ptr) { verbose_python_log_ptr_ = ptr; }
+    void SetVerbosePythonLogPtr(std::atomic<bool>* ptr) { verbose_python_log_ptr_ = ptr; }
+    // Tools > Diagnostics: the three switches (frame-rate log, Python command
+    // log, frame overlay) are the user's saved settings. Apply sets them from
+    // the Engine settings once the pointers above are set; Save writes them
+    // after a change (the menu and Preferences > General).
+    void ApplySavedDiagnostics();
+    void SaveDiagnostics();
 
     // Python diagnostics callback (Preferences -> Python)
     void SetPythonDiagnosticsCallback(std::function<std::string()> callback) { python_diagnostics_callback_ = callback; }
@@ -358,6 +358,10 @@ private:
     void StartServerProbe(const std::string& key);
     void PollServerProbe();
     void ApplyServerAddress(const std::string& address);
+    // The server's private CA under the address (TOFIX192 T1c): shown for an
+    // https:// address, applied when chosen, cleared or the field is left.
+    void RenderServerCaRow(const std::string& address);
+    void ApplyServerCaFile(const std::string& path);
     void SignOut();
     void RenderAppearancePreferences();  // Preferences > Appearance
     // Preferences > Studio Debugger (toolbar_preferences_studio_debugger.cpp)
@@ -419,7 +423,6 @@ private:
     std::function<void()> deploy_to_server_callback_;
     std::function<void()> import_dataset_callback_;
     std::function<void()> create_custom_dataset_callback_;
-    std::function<void()> tokenize_dataset_callback_;
     std::function<void()> augment_dataset_callback_;
     std::function<void()> dataset_statistics_callback_;
     std::function<void()> compile_graph_callback_;
@@ -452,14 +455,14 @@ private:
     std::function<void()> open_custom_node_editor_callback_;
     std::function<void()> open_theme_editor_callback_;
     std::function<void()> open_profiler_callback_;
-    std::function<void()> open_memory_monitor_callback_;
-    std::function<void()> open_memory_panel_callback_;
+    std::function<void(const std::string&)> open_monitor_callback_;
     std::function<void()> open_script_callback_;
     std::function<void(const std::string&)> open_script_in_editor_callback_;
     std::function<void()> open_python_console_callback_;
     std::function<void()> run_script_callback_;
     std::function<void()> stop_script_callback_;
     std::function<MenuStateSnapshot()> menu_state_provider_;
+    std::function<void(const std::string&)> simulation_command_callback_;
     bool* frame_overlay_ptr_ = nullptr;
     std::unordered_map<std::string, std::function<void(const std::string&)>> action_handlers_;
     std::string status_hint_;
@@ -557,6 +560,8 @@ private:
     // Preferences > Servers
     bool servers_loaded_ = false;  // buffers filled from the config when the tab opens
     char server_address_buf_[256] = {};
+    char server_ca_buf_[1024] = {};
+    cyxwiz::protocol::ServerCaViewCache server_ca_view_;
     char separate_central_buf_[256] = {};
     char separate_gateway_buf_[256] = {};
     char separate_api_buf_[256] = {};
@@ -701,9 +706,7 @@ private:
     std::function<void()> convert_dir_to_binary_callback_;
 
     // Model Analysis callbacks (Phase 2)
-    std::function<void()> open_model_summary_callback_;
-    std::function<void()> open_architecture_diagram_callback_;
-    std::function<void()> open_lr_finder_callback_;
+    std::function<void(const std::string&)> open_model_callback_;
 
     // Data Science callbacks (Phase 3)
     std::function<void()> open_correlation_matrix_callback_;
@@ -718,13 +721,11 @@ private:
 
     // Advanced Tools callbacks (Phase 5)
     std::function<void()> open_dim_reduction_callback_;
-    std::function<void()> open_gradcam_callback_;
     std::function<void()> open_feature_importance_callback_;
-    std::function<void()> open_nas_callback_;
     std::function<void()> open_hyperparam_search_callback_;
+    std::function<void()> open_nas_callback_;
     std::function<void()> open_serving_callback_;
     std::function<void(const std::string&)> show_plugin_nodes_callback_;
-    std::function<void()> open_dnn_inference_callback_;
 
     // Clustering callbacks (Phase 6A)
     std::function<void()> open_kmeans_callback_;
@@ -747,12 +748,7 @@ private:
     std::function<void()> open_boxcox_callback_;
     std::function<void()> open_feature_scaling_callback_;
 
-    // Linear Algebra callbacks (Phase 7)
-    std::function<void()> open_matrix_calculator_callback_;
-    std::function<void()> open_eigen_decomp_callback_;
-    std::function<void()> open_svd_callback_;
-    std::function<void()> open_qr_callback_;
-    std::function<void()> open_cholesky_callback_;
+    std::function<void(const std::string&)> open_linear_algebra_callback_;
 
     // Signal Processing callbacks (Phase 8)
     std::function<void()> open_fft_callback_;
@@ -762,12 +758,7 @@ private:
     std::function<void()> open_wavelet_callback_;
 
     // Optimization & Calculus callbacks (Phase 9)
-    std::function<void()> open_gradient_descent_callback_;
-    std::function<void()> open_convexity_callback_;
-    std::function<void()> open_lp_callback_;
-    std::function<void()> open_qp_callback_;
-    std::function<void()> open_differentiation_callback_;
-    std::function<void()> open_integration_callback_;
+    std::function<void(const std::string&)> open_optimization_callback_;
 
     // Time Series Analysis callbacks (Phase 10)
     std::function<void()> open_decomposition_callback_;
@@ -784,13 +775,8 @@ private:
     std::function<void()> open_sentiment_callback_;
     std::function<void()> open_language_model_generation_callback_;
 
-    // Utilities callbacks (Phase 12)
-    std::function<void()> open_calculator_callback_;
-    std::function<void()> open_unit_converter_callback_;
-    std::function<void()> open_random_generator_callback_;
-    std::function<void()> open_hash_generator_callback_;
-    std::function<void()> open_json_viewer_callback_;
-    std::function<void()> open_regex_tester_callback_;
+    // Tools > Utilities (TOFIX129 D12)
+    std::function<void(const std::string&)> open_utilities_callback_;
 
     // Export/Import callbacks
     std::function<void(int)> export_model_callback_;  // int = format index (0=CyxModel, 1=Safetensors, 2=ONNX, 3=GGUF)
@@ -810,7 +796,7 @@ private:
 
     // Debug logging pointers
     bool* idle_log_ptr_ = nullptr;
-    bool* verbose_python_log_ptr_ = nullptr;
+    std::atomic<bool>* verbose_python_log_ptr_ = nullptr;  // read by Python worker threads
     std::function<std::string()> python_diagnostics_callback_;
 
     // Files preferences

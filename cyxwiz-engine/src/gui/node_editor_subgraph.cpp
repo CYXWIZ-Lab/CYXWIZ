@@ -647,6 +647,29 @@ int NodeEditor::BranchSource(int step_id) const {
 }
 
 void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
+    if (!request.branch && request.second_source >= 0) {
+        // In the data path, everything after `after` would come after the
+        // step: a second source among them would feed the step its own
+        // result. Such a node goes in as a branch reading `after`.
+        const int second = BranchSource(request.second_source);
+        std::set<int> reached;
+        std::vector<int> frontier{request.after};
+        while (!frontier.empty()) {
+            const int from = frontier.back();
+            frontier.pop_back();
+            for (const auto& link : links_)
+                if (link.from_node == from && reached.insert(link.to_node).second) frontier.push_back(link.to_node);
+        }
+        if (reached.count(second)) {
+            spdlog::info("Node {} reads node {}'s result, so the new node's second input cannot come from it in the data path: "
+                         "added as a branch",
+                         second, request.after);
+            PendingStepAfter branch = request;
+            branch.branch = true;
+            InsertStepAfter(branch);
+            return;
+        }
+    }
     const int after_id = request.branch ? BranchSource(request.after) : request.after;
     const MLNode* after = FindNodeById(after_id);
     if (!after || after->outputs.empty()) return;
@@ -695,6 +718,7 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         }
         // It stays outside any recipe: a recipe's every step must lead to its output.
         links_.push_back({next_link_id_++, after_id, after_out, step.id, step.inputs.front().id, LinkType::TensorFlow});
+        LinkSecondInput(request, step);
         const int step_id = step.id;
         const ImVec2 position(step.initial_pos_x, step.initial_pos_y);
         nodes_.push_back(std::move(step));
@@ -773,6 +797,7 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
         }
     }
     links_.push_back({next_link_id_++, after_id, after_out, step.id, step_in, LinkType::TensorFlow});
+    LinkSecondInput(request, step);
     // Inside a recipe it becomes a step of that recipe, and its output when
     // the old step was.
     for (auto& data : subgraphs_) {
@@ -794,6 +819,14 @@ void NodeEditor::InsertStepAfter(const PendingStepAfter& request) {
     last_added_step_ = step_id;
     spdlog::info("Added {} node {} after node {} ({} moved right)", kind, step_id, after_id, downstream.size());
     if (request.open_dialog) OpenNodeConfiguration(step_id);
+}
+
+void NodeEditor::LinkSecondInput(const PendingStepAfter& request, const MLNode& step) {
+    if (request.second_source < 0 || step.inputs.size() < 2) return;
+    const int source_id = BranchSource(request.second_source);
+    const MLNode* source = FindNodeById(source_id);
+    if (!source || source->outputs.empty()) return;
+    links_.push_back({next_link_id_++, source_id, source->outputs.front().id, step.id, step.inputs[1].id, LinkType::TensorFlow});
 }
 
 void NodeEditor::MoveOrRemoveStep(const PendingStepMove& move) {

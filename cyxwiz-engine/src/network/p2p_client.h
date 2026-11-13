@@ -187,9 +187,11 @@ public:
     // Data Inputs that live in CyxCloud are not shipped: the job gets the
     // gateway address and an access token per dataset instead (TOFIX164),
     // minted through `cloud` (the Engine's DataStreamClient, may be null).
+    // `cloud_token_ids`, when given, receives the ids of the tokens minted.
     bool RegisterJobDatasets(const std::string& job_id, const std::string& graph_json, DataStreamClient* cloud,
                              const std::string& cloud_gateway_address, int64_t cloud_token_ttl_seconds,
-                             cyxwiz::protocol::JobConfig& config, std::string& error);
+                             cyxwiz::protocol::JobConfig& config, std::string& error,
+                             std::vector<std::string>* cloud_token_ids = nullptr);
     void UnregisterJobDatasets(const std::string& job_id);
 
 private:

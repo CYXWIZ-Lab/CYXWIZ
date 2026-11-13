@@ -6,7 +6,7 @@ adds the release rules as they are built.
 
 ## See what is held
 
-**Tools > Monitoring > Memory Visualization > Loaded data** lists every dataset
+**Tools > Monitoring > Loaded Data** (the Monitor window's Loaded data tab) lists every dataset
 the Engine holds:
 
 - **Summary:**

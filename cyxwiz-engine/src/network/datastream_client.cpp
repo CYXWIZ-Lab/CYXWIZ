@@ -538,6 +538,10 @@ bool DataStreamClient::VerifyDataset(const std::string& dataset_id,
 // Access Tokens
 // ============================================================================
 
+// Token calls run on the UI thread (sending and ending a job): a gateway
+// that does not answer gives up after this, not never.
+constexpr int kTokenCallSeconds = 5;
+
 bool DataStreamClient::CreateAccessToken(const std::string& dataset_id,
                                           DataStreamAccessToken& out_token,
                                           const std::string& node_id,
@@ -548,6 +552,7 @@ bool DataStreamClient::CreateAccessToken(const std::string& dataset_id,
     }
 
     grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(kTokenCallSeconds));
     AddAuthMetadata(context);
 
     cyxcloud::datastream::CreateAccessTokenRequest request;
@@ -585,6 +590,7 @@ bool DataStreamClient::RevokeAccessToken(const std::string& token_id) {
     }
 
     grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(kTokenCallSeconds));
     AddAuthMetadata(context);
 
     cyxcloud::datastream::RevokeAccessTokenRequest request;

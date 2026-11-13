@@ -422,6 +422,52 @@ model_seed 52 initialisation is the fixture's start, then trains a compiled
 graph per node and matches torch's parameters after
 `(mse + penalty).backward()` and SGD steps.
 
+PPO (cyxwiz/rl/ppo.h; TOFIX195 S4.1) has no autograd either: the loss of
+Stable-Baselines3 2.7 (normalised advantages, clipped surrogate, optional
+clipped value, entropy bonus) writes its gradients with respect to the
+policy's means or logits, the log standard deviation and the values by
+hand. `ppo_pytorch_parity` (test_computation_truth_ppo.cpp, fixture from
+generate_ppo_fixtures.py, which copies SB3's PPO.train on
+torch.distributions) matches the losses, approximate KL, clip fraction and
+every gradient for Gaussian and categorical policies under three settings
+(ties at ratio 1, ratios clipped on both sides), GAE against SB3's
+RolloutBuffer, and checks the samplers' seeds and distributions. Run the
+generator with torch 2.10 (the Engine's python-embed has it). The same test
+checks OrthogonalWeights (torch.nn.init.orthogonal_'s contract: W W^T or
+W^T W is gain^2 I, one seed one matrix), which the PPO networks start from.
+
+Gradient clipping by the global norm has three implementations: the host
+clip (ClipGradientsByGlobalNorm, the optimizer nodes' Gradient clip norm),
+the device clip (ClipGradientsByGlobalNormOnDevice, PPO's per-tensor path)
+and the clip inside the fused Adam kernel (AdamOptimizer::StepTogether, PPO
+on the NVIDIA provider). `gradient_clipping_pytorch_parity`
+(test_computation_truth_gradient_clipping.cpp, fixture from
+generate_gradient_clipping_fixtures.py) matches each of them against
+torch.nn.utils.clip_grad_norm_ with its default error_if_nonfinite=False,
+followed by torch.optim.Adam: a clip that bites, one that does not, a NaN
+norm (every gradient, then every parameter, NaN) and an infinite norm (the
+finite gradients 0, the finite parameters unchanged). Non-finite numbers are
+written as "nan" / "inf" in the fixture. Run it on CPU and CUDA
+(CYXWIZ_TEST_ARRAYFIRE_BACKEND); the fused Adam is checked where a provider
+runs it.
+
+The PPO trainer's observation and reward normalisation (core/rl/vec_normalize,
+TOFIX195 S4.3a) is checked against Stable-Baselines3's own VecNormalize:
+`vec_normalize_sb3_parity` (test_computation_truth_vec_normalize.cpp, fixture
+from generate_vec_normalize_fixtures.py) replays a recorded stream of three
+copies through it and matches the normalised observations, the scaled and
+clipped rewards, the final observations of ended episodes and the running
+statistics to float precision.
+
+generate_ppo_sb3_curves.py is not a test fixture generator but the reference
+the trainer is judged by: it trains SB3 PPO on the Engine's own environments
+(pycyxwiz.rl, the same MuJoCo build) with test_ppo_trainer's settings and
+copy counts for three seeds, and records every update in
+cyxwiz-engine/resources/rl_reference/ppo_sb3_curves.json, which the RL
+Training Dashboard draws under a run of the same environment and settings. On 2026-11-09 SB3 reached CartPole's 475 at 59,648 /
+64,256 / 72,192 steps and InvertedPendulum's 950 at 120,832 / 135,168 /
+161,792; the Engine's trainer reached them at 69,376 and 122,880.
+
 Each `LRScheduler` also exports/imports a typed, transactional state envelope.
 The scheduler tests resume every PyTorch LR sequence from a midpoint and reject
 schema, type, configuration, and non-finite state drift without mutating the

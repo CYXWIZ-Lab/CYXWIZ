@@ -1,5 +1,6 @@
 // inference_handler.cpp - gRPC InferenceService implementation
 #include "inference_handler.h"
+#include "core/grpc_listen.h"
 #include "deployment_manager.h"
 #include <spdlog/spdlog.h>
 #include <cyxwiz/tensor.h>
@@ -233,7 +234,7 @@ bool InferenceServer::Start() {
 
         // Build server
         grpc::ServerBuilder builder;
-        builder.AddListeningPort(address_, grpc::InsecureServerCredentials());
+        cyxwiz::servernode::core::ListenExclusively(builder, address_, grpc::InsecureServerCredentials());
         builder.RegisterService(service_.get());
 
         server_ = builder.BuildAndStart();

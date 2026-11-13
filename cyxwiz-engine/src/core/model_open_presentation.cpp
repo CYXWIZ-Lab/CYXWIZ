@@ -22,6 +22,14 @@ std::string FormatLine(const ProbeResult& probe) {
 }
 
 std::string Trained(const ProbeResult& probe) {
+    if (probe.has_rl_policy) {  // a PPO policy: environment steps and the last mean return
+        const auto steps = probe.custom_metadata.find("rl_steps");
+        if (steps == probe.custom_metadata.end()) return {};
+        std::string text = FormatCompiledCount(std::stoll(steps->second)) + " environment steps";
+        const auto ret = probe.custom_metadata.find("rl_mean_return");
+        if (ret != probe.custom_metadata.end()) text += ", mean return " + ret->second;
+        return text;
+    }
     if (!probe.epochs_trained) return {};
     const int epochs = *probe.epochs_trained;
     std::string text = FormatCompiledCount(epochs) + (epochs == 1 ? " epoch" : " epochs");
@@ -43,6 +51,7 @@ std::string Contains(const ProbeResult& probe) {
     parts.emplace_back("weights");
     if (probe.has_training_history) parts.emplace_back("training history");
     if (probe.has_optimizer_state) parts.emplace_back("optimizer state");
+    if (probe.has_rl_policy) parts.emplace_back("RL policy settings");
     if (probe.has_tokenizer) parts.emplace_back("tokenizer");
     if (probe.has_vocabulary) parts.emplace_back("vocabulary");
     std::string text;
@@ -97,7 +106,15 @@ View BuildView(const ProbeResult& probe) {
     v.rows.emplace_back("Size", FormatCompiledBytes(probe.file_size));
     v.layers = LayersLine(probe);
     v.can_open_graph = probe.has_graph;
-    if (v.can_open_graph) {
+    v.can_play_policy = probe.has_rl_policy && probe.has_graph;
+    if (v.can_play_policy) {
+        const auto env = probe.custom_metadata.find("rl_environment");
+        const std::string environment = env == probe.custom_metadata.end() ? "its environment" : env->second;
+        v.rows.emplace_back("Policy", "PPO on " + environment);
+        v.note = "A trained PPO policy. Play policy loads it and plays " + environment +
+                 " (the environment must be available: for a MuJoCo task, the MuJoCo plugin loaded). Open its graph "
+                 "opens the RL graph it was trained from.";
+    } else if (v.can_open_graph) {
         v.note = "Opens the graph in Studio, without its weights: train it, or load one of its training checkpoints "
                  "with Train > Test > Load Checkpoint for Testing.";
     } else {

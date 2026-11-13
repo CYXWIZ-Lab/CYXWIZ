@@ -32,8 +32,17 @@ void BindLossGradientCheck(pybind11::module_& m);
 // run as a submodule (also importable as `import pycyxwiz.nodes`).
 void InstallNodesSubmodule(pybind11::module_& m);
 
+// pycyxwiz.rl: the Python source of pycyxwiz_rl.py, plugin environments as
+// Gymnasium environments over the Engine's _cyxwiz_envs module (TOFIX195).
+void InstallRlSubmodule(pybind11::module_& m);
+
 // Sequential.add(module): appends any pycyxwiz module, Python-defined or
 // built in, without taking it from Python.
 void AddModuleToSequential(cyxwiz::SequentialModel& model, pybind11::object module);
+
+// The module itself: Sequential.add wraps a module Python also holds.
+const cyxwiz::Module& HeldModule(const cyxwiz::Module& module);
+// True for a module written in Python (a pycyxwiz.Module subclass).
+bool IsPythonModule(const cyxwiz::Module& module);
 
 }  // namespace pycyxwiz_bindings

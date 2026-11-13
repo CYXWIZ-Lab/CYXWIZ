@@ -1,5 +1,6 @@
 #include "audio_dataset_batcher.h"
 #include "classification_decision.h"
+#include "cyxwiz/portable_random.h"
 #include <cyxwiz/error_codes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -65,6 +66,7 @@ AudioDatasetBatcher::AudioDatasetBatcher(
         cfg.noise_level  = preprocess_config.noise_level;
         cfg.time_stretch = preprocess_config.time_stretch;
         cfg.pitch_shift  = preprocess_config.pitch_shift;
+        cfg.augmentation_seed = shuffle_seed ^ 0x9E3779B9u;  // as image augmentation
         spdlog::info("AudioDatasetBatcher: graph augmentation enabled "
                      "(noise_level={}, time_stretch={}, pitch_shift={})",
                      cfg.noise_level, cfg.time_stretch, cfg.pitch_shift);
@@ -288,7 +290,8 @@ void AudioDatasetBatcher::Reset() {
     // The current phase's part; only train batches are shuffled, so
     // validation and test metrics are reproducible across epochs.
     epoch_order_ = Part(current_phase_);
-    if (current_phase_ == BatcherPhase::Train && shuffle_) std::shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
+    if (current_phase_ == BatcherPhase::Train && dataset_) dataset_->SetAugmentationRound(++augmentation_round_);
+    if (current_phase_ == BatcherPhase::Train && shuffle_) cyxwiz::portable::Shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
     current_idx_ = 0;
 }
 

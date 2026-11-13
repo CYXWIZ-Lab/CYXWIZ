@@ -26,7 +26,8 @@ MenuInputs SampleInputs() {
     MenuInputs in;
     in.has_project = true;
     in.signed_in = true;
-    in.user_display_name = "Owner";
+    in.user_name = "Owner";
+    in.user_email = "owner@example.com";
     in.script_open = true;
     in.panels = {{"CyxWiz Studio", "Workspace", true, ""}, {"Properties", "Workspace", true, ""},
                  {"Patterns", "Workspace", false, ""}, {"Table Viewer", "Data", false, ""},
@@ -39,6 +40,16 @@ MenuInputs SampleInputs() {
     in.icon_packs = {{"0", "FontAwesome (Default)", true, ""}, {"1", "Tabler Icons", false, ""}};
     in.tutorials = {{"getting_started", "Getting Started", true, ""}, {"first_model", "Your First Model", false, ""}};
     in.plugin_panels = {{"mujoco_viewport", "MuJoCo Viewport", false, "Simulation"}};
+    // Commands a simulation plugin adds (plugin API 1.4), and one for a menu
+    // the Engine does not have
+    in.plugin_commands = {
+        {"sim.plugin:run", "Simulation", "run", "Run Simulation", "Runs the loaded model.", false,
+         "Load a model first.", false, false, "MuJoCo Simulation", true},
+        {"sim.plugin:stop", "Simulation", "run", "Stop", "Stops the run.", false, "Nothing is running.", false, false,
+         "MuJoCo Simulation", true},
+        {"sim.plugin:load", "Simulation", "model", "Load MJCF Model...", "Opens a model file.", true, "", false, false,
+         "MuJoCo Simulation", false},
+        {"other.plugin:sync", "Robots", "", "Sync Robots", "Syncs the robots.", true, "", false, false, "", false}};
     in.loaded_plugins = {{"com.cyxwiz.examples.activation-nodes", "Example Activation Nodes", "2 nodes", true},
                          {"com.cyxwiz.simulation.mujoco", "MuJoCo Simulation", "2 windows, 5 nodes", true},
                          {"com.example.viewer", "Viewer", "1 window", false}};
@@ -97,7 +108,8 @@ int main() {
         Check(!item.hint.empty() && EndsWith(item.hint, "."), "hint sentence for " + item.id);
         if (!item.enabled) Check(!item.disabled_reason.empty(), "disabled reason for " + item.id);
         if (item.planned) Check(!item.enabled, "planned item is disabled: " + item.id);
-        if (item.kind == MenuItem::Kind::Action && EndsWith(item.label, "...")) dialog_labels.insert(item.id);
+        if (item.kind == MenuItem::Kind::Action && EndsWith(item.label, "...") && item.id != "plugin.command")
+            dialog_labels.insert(item.id);
         if (item.kind == MenuItem::Kind::Action && item.argument.empty()) {
             auto it = label_by_id.find(item.id);
             if (it == label_by_id.end()) label_by_id[item.id] = item.label;
@@ -109,12 +121,13 @@ int main() {
     const std::set<std::string> dialog_openers = {
         "file.new_project", "file.open_project", "script.new", "script.open", "file.save_as", "file.import_model",
         "file.preferences", "edit.find", "edit.replace", "edit.find_in_files", "edit.replace_in_files",
-        "edit.go_to_line", "view.command_palette", "view.theme_editor", "nodes.custom_node_editor", "nodes.freeze_but_last",
+        "edit.go_to_line", "view.command_palette", "view.theme_editor", "nodes.custom_node_editor", "tools.clear_cache",
+        "nodes.freeze_but_last",
         "train.optimizer_settings", "train.compare_test_results", "train.export_test_report",
         "train.load_checkpoint", "data.import", "data.create_custom", "deploy.connect", "deploy.deploy",
-        "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin", "deploy.marketplace", "sim.load_mjcf",
+        "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin", "deploy.marketplace",
         "help.browse_tutorials", "help.shortcuts", "help.report_issue", "help.check_updates", "help.about",
-        "account.settings"};
+        "account.settings", "account.servers"};
     for (const auto& id : dialog_openers) Check(dialog_labels.count(id) == 1, "dialog opener has ...: " + id);
     for (const auto& id : dialog_labels) Check(dialog_openers.count(id) == 1, "... only on dialog openers: " + id);
 
@@ -132,7 +145,7 @@ int main() {
         "edit.toggle_line_comment", "edit.toggle_block_comment", "file.preferences",
         "view.panel", "view.save_layout", "view.reset_layout", "view.theme", "view.theme_editor",
         "view.studio_minimap", "view.script_minimap", "tools.idle_log", "tools.verbose_python", "view.fullscreen",
-        "tools.profiler", "tools.memory_panel", "tools.system_monitor",
+        "tools.profiler", "tools.monitor_system", "tools.monitor_memory", "tools.monitor_loaded_data", "tools.monitor_frames",
         "nodes.add_dense", "nodes.add_conv", "nodes.add_pooling", "nodes.add_dropout", "nodes.add_batchnorm",
         "nodes.add_attention", "nodes.group", "nodes.ungroup", "nodes.duplicate", "nodes.delete", "view.icon_pack",
         "nodes.custom_node_editor",
@@ -140,18 +153,19 @@ int main() {
         "nodes.freeze_but_last", "nodes.unfreeze_all",
         "train.compile", "train.local_debug", "train.start", "train.pause", "train.stop", "train.dashboard",
         "train.optimizer_settings",
-        "sim.run", "sim.pause", "sim.stop", "sim.step", "sim.viewport", "sim.env_library", "sim.load_mjcf",
+        // The Simulation actions come from simulation plugins (plugin API 1.4)
+        "plugin.command",
         "train.hyperparam_search", "deploy.serving", "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin",
         "train.load_checkpoint", "train.run_test", "train.quick_test", "train.view_test_results",
         "train.compare_test_results", "train.export_test_report", "tools.clear_cache", "tools.gc",
-        "tools.model_summary", "tools.flops", "tools.architecture_diagram", "tools.lr_finder",
+        "tools.model_summary", "tools.flops", "tools.lr_finder", "tools.model_health", "tools.projector",
         "data.missing_values", "data.outliers", "data.correlation",
         "data.normalization", "data.standardization", "data.log_transform", "data.boxcox", "data.feature_scaling",
         "tools.descriptive_stats", "tools.hypothesis_test", "tools.regression", "tools.distribution_fitter",
         "tools.cross_validation", "tools.confusion_matrix", "tools.roc_auc", "tools.pr_curve",
         "tools.learning_curves", "tools.kmeans", "tools.dbscan", "tools.hierarchical", "tools.gmm",
         "tools.cluster_eval", "tools.dim_reduction", "tools.feature_importance", "tools.gradcam", "tools.saliency",
-        "tools.nas", "tools.architecture_suggestions", "tools.matrix_calculator", "tools.eigen", "tools.svd",
+        "tools.matrix_calculator", "tools.eigen", "tools.svd",
         "tools.qr", "tools.cholesky", "tools.fft", "tools.spectrogram", "tools.filter_designer",
         "tools.convolution", "tools.wavelet", "tools.gradient_descent", "tools.convexity", "tools.lp", "tools.qp",
         "tools.differentiation", "tools.integration", "tools.decomposition", "tools.acf_pacf",
@@ -166,16 +180,15 @@ int main() {
         "help.tutorial", "help.browse_tutorials", "help.documentation", "help.shortcuts", "help.api_reference",
         "help.report_issue", "help.check_updates", "help.about", "account.sign_out",
         // not in any menu today
-        "view.command_palette", "tools.dnn_inference", "script.stop", "account.wallet"};
+        "view.command_palette", "script.stop", "account.wallet"};
     for (const auto& id : inventory) Check(Find(model, id) != nullptr, "inventory action present: " + id);
 
     // Rule: the Planned set is exactly this (kept visible, never enabled).
     std::set<std::string> planned;
     WalkModel(model, [&](const MenuItem& item, int, const std::string&) { if (item.planned) planned.insert(item.id); });
     const std::set<std::string> expected_planned = {
-        "view.fullscreen", "export.gguf", "deploy.quantize_int8", "deploy.quantize_int4", "deploy.quantize_fp16",
-        "deploy.marketplace", "sim.run", "sim.pause", "sim.stop", "sim.step", "sim.load_mjcf", "help.documentation",
-        "help.api_reference", "help.check_updates", "data.augment"};
+        "export.gguf", "deploy.quantize_int8", "deploy.quantize_int4", "deploy.quantize_fp16",
+        "deploy.marketplace", "help.check_updates", "data.augment"};
     Check(planned == expected_planned, "planned set");
 
     // Rule: every printed shortcut comes from the table, and within one
@@ -328,6 +341,98 @@ int main() {
         Check(!Find(BuildMenuModel(no_recent), "file.recent")->enabled, "empty recent list is disabled with a reason");
     }
 
+    // The Simulation menu: with no simulation graph open, what simulation
+    // plugins add (their commands in groups under their name), then the
+    // Simulation Monitor and their windows; without a plugin it says so.
+    const auto simulation_menu = [](const MenuModel& built) {
+        const Menu* sim = nullptr;
+        for (const auto& menu : built.menus) if (menu.label == "Simulation") sim = &menu;
+        return sim;
+    };
+    {
+        const Menu* sim = simulation_menu(model);
+        Check(sim && sim->items.size() == 8, "Simulation: a heading, 3 commands, 2 separators, 2 windows");
+        Check(sim->items[0].kind == MenuItem::Kind::Header && sim->items[0].label == "MuJoCo Simulation",
+              "the plugin's commands sit under its name");
+        Check(sim->items[1].id == "plugin.command" && sim->items[1].argument == "sim.plugin:run" &&
+                  !sim->items[1].enabled && sim->items[1].disabled_reason == "Load a model first.",
+              "a disabled command keeps the plugin's reason");
+        Check(sim->items[2].argument == "sim.plugin:stop" && sim->items[3].kind == MenuItem::Kind::Separator &&
+                  sim->items[4].label == "Load MJCF Model..." && sim->items[4].enabled,
+              "a separator between command groups");
+        Check(sim->items[5].kind == MenuItem::Kind::Separator && sim->items[6].id == "simulation.monitor" &&
+                  sim->items[6].checkable && !sim->items[6].checked,
+              "the Simulation Monitor follows as a toggle");
+        Check(sim->items[7].id == "apps.panel" && sim->items[7].argument == "mujoco_viewport" &&
+                  sim->items[7].checkable,
+              "the plugin's Simulation windows follow as toggles");
+
+        // A simulation graph open: its run comes first and the plugin's own
+        // run commands give way to it
+        MenuInputs graph = in;
+        graph.simulation_graph = true;
+        graph.simulation_graph_name = "cartpole";
+        graph.simulation_monitor_visible = true;
+        graph.simulation_commands = {
+            {"simulation.run", "Run Sim", "Runs the open graph's simulation.", true, ""},
+            {"simulation.pause", "Pause", "Pauses the graph run.", false, "Nothing is running."},
+            {"simulation.step", "Step Once", "Pauses the graph run and advances it one tick.", false,
+             "Run the graph first."},
+            {"simulation.stop", "Stop", "Stops the graph run.", false, "Nothing is running."},
+            {"simulation.clear", "Clear Traces", "Empties every Signal Scope's trace; a run goes on.", true, ""}};
+        const MenuModel graph_model = BuildMenuModel(graph);
+        const Menu* run = simulation_menu(graph_model);
+        Check(run && run->items.size() == 12, "graph run: heading, 5 commands, plugin heading, 1 command, 2 windows");
+        Check(run->items[0].kind == MenuItem::Kind::Header && run->items[0].label == "Graph run: cartpole",
+              "the graph run is headed by the graph's name");
+        Check(run->items[1].id == "simulation.run" && run->items[1].enabled && run->items[2].id == "simulation.pause" &&
+                  !run->items[2].enabled && run->items[2].disabled_reason == "Nothing is running." &&
+                  run->items[5].id == "simulation.clear",
+              "the graph run's commands with their reasons");
+        Check(run->items[6].kind == MenuItem::Kind::Separator && run->items[7].label == "MuJoCo Simulation" &&
+                  run->items[8].argument == "sim.plugin:load",
+              "the plugin's run commands give way; its other commands stay");
+        Check(run->items[10].id == "simulation.monitor" && run->items[10].checked, "the Monitor shows as open");
+        const MenuItem* sync = Find(model, "plugin.command", "other.plugin:sync");
+        bool robots_heading = false;
+        for (const auto& menu : model.menus)
+            if (menu.label == "Apps")
+                for (const auto& item : menu.items) robots_heading = robots_heading || item.label == "Robots";
+        Check(sync && robots_heading, "a command for an unknown menu sits in Apps under its title");
+        MenuInputs bare = in;
+        bare.plugin_commands.clear();
+        bare.plugin_panels.clear();
+        const MenuModel bare_model = BuildMenuModel(bare);
+        const Menu* none = simulation_menu(bare_model);
+        Check(none && none->items.size() == 3 && none->items[0].kind == MenuItem::Kind::Header &&
+                  none->items[2].id == "simulation.monitor",
+              "no simulation plugin: the menu says so and keeps the Monitor");
+        // A plugin registered again (its commands around another plugin's):
+        // each plugin heads its commands once, each of its groups stays whole
+        MenuInputs mixed = bare;
+        mixed.plugin_commands = {
+            {"a.plugin:run", "Simulation", "run", "Run A", "", true, "", false, false, "Plugin A", false},
+            {"b.plugin:run", "Simulation", "run", "Run B", "", true, "", false, false, "Plugin B", false},
+            {"a.plugin:stop", "Simulation", "run", "Stop A", "", true, "", false, false, "Plugin A", false}};
+        const MenuModel mixed_model = BuildMenuModel(mixed);
+        const Menu* mixed_menu = simulation_menu(mixed_model);
+        std::vector<std::string> labels;
+        if (mixed_menu)
+            for (const auto& item : mixed_menu->items)
+                if (item.kind == MenuItem::Kind::Header || item.id == "plugin.command") labels.push_back(item.label);
+        Check(labels.size() >= 5 && labels[0] == "Plugin A" && labels[1] == "Run A" && labels[2] == "Stop A" &&
+                  labels[3] == "Plugin B" && labels[4] == "Run B",
+              "a plugin's commands stay under one heading, in one group");
+        MenuInputs signal_only = graph;
+        signal_only.plugin_commands.clear();
+        signal_only.plugin_panels.clear();
+        const MenuModel signal_model = BuildMenuModel(signal_only);
+        const Menu* signal = simulation_menu(signal_model);
+        Check(signal && signal->items.size() == 10 && signal->items[6].kind == MenuItem::Kind::Separator &&
+                  signal->items[7].kind == MenuItem::Kind::Header && signal->items[9].id == "simulation.monitor",
+              "a signal graph without a plugin: its run, a separator, the note, the Monitor");
+    }
+
     // ONNX export follows the build.
     Check(!Find(model, "export.onnx")->enabled, "ONNX disabled when not compiled");
     MenuInputs onnx = in;
@@ -338,9 +443,59 @@ int main() {
     const auto palette = BuildPaletteEntries(model);
     Check(palette.size() > 150, "palette has every action");
     for (const auto& e : palette) Check(!e.menu_path.empty() && !e.label.empty(), "palette entry complete: " + e.id);
-    bool has_dnn = false;
-    for (const auto& e : palette) if (e.id == "tools.dnn_inference") has_dnn = e.menu_path == "Tools > Model";
-    Check(has_dnn, "DNN Inference path");
+    bool has_summary = false;
+    for (const auto& e : palette) if (e.id == "tools.model_summary") has_summary = e.menu_path == "Tools > Model";
+    Check(has_summary, "Model Summary path");
+    // The Model window replaced Architecture Diagram and DNN Inference (TOFIX129 D11);
+    // Architecture Suggestions went with them. Neural Architecture Search stays
+    // (it trains its best versions, TOFIX178 H2), last under Tools > Model.
+    for (const char* gone : {"tools.architecture_diagram", "tools.architecture_suggestions", "tools.dnn_inference"})
+        Check(Find(model, gone) == nullptr, std::string("removed from the menu: ") + gone);
+    Check(Find(model, "tools.nas") != nullptr, "Neural Architecture Search is under Tools > Model");
+
+    // The account chip at the top-right corner (TOFIX129 A3b).
+    {
+        const AccountChip a = AccountChipFor("Sample User", "sample", "sample@example.com", "pro");
+        Check(a.initials == "SU" && a.short_name == "Sample User" && a.plan == "Pro" && a.email == "sample@example.com",
+              "a name gives initials, the whole short name and the plan");
+        const AccountChip b = AccountChipFor("Maximilian Alexander Thorne", "", "m@example.com", "user");
+        Check(b.initials == "MA" && b.short_name == "Maximilian" && b.full_name == "Maximilian Alexander Thorne" &&
+                  b.plan.empty(),
+              "a long name shows its first word; the free plan has no badge");
+        const AccountChip c = AccountChipFor("", "code_wizard", "x@example.com", "admin");
+        Check(c.full_name == "code_wizard" && c.initials == "CW" && c.plan == "Admin", "no name: the user name");
+        const AccountChip d = AccountChipFor(" ", "", "jo@example.com", "");
+        Check(d.full_name == "jo" && d.initials == "JO", "no name or user name: the email's local part");
+        MenuInputs signed_in = in;
+        signed_in.signed_in = true;
+        signed_in.user_name = "Sample User";
+        signed_in.user_email = "sample@example.com";
+        signed_in.user_role = "pro";
+        const MenuModel with_user = BuildMenuModel(signed_in);
+        Check(with_user.account_chip.initials == "SU" && Find(with_user, "account.servers") != nullptr,
+              "signed in: the chip and Servers... in the account menu");
+        MenuInputs with_project = in;
+        with_project.has_project = true;
+        const MenuModel project_model = BuildMenuModel(with_project);
+        Check(project_model.project.items.size() == 4 && project_model.project.items[0].id == "file.show_project_folder" &&
+                  project_model.project.items[1].id == "file.copy_project_path",
+              "the project chip's menu: Show in Explorer, Copy Path, Close Project");
+        MenuInputs no_project = in;
+        no_project.has_project = false;
+        const MenuModel bare = BuildMenuModel(no_project);
+        const MenuItem* show = Find(bare, "file.show_project_folder");
+        Check(bare.project.items.empty() && show && !show->enabled, "no project: no chip menu, File > Show Project Folder greyed");
+        MenuInputs fs = in;
+        fs.fullscreen = true;
+        const MenuModel fs_model = BuildMenuModel(fs);  // Find points into the model: keep it alive
+        const MenuItem* full = Find(fs_model, "view.fullscreen");
+        Check(full && full->enabled && full->checkable && full->checked && full->shortcut == "F11", "Full Screen is a real toggle on F11");
+        const MenuItem* known = Find(bare, "help.known_issues");
+        Check(known && !known->enabled && !known->disabled_reason.empty(), "Known Issues greyed with its reason when the file is missing");
+        Check(Find(bare, "help.documentation")->shortcut == "F1" && Find(bare, "help.open_logs") != nullptr &&
+                  Find(bare, "help.whats_new") != nullptr,
+              "Help: Documentation (F1), What's New, Open Logs Folder");
+    }
 
     std::cout << "menu presentation: " << palette.size() << " palette entries, " << table.size()
               << " shortcut entries, " << planned.size() << " planned items. OK\n";

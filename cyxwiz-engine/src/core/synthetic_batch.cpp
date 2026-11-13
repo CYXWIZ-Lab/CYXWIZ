@@ -1,6 +1,7 @@
 #include "synthetic_batch.h"
 #include "spatial_batch_layout.h"
 #include "spatial_sequential_head.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstdint>
@@ -32,7 +33,7 @@ size_t InferNumEmbeddings(const TrainingConfiguration& config) {
 
 Tensor MakeFloatRandom(const std::vector<size_t>& shape, uint32_t seed) {
     std::mt19937 rng(seed);
-    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    const auto dist = [low = 0.0f, high = 1.0f](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
     size_t n = 1;
     for (size_t d : shape) n *= d;
     std::vector<float> buf(n);
@@ -45,7 +46,7 @@ Tensor MakeInt64Random(const std::vector<size_t>& shape,
                        uint32_t seed) {
     std::mt19937 rng(seed);
     if (hi_exclusive <= lo) hi_exclusive = lo + 1;
-    std::uniform_int_distribution<int64_t> dist(lo, hi_exclusive - 1);
+    const auto dist = [low = lo, high = hi_exclusive - 1](auto& r) { return cyxwiz::portable::UniformInt<int64_t>(r, low, high); };
     size_t n = 1;
     for (size_t d : shape) n *= d;
     std::vector<int64_t> buf(n);
@@ -55,7 +56,7 @@ Tensor MakeInt64Random(const std::vector<size_t>& shape,
 
 Tensor MakeBinaryFloat(const std::vector<size_t>& shape, uint32_t seed) {
     std::mt19937 rng(seed);
-    std::uniform_int_distribution<int> dist(0, 1);
+    const auto dist = [low = 0, high = 1](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
     size_t n = 1;
     for (size_t d : shape) n *= d;
     std::vector<float> buf(n);

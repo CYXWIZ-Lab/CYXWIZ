@@ -119,6 +119,26 @@ int main() {
     Equal(cyxwiz::PluginAddsLine(mixed), "Adds: 2 trainable nodes (Activations), 2 dataset formats",
           "categories stay with the nodes");
 
+    // Plugin packs from the installed runtime load from their current folder.
+    {
+        cyxwiz::PluginStartupList packs_list;
+        cyxwiz::RecordPluginLoaded(packs_list, "com.cyxwiz.simulation.mujoco",
+                                   "C:/CyxWiz/runtime/plugins/com.cyxwiz.simulation.mujoco/mujoco-v1");
+        cyxwiz::RecordPluginLoaded(packs_list, "com.example.off", "C:/plugins/off");
+        cyxwiz::SetPluginLoadAtStartup(packs_list, "com.example.off", false);
+        const std::vector<cyxwiz::PluginStartupEntry> packs = {
+            {"com.cyxwiz.simulation.mujoco",
+             "C:/CyxWiz/runtime/plugins/com.cyxwiz.simulation.mujoco/mujoco-v2", true},
+            {"com.example.off", "C:/CyxWiz/runtime/plugins/com.example.off/off-v1", true},
+            {"com.example.new", "C:/CyxWiz/runtime/plugins/com.example.new/new-v1", true}};
+        const auto pack_load = cyxwiz::PluginsToLoadAtStartup(packs_list, packs);
+        Check(pack_load.size() == 2, "a pack loads unless the user set it off");
+        Equal(pack_load[0].folder, "C:/CyxWiz/runtime/plugins/com.cyxwiz.simulation.mujoco/mujoco-v2",
+              "a listed pack loads from its active folder, not the recorded one");
+        Equal(pack_load[1].id, "com.example.new", "a newly installed pack loads at startup");
+        Check(cyxwiz::PluginsToLoadAtStartup(packs_list).size() == 1, "without packs the list is unchanged");
+    }
+
     std::cout << "test_plugin_presentation: all checks passed\n";
     return 0;
 }

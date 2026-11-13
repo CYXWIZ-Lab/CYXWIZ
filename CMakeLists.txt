@@ -17,6 +17,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Add custom cmake modules path (for FindONNXRuntime, etc.)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CyxWizWindowsResources)
+include(CyxWizHttplib)
 
 # Build options
 option(CYXWIZ_BUILD_ENGINE "Build CyxWiz Engine (Desktop Client)" ON)
@@ -275,6 +276,19 @@ if(CYXWIZ_ENABLE_ONNX)
             if(onnxruntime_FOUND)
                 message(STATUS "ONNX Runtime found (CONFIG) - ONNX support enabled")
                 set(CYXWIZ_HAS_ONNX ON CACHE BOOL "ONNX Runtime available" FORCE)
+                # vcpkg's Linux port (1.23) gives the target no include directory;
+                # its headers are in include/onnxruntime.
+                get_target_property(_ort_includes onnxruntime::onnxruntime INTERFACE_INCLUDE_DIRECTORIES)
+                if(NOT _ort_includes)
+                    find_path(CYXWIZ_ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h PATH_SUFFIXES onnxruntime)
+                    if(CYXWIZ_ONNXRUNTIME_INCLUDE_DIR)
+                        set_property(TARGET onnxruntime::onnxruntime APPEND PROPERTY
+                            INTERFACE_INCLUDE_DIRECTORIES "${CYXWIZ_ONNXRUNTIME_INCLUDE_DIR}")
+                    else()
+                        message(WARNING "ONNX Runtime headers (onnxruntime_cxx_api.h) not found - ONNX support disabled")
+                        set(CYXWIZ_HAS_ONNX OFF CACHE BOOL "ONNX Runtime available" FORCE)
+                    endif()
+                endif()
             else()
                 # Fallback to custom FindONNXRuntime module
                 find_package(ONNXRuntime QUIET)

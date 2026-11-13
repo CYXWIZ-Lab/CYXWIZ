@@ -200,9 +200,9 @@ TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     }
     const int label_index = ResolveLabelColumnIndex(schema, label_column);
     if (label_index >= 0) {
-        return {CountNumericBatchFeatureColumns(schema, label_index), false, true};
+        return {CountNumericBatchFeatureColumns(schema, label_index, {}, config.excluded_feature_columns), false, true};
     }
-    return {CountNumericBatchFeatureColumns(schema), false, false};
+    return {CountNumericBatchFeatureColumns(schema, -1, {}, config.excluded_feature_columns), false, false};
 }
 
 bool TryApplyBalancedClassWeightsFromArrowTable(
@@ -457,6 +457,11 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
         partition_col, /*partition_value=*/2, num_workers,
         BatcherPhase::Test, effective_val_ratio,
         static_cast<uint32_t>(config.dataloader_seed));
+    // The Data Input's roles keep ID, Group, Weight and Ignore columns out of
+    // the features (TOFIX129 D7a G1), in every split alike.
+    result.arrow_train->ExcludeFeatureColumns(config.excluded_feature_columns);
+    result.arrow_val->ExcludeFeatureColumns(config.excluded_feature_columns);
+    result.arrow_test->ExcludeFeatureColumns(config.excluded_feature_columns);
 
     if (continuous_target) {
         const size_t target_width =
@@ -588,6 +593,9 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         partition_col, /*partition_value=*/2, num_workers,
         BatcherPhase::Test, effective_val_ratio,
         static_cast<uint32_t>(config.dataloader_seed), vocabulary);
+    result.parquet_train->ExcludeFeatureColumns(config.excluded_feature_columns);
+    result.parquet_val->ExcludeFeatureColumns(config.excluded_feature_columns);
+    result.parquet_test->ExcludeFeatureColumns(config.excluded_feature_columns);
 
     // A row-level split (TOFIX154), by the in-memory path's rules: its
     // contiguous slices, or with a stratified Data Split each class's share
@@ -792,19 +800,23 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
     const int num_workers = ClampNumWorkersToPlatform(config.num_workers);
     const auto make_arrow_role = [&](const std::shared_ptr<ArrowDataset>& dataset,
                                      const std::string& label_column) {
-        return std::make_unique<ArrowDatasetBatcher>(
+        auto batcher = std::make_unique<ArrowDatasetBatcher>(
             vocabulary ? WithEncodedLabels(dataset, label_column, *vocabulary) : dataset,
             label_column, batch_size, false, 1.0f, true, "", 0,
             num_workers, BatcherPhase::Train, 0.0f,
             static_cast<uint32_t>(config.dataloader_seed));
+        batcher->ExcludeFeatureColumns(config.excluded_feature_columns);
+        return batcher;
     };
     const auto make_parquet_role = [&, batch_size](
         const std::shared_ptr<ParquetBackedDataset>& dataset,
         const std::string& label_column) {
-        return std::make_unique<ParquetArrowBatcher>(
+        auto batcher = std::make_unique<ParquetArrowBatcher>(
             dataset, label_column, batch_size, false, 1.0f, true, "", 0,
             num_workers, BatcherPhase::Train, 0.0f,
             static_cast<uint32_t>(config.dataloader_seed), vocabulary);
+        batcher->ExcludeFeatureColumns(config.excluded_feature_columns);
+        return batcher;
     };
 
     if (external_dev && datasets.dev_arrow) {

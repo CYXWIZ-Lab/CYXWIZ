@@ -2,6 +2,7 @@
 
 #include "../dataset_base.h"
 #include "../data_registry.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
@@ -129,8 +130,8 @@ private:
 
             std::random_device rd;
             std::mt19937 gen(rd());
-            std::uniform_int_distribution<> label_dist(0, 9);
-            std::normal_distribution<float> pixel_dist(0.5f, 0.3f);
+            const auto label_dist = [low = 0, high = 9](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
+            const auto pixel_dist = [mean = 0.5f, sd = 0.3f](auto& r) { return static_cast<float>(cyxwiz::portable::Normal(r, mean, sd)); };
 
             for (size_t i = 0; i < num_samples; i++) {
                 std::vector<float> sample(784);
@@ -166,8 +167,8 @@ private:
                 return false;
             }
             const int max_label = static_cast<int>(num_classes_ - 1);
-            std::uniform_int_distribution<> label_dist(0, max_label);
-            std::uniform_real_distribution<float> pixel_dist(0.0f, 1.0f);
+            const auto label_dist = [low = 0, high = max_label](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
+            const auto pixel_dist = [low = 0.0f, high = 1.0f](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
 
             for (size_t i = 0; i < num_samples; i++) {
                 std::vector<float> sample(3072);
@@ -193,8 +194,8 @@ private:
 
             std::random_device rd;
             std::mt19937 gen(rd());
-            std::uniform_int_distribution<> label_dist(0, 1);
-            std::normal_distribution<float> embed_dist(0.0f, 1.0f);
+            const auto label_dist = [low = 0, high = 1](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
+            const auto embed_dist = [mean = 0.0f, sd = 1.0f](auto& r) { return static_cast<float>(cyxwiz::portable::Normal(r, mean, sd)); };
 
             for (size_t i = 0; i < num_samples; i++) {
                 std::vector<float> sample(512);

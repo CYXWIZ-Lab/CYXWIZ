@@ -74,8 +74,6 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::ConvTranspose2D: return "ConvTranspose2D";
         case gui::NodeType::Upsample: return "Upsample";
         case gui::NodeType::PixelShuffle: return "PixelShuffle";
-        case gui::NodeType::PolicyNetwork: return "PolicyNetwork";
-        case gui::NodeType::ValueNetwork: return "ValueNetwork";
         case gui::NodeType::Embedding: return "Embedding";
         case gui::NodeType::TransformerEncoder: return "TransformerEncoder";
         case gui::NodeType::PositionalEncoding: return "PositionalEncoding";

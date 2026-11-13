@@ -29,9 +29,11 @@ the graph's shape:
 The line under the parts gives the parameter count, the model layers
 (layers, activations, merges; not the data nodes or the loss) and the skip
 connections. For example: "Parameters 109,386 · model layers: 3x Dense,
-2x ReLU · no skip connections". The counts come from the same analysis as
-**Model Summary** ([model_summary.md](model_summary.md)): every layer is
-sized by what reaches it.
+2x ReLU · no skip connections". The counts are the Model window's
+(Summary, [model_tools.md](model_tools.md#summary)): each version is compiled the way
+the canvas compiles, its parameters come from the built model and its
+multiply-adds from each compiled layer (two FLOPs each). A version that
+does not compile is not scored, and the reason is shown.
 
 The quick score does not say how well a model will learn. Use **Train the
 best** (below) to compare versions for real.
@@ -109,15 +111,6 @@ training does not start while Train, a hyperparameter search, a
 cross-validation or a test runs. If a check stops the training before it
 starts, the reason shows above the table.
 
-## Start from a suggestion
-
-**Show suggestions** builds five small models for the graph's input and
-output, for example "Five small models for 784 features and 10 classes".
-Convolutional models are offered for images. Each row gives the layers, the
-quick score and the parameter count. **Add beside the graph** adds that
-model in a row below the graph, linked in order. It is a separate model:
-link it to your data, or delete the old model, before training.
-
 ## Defaults
 
 **Preferences > Search** sets the defaults for the search fields and for
@@ -142,9 +135,6 @@ column `label`.
    10 different ones are kept, in a few seconds.
 4. Train the best 3 (10 epochs each, about 10 s per version on this PC)
    gave 87.3 %, 87.4 % and 88.3 % validation accuracy.
-5. Show suggestions, then Add beside the graph on "Dense 256, ReLU, Dense
-   128, Mish, Dense 10" (235,146 parameters): 7 nodes and 6 links appear
-   below the graph.
 
 ## Limits
 

@@ -16,6 +16,7 @@
 
 #include <mujoco/mujoco.h>
 #include <mutex>
+#include <vector>
 
 struct GLFWwindow;  // Forward declare — avoid pulling in GLFW headers
 
@@ -39,6 +40,11 @@ public:
     // Release all resources (MuJoCo context, GL texture, hidden window).
     void Shutdown();
 
+    // The same model file with another stress scene (a ground, thrown
+    // objects): the scene and the render context are made again for it; the
+    // camera and the View options stay. Call from the main thread.
+    bool ChangeModel(const mjModel* model);
+
     bool IsInitialized() const { return initialized_; }
     bool IsEnabled() const { return enabled_; }
     void SetEnabled(bool enabled) { enabled_ = enabled; }
@@ -46,26 +52,90 @@ public:
     // Render one frame. Call from main thread.
     // Returns the Core Profile texture ID suitable for ImGui::Image().
     // Returns 0 if rendering is disabled or not initialized.
-    unsigned int RenderFrame(const mjModel* model, const mjData* data);
+    // ghost: a second state of the same model drawn see-through beside it
+    // (a second policy, TOFIX212 P3d); null: none
+    unsigned int RenderFrame(const mjModel* model, const mjData* data, const mjData* ghost = nullptr);
+    // The colour the ghost is tinted with (the theme's accent)
+    void SetGhostTint(const float rgba[4]) {
+        for (int i = 0; i < 4; ++i) ghost_rgba_[i] = rgba[i];
+    }
 
-    // Camera controls (called from ImGui mouse input)
+    // Camera controls (called from ImGui mouse input). Orbit and zoom move
+    // the free and the following camera; pan moves the free camera only (a
+    // following camera keeps its body in the centre); a model camera stays
+    // where the model puts it.
     void RotateCamera(float dx, float dy);
     void ZoomCamera(float dz);
     void PanCamera(float dx, float dy);
+    // The free camera, aimed at the whole model
     void ResetCamera(const mjModel* model);
-    void TrackBody(int body_id);
+
+    // The camera the scene is seen through
+    enum class CameraMode { Free, FollowBody, ModelCamera };
+    CameraMode GetCameraMode() const;
+    // The followed body or the model camera's id; -1 for the free camera
+    int CameraTarget() const;
+    // The free camera from where the view is now
+    void UseFreeCamera();
+    // Follows a body (its subtree's centre of mass) from the current angle, at
+    // a distance that frames the body and what hangs from it
+    void FollowBody(const mjModel* model, const mjData* data, int body_id);
+    // One of the model's own <camera> elements
+    void UseModelCamera(int camera_id);
+
+    // The body under a point of the last frame (0..1 from the left and from
+    // the top); -1 for none or the floor and sky (the world body)
+    int BodyAt(const mjModel* model, const mjData* data, float x, float y);
+
+    // Ctrl+drag pulls a body with a spring (MuJoCo's perturbation, as in its
+    // own viewer). StartPush: the body under a point of the last frame (as
+    // BodyAt), false for none. MovePush: the mouse's travel over the frame
+    // height. PushForce: the pull for the body's state now, written into
+    // data->xfrc_applied and `force`; the held body, -1 when none.
+    bool StartPush(const mjModel* model, mjData* data, float x, float y);
+    void MovePush(const mjModel* model, const mjData* data, float dx, float dy);
+    int PushForce(const mjModel* model, mjData* data, mjtNum force[6]);
+    void EndPush();
+    bool IsPushing() const { return pert_.select > 0; }
+    // The body the Inspect panel selected (-1: none): drawn highlighted, its
+    // name shown when no labels are on, and a marker at its centre of mass in
+    // `rgba` (the theme's colour; alpha 0: no marker)
+    void Select(int body, const float rgba[4]) {
+        selected_ = body;
+        for (int i = 0; i < 4; ++i) marker_rgba_[i] = rgba[i];
+    }
+    int PushedBody() const { return pert_.select; }
 
     // Render settings
     void SetResolution(int width, int height);
     int GetWidth() const { return width_; }
     int GetHeight() const { return height_; }
 
-    // Visualization options
-    void ToggleContactPoints() { opt_.flags[mjVIS_CONTACTPOINT] ^= 1; }
-    void ToggleContactForces() { opt_.flags[mjVIS_CONTACTFORCE] ^= 1; }
-    void ToggleWireframe() { scn_.flags[mjRND_WIREFRAME] ^= 1; }
-    void ToggleJoints() { opt_.flags[mjVIS_JOINT] ^= 1; }
-    void ToggleActuators() { opt_.flags[mjVIS_ACTUATOR] ^= 1; }
+    // Visualization options (the View menu): an mjtVisFlag (contacts, joints,
+    // centre of mass ...), an mjtRndFlag (wireframe, shadows, sky ...), the
+    // frames and labels drawn, and the geom and site groups shown (0..5)
+    bool VisFlag(int flag) const { return opt_.flags[flag] != 0; }
+    void SetVisFlag(int flag, bool on) { opt_.flags[flag] = on ? 1 : 0; }
+    bool RenderFlag(int flag) const { return scn_.flags[flag] != 0; }
+    void SetRenderFlag(int flag, bool on) { scn_.flags[flag] = on ? 1 : 0; }
+    int Frames() const { return opt_.frame; }
+    void SetFrames(int frame) { opt_.frame = frame; }
+    int Labels() const { return opt_.label; }
+    void SetLabels(int label) { opt_.label = label; }
+    bool GeomGroup(int group) const { return opt_.geomgroup[group] != 0; }
+    void SetGeomGroup(int group, bool on) { opt_.geomgroup[group] = on ? 1 : 0; }
+    bool SiteGroup(int group) const { return opt_.sitegroup[group] != 0; }
+    void SetSiteGroup(int group, bool on) { opt_.sitegroup[group] = on ? 1 : 0; }
+
+    // An endless floor: a model's level floor plane is drawn where the camera
+    // looks, moved in whole texture repeats so its pattern stays put (a plane
+    // collides everywhere; the model draws only its own size)
+    bool EndlessFloor() const { return endless_floor_; }
+    void SetEndlessFloor(bool on) { endless_floor_ = on; }
+
+    // The last frame's pixels: RGB, bottom row first, GetWidth() x GetHeight()
+    // (empty before the first frame)
+    const std::vector<unsigned char>& LastFrame() const { return pixel_buffer_; }
 
     const mjvCamera& GetCamera() const { return cam_; }
     const mjvOption& GetOption() const { return opt_; }
@@ -74,6 +144,8 @@ public:
     void SetPhysicsMutex(std::mutex* mtx) { physics_mutex_ = mtx; }
 
 private:
+    void KeepModelCameraView(bool aim);
+    void MoveFloorUnderView(const mjModel* model);
     bool CreateCompatContext(GLFWwindow* main_window);
     void MakeMainContextCurrent();
     void MakeCompatContextCurrent();
@@ -85,6 +157,10 @@ private:
     mjvOption opt_{};
     mjvScene scn_{};
     mjrContext con_{};
+    mjvPerturb pert_{};  // the Ctrl+drag pull, drawn with the scene while held
+    int selected_ = -1;  // Select
+    float marker_rgba_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float ghost_rgba_[4] = {0.5f, 0.5f, 1.0f, 1.0f};  // SetGhostTint
 
     // Hidden GLFW window for compatibility context
     GLFWwindow* compat_window_ = nullptr;
@@ -100,6 +176,7 @@ private:
     int height_ = 480;
     bool initialized_ = false;
     bool enabled_ = true;
+    bool endless_floor_ = true;
     bool resolution_changed_ = false;
     std::mutex* physics_mutex_ = nullptr;
 };

@@ -10,12 +10,30 @@
 #include "IconsIconoir.h"
 #include "IconsPhosphor.h"
 
+#include <imgui_internal.h>  // ImTextCharFromUtf8
+
 namespace gui {
 
 // ========== Icon Implementation ==========
-const char* NodeEditor::GetNodeIcon(NodeType type) {
+const char* NodeEditor::GetNodeIcon(NodeType type) { return NodeIconFor(icon_pack_, type); }
+
+std::vector<ImWchar> NodeIconGlyphRanges(IconPack pack) {
+    ImFontGlyphRangesBuilder builder;
+    for (int t = 0; t <= static_cast<int>(NodeType::Unknown); ++t) {
+        const char* icon = NodeIconFor(pack, static_cast<NodeType>(t));
+        if (!icon || !*icon) continue;
+        unsigned int codepoint = 0;
+        ImTextCharFromUtf8(&codepoint, icon, nullptr);
+        if (codepoint != 0) builder.AddChar(static_cast<ImWchar>(codepoint));
+    }
+    ImVector<ImWchar> ranges;
+    builder.BuildRanges(&ranges);
+    return std::vector<ImWchar>(ranges.begin(), ranges.end());
+}
+
+const char* NodeIconFor(IconPack pack, NodeType type) {
     // Check if Tabler icon pack is selected
-    if (icon_pack_ == IconPack::Tabler) {
+    if (pack == IconPack::Tabler) {
         switch (type) {
             // Data Pipeline
             case NodeType::DatasetInput:
@@ -247,14 +265,12 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_TI_WAVE_SQUARE;
 
             // RL
-            case NodeType::GymEnvironment:
+            case NodeType::RLEnvironment:
                 return ICON_TI_FOCUS;
-            case NodeType::ReplayBufferNode:
-                return ICON_TI_DATABASE;
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork:
+            case NodeType::PolicyHead:
+            case NodeType::ValueHead:
                 return ICON_TI_BRAIN;
-            case NodeType::RLTraining:
+            case NodeType::PPO:
                 return ICON_TI_SCAN;
 
             // Smart I/O Nodes
@@ -269,7 +285,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::ExcelFile:
                 return ICON_TI_FILE_SPREADSHEET;
             case NodeType::SQLQuery:
-            case NodeType::HDF5Dataset:
                 return ICON_TI_FILE_DATABASE;
             case NodeType::ParquetFile:
             case NodeType::FeatherFile:
@@ -415,6 +430,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::CrossValidationNode:
                 return ICON_TI_COPY;
             case NodeType::RegressionMetricsNode:
+            case NodeType::PortfolioWeights:
             case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
@@ -450,7 +466,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
     }
 
     // Remix Icon pack
-    if (icon_pack_ == IconPack::Remix) {
+    if (pack == IconPack::Remix) {
         switch (type) {
             // Data Pipeline
             case NodeType::DatasetInput:
@@ -469,8 +485,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Core Layers
             case NodeType::Dense:
             case NodeType::DNNModelLoad:
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork:
+            case NodeType::PolicyHead:
+            case NodeType::ValueHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -527,7 +543,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MultiHeadAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
-            case NodeType::GymEnvironment:
+            case NodeType::RLEnvironment:
             case NodeType::KNNClassifier:
                 return ICON_RI_TARGET;
             case NodeType::TransformerEncoder:
@@ -617,6 +633,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::PortfolioWeights:
             case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
@@ -691,7 +708,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // DNN Inference Nodes
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
-            case NodeType::RLTraining:
+            case NodeType::PPO:
                 return ICON_RI_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -715,9 +732,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
                 return ICON_RI_MUSIC;
 
             // RL
-            case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
-            case NodeType::HDF5Dataset:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
             case NodeType::AudioFolderDataset:
@@ -802,14 +817,12 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
     }
 
     // Lucide Icon pack
-    if (icon_pack_ == IconPack::Lucide) {
+    if (pack == IconPack::Lucide) {
         switch (type) {
             // Data Pipeline
             case NodeType::DatasetInput:
             case NodeType::DataLoader:
-            case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
-            case NodeType::HDF5Dataset:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
             case NodeType::AudioFolderDataset:
@@ -837,8 +850,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Core Layers
             case NodeType::Dense:
             case NodeType::DNNModelLoad:
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork:
+            case NodeType::PolicyHead:
+            case NodeType::ValueHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -910,7 +923,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MultiHeadAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
-            case NodeType::GymEnvironment:
+            case NodeType::RLEnvironment:
             case NodeType::KNNClassifier:
                 return ICON_LU_TARGET;
             case NodeType::TransformerEncoder:
@@ -987,6 +1000,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::PortfolioWeights:
             case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
@@ -1052,7 +1066,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // DNN Inference Nodes
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
-            case NodeType::RLTraining:
+            case NodeType::PPO:
                 return ICON_LU_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -1129,14 +1143,12 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
     }
 
     // Iconoir Icon pack
-    if (icon_pack_ == IconPack::Iconoir) {
+    if (pack == IconPack::Iconoir) {
         switch (type) {
             // Data Pipeline
             case NodeType::DatasetInput:
             case NodeType::DataLoader:
-            case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
-            case NodeType::HDF5Dataset:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
             case NodeType::AudioFolderDataset:
@@ -1164,8 +1176,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Core Layers
             case NodeType::Dense:
             case NodeType::DNNModelLoad:
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork:
+            case NodeType::PolicyHead:
+            case NodeType::ValueHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -1237,7 +1249,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MultiHeadAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
-            case NodeType::GymEnvironment:
+            case NodeType::RLEnvironment:
             case NodeType::KNNClassifier:
                 return ICON_IO_TARGET;
             case NodeType::TransformerEncoder:
@@ -1314,6 +1326,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::PortfolioWeights:
             case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
@@ -1379,7 +1392,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // DNN Inference Nodes
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
-            case NodeType::RLTraining:
+            case NodeType::PPO:
                 return ICON_IO_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -1456,14 +1469,12 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
     }
 
     // Phosphor Icon pack
-    if (icon_pack_ == IconPack::Phosphor) {
+    if (pack == IconPack::Phosphor) {
         switch (type) {
             // Data Pipeline
             case NodeType::DatasetInput:
             case NodeType::DataLoader:
-            case NodeType::ReplayBufferNode:
             case NodeType::SQLQuery:
-            case NodeType::HDF5Dataset:
             case NodeType::StreamingDataset:
             case NodeType::TimeSeriesCSV:
             case NodeType::AudioFolderDataset:
@@ -1491,8 +1502,8 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // Core Layers
             case NodeType::Dense:
             case NodeType::DNNModelLoad:
-            case NodeType::PolicyNetwork:
-            case NodeType::ValueNetwork:
+            case NodeType::PolicyHead:
+            case NodeType::ValueHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -1564,7 +1575,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::MultiHeadAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
-            case NodeType::GymEnvironment:
+            case NodeType::RLEnvironment:
             case NodeType::KNNClassifier:
                 return ICON_PH_TARGET;
             case NodeType::TransformerEncoder:
@@ -1641,6 +1652,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             case NodeType::HuberLoss:
             case NodeType::MathFormula:
             case NodeType::RegressionMetricsNode:
+            case NodeType::PortfolioWeights:
             case NodeType::HypothesisTest:
             case NodeType::ClassificationMetricsNode:
             case NodeType::TestEvaluationNode:
@@ -1706,7 +1718,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             // DNN Inference Nodes
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
-            case NodeType::RLTraining:
+            case NodeType::PPO:
                 return ICON_PH_MAGNIFYING_GLASS;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -2036,14 +2048,12 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
             return ICON_FA_WAVE_SQUARE;
 
         // RL
-        case NodeType::GymEnvironment:
+        case NodeType::RLEnvironment:
             return ICON_FA_BULLSEYE;
-        case NodeType::ReplayBufferNode:
-            return ICON_FA_DATABASE;
-        case NodeType::PolicyNetwork:
-        case NodeType::ValueNetwork:
+        case NodeType::PolicyHead:
+        case NodeType::ValueHead:
             return ICON_FA_BRAIN;
-        case NodeType::RLTraining:
+        case NodeType::PPO:
             return ICON_FA_CROSSHAIRS;
 
         // Smart I/O Nodes
@@ -2060,7 +2070,6 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::ExcelFile:
             return ICON_FA_FILE_EXCEL;
         case NodeType::SQLQuery:
-        case NodeType::HDF5Dataset:
             return ICON_FA_DATABASE;
         case NodeType::ParquetFile:
         case NodeType::FeatherFile:
@@ -2206,6 +2215,7 @@ const char* NodeEditor::GetNodeIcon(NodeType type) {
         case NodeType::CrossValidationNode:
             return ICON_FA_COPY;
         case NodeType::RegressionMetricsNode:
+        case NodeType::PortfolioWeights:
         case NodeType::HypothesisTest:
         case NodeType::ClassificationMetricsNode:
         case NodeType::TestEvaluationNode:

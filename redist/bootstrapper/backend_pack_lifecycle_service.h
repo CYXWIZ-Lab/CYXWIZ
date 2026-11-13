@@ -197,6 +197,17 @@ public:
     BackendPackLifecycleResult Remove(
         std::string backend,
         std::string pack_id);
+    // Plugin packs: signed delivery into runtime/plugins/<plugin-id>/<pack-id>,
+    // activated in active-plugins.json without route qualification. Only a
+    // `supported` catalog entry is delivered.
+    BackendPackLifecycleResult DeliverPlugin(
+        const BackendPackDeliveryRequest& request,
+        BackendPackArtifactSource& source);
+    BackendPackLifecycleResult DeliverPlugin(
+        const BackendPackDeliveryRequest& request);
+    BackendPackLifecycleResult RemovePlugin(
+        std::string plugin_id,
+        std::string pack_id);
     // Exact installed CPU base only. Requires a valid activation record and an
     // execution guard. Acquires exclusive helper ownership, or borrows a live
     // matching helper session lock for this synchronous call only.
@@ -215,7 +226,8 @@ private:
         OptionalPack,
         FreshBase,
         BaseUpdate,
-        BaseRepair
+        BaseRepair,
+        PluginPack
     };
 
     BackendPackLifecycleResult DeliverInternal(

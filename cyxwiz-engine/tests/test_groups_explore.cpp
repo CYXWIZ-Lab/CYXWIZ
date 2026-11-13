@@ -7,6 +7,7 @@
 // the dendrogram, PCA, the t-SNE / UMAP row cap, and the words.
 
 #include "../src/core/groups_explore.h"
+#include "../src/core/tsne_learning_rate.h"
 #include "../src/core/groups_presentation.h"
 #include "../src/core/node_executors/clustering_operators.h"
 #include "../src/core/node_executors/pca_operator.h"
@@ -402,6 +403,12 @@ int main() {
               "t-SNE node adds tsne_0, tsne_1 beside the input");
         Check(!tsne_node.Configure({{"iterations", "100"}}, configure_error) && configure_error.find("250") != std::string::npos,
               "t-SNE refuses fewer than 250 iterations");
+        // learning_rate 0 (the default): scikit-learn's auto, rows / 48 and at least 50; a typed rate wins.
+        Check(TsneLearningRate(0.0, 120) == 50.0 && TsneLearningRate(0.0, 4800) == 100.0 && TsneLearningRate(200.0, 4800) == 200.0,
+              "t-SNE auto learning rate");
+        Check(tsne_node.Configure({{"feature_cols", features}, {"learning_rate", "0"}}, configure_error), "t-SNE learning_rate 0 is auto");
+        Check(!tsne_node.Configure({{"feature_cols", features}, {"learning_rate", "-1"}}, configure_error), "t-SNE refuses a negative learning rate");
+        Check(tsne_node.Configure({{"feature_cols", features}, {"iterations", "250"}}, configure_error), "t-SNE node configures again");
         TSNEOperator stopped_node;
         Check(stopped_node.Configure({{"feature_cols", features}, {"iterations", "5000"}}, configure_error), "t-SNE node configures");
         // The first ask is while reading the rows; the next is t-SNE's first report.

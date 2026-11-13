@@ -4,6 +4,7 @@
 #include "core/backend_manager.h"
 #include "ipc/daemon_client.h"
 #include "gui/server_probe.h"
+#include "common/server_ca_view.h"
 #include <string>
 
 namespace cyxwiz::servernode::gui {
@@ -16,6 +17,10 @@ public:
 private:
     void RenderRemoteConnectionTab();
     void RenderNetworkTab();  // settings_network.cpp (TOFIX168 step 3b)
+    // The server's private CA under the address (TOFIX192 T1c), saved with
+    // the other settings.
+    void RenderServerCaRow(const std::string& address);
+    cyxwiz::protocol::ServerCaViewCache server_ca_view_;
     bool ServerSettingsChanged() const;
     void SaveChanges();
     void RenderPricingTab();

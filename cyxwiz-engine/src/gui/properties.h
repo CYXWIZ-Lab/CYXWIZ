@@ -137,9 +137,6 @@ private:
     // Per-frame: the truths drawn on a row (the rest is listed read-only).
     std::set<std::string> shown_truth_keys_;
 
-    // Scope data buffers (node_id -> time/value ring buffer)
-    std::map<int, properties_node_editors::ScopeBuffer> scope_buffers_;
-
     // Section and disclosure state
     bool section_settings_open_ = true;
     bool section_advanced_open_ = false;

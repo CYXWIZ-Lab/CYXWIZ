@@ -48,6 +48,8 @@ void Label(const char* label, bool required = false, const char* tooltip = nullp
 bool LabelWithReset(const char* label, bool required, const char* tooltip, const char* reset_tooltip, bool* drawn);
 // A muted note on its own full-width row (a hint under a setting).
 void Note(const char* text);
+// A heading row that starts a group of settings ("ROBUSTNESS (TRAINING)").
+void Section(const char* title);
 // The status cell for the setting `key`: its truth chip, with the provenance
 // and message on hover, and under the row when details are shown. Call after
 // the editor, once per row.

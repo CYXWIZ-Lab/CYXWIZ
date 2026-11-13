@@ -20,6 +20,8 @@ struct VerifiedBackendPackPayload {
     std::string pack_id;
     std::filesystem::path source_directory;
     std::vector<VerifiedPackComponent> components;
+    // Set only for a plugin pack (backend and runtime_set_id are then empty).
+    std::string plugin_id;
 };
 
 }  // namespace cyxwiz::runtime

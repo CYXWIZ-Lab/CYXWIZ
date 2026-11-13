@@ -2352,6 +2352,24 @@ BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& conf
     return out;
 }
 
+BuiltExecutableModel BuildNetworkFromLayers(const std::vector<CompiledLayer>& layers, size_t input_size) {
+    BuiltExecutableModel out;
+    TrainingConfiguration config;
+    config.layers = layers;
+    config.input_size = input_size;
+    try {
+        auto model = std::make_unique<SequentialModel>();
+        if (!BuildSequential(*model, config, nullptr)) {
+            out.error_message = "The network has no layers the model builder can build";
+            return out;
+        }
+        out.model = std::make_unique<SequentialExecutableModel>(std::move(model));
+    } catch (const std::exception& e) {
+        out.error_message = e.what();
+    }
+    return out;
+}
+
 BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration& config) {
     BuiltExecutableModel out;
 

@@ -20,6 +20,7 @@
 #include "../node_editor.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <set>
 
@@ -52,6 +53,8 @@ DataStudioPanel::DataStudioPanel() {
     plugins_ = std::make_unique<PluginsView>();
     series_ = std::make_unique<SeriesView>();
     forecast_ = std::make_unique<ForecastView>();
+    signal_ = std::make_unique<SignalView>();
+    text_ = std::make_unique<TextView>();
     projection_->groups_shown = [this](const std::string& dataset) { return groups_ ? groups_->Shown(dataset) : nullptr; };
     // Groups and projections go into the graph as their nodes (TOFIX129 D5): in the
     // data path (a step: the rest of the graph gets the new columns) or as a branch.
@@ -62,7 +65,7 @@ DataStudioPanel::DataStudioPanel() {
         if (step) node_editor_->RequestStepAfter(from->id, type, name, std::move(params));
         else node_editor_->RequestBranchAfter(from->id, type, std::move(params), name);
         return std::string("Added the node \"") + name + "\" " + (step ? "after" : "reading") + " \"" + from->name +
-               "\" (Ctrl+Z on the canvas undoes it).";
+               "\" (Ctrl+Z on the canvas undoes it). " + (step ? explore_view::StepAddedNote() : explore_view::BranchAddedNote());
     };
     groups_->add_to_graph = [add_node](const groups::GroupsRequest& r, bool step) {
         ::gui::NodeType type = ::gui::NodeType::KMeansCluster;
@@ -90,13 +93,18 @@ DataStudioPanel::DataStudioPanel() {
         return add_node(*node_type, name, std::move(params), step);
     };
     forecast_->add_to_graph = series_->add_to_graph;
+    // Explore > Signal adds the FFT branch or the filter / wavelet steps (TOFIX129 D7).
+    signal_->add_to_graph = series_->add_to_graph;
+    // Explore > Text adds the TF-IDF / Sentiment / Tokenizer steps or the Word Embeddings branch (TOFIX129 D8).
+    text_->add_to_graph = series_->add_to_graph;
     // Explore's Tests and Regression keep what they found as nodes reading the data in use (TOFIX129 D3).
     tests_->keep_as_node = [this](const stats::TestRequest& r) -> std::string {
         const studio::GraphNode* from = NodeOfDataset(active_dataset_);
         if (!from || !node_editor_) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list.";
         const std::string name = stats_view::TestName(r) + " (" + (r.values.empty() ? r.groups : r.values) + ")";
         node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::HypothesisTest, HypothesisTestOperator::ParametersFromRequest(r), name);
-        return "Added the Hypothesis Test node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it).";
+        return "Added the Hypothesis Test node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it). " +
+               explore_view::BranchAddedNote();
     };
     regression_->add_to_graph = [this](const stats::RegressionRequest& r) -> std::string {
         const studio::GraphNode* from = NodeOfDataset(active_dataset_);
@@ -113,11 +121,54 @@ DataStudioPanel::DataStudioPanel() {
                                              {{"feature_cols", features}, {"target_col", r.response}, {"fit_intercept", "true"}}, name);
         }
         return std::string("Added the ") + (r.polynomial ? "Polynomial" : "Linear") + " Regression node \"" + name + "\" reading \"" +
-               from->name + "\" (Ctrl+Z on the canvas undoes it).";
+               from->name + "\" (Ctrl+Z on the canvas undoes it). " + explore_view::BranchAddedNote();
     };
     outliers_->on_open_query = [this](const std::string& sql) { ShowQuery(active_dataset_, sql); };
     missing_->on_drop_rows = [this](const std::string& column, const std::vector<std::string>& texts) {
         return AddKeepRowsStep(column, texts);
+    };
+    // Profile > Treat as missing > Make them empty in Prepare (TOFIX129 D7a G1):
+    // an SQL step that turns the texts into empty cells, so the graph and
+    // training see them as missing, not only Explore.
+    profile_->on_make_empty = [this](const std::string& column, const std::vector<std::string>& texts) -> std::string {
+        const studio::GraphNode* from = NodeOfDataset(active_dataset_);
+        if (!from || !node_editor_) return "This data is not a table of this graph's nodes; pick a Data Input or a node result in the list.";
+        const auto quote_name = [](const std::string& s) {
+            std::string out = "\"";
+            for (char c : s) out += c == '"' ? std::string("\"\"") : std::string(1, c);
+            return out + "\"";
+        };
+        const auto quote_text = [](const std::string& s) {
+            std::string out = "'";
+            for (char c : s) out += c == '\'' ? std::string("''") : std::string(1, c);
+            return out + "'";
+        };
+        std::string list;
+        for (const auto& t : texts) list += (list.empty() ? "" : ", ") + quote_text(t);
+        const std::string sql = "SELECT * REPLACE (CASE WHEN CAST(" + quote_name(column) + " AS VARCHAR) IN (" + list +
+                                ") THEN NULL ELSE " + quote_name(column) + " END AS " + quote_name(column) + ")\nFROM input";
+        if (const auto it = canvas_node_.find(from->id); it != canvas_node_.end())
+            node_editor_->RequestSubgraphAction(it->second, ::gui::NodeEditor::SubgraphRequest::Expand);
+        const std::string name = "Empty " + column + " where " + list;
+        node_editor_->RequestSqlStepAfter(from->id, name, sql);
+        return "Added the SQL step \"" + name + "\" after \"" + from->name + "\" (Ctrl+Z on the canvas undoes it). " +
+               explore_view::StepAddedNote();
+    };
+    // Missing > Fill in Prepare and Outliers > Flag / Clip / Drop rows (TOFIX129
+    // D7a G2): steps on the data path, so training reads their result.
+    missing_->on_fill = [add_node](const std::string& column, const std::string& strategy, const std::string& value) {
+        std::map<std::string, std::string> params{{"columns", column}, {"strategy", strategy}};
+        if (strategy == "constant") params["value"] = value;
+        return add_node(::gui::NodeType::FillMissingValues, "Fill " + column + " (" + strategy + ")", std::move(params), true);
+    };
+    outliers_->step_blocker = missing_->drop_blocker;
+    outliers_->on_add_step = [add_node](const std::string& column, explore::OutlierRule rule, double factor, const char* action) {
+        const char* method = rule == explore::OutlierRule::Iqr ? "iqr" : rule == explore::OutlierRule::ZScore ? "zscore" : "modified_z";
+        const char* verb = std::string(action) == "flag" ? "Flag" : std::string(action) == "clip" ? "Clip" : "Drop";
+        char factor_text[32];
+        std::snprintf(factor_text, sizeof(factor_text), "%g", factor);
+        return add_node(::gui::NodeType::OutlierDetector, std::string(verb) + " outliers in " + column,
+                        {{"columns", column}, {"method", method}, {"threshold", factor_text}, {"action", action}}, true);
     };
     visualizer_ = std::make_unique<Visualizer>();
     prepare_ = std::make_unique<PrepareView>();
@@ -150,7 +201,8 @@ DataStudioPanel::DataStudioPanel() {
         if (!from || !node_editor_) return "The data's node is no longer in the graph.";
         const std::string name = "Plot: " + title;
         node_editor_->RequestBranchAfter(from->id, ::gui::NodeType::Plot, {{"plot_spec", spec_json}}, name);
-        return "Added the Plot node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it).";
+        return "Added the Plot node \"" + name + "\" reading \"" + from->name + "\" (Ctrl+Z on the canvas undoes it). " +
+               explore_view::BranchAddedNote();
     };
     query_editor_->step_blocker = [this](const std::vector<std::string>& inputs) { return StepBlocker(inputs); };
     query_editor_->on_turn_into_step = [this](const std::string& sql, const std::vector<std::string>& inputs) {
@@ -227,6 +279,16 @@ void DataStudioPanel::ShowSeries(SeriesView::Look look) {
 
 void DataStudioPanel::ShowForecast() { ShowExplore(active_dataset_, ExploreTab::Forecast); }
 
+void DataStudioPanel::ShowSignal(SignalView::Look look, bool kernel) {
+    if (signal_) signal_->SelectLook(look, kernel);
+    ShowExplore(active_dataset_, ExploreTab::Signal);
+}
+
+void DataStudioPanel::ShowText(TextView::Look look) {
+    if (text_) text_->SelectLook(look);
+    ShowExplore(active_dataset_, ExploreTab::Text);
+}
+
 ExploreContext DataStudioPanel::MakeExploreContext() const {
     ExploreContext c;
     c.dataset = active_dataset_;
@@ -258,7 +320,8 @@ std::string DataStudioPanel::AddKeepRowsStep(const std::string& column, const st
     const std::string name = "Keep rows with " + column;
     node_editor_->RequestStepAfter(from->id, ::gui::NodeType::SQLQuery, name,
                                    {{guided::kGuidedOpsParameter, guided::ToJson(saved.step)}, {"query", saved.generated.sql}});
-    return "Added the guided step \"" + name + "\" after \"" + from->name + "\"; Prepare lists it (Ctrl+Z on the canvas undoes it).";
+    return "Added the guided step \"" + name + "\" after \"" + from->name + "\"; Prepare lists it (Ctrl+Z on the canvas undoes it). " +
+           explore_view::StepAddedNote();
 }
 
 void DataStudioPanel::AddTransformStep(::gui::NodeType type, std::map<std::string, std::string> parameters, bool compare) {
@@ -285,10 +348,22 @@ void DataStudioPanel::AddTransformStep(::gui::NodeType type, std::map<std::strin
     prepare_->AddAfter(from->id, type, std::move(parameters), compare);
 }
 
+void DataStudioPanel::TellProfileItsNode() {
+    if (!profile_) return;
+    const studio::GraphNode* of = NodeOfDataset(active_dataset_);
+    if (!of || of->type != ::gui::NodeType::DataInput) {
+        profile_->SetDataInputNode(-1, "");
+        return;
+    }
+    const auto roles = of->parameters.find("column_roles");
+    profile_->SetDataInputNode(of->id, roles == of->parameters.end() ? std::string() : roles->second);
+}
+
 void DataStudioPanel::SetActiveDataset(const std::string& dataset_name) {
     active_dataset_ = dataset_name;
     if (query_editor_) query_editor_->SetActiveDataset(dataset_name);
     if (profile_) profile_->SetActiveDataset(dataset_name);
+    TellProfileItsNode();  // at once, not on the next refresh (a role edit right after a rail click)
     if (gallery_) gallery_->SetDataset(dataset_name);
     if (visualizer_) visualizer_->SetActiveDataset(dataset_name);
 }
@@ -311,8 +386,9 @@ void DataStudioPanel::RefreshView() {
             if (parameters) {
                 // Validate shows a check's (or validator's) rule from its settings,
                 // Publish an output's file.
+                // Data Inputs too: Profile reads and writes their column roles (D7a G1).
                 if (type == ::gui::NodeType::RowCountCheck || type == ::gui::NodeType::DataValidator ||
-                    studio::IsOutputNode(type))
+                    type == ::gui::NodeType::DataInput || studio::IsOutputNode(type))
                     n.parameters = *parameters;
                 const auto it = parameters->find("file_path");
                 if (it != parameters->end()) n.file_path = it->second;
@@ -342,6 +418,7 @@ void DataStudioPanel::RefreshView() {
             return true;
         };
         const auto& links = node_editor_->GetLinks();
+        std::map<int, int> recipe_last_step;  // a recipe node -> its last step
         for (const auto& node : node_editor_->GetNodes()) {
             if (!add(node.id, node.type, node.name, &node.parameters)) continue;
             // The node linked to each input pin, so a view can follow the flow
@@ -365,6 +442,13 @@ void DataStudioPanel::RefreshView() {
                 const ::gui::MLNode* stored = node_editor_->FindStep(step.id);
                 add(step.id, step.type, step.name, stored ? &stored->parameters : nullptr);
             }
+            // A collapsed recipe feeding the Split stands for its last step (in
+            // run order; checks pass the table through), whose result training reads.
+            if (!summary.steps.empty()) recipe_last_step[node.id] = summary.steps.back().id;
+        }
+        for (auto& n : in.nodes) {
+            if ((n.type != ::gui::NodeType::DataSplit && n.type != ::gui::NodeType::DataLoader) || n.input_from.empty()) continue;
+            if (const auto last = recipe_last_step.find(n.input_from[0]); last != recipe_last_step.end()) n.input_from[0] = last->second;
         }
     }
     for (const auto& entry : DatasetCatalog::Instance().List()) {
@@ -407,6 +491,11 @@ void DataStudioPanel::RefreshView() {
     }
     graph_nodes_ = in.nodes;
     view_ = studio::Build(in);
+    // Nothing picked yet: Explore opens on what training reads (TOFIX129 D7a),
+    // so the plots show the data the model sees, not the raw input.
+    if (active_dataset_.empty() && !view_.training.dataset.empty()) SetActiveDataset(view_.training.dataset);
+    // Profile writes the roles of a Data Input's table into that node (D7a G1).
+    TellProfileItsNode();
     if (prepare_) prepare_->SetGraph(node_editor_, graph_nodes_, view_.jobs[static_cast<size_t>(studio::Job::Prepare)].node_ids);
     if (validate_) {
         std::vector<int> recipes;
@@ -430,10 +519,41 @@ const studio::GraphNode* DataStudioPanel::NodeMaking(const std::string& table) c
     return nullptr;
 }
 
+std::string DataStudioPanel::AddNodeReading(const std::string& dataset, const std::string& type, const std::string& name,
+                                            std::map<std::string, std::string> parameters, bool step, const std::string& second_dataset) {
+    if (!node_editor_) return "No graph is open.";
+    const auto node_type = ::gui::ResolveNodeTypeImportName(type);
+    if (!node_type) return "No node of type " + type + ".";
+    RefreshView();  // the graph as it is now (Data Studio may be closed)
+    const studio::GraphNode* from = NodeOfDataset(dataset);
+    if (!from) return "\"" + dataset + "\" is not a table of this graph's nodes: pick a Data Input's table or a node result.";
+    int second_id = -1;
+    std::string second_name;
+    if (!second_dataset.empty()) {
+        const studio::GraphNode* second = NodeOfDataset(second_dataset);
+        if (!second) return "\"" + second_dataset + "\" is not a table of this graph's nodes: pick a Data Input's table or a node result.";
+        second_id = second->id;
+        second_name = second->name;
+    }
+    const std::string from_name = from->name;
+    node_editor_->RequestNodeAfter(from->id, *node_type, std::move(parameters), name, !step, second_id);
+    return "Added the node \"" + name + "\" " + (step ? "after" : "reading") + " \"" + from_name + "\"" +
+           (second_id >= 0 ? ", with \"" + second_name + "\" into its second input" : std::string()) +
+           " (Ctrl+Z on the canvas undoes it). " + (step ? explore_view::StepAddedNote() : explore_view::BranchAddedNote());
+}
+
 const studio::GraphNode* DataStudioPanel::NodeOfDataset(const std::string& dataset) const {
     if (const studio::GraphNode* n = NodeMaking(dataset)) return n;
+    // A registry name, or the name the table is shown and queried by (Tools >
+    // Linear Algebra's table list): a label can name several registry entries.
+    if (dataset.empty()) return nullptr;
     for (const auto& n : graph_nodes_)
-        if (n.type == ::gui::NodeType::DataInput && !dataset.empty() && n.dataset_name == dataset) return &n;
+        if (n.type == ::gui::NodeType::DataInput && n.dataset_name == dataset) return &n;
+    for (const auto& e : DatasetCatalog::Instance().List()) {
+        if (e.Shown() != dataset) continue;
+        for (const auto& n : graph_nodes_)
+            if (n.type == ::gui::NodeType::DataInput && !n.dataset_name.empty() && n.dataset_name == e.name) return &n;
+    }
     return nullptr;
 }
 

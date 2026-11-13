@@ -24,6 +24,7 @@
 #include <iostream>
 #include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Graph-only: no file loaders, so datasets are not read.
@@ -79,11 +80,13 @@ std::string ShapeText(const std::vector<size_t>& shape) {
     return s + "]";
 }
 
-const cyxwiz::CompiledLayer& LayerNamed(const cyxwiz::TrainingConfiguration& config, const std::string& name) {
+// Takes a view: a reference returned for a temporary std::string argument looks
+// dangling to GCC (-Wdangling-reference).
+const cyxwiz::CompiledLayer& LayerNamed(const cyxwiz::TrainingConfiguration& config, std::string_view name) {
     for (const auto& layer : config.layers) {
         if (layer.name == name) return layer;
     }
-    Check(false, "compiled layer missing: " + name);
+    Check(false, "compiled layer missing: " + std::string(name));
     return config.layers.front();
 }
 

@@ -582,7 +582,7 @@ void TutorialSystem::RegisterBuiltInTutorials() {
                 "node_editor",
                 "CyxWiz Studio",
                 "CyxWiz Studio is the heart of CyxWiz. Here you design neural networks visually:\n\n• Right-click to add nodes\n• Drag between pins to connect\n• Use Ctrl+G to group nodes\n• Ctrl+F to search nodes",
-                "CyxWiz Studio",
+                "###CyxWiz Studio",  // the Studio window's id (NodeEditor::kWindowId)
                 "Right-click to see the node context menu",
                 nullptr,
                 false,
@@ -676,7 +676,7 @@ void TutorialSystem::RegisterBuiltInTutorials() {
                 "add_input",
                 "Add an Input Layer",
                 "First, we need an input layer to receive data. Right-click in CyxWiz Studio and select 'Data > DataInput' to add an input node.",
-                "CyxWiz Studio",
+                "###CyxWiz Studio",  // the Studio window's id (NodeEditor::kWindowId)
                 "Add a DataInput node from the context menu",
                 nullptr,
                 false,
@@ -686,7 +686,7 @@ void TutorialSystem::RegisterBuiltInTutorials() {
                 "add_dense",
                 "Add a Dense Layer",
                 "Now add a Dense (fully connected) layer. Right-click and select 'Layers > Dense'. This layer will learn patterns in your data.",
-                "CyxWiz Studio",
+                "###CyxWiz Studio",  // the Studio window's id (NodeEditor::kWindowId)
                 "Add a Dense layer from the context menu",
                 nullptr,
                 false,
@@ -696,7 +696,7 @@ void TutorialSystem::RegisterBuiltInTutorials() {
                 "connect",
                 "Connect the Nodes",
                 "Connect the DataInput to the Dense layer by dragging from the output pin to the input pin. This defines the data flow.",
-                "CyxWiz Studio",
+                "###CyxWiz Studio",  // the Studio window's id (NodeEditor::kWindowId)
                 "Drag from output to input to connect nodes",
                 nullptr,
                 false,
@@ -706,7 +706,7 @@ void TutorialSystem::RegisterBuiltInTutorials() {
                 "add_output",
                 "Add Output Layer",
                 "Add another Dense layer for the output. Set its units to match the number of classes you want to classify (e.g., 10 for digits).",
-                "CyxWiz Studio",
+                "###CyxWiz Studio",  // the Studio window's id (NodeEditor::kWindowId)
                 "Add another Dense layer for output",
                 nullptr,
                 false,

@@ -4,6 +4,7 @@
 #include "training_generation_preview_settings.h"
 #include <cyxwiz/sequential.h>
 #include "algorithms/arrayfire_backend_utils.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -258,9 +259,8 @@ NextTokenSelection SelectNextTokenFromDistribution(
         weights.push_back(static_cast<double>(candidate.probability));
     }
 
-    std::discrete_distribution<size_t> distribution(
-        weights.begin(), weights.end());
-    const size_t index = distribution(rng);
+    size_t index = cyxwiz::portable::Discrete(rng, weights);
+    if (index >= candidates.size()) index = 0;  // no weight above 0: the first candidate
     selection.token_id = candidates[index].token_id;
     selection.probability = candidates[index].probability;
     return selection;

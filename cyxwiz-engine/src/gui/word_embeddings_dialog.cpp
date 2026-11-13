@@ -44,7 +44,7 @@ constexpr int kNearest = 10;
 constexpr size_t kMissingListed = 2000;  // chips on the Vocabulary tab
 const char* const kDot = " \xC2\xB7 ";  // " · "
 
-enum Tab { kSourceTab = 0, kVocabularyTab, kNearestTab, kOutputsTab };
+enum Tab { kSourceTab = 0, kVocabularyTab, kNearestTab, kMapTab, kOutputsTab };
 
 // A tinted card: one step off the window, no border, as tall as its content.
 bool BeginCard(const char* id) {
@@ -480,9 +480,10 @@ void WordEmbeddingsDialog::RenderContent() {
     // a field is being typed in).
     if (!Training() && !read_ && !ImGui::IsAnyItemActive() && ReadKey() != read_key_) StartRead();
 
+    if (map_view_) map_view_->DrawWindow();
     if (!ImGui::BeginTabBar("##word_embeddings_tabs")) return;
-    const char* names[] = {"Source", "Vocabulary", "Nearest words", "Outputs"};
-    for (int tab = 0; tab < 4; ++tab) {
+    const char* names[] = {"Source", "Vocabulary", "Nearest words", "Map", "Outputs"};
+    for (int tab = 0; tab < 5; ++tab) {
         const ImGuiTabItemFlags flags = tab_request_ == tab ? ImGuiTabItemFlags_SetSelected : 0;
         if (!ImGui::BeginTabItem(names[tab], nullptr, flags)) continue;
         ImGui::Dummy(ImVec2(0, ui::CurrentTokens().space_sm));
@@ -491,6 +492,7 @@ void WordEmbeddingsDialog::RenderContent() {
         case kSourceTab: RenderSource(); break;
         case kVocabularyTab: RenderVocabulary(); break;
         case kNearestTab: RenderNearest(); break;
+        case kMapTab: RenderMap(); break;
         default: RenderOutputs(); break;
         }
         ImGui::EndChild();
@@ -1054,10 +1056,37 @@ bool WordEmbeddingsDialog::UnseenWordVector(const std::string& word, std::vector
     return true;
 }
 
+std::shared_ptr<const cyxwiz::WordVectors> WordEmbeddingsDialog::ShownVectors() const {
+    return Training() ? (run_vectors_ ? run_vectors_ : saved_vectors_) : (read_vectors_ ? read_vectors_ : run_vectors_);
+}
+
+// The word map of these vectors (the widget Explore > Text > Embeddings uses):
+// a turning preview here, every control in its window.
+void WordEmbeddingsDialog::RenderMap() {
+    const auto vectors = ShownVectors();
+    if (!vectors) {
+        ImGui::Dummy(ImVec2(0, ui::CurrentTokens().space_lg));
+        Dim(Training() ? "Train the vectors (Source tab) to map them here." : "Choose a vector file (Source tab) to map it here.");
+        return;
+    }
+    if (!map_view_) map_view_ = std::make_unique<cyxwiz::WordMapView>("node" + std::to_string(node_ ? node_->id : 0));
+    cyxwiz::WordMapView::Source source;
+    source.vectors = vectors;
+    char key[32];
+    std::snprintf(key, sizeof key, "%p", static_cast<const void*>(vectors.get()));
+    source.key = key;
+    source.title = (node_ ? node_->name : std::string("Word Embeddings")) + ": " + cyxwiz::GroupedCount(vectors->words.size()) + " words";
+    map_view_->SetSource(std::move(source));
+    Dim("The words in 3D: words used in the same places sit together. Open the map to look a word up, turn it, colour it by clusters and dock or float it.");
+    ImGui::Dummy(ImVec2(0, ui::CurrentTokens().space_sm));
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    map_view_->DrawPreview(ImVec2(avail.x, (std::max)(240.0f, avail.y - ImGui::GetFrameHeightWithSpacing() * 2.0f)));
+    if (ui::PrimaryButton("Open the word map", true, nullptr, ui::ButtonSize::Small)) map_view_->Open();
+}
+
 void WordEmbeddingsDialog::RenderNearest() {
     const auto& t = ui::CurrentTokens();
-    const auto vectors = Training() ? (run_vectors_ ? run_vectors_ : saved_vectors_)
-                                    : (read_vectors_ ? read_vectors_ : run_vectors_);
+    const auto vectors = ShownVectors();
     if (Training()) {
         RenderRunCard();
     } else if (!read_summary_.empty()) {

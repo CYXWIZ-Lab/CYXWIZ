@@ -18,8 +18,10 @@ inline std::string ResolveTabularFileType(
     return data_input::ResolveFormat(file_type, source_path);
 }
 
+// HDF5 never takes the generic path: it loads through its own source
+// (hdf5_apply_preparation), which reuses the inspector's checks.
 inline bool IsSupportedTabularFileType(const std::string& file_type) {
-    return data_input::IsExecutable(file_type);
+    return file_type != "hdf5" && data_input::IsExecutable(file_type);
 }
 
 inline bool IsUnsupportedTabularFileType(const std::string& file_type) {
@@ -28,6 +30,8 @@ inline bool IsUnsupportedTabularFileType(const std::string& file_type) {
 
 inline std::string UnsupportedTabularFileTypeMessage(
     const std::string& file_type) {
+    if (file_type == "hdf5" && data_input::IsExecutable(file_type))
+        return "HDF5 loads through the HDF5 source settings, not the generic table loader";
     return data_input::UnsupportedReason(file_type, data_input::kHdf5BuildAvailable);
 }
 

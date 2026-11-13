@@ -14,6 +14,7 @@ class IPanelProvider;
 class IDataProvider;
 class ITrainingHook;
 class IAnalyticsProvider;
+class PluginUi;
 
 struct AssistantContextSnapshot {
     std::string engine_version;
@@ -71,6 +72,36 @@ public:
 
     // Register custom analytics computations (requires DataRegistry permission)
     virtual bool RegisterAnalyticsProvider(IAnalyticsProvider* provider) = 0;
+
+    // === UI (plugin API 1.4) ===
+    // The Engine's buttons, fields and theme colours for plugin panels
+    // (plugin_ui.h). Null where the host draws no windows (command-line
+    // tools); the Engine always provides it. Declare api_version 1.4.0 or
+    // newer in plugin.json to call it.
+    virtual PluginUi* GetUi() = 0;
+
+    // Opens one of this plugin's own panels and brings it to the front (a
+    // button in one panel that leads to another). False when the plugin has
+    // no panel with that id.
+    virtual bool ShowPanel(const std::string& panel_id) = 0;
+
+    // Keeps the Engine drawing at full frame rate for the next second. Call
+    // it every frame while something in your panel moves (a running
+    // simulation, an animation): without mouse or key input the Engine draws
+    // 10 frames a second.
+    virtual void RequestFullFrameRate() = 0;
+
+    // === Project and settings (plugin API 1.4) ===
+    // The open project's folder (it holds exports/, models/ ...); empty when
+    // no project is open.
+    virtual std::filesystem::path GetProjectDir() const = 0;
+
+    // The user's settings for this plugin, kept by the Engine between
+    // sessions (with its own settings). GetSetting returns `fallback` for a
+    // key never set; SetSetting saves at once. Values are text: write
+    // numbers and switches as text ("1.5", "on") and read them back.
+    virtual std::string GetSetting(const std::string& key, const std::string& fallback = {}) const = 0;
+    virtual void SetSetting(const std::string& key, const std::string& value) = 0;
 
 protected:
     PluginContext() = default;

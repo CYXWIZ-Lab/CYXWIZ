@@ -1,4 +1,6 @@
 #include "cyxwiz/image_augmentation.h"
+#include "cyxwiz/portable_random.h"
+#include "../device_random.h"
 
 #include <algorithm>
 #include <array>
@@ -420,8 +422,8 @@ af::array GaussianNoise(const af::array& images, const ImageOpDraws& draws, cons
         }
         noise = RowsToImages(af::transpose(af::array(static_cast<dim_t>(shape.Size()), n, draws.noise.data())), shape);
     } else {
-        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, draws.noise_seed);
-        noise = af::randn(images.dims(), f32, engine);
+        af::randomEngine engine = cyxwiz::DeviceRandomEngine(draws.noise_seed);
+        noise = cyxwiz::DeviceNormal(images.dims(), f32, engine);
     }
     const af::array out = images + (op.noise_mean + noise * op.sigma);
     return op.clip ? af::clamp(out, 0.0, 1.0) : out;
@@ -1124,7 +1126,7 @@ ImageShape ImageShapeAfter(const ImageOp& op, const ImageShape& input) {
 ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batch, bool training,
                          std::mt19937& rng) {
     ImageOpDraws draws;
-    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    const auto unit = [](std::mt19937& r) { return cyxwiz::portable::UniformFloat(r, 0.0f, 1.0f); };
     switch (op.kind) {
         case ImageOpKind::RandomCrop: {
             draws.top.resize(batch);
@@ -1133,10 +1135,10 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
                 const size_t padded_h = input.height + 2 * static_cast<size_t>(op.padding);
                 const size_t padded_w = input.width + 2 * static_cast<size_t>(op.padding);
                 if (training) {
-                    draws.top[i] = std::uniform_int_distribution<int>(
-                        0, static_cast<int>(padded_h) - op.height)(rng);
-                    draws.left[i] = std::uniform_int_distribution<int>(
-                        0, static_cast<int>(padded_w) - op.width)(rng);
+                    draws.top[i] = cyxwiz::portable::UniformInt<int>(rng,
+                        0, static_cast<int>(padded_h) - op.height);
+                    draws.left[i] = cyxwiz::portable::UniformInt<int>(rng,
+                        0, static_cast<int>(padded_w) - op.width);
                 } else {
                     draws.top[i] = CenterOffset(padded_h, op.height);
                     draws.left[i] = CenterOffset(padded_w, op.width);
@@ -1155,7 +1157,7 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             draws.angle.resize(batch);
             for (auto& angle : draws.angle) {
                 const bool rotate = unit(rng) < op.probability;
-                const float a = std::uniform_real_distribution<float>(-op.max_angle, op.max_angle)(rng);
+                const float a = cyxwiz::portable::UniformFloat(rng, -op.max_angle, op.max_angle);
                 angle = rotate ? a : 0.0f;
             }
             break;
@@ -1168,15 +1170,15 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             for (size_t i = 0; i < batch; ++i) {
                 std::vector<int> order(4);
                 std::iota(order.begin(), order.end(), 0);
-                std::shuffle(order.begin(), order.end(), rng);
+                cyxwiz::portable::Shuffle(order.begin(), order.end(), rng);
                 const auto factor = [&rng](float spread) {
-                    return std::uniform_real_distribution<float>((std::max)(0.0f, 1.0f - spread), 1.0f + spread)(rng);
+                    return cyxwiz::portable::UniformFloat(rng, (std::max)(0.0f, 1.0f - spread), 1.0f + spread);
                 };
                 draws.factors[i] = {
                     active[0] ? factor(op.brightness) : 1.0f,
                     active[1] ? factor(op.contrast) : 1.0f,
                     active[2] ? factor(op.saturation) : 1.0f,
-                    active[3] ? std::uniform_real_distribution<float>(-op.hue, op.hue)(rng) : 0.0f,
+                    active[3] ? cyxwiz::portable::UniformFloat(rng, -op.hue, op.hue) : 0.0f,
                 };
                 for (int step : order) {
                     if (active[step]) draws.order[i].push_back(step);
@@ -1191,7 +1193,7 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             for (size_t i = 0; i < batch; ++i) {
                 if (!(unit(rng) < op.probability)) continue;  // Identity picks
                 for (int pick = 0; pick < op.num_ops; ++pick) {
-                    const int id = std::uniform_int_distribution<int>(0, kRandAugmentOps - 1)(rng);
+                    const int id = cyxwiz::portable::UniformInt<int>(rng, 0, kRandAugmentOps - 1);
                     const auto chosen = static_cast<AugmentOp>(id);
                     float m = AugmentMagnitude(AugmentSpace::Standard, chosen, kRandAugmentBins, op.magnitude,
                                                input.height, input.width);
@@ -1213,8 +1215,8 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
                 if (!(unit(rng) < op.probability)) continue;
                 if (op.erase_method == EraseMethod::Cutout) {
                     // DeVries & Taylor: centre anywhere, square clipped to the image.
-                    const int cy = std::uniform_int_distribution<int>(0, h - 1)(rng);
-                    const int cx = std::uniform_int_distribution<int>(0, w - 1)(rng);
+                    const int cy = cyxwiz::portable::UniformInt<int>(rng, 0, h - 1);
+                    const int cx = cyxwiz::portable::UniformInt<int>(rng, 0, w - 1);
                     const int half = op.cutout_size / 2;
                     const int y1 = std::clamp(cy - half, 0, h), y2 = std::clamp(cy + half, 0, h);
                     const int x1 = std::clamp(cx - half, 0, w), x2 = std::clamp(cx + half, 0, w);
@@ -1229,13 +1231,13 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
                 const double log_min = std::log(op.ratio_min), log_max = std::log(op.ratio_max);
                 for (int attempt = 0; attempt < 10; ++attempt) {
                     const double erase_area =
-                        area * std::uniform_real_distribution<double>(op.scale_min, op.scale_max)(rng);
-                    const double aspect = std::exp(std::uniform_real_distribution<double>(log_min, log_max)(rng));
+                        area * cyxwiz::portable::Uniform(rng, op.scale_min, op.scale_max);
+                    const double aspect = std::exp(cyxwiz::portable::Uniform(rng, log_min, log_max));
                     const int eh = RoundHalfEven(std::sqrt(erase_area * aspect));
                     const int ew = RoundHalfEven(std::sqrt(erase_area / aspect));
                     if (!(eh < h && ew < w)) continue;
-                    draws.top[i] = std::uniform_int_distribution<int>(0, h - eh)(rng);
-                    draws.left[i] = std::uniform_int_distribution<int>(0, w - ew)(rng);
+                    draws.top[i] = cyxwiz::portable::UniformInt<int>(rng, 0, h - eh);
+                    draws.left[i] = cyxwiz::portable::UniformInt<int>(rng, 0, w - ew);
                     draws.box_height[i] = eh;
                     draws.box_width[i] = ew;
                     break;
@@ -1257,13 +1259,13 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             for (size_t i = 0; i < batch; ++i) {
                 bool found = false;
                 for (int attempt = 0; training && attempt < 10 && !found; ++attempt) {
-                    const double target = area * std::uniform_real_distribution<double>(op.scale_min, op.scale_max)(rng);
-                    const double aspect = std::exp(std::uniform_real_distribution<double>(log_min, log_max)(rng));
+                    const double target = area * cyxwiz::portable::Uniform(rng, op.scale_min, op.scale_max);
+                    const double aspect = std::exp(cyxwiz::portable::Uniform(rng, log_min, log_max));
                     const int bw = RoundHalfEven(std::sqrt(target * aspect));
                     const int bh = RoundHalfEven(std::sqrt(target / aspect));
                     if (!(bw > 0 && bw <= w && bh > 0 && bh <= h)) continue;
-                    draws.top[i] = std::uniform_int_distribution<int>(0, h - bh)(rng);
-                    draws.left[i] = std::uniform_int_distribution<int>(0, w - bw)(rng);
+                    draws.top[i] = cyxwiz::portable::UniformInt<int>(rng, 0, h - bh);
+                    draws.left[i] = cyxwiz::portable::UniformInt<int>(rng, 0, w - bw);
                     draws.box_height[i] = bh;
                     draws.box_width[i] = bw;
                     found = true;
@@ -1290,12 +1292,12 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             const double max_dx = op.translate_x * static_cast<double>(input.width);
             const double max_dy = op.translate_y * static_cast<double>(input.height);
             for (auto& f : draws.factors) {
-                const double angle = std::uniform_real_distribution<double>(-op.max_angle, op.max_angle)(rng);
-                const double tx = RoundHalfEven(std::uniform_real_distribution<double>(-max_dx, max_dx)(rng));
-                const double ty = RoundHalfEven(std::uniform_real_distribution<double>(-max_dy, max_dy)(rng));
-                const double scale = std::uniform_real_distribution<double>(op.zoom_min, op.zoom_max)(rng);
-                const double shear_x = std::uniform_real_distribution<double>(op.shear_x_min, op.shear_x_max)(rng);
-                const double shear_y = std::uniform_real_distribution<double>(op.shear_y_min, op.shear_y_max)(rng);
+                const double angle = cyxwiz::portable::Uniform(rng, -op.max_angle, op.max_angle);
+                const double tx = RoundHalfEven(cyxwiz::portable::Uniform(rng, -max_dx, max_dx));
+                const double ty = RoundHalfEven(cyxwiz::portable::Uniform(rng, -max_dy, max_dy));
+                const double scale = cyxwiz::portable::Uniform(rng, op.zoom_min, op.zoom_max);
+                const double shear_x = cyxwiz::portable::Uniform(rng, op.shear_x_min, op.shear_x_max);
+                const double shear_y = cyxwiz::portable::Uniform(rng, op.shear_y_min, op.shear_y_max);
                 f = {static_cast<float>(angle), static_cast<float>(tx), static_cast<float>(ty),
                      static_cast<float>(scale), static_cast<float>(shear_x), static_cast<float>(shear_y)};
             }
@@ -1310,7 +1312,7 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             const int h = static_cast<int>(input.height), w = static_cast<int>(input.width);
             const int bound_h = static_cast<int>(op.distortion * static_cast<float>(h / 2)) + 1;
             const int bound_w = static_cast<int>(op.distortion * static_cast<float>(w / 2)) + 1;
-            const auto pick = [&rng](int low, int high) { return std::uniform_int_distribution<int>(low, high - 1)(rng); };
+            const auto pick = [&rng](int low, int high) { return cyxwiz::portable::UniformInt<int>(rng, low, high - 1); };
             for (size_t i = 0; i < batch; ++i) {
                 if (!(unit(rng) < op.probability)) continue;
                 draws.corners[i] = {pick(0, bound_w),     pick(0, bound_h),     pick(w - bound_w, w), pick(0, bound_h),
@@ -1342,7 +1344,7 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             for (size_t i = 0; i < batch; ++i) {
                 if (!(unit(rng) < op.probability)) continue;
                 const Policy& policy = policies[static_cast<size_t>(
-                    std::uniform_int_distribution<int>(0, static_cast<int>(policies.size()) - 1)(rng))];
+                    cyxwiz::portable::UniformInt<int>(rng, 0, static_cast<int>(policies.size()) - 1))];
                 for (size_t s = 0; s < 2; ++s) {
                     if (!(unit(rng) <= policy[s].probability)) continue;
                     float m = policy[s].bin < 0 ? 0.0f
@@ -1362,8 +1364,8 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             draws.factors.assign(batch, std::vector<float>(1, 0.0f));
             for (size_t i = 0; i < batch; ++i) {
                 if (!(unit(rng) < op.probability)) continue;
-                const auto chosen = static_cast<AugmentOp>(std::uniform_int_distribution<int>(0, kRandAugmentOps - 1)(rng));
-                const int bin = std::uniform_int_distribution<int>(0, op.magnitude_bins - 1)(rng);
+                const auto chosen = static_cast<AugmentOp>(cyxwiz::portable::UniformInt<int>(rng, 0, kRandAugmentOps - 1));
+                const int bin = cyxwiz::portable::UniformInt<int>(rng, 0, op.magnitude_bins - 1);
                 float m = AugmentMagnitude(AugmentSpace::Wide, chosen, op.magnitude_bins, bin, input.height, input.width);
                 if (AugmentSigned(chosen) && unit(rng) <= 0.5f) m = -m;
                 draws.order[i][0] = static_cast<int>(chosen);
@@ -1380,7 +1382,7 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
             draws.order.assign(batch, std::vector<int>(chains * slots, 0));
             draws.factors.assign(batch, std::vector<float>(chains * slots, 0.0f));
             draws.weights.assign(batch, std::vector<float>(chains + 1, 0.0f));
-            std::gamma_distribution<double> gamma(op.alpha, 1.0);
+            const auto gamma = [&op](std::mt19937& r) { return cyxwiz::portable::Gamma(r, op.alpha); };
             const auto dirichlet = [&](size_t k) {
                 std::vector<double> g(k);
                 double total = 0.0;
@@ -1396,11 +1398,11 @@ ImageOpDraws DrawImageOp(const ImageOp& op, const ImageShape& input, size_t batc
                 for (size_t c = 0; c < chains; ++c) {
                     draws.weights[i][c + 1] = static_cast<float>(mixing[c] * m[1]);
                     const size_t depth = op.chain_depth > 0 ? slots
-                                                            : static_cast<size_t>(std::uniform_int_distribution<int>(1, 3)(rng));
+                                                            : static_cast<size_t>(cyxwiz::portable::UniformInt<int>(rng, 1, 3));
                     for (size_t s = 0; s < depth; ++s) {
                         const AugmentOp chosen = kAugMixOps[static_cast<size_t>(
-                            std::uniform_int_distribution<int>(0, static_cast<int>(kAugMixOps.size()) - 1)(rng))];
-                        const int bin = std::uniform_int_distribution<int>(0, op.severity - 1)(rng);
+                            cyxwiz::portable::UniformInt<int>(rng, 0, static_cast<int>(kAugMixOps.size()) - 1))];
+                        const int bin = cyxwiz::portable::UniformInt<int>(rng, 0, op.severity - 1);
                         float mag = AugmentMagnitude(AugmentSpace::AugMix, chosen, 10, bin, input.height, input.width);
                         if (AugmentSigned(chosen) && unit(rng) <= 0.5f) mag = -mag;
                         draws.order[i][c * slots + s] = static_cast<int>(chosen);
@@ -1476,10 +1478,10 @@ bool AugmentSigned(AugmentOp op) {
 BatchMixDraw DrawBatchMix(BatchMix method, float alpha, float probability, const ImageShape& shape,
                           std::mt19937& rng) {
     BatchMixDraw draw;
-    if (method == BatchMix::None || !(std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) < probability)) {
+    if (method == BatchMix::None || !(cyxwiz::portable::UniformFloat(rng, 0.0f, 1.0f) < probability)) {
         return draw;
     }
-    std::gamma_distribution<double> gamma(alpha, 1.0);
+    const auto gamma = [alpha](std::mt19937& r) { return cyxwiz::portable::Gamma(r, alpha); };
     const double x = gamma(rng), y = gamma(rng);
     const double lambda = x + y > 0.0 ? x / (x + y) : 0.5;  // Beta(alpha, alpha)
     draw.apply = true;
@@ -1488,8 +1490,8 @@ BatchMixDraw DrawBatchMix(BatchMix method, float alpha, float probability, const
         // torchvision v2 CutMix: centre anywhere, half sides r * size with
         // r = 0.5 sqrt(1 - lambda), clipped; lambda becomes 1 - box area.
         const int h = static_cast<int>(shape.height), w = static_cast<int>(shape.width);
-        const int rx = std::uniform_int_distribution<int>(0, w - 1)(rng);
-        const int ry = std::uniform_int_distribution<int>(0, h - 1)(rng);
+        const int rx = cyxwiz::portable::UniformInt<int>(rng, 0, w - 1);
+        const int ry = cyxwiz::portable::UniformInt<int>(rng, 0, h - 1);
         const double r = 0.5 * std::sqrt(1.0 - lambda);
         const int half_w = static_cast<int>(r * w), half_h = static_cast<int>(r * h);
         const int x1 = (std::max)(rx - half_w, 0), y1 = (std::max)(ry - half_h, 0);

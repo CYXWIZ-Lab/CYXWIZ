@@ -161,6 +161,12 @@ void ValidateView::Render() {
         if (r.result != "not run") ++ran;
         if (r.tone == studio::Tone::Ok) ++passed;
     }
+    // Says what a check is for training (TOFIX129 D7a): a gate, not a change.
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(t.text_faint, "A check passes the table through unchanged; one that fails stops the run, and training with it. "
+                                     "Nothing here changes the data.");
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
     ImGui::AlignTextToFramePadding();
     if (rows_.empty()) ImGui::TextColored(t.text_dim, "No checks in this graph yet.");
     else if (!ran) ImGui::TextColored(t.text_bright, "%zu check%s, not run in this session", checks, checks == 1 ? "" : "s");

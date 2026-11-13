@@ -96,6 +96,8 @@ wallet.json
 **/*.cyxmodel/
 examples/data/codefeedback_demo_smoke/codefeedback_lang_multiclass.csv
 *.h5
+# Example HDF5 datasets ship; model weights (*.h5 above) do not.
+!examples/datasets/*.h5
 *.pt
 *.onnx
 

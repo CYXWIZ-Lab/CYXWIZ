@@ -361,6 +361,12 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
                         ": remove it from the file or rebuild that step with those nodes";
                 return false;
             }
+            if (node_type == NodeType::HDF5Dataset) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                        "' is an HDF5 Reader node, which Data Input replaced: remove it from the file or rebuild "
+                        "that step with a Data Input (it loads a dataset of an HDF5 file)";
+                return false;
+            }
             if (node_type == NodeType::SelfAttention) {
                 error = "node '" + node_json.value("name", std::string("<unnamed>")) +
                         "' is a Self Attention node, which Multi-Head Attention replaced: remove it from the file "
@@ -372,6 +378,22 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
                         (node_type == NodeType::SharedEncoder ? "Shared Encoder" : "Siamese Branch") +
                         " node. Shared Encoder / Siamese Branch were retired: metric-learning losses run the "
                         "model once over the stacked batch; connect the encoder layers straight to the loss";
+                return false;
+            }
+            // TOFIX195 S4.3: the native PPO graph replaced the RL sketch nodes
+            if (node_type == NodeType::GymEnvironment || node_type == NodeType::ReplayBufferNode ||
+                node_type == NodeType::PolicyNetwork || node_type == NodeType::ValueNetwork ||
+                node_type == NodeType::RLTraining) {
+                const char* replaced =
+                    node_type == NodeType::GymEnvironment     ? "a Gym Environment node, which Environment replaced"
+                    : node_type == NodeType::ReplayBufferNode ? "a Replay Buffer node, which PPO does not use"
+                    : node_type == NodeType::PolicyNetwork
+                        ? "a Policy Network node, which layer nodes ending in a Policy Head replaced"
+                    : node_type == NodeType::ValueNetwork
+                        ? "a Value Network node, which layer nodes ending in a Value Head replaced"
+                        : "an RL Training node, which PPO replaced";
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) + "' is " + replaced +
+                        ": remove it from the file or rebuild the graph from the PPO pattern";
                 return false;
             }
 

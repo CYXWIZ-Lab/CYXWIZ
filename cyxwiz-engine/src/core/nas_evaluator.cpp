@@ -1,6 +1,9 @@
 #include "nas_evaluator.h"
 #include "node_metadata_registry.h"
-#include "model_analyzer.h"
+#include "graph_compiler.h"
+#include "model_builder.h"
+#include "model_summary_presentation.h"
+#include <cyxwiz/device.h>
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <algorithm>
@@ -40,12 +43,42 @@ bool IsModelNode(gui::NodeType type) {
     }
 }
 
-// NAS shapes carry the batch first ([1, features], [1, C, H, W]); the
-// analysis takes one sample as the model receives it ([features], [H, W, C]).
-std::vector<size_t> SampleShape(const std::vector<size_t>& input_shape) {
-    if (input_shape.size() == 4) return {input_shape[2], input_shape[3], input_shape[1]};
-    if (input_shape.size() >= 2) return {input_shape.begin() + 1, input_shape.end()};
-    return input_shape;
+// Parameters and FLOPs of a version as the Model window counts them (the
+// one counter, model_summary_presentation): the graph compiled from its saved
+// data contract, multiply-adds per compiled layer (two FLOPs each), learnable
+// parameters from the built model. False, with why, when it cannot be counted.
+bool CountWithCompiler(const std::vector<gui::MLNode>& nodes, const std::vector<gui::NodeLink>& links,
+                       ArchitectureScore& score, std::string& why) {
+    const TrainingConfiguration compiled = GraphCompiler{}.Compile(nodes, links, /*allow_unloaded_data=*/true);
+    if (!compiled.is_valid || compiled.layers.empty()) {
+        why = compiled.error_message.empty() ? "The version does not compile" : compiled.error_message;
+        return false;
+    }
+    long long multiply_adds = 0;
+    for (const auto& layer : compiled.layers) {
+        const LayerCost cost = CountLayerMultiplyAdds(layer);
+        if (cost.counted) multiply_adds += cost.value;
+    }
+    try {
+        const QuietModelBuildScope quiet;  // no Console lines per version
+        Device::ActivateProcessDeviceOnThisThread();
+        auto built = BuildExecutableFromConfig(compiled);
+        if (!built.ok()) {
+            why = "The version could not be built";
+            return false;
+        }
+        const auto state = built.model->GetStateParameterNames();
+        long long parameters = 0;
+        for (const auto& [name, tensor] : built.model->GetParameters())
+            if (!state.count(name)) parameters += static_cast<long long>(tensor.NumElements());
+        score.trainable_params = parameters;
+        score.total_params = parameters;
+        score.total_flops = 2 * multiply_adds;
+    } catch (const std::exception& error) {
+        why = std::string("The version could not be built: ") + error.what();
+        return false;
+    }
+    return true;
 }
 
 }  // namespace
@@ -161,7 +194,6 @@ gui::NodeType NASEvaluator::GetRandomActivation(std::mt19937& rng) {
 ArchitectureScore NASEvaluator::ScoreArchitecture(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links,
-    const std::vector<size_t>& input_shape,
     const NASSearchConfig& config)
 {
     ArchitectureScore score;
@@ -181,12 +213,11 @@ ArchitectureScore NASEvaluator::ScoreArchitecture(
         if (IsModelNode(node.type)) score.layer_count++;
     }
 
-    // Parameters and FLOPs layer by layer, each layer sized by what reaches
-    // it (Model Summary's analysis).
-    const ModelAnalysis analysis = ModelAnalyzer{}.AnalyzeGraph(nodes, links, 1, SampleShape(input_shape));
-    score.trainable_params = analysis.trainable_parameters;
-    score.total_flops = analysis.total_flops;
-    score.total_params = score.trainable_params;
+    // Parameters and FLOPs as the Model window counts them (CountWithCompiler).
+    // The layout scores below need no compile: a version that does not
+    // compile is still described, but not scored.
+    std::string not_sized;
+    const bool sized = CountWithCompiler(nodes, links, score, not_sized);
 
     // Calculate complexity score (prefer smaller models)
     // Log scale: 1M params -> 0.5, 10M -> 0.25, 100K -> 0.75
@@ -245,6 +276,12 @@ ArchitectureScore NASEvaluator::ScoreArchitecture(
 
     // Generate summary
     score.architecture_summary = DescribeArchitecture(nodes, links);
+    if (!sized) {
+        score.success = false;
+        score.error_message = not_sized;
+        score.overall_score = 0.0;
+        return score;
+    }
     score.success = true;
 
     return score;
@@ -677,210 +714,6 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Mu
 }
 
 // ============================================================================
-// Architecture Suggestions
-// ============================================================================
-
-std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>>
-NASEvaluator::SuggestArchitectures(
-    const std::string& task_type,
-    const std::vector<size_t>& input_shape,
-    int output_size,
-    int num_suggestions)
-{
-    (void)input_shape;
-
-    std::vector<std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>>> suggestions;
-
-    std::mt19937 rng(42);
-
-    for (int s = 0; s < num_suggestions; s++) {
-        std::vector<gui::MLNode> nodes;
-        std::vector<gui::NodeLink> links;
-        int node_id = 1;
-        int pin_id = 1;
-        int link_id = 1;
-
-        // Input node
-        gui::MLNode input_node;
-        input_node.id = node_id++;
-        input_node.type = gui::NodeType::DatasetInput;
-        input_node.name = "Input";
-        gui::NodePin input_out;
-        input_out.id = pin_id++;
-        input_out.type = gui::PinType::Dataset;
-        input_out.name = "data";
-        input_out.is_input = false;
-        input_node.outputs.push_back(input_out);
-        nodes.push_back(input_node);
-
-        int last_output_pin = input_out.id;
-        int last_node_id = input_node.id;
-
-        // Different architectures based on task
-        if (task_type == "image_classification" || task_type == "image") {
-            // CNN architecture
-            std::vector<int> filters = {32, 64, 128};
-            std::uniform_int_distribution<int> layer_dist(2, 4);
-            int num_conv_blocks = layer_dist(rng);
-
-            for (int i = 0; i < num_conv_blocks && i < 3; i++) {
-                // Conv2D
-                gui::MLNode conv = CreateLayerNode(gui::NodeType::Conv2D, node_id++, pin_id, filters[i]);
-                nodes.push_back(conv);
-
-                gui::NodeLink link;
-                link.id = link_id++;
-                link.from_node = last_node_id;
-                link.from_pin = last_output_pin;
-                link.to_node = conv.id;
-                link.to_pin = conv.inputs[0].id;
-                links.push_back(link);
-
-                last_node_id = conv.id;
-                last_output_pin = conv.outputs[0].id;
-
-                // ReLU
-                gui::MLNode relu = CreateLayerNode(gui::NodeType::ReLU, node_id++, pin_id);
-                nodes.push_back(relu);
-
-                link.id = link_id++;
-                link.from_node = last_node_id;
-                link.from_pin = last_output_pin;
-                link.to_node = relu.id;
-                link.to_pin = relu.inputs[0].id;
-                links.push_back(link);
-
-                last_node_id = relu.id;
-                last_output_pin = relu.outputs[0].id;
-
-                // MaxPool
-                gui::MLNode pool = CreateLayerNode(gui::NodeType::MaxPool2D, node_id++, pin_id);
-                nodes.push_back(pool);
-
-                link.id = link_id++;
-                link.from_node = last_node_id;
-                link.from_pin = last_output_pin;
-                link.to_node = pool.id;
-                link.to_pin = pool.inputs[0].id;
-                links.push_back(link);
-
-                last_node_id = pool.id;
-                last_output_pin = pool.outputs[0].id;
-            }
-
-            // Flatten
-            gui::MLNode flatten = CreateLayerNode(gui::NodeType::Flatten, node_id++, pin_id);
-            nodes.push_back(flatten);
-
-            gui::NodeLink link;
-            link.id = link_id++;
-            link.from_node = last_node_id;
-            link.from_pin = last_output_pin;
-            link.to_node = flatten.id;
-            link.to_pin = flatten.inputs[0].id;
-            links.push_back(link);
-
-            last_node_id = flatten.id;
-            last_output_pin = flatten.outputs[0].id;
-
-        } else {
-            // MLP architecture for classification/regression
-            std::vector<int> units = {256, 128, 64};
-            std::uniform_int_distribution<int> layer_dist(2, 4);
-            int num_hidden = layer_dist(rng);
-
-            for (int i = 0; i < num_hidden && i < 3; i++) {
-                // Dense
-                gui::MLNode dense = CreateLayerNode(gui::NodeType::Dense, node_id++, pin_id, units[i]);
-                nodes.push_back(dense);
-
-                gui::NodeLink link;
-                link.id = link_id++;
-                link.from_node = last_node_id;
-                link.from_pin = last_output_pin;
-                link.to_node = dense.id;
-                link.to_pin = dense.inputs[0].id;
-                links.push_back(link);
-
-                last_node_id = dense.id;
-                last_output_pin = dense.outputs[0].id;
-
-                // Activation
-                gui::NodeType act_type = GetRandomActivation(rng);
-                gui::MLNode act = CreateLayerNode(act_type, node_id++, pin_id);
-                nodes.push_back(act);
-
-                link.id = link_id++;
-                link.from_node = last_node_id;
-                link.from_pin = last_output_pin;
-                link.to_node = act.id;
-                link.to_pin = act.inputs[0].id;
-                links.push_back(link);
-
-                last_node_id = act.id;
-                last_output_pin = act.outputs[0].id;
-
-                // Optional dropout
-                std::uniform_real_distribution<double> drop_prob(0, 1);
-                if (drop_prob(rng) < 0.3) {
-                    gui::MLNode dropout = CreateLayerNode(gui::NodeType::Dropout, node_id++, pin_id);
-                    nodes.push_back(dropout);
-
-                    link.id = link_id++;
-                    link.from_node = last_node_id;
-                    link.from_pin = last_output_pin;
-                    link.to_node = dropout.id;
-                    link.to_pin = dropout.inputs[0].id;
-                    links.push_back(link);
-
-                    last_node_id = dropout.id;
-                    last_output_pin = dropout.outputs[0].id;
-                }
-            }
-        }
-
-        // Output Dense
-        gui::MLNode output_dense = CreateLayerNode(gui::NodeType::Dense, node_id++, pin_id, output_size);
-        nodes.push_back(output_dense);
-
-        gui::NodeLink link;
-        link.id = link_id++;
-        link.from_node = last_node_id;
-        link.from_pin = last_output_pin;
-        link.to_node = output_dense.id;
-        link.to_pin = output_dense.inputs[0].id;
-        links.push_back(link);
-
-        last_node_id = output_dense.id;
-        last_output_pin = output_dense.outputs[0].id;
-
-        // Output node
-        gui::MLNode output_node;
-        output_node.id = node_id++;
-        output_node.type = gui::NodeType::Output;
-        output_node.name = "Output";
-        gui::NodePin output_in;
-        output_in.id = pin_id++;
-        output_in.type = gui::PinType::Tensor;
-        output_in.name = "prediction";
-        output_in.is_input = true;
-        output_node.inputs.push_back(output_in);
-        nodes.push_back(output_node);
-
-        link.id = link_id++;
-        link.from_node = last_node_id;
-        link.from_pin = last_output_pin;
-        link.to_node = output_node.id;
-        link.to_pin = output_in.id;
-        links.push_back(link);
-
-        suggestions.push_back({nodes, links});
-    }
-
-    return suggestions;
-}
-
-// ============================================================================
 // Evolutionary Search
 // ============================================================================
 
@@ -906,7 +739,6 @@ std::pair<std::vector<gui::MLNode>, std::vector<gui::NodeLink>> NASEvaluator::Cr
 NASSearchResult NASEvaluator::EvolveArchitecture(
     const std::vector<gui::MLNode>& initial_nodes,
     const std::vector<gui::NodeLink>& initial_links,
-    const std::vector<size_t>& input_shape,
     const NASSearchConfig& config,
     std::function<bool(int, const ArchitectureScore&)> progress_callback)
 {
@@ -951,7 +783,7 @@ NASSearchResult NASEvaluator::EvolveArchitecture(
 
         for (size_t i = 0; i < population.size(); i++) {
             ArchitectureScore score = ScoreArchitecture(
-                population[i].first, population[i].second, input_shape, config);
+                population[i].first, population[i].second, config);
             if (score.success) keep(population[i].first, population[i].second, score);
             scores.push_back({score, static_cast<int>(i)});
             result.total_evaluations++;

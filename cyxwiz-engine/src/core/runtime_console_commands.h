@@ -27,7 +27,7 @@ struct RuntimeConsoleOutputLine {
     RuntimeConsoleOutputLevel level = RuntimeConsoleOutputLevel::Info;
     std::string text;
     // A runtime event row of "show logs ..." (the text is its one-line copy).
-    std::shared_ptr<const RuntimeLogEvent> event;
+    std::shared_ptr<const RuntimeLogEvent> event{};
 };
 
 enum class RuntimeConsoleAction : uint8_t {

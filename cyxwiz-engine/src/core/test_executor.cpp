@@ -8,6 +8,10 @@
 #include "model_builder.h"
 #include "training_batcher_setup.h"
 
+#include <arrayfire.h>
+
+#include <algorithm>
+#include <iterator>
 #include <cstdint>
 #include <spdlog/spdlog.h>
 #include <cmath>
@@ -274,7 +278,11 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
     const std::string source_dataset = use_arrow_dataset_ && arrow_dataset_       ? arrow_dataset_->GetName()
                                        : use_parquet_dataset_ && parquet_dataset_ ? parquet_dataset_->GetName()
                                                                                   : external_source_.source_dataset;
-    UpdateMetrics([regression_mode, &source_dataset](TestingMetrics& m) {
+    const std::vector<size_t> kept_shape = UsesSpatialSequentialInput(config_) ? config_.input_shape : std::vector<size_t>{};
+    const bool classifier_decision = !config_.decision.Empty() && !regression_mode && config_.metric_sampling == MetricSampling::None;
+    const std::string applied = classifier_decision ? DescribeModelDecision(config_.decision, {}) : std::string();
+    const bool calibrated = classifier_decision && config_.decision.calibration != ModelDecision::Calibration::None;
+    UpdateMetrics([regression_mode, &source_dataset, &kept_shape, &applied, calibrated](TestingMetrics& m) {
         m.current_batch = 0;
         m.total_batches = 0;
         m.total_samples = 0;
@@ -303,7 +311,16 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
         m.roc.reset();
         m.pr.reset();
         m.curves_note.clear();
+        m.kept_inputs.clear();
+        m.kept_input_bytes = 0;
+        m.kept_input_shape = kept_shape;
+        m.layer_features.clear();
+        m.layer_features_note.clear();
+        m.decision_applied = applied;
+        m.decision_calibrated = calibrated;
     });
+    dropped_feature_layers_.clear();
+    feature_layer_of_module_.clear();
 
     // Create the test batcher using the dataset type that was trained.
     std::unique_ptr<IBatcher> external_test_batcher;
@@ -413,11 +430,16 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
 
         batch_num++;
 
-        // Process batch
-        ProcessBatch(batch);
+        // Process batch; the observer comes off the shared model even when
+        // the forward pass throws.
+        WatchLayerFeatures(true);
+        struct StopWatching {
+            TestExecutor* executor;
+            ~StopWatching() { executor->WatchLayerFeatures(false); }
+        } stop_watching{this};
+        const Tensor predictions = ProcessBatch(batch);
 
         // Compute current loss for this batch
-        Tensor predictions = Forward(batch.data);
         float batch_loss = ComputeLoss(predictions, batch.labels);
         total_loss += batch_loss;
 
@@ -483,7 +505,77 @@ void TestExecutor::TestImpl(int batch_size, TestBatchCallback batch_cb,
     }
 }
 
-void TestExecutor::ProcessBatch(const Batch& batch) {
+void TestExecutor::WatchLayerFeatures(bool on) {
+    SequentialModel* stack = model_ ? model_->AsSequentialModel() : nullptr;
+    if (!stack || UsesContinuousTargetMetrics(config_)) return;
+    if (!on) {
+        stack->SetForwardObserver({});
+        return;
+    }
+    if (feature_layer_of_module_.empty()) {
+        // Each weight layer, and the activation right after it when there is one.
+        static const char* const kActivations[] = {"ReLU", "LeakyReLU", "GELU", "Tanh", "Sigmoid", "ELU",
+                                                   "SELU", "Swish", "Mish", "Softmax"};
+        for (size_t i = 0; i < stack->Size(); ++i) {
+            bool weights = false;
+            for (const auto& [name, tensor] : stack->GetModule(i)->GetParameters())
+                weights = weights || tensor.Shape().size() >= 2;
+            if (!weights) continue;
+            size_t recorded = i;
+            if (i + 1 < stack->Size()) {
+                const std::string next = stack->GetModule(i + 1)->GetName();
+                for (const char* activation : kActivations)
+                    if (next.rfind(activation, 0) == 0) recorded = i + 1;
+            }
+            feature_layer_of_module_[recorded] = i;
+        }
+    }
+    stack->SetForwardObserver([this](size_t index, const Module&, const Tensor& output) {
+        const auto found = feature_layer_of_module_.find(index);
+        if (found == feature_layer_of_module_.end() || dropped_feature_layers_.count(found->second)) return;
+        const auto& shape = output.Shape();
+        af::array rows;  // [samples, width]
+        if (shape.size() == 4) {
+            rows = af::moddims(af::mean(af::mean(output.GetArrayRowMajor4D(), 0), 1),
+                               static_cast<dim_t>(shape[2]), static_cast<dim_t>(shape[3])).T();
+        } else if (shape.size() == 3) {
+            rows = af::mean(output.GetArrayRowMajor3D(), 1);
+            rows = af::moddims(rows, static_cast<dim_t>(shape[0]), static_cast<dim_t>(shape[2]));
+        } else if (shape.size() == 2) {
+            rows = output.GetSemanticArray();
+        } else {
+            return;
+        }
+        const size_t samples = static_cast<size_t>(rows.dims(0)), width = static_cast<size_t>(rows.dims(1));
+        // Row-major [samples, width], read through the Tensor's attributed host copy.
+        const Tensor features = Tensor::FromRowMajorFlatArray(af::flat(rows.T()).as(f32), {samples, width});
+        const float* read = features.ReadData<float>();
+        const std::vector<float> host(read, read + samples * width);
+        const size_t layer = found->second;
+        UpdateMetrics([&](TestingMetrics& m) {
+            auto it = std::find_if(m.layer_features.begin(), m.layer_features.end(),
+                                   [layer](const TestingMetrics::LayerFeatures& f) { return f.layer == layer; });
+            if (it == m.layer_features.end()) {
+                if (dropped_feature_layers_.count(layer)) return;
+                m.layer_features.push_back({layer, width, {}});
+                it = std::prev(m.layer_features.end());
+            }
+            if (it->width != width) return;
+            size_t bytes = 0;
+            for (const auto& f : m.layer_features) bytes += f.values.size() * sizeof(float);
+            if (bytes + host.size() * sizeof(float) > TestingMetrics::kLayerFeatureBytes) {
+                m.layer_features_note += (m.layer_features_note.empty() ? "Too large to keep for the Projector: layer " : ", layer ") +
+                                         std::to_string(layer);
+                dropped_feature_layers_.insert(layer);
+                m.layer_features.erase(it);
+                return;
+            }
+            it->values.insert(it->values.end(), host.begin(), host.end());
+        });
+    });
+}
+
+Tensor TestExecutor::ProcessBatch(const Batch& batch) {
     // Forward pass
     Tensor predictions = Forward(batch.data);
 
@@ -534,11 +626,18 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
                     static_cast<float>(transform.InverseValue(pred_data[i], i % output_width)));
             }
         });
-        return;
+        return predictions;
     }
 
     const auto decision_mode =
         ClassificationDecisionModeForLoss(config_.loss_type);
+
+    // Inputs Explain can use: not token ids (an Embedding's input).
+    const bool token_ids = !config_.layers.empty() && (config_.layers.front().type == gui::NodeType::Embedding ||
+                                                       config_.layers.front().type == gui::NodeType::Concatenate);
+    const bool keep_inputs = !token_ids && batch.size > 0 && batch.data.NumElements() % batch.size == 0;
+    const size_t sample_width = batch.size > 0 ? batch.data.NumElements() / batch.size : 0;
+    const float* input_data = nullptr;  // read from the device once, when a sample is kept
 
     for (size_t b = 0; b < batch.size; ++b) {
         const float* sample_pred = pred_data + b * output_width;
@@ -558,9 +657,14 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
         std::vector<float> probabilities;
         const size_t classes = ClassificationClassProbabilities(
             sample_pred, output_width, decision_mode, probabilities);
+        // The model's kept threshold and calibration (Results > Test).
+        if (!config_.decision.Empty() && classes >= 2) {
+            pred_class = ApplyModelDecision(config_.decision, probabilities);
+            confidence = probabilities[static_cast<size_t>(pred_class)];
+        }
 
         // Update metrics
-        UpdateMetrics([pred_class, true_class, confidence, classes, &probabilities](TestingMetrics& m) {
+        UpdateMetrics([&, pred_class, true_class, confidence, classes](TestingMetrics& m) {
             // Kept up to kMaxCurveValues (about 80 MB); past that the curves
             // are skipped rather than the test running out of memory.
             constexpr size_t kMaxCurveValues = 20'000'000;
@@ -574,6 +678,16 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
                                                  probabilities.end());
                 }
             }
+            const int sample = m.total_samples;
+            if (keep_inputs && (pred_class != true_class || sample < TestingMetrics::kKeptFirstSamples) &&
+                m.kept_input_bytes + sample_width * sizeof(float) <= TestingMetrics::kKeptInputBytes) {
+                if (!input_data) input_data = batch.data.ReadData<float>();
+                if (input_data) {
+                    const float* row = input_data + b * sample_width;
+                    m.kept_inputs.push_back({sample, std::vector<float>(row, row + sample_width)});
+                    m.kept_input_bytes += sample_width * sizeof(float);
+                }
+            }
             m.total_samples++;
             if (pred_class == true_class) {
                 m.correct_predictions++;
@@ -584,6 +698,7 @@ void TestExecutor::ProcessBatch(const Batch& batch) {
             m.confusion_matrix.Add(true_class, pred_class);
         });
     }
+    return predictions;
 }
 
 void TestExecutor::TestMetricLearning(IBatcher& rows, int batch_size) {

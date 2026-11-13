@@ -4,7 +4,6 @@
 
 #include <arrow/api.h>
 
-#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -13,6 +12,10 @@
 #include <memory>
 #include <string>
 #include <vector>
+// Last on purpose: the checks are asserts, and they must run in Release too
+// (NDEBUG would compile them to nothing).
+#undef NDEBUG
+#include <cassert>
 
 using namespace cyxwiz;
 

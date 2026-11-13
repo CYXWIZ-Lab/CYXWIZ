@@ -85,10 +85,21 @@ public:
     BackendPackRemovalResult Remove(
         std::string backend,
         std::string pack_id);
+    // Plugin packs: deactivated in active-plugins.json, then quarantined and
+    // deleted like a backend pack. active-runtime.json is never changed.
+    BackendPackRemovalResult RemovePlugin(
+        std::string plugin_id,
+        std::string pack_id);
     void Cancel();
     BackendPackRemovalProgress GetProgress() const;
 
 private:
+    BackendPackRemovalResult QuarantineAndDelete(
+        const std::filesystem::path& target,
+        bool target_exists,
+        const std::filesystem::path& pending_root,
+        BackendPackRemovalProgress& progress,
+        const std::optional<BackendPackStateResult>& deactivation);
     BackendPackRemovalResult Finish(
         BackendPackRemovalStatus status,
         std::string message,

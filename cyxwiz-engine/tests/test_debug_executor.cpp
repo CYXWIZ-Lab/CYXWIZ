@@ -40,7 +40,6 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <cassert>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
@@ -56,6 +55,10 @@
 #include <random>
 #include <stdexcept>
 #include <thread>
+// Last on purpose: the checks are asserts, and they must run in Release too
+// (NDEBUG would compile them to nothing).
+#undef NDEBUG
+#include <cassert>
 
 using namespace cyxwiz;
 

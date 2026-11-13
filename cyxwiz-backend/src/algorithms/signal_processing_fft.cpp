@@ -1,213 +1,142 @@
+#ifdef _WIN32
+#define NOMINMAX
+#endif
+
 #include <cyxwiz/signal_processing.h>
 
-#include "arrayfire_host_materialization.h"
+#include "signal_device.h"
 
-#include <algorithm>
 #include <cmath>
 #include <complex>
-#include <stdexcept>
 #include <vector>
 
 #include <arrayfire.h>
 
 namespace cyxwiz {
-namespace {
-} // namespace
+
+using namespace signal_detail;
 
 // ============================================================================
-// FFT Operations
+// FFT Operations (numpy.fft on the ArrayFire device, TOFIX129 D7)
 // ============================================================================
 
 FFTResult SignalProcessing::FFT(const std::vector<double>& signal, double sample_rate) {
     FFTResult result;
     result.sample_rate = sample_rate;
-
-    if (signal.empty()) {
-        result.error_message = "Empty signal";
+    result.error_message = Refusal(signal, 1, "FFT");
+    if (!result.error_message.empty()) return result;
+    if (!(sample_rate > 0.0)) {
+        result.error_message = "FFT: the sample rate must be positive";
         return result;
     }
-
-    int n = static_cast<int>(signal.size());
+    const int n = static_cast<int>(signal.size());
     result.n = n;
-
     try {
-        // GPU-accelerated FFT using ArrayFire
-        af::array sig(n, signal.data());
-        af::array fft_result = af::fft(sig);
-
-        // Get complex output
-        std::vector<af::cfloat> complex_host(n);
-        MaterializeArrayFireToHost(
-            fft_result,
-            complex_host.data(),
-            ArrayFireHostSyncCategory::OutputMaterialization,
-            "SignalProcessing::FFT",
-            "arrayfire_native");
-
-        result.complex_output.resize(n);
-        result.magnitude.resize(n);
-        result.phase.resize(n);
+        const af::array spectrum = af::fft(ToDevice(signal));
+        result.complex_output = ComplexToHost(spectrum, "SignalProcessing::FFT");
+        result.magnitude = ToHost(af::abs(spectrum), "SignalProcessing::FFT");
+        result.phase = ToHost(af::arg(spectrum), "SignalProcessing::FFT");
+        // numpy.fft.fftfreq(n, 1 / fs): 0 .. (n - 1) / 2 positive, then negative.
         result.frequencies.resize(n);
-
-        double freq_resolution = sample_rate / n;
-
-        for (int i = 0; i < n; i++) {
-            result.complex_output[i] = std::complex<double>(
-                complex_host[i].real, complex_host[i].imag
-            );
-            result.magnitude[i] = std::abs(result.complex_output[i]);
-            result.phase[i] = std::arg(result.complex_output[i]);
-
-            // Frequency bins
-            if (i <= n / 2) {
-                result.frequencies[i] = i * freq_resolution;
-            } else {
-                result.frequencies[i] = (i - n) * freq_resolution;
-            }
-        }
-
+        for (int i = 0; i < n; ++i)
+            result.frequencies[i] = (i <= (n - 1) / 2 ? i : i - n) * sample_rate / n;
         result.success = true;
-    } catch (const std::exception& e) {
-        result.error_message = std::string("FFT failed: ") + e.what();
+    } catch (const af::exception& e) {
+        result.error_message = DeviceError("SignalProcessing::FFT", e);
     }
-
     return result;
 }
 
 FFT2DResult SignalProcessing::FFT2D(const std::vector<std::vector<double>>& image) {
     FFT2DResult result;
-
     if (image.empty() || image[0].empty()) {
-        result.error_message = "Empty image";
+        result.error_message = "FFT2D: the image is empty";
         return result;
     }
-
-    int rows = static_cast<int>(image.size());
-    int cols = static_cast<int>(image[0].size());
+    const int rows = static_cast<int>(image.size());
+    const int cols = static_cast<int>(image[0].size());
     result.rows = rows;
     result.cols = cols;
-
     try {
-        // Flatten to 1D and create ArrayFire array
-        std::vector<double> flat(rows * cols);
-        for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < cols; j++) {
-                flat[i * cols + j] = image[i][j];
+        std::vector<double> flat(static_cast<size_t>(rows) * cols);
+        for (int i = 0; i < rows; ++i) {
+            if (static_cast<int>(image[i].size()) != cols) {
+                result.error_message = "FFT2D: the rows have different lengths";
+                return result;
+            }
+            for (int j = 0; j < cols; ++j) flat[static_cast<size_t>(i) * cols + j] = image[i][j];
+        }
+        // Row-major on the host is column-major [cols, rows] on the device: transpose.
+        const af::array img = af::transpose(af::moddims(ToDevice(flat), cols, rows));
+        const af::array spectrum = af::fft2(img);
+        const std::vector<std::complex<double>> values = ComplexToHost(af::transpose(spectrum), "SignalProcessing::FFT2D");
+        result.complex_output.assign(rows, std::vector<std::complex<double>>(cols));
+        result.magnitude.assign(rows, std::vector<double>(cols));
+        result.phase.assign(rows, std::vector<double>(cols));
+        for (int i = 0; i < rows; ++i) {
+            for (int j = 0; j < cols; ++j) {
+                const std::complex<double> v = values[static_cast<size_t>(i) * cols + j];
+                result.complex_output[i][j] = v;
+                result.magnitude[i][j] = std::abs(v);
+                result.phase[i][j] = std::arg(v);
             }
         }
-
-        af::array img(cols, rows, flat.data());
-        img = af::transpose(img);
-        af::array fft_result = af::fft2(img);
-
-        // Get complex output
-        std::vector<af::cfloat> complex_host(rows * cols);
-        MaterializeArrayFireToHost(
-            af::transpose(fft_result),
-            complex_host.data(),
-            ArrayFireHostSyncCategory::OutputMaterialization,
-            "SignalProcessing::FFT2D",
-            "row_major_2d");
-
-        result.complex_output.resize(rows, std::vector<std::complex<double>>(cols));
-        result.magnitude.resize(rows, std::vector<double>(cols));
-        result.phase.resize(rows, std::vector<double>(cols));
-
-        for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < cols; j++) {
-                int idx = i * cols + j;
-                result.complex_output[i][j] = std::complex<double>(
-                    complex_host[idx].real, complex_host[idx].imag
-                );
-                result.magnitude[i][j] = std::abs(result.complex_output[i][j]);
-                result.phase[i][j] = std::arg(result.complex_output[i][j]);
-            }
-        }
-
         result.success = true;
-    } catch (const std::exception& e) {
-        result.error_message = std::string("2D FFT failed: ") + e.what();
+    } catch (const af::exception& e) {
+        result.error_message = DeviceError("SignalProcessing::FFT2D", e);
     }
-
     return result;
 }
 
 std::vector<double> SignalProcessing::IFFT(const std::vector<std::complex<double>>& spectrum) {
-    if (spectrum.empty()) {
-        return {};
-    }
-
-    int n = static_cast<int>(spectrum.size());
-
+    if (spectrum.empty()) return {};
+    const dim_t n = static_cast<dim_t>(spectrum.size());
     try {
-        // Convert to ArrayFire complex array
-        std::vector<af::cfloat> complex_input(n);
-        for (int i = 0; i < n; i++) {
-            complex_input[i].real = static_cast<float>(spectrum[i].real());
-            complex_input[i].imag = static_cast<float>(spectrum[i].imag());
-        }
-
-        af::array spec(n, complex_input.data());
-        af::array ifft_result = af::ifft(spec);
-
-        std::vector<float> real_output(n);
-        MaterializeArrayFireToHost(
-            af::real(ifft_result),
-            real_output.data(),
-            ArrayFireHostSyncCategory::OutputMaterialization,
-            "SignalProcessing::IFFT",
-            "arrayfire_native");
-
-        std::vector<double> result(n);
-        for (int i = 0; i < n; i++) {
-            result[i] = static_cast<double>(real_output[i]);
-        }
-
-        return result;
-    } catch (...) {
+        const af::array back = af::ifftNorm(ComplexToDevice(spectrum), 1.0 / static_cast<double>(n));
+        return ToHost(af::real(back), "SignalProcessing::IFFT");
+    } catch (const af::exception& e) {
+        static_cast<void>(DeviceError("SignalProcessing::IFFT", e));  // the vector API has no place for the message
         return {};
     }
 }
 
+std::vector<double> SignalProcessing::InverseSpectrum(const std::vector<std::complex<double>>& one_sided, int samples) {
+    const int bins = static_cast<int>(one_sided.size());
+    if (bins < 1) return {};
+    const int n = samples > 0 ? samples : 2 * (bins - 1);
+    if (n < 1 || n / 2 + 1 != bins) return {};
+    // numpy.fft.irfft: the full Hermitian spectrum X[n - k] = conj(X[k]), then ifft's real part.
+    std::vector<std::complex<double>> full(static_cast<size_t>(n));
+    for (int k = 0; k < bins && k < n; ++k) full[static_cast<size_t>(k)] = one_sided[static_cast<size_t>(k)];
+    for (int k = 1; k < bins && n - k >= bins; ++k) full[static_cast<size_t>(n - k)] = std::conj(one_sided[static_cast<size_t>(k)]);
+    // irfft ignores the imaginary part of the DC and Nyquist bins.
+    full[0] = {full[0].real(), 0.0};
+    if (n % 2 == 0) full[static_cast<size_t>(n / 2)] = {full[static_cast<size_t>(n / 2)].real(), 0.0};
+    return IFFT(full);
+}
+
 std::vector<std::vector<double>> SignalProcessing::IFFT2D(
     const std::vector<std::vector<std::complex<double>>>& spectrum) {
-
-    if (spectrum.empty() || spectrum[0].empty()) {
+    if (spectrum.empty() || spectrum[0].empty()) return {};
+    const int rows = static_cast<int>(spectrum.size());
+    const int cols = static_cast<int>(spectrum[0].size());
+    try {
+        std::vector<std::complex<double>> flat(static_cast<size_t>(rows) * cols);
+        for (int i = 0; i < rows; ++i) {
+            if (static_cast<int>(spectrum[i].size()) != cols) return {};
+            for (int j = 0; j < cols; ++j) flat[static_cast<size_t>(i) * cols + j] = spectrum[i][j];
+        }
+        const af::array spec = af::transpose(af::moddims(ComplexToDevice(flat), cols, rows));
+        const af::array back = af::ifft2Norm(spec, 1.0 / static_cast<double>(static_cast<dim_t>(rows) * cols));
+        const std::vector<double> values = ToHost(af::real(af::transpose(back)), "SignalProcessing::IFFT2D");
+        std::vector<std::vector<double>> out(rows, std::vector<double>(cols));
+        for (int i = 0; i < rows; ++i)
+            for (int j = 0; j < cols; ++j) out[i][j] = values[static_cast<size_t>(i) * cols + j];
+        return out;
+    } catch (const af::exception& e) {
+        static_cast<void>(DeviceError("SignalProcessing::IFFT2D", e));  // the vector API has no place for the message
         return {};
     }
-
-    int rows = static_cast<int>(spectrum.size());
-    int cols = static_cast<int>(spectrum[0].size());
-
-    // Apply IFFT to columns first, then rows
-    std::vector<std::vector<std::complex<double>>> temp(rows, std::vector<std::complex<double>>(cols));
-
-    // IFFT on columns
-    for (int j = 0; j < cols; j++) {
-        std::vector<std::complex<double>> col(rows);
-        for (int i = 0; i < rows; i++) {
-            col[i] = spectrum[i][j];
-        }
-        auto col_ifft = IFFT(col);
-        for (int i = 0; i < rows; i++) {
-            temp[i][j] = std::complex<double>(col_ifft[i], 0.0);
-        }
-    }
-
-    // IFFT on rows
-    std::vector<std::vector<double>> result(rows, std::vector<double>(cols));
-    for (int i = 0; i < rows; i++) {
-        std::vector<std::complex<double>> row(cols);
-        for (int j = 0; j < cols; j++) {
-            row[j] = temp[i][j];
-        }
-        auto row_ifft = IFFT(row);
-        for (int j = 0; j < cols; j++) {
-            result[i][j] = row_ifft[j];
-        }
-    }
-
-    return result;
 }
 
 } // namespace cyxwiz

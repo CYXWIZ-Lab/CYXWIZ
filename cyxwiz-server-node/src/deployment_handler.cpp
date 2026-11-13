@@ -1,4 +1,5 @@
 #include "deployment_handler.h"
+#include "core/grpc_listen.h"
 #include <spdlog/spdlog.h>
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <grpcpp/health_check_service_interface.h>
@@ -225,7 +226,7 @@ bool DeploymentHandler::Start() {
 
         // Build server
         grpc::ServerBuilder builder;
-        builder.AddListeningPort(listen_address_, grpc::InsecureServerCredentials());
+        cyxwiz::servernode::core::ListenExclusively(builder, listen_address_, grpc::InsecureServerCredentials());
         builder.RegisterService(service_.get());
 
         // Set channel arguments for better performance

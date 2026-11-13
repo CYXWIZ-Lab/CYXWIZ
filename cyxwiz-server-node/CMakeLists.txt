@@ -31,6 +31,8 @@ if(CYXWIZ_BUILD_GUI)
     find_package(glad CONFIG REQUIRED)
     find_package(Stb REQUIRED)
     find_package(OpenGL REQUIRED)
+    # Settings > Network: Browse for the server's CA
+    find_package(nfd CONFIG REQUIRED)
     message(STATUS "GUI mode enabled - ImGui dependencies found")
 endif()
 
@@ -58,6 +60,15 @@ set(SHARED_CORE_SOURCES
     src/auth/token_refresh.cpp
 )
 
+# Every target that compiles SHARED_CORE_SOURCES links these: on macOS the
+# metrics collector reads GPU use through IOKit.
+set(SHARED_CORE_PLATFORM_LIBS)
+if(APPLE)
+    find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
+    find_library(IOKIT_LIBRARY IOKit REQUIRED)
+    set(SHARED_CORE_PLATFORM_LIBS ${COREFOUNDATION_LIBRARY} ${IOKIT_LIBRARY})
+endif()
+
 # ========== IPC Sources ==========
 # Daemon service (server-side) - only for daemon
 set(IPC_SERVER_SOURCES
@@ -72,6 +83,7 @@ set(IPC_CLIENT_SOURCES
 # ========== Daemon-Specific Sources ==========
 set(DAEMON_SOURCES
     src/daemon_main.cpp
+    src/core/secret_file.cpp
     src/deployment_handler.cpp
     src/deployment_manager.cpp
     src/model_loader.cpp
@@ -208,10 +220,7 @@ if(CYXWIZ_BUILD_DAEMON)
             GOOGLE_PROTOBUF_NO_THREADLOCAL
         )
     elseif(APPLE)
-        find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
-        find_library(CFNETWORK_LIBRARY CFNetwork REQUIRED)
-        find_library(IOKIT_LIBRARY IOKit REQUIRED)
-        target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${COREFOUNDATION_LIBRARY} ${CFNETWORK_LIBRARY} ${IOKIT_LIBRARY})
+        target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread ${SHARED_CORE_PLATFORM_LIBS})
     else()
         target_link_libraries(cyxwiz-server-daemon PRIVATE util pthread)
     endif()
@@ -312,6 +321,7 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
             glfw
             glad::glad
             OpenGL::GL
+            nfd::nfd
         )
         target_compile_definitions(cyxwiz-server-gui PRIVATE CYXWIZ_HAS_GUI)
     endif()
@@ -336,7 +346,7 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
             GOOGLE_PROTOBUF_NO_THREADLOCAL
         )
     else()
-        target_link_libraries(cyxwiz-server-gui PRIVATE pthread)
+        target_link_libraries(cyxwiz-server-gui PRIVATE pthread ${SHARED_CORE_PLATFORM_LIBS})
     endif()
 
     # ONNX Runtime linkage
@@ -371,6 +381,26 @@ if(CYXWIZ_BUILD_GUI_CLIENT AND (CYXWIZ_BUILD_GUI OR CYXWIZ_BUILD_TUI))
     endif()
 
     install(TARGETS cyxwiz-server-gui RUNTIME DESTINATION bin)
+
+    # The GUI's logo and fonts beside it, where FindResourceFile looks first:
+    # a node-only build has no Engine resources folder to borrow from. The
+    # files are the same as the Engine's, so a shared bin folder is fine.
+    set(_node_gui_images "${CMAKE_CURRENT_SOURCE_DIR}/resources/cyxwiz.png")
+    set(_node_gui_fonts
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/Inter-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/JetBrainsMono-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/fa-solid-900.ttf")
+    add_custom_command(TARGET cyxwiz-server-gui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:cyxwiz-server-gui>/resources/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_node_gui_images}
+                "$<TARGET_FILE_DIR:cyxwiz-server-gui>/resources"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_node_gui_fonts}
+                "$<TARGET_FILE_DIR:cyxwiz-server-gui>/resources/fonts"
+        COMMENT "Staging the server node GUI's logo and fonts"
+        VERBATIM)
+    install(FILES ${_node_gui_images} DESTINATION bin/resources)
+    install(FILES ${_node_gui_fonts} DESTINATION bin/resources/fonts)
+
     message(STATUS "Building cyxwiz-server-gui (GUI/TUI client)")
 endif()
 
@@ -424,6 +454,7 @@ if(CYXWIZ_BUILD_TESTS)
         unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
         httplib::httplib
+        ${SHARED_CORE_PLATFORM_LIBS}
     )
 
     target_compile_definitions(test_job_execution_service PRIVATE
@@ -492,6 +523,33 @@ if(CYXWIZ_BUILD_TESTS)
     target_compile_features(test_allocation_device_type PRIVATE cxx_std_17)
     add_test(NAME test_allocation_device_type COMMAND test_allocation_device_type)
 
+    # A daemon's gRPC ports are its own: a second daemon cannot share them
+    add_executable(test_grpc_listen tests/test_grpc_listen.cpp)
+    target_include_directories(test_grpc_listen PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_grpc_listen PRIVATE cyxwiz-protocol Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_grpc_listen PRIVATE cxx_std_17)
+    add_test(NAME test_grpc_listen COMMAND test_grpc_listen)
+
+    # The P2P secret is read from a file kept to its owner
+    add_executable(test_secret_file tests/test_secret_file.cpp src/core/secret_file.cpp)
+    target_include_directories(test_secret_file PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_secret_file PRIVATE Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_secret_file PRIVATE cxx_std_17)
+    add_test(NAME test_secret_file COMMAND test_secret_file)
+
+    # The GUI's daemon client reconnects after the daemon restarts
+    add_executable(test_daemon_client_reconnect tests/test_daemon_client_reconnect.cpp src/ipc/daemon_client.cpp)
+    target_include_directories(test_daemon_client_reconnect PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_daemon_client_reconnect PRIVATE cyxwiz-protocol spdlog::spdlog Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(test_daemon_client_reconnect PRIVATE cxx_std_17)
+    add_test(NAME test_daemon_client_reconnect COMMAND test_daemon_client_reconnect)
+
+    # Admission and the job thread use the route the process chose, on any thread
+    add_executable(test_node_job_route tests/test_node_job_route.cpp)
+    target_include_directories(test_node_job_route PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_node_job_route PRIVATE cyxwiz-training-core cyxwiz-backend Catch2::Catch2 Catch2::Catch2WithMain)
+    add_test(NAME test_node_job_route COMMAND test_node_job_route)
+
     # Mock Engine Client (standalone test tool)
     add_executable(mock_engine_client
         tests/mock_engine_client.cpp
@@ -554,6 +612,8 @@ if(CYXWIZ_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../cyxwiz-protocol
     )
 
+    # The shared sources include cpp-httplib with TLS (token_refresh.cpp)
+    target_compile_definitions(standalone_p2p_server PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(standalone_p2p_server PRIVATE
         cyxwiz-training-core
         cyxwiz-backend
@@ -563,9 +623,13 @@ if(CYXWIZ_BUILD_TESTS)
         spdlog::spdlog
         fmt::fmt
         Threads::Threads
+        httplib::httplib
+        OpenSSL::SSL
+        OpenSSL::Crypto
         yaml-cpp::yaml-cpp
         unofficial::sqlite3::sqlite3
         jwt-cpp::jwt-cpp
+        ${SHARED_CORE_PLATFORM_LIBS}
     )
 
     if(WIN32)
@@ -589,8 +653,11 @@ if(CYXWIZ_BUILD_TESTS)
         src/security/docker_manager.cpp
     )
 
+    # api_key_manager.cpp draws through the header-only cyxwiz/portable_random.h;
+    # this test does not link cyxwiz-backend, so it names the headers itself.
     target_include_directories(test_security PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
     )
 
     # cpp-httplib is header-only: every file that includes it must agree on TLS

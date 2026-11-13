@@ -127,55 +127,6 @@ struct StreamingConfig {
 };
 
 /**
- * HDF5 dataset configuration
- */
-struct HDF5Config {
-    std::string data_path = "";      // Path to data dataset (e.g., "/images")
-    std::string label_path = "";     // Path to labels dataset (e.g., "/labels")
-    bool auto_detect = true;         // Auto-detect data/label paths
-    bool normalize = true;           // Normalize uint8 to [0,1]
-
-    // Lazy loading options
-    bool lazy_loading = true;        // Enable lazy loading (default: true for large files)
-    size_t chunk_size = 256;         // Number of samples per chunk
-    size_t chunk_cache_size = 32;    // Max number of chunks to keep in memory
-    size_t lazy_threshold = 10000;   // Enable lazy loading if num_samples > this
-
-    // Layout options
-    bool auto_detect_nchw = true;    // Auto-detect NCHW format and transpose to NHWC
-    bool force_nchw = false;         // Force NCHW->NHWC transpose (overrides auto-detect)
-
-    // Parallel I/O options
-    bool prefetch_enabled = true;    // Enable background prefetching
-    size_t prefetch_threads = 2;     // Number of prefetch worker threads
-    size_t prefetch_ahead = 4;       // Number of chunks to prefetch ahead
-};
-
-/**
- * HDF5 export configuration
- */
-struct HDF5ExportConfig {
-    std::string data_path = "/images";   // Path to store data dataset
-    std::string label_path = "/labels";  // Path to store labels dataset
-
-    // Compression options
-    bool compress = true;                // Enable GZIP compression
-    int compression_level = 4;           // GZIP level (1-9, higher = more compression)
-
-    // Chunking options
-    bool chunked = true;                 // Enable chunked storage
-    size_t chunk_samples = 256;          // Number of samples per chunk
-
-    // Data type options
-    bool store_as_uint8 = false;         // Store as uint8 (assumes data is [0,1], multiplies by 255)
-    bool store_as_nchw = false;          // Transpose NHWC to NCHW for PyTorch compatibility
-
-    // Metadata
-    bool include_metadata = true;        // Include class names, split indices, etc.
-    std::vector<std::string> class_names; // Optional class names to store
-};
-
-/**
  * HuggingFace dataset configuration
  */
 struct HuggingFaceConfig {
@@ -312,8 +263,6 @@ public:
     DatasetHandle LoadHuggingFace(const HuggingFaceConfig& config, const std::string& name = "");
     DatasetHandle LoadKaggle(const KaggleConfig& config, const std::string& name = "");
     DatasetHandle LoadCustom(const CustomConfig& config, const std::string& name = "");
-    DatasetHandle LoadHDF5(const std::string& path, const std::string& name = "",
-                           const HDF5Config& config = {});
 
     // Streaming dataset loading
     DatasetHandle LoadStreamingDataset(const std::string& path, const StreamingConfig& config, const std::string& name = "");
@@ -730,12 +679,6 @@ public:
     bool ImportConfig(const std::string& filepath, std::string& out_name, SplitConfig& out_split);
     static std::string SerializeConfig(const DatasetInfo& info, const SplitConfig& split);
     static bool DeserializeConfig(const std::string& json_str, DatasetInfo& info, SplitConfig& split);
-
-    // HDF5 export
-    bool ExportHDF5(const std::string& name, const std::string& filepath,
-                    const HDF5ExportConfig& config = {});
-    bool ExportHDF5(DatasetHandle handle, const std::string& filepath,
-                    const HDF5ExportConfig& config = {});
 
     // Dataset versioning
     struct DatasetVersion {

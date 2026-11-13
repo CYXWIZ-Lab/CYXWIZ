@@ -3,11 +3,13 @@
 #include "icons.h"
 #include "ui_buttons.h"
 #include "ui_tokens.h"
+#include "ui_fonts.h"
 #include "ui_widgets.h"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <string>
 
@@ -190,6 +192,28 @@ void Note(const char* text) {
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_dim, "%s", text);
     ImGui::PopTextWrapPos();
+}
+
+void Section(const char* title) {
+    if (!title || !title[0]) return;
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    // Drawn across the whole row (the label column alone would clip a long
+    // heading), as SettingsSection draws it; the row keeps only its height, so
+    // the heading never widens the label column
+    std::string upper(title);
+    for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const auto& t = cyxwiz::ui::CurrentTokens();
+    ImGui::Spacing();
+    cyxwiz::ui::FontScope font(cyxwiz::ui::Font::Medium);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->PushClipRect(ImGui::GetWindowPos(),
+                     ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x,
+                            ImGui::GetWindowPos().y + ImGui::GetWindowSize().y));
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), at, ImGui::GetColorU32(t.text_dim), upper.c_str());
+    dl->PopClipRect();
+    ImGui::Dummy(ImVec2(1.0f, ImGui::GetTextLineHeight()));
 }
 
 void Status(const char* key) {

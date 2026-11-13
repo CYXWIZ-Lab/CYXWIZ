@@ -8,7 +8,6 @@
 #include <map>
 #include <set>
 #include <utility>
-#include <random>
 
 namespace cyxwiz {
 
@@ -57,25 +56,21 @@ struct CYXWIZ_API EmbeddingResult {
     std::vector<std::vector<double>> embeddings;    // words x dimensions matrix
     std::vector<std::string> words;                 // Vocabulary (rows)
     int embedding_dim = 0;                          // Embedding dimension
-    std::string method;                             // Method used (onehot, random)
+    std::string method;                             // How the vectors were made (the caller's name)
     std::vector<std::pair<std::string, double>> similar_words;  // For similarity query
     double similarity_score = 0.0;                  // Similarity result
     bool success = false;
     std::string error_message;
 };
 
-struct CYXWIZ_API SentimentResult {
-    double polarity = 0.0;                          // -1.0 (negative) to 1.0 (positive)
-    double subjectivity = 0.0;                      // 0.0 (objective) to 1.0 (subjective)
-    std::string label;                              // "positive", "negative", "neutral"
-    double confidence = 0.0;                        // 0.0 to 1.0
-    std::vector<std::pair<std::string, double>> word_scores;  // Word-level sentiment
-    int positive_count = 0;                         // Number of positive words
-    int negative_count = 0;                         // Number of negative words
-    int neutral_count = 0;                          // Number of neutral words
-    std::string analysis;                           // Detailed text analysis
-    bool success = false;
-    std::string error_message;
+// The VADER sentiment of a text (TextProcessing::Vader).
+struct CYXWIZ_API VaderScores {
+    double negative = 0.0;  // the shares of the text's weight that read negative,
+    double neutral = 0.0;   // neutral and positive (they sum to 1; 0 for a text
+    double positive = 0.0;  // with no words)
+    double compound = 0.0;  // the valences summed and normalised to -1 .. 1
+    std::vector<std::pair<std::string, double>> words;  // each word or emoticon as VADER splits
+                                                        // the text, with its valence after the rules
 };
 
 // ============================================================================
@@ -104,7 +99,32 @@ public:
     );
 
     /**
-     * Remove stopwords from tokens
+     * The words of a text: lower-cased runs of letters and digits of any
+     * script (Python's str.isalnum), two or more long, an apostrophe between
+     * two of them kept ("don't", "i've"; a typographic apostrophe reads as
+     * one). The rule Data Studio's Text tab and the TF-IDF / Count Vectorizer
+     * nodes share; Python: re.finditer(r"[^\W_]+(?:'[^\W_]+)*", text).
+     * Lower-cased character by character; a character Python lowers to
+     * several (U+0130, capital I with a dot) is kept as it is.
+     */
+    static std::vector<std::string> Words(const std::string& text);
+
+    /**
+     * The word n-grams of tokens, ngram_min to ngram_max words long: the
+     * shortest first, each in text order, joined by one space (scikit-learn's
+     * word n-grams); empty for an empty or reversed range
+     */
+    static std::vector<std::string> NGrams(const std::vector<std::string>& tokens, int ngram_min, int ngram_max);
+
+    /**
+     * The terms of a text as the TF-IDF and Count Vectorizer nodes and Data
+     * Studio's Text tab count them: Words, the English stop words left out
+     * first when asked, then NGrams
+     */
+    static std::vector<std::string> Terms(const std::string& text, bool english_stop_words, int ngram_min, int ngram_max);
+
+    /**
+     * Remove the stopwords (GetStopwords) from tokens, compared lower-cased
      * @param tokens Input tokens
      * @param language Language for stopwords ("english")
      * @return Filtered tokens
@@ -115,7 +135,8 @@ public:
     );
 
     /**
-     * Apply Porter stemming to a word
+     * The Porter (1980) stem of a word, lower-cased first: NLTK's
+     * PorterStemmer(mode=ORIGINAL_ALGORITHM)
      * @param word Input word
      * @return Stemmed word
      */
@@ -129,7 +150,8 @@ public:
     static std::vector<std::string> StemWords(const std::vector<std::string>& words);
 
     /**
-     * Get English stopwords set
+     * The English stop words: scikit-learn's ENGLISH_STOP_WORDS (318) plus
+     * their contractions ("don't", "i'm", ...), lower case
      * @return Set of stopwords
      */
     static const std::set<std::string>& GetStopwords();
@@ -239,28 +261,6 @@ public:
     // ==================== Word Embeddings ====================
 
     /**
-     * Create one-hot embeddings for vocabulary
-     * @param vocabulary List of words
-     * @return EmbeddingResult
-     */
-    static EmbeddingResult CreateOneHotEmbeddings(
-        const std::vector<std::string>& vocabulary
-    );
-
-    /**
-     * Create random embeddings for vocabulary
-     * @param vocabulary List of words
-     * @param embedding_dim Dimension of embeddings
-     * @param seed Random seed (-1 for random)
-     * @return EmbeddingResult
-     */
-    static EmbeddingResult CreateRandomEmbeddings(
-        const std::vector<std::string>& vocabulary,
-        int embedding_dim = 50,
-        int seed = -1
-    );
-
-    /**
      * Find similar words using cosine similarity
      * @param word Query word
      * @param embeddings Embedding result
@@ -286,38 +286,15 @@ public:
         const EmbeddingResult& embeddings
     );
 
-    // ==================== Sentiment Analysis ====================
+    // ==================== Sentiment ====================
 
     /**
-     * Analyze sentiment of text using lexicon-based approach
-     * @param text Input text
-     * @param method "simple", "vader", "afinn"
-     * @return SentimentResult
+     * The VADER sentiment of a text (Hutto and Gilbert, 2014): its lexicon,
+     * negation, boosters and dampeners, capitals, "but", "least", the special
+     * idioms, emoticons, emojis and ! / ?, as vaderSentiment 3.3.2 gives them
+     * (unrounded).
      */
-    static SentimentResult AnalyzeSentiment(
-        const std::string& text,
-        const std::string& method = "simple"
-    );
-
-    /**
-     * Get sentiment lexicon
-     * @param name Lexicon name ("simple", "afinn")
-     * @return Word to score mapping
-     */
-    static const std::map<std::string, double>& GetSentimentLexicon(
-        const std::string& name = "simple"
-    );
-
-    /**
-     * Compute polarity score from tokens and lexicon
-     * @param tokens Input tokens
-     * @param lexicon Sentiment lexicon
-     * @return Polarity score
-     */
-    static double ComputePolarityScore(
-        const std::vector<std::string>& tokens,
-        const std::map<std::string, double>& lexicon
-    );
+    static VaderScores Vader(const std::string& text);
 
     // ==================== Text Utilities ====================
 
@@ -366,37 +343,6 @@ public:
      */
     static std::string NormalizeWhitespace(const std::string& text);
 
-    // ==================== Sample Text Generation ====================
-
-    /**
-     * Generate sample text
-     * @param type "lorem", "news", "review_positive", "review_negative", "technical"
-     * @return Sample text
-     */
-    static std::string GenerateSampleText(const std::string& type = "lorem");
-
-    /**
-     * Generate sample documents
-     * @param num_docs Number of documents
-     * @param type Document type ("news", "reviews", "technical")
-     * @return List of documents
-     */
-    static std::vector<std::string> GenerateSampleDocuments(
-        int num_docs,
-        const std::string& type = "news"
-    );
-
-    /**
-     * Generate sample vocabulary
-     * @param size Vocabulary size
-     * @param domain Domain ("general", "tech", "science")
-     * @return List of words
-     */
-    static std::vector<std::string> GenerateSampleVocabulary(
-        int size = 100,
-        const std::string& domain = "general"
-    );
-
 private:
     // Helper functions
     static std::vector<std::string> TokenizeWhitespace(const std::string& text);
@@ -404,8 +350,6 @@ private:
     static std::vector<std::string> TokenizeSentence(const std::string& text);
     static std::vector<std::string> TokenizeNgram(const std::string& text, int n, bool lowercase);
 
-    static void InitStopwords();
-    static void InitSentimentLexicons();
 
     static double L2Norm(const std::vector<double>& vec);
     static double L1Norm(const std::vector<double>& vec);

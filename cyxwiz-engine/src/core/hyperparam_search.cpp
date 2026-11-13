@@ -1,4 +1,5 @@
 #include "hyperparam_search.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <cmath>
 #include <random>
@@ -463,11 +464,11 @@ HyperparamSearch::SampleRandom() {
     std::map<std::string, float> params;
     std::map<std::string, std::string> categorical_params;
 
-    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    const auto uniform = [low = 0.0f, high = 1.0f](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
 
     for (const auto& param : config_.space.parameters) {
         if (param.type == ParamType::Categorical) {
-            std::uniform_int_distribution<int> dist(0, static_cast<int>(param.options.size()) - 1);
+            const auto dist = [low = 0, high = static_cast<int>(param.options.size()) - 1](auto& r) { return cyxwiz::portable::UniformInt<int>(r, low, high); };
             categorical_params[param.name] = param.options[dist(rng_)];
         } else {
             float t = uniform(rng_);

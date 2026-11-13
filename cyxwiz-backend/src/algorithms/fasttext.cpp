@@ -26,6 +26,7 @@
 #include "word2vec_sampling.h"
 #include "word_training_vocabulary.h"
 #include "word_vector_device.h"
+#include "device_random.h"
 
 #include <arrayfire.h>
 
@@ -362,7 +363,7 @@ FastTextModel WordEmbeddings::TrainFastText(const std::vector<std::vector<std::s
         // others in batches of their own at full width.
         const DevicePieces pieces =
             ToDevice(host_pieces, options.cbow ? 0 : NarrowWidth(host_pieces, model.counts, 0.98));
-        af::randomEngine engine(AF_RANDOM_ENGINE_DEFAULT, options.seed);
+        af::randomEngine engine = cyxwiz::DeviceRandomEngine(options.seed);
         // fastText and gensim: input rows (words and n-grams) uniform in
         // +-1 / vector_size, output rows 0.
         af::array w_in =
@@ -380,7 +381,17 @@ FastTextModel WordEmbeddings::TrainFastText(const std::vector<std::vector<std::s
         for (int epoch = 0; epoch < options.epochs; ++epoch) {
             const EpochExamples examples_of_epoch =
                 MakeEpochExamples(corpus, corpus_sentence, keep_probability, window, options.cbow, true, engine);
-            if (examples_of_epoch.outputs.isempty()) continue;
+            if (examples_of_epoch.outputs.isempty()) {
+                // No context pairs this epoch: it still counts (loss 0, 0
+                // examples), so epoch_loss and the callbacks keep one entry per
+                // epoch and Stop is still heard.
+                model.epoch_loss.push_back(0.0);
+                if (options.on_epoch_loss) options.on_epoch_loss(epoch + 1, 0.0, 0);
+                if (options.on_progress &&
+                    !options.on_progress(static_cast<double>(epoch + 1) / options.epochs, epoch + 1))
+                    return fail("Training was stopped");
+                continue;
+            }
             const af::array ex_inputs =
                 options.cbow ? examples_of_epoch.inputs
                              : af::moddims(examples_of_epoch.inputs, examples_of_epoch.inputs.elements(), 1);

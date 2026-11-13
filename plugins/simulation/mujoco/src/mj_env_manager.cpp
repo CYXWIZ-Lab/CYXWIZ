@@ -2,7 +2,6 @@
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
-#include <numeric>
 
 namespace cyxwiz::plugin::mujoco {
 
@@ -13,13 +12,15 @@ MjEnvManager::~MjEnvManager() {
 MjEnvManager::MjEnvManager(MjEnvManager&& other) noexcept
     : model_(other.model_),
       data_(other.data_),
+      builder_(std::move(other.builder_)),
+      option_(std::move(other.option_)),
+      scene_(std::move(other.scene_)),
+      last_terminated_(other.last_terminated_),
       max_episode_steps_(other.max_episode_steps_),
       frame_skip_(other.frame_skip_),
       current_step_(other.current_step_),
       episode_reward_(other.episode_reward_),
       episode_count_(other.episode_count_),
-      recent_episode_rewards_(std::move(other.recent_episode_rewards_)),
-      recent_episode_lengths_(std::move(other.recent_episode_lengths_)),
       reward_fn_(std::move(other.reward_fn_)),
       termination_fn_(std::move(other.termination_fn_)),
       observation_fn_(std::move(other.observation_fn_)) {
@@ -37,13 +38,15 @@ MjEnvManager& MjEnvManager::operator=(MjEnvManager&& other) noexcept {
         Close();
         model_ = other.model_;
         data_ = other.data_;
+        builder_ = std::move(other.builder_);
+        option_ = std::move(other.option_);
+        scene_ = std::move(other.scene_);
+        last_terminated_ = other.last_terminated_;
         max_episode_steps_ = other.max_episode_steps_;
         frame_skip_ = other.frame_skip_;
         current_step_ = other.current_step_;
         episode_reward_ = other.episode_reward_;
         episode_count_ = other.episode_count_;
-        recent_episode_rewards_ = std::move(other.recent_episode_rewards_);
-        recent_episode_lengths_ = std::move(other.recent_episode_lengths_);
         reward_fn_ = std::move(other.reward_fn_);
         termination_fn_ = std::move(other.termination_fn_);
         observation_fn_ = std::move(other.observation_fn_);
@@ -62,15 +65,20 @@ MjEnvManager& MjEnvManager::operator=(MjEnvManager&& other) noexcept {
 // Lifecycle
 // =============================================================================
 
-bool MjEnvManager::LoadModel(const std::string& mjcf_path) {
+bool MjEnvManager::LoadModel(const std::string& path, const MjScene& wanted) {
+    // Copies first: the caller may pass this manager's own path and scene, which Close clears
+    const std::string mjcf_path = path;
+    const MjScene scene = wanted;
     Close();
 
-    char error[1000] = "";
-    model_ = mj_loadXML(mjcf_path.c_str(), nullptr, error, sizeof(error));
+    std::string error;
+    if (builder_.Load(mjcf_path, error)) model_ = builder_.Build(scene, error);
     if (!model_) {
         spdlog::error("[MuJoCo] Failed to load model '{}': {}", mjcf_path, error);
+        builder_ = {};
         return false;
     }
+    scene_ = scene;
 
     data_ = mj_makeData(model_);
     if (!data_) {
@@ -82,6 +90,64 @@ bool MjEnvManager::LoadModel(const std::string& mjcf_path) {
 
     spdlog::info("[MuJoCo] Loaded model '{}' — nq={}, nv={}, nu={}, nsensordata={}",
                  mjcf_path, model_->nq, model_->nv, model_->nu, model_->nsensordata);
+    return true;
+}
+
+bool MjEnvManager::Reload(std::string& error) {
+    if (!model_ || builder_.Path().empty()) {
+        error = "No model file is open.";
+        return false;
+    }
+    MjSceneBuilder builder;
+    if (!builder.Load(builder_.Path(), error)) return false;
+    mjModel* model = builder.Build(scene_, error);
+    if (!model) return false;
+    mjData* data = mj_makeData(model);
+    if (!data) {
+        mj_deleteModel(model);
+        error = "MuJoCo could not make the model's state (out of memory?).";
+        return false;
+    }
+    if (option_) model->opt = *option_;
+    mj_deleteData(data_);
+    mj_deleteModel(model_);
+    model_ = model;
+    data_ = data;
+    builder_ = std::move(builder);
+    Reset();
+    return true;
+}
+
+void MjEnvManager::SetOption(const mjOption& option) {
+    option_ = option;
+    if (model_) model_->opt = option;
+}
+
+void MjEnvManager::ClearOption() {
+    option_.reset();
+    if (model_ && builder_.Loaded()) model_->opt = builder_.FileOption();
+}
+
+bool MjEnvManager::ChangeScene(const MjScene& scene, std::string& error) {
+    if (!model_ || !data_) {
+        error = "No model is open.";
+        return false;
+    }
+    mjModel* model = builder_.Build(scene, error);
+    if (!model) return false;
+    mjData* data = mj_makeData(model);
+    if (!data) {
+        mj_deleteModel(model);
+        error = "MuJoCo could not make the model's state (out of memory?).";
+        return false;
+    }
+    if (option_) model->opt = *option_;  // the Inspect panel's physics stay
+    CopySceneState(model_, data_, model, data, builder_.Robot());
+    mj_deleteData(data_);
+    mj_deleteModel(model_);
+    model_ = model;
+    data_ = data;
+    scene_ = scene;
     return true;
 }
 
@@ -104,6 +170,10 @@ void MjEnvManager::Close() {
     }
     current_step_ = 0;
     episode_reward_ = 0.0f;
+    last_terminated_ = false;
+    scene_ = MjScene{};
+    builder_ = {};
+    option_.reset();  // another file starts with its own physics
 }
 
 // =============================================================================
@@ -120,7 +190,7 @@ StepResult MjEnvManager::Step(const std::vector<float>& action) {
     }
 
     // Apply action to actuators (clamp to model limits)
-    int nu = model_->nu;
+    const int nu = static_cast<int>(model_->nu);
     for (int i = 0; i < nu && i < static_cast<int>(action.size()); ++i) {
         float a = action[i];
         // Clamp to actuator range if defined
@@ -161,13 +231,8 @@ StepResult MjEnvManager::Step(const std::vector<float>& action) {
 
     // Track episode stats on terminal
     if (terminated || truncated) {
-        recent_episode_rewards_.push_back(episode_reward_);
-        recent_episode_lengths_.push_back(current_step_);
-        if (static_cast<int>(recent_episode_rewards_.size()) > kRecentBufferSize) {
-            recent_episode_rewards_.pop_front();
-            recent_episode_lengths_.pop_front();
-        }
         episode_count_++;
+        last_terminated_ = terminated;
         result.info["episode_reward"] = episode_reward_;
         result.info["episode_length"] = static_cast<float>(current_step_);
     }
@@ -207,27 +272,13 @@ std::vector<float> MjEnvManager::GetObservation() const {
 
 int MjEnvManager::GetObservationDim() const {
     if (!model_) return 0;
-    // Default observation: qpos + qvel + sensor data
-    return model_->nq + model_->nv + model_->nsensordata;
+    // Default observation: the robot's qpos + qvel (not a stress scene's objects) + sensor data
+    return static_cast<int>(builder_.Robot().nq + builder_.Robot().nv + model_->nsensordata);
 }
 
 int MjEnvManager::GetActionDim() const {
     if (!model_) return 0;
-    return model_->nu;
-}
-
-float MjEnvManager::GetMeanEpisodeReward() const {
-    if (recent_episode_rewards_.empty()) return 0.0f;
-    float sum = std::accumulate(recent_episode_rewards_.begin(),
-                                recent_episode_rewards_.end(), 0.0f);
-    return sum / static_cast<float>(recent_episode_rewards_.size());
-}
-
-float MjEnvManager::GetMeanEpisodeLength() const {
-    if (recent_episode_lengths_.empty()) return 0.0f;
-    int sum = std::accumulate(recent_episode_lengths_.begin(),
-                              recent_episode_lengths_.end(), 0);
-    return static_cast<float>(sum) / static_cast<float>(recent_episode_lengths_.size());
+    return static_cast<int>(model_->nu);
 }
 
 // =============================================================================
@@ -274,15 +325,15 @@ std::vector<float> MjEnvManager::ComputeDefaultObservation() const {
     if (!model_ || !data_) return {};
 
     std::vector<float> obs;
-    obs.reserve(model_->nq + model_->nv + model_->nsensordata);
+    obs.reserve(builder_.Robot().nq + builder_.Robot().nv + model_->nsensordata);
 
-    // Joint positions
-    for (int i = 0; i < model_->nq; ++i) {
+    // Joint positions (the robot's: a stress scene's objects come after them)
+    for (int i = 0; i < builder_.Robot().nq; ++i) {
         obs.push_back(static_cast<float>(data_->qpos[i]));
     }
 
     // Joint velocities
-    for (int i = 0; i < model_->nv; ++i) {
+    for (int i = 0; i < builder_.Robot().nv; ++i) {
         obs.push_back(static_cast<float>(data_->qvel[i]));
     }
 

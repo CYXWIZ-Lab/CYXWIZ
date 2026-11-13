@@ -14,7 +14,7 @@ struct TreeRect {
     double x = 0, y = 0, w = 0, h = 0;  // y from the top
     int depth = 0;                      // 0: the outer groups (of the zoomed level)
     bool leaf = false;
-    std::vector<std::string> path;      // outer group first
+    std::vector<std::string> path{};    // outer group first
     double size = 0;
     double colour = NAN;                // leaves: the colour value (NaN without a colour column)
     int top = 0;                        // index into Prepared::tree_tops

@@ -1,6 +1,10 @@
 #include "menu_presentation.h"
 
+#include <algorithm>
+#include <iterator>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace cyxwiz::menu {
 
@@ -13,7 +17,7 @@ struct Opts {
     bool checkable = false;
     bool checked = false;
     bool planned = false;
-    std::string argument;
+    std::string argument{};
 };
 
 MenuItem Action(Context focus, const std::string& id, const std::string& label,
@@ -68,6 +72,44 @@ MenuItem Head(const std::string& label) {
     item.kind = Kind::Header;
     item.label = label;
     return item;
+}
+
+// The Engine's top menus a plugin command can name
+bool IsMenuTitle(const std::string& title) {
+    static const char* const kTitles[] = {"File", "Edit", "View", "Nodes", "Train", "Data", "Tools",
+                                          "Script", "Deploy", "Simulation", "Help"};
+    return std::find(std::begin(kTitles), std::end(kTitles), title) != std::end(kTitles);
+}
+
+// The plugin commands of one menu, a separator between groups: each group
+// once, in the order its first command registered (a plugin registered
+// again does not split its group), its commands in registration order
+void AppendPluginCommands(Context focus, const std::vector<PluginCommandEntry>& commands, const std::string& menu,
+                          std::vector<MenuItem>& items) {
+    // A group is one plugin's (its id, the key's prefix): two plugins' "run" stay apart
+    const auto group_of = [](const PluginCommandEntry& c) { return c.key.substr(0, c.key.find(':')) + '\n' + c.group; };
+    std::vector<std::string> groups;
+    for (const auto& c : commands)
+        if (c.menu == menu && std::find(groups.begin(), groups.end(), group_of(c)) == groups.end())
+            groups.push_back(group_of(c));
+    std::vector<const PluginCommandEntry*> ordered;
+    for (const auto& g : groups)
+        for (const auto& c : commands)
+            if (c.menu == menu && group_of(c) == g) ordered.push_back(&c);
+    bool first = true;
+    std::string group;
+    for (const auto* entry : ordered) {
+        const auto& c = *entry;
+        if (!first && group_of(c) != group) items.push_back(Sep());
+        first = false;
+        group = group_of(c);
+        Opts opts;
+        opts.argument = c.key;
+        opts.checkable = c.checkable;
+        opts.checked = c.checked;
+        if (!c.enabled) opts.why = c.disabled_reason.empty() ? "Not available now." : c.disabled_reason;
+        items.push_back(Action(focus, "plugin.command", c.label, c.hint, opts));
+    }
 }
 
 MenuItem Sub(const std::string& id, const std::string& label, const std::string& hint,
@@ -171,8 +213,8 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(any, "train.compile", "Compile Graph", "F7", "Train");
         add(any, "train.run_test", "Run Test", "F8", "Train > Test");
         add(any, "script.python_console", "Open Python Console (go to definition when the Script Editor is focused)", "F12", "Script");
-        add(any, "help.documentation", "Documentation", "F1", "Help", false, true);
-        add(any, "view.fullscreen", "Fullscreen", "F11", "View", false, true);
+        add(any, "help.documentation", "Documentation", "F1", "Help");
+        add(any, "view.fullscreen", "Full Screen", "F11", "View");
         add(any, "file.exit", "Exit", "Alt+F4", "File", true);
 
         // Studio canvas: the node editor handles these itself.
@@ -347,6 +389,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         }
         i.push_back(Action(f, "file.close_project", "Close Project", "Saves settings and closes the project.",
                            Opts{need_project}));
+        i.push_back(Action(f, "file.show_project_folder", "Show Project Folder",
+                           "Opens the project's folder in the file manager.", Opts{need_project}));
         i.push_back(Sep());
         i.push_back(Action(f, "file.new_window", "New Window", "Starts a second Engine window."));
         {
@@ -503,7 +547,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Toggle(f, "view.script_minimap", "Script Editor Minimap",
                                 "Shows the overview map beside the script.", in.script_minimap)}));
         i.push_back(Sep());
-        i.push_back(Planned(f, "view.fullscreen", "Fullscreen", "Fills the screen with the Engine window."));
+        i.push_back(Toggle(f, "view.fullscreen", "Full Screen",
+                           "Fills the screen with the Engine window; F11 again goes back.", in.fullscreen));
         model.menus.push_back(std::move(m));
     }
 
@@ -612,7 +657,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                                 "Adds a Power Transform step (Box-Cox) in Data Studio's Prepare, after the data in use."),
                          Action(f, "data.feature_scaling", "Feature Scaling (All Methods)",
                                 "Adds a scaling step in Data Studio's Prepare and compares every method on it.")}));
-        i.push_back(Tool(f, "tools.tokenization", "Tokenization"));
+        i.push_back(Action(f, "tools.tokenization", "Tokenization",
+                           "Opens Data Studio's Text tab on Tokens: a tokenizer trained on a text column, the tokens per row and the length limit."));
         i.push_back(Planned(f, "data.augment", "Augment", "Data augmentation."));
         model.menus.push_back(std::move(m));
     }
@@ -622,18 +668,25 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         Menu m{"tools", "Tools", {}};
         auto& i = m.items;
         i.push_back(Sub("tools.model", "Model", "Inspect and explain a model.",
-                        {Tool(f, "tools.model_summary", "Model Summary"),
-                         Tool(f, "tools.flops", "FLOPs Calculator"),
-                         Tool(f, "tools.architecture_diagram", "Architecture Diagram"),
-                         Tool(f, "tools.lr_finder", "Learning Rate Finder"),
+                        {Action(f, "tools.model_summary", "Model Summary",
+                                "Opens the Model window on Summary: every layer as compiled, its parameters and multiply-adds."),
+                         Action(f, "tools.flops", "FLOPs Calculator",
+                                "Opens the Model window on Summary: multiply-adds and FLOPs a sample, per layer and in all."),
+                         Action(f, "tools.lr_finder", "Learning Rate Finder",
+                                "Opens the Model window on Learning rate: a range test on the Train rows and the rate it suggests."),
                          Sep(),
-                         Tool(f, "tools.gradcam", "Grad-CAM Visualization"),
-                         Tool(f, "tools.saliency", "Saliency Maps"),
+                         Action(f, "tools.gradcam", "Grad-CAM Visualization",
+                                "Opens the Model window on Explain: where a convolution found what raised a test row's score."),
+                         Action(f, "tools.saliency", "Saliency Maps",
+                                "Opens the Model window on Explain: saliency and Integrated Gradients of a test row's score."),
                          Sep(),
-                         Tool(f, "tools.nas", "Neural Architecture Search"),
-                         Tool(f, "tools.architecture_suggestions", "Architecture Suggestions"),
+                         Action(f, "tools.model_health", "Training Health",
+                                "Opens the Model window on Health: weights, gradients and dead units of each layer, epoch by epoch."),
+                         Action(f, "tools.projector", "Embedding Projector",
+                                "Opens the Model window on Projector: what a layer makes of the test rows, in two dimensions."),
                          Sep(),
-                         Tool(f, "tools.dnn_inference", "DNN Inference")}));
+                         Action(f, "tools.nas", "Neural Architecture Search",
+                                "Changed versions of the graph, scored, and the best ones trained the way Train does.")}));
         i.push_back(Sub("tools.evaluation", "Evaluation", "Measure how well a model performs.",
                         {Action(f, "tools.cross_validation", "Cross-Validation",
                                 "Opens Data Studio > Results > Cross-validation: the graph trained once per fold, each fold scored once."),
@@ -659,37 +712,40 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Action(f, "tools.hypothesis_test", "Hypothesis Testing", "Opens Data Studio's Tests tab: two groups, paired columns, several groups, one value, two categories."),
                          Action(f, "tools.regression", "Linear / Polynomial Regression", "Opens Data Studio's Regression tab: predict a number column from others, or a curve in one."),
                          Action(f, "tools.distribution_fitter", "Distribution Fitter", "Opens Data Studio's Distribution tab: Normal, Uniform, Exponential and Log-Normal fits.")}));
-        i.push_back(Sub("tools.linear_algebra", "Linear Algebra", "Matrix tools.",
-                        {Tool(f, "tools.matrix_calculator", "Matrix Calculator"),
-                         Tool(f, "tools.eigen", "Eigenvalue Decomposition"),
-                         Tool(f, "tools.svd", "SVD (Singular Value Decomposition)"),
-                         Tool(f, "tools.qr", "QR Decomposition"),
-                         Tool(f, "tools.cholesky", "Cholesky Decomposition")}));
-        i.push_back(Sub("tools.signal", "Signal Processing", "Signal tools.",
-                        {Tool(f, "tools.fft", "FFT (Fourier Transform)"),
-                         Tool(f, "tools.spectrogram", "Spectrogram (STFT)"),
-                         Tool(f, "tools.filter_designer", "Filter Designer"),
-                         Tool(f, "tools.convolution", "Convolution Calculator"),
-                         Tool(f, "tools.wavelet", "Wavelet Transform")}));
-        i.push_back(Sub("tools.optimization", "Optimization and Calculus", "Optimisation and calculus tools.",
-                        {Tool(f, "tools.gradient_descent", "Gradient Descent Visualizer"),
-                         Tool(f, "tools.convexity", "Convexity Analyzer"),
-                         Tool(f, "tools.lp", "Linear Programming (LP)"),
-                         Tool(f, "tools.qp", "Quadratic Programming (QP)"),
-                         Tool(f, "tools.differentiation", "Numerical Differentiation"),
-                         Tool(f, "tools.integration", "Numerical Integration")}));
-        i.push_back(Sub("tools.time_series", "Time Series", "Time series tools.",
-                        {Tool(f, "tools.decomposition", "Time Series Decomposition"),
-                         Tool(f, "tools.acf_pacf", "ACF / PACF (Correlogram)"),
-                         Tool(f, "tools.stationarity", "Stationarity Testing"),
-                         Tool(f, "tools.seasonality", "Seasonality Detection"),
-                         Tool(f, "tools.forecasting", "Forecasting")}));
-        i.push_back(Sub("tools.text", "Text", "Text tools.",
-                        {Tool(f, "tools.tokenization", "Tokenization"),
-                         Tool(f, "tools.word_frequency", "Word Frequency"),
-                         Tool(f, "tools.tfidf", "TF-IDF Analysis"),
-                         Tool(f, "tools.embeddings", "Word Embeddings"),
-                         Tool(f, "tools.sentiment", "Sentiment Analysis"),
+        i.push_back(Sub("tools.linear_algebra", "Linear Algebra", "Matrices: combine, describe, solve and factor them.",
+                        {Action(f, "tools.matrix_calculator", "Matrix Calculator",
+                                "Opens the Linear Algebra window on A × B: sums, products, the inverse, determinant, rank, A x = b."),
+                         Action(f, "tools.eigen", "Eigenvalue Decomposition", "Opens the Linear Algebra window on Eigen: the directions A only stretches."),
+                         Action(f, "tools.svd", "SVD (Singular Value Decomposition)", "Opens the Linear Algebra window on SVD: A's directions and their strengths."),
+                         Action(f, "tools.qr", "QR Decomposition", "Opens the Linear Algebra window on QR: orthonormal columns times an upper triangle."),
+                         Action(f, "tools.cholesky", "Cholesky Decomposition", "Opens the Linear Algebra window on Cholesky: A = L L^T.")}));
+        i.push_back(Sub("tools.signal", "Signal Processing", "Frequencies, filters and wavelets of a number column.",
+                        {Action(f, "tools.fft", "FFT (Fourier Transform)", "Opens Data Studio's Signal tab on Spectrum: the frequencies of a column and its peaks."),
+                         Action(f, "tools.spectrogram", "Spectrogram (STFT)", "Opens the Signal tab on Spectrogram: the frequencies over time."),
+                         Action(f, "tools.filter_designer", "Filter Designer", "Opens the Signal tab on Filter: a band kept or removed, its response and the column filtered."),
+                         Action(f, "tools.convolution", "Convolution Calculator", "Opens the Signal tab on Filter with a typed kernel: the column convolved with it."),
+                         Action(f, "tools.wavelet", "Wavelet Transform", "Opens the Signal tab on Wavelet: the column split by scale, each part's share of the energy.")}));
+        i.push_back(Sub("tools.optimization", "Optimization and Calculus", "Typed formulas minimized, integrated and differentiated; linear and quadratic programs.",
+                        {Action(f, "tools.gradient_descent", "Gradient Descent Visualizer",
+                                "Opens the Optimization and Calculus window on Optimizers: the training optimizers' paths on a formula's map."),
+                         Action(f, "tools.convexity", "Convexity Analyzer", "Opens the window on Curvature: how a formula curves at a point and over a range."),
+                         Action(f, "tools.lp", "Linear Programming (LP)", "Opens the window on Linear: the best c . x under linear constraints, any number of variables."),
+                         Action(f, "tools.qp", "Quadratic Programming (QP)", "Opens the window on Quadratic: the smallest 0.5 x' Q x + c' x under linear constraints, or a portfolio from a table of returns."),
+                         Action(f, "tools.differentiation", "Numerical Differentiation", "Opens the window on Derivative: f' and f'' exactly and by differences."),
+                         Action(f, "tools.integration", "Numerical Integration", "Opens the window on Integral: adaptive with an error estimate, and the fixed rules.")}));
+        i.push_back(Sub("tools.time_series", "Time Series", "A column over time: its parts, its season, its forecast.",
+                        {Action(f, "tools.decomposition", "Time Series Decomposition", "Opens Data Studio's Series tab on Parts: trend, season and the rest."),
+                         Action(f, "tools.acf_pacf", "ACF / PACF (Correlogram)", "Opens the Series tab on Correlogram: how the series follows its own past."),
+                         Action(f, "tools.stationarity", "Stationarity Testing", "Opens the Series tab on Stationarity: the ADF and KPSS tests."),
+                         Action(f, "tools.seasonality", "Seasonality Detection", "Opens the Series tab on Seasonality: the period the series repeats on."),
+                         Action(f, "tools.forecasting", "Forecasting", "Opens Data Studio's Forecast tab: a forecast with its range, checked on the last rows held out.")}));
+        i.push_back(Sub("tools.text", "Text", "A text column: its words, terms, sentiment, tokens and word vectors.",
+                        {Action(f, "tools.tokenization", "Tokenization",
+                                "Opens Data Studio's Text tab on Tokens: a tokenizer trained on a text column, the tokens per row and the length limit."),
+                         Action(f, "tools.word_frequency", "Word Frequency", "Opens the Text tab on Words: the commonest words or pairs, per group too."),
+                         Action(f, "tools.tfidf", "TF-IDF Analysis", "Opens the Text tab on Terms: what sets each group apart, and the rows alike."),
+                         Action(f, "tools.embeddings", "Word Embeddings", "Opens the Text tab on Embeddings: word vectors learned from the column, nearest words and the word map."),
+                         Action(f, "tools.sentiment", "Sentiment Analysis", "Opens the Text tab on Sentiment: VADER on every row, per group too."),
                          Tool(f, "tools.language_model", "Language Model Generation")}));
         i.push_back(Sub("tools.utilities", "Utilities", "Small helper tools.",
                         {Tool(f, "tools.calculator", "Calculator"),
@@ -700,21 +756,24 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Tool(f, "tools.regex_tester", "Regex Tester")}));
         i.push_back(Sep());
         i.push_back(Sub("tools.monitoring", "Monitoring", "Watch time and memory use.",
-                        {Action(f, "tools.profiler", "Performance Profiler",
+                        {Action(f, "tools.monitor_system", "System",
+                                "The machine, the compute device and this Engine: CPU, memory, threads."),
+                         Action(f, "tools.monitor_memory", "Memory", "The Engine's memory over time."),
+                         Action(f, "tools.monitor_loaded_data", "Loaded Data", "Every dataset the Engine holds, in memory and on disk."),
+                         Action(f, "tools.monitor_frames", "Frames", "Frame times and the windows they go to."),
+                         Action(f, "tools.profiler", "Performance Profiler",
                                 "Opens the Studio Debugger on its runtime view."),
-                         Action(f, "tools.memory_panel", "Memory Visualization", "Opens the Memory panel."),
-                         Action(f, "tools.system_monitor", "System Monitor", "Opens the system monitor."),
                          Sep(),
-                         Action(f, "tools.clear_cache", "Clear Cache", "Removes the prepared-data cache of this project, after asking."),
-                         Action(f, "tools.gc", "Garbage Collection", "Returns unused device memory to the driver and runs a Python garbage collection.")}));
+                         Action(f, "tools.clear_cache", "Clear Caches...", "Lists the caches with their sizes and clears the ones you tick."),
+                         Action(f, "tools.gc", "Free Unused Memory", "Returns unused device memory to the driver, collects Python's garbage and says what was freed.")}));
         i.push_back(Sub("tools.diagnostics", "Diagnostics", "Extra logging for support.",
-                        {Toggle(f, "tools.idle_log", "Log Idle Mode Transitions",
-                                "Logs when the Engine slows its frame rate to save power.", in.idle_log),
-                         Toggle(f, "tools.verbose_python", "Verbose Python Logging",
-                                "Logs more detail from the Python runtime.", in.verbose_python),
+                        {Toggle(f, "tools.idle_log", "Log Frame-rate Changes",
+                                "One log line when the Engine slows or speeds its frames: idle, not in front, minimised.", in.idle_log),
+                         Toggle(f, "tools.verbose_python", "Log Every Python Command",
+                                "Logs each command the Engine sends to Python, with how long it took.", in.verbose_python),
                          Sep(),
                          Toggle(f, "tools.frame_overlay", "Frame Time Overlay",
-                                "Shows frame time, the panels that cost the most and the font atlas size.",
+                                "Shows the whole frame time and the Engine's own interface-building time. More in Monitor > Frames.",
                                 in.frame_overlay)}));
         model.menus.push_back(std::move(m));
     }
@@ -764,20 +823,57 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
 
     // ---------------------------------------------------------- Simulation
     {
+        // The open graph's run when it has simulation nodes; then each
+        // simulation plugin's commands under its name (its own run controls
+        // give way to the graph run); then the windows.
         Menu m{"simulation", "Simulation", {}};
         auto& i = m.items;
-        const std::string need_mujoco = in.mujoco_loaded ? "" : "The MuJoCo plugin is not loaded.";
-        i.push_back(Planned(f, "sim.run", "Run Simulation", "Runs the simulation."));
-        i.push_back(Planned(f, "sim.pause", "Pause", "Pauses the simulation."));
-        i.push_back(Planned(f, "sim.stop", "Stop", "Stops the simulation."));
-        i.push_back(Planned(f, "sim.step", "Step Once", "Advances one step."));
-        i.push_back(Sep());
-        i.push_back(Toggle(f, "sim.viewport", "Open Viewport", "Shows the MuJoCo viewport.",
-                           in.mujoco_viewport_visible, need_mujoco));
-        i.push_back(Toggle(f, "sim.env_library", "Environment Library", "Shows the environment list.",
-                           in.mujoco_env_visible, need_mujoco));
-        i.push_back(Sep());
-        i.push_back(Planned(f, "sim.load_mjcf", "Load MJCF Model...", "Loads a MuJoCo model file."));
+        if (in.simulation_graph) {
+            i.push_back(Head("Graph run: " + in.simulation_graph_name));
+            for (const auto& c : in.simulation_commands) {
+                Opts opts;
+                if (!c.enabled) opts.why = c.disabled_reason.empty() ? "Not available now." : c.disabled_reason;
+                i.push_back(Action(f, c.action_id, c.label, c.hint, opts));
+            }
+        }
+        std::vector<PluginCommandEntry> plugin_commands;
+        for (const auto& c : in.plugin_commands)
+            if (c.menu == "Simulation" && !(in.simulation_graph && c.replaced_by_graph_run)) plugin_commands.push_back(c);
+        // Each plugin once, under its name, in the order it first registered
+        std::vector<std::string> plugins;
+        for (const auto& c : plugin_commands)
+            if (std::find(plugins.begin(), plugins.end(), c.plugin_name) == plugins.end()) plugins.push_back(c.plugin_name);
+        for (const auto& plugin : plugins) {
+            std::vector<PluginCommandEntry> own;
+            for (const auto& c : plugin_commands)
+                if (c.plugin_name == plugin) own.push_back(c);
+            if (!i.empty()) i.push_back(Sep());
+            if (!plugin.empty()) i.push_back(Head(plugin));
+            AppendPluginCommands(f, own, "Simulation", i);
+        }
+        const bool from_plugins = !plugin_commands.empty() ||
+            std::any_of(in.plugin_panels.begin(), in.plugin_panels.end(),
+                        [](const NamedEntry& p) { return p.group == "Simulation"; });
+        if (!from_plugins) {
+            if (!i.empty()) i.push_back(Sep());
+            i.push_back(Head("No simulation plugin loaded. Add one in the Plugin Manager."));
+        }
+        if (!i.empty()) i.push_back(Sep());
+        {
+            Opts opts;
+            opts.checkable = true;
+            opts.checked = in.simulation_monitor_visible;
+            i.push_back(Action(f, "simulation.monitor", "Simulation Monitor",
+                               "Shows or hides the Simulation Monitor: the graph run and its Scopes.", opts));
+        }
+        for (const auto& p : in.plugin_panels) {
+            if (p.group != "Simulation") continue;
+            Opts opts;
+            opts.checkable = true;
+            opts.checked = p.checked;
+            opts.argument = p.id;
+            i.push_back(Action(f, "apps.panel", p.label, "Shows or hides this window.", opts));
+        }
         model.menus.push_back(std::move(m));
     }
 
@@ -828,6 +924,17 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                 i.push_back(std::move(item));
             }
         }
+        // Plugin commands for a menu the Engine does not have, under its title
+        std::vector<std::string> other_menus;
+        for (const auto& c : in.plugin_commands)
+            if (!IsMenuTitle(c.menu) &&
+                std::find(other_menus.begin(), other_menus.end(), c.menu) == other_menus.end())
+                other_menus.push_back(c.menu);
+        for (const auto& title : other_menus) {
+            i.push_back(Sep());
+            i.push_back(Head(title));
+            AppendPluginCommands(f, in.plugin_commands, title, i);
+        }
         i.push_back(Sep());
         i.push_back(Action(f, "apps.plugin_manager", "Plugin Manager", "Install, enable or remove plugins."));
         model.menus.push_back(std::move(m));
@@ -853,10 +960,20 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                             std::move(tutorials)));
         }
         i.push_back(Action(f, "help.shortcuts", "Keyboard Shortcuts...", "Opens the list of shortcuts."));
-        i.push_back(Planned(f, "help.documentation", "Documentation", "Opens the user guide."));
-        i.push_back(Planned(f, "help.api_reference", "API Reference", "Opens the pycyxwiz reference."));
+        i.push_back(Action(f, "help.documentation", "Documentation", "Opens the usage guides in your browser."));
+        i.push_back(Action(f, "help.api_reference", "API Reference",
+                           "Opens the pycyxwiz Python reference in your browser."));
+        i.push_back(Action(f, "help.whats_new", "What's New", "Opens the release notes in your browser."));
+        {
+            Opts opts;
+            opts.why = in.known_issues_found ? "" : "KNOWN_ISSUES.md is not beside the Engine.";
+            i.push_back(Action(f, "help.known_issues", "Known Issues",
+                               "Opens KNOWN_ISSUES.md, the problems known in this release.", opts));
+        }
         i.push_back(Sep());
         i.push_back(Action(f, "help.report_issue", "Report Issue...", "Opens the issue page in your browser."));
+        i.push_back(Action(f, "help.open_logs", "Open Logs Folder",
+                           "Shows engine_log.txt in the file manager, for a bug report."));
         i.push_back(Planned(f, "help.check_updates", "Check for Updates...", "Looks for a newer Engine."));
         i.push_back(Sep());
         i.push_back(Action(f, "help.about", "About CyxWiz...", "Shows the version and licence."));
@@ -868,9 +985,12 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         Menu m{"account", "Account", {}};
         auto& i = m.items;
         if (in.signed_in) {
-            i.push_back(Head("Signed in as " + in.user_display_name));
+            // Who you are is drawn above these (the chip's initials, name, email, plan).
+            model.account_chip = AccountChipFor(in.user_name, in.user_username, in.user_email, in.user_role);
             i.push_back(Action(f, "account.settings", "Account Settings...", "Opens your account settings."));
             i.push_back(Action(f, "account.wallet", "Wallet", "Opens the Wallet panel."));
+            i.push_back(Action(f, "account.servers", "Servers...",
+                               "Opens Preferences > Servers: the central server and your nodes."));
             i.push_back(Sep());
             i.push_back(Action(f, "account.sign_out", "Sign out", "Signs you out and clears the session."));
         } else {
@@ -879,7 +999,60 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         model.account = std::move(m);
     }
 
+    // ------------------------------------------------------------- Project
+    if (in.has_project) {
+        Menu m{"project", "Project", {}};
+        auto& i = m.items;
+        i.push_back(Action(f, "file.show_project_folder", "Show in Explorer",
+                           "Opens the project's folder in the file manager."));
+        i.push_back(Action(f, "file.copy_project_path", "Copy Path", "Copies the project file's path."));
+        i.push_back(Sep());
+        i.push_back(Action(f, "file.close_project", "Close Project", "Saves settings and closes the project."));
+        model.project = std::move(m);
+    }
+
     return model;
+}
+
+AccountChip AccountChipFor(const std::string& name, const std::string& username, const std::string& email,
+                           const std::string& role) {
+    AccountChip chip;
+    chip.email = email;
+    const auto trim = [](std::string t) {
+        while (!t.empty() && t.front() == ' ') t.erase(t.begin());
+        while (!t.empty() && t.back() == ' ') t.pop_back();
+        return t;
+    };
+    chip.full_name = trim(name);
+    if (chip.full_name.empty()) chip.full_name = trim(username);
+    if (chip.full_name.empty()) chip.full_name = email.substr(0, email.find('@'));
+    if (chip.full_name.empty()) chip.full_name = "Account";
+    // Initials: the first letters of the first two words ("Sample User" -> "SU");
+    // one word gives its first two letters.
+    std::vector<std::string> words;
+    std::string word;
+    for (char c : chip.full_name) {
+        if (c == ' ' || c == '.' || c == '_' || c == '-') {
+            if (!word.empty()) words.push_back(word);
+            word.clear();
+        } else {
+            word += c;
+        }
+    }
+    if (!word.empty()) words.push_back(word);
+    const auto upper = [](char c) { return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c; };
+    if (words.size() >= 2) {
+        chip.initials = {upper(words[0][0]), upper(words[1][0])};
+    } else if (!words.empty()) {
+        chip.initials = std::string(1, upper(words[0][0]));
+        if (words[0].size() > 1) chip.initials += upper(words[0][1]);
+    }
+    // On the bar: the whole name when short, else the first word.
+    chip.short_name = chip.full_name.size() <= 14 || words.empty() ? chip.full_name : words[0];
+    if (chip.short_name.size() > 14) chip.short_name = chip.short_name.substr(0, 13) + "\xe2\x80\xa6";  // "...": one character
+    if (role == "pro") chip.plan = "Pro";
+    else if (role == "admin") chip.plan = "Admin";
+    return chip;
 }
 
 namespace {

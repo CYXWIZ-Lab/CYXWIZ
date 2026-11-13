@@ -45,15 +45,12 @@ GraphShape ReadShape(const TrainingConfiguration& compiled) {
     const bool regression = UsesContinuousTargetMetrics(compiled);
     shape.outputs = static_cast<int>(compiled.output_size);
     if (in.size() == 3) {
-        // [H, W, C] -> [1, C, H, W]
-        shape.input_shape = {1, in[2], in[0], in[1]};
         shape.inputs_text = std::to_string(in[0]) + " x " + std::to_string(in[1]) + " x " + std::to_string(in[2]) +
                             " images";
         shape.task = regression ? "regression" : "image_classification";
     } else {
         size_t features = 1;
         for (size_t d : in) features *= d;
-        shape.input_shape = {1, features};
         shape.inputs_text = std::to_string(features) + " features";
         shape.task = regression ? "regression" : "classification";
     }
@@ -197,14 +194,6 @@ std::string AccuracyText(const TrialScore& score) {
     if (score.regression) std::snprintf(text, sizeof(text), "MAE %.4g", score.val_mae);
     else std::snprintf(text, sizeof(text), "%.1f %%", score.val_accuracy * 100.0f);
     return text;
-}
-
-std::string SuggestionsIntro(const GraphShape& shape, size_t count) {
-    static const char* const kCounts[] = {"No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"};
-    const std::string number = count < 11 ? kCounts[count] : std::to_string(count);
-    std::string text = number + (count == 1 ? " small model" : " small models");
-    if (shape.ok) text += " for " + shape.inputs_text + " and " + shape.outputs_text;
-    return text + ".";
 }
 
 void ApplyDefaults(NASSearchConfig& config, int& train_best, const core::ArchitectureSearchDefaults& defaults) {

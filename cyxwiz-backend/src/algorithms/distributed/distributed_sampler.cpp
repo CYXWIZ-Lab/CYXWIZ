@@ -1,4 +1,5 @@
 #include "cyxwiz/distributed/distributed_sampler.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <numeric>
@@ -62,7 +63,7 @@ std::vector<size_t> DistributedSampler::GenerateGlobalIndices() const {
     if (shuffle_) {
         // Use seed + epoch for deterministic shuffling across ranks
         std::mt19937 gen(seed_ + static_cast<unsigned int>(epoch_));
-        std::shuffle(indices.begin(), indices.end(), gen);
+        cyxwiz::portable::Shuffle(indices.begin(), indices.end(), gen);
     }
 
     return indices;

@@ -253,7 +253,7 @@ void DockStyle::ApplyBlenderPreset() {
 
 void DockStyle::RegisterPanel(const std::string& name, const std::string& icon,
                               bool* visible_ptr, std::function<void()> on_toggle,
-                              const std::string& group, const std::string& shortcut) {
+                              const std::string& group, const std::string& shortcut, bool remembered) {
     // Check if already registered
     auto it = std::find_if(panels_.begin(), panels_.end(),
                            [&name](const PanelVisibility& p) { return p.name == name; });
@@ -265,9 +265,10 @@ void DockStyle::RegisterPanel(const std::string& name, const std::string& icon,
         it->on_toggle = on_toggle;
         it->group = group;
         it->shortcut = shortcut;
+        it->remembered = remembered;
     } else {
         // Add new
-        panels_.push_back({name, icon, visible_ptr, on_toggle, group, shortcut});
+        panels_.push_back({name, icon, visible_ptr, on_toggle, group, shortcut, remembered});
     }
 }
 

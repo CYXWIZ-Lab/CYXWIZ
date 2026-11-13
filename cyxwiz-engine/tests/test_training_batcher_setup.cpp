@@ -890,6 +890,44 @@ void TestTextLabels(const std::filesystem::path& work_dir) {
     std::filesystem::remove(parquet_path);
 }
 
+// Properties' "Dataset classes" for any label type: text counts its vocabulary,
+// whole numbers from 0 are class indices (max + 1), the rest is a regression target.
+void TestLabelClassCount() {
+    arrow::Int32Builder ints;
+    Check(ints.AppendValues({0, 3, 1, 3}).ok() && ints.AppendNull().ok(), "int append");
+    arrow::BooleanBuilder flags;
+    Check(flags.Append(true).ok() && flags.Append(false).ok() && flags.AppendNull().ok() && flags.AppendNull().ok() &&
+              flags.Append(true).ok(),
+          "bool append");
+    arrow::StringBuilder text;
+    for (const char* v : {"cat", "dog", "cat", "bird", "dog"}) Check(text.Append(v).ok(), "text append");
+    arrow::Int64Builder negative;
+    Check(negative.AppendValues({-1, 0, 1, 2, 3}).ok(), "negative append");
+    arrow::Int32Builder nulls;
+    Check(nulls.AppendNulls(5).ok(), "null append");
+    std::shared_ptr<arrow::Array> int_array, flag_array, text_array, negative_array, null_array;
+    Check(ints.Finish(&int_array).ok() && flags.Finish(&flag_array).ok() && text.Finish(&text_array).ok() &&
+              negative.Finish(&negative_array).ok() && nulls.Finish(&null_array).ok(),
+          "label finish");
+    const auto table = arrow::Table::Make(
+        arrow::schema({arrow::field("index", arrow::int32()), arrow::field("whole_float", arrow::float32()),
+                       arrow::field("price", arrow::float32()), arrow::field("flag", arrow::boolean()),
+                       arrow::field("name", arrow::utf8()), arrow::field("delta", arrow::int64()),
+                       arrow::field("empty", arrow::int32())}),
+        {int_array, FinishFloatArray({0, 1, 2, 2, 1}), FinishFloatArray({0.5f, 1, 2, 3, 4}), flag_array, text_array,
+         negative_array, null_array},
+        5);
+    Check(cyxwiz::LabelClassCount(table, "index") == std::optional<size_t>(4), "int indices 0..3: 4 classes");
+    Check(cyxwiz::LabelClassCount(table, "whole_float") == std::optional<size_t>(3),
+          "whole floats 0..2 are indices: 3 classes");
+    Check(cyxwiz::LabelClassCount(table, "flag") == std::optional<size_t>(2), "booleans: 2 classes");
+    Check(cyxwiz::LabelClassCount(table, "name") == std::optional<size_t>(3), "text: its 3 distinct values");
+    Check(!cyxwiz::LabelClassCount(table, "price"), "fractional values are a regression target");
+    Check(!cyxwiz::LabelClassCount(table, "delta"), "negative values are not class indices");
+    Check(!cyxwiz::LabelClassCount(table, "empty"), "an all-null column has no classes");
+    Check(!cyxwiz::LabelClassCount(table, "missing"), "a missing column has no classes");
+}
+
 int main(int argc, char** argv) {
     namespace fs = std::filesystem;
 
@@ -922,6 +960,12 @@ int main(int argc, char** argv) {
           "tabular input size should not use compiled override");
     Check(tabular_resolution.has_separate_label_column,
           "tabular multi-column data should report a separate label column");
+    // The Data Input's roles keep columns out (TOFIX129 D7a G1): an ID role on
+    // f2 and Ignore on f3 leave two features.
+    auto roles_config = MakeConfig();
+    roles_config.excluded_feature_columns = {"f2", "f3", "label"};
+    Check(cyxwiz::ResolveTabularTrainingInputSize(roles_config, tabular_schema, "label").input_size == 2,
+          "column roles keep f2 and f3 out of the input width");
 
     auto single_col_resolution = cyxwiz::ResolveTabularTrainingInputSize(
         MakeConfig(), arrow::schema({arrow::field("x", arrow::float64())}), "");
@@ -1887,6 +1931,7 @@ int main(int argc, char** argv) {
     fs::remove(multi_ts_parquet_path);
     fs::remove(multi_step_ts_parquet_path);
     TestTextLabels(fs::temp_directory_path());
+    TestLabelClassCount();
     TestParquetRowSplit(fs::temp_directory_path());
     TestParquetClassBalancing(fs::temp_directory_path());
     fs::remove_all(work_dir);

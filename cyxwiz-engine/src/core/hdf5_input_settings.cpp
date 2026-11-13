@@ -15,7 +15,6 @@ constexpr const char* kLabelPath = "hdf5_label_path";
 constexpr const char* kImportMode = "hdf5_import_mode";
 constexpr const char* kNumericPolicy = "hdf5_numeric_policy";
 constexpr const char* kMaxMaterializedBytes = "hdf5_max_materialized_bytes";
-constexpr const char* kLegacyDataset = "hdf5_dataset";
 
 constexpr std::array<const char*, 6> kCanonicalKeys = {
     kSelectionVersion,
@@ -95,11 +94,6 @@ bool ParsePolicy(const std::string& text, Hdf5NumericPolicy& policy,
     return false;
 }
 
-std::string NormalizeLegacyDatasetPath(const std::string& path) {
-    if (!path.empty() && path.front() == '/') return path;
-    return "/" + path;
-}
-
 void WriteCanonical(const Hdf5InputSettings& settings,
                     std::map<std::string, std::string>& parameters) {
     parameters[kSelectionVersion] = "1";
@@ -109,7 +103,6 @@ void WriteCanonical(const Hdf5InputSettings& settings,
     parameters[kNumericPolicy] = PolicyText(settings.numeric_policy);
     parameters[kMaxMaterializedBytes] =
         std::to_string(settings.max_materialized_bytes);
-    parameters.erase(kLegacyDataset);
 }
 
 } // namespace
@@ -172,24 +165,6 @@ Hdf5InputSettingsResult ReadHdf5InputSettings(
             return result;
         }
         result.ok = true;
-        return result;
-    }
-
-    if (HasKey(parameters, kLegacyDataset)) {
-        const auto legacy = Value(parameters, kLegacyDataset);
-        if (legacy.empty()) {
-            result.error = "hdf5_dataset legacy path must not be empty";
-            return result;
-        }
-        result.settings.selection.data_path = NormalizeLegacyDatasetPath(legacy);
-        result.settings.selection.label_path.clear();
-        result.settings.numeric_policy = Hdf5NumericPolicy::Preserve;
-        result.settings.max_materialized_bytes = kDefaultMaxMaterializedBytes;
-        if (!ValidateHdf5InputSettings(result.settings, result.error)) {
-            return result;
-        }
-        result.ok = true;
-        result.migrated_legacy = true;
         return result;
     }
 

@@ -176,27 +176,6 @@ void NodeEditor::ShowRenamePopup() {
     ImGui::EndPopup();
 }
 
-void NodeEditor::ShowCodegenErrorPopup() {
-    if (codegen_error_.empty()) return;
-    constexpr const char* kTitle = "Code not generated";
-    if (!ImGui::IsPopupOpen(kTitle)) ImGui::OpenPopup(kTitle);
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    bool open = true;
-    if (ImGui::BeginPopupModal(kTitle, &open, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
-        ImGui::TextUnformatted(codegen_error_.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        if (ui::PrimaryButton("OK", true, nullptr, ui::ButtonSize::Small) || !open) {
-            codegen_error_.clear();
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    } else if (!open) {
-        codegen_error_.clear();
-    }
-}
-
 void NodeEditor::ShowNodeDescriptionEditPopup() {
     if (!editing_node_description_) return;
 

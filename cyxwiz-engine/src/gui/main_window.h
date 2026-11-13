@@ -56,58 +56,28 @@ class JobStatusPanel;
 class P2PTrainingPanel;
 class PatternBrowserPanel;
 class QueryConsolePanel;
-class MemoryPanel;
-class MemoryMonitor;
+class MonitorPanel;
 class VariableExplorerPanel;
 class PlotOutputPanel;
 class ExportDialog;
 class ImportDialog;
 class DeploymentDialog;
-class ModelSummaryPanel;
-class ArchitectureDiagram;
-class LRFinderPanel;
+class ModelPanel;
 class StudioDebuggerPanel;
-class GradCAMPanel;
 class FeatureImportancePanel;
-class NASPanel;
 class HyperparamSearchPanel;
+class NASPanel;
 struct TrialSetup;
 class ServingPanel;
-class DNNInferencePanel;
 // Model Evaluation panels (Phase 6B)
 // Linear Algebra panels (Phase 7)
-class MatrixCalculatorPanel;
-class EigenDecompPanel;
-class SVDPanel;
-class QRPanel;
-class CholeskyPanel;
-// Signal Processing panels (Phase 8)
-class FFTPanel;
-class SpectrogramPanel;
-class FilterDesignerPanel;
-class ConvolutionPanel;
-class WaveletPanel;
+class LinearAlgebraPanel;
 // Optimization & Calculus panels (Phase 9)
-class GradientDescentPanel;
-class ConvexityPanel;
-class LPPanel;
-class QPPanel;
-class DifferentiationPanel;
-class IntegrationPanel;
-// Text Processing panels (Phase 11)
-class TokenizationPanel;
-class WordFrequencyPanel;
-class TFIDFPanel;
-class EmbeddingsPanel;
-class SentimentPanel;
+class OptimizationPanel;
+// Text: Language Model Generation (the data tools are Explore > Text)
 class LanguageModelGenerationPanel;
 // Utilities panels (Phase 12)
-class CalculatorPanel;
-class UnitConverterPanel;
-class RandomGeneratorPanel;
-class HashGeneratorPanel;
-class JSONViewerPanel;
-class RegexTesterPanel;
+class UtilitiesPanel;
 // Plugin Manager panel
 class PluginManagerPanel;
 // Data Studio panel (Phase 1 Week 1)
@@ -115,6 +85,7 @@ class DataStudioPanel;
 class FoldsView;
 // Node Info panel (Phase 2)
 class NodeInfoPanel;
+class SimulationMonitorPanel;
 struct StudioDebuggerSnapshot;
 struct StudioDebuggerRunControl;
 struct StudioDebuggerRunInputs;
@@ -269,6 +240,11 @@ private:
     ::gui::GraphTrainingDispatch MakeTrialsDispatch(std::vector<MLNode> nodes, std::vector<NodeLink> links,
                                                     std::function<void(cyxwiz::TrialSetup)> begin,
                                                     std::function<void(const std::string&)> not_started);
+    // The Model window's learning rate range test (TOFIX129 D11): a marked
+    // launch whose dispatch trains with config.learning_rate_range; the
+    // trained model in use is kept. "" when it starts (or waits for the
+    // data), else why not.
+    std::string StartLearningRateRangeTest(const cyxwiz::LearningRateRangeSettings& settings);
 
 
     // Compile the current graph as a dry-run (no training) and show results in a popup
@@ -317,6 +293,7 @@ private:
     std::string operation_error_message_;
     bool compile_result_success_ = false;
     bool compile_result_has_config_ = false;
+    std::shared_ptr<const cyxwiz::RLTrainingConfiguration> compile_result_rl_;  // an RL graph's compile
     cyxwiz::compile_report::ConfigFacts compile_result_config_;
     std::vector<cyxwiz::ValidationIssue> compile_result_issues_;
     std::vector<cyxwiz::BackendPlacementEntry> compile_result_backend_placements_;
@@ -394,6 +371,7 @@ private:
     // COMPILED card, link colours and tooltips follow it.
     std::unique_ptr<cyxwiz::LiveGraphCompile> live_compile_;
     uint64_t live_compile_serial_seen_ = 0;
+    uint64_t live_compile_clears_seen_ = 0;  // the node editor's ValidationClears when its pins were last coloured
     // Scopes the dataset catalog subscription that recompiles the graph when a
     // dataset is added, replaced or removed (declared after live_compile_, so
     // it goes first).
@@ -433,8 +411,7 @@ private:
     std::unique_ptr<cyxwiz::QueryConsolePanel> query_console_;
     std::unique_ptr<gui::CustomNodeEditorPanel> custom_node_editor_;
     std::unique_ptr<gui::ThemeEditorPanel> theme_editor_;
-    std::unique_ptr<cyxwiz::MemoryPanel> memory_panel_;
-    std::unique_ptr<cyxwiz::MemoryMonitor> memory_monitor_;
+    std::unique_ptr<cyxwiz::MonitorPanel> monitor_panel_;
     std::unique_ptr<cyxwiz::VariableExplorerPanel> variable_explorer_;
     std::unique_ptr<cyxwiz::PlotOutputPanel> plot_output_panel_;
     std::unique_ptr<cyxwiz::ExportDialog> export_dialog_;
@@ -443,66 +420,37 @@ private:
     std::unique_ptr<cyxwiz::StudioDebuggerPanel> studio_debugger_panel_;
 
     // Model Analysis panels (Phase 2)
-    std::unique_ptr<cyxwiz::ModelSummaryPanel> model_summary_panel_;
-    std::unique_ptr<cyxwiz::ArchitectureDiagram> architecture_diagram_;
-    std::unique_ptr<cyxwiz::LRFinderPanel> lr_finder_panel_;
+    std::unique_ptr<cyxwiz::ModelPanel> model_panel_;
 
     // Statistics panels (Phase 4)
 
     // Advanced Tools panels (Phase 5)
-    std::unique_ptr<cyxwiz::GradCAMPanel> gradcam_panel_;
     std::unique_ptr<cyxwiz::FeatureImportancePanel> feature_importance_panel_;
-    std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
     std::unique_ptr<cyxwiz::HyperparamSearchPanel> hyperparam_search_panel_;
+    std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
     std::unique_ptr<cyxwiz::ServingPanel> serving_panel_;
-    std::unique_ptr<cyxwiz::DNNInferencePanel> dnn_inference_panel_;
 
     // Clustering panels (Phase 6A)
 
     // Model Evaluation panels (Phase 6B)
 
     // Linear Algebra panels (Phase 7)
-    std::unique_ptr<cyxwiz::MatrixCalculatorPanel> matrix_calculator_panel_;
-    std::unique_ptr<cyxwiz::EigenDecompPanel> eigen_decomp_panel_;
-    std::unique_ptr<cyxwiz::SVDPanel> svd_panel_;
-    std::unique_ptr<cyxwiz::QRPanel> qr_panel_;
-    std::unique_ptr<cyxwiz::CholeskyPanel> cholesky_panel_;
-
-    // Signal Processing panels (Phase 8)
-    std::unique_ptr<cyxwiz::FFTPanel> fft_panel_;
-    std::unique_ptr<cyxwiz::SpectrogramPanel> spectrogram_panel_;
-    std::unique_ptr<cyxwiz::FilterDesignerPanel> filter_designer_panel_;
-    std::unique_ptr<cyxwiz::ConvolutionPanel> convolution_panel_;
-    std::unique_ptr<cyxwiz::WaveletPanel> wavelet_panel_;
+    std::unique_ptr<cyxwiz::LinearAlgebraPanel> linear_algebra_panel_;
 
     // Optimization & Calculus panels (Phase 9)
-    std::unique_ptr<cyxwiz::GradientDescentPanel> gradient_descent_panel_;
-    std::unique_ptr<cyxwiz::ConvexityPanel> convexity_panel_;
-    std::unique_ptr<cyxwiz::LPPanel> lp_panel_;
-    std::unique_ptr<cyxwiz::QPPanel> qp_panel_;
-    std::unique_ptr<cyxwiz::DifferentiationPanel> differentiation_panel_;
-    std::unique_ptr<cyxwiz::IntegrationPanel> integration_panel_;
+    std::unique_ptr<cyxwiz::OptimizationPanel> optimization_panel_;
 
-    // Text Processing panels (Phase 11)
-    std::unique_ptr<cyxwiz::TokenizationPanel> tokenization_panel_;
-    std::unique_ptr<cyxwiz::WordFrequencyPanel> word_frequency_panel_;
-    std::unique_ptr<cyxwiz::TFIDFPanel> tfidf_panel_;
-    std::unique_ptr<cyxwiz::EmbeddingsPanel> embeddings_panel_;
-    std::unique_ptr<cyxwiz::SentimentPanel> sentiment_panel_;
+    // Text: Language Model Generation
     std::unique_ptr<cyxwiz::LanguageModelGenerationPanel> language_model_generation_panel_;
 
     // Utilities panels (Phase 12)
-    std::unique_ptr<cyxwiz::CalculatorPanel> calculator_panel_;
-    std::unique_ptr<cyxwiz::UnitConverterPanel> unit_converter_panel_;
-    std::unique_ptr<cyxwiz::RandomGeneratorPanel> random_generator_panel_;
-    std::unique_ptr<cyxwiz::HashGeneratorPanel> hash_generator_panel_;
-    std::unique_ptr<cyxwiz::JSONViewerPanel> json_viewer_panel_;
-    std::unique_ptr<cyxwiz::RegexTesterPanel> regex_tester_panel_;
+    std::unique_ptr<cyxwiz::UtilitiesPanel> utilities_panel_;
     
     // Cloud panels (DataStream)
     std::unique_ptr<gui::CloudBrowserPanel> cloud_browser_panel_;
     std::unique_ptr<gui::NodeBrowserPanel> node_browser_panel_;
     std::unique_ptr<cyxwiz::NodeInfoPanel> node_info_panel_;
+    std::unique_ptr<cyxwiz::SimulationMonitorPanel> simulation_monitor_panel_;
     std::unique_ptr<gui::CloudDatasetManagerPanel> cloud_dataset_manager_panel_;
 
     // Plugin Manager

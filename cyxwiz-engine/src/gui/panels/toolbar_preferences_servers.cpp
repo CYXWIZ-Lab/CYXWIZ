@@ -7,11 +7,13 @@
 #include "toolbar.h"
 
 #include "../../core/engine_config.h"
+#include "../../core/file_dialogs.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
 
 #include "common/server_address_probe.h"
 #include "common/server_address_view.h"
+#include "common/server_ca_view.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -58,6 +60,7 @@ void SectionHeading(const char* title) {
 void ToolbarPanel::LoadServerSettings() {
     auto& config = core::EngineConfig::Instance();
     CopyTo(server_address_buf_, sizeof(server_address_buf_), config.GetServerAddress());
+    CopyTo(server_ca_buf_, sizeof(server_ca_buf_), config.GetServerCaFile());
     const auto separate = config.GetSeparateAddresses();
     CopyTo(separate_central_buf_, sizeof(separate_central_buf_), separate.central);
     CopyTo(separate_gateway_buf_, sizeof(separate_gateway_buf_), separate.gateway);
@@ -121,6 +124,64 @@ void ToolbarPanel::ApplyServerAddress(const std::string& address) {
     if (server_changed_callback_) server_changed_callback_();
 }
 
+void ToolbarPanel::ApplyServerCaFile(const std::string& path) {
+    auto& config = core::EngineConfig::Instance();
+    if (path == config.GetServerCaFile()) return;
+    config.SetServerCaFile(path);
+    config.Save();
+    server_probed_.clear();  // check the server again with the new trust
+    // Open channels keep the trust they were made with: make them again
+    // (the sign-in stays: the server is the same)
+    if (server_changed_callback_) server_changed_callback_();
+    spdlog::info("Server CA set to {}", path.empty() ? "none (the system's trusted roots)" : path);
+}
+
+void ToolbarPanel::RenderServerCaRow(const std::string& address) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    const auto& ca = server_ca_view_.Get(address, server_ca_buf_);
+    if (!ca.shown) return;
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Certificate authority (optional)");
+    const char* browse_label = "Browse...";
+    const char* clear_label = "Clear";
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float browse_width = ui::ButtonWidth(browse_label, ui::ButtonSize::Regular);
+    const float clear_width = ca.empty ? 0.0f : ImGui::CalcTextSize(clear_label).x + style.ItemSpacing.x;
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - browse_width - clear_width - style.ItemSpacing.x);
+    if (ImGui::InputTextWithHint("##server_ca", "the server's ca.crt", server_ca_buf_, sizeof(server_ca_buf_),
+                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
+        ApplyServerCaFile(Trimmed(server_ca_buf_));
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) ApplyServerCaFile(Trimmed(server_ca_buf_));
+    ImGui::SameLine();
+    if (ui::SecondaryButton(browse_label, true, nullptr, ui::ButtonSize::Regular)) {
+        const std::string picked =
+            FileDialogs::OpenFile("The server's CA", {{"Certificates", "crt,pem,cer"}, {"All Files", "*"}})
+                .value_or("");
+        if (!picked.empty()) {
+            CopyTo(server_ca_buf_, sizeof(server_ca_buf_), picked);
+            ApplyServerCaFile(picked);
+        }
+    }
+    if (!ca.empty) {
+        ImGui::SameLine();
+        if (ui::LinkButton(clear_label)) {
+            server_ca_buf_[0] = '\0';
+            ApplyServerCaFile("");
+        }
+    }
+
+    if (!ca.problem.empty()) {
+        ImGui::TextColored(t.caution, "%s", ca.problem.c_str());
+    } else if (!ca.empty) {
+        ImGui::TextDisabled("%s", ca.trusts.c_str());
+        ImGui::TextDisabled("SHA-256 %s  -  %s", ca.fingerprint_short.c_str(), ca.compare.c_str());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("SHA-256 %s", ca.fingerprint.c_str());
+    }
+    ImGui::TextDisabled("%s", ca.leave_empty.c_str());
+}
+
 void ToolbarPanel::RenderServersTab() {
     const ui::Tokens& t = ui::CurrentTokens();
     auto& config = core::EngineConfig::Instance();
@@ -177,6 +238,9 @@ void ToolbarPanel::RenderServersTab() {
     } else {
         ImGui::TextDisabled("%s", typed_view.kind_line.c_str());
     }
+
+    // ---- The server's private CA (an https:// server)
+    RenderServerCaRow(typed.empty() ? saved : typed);
 
     // ---- Signed in: changing the server signs out, so ask first
     if (server_change_confirm_) {

@@ -1,5 +1,6 @@
 #include "image_dataset_batcher.h"
 #include "device_data_budget.h"
+#include "cyxwiz/portable_random.h"
 #include <arrayfire.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -230,7 +231,7 @@ Batch ImageDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_si
 void ImageDatasetBatcher::Reset() {
     // The current phase's part; only train batches are shuffled.
     epoch_order_ = Part(current_phase_);
-    if (current_phase_ == BatcherPhase::Train && shuffle_) std::shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
+    if (current_phase_ == BatcherPhase::Train && shuffle_) cyxwiz::portable::Shuffle(epoch_order_.begin(), epoch_order_.end(), rng_);
     current_idx_ = 0;
 }
 

@@ -91,6 +91,7 @@ Tensor SequentialModel::Forward(const Tensor& input) {
                                 input_shape, current.Shape(), duration_ms);
         }
         intermediate_outputs_.push_back(current.Clone());
+        if (forward_observer_) forward_observer_(i, *module, current);
     }
 
     return current;

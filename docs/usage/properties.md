@@ -62,7 +62,12 @@ its step is 0.01 for a range up to 1 (the Data Split's ratios), 0.1 up to
 Settings the rules know but no editor shows (for example a Data Input's
 label column, owned by the loader) are listed read-only below the rows. A
 Data Input also gets a **Data** row: the file, whether it is loaded, and the
-rows × columns (or images and classes) once it is.
+rows × columns (or images and classes) once it is. Its **Dataset classes**
+row counts the classes of the label column: text labels count their
+distinct values, true / false labels are 2, and whole numbers from 0 are
+class numbers, so the count is the largest one plus 1 (labels 0 to 3: 4
+classes). Fractional or negative labels are a regression target: the row
+says *unknown* and why. An Output node's class count is checked against it.
 
 Plot and Dashboard nodes show the settings saved by their window, in words;
 they are changed in the window.

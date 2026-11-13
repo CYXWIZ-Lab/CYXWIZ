@@ -24,6 +24,7 @@ namespace cyxwiz {
 namespace {
 
 #include "training_benchmark_graph.inc"
+#include "cyxwiz/portable_random.h"
 
 constexpr int kVocabularySize = 8192;
 constexpr int kContext = 256;
@@ -70,7 +71,7 @@ bool WriteSyntheticTokenWindows(const fs::path& path, int rows, std::string& err
     }
 
     std::mt19937 engine(kDataSeed);
-    std::uniform_int_distribution<int64_t> token(specials, kVocabularySize - 1);
+    const auto token = [low = specials, high = kVocabularySize - 1](auto& r) { return cyxwiz::portable::UniformInt<int64_t>(r, low, high); };
     auto values = std::make_shared<arrow::Int64Builder>();
     arrow::ListBuilder ids(arrow::default_memory_pool(), values, arrow::list(arrow::field("element", arrow::int64())));
     arrow::StringBuilder documents;

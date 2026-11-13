@@ -2,6 +2,8 @@
 
 #include "../data_registry.h"
 #include <cyxwiz/audio_processing.h>
+#include <atomic>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -57,6 +59,9 @@ struct AudioDatasetConfig {
     float noise_level = 0.0f;
     bool time_stretch = false;
     bool pitch_shift = false;
+    // Seeds the augmentation draws, with the round and the clip's index, so a
+    // run repeats (AudioDatasetBatcher derives it from the DataLoader seed).
+    uint32_t augmentation_seed = 42;
 
     // false = scan files and labels only, no feature-shape probe; GetInfo()
     // then reports shape {0, 0}. The Data Input load check uses this.
@@ -102,6 +107,10 @@ public:
     int GetItemLabel(size_t index) const override { return labels_.at(index); }
     const std::vector<int>& Labels() const { return labels_; }
 
+    // A new round of augmentation draws (the batcher calls it each training
+    // epoch), so a clip is augmented differently each epoch, reproducibly.
+    void SetAugmentationRound(uint32_t round) { augmentation_round_.store(round); }
+
 private:
     AudioDatasetConfig config_;
     std::vector<std::string> file_paths_;
@@ -112,7 +121,8 @@ private:
 
     void ScanDirectory(const std::string& directory);
     void LoadFromCSV(const std::string& directory);  // FlatWithCSV mode
-    AudioFeatures ExtractFeatures(const std::string& filepath, bool augment = true) const;
+    AudioFeatures ExtractFeatures(const std::string& filepath, size_t index, bool augment = true) const;
+    std::atomic<uint32_t> augmentation_round_{0};
 };
 
 } // namespace cyxwiz

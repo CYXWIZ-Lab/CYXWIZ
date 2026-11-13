@@ -3,6 +3,7 @@
 
 #include "dataset_base.h"
 #include "data_registry.h"  // For DatasetHandle
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <random>
@@ -41,7 +42,7 @@ void Dataset::SetSplit(const SplitConfig& config) {
     // Shuffle if requested
     if (config.shuffle) {
         std::mt19937 rng(config.seed);
-        std::shuffle(all_indices_.begin(), all_indices_.end(), rng);
+        cyxwiz::portable::Shuffle(all_indices_.begin(), all_indices_.end(), rng);
     }
 
     // Calculate split sizes

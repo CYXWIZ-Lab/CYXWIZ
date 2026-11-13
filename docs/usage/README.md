@@ -10,6 +10,7 @@ To write your own nodes in Python or C++, see
 
 | Page | What it covers |
 | --- | --- |
+| [The menu bar](menu_bar.md) | File to Help, the project and your account at the top right |
 | [The CyxWiz Studio bar](studio_toolbar.md) | The bar at the top of the canvas |
 | [Windows of their own](windows.md) | Moving the big windows out of the main window |
 | [Asset Browser](asset_browser.md) | The project's folders and files, previews, new files |
@@ -25,6 +26,11 @@ To write your own nodes in Python or C++, see
 | [Branched graphs](branched_graphs.md) | Split and merge inside a model |
 | [Groups, frames and names](canvas_groups_frames.md) | Grouping and naming nodes, frames, copy and paste, renaming |
 | [Your own nodes](extension_nodes.md) | Python node bundles and C++ plugins in the Engine: install, approve, use |
+| [Graph simulation](graph_simulation.md) | Run Sim, the Simulation menu and the Simulation Monitor |
+| [Environments for reinforcement learning](rl_environments.md) | Plugin environments (MuJoCo tasks), their settings, and `pycyxwiz.rl` for Gymnasium and Stable-Baselines3 |
+| [Training a policy (PPO)](rl_training.md) | The RL graph (Environment, layers, Policy / Value Head, PPO), its settings, Train and the RL Training Dashboard |
+| [The MuJoCo Viewport](mujoco_viewport.md) | The 3D view: run a model, cameras (follow a body, the model's cameras), View options, live numbers, screenshots and recordings, the Stress panel, Inspect (bodies, joints, controls, keyframes, physics), the timeline and plots |
+| [Train, play and export a policy](rl_walkthrough.md) | Step by step: CartPole, InvertedPendulum and HalfCheetah from Studio, playing and saving the policy, export, and what a real robot needs |
 
 ## Data
 
@@ -50,9 +56,14 @@ To write your own nodes in Python or C++, see
 | [Statistics](statistics.md) | Hypothesis tests and regression |
 | [Clustering](clustering.md) | Explore > Groups and the clustering nodes |
 | [Dimensionality reduction](dimensionality_reduction.md) | Explore > Projection, PCA, t-SNE, UMAP |
-| [Linear algebra tools](linear_algebra.md) | Matrix calculator, SVD, QR, Cholesky, Eigen |
+| [Time series](time_series.md) | Explore > Series and Forecast, and the time series nodes |
+| [Signal processing](signal_processing.md) | Explore > Signal: spectrum, spectrogram, filters, wavelets |
+| [Text](text.md) | Explore > Text: words, TF-IDF terms, VADER sentiment, tokens, word vectors and the word map |
+| [Linear algebra](linear_algebra.md) | Tools > Linear Algebra (matrices typed, pasted or from tables; into the graph), the PCA, Truncated SVD, Whitening, Linear Solve and Linear Projection nodes |
+| [Monitoring and diagnostics](monitoring.md) | Tools > Monitoring: the Monitor window (system, the Engine's memory over time, loaded data, frame times), Clear Caches, Free Unused Memory; Tools > Diagnostics: the frame-rate and Python command logs, the frame overlay |
+| [Utilities](utilities.md) | Tools > Utilities: calculator, exact unit conversion, seeded random values and UUIDs, hashes of text and files, JSON check and tree, regex with multiline and replace |
+| [Optimization and calculus](optimization_calculus.md) | Tools > Optimization and Calculus (optimizer paths, linear and quadratic programs, integrals, derivatives, curvature), the Portfolio Weights node |
 | [Feature Importance](feature_importance.md) | Which columns matter to a model |
-| [Model Summary](model_summary.md) | Layer shapes, parameters and FLOPs of the model on the canvas |
 | [Hyperparameter Search](hyperparameter_search.md) | Train the graph with different property values and keep the best |
 | [Neural Architecture Search](neural_architecture_search.md) | Score the model, change its layers, search, train the best versions, put one on the canvas |
 | [Analysis demo graph](analysis_demo_graph.md) | Analysis nodes working together on one dataset |
@@ -72,6 +83,7 @@ To write your own nodes in Python or C++, see
 | [Linear Attention](linear_attention.md) | Self-attention with linear cost |
 | [Regularization nodes](regularization.md) | Penalties on the model's parameters |
 | [Learning-rate schedulers](lr_schedulers.md) | Changing the learning rate during training |
+| [Gradient clipping](gradient_clipping.md) | Limiting how far one step can move the weights (as PyTorch's clip_grad_norm_) |
 | [Metric learning](metric_learning.md) | Pairs and triplets |
 | [Sentiment text classification](sentiment_text_classification.md) | The example text classification graphs |
 
@@ -79,7 +91,9 @@ To write your own nodes in Python or C++, see
 
 | Page | What it covers |
 | --- | --- |
-| [Testing a trained model](testing.md) | Running a test on the test split |
+| [Testing a trained model](testing.md) | Running a test on the test split; Results > Test: errors, threshold, calibration, a decision kept with the model |
+| [Seeds and reproducibility](seeds_and_reproducibility.md) | What each seed draws; the same draws on every operating system and device |
+| [The Model window](model_tools.md) | Tools > Model: summary (parameters, multiply-adds, memory), learning-rate range test, Grad-CAM / saliency / Integrated Gradients, training health, projector |
 | [Generation previews](generation_previews.md) | Prompting a language model while it trains |
 | [Language model generation](lm_generation.md) | Using a trained language model in the Engine |
 | [Fine-tuning language models](fine_tuning_language_models.md) | Fine-tuning on prompt/answer examples |

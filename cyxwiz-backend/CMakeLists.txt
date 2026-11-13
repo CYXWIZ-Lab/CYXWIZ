@@ -19,6 +19,8 @@ message(STATUS "ArrayFire found: ${ArrayFire_DIR}")
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+# Linear and convex quadratic programs (TOFIX129 D10), the solver scipy uses.
+find_package(highs CONFIG REQUIRED)
 
 set(CYXWIZ_HAS_SENTENCEPIECE FALSE)
 set(CYXWIZ_SENTENCEPIECE_TARGET "")
@@ -131,6 +133,10 @@ set(BACKEND_SOURCES
     src/core/debug_hooks.cpp
     src/core/device_identity.cpp
     src/core/device_identity.h
+    src/core/loaded_library.cpp
+    src/core/loaded_library.h
+    src/core/device_memory.cpp
+    src/core/dynamic_library.h
     src/core/device_probe.h
     src/core/memory_manager.cpp
     src/core/cyxwiz_c.cpp
@@ -191,6 +197,7 @@ set(BACKEND_SOURCES
     src/algorithms/gradient_check.cpp
     src/algorithms/sequential/activation_modules.cpp
     src/algorithms/sequential/feedforward_modules.cpp
+    src/algorithms/sequential/fused_mlp.cpp
     src/algorithms/sequential/spatial_modules.cpp
     src/algorithms/sequential/recurrent_modules.cpp
     src/algorithms/sequential/regularization_shape_modules.cpp
@@ -237,12 +244,18 @@ set(BACKEND_SOURCES
     src/algorithms/signal_processing_windows.cpp
     src/algorithms/signal_processing_analysis.cpp
     src/algorithms/signal_processing_utilities.cpp
-    src/algorithms/signal_processing_spectrogram.cpp
     src/algorithms/signal_processing_wavelet.cpp
     src/algorithms/signal_processing_convolution.cpp
     src/algorithms/signal_processing_filters.cpp
     src/algorithms/signal_processing_fft.cpp
-    src/algorithms/optimization.cpp
+    src/algorithms/signal_processing_spectrum.cpp
+    src/algorithms/calculus.cpp
+    src/algorithms/calibration.cpp
+    src/algorithms/learning_rate_range.cpp
+    src/algorithms/model_cost.cpp
+    src/algorithms/expression.cpp
+    src/algorithms/optimization_paths.cpp
+    src/algorithms/optimization_programs.cpp
     src/algorithms/time_series.cpp
     src/algorithms/time_series/statistics.cpp
     src/algorithms/time_series/decomposition.cpp
@@ -255,17 +268,19 @@ set(BACKEND_SOURCES
     src/algorithms/time_series/windowing.cpp
     src/algorithms/text_processing.cpp
     src/algorithms/text_processing_tfidf.cpp
-    src/algorithms/text_processing_sentiment.cpp
     src/algorithms/text_processing_embeddings.cpp
-    src/algorithms/text_processing_samples.cpp
     src/algorithms/text_processing_frequency.cpp
     src/algorithms/text_processing_utilities.cpp
+    src/algorithms/text_processing_words.cpp
+    src/algorithms/text_processing_vader.cpp
+    src/algorithms/text_unicode.cpp
     src/algorithms/tokenizer.cpp
     src/algorithms/tokenizer/vocabulary_persistence.cpp
     src/algorithms/tokenizer/byte_bpe.cpp
     src/algorithms/audio_processing.cpp
     src/algorithms/utilities.cpp
     src/algorithms/rl_interface.cpp
+    src/algorithms/rl/ppo.cpp
     src/algorithms/dataloader.cpp
     src/algorithms/data/synthetic_dataset.cpp
     src/algorithms/data/mnist_dataset.cpp
@@ -291,6 +306,7 @@ set(BACKEND_HEADERS
     include/cyxwiz/engine.h
     include/cyxwiz/tensor.h
     include/cyxwiz/device.h
+    include/cyxwiz/device_memory.h
     include/cyxwiz/memory_manager.h
     include/cyxwiz/optimizer.h
     include/cyxwiz/optimizers/adaptive.h
@@ -339,6 +355,11 @@ set(BACKEND_HEADERS
     include/cyxwiz/model_interpretability.h
     include/cyxwiz/linear_algebra.h
     include/cyxwiz/signal_processing.h
+    include/cyxwiz/calculus.h
+    include/cyxwiz/calibration.h
+    include/cyxwiz/learning_rate_range.h
+    include/cyxwiz/model_cost.h
+    include/cyxwiz/expression.h
     include/cyxwiz/optimization.h
     include/cyxwiz/time_series.h
     include/cyxwiz/text_processing.h
@@ -408,6 +429,7 @@ if(WIN32)
 endif()
 
 target_link_libraries(cyxwiz-backend PUBLIC ArrayFire::af)
+target_link_libraries(cyxwiz-backend PRIVATE highs::highs)
 # Marks code that links ArrayFire; only sources shared with the ArrayFire-free
 # installer (route qualification) still test it.
 target_compile_definitions(cyxwiz-backend PUBLIC CYXWIZ_HAS_ARRAYFIRE)
@@ -695,6 +717,10 @@ if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
         python/bindings.cpp
         python/bindings_tensor.cpp
         python/bindings_module.cpp
+        python/bindings_optimize.cpp
+        python/bindings_utilities.cpp
+        python/bindings_system.cpp
+        python/bindings_model.cpp
     )
 
     target_link_libraries(pycyxwiz PRIVATE
@@ -712,12 +738,26 @@ if(CYXWIZ_HAS_PYTHON AND pybind11_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EmbedPythonSource.cmake
         COMMENT "Embedding pycyxwiz.nodes")
     target_sources(pycyxwiz PRIVATE ${_pycyxwiz_nodes_inc})
+    # pycyxwiz.rl likewise (TOFIX195 S3.4)
+    set(_pycyxwiz_rl_inc ${CMAKE_CURRENT_BINARY_DIR}/generated/pycyxwiz_rl_source.inc)
+    add_custom_command(
+        OUTPUT ${_pycyxwiz_rl_inc}
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/python/pycyxwiz_rl.py
+                -DOUTPUT=${_pycyxwiz_rl_inc} -DNAME=kPycyxwizRlSource
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EmbedPythonSource.cmake
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/python/pycyxwiz_rl.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EmbedPythonSource.cmake
+        COMMENT "Embedding pycyxwiz.rl")
+    target_sources(pycyxwiz PRIVATE ${_pycyxwiz_rl_inc})
     target_include_directories(pycyxwiz PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
-    # Python subclasses of pycyxwiz.Module (TOFIX125 P3): run with the Python
+    # Python subclasses of pycyxwiz.Module (TOFIX125 P3), pycyxwiz.text
+    # against the text truth fixture (TOFIX129 D8), pycyxwiz.optimize /
+    # calculus against the optimization fixture (D10) and pycyxwiz.utilities
+    # against the utilities fixture (D12): run with the Python
     # pycyxwiz is built for; the backend DLLs are in the runtime folder.
     if(Python3_EXECUTABLE)
-        foreach(_pycyxwiz_test python_modules python_nodes python_bundle)
+        foreach(_pycyxwiz_test python_modules python_nodes python_bundle python_text python_optimize python_model python_utilities python_system)
             add_test(NAME pycyxwiz_${_pycyxwiz_test}
                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_${_pycyxwiz_test}.py
                         $<TARGET_FILE_DIR:pycyxwiz> ${CMAKE_BINARY_DIR}/bin/$<CONFIG>)

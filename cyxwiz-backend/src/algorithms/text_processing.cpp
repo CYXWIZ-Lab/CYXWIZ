@@ -10,40 +10,6 @@
 namespace cyxwiz {
 
 // ============================================================================
-// Static Data Initialization
-// ============================================================================
-
-static std::set<std::string> g_stopwords;
-static bool g_stopwords_initialized = false;
-
-void TextProcessing::InitStopwords() {
-    if (g_stopwords_initialized) return;
-
-    // Common English stopwords
-    g_stopwords = {
-        "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-        "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
-        "be", "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "must", "shall", "can", "need", "dare", "ought",
-        "used", "this", "that", "these", "those", "i", "you", "he", "she", "it",
-        "we", "they", "what", "which", "who", "whom", "this", "that", "am", "is",
-        "are", "was", "were", "be", "been", "being", "have", "has", "had", "having",
-        "do", "does", "did", "doing", "a", "an", "the", "and", "but", "if", "or",
-        "because", "as", "until", "while", "of", "at", "by", "for", "with", "about",
-        "against", "between", "into", "through", "during", "before", "after", "above",
-        "below", "to", "from", "up", "down", "in", "out", "on", "off", "over", "under",
-        "again", "further", "then", "once", "here", "there", "when", "where", "why",
-        "how", "all", "each", "few", "more", "most", "other", "some", "such", "no",
-        "nor", "not", "only", "own", "same", "so", "than", "too", "very", "s", "t",
-        "just", "don", "now", "d", "ll", "m", "o", "re", "ve", "y", "ain", "aren",
-        "couldn", "didn", "doesn", "hadn", "hasn", "haven", "isn", "ma", "mightn",
-        "mustn", "needn", "shan", "shouldn", "wasn", "weren", "won", "wouldn"
-    };
-
-    g_stopwords_initialized = true;
-}
-
-// ============================================================================
 // Tokenization
 // ============================================================================
 
@@ -231,67 +197,6 @@ std::vector<std::string> TextProcessing::TokenizeNgram(
     }
 
     return ngrams;
-}
-
-std::vector<std::string> TextProcessing::RemoveStopwords(
-    const std::vector<std::string>& tokens,
-    const std::string& /*language*/
-) {
-    InitStopwords();
-
-    std::vector<std::string> filtered;
-    for (const auto& token : tokens) {
-        std::string lower_token = ToLowercase(token);
-        if (g_stopwords.find(lower_token) == g_stopwords.end()) {
-            filtered.push_back(token);
-        }
-    }
-    return filtered;
-}
-
-std::string TextProcessing::Stem(const std::string& word) {
-    // Simple Porter-like stemmer (simplified version)
-    if (word.length() < 3) return word;
-
-    std::string result = ToLowercase(word);
-
-    // Remove common suffixes
-    const std::vector<std::pair<std::string, std::string>> rules = {
-        {"ational", "ate"}, {"tional", "tion"}, {"enci", "ence"},
-        {"anci", "ance"}, {"izer", "ize"}, {"isation", "ize"},
-        {"ization", "ize"}, {"ation", "ate"}, {"ator", "ate"},
-        {"alism", "al"}, {"iveness", "ive"}, {"fulness", "ful"},
-        {"ousness", "ous"}, {"aliti", "al"}, {"iviti", "ive"},
-        {"biliti", "ble"}, {"alli", "al"}, {"entli", "ent"},
-        {"eli", "e"}, {"ousli", "ous"}, {"ation", "ate"},
-        {"ness", ""}, {"ment", ""}, {"ing", ""}, {"ings", ""},
-        {"ed", ""}, {"es", ""}, {"ly", ""}, {"s", ""}
-    };
-
-    for (const auto& rule : rules) {
-        if (result.length() > rule.first.length() + 2) {
-            if (result.substr(result.length() - rule.first.length()) == rule.first) {
-                result = result.substr(0, result.length() - rule.first.length()) + rule.second;
-                break;
-            }
-        }
-    }
-
-    return result;
-}
-
-std::vector<std::string> TextProcessing::StemWords(const std::vector<std::string>& words) {
-    std::vector<std::string> stemmed;
-    stemmed.reserve(words.size());
-    for (const auto& word : words) {
-        stemmed.push_back(Stem(word));
-    }
-    return stemmed;
-}
-
-const std::set<std::string>& TextProcessing::GetStopwords() {
-    InitStopwords();
-    return g_stopwords;
 }
 
 // ============================================================================

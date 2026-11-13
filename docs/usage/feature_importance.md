@@ -13,6 +13,10 @@ session - 9 layers"). With no model it says *Nothing to measure yet*; train
 the graph or load a checkpoint. A result belongs to the model it was computed
 for: training again or loading another checkpoint clears it.
 
+The model runs one job at a time: while Train, a test, Model > Explain or
+generation from this session's model is running, Compute importance says
+which and waits for you to run it again.
+
 ## Data
 
 - **Dataset**: a loaded table (a Data Input you applied), for example

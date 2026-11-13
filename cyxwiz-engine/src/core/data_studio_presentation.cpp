@@ -28,7 +28,7 @@ bool JobOf(NodeType type, Job& job) {
     switch (type) {
         // Data enters through a Data Input; older file nodes are sources too.
         case NodeType::DataInput: case NodeType::CSVFile: case NodeType::ParquetFile: case NodeType::JSONFile:
-        case NodeType::ExcelFile: case NodeType::TSVFile: case NodeType::TXTFile: case NodeType::HDF5Dataset:
+        case NodeType::ExcelFile: case NodeType::TSVFile: case NodeType::TXTFile:
         case NodeType::FeatherFile: case NodeType::ArrowIPCFile: case NodeType::NumPyFile: case NodeType::TimeSeriesCSV:
         case NodeType::TextCorpusDataset: case NodeType::DataConvert:
             job = Job::BringIn; return true;
@@ -58,6 +58,12 @@ bool JobOf(NodeType type, Job& job) {
         // Groups and projections added as steps (Explore > Groups / Projection, TOFIX129 D5).
         case NodeType::KMeansCluster: case NodeType::DBSCANCluster: case NodeType::HierarchicalCluster:
         case NodeType::GMMCluster: case NodeType::PCANode: case NodeType::TSNENode: case NodeType::UMAPNode:
+        // Linear algebra steps (Tools > Linear Algebra, TOFIX129 D9).
+        case NodeType::TruncatedSVD: case NodeType::Whitening: case NodeType::LinearProjection:
+        // Text features and the signal columns training reads (Explore > Text / Signal, TOFIX129 D8).
+        case NodeType::TFIDFVectorizer: case NodeType::CountVectorizer: case NodeType::TextTokenizer:
+        case NodeType::SentimentAnalyzer: case NodeType::WordEmbeddings:
+        case NodeType::FilterDesigner: case NodeType::Convolution1D: case NodeType::WaveletTransform:
             job = Job::Prepare; return true;
         case NodeType::RowCountCheck: case NodeType::DataValidator:
             job = Job::Validate; return true;
@@ -68,7 +74,7 @@ bool JobOf(NodeType type, Job& job) {
             job = Job::Publish; return true;
         case NodeType::ConfusionMatrixNode: case NodeType::ROCCurveNode: case NodeType::PRCurveNode:
         case NodeType::ClassificationMetricsNode: case NodeType::RegressionMetricsNode:
-        case NodeType::HypothesisTest: case NodeType::TestEvaluationNode:
+        case NodeType::HypothesisTest: case NodeType::TestEvaluationNode: case NodeType::PortfolioWeights:
         case NodeType::LearningCurvesNode: case NodeType::FeatureImportanceNode: case NodeType::CrossValidationNode:
             job = Job::Results; return true;
         default:
@@ -176,6 +182,42 @@ const Dataset* DatasetOfInput(const Input& in, const GraphNode& n) {
     return found;
 }
 
+const GraphNode* NodeWithId(const Input& in, int id) {
+    for (const auto& n : in.nodes)
+        if (n.id == id) return &n;
+    return nullptr;
+}
+
+// The node on a Data Split's first pin (Training Dataset), else on a Data
+// Loader's first pin: the same rule as TrainingInputFeeder (the launcher's).
+TrainingReader TrainingReaderOf(const Input& in) {
+    TrainingReader reader;
+    // The first node of `type` whose first pin is wired (as TrainingInputFeeder
+    // walks the launcher's graph); an unwired one is skipped.
+    const auto feeder_of = [&](NodeType type) -> const GraphNode* {
+        for (const auto& n : in.nodes) {
+            if (n.type != type || n.input_from.empty() || n.input_from[0] < 0) continue;
+            if (const GraphNode* source = NodeWithId(in, n.input_from[0])) return source;
+        }
+        return nullptr;
+    };
+    const GraphNode* feeder = feeder_of(NodeType::DataSplit);
+    reader.split = feeder != nullptr;
+    if (!feeder) feeder = feeder_of(NodeType::DataLoader);
+    // A Loader fed by an unwired Split: nothing reaches training yet.
+    if (feeder && feeder->type == NodeType::DataSplit) feeder = nullptr;
+    if (!feeder) return reader;
+    reader.node_id = feeder->id;
+    reader.name = feeder->name;
+    reader.data_input = IsDataInput(*feeder);
+    if (IsDataInput(*feeder)) {
+        if (const Dataset* d = DatasetOfInput(in, *feeder)) reader.dataset = d->name;
+    } else if (feeder->ran && feeder->error.empty() && DatasetNamed(in, feeder->output_dataset)) {
+        reader.dataset = feeder->output_dataset;
+    }
+    return reader;
+}
+
 // Where a Data Split input's rows come from, walking the flow back from the
 // node linked to that input. A step's run result is what training reads
 // (SQL, Text Clean, a recipe ...); a Quality Analyzer only leaves files of its
@@ -268,10 +310,10 @@ void AddChips(JobView& view, const std::vector<const GraphNode*>& nodes) {
 std::vector<StepRow> StepRows(const std::vector<GraphNode>& steps) {
     std::vector<StepRow> rows;
     for (const auto& n : steps) {
+        const char* kind = TypeLabel(n.type);
         StepRow r;
         r.id = n.id;
         r.name = n.name;
-        const char* kind = TypeLabel(n.type);
         r.kind = kind ? kind : "step node";
         r.sql = n.type == NodeType::SQLQuery;
         if (!n.error.empty()) {
@@ -421,6 +463,7 @@ View Build(const Input& in) {
     }
 
     // The rail: Data Inputs, node results, published files, other datasets.
+    v.training = TrainingReaderOf(in);
     std::set<std::string> shown;
     RailSection sources{"Data Inputs", {}};
     for (const auto& n : in.nodes) {
@@ -429,7 +472,9 @@ View Build(const Input& in) {
         item.kind = RailItem::Kind::DataInput;
         item.label = n.name;
         item.node_id = n.id;
+        item.training = n.id == v.training.node_id;
         item.tip = n.file_path;
+        if (item.training) item.tip += (item.tip.empty() ? "" : "\n") + std::string("Training reads this table as it is loaded.");
         if (const Dataset* d = DatasetOfInput(in, n)) {
             item.dataset = d->name;
             item.meta = Thousands(static_cast<int64_t>(d->rows));
@@ -472,6 +517,7 @@ View Build(const Input& in) {
         item.kind = RailItem::Kind::NodeResult;
         item.label = n.name;
         item.node_id = n.id;
+        item.training = n.id == v.training.node_id;
         if (!n.error.empty()) {
             item.meta = "failed";
             item.tone = Tone::Error;
@@ -489,6 +535,8 @@ View Build(const Input& in) {
             item.dataset = n.output_dataset;
             shown.insert(n.output_dataset);
         }
+        if (item.training)
+            item.tip += (item.tip.empty() ? "" : "\n") + std::string("Training reads this table: the steps before it have run on the data.");
         results.items.push_back(std::move(item));
     }
     RailSection published{"Published", {}};
@@ -515,6 +563,9 @@ View Build(const Input& in) {
     RailSection other{"Other datasets", {}};
     for (const auto& d : in.datasets) {
         if (shown.count(d.name) || !d.tabular) continue;
+        // The pipeline run's partition-marked copy of a Data Input (<name>__split,
+        // TOFIX178 S0-g2) is the run's own; listing it would look like a dataset.
+        if (d.name.size() > 7 && d.name.compare(d.name.size() - 7, 7, "__split") == 0) continue;
         RailItem item;
         item.kind = RailItem::Kind::Other;
         item.label = d.label.empty() ? d.name : d.label;
@@ -600,6 +651,34 @@ View Build(const Input& in) {
         v.last_run_tone = checks_ran && checks_passed < checks_ran ? Tone::Warn : Tone::Ok;
     }
     return v;
+}
+
+ReadsNote TrainingReads(const View& view, const std::string& dataset) {
+    ReadsNote note;
+    const TrainingReader& t = view.training;
+    if (t.node_id < 0) {
+        note.kind = ReadsNote::Kind::None;
+        note.text = "Nothing feeds a Data Split or a Data Loader yet, so training reads no table. "
+                    "Steps added here feed it once the graph trains on this data.";
+        return note;
+    }
+    if (!dataset.empty() && dataset == t.dataset) {
+        note.kind = ReadsNote::Kind::This;
+        note.text = std::string("Training reads this table") + (t.split ? " through the Data Split." : " through the Data Loader.");
+        return note;
+    }
+    if (t.dataset.empty()) {
+        note.kind = ReadsNote::Kind::NotRun;
+        note.text = "Training reads \"" + t.name + "\", which " +
+                    (t.data_input ? "is not loaded yet (open its dialog and Apply)" : "has no table yet (run its steps in Prepare)") +
+                    "; this is not it.";
+        note.link = "Show the node";
+        return note;
+    }
+    note.kind = ReadsNote::Kind::Other;
+    note.text = "Training reads \"" + t.name + "\", not this table.";
+    note.link = "Show what training reads";
+    return note;
 }
 
 }  // namespace cyxwiz::studio

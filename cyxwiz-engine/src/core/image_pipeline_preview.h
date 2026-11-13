@@ -40,6 +40,10 @@ struct ImagePipelinePreview {
 std::string ImageStepsKey(const PreparedImageSpec& spec, const image::ImageAugmentation& augmentation,
                           const std::vector<CvImageStep>& cv_steps);
 
+// The preview's seed for an image: FNV-1a of its path, so a picture shows the
+// same draws on every platform (std::hash differs between libraries).
+uint32_t PreviewSeedOf(const std::string& path);
+
 ImagePipelinePreview PreviewImagePipeline(const std::string& path, const PreparedImageSpec& spec,
                                           const image::ImageAugmentation& augmentation,
                                           const std::vector<CvImageStep>& cv_steps, int draws, uint32_t seed);

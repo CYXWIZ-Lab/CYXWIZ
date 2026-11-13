@@ -1,5 +1,6 @@
 #include "compiled_node_presentation.h"
 #include "frozen_layers.h"
+#include "rl_graph_compile.h"
 #include "normalize_statistics.h"
 
 #include "sequence_fusion_presentation.h"
@@ -115,6 +116,10 @@ std::map<size_t, long long> CountParametersPerLayer(
     std::map<size_t, long long> per_layer;
     for (const auto& [name, count] : named_counts) {
         if (name.rfind("layer", 0) != 0) continue;
+        // Normalization running statistics are saved with the weights but
+        // not learned: PyTorch keeps them as buffers, not parameters.
+        const std::string leaf = name.substr(name.rfind('.') + 1);
+        if (leaf == "running_mean" || leaf == "running_var" || leaf == "num_batches_tracked") continue;
         size_t end = 5;
         while (end < name.size() && name[end] >= '0' && name[end] <= '9') ++end;
         if (end == 5) continue;
@@ -160,6 +165,56 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
     if (!node || !config) {
         if (!node) card.no_shapes_text = "This node no longer exists.";
         else card.no_shapes_text = "No compile yet: shapes and parameters appear once the graph compiles.";
+        return card;
+    }
+
+    // An RL graph (TOFIX195 S4.3): no data and no shapes until Train builds the networks
+    if (std::any_of(nodes.begin(), nodes.end(), [](const gui::MLNode& n) { return IsRLGraphNode(n.type); })) {
+        for (const auto& issue : config->issues)
+            if (issue.node_id == node_id && issue.level != IssueLevel::Info)
+                card.issues.push_back({issue.level == IssueLevel::Error, issue.message});
+        if (!config->rl) {
+            if (inputs.state == LiveCompileState::Compiled || inputs.state == LiveCompileState::Failed) {
+                card.status = "Compile failed";
+                card.kind = CompiledStatusKind::Failed;
+                card.status_note = "The RL graph does not compile yet: the Compile popup lists what it needs.";
+            }
+            card.no_shapes_text = "Shapes appear once the RL graph compiles.";
+            return card;
+        }
+        const auto& rl = *config->rl;
+        const auto in_chain = [node_id](const std::vector<CompiledLayer>& layers) {
+            for (size_t i = 0; i < layers.size(); ++i)
+                if (layers[i].node_id == node_id) return static_cast<int>(i);
+            return -1;
+        };
+        const int policy_index = in_chain(rl.policy_layers);
+        const int value_index = in_chain(rl.value_layers);
+        const std::string inputs_text = std::to_string(rl.observation_size) + " observation values";
+        if (node_id == rl.environment_node_id) {
+            card.role = "The environment PPO trains in: " + rl.environment.id + " x " + std::to_string(rl.copies);
+        } else if (node_id == rl.policy_head_node_id) {
+            card.role = "Ends the policy network: " + std::to_string(rl.policy_outputs) +
+                        (rl.environment.discrete_actions ? " logits" : " action means");
+        } else if (node_id == rl.value_head_node_id) {
+            card.role = "Ends the value network: 1 value";
+        } else if (node_id == rl.ppo_node_id) {
+            card.role = "Trains both networks";
+        } else if (policy_index >= 0) {
+            card.role = "Layer " + std::to_string(policy_index + 1) + " of " + std::to_string(rl.policy_layers.size()) +
+                        " of the policy network";
+        } else if (value_index >= 0) {
+            card.role = "Layer " + std::to_string(value_index + 1) + " of " + std::to_string(rl.value_layers.size()) +
+                        " of the value network";
+        } else {
+            card.role = "Not part of the RL training";
+        }
+        card.status_note = "Compiled for PPO on " + rl.environment.id + " x " + std::to_string(rl.copies) +
+                           "; the networks are built when Train starts.";
+        card.no_shapes_text = "Each network takes the " + inputs_text + " of a copy; the policy gives " +
+                              std::to_string(rl.policy_outputs) +
+                              (rl.environment.discrete_actions ? " logits" : " action means") +
+                              ", the value network 1 value.";
         return card;
     }
 

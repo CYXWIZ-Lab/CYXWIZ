@@ -15,6 +15,8 @@
 #include "../../core/training_run_comparison.h"
 #include "../../core/route_qualification_snapshot.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include <imgui.h>
 #include <implot.h>
 #include <algorithm>
@@ -201,6 +203,8 @@ bool OpenDirectoryInFileBrowser(const std::string& directory) {
 #endif
 }
 
+// The training warnings list is its only user.
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 const char* ClassifyTrainingWarning(const std::string& text) {
     std::string lower = text;
     std::transform(lower.begin(), lower.end(), lower.begin(),
@@ -229,7 +233,6 @@ const char* ClassifyTrainingWarning(const std::string& text) {
     return "Warning";
 }
 
-#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 const TrainingTraceEvent* FindLatestPinMemoryTransferEvent(
     const TrainingTraceSummary& trace) {
     for (auto it = trace.recent_events.rbegin();
@@ -435,6 +438,13 @@ void TrainingPlotPanel::Render() {
 
     // Metric cards: latest values, change and timing.
     RenderKpiCards();
+    if (health_notice_) {
+        const HealthNotice notice = health_notice_();
+        if (notice.show) {
+            ui::NoticeLine(notice.text, ui::CurrentTokens().caution);
+            if (open_health_ && ui::LinkButton("Open Model > Health")) open_health_();
+        }
+    }
 
     // Check if we have any training data
     bool has_data = !train_loss_.values.empty() || !train_accuracy_.values.empty() || !custom_metrics_.empty();
@@ -3015,9 +3025,11 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     auto& tm = TrainingManager::Instance();
     const bool training_active = tm.IsTrainingActive();
     const bool training_paused = tm.IsPaused();
+    const std::string waiting_for_gpu = training_active ? tm.WaitingForGpu() : std::string();
 #else
     const bool training_active = false;
     const bool training_paused = false;
+    const std::string waiting_for_gpu;
 #endif
     const bool finished = !is_training_ && total_training_time_ > 0;
     const bool early_stopped = terminal_status_ == "early_stopped";
@@ -3027,7 +3039,10 @@ void TrainingPlotPanel::RenderTrainingStatus() {
 
     const char* status = "Idle";
     ImVec4 status_color = c.muted;
-    if (is_training_) {
+    if (is_training_ && !waiting_for_gpu.empty()) {  // another training run holds the GPU
+        status = "Waiting for the GPU";
+        status_color = c.caution;
+    } else if (is_training_) {
         status = training_paused ? "Paused" : "Training";
         status_color = training_paused ? c.warning : c.success;
     } else if (preparation_failed_) {
@@ -3068,6 +3083,10 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     ImGui::SetCursorPosY(row_top + 4.0f);
     if (preparation_failed_ || is_preparing_) {
         ImGui::TextColored(c.muted, "Getting the data and model ready");
+    } else if (is_training_ && !waiting_for_gpu.empty()) {
+        ImGui::TextColored(c.muted, "Starts when the other run ends");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s\nEarly stop cancels the run while it waits.", waiting_for_gpu.c_str());
     } else if (total_epochs_ > 0) {
         if (finished) {
             ImGui::Text("Executed epochs %d / %d", last_executed_epoch_, total_epochs_);
@@ -3253,10 +3272,6 @@ void TrainingPlotPanel::RenderTrainingStatus() {
                     : (restored_checkpoint
                         ? "Best validation checkpoint restored"
                         : "Final state from executed run"));
-            if (!active_model_provenance_.empty()) {
-                row("Provenance");
-                ImGui::TextWrapped("%s", active_model_provenance_.c_str());
-            }
             if (checkpoint_epoch_ > 0) {
                 row("Checkpoint epoch");
                 ImGui::Text("%d", checkpoint_epoch_);

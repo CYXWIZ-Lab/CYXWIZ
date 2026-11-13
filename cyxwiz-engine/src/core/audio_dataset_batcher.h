@@ -113,6 +113,7 @@ private:
     size_t current_idx_ = 0;
 
     std::mt19937 rng_;
+    uint32_t augmentation_round_ = 0;  // training epochs begun (augmentation draws)
 };
 
 // The Data Split's settings for the training dataset's audio batcher.

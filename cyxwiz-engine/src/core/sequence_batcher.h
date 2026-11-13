@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dataset_batcher.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -18,7 +19,7 @@ struct SequenceSample {
     std::vector<int64_t> tag_ids;
     // Causal LM only, optional: one entry per target (word_ids.size() - 1);
     // 0 excludes that target from the loss (prompt tokens in supervised windows).
-    std::vector<uint8_t> target_mask;
+    std::vector<uint8_t> target_mask{};
 };
 
 struct SequenceBatcherConfig {
@@ -159,13 +160,13 @@ public:
         }
         if (split_mode_) {
             if (current_phase_ == BatcherPhase::Train && config_.shuffle) {
-                std::shuffle(active_indices.begin(), active_indices.end(), rng_);
+                cyxwiz::portable::Shuffle(active_indices.begin(), active_indices.end(), rng_);
             }
             return;
         }
 
         if (config_.shuffle) {
-            std::shuffle(active_indices.begin(), active_indices.end(), rng_);
+            cyxwiz::portable::Shuffle(active_indices.begin(), active_indices.end(), rng_);
         }
     }
 
