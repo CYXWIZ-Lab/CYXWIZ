@@ -47,6 +47,7 @@ ImU32 Colour(const ImVec4& c) { return ImGui::GetColorU32(c); }
 
 bool PolicyPlaybackPanel::Play(std::shared_ptr<rl::TrainedPolicy> policy, std::string file_name, std::string& error) {
     const auto& config = core::EngineConfig::Instance();
+    ArmGhost(policy, file_name);
     if (!playback_.Start(std::move(policy), static_cast<rl::PlaybackSpeed>(config.PolicyPlaybackSpeed()),
                          config.PolicyPlaybackBestActions(), error))
         return false;
@@ -224,14 +225,8 @@ void PolicyPlaybackPanel::RenderPlay(const std::shared_ptr<rl::TrainedPolicy>& p
     if (ui::PrimaryButton(primary.c_str(), true, nullptr, ui::ButtonSize::Regular)) {
         if (v.status == pb::Status::Playing) playback_.Pause();
         else if (v.status == pb::Status::Paused) playback_.Resume();
-        else {
-            start_error_.clear();
-            if (!playback_.Start(policy, playback_.Speed(), playback_.Best(), start_error_))
-                spdlog::error("Policy playback: {}", start_error_);
-            else if (on_play_)
-                on_play_();
-            view_opened_ = false;
-        }
+        else
+            StartAgain(policy);
     }
     if (v.can_new_episode) {
         ImGui::SameLine();
@@ -301,6 +296,103 @@ void PolicyPlaybackPanel::RenderPlay(const std::shared_ptr<rl::TrainedPolicy>& p
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Real time: the environment's own step time. The defaults are in Preferences > Simulation.");
     ImGui::EndGroup();
+
+    ImGui::Spacing();
+    RenderGhost(policy, s, std::max(label_w, ImGui::CalcTextSize("Compare with").x + gap * 2.0f));
+}
+
+void PolicyPlaybackPanel::StartAgain(const std::shared_ptr<rl::TrainedPolicy>& policy) {
+    start_error_.clear();
+    ArmGhost(policy, file_name_);
+    if (!playback_.Start(policy, playback_.Speed(), playback_.Best(), start_error_))
+        spdlog::error("Policy playback: {}", start_error_);
+    else if (on_play_)
+        on_play_();
+    view_opened_ = false;
+}
+
+void PolicyPlaybackPanel::ArmGhost(const std::shared_ptr<rl::TrainedPolicy>& policy, const std::string& file_name) {
+    if (!ghost_policy_ || !policy) return;
+    if (ghost_policy_->config.environment_key != policy->config.environment_key) {
+        ghost_policy_.reset();  // another environment: it cannot play beside this one
+        return;
+    }
+    playback_.SetGhost(ghost_policy_, pb::PolicyName(ghost_file_), pb::PolicyName(file_name));
+}
+
+void PolicyPlaybackPanel::RenderGhost(const std::shared_ptr<rl::TrainedPolicy>& policy,
+                                      const rl::PolicyPlayback::Snapshot& s, float label_w) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    RenderCompareWith(policy, label_w, true);
+    const bool ghost_on = ghost_policy_ != nullptr;
+    ImGui::SetCursorPosX(label_w + ImGui::GetCursorStartPos().x);
+    if (ghost_on) {
+        if (ui::SecondaryButton("Remove the ghost", true, nullptr, ui::ButtonSize::Regular)) {
+            ghost_policy_.reset();
+            playback_.RemoveGhost();
+        }
+    } else if (ui::SecondaryButton(
+                   "Show as a ghost",
+                   compare_policy_ && compare_policy_->config.environment_key == policy->config.environment_key,
+                   compare_policy_ ? "The policy in Compare with plays another environment than this one."
+                                   : "Load a saved policy of the same environment in Compare with first.",
+                   ui::ButtonSize::Regular)) {
+        ghost_policy_ = compare_policy_;
+        ghost_file_ = compare_name_;
+        StartAgain(policy);  // both start on one seed
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Plays the second policy beside this one, on the same ground and seed, drawn see-through "
+                          "in the plugin's view. Starts the playback again.");
+    const std::string line =
+        pb::GhostLine(s.ghost, s.ghost_episode, s.ghost_step, s.ghost_return, s.ghost_returns, s.ghost_note);
+    if (!line.empty() && (ghost_on || !s.ghost_note.empty())) {
+        ImGui::SameLine();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(s.ghost ? t.text_dim : t.caution, "%s", line.c_str());
+        ImGui::PopTextWrapPos();
+    }
+}
+
+void PolicyPlaybackPanel::RenderCompareWith(const std::shared_ptr<rl::TrainedPolicy>& policy, float label_w,
+                                            bool enabled) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(t.text_dim, "Compare with");
+    ImGui::SameLine(label_w + ImGui::GetCursorStartPos().x);
+    ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x -
+                                                 2.0f * ui::ButtonWidth("Clear", ui::ButtonSize::Regular) - 20.0f));
+    ImGui::InputTextWithHint("##compare_path", "a saved .cyxmodel (optional)", compare_path_, sizeof(compare_path_));
+    ImGui::SameLine();
+    if (ui::SecondaryButton("Load", compare_path_[0] != '\0' && enabled, "Type the path of a saved policy first.",
+                            ui::ButtonSize::Regular)) {
+        compare_error_.clear();
+        std::string error;
+        std::unique_ptr<rl::TrainedPolicy> loaded = rl::LoadTrainedPolicy(compare_path_, error);
+        if (!loaded) {
+            compare_error_ = error;
+            compare_policy_.reset();
+        } else if (loaded->config.environment_key != policy->config.environment_key) {
+            compare_error_ = "It plays " + loaded->config.environment.id + ", not " + policy->config.environment.id + ".";
+            compare_policy_.reset();
+        } else {
+            compare_policy_ = std::move(loaded);
+            compare_name_ = std::filesystem::path(compare_path_).filename().string();
+        }
+    }
+    if (compare_policy_) {
+        ImGui::SameLine();
+        if (ui::LinkButton("Clear")) compare_policy_.reset();
+    }
+    if (!compare_error_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.error, "%s", compare_error_.c_str());
+        ImGui::PopTextWrapPos();
+    } else if (compare_policy_) {
+        ImGui::SetCursorPosX(label_w + ImGui::GetCursorStartPos().x);
+        ImGui::TextColored(t.text_dim, "%s", pb::PolicySource(compare_name_, compare_policy_->steps).c_str());
+    }
 }
 
 void PolicyPlaybackPanel::WatchLevel(const std::shared_ptr<rl::TrainedPolicy>& policy, int level) {
@@ -310,6 +402,10 @@ void PolicyPlaybackPanel::WatchLevel(const std::shared_ptr<rl::TrainedPolicy>& p
         rl::StressSettings(policy->config.environment_settings, spec.kind, rl::StressDifficulty(spec, level)),
         rl::StressSeed(spec, level));
     start_error_.clear();
+    std::string played_file = file_name_;
+    for (const auto& [name, tested] : tested_)
+        if (tested == policy) played_file = name;
+    ArmGhost(policy, played_file);
     if (!playback_.Start(policy, playback_.Speed(), true, start_error_)) spdlog::error("Policy playback: {}", start_error_);
     else if (on_play_)
         on_play_();
@@ -340,38 +436,7 @@ void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPoli
     label("Policy");
     ImGui::TextUnformatted(stress_policy_ == policy || !stress_policy_ ? pb::PolicySource(file_name_, policy->steps).c_str()
                                                                        : stress_policy_name_.c_str());
-    label("Compare with");
-    ImGui::SetNextItemWidth(std::max(160.0f, ImGui::GetContentRegionAvail().x - 2.0f * ui::ButtonWidth("Clear", ui::ButtonSize::Regular) - 20.0f));
-    ImGui::InputTextWithHint("##compare_path", "a saved .cyxmodel (optional)", compare_path_, sizeof(compare_path_));
-    ImGui::SameLine();
-    if (ui::SecondaryButton("Load", compare_path_[0] != '\0' && !running, "Type the path of a saved policy first.",
-                            ui::ButtonSize::Regular)) {
-        compare_error_.clear();
-        std::string error;
-        std::unique_ptr<rl::TrainedPolicy> loaded = rl::LoadTrainedPolicy(compare_path_, error);
-        if (!loaded) {
-            compare_error_ = error;
-            compare_policy_.reset();
-        } else if (loaded->config.environment_key != policy->config.environment_key) {
-            compare_error_ = "It plays " + loaded->config.environment.id + ", not " + policy->config.environment.id + ".";
-            compare_policy_.reset();
-        } else {
-            compare_policy_ = std::move(loaded);
-            compare_name_ = std::filesystem::path(compare_path_).filename().string();
-        }
-    }
-    if (compare_policy_) {
-        ImGui::SameLine();
-        if (ui::LinkButton("Clear")) compare_policy_.reset();
-    }
-    if (!compare_error_.empty()) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.error, "%s", compare_error_.c_str());
-        ImGui::PopTextWrapPos();
-    } else if (compare_policy_) {
-        ImGui::SetCursorPosX(label_w + ImGui::GetCursorStartPos().x);
-        ImGui::TextColored(t.text_dim, "%s", pb::PolicySource(compare_name_, compare_policy_->steps).c_str());
-    }
+    RenderCompareWith(policy, label_w, !running);
 
     if (!stress_defaults_read_) {
         stress_defaults_read_ = true;

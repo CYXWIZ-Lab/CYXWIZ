@@ -42,6 +42,16 @@ public:
 
 private:
     void RenderPlay(const std::shared_ptr<rl::TrainedPolicy>& policy);
+    // Compare with: a second saved policy of the same environment, loaded
+    // from a typed path (the Play tab's ghost and the Stress test share it)
+    void RenderCompareWith(const std::shared_ptr<rl::TrainedPolicy>& policy, float label_w, bool enabled);
+    // The Play tab's ghost: Show as a ghost / Remove the ghost, its numbers
+    void RenderGhost(const std::shared_ptr<rl::TrainedPolicy>& policy, const rl::PolicyPlayback::Snapshot& s,
+                     float label_w);
+    // The next Start plays the ghost too, when one is on and fits `policy`
+    void ArmGhost(const std::shared_ptr<rl::TrainedPolicy>& policy, const std::string& file_name);
+    // Plays `policy` again from its first episode (with the ghost when on)
+    void StartAgain(const std::shared_ptr<rl::TrainedPolicy>& policy);
     // The Stress test tab (TOFIX212 P4 board 6): N episodes at each difficulty
     // of one disturbance, the policy against a second saved one
     void RenderStressTest(const std::shared_ptr<rl::TrainedPolicy>& policy);
@@ -73,6 +83,9 @@ private:
     std::shared_ptr<rl::TrainedPolicy> compare_policy_;
     std::string compare_name_;
     std::string compare_error_;
+    // The ghost played beside the policy (Show as a ghost), kept for later plays
+    std::shared_ptr<rl::TrainedPolicy> ghost_policy_;
+    std::string ghost_file_;
     // From Preferences > Simulation, read when the tab is first drawn
     bool stress_defaults_read_ = false;
     int stress_kind_ = 0;

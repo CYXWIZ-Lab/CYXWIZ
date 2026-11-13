@@ -14,6 +14,7 @@
 #include <map>
 #include <functional>
 #include <mutex>
+#include <optional>
 
 namespace cyxwiz::plugin::mujoco {
 
@@ -52,8 +53,20 @@ public:
     // The same model file with another scene, the state carried over. The
     // caller holds the physics lock. False with the reason: the model is kept.
     bool ChangeScene(const MjScene& scene, std::string& error);
+    // The model file read again (it may have changed on disk) with the scene
+    // in use. The model is replaced only when the file builds: false with the
+    // reason keeps it. The state starts over. The caller holds the physics lock.
+    bool Reload(std::string& error);
+    // Physics options set from the Inspect panel: applied to the model in use
+    // and to every model built for this file after (a scene change, Reload).
+    // ClearOption puts the file's own back. Another file clears them. The
+    // caller holds the physics lock.
+    void SetOption(const mjOption& option);
+    void ClearOption();
+    const mjOption* FileOption() const { return builder_.Loaded() ? &builder_.FileOption() : nullptr; }
     const MjScene& Scene() const { return scene_; }
     const MjRobotSize& Robot() const { return builder_.Robot(); }
+    const std::string& ModelPath() const { return builder_.Path(); }
     bool LoadModelFromString(const std::string& xml);
     void Close();
     bool IsLoaded() const { return model_ != nullptr; }
@@ -85,6 +98,8 @@ public:
 
     // --- Raw MuJoCo access (for renderer) ---
     const mjModel* GetModel() const { return model_; }
+    // The options the run uses now (SetOption, else the file's); null without a model
+    const mjOption* Option() const { return model_ ? &model_->opt : nullptr; }
     const mjData* GetData() const { return data_; }
     mjData* GetMutableData() { return data_; }
 
@@ -101,6 +116,7 @@ private:
     mutable std::mutex physics_mutex_;
 
     MjSceneBuilder builder_;  // the model file, parsed once; each scene builds on it
+    std::optional<mjOption> option_;  // SetOption
     MjScene scene_;
     bool last_terminated_ = false;
 

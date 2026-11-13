@@ -92,6 +92,7 @@ MjEnvBatch* MjEnvBatch::Create(const MjTaskSpec& spec, const std::string& model_
 
 MjEnvBatch::~MjEnvBatch() {
     ShowCopy(-1);
+    ShowCopyAsGhost(-1, {});
     pool_.reset();  // no worker touches the data below any more
     for (size_t i = 0; i < data_.size(); ++i) mj_deleteData(data_[i]);
 }
@@ -105,6 +106,10 @@ bool MjEnvBatch::ShowCopy(int copy) {
         if (view_->owner == this) view_->owner = nullptr;
         shown_copy_ = -1;
         return copy < 0;
+    }
+    if (view_->owner != this && view_->ghost.owner) {  // a ghost belongs to the copy it was shown beside
+        view_->ghost.owner = nullptr;
+        ++view_->ghost.version;
     }
     view_->owner = this;
     view_->model_path = model_path_;
@@ -124,6 +129,7 @@ bool MjEnvBatch::ShowCopy(int copy) {
     view_->stress_message.clear();
     view_->label = {};  // the view's own words until the Engine labels the copy
     ++view_->version;
+    view_->published = 0;
     shown_copy_ = copy;
     stress_.scene = scenes_[static_cast<size_t>(copy)];
     return true;
@@ -135,6 +141,35 @@ void MjEnvBatch::LabelShownCopy(const PluginShownCopyLabel& label) {
     if (view_->owner != this) return;
     view_->label = label;
     if (label.watch_only) view_->requests.clear();  // none reach a training's own copy
+}
+
+bool MjEnvBatch::ShowCopyAsGhost(int copy, const std::string& name) {
+    if (!view_) return false;
+    std::lock_guard<std::mutex> lock(view_->mutex);
+    MjGhostView& ghost = view_->ghost;
+    if (copy < 0 || copy >= count_) {
+        if (ghost.owner == this) {
+            ghost.owner = nullptr;
+            ++ghost.version;
+        }
+        ghost_copy_ = -1;
+        return copy < 0;
+    }
+    const size_t c = static_cast<size_t>(copy);
+    ghost.owner = this;
+    ghost.model_path = model_path_;
+    ghost.scene = scenes_[c];
+    ghost.name = name;
+    ghost.state.clear();
+    ghost.episode = 1;
+    ghost.step = 0;
+    ghost.episode_return = 0.0;
+    ghost.has_last_return = false;
+    ghost.last_return = 0.0;
+    ++ghost.version;
+    ghost.published = 0;
+    ghost_copy_ = copy;
+    return true;
 }
 
 std::vector<PluginEnvironmentStat> MjEnvBatch::Stats() const {
@@ -192,6 +227,38 @@ void MjEnvBatch::Publish(const SteppedCopy* step) {
         stress_.message.clear();
     }
     ++view_->version;
+    ++view_->published;
+}
+
+void MjEnvBatch::PublishGhost(const SteppedCopy* step) {
+    if (ghost_copy_ < 0) return;
+    std::lock_guard<std::mutex> lock(view_->mutex);
+    MjGhostView& ghost = view_->ghost;
+    if (ghost.owner != this) {  // another batch took it
+        ghost_copy_ = -1;
+        return;
+    }
+    const size_t c = static_cast<size_t>(ghost_copy_);
+    const mjModel* m = models_[c].get();
+    ghost.state.resize(static_cast<size_t>(mj_stateSize(m, mjSTATE_FULLPHYSICS)));
+    mj_getState(m, data_[c], ghost.state.data(), mjSTATE_FULLPHYSICS);
+    if (!step) {  // a new start
+        ghost.episode = 1;
+        ghost.episode_return = 0.0;
+        ghost.has_last_return = false;
+    } else {
+        ghost.episode_return += step->reward;
+        if (step->episode_ended) {
+            ghost.last_return = ghost.episode_return;
+            ghost.has_last_return = true;
+            ghost.episode_return = 0.0;
+            ++ghost.episode;
+        }
+    }
+    ghost.step = steps_[c];
+    ghost.scene = scenes_[c];
+    ++ghost.version;
+    ++ghost.published;
 }
 
 MjStressHost MjEnvBatch::StressHost() {
@@ -316,6 +383,7 @@ bool MjEnvBatch::Reset(uint64_t seed, float* observations) {
     }
     started_ = true;
     Publish(nullptr);
+    PublishGhost(nullptr);
     return true;
 }
 
@@ -401,6 +469,12 @@ bool MjEnvBatch::Step(const float* actions, const PluginEnvironmentStepBuffers& 
         const size_t c = static_cast<size_t>(shown_copy_);
         const SteppedCopy stepped{actions + c * action_size_, out.rewards[c], shown_ended, out.terminated[c] != 0};
         Publish(&stepped);
+    }
+    if (ghost_copy_ >= 0) {
+        const size_t c = static_cast<size_t>(ghost_copy_);
+        const bool ended = out.terminated[c] != 0 || out.truncated[c] != 0;
+        const SteppedCopy stepped{actions + c * action_size_, out.rewards[c], ended, out.terminated[c] != 0};
+        PublishGhost(&stepped);
     }
     return true;
 }

@@ -26,6 +26,7 @@
 #include "mj_viewport_panel.h"
 #include "mj_env_browser_panel.h"
 #include "env/mj_view_slot.h"
+#include "env/mj_history.h"
 #include "rl/observation_filter.h"
 
 #include <optional>
@@ -159,12 +160,18 @@ private:
     void SyncPlayback();
     std::shared_ptr<MjViewSlot> view_slot_ = std::make_shared<MjViewSlot>();
     uint64_t shown_version_ = 0;
+    uint64_t ghost_version_ = 0;  // the ghost's state last taken from the view slot
     bool playback_ = false;
     // What the viewport showed before playback, given back when it ends
     std::string restore_path_;
     std::string restore_title_;
     std::string restore_subtitle_;
     MjScene restore_scene_;  // the scene of the model open before a playback
+    // The timeline's steps (guarded by the physics lock): the own run's last
+    // 30 s, or the played episode; the played return before this state
+    MjHistory history_;
+    int history_episode_ = 0;
+    double history_return_ = 0.0;
     std::string shown_as_ = "policy playback";  // what the last shown copy was (its status, lower case)
 
     // The Viewport's Stress panel (TOFIX212 P4): its requests go to the played
@@ -172,6 +179,9 @@ private:
     void ForwardStressRequests();
     // The played copy's scene in the Viewport's model (the same build as the batch's)
     void MirrorPlaybackScene(const MjScene& scene);
+    // Inspect's Reload: the open model file read again, the camera and the
+    // scene kept; false with the reason (the model stays as it was)
+    bool ReloadModel(std::string& error);
     bool SceneFailed(const MjScene& scene) const;  // the played scene did not build here
     std::optional<MjScene> failed_scene_;
     MjStressRun local_stress_;

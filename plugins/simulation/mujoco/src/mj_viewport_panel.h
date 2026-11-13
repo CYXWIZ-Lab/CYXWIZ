@@ -15,6 +15,9 @@
 #include "mj_renderer.h"
 #include "mj_env_manager.h"
 #include "mj_recorder.h"
+#include "env/mj_inspect.h"
+#include "env/mj_history.h"
+#include "env/mj_ghost.h"
 #include "mj_viewport_settings.h"
 
 #include <atomic>
@@ -37,6 +40,8 @@ class MjViewportPanel {
 public:
     // Opens a model file the user picked (the plugin's LoadEnvironment).
     using OpenModelFn = std::function<bool(const std::string& mjcf_path)>;
+    // Reads the open model file again (Inspect's Reload); false with the reason
+    using ReloadModelFn = std::function<bool(std::string& error)>;
 
     MjViewportPanel() = default;
     ~MjViewportPanel() = default;
@@ -44,6 +49,13 @@ public:
     // The Engine's widgets, and the Environment Library panel to open.
     void SetContext(PluginContext* ctx) { ctx_ = ctx; }
     void SetOpenModel(OpenModelFn fn) { open_model_ = std::move(fn); }
+    void SetReloadModel(ReloadModelFn fn) { reload_model_ = std::move(fn); }
+    // The steps the plugin keeps for the timeline and plots (guarded by the
+    // physics lock)
+    void SetHistory(MjHistory* history) { history_ = history; }
+    // A kept step is shown instead of the live one: a played copy's new
+    // states are not applied meanwhile
+    bool Scrubbing() const { return scrub_index_ >= 0; }
 
     // Render the panel. Call each frame from IPanelProvider::RenderPanel.
     // |env| and |renderer| must be valid. |visible| controls panel open state.
@@ -67,6 +79,11 @@ public:
     // episode strip says ("Inverted Pendulum · copy 0").
     void SetPlayback(bool active, std::string label = {}) {
         if (active && !playback_) camera_default_pending_ = true;  // playback starts with its camera
+        if (active != playback_) {  // its start or end: no step back of the run before stays shown
+            scrub_index_ = -1;
+            resume_after_scrub_ = false;
+            ghost_.Clear();
+        }
         playback_ = active;
         playback_label_ = std::move(label);
     }
@@ -88,6 +105,22 @@ public:
         bool watch_only = false;  // a training's own copy: the Stress panel is off
     };
     void SetPlaybackNumbers(PlaybackNumbers numbers) { numbers_ = std::move(numbers); }
+    // A second policy drawn see-through beside the played one
+    // (ShowCopyAsGhost): its numbers, and why the scene does not draw it
+    struct GhostNumbers {
+        bool active = false;
+        std::string name;
+        int episode = 1;
+        int step = 0;
+        double episode_return = 0.0;
+        bool has_last_return = false;
+        double last_return = 0.0;
+        std::string not_drawn;  // empty: drawn
+    };
+    // Each frame of a playback; state: newly published (null: unchanged),
+    // put on model m unless a step back is shown
+    void SetGhost(const mjModel* m, GhostNumbers numbers, const std::vector<mjtNum>* state);
+    const MjGhost& Ghost() const { return ghost_; }  // the timeline keeps its state
     // The played copy's status word: the Engine's, or "Policy playback"
     const char* PlaybackStatus() const { return numbers_.status.empty() ? "Policy playback" : numbers_.status.c_str(); }
     // The renderer (re)started for a model: apply the saved scene options and
@@ -107,7 +140,8 @@ public:
     }
     // A request could not be done (shown on the scene for a few seconds)
     void StressFailed(const std::string& why) { Notify("Stress: " + why, true); }
-    // Another model was opened: the events and the held push belong to the old one
+    // Another model was opened (or the file read again): the events, the held
+    // push, the selected body and the held controls belong to the old one
     void ResetStress();
     const std::string& ModelTitle() const { return model_title_; }
     const std::string& ModelSubtitle() const { return model_subtitle_; }
@@ -140,6 +174,20 @@ private:
     void RenderScene(MjEnvManager& env, MjRenderer& renderer);
     void RenderEpisodeStrip(MjEnvManager& env);
     void RenderLiveNumbers(float scene_left, float scene_top, const MjGround& ground);
+    // The Inspect panel (mj_viewport_inspect.cpp): the selected body, its
+    // joints, the actuators, keyframes, Reload
+    void RenderInspectPanel(MjEnvManager& env, MjRenderer& renderer);
+    // Why Inspect cannot change the model now; empty: it can
+    std::string InspectBlocked(MjEnvManager& env) const;
+    // The held controls to the run (under the physics lock)
+    void ApplyHeldControls(MjEnvManager& env);
+    // The timeline and plots (mj_viewport_timeline.cpp), under the scene
+    void RenderTimeline(MjEnvManager& env);
+    void RenderPlots(MjEnvManager& env);
+    float StripsHeight() const;  // what they take below the scene
+    void ShowHistoryEntry(MjEnvManager& env, size_t index);  // a step back (pauses the own run)
+    void BackToLive(MjEnvManager& env);
+    void GoOnFromShownStep(MjEnvManager& env);  // Run or Step while a step back is shown
     // The Stress panel (mj_viewport_stress.cpp)
     void RenderStressPanel(MjEnvManager& env);
     // Why the Stress panel cannot act now; empty: it can
@@ -185,6 +233,21 @@ private:
 
     PluginContext* ctx_ = nullptr;
     OpenModelFn open_model_;
+    ReloadModelFn reload_model_;
+    // Inspect
+    InspectOptions inspect_;
+    int selected_body_ = -1;              // double-clicked; -1: none
+    std::vector<double> typed_controls_;  // the actuator controls typed in Inspect
+    std::vector<MjKeyframe> keyframes_;   // saved for keyframes_model_ (in the project)
+    std::string keyframes_model_;
+    char keyframe_name_[64] = "";
+    // Timeline and plots
+    MjHistory* history_ = nullptr;
+    MjEnvManager* current_env_ = nullptr;  // the model Render last drew
+    bool has_history_ = false;  // read at the frame's start
+    long long scrub_index_ = -1;  // the kept step shown; -1: live
+    bool resume_after_scrub_ = false;
+    TimelineOptions timeline_;
     MjSimulationExecutor* sim_executor_ = nullptr;
     std::string model_title_;
     std::string model_subtitle_;
@@ -193,6 +256,8 @@ private:
     bool playback_ = false;
     std::string playback_label_;
     PlaybackNumbers numbers_;
+    GhostNumbers ghost_numbers_;  // SetGhost
+    MjGhost ghost_;
 
     // Saved choices (Preferences > Simulation), read when a model or a
     // playback starts

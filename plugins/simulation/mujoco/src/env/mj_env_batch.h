@@ -40,6 +40,7 @@ public:
     bool ShowCopy(int copy) override;
     std::vector<PluginEnvironmentStat> Stats() const override;
     void LabelShownCopy(const PluginShownCopyLabel& label) override;
+    bool ShowCopyAsGhost(int copy, const std::string& name) override;
     void Release() override { delete this; }
 
     int Threads() const { return pool_ ? pool_->Threads() : 1; }
@@ -74,6 +75,8 @@ private:
         bool terminated = false;  // ended by the task's own end
     };
     void Publish(const SteppedCopy* step);
+    // The ghost copy's state into the view slot's ghost part, the same way
+    void PublishGhost(const SteppedCopy* step);
     // The Stress panel's requests for the shown copy, taken from the view slot
     // and applied before a step; then its pushes
     void ApplyStress();
@@ -110,6 +113,7 @@ private:
     std::string model_path_;
     std::string title_;
     int shown_copy_ = -1;
+    int ghost_copy_ = -1;  // ShowCopyAsGhost
     // The Stress panel's run on the shown copy (TOFIX212 P4)
     MjStressRun stress_;
 };

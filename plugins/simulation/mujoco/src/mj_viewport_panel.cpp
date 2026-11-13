@@ -27,7 +27,9 @@ struct SceneSnapshot {
     float episode_reward = 0.0f;
 };
 
-SceneSnapshot Snapshot(MjEnvManager& env) {
+// `shown`: the timeline's step back (-1: live), whose own numbers replace
+// the live run's
+SceneSnapshot Snapshot(MjEnvManager& env, const MjHistory* history, long long shown) {
     SceneSnapshot s;
     std::lock_guard phys_lock(env.GetPhysicsMutex());
     if (const mjData* d = env.GetData()) s.time = d->time;
@@ -36,6 +38,12 @@ SceneSnapshot Snapshot(MjEnvManager& env) {
     s.episode_step = env.GetCurrentStep();
     s.max_episode_steps = env.GetMaxEpisodeSteps();
     s.episode_reward = env.GetEpisodeReward();
+    if (history && shown >= 0 && static_cast<size_t>(shown) < history->Size()) {
+        const MjHistoryEntry& e = history->At(static_cast<size_t>(shown));
+        s.episode = e.episode;
+        s.episode_step = e.step;
+        s.episode_reward = static_cast<float>(e.episode_return);
+    }
     return s;
 }
 
@@ -43,6 +51,7 @@ SceneSnapshot Snapshot(MjEnvManager& env) {
 
 void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visible) {
     if (!visible || !*visible) return;
+    current_env_ = &env;
 
     // A model file the user picked: loaded before this frame's ImGui calls,
     // since loading switches GL contexts.
@@ -67,6 +76,9 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
         defaults_ = LoadViewportDefaults(*ctx_);
         live_numbers_ = defaults_.live_numbers;
         stress_ = defaults_.stress;
+        inspect_ = defaults_.inspect;
+        timeline_ = defaults_.timeline;
+        if (inspect_.panel_open && stress_.panel_open) inspect_.panel_open = false;  // one side panel
         defaults_loaded_ = true;
     }
 
@@ -103,8 +115,12 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
         }
         RenderControls(env, renderer);
         WatchStress(env);
-        if (stress_.panel_open) {
-            // The scene and the Stress panel side by side
+        if (history_) {  // the strips under the scene take room only when there is something kept
+            std::lock_guard phys_lock(env.GetPhysicsMutex());
+            has_history_ = !history_->Empty();
+        }
+        if (stress_.panel_open || inspect_.panel_open) {
+            // The scene and the Stress or Inspect panel side by side
             constexpr float kStressWidth = 390.0f;
             const ImVec2 avail = ImGui::GetContentRegionAvail();
             const float spacing = ImGui::GetStyle().ItemSpacing.x;
@@ -112,6 +128,8 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
             constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
             ImGui::BeginChild("##scene_area", ImVec2(scene_w, avail.y), ImGuiChildFlags_None, kFlags);
             RenderScene(env, renderer);
+            RenderTimeline(env);
+            RenderPlots(env);
             RenderEpisodeStrip(env);
             ImGui::EndChild();
             ImGui::SameLine();
@@ -119,13 +137,16 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ToImVec4(colors.bg_panel));
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
-            ImGui::BeginChild("##stress_panel", ImVec2(kStressWidth, avail.y), ImGuiChildFlags_AlwaysUseWindowPadding);
-            RenderStressPanel(env);
+            ImGui::BeginChild("##side_panel", ImVec2(kStressWidth, avail.y), ImGuiChildFlags_AlwaysUseWindowPadding);
+            if (stress_.panel_open) RenderStressPanel(env);
+            else RenderInspectPanel(env, renderer);
             ImGui::EndChild();
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor();
         } else {
             RenderScene(env, renderer);
+            RenderTimeline(env);
+            RenderPlots(env);
             RenderEpisodeStrip(env);
         }
     }
@@ -153,6 +174,7 @@ MjViewportPanel::RunState MjViewportPanel::GetRunState() const {
 void MjViewportPanel::RunOrResume() {
     const RunState s = GetRunState();
     if (!s.can_drive || s.running) return;
+    if (Scrubbing() && current_env_) GoOnFromShownStep(*current_env_);
     if (s.paused) sim_executor_->Resume();
     else sim_executor_->StartManualControl();
 }
@@ -164,6 +186,7 @@ void MjViewportPanel::PauseRun() {
 void MjViewportPanel::StepOnce() {
     const RunState s = GetRunState();
     if (!s.can_drive) return;
+    if (Scrubbing() && current_env_) GoOnFromShownStep(*current_env_);
     if (s.running) sim_executor_->Pause();
     sim_executor_->SingleStep();
 }
@@ -302,7 +325,9 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     const float view_w = ui->ButtonWidth("View", UiButtonSize::Regular);
     const char* stress = stress_.panel_open ? "Hide Stress" : "Stress";
     const float stress_w = ui->ButtonWidth(stress, UiButtonSize::Regular);
-    const float right_w = camera_w + record_w + pill_w + view_w + stress_w + spacing * 4;
+    const char* inspect = inspect_.panel_open ? "Hide Inspect" : "Inspect";
+    const float inspect_w = ui->ButtonWidth(inspect, UiButtonSize::Regular);
+    const float right_w = camera_w + record_w + pill_w + view_w + stress_w + inspect_w + spacing * 5;
     next(right_w, button_h);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - right_w));
     if (ui->SecondaryButton(camera.c_str())) ImGui::OpenPopup("mujoco_camera_menu");
@@ -321,9 +346,19 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     if (ui->SecondaryButton("View")) ImGui::OpenPopup("mujoco_view_menu");
     RenderViewMenu(env, renderer);
     next(stress_w, button_h);
-    if (ui->SecondaryButton(stress)) stress_.panel_open = !stress_.panel_open;
+    if (ui->SecondaryButton(stress)) {
+        stress_.panel_open = !stress_.panel_open;
+        if (stress_.panel_open) inspect_.panel_open = false;  // one side panel at a time
+    }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Kick the robot, throw objects at it, change the ground: does the policy cope?");
+    next(inspect_w, button_h);
+    if (ui->SecondaryButton(inspect)) {
+        inspect_.panel_open = !inspect_.panel_open;
+        if (inspect_.panel_open) stress_.panel_open = false;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("The selected body, its joints, the actuators, keyframes, Reload the model file");
 
     ImGui::SetCursorPosY(line_y + row_h + ImGui::GetStyle().ItemSpacing.y);
 }
@@ -357,9 +392,9 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
     PluginUi* ui = ctx_->GetUi();
     const UiColors colors = ui->Colors();
 
-    // Room for the episode strip below the scene
+    // Room for the timeline, the plots and the episode strip below the scene
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    avail.y -= ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    avail.y -= ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y + StripsHeight();
     if (avail.x < 10.0f || avail.y < 10.0f) return;
 
     // Debounced resize — avoid expensive MuJoCo context recreation every frame
@@ -378,7 +413,13 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
         renderer.SetResolution(pending_w_, pending_h_);
     }
 
-    const unsigned int tex_id = renderer.RenderFrame(env.GetModel(), env.GetData());
+    {
+        const UiColor tint = ctx_->GetUi()->Colors().accent;
+        const float rgba[4] = {tint.r, tint.g, tint.b, tint.a};
+        renderer.SetGhostTint(rgba);
+    }
+    const mjData* ghost = playback_ && ghost_numbers_.active ? ghost_.Data(env.GetModel()) : nullptr;
+    const unsigned int tex_id = renderer.RenderFrame(env.GetModel(), env.GetData(), ghost);
     if (tex_id != 0) RecordFrame(env, renderer);
 
     // The scene takes the mouse: dragging orbits or pans the camera instead of
@@ -396,12 +437,21 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) renderer.PanCamera(io.MouseDelta.x, io.MouseDelta.y);
     }
     if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) renderer.ZoomCamera(io.MouseWheel);
-    // Double-click a body to follow it
+    // Double-click a body: select it (Inspect shows it); with Inspect closed the
+    // camera also follows it, as before Inspect
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         const float x = (io.MousePos.x - p0.x) / std::max(1.0f, p1.x - p0.x);
         const float y = (io.MousePos.y - p0.y) / std::max(1.0f, p1.y - p0.y);
         const int body = renderer.BodyAt(env.GetModel(), env.GetData(), x, y);
-        if (body > 0) renderer.FollowBody(env.GetModel(), env.GetData(), body);
+        if (body > 0) {
+            selected_body_ = body;
+            if (!inspect_.panel_open) renderer.FollowBody(env.GetModel(), env.GetData(), body);
+        }
+    }
+    {
+        const UiColor marker = ctx_->GetUi()->Colors().success;
+        const float rgba[4] = {marker.r, marker.g, marker.b, marker.a};
+        renderer.Select(selected_body_, rgba);
     }
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -420,7 +470,7 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
 
     // Overlays: time, steps and achieved speed at the bottom left, the camera
     // hint at the bottom right
-    const SceneSnapshot snap = Snapshot(env);
+    const SceneSnapshot snap = Snapshot(env, history_, scrub_index_);
     const RunState rs = GetRunState();
     const bool graph = rs.graph;
     const bool active = rs.active;
@@ -438,12 +488,17 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
     char buf[128];
     std::snprintf(buf, sizeof(buf), "Time %.2f s", snap.time);
     parts.push_back({buf, ToU32(colors.text)});
-    if (active) {
+    if (Scrubbing()) {  // a step back: its own step, not the run's count
+        std::snprintf(buf, sizeof(buf), "Episode %d step %d", snap.episode, snap.episode_step);
+        parts.push_back({buf, ToU32(colors.text)});
+    } else if (active) {
         std::snprintf(buf, sizeof(buf), "Step %lld",
                       static_cast<long long>(sim_executor_->GetMetrics().step_count));
         parts.push_back({buf, ToU32(colors.text)});
     }
-    if (running || graph) {
+    if (Scrubbing()) {
+        parts.push_back({"A step back", ToU32(colors.accent_text)});
+    } else if (running || graph) {
         const double asked = unlimited_ || graph ? 0.0 : speed_;
         if (achieved_speed_ <= 0.0) {
             std::snprintf(buf, sizeof(buf), "Starting...");
@@ -484,7 +539,9 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
     } else {
         switch (renderer.GetCameraMode()) {
             case MjRenderer::CameraMode::Free:
-                hint = "Drag to orbit  |  Right-drag to pan  |  Scroll to zoom  |  Double-click a body to follow it";
+                hint = inspect_.panel_open
+                           ? "Drag to orbit  |  Right-drag to pan  |  Scroll to zoom  |  Double-click a body to select it"
+                           : "Drag to orbit  |  Right-drag to pan  |  Scroll to zoom  |  Double-click a body to follow it";
                 break;
             case MjRenderer::CameraMode::FollowBody:
                 hint = "Following a body: drag to orbit  |  Scroll to zoom  |  Camera > Free to pan";
@@ -507,60 +564,121 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
     if (stress_.panel_open) RenderThrowDial(p1.x, p0.y);
 }
 
+void MjViewportPanel::SetGhost(const mjModel* m, GhostNumbers numbers, const std::vector<mjtNum>* state) {
+    ghost_numbers_ = std::move(numbers);
+    if (!ghost_numbers_.active || !ghost_numbers_.not_drawn.empty()) {
+        ghost_.Clear();
+        return;
+    }
+    if (state && !Scrubbing() && !ghost_.Apply(m, *state)) {
+        ghost_.Clear();
+        ghost_numbers_.not_drawn = "its state does not fit this model.";
+    }
+}
+
 // The played episode's numbers at the top left of the scene
 void MjViewportPanel::RenderLiveNumbers(float scene_left, float scene_top, const MjGround& ground) {
+    // A step back on the timeline shows its own episode, step, return and
+    // action (and the ghost's); live otherwise
+    PlaybackNumbers shown = numbers_;
+    GhostNumbers ghost_shown = ghost_numbers_;
+    if (Scrubbing() && history_ && current_env_) {
+        std::lock_guard phys_lock(current_env_->GetPhysicsMutex());
+        if (static_cast<size_t>(scrub_index_) < history_->Size()) {
+            const MjHistoryEntry& e = history_->At(static_cast<size_t>(scrub_index_));
+            shown.episode = e.episode;
+            shown.step = e.step;
+            shown.episode_return = e.episode_return;
+            shown.action.clear();
+            for (const double c : e.controls) shown.action.push_back(static_cast<float>(c));
+            if (!e.ghost_state.empty()) {
+                ghost_shown.episode = e.ghost_episode;
+                ghost_shown.step = e.ghost_step;
+                ghost_shown.episode_return = e.ghost_return;
+            }
+        }
+    }
+    const PlaybackNumbers& numbers = shown;
     const UiColors colors = ctx_->GetUi()->Colors();
     struct Row {
         std::string label;
         std::string value;
+        std::string ghost;  // the ghost's, when one plays beside
     };
     std::vector<Row> rows;
     char buf[64];
-    for (const auto& [label, value] : numbers_.rows) rows.push_back({label, value});  // the Engine's first
-    rows.push_back({"Episode", std::to_string(numbers_.episode)});
-    if (numbers_.max_steps > 0) std::snprintf(buf, sizeof(buf), "%d / %d", numbers_.step, numbers_.max_steps);
-    else std::snprintf(buf, sizeof(buf), "%d", numbers_.step);
+    for (const auto& [label, value] : numbers.rows) rows.push_back({label, value, {}});  // the Engine's first
+    rows.push_back({"Episode", std::to_string(numbers.episode)});
+    if (numbers.max_steps > 0) std::snprintf(buf, sizeof(buf), "%d / %d", numbers.step, numbers.max_steps);
+    else std::snprintf(buf, sizeof(buf), "%d", numbers.step);
     rows.push_back({"Step", buf});
-    std::snprintf(buf, sizeof(buf), "%.1f", numbers_.episode_return);
+    std::snprintf(buf, sizeof(buf), "%.1f", numbers.episode_return);
     rows.push_back({"Return", buf});
-    if (numbers_.has_last_return) {
-        std::snprintf(buf, sizeof(buf), "%.1f", numbers_.last_return);
+    if (numbers.has_last_return) {
+        std::snprintf(buf, sizeof(buf), "%.1f", numbers.last_return);
         rows.push_back({"Last episode", buf});
     }
-    if (!numbers_.action.empty()) {
+    if (!numbers.action.empty()) {
         constexpr size_t kShown = 8;
         std::string action;
-        for (size_t i = 0; i < std::min(kShown, numbers_.action.size()); ++i) {
-            std::snprintf(buf, sizeof(buf), "%s%.2f", i ? "  " : "", numbers_.action[i]);
+        for (size_t i = 0; i < std::min(kShown, numbers.action.size()); ++i) {
+            std::snprintf(buf, sizeof(buf), "%s%.2f", i ? "  " : "", numbers.action[i]);
             action += buf;
         }
-        if (numbers_.action.size() > kShown)
-            action += "  ... (" + std::to_string(numbers_.action.size()) + " values)";
+        if (numbers.action.size() > kShown)
+            action += "  ... (" + std::to_string(numbers.action.size()) + " values)";
         rows.push_back({"Action", action});
     }
     if (ground.kind != MjGroundKind::Flat) {
         std::snprintf(buf, sizeof(buf), "%s \xC2\xB7 difficulty %.2f", GroundName(ground.kind), ground.difficulty);
-        rows.push_back({"Ground", buf});
+        rows.push_back({"Ground", buf, {}});
+    }
+    const bool ghost = ghost_shown.active;
+    if (ghost) {  // the ghost's numbers beside the played ones
+        const GhostNumbers& g = ghost_shown;
+        for (auto& row : rows) {
+            if (row.label == "Policy") row.ghost = g.name;
+            else if (row.label == "Episode") row.ghost = std::to_string(g.episode);
+            else if (row.label == "Step") {
+                if (numbers.max_steps > 0) std::snprintf(buf, sizeof(buf), "%d / %d", g.step, numbers.max_steps);
+                else std::snprintf(buf, sizeof(buf), "%d", g.step);
+                row.ghost = buf;
+            } else if (row.label == "Return") {
+                std::snprintf(buf, sizeof(buf), "%.1f", g.episode_return);
+                row.ghost = buf;
+            } else if (row.label == "Last episode" && g.has_last_return) {
+                std::snprintf(buf, sizeof(buf), "%.1f", g.last_return);
+                row.ghost = buf;
+            }
+        }
+        rows.insert(rows.begin(), Row{"", "Played", "Ghost"});
     }
 
     const float pad = 8.0f;
     const float margin = 12.0f;
     const float gap = 14.0f;
     const float line_h = ImGui::GetTextLineHeightWithSpacing();
-    float label_w = 0.0f, value_w = 0.0f;
+    float label_w = 0.0f, value_w = 0.0f, ghost_w = 0.0f;
     for (const auto& row : rows) {
         label_w = std::max(label_w, ImGui::CalcTextSize(row.label.c_str()).x);
         value_w = std::max(value_w, ImGui::CalcTextSize(row.value.c_str()).x);
+        ghost_w = std::max(ghost_w, ImGui::CalcTextSize(row.ghost.c_str()).x);
     }
+    const float ghost_col = ghost ? gap + ghost_w : 0.0f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 box0(scene_left + margin, scene_top + margin);
-    const ImVec2 box1(box0.x + pad * 2 + label_w + gap + value_w,
+    const ImVec2 box1(box0.x + pad * 2 + label_w + gap + value_w + ghost_col,
                       box0.y + pad * 2 + line_h * static_cast<float>(rows.size()) - ImGui::GetStyle().ItemSpacing.y);
     dl->AddRectFilled(box0, box1, ToU32(colors.bg_window, 0.85f), 6.0f);
     float y = box0.y + pad;
     for (const auto& row : rows) {
         dl->AddText(ImVec2(box0.x + pad, y), ToU32(colors.text_dim), row.label.c_str());
-        dl->AddText(ImVec2(box0.x + pad + label_w + gap, y), ToU32(colors.text), row.value.c_str());
+        const bool header = ghost && &row == &rows.front();
+        dl->AddText(ImVec2(box0.x + pad + label_w + gap, y), ToU32(header ? colors.text_dim : colors.text),
+                    row.value.c_str());
+        if (ghost && !row.ghost.empty())
+            dl->AddText(ImVec2(box0.x + pad + label_w + gap + value_w + gap, y),
+                        ToU32(header ? colors.text_dim : colors.accent_text), row.ghost.c_str());
         y += line_h;
     }
 }
@@ -577,7 +695,7 @@ void MjViewportPanel::RenderEpisodeStrip(MjEnvManager& env) {
         ImGui::TextColored(ToImVec4(colors.text), "%s", playback_label_.c_str());
         return;
     }
-    const SceneSnapshot snap = Snapshot(env);
+    const SceneSnapshot snap = Snapshot(env, history_, scrub_index_);
     char value[64];
     bool first = true;
     auto item = [&](const char* label, const char* text) {

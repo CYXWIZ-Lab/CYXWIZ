@@ -279,6 +279,7 @@ std::vector<MjGroundBox> GroundBoxes(const MjGround& ground) {
 }
 
 bool MjSceneBuilder::Load(const std::string& model_path, std::string& error) {
+    path_ = model_path;
     char parse_error[1000] = "";
     spec_.reset(mj_parseXML(model_path.c_str(), nullptr, parse_error, sizeof(parse_error)), mj_deleteSpec);
     if (!spec_) {

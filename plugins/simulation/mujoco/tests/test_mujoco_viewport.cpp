@@ -6,6 +6,11 @@
 #include "mj_gif_writer.h"
 #include "mj_recorder.h"
 #include "env/mj_stress.h"
+#include "env/mj_inspect.h"
+#include "env/mj_physics.h"
+#include "env/mj_history.h"
+#include "env/mj_ghost.h"
+#include "mj_env_manager.h"
 #include "mj_viewport_settings.h"
 
 #include "plugin/plugin_context.h"
@@ -563,6 +568,219 @@ void CheckStressSettings() {
     Check(DecodeStress("not json") == StressOptions{}, "broken text gives the defaults");
 }
 
+// Inspect (P2): the selected body, a joint set within its range, the
+// actuators, keyframes and the panel's saved choices, on HalfCheetah
+void CheckInspect(const std::filesystem::path& dir) {
+    const std::string path = std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/half_cheetah.xml";
+    MjSceneBuilder builder;
+    std::string error;
+    Check(builder.Load(path, error) && builder.Path() == path, "the builder reads HalfCheetah and keeps its path: " + error);
+    mjModel* m = builder.Build(MjScene{}, error);
+    Check(m != nullptr, "HalfCheetah builds: " + error);
+    if (!m) return;
+    mjData* d = mj_makeData(m);
+    mj_forward(m, d);
+    const int bthigh = mj_name2id(m, mjOBJ_BODY, "bthigh");
+    const MjBodyInfo info = InspectBody(m, d, bthigh, builder.Robot());
+    double robot_mass = 0.0;
+    for (int b = 1; b < m->nbody; ++b) robot_mass += m->body_mass[b];
+    Check(info.name == "bthigh" && info.parent_name == "torso" && info.mass > 0.0 &&
+              std::abs(info.robot_mass - robot_mass) < 1e-9,
+          "bthigh: its parent, its mass and the robot's");
+    Check(info.joints.size() == 1 && info.joints[0].name == "bthigh" && info.joints[0].scalar &&
+              info.joints[0].limited && std::abs(info.joints[0].low + 0.52) < 1e-9 &&
+              std::abs(info.joints[0].high - 1.05) < 1e-9 && info.joints[0].stiffness == 240.0,
+          "its hinge: range -0.52..1.05, stiffness 240");
+    const MjBodyInfo torso = InspectBody(m, d, mj_name2id(m, mjOBJ_BODY, "torso"), builder.Robot());
+    Check(torso.joints.size() == 3 && torso.joints[0].type == mjJNT_SLIDE && !torso.joints[0].limited &&
+              torso.parent_name == "the world",
+          "the torso: rootx, rootz, rooty, unlimited, on the world");
+    Check(InspectBody(m, d, 0, builder.Robot()).id == -1 && InspectBody(m, d, static_cast<int>(m->nbody), builder.Robot()).id == -1,
+          "the world body or none: nothing to inspect");
+
+    const int bshin = mj_name2id(m, mjOBJ_BODY, "bshin");
+    const double before = d->xipos[3 * bshin + 2];
+    Check(SetJointValue(m, d, info.joints[0].id, 5.0) && d->qpos[m->jnt_qposadr[info.joints[0].id]] == 1.05,
+          "a joint set past its range stops at the range");
+    Check(d->xipos[3 * bshin + 2] != before, "the state is computed again: the shin below it moved");
+    Check(!SetJointValue(m, d, -1, 0.0), "no joint: nothing set");
+
+    const auto actuators = InspectActuators(m, d);
+    Check(actuators.size() == 6 && actuators[0].name == "bthigh" && actuators[0].limited && actuators[0].low == -1.0,
+          "six actuators, controls -1..1");
+    d->ctrl[0] = 0.4;
+    mj_forward(m, d);
+    Check(std::abs(InspectActuators(m, d)[0].force - 48.0) < 1e-9, "bthigh at 0.4: 48 N m at the joint (gear 120)");
+
+    // Keyframes
+    const MjKeyframe crouch = CaptureKeyframe(m, d, "crouch", "12:04");
+    Check(crouch.state.size() == static_cast<size_t>(mj_stateSize(m, kKeyframeState)), "a keyframe holds the state");
+    mj_resetData(m, d);
+    mj_forward(m, d);
+    Check(ApplyKeyframe(m, d, crouch, error) && d->qpos[m->jnt_qposadr[info.joints[0].id]] == 1.05 &&
+              d->ctrl[0] == 0.4,
+          "loading it puts the joint and the controls back: " + error);
+    MjKeyframe other = crouch;
+    other.state.pop_back();
+    Check(!ApplyKeyframe(m, d, other, error) && error.find("another version") != std::string::npos,
+          "a keyframe of another version of the model is refused: " + error);
+    const auto file = KeyframesFile(dir, path);
+    Check(file.parent_path() == dir / "mujoco" / "keyframes" && file.stem().string().rfind("half_cheetah-", 0) == 0 &&
+              file.extension() == ".json",
+          "saved in the project, named after the model file: " + file.filename().string());
+    Check(KeyframesFile(dir, path) == file, "the same model file, the same keyframes");
+    Check(KeyframesFile(dir, "D:/robots/a/scene.xml") != KeyframesFile(dir, "D:/robots/b/scene.xml"),
+          "two models with one file name keep their own keyframes (Menagerie's scene.xml)");
+    Check(KeyframesFile(dir, (dir / "models" / "arm.xml").string()) ==
+              KeyframesFile(dir, (dir / "models" / "." / "arm.xml").string()),
+          "a model inside the project is keyed by its path there");
+    Check(SaveKeyframes(file, {crouch}, path, error), "saved: " + error);
+    const auto loaded = LoadKeyframes(file);
+    Check(loaded.size() == 1 && loaded[0].name == "crouch" && loaded[0].saved == "12:04" && loaded[0].state == crouch.state,
+          "and read back");
+    Check(DecodeKeyframes("not json").empty() && LoadKeyframes(dir / "none.json").empty(), "broken or missing: none");
+    Check(ModelKeyframes(m).empty(), "HalfCheetah's file has no keyframes of its own");
+
+    // The panel's saved choices
+    SettingsContext ctx;
+    Check(LoadViewportDefaults(ctx).inspect == InspectOptions{}, "nothing saved: Inspect closed, controls not held");
+    ViewportDefaults saved;
+    saved.inspect = InspectOptions{true, true};
+    SaveViewportDefaults(ctx, saved);
+    Check(LoadViewportDefaults(ctx).inspect == saved.inspect, "Inspect's choices read back");
+    Check(DecodeInspect("[1]") == InspectOptions{}, "broken text gives the defaults");
+    mj_deleteData(d);
+    mj_deleteModel(m);
+}
+
+// Physics (P3a): switches, what differs from the file, and the options kept
+// across a scene change and a reload, cleared by another file
+void CheckPhysics() {
+    const std::string path = std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/half_cheetah.xml";
+    MjEnvManager env;
+    Check(env.LoadModel(path), "HalfCheetah loads");
+    if (!env.IsLoaded()) return;
+    const mjOption file = *env.FileOption();
+    Check(PhysicsChanges(*env.Option(), file).empty(), "a fresh model has the file's physics");
+    mjOption option = file;
+    option.integrator = mjINT_IMPLICITFAST;
+    option.gravity[2] = -3.7;
+    const auto& contacts = PhysicsSwitches()[0];
+    Check(SwitchOn(option, contacts), "contacts are on in the file");
+    SetSwitch(option, contacts, false);
+    Check(!SwitchOn(option, contacts) && (option.disableflags & mjDSBL_CONTACT), "off sets the disable bit");
+    const auto& energy = PhysicsSwitches().back();
+    SetSwitch(option, energy, true);
+    Check(SwitchOn(option, energy) && (option.enableflags & mjENBL_ENERGY), "energy is an enable bit");
+    Check(PhysicsChanges(option, file) == "integrator, gravity, contacts, energy",
+          "the differences in words: " + PhysicsChanges(option, file));
+    env.SetOption(option);
+    std::string error;
+    MjScene rough;
+    rough.ground = MjGround{MjGroundKind::Rough, 0.4, 7};
+    Check(env.ChangeScene(rough, error) && env.Option()->integrator == mjINT_IMPLICITFAST &&
+              env.Option()->gravity[2] == -3.7,
+          "a scene change keeps the options: " + error);
+    Check(env.Reload(error) && env.Option()->integrator == mjINT_IMPLICITFAST, "Reload keeps them: " + error);
+    env.ClearOption();
+    Check(PhysicsChanges(*env.Option(), file).empty(), "Back to the file's values");
+    env.SetOption(option);
+    Check(env.LoadModel(path) && PhysicsChanges(*env.Option(), *env.FileOption()).empty(),
+          "opening a model file starts with its own physics");
+}
+
+// The timeline's history (P3b, P3c): its length in simulated time across
+// episodes, the plots' window, going on from a step back, a state put back,
+// and the plots' saved choices
+void CheckHistory() {
+    MjHistory history;
+    history.SetLimit(1.0, 1000);
+    auto entry = [](int episode, int step, double time) {
+        MjHistoryEntry e;
+        e.episode = episode;
+        e.step = step;
+        e.time = time;
+        return e;
+    };
+    for (int i = 0; i <= 30; ++i) history.Add(entry(1, i, 0.1 * i));
+    Check(history.Size() == 11 && history.At(0).step == 20 && history.Newest().step == 30,
+          "1 s kept at 0.1 s a step: the last 11 steps");
+    history.Add(entry(2, 0, 0.0));  // a new episode starts its clock again: no time between them
+    history.Add(entry(2, 1, 0.1));
+    Check(history.Size() == 12 && history.At(0).step == 21, "the time counts over episodes");
+    Check(history.CountWithin(0.5) == 2, "the plots' window stays in the newest episode");
+    history.TruncateAfter(3);
+    Check(history.Size() == 4 && history.Newest().step == 24, "going on from a step back drops what followed");
+    history.Add(entry(1, 25, 2.5));
+    Check(history.Newest().step == 25, "and it grows again from there");
+    MjHistory capped;
+    capped.SetLimit(0.0, 5);
+    for (int i = 0; i < 9; ++i) capped.Add(entry(1, i, 0.1 * i));
+    Check(capped.Size() == 5 && capped.At(0).step == 4, "no time limit: the count caps it (a played episode)");
+
+    const std::string path = std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/half_cheetah.xml";
+    mjModel* m = mj_loadXML(path.c_str(), nullptr, nullptr, 0);
+    if (!m) return;
+    mjData* d = mj_makeData(m);
+    d->qpos[3] = 0.4;
+    d->ctrl[0] = 0.6;
+    mj_forward(m, d);
+    const MjHistoryEntry kept = MjHistory::Capture(m, d, 3, 17, 1.25, 1);
+    Check(kept.episode == 3 && kept.step == 17 && kept.reward == 1.25 && kept.controls.size() == 6 &&
+              kept.sensors.empty(),
+          "a step keeps its episode, step, reward and controls (HalfCheetah has no sensors)");
+    mj_resetData(m, d);
+    Check(MjHistory::Apply(m, d, kept) && d->qpos[3] == 0.4 && d->ctrl[0] == 0.6, "a step back puts them back");
+    MjHistoryEntry wrong = kept;
+    wrong.state.pop_back();
+    Check(!MjHistory::Apply(m, d, wrong), "a state of another model is not put back");
+    mj_deleteData(d);
+    mj_deleteModel(m);
+
+    SettingsContext ctx;
+    Check(LoadViewportDefaults(ctx).timeline == TimelineOptions{}, "nothing saved: plots hidden, reward and joint");
+    ViewportDefaults saved;
+    saved.timeline = TimelineOptions{true, kPlotSpeed | kPlotControls};
+    SaveViewportDefaults(ctx, saved);
+    Check(LoadViewportDefaults(ctx).timeline == saved.timeline, "the plots' choices read back");
+    Check(DecodeTimeline(R"({"signals": 4096})") == TimelineOptions{}, "unknown signals keep the defaults");
+}
+
+// The ghost (TOFIX212 P3d): a second state put on the shown model, its bodies
+// where the source's are; a state of another model is refused; Clear and
+// another model leave nothing to draw
+void CheckGhost() {
+    const std::string path = std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/half_cheetah.xml";
+    mjModel* m = mj_loadXML(path.c_str(), nullptr, nullptr, 0);
+    if (!m) return;
+    mjData* d = mj_makeData(m);
+    d->qpos[0] = 1.5;  // ahead of the start
+    d->qpos[3] = -0.3;
+    for (int i = 0; i < 20; ++i) mj_step(m, d);
+    mj_forward(m, d);  // the bodies where the stepped state puts them (mj_step leaves the last ones)
+    std::vector<mjtNum> state(static_cast<size_t>(mj_stateSize(m, mjSTATE_FULLPHYSICS)));
+    mj_getState(m, d, state.data(), mjSTATE_FULLPHYSICS);
+    MjGhost ghost;
+    Check(ghost.Data(m) == nullptr, "nothing applied: nothing to draw");
+    Check(ghost.Apply(m, state) && ghost.Data(m) != nullptr && ghost.State() == state, "a state is put on the model");
+    bool same = ghost.Data(m) != nullptr;
+    for (int i = 0; same && i < 3 * m->nbody; ++i) same = ghost.Data(m)->xpos[i] == d->xpos[i];
+    Check(same, "its bodies are where the source's are");
+    std::vector<mjtNum> wrong = state;
+    wrong.pop_back();
+    Check(!ghost.Apply(m, wrong) && ghost.State() == state, "a state of another model is refused, the last stays");
+    mjModel* other = mj_loadXML((std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/hopper.xml").c_str(), nullptr, nullptr, 0);
+    if (other) {
+        Check(ghost.Data(other) == nullptr, "on another model there is nothing to draw");
+        mj_deleteModel(other);
+    }
+    ghost.Clear();
+    Check(ghost.Data(m) == nullptr && ghost.State().empty(), "Clear leaves nothing to draw");
+    Check(ghost.Apply(m, state) && ghost.Data(m) != nullptr, "and a state is put on the model again after it");
+    mj_deleteData(d);
+    mj_deleteModel(m);
+}
+
 }  // namespace
 
 int main() {
@@ -578,6 +796,10 @@ int main() {
     CheckObjectSlots();
     CheckStressLog();
     CheckStressSettings();
+    CheckInspect(dir);
+    CheckPhysics();
+    CheckHistory();
+    CheckGhost();
     std::filesystem::remove_all(dir, ec);
     if (failures == 0) std::printf("test_mujoco_viewport: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -13,6 +13,7 @@ MjEnvManager::MjEnvManager(MjEnvManager&& other) noexcept
     : model_(other.model_),
       data_(other.data_),
       builder_(std::move(other.builder_)),
+      option_(std::move(other.option_)),
       scene_(std::move(other.scene_)),
       last_terminated_(other.last_terminated_),
       max_episode_steps_(other.max_episode_steps_),
@@ -38,6 +39,7 @@ MjEnvManager& MjEnvManager::operator=(MjEnvManager&& other) noexcept {
         model_ = other.model_;
         data_ = other.data_;
         builder_ = std::move(other.builder_);
+        option_ = std::move(other.option_);
         scene_ = std::move(other.scene_);
         last_terminated_ = other.last_terminated_;
         max_episode_steps_ = other.max_episode_steps_;
@@ -91,6 +93,41 @@ bool MjEnvManager::LoadModel(const std::string& path, const MjScene& wanted) {
     return true;
 }
 
+bool MjEnvManager::Reload(std::string& error) {
+    if (!model_ || builder_.Path().empty()) {
+        error = "No model file is open.";
+        return false;
+    }
+    MjSceneBuilder builder;
+    if (!builder.Load(builder_.Path(), error)) return false;
+    mjModel* model = builder.Build(scene_, error);
+    if (!model) return false;
+    mjData* data = mj_makeData(model);
+    if (!data) {
+        mj_deleteModel(model);
+        error = "MuJoCo could not make the model's state (out of memory?).";
+        return false;
+    }
+    if (option_) model->opt = *option_;
+    mj_deleteData(data_);
+    mj_deleteModel(model_);
+    model_ = model;
+    data_ = data;
+    builder_ = std::move(builder);
+    Reset();
+    return true;
+}
+
+void MjEnvManager::SetOption(const mjOption& option) {
+    option_ = option;
+    if (model_) model_->opt = option;
+}
+
+void MjEnvManager::ClearOption() {
+    option_.reset();
+    if (model_ && builder_.Loaded()) model_->opt = builder_.FileOption();
+}
+
 bool MjEnvManager::ChangeScene(const MjScene& scene, std::string& error) {
     if (!model_ || !data_) {
         error = "No model is open.";
@@ -104,6 +141,7 @@ bool MjEnvManager::ChangeScene(const MjScene& scene, std::string& error) {
         error = "MuJoCo could not make the model's state (out of memory?).";
         return false;
     }
+    if (option_) model->opt = *option_;  // the Inspect panel's physics stay
     CopySceneState(model_, data_, model, data, builder_.Robot());
     mj_deleteData(data_);
     mj_deleteModel(model_);
@@ -135,6 +173,7 @@ void MjEnvManager::Close() {
     last_terminated_ = false;
     scene_ = MjScene{};
     builder_ = {};
+    option_.reset();  // another file starts with its own physics
 }
 
 // =============================================================================

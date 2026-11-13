@@ -52,7 +52,13 @@ public:
     // Render one frame. Call from main thread.
     // Returns the Core Profile texture ID suitable for ImGui::Image().
     // Returns 0 if rendering is disabled or not initialized.
-    unsigned int RenderFrame(const mjModel* model, const mjData* data);
+    // ghost: a second state of the same model drawn see-through beside it
+    // (a second policy, TOFIX212 P3d); null: none
+    unsigned int RenderFrame(const mjModel* model, const mjData* data, const mjData* ghost = nullptr);
+    // The colour the ghost is tinted with (the theme's accent)
+    void SetGhostTint(const float rgba[4]) {
+        for (int i = 0; i < 4; ++i) ghost_rgba_[i] = rgba[i];
+    }
 
     // Camera controls (called from ImGui mouse input). Orbit and zoom move
     // the free and the following camera; pan moves the free camera only (a
@@ -91,6 +97,13 @@ public:
     int PushForce(const mjModel* model, mjData* data, mjtNum force[6]);
     void EndPush();
     bool IsPushing() const { return pert_.select > 0; }
+    // The body the Inspect panel selected (-1: none): drawn highlighted, its
+    // name shown when no labels are on, and a marker at its centre of mass in
+    // `rgba` (the theme's colour; alpha 0: no marker)
+    void Select(int body, const float rgba[4]) {
+        selected_ = body;
+        for (int i = 0; i < 4; ++i) marker_rgba_[i] = rgba[i];
+    }
     int PushedBody() const { return pert_.select; }
 
     // Render settings
@@ -145,6 +158,9 @@ private:
     mjvScene scn_{};
     mjrContext con_{};
     mjvPerturb pert_{};  // the Ctrl+drag pull, drawn with the scene while held
+    int selected_ = -1;  // Select
+    float marker_rgba_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float ghost_rgba_[4] = {0.5f, 0.5f, 1.0f, 1.0f};  // SetGhostTint
 
     // Hidden GLFW window for compatibility context
     GLFWwindow* compat_window_ = nullptr;

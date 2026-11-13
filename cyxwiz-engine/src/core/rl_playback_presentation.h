@@ -88,4 +88,14 @@ std::string PreviewOf(int update, int64_t steps);
 // episode the preview finished, and the networks that played the last one
 std::string PreviewEpisodes(int episodes, bool has_last_return, double last_return, int last_return_update);
 
+// A second policy played beside the first as a ghost (TOFIX212 P3d): a
+// policy's short name in the view ("half_cheetah_robust" from its file,
+// "this session's run")
+std::string PolicyName(const std::string& file_name);
+// The Play tab's line about the ghost: "Ghost Â· episode 2 Â· step 412 Â·
+// return 1203.4 Â· last 2415.7", then the note (why the view does not draw
+// it); not playing: the note alone (why it does not play)
+std::string GhostLine(bool playing, int episode, int step, double episode_return, const std::vector<double>& returns,
+                      const std::string& note);
+
 }  // namespace cyxwiz::rl_playback

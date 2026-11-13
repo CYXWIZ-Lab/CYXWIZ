@@ -462,6 +462,33 @@ void RenderViewportPreferences(PluginContext& ctx) {
             changed = true;
         }
 
+        // The Inspect panel: shown or not, and whether typed controls are held
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Inspect panel");
+        ImGui::TableNextColumn();
+        if (ImGui::Checkbox("Show it beside the scene when the Viewport starts##inspect_open", &d.inspect.panel_open))
+            changed = true;
+        if (ImGui::Checkbox("Hold the typed actuator controls while the run steps", &d.inspect.hold_controls))
+            changed = true;
+
+        // The plots under the scene
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Plots");
+        ImGui::TableNextColumn();
+        if (ImGui::Checkbox("Show them under the scene when the Viewport starts", &d.timeline.plots_open))
+            changed = true;
+        static const char* kSignalNames[] = {"Reward", "The selected joint", "Root speed", "Controls", "Sensors"};
+        for (int i = 0; i < 5; ++i) {
+            if (i) ImGui::SameLine();
+            bool on = (d.timeline.signals & (1u << i)) != 0;
+            if (ui->ToggleChip(kSignalNames[i], kSignalNames[i], &on)) {
+                d.timeline.signals = on ? d.timeline.signals | (1u << i) : d.timeline.signals & ~(1u << i);
+                changed = true;
+            }
+        }
+
         // The Stress panel: shown or not, and what it offers first
         using L = StressLimits;
         StressOptions& st = d.stress;

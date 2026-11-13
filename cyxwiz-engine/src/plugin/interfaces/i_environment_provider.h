@@ -151,6 +151,13 @@ public:
     // view's own words. Declared last, like Stats.
     virtual void LabelShownCopy(const PluginShownCopyLabel& /*label*/) {}
 
+    // Optional: shows copy `copy` see-through in the plugin's view, beside the
+    // copy another batch shows (ShowCopy), as later Resets and Steps move it,
+    // until ShowCopyAsGhost(-1, "") or Release: a second policy to compare.
+    // `name` names it in the view (the policy). False: the view draws no
+    // ghost. Declared last, like LabelShownCopy.
+    virtual bool ShowCopyAsGhost(int /*copy*/, const std::string& /*name*/) { return false; }
+
 protected:
     ~IEnvironmentBatch() = default;
 };

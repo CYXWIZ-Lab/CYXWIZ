@@ -94,6 +94,14 @@ public:
         filters.emplace_back("All Files", "*");
         return FileDialogs::OpenFile(title.c_str(), filters).value_or(std::string());
     }
+
+    bool ToggleChip(const char* id, const char* label, bool* on) override {
+        if (!on) return false;
+        if (!ui::ToggleChip(id, label, "", *on, ImGui::GetColorU32(ui::CurrentTokens().accent_text))) return false;
+        *on = !*on;
+        return true;
+    }
+    float ToggleChipWidth(const char* label) const override { return ui::ToggleChipWidth(label, ""); }
 };
 
 }  // namespace

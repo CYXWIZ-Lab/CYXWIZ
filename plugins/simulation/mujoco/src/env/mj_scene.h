@@ -102,6 +102,9 @@ const char* GroundName(MjGroundKind kind);  // "Rough"
 class MjSceneBuilder {
 public:
     bool Load(const std::string& model_path, std::string& error);
+    const std::string& Path() const { return path_; }  // the file Load read
+    // The file's own physics options (timestep, integrator, gravity ...)
+    const mjOption& FileOption() const { return plain_->opt; }
     // The model with the scene; null with the reason. An empty scene gives the
     // same model as mj_loadXML. The caller deletes it (mj_deleteModel).
     mjModel* Build(const MjScene& scene, std::string& error) const;
@@ -110,6 +113,7 @@ public:
     double StartX() const { return start_[0]; }  // the robot's root at rest: the ground starts kGroundStart ahead
 
 private:
+    std::string path_;
     std::shared_ptr<mjSpec> spec_;
     std::shared_ptr<mjModel> plain_;
     MjRobotSize robot_;

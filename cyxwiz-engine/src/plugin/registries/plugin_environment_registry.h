@@ -42,6 +42,10 @@ public:
     std::vector<PluginEnvironmentStat> Stats() const;
     // How the view names the shown copy (a plugin without it ignores it)
     void LabelShownCopy(const PluginShownCopyLabel& label);
+    // Shows one copy see-through beside the shown one (-1: stop), named
+    // `name`. False when the view draws no ghost, or the plugin failed (error
+    // says why).
+    bool ShowCopyAsGhost(int copy, const std::string& name, std::string& error);
 
 private:
     friend class PluginEnvironmentRegistry;

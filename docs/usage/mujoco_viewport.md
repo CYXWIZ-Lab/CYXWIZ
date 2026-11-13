@@ -67,6 +67,13 @@ update. **Raw training copy** shows copy 0 of the training as it learns
 (**Training copy 0**); the Stress panel is off for it (a disturbance would
 change what training learns). See the [RL walkthrough](rl_walkthrough.md) (While it trains).
 
+With a second policy playing beside it as a ghost (Policy Playback: **Compare
+with**, then **Show as a ghost**), the scene draws the ghost see-through and
+tinted, and the numbers get a **Played** and a **Ghost** column: **Policy**
+(each one's name), **Episode**, **Step**, **Return** and **Last episode**. A
+step back on the timeline shows both where they were, with that step's numbers. See the
+[RL walkthrough](rl_walkthrough.md) (Compare two policies side by side).
+
 ## Record
 
 **Record > Screenshot (PNG)** saves the scene as it is now.
@@ -122,6 +129,82 @@ The policy plays on: a disturbance never changes what it observes (the
 robot's own joints), only what happens to it. HalfCheetah never ends an
 episode by itself, so for it a fall shows as **flipped over**.
 
+## Inspect: look inside the model
+
+**Inspect** (beside Stress; the two share the side of the scene) shows and
+changes the Viewport's own run. While a policy plays or a graph run steps the
+model, it shows and changes nothing.
+
+- **Select a body** by double-clicking it in the scene (with Inspect closed a
+  double-click also follows the body with the camera, as before). The body is
+  drawn highlighted with its name and a dot at its centre of mass. Inspect
+  shows its **mass** (and the robot's), its **centre of mass** and its
+  **speed**; **Follow it with the camera**, **Select parent**, **Clear**.
+- **Its joints**: a hinge or slide joint's position is typed in while the run
+  is paused (kept within the joint's range; the state is computed again), with
+  its velocity, stiffness and damping.
+- **Actuators**: each actuator's control typed in (within its range), with
+  the force it puts on its joint (gear times the actuator's force: 0.40 on
+  HalfCheetah's bthigh is 48 N·m). Paused, the force shows at once; a run
+  steps with zeros unless **Hold these controls while it runs** is on.
+  **Set all to 0**.
+- **Keyframes**: **Save the state** under a name; **Load** puts it back (the
+  joints, velocities and controls), **Delete** removes it. They are saved with
+  the project in `mujoco/keyframes/<model file name>-<id>.json` (one file a model
+  file, also when two models share a file name), so they come back next
+  time; a keyframe saved for another version of the model file is refused with
+  the reason. A model file's own `<key>` elements are listed too.
+- **Physics** (the Viewport's own run): the **timestep** (with the
+  environment's frame skip beside it), the **integrator** (Euler, RK4,
+  Implicit, Implicit fast), the **solver** (PGS, CG, Newton) and its
+  iterations, **gravity** (x, y, z), and switches for contacts, joint limits,
+  friction loss, actuation, gravity, springs, dampers, warm start and energy.
+  The line beside **Back to the model file's values** says what differs from
+  the file. The options stay through a Stress ground and a Reload; opening
+  another model file starts with its own. A played policy keeps its
+  environment's physics.
+- **Compare**: the ghost's name while a second policy plays beside the
+  played one (Policy Playback: **Compare with**, then **Show as a ghost**),
+  or why it is not drawn (it plays another model file or ground). Choosing
+  and removing it is done in Policy Playback.
+- **Reload the model file** reads the file again (after editing it on disk),
+  keeping the camera and the scene; the state starts over. A file that does not
+  build any more leaves the model as it was and says why.
+
+## Timeline: look back at what happened
+
+The strip under the scene keeps the steps of what the Viewport shows: the
+last 30 seconds of simulated time of the Viewport's own run, or the whole
+episode a policy is playing (a new episode starts it again).
+
+- **Drag along it** (or click), or press **Step back** and **Step**, to show
+  an earlier step: the scene goes back to that exact state (the joints,
+  velocities, contacts and controls). The Viewport's own run pauses; the scene
+  says **A step back** with the shown episode and step, and the numbers under
+  it are that step's (its episode, step and the reward summed so far).
+- **Back to live** (shown only while a step back is) puts the newest step
+  back and runs again if the run was running.
+- **Run**, **Resume** or **Step** from a step back goes on from the shown
+  step: the kept steps after it are dropped, so you can try again from just
+  before a fall, for example after a kick from the Stress panel.
+- While a policy plays, a step back holds the scene on that step, and the live
+  numbers show that step (a ghost's too); the policy plays on, and **Back to
+  live** shows it again.
+- The red marks on the track are the Stress panel's **fell** and **flipped
+  over** events, at the step they happened.
+
+**Plots** (beside the step buttons) draws the last 10 seconds of the kept
+steps under the timeline, all on one scale (the line under the plot says the
+range); a line marks the shown step. Pick what it draws:
+
+| Choice | The line |
+| --- | --- |
+| **Reward** | The reward of each step |
+| **Selected joint** | The position of the first joint of the body selected with a double-click (named after the joint once one is selected) |
+| **Root speed** | The speed of the robot's root body (m/s) |
+| **Controls** | Every actuator's control |
+| **Sensors** | The model's first 8 sensor values (shown only for a model with sensors) |
+
 ## Preferences > Simulation > MuJoCo Viewport
 
 | Setting | Default |
@@ -130,6 +213,8 @@ episode by itself, so for it a fall shows as **flipped over**.
 | **Live numbers** | On |
 | **Record video** | GIF, until the episode ends |
 | **Scene options** | MuJoCo's; **Use MuJoCo's** resets options kept from the View menu |
+| **Inspect panel** | Closed; typed controls not held |
+| **Plots** | Not shown under the scene; Reward and the selected joint picked |
 | **Stress panel** | Closed; a sudden 1.5 m/s kick; a 0.2 m 2 kg ball at 6 m/s from 3 m ahead, no tumble; no random kicks (every 3 s when on) or throws (every 1.5 s, size × 0.5-2, mass × 0.5-3); Rough 0.40 seed 7 offered |
 
 Changing a choice in the Viewport does not change these, except **View >
@@ -146,9 +231,9 @@ policy** whenever you want to watch it: no training run is needed. See
 ## Limits
 
 - The Viewport shows one copy of a training run's environments (the first).
-- Typed joint and actuator values, keyframes and physics options are
-  planned (the Inspect panel), as are a timeline to scrub a played episode
-  and side-by-side policies.
+- The Stress panel acts on the played policy only, not on a ghost.
+- The timeline keeps at most 100,000 steps of the Viewport's own run and
+  20,000 of a played episode.
 - Training with pushes and rough ground, and the stress test that compares
   two saved policies by difficulty, are in the
   [RL walkthrough](rl_walkthrough.md) (Robustness, and Stress test).

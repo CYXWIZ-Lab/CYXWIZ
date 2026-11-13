@@ -158,9 +158,12 @@ void MjSimulationExecutor::ExecuteOneStep() {
         mjData* d = env_->GetMutableData();
         if (!d) return;
         if (hooks_.before_step) hooks_.before_step(env_->GetModel(), d);
-        const std::vector<float> no_action(static_cast<size_t>(env_->GetActionDim()), 0.0f);
-        const StepResult result = env_->Step(no_action);
-        if (result.terminated || result.truncated) {
+        std::vector<float> action = controls_;  // held controls, else zeros
+        action.resize(static_cast<size_t>(env_->GetActionDim()), 0.0f);
+        const StepResult result = env_->Step(action);
+        const bool ended = result.terminated || result.truncated;
+        if (hooks_.after_step) hooks_.after_step(env_->GetModel(), d, result.reward, ended);
+        if (ended) {
             if (hooks_.episode_ended && hooks_.episode_ended()) held_ = true;
             else env_->Reset();
         }

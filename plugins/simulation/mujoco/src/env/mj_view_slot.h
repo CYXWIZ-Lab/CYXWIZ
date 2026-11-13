@@ -18,6 +18,25 @@
 
 namespace cyxwiz::plugin::mujoco {
 
+// A second policy's copy drawn see-through beside the shown one
+// (IEnvironmentBatch::ShowCopyAsGhost, TOFIX212 P3d): its batch publishes it
+// as the shown copy's batch does; the Viewport draws it when it plays the
+// same model file and scene.
+struct MjGhostView {
+    const void* owner = nullptr;  // the ghost's batch; null: no ghost
+    std::string model_path;
+    MjScene scene;
+    std::string name;             // the policy (the Engine's words)
+    std::vector<mjtNum> state;    // mj_getState(mjSTATE_FULLPHYSICS)
+    int episode = 1;
+    int step = 0;
+    double episode_return = 0.0;
+    bool has_last_return = false;
+    double last_return = 0.0;
+    uint64_t version = 0;         // grows with every published state
+    uint64_t published = 0;       // states published since ShowCopyAsGhost (Reset and Step)
+};
+
 struct MjViewSlot {
     std::mutex mutex;
     const void* owner = nullptr;  // the showing batch; null: nothing shown
@@ -47,6 +66,11 @@ struct MjViewSlot {
     // a training copy); empty: "Policy playback"
     PluginShownCopyLabel label;
     uint64_t version = 0;         // grows with every published state
+    // States published since ShowCopy (Reset and Step). The Engine steps a
+    // ghost right after the shown copy: one more here than the ghost's means
+    // the ghost's state of that step is still to come
+    uint64_t published = 0;
+    MjGhostView ghost;            // a second policy beside it (ShowCopyAsGhost)
 };
 
 }  // namespace cyxwiz::plugin::mujoco

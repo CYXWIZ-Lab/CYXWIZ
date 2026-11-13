@@ -10,6 +10,7 @@
 #include <atomic>
 #include <functional>
 #include <thread>
+#include <vector>
 
 namespace cyxwiz::plugin::mujoco {
 
@@ -29,6 +30,10 @@ enum class SimState {
 struct MjStepHooks {
     // Before every step: the pushes on the model
     std::function<void(const mjModel* m, mjData* d)> before_step;
+    // After every step, before an ended episode starts again: the state the
+    // step reached, its reward and whether it ended the episode (the timeline
+    // records it)
+    std::function<void(const mjModel* m, const mjData* d, double reward, bool ended)> after_step;
     // An episode ended: true holds the next one until ContinueEpisode (its
     // ground is built on the UI thread first); false starts it at once
     std::function<bool()> episode_ended;
@@ -60,6 +65,9 @@ public:
     // the physics lock; ContinueEpisode after the caller started the next one.
     bool HoldsEpisode() const { return held_.load(); }
     void ContinueEpisode() { held_ = false; }
+    // The controls the run steps with instead of zeros (the Inspect panel's
+    // held controls; empty: zeros). Set under the physics lock.
+    void SetHeldControls(std::vector<float> controls) { controls_ = std::move(controls); }
 
     // --- Manual Control Mode ---
     void StartManualControl();
@@ -84,6 +92,7 @@ private:
 
     MjEnvManager* env_ = nullptr;
     MjStepHooks hooks_;
+    std::vector<float> controls_;  // guarded by the environment's physics lock
     std::atomic<bool> held_{false};
 
     std::atomic<SimMode> mode_{SimMode::Stopped};
