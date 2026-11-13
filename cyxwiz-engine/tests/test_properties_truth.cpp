@@ -182,8 +182,8 @@ int main() {
         const auto& covered = gui::properties_truth::SpecializedTruthCoverageNodeTypes();
         // 76 tofix48 baseline nodes + RNN (tofix68 Studio RNN wiring) +
         // WordEmbeddings (TOFIX152) + Max-Abs Scaler, Quantile Transform and
-        // Power Transform (TOFIX129 D2).
-        Check(covered.size() == 81,
+        // Power Transform (TOFIX129 D2) + Hardswish and Hardsigmoid (TOFIX178 1.7) + ReLU6 (TOFIX178 1.9).
+        Check(covered.size() == 84,
               "tofix48 baseline should record each specialized truth-covered node");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::RNN),
               "RNN should be in specialized truth coverage");
@@ -227,7 +227,10 @@ int main() {
               "Dense should be in specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::ELU) &&
                   gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Swish) &&
-                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Mish),
+                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Mish) &&
+                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Hardswish) &&
+                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::Hardsigmoid) &&
+                  gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::ReLU6),
               "all executable activation variants should have specialized truth coverage");
         Check(gui::properties_truth::HasSpecializedTruthCoverage(gui::NodeType::BatchNorm),
               "BatchNorm should be in specialized truth coverage");
@@ -925,8 +928,14 @@ int main() {
         auto sgd = MakeNode(2, gui::NodeType::SGD, "SGD");
         sgd.parameters["learning_rate"] = "0";
         sgd.parameters["momentum"] = "0.9";
+        sgd.parameters["weight_decay"] = "0.0005";
 
         const auto report = gui::properties_truth::ResolveNodeTruth(sgd);
+        const auto* decay = FindProperty(report, "weight_decay");
+        Check(decay != nullptr && !HasStatus(*decay, gui::properties_truth::TruthStatus::Unsupported),
+              "SGD weight decay is a runtime setting, not an unsupported one");
+        Check(FindProperty(report, "nesterov") != nullptr && FindProperty(report, "weight_decay_exclude") != nullptr,
+              "SGD should surface nesterov and weight_decay_exclude truth");
         const auto* lr = FindProperty(report, "learning_rate");
         Check(lr != nullptr,
               "SGD should surface learning_rate truth");
@@ -1030,6 +1039,36 @@ int main() {
                             gui::properties_truth::TruthStatus::Conflicting) &&
                   conflict.has_issue,
               "TimeDistributed should expose conflicting width aliases as an issue");
+    }
+
+    {
+        // Freezing: a mark on Frozen for every layer with weights, and on
+        // When frozen for BatchNorm; an unknown statistics value is flagged.
+        auto conv = MakeNode(31, gui::NodeType::Conv2D, "conv1");
+        conv.parameters["frozen"] = "true";
+        auto report = gui::properties_truth::ResolveNodeTruth(conv);
+        const auto* frozen = FindProperty(report, "frozen");
+        Check(frozen != nullptr && frozen->effective_value == "true" &&
+                  HasStatus(*frozen, gui::properties_truth::TruthStatus::OK) &&
+                  FindProperty(report, "frozen_statistics") == nullptr,
+              "Conv2D truth marks Frozen and has no When frozen");
+        auto norm = MakeNode(32, gui::NodeType::BatchNorm, "bn1");
+        norm.parameters["frozen"] = "true";
+        norm.parameters["frozen_statistics"] = "update";
+        report = gui::properties_truth::ResolveNodeTruth(norm);
+        const auto* statistics = FindProperty(report, "frozen_statistics");
+        Check(statistics != nullptr && statistics->effective_value == "update" &&
+                  HasStatus(*statistics, gui::properties_truth::TruthStatus::OK),
+              "BatchNorm truth marks When frozen");
+        norm.parameters["frozen_statistics"] = "sometimes";
+        report = gui::properties_truth::ResolveNodeTruth(norm);
+        statistics = FindProperty(report, "frozen_statistics");
+        Check(statistics != nullptr &&
+                  HasStatus(*statistics, gui::properties_truth::TruthStatus::Unsupported),
+              "an unknown When frozen value is flagged");
+        auto relu = MakeNode(33, gui::NodeType::ReLU, "relu");
+        Check(FindProperty(gui::properties_truth::ResolveNodeTruth(relu), "frozen") == nullptr,
+              "a layer without weights has no Frozen truth");
     }
 
     {

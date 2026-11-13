@@ -6,6 +6,7 @@
 
 #include "cyxwiz/gradient_check.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <stdexcept>
@@ -88,6 +89,29 @@ public:
         });
     }
 
+    std::vector<std::string> GetStateNames() const override {
+        return Call("get_state_names", [&]() {
+            if (py::function f = Override("get_state_names")) return f().cast<std::vector<std::string>>();
+            return state_names_;
+        });
+    }
+
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override {
+        return Call("cached_elements_per_sample", [&]() -> size_t {
+            if (py::function f = Override("cached_elements_per_sample")) return f(sample_input_shape).cast<size_t>();
+            return 0;
+        });
+    }
+
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override {
+        return Call("backward_working_elements_per_sample", [&]() -> size_t {
+            if (py::function f = Override("backward_working_elements_per_sample")) {
+                return f(sample_input_shape).cast<size_t>();
+            }
+            return 0;
+        });
+    }
+
     std::string GetName() const override {
         return Call("get_name", [&]() {
             if (py::function f = Override("get_name")) return f().cast<std::string>();
@@ -103,21 +127,48 @@ public:
         });
     }
 
-    // Helpers for Python subclasses (add_parameter, parameter, set_gradient).
+    // Helpers for Python subclasses (add_parameter, parameter, set_gradient,
+    // and add_state for tensors kept but not trained). State lives in
+    // parameters_ too, so it is saved and loaded with the weights, but has no
+    // gradient and is named by GetStateNames.
     void AddParameter(const std::string& name, const Tensor& value) {
-        if (name.empty()) throw std::invalid_argument("a parameter needs a name");
-        if (parameters_.count(name)) throw std::invalid_argument("parameter '" + name + "' already exists");
-        parameters_[name] = value;
+        AddTensor(name, value);
         gradients_[name] = Tensor::Zeros(value.Shape(), value.GetDataType());
     }
 
+    void AddState(const std::string& name, const Tensor& value) {
+        AddTensor(name, value);
+        state_names_.push_back(name);
+    }
+
     const Tensor& Parameter(const std::string& name) const {
+        if (IsState(name)) throw py::key_error("'" + name + "' is state; read it with state(name)");
         const auto it = parameters_.find(name);
         if (it == parameters_.end()) throw py::key_error("no parameter '" + name + "'; add it with add_parameter");
         return it->second;
     }
 
+    const Tensor& State(const std::string& name) const {
+        const auto it = parameters_.find(name);
+        if (it == parameters_.end() || !IsState(name)) {
+            throw py::key_error("no state '" + name + "'; add it with add_state");
+        }
+        return it->second;
+    }
+
+    void SetState(const std::string& name, const Tensor& value) {
+        const auto it = parameters_.find(name);
+        if (it == parameters_.end() || !IsState(name)) {
+            throw py::key_error("no state '" + name + "'; add it with add_state");
+        }
+        if (value.Shape() != it->second.Shape()) {
+            throw std::invalid_argument("the new value of '" + name + "' must have its shape");
+        }
+        it->second = value;
+    }
+
     void SetGradient(const std::string& name, const Tensor& gradient) {
+        if (IsState(name)) throw py::key_error("'" + name + "' is state; it takes no gradient");
         const auto it = parameters_.find(name);
         if (it == parameters_.end()) throw py::key_error("no parameter '" + name + "'; add it with add_parameter");
         if (gradient.Shape() != it->second.Shape()) {
@@ -134,11 +185,25 @@ public:
 
     std::vector<std::string> ParameterNames() const {
         std::vector<std::string> names;
-        for (const auto& [name, value] : parameters_) names.push_back(name);
+        for (const auto& [name, value] : parameters_) {
+            if (!IsState(name)) names.push_back(name);
+        }
         return names;
     }
 
+    const std::vector<std::string>& StateNames() const { return state_names_; }
+
 private:
+    void AddTensor(const std::string& name, const Tensor& value) {
+        if (name.empty()) throw std::invalid_argument("a parameter needs a name");
+        if (parameters_.count(name)) throw std::invalid_argument("parameter '" + name + "' already exists");
+        parameters_[name] = value;
+    }
+
+    bool IsState(const std::string& name) const {
+        return std::find(state_names_.begin(), state_names_.end(), name) != state_names_.end();
+    }
+
     // The Python method overriding `name`, or an empty function when the
     // subclass does not define it. Needs the lock.
     py::function Override(const char* name) const {
@@ -183,6 +248,7 @@ private:
 
     TensorMap parameters_;
     TensorMap gradients_;
+    std::vector<std::string> state_names_;
 };
 
 PythonModule& AsPythonModule(Module& module) {
@@ -218,6 +284,13 @@ public:
     void SetParameters(const TensorMap& params) override { target_->SetParameters(params); }
     TensorMap GetGradients() override { return target_->GetGradients(); }
     bool HasParameters() const override { return target_->HasParameters(); }
+    std::vector<std::string> GetStateNames() const override { return target_->GetStateNames(); }
+    size_t CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const override {
+        return target_->CachedElementsPerSample(sample_input_shape);
+    }
+    size_t BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const override {
+        return target_->BackwardWorkingElementsPerSample(sample_input_shape);
+    }
     std::string GetName() const override { return target_->GetName(); }
     void SetTraining(bool training) override {
         is_training_ = training;
@@ -374,6 +447,14 @@ void BindModuleBase(py::module_& m) {
         .def("set_parameters", &Module::SetParameters, py::arg("params"), "Set module parameters")
         .def("get_gradients", &Module::GetGradients, "Get parameter gradients")
         .def("has_parameters", &Module::HasParameters, "Check if module has trainable parameters")
+        .def("get_state_names", &Module::GetStateNames,
+            "Names of the get_parameters entries kept but not trained (no gradient)")
+        .def("cached_elements_per_sample", &Module::CachedElementsPerSample, py::arg("sample_input_shape"),
+            "For memory estimates: elements one training forward keeps for backward beyond the output, "
+            "per sample of this shape (no batch axis); 0 by default")
+        .def("backward_working_elements_per_sample", &Module::BackwardWorkingElementsPerSample,
+            py::arg("sample_input_shape"),
+            "For memory estimates: elements backward holds at once while it runs, per sample; 0 by default")
         .def("get_name", &Module::GetName, "Get module name")
         .def("set_training", &Module::SetTraining, py::arg("training"), "Set training mode")
         .def("is_training", &Module::IsTraining, "Check if in training mode")
@@ -396,7 +477,21 @@ void BindModuleBase(py::module_& m) {
             }, py::arg("name"), "The last gradient stored for a parameter")
         .def("parameter_names", [](Module& self) {
                 return AsPythonModule(self).ParameterNames();
-            }, "Names of the parameters added with add_parameter");
+            }, "Names of the parameters added with add_parameter")
+        .def("add_state", [](Module& self, const std::string& name, const Tensor& value) {
+                AsPythonModule(self).AddState(name, value);
+            }, py::arg("name"), py::arg("value"),
+            "Declare a tensor the module keeps but does not train, such as a running mean. "
+            "It is saved with the weights and takes no gradient; update it with set_state")
+        .def("state", [](Module& self, const std::string& name) {
+                return AsPythonModule(self).State(name);
+            }, py::arg("name"), "The current value of a state tensor")
+        .def("set_state", [](Module& self, const std::string& name, const Tensor& value) {
+                AsPythonModule(self).SetState(name, value);
+            }, py::arg("name"), py::arg("value"), "Replace a state tensor (same shape)")
+        .def("state_names", [](Module& self) {
+                return AsPythonModule(self).StateNames();
+            }, "Names of the state tensors added with add_state");
 
     // The C++ module behind a Python module object, for the Engine (Part C3
     // option A): an address, so the Engine needs no pybind11 type registry

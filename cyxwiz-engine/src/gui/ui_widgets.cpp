@@ -618,4 +618,53 @@ bool MessageDialog(const char* title, const char* message) {
     return dismissed;
 }
 
+void SheetTiles(const std::vector<SheetTile>& tiles, float width, float aspect, size_t per_row) {
+    const Tokens& t = CurrentTokens();
+    const float gap = 10.0f;
+    const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    const ImVec2 size(width, std::max(1.0f, width * aspect));
+    size_t in_row = 0;
+    for (size_t i = 0; i < tiles.size(); ++i) {
+        if (i > 0) {
+            const bool row_full = per_row > 0 && in_row >= per_row;
+            ImGui::SameLine(0.0f, gap);
+            if (row_full || (per_row == 0 && ImGui::GetCursorScreenPos().x + width > right)) {
+                ImGui::NewLine();
+                in_row = 0;
+            }
+        }
+        ++in_row;
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::BeginGroup();
+        if (tiles[i].texture) ImGui::Image(tiles[i].texture, size);
+        else ImGui::Dummy(size);
+        if (!tiles[i].name.empty()) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);
+            ImGui::TextColored(t.text_dim, "%s", tiles[i].name.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndGroup();
+        ImGui::PopID();
+    }
+}
+
+void SheetCountMark(ImDrawList* draw_list, const ImVec2& p1, size_t more) {
+    if (!draw_list || more == 0) return;
+    const Tokens& t = CurrentTokens();
+    const std::string text = "+" + std::to_string(more);
+    const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+    const ImVec2 pad(5.0f, 1.0f);
+    const ImVec2 b1(p1.x - 3.0f, p1.y - 3.0f);
+    const ImVec2 b0(b1.x - size.x - 2.0f * pad.x, b1.y - size.y - 2.0f * pad.y);
+    draw_list->AddRectFilled(b0, b1, ToU32(t.bg_input), 4.0f);
+    draw_list->AddText(ImVec2(b0.x + pad.x, b0.y + pad.y), ToU32(t.text), text.c_str());
+}
+
+void SheetTooltip(const std::vector<SheetTile>& tiles, float aspect) {
+    if (tiles.empty() || !ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) return;
+    ImGui::BeginTooltip();
+    SheetTiles(tiles, 112.0f, aspect, 4);
+    ImGui::EndTooltip();
+}
+
 }  // namespace cyxwiz::ui

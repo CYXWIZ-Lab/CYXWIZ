@@ -196,6 +196,7 @@
 #define ICON_FA_BULLSEYE            "\xef\x85\x80"  // U+F140 bullseye - bullseye/target
 #define ICON_FA_CIRCLE_NODES        "\xee\x93\xa2"  // U+E4E2 circle-nodes
 #define ICON_FA_FIRE                "\xef\x81\xad"  // U+F06D fire
+#define ICON_FA_SNOWFLAKE           "\xef\x8b\x9c"  // U+F2DC snowflake - a frozen layer
 #define ICON_FA_DNA                 "\xef\x91\xb1"  // U+F471 dna
 #define ICON_FA_RANKING_STAR        "\xee\x95\xa1"  // U+E561 ranking-star
 #define ICON_FA_TROPHY              "\xef\x82\x91"  // U+F091 trophy

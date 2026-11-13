@@ -615,8 +615,25 @@ void CheckGraphTrainingKeepsBestCheckpoint() {
               final_metrics.active_model_provenance == "restored_best_checkpoint",
           "the graph model's best checkpoint is kept and restored (" + final_metrics.active_model_provenance +
               ", epoch " + std::to_string(final_metrics.restored_checkpoint_epoch) + ")");
+
+    // A second run starts from that checkpoint and leaves biases out of weight
+    // decay: both work on a graph with branches, not only on a layer stack.
+    const auto second_dir = std::filesystem::temp_directory_path() / "cyxwiz_branch_graph_warm";
+    std::filesystem::remove_all(second_dir);
+    auto warm = config;
+    warm.initialize_from_checkpoint = final_metrics.checkpoint_used;
+    warm.optimizer_type = gui::NodeType::AdamW;
+    warm.weight_decay_exclude = "norms_biases_embeddings";
+    warm.checkpoint_dir = second_dir.string();
+    cyxwiz::TrainingExecutor warm_executor(warm, dataset, "label");
+    cyxwiz::TrainingMetrics warm_metrics;
+    warm_executor.Train(warm.epochs, warm.batch_size, nullptr, nullptr,
+                        [&](const cyxwiz::TrainingMetrics& metrics) { warm_metrics = metrics; });
+    Check(warm_metrics.is_complete, "a graph model starts from a checkpoint: " + warm_metrics.status_message);
+    Check(!warm_metrics.initialized_from.empty(), "the run records the checkpoint it started from");
+    std::filesystem::remove_all(second_dir);
     std::filesystem::remove_all(dir);
-    std::cout << "  residual graph: training keeps and restores its best checkpoint\n";
+    std::cout << "  residual graph: training keeps and restores its best checkpoint; a second run starts from it\n";
 }
 
 // Feature importance on a graph with branches (TOFIX157): permutation and

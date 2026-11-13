@@ -149,6 +149,12 @@ void AddConfig(Report& r, const ConfigFacts& c) {
     if (c.parameters >= 0)
         r.tiles.push_back({FormatCompiledCount(c.parameters),
                            "parameters, " + FormatCompiledBytes(static_cast<unsigned long long>(c.parameters) * 4ull)});
+    const ModelMemoryEstimate& m = c.memory;
+    const bool too_large = m.available && m.device_memory_bytes > 0 && m.total_bytes > m.device_memory_bytes;
+    if (m.available)
+        r.tiles.push_back({"about " + FormatCompiledBytes(m.total_bytes),
+                           too_large ? "per training step: more than the device has"
+                                     : "per training step, batch " + std::to_string(m.batch_size)});
 
     ConfigGroup data{"Data", {}};
     data.rows.emplace_back("Dataset", c.dataset.empty() ? "not set in the Data Input" : c.dataset);
@@ -193,6 +199,36 @@ void AddConfig(Report& r, const ConfigFacts& c) {
     }
     if (c.one_hot) learning.rows.emplace_back("Labels", "one-hot, " + Count(static_cast<size_t>(c.num_classes), "class", "classes"));
     r.config.push_back(std::move(learning));
+
+    if (m.available) {
+        ConfigGroup memory{"Memory of a training step (estimate)", {}};
+        memory.rows.emplace_back("Weights", FormatCompiledBytes(m.parameter_bytes) + " (" +
+                                                FormatCompiledCount(static_cast<long long>(m.trained_elements)) +
+                                                " parameters)");
+        memory.rows.emplace_back("Gradients", FormatCompiledBytes(m.gradient_bytes) + " (one per parameter)");
+        memory.rows.emplace_back("Optimizer state",
+                                 m.optimizer_tensors_per_parameter == 0
+                                     ? std::string("none (") + c.optimizer + " keeps nothing per parameter)"
+                                     : FormatCompiledBytes(m.optimizer_bytes) + " (" + c.optimizer + " keeps " +
+                                           std::to_string(m.optimizer_tensors_per_parameter) + " per parameter)");
+        if (m.state_elements > 0)
+            memory.rows.emplace_back("Kept state", FormatCompiledBytes(m.state_bytes) +
+                                                       " (kept but not trained: frozen layers and BatchNorm running statistics)");
+        memory.rows.emplace_back("Activations", FormatCompiledBytes(m.activation_bytes) + " (batch " +
+                                                    std::to_string(m.batch_size) +
+                                                    ": each layer's output and what it keeps for the backward pass)");
+        memory.rows.emplace_back("Total", "about " + FormatCompiledBytes(m.total_bytes) +
+                                              "; the device runtime and the training data come on top");
+        if (m.device_memory_bytes > 0) {
+            const double share = static_cast<double>(m.total_bytes) / static_cast<double>(m.device_memory_bytes);
+            memory.rows.emplace_back(
+                "Device", m.device_name + ", " + FormatCompiledBytes(m.device_memory_bytes) + ": the estimate is " +
+                              Number(share * 100.0, share < 0.1 ? 1 : 0) + "% of it" +
+                              (too_large ? ". Lower the batch size or the input size, or train on a larger device"
+                                         : ""));
+        }
+        r.config.push_back(std::move(memory));
+    }
 }
 
 std::string CopyText(const Report& r) {

@@ -169,8 +169,16 @@ int main() {
             cyxwiz::CrossValidationSettings settings;
             settings.folds = 5;
             settings.fold_of_row = folds;
-            const auto r = cyxwiz::RunCrossValidation(p.job.config, p.table, "species", epochs, batch, settings);
+            int highest_epoch = 0, last_epoch = 0;
+            cyxwiz::CrossValidationCallbacks callbacks;
+            callbacks.on_progress = [&](const cyxwiz::CrossValidationProgress& progress) {
+                highest_epoch = std::max(highest_epoch, progress.epoch);
+                last_epoch = progress.epoch;
+            };
+            const auto r = cyxwiz::RunCrossValidation(p.job.config, p.table, "species", epochs, batch, settings, callbacks);
             Check(r.ok && r.runs.size() == 5, "five folds trained" + (r.error.empty() ? "" : ": " + r.error));
+            Check(highest_epoch == epochs && last_epoch == epochs,
+                  "progress counts epochs 1.." + std::to_string(epochs) + " (highest " + std::to_string(highest_epoch) + ")");
             Check(r.rows == static_cast<int64_t>(folds.size()) && r.test_rows_left_out == 0 && !r.regression,
                   "every row used, none held out (no Split)");
             for (size_t k = 0; k < r.runs.size() && k < 5; ++k) {

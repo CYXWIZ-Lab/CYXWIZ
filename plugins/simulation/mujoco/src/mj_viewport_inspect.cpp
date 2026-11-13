@@ -231,14 +231,21 @@ void MjViewportPanel::RenderInspectPanel(MjEnvManager& env, MjRenderer& renderer
     section("Keyframes");
     const std::filesystem::path project = ctx_->GetProjectDir();
     const std::string model_path = env.ModelPath();
+    if (place_path_ != model_path) {
+        place_path_ = model_path;
+        place_ = {};
+        place_.ref.path = model_path;
+        if (model_place_) place_ = model_place_(model_path);
+    }
+    const MjModelRef& model_ref = place_.ref;
     if (keyframes_model_ != model_path) {
         keyframes_model_ = model_path;
-        keyframes_ = project.empty() ? std::vector<MjKeyframe>{} : LoadKeyframes(KeyframesFile(project, model_path));
+        keyframes_ = project.empty() ? std::vector<MjKeyframe>{} : LoadKeyframes(KeyframesFile(project, model_ref));
     }
     auto save = [&]() {
         if (project.empty()) return;  // kept for this session only
         std::string error;
-        if (!SaveKeyframes(KeyframesFile(project, model_path), keyframes_, model_path, error)) Notify(error, true);
+        if (!SaveKeyframes(KeyframesFile(project, model_ref), keyframes_, model_path, error)) Notify(error, true);
     };
     for (size_t k = 0; k < model_keys.size(); ++k) {
         ImGui::PushID(static_cast<int>(k) + 10000);
@@ -400,14 +407,45 @@ void MjViewportPanel::RenderInspectPanel(MjEnvManager& env, MjRenderer& renderer
              "Compare with, then Show as a ghost.");
     }
 
-    // The model file read again
+    // The model: where it is (the same name on every PC), read again, copied into the project
     section("Model");
+    const bool shared = place_.shared;
+    std::string where;
+    switch (model_ref.kind) {
+        case MjRefKind::Builtin: where = "Built in \xC2\xB7 " + model_ref.file; break;
+        case MjRefKind::Menagerie:
+            where = "Menagerie " + model_ref.robot + " \xC2\xB7 " +
+                    (model_ref.commit.empty() ? std::string("version unknown") : "version " + ShortCommit(model_ref.commit)) +
+                    (shared ? " \xC2\xB7 shared download" : " \xC2\xB7 copy in this project");
+            break;
+        case MjRefKind::Project: where = "In this project \xC2\xB7 " + model_ref.file; break;
+        case MjRefKind::Path: where = model_path + " \xC2\xB7 not in the project"; break;
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(where.c_str());
+    ImGui::PopTextWrapPos();
     if (ui->SecondaryButton("Reload the model file", can && reload_model_, blocked.c_str(), UiButtonSize::Small)) {
         std::string error;
         if (reload_model_(error)) Notify("Reloaded " + std::filesystem::path(model_path).filename().string());
         else Notify("Reload: " + error, true);
     }
-    hint("Keeps the camera and the scene; the state starts over.");
+    // A copy promises other PCs the same version: only a download whose version is known.
+    // A file outside the project: its folder is copied (it then travels with the project).
+    const bool pinned = !model_ref.commit.empty();
+    const bool outside = model_ref.kind == MjRefKind::Path;
+    if ((shared || outside) && copy_model_ && !project.empty()) {
+        ImGui::SameLine();
+        if (ui->SecondaryButton("Copy into the project", outside || pinned,
+                                "Its version is unknown (downloaded before versions were kept): Download again (pinned) "
+                                "in the Environment Library first.",
+                                UiButtonSize::Small))
+            copy_model_(model_ref, model_path);
+    }
+    hint(shared    ? "This is a shared download used by every project: copy it into the project before editing its "
+                     "file. Reload keeps the camera and the scene; the state starts over."
+         : outside ? "Other PCs will not find this file: copy its folder into the project. Reload keeps the camera "
+                     "and the scene; the state starts over."
+                   : "Reload keeps the camera and the scene; the state starts over.");
 }
 
 }  // namespace cyxwiz::plugin::mujoco

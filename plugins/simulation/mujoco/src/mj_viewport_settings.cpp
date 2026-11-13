@@ -13,6 +13,7 @@ namespace {
 
 constexpr const char* kPlaybackCamera = "viewport.playback_camera";
 constexpr const char* kLiveNumbers = "viewport.live_numbers";
+constexpr const char* kCopyModels = "models.copy_into_project";
 constexpr const char* kRecordFormat = "viewport.record_format";
 constexpr const char* kRecordLength = "viewport.record_length";
 constexpr const char* kScene = "viewport.scene";
@@ -230,6 +231,7 @@ ViewportDefaults LoadViewportDefaults(const PluginContext& ctx) {
     ViewportDefaults d;
     d.playback_camera = PlaybackCameraFromKey(ctx.GetSetting(kPlaybackCamera, "track"));
     d.live_numbers = ctx.GetSetting(kLiveNumbers, "on") != "off";
+    d.copy_models_into_project = ctx.GetSetting(kCopyModels, "off") == "on";
     d.record_format = ctx.GetSetting(kRecordFormat, "gif") == "png" ? MjRecorder::Format::PngFrames
                                                                     : MjRecorder::Format::Gif;
     d.record_until_stop = ctx.GetSetting(kRecordLength, "episode") == "stop";
@@ -243,6 +245,7 @@ ViewportDefaults LoadViewportDefaults(const PluginContext& ctx) {
 void SaveViewportDefaults(PluginContext& ctx, const ViewportDefaults& d) {
     ctx.SetSetting(kPlaybackCamera, PlaybackCameraKey(d.playback_camera));
     ctx.SetSetting(kLiveNumbers, d.live_numbers ? "on" : "off");
+    ctx.SetSetting(kCopyModels, d.copy_models_into_project ? "on" : "off");
     ctx.SetSetting(kRecordFormat, d.record_format == MjRecorder::Format::PngFrames ? "png" : "gif");
     ctx.SetSetting(kRecordLength, d.record_until_stop ? "stop" : "episode");
     ctx.SetSetting(kScene, EncodeScene(d.scene));

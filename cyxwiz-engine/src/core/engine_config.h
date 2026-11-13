@@ -33,6 +33,99 @@ struct AppearanceConfig {
     bool operator==(const AppearanceConfig&) const = default;
 };
 
+// The Nodes panel's Favourites and Recent (Engine-wide, every project). Node
+// types are saved as their NodeType numbers, as graphs save them.
+struct NodesPanelConfig {
+    std::vector<int> favourites;
+    std::vector<int> recent;  // newest first
+    bool show_recent = true;
+    int recent_count = 8;     // 1..kNodesPanelMaxRecent
+
+    bool operator==(const NodesPanelConfig&) const = default;
+};
+inline constexpr int kNodesPanelMaxRecent = 20;
+
+// Preferences > Search, Hyperparameter Search (TOFIX178 T4): how a new search starts.
+// The panel follows them; values are clamped when set.
+struct HyperparamSearchDefaults {
+    std::string strategy = "random";     // "grid", "random" or "bayesian"
+    int trials = 20;                     // 1..kSearchMaxTrials (Random, Bayesian)
+    double hours = 1.0;                  // kSearchMinHours..kSearchMaxHours
+    std::string objective = "val_loss";  // "val_loss", "val_accuracy" or "val_mae"
+
+    bool operator==(const HyperparamSearchDefaults&) const = default;
+};
+inline constexpr int kSearchMaxTrials = 1000;
+inline constexpr double kSearchMinHours = 0.05;
+inline constexpr double kSearchMaxHours = 168.0;
+
+// Preferences > Search, Neural Architecture Search (TOFIX178 T4): how its
+// search starts and how many of the best it trains. Clamped when set.
+struct ArchitectureSearchDefaults {
+    int versions = 20;          // per round, 2..kArchitectureSearchMaxVersions
+    int rounds = 10;            // 1..kArchitectureSearchMaxRounds
+    int kept = 2;               // kept unchanged each round, 0..versions - 1
+    int changed_percent = 30;   // changed each round, 0..100
+    int mixed_percent = 50;     // made from two each round, 0..100
+    int train_best = 3;         // 1..kArchitectureSearchMaxTrain
+
+    bool operator==(const ArchitectureSearchDefaults&) const = default;
+};
+inline constexpr int kArchitectureSearchMaxVersions = 200;
+inline constexpr int kArchitectureSearchMaxRounds = 200;
+inline constexpr int kArchitectureSearchMaxTrain = 10;
+
+// Preferences > Studio Debugger (TOFIX178 6.1c): the user's defaults for
+// layer capture and the layer views. Each run's capture control starts from
+// them. Values are clamped when read.
+enum class LayerCaptureWhen { Off, LocalDebug, Training };  // Training: also Local Debug runs
+enum class FeatureMapColour { Heat, Grayscale };
+// Feature maps' order: largest mean first, highest peak first, or by number.
+enum class ChannelSort { Strongest, Peak, Number };
+// Where it looks (TOFIX178 6.3b-c): the method, and what saliency shows.
+enum class WhereItLooksMethod { Occlusion, Saliency };
+enum class SaliencyShow { Size, TimesInput };  // gradient size, gradient x input
+// Top images (6.4): the channels shown first (the first the layer offers when
+// it has no such choice) and how a channel's map becomes one number.
+enum class TopImagesChannels { HeadVotes, Clicked, Strongest };
+enum class TopImagesRank { Maximum, Mean };
+// Embedding (6.4b): the projection and what colours the points.
+enum class EmbeddingMethod { Pca, Tsne, Umap };
+enum class EmbeddingColour { TrueClass, PredictedClass };
+// Unit weights (6.4c): largest weight norm first, or by number.
+enum class UnitWeightsOrder { Norm, Number };
+
+inline constexpr int kLayerCaptureBatchSamples = 8;
+
+struct StudioDebuggerConfig {
+    LayerCaptureWhen capture_when = LayerCaptureWhen::Off;
+    int capture_every_epochs = 5;  // and after the last epoch
+    bool capture_activations = true;
+    bool capture_parameters = true;
+    bool capture_gradients = true;
+    bool capture_batch = false;  // a batch of kLayerCaptureBatchSamples from the picked sample on
+    FeatureMapColour feature_map_colour = FeatureMapColour::Heat;
+    ChannelSort channel_sort = ChannelSort::Strongest;
+    WhereItLooksMethod where_it_looks_method = WhereItLooksMethod::Occlusion;
+    SaliencyShow saliency_show = SaliencyShow::Size;
+    TopImagesChannels top_images_channels = TopImagesChannels::HeadVotes;
+    TopImagesRank top_images_rank = TopImagesRank::Maximum;
+    EmbeddingMethod embedding_method = EmbeddingMethod::Pca;
+    EmbeddingColour embedding_colour = EmbeddingColour::TrueClass;
+    UnitWeightsOrder unit_weights_order = UnitWeightsOrder::Norm;
+    int keep_capture_runs = 10;  // runs whose captures stay on disk
+
+    bool operator==(const StudioDebuggerConfig&) const = default;
+};
+
+// The user's defaults for training choices (Preferences > Training).
+struct TrainingDefaultsConfig {
+    // What a new BatchNorm node does with its running statistics when it is
+    // frozen: keep them (true) or keep updating them.
+    bool frozen_batchnorm_keeps_statistics = true;
+    bool operator==(const TrainingDefaultsConfig&) const = default;
+};
+
 // The user's defaults for Tools > Utilities (Preferences > General, or "Save
 // as my default" in the window); the shipped values are only the start.
 struct UtilitiesConfig {
@@ -209,6 +302,12 @@ public:
     bool RequireDebugBeforeTrain() const;
     void SetRequireDebugBeforeTrain(bool require);
 
+    StudioDebuggerConfig GetStudioDebugger() const;
+    void SetStudioDebugger(const StudioDebuggerConfig& studio_debugger);
+
+    TrainingDefaultsConfig GetTrainingDefaults() const;
+    void SetTrainingDefaults(const TrainingDefaultsConfig& training_defaults);
+
     // ===== Runtime Observability =====
 
     std::vector<RuntimeLogSavedFilterConfig> GetRuntimeLogSavedFilters() const;
@@ -269,6 +368,18 @@ public:
 
     AppearanceConfig GetAppearance() const;
     void SetAppearance(const AppearanceConfig& appearance);
+
+    // ===== Nodes panel (Engine-wide) =====
+
+    NodesPanelConfig GetNodesPanel() const;
+    void SetNodesPanel(const NodesPanelConfig& nodes_panel);
+
+    // ===== Hyperparameter Search (Engine-wide) =====
+
+    HyperparamSearchDefaults GetSearchDefaults() const;
+    void SetSearchDefaults(const HyperparamSearchDefaults& defaults);
+    ArchitectureSearchDefaults GetArchitectureSearchDefaults() const;
+    void SetArchitectureSearchDefaults(const ArchitectureSearchDefaults& defaults);
 
     UtilitiesConfig GetUtilities() const;
     void SetUtilities(const UtilitiesConfig& utilities);
@@ -333,6 +444,8 @@ private:
 
     // Local Debug settings
     bool require_debug_before_train_ = false;
+    StudioDebuggerConfig studio_debugger_;
+    TrainingDefaultsConfig training_defaults_;
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;
@@ -347,6 +460,9 @@ private:
     bool open_simulation_monitor_on_run_ = true;
     std::map<std::string, std::map<std::string, std::string>> plugin_settings_;
     AppearanceConfig appearance_;
+    NodesPanelConfig nodes_panel_;
+    HyperparamSearchDefaults search_defaults_;
+    ArchitectureSearchDefaults architecture_search_defaults_;
     UtilitiesConfig utilities_;
     MonitorConfig monitor_;
 

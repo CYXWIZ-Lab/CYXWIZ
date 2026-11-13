@@ -1715,6 +1715,9 @@ void TestTrainingGraphDiffContract() {
     current.replay_capsule.selected_sample_index = 1;
     current.replay_capsule.compiled_config.optimizer = "AdamW";
     current.replay_capsule.compiled_config.learning_rate = 0.0005f;
+    current.replay_capsule.compiled_config.nesterov = true;
+    current.replay_capsule.compiled_config.weight_decay_exclude = "norms_and_biases";
+    current.replay_capsule.compiled_config.lr_schedule = "one_cycle";
     current.summary.execution = baseline.summary.execution;
     current.summary.execution.effective_backend = "CUDA";
     current.summary.execution.effective_device_name = "Test GPU";
@@ -1747,8 +1750,9 @@ void TestTrainingGraphDiffContract() {
     Check(payload["dataset_changed"].get<bool>() &&
               payload["selected_sample_changed"].get<bool>(),
           "graph diff should compare replay dataset and sample selection");
-    Check(payload["compiled_config_change_count"].get<size_t>() == 2,
-          "graph diff should report changed optimizer and learning rate");
+    Check(payload["compiled_config_change_count"].get<size_t>() == 5,
+          "graph diff should report changed optimizer, learning rate, Nesterov, "
+          "decay exclusion and schedule");
     Check(payload["backend_change_count"].get<size_t>() == 3,
           "graph diff should report backend, device name, and placement changes");
     Check(payload["differences_found"].get<bool>() &&
@@ -4198,6 +4202,12 @@ void TestDebugRunStoreContract() {
     replay_config.dataloader_seed = 19;
     replay_config.balance_seed = 23;
     replay_config.learning_rate = 0.005f;
+    replay_config.nesterov = true;
+    replay_config.weight_decay_exclude = "norms_and_biases";
+    replay_config.lr_schedule = "one_cycle";
+    replay_config.warmup_ratio = 0.3f;
+    replay_config.min_lr_ratio = 0.05f;
+    replay_config.grad_clip_norm = 1.5f;
     replay_config.compiler_placement_fingerprint = "replay-placement";
     replay_config.strict_execution = true;
     record.replay_capsule = cyxwiz::MakeDebugRunReplayCapsule(
@@ -4322,6 +4332,12 @@ void TestDebugRunStoreContract() {
               loaded->replay_capsule.compiled_config.batch_size == 64 &&
               loaded->replay_capsule.compiled_config.grad_accum_steps == 2 &&
               loaded->replay_capsule.compiled_config.learning_rate == 0.005f &&
+              loaded->replay_capsule.compiled_config.nesterov &&
+              loaded->replay_capsule.compiled_config.weight_decay_exclude == "norms_and_biases" &&
+              loaded->replay_capsule.compiled_config.lr_schedule == "one_cycle" &&
+              loaded->replay_capsule.compiled_config.warmup_ratio == 0.3f &&
+              loaded->replay_capsule.compiled_config.min_lr_ratio == 0.05f &&
+              loaded->replay_capsule.compiled_config.grad_clip_norm == 1.5f &&
               loaded->replay_capsule.compiled_config
                       .compiler_placement_fingerprint == "replay-placement" &&
               loaded->replay_capsule.compiled_config

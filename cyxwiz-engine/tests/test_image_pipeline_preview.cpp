@@ -127,6 +127,7 @@ int main() {
     steps.ops = {crop, flip};
     const ImagePipelinePreview with_edges = PreviewImagePipeline(file, spec, steps, {edges}, 1, 1);
     Check(with_edges.error.empty() && with_edges.fixed.size() == 2, "crop and edges done once: " + with_edges.error);
+    Check(with_edges.fixed[1].more.empty() && with_edges.fixed[1].first_name.empty(), "an edge map is one picture");
     Check(with_edges.fixed[1].title == "Edges (Canny 50 / 150)" &&
               with_edges.fixed[1].detail == "12 \xC3\x97 8, once on the CPU",
           "the OpenCV step is named and done on the CPU: " + with_edges.fixed[1].detail);
@@ -136,6 +137,23 @@ int main() {
         binary = binary && (v == 0 || v == 255) && with_edges.fixed[1].rgba[i * 4 + 1] == v;
     }
     Check(binary, "Canny edges are black and white");
+    {
+        // The image kept (TOFIX209): a sheet, the cropped picture first, then the edge map as a named tile.
+        CvImageStep kept = edges;
+        kept.edge_keep_image = true;
+        const ImagePipelinePreview sheet = PreviewImagePipeline(file, spec, steps, {kept}, 1, 1);
+        Check(sheet.error.empty() && sheet.fixed.size() == 2, "crop and edges with the image kept: " + sheet.error);
+        const PreviewPicture& kp = sheet.fixed[1];
+        Check(kp.rgba == sheet.fixed[0].rgba, "the first tile is the picture before the step");
+        Check(kp.first_name == "R, G, B" && kp.more.size() == 1 && kp.more[0].name == "channel 4 \xC2\xB7 edges" &&
+                  kp.more[0].width == 12 && kp.more[0].height == 8,
+              "one further tile, named: [" + kp.first_name + "] " + std::to_string(kp.more.size()) + (kp.more.empty() ? "" : " [" + kp.more[0].name + "]"));
+        bool same_map = true;
+        for (size_t i = 0; i < 12 * 8; ++i) same_map = same_map && kp.more[0].rgba[i * 4] == with_edges.fixed[1].rgba[i * 4];
+        Check(same_map, "the further tile is the edge map");
+        Check(kp.detail == "12 \xC3\x97 8 \xC3\x97 4 (R, G, B, edges), once on the CPU", "the size names the channels: " + kp.detail);
+        Check(!sheet.draws.empty() && sheet.draws[0].more.size() == 1, "a draw after it is a sheet too");
+    }
     Check(ImageStepsKey(spec, steps, {edges}) != ImageStepsKey(spec, steps, {}), "the step is in the preview key");
 
     fs::remove_all(dir, ec);

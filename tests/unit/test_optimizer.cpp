@@ -43,6 +43,61 @@ TEST_CASE("SGD optimizer updates parameters", "[optimizer]") {
     REQUIRE(updated[1] < -1.899f);
 }
 
+TEST_CASE("SGD weight decay and Nesterov momentum match torch.optim.SGD", "[optimizer][truth]") {
+    // torch 2.10.0: p = [1, -2, 0.5], lr 0.1, three steps with these gradients:
+    //   for g in grads: p.grad = g; optimizer.step()
+    const std::vector<std::vector<float>> grads = {{0.5f, -1.0f, 0.25f}, {0.1f, 0.2f, -0.3f}, {-0.4f, 0.05f, 0.6f}};
+    struct Case {
+        const char* name;
+        double momentum, weight_decay;
+        bool nesterov;
+        float expected[3];
+    };
+    const Case cases[] = {
+        {"momentum 0.9, weight decay 0.01, Nesterov", 0.9, 0.01, true, {0.86946553f, -1.70468664f, 0.377456427f}},
+        {"momentum 0.9, weight decay 0.01", 0.9, 0.01, false, {0.880094767f, -1.76114941f, 0.426512361f}},
+        {"weight decay 0.1, no momentum", 0.0, 0.1, false, {0.951394022f, -1.86738801f, 0.430346996f}},
+        {"momentum 0.5, Nesterov", 0.5, 0.0, true, {0.948750019f, -1.85500002f, 0.415625036f}},
+    };
+    for (const Case& c : cases) {
+        INFO(c.name);
+        float start[] = {1.0f, -2.0f, 0.5f};
+        std::map<std::string, cyxwiz::Tensor> params;
+        params.emplace("w", cyxwiz::Tensor({3}, start, cyxwiz::DataType::Float32));
+        cyxwiz::SGDOptimizer opt(0.1, c.momentum, c.weight_decay, c.nesterov);
+        for (const auto& g : grads) {
+            std::map<std::string, cyxwiz::Tensor> step;
+            step.emplace("w", cyxwiz::Tensor({3}, g.data(), cyxwiz::DataType::Float32));
+            opt.Step(params, step);
+        }
+        const float* got = params.at("w").Data<float>();
+        for (int i = 0; i < 3; ++i) REQUIRE(got[i] == Catch::Approx(c.expected[i]).margin(2e-6));
+    }
+
+    // A tensor named as taking no decay is stepped as without decay.
+    float start[] = {1.0f, -2.0f, 0.5f};
+    std::map<std::string, cyxwiz::Tensor> params, step;
+    params.emplace("bias", cyxwiz::Tensor({3}, start, cyxwiz::DataType::Float32));
+    step.emplace("bias", cyxwiz::Tensor({3}, grads[0].data(), cyxwiz::DataType::Float32));
+    cyxwiz::SGDOptimizer skipping(0.1, 0.0, 0.1);
+    skipping.SetNoDecayParameters({"bias"});
+    skipping.Step(params, step);
+    REQUIRE(params.at("bias").Data<float>()[0] == Catch::Approx(0.95f).margin(1e-6));
+
+    REQUIRE_THROWS_AS(cyxwiz::SGDOptimizer(0.1, 0.0, 0.0, true), std::invalid_argument);
+    REQUIRE_THROWS_AS(cyxwiz::SGDOptimizer(0.1, 0.9, -0.1), std::invalid_argument);
+
+    // A state saved before these settings (momentum only) still loads into a plain SGD,
+    // and a state with Nesterov does not load into one without.
+    cyxwiz::SGDOptimizer plain(0.1, 0.9), nesterov(0.1, 0.9, 0.0, true);
+    cyxwiz::OptimizerState saved;
+    std::string error;
+    REQUIRE(plain.ExportState(saved, error));
+    REQUIRE(saved.hyperparameters == std::map<std::string, double>{{"momentum", 0.9}});
+    REQUIRE(plain.ImportState(saved, error));
+    REQUIRE_FALSE(nesterov.ImportState(saved, error));
+}
+
 TEST_CASE("SGD validates the complete step before mutating parameters",
           "[optimizer][truth]") {
     const float parameter_values[] = {1.0f, -2.0f};

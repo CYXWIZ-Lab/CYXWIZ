@@ -12,6 +12,8 @@
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
+#include <optional>
 
 namespace gui {
 
@@ -285,52 +287,190 @@ void NodeEditor::InsertPattern(const std::vector<MLNode>& nodes, const std::vect
 
     SaveUndoState();
 
-    // Add all nodes from the pattern
+    std::map<int, ImVec2> positions;
+    for (const auto& node : nodes)
+        if (node.has_initial_position) positions[node.id] = ImVec2(node.initial_pos_x, node.initial_pos_y);
+    // Nodes with no place of their own (a NAS suggestion) go in a row, in
+    // their order, below what is on the canvas.
+    float left = 0.0f, bottom = 0.0f;
+    bool placed = false;
+    for (const auto& node : nodes_) {
+        const auto at = cached_node_positions_.find(node.id);
+        if (at == cached_node_positions_.end()) continue;
+        left = placed ? std::min(left, at->second.x) : at->second.x;
+        bottom = placed ? std::max(bottom, at->second.y) : at->second.y;
+        placed = true;
+    }
+    float x = left;
     for (const auto& node : nodes) {
-        nodes_.push_back(node);
-
-        // Queue position for deferred setting (will be applied during render)
-        if (node.has_initial_position) {
-            pending_positions_[node.id] = ImVec2(node.initial_pos_x, node.initial_pos_y);
-        }
-
-        // Update next IDs to avoid collisions
-        if (node.id >= next_node_id_) {
-            next_node_id_ = node.id + 1;
-        }
-        for (const auto& pin : node.inputs) {
-            if (pin.id >= next_pin_id_) {
-                next_pin_id_ = pin.id + 1;
-            }
-        }
-        for (const auto& pin : node.outputs) {
-            if (pin.id >= next_pin_id_) {
-                next_pin_id_ = pin.id + 1;
-            }
-        }
+        if (node.has_initial_position) continue;
+        positions[node.id] = ImVec2(x, placed ? bottom + 220.0f : 0.0f);
+        x += 220.0f;
     }
+    AddWithFreshIds(nodes, links, positions);
 
-    // Add all links from the pattern
-    for (const auto& link : links) {
+    spdlog::info("Inserted pattern with {} nodes and {} links", nodes.size(), links.size());
+}
+
+std::map<int, int> NodeEditor::AddWithFreshIds(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
+                                               const std::map<int, ImVec2>& positions) {
+    std::map<int, int> node_ids;
+    std::map<int, int> pin_ids;
+    for (const auto& source : nodes) {
+        MLNode node = source;
+        node.id = next_node_id_++;
+        // Keyed by the source pin's id: the links below name those.
+        for (auto* pins : {&node.inputs, &node.outputs}) {
+            for (auto& pin : *pins) {
+                const int fresh = next_pin_id_++;
+                pin_ids[pin.id] = fresh;
+                pin.id = fresh;
+            }
+        }
+        node_ids[source.id] = node.id;
+        const auto at = positions.find(source.id);
+        if (at != positions.end()) pending_positions_[node.id] = at->second;
+        nodes_.push_back(std::move(node));
+    }
+    for (const auto& source : links) {
+        const auto from = node_ids.find(source.from_node);
+        const auto to = node_ids.find(source.to_node);
+        const auto from_pin = pin_ids.find(source.from_pin);
+        const auto to_pin = pin_ids.find(source.to_pin);
+        if (from == node_ids.end() || to == node_ids.end() || from_pin == pin_ids.end() || to_pin == pin_ids.end())
+            continue;  // a link to a node that was not added
+        NodeLink link = source;
+        link.id = next_link_id_++;
+        link.from_node = from->second;
+        link.to_node = to->second;
+        link.from_pin = from_pin->second;
+        link.to_pin = to_pin->second;
         links_.push_back(link);
-
-        // Update next link ID
-        if (link.id >= next_link_id_) {
-            next_link_id_ = link.id + 1;
-        }
     }
-
-    // Set frame counter to apply positions during next few render frames
-    // This is required because ImNodes needs nodes to exist before SetNodeGridSpacePos works
-    if (!pending_positions_.empty()) {
-        pending_positions_frames_ = 3;  // Apply for 3 frames to ensure positions stick
-    }
-
-    // Rebuild pin lookup after inserting pattern
+    // ImNodes places a node only once it exists, so the positions are applied
+    // over the next few frames.
+    if (!pending_positions_.empty()) pending_positions_frames_ = 3;
     RebuildPinLookup();
+    return node_ids;
+}
 
-    spdlog::info("Inserted pattern with {} nodes and {} links (positions queued: {})",
-                 nodes.size(), links.size(), pending_positions_.size());
+void NodeEditor::ReplaceWithEditedGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
+    if (!CanReplaceGraph("apply the architecture")) return;
+    if (nodes.empty()) return;
+    SaveUndoState();
+    ClearValidationState();
+    if (properties_panel_) properties_panel_->ClearNodeReferences();  // it points into nodes_
+
+    std::map<int, const MLNode*> current;
+    for (const auto& node : nodes_) current[node.id] = &node;
+
+    // A node still on the canvas as the same type keeps its id (so its place
+    // and group); a new or retyped one is built by CreateNode, which owns the
+    // pins for its type, with the edited parameters on top.
+    std::vector<MLNode> next;
+    std::map<int, int> node_ids;
+    std::map<int, int> pin_ids;
+    std::vector<int> built;  // ids given by CreateNode
+    for (const auto& node : nodes) {
+        const auto it = current.find(node.id);
+        if (it != current.end() && it->second->type == node.type) {
+            next.push_back(node);
+            node_ids[node.id] = node.id;
+            for (const auto& pin : node.inputs) pin_ids[pin.id] = pin.id;
+            for (const auto& pin : node.outputs) pin_ids[pin.id] = pin.id;
+            continue;
+        }
+        MLNode fresh = CreateNode(node.type, node.name);
+        for (const auto& [key, value] : node.parameters) fresh.parameters[key] = value;
+        for (size_t i = 0; i < std::min(node.inputs.size(), fresh.inputs.size()); ++i)
+            pin_ids[node.inputs[i].id] = fresh.inputs[i].id;
+        for (size_t i = 0; i < std::min(node.outputs.size(), fresh.outputs.size()); ++i)
+            pin_ids[node.outputs[i].id] = fresh.outputs[i].id;
+        node_ids[node.id] = fresh.id;
+        // A retyped node stays where it was.
+        if (it != current.end()) {
+            const auto was = cached_node_positions_.find(node.id);
+            if (was != cached_node_positions_.end()) pending_positions_[fresh.id] = was->second;
+        }
+        built.push_back(fresh.id);
+        next.push_back(std::move(fresh));
+    }
+
+    std::vector<NodeLink> next_links;
+    for (const auto& source : links) {
+        const auto from = node_ids.find(source.from_node);
+        const auto to = node_ids.find(source.to_node);
+        const auto from_pin = pin_ids.find(source.from_pin);
+        const auto to_pin = pin_ids.find(source.to_pin);
+        if (from == node_ids.end() || to == node_ids.end() || from_pin == pin_ids.end() || to_pin == pin_ids.end())
+            continue;
+        NodeLink link = source;
+        link.id = next_link_id_++;
+        link.from_node = from->second;
+        link.to_node = to->second;
+        link.from_pin = from_pin->second;
+        link.to_pin = to_pin->second;
+        next_links.push_back(link);
+    }
+
+    // A new node goes midway between the nodes it links to, placed ones
+    // first: two new nodes in a row take their places one after the other.
+    // A place too near another node moves down until it is free.
+    const auto place_of = [this](int id) -> std::optional<ImVec2> {
+        if (const auto at = pending_positions_.find(id); at != pending_positions_.end()) return at->second;
+        if (const auto at = cached_node_positions_.find(id); at != cached_node_positions_.end()) return at->second;
+        return std::nullopt;
+    };
+    const auto taken = [&](const ImVec2& at) {
+        const auto close_to = [&at](const ImVec2& other) {
+            return std::abs(other.x - at.x) < 120.0f && std::abs(other.y - at.y) < 80.0f;
+        };
+        for (const auto& node : next) {
+            const auto other = place_of(node.id);
+            if (other && close_to(*other)) return true;
+        }
+        return false;
+    };
+    std::vector<int> waiting;
+    for (const int id : built)
+        if (!pending_positions_.count(id)) waiting.push_back(id);
+    for (size_t pass = 0; pass < built.size() && !waiting.empty(); ++pass) {
+        std::vector<int> still;
+        for (const int id : waiting) {
+            ImVec2 sum(0.0f, 0.0f);
+            int count = 0;
+            for (const auto& link : next_links) {
+                const int other = link.to_node == id ? link.from_node : link.from_node == id ? link.to_node : 0;
+                const auto at = other ? place_of(other) : std::nullopt;
+                if (!at) continue;
+                sum.x += at->x;
+                sum.y += at->y;
+                ++count;
+            }
+            if (!count) {
+                still.push_back(id);
+                continue;
+            }
+            ImVec2 at(sum.x / count, sum.y / count + 40.0f);
+            for (int step = 0; step < 20 && taken(at); ++step) at.y += 90.0f;
+            pending_positions_[id] = at;
+        }
+        if (still.size() == waiting.size()) break;  // linked to nothing placed
+        waiting = std::move(still);
+    }
+    if (!pending_positions_.empty()) pending_positions_frames_ = 3;
+
+    std::set<int> kept;
+    for (const auto& node : next) kept.insert(node.id);
+    for (auto& group : groups_) std::erase_if(group.node_ids, [&](int id) { return !kept.count(id); });
+
+    const std::vector<MLNode> before = nodes_;
+    nodes_ = std::move(next);
+    links_ = std::move(next_links);
+    RebuildPinLookup();
+    SyncDataAfterSwap(before);
+    spdlog::info("Applied an edited architecture: {} nodes, {} links ({} new)", nodes_.size(), links_.size(),
+                 built.size());
 }
 
 // ===== Undo/Redo System =====

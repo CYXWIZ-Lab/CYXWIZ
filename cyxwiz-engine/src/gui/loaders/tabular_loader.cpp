@@ -12,7 +12,7 @@
 #include "../../core/node_executors/text_column_utils.h"
 #include "../../core/parquet_backed_dataset.h"
 #include "../../core/project_manager.h"
-#include "../../core/training_manager.h"
+#include "../../core/training_recipe.h"
 #include "../../core/training_batcher_setup.h"
 
 #include <spdlog/spdlog.h>
@@ -411,7 +411,7 @@ uint64_t TabularLoader::LaunchAsyncLoad(const ApplyContext& ctx,
 bool TabularLoader::IsRegistered(const std::string& name) const {
     auto& reg = cyxwiz::DataRegistry::Instance();
     // Sparse CSR outputs (TF-IDF / Count vectorizer with output_format=sparse)
-    // train through LaunchTraining's sparse path, so this loader owns them too.
+    // train through the training recipe's sparse path, so this loader owns them too.
     return reg.IsArrowDataset(name) || reg.IsParquetBackedDataset(name) ||
            reg.IsSparseFeatureDataset(name);
 }
@@ -486,144 +486,118 @@ cyxwiz::PreprocessingDomain TabularLoader::Domain(
     return cyxwiz::PreprocessingDomain::Tabular;
 }
 
-bool TabularLoader::LaunchTraining(
-    cyxwiz::TrainingConfiguration config,
+cyxwiz::TrainingRecipe TabularLoader::TrainingRecipeFor(
+    const cyxwiz::TrainingConfiguration& config,
     const std::string& dataset_name,
-    const std::string& label_column,
-    int epochs,
-    int batch_size,
-    std::weak_ptr<cyxwiz::TrainingPlotPanel> plot_panel,
-    std::function<void(bool)> node_editor_callback) {
+    const std::string& label_column) const {
     auto& registry = cyxwiz::DataRegistry::Instance();
-    auto& tm       = cyxwiz::TrainingManager::Instance();
     const bool has_external_role = config.dataset_roles.dev.IsSupplied() ||
                                    config.dataset_roles.test.IsSupplied();
     if (has_external_role && !config.sequence_batch.enabled) {
-        if (!config.dataset_roles.train.IsSupplied()) {
-            config.dataset_roles.train.dataset_name = dataset_name;
-            config.dataset_roles.train.label_column = label_column;
-        }
-        ResolvedTabularDatasets datasets;
-        datasets.train_arrow = registry.GetArrowDataset(
-            config.dataset_roles.train.dataset_name);
-        datasets.train_parquet = registry.GetParquetBackedDataset(
-            config.dataset_roles.train.dataset_name);
-        datasets.train_sparse = registry.GetSparseFeatureDataset(
-            config.dataset_roles.train.dataset_name);
-        if (config.dataset_roles.dev.IsSupplied()) {
-            datasets.dev_arrow = registry.GetArrowDataset(
-                config.dataset_roles.dev.dataset_name);
-            datasets.dev_parquet = registry.GetParquetBackedDataset(
-                config.dataset_roles.dev.dataset_name);
-            datasets.dev_sparse = registry.GetSparseFeatureDataset(
-                config.dataset_roles.dev.dataset_name);
-        }
-        if (config.dataset_roles.test.IsSupplied()) {
-            datasets.test_arrow = registry.GetArrowDataset(
-                config.dataset_roles.test.dataset_name);
-            datasets.test_parquet = registry.GetParquetBackedDataset(
-                config.dataset_roles.test.dataset_name);
-            datasets.test_sparse = registry.GetSparseFeatureDataset(
-                config.dataset_roles.test.dataset_name);
-        }
-        auto built = BuildResolvedTabularTrainingBatchers(
-            config, datasets, batch_size);
-        if (!built.ok()) {
-            spdlog::error(
-                "TabularLoader: could not build resolved partitions: {}",
-                built.error_message);
-            return false;
-        }
-
-        return tm.StartTrainingExternal(
-            std::move(config),
-            TakeResolvedExternalBatchers(std::move(built.batchers)),
-            epochs, batch_size, plot_panel, std::move(node_editor_callback));
+        return cyxwiz::ResolvedBatchersTrainingRecipe(
+            [dataset_name, label_column](cyxwiz::TrainingConfiguration& run, int batch_size,
+                                         cyxwiz::ResolvedExternalBatchers& batchers, std::string& error) {
+                auto& roles_registry = cyxwiz::DataRegistry::Instance();
+                if (!run.dataset_roles.train.IsSupplied()) {
+                    run.dataset_roles.train.dataset_name = dataset_name;
+                    run.dataset_roles.train.label_column = label_column;
+                }
+                ResolvedTabularDatasets datasets;
+                const auto fill = [&roles_registry](const std::string& name, auto& arrow, auto& parquet,
+                                                    auto& sparse) {
+                    arrow = roles_registry.GetArrowDataset(name);
+                    parquet = roles_registry.GetParquetBackedDataset(name);
+                    sparse = roles_registry.GetSparseFeatureDataset(name);
+                };
+                fill(run.dataset_roles.train.dataset_name, datasets.train_arrow, datasets.train_parquet,
+                     datasets.train_sparse);
+                if (run.dataset_roles.dev.IsSupplied())
+                    fill(run.dataset_roles.dev.dataset_name, datasets.dev_arrow, datasets.dev_parquet,
+                         datasets.dev_sparse);
+                if (run.dataset_roles.test.IsSupplied())
+                    fill(run.dataset_roles.test.dataset_name, datasets.test_arrow, datasets.test_parquet,
+                         datasets.test_sparse);
+                auto built = BuildResolvedTabularTrainingBatchers(run, datasets, batch_size);
+                if (!built.ok()) {
+                    error = "could not build resolved partitions: " + built.error_message;
+                    return false;
+                }
+                batchers = TakeResolvedExternalBatchers(std::move(built.batchers));
+                return true;
+            },
+            "Training Model (Resolved Roles)", "Training from resolved dataset roles");
     }
     if (config.sequence_batch.enabled) {
-        auto table = LoadSequenceSourceTable(dataset_name);
-        if (!table) {
-            spdlog::error("TabularLoader: '{}' is registered but no Arrow/Parquet "
-                          "table could be retrieved for sequence training",
-                          dataset_name);
-            return false;
-        }
+        return cyxwiz::SequenceTrainingRecipe(
+            [dataset_name](cyxwiz::TrainingConfiguration& run, int batch_size,
+                           std::unique_ptr<cyxwiz::ISequenceBatcher>& batcher, std::vector<std::string>& id_to_label,
+                           std::string& error) {
+                auto table = LoadSequenceSourceTable(dataset_name);
+                if (!table) {
+                    error = "'" + dataset_name +
+                            "' is registered but no Arrow/Parquet table could be retrieved for sequence training";
+                    return false;
+                }
 
-        std::vector<NERSequenceRow> rows;
-        std::string error;
-        if (!LoadTabularSequenceRows(
-                table,
-                config.sequence_batch.token_column,
-                config.sequence_batch.pos_column,
-                config.sequence_batch.tag_column,
-                rows,
-                error)) {
-            spdlog::error("TabularLoader: sequence materialization failed for '{}': {}",
-                          dataset_name, error);
-            return false;
-        }
+                std::vector<NERSequenceRow> rows;
+                std::string rows_error;
+                if (!LoadTabularSequenceRows(table, run.sequence_batch.token_column, run.sequence_batch.pos_column,
+                                             run.sequence_batch.tag_column, rows, rows_error)) {
+                    error = "sequence materialization failed for '" + dataset_name + "': " + rows_error;
+                    return false;
+                }
 
-        NERSequenceBuilderConfig builder_config;
-        builder_config.use_pos_tags = !config.sequence_batch.pos_column.empty();
-        builder_config.require_tags = true;
-        builder_config.batcher.batch_size = static_cast<size_t>(std::max(1, batch_size));
-        builder_config.batcher.shuffle = config.shuffle;
-        builder_config.batcher.drop_last = config.drop_last;
-        builder_config.batcher.create_attention_mask =
-            config.sequence_batch.create_attention_mask;
-        builder_config.batcher.tag_ignore_index = config.sequence_batch.ignore_index;
-        builder_config.token_vocabulary.lowercase = true;
-        builder_config.pos_vocabulary.lowercase = false;
+                NERSequenceBuilderConfig builder_config;
+                builder_config.use_pos_tags = !run.sequence_batch.pos_column.empty();
+                builder_config.require_tags = true;
+                builder_config.batcher.batch_size = static_cast<size_t>(std::max(1, batch_size));
+                builder_config.batcher.shuffle = run.shuffle;
+                builder_config.batcher.drop_last = run.drop_last;
+                builder_config.batcher.create_attention_mask = run.sequence_batch.create_attention_mask;
+                builder_config.batcher.tag_ignore_index = run.sequence_batch.ignore_index;
+                builder_config.token_vocabulary.lowercase = true;
+                builder_config.pos_vocabulary.lowercase = false;
 
-        auto built = BuildNERSequenceData(rows, builder_config);
-        if (!built.has_tags || built.samples.empty()) {
-            spdlog::error("TabularLoader: sequence build produced no supervised samples for '{}'",
-                          dataset_name);
-            return false;
-        }
-
-        spdlog::info("TabularLoader: Starting sequence training: dataset={}, epochs={}, "
-                     "batch_size={}, {} samples, {} labels",
-                     dataset_name, epochs, batch_size,
-                     built.samples.size(), built.tag_vocabulary.Size());
-        return tm.StartTrainingSequence(
-            std::move(config),
-            std::make_unique<SequenceBatcher>(built.samples, built.batcher_config),
-            built.tag_vocabulary.Values(),
-            epochs,
-            batch_size,
-            plot_panel,
-            std::move(node_editor_callback));
+                auto built = BuildNERSequenceData(rows, builder_config);
+                if (!built.has_tags || built.samples.empty()) {
+                    error = "sequence build produced no supervised samples for '" + dataset_name + "'";
+                    return false;
+                }
+                spdlog::info("TabularLoader: sequence training data: dataset={}, batch_size={}, {} samples, {} labels",
+                             dataset_name, batch_size, built.samples.size(), built.tag_vocabulary.Size());
+                batcher = std::make_unique<SequenceBatcher>(built.samples, built.batcher_config);
+                id_to_label = built.tag_vocabulary.Values();
+                return true;
+            });
     }
 
-    if (auto sparse_dataset =
-            registry.GetSparseFeatureDataset(dataset_name)) {
-        if (!config.dataset_roles.train.IsSupplied()) {
-            config.dataset_roles.train.dataset_name = dataset_name;
-            config.dataset_roles.train.label_column =
-                sparse_dataset->GetLabelName();
-        }
-        ResolvedTabularDatasets datasets;
-        datasets.train_sparse = std::move(sparse_dataset);
-        auto built = BuildResolvedTabularTrainingBatchers(
-            config, datasets, batch_size);
-        if (!built.ok()) {
-            spdlog::error(
-                "TabularLoader: could not build sparse partitions: {}",
-                built.error_message);
-            return false;
-        }
-        spdlog::info(
-            "TabularLoader: Starting sparse CSR training: dataset={}, "
-            "epochs={}, batch_size={}, features={}, label={}",
-            dataset_name, epochs, batch_size,
-            datasets.train_sparse->GetNumFeatures(),
-            datasets.train_sparse->GetLabelName());
-        return tm.StartTrainingExternal(
-            std::move(config),
-            TakeResolvedExternalBatchers(std::move(built.batchers)),
-            epochs, batch_size, plot_panel,
-            std::move(node_editor_callback));
+    if (registry.GetSparseFeatureDataset(dataset_name)) {
+        return cyxwiz::ResolvedBatchersTrainingRecipe(
+            [dataset_name](cyxwiz::TrainingConfiguration& run, int batch_size,
+                           cyxwiz::ResolvedExternalBatchers& batchers, std::string& error) {
+                auto sparse_dataset = cyxwiz::DataRegistry::Instance().GetSparseFeatureDataset(dataset_name);
+                if (!sparse_dataset) {
+                    error = "the sparse dataset '" + dataset_name + "' is no longer loaded";
+                    return false;
+                }
+                if (!run.dataset_roles.train.IsSupplied()) {
+                    run.dataset_roles.train.dataset_name = dataset_name;
+                    run.dataset_roles.train.label_column = sparse_dataset->GetLabelName();
+                }
+                spdlog::info("TabularLoader: sparse CSR training: dataset={}, batch_size={}, features={}, label={}",
+                             dataset_name, batch_size, sparse_dataset->GetNumFeatures(),
+                             sparse_dataset->GetLabelName());
+                ResolvedTabularDatasets datasets;
+                datasets.train_sparse = std::move(sparse_dataset);
+                auto built = BuildResolvedTabularTrainingBatchers(run, datasets, batch_size);
+                if (!built.ok()) {
+                    error = "could not build sparse partitions: " + built.error_message;
+                    return false;
+                }
+                batchers = TakeResolvedExternalBatchers(std::move(built.batchers));
+                return true;
+            },
+            "Training Model (Resolved Roles)", "Training from resolved dataset roles");
     }
 
     // Tabular covers both backends: in-memory Arrow (the default fast
@@ -631,25 +605,16 @@ bool TabularLoader::LaunchTraining(
     // CSV was too big to fit in RAM). Check Arrow first since the
     // Apply dispatch prefers it.
     if (auto arrow_ds = registry.GetArrowDataset(dataset_name)) {
-        spdlog::info("TabularLoader: Starting Arrow training: dataset={}, epochs={}, "
-                     "batch_size={}, label={}",
-                     dataset_name, epochs, batch_size, label_column);
-        return tm.StartTrainingArrow(std::move(config), arrow_ds, label_column,
-                                     epochs, batch_size, plot_panel,
-                                     std::move(node_editor_callback));
+        spdlog::info("TabularLoader: Arrow training: dataset={}, label={}", dataset_name, label_column);
+        return cyxwiz::ArrowTrainingRecipe(arrow_ds, label_column);
     }
     if (auto pq_ds = registry.GetParquetBackedDataset(dataset_name)) {
-        spdlog::info("TabularLoader: Starting Parquet-backed training: dataset={}, "
-                     "epochs={}, batch_size={}, label={}, {:.1f} MB on disk",
-                     dataset_name, epochs, batch_size, label_column,
-                     pq_ds->GetFileSizeBytes() / (1024.0 * 1024.0));
-        return tm.StartTrainingParquet(std::move(config), pq_ds, label_column,
-                                       epochs, batch_size, plot_panel,
-                                       std::move(node_editor_callback));
+        spdlog::info("TabularLoader: Parquet-backed training: dataset={}, label={}, {:.1f} MB on disk", dataset_name,
+                     label_column, pq_ds->GetFileSizeBytes() / (1024.0 * 1024.0));
+        return cyxwiz::ParquetTrainingRecipe(pq_ds, label_column);
     }
-    spdlog::error("TabularLoader: '{}' is registered but no supported tabular "
-                  "dataset can be retrieved", dataset_name);
-    return false;
+    return cyxwiz::FailedTrainingRecipe("'" + dataset_name +
+                                        "' is registered but no supported tabular dataset can be retrieved");
 }
 
 std::vector<ParamSchema> TabularLoader::NodeParams() const {

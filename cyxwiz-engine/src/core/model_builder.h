@@ -49,6 +49,7 @@ struct BuiltExecutableModel {
     std::unique_ptr<Loss>             loss;
     std::unique_ptr<Optimizer>        optimizer;
     std::string                       error_message;
+    std::vector<BuiltModuleProvenance> module_provenance;
 
     bool ok() const { return model != nullptr; }
 };
@@ -87,6 +88,7 @@ struct ResolvedOptimizerConfiguration {
     std::optional<float> epsilon;
     std::optional<float> rmsprop_alpha;
     std::optional<float> weight_decay;
+    std::optional<bool> nesterov;  // SGD
 };
 
 // Build SequentialModel + Loss + Optimizer from a TrainingConfiguration.

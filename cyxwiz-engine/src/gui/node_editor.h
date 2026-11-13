@@ -113,13 +113,6 @@ struct GraphSnapshot {
     int next_link_id;
 };
 
-// Clipboard data for copy/paste
-struct ClipboardData {
-    std::vector<MLNode> nodes;
-    std::vector<NodeLink> links;  // Internal links only
-    bool valid = false;
-};
-
 // Supported code generation frameworks
 enum class CodeFramework {
     PyTorch,
@@ -252,6 +245,17 @@ struct CanvasFrame {
         , color(0.3f, 0.5f, 0.7f, 0.8f) {}  // Default blue
 };
 
+// Clipboard data for copy/paste: the nodes, the links between them, where
+// they sat (pasted with the same layout) and, for a frame's Copy / Cut, the
+// frame around them.
+struct ClipboardData {
+    std::vector<MLNode> nodes;
+    std::vector<NodeLink> links;  // Internal links only
+    std::map<int, ImVec2> positions;  // grid positions by node id
+    std::optional<CanvasFrame> frame;
+    bool valid = false;
+};
+
 // Validation warning severity levels
 enum class ValidationSeverity {
     Error,    // Blocking errors (prevent training)
@@ -361,6 +365,8 @@ public:
     void SetWordVectorFeed(WordVectorFeed feed) { word_vector_feed_ = std::move(feed); }
     const WordVectorFeed& GetWordVectorFeed() const { return word_vector_feed_; }
     const std::vector<NodeLink>& GetLinks() const { return links_; }
+    // The canvas groups (the Studio Debugger names layer sections by them).
+    const std::vector<NodeGroup>& GetGroups() const { return groups_; }
     // Grid-space node positions from the last frame the canvas drew (empty
     // until it has drawn once).
     const std::map<int, ImVec2>& GetCachedNodePositions() const { return cached_node_positions_; }
@@ -462,6 +468,16 @@ public:
 
     // Training state control
     void SetTrainingActive(bool active) { is_training_ = active; }
+
+    // Freezing layers (fine-tuning; node_editor_freeze.cpp). The commands of
+    // the Freeze menu: "selected", "unselected", "loaded" (every layer the
+    // Data Loader's weights file fills), "but_head", "but_last" (asks how
+    // many), "unfreeze_all".
+    void RunFreezeCommand(const std::string& command);
+    // The user's saved defaults (Preferences) for a node just added from the
+    // palette or a pattern; not for a node loaded, pasted or duplicated.
+    void ApplyUserNodeDefaults(MLNode& node) const;
+    bool HasLayersWithWeights() const;
     bool IsTrainingActive() const { return is_training_; }
 
     // Unified Canvas Phase 2: Execution mode control
@@ -529,10 +545,17 @@ public:
 
     // Dynamic pins: rebuild a node's pins from plugin-provided data.
     // Called when a trigger parameter changes on a supports_dynamic_pins node.
-    void ResolveDynamicPins(int node_id);
+    // record_undo false: an automatic check (a graph just opened, a model
+    // looked for again), not an edit the user can undo
+    void ResolveDynamicPins(int node_id, bool record_undo = true);
 
     // Pattern insertion - add multiple nodes and links from a pattern template
+    // (fresh ids, so a pattern never shares an id with the canvas).
     void InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    // Replace the graph with an edited copy of it (Neural Architecture
+    // Search): unchanged nodes keep their id, place and group; new or retyped
+    // nodes are built for their type and placed between their neighbours.
+    void ReplaceWithEditedGraph(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
 
     // ID getters for pattern library to generate unique IDs
     int GetNextNodeId() const { return next_node_id_; }
@@ -869,6 +892,18 @@ private:
     // The strip along the canvas bottom: the counts, the selection and what
     // the canvas is doing (graph locked, the mode); TOFIX178 UI-1.
     void RenderCanvasFooter();
+    void FreezeSelectedNodes(bool freeze);
+    void FreezeAllButLastLayers(size_t keep);
+    void FreezeLayersLoadedFromFile();
+    void UnfreezeAllLayers();
+    void ApplyFreeze(const std::function<size_t(std::vector<MLNode>&)>& action, const std::string& what,
+                     const std::string& nothing);
+    void RenderFreezeMenuItems();
+    void RenderFreezePopups();
+    std::string FrozenTotalsText() const;
+    bool freeze_last_popup_ = false;
+    int freeze_keep_layers_ = 1;
+    std::string freeze_message_;
     static constexpr float kCanvasFooterHeight = 26.0f;
     int toolbar_fold_level_ = -1;  // the bar's last fold, logged when it changes
     void CarryDockFromOldName();
@@ -900,6 +935,9 @@ private:
     void ConfigureNode(int node_id);
     void ShowSingleNodeContextMenu();  // Node-specific context menu
     void ShowNodeDescriptionEditPopup();  // KNIME-style node description editor
+    // Names a node or a canvas group (the node menu's Rename..., a group
+    // header's double-click or Rename...).
+    void ShowRenamePopup();
 
     // Helper functions
     unsigned int GetNodeColor(NodeType type);
@@ -995,6 +1033,13 @@ private:
     void CopySelection();
     void CutSelection();
     void PasteClipboard();
+    // These nodes (and the links between them) to the clipboard; false when
+    // they cannot be copied (a subgraph).
+    bool CopyNodes(const std::vector<int>& node_ids);
+    // A frame with the nodes inside it; Cut also removes them.
+    void CopyFrame(int frame_id);
+    void CutFrame(int frame_id);
+    std::vector<int> NodesInsideFrame(const CanvasFrame& frame) const;
     void DuplicateSelection();
 
     // Helper for finding empty position
@@ -1041,6 +1086,10 @@ private:
     // Frame management
     void AddFrameAt(const ImVec2& canvas_position);
     void DeleteFrame(int frame_id);
+    // The mouse is over a node (ImNodes' hover at the end of the previous
+    // frame): frames and group headers drawn under the nodes leave its
+    // clicks to the node.
+    bool MouseOverNode() const { return node_hovered_last_frame_; }
     const std::vector<CanvasFrame>& GetFrames() const { return frames_; }
 
     // Annotation rendering and interaction
@@ -1298,6 +1347,11 @@ private:
     std::vector<int> selected_node_ids_;  // Multi-selection support
     ImVec2 paste_offset_ = ImVec2(50.0f, 50.0f);  // Offset for pasted nodes
 
+    // Adds nodes and the links between them under new node, pin and link ids
+    // (positions keyed by the old node id); returns old id -> new id.
+    std::map<int, int> AddWithFreshIds(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
+                                       const std::map<int, ImVec2>& positions);
+
     // Deferred position setting (for nodes created outside render context)
     std::map<int, ImVec2> pending_positions_;  // node_id -> position
     int pending_positions_frames_ = 0;  // Number of frames to keep applying positions (needed for ImNodes)
@@ -1364,10 +1418,16 @@ private:
     std::vector<NodeGroup> groups_;
     int next_group_id_ = 1;
 
-    // Create group dialog state
-    bool show_create_group_dialog_ = false;
-    char create_group_name_[256] = "";
     float create_group_color_[4] = {0.2f, 0.5f, 0.8f, 0.3f};
+    bool group_right_clicked_ = false;  // Prevents canvas menu when a group header is right-clicked
+    bool node_hovered_last_frame_ = false;
+
+    // Rename popup: a node or a group, by id
+    enum class RenameTarget { None, Node, Group };
+    RenameTarget rename_target_ = RenameTarget::None;
+    int rename_id_ = -1;
+    char rename_buffer_[256] = "";
+    void BeginRename(RenameTarget target, int id, const std::string& current);
 
     // Canvas annotations (KNIME-style sticky notes)
     std::vector<CanvasAnnotation> annotations_;

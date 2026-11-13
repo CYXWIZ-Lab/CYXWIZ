@@ -67,6 +67,7 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::LayerNorm: return "LayerNorm";
         case gui::NodeType::GroupNorm: return "GroupNorm";
         case gui::NodeType::InstanceNorm: return "InstanceNorm";
+        case gui::NodeType::SqueezeExcitation: return "SqueezeExcitation";
         case gui::NodeType::MultiHeadAttention: return "MultiHeadAttention";
         case gui::NodeType::CrossAttention: return "CrossAttention";
         case gui::NodeType::LinearAttention: return "LinearAttention";
@@ -89,6 +90,9 @@ inline const char* LayerTypeName(gui::NodeType type) {
         case gui::NodeType::GELU: return "GELU";
         case gui::NodeType::Swish: return "Swish";
         case gui::NodeType::Mish: return "Mish";
+        case gui::NodeType::Hardswish: return "Hardswish";
+        case gui::NodeType::Hardsigmoid: return "Hardsigmoid";
+        case gui::NodeType::ReLU6: return "ReLU6";
         case gui::NodeType::Sigmoid: return "Sigmoid";
         case gui::NodeType::Tanh: return "Tanh";
         case gui::NodeType::Softmax: return "Softmax";
@@ -154,6 +158,7 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::BatchNorm:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:
@@ -172,6 +177,9 @@ inline bool IsKnownArrayFireTensorLayer(gui::NodeType type) {
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
+        case gui::NodeType::Hardswish:
+        case gui::NodeType::Hardsigmoid:
+        case gui::NodeType::ReLU6:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:

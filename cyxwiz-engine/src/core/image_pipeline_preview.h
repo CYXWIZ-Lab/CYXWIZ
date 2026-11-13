@@ -6,6 +6,7 @@
 // transforms (done per batch), on the ArrayFire device. Normalize is left out
 // so the pictures stay in 0..1.
 
+#include "image_sheet.h"
 #include "prepared_image_set.h"
 
 #include <cyxwiz/image_augmentation.h>
@@ -20,7 +21,11 @@ struct PreviewPicture {
     std::string title;               // "Center Crop 64 x 64", "Draw 1"
     std::string detail;              // "64 x 64, once", "flipped, rotated 7.5 degrees"
     int width = 0, height = 0;
-    std::vector<uint8_t> rgba;       // width * height * 4
+    std::vector<uint8_t> rgba;       // width * height * 4: the picture, or a sheet's first tile
+    // An image that is neither grey nor RGB (TOFIX209): the first tile's
+    // name and the further tiles, each a named grey channel.
+    std::string first_name;
+    std::vector<ImageSheetTile> more;
 };
 
 struct ImagePipelinePreview {

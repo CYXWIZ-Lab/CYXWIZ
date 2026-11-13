@@ -7,14 +7,31 @@
 // dead-subgraph warning path.
 
 #include "../src/core/debug_executor.h"
+#include "../src/core/debug_model_session.h"
+#include "../src/core/occlusion.h"
+#include "../src/core/saliency.h"
+#include "../src/core/top_images.h"
+#include "../src/core/dense_contributions.h"
+#include "../src/core/layer_embedding.h"
+#include "../src/core/unit_weights.h"
+#include "../src/core/dataset_batcher.h"
+#include "../src/core/training_snapshots_presentation.h"
+#include "../src/core/where_it_looks_presentation.h"
 #include "../src/core/debug_numerics.h"
 #include "../src/core/debug_loss_metric_explainer.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/synthetic_batch.h"
 #include "../src/core/graph_compiler.h"
+#include "../src/core/graph_compiler_dataset_hooks.h"
+#include "../src/core/graph_document.h"
 #include "../src/core/checkpoint_manifest.h"
 #include "../src/core/checkpoint_payload_io.h"
 #include "../src/core/checkpoint_manager.h"
+#include "../src/core/debug_run_paths.h"
+#include "../src/core/layer_capture_store.h"
+#include "../src/core/layer_tensor_reader.h"
+#include "../src/core/tensor_file.h"
+#include "algorithms/arrayfire_backend_utils.h"
 
 #include <cyxwiz/loss.h>
 #include <cyxwiz/optimizers/sgd.h>
@@ -23,14 +40,21 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <limits>
+#include <optional>
+#include <random>
 #include <stdexcept>
+#include <thread>
 // Last on purpose: the checks are asserts, and they must run in Release too
 // (NDEBUG would compile them to nothing).
 #undef NDEBUG
@@ -238,7 +262,7 @@ TrainingConfiguration MakeSentimentConfig(size_t num_layers = 1) {
     return cfg;
 }
 
-void ExpectEq(size_t a, size_t b, const char* what) {
+void ExpectEq(size_t a, size_t b, const std::string& what) {
     if (a != b) {
         std::cerr << "FAIL: " << what << ": expected " << b
                   << " got " << a << "\n";
@@ -246,7 +270,7 @@ void ExpectEq(size_t a, size_t b, const char* what) {
     }
 }
 
-void ExpectTrue(bool condition, const char* what) {
+void ExpectTrue(bool condition, const std::string& what) {
     if (!condition) {
         std::cerr << "FAIL: " << what << "\n";
         std::exit(1);
@@ -616,6 +640,30 @@ void TestNormalizationRegularizationConfigurationContract() {
     }
     ExpectTrue(direct_batch_norm_rejected,
                "direct BatchNormModule construction should reject eps=0");
+
+    // TOFIX207: a gradient through an evaluated BatchNorm1d (saliency on an
+    // image MLP): the running statistics are constants, so dx = dy * gamma /
+    // sqrt(running_var + eps), as PyTorch's eval BatchNorm1d gives.
+    const auto bn_tensor = [](std::vector<float> v, std::vector<size_t> shape) {
+        return Tensor(shape, v.data(), DataType::Float32);
+    };
+    BatchNormModule eval_bn(3, 1e-5f, 0.1f);
+    eval_bn.SetParameters({{"gamma", bn_tensor({2.0f, -1.0f, 0.5f}, {3})},
+                           {"beta", bn_tensor({0.1f, 0.2f, 0.3f}, {3})},
+                           {"running_mean", bn_tensor({1.0f, 0.0f, -1.0f}, {3})},
+                           {"running_var", bn_tensor({4.0f, 1.0f, 0.25f}, {3})}});
+    eval_bn.SetTraining(false);
+    eval_bn.Forward(bn_tensor({1.0f, 2.0f, 3.0f, -1.0f, 0.5f, 0.0f}, {2, 3}));
+    const auto eval_dx =
+        layer_view::ReadValues(eval_bn.Backward(bn_tensor({1.0f, 1.0f, 1.0f, 2.0f, 0.0f, -1.0f}, {2, 3})));
+    const std::vector<float> scale = {2.0f / std::sqrt(4.0f + 1e-5f), -1.0f / std::sqrt(1.0f + 1e-5f),
+                                      0.5f / std::sqrt(0.25f + 1e-5f)};
+    const std::vector<float> expected_dx = {scale[0], scale[1], scale[2], 2.0f * scale[0], 0.0f, -scale[2]};
+    float eval_worst = eval_dx.size() == expected_dx.size() ? 0.0f : 1.0f;
+    for (size_t i = 0; i < eval_dx.size() && i < expected_dx.size(); ++i)
+        eval_worst = std::max(eval_worst, std::fabs(eval_dx[i] - expected_dx[i]));
+    ExpectTrue(eval_worst < 1e-5f,
+               "an eval-mode BatchNorm1d backward scales by gamma / sqrt(running_var + eps)");
 
     spdlog::info(
         "  OK: normalization/regularization exact values and invalid states are enforced");
@@ -1628,9 +1676,14 @@ void TestBuildSequentialTextEmbeddingWeights() {
         std::exit(1);
     }
 
-    auto params = built.model->GetParameters();
-    ExpectTrue(params.count("layer0.weight") == 0,
-               "frozen pretrained embedding should not expose trainable layer0.weight");
+    // A frozen table stays part of the model (a checkpoint keeps it); it is
+    // only left out of what the optimizer steps.
+    ExpectTrue(built.model->GetParameters().count("layer0.weight") == 1,
+               "a frozen pretrained embedding table stays in the model's parameters");
+    ExpectTrue(built.model->GetTrainableParameters().count("layer0.weight") == 0,
+               "a frozen pretrained embedding table is not handed to the optimizer");
+    ExpectTrue(built.model->GetFrozenParameterNames().count("layer0.weight") == 1,
+               "a frozen pretrained embedding table is named as frozen");
 }
 
 // TOFIX152: the layer also reads word vectors as text (a Word Embeddings
@@ -2209,6 +2262,165 @@ void TestDebugNumericsContract() {
     spdlog::info("  OK: bounded summaries and shape contracts");
 }
 
+// The device scan against a plain host pass over the same values: random
+// data with NaN, Inf, zeros and large values, a ReLU, a Sigmoid, a Tanh and
+// a Softmax-shaped tensor, so every count and every reduction is compared.
+void TestDebugNumericsMatchHostReference() {
+    spdlog::info("--- TestDebugNumericsMatchHostReference ---");
+    std::mt19937 random(20261106);
+    std::normal_distribution<float> normal(0.0f, 1.5f);
+    std::vector<float> values(6000);
+    for (size_t i = 0; i < values.size(); ++i) {
+        values[i] = normal(random);
+        if (i % 97 == 0) values[i] = 0.0f;
+        if (i % 211 == 0) values[i] = std::numeric_limits<float>::quiet_NaN();
+        if (i % 307 == 0) values[i] = -std::numeric_limits<float>::infinity();
+        if (i % 401 == 0) values[i] = 2.0e6f;
+        if (i % 13 == 0) values[i] = std::abs(values[i]) < 1.0f ? 0.995f : values[i];
+    }
+    for (const auto type : {gui::NodeType::Dense, gui::NodeType::ReLU, gui::NodeType::Sigmoid,
+                            gui::NodeType::Tanh, gui::NodeType::Softmax}) {
+        // [rows, 6] so the Softmax case has rows of 6 classes.
+        Tensor tensor({values.size() / 6, 6}, values.data(), DataType::Float32);
+        const auto summary = ScanDebugTensorNumerics(tensor, type);
+        size_t nan = 0, inf = 0, finite = 0, zero = 0, exploding = 0, saturated = 0;
+        long double sum = 0.0L, squares = 0.0L;
+        double low = std::numeric_limits<double>::infinity(), high = -low, largest = 0.0;
+        for (const float value : values) {
+            if (std::isnan(value)) { ++nan; continue; }
+            if (std::isinf(value)) { ++inf; continue; }
+            ++finite;
+            sum += value;
+            squares += static_cast<long double>(value) * value;
+            low = std::min(low, static_cast<double>(value));
+            high = std::max(high, static_cast<double>(value));
+            largest = std::max(largest, std::abs(static_cast<double>(value)));
+            if (value == 0.0f) ++zero;
+            if (std::abs(value) >= kDebugExplodingAbsoluteThreshold) ++exploding;
+            if ((type == gui::NodeType::Sigmoid && (value <= 0.01f || value >= 0.99f)) ||
+                (type == gui::NodeType::Tanh && std::abs(value) >= 0.99f) ||
+                (type == gui::NodeType::ReLU && value <= 0.0f)) {
+                ++saturated;
+            }
+        }
+        if (type == gui::NodeType::Softmax) {
+            for (size_t row = 0; row < values.size() / 6; ++row) {
+                double row_high = -std::numeric_limits<double>::infinity();
+                for (size_t column = 0; column < 6; ++column) {
+                    const float value = values[row * 6 + column];
+                    if (std::isfinite(value)) row_high = std::max(row_high, static_cast<double>(value));
+                }
+                if (row_high >= kDebugSoftmaxProbabilityThreshold) ++saturated;
+            }
+        }
+        const std::string kind = std::to_string(static_cast<int>(type));
+        ExpectEq(summary.element_count, values.size(), "device numerics element count " + kind);
+        ExpectEq(summary.nan_count, nan, "device numerics NaN count " + kind);
+        ExpectEq(summary.inf_count, inf, "device numerics Inf count " + kind);
+        ExpectEq(summary.finite_count, finite, "device numerics finite count " + kind);
+        ExpectEq(summary.zero_count, zero, "device numerics zero count " + kind);
+        ExpectEq(summary.exploding_count, exploding, "device numerics exploding count " + kind);
+        ExpectEq(summary.saturation_candidate_count, saturated, "device numerics saturation count " + kind);
+        const double mean = static_cast<double>(sum / static_cast<long double>(finite));
+        const double l2 = std::sqrt(static_cast<double>(squares));
+        ExpectTrue(std::abs(summary.mean - mean) <= 1e-5 * std::max(1.0, std::abs(mean)) + 1e-3,
+                   "device numerics mean " + kind);
+        ExpectTrue(std::abs(summary.l2_norm - l2) <= 1e-5 * l2, "device numerics L2 norm " + kind);
+        ExpectTrue(summary.minimum == low && summary.maximum == high && summary.maximum_absolute == largest,
+                   "device numerics range " + kind);
+    }
+    spdlog::info("  OK: device numerics equal the host reference");
+}
+
+// The layer view reads (TOFIX178 6.2c) against host arithmetic on tensors
+// whose every value is known: one sample of [H, W, C, N], its channels'
+// means, maxima and pictures, flat units, a histogram, and heatmap rows of
+// conv [kh, kw, cin, cout] and Dense [out, in] weights.
+void TestLayerTensorReader() {
+    spdlog::info("--- TestLayerTensorReader ---");
+    using namespace cyxwiz::layer_view;
+    const size_t H = 3, W = 4, C = 5, N = 2;
+    std::vector<float> spatial(H * W * C * N);
+    for (size_t i = 0; i < spatial.size(); ++i) spatial[i] = static_cast<float>(i % 23) - 7.0f;
+    const auto at = [&](size_t h, size_t w, size_t c, size_t n) { return spatial[((h * W + w) * C + c) * N + n]; };
+    const Tensor activation({H, W, C, N}, spatial.data(), DataType::Float32);
+
+    const Tensor sample = SampleOf(activation, 1);
+    ExpectTrue(sample.Shape() == std::vector<size_t>({H, W, C}), "a spatial sample is [H, W, C]");
+    const std::vector<float> sample_values = ReadValues(sample);
+    bool same = sample_values.size() == H * W * C;
+    for (size_t h = 0; same && h < H; ++h)
+        for (size_t w = 0; w < W; ++w)
+            for (size_t c = 0; c < C; ++c) same = same && sample_values[(h * W + w) * C + c] == at(h, w, c, 1);
+    ExpectTrue(same, "sample 1 holds the batch's second item, row-major");
+
+    const auto summary = ReadChannelSummary(sample);
+    bool sums = summary.means.size() == C && summary.maxima.size() == C;
+    for (size_t c = 0; sums && c < C; ++c) {
+        double sum = 0.0;
+        float high = -1e30f;
+        for (size_t h = 0; h < H; ++h)
+            for (size_t w = 0; w < W; ++w) {
+                sum += at(h, w, c, 1);
+                high = std::max(high, at(h, w, c, 1));
+            }
+        sums = sums && std::abs(summary.means[c] - static_cast<float>(sum / (H * W))) < 1e-5f &&
+               summary.maxima[c] == high;
+    }
+    ExpectTrue(sums, "channel means and maxima");
+
+    const auto pictures = ReadChannelImages(sample, {4, 1});
+    bool pictured = pictures.size() == 2 * H * W;
+    for (size_t h = 0; pictured && h < H; ++h)
+        for (size_t w = 0; w < W; ++w)
+            pictured = pictured && pictures[h * W + w] == at(h, w, 4, 1) &&
+                       pictures[H * W + h * W + w] == at(h, w, 1, 1);
+    ExpectTrue(pictured, "the shown channels' pictures, row by row, in the asked order");
+
+    std::vector<float> rows(3 * 6);
+    for (size_t i = 0; i < rows.size(); ++i) rows[i] = static_cast<float>(i) * 0.5f;
+    const Tensor flat({3, 6}, rows.data(), DataType::Float32);
+    const auto units = ReadValues(SampleOf(flat, 2));
+    ExpectTrue(units.size() == 6 && units[0] == 6.0f && units[5] == 8.5f, "a flat sample's units");
+
+    const float histogram_values[] = {0.0f, 0.1f, 0.9f, 1.0f, 2.5f, 3.9f, std::numeric_limits<float>::quiet_NaN(),
+                                      4.0f};
+    const Tensor for_histogram({8}, histogram_values, DataType::Float32);
+    const auto histogram = ReadHistogram(for_histogram, 0.0f, 4.0f, 4);
+    ExpectTrue(histogram.counts == std::vector<unsigned>({3, 1, 1, 2}),
+               "histogram of the finite values over [low, high] (the top value in the last bin)");
+
+    const size_t kh = 2, kw = 2, cin = 3, cout = 4;
+    std::vector<float> conv(kh * kw * cin * cout);
+    for (size_t i = 0; i < conv.size(); ++i) conv[i] = static_cast<float>(i);
+    const Tensor conv_weights({kh, kw, cin, cout}, conv.data(), DataType::Float32);
+    const TensorInfo conv_info{CapturedTensorRole::Parameter, "weights", {kh, kw, cin, cout}};
+    const auto page = ReadMatrixRows(conv_info, conv_weights, 1, 2);
+    const size_t columns = kh * kw * cin;
+    bool conv_rows = page.size() == 2 * columns;
+    for (size_t r = 0; conv_rows && r < 2; ++r)
+        for (size_t col = 0; col < columns; ++col)
+            conv_rows = conv_rows && page[r * columns + col] == conv[MatrixFlatIndex(conv_info, 1 + r, col)];
+    ExpectTrue(conv_rows, "conv heatmap rows are output channels over (ky, kx, cin)");
+    for (size_t position = 0; position < kh * kw; ++position) {
+        const auto slice = ReadMatrixRows(conv_info, conv_weights, 0, cout, position);
+        bool slice_ok = slice.size() == cout * cin;
+        for (size_t r = 0; slice_ok && r < cout; ++r)
+            for (size_t c = 0; c < cin; ++c)
+                slice_ok = slice_ok && slice[r * cin + c] == conv[MatrixFlatIndex(conv_info, r, c, position)];
+        ExpectTrue(slice_ok, "a kernel position's slice is output channels over input channels");
+    }
+
+    std::vector<float> dense(3 * 5);
+    for (size_t i = 0; i < dense.size(); ++i) dense[i] = static_cast<float>(i) - 4.0f;
+    const Tensor dense_weights({3, 5}, dense.data(), DataType::Float32);
+    const TensorInfo dense_info{CapturedTensorRole::Parameter, "weight", {3, 5}};
+    const auto dense_page = ReadMatrixRows(dense_info, dense_weights, 2, 9);
+    ExpectTrue(dense_page.size() == 5 && dense_page[0] == dense[10] && dense_page[4] == dense[14],
+               "Dense heatmap rows, clipped to the matrix");
+    spdlog::info("  OK: layer view reads equal host arithmetic");
+}
+
 void TestDebugExecutorGoldenPath() {
     spdlog::info("--- TestDebugExecutorGoldenPath ---");
     auto cfg = MakeTabularConfig();
@@ -2298,6 +2510,1572 @@ void TestDebugExecutorGoldenPath() {
                  "layer_traces={}, loss={}",
                  res.params_with_grad, res.layer_traces.size(),
                  res.loss_value);
+}
+
+// TOFIX178 6.0b: Local Debug runs the sample it is given (the picked item)
+// and names it; without one it runs and names a synthetic sample.
+void TestDebugExecutorInputSample() {
+    spdlog::info("--- TestDebugExecutorInputSample ---");
+    auto cfg = MakeTabularConfig();
+    DebugExecutor synthetic(cfg);
+    const auto plain = synthetic.Run();
+    ExpectTrue(plain.success && plain.input_description == "a synthetic sample (seed 1337)",
+               "no sample given: a synthetic one, named: " + plain.input_description);
+
+    const auto given = MakeSyntheticBatch(cfg, /*seed=*/7);
+    DebugExecutor picked(cfg);
+    picked.SetInputSample(given.features, given.labels, "row 3 of rows, validation");
+    const auto res = picked.Run();
+    ExpectTrue(res.success && res.input_description == "row 3 of rows, validation",
+               "the given sample runs and is named: " + res.input_description);
+    ExpectTrue(res.loss_value != plain.loss_value, "the given sample, not the synthetic one, reached the loss");
+}
+
+// TOFIX178 6.0a: Local Debug runs a branched graph the way training does (its
+// graph plan), not as a straight chain. The 1.8 ResNet example (skips into
+// Add, stride-2 blocks with 1x1 projections) used to stop at the first
+// stride-2 block with "Conv2D forward input channel mismatch".
+TrainingConfiguration CompileResNetExample() {
+    cyxwiz::GraphCompilerDatasetHooks hooks;
+    hooks.is_dataset_registered = [](const std::string&) { return false; };
+    hooks.labels_from_structure = [](const std::string& category) -> std::optional<bool> {
+        return category == "image";
+    };
+    hooks.preprocessing_domain = [](const std::string& category) -> std::optional<cyxwiz::PreprocessingDomain> {
+        return category == "image" ? cyxwiz::PreprocessingDomain::Image : cyxwiz::PreprocessingDomain::Tabular;
+    };
+    cyxwiz::SetGraphCompilerDatasetHooks(std::move(hooks));
+
+    const std::filesystem::path path = std::filesystem::path(CYXWIZ_SOURCE_ROOT) / "examples" / "cyxgraph" /
+                                       "cats_dogs_resnet_scratch.cyxgraph";
+    std::ifstream in(path, std::ios::binary);
+    ExpectTrue(static_cast<bool>(in), "ResNet example opens: " + path.string());
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    cyxwiz::GraphDocument graph;
+    std::string error;
+    ExpectTrue(cyxwiz::ParseGraphDocument(text, graph, error), "ResNet example loads: " + error);
+    auto config = cyxwiz::GraphCompiler{}.Compile(graph.nodes, graph.links, /*allow_unloaded_data=*/true);
+    ExpectTrue(config.is_valid, "ResNet example compiles without its data");
+    return config;
+}
+
+void TestDebugExecutorResNetExample() {
+    spdlog::info("--- TestDebugExecutorResNetExample ---");
+    const auto config = CompileResNetExample();
+    DebugExecutor exe(config);
+    const auto res = exe.Run();
+    ExpectTrue(res.reached == DebugStage::Complete && res.success,
+               "ResNet Local Debug completes: " + res.failure_summary);
+    // The 12 BatchNorm layers' running mean and variance are state, not
+    // parameters missing a gradient; every trained parameter has one.
+    ExpectEq(res.state_tensors, 24, "BatchNorm running statistics counted as state");
+    ExpectEq(res.params_missing_grad, 0, "ResNet params_missing_grad");
+    for (const auto& g : res.grad_norms)
+        ExpectTrue(g.param_name.find("running_") == std::string::npos,
+                   "no running statistic among the gradients: " + g.param_name);
+    // BN stem (32 channels): gamma and beta trained, running mean and
+    // variance its state.
+    const auto& bn_stem = res.model_build_traces.at(1).payload;
+    ExpectEq(bn_stem["parameter_tensor_count"].get<size_t>(), 2, "BN stem trained tensors");
+    ExpectEq(bn_stem["parameter_numel"].get<size_t>(), 64, "BN stem trained elements");
+    ExpectEq(bn_stem["state_tensor_count"].get<size_t>(), 2, "BN stem state tensors");
+    ExpectEq(bn_stem["state_numel"].get<size_t>(), 64, "BN stem state elements");
+    ExpectEq(res.layer_traces.size(), config.layers.size(), "one forward trace per layer");
+    ExpectEq(res.model_build_traces.size(), config.layers.size(), "one build trace per layer");
+    for (const auto& t : res.layer_traces) {
+        const auto shape_text = [](const std::vector<size_t>& shape) {
+            std::string out;
+            for (size_t d : shape) out += (out.empty() ? "" : ",") + std::to_string(d);
+            return "[" + out + "]";
+        };
+        ExpectTrue(t.shape_matches && t.input_shape_matches && !t.has_nan && !t.has_inf,
+                   "layer " + t.name + " runs with its compiled shapes: input " + shape_text(t.actual_input_shape) +
+                       " (compiled " + shape_text(t.predicted_input_shape) + "), output " +
+                       shape_text(t.actual_shape) + " (compiled " + shape_text(t.predicted_shape) + ")");
+    }
+    // The ReLU after a block is fed by the block's Add, not by the layer run
+    // before it (the projection's BatchNorm).
+    int relus_after_add = 0;
+    for (const auto& t : res.layer_traces) {
+        if (t.name.rfind("ReLU s", 0) == 0 && t.name.size() == 7) {
+            ExpectTrue(t.upstream_node_name == "Add " + t.name.substr(5),
+                       t.name + " is fed by its block's Add, got " + t.upstream_node_name);
+            ++relus_after_add;
+        }
+    }
+    ExpectEq(relus_after_add, 4, "four blocks end in Add -> ReLU");
+    // Every weight gets a gradient. What comes back without one is BatchNorm's
+    // running statistics, which GetParameters lists beside the weights (state,
+    // not trained; TOFIX178 6.0e separates them).
+    for (const auto& g : res.grad_norms) {
+        const bool running_stat = g.param_name.size() > 13 &&
+            (g.param_name.compare(g.param_name.size() - 13, 13, ".running_mean") == 0 ||
+             g.param_name.compare(g.param_name.size() - 12, 12, ".running_var") == 0);
+        ExpectTrue(g.has_gradient || running_stat, g.param_name + " gets a gradient");
+    }
+    // A picked image arrives as the image batcher hands it out, batch first
+    // [1, H, W, C] (TOFIX178 6.0b), and enters the model the way training's
+    // Forward converts it.
+    std::vector<float> pixels(64 * 64 * 3);
+    for (size_t i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<float>(i % 251) / 251.0f;
+    const auto synthetic = MakeSyntheticBatch(config, 3);
+    DebugExecutor picked(config);
+    picked.SetInputSample(Tensor({1, 64, 64, 3}, pixels.data(), DataType::Float32), synthetic.labels,
+                          "image 0 of cat_dog, train");
+    const auto picked_res = picked.Run();
+    ExpectTrue(picked_res.reached == DebugStage::Complete && picked_res.success,
+               "a batch-first picked image runs the ResNet: " + picked_res.failure_summary);
+    spdlog::info("  OK: ResNet layer_traces={}, params_with_grad={}, loss={}",
+                 res.layer_traces.size(), res.params_with_grad, res.loss_value);
+}
+
+// TOFIX178 6.1a: Local Debug keeps what every layer held.
+std::vector<float> HostValues(const Tensor& t) {
+    const float* data = t.ReadData<float>();
+    return std::vector<float>(data, data + t.NumElements());
+}
+
+float MaxAbsDifference(const std::vector<float>& a, const std::vector<float>& b) {
+    if (a.size() != b.size()) return std::numeric_limits<float>::infinity();
+    float worst = 0.0f;
+    for (size_t i = 0; i < a.size(); ++i) worst = std::max(worst, std::fabs(a[i] - b[i]));
+    return worst;
+}
+
+const CapturedLayer& CapturedNamed(const LayerCapture& capture, const std::string& name) {
+    for (const auto& layer : capture.Layers())
+        if (layer.node_name == name) return layer;
+    std::cerr << "FAIL: no captured layer named " << name << "\n";
+    std::exit(1);
+}
+
+const Tensor& CapturedTensorOf(const CapturedLayer& layer, CapturedTensorRole role, const std::string& name = {}) {
+    const CapturedTensor* t = layer.Find(role, name);
+    ExpectTrue(t != nullptr, layer.node_name + " captured its " + CapturedTensorRoleName(role) + " " + name);
+    return t->tensor;
+}
+
+void TestLayerCaptureTabular() {
+    spdlog::info("--- TestLayerCaptureTabular ---");
+    const auto cfg = MakeTabularConfig();
+
+    DebugExecutor off(cfg);
+    const auto plain = off.Run();
+    ExpectTrue(plain.success && !plain.layer_capture, "capture off: nothing is kept");
+
+    DebugExecutor exe(cfg);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "capture on: the run keeps its layers");
+    const LayerCapture& capture = *res.layer_capture;
+    ExpectEq(capture.Layers().size(), 3, "one captured layer per module");
+    ExpectTrue(!capture.Truncated(), "a small model fits the default budget");
+    size_t bytes = 0;
+    for (size_t i = 0; i < capture.Layers().size(); ++i) {
+        const auto& layer = capture.Layers()[i];
+        ExpectEq(layer.module_index, i, "captured layers in run order");
+        ExpectEq(static_cast<size_t>(layer.node_id), static_cast<size_t>(101 + i), "captured layer node id");
+        ExpectTrue(layer.node_name == res.layer_traces[i].name, "captured layer named as its trace");
+        const Tensor& output = CapturedTensorOf(layer, CapturedTensorRole::Output);
+        ExpectTrue(output.Shape() == res.layer_traces[i].actual_shape, layer.node_name + " output shape");
+        for (const auto& t : layer.tensors) bytes += t.tensor.NumBytes();
+        if (i + 1 < capture.Layers().size()) {
+            const Tensor& next_input = CapturedTensorOf(capture.Layers()[i + 1], CapturedTensorRole::Input);
+            ExpectTrue(MaxAbsDifference(HostValues(output), HostValues(next_input)) == 0.0f,
+                       layer.node_name + " output is the next layer's input");
+        }
+    }
+    ExpectEq(capture.BytesHeld(), bytes, "bytes held is what the layers keep");
+
+    // The kept weights are the ones that ran: Dense recomputed on the host
+    // from the captured input, weight and bias gives the captured output.
+    const auto& dense = capture.Layers()[0];
+    const auto x = HostValues(CapturedTensorOf(dense, CapturedTensorRole::Input));
+    const Tensor& w_tensor = CapturedTensorOf(dense, CapturedTensorRole::Parameter, "weight");
+    const auto w = HostValues(w_tensor);
+    const auto b = HostValues(CapturedTensorOf(dense, CapturedTensorRole::Parameter, "bias"));
+    const auto y = HostValues(CapturedTensorOf(dense, CapturedTensorRole::Output));
+    const size_t in = 10, out = 32, rows = x.size() / in;
+    const bool out_by_in = w_tensor.Shape() == std::vector<size_t>{out, in};
+    ExpectTrue(out_by_in || w_tensor.Shape() == std::vector<size_t>{in, out}, "Dense weight is [out, in] or [in, out]");
+    float worst = 0.0f;
+    for (size_t r = 0; r < rows; ++r)
+        for (size_t o = 0; o < out; ++o) {
+            double sum = b[o];
+            for (size_t k = 0; k < in; ++k) sum += x[r * in + k] * w[out_by_in ? o * in + k : k * out + o];
+            worst = std::max(worst, std::fabs(static_cast<float>(sum) - y[r * out + o]));
+        }
+    ExpectTrue(worst < 1e-4f, "Dense output recomputed from the captured tensors, worst " + std::to_string(worst));
+
+    // Parameters and gradients are the model's, before the optimizer step:
+    // the same norms Local Debug reports.
+    size_t gradients = 0;
+    for (const auto& entry : res.grad_norms) {
+        const auto& layer = capture.Layers().at(static_cast<size_t>(entry.layer_index));
+        const auto field = entry.param_name.substr(entry.param_name.find('.') + 1);
+        const auto p = HostValues(CapturedTensorOf(layer, CapturedTensorRole::Parameter, field));
+        const auto g = HostValues(CapturedTensorOf(layer, CapturedTensorRole::Gradient, field));
+        double p2 = 0, g2 = 0;
+        for (float v : p) p2 += double(v) * v;
+        for (float v : g) g2 += double(v) * v;
+        ExpectNear(static_cast<float>(std::sqrt(p2)), entry.parameter_l2_norm, 1e-4f * (1 + entry.parameter_l2_norm),
+                   "captured parameter is the model's");
+        ExpectNear(static_cast<float>(std::sqrt(g2)), entry.l2_norm, 1e-4f * (1 + entry.l2_norm),
+                   "captured gradient is the model's");
+        ++gradients;
+    }
+    ExpectEq(gradients, 4, "two Dense layers: weight and bias gradients");
+
+    // What to keep.
+    DebugExecutor weights_only(cfg);
+    weights_only.SetLayerCapture({/*activations=*/false, /*parameters=*/true, /*gradients=*/false});
+    const auto w_res = weights_only.Run();
+    ExpectEq(w_res.layer_capture->Layers().size(), 2, "weights only: the two Dense layers");
+    for (const auto& layer : w_res.layer_capture->Layers())
+        for (const auto& t : layer.tensors)
+            ExpectTrue(t.role == CapturedTensorRole::Parameter, "weights only keeps parameters");
+
+    // The budget: tensors past it are skipped and counted, none is cut.
+    LayerCaptureOptions small;
+    small.byte_budget = bytes / 2;
+    DebugExecutor bounded(cfg);
+    bounded.SetLayerCapture(small);
+    const auto b_res = bounded.Run();
+    const LayerCapture& kept = *b_res.layer_capture;
+    ExpectTrue(b_res.success && kept.Truncated(), "a budget below the model's tensors truncates");
+    ExpectTrue(kept.BytesHeld() <= small.byte_budget, "held within the budget");
+    ExpectEq(kept.BytesHeld() + kept.SkippedBytes(), bytes, "held + skipped is everything");
+    size_t held_tensors = 0, all_tensors = 0;
+    for (const auto& layer : kept.Layers()) held_tensors += layer.tensors.size();
+    for (const auto& layer : capture.Layers()) all_tensors += layer.tensors.size();
+    ExpectEq(held_tensors + kept.SkippedTensors(), all_tensors, "held + skipped tensors is every tensor");
+    spdlog::info("  OK: capture {} bytes, Dense recompute worst {}", bytes, worst);
+}
+
+// The graph model (branches into Add): each layer is captured with its
+// compiled name, BatchNorm keeps its running statistics as state, and the
+// ReLU after a block is fed the sum of the block's two branches.
+void TestLayerCaptureResNetExample() {
+    spdlog::info("--- TestLayerCaptureResNetExample ---");
+    const auto config = CompileResNetExample();
+    DebugExecutor exe(config);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "ResNet runs with capture: " + res.failure_summary);
+    const LayerCapture& capture = *res.layer_capture;
+    ExpectTrue(!capture.Truncated(), "the ResNet's one-image step fits the default budget");
+    ExpectEq(capture.Layers().size(), res.layer_traces.size(), "one captured layer per layer that ran");
+    for (const auto& trace : res.layer_traces) {
+        const auto& layer = CapturedNamed(capture, trace.name);
+        ExpectTrue(CapturedTensorOf(layer, CapturedTensorRole::Output).Shape() == trace.actual_shape,
+                   trace.name + " captured output shape");
+        ExpectTrue(CapturedTensorOf(layer, CapturedTensorRole::Input).Shape() == trace.actual_input_shape,
+                   trace.name + " captured input shape");
+    }
+    size_t state = 0;
+    for (const auto& layer : capture.Layers())
+        for (const auto& t : layer.tensors)
+            if (t.role == CapturedTensorRole::State) {
+                ++state;
+                ExpectTrue(t.name.rfind("running_", 0) == 0, layer.node_name + " state is a running statistic");
+                ExpectTrue(!layer.Find(CapturedTensorRole::Gradient, t.name), "no gradient for state " + t.name);
+            }
+    ExpectEq(state, res.state_tensors, "every running statistic kept as state");
+    const auto& stem = CapturedNamed(capture, "Conv 32 stem");
+    ExpectTrue(CapturedTensorOf(stem, CapturedTensorRole::Gradient, "weights").Shape() ==
+                   CapturedTensorOf(stem, CapturedTensorRole::Parameter, "weights").Shape(),
+               "the stem's weight gradient has the weight's shape");
+    ExpectTrue(MaxAbsDifference(HostValues(CapturedTensorOf(stem, CapturedTensorRole::Output)),
+                                HostValues(CapturedTensorOf(CapturedNamed(capture, "BN stem"),
+                                                            CapturedTensorRole::Input))) == 0.0f,
+               "the stem's output is BN stem's input");
+
+    const auto add_input = [&](const std::string& relu, const std::string& main, const std::string& skip) {
+        const auto in = HostValues(CapturedTensorOf(CapturedNamed(capture, relu), CapturedTensorRole::Input));
+        const auto a = HostValues(CapturedTensorOf(CapturedNamed(capture, main), CapturedTensorRole::Output));
+        const auto b = HostValues(CapturedTensorOf(CapturedNamed(capture, skip), CapturedTensorRole::Output));
+        ExpectTrue(in.size() == a.size() && a.size() == b.size(), relu + " input and branch sizes agree");
+        float worst = 0.0f;
+        for (size_t i = 0; i < in.size(); ++i) worst = std::max(worst, std::fabs(in[i] - (a[i] + b[i])));
+        ExpectTrue(worst < 1e-5f, relu + " input is " + main + " + " + skip + ", worst " + std::to_string(worst));
+        const auto out = HostValues(CapturedTensorOf(CapturedNamed(capture, relu), CapturedTensorRole::Output));
+        float relu_worst = 0.0f;
+        for (size_t i = 0; i < in.size(); ++i) relu_worst = std::max(relu_worst, std::fabs(out[i] - std::max(0.0f, in[i])));
+        ExpectTrue(relu_worst == 0.0f, relu + " output is max(0, input)");
+    };
+    add_input("ReLU s1", "BN s1b", "ReLU stem");  // identity skip
+    add_input("ReLU s2", "BN s2b", "BN s2s");     // 1x1 projection skip
+    spdlog::info("  OK: ResNet capture {} layers, {} MB", capture.Layers().size(), capture.BytesHeld() >> 20);
+}
+
+// TOFIX202: a debug run's model rebuilt from its capture answers again with
+// the weights the run used; its input gradient matches central differences.
+std::vector<float> RowMajor(const Tensor& t) {
+    const af::array flat = t.GetRowMajorFlatArray();
+    std::vector<float> values(static_cast<size_t>(flat.elements()));
+    if (!values.empty()) flat.as(f32).host(values.data());
+    return values;
+}
+
+Tensor FromRowMajor(const std::vector<float>& values, const std::vector<size_t>& shape) {
+    return Tensor::FromRowMajorFlatArray(af::array(static_cast<dim_t>(values.size()), values.data()), shape);
+}
+
+// sum(output x target) for an input.
+double Score(DebugModelSession& session, const Tensor& input, const std::vector<float>& target) {
+    const auto out = RowMajor(session.Forward(input));
+    double s = 0.0;
+    for (size_t i = 0; i < out.size(); ++i) s += double(out[i]) * target[i];
+    return s;
+}
+
+// The input gradient at `indices` against central differences.
+void CheckInputGradient(DebugModelSession& session, const Tensor& input, const std::vector<size_t>& indices,
+                        float eps, const std::string& what) {
+    const Tensor output = session.Forward(input);
+    std::vector<float> target(output.NumElements(), 0.0f);
+    target[target.size() - 1] = 1.0f;  // the last output of the last sample
+    const auto grad = RowMajor(session.InputGradient(input, FromRowMajor(target, output.Shape())));
+    ExpectEq(grad.size(), input.NumElements(), what + ": the gradient has the input's size");
+    const auto x = RowMajor(input);
+    for (size_t k : indices) {
+        auto up = x, down = x;
+        up[k] += eps;
+        down[k] -= eps;
+        const double numeric = (Score(session, FromRowMajor(up, input.Shape()), target) -
+                                Score(session, FromRowMajor(down, input.Shape()), target)) / (2.0 * eps);
+        const double analytic = grad[k];
+        const double tolerance = 0.05 * std::max(std::fabs(numeric), std::fabs(analytic)) + 2e-3;
+        ExpectTrue(std::fabs(numeric - analytic) <= tolerance,
+                   what + ": input " + std::to_string(k) + " gradient " + std::to_string(analytic) +
+                       " vs central difference " + std::to_string(numeric));
+    }
+}
+
+// TOFIX204: the layer backward observer reports the gradient that reached
+// each layer's output, summed over its consumers, and changes nothing.
+std::map<size_t, Tensor> BackwardThroughModel(IExecutableModel& model, const Tensor& input, Tensor* input_grad) {
+    std::map<size_t, Tensor> grads;
+    model.SetLayerBackwardObserver([&](size_t module_index, const Tensor& grad) {
+        ExpectTrue(grads.find(module_index) == grads.end(), "each layer's output gradient is reported once");
+        grads.emplace(module_index, grad.Clone());
+    });
+    const Tensor output = model.Forward(input);
+    std::vector<float> target(output.NumElements(), 0.0f);
+    target[target.size() - 1] = 1.0f;
+    *input_grad = model.Backward(FromRowMajor(target, output.Shape()));
+    model.SetLayerBackwardObserver(nullptr);
+    return grads;
+}
+
+void TestLayerBackwardObserver() {
+    spdlog::info("--- TestLayerBackwardObserver ---");
+    // An MLP: each layer's backward of its output gradient is the gradient
+    // at the layer before it, and the first gives the input gradient.
+    auto mlp = BuildExecutableFromConfig(MakeTabularConfig());
+    ExpectTrue(mlp.ok(), "the MLP builds: " + mlp.error_message);
+    mlp.model->SetTraining(false);
+    std::vector<float> x(3 * 10);
+    for (size_t i = 0; i < x.size(); ++i) x[i] = std::sin(0.7f * float(i)) * 2.0f;
+    const Tensor input = FromRowMajor(x, {3, 10});
+    Tensor input_grad;
+    auto grads = BackwardThroughModel(*mlp.model, input, &input_grad);
+    ExpectEq(grads.size(), 3, "one output gradient per MLP layer");
+    const Tensor plain_grad = mlp.model->Backward(grads.at(2));
+    ExpectTrue(MaxAbsDifference(RowMajor(plain_grad), RowMajor(input_grad)) == 0.0f,
+               "without the observer the backward is unchanged");
+    std::vector<float> last(12, 0.0f);
+    last.back() = 1.0f;
+    ExpectTrue(RowMajor(grads.at(2)) == last, "the last layer's output gradient is the target");
+    for (size_t i = 2; i > 0; --i) {
+        const float worst = MaxAbsDifference(RowMajor(mlp.model->LayerModule(i)->Backward(grads.at(i))),
+                                             RowMajor(grads.at(i - 1)));
+        ExpectTrue(worst < 1e-6f, "MLP layer " + std::to_string(i) + " backward gives layer " +
+                                      std::to_string(i - 1) + "'s output gradient, worst " + std::to_string(worst));
+    }
+    ExpectTrue(MaxAbsDifference(RowMajor(mlp.model->LayerModule(0)->Backward(grads.at(0))), RowMajor(input_grad)) <
+                   1e-6f,
+               "the first MLP layer's backward gives the input gradient");
+
+    // Embedding, Flatten, Dense: the gradient at each token position is what
+    // the Embedding table's gradient sums over the positions of that id.
+    auto text = BuildExecutableFromConfig(MakeTextConfig());
+    ExpectTrue(text.ok(), "the text model builds: " + text.error_message);
+    text.model->SetTraining(false);
+    std::vector<float> ids(2 * 16);
+    for (size_t i = 0; i < ids.size(); ++i) ids[i] = float((i * 7) % 11 + 1);  // ids repeat
+    Tensor ids_grad;
+    grads = BackwardThroughModel(*text.model, FromRowMajor(ids, {2, 16}), &ids_grad);
+    const Tensor& at_embedding = grads.at(0);
+    ExpectTrue(at_embedding.Shape() == std::vector<size_t>({2, 16, 8}),
+               "the gradient at the Embedding output is [N, T, D]");
+    const auto per_position = RowMajor(at_embedding);
+    std::vector<double> summed(500 * 8, 0.0);
+    for (size_t p = 0; p < ids.size(); ++p)
+        for (size_t d = 0; d < 8; ++d) summed[size_t(ids[p]) * 8 + d] += per_position[p * 8 + d];
+    const auto table_grads = text.model->GetGradients();
+    const Tensor* table = nullptr;
+    for (const auto& [key, g] : table_grads)
+        if (g.Shape() == std::vector<size_t>({500, 8})) table = &g;
+    ExpectTrue(table != nullptr, "the Embedding table has a [500, 8] gradient");
+    const auto table_values = RowMajor(*table);
+    double worst = 0.0;
+    for (size_t i = 0; i < summed.size(); ++i) worst = std::max(worst, std::fabs(summed[i] - table_values[i]));
+    ExpectTrue(worst < 1e-5, "per-position gradients sum to the Embedding table's gradient, worst " +
+                                 std::to_string(worst));
+
+    // The ResNet: "ReLU stem" feeds the first block and its identity skip,
+    // so its output gradient is the sum of both; back through the stem it
+    // gives the model's input gradient.
+    const auto resnet = CompileResNetExample();
+    auto r = BuildExecutableFromConfig(resnet);
+    ExpectTrue(r.ok(), "the ResNet builds: " + r.error_message);
+    r.model->SetTraining(false);
+    std::map<std::string, size_t> module_of;
+    for (const auto& p : r.module_provenance)
+        if (p.module_index) module_of[p.node_name] = *p.module_index;
+    ExpectTrue(module_of.count("Conv 32 stem") && module_of.count("BN stem") && module_of.count("ReLU stem"),
+               "the ResNet's stem layers are modules");
+    DebugExecutor r_exe(resnet);
+    r_exe.SetLayerCapture({});
+    const auto r_res = r_exe.Run();
+    ExpectTrue(r_res.success && r_res.layer_capture, "the ResNet runs with capture: " + r_res.failure_summary);
+    const Tensor& image = CapturedTensorOf(r_res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    Tensor image_grad;
+    grads = BackwardThroughModel(*r.model, image, &image_grad);
+    Tensor back = grads.at(module_of.at("ReLU stem"));
+    for (const char* name : {"ReLU stem", "BN stem", "Conv 32 stem"})
+        back = r.model->LayerModule(module_of.at(name))->Backward(back);
+    const float r_worst = MaxAbsDifference(RowMajor(back), RowMajor(image_grad));
+    ExpectTrue(MaxAbsDifference(RowMajor(image_grad), std::vector<float>(image_grad.NumElements(), 0.0f)) > 0.0f,
+               "the ResNet's input gradient is not all zero");
+    ExpectTrue(r_worst < 1e-4f, "the stem's summed output gradient leads to the input gradient, worst " +
+                                    std::to_string(r_worst));
+    spdlog::info("  OK: layer backward observer (MLP, Embedding table worst {}, ResNet stem worst {})", worst, r_worst);
+}
+
+// TOFIX178 6.3c: saliency against PyTorch (computation_truth/fixtures/
+// saliency_pytorch.json, generate_saliency_fixtures.py): the output weighting,
+// the gradient (at the input, or at the Embedding's output for tokens) and
+// the per-element size and gradient x input, for an image CNN, a one-logit
+// table MLP (both classes) and an Embedding text model, in eval mode.
+Tensor FixtureTensor(const nlohmann::json& value) {
+    return FromRowMajor(value.at("values").get<std::vector<float>>(), value.at("shape").get<std::vector<size_t>>());
+}
+
+void ExpectCloseTo(const std::vector<float>& actual, const nlohmann::json& expected, float atol, float rtol,
+                   const std::string& what) {
+    const auto values = expected.at("values").get<std::vector<float>>();
+    ExpectEq(actual.size(), values.size(), what + ": size");
+    for (size_t i = 0; i < values.size(); ++i)
+        ExpectTrue(std::fabs(actual[i] - values[i]) <= atol + rtol * std::fabs(values[i]),
+                   what + ": element " + std::to_string(i) + " " + std::to_string(actual[i]) + ", PyTorch " +
+                       std::to_string(values[i]));
+}
+
+std::vector<float> AsFloats(const std::vector<double>& v) {
+    std::vector<float> out;
+    out.reserve(v.size());
+    for (double x : v) out.push_back(static_cast<float>(x));
+    return out;
+}
+
+TrainingConfiguration SaliencyFixtureConfig(const std::string& kind) {
+    TrainingConfiguration cfg;
+    cfg.loss_type = gui::NodeType::CrossEntropyLoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+    const auto layer = [](gui::NodeType type, std::vector<size_t> in, std::vector<size_t> out) {
+        CompiledLayer l;
+        l.type = type;
+        l.input_shape = std::move(in);
+        l.output_shape = std::move(out);
+        return l;
+    };
+    if (kind == "image") {
+        cfg.preprocessing_domain = PreprocessingDomain::Image;
+        cfg.input_size = 75;
+        cfg.input_shape = {5, 5, 3};
+        cfg.output_size = 3;
+        CompiledLayer conv = layer(gui::NodeType::Conv2D, {5, 5, 3}, {5, 5, 4});
+        conv.parameters = {{"filters", "4"}, {"kernel_size", "3"}, {"stride", "1"}, {"padding", "1"}};
+        cfg.layers = {conv, layer(gui::NodeType::ReLU, {5, 5, 4}, {5, 5, 4}),
+                      layer(gui::NodeType::Flatten, {5, 5, 4}, {100}), layer(gui::NodeType::Dense, {100}, {3})};
+        cfg.layers.back().units = 3;
+    } else if (kind == "features") {
+        cfg.preprocessing_domain = PreprocessingDomain::Tabular;
+        cfg.input_size = 4;
+        cfg.output_size = 1;
+        cfg.loss_type = gui::NodeType::BCEWithLogits;
+        cfg.layers = {layer(gui::NodeType::Dense, {4}, {5}), layer(gui::NodeType::ReLU, {5}, {5}),
+                      layer(gui::NodeType::Dense, {5}, {1})};
+        cfg.layers[0].units = 5;
+        cfg.layers[2].units = 1;
+    } else {
+        cfg.preprocessing_domain = PreprocessingDomain::Text;
+        cfg.input_size = 5;
+        cfg.output_size = 3;
+        CompiledLayer emb;
+        emb.type = gui::NodeType::Embedding;
+        emb.parameters["num_embeddings"] = "20";
+        emb.parameters["embedding_dim"] = "4";
+        CompiledLayer flatten;
+        flatten.type = gui::NodeType::Flatten;
+        CompiledLayer dense;
+        dense.type = gui::NodeType::Dense;
+        dense.units = 3;
+        cfg.layers = {emb, flatten, dense};
+    }
+    return cfg;
+}
+
+void TestSaliencyAgainstPyTorch() {
+    spdlog::info("--- TestSaliencyAgainstPyTorch ---");
+    namespace sal = saliency;
+    const auto path = std::filesystem::path(CYXWIZ_SOURCE_ROOT) / "cyxwiz-engine" / "tests" / "computation_truth" /
+                      "fixtures" / "saliency_pytorch.json";
+    std::ifstream in(path);
+    ExpectTrue(in.good(), "the saliency fixture opens: " + path.string());
+    const auto fixture = nlohmann::json::parse(in);
+    const float atol = fixture.at("tolerance").at("atol").get<float>();
+    const float rtol = fixture.at("tolerance").at("rtol").get<float>();
+    for (const auto& c : fixture.at("cases")) {
+        const std::string name = c.at("name").get<std::string>();
+        const std::string kind_key = c.at("kind").get<std::string>();
+        const auto kind = kind_key == "image"      ? occlusion::InputKind::Image
+                          : kind_key == "features" ? occlusion::InputKind::Features
+                                                   : occlusion::InputKind::Tokens;
+        auto built = BuildExecutableFromConfig(SaliencyFixtureConfig(kind_key));
+        ExpectTrue(built.ok(), name + ": the model builds: " + built.error_message);
+        std::map<std::string, Tensor> parameters;
+        for (const auto& [key, value] : c.at("layers").items()) parameters[key] = FixtureTensor(value);
+        built.model->SetParameters(parameters);
+        built.model->SetTraining(false);
+
+        const Tensor input = FixtureTensor(c.at("input"));
+        const Tensor output = built.model->Forward(input);
+        ExpectCloseTo(RowMajor(output), c.at("output"), atol, rtol, name + " output");
+        const auto rule = layer_view::OutputRuleFromKey(c.at("rule").get<std::string>());
+        const auto weights = sal::TargetWeights(output.NumElements(), rule, c.at("target").get<int>());
+        ExpectCloseTo(weights, c.at("weights"), 0.0f, 0.0f, name + " output weighting");
+
+        Tensor gradient, values = input;
+        if (kind == occlusion::InputKind::Tokens) {
+            built.model->SetLayerForwardObserver([&](size_t i, const Tensor&, const Tensor& out, float) {
+                if (i == 0) values = out.Clone();
+            });
+            built.model->SetLayerBackwardObserver([&](size_t i, const Tensor& g) {
+                if (i == 0) gradient = g.Clone();
+            });
+            built.model->Forward(input);
+            built.model->Backward(FromRowMajor(weights, output.Shape()));
+            ExpectCloseTo(RowMajor(values), c.at("embedded"), atol, rtol, name + " embedding output");
+        } else {
+            built.model->Forward(input);
+            gradient = built.model->Backward(FromRowMajor(weights, output.Shape()));
+        }
+        ExpectCloseTo(RowMajor(gradient), c.at("gradient"), atol, rtol, name + " gradient");
+        const auto reduced = sal::Reduce(kind, gradient, values);
+        ExpectCloseTo(AsFloats(reduced.size), c.at("size"), atol, rtol, name + " size");
+        ExpectCloseTo(AsFloats(reduced.times_input), c.at("times_input"), atol, rtol, name + " gradient x input");
+    }
+
+    // Run on a rebuilt model gives Reduce of the session's own gradient.
+    const auto cfg = MakeTabularConfig();
+    DebugExecutor exe(cfg);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    std::string error;
+    auto session = DebugModelSession::FromCapture(cfg, *res.layer_capture, &error);
+    ExpectTrue(session != nullptr, "the MLP is rebuilt: " + error);
+    const Tensor all = CapturedTensorOf(res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    const auto row = RowMajor(all);
+    const std::vector<float> first(row.begin(), row.begin() + 10);
+    const Tensor one = FromRowMajor(first, {1, 10});
+    const auto run = sal::Run(*session, one, occlusion::InputKind::Features, layer_view::OutputRule::Softmax, 1);
+    std::vector<float> w(4, 0.0f);
+    w[1] = 1.0f;
+    const auto direct = sal::Reduce(occlusion::InputKind::Features, session->InputGradient(one, FromRowMajor(w, {1, 4})), one);
+    ExpectTrue(run.size == direct.size && run.times_input == direct.times_input,
+               "Run is Reduce of the session's input gradient");
+
+    // Tokens through Run: one value per token position.
+    const auto text_cfg = MakeTextConfig();
+    DebugExecutor text_exe(text_cfg);
+    text_exe.SetLayerCapture({});
+    const auto text_res = text_exe.Run();
+    auto text_session = DebugModelSession::FromCapture(text_cfg, *text_res.layer_capture, &error);
+    ExpectTrue(text_session != nullptr, "the text model is rebuilt: " + error);
+    const auto ids = RowMajor(CapturedTensorOf(text_res.layer_capture->Layers().front(), CapturedTensorRole::Input));
+    const Tensor sentence = FromRowMajor(std::vector<float>(ids.begin(), ids.begin() + 16), {1, 16});
+    const auto tokens = sal::Run(*text_session, sentence, occlusion::InputKind::Tokens, layer_view::OutputRule::Softmax, 0, 0);
+    ExpectEq(tokens.size.size(), 16, "one saliency value per token");
+    ExpectEq(tokens.times_input.size(), 16, "one gradient x embedding per token");
+    spdlog::info("  OK: saliency matches PyTorch ({} cases), Run == Reduce", fixture.at("cases").size());
+}
+
+// TOFIX178 6.3d: training snapshots in words (approved mockup board Snapshots).
+void TestTrainingSnapshotsPresentation() {
+    spdlog::info("--- TestTrainingSnapshotsPresentation ---");
+    namespace ts = training_snapshots;
+    const std::string dot = " \xC2\xB7 ";
+    ExpectTrue(ts::WhenFromRunId("train-1793417384228").size() == 16, "a run id's time: " + ts::WhenFromRunId("train-1793417384228"));
+    ExpectTrue(ts::WhenFromRunId("run-a").empty() && ts::WhenFromRunId("train-12").empty(), "no time in the id: none");
+    ExpectTrue(ts::SizeText(19293798) == "18.4 MB" && ts::SizeText(2048) == "2.0 KB", "sizes");
+    ExpectTrue(ts::SnapshotName("epoch_0020") == "epoch 20" && ts::SnapshotName("local_debug") == "local_debug",
+               "snapshot names");
+
+    // The approved board's run: 20 epochs, snapshots every 5.
+    const float val[] = {0.6425f, 0.6258f, 0.7501f, 0.8003f, 0.8259f, 0.8259f, 0.8292f, 0.8623f, 0.8828f, 0.8949f,
+                         0.8912f, 0.9108f, 0.9083f, 0.9117f, 0.9234f, 0.9217f, 0.928f, 0.9297f, 0.923f, 0.9296f};
+    TrainingRunRecord record;
+    record.run_id = "train-1793417384228";
+    record.graph_name = "cats_dogs_resnet_scratch";
+    record.total_epochs = 20;
+    for (int e = 1; e <= 20; ++e) record.epochs.push_back({e, 1.0f / e, 0.5f, 0.9f / e, val[e - 1]});
+    std::vector<LayerCaptureInfo> captures;
+    for (int e : {5, 10, 15, 20}) captures.push_back({EpochCaptureLabel(e), e, 19293798});
+    const auto row = ts::TrainingRunRow(record.run_id, record, captures);
+    ExpectTrue(row.training && row.kind == "Training" &&
+                   row.title == "train-1793417384228" + dot + "cats_dogs_resnet_scratch",
+               "a training run's title names its graph: " + row.title);
+    ExpectTrue(row.detail == "20 epochs" + dot + "best validation 92.97 % (epoch 18)" + dot +
+                                 "4 layer snapshots (epochs 5, 10, 15, 20)",
+               "a training run's line: " + row.detail);
+    const auto bare = ts::TrainingRunRow("train-1793427851890", std::nullopt, {{EpochCaptureLabel(2), 2, 10}});
+    ExpectTrue(bare.detail == "1 layer snapshot (epoch 2)" + dot + "epochs not recorded",
+               "snapshots saved before the epochs were kept: " + bare.detail);
+
+    const auto table = ts::SnapshotTableFor(record.run_id, record, captures);
+    ExpectTrue(table.heading == "Snapshots of train-1793417384228" + dot + "cats_dogs_resnet_scratch (20 epochs)",
+               "table heading: " + table.heading);
+    ExpectTrue(table.metric_header == "Validation accuracy" && table.rows.size() == 4, "four snapshot rows");
+    ExpectTrue(table.rows[3].epoch == 20 && table.rows[3].label == "epoch_0020" && table.rows[3].val_metric == "92.96 %" &&
+                   table.rows[3].train_loss == "0.050" && table.rows[3].val_loss == "0.045" && table.rows[3].size == "18.4 MB",
+               "the epoch 20 row");
+    const auto old = ts::SnapshotTableFor("train-1", std::nullopt, captures);
+    ExpectTrue(old.rows[0].val_metric == "not recorded" && old.heading == "Snapshots of train-1", "not recorded");
+    TrainingRunRecord mae = record;
+    mae.regression = true;
+    for (auto& e : mae.epochs) e.val_metric = 1.0f - *e.val_metric;
+    ExpectTrue(ts::SnapshotTableFor(mae.run_id, mae, captures).metric_header == "Validation MAE" &&
+                   ts::TrainingRunRow(mae.run_id, mae, captures).detail.find("best validation MAE 0.070 (epoch 18)") !=
+                       std::string::npos,
+               "a regression run: the lowest MAE is the best");
+    ExpectTrue(ts::StepperText(3, 4, 20, record) == "4 of 4 snapshots" + dot + "validation 92.96 %", "stepper text");
+    ExpectTrue(ts::StepperText(0, 1, 2, std::nullopt) == "1 of 1 snapshot", "stepper without a record");
+    ExpectTrue(ts::SnapshotTitle("epoch_0020", record) == "Epoch 20" + dot + "validation 92.96 %" &&
+                   ts::SnapshotTitle("epoch_0002", std::nullopt) == "Epoch 2" &&
+                   ts::SnapshotTitle("local_debug", record) == "local_debug",
+               "a compared side's title");
+
+    DebugRunStoreSummary debug;
+    debug.run_id = "local-debug-a2c705e68029f801-1794247562482";
+    debug.timestamp = "2026-11-09 22:06";
+    debug.success = true;
+    debug.trace_count = 72;
+    debug.file_path = "C:/runs/session.json";
+    debug.summary = "Local Debug: Passed";
+    const auto d = ts::DebugRunRow(debug);
+    ExpectTrue(!d.training && d.kind == "Local Debug" && d.detail == "Passed", "a debug run's line: " + d.detail);
+    ExpectTrue(d.when == ts::WhenFromRunId(debug.run_id), "a debug run's time from its id, as a training run's");
+    bool traces = false, saved = false, summary = false;
+    for (const auto& [k, v] : d.details) {
+        traces |= k == "Traces" && v == "72";
+        saved |= k == "Saved at" && v == "C:/runs/session.json";
+        summary |= k == "Summary" && v == "Local Debug: Passed";
+    }
+    ExpectTrue(traces && saved && summary, "a debug run keeps its facts, and its summary, under Details");
+    spdlog::info("  OK: training snapshots presentation");
+}
+
+// TOFIX178 6.3e: top images. Strengths per channel and item against host
+// arithmetic, item ranges in both layouts, a batched run equal to items one
+// at a time on the ResNet, and the Dense head's votes.
+void TestTopImages() {
+    spdlog::info("--- TestTopImages ---");
+    namespace ti = top_images;
+    // [H=2, W=2, C=3, N=2] row-major: ((h * 2 + w) * 3 + c) * 2 + n.
+    std::vector<float> maps(24);
+    for (size_t i = 0; i < maps.size(); ++i) maps[i] = std::sin(1.3f * float(i)) * 3.0f;
+    const Tensor spatial = FromRowMajor(maps, {2, 2, 3, 2});
+    for (const auto rank : {ti::Rank::Maximum, ti::Rank::Mean}) {
+        const auto s = ti::ChannelStrengths(spatial, rank);
+        ExpectTrue(s.channels == 3 && s.items == 2, "a spatial output's channels and items");
+        for (size_t c = 0; c < 3; ++c)
+            for (size_t n = 0; n < 2; ++n) {
+                float best = -1e30f, sum = 0.0f;
+                for (size_t pos = 0; pos < 4; ++pos) {
+                    const float v = maps[(pos * 3 + c) * 2 + n];
+                    best = std::max(best, v);
+                    sum += v;
+                }
+                const float want = rank == ti::Rank::Maximum ? best : sum / 4.0f;
+                ExpectTrue(std::fabs(s.At(c, n) - want) < 1e-5f, "channel " + std::to_string(c) + " item " +
+                                                                       std::to_string(n) + " strength");
+            }
+    }
+    // [N=3, C=2] row-major: n * 2 + c.
+    const auto flat = ti::ChannelStrengths(FromRowMajor({1, 2, 3, 4, 5, 6}, {3, 2}), ti::Rank::Maximum);
+    ExpectTrue(flat.channels == 2 && flat.items == 3 && flat.At(0, 2) == 5.0f && flat.At(1, 0) == 2.0f,
+               "a flat output's value per channel and item");
+    ExpectTrue(ti::TopItems(flat, 1, 2) == std::vector<size_t>({2, 1}), "top items strongest first");
+    ExpectTrue(ti::TopItems(flat, 5, 2).empty(), "no channel: none");
+
+    // Item ranges: batch last and batch first.
+    const auto images = RowMajor(ti::ItemRange(spatial, 1, 2));
+    for (size_t s = 0; s < 12; ++s) ExpectTrue(images[s] == maps[s * 2 + 1], "item 1 of a batch-last batch");
+    ExpectTrue(RowMajor(ti::ItemRange(FromRowMajor({1, 2, 3, 4, 5, 6}, {3, 2}), 1, 3)) ==
+                   std::vector<float>({3, 4, 5, 6}),
+               "items 1-2 of a batch-first batch");
+
+    // The ResNet: five items, batched in chunks of 2 = each item alone.
+    const auto resnet = CompileResNetExample();
+    DebugExecutor exe(resnet);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "the ResNet runs with capture: " + res.failure_summary);
+    std::string error;
+    auto session = DebugModelSession::FromCapture(resnet, *res.layer_capture, &error);
+    ExpectTrue(session != nullptr, "the ResNet is rebuilt: " + error);
+    const Tensor& image = CapturedTensorOf(res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    const auto pixels = RowMajor(image);  // [H, W, C, 1]
+    const size_t n = 5;
+    std::vector<float> batch(pixels.size() * n);
+    for (size_t s = 0; s < pixels.size(); ++s)
+        for (size_t i = 0; i < n; ++i) batch[s * n + i] = pixels[s] * (1.0f - 0.15f * float(i)) + 0.05f * float(i);
+    auto shape = image.Shape();
+    shape.back() = n;
+    const Tensor items = FromRowMajor(batch, shape);
+    const CapturedLayer* pooled = nullptr;
+    const CapturedLayer* conv = nullptr;
+    for (const auto& l : res.layer_capture->Layers()) {
+        const auto& out = CapturedTensorOf(l, CapturedTensorRole::Output).Shape();
+        if (!pooled && out.size() == 2 && out[1] > 1) pooled = &l;
+        if (!conv && out.size() == 4) conv = &l;
+    }
+    ExpectTrue(pooled && conv, "the ResNet has a pooled and a conv layer");
+    size_t progress_calls = 0;
+    for (const CapturedLayer* layer : {pooled, conv}) {
+        const auto batched = ti::Run(*session, items, layer->module_index, ti::Rank::Maximum, 2,
+                                     [&](size_t, size_t) { ++progress_calls; });
+        ExpectTrue(!batched.cancelled && batched.items == n && batched.channels > 1, layer->node_name + " strengths");
+        float worst = 0.0f;
+        for (size_t i = 0; i < n; ++i) {
+            const auto alone = ti::ChannelStrengths(session->LayerOutput(ti::ItemRange(items, i, i + 1),
+                                                                         layer->module_index),
+                                                    ti::Rank::Maximum);
+            for (size_t c = 0; c < batched.channels; ++c) worst = std::max(worst, std::fabs(alone.At(c, 0) - batched.At(c, i)));
+        }
+        ExpectTrue(worst < 1e-4f, layer->node_name + ": batched == one at a time, worst " + std::to_string(worst));
+    }
+    ExpectEq(progress_calls, 6, "progress after each chunk (3 chunks per layer)");
+    const auto stopped = ti::Run(*session, items, pooled->module_index, ti::Rank::Maximum, 2, {}, [] { return true; });
+    ExpectTrue(stopped.cancelled, "Stop ends the run");
+    bool refused = false;
+    try {
+        session->LayerOutput(image, 999);
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    ExpectTrue(refused, "a layer not in the model is refused");
+
+    // Votes: one logit votes both classes; two outputs vote each.
+    const auto one = ti::StrongestVotes({0.3f, -0.5f, 0.1f, -0.2f, 0.4f}, 1, 5, 2);
+    ExpectTrue(one.size() == 4 && one[0].channel == 4 && one[0].towards == 1 && one[1].channel == 0 &&
+                   one[2].channel == 1 && one[2].towards == 0 && one[3].channel == 3,
+               "one logit: the largest positive weights vote class 1, the largest negative class 0");
+    const auto two = ti::StrongestVotes({0.1f, 0.9f, 0.2f, 0.7f, 0.0f, -0.4f}, 2, 3, 1);
+    ExpectTrue(two.size() == 2 && two[0].channel == 1 && two[0].towards == 0 && two[1].channel == 0 &&
+                   two[1].towards == 1,
+               "two outputs: each votes with its largest weight");
+
+    // Items spread over the data (6.3e): every k-th, and a stand-in batcher
+    // handing back exactly those numbers.
+    const auto spread = SpreadItems(25000, 0, 320);
+    ExpectTrue(spread.count == 320 && spread.stride == 78, "320 of 25,000: every 78th");
+    ExpectTrue(SpreadItems(100, 0, 320).count == 100 && SpreadItems(100, 0, 320).stride == 1,
+               "more asked than there are: all of them, consecutive");
+    ExpectTrue(SpreadItems(10, 10, 4).count == 0, "nothing past the end");
+    struct Numbered : IBatcher {
+        Batch GetNextBatch() override { return {}; }
+        void Reset() override {}
+        bool IsEpochComplete() const override { return true; }
+        size_t GetNumBatches() const override { return 0; }
+        size_t GetNumSamples() const override { return 0; }
+        void SetNormalization(float, float) override {}
+        void SetOneHotEncoding(size_t) override {}
+        void SetFlatten(bool) override {}
+        size_t SourceSampleCount() const override { return 40; }
+        std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override {
+            std::vector<float> v;
+            for (size_t i : indices) {
+                if (i >= 40) throw std::out_of_range("past the end");
+                v.push_back(static_cast<float>(i));
+            }
+            Batch b;
+            b.data = FromRowMajor(v, {v.size(), 1});
+            return b;
+        }
+    } numbered;
+    size_t taken = 0;
+    const auto every = GetSourceSampleRange(numbered, 2, 4, &taken, 9);
+    ExpectTrue(every && taken == 4 && RowMajor(every->data) == std::vector<float>({2, 11, 20, 29}),
+               "items 2, 11, 20, 29 by number");
+    const auto past = GetSourceSampleRange(numbered, 30, 4, &taken, 9);
+    ExpectTrue(past && taken == 1 && RowMajor(past->data) == std::vector<float>({30}),
+               "running past the end falls back to the first item alone");
+    // Words for the result.
+    ExpectTrue(ti::ValueText(4.2134f) == "4.21" && ti::ValueText(0.0123f) == "0.0123", "values, 3 digits");
+    ExpectTrue(ti::Caption(1, "dog") == "#1 \xC2\xB7 dog" && ti::Caption(2, "") == "#2",
+               "captions");
+    ExpectTrue(ti::RowSummary({"dog", "cat", "dog", "", "dog"}, {4.21f, 4.0f, 3.5f, 3.2f, 3.12f}) ==
+                   "3 \xC3\x97 dog, 1 \xC3\x97 cat \xC2\xB7 4.21 to 3.12",
+               "a row's summary: labels counted, the value range");
+    ExpectTrue(ti::RowSummary({}, {2.0f, 1.0f}) == "2 to 1", "no labels: the range alone");
+    spdlog::info("  OK: top images");
+}
+
+// TOFIX178 6.4: Contributions. Terms by hand; the MLP's output layer
+// rebuilt from its captured input, weights and bias equals its captured
+// output; a row read from the device; an input's place.
+void TestContributions() {
+    spdlog::info("--- TestContributions ---");
+    namespace ct = contributions;
+    const auto e = ct::Explain({0.5f, -2.0f, 0.1f, 1.0f}, {2.0f, 1.0f, 3.0f, -0.25f}, 0.5, 2);
+    ExpectTrue(e.top.size() == 2 && e.top[0].input == 1 && e.top[0].wx == -2.0f && e.top[1].input == 0,
+               "the largest |w x x| first");
+    ExpectTrue(std::fabs(e.sum - (1.0 - 2.0 + 0.3 - 0.25)) < 1e-6 && std::fabs(e.value - (e.sum + 0.5)) < 1e-9,
+               "the sum and the value");
+    ExpectTrue(e.rest == 2 && std::fabs(e.rest_sum - 0.05) < 1e-7, "the rest of the inputs and their share");
+    ExpectTrue(ct::InputPlace(4 * 8 * 128 + 6 * 128 + 65, {8, 8, 128}) == "row 4, column 6, channel 65",
+               "an input's place in an [H, W, C] layer");
+    ExpectTrue(ct::InputPlace(3, {8}).empty(), "no place in a flat layer");
+    ExpectTrue(ct::Signed(0.06811) == "+0.0681" && ct::Signed(-0.08333) == "-0.0833" && ct::Signed(0.00001) == "0.0000",
+               "signed values");
+    ExpectTrue(ct::MatrixRow(FromRowMajor({1, 2, 3, 4, 5, 6}, {2, 3}), 1) == std::vector<float>({4, 5, 6}),
+               "a row of a matrix");
+
+    // The MLP's output Dense: sum of w x x + b == its captured output.
+    DebugExecutor exe(MakeTabularConfig());
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "the MLP runs with capture: " + res.failure_summary);
+    const CapturedLayer& dense = CapturedNamed(*res.layer_capture, "Output Dense");
+    const Tensor& input = CapturedTensorOf(dense, CapturedTensorRole::Input);
+    const Tensor& weight = CapturedTensorOf(dense, CapturedTensorRole::Parameter, "weight");
+    const Tensor& bias = CapturedTensorOf(dense, CapturedTensorRole::Parameter, "bias");
+    const auto out = RowMajor(CapturedTensorOf(dense, CapturedTensorRole::Output));
+    const auto x_all = RowMajor(input);
+    const auto b = RowMajor(bias);
+    const size_t in = input.Shape()[1], outputs = weight.Shape()[0];
+    float worst = 0.0f;
+    for (size_t item = 0; item < input.Shape()[0]; ++item)
+        for (size_t o = 0; o < outputs; ++o) {
+            const std::vector<float> x(x_all.begin() + static_cast<std::ptrdiff_t>(item * in),
+                                       x_all.begin() + static_cast<std::ptrdiff_t>((item + 1) * in));
+            const auto ex = ct::Explain(ct::MatrixRow(weight, o), x, b[o], 8);
+            worst = std::max(worst, std::fabs(static_cast<float>(ex.value) - out[item * outputs + o]));
+        }
+    ExpectTrue(worst < 1e-4f, "sum of w x x + b == the captured output, worst " + std::to_string(worst));
+    spdlog::info("  OK: contributions (MLP output rebuilt, worst {})", worst);
+}
+
+// TOFIX178 6.4b: Embedding. Two clouds in 8-D stay apart in 2-D with each
+// method; unit scaling, the nearest point and the class counts.
+void TestLayerEmbedding() {
+    spdlog::info("--- TestLayerEmbedding ---");
+    namespace le = layer_embedding;
+    const size_t n = 40, f = 8;
+    std::vector<float> rows(n * f);
+    std::vector<int> labels(n);
+    for (size_t i = 0; i < n; ++i) {
+        labels[i] = static_cast<int>(i % 2);
+        for (size_t k = 0; k < f; ++k)
+            rows[i * f + k] = (labels[i] ? 5.0f : -5.0f) + 0.3f * std::sin(1.7f * float(i * f + k));
+    }
+    for (const auto method : {le::Method::PCA, le::Method::TSNE, le::Method::UMAP}) {
+        const auto p = le::Project(rows, n, f, method);
+        ExpectTrue(p.error.empty() && p.x.size() == n && p.y.size() == n,
+                   std::string(le::MethodName(method)) + " projects every item: " + p.error);
+        // The two classes' centres are further apart than either cloud is wide.
+        double cx[2] = {0, 0}, cy[2] = {0, 0}, spread[2] = {0, 0};
+        for (size_t i = 0; i < n; ++i) {
+            cx[labels[i]] += p.x[i] / (n / 2.0);
+            cy[labels[i]] += p.y[i] / (n / 2.0);
+        }
+        for (size_t i = 0; i < n; ++i)
+            spread[labels[i]] = std::max(spread[labels[i]], std::hypot(p.x[i] - cx[labels[i]], p.y[i] - cy[labels[i]]));
+        const double apart = std::hypot(cx[0] - cx[1], cy[0] - cy[1]);
+        ExpectTrue(apart > spread[0] && apart > spread[1],
+                   std::string(le::MethodName(method)) + " keeps the two clouds apart");
+        ExpectTrue(!p.about.empty(), "the projection says how it was made");
+    }
+    const auto few = le::Project({1, 2}, 2, 1, le::Method::PCA);
+    ExpectTrue(!few.error.empty(), "too few items: said so");
+
+    le::Projection small;
+    small.x = {0.0f, 10.0f, 5.0f};
+    small.y = {2.0f, 2.0f, 2.0f};
+    const auto unit = le::ToUnit(small);
+    ExpectTrue(unit.x == std::vector<float>({0.0f, 1.0f, 0.5f}) && unit.y == std::vector<float>({0.5f, 0.5f, 0.5f}),
+               "unit scaling; a constant axis sits at 0.5");
+    ExpectTrue(le::Nearest(unit, 0.95f, 0.5f, 0.1f, 1.0f) == std::optional<size_t>(1), "the nearest point");
+    ExpectTrue(!le::Nearest(unit, 0.25f, 0.9f, 0.1f, 1.0f), "nothing near: none");
+    const std::vector<float> three = {0.0f, 0.0f, 3.0f, 4.0f, 10.0f, -2.0f};
+    const auto twin = le::SameRow(three, 3, 2, {3.0f + 1e-6f, 4.0f});
+    ExpectTrue(twin && *twin == 1, "a sample that is one of the items is found (float noise allowed)");
+    ExpectTrue(!le::SameRow(three, 3, 2, {3.0f, 4.1f}), "a sample near an item is not taken for it");
+    const auto counts = le::ClassCounts({1, 0, 1, -1, 1}, {"cat", "dog"});
+    ExpectTrue(counts.size() == 2 && counts[0].label == 0 && counts[0].name == "cat" && counts[0].count == 1 &&
+                   counts[1].label == 1 && counts[1].name == "dog" && counts[1].count == 3,
+               "class counts, items without a class left out");
+    spdlog::info("  OK: layer embedding (PCA, t-SNE, UMAP)");
+}
+
+// TOFIX178 6.4c: unit weights as images. A Flatten hands the Dense the image
+// [H, W, C] row-major, so weight k of a unit is that pixel and colour; norms
+// and rows read on the device match the host; order, drawing, the image rule.
+void TestUnitWeights() {
+    spdlog::info("--- TestUnitWeights ---");
+    namespace uw = unit_weights;
+    // Flatten order on a built model: the Dense's input is the sample read row-major.
+    TrainingConfiguration cfg;
+    cfg.preprocessing_domain = PreprocessingDomain::Image;
+    cfg.input_shape = {4, 3, 2};
+    cfg.input_size = 24;
+    cfg.output_size = 5;
+    cfg.loss_type = gui::NodeType::CrossEntropyLoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+    CompiledLayer flatten;
+    flatten.type = gui::NodeType::Flatten;
+    flatten.input_shape = {4, 3, 2};
+    flatten.output_shape = {24};
+    CompiledLayer dense;
+    dense.type = gui::NodeType::Dense;
+    dense.units = 5;
+    dense.input_shape = {24};
+    dense.output_shape = {5};
+    cfg.layers = {flatten, dense};
+    auto built = BuildExecutableFromConfig(cfg);
+    ExpectTrue(built.ok(), "the image MLP builds: " + built.error_message);
+    std::vector<float> pixels(24);
+    for (size_t k = 0; k < pixels.size(); ++k) pixels[k] = 0.25f * static_cast<float>(k) - 1.0f;
+    // As the image batcher hands it out: batch first [1, H, W, C].
+    const Tensor image = FromRowMajor(pixels, {1, 4, 3, 2});
+    Tensor seen, flat;
+    built.model->SetLayerForwardObserver([&](size_t i, const Tensor& in, const Tensor& out, float) {
+        if (i == 0) {
+            seen = in.Clone();
+            flat = out.Clone();
+        }
+    });
+    built.model->Forward(image);
+    ExpectTrue(seen.Shape() == std::vector<size_t>({1, 4, 3, 2}), "the Flatten takes the image batch first");
+    ExpectTrue(RowMajor(flat) == pixels, "a Flatten hands the Dense the image [H, W, C] row-major");
+
+    // Norms and rows on the device == the host.
+    const std::vector<float> w = {3, 4, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1};  // [3 units, 4 inputs]
+    const Tensor weights = FromRowMajor(w, {3, 4});
+    const auto norms = uw::RowNorms(weights);
+    ExpectTrue(norms.size() == 3 && std::fabs(norms[0] - 5.0f) < 1e-6f && std::fabs(norms[1] - std::sqrt(3.0f)) < 1e-6f &&
+                   std::fabs(norms[2] - 2.0f) < 1e-6f,
+               "each unit's weight norm");
+    ExpectTrue(uw::Order(norms, true, 0) == std::vector<size_t>({0, 2, 1}), "the largest norm first");
+    ExpectTrue(uw::Order(norms, true, 2) == std::vector<size_t>({0, 2}), "the first N by norm");
+    ExpectTrue(uw::Order(norms, false, 2) == std::vector<size_t>({0, 1}), "unit order");
+    ExpectTrue(uw::Rows(weights, {2, 0}) == std::vector<float>({1, 1, 1, 1, 3, 4, 0, 0}), "rows gathered in order");
+
+    // Drawing: grey keeps 0 at 0 and the sign; colour spans 0..1.
+    const float grey[4] = {-2.0f, 1.0f, 0.0f, 4.0f};
+    const auto g = uw::Draw(grey, {2, 2, 1});
+    ExpectTrue(g.pixels == std::vector<float>({-0.5f, 0.25f, 0.0f, 1.0f}) && g.low == -2.0f && g.high == 4.0f,
+               "a grey unit over its largest |weight|");
+    const float colour[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12};
+    const auto c = uw::Draw(colour, {2, 2, 3});
+    ExpectTrue(c.pixels.front() == 0.0f && c.pixels.back() == 1.0f && std::fabs(c.pixels[6] - 0.5f) < 1e-6f,
+               "a colour unit over its own range");
+
+    // The image rule.
+    ExpectTrue(uw::ReadsImage(784, 28, 28, 1, true).has_value(), "a first Dense on a 28 x 28 image");
+    ExpectTrue(uw::ReadsImage(12288, 64, 64, 3, true).has_value(), "a first Dense on a 64 x 64 colour image");
+    ExpectTrue(!uw::ReadsImage(784, 28, 28, 1, false), "not after a layer with parameters");
+    ExpectTrue(!uw::ReadsImage(100, 28, 28, 1, true), "not with another input size");
+    ExpectTrue(!uw::ReadsImage(8, 2, 2, 2, true), "not for 2 channels");
+    ExpectTrue(uw::Lead({28, 28, 1}, 128, 32, true).find("784 input weights drawn as the 28 \xC3\x97 28 image") !=
+                   std::string::npos,
+               "the lead names the picture");
+    spdlog::info("  OK: unit weights (Flatten order, norms, rows, drawing)");
+}
+
+// TOFIX207: a Flatten-first image MLP takes its image batch first; the
+// capture keeps it as [H, W, C, N] like a spatial model's, the rebuilt model
+// takes and gives that layout, and the store keeps it (an older capture saved
+// batch first is converted on load).
+void TestImageMlpLayout() {
+    spdlog::info("--- TestImageMlpLayout ---");
+    namespace fs = std::filesystem;
+    TrainingConfiguration cfg;
+    cfg.preprocessing_domain = PreprocessingDomain::Image;
+    cfg.input_shape = {4, 3, 2};
+    cfg.input_size = 24;
+    cfg.output_size = 3;
+    cfg.loss_type = gui::NodeType::CrossEntropyLoss;
+    cfg.optimizer_type = gui::NodeType::Adam;
+    CompiledLayer flatten;
+    flatten.type = gui::NodeType::Flatten;
+    flatten.node_id = 301;
+    flatten.input_shape = {4, 3, 2};
+    flatten.output_shape = {24};
+    CompiledLayer dense;
+    dense.type = gui::NodeType::Dense;
+    dense.node_id = 302;
+    dense.units = 3;
+    dense.input_shape = {24};
+    dense.output_shape = {3};
+    cfg.layers = {flatten, dense};
+
+    std::vector<float> pixels(24);
+    for (size_t k = 0; k < pixels.size(); ++k) pixels[k] = 0.1f * static_cast<float>(k) - 1.0f;
+    DebugExecutor exe(cfg);
+    exe.SetLayerCapture({});
+    exe.SetInputSample(Tensor({1, 4, 3, 2}, pixels.data(), DataType::Float32), MakeSyntheticBatch(cfg, 7).labels,
+                       "image 0 of tiny, train");
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "the image MLP runs with capture: " + res.failure_summary);
+    const LayerCapture& capture = *res.layer_capture;
+    ExpectTrue(capture.Options().images_batch_first, "the capture knows the model takes images batch first");
+    const Tensor& image = CapturedTensorOf(capture.Layers().front(), CapturedTensorRole::Input);
+    ExpectTrue(image.Shape() == std::vector<size_t>({4, 3, 2, 1}), "the capture keeps the image as [H, W, C, N]");
+    ExpectTrue(layer_view::ReadValues(layer_view::SampleOf(image, 0)) == pixels, "the sample reads back as given");
+
+    std::string error;
+    auto session = DebugModelSession::FromCapture(cfg, capture, &error);
+    ExpectTrue(session != nullptr, "the image MLP is rebuilt: " + error);
+    const auto out = RowMajor(session->Forward(image));
+    const auto kept = RowMajor(CapturedTensorOf(capture.Layers().back(), CapturedTensorRole::Output));
+    ExpectTrue(MaxAbsDifference(out, kept) < 1e-5f, "the rebuilt model takes the [H, W, C, N] image");
+    const Tensor gradient = session->InputGradient(image, FromRowMajor({1.0f, 0.0f, 0.0f}, {1, 3}));
+    ExpectTrue(gradient.Shape() == std::vector<size_t>({4, 3, 2, 1}), "the image gradient comes back as [H, W, C, N]");
+    ExpectTrue(session->LayerOutput(image, 0).Shape() == std::vector<size_t>({1, 24}), "the Flatten's rows");
+    // Two images at once: items in the debugger's layout.
+    std::vector<float> two(pixels);
+    two.insert(two.end(), pixels.rbegin(), pixels.rend());
+    const Tensor batch = ImagesBatchLast(Tensor({2, 4, 3, 2}, two.data(), DataType::Float32));
+    const auto both = RowMajor(session->Forward(batch));
+    ExpectTrue(both.size() == 6 && MaxAbsDifference(std::vector<float>(both.begin(), both.begin() + 3), out) < 1e-5f,
+               "a batch of items in [H, W, C, N] runs item by item");
+
+    // The store keeps the layout; an older capture saved batch first converts on load.
+    const fs::path root = fs::temp_directory_path() / "cyxwiz_image_mlp_layout";
+    fs::remove_all(root);
+    const ScopedDebugRunRootOverrideForTesting debug_root(root);
+    ExpectTrue(SaveLayerCapture(capture, "run-i", kLocalDebugCaptureLabel, &error), "the capture saves: " + error);
+    auto loaded = LoadLayerCapture("run-i", kLocalDebugCaptureLabel, &error);
+    ExpectTrue(loaded && loaded->Options().images_batch_first &&
+                   CapturedTensorOf(loaded->Layers().front(), CapturedTensorRole::Input).Shape() ==
+                       std::vector<size_t>({4, 3, 2, 1}),
+               "the saved capture reads back as [H, W, C, N]");
+    std::vector<CapturedLayer> old_layers = capture.Layers();
+    for (auto& layer : old_layers)
+        for (auto& t : layer.tensors)
+            if (t.role == CapturedTensorRole::Input || t.role == CapturedTensorRole::Output)
+                t.tensor = ImagesBatchFirst(t.tensor);
+    const LayerCapture old(LayerCaptureOptions{}, std::move(old_layers), 0, 0);
+    ExpectTrue(SaveLayerCapture(old, "run-o", kLocalDebugCaptureLabel, &error), "an old-style capture saves");
+    const fs::path index = LayerCaptureDir("run-o", kLocalDebugCaptureLabel) / "capture.json";
+    nlohmann::json json;
+    {
+        std::ifstream in(index);
+        in >> json;
+    }
+    json.erase("image_layout");
+    json["options"].erase("images_batch_first");
+    {
+        std::ofstream outfile(index, std::ios::trunc);
+        outfile << json.dump(1);
+    }
+    loaded = LoadLayerCapture("run-o", kLocalDebugCaptureLabel, &error);
+    ExpectTrue(loaded && loaded->Options().images_batch_first &&
+                   CapturedTensorOf(loaded->Layers().front(), CapturedTensorRole::Input).Shape() ==
+                       std::vector<size_t>({4, 3, 2, 1}) &&
+                   layer_view::ReadValues(layer_view::SampleOf(
+                       CapturedTensorOf(loaded->Layers().front(), CapturedTensorRole::Input), 0)) == pixels,
+               "a capture saved batch first before the layout was recorded converts on load");
+    fs::remove_all(root);
+    spdlog::info("  OK: image MLP layout (capture, session, store)");
+}
+
+void TestDebugModelSession() {
+    spdlog::info("--- TestDebugModelSession ---");
+    // An MLP (no dropout or BatchNorm: the run's training forward equals
+    // eval): the rebuilt model gives the run's output for the run's input.
+    const auto cfg = MakeTabularConfig();
+    DebugExecutor exe(cfg);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture, "the MLP runs with capture: " + res.failure_summary);
+    const LayerCapture& capture = *res.layer_capture;
+    std::string error;
+    auto session = DebugModelSession::FromCapture(cfg, capture, &error);
+    ExpectTrue(session != nullptr, "the MLP's model is rebuilt from its capture: " + error);
+    const Tensor& input = CapturedTensorOf(capture.Layers().front(), CapturedTensorRole::Input);
+    const Tensor& output = CapturedTensorOf(capture.Layers().back(), CapturedTensorRole::Output);
+    const float worst = MaxAbsDifference(RowMajor(session->Forward(input)), RowMajor(output));
+    ExpectTrue(worst < 1e-5f, "the rebuilt MLP gives the run's output, worst " + std::to_string(worst));
+    CheckInputGradient(*session, input, {0, 3, 7, 9}, 1e-2f, "MLP");
+
+    // A layer's output and the gradient at it (TOFIX204): the last layer's
+    // gradient is the target; the hidden ReLU's output is the run's; the
+    // first layer's backward of its gradient is the input gradient.
+    {
+        const Tensor out = session->Forward(input);
+        std::vector<float> target(out.NumElements(), 0.0f);
+        target[1] = 1.0f;
+        const Tensor weights = FromRowMajor(target, out.Shape());
+        const auto last = session->LayerOutputGradient(input, weights, 2);
+        ExpectTrue(RowMajor(last.gradient) == target, "the last layer's output gradient is the target");
+        const auto hidden = session->LayerOutputGradient(input, weights, 1);
+        const float hidden_worst = MaxAbsDifference(
+            RowMajor(hidden.output), RowMajor(CapturedTensorOf(CapturedNamed(capture, "Hidden ReLU"),
+                                                               CapturedTensorRole::Output)));
+        ExpectTrue(hidden_worst < 1e-5f, "the hidden layer's output is the run's, worst " + std::to_string(hidden_worst));
+        ExpectTrue(hidden.gradient.Shape() == hidden.output.Shape(), "the gradient has the layer output's shape");
+        const auto first = session->LayerOutputGradient(input, weights, 0);
+        bool not_reached = false;
+        try {
+            session->LayerOutputGradient(input, weights, 7);
+        } catch (const std::exception&) {
+            not_reached = true;
+        }
+        ExpectTrue(not_reached, "a layer that is not in the model is refused");
+        // The observers are cleared: the session answers as before.
+        const float again = MaxAbsDifference(RowMajor(session->Forward(input)), RowMajor(out));
+        ExpectTrue(again == 0.0f, "the session's forward is unchanged after a layer gradient");
+        ExpectTrue(first.gradient.Shape() == std::vector<size_t>({input.Shape()[0], 32}),
+                   "the first Dense's output gradient is [N, 32]");
+    }
+
+    // A text model: the gradient at the Embedding output, one row per token.
+    {
+        const auto text_cfg = MakeTextConfig();
+        DebugExecutor text_exe(text_cfg);
+        text_exe.SetLayerCapture({});
+        const auto text_res = text_exe.Run();
+        ExpectTrue(text_res.success && text_res.layer_capture, "the text model runs with capture: " + text_res.failure_summary);
+        error.clear();
+        auto text_session = DebugModelSession::FromCapture(text_cfg, *text_res.layer_capture, &error);
+        ExpectTrue(text_session != nullptr, "the text model is rebuilt from its capture: " + error);
+        const Tensor& ids = CapturedTensorOf(text_res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+        const Tensor text_out = text_session->Forward(ids);
+        std::vector<float> target(text_out.NumElements(), 0.0f);
+        target[0] = 1.0f;
+        const auto at_embedding = text_session->LayerOutputGradient(ids, FromRowMajor(target, text_out.Shape()), 0);
+        const auto& id_shape = ids.Shape();
+        ExpectTrue(at_embedding.gradient.Shape() == std::vector<size_t>({id_shape[0], id_shape[1], 8}),
+                   "the gradient at the Embedding output is [N, T, D]");
+        ExpectTrue(at_embedding.output.Shape() == at_embedding.gradient.Shape(), "the Embedding output is [N, T, D]");
+        const auto g = RowMajor(at_embedding.gradient);
+        ExpectTrue(std::any_of(g.begin(), g.end(), [](float v) { return v != 0.0f; }),
+                   "the first item's tokens have a gradient");
+    }
+
+    // A capture without the weights cannot rebuild the model, and says why.
+    DebugExecutor activations_only(cfg);
+    activations_only.SetLayerCapture({/*activations=*/true, /*parameters=*/false, /*gradients=*/false});
+    const auto a_res = activations_only.Run();
+    error.clear();
+    ExpectTrue(!DebugModelSession::FromCapture(cfg, *a_res.layer_capture, &error) &&
+                   error.find("did not keep") != std::string::npos,
+               "a capture without weights is refused: " + error);
+
+    // A target of the wrong shape is refused.
+    bool refused = false;
+    try {
+        session->InputGradient(input, FromRowMajor({1.0f}, {1}));
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    ExpectTrue(refused, "a target that is not the output's shape is refused");
+
+    // The ResNet example (branches into Add, BatchNorm kept state): rebuilt
+    // in eval mode, its input gradient matches central differences.
+    const auto resnet = CompileResNetExample();
+    DebugExecutor r_exe(resnet);
+    r_exe.SetLayerCapture({});
+    const auto r_res = r_exe.Run();
+    ExpectTrue(r_res.success && r_res.layer_capture, "the ResNet runs with capture: " + r_res.failure_summary);
+    error.clear();
+    auto r_session = DebugModelSession::FromCapture(resnet, *r_res.layer_capture, &error);
+    ExpectTrue(r_session != nullptr, "the ResNet's model is rebuilt from its capture: " + error);
+    const Tensor& image = CapturedTensorOf(r_res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    const Tensor r_out = r_session->Forward(image);
+    ExpectTrue(r_out.Shape() == CapturedTensorOf(r_res.layer_capture->Layers().back(), CapturedTensorRole::Output).Shape(),
+               "the rebuilt ResNet's output has the run's output shape");
+    for (float v : RowMajor(r_out)) ExpectTrue(std::isfinite(v), "the rebuilt ResNet's output is finite");
+    const size_t pixels = image.NumElements();
+    CheckInputGradient(*r_session, image, {pixels / 7, pixels / 2 + 13, pixels - 5}, 1e-2f, "ResNet");
+    spdlog::info("  OK: MLP rebuilt output worst {}", worst);
+}
+
+// TOFIX178 6.3b: occlusion covers the right elements in every layout, and a
+// batch scores each piece exactly as covering it alone does.
+void TestOcclusion() {
+    spdlog::info("--- TestOcclusion ---");
+    namespace oc = cyxwiz::occlusion;
+    using layer_view::OutputRule;
+
+    // Kinds from the input shape.
+    ExpectTrue(oc::KindOf({64, 64, 3, 1}, false) == oc::InputKind::Image, "an image");
+    ExpectTrue(oc::KindOf({1, 40}, true) == oc::InputKind::Tokens, "token ids into an Embedding");
+    ExpectTrue(oc::KindOf({1, 8}, false) == oc::InputKind::Features, "features");
+    ExpectTrue(!oc::KindOf({1, 10, 4}, false), "a sequence of vectors is none of the three");
+
+    // An image [4, 5, 2, 1], patch 2, step 2: rows 0, 2; columns 0, 2, 3 (flush).
+    oc::Plan image;
+    image.kind = oc::InputKind::Image;
+    image.sample_shape = {4, 5, 2, 1};
+    image.patch = 2;
+    image.step = 2;
+    image.fill = {-1.0f, -2.0f};
+    const auto patches = oc::PiecesOf(image);
+    ExpectEq(patches.size(), 6, "2 x 3 patch positions");
+    ExpectTrue(oc::PatchGrid(image) == std::make_pair<size_t, size_t>(2, 3), "the patch grid");
+    ExpectTrue(patches.back().row == 2 && patches.back().column == 3, "the last patch is flush with the edges");
+    std::vector<float> pixels(40);
+    for (size_t i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<float>(i);
+    const Tensor sample = FromRowMajor(pixels, {4, 5, 2, 1});
+    const Tensor batch = oc::CoveredBatch(sample, image, patches);
+    ExpectTrue(batch.Shape() == std::vector<size_t>({4, 5, 2, 6}), "one image per patch, batch last");
+    const auto got = RowMajor(batch);
+    size_t wrong = 0;
+    for (size_t h = 0; h < 4; ++h)
+        for (size_t w = 0; w < 5; ++w)
+            for (size_t c = 0; c < 2; ++c)
+                for (size_t k = 0; k < patches.size(); ++k) {
+                    const auto& p = patches[k];
+                    const bool covered = h >= p.row && h < p.row + p.rows && w >= p.column && w < p.column + p.columns;
+                    const float want = covered ? image.fill[c] : pixels[(h * 5 + w) * 2 + c];
+                    if (got[((h * 5 + w) * 2 + c) * patches.size() + k] != want) ++wrong;
+                }
+    ExpectEq(wrong, 0, "each image has exactly its patch filled with its channel's value");
+
+    // Tokens [1, 6] with two pads (0): four pieces; each copy has one token padded.
+    oc::Plan tokens;
+    tokens.kind = oc::InputKind::Tokens;
+    tokens.sample_shape = {1, 6};
+    tokens.fill = {0.0f};
+    const std::vector<float> ids = {5, 9, 2, 7, 0, 0};
+    const auto positions = oc::PiecesOf(tokens, ids, 0.0f);
+    ExpectEq(positions.size(), 4, "padding is not covered");
+    const auto token_batch = RowMajor(oc::CoveredBatch(FromRowMajor(ids, {1, 6}), tokens, positions));
+    wrong = 0;
+    for (size_t k = 0; k < positions.size(); ++k)
+        for (size_t t = 0; t < 6; ++t)
+            if (token_batch[k * 6 + t] != (t == positions[k].position ? 0.0f : ids[t])) ++wrong;
+    ExpectEq(wrong, 0, "each copy has one token replaced by the pad id, batch first");
+
+    // Scores through the output rule.
+    ExpectNear(static_cast<float>(oc::TargetScore({0.0f, std::log(3.0f)}, OutputRule::Softmax, 1)), 0.75f, 1e-6f,
+               "softmax probability of class 1");
+    ExpectNear(static_cast<float>(oc::TargetScore({0.0f}, OutputRule::Sigmoid, 0)), 0.5f, 1e-6f, "sigmoid class 0");
+    ExpectNear(static_cast<float>(oc::TargetScore({std::log(3.0f)}, OutputRule::Sigmoid, 0)), 0.25f, 1e-6f,
+               "one logit: class 0 is 1 - sigmoid");
+    ExpectNear(static_cast<float>(oc::TargetScore({2.5f, -1.0f}, OutputRule::Value, 1)), -1.0f, 0.0f, "a value");
+
+    // The MLP: features replaced by a fill; a batch of 4 scores each feature
+    // exactly as covering it alone does.
+    const auto cfg = MakeTabularConfig();
+    DebugExecutor exe(cfg);
+    exe.SetLayerCapture({});
+    const auto res = exe.Run();
+    std::string error;
+    auto session = DebugModelSession::FromCapture(cfg, *res.layer_capture, &error);
+    ExpectTrue(session != nullptr, "the MLP session: " + error);
+    const Tensor& rows = CapturedTensorOf(res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    const auto row_values = RowMajor(rows);
+    const Tensor one_row = FromRowMajor(std::vector<float>(row_values.begin(), row_values.begin() + 10), {1, 10});
+    oc::Plan features;
+    features.kind = oc::InputKind::Features;
+    features.sample_shape = {1, 10};
+    features.fill = std::vector<float>(10, 0.25f);
+    const auto all = oc::PiecesOf(features);
+    const auto batched = oc::Run(*session, one_row, features, all, OutputRule::Softmax, 2, 4);
+    const auto alone = oc::Run(*session, one_row, features, all, OutputRule::Softmax, 2, 1);
+    ExpectEq(batched.change.size(), 10, "one score per feature");
+    double worst = 0.0;
+    for (size_t i = 0; i < all.size(); ++i) worst = std::max(worst, std::fabs(batched.change[i] - alone.change[i]));
+    ExpectTrue(worst < 1e-6, "MLP: batched scores equal one at a time, worst " + std::to_string(worst));
+    auto covered = RowMajor(one_row);
+    covered[3] = 0.25f;
+    const double by_hand = oc::TargetScore(RowMajor(session->Forward(FromRowMajor(covered, {1, 10}))), OutputRule::Softmax, 2) -
+                           batched.baseline;
+    ExpectTrue(std::fabs(by_hand - batched.change[3]) < 1e-6, "MLP: feature 3's change is covering it by hand");
+
+    // The ResNet (batch-last images, BatchNorm in eval): 16 patches a forward
+    // score each patch as one at a time does; a cancel stops between forwards.
+    const auto resnet = CompileResNetExample();
+    DebugExecutor r_exe(resnet);
+    r_exe.SetLayerCapture({});
+    const auto r_res = r_exe.Run();
+    auto r_session = DebugModelSession::FromCapture(resnet, *r_res.layer_capture, &error);
+    ExpectTrue(r_session != nullptr, "the ResNet session: " + error);
+    const Tensor& img = CapturedTensorOf(r_res.layer_capture->Layers().front(), CapturedTensorRole::Input);
+    oc::Plan picture;
+    picture.kind = oc::InputKind::Image;
+    picture.sample_shape = img.Shape();
+    picture.fill = std::vector<float>(picture.sample_shape[2], 0.0f);
+    auto some = oc::PiecesOf(picture);
+    ExpectEq(some.size(), 196, "a 64 x 64 image: 14 x 14 patches of 12, step 4");
+    some.resize(20);
+    const auto r_batched = oc::Run(*r_session, img, picture, some, OutputRule::Sigmoid, 0, 16);
+    const auto r_alone = oc::Run(*r_session, img, picture, some, OutputRule::Sigmoid, 0, 1);
+    worst = 0.0;
+    double moved = 0.0;
+    for (size_t i = 0; i < some.size(); ++i) {
+        worst = std::max(worst, std::fabs(r_batched.change[i] - r_alone.change[i]));
+        moved = std::max(moved, std::fabs(r_alone.change[i]));
+    }
+    ExpectTrue(worst < 1e-5, "ResNet: batched patches equal one at a time, worst " + std::to_string(worst));
+    ExpectTrue(moved > 0.0, "ResNet: covering patches moves the score");
+    size_t forwards = 0;
+    const auto stopped = oc::Run(*r_session, img, picture, some, OutputRule::Sigmoid, 0, 4, {},
+                                 [&] { return ++forwards > 2; });
+    ExpectTrue(stopped.cancelled && stopped.change.size() == 8, "a cancel stops between forwards");
+    spdlog::info("  OK: occlusion, ResNet batched vs alone worst {}, largest change {}", worst, moved);
+}
+
+// TOFIX178 6.3b: the Where it looks view's words.
+void TestWhereItLooksPresentation() {
+    spdlog::info("--- TestWhereItLooksPresentation ---");
+    namespace wl = cyxwiz::where_it_looks;
+    namespace oc = cyxwiz::occlusion;
+    using layer_view::OutputRule;
+    // One logit through a sigmoid: two classes.
+    const auto two = wl::OutputNames(OutputRule::Sigmoid, 1, {"cat", "dog"});
+    ExpectTrue(two == std::vector<std::string>({"cat", "dog"}), "one logit explains two classes");
+    const auto targets = wl::Targets(two, 0, 1);
+    ExpectTrue(targets.size() == 2 && targets[0].label == "Predicted: cat" && targets[1].label == "True: dog",
+               "predicted, then true");
+    ExpectTrue(wl::Targets(two, 0, 0).size() == 2 && wl::Targets(two, 0, 0)[1].label == "dog",
+               "true left out when it is the predicted class; the other class follows");
+    ExpectTrue(wl::OutputNames(OutputRule::Value, 2, {})[1] == "output 1", "values are outputs");
+
+    oc::Plan image;
+    image.kind = oc::InputKind::Image;
+    image.sample_shape = {64, 64, 3, 1};
+    ExpectTrue(wl::CoverText(image, "the image's mean per channel") ==
+                   "Patch 12 \xC3\x97 12 px, every 4 px, filled with the image's mean per channel",
+               "cover text: " + wl::CoverText(image, "the image's mean per channel"));
+    ExpectTrue(wl::PassesText(image, 196, 64) ==
+                   "196 forward passes (14 \xC3\x97 14 patch positions), 64 at a time on the device, and one on the "
+                   "unchanged input.",
+               "passes text: " + wl::PassesText(image, 196, 64));
+    const auto pieces = oc::PiecesOf(image);
+    oc::Result result;
+    result.baseline = 0.94;
+    result.change.assign(pieces.size(), 0.0);
+    result.change[45] = -0.409;
+    result.change[3] = 0.12;
+    const std::string headline = wl::Headline(image, pieces, result, "cat", {});
+    ExpectTrue(headline == "Covering rows 12-23, columns 12-23 lowers the cat score most: 0.940 to 0.531.",
+               "headline: " + headline);
+    const auto scaled = wl::Scaled(result.change);
+    ExpectNear(scaled[45], -1.0f, 1e-6f, "the largest change scales to -1");
+    ExpectNear(scaled[3], static_cast<float>(0.12 / 0.409), 1e-6f, "others in proportion");
+    oc::Result flat;
+    flat.baseline = 0.5;
+    flat.change = {0.0, 0.01};
+    ExpectTrue(wl::Headline(image, pieces, flat, "cat", {}).rfind("No covered piece lowers", 0) == 0,
+               "nothing lowers the score: said so");
+    oc::Plan features;
+    features.kind = oc::InputKind::Features;
+    features.sample_shape = {1, 3};
+    ExpectTrue(wl::PieceText(features, oc::PiecesOf(features)[1], {"preg", "plas", "pres"}) == "plas",
+               "a feature by its name");
+    ExpectTrue(wl::ChangeText(-0.4091) == "-0.409" && wl::ChangeText(0.0001) == "0.000", "change text");
+    ExpectTrue(!wl::InspectorHint().empty(), "the view has its Inspector note");
+
+    // Saliency (6.3c).
+    using layer_view::OutputRule;
+    ExpectTrue(wl::SaliencyOfText(OutputRule::Softmax, 2, 1, "dog") ==
+                   "the dog logit (the score before the softmax, which does not saturate)",
+               "softmax: the class's logit");
+    ExpectTrue(wl::SaliencyOfText(OutputRule::Sigmoid, 1, 1, "positive") == "the logit (the output before the sigmoid)",
+               "one sigmoid logit, class 1: the logit");
+    ExpectTrue(wl::SaliencyOfText(OutputRule::Sigmoid, 1, 0, "negative") ==
+                   "minus the logit: negative rises as the logit falls",
+               "one sigmoid logit, class 0: minus the logit");
+    ExpectTrue(wl::ScaledSize({0.5, -2.0, 0.0}) == std::vector<float>({0.25f, 1.0f, 0.0f}), "sizes scale by the largest");
+    ExpectTrue(wl::ScaledSize({0.0, 0.0}) == std::vector<float>({0.0f, 0.0f}), "no gradient: all zero");
+    saliency::Result sal_image;
+    sal_image.rows = 2;
+    sal_image.columns = 3;
+    sal_image.size = {0.1, 0.2, 0.9, 0.0, 0.3, 0.1};
+    sal_image.times_input = {0.1, -0.5, 0.2, 0.0, 0.3, 0.1};
+    ExpectTrue(wl::SaliencyHeadline(oc::InputKind::Image, sal_image, false, {}, "dog", {}) ==
+                   "Most sensitive: the pixel at row 0, column 2.",
+               "image size headline: " + wl::SaliencyHeadline(oc::InputKind::Image, sal_image, false, {}, "dog", {}));
+    ExpectTrue(wl::SaliencyHeadline(oc::InputKind::Image, sal_image, true, {}, "dog", {}) ==
+                   "The pixel at row 0, column 1 pulls the dog score down most (-0.500).",
+               "image gradient x input headline");
+    saliency::Result sal_tokens;
+    sal_tokens.size = {0.9, 0.4, 0.6, 0.0};
+    sal_tokens.times_input = {0.2, 0.1, 0.3, 0.0};
+    ExpectTrue(wl::SaliencyHeadline(oc::InputKind::Tokens, sal_tokens, false, {1, 2}, "Anxiety", {"#3", "#7", "#12", "#0"}) ==
+                   "Most sensitive: \"#12\", then \"#7\".",
+               "token headline skips what is not considered (padding)");
+    ExpectTrue(wl::SaliencyHeadline(oc::InputKind::Features, sal_tokens, true, {}, "positive", {"preg", "plas", "pres", "skin"}) ==
+                   "pres pushes the positive score up most (+0.300).",
+               "feature gradient x input headline");
+    saliency::Result sal_none;
+    sal_none.size = {0.0, 0.0};
+    sal_none.times_input = {0.0, 0.0};
+    ExpectTrue(wl::SaliencyHeadline(oc::InputKind::Features, sal_none, false, {}, "positive", {}) ==
+                   "No element moves the positive score.",
+               "no gradient: said so");
+    ExpectTrue(wl::SaliencyValueText(0.2141, false) == "0.214" && wl::SaliencyValueText(0.2141, true) == "+0.214" &&
+                   wl::SaliencyValueText(-0.0001, true) == "0.000",
+               "saliency value text");
+    ExpectTrue(!wl::SaliencyInspectorHint().empty() && !wl::SaliencyPassesText().empty(), "saliency's notes");
+    spdlog::info("  OK: where it looks presentation");
+}
+
+// TOFIX178 6.1b: a training snapshot runs in eval mode, so BatchNorm's
+// running statistics and every weight are left exactly as they were.
+void TestCaptureStepLeavesTheModel() {
+    spdlog::info("--- TestCaptureStepLeavesTheModel ---");
+    const auto config = CompileResNetExample();
+    auto built = BuildExecutableFromConfig(config);
+    ExpectTrue(built.ok(), "ResNet builds: " + built.error_message);
+    built.model->SetTraining(true);
+    const auto batch = MakeSyntheticBatch(config, 5);
+    const Tensor& input = batch.features;  // synthetic batches are model-ready
+    std::map<std::string, std::vector<float>> before;
+    for (const auto& [name, t] : built.model->GetParameters()) before[name] = HostValues(t);
+    const auto capture = CaptureStep(*built.model, *built.loss, input, batch.labels, {}, built.module_provenance);
+    ExpectEq(capture->Layers().size(), config.layers.size(), "the snapshot holds every layer");
+    size_t changed = 0;
+    for (const auto& [name, t] : built.model->GetParameters())
+        if (HostValues(t) != before.at(name)) ++changed;
+    ExpectEq(changed, 0, "a snapshot changes no weight and no running statistic");
+    const auto& stem = CapturedNamed(*capture, "Conv 32 stem");
+    ExpectTrue(stem.Find(CapturedTensorRole::Gradient, "weights") != nullptr, "the snapshot holds gradients");
+    spdlog::info("  OK: snapshot of {} layers, model unchanged", capture->Layers().size());
+}
+
+// TOFIX178 6.1c: a capture saved with its run reads back as it was kept, a
+// damaged one is refused, and only the last runs keep their captures.
+void TestLayerCaptureStore() {
+    spdlog::info("--- TestLayerCaptureStore ---");
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "cyxwiz_layer_capture_store";
+    fs::remove_all(root);
+    const ScopedDebugRunRootOverrideForTesting debug_root(root);
+
+    DebugExecutor exe(MakeTabularConfig());
+    LayerCaptureOptions options;
+    options.byte_budget = 4096;  // some tensors left out, so the counts travel too
+    exe.SetLayerCapture(options);
+    const auto res = exe.Run();
+    ExpectTrue(res.success && res.layer_capture && res.layer_capture->Truncated(), "a capture over its budget");
+    const LayerCapture& kept = *res.layer_capture;
+
+    std::string error;
+    ExpectTrue(SaveLayerCapture(kept, "run-a", kLocalDebugCaptureLabel, &error), "the capture saves: " + error);
+    const auto loaded = LoadLayerCapture("run-a", kLocalDebugCaptureLabel, &error);
+    ExpectTrue(loaded != nullptr, "the capture reads back: " + error);
+    ExpectEq(loaded->Layers().size(), kept.Layers().size(), "every layer reads back");
+    ExpectEq(loaded->BytesHeld(), kept.BytesHeld(), "bytes held read back");
+    ExpectEq(loaded->SkippedTensors(), kept.SkippedTensors(), "skipped tensors read back");
+    ExpectEq(loaded->SkippedBytes(), kept.SkippedBytes(), "skipped bytes read back");
+    ExpectEq(loaded->Options().byte_budget, options.byte_budget, "the budget reads back");
+    for (size_t l = 0; l < kept.Layers().size(); ++l) {
+        const auto& a = kept.Layers()[l];
+        const auto& b = loaded->Layers()[l];
+        ExpectTrue(a.module_index == b.module_index && a.node_id == b.node_id && a.node_name == b.node_name &&
+                       a.tensors.size() == b.tensors.size(),
+                   a.node_name + " keeps its module, node and tensors");
+        for (size_t t = 0; t < a.tensors.size(); ++t) {
+            const auto& x = a.tensors[t];
+            const auto& y = b.tensors[t];
+            ExpectTrue(x.role == y.role && x.name == y.name && x.tensor.Shape() == y.tensor.Shape() &&
+                           HostValues(x.tensor) == HostValues(y.tensor),
+                       a.node_name + " " + x.name + " reads back bit for bit");
+        }
+    }
+    ExpectTrue(ListLayerCaptures("run-a") == std::vector<std::string>{kLocalDebugCaptureLabel},
+               "the run lists its capture");
+    ExpectTrue(EpochCaptureLabel(5) == "epoch_0005", "epoch labels sort by epoch");
+
+    // Not a folder name: refused, nothing written outside the store.
+    ExpectTrue(!SaveLayerCapture(kept, "../run", kLocalDebugCaptureLabel, &error), "a run id with a path is refused");
+    ExpectTrue(!SaveLayerCapture(kept, "run-a", "", &error), "an empty label is refused");
+
+    // A damaged tensor file: the load says why instead of returning a part.
+    const fs::path dir = LayerCaptureDir("run-a", kLocalDebugCaptureLabel);
+    fs::path victim;
+    for (const auto& entry : fs::directory_iterator(dir))
+        if (entry.path().extension() == ".bin") victim = entry.path();
+    ExpectTrue(!victim.empty(), "the capture wrote tensor files");
+    fs::resize_file(victim, fs::file_size(victim) - 1);
+    ExpectTrue(LoadLayerCapture("run-a", kLocalDebugCaptureLabel, &error) == nullptr &&
+                   error.find("truncated") != std::string::npos,
+               "a truncated tensor file is refused: " + error);
+    // Saving again replaces it whole.
+    ExpectTrue(SaveLayerCapture(kept, "run-a", kLocalDebugCaptureLabel, &error), "the capture saves again");
+    ExpectTrue(LoadLayerCapture("run-a", kLocalDebugCaptureLabel, &error) != nullptr, "the new save reads back");
+    // An unfinished save (no capture.json) is not listed.
+    fs::create_directories(LayerCaptureDir("run-a", "epoch_0001"));
+    ExpectEq(ListLayerCaptures("run-a").size(), 1, "an unfinished save is not listed");
+
+    // Tensor files keep their data type.
+    const uint8_t bytes[6] = {0, 1, 2, 250, 254, 255};
+    const Tensor u8({2, 3}, bytes, DataType::UInt8);
+    ExpectTrue(WriteTensorFile(root / "u8.bin", u8, ArrayFireHostSyncCategory::DebugSampleDump, "test", &error),
+               "a uint8 tensor writes: " + error);
+    const auto u8_back = ReadTensorFile(root / "u8.bin", &error);
+    ExpectTrue(u8_back && u8_back->GetDataType() == DataType::UInt8 && u8_back->Shape() == u8.Shape() &&
+                   std::memcmp(u8_back->ReadData(), bytes, sizeof(bytes)) == 0,
+               "a uint8 tensor reads back as it was");
+    ExpectTrue(!ReadTensorFile(root / "missing.bin", &error) && error.find("unreadable") != std::string::npos,
+               "a missing tensor file says so");
+
+    // Only the last runs keep their captures; their folders stay.
+    for (const char* run : {"run-b", "run-c"}) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));  // distinct folder times
+        ExpectTrue(SaveLayerCapture(kept, run, kLocalDebugCaptureLabel, &error), std::string(run) + " saves");
+    }
+    ExpectEq(PruneLayerCaptures(2), 1, "one run past the last two is cleared");
+    ExpectTrue(ListLayerCaptures("run-a").empty() && fs::exists(GetDebugRunStoreRoot() / "run-a"),
+               "the oldest run's captures are gone, its folder stays");
+    ExpectEq(ListLayerCaptures("run-b").size() + ListLayerCaptures("run-c").size(), 2, "the last two keep theirs");
+    ExpectEq(PruneLayerCaptures(2), 0, "nothing more to clear");
+
+    // 6.3d: runs newest first; a capture's epoch and size; a training run's
+    // epochs round trip, and a run without them has none.
+    ExpectTrue(ListRunsWithLayerCaptures() == std::vector<std::string>({"run-c", "run-b"}),
+               "runs with captures, newest first; a pruned run is not listed");
+    ExpectTrue(SaveLayerCapture(kept, "run-c", EpochCaptureLabel(5), &error), "a snapshot saves");
+    const auto infos = ListLayerCaptureInfo("run-c");
+    ExpectTrue(infos.size() == 2 && infos[0].label == "epoch_0005" && infos[0].epoch == 5 && infos[0].bytes > 0 &&
+                   infos[1].label == kLocalDebugCaptureLabel && infos[1].epoch == 0,
+               "captures listed with their epoch and size");
+    TrainingRunRecord record;
+    record.run_id = "run-c";
+    record.graph_name = "cats_dogs";
+    record.total_epochs = 3;
+    record.epochs = {{1, 0.9f, 0.5f, 0.8f, 0.55f}, {2, 0.7f, 0.6f, std::nullopt, std::nullopt}};
+    ExpectTrue(SaveTrainingRunRecord(record, &error), "a training record saves: " + error);
+    const auto back = LoadTrainingRunRecord("run-c");
+    ExpectTrue(back && back->graph_name == "cats_dogs" && back->total_epochs == 3 && !back->regression &&
+                   back->epochs.size() == 2 && back->epochs[0].val_metric == 0.55f && !back->epochs[1].val_loss &&
+                   back->epochs[1].train_loss == 0.7f,
+               "a training record reads back, an epoch without validation stays without");
+    ExpectTrue(!LoadTrainingRunRecord("run-b") && !LoadTrainingRunRecord("../run-c"),
+               "no record for a Local Debug run or a path outside the store");
+    fs::remove_all(root);
+    spdlog::info("  OK: {} layers saved and read back, damaged files refused, old runs pruned",
+                 kept.Layers().size());
 }
 
 void TestDebugExecutorBinaryHeadBackward() {
@@ -2797,7 +4575,26 @@ int main(int argc, char** argv) {
         TestTimeDistributedDenseModule();
         TestBuildSequentialTimeDistributedHead();
         TestDebugNumericsContract();
+        TestDebugNumericsMatchHostReference();
+        TestLayerTensorReader();
         TestDebugExecutorGoldenPath();
+        TestDebugExecutorResNetExample();
+        TestDebugExecutorInputSample();
+        TestLayerCaptureTabular();
+        TestLayerCaptureResNetExample();
+        TestCaptureStepLeavesTheModel();
+        TestLayerCaptureStore();
+        TestLayerBackwardObserver();
+        TestDebugModelSession();
+        TestOcclusion();
+        TestSaliencyAgainstPyTorch();
+        TestTrainingSnapshotsPresentation();
+        TestTopImages();
+        TestContributions();
+        TestLayerEmbedding();
+        TestUnitWeights();
+        TestImageMlpLayout();
+        TestWhereItLooksPresentation();
         TestDebugExecutorBinaryHeadBackward();
         TestDebugExecutorFirstShapeMismatch();
         TestDebugExecutorSkippedLayerMapping();

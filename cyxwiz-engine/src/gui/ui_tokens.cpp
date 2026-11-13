@@ -48,6 +48,14 @@ ImVec4 DivergingAt(const Tokens& t, float v) {
     return ScaleAt(t.scale_diverging, 3, (v + 1.0f) * 0.5f);
 }
 
+ImVec4 HeatAt(const Tokens& t, float v) {
+    return ScaleAt(t.scale_heat, 6, v);
+}
+
+ImVec4 GrayAt(const Tokens& t, float v) {
+    return ScaleAt(t.scale_gray, 2, v);
+}
+
 ImVec4 ReadableOn(const Tokens& t, const ImVec4& background) {
     // The theme's bright text or the window colour, whichever contrasts
     // more with the fill (mid-tone fills fail a plain light/dark split).
@@ -179,6 +187,13 @@ Tokens BuildTokens(const ImGuiStyle& style) {
     t.scale_diverging[0] = ImVec4(0.29f, 0.56f, 0.85f, 1.0f);
     t.scale_diverging[1] = t.plot_bg;
     t.scale_diverging[2] = ImVec4(0.88f, 0.44f, 0.31f, 1.0f);
+    // Inferno's stops (#000004 #420A68 #932667 #DD513A #FCA50A #FCFFA4).
+    const ImVec4 heat[6] = {{0.000f, 0.000f, 0.016f, 1.0f}, {0.259f, 0.039f, 0.408f, 1.0f},
+                            {0.576f, 0.149f, 0.404f, 1.0f}, {0.867f, 0.318f, 0.227f, 1.0f},
+                            {0.988f, 0.647f, 0.039f, 1.0f}, {0.988f, 1.000f, 0.643f, 1.0f}};
+    for (int i = 0; i < 6; ++i) t.scale_heat[i] = heat[i];
+    t.scale_gray[0] = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    t.scale_gray[1] = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     return t;
 }
 

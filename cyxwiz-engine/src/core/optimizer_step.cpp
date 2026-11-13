@@ -6,7 +6,9 @@ namespace cyxwiz {
 
 float ApplyOptimizerStep(IExecutableModel& model, Optimizer& optimizer, std::map<std::string, Tensor>& gradients,
                          const OptimizerStepSettings& settings) {
-    auto params = model.GetParameters();
+    // Frozen layers are neither stepped nor written back (their weights stay
+    // as loaded; no penalty, no optimizer state).
+    auto params = model.GetTrainableParameters();
     // Regularization node (TOFIX140 A4): the gradient of
     // l1 x sum(|w|) + l2 x sum(w^2), once per step and before clipping, as
     // torch's backward of loss + penalty gives it.

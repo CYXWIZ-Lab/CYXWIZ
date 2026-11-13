@@ -14,6 +14,7 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_node_factory.h"
+#include "../src/core/layer_capture_store.h"
 #include "../src/core/training_executor.h"
 #include "route_qualification_test_fixture.h"
 
@@ -30,6 +31,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -223,10 +225,14 @@ void SelectArrayFireCpu() {
 }
 
 // Trains and returns the model's parameters, flattened in the Engine's layout.
+// With `snapshots`, layer snapshots are taken on the schedule and handed back.
 Parameters TrainAndRead(const cyxwiz::TrainingConfiguration& config, const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
-                        int epochs, const std::string& what) {
+                        int epochs, const std::string& what,
+                        const std::optional<cyxwiz::TrainingExecutor::LayerSnapshotSchedule>& snapshots = std::nullopt,
+                        std::vector<cyxwiz::TrainingExecutor::LayerSnapshot>* taken = nullptr) {
     SelectArrayFireCpu();
     cyxwiz::TrainingExecutor executor(config, dataset, "label");
+    if (snapshots) executor.EnableLayerSnapshots(*snapshots);
     cyxwiz::TrainingMetrics final_metrics;
     bool completed = false;
     executor.Train(epochs, config.batch_size, nullptr, nullptr, [&](const cyxwiz::TrainingMetrics& metrics) {
@@ -237,6 +243,7 @@ Parameters TrainAndRead(const cyxwiz::TrainingConfiguration& config, const std::
     Check(final_metrics.terminal_status == "completed",
           what + " completes (" + final_metrics.terminal_status + ": " + final_metrics.terminal_reason + ")");
     Check(executor.GetModel() != nullptr, what + ": the trained model");
+    if (taken) *taken = executor.LayerSnapshots();
     Parameters result;
     for (const auto& [name, tensor] : executor.GetModel()->GetParameters()) {
         const float* values = tensor.ReadData<float>();
@@ -314,6 +321,13 @@ void CheckRefusals() {
                              Penalty(gui::NodeType::L2Regularization, 12, {})},
                             0.0625),
                  "must sit between the training loss and the optimizer", "two chained penalties");
+    {
+        // The SGD node: Nesterov needs momentum (BuildGraph sets momentum 0).
+        Graph nesterov = BuildGraph({}, 0.0625);
+        for (auto& node : nesterov.nodes)
+            if (node.type == gui::NodeType::SGD) node.parameters["nesterov"] = "true";
+        CheckRefused(nesterov, "set momentum above 0", "Nesterov without momentum");
+    }
     CheckRefused(BuildGraph({Penalty(gui::NodeType::L1Regularization, 11, {{"lambda", "-1"}})}, 0.0625),
                  "must be a number from 0 to 1000000", "a negative lambda");
     CheckRefused(BuildGraph({Penalty(gui::NodeType::ElasticNet, 11, {{"l1_ratio", "2"}})}, 0.0625),
@@ -323,6 +337,110 @@ void CheckRefusals() {
 }
 
 }  // namespace
+
+// TOFIX178 6.1b: layer snapshots during training leave the training as it
+// was: the trained parameters are bit for bit the run's without them (and so
+// still torch's), and the last snapshot holds the trained weights.
+void CheckLayerSnapshots(const json& fixture, const std::shared_ptr<cyxwiz::ArrowDataset>& dataset,
+                         double learning_rate, int batch_size, int epochs, double tolerance) {
+    const json& plain_case = fixture.at("cases").at(0);
+    Check(!plain_case.contains("node"), "the first fixture case is the plain run");
+    const auto config = CompileValid(BuildGraph({}, learning_rate), batch_size, "snapshots");
+    const auto without = TrainAndRead(config, dataset, epochs, "without snapshots");
+
+    cyxwiz::TrainingExecutor::LayerSnapshotSchedule schedule;
+    schedule.every_epochs = 2;
+    const float row[2] = {fixture.at("x0").at(0).get<float>(), fixture.at("x1").at(0).get<float>()};
+    const float target[1] = {fixture.at("label").at(0).get<float>()};
+    schedule.features = cyxwiz::Tensor({1, 2}, row, cyxwiz::DataType::Float32);
+    schedule.labels = cyxwiz::Tensor({1, 1}, target, cyxwiz::DataType::Float32);
+    std::vector<cyxwiz::TrainingExecutor::LayerSnapshot> taken;
+    const auto with = TrainAndRead(config, dataset, epochs, "with snapshots", schedule, &taken);
+    Check(with == without, "snapshots leave the trained parameters bit for bit as without them");
+    CheckParameters(with, plain_case.at("parameters_after"), tolerance, "with snapshots: trained parameters match torch");
+
+    std::vector<int> expected;
+    for (int e = 2; e <= epochs; e += 2) expected.push_back(e);
+    if (expected.empty() || expected.back() != epochs) expected.push_back(epochs);
+    Check(taken.size() == expected.size(), "one snapshot every 2 epochs and after the last: " +
+                                               std::to_string(taken.size()) + " of " + std::to_string(expected.size()));
+    // A saved snapshot keeps no tensors in memory; it reads back from the run store.
+    const auto saved = [](const cyxwiz::TrainingExecutor::LayerSnapshot& snapshot) {
+        std::string why;
+        auto capture = cyxwiz::LoadLayerCapture(snapshot.run_id, snapshot.label, &why);
+        Check(!snapshot.capture && capture != nullptr,
+              "the snapshot after epoch " + std::to_string(snapshot.epoch) + " is on disk, not held in memory: " + why);
+        if (!capture) throw std::runtime_error("a saved snapshot did not read back");
+        return capture;
+    };
+    for (size_t i = 0; i < taken.size(); ++i) {
+        Check(taken[i].epoch == expected[i], "snapshot " + std::to_string(i) + " after epoch " + std::to_string(expected[i]));
+        const auto capture = saved(taken[i]);
+        const auto& layers = capture->Layers();
+        Check(layers.size() == 1 && layers[0].node_name == "Dense", "the snapshot holds the Dense layer");
+        const auto* input = layers[0].Find(cyxwiz::CapturedTensorRole::Input);
+        Check(input && input->tensor.Shape() == std::vector<size_t>({1, 2}), "the snapshot ran the given row");
+        Check(layers[0].Find(cyxwiz::CapturedTensorRole::Gradient, "weight") != nullptr, "the snapshot holds the gradient");
+    }
+    // The last snapshot, after the last epoch, holds the trained weights.
+    const auto last = saved(taken.back());
+    for (const auto& [name, values] : with) {
+        const auto field = name.substr(name.find('.') + 1);
+        const auto* p = last->Layers()[0].Find(cyxwiz::CapturedTensorRole::Parameter, field);
+        Check(p != nullptr, "the last snapshot holds " + name);
+        const float* data = p->tensor.ReadData<float>();
+        Check(std::vector<double>(data, data + p->tensor.NumElements()) == values,
+              "the last snapshot's " + name + " is the trained one");
+    }
+
+    // Saved with the run as they are taken (6.1c): one capture per snapshot,
+    // read back tensor for tensor.
+    const std::string run_id = taken.back().run_id;
+    Check(!run_id.empty(), "the snapshots are saved with the training run");
+    std::vector<std::string> labels;
+    for (const auto& snapshot : taken) {
+        Check(snapshot.run_id == run_id && snapshot.label == cyxwiz::EpochCaptureLabel(snapshot.epoch),
+              "snapshot after epoch " + std::to_string(snapshot.epoch) + " is saved under its epoch");
+        labels.push_back(snapshot.label);
+    }
+    Check(cyxwiz::ListLayerCaptures(run_id) == labels, "the run lists its saved snapshots");
+    // Each epoch's metrics are saved with the snapshots (6.3d), the last
+    // snapshot's save holding every epoch.
+    const auto record = cyxwiz::LoadTrainingRunRecord(run_id);
+    Check(record.has_value(), "the run's epochs are saved with its snapshots");
+    Check(record->total_epochs == epochs && static_cast<int>(record->epochs.size()) == epochs,
+          "every epoch is in the saved record");
+    for (int e = 0; e < epochs; ++e) {
+        Check(record->epochs[static_cast<size_t>(e)].epoch == e + 1, "the record is in epoch order");
+        Check(std::isfinite(record->epochs[static_cast<size_t>(e)].train_loss) &&
+                  record->epochs[static_cast<size_t>(e)].train_loss > 0.0f,
+              "each epoch's training loss is recorded");
+    }
+    Check(!record->label_values.empty() && !record->label_shape.empty(),
+          "the snapshot items' labels are saved with the run");
+    Check(cyxwiz::ListRunsWithLayerCaptures().front() == run_id, "the training run is listed first, newest");
+    const auto infos = cyxwiz::ListLayerCaptureInfo(run_id);
+    Check(infos.size() == labels.size() && infos.back().epoch == taken.back().epoch && infos.back().bytes > 0,
+          "each snapshot is listed with its epoch and its size on disk");
+    // On items by number from the run's own batchers: rows 0 and 1, as
+    // validation reads them.
+    cyxwiz::TrainingExecutor::LayerSnapshotSchedule by_number;
+    by_number.every_epochs = epochs;
+    by_number.source_index = 0;
+    by_number.source_count = 2;
+    by_number.save = false;
+    std::vector<cyxwiz::TrainingExecutor::LayerSnapshot> numbered;
+    const auto with_numbered = TrainAndRead(config, dataset, epochs, "with snapshots by number", by_number, &numbered);
+    Check(with_numbered == without, "snapshots on items by number leave the training as it was");
+    Check(numbered.size() == 1 && numbered[0].run_id.empty(), "one unsaved snapshot after the last epoch");
+    const auto* rows = numbered[0].capture->Layers()[0].Find(cyxwiz::CapturedTensorRole::Input);
+    Check(rows && rows->tensor.Shape() == std::vector<size_t>({2, 2}), "the snapshot ran rows 0 and 1");
+    const float* r = rows->tensor.ReadData<float>();
+    for (size_t i = 0; i < 2; ++i)
+        Check(r[2 * i] == fixture.at("x0").at(i).get<float>() && r[2 * i + 1] == fixture.at("x1").at(i).get<float>(),
+              "snapshot row " + std::to_string(i) + " is the dataset's row " + std::to_string(i));
+    std::cout << "Layer snapshots: " << taken.size() << " taken and saved, training unchanged\n";
+}
 
 int main(int, char** argv) {
     namespace fs = std::filesystem;
@@ -364,10 +482,18 @@ int main(int, char** argv) {
             penalties.push_back(
                 Penalty(NodeTypeNamed(c.at("node")), 11, c.at("parameters").get<std::map<std::string, std::string>>()));
         }
-        const auto config = CompileValid(BuildGraph(penalties, learning_rate), batch_size, name);
+        Graph graph = BuildGraph(penalties, learning_rate);
+        if (c.contains("optimizer"))  // the SGD node's own settings: momentum, Nesterov, weight decay
+            for (auto& node : graph.nodes)
+                if (node.type == gui::NodeType::SGD)
+                    for (const auto& [key, value] : c.at("optimizer").get<std::map<std::string, std::string>>())
+                        node.parameters[key] = value;
+        const auto config = CompileValid(graph, batch_size, name);
         CheckParameters(TrainAndRead(config, dataset, epochs, name), c.at("parameters_after"), tolerance,
                         name + ": trained parameters match torch");
     }
+
+    CheckLayerSnapshots(fixture, dataset, learning_rate, batch_size, epochs, tolerance);
 
     fs::remove_all(work_dir);
     std::cout << "Regularization nodes match PyTorch: " << fixture.at("cases").size() << " cases\n";

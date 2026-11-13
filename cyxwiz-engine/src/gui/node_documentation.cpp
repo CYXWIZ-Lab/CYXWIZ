@@ -66,8 +66,11 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
 
     ImGui::Separator();
 
+    // Every line wraps at one width, so a long parameter description or
+    // usage line cannot stretch the tooltip across the screen.
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
+
     // Description
-    ImGui::PushTextWrapPos(400.0f);
     if (!brief.empty()) {
         ImGui::TextWrapped("%s", brief.c_str());
     }
@@ -75,7 +78,6 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
         ImGui::Spacing();
         ImGui::TextWrapped("%s", details.c_str());
     }
-    ImGui::PopTextWrapPos();
 
     // Parameters
     if (metadata && !metadata->parameters.empty()) {
@@ -85,8 +87,8 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
             const std::string& label = param.display_name.empty()
                 ? param.name
                 : param.display_name;
-            ImGui::BulletText("%s%s", label.c_str(),
-                              param.required ? " *" : "");
+            ImGui::Bullet();
+            ImGui::Text("%s%s", label.c_str(), param.required ? " *" : "");
             ImGui::SameLine();
             ImGui::TextDisabled("- %s", param.description.c_str());
         }
@@ -94,7 +96,8 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
         ImGui::Spacing();
         ImGui::TextColored(t.text_bright, "Parameters:");
         for (const auto& param : doc->parameters) {
-            ImGui::BulletText("%s", param.first.c_str());
+            ImGui::Bullet();
+            ImGui::Text("%s", param.first.c_str());
             ImGui::SameLine();
             ImGui::TextDisabled("- %s", param.second.c_str());
         }
@@ -106,7 +109,8 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
         ImGui::Spacing();
         ImGui::TextColored(t.text_bright, "Tips:");
         for (const auto& tip : doc->tips) {
-            ImGui::BulletText("%s", tip.c_str());
+            ImGui::Bullet();
+            ImGui::Text("%s", tip.c_str());
         }
     }
 
@@ -117,6 +121,7 @@ void NodeDocumentationManager::RenderTooltip(const cyxwiz::NodeMetadata* metadat
         ImGui::TextDisabled("%s", usage.c_str());
     }
 
+    ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }
 
@@ -167,6 +172,7 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::LayerNorm:
         case NodeType::GroupNorm:
         case NodeType::InstanceNorm:
+        case NodeType::SqueezeExcitation:
             return "Normalization";
 
         // Regularization
@@ -200,6 +206,9 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::GELU:
         case NodeType::Swish:
         case NodeType::Mish:
+        case NodeType::Hardswish:
+        case NodeType::Hardsigmoid:
+        case NodeType::ReLU6:
         case NodeType::Sigmoid:
         case NodeType::Tanh:
         case NodeType::Softmax:
@@ -317,6 +326,8 @@ const char* NodeDocumentationManager::GetCategoryName(NodeType type) {
         case NodeType::ImageSmooth:
         case NodeType::ImageWarp:
         case NodeType::ImagePyramid:
+        case NodeType::ImageFilter:
+        case NodeType::ImageGabor:
         case NodeType::RandomResizedCrop:
         case NodeType::RandomAffine:
         case NodeType::RandomPerspective:
@@ -361,7 +372,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"filters", "Number of output channels/filters"},
             {"kernel_size", "Size of the sliding window"},
             {"stride", "Step size between kernel applications"},
-            {"padding", "Zero-padding added to both sides"}
+            {"padding", "Zero-padding added to both sides"},
+            {"use_bias", "A learned value per output channel; off when a BatchNorm follows"}
         },
         {
             "Use padding='same' to preserve sequence length",
@@ -379,7 +391,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"filters", "Number of output channels/filters"},
             {"kernel_size", "Size of the 2D kernel (e.g., 3 for 3x3)"},
             {"stride", "Step size (e.g., 2 for downsampling)"},
-            {"padding", "Zero-padding around the input"}
+            {"padding", "Zero-padding around the input"},
+            {"use_bias", "A learned value per output channel; off when a BatchNorm follows"}
         },
         {
             "3x3 kernels are most common and efficient",
@@ -401,7 +414,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"filters", "Number of output channels"},
             {"kernel_size", "Cubic kernel size (3 means 3x3x3)"},
             {"stride", "Step size on every axis"},
-            {"padding", "'same' keeps D, H and W at stride 1 (odd kernels); 'valid' adds none"}
+            {"padding", "'same' keeps D, H and W at stride 1 (odd kernels); 'valid' adds none"},
+            {"use_bias", "A learned value per output channel; off when a BatchNorm follows"}
         },
         {
             "A k x k x k kernel has C x k^3 weights per filter: start with few filters",
@@ -421,7 +435,8 @@ void NodeDocumentationManager::InitializeDocumentation() {
             {"kernel_size", "Square kernel size k"},
             {"stride", "Step size s"},
             {"padding", "same ((k-1)/2, odd k) or valid (0)"},
-            {"depth_multiplier", "Output channels per input channel M"}
+            {"depth_multiplier", "Output channels per input channel M"},
+            {"use_bias", "A learned value per output channel; off when a BatchNorm follows"}
         },
         {
             "Follow with 1x1 Conv2D (pointwise) for full depthwise separable conv",
@@ -439,7 +454,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             {"pool_size", "Size of the pooling window (e.g., 2 for 2x2)"},
             {"stride", "Step between windows (default: same as pool_size)"},
-            {"padding", "Padding mode"}
+            {"padding", "Cells added on every side first, at most half the pool size (0 = none)"}
         },
         {
             "Preserves strong activations, good for detecting features",
@@ -456,7 +471,7 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             {"pool_size", "Size of the pooling window"},
             {"stride", "Step between windows"},
-            {"padding", "Padding mode"}
+            {"padding", "Zero cells added on every side first, counted in the average; at most half the pool size"}
         },
         {
             "Better for regression tasks where all values matter",
@@ -556,6 +571,26 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "Use when batch size is too small for BatchNorm",
             "32 groups is a common default"
+        },
+        "Normalization"
+    };
+
+    docs_[NodeType::SqueezeExcitation] = {
+        "Squeeze-Excitation",
+        "Scales each channel of a feature map by a learned value between 0 and 1, worked out from the "
+        "channels' means: the model learns which channels matter for each image.",
+        "mean over the map -> Dense(hidden width) -> activation -> Dense(C) -> gate -> multiply.",
+        {
+            {"width_mode", "Hidden width from the channels / Reduction, or a typed number"},
+            {"reduction", "The gate's hidden width is C / reduction, at least 1"},
+            {"squeeze_channels", "The hidden width, when typed"},
+            {"inner_activation", "ReLU, Hardswish or Swish between the two Dense steps"},
+            {"gate", "Sigmoid or Hardsigmoid: one value between 0 and 1 per channel"},
+            {"use_bias", "A bias on both Dense steps"}
+        },
+        {
+            "After a convolution block, before the next one (SENet, MobileNetV3, EfficientNet)",
+            "Adds few parameters: about 2 x C x C / reduction"
         },
         "Normalization"
     };
@@ -952,6 +987,43 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Activation"
     };
 
+    docs_[NodeType::ReLU6] = {
+        "ReLU6",
+        "f(x) = min(max(x, 0), 6): ReLU that stops rising at 6.",
+        "Keeps activations in a small range, which suits low-precision and mobile networks.",
+        {},
+        {
+            "MobileNetV1 and MobileNetV2 blocks (Conv2D -> BatchNorm -> ReLU6)",
+            "A pretrained network whose weights were trained with ReLU6"
+        },
+        "Activation"
+    };
+
+    docs_[NodeType::Hardsigmoid] = {
+        "Hardsigmoid",
+        "f(x) = relu6(x + 3) / 6: a sigmoid made of straight pieces. 0 below -3, 1 above 3.",
+        "Cheaper than Sigmoid, with nearly the same shape.",
+        {},
+        {
+            "The gate of MobileNetV3's Squeeze-Excitation blocks",
+            "A value between 0 and 1 where Sigmoid is too slow"
+        },
+        "Activation"
+    };
+
+    docs_[NodeType::Hardswish] = {
+        "Hardswish",
+        "f(x) = x * relu6(x + 3) / 6: Swish with its sigmoid replaced by a straight piece. "
+        "0 below -3, x above 3.",
+        "Cheaper than Swish and Mish, with nearly the same shape.",
+        {},
+        {
+            "The activation of MobileNetV3 and EfficientNet-Lite",
+            "A good swap for ReLU in small CNNs"
+        },
+        "Activation"
+    };
+
     docs_[NodeType::Mish] = {
         "Mish",
         "f(x) = x * tanh(softplus(x)). Similar to Swish but smoother. "
@@ -1337,10 +1409,14 @@ void NodeDocumentationManager::InitializeDocumentation() {
         "Stochastic Gradient Descent",
         "Classic optimizer. Simple but requires careful learning rate tuning. "
         "Add momentum for faster convergence.",
-        "weight = weight - lr * gradient.",
+        "g = gradient + weight_decay * weight; v = momentum * v + g; weight = weight - lr * v "
+        "(with Nesterov: lr * (g + momentum * v)). torch.optim.SGD, dampening 0.",
         {
             {"learning_rate", "Positive update step size (0.01 default)"},
-            {"momentum", "Momentum coefficient in [0, 1)"}
+            {"momentum", "Momentum coefficient in [0, 1)"},
+            {"nesterov", "Look-ahead momentum; needs momentum above 0"},
+            {"weight_decay", "L2 decay added to the gradient; 0 = off"},
+            {"weight_decay_exclude", "none, or norms_and_biases (1-D tensors skip the decay)"}
         },
         {
             "Use momentum >= 0.9 for better convergence",
@@ -1979,18 +2055,22 @@ void NodeDocumentationManager::InitializeDocumentation() {
 
     docs_[NodeType::ImageEdges] = {
         "Image Edges",
-        "An edge map instead of the photo: Canny, Sobel, Laplacian or Scharr. The output has one channel.",
+        "An edge map instead of the photo: Canny, Sobel, Laplacian, Scharr, LoG or DoG. The output has one channel.",
         "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
         "Runs in training, validation and test.",
         {
-            {"method", "canny, sobel, laplacian or scharr"},
+            {"method", "canny, sobel, laplacian, scharr, log or dog"},
+            {"direction", "Sobel and Scharr: magnitude, x, y or angle"},
             {"threshold1", "Canny: weak edge threshold (0 to 255 scale)"},
             {"threshold2", "Canny: strong edge threshold"},
-            {"kernel_size", "Sobel: 1, 3, 5 or 7; Laplacian: odd up to 31"}
+            {"kernel_size", "Sobel: 1, 3, 5 or 7; Laplacian and LoG: odd up to 31"},
+            {"sigma", "LoG: smoothing before the Laplacian; DoG: the finer blur"},
+            {"sigma2", "DoG: the coarser blur"},
+            {"keep_image", "Keep the image and add the edge map as one more channel"}
         },
         {
             "Shapes matter more than colour or texture",
-            "The model's input becomes [H, W, 1]",
+            "The model's input becomes [H, W, 1], or [H, W, C + 1] with Keep image",
         },
         "Data Pipeline"
     };
@@ -2045,6 +2125,47 @@ void NodeDocumentationManager::InitializeDocumentation() {
         {
             "down: a quarter of the pixels with less aliasing than a plain resize",
             "detail: edges and texture only, mid-grey where flat",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageFilter] = {
+        "Image Filter",
+        "One fixed kernel over every image: a classic one (sharpen, emboss, outline, Prewitt, Roberts, Kirsch, "
+        "Robinson, box) or the numbers you type.",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"preset", "custom, identity, box, sharpen, emboss, outline, prewitt_x / _y, roberts_x / _y, kirsch, robinson"},
+            {"direction", "Kirsch and Robinson: n, ne, e, se, s, sw, w or nw"},
+            {"kernel", "custom: rows split by ';', numbers by spaces"},
+            {"normalize", "Divide the kernel by its sum when it is not 0"},
+            {"border", "reflect_101, reflect, replicate or zero"},
+            {"output", "clip, absolute or offset (around mid-grey)"}
+        },
+        {
+            "See what a hand-made filter does before a Conv2D learns its own",
+            "Compare it with the learned kernels in the Studio Debugger's Filters view",
+        },
+        "Data Pipeline"
+    };
+
+    docs_[NodeType::ImageGabor] = {
+        "Image Gabor",
+        "A bank of striped kernels over every image: one channel per orientation and wavelength.",
+        "Done once when the images are prepared (OpenCV, CPU), in canvas order before the first random step. "
+        "Runs in training, validation and test.",
+        {
+            {"orientations", "Directions over 180 degrees, 1 to 16"},
+            {"wavelengths", "Pixels per cycle, split by commas or spaces"},
+            {"bandwidth", "Octaves, 0.25 to 4"},
+            {"aspect", "The window's width over its length, 0.1 to 1"},
+            {"response", "energy, even or odd"},
+            {"keep_image", "The image's channels first, then the bank's"}
+        },
+        {
+            "Give a small model texture and direction it would otherwise have to learn",
+            "Compare the bank with a first Conv2D's learned kernels in the Studio Debugger's Filters view",
         },
         "Data Pipeline"
     };

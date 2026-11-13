@@ -61,6 +61,7 @@ bool IsZeroCostLayer(gui::NodeType type) {
         case gui::NodeType::TransformerDecoder:
         case gui::NodeType::LinearAttention:
         case gui::NodeType::CrossAttention:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::PluginCustom:
             return false;
         default:
@@ -172,6 +173,13 @@ LayerCost CountLayerMultiplyAdds(const CompiledLayer& layer) {
                 return NotCounted("Depends on the Key length, which the compile does not record.");
             case gui::NodeType::PluginCustom:
                 return NotCounted("An extension node: its cost is its own code's.");
+            case gui::NodeType::SqueezeExcitation: {
+                const size_t channels = layer.input_shape.empty() ? 0 : layer.input_shape.back();
+                if (channels == 0) return NotCounted("its input has no channels yet");
+                cost.kind = LayerCostKind::SqueezeExcitation;
+                cost.hidden = static_cast<long long>(spatial::ResolveSqueezeExcitation(channels, layer.parameters).squeeze);
+                break;
+            }
             default:
                 return {true, 0, ZeroCostWords(layer.type)};
         }

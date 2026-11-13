@@ -36,6 +36,22 @@ int main() {
     Check(config.GetRuntimeLogSavedFilters() == expected,
           "valid and invalid saved expressions should survive round trip");
 
+    // Studio Debugger defaults (TOFIX178 6.3c): Where it looks' method and
+    // what saliency shows survive a save and load.
+    cyxwiz::core::StudioDebuggerConfig debugger = config.GetStudioDebugger();
+    debugger.where_it_looks_method = cyxwiz::core::WhereItLooksMethod::Saliency;
+    debugger.saliency_show = cyxwiz::core::SaliencyShow::TimesInput;
+    debugger.top_images_channels = cyxwiz::core::TopImagesChannels::Strongest;
+    debugger.top_images_rank = cyxwiz::core::TopImagesRank::Mean;
+    debugger.embedding_method = cyxwiz::core::EmbeddingMethod::Umap;
+    debugger.embedding_colour = cyxwiz::core::EmbeddingColour::PredictedClass;
+    debugger.unit_weights_order = cyxwiz::core::UnitWeightsOrder::Number;
+    config.SetStudioDebugger(debugger);
+    Check(config.Save(path), "the Studio Debugger defaults save");
+    config.SetStudioDebugger({});
+    Check(config.Load(path), "the Studio Debugger defaults reload");
+    Check(config.GetStudioDebugger() == debugger, "the layer views' saved choices survive a round trip");
+
     // Preferences > Simulation: the graph run's defaults, kept within range
     using cyxwiz::core::EngineConfig;
     config.SetSimulationRateHz(5000);

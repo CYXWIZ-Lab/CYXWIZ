@@ -1,5 +1,9 @@
 #include "debug_numerics.h"
 
+#include "algorithms/arrayfire_host_values.h"  // DeviceHasDouble, MaterializeArrayFireToHost
+
+#include <arrayfire.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -36,11 +40,6 @@ DebugTensorNumericSummary ScanDebugTensorNumerics(
 
     summary.available = true;
     summary.element_count = tensor.NumElements();
-    const float* values = tensor.ReadData<float>();
-    long double sum = 0.0L;
-    long double sum_squares = 0.0L;
-    double minimum = std::numeric_limits<double>::infinity();
-    double maximum = -std::numeric_limits<double>::infinity();
 
     const bool element_saturation =
         producer_type == gui::NodeType::Sigmoid ||
@@ -61,77 +60,89 @@ DebugTensorNumericSummary ScanDebugTensorNumerics(
         summary.saturation_definition =
             "row maximum probability >= 0.999";
     }
-
-    for (size_t index = 0; index < summary.element_count; ++index) {
-        const double value = static_cast<double>(values[index]);
-        if (std::isnan(value)) {
-            ++summary.nan_count;
-            continue;
-        }
-        if (std::isinf(value)) {
-            ++summary.inf_count;
-            continue;
-        }
-        ++summary.finite_count;
-        sum += value;
-        sum_squares += static_cast<long double>(value) * value;
-        minimum = std::min(minimum, value);
-        maximum = std::max(maximum, value);
-        summary.maximum_absolute =
-            std::max(summary.maximum_absolute, std::abs(value));
-        if (value == 0.0) {
-            ++summary.zero_count;
-        }
-        if (std::abs(value) >= kDebugExplodingAbsoluteThreshold) {
-            ++summary.exploding_count;
-        }
-        if (element_saturation) {
-            const bool candidate =
-                (producer_type == gui::NodeType::Sigmoid &&
-                 (value <= 0.01 || value >= 0.99)) ||
-                (producer_type == gui::NodeType::Tanh &&
-                 std::abs(value) >= 0.99) ||
-                (producer_type == gui::NodeType::ReLU && value <= 0.0);
-            if (candidate) {
-                ++summary.saturation_candidate_count;
-            }
-        }
-    }
-
-    if (summary.finite_count > 0) {
-        summary.minimum = minimum;
-        summary.maximum = maximum;
-        summary.mean = static_cast<double>(
-            sum / static_cast<long double>(summary.finite_count));
-        summary.l2_norm = std::sqrt(static_cast<double>(sum_squares));
-    }
-
-    if (element_saturation) {
-        summary.saturation_observation_count = summary.finite_count;
-    } else if (producer_type == gui::NodeType::Softmax &&
-               !tensor.Shape().empty()) {
-        const size_t class_count = tensor.Shape().back();
-        if (class_count > 0 &&
-            summary.element_count % class_count == 0) {
-            const size_t row_count = summary.element_count / class_count;
-            summary.saturation_observation_count = row_count;
-            for (size_t row = 0; row < row_count; ++row) {
-                double row_maximum = -std::numeric_limits<double>::infinity();
-                for (size_t column = 0; column < class_count; ++column) {
-                    const double value = static_cast<double>(
-                        values[row * class_count + column]);
-                    if (std::isfinite(value)) {
-                        row_maximum = std::max(row_maximum, value);
-                    }
-                }
-                if (row_maximum >= kDebugSoftmaxProbabilityThreshold) {
-                    ++summary.saturation_candidate_count;
-                }
-            }
+    size_t softmax_rows = 0;
+    size_t class_count = 0;
+    if (producer_type == gui::NodeType::Softmax && !tensor.Shape().empty()) {
+        class_count = tensor.Shape().back();
+        if (class_count > 0 && summary.element_count % class_count == 0) {
+            softmax_rows = summary.element_count / class_count;
         } else {
             summary.saturation_summary_available = false;
             summary.saturation_definition.clear();
         }
+    }
+    if (summary.element_count == 0) {
+        return summary;
+    }
+
+    // Reduced where the tensor lives; only the counts and five values come
+    // back (float64 sums where the device has float64).
+    const af::array values = af::flat(tensor.GetArray());
+    const af::array finite = !(af::isNaN(values) || af::isInf(values));
+    const af::dtype precision = DeviceHasDouble() ? f64 : f32;
+    const af::array kept = af::select(finite, values, 0.0f).as(precision);
+    const float infinity = std::numeric_limits<float>::infinity();
+
+    std::vector<af::array> counts{
+        af::count(af::isNaN(values)),
+        af::count(af::isInf(values)),
+        af::count(finite),
+        af::count(finite && values == 0.0f),
+        af::count(finite && af::abs(values) >= static_cast<float>(kDebugExplodingAbsoluteThreshold)),
+    };
+    if (element_saturation) {
+        const af::array candidate =
+            producer_type == gui::NodeType::Sigmoid ? (values <= 0.01f || values >= 0.99f)
+            : producer_type == gui::NodeType::Tanh  ? af::abs(values) >= 0.99f
+                                                    : values <= 0.0f;
+        counts.push_back(af::count(finite && candidate));
+    } else if (softmax_rows > 0) {
+        // Rows are the row-major leading axes, the classes the last.
+        const af::array rows = af::moddims(tensor.GetRowMajorFlatArray(), static_cast<dim_t>(class_count),
+                                           static_cast<dim_t>(softmax_rows));
+        const af::array row_maximum =
+            af::max(af::select(af::isNaN(rows) || af::isInf(rows), -infinity, rows), 0);
+        counts.push_back(af::count(row_maximum >= static_cast<float>(kDebugSoftmaxProbabilityThreshold)));
+    }
+    af::array joined_counts = counts.front();
+    for (size_t i = 1; i < counts.size(); ++i) joined_counts = af::join(0, joined_counts, counts[i]);
+    std::vector<unsigned> count_values(counts.size());
+    MaterializeArrayFireToHost(joined_counts.as(u32), count_values.data(), ArrayFireHostSyncCategory::DebugSampleDump,
+                               "ScanDebugTensorNumerics", "arrayfire_aggregate_vector", "bounded_debug_readback",
+                               "numeric counts");
+    summary.nan_count = count_values[0];
+    summary.inf_count = count_values[1];
+    summary.finite_count = count_values[2];
+    summary.zero_count = count_values[3];
+    summary.exploding_count = count_values[4];
+    if (counts.size() > 5) {
+        summary.saturation_candidate_count = count_values[5];
+        summary.saturation_observation_count = element_saturation ? summary.finite_count : softmax_rows;
+    }
+
+    if (summary.finite_count > 0) {
+        const af::array aggregates = af::join(
+            0, af::join(0, af::sum(kept), af::sum(kept * kept)),
+            af::join(0, af::min(af::select(finite, values, infinity)).as(precision),
+                     af::max(af::select(finite, values, -infinity)).as(precision), af::max(af::abs(kept))));
+        // f64 on the device only where it has f64 (aggregates are f32 otherwise).
+        std::vector<double> host(5);
+        if (precision == f64) {
+            MaterializeArrayFireToHost(aggregates, host.data(), ArrayFireHostSyncCategory::DebugSampleDump,
+                                       "ScanDebugTensorNumerics", "arrayfire_aggregate_vector",
+                                       "bounded_debug_readback", "numeric sums and range");
+        } else {
+            std::vector<float> narrow(host.size());
+            MaterializeArrayFireToHost(aggregates, narrow.data(), ArrayFireHostSyncCategory::DebugSampleDump,
+                                       "ScanDebugTensorNumerics", "arrayfire_aggregate_vector",
+                                       "bounded_debug_readback", "numeric sums and range");
+            std::copy(narrow.begin(), narrow.end(), host.begin());
+        }
+        summary.mean = host[0] / static_cast<double>(summary.finite_count);
+        summary.l2_norm = std::sqrt(host[1]);
+        summary.minimum = host[2];
+        summary.maximum = host[3];
+        summary.maximum_absolute = host[4];
     }
 
     if (summary.saturation_observation_count > 0) {
@@ -213,7 +224,7 @@ void AttachDebugNumericsPayload(DebugTraceRecord& trace,
     payload["numeric_subject"] = subject;
     payload["numeric_host_read_performed"] = summary.available;
     payload["numeric_values_included"] = false;
-    payload["numeric_summary_scope"] = "bounded_debug_host_read";
+    payload["numeric_summary_scope"] = "device_reduction_bounded_readback";
     if (!summary.available) {
         payload["numeric_summary_reason"] =
             "The tensor is not Float32 or was unavailable.";

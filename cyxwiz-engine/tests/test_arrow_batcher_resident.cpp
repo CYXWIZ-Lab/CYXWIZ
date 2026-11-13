@@ -11,6 +11,7 @@
 #include "core/prefetch_batcher.h"
 #include "computation_truth/test_device_selection.h"
 
+#include <stdexcept>
 #include <arrow/api.h>
 
 #include <cstdio>
@@ -128,6 +129,50 @@ int main() {
     CompareRuns(dataset, true, 0.15f, false, "train with a validation share");
     CompareRuns(dataset, false, 0.15f, false, "validation");
     CompareRuns(dataset, true, 0.0f, true, "train, classes balanced");
+
+    // Local Debug's picked row (TOFIX178 6.0b): row N as validation sees it,
+    // whatever the batcher's part or shuffle - the same values as that row in
+    // its validation batch - with the part it falls in.
+    {
+        const auto make = [&](bool training, bool balance) {
+            auto batcher = std::make_unique<cyxwiz::ArrowDatasetBatcher>(
+                dataset, "label", 64, true, 0.7f, training, "", 0, 0,
+                training ? cyxwiz::BatcherPhase::Train : cyxwiz::BatcherPhase::Val, 0.15f, 1234u, balance,
+                balance ? "oversample" : "none", "max", 99u);
+            batcher->SetNormalization(3.5f, 17.25f);
+            batcher->SetOneHotEncoding(3);
+            batcher->Reset();
+            return batcher;
+        };
+        auto val = make(false, false);
+        auto train = make(true, true);
+        const cyxwiz::Batch batch = val->GetNextBatch();
+        const size_t row = static_cast<size_t>(batch.row_ids[3]);
+        const size_t width = batch.data.Shape()[1], classes = batch.labels.Shape()[1];
+        for (cyxwiz::ArrowDatasetBatcher* source : {val.get(), train.get()}) {
+            const auto picked = source->GetSourceSamples({row});
+            Check(picked && picked->size == 1 && picked->data.Shape() == std::vector<size_t>({1, width}),
+                  "a picked row is one [1, features] sample");
+            if (!picked) continue;
+            const float* p = picked->data.ReadData<float>();
+            const float* v = batch.data.ReadData<float>() + 3 * width;
+            const float* pl = picked->labels.ReadData<float>();
+            const float* vl = batch.labels.ReadData<float>() + 3 * classes;
+            bool same = picked->row_ids == std::vector<int64_t>{static_cast<int64_t>(row)};
+            for (size_t i = 0; i < width; ++i) same = same && p[i] == v[i];
+            for (size_t i = 0; i < classes; ++i) same = same && pl[i] == vl[i];
+            Check(same, "a picked row has its validation batch values, from either part's batcher");
+        }
+        Check(val->SourceSamplePart(row) == cyxwiz::BatcherPhase::Val, "the picked row is in validation");
+        Check(!train->SourceSamplePart(row).has_value(), "the train batcher does not hold it");
+        bool refused = false;
+        try {
+            val->GetSourceSamples({1000});
+        } catch (const std::out_of_range&) {
+            refused = true;
+        }
+        Check(refused, "a row past the table is refused");
+    }
 
     // Training prefetches batches on a worker thread (PrefetchBatcher): the
     // resident features are built and looked up there, on the training device.

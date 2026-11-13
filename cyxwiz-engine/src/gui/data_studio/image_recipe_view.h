@@ -12,6 +12,7 @@
 #include "../../core/image_pipeline_preview.h"
 #include "../../core/image_recipe_presentation.h"
 #include "../properties.h"
+#include "../ui_widgets.h"
 
 #include <cstdint>
 #include <functional>
@@ -56,6 +57,10 @@ private:
     std::unique_ptr<Previews> previews_;
     std::vector<uint32_t> textures_;
     std::map<int, uint32_t> row_texture_;                 // node -> its picture after the step
+    // node -> the whole sheet when that picture is only its first tile (an
+    // image that is neither grey nor RGB), and its height / width.
+    std::map<int, std::vector<ui::SheetTile>> row_sheet_;
+    std::map<uint32_t, float> sheet_aspect_;  // by a sheet's first texture
     std::map<int, std::vector<uint32_t>> row_draws_;      // per-batch node -> its draws
     uint32_t sample_texture_ = 0;
     int open_settings_ = -1;                               // the node whose settings show

@@ -323,5 +323,47 @@
   ],
   "parameters": 29794,
   "multiply_adds": 230400
+ },
+ "se_block": {
+  "layers": [
+   {
+    "name": "Conv same",
+    "output": [
+     8,
+     8,
+     16
+    ],
+    "parameters": 448,
+    "multiply_adds": 27648
+   },
+   {
+    "name": "SE",
+    "output": [
+     8,
+     8,
+     16
+    ],
+    "parameters": 148,
+    "multiply_adds": 128
+   },
+   {
+    "name": "Global pool",
+    "output": [
+     16
+    ],
+    "parameters": 0,
+    "multiply_adds": 0
+   },
+   {
+    "name": "Head",
+    "output": [
+     3
+    ],
+    "parameters": 51,
+    "multiply_adds": 48
+   }
+  ],
+  "parameters": 647,
+  "multiply_adds": 27824
  }
 }

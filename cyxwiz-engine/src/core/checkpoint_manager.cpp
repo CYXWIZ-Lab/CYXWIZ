@@ -1,5 +1,6 @@
 #include "checkpoint_manager.h"
 #include "executable_model.h"
+#include "tensor_file.h"
 #include "algorithms/arrayfire_backend_utils.h"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -7,7 +8,6 @@
 #include <chrono>
 #include <iomanip>
 #include <algorithm>
-#include <limits>
 #include <vector>
 
 namespace cyxwiz {
@@ -18,18 +18,6 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr const char* kCheckpointFormatV1 = "1.0";
-
-bool IsSupportedCheckpointDataType(DataType dtype) {
-    switch (dtype) {
-        case DataType::Float32:
-        case DataType::Float64:
-        case DataType::Int32:
-        case DataType::Int64:
-        case DataType::UInt8:
-            return true;
-    }
-    return false;
-}
 
 CheckpointInspection ClassifyCheckpointVersion(const std::string& version) {
     CheckpointInspection inspection;
@@ -558,8 +546,10 @@ bool CheckpointManager::SaveModelParameters(const fs::path& dir, const Model& mo
             filename += ".bin";
 
             fs::path tensor_path = model_dir / filename;
-            if (!SaveTensor(tensor_path, tensor)) {
-                spdlog::error("CheckpointManager: Failed to save parameter: {}", name);
+            std::string error;
+            if (!WriteTensorFile(tensor_path, tensor, ArrayFireHostSyncCategory::CheckpointOutput,
+                                 "CheckpointManager::SaveModelParameters", &error)) {
+                spdlog::error("CheckpointManager: Failed to save parameter {}: {}", name, error);
                 return false;
             }
         }
@@ -628,11 +618,10 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, Model& model) {
         for (auto item = manifest.begin(); item != manifest.end(); ++item) {
             const std::string param_name = item.value().get<std::string>();
             fs::path tensor_path = model_dir / item.key();
-            auto tensor = LoadTensor(tensor_path);
+            std::string error;
+            auto tensor = ReadTensorFile(tensor_path, &error);
             if (!tensor) {
-                if (last_error_.empty()) {
-                    last_error_ = "Could not load checkpoint parameter '" + param_name + "'.";
-                }
+                last_error_ = "Could not load checkpoint parameter '" + param_name + "': " + error;
                 spdlog::error("CheckpointManager: Failed to load parameter: {}", param_name);
                 return false;
             }
@@ -643,19 +632,12 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, Model& model) {
         // model. A failed load must leave the previously active model intact.
         const auto expected = model.GetParameters();
         std::vector<std::string> migrated_batch_norm_state;
-        const auto is_legacy_batch_norm_state = [](const std::string& name) {
-            const auto has_suffix = [&](const char* suffix) {
-                const size_t suffix_size = std::char_traits<char>::length(suffix);
-                return name.size() >= suffix_size &&
-                       name.compare(name.size() - suffix_size,
-                                    suffix_size,
-                                    suffix) == 0;
-            };
-            return has_suffix(".running_mean") || has_suffix(".running_var");
-        };
+        // A checkpoint from before BatchNorm saved its running statistics:
+        // that state starts from the model's own.
+        const auto state_names = model.GetStateParameterNames();
         for (const auto& [name, expected_tensor] : expected) {
-            if (params.find(name) == params.end() &&
-                is_legacy_batch_norm_state(name)) {
+            const bool running_statistic = name.ends_with(".running_mean") || name.ends_with(".running_var");
+            if (params.find(name) == params.end() && state_names.count(name) && running_statistic) {
                 params.emplace(name, expected_tensor);
                 migrated_batch_norm_state.push_back(name);
             }
@@ -704,138 +686,6 @@ bool CheckpointManager::LoadModelParameters(const fs::path& dir, Model& model) {
                       std::string(e.what());
         spdlog::error("CheckpointManager: Error loading model parameters: {}", e.what());
         return false;
-    }
-}
-
-bool CheckpointManager::SaveTensor(const fs::path& path, const Tensor& tensor) {
-    try {
-        std::ofstream file(path, std::ios::binary);
-        if (!file.is_open()) {
-            spdlog::error("CheckpointManager: Failed to open tensor file for writing: {}", path.string());
-            return false;
-        }
-
-        // Write header: ndims, shape, dtype
-        const auto& shape = tensor.Shape();
-        uint32_t ndims = static_cast<uint32_t>(shape.size());
-        uint32_t dtype = static_cast<uint32_t>(tensor.GetDataType());
-
-        file.write(reinterpret_cast<const char*>(&ndims), sizeof(ndims));
-        if (!file.good()) {
-            spdlog::error("CheckpointManager: Failed to write tensor ndims to file: {}", path.string());
-            return false;
-        }
-
-        for (size_t dim : shape) {
-            uint64_t d = static_cast<uint64_t>(dim);
-            file.write(reinterpret_cast<const char*>(&d), sizeof(d));
-            if (!file.good()) {
-                spdlog::error("CheckpointManager: Failed to write tensor shape to file: {}", path.string());
-                return false;
-            }
-        }
-
-        file.write(reinterpret_cast<const char*>(&dtype), sizeof(dtype));
-        if (!file.good()) {
-            spdlog::error("CheckpointManager: Failed to write tensor dtype to file: {}", path.string());
-            return false;
-        }
-
-        // Write data
-        const ScopedArrayFireHostSyncAttribution checkpoint_attribution(
-            ArrayFireHostSyncCategory::CheckpointOutput,
-            "CheckpointManager::SaveTensor");
-        const size_t num_bytes = tensor.NumBytes();
-        if (num_bytes > static_cast<size_t>(
-                (std::numeric_limits<std::streamsize>::max)())) {
-            spdlog::error(
-                "CheckpointManager: Tensor payload is too large to serialize: {}",
-                path.string());
-            return false;
-        }
-        const void* data = tensor.ReadData();
-        file.write(reinterpret_cast<const char*>(data),
-                   static_cast<std::streamsize>(num_bytes));
-        if (!file.good()) {
-            spdlog::error("CheckpointManager: Failed to write tensor data to file: {}", path.string());
-            return false;
-        }
-
-        return true;
-    } catch (const std::exception& e) {
-        spdlog::error("CheckpointManager: Error saving tensor: {}", e.what());
-        return false;
-    }
-}
-
-std::optional<Tensor> CheckpointManager::LoadTensor(const fs::path& path) {
-    try {
-        std::ifstream file(path, std::ios::binary);
-        if (!file.is_open()) {
-            last_error_ = "Checkpoint tensor is unreadable: " + path.string();
-            return std::nullopt;
-        }
-
-        // Read header
-        uint32_t ndims;
-        file.read(reinterpret_cast<char*>(&ndims), sizeof(ndims));
-        if (!file.good() || ndims > 16) {
-            last_error_ = "Checkpoint tensor has an invalid rank header: " +
-                          path.string();
-            return std::nullopt;
-        }
-
-        std::vector<size_t> shape(ndims);
-        for (uint32_t i = 0; i < ndims; ++i) {
-            uint64_t d;
-            file.read(reinterpret_cast<char*>(&d), sizeof(d));
-            if (!file.good() || d == 0) {
-                last_error_ = "Checkpoint tensor has an invalid shape header: " +
-                              path.string();
-                return std::nullopt;
-            }
-            shape[i] = static_cast<size_t>(d);
-        }
-
-        uint32_t dtype;
-        file.read(reinterpret_cast<char*>(&dtype), sizeof(dtype));
-        if (!file.good()) {
-            last_error_ = "Checkpoint tensor has an invalid data type header: " +
-                          path.string();
-            return std::nullopt;
-        }
-        const auto data_type = static_cast<DataType>(dtype);
-        if (!IsSupportedCheckpointDataType(data_type)) {
-            last_error_ = "Checkpoint tensor has an unsupported data type header: " +
-                          path.string();
-            return std::nullopt;
-        }
-
-        // Create tensor with shape
-        Tensor tensor(shape, data_type);
-
-        // Read data
-        const size_t num_bytes = tensor.NumBytes();
-        if (num_bytes > static_cast<size_t>(
-                (std::numeric_limits<std::streamsize>::max)())) {
-            last_error_ = "Checkpoint tensor payload is too large to load: " +
-                          path.string();
-            return std::nullopt;
-        }
-        void* data = tensor.MutableData();
-        file.read(reinterpret_cast<char*>(data),
-                  static_cast<std::streamsize>(num_bytes));
-        if (!file.good()) {
-            last_error_ = "Checkpoint tensor data is truncated: " + path.string();
-            return std::nullopt;
-        }
-
-        return tensor;
-    } catch (const std::exception& e) {
-        last_error_ = "Checkpoint tensor loading failed for '" + path.string() +
-                      "': " + e.what();
-        spdlog::error("CheckpointManager: Error loading tensor: {}", e.what());
-        return std::nullopt;
     }
 }
 

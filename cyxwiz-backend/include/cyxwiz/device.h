@@ -4,6 +4,7 @@
 
 #include "api_export.h"
 #include "device_type.h"
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -53,6 +54,18 @@ struct DeviceActivationResult {
     int error_code = 0;
     std::string message;
 };
+
+// A device name as people read it: ArrayFire reports CUDA and OpenCL names
+// like "NVIDIA_GeForce_GTX_1050_Ti"; DeviceInfo::name carries them with
+// spaces, trimmed. Inline so tools that do not link the backend (the
+// Installer) word saved names the same way.
+inline std::string DeviceDisplayName(std::string name) {
+    std::replace(name.begin(), name.end(), '_', ' ');
+    const auto first = name.find_first_not_of(' ');
+    if (first == std::string::npos) return {};
+    const auto last = name.find_last_not_of(' ');
+    return name.substr(first, last - first + 1);
+}
 
 struct DeviceInfo {
     DeviceType type = DeviceType::CPU;

@@ -70,6 +70,7 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"nodes.add_layer", ICON_FA_PLUS}, {"nodes.group", ICON_FA_OBJECT_GROUP},
         {"nodes.ungroup", ICON_FA_OBJECT_UNGROUP}, {"nodes.duplicate", ICON_FA_COPY},
         {"nodes.delete", ICON_FA_TRASH}, {"nodes.custom_node_editor", ICON_FA_CUBE},
+        {"nodes.freeze", ICON_FA_SNOWFLAKE},
         {"train.compile", ICON_FA_WRENCH}, {"train.local_debug", ICON_FA_BUG}, {"train.start", ICON_FA_PLAY},
         {"train.pause", ICON_FA_PAUSE}, {"train.resume", ICON_FA_PLAY}, {"train.stop", ICON_FA_STOP},
         {"train.test", ICON_FA_FLASK}, {"train.evaluate", ICON_FA_ROTATE}, {"train.dashboard", ICON_FA_CHART_LINE},
@@ -639,6 +640,16 @@ void ToolbarPanel::BuildActionHandlers() {
     call("nodes.ungroup", ungroup_nodes_callback_);
     call("nodes.duplicate", duplicate_nodes_callback_);
     call("nodes.delete", delete_nodes_callback_);
+    for (const auto& [id, command] : {std::pair<const char*, const char*>{"nodes.freeze_selected", "selected"},
+                                      {"nodes.unfreeze_selected", "unselected"},
+                                      {"nodes.freeze_loaded", "loaded"},
+                                      {"nodes.freeze_but_head", "but_head"},
+                                      {"nodes.freeze_but_last", "but_last"},
+                                      {"nodes.unfreeze_all", "unfreeze_all"}}) {
+        h[id] = [this, command](const std::string&) {
+            if (freeze_nodes_callback_) freeze_nodes_callback_(command);
+        };
+    }
     call("nodes.custom_node_editor", open_custom_node_editor_callback_);
 
     // Train
@@ -659,6 +670,7 @@ void ToolbarPanel::BuildActionHandlers() {
     call("train.dashboard", training_settings_callback_);
     call("train.optimizer_settings", optimizer_settings_callback_);
     call("train.hyperparam_search", open_hyperparam_search_callback_);
+    call("tools.nas", open_nas_callback_);
 
     // Data
     call("data.import", import_dataset_callback_);

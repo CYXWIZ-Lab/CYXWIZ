@@ -10,6 +10,8 @@
 #include "env/mj_physics.h"
 #include "env/mj_history.h"
 #include "env/mj_ghost.h"
+#include "env/mj_model_ref.h"
+#include "mj_env_library.h"
 #include "mj_env_manager.h"
 #include "mj_viewport_settings.h"
 
@@ -624,16 +626,17 @@ void CheckInspect(const std::filesystem::path& dir) {
     other.state.pop_back();
     Check(!ApplyKeyframe(m, d, other, error) && error.find("another version") != std::string::npos,
           "a keyframe of another version of the model is refused: " + error);
-    const auto file = KeyframesFile(dir, path);
+    const auto file = KeyframesFile(dir, *ParseModelRef("builtin:half_cheetah.xml"));
     Check(file.parent_path() == dir / "mujoco" / "keyframes" && file.stem().string().rfind("half_cheetah-", 0) == 0 &&
               file.extension() == ".json",
           "saved in the project, named after the model file: " + file.filename().string());
-    Check(KeyframesFile(dir, path) == file, "the same model file, the same keyframes");
-    Check(KeyframesFile(dir, "D:/robots/a/scene.xml") != KeyframesFile(dir, "D:/robots/b/scene.xml"),
+    Check(KeyframesFile(dir, *ParseModelRef("builtin:half_cheetah.xml")) == file, "the same model, the same keyframes");
+    Check(KeyframesFile(dir, *ParseModelRef("menagerie:a/scene.xml@1")) !=
+              KeyframesFile(dir, *ParseModelRef("menagerie:b/scene.xml@1")),
           "two models with one file name keep their own keyframes (Menagerie's scene.xml)");
-    Check(KeyframesFile(dir, (dir / "models" / "arm.xml").string()) ==
-              KeyframesFile(dir, (dir / "models" / "." / "arm.xml").string()),
-          "a model inside the project is keyed by its path there");
+    Check(KeyframesFile(dir, *ParseModelRef("menagerie:a/scene.xml@1")) !=
+              KeyframesFile(dir, *ParseModelRef("menagerie:a/scene.xml@2")),
+          "another version of a robot keeps its own keyframes");
     Check(SaveKeyframes(file, {crouch}, path, error), "saved: " + error);
     const auto loaded = LoadKeyframes(file);
     Check(loaded.size() == 1 && loaded[0].name == "crouch" && loaded[0].saved == "12:04" && loaded[0].state == crouch.state,
@@ -781,6 +784,219 @@ void CheckGhost() {
     mj_deleteModel(m);
 }
 
+// Model references (TOFIX219): the same name on every machine, found in the
+// project's copy first, then the shared download of that commit
+void CheckModelRef(const std::filesystem::path& dir) {
+    namespace fs = std::filesystem;
+    const auto touch = [](const fs::path& p) {
+        fs::create_directories(p.parent_path());
+        std::ofstream(p) << "<mujoco/>";
+    };
+    const std::string sha = "2f1a9c3b7d40e1f2a3b4c5d6e7f8091a2b3c4d5e";
+    MjModelRoots roots;
+    roots.builtin = CYXWIZ_MUJOCO_ASSETS_DIR;
+    roots.menagerie = dir / "home" / "menagerie";
+    roots.project = dir / "proj";
+
+    // Text: each kind reads back as written
+    for (const std::string& text : std::vector<std::string>{"builtin:half_cheetah.xml", "menagerie:franka_emika_panda/scene.xml@" + sha,
+                                   "menagerie:google_robot/scene.xml", "project:mujoco/models/arm/arm.xml",
+                                   "D:/robots/arm.xml"}) {
+        const auto ref = ParseModelRef(text);
+        Check(ref && FormatModelRef(*ref) == text, "a reference reads back as written: " + text);
+    }
+    const auto franka = ParseModelRef("menagerie:franka_emika_panda/scene.xml@" + sha);
+    Check(franka && franka->kind == MjRefKind::Menagerie && franka->robot == "franka_emika_panda" &&
+              franka->file == "scene.xml" && franka->commit == sha,
+          "a Menagerie reference names the robot, its file and the commit");
+    Check(!ParseModelRef(""), "no text: no reference");
+    Check(ParseModelRef("C:/models/a.xml")->kind == MjRefKind::Path, "a plain path is a Path reference");
+
+    // Built in
+    auto r = ResolveModelRef(*ParseModelRef("builtin:half_cheetah.xml"), roots);
+    Check(r.where == MjModelWhere::Builtin && r.portable && fs::exists(r.file), "a built-in model is found");
+    r = ResolveModelRef(*ParseModelRef("builtin:no_such.xml"), roots);
+    Check(r.where == MjModelWhere::Missing && !r.why.empty(), "a built-in model the plugin lacks is missing");
+
+    // Menagerie: missing, then the shared download of that commit, then the project's copy first
+    r = ResolveModelRef(*franka, roots);
+    Check(r.where == MjModelWhere::Missing &&
+              r.why == "Not on this PC: MuJoCo Menagerie franka_emika_panda, version 2f1a9c3.",
+          "a robot not downloaded says which version is missing: " + r.why);
+    const fs::path shared = MenagerieFolder(roots.menagerie, "franka_emika_panda", sha);
+    Check(shared.filename() == "franka_emika_panda@2f1a9c3b7d40", "a download's folder names its commit");
+    touch(shared / "scene.xml");
+    Check(ResolveModelRef(*franka, roots).where == MjModelWhere::Missing,
+          "a pinned folder without its manifest (a download that stopped) is not found");
+    MjModelManifest m;
+    m.robot = "franka_emika_panda";
+    m.commit = sha;
+    m.date = "2026-11-13 15:40";
+    m.bytes = 38200000;
+    m.files = 49;
+    std::string error;
+    Check(WriteModelManifest(shared, m, error) && ReadModelManifest(shared) == m, "a manifest reads back: " + error);
+    r = ResolveModelRef(*franka, roots);
+    Check(r.where == MjModelWhere::SharedDownload && r.portable && r.file == shared / "scene.xml",
+          "a pinned shared download is found and portable");
+    const auto other_commit = ParseModelRef("menagerie:franka_emika_panda/scene.xml@a7c22e1aaaaaaaaaaaaa");
+    Check(ResolveModelRef(*other_commit, roots).where == MjModelWhere::Missing,
+          "another commit of the robot is another download");
+    const fs::path copy = ProjectModelsFolder(roots.project) / "franka_emika_panda";
+    touch(copy / "scene.xml");
+    WriteModelManifest(copy, m, error);
+    r = ResolveModelRef(*franka, roots);
+    Check(r.where == MjModelWhere::ProjectCopy && r.portable && r.file == copy / "scene.xml",
+          "the project's copy of the robot comes first");
+    Check(ResolveModelRef(*other_commit, roots).where == MjModelWhere::Missing,
+          "the project's copy of another version does not stand in for the version named");
+    // A robot downloaded before versions were kept
+    touch(roots.menagerie / "google_robot" / "scene.xml");
+    r = ResolveModelRef(*ParseModelRef("menagerie:google_robot/scene.xml"), roots);
+    Check(r.where == MjModelWhere::SharedDownload && !r.portable &&
+              DescribeWhere(r).find("version unknown") != std::string::npos,
+          "an unpinned download is found, not portable");
+
+    // The project's own file, and a file elsewhere
+    touch(roots.project / "mujoco" / "models" / "arm" / "arm.xml");
+    r = ResolveModelRef(*ParseModelRef("project:mujoco/models/arm/arm.xml"), roots);
+    Check(r.where == MjModelWhere::InProject && r.portable, "a model in the project is found");
+    touch(dir / "elsewhere" / "arm.xml");
+    r = ResolveModelRef(*ParseModelRef((dir / "elsewhere" / "arm.xml").string()), roots);
+    Check(r.where == MjModelWhere::Elsewhere && !r.portable, "a file elsewhere is found, not portable");
+    Check(ResolveModelRef(*ParseModelRef("menagerie:../../x/scene.xml@1"), roots).where == MjModelWhere::Missing,
+          "a reference that climbs out of its folder is refused");
+    r = ResolveModelRef(*ParseModelRef("menagerie:franka_emika_panda/scene.xml@/../../../x"), roots);
+    Check(r.where == MjModelWhere::Missing && r.why.find("not a Menagerie version") != std::string::npos,
+          "a version that is not a commit id is refused: " + r.why);
+    Check(ResolveModelRef(*ParseModelRef("menagerie:franka_emika_panda/scene.xml@main"), roots).where ==
+              MjModelWhere::Missing,
+          "a branch name is not a version");
+    Check(ValidCommit(sha) && ValidCommit("2f1a9c3") && !ValidCommit("main") && !ValidCommit("2F1A9C3"),
+          "commit ids: 7 to 40 lowercase hex");
+    Check(SafeFolderName("..\\evil/arm.xml") == "_evil_arm.xml" && SafeFolderName("..") == "model",
+          "a folder name from a URL keeps no separators or leading dots: " + SafeFolderName("..\\evil/arm.xml"));
+
+    // Copying a model's folder: never the drive, never over a folder, finished only with its manifest
+    uint64_t bytes = 0;
+    Check(!CopyModelFolder(fs::path(dir).root_path(), dir / "x", {}, 1000000, bytes, error),
+          "a drive's root is never copied: " + error);
+    const fs::path dest = dir / "proj2" / "mujoco" / "models" / "franka_emika_panda";
+    Check(CopyModelFolder(shared, dest, m, 1000000, bytes, error) && ReadModelManifest(dest) && fs::exists(dest / "scene.xml") &&
+              !fs::exists(dest.parent_path() / "franka_emika_panda.copying"),
+          "a folder is copied with its manifest written last: " + error);
+    Check(!CopyModelFolder(shared, dest, m, 1000000, bytes, error) && error.find("exists already") != std::string::npos,
+          "an existing copy is never replaced: " + error);
+    Check(!CopyModelFolder(shared, dir / "proj2" / "too_big", m, 2, bytes, error), "a folder over the limit is refused");
+    Check(UniqueFolder(dest.parent_path(), "franka_emika_panda").filename() == "franka_emika_panda_2",
+          "a folder name in use gets a number");
+
+    // The reference a picked file gets
+    Check(RefForFile(shared / "scene.xml", roots) == *franka, "a shared download's file -> its Menagerie reference");
+    Check(RefForFile(copy / "scene.xml", roots) == *franka, "the project's copy -> the same Menagerie reference");
+    Check(FormatModelRef(RefForFile(roots.menagerie / "google_robot" / "scene.xml", roots)) ==
+              "menagerie:google_robot/scene.xml",
+          "an unpinned download -> its robot, version unknown");
+    Check(FormatModelRef(RefForFile(roots.project / "mujoco" / "models" / "arm" / "arm.xml", roots)) ==
+              "project:mujoco/models/arm/arm.xml",
+          "another file in the project -> project:");
+    Check(FormatModelRef(RefForFile(fs::path(CYXWIZ_MUJOCO_ASSETS_DIR) / "half_cheetah.xml", roots)) ==
+              "builtin:half_cheetah.xml",
+          "the plugin's asset -> builtin:");
+    Check(RefForFile(dir / "elsewhere" / "arm.xml", roots).kind == MjRefKind::Path, "any other file -> its path");
+}
+
+// The Library finds each robot where this PC has it: the project's copy, the
+// newest pinned shared download, or one downloaded before versions were
+// kept; the project's own models; the versions the project needs
+void CheckLibraryRescan(const std::filesystem::path& dir) {
+    namespace fs = std::filesystem;
+    const auto touch = [](const fs::path& p) {
+        fs::create_directories(p.parent_path());
+        std::ofstream(p) << "<mujoco/>";
+    };
+    const fs::path menagerie = dir / "lib" / "menagerie";
+    const fs::path project = dir / "lib" / "proj";
+    const std::string old_sha = "1111111111111111111111111111111111111111";
+    const std::string new_sha = "2f1a9c3b7d40e1f2a3b4c5d6e7f8091a2b3c4d5e";
+    std::string error;
+    const auto download = [&](const std::string& robot, const std::string& sha, const std::string& date) {
+        const fs::path folder = MenagerieFolder(menagerie, robot, sha);
+        touch(folder / "scene.xml");
+        MjModelManifest m;
+        m.robot = robot;
+        m.commit = sha;
+        m.date = date;
+        m.bytes = 1000;
+        WriteModelManifest(folder, m, error);
+    };
+    download("franka_emika_panda", old_sha, "2026-10-01 10:00");
+    download("franka_emika_panda", new_sha, "2026-11-13 15:40");
+    touch(menagerie / "google_robot" / "scene.xml");  // downloaded before versions were kept
+
+    MjEnvLibrary library;
+    library.SetAssetsDir(CYXWIZ_MUJOCO_ASSETS_DIR);
+    library.SetMenagerieRoot(menagerie.string());
+    library.Rescan();
+    const auto find = [&](const std::string& id) -> const EnvInfo* {
+        for (const auto& e : library.GetAll())
+            if (e.id == id) return &e;
+        return nullptr;
+    };
+    const EnvInfo* franka = find("franka_emika_panda");
+    Check(franka && franka->where == MjModelWhere::SharedDownload && franka->commit == new_sha && !franka->requires_download,
+          "a robot downloaded twice shows its newest version");
+    Check(franka && library.GetAssetPath(*franka) == (MenagerieFolder(menagerie, "franka_emika_panda", new_sha) / "scene.xml").string(),
+          "and loads that version");
+    Check(franka && FormatModelRef(library.RefFor(*franka)) == "menagerie:franka_emika_panda/scene.xml@" + new_sha,
+          "its reference names that version");
+    const EnvInfo* google = find("google_robot");
+    Check(google && google->where == MjModelWhere::SharedDownload && google->commit.empty(),
+          "a robot downloaded before versions were kept is found, version unknown");
+    const EnvInfo* g1 = find("unitree_g1");
+    Check(g1 && g1->where == MjModelWhere::Missing && g1->requires_download, "a robot not downloaded needs a download");
+    const EnvInfo* cheetah = find("half_cheetah");
+    Check(cheetah && FormatModelRef(library.RefFor(*cheetah)) == "builtin:half_cheetah.xml", "a built-in model's reference");
+
+    // A project: its copy of Franka comes first; its own model is listed
+    const fs::path copy = ProjectModelsFolder(project) / "franka_emika_panda";
+    touch(copy / "scene.xml");
+    MjModelManifest copied;
+    copied.robot = "franka_emika_panda";
+    copied.commit = new_sha;
+    copied.date = "2026-11-13 16:00";
+    WriteModelManifest(copy, copied, error);
+    touch(ProjectModelsFolder(project) / "my_arm" / "arm.xml");
+    MjModelManifest url;
+    url.source = "url";
+    url.url = "https://example.org/arm.xml";
+    WriteModelManifest(ProjectModelsFolder(project) / "my_arm", url, error);
+    library.SetProjectDir(project.string());
+    library.Rescan();
+    franka = find("franka_emika_panda");
+    Check(franka && franka->where == MjModelWhere::ProjectCopy && library.GetAssetPath(*franka) == (copy / "scene.xml").string(),
+          "the project's copy comes first");
+    const EnvInfo* arm = find("project_my_arm");
+    Check(arm && arm->source == EnvSource::Project && arm->description == "Imported from https://example.org/arm.xml" &&
+              FormatModelRef(library.RefFor(*arm)) == "project:mujoco/models/my_arm/arm.xml",
+          "the project's own model is listed with a project reference");
+    Check(!find("project_franka_emika_panda"), "a Menagerie copy shows on its robot's card, not as its own");
+
+    // The versions the project names
+    library.SetNeeded({*ParseModelRef("menagerie:unitree_g1/scene.xml@a7c22e1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                       *ParseModelRef("menagerie:franka_emika_panda/scene.xml@" + new_sha)});
+    g1 = find("unitree_g1");
+    franka = find("franka_emika_panda");
+    Check(g1 && g1->needed_commit == "a7c22e1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "a needed version this PC lacks marks its robot");
+    Check(franka && franka->needed_commit.empty(), "a needed version this PC has marks nothing");
+
+    // Another project: the first one's models go
+    library.SetProjectDir((dir / "lib" / "other").string());
+    library.Rescan();
+    Check(!find("project_my_arm") && find("franka_emika_panda")->where == MjModelWhere::SharedDownload,
+          "another project: the first one's models and copies are not listed");
+}
+
 }  // namespace
 
 int main() {
@@ -800,6 +1016,8 @@ int main() {
     CheckPhysics();
     CheckHistory();
     CheckGhost();
+    CheckModelRef(dir);
+    CheckLibraryRescan(dir);
     std::filesystem::remove_all(dir, ec);
     if (failures == 0) std::printf("test_mujoco_viewport: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -1,4 +1,5 @@
 #include "node_metadata_registry.h"
+#include "frozen_layers.h"
 #include "data_convert_formats.h"
 #include "pipeline_runtime_capabilities.h"
 #include "training_parameter_contract.h"
@@ -340,7 +341,6 @@ void NodeMetadataRegistry::Initialize() {
     // the registry so generated inventory covers both sources consistently.
     ApplyRuntimeCapabilityStatus();
 
-    LoadUserPreferences();
     initialized_ = true;
     spdlog::debug("NodeMetadataRegistry: Registered {} nodes", metadata_.size());
 }
@@ -368,6 +368,31 @@ void NodeMetadataRegistry::InitializeBuiltinNodes() {
 
     InitializeKNIMENodes();
     InitializeUtilityNodes();
+    AddFrozenSettings();
+}
+
+// Freezing is the same setting on every layer node that holds weights, so it
+// is added in one place rather than written into each node's list.
+void NodeMetadataRegistry::AddFrozenSettings() {
+    for (auto& [type, metadata] : metadata_) {
+        if (!frozen::LayerNodeHoldsWeights(type)) continue;
+        metadata.parameters.push_back(
+            {frozen::kFrozen, "bool", "false",
+             "Keeps this layer's weights as they are while the rest of the model trains: no gradient step, no "
+             "weight decay, no optimizer memory. Use it on layers that start from a weights file (fine-tuning), "
+             "then turn it off to train them too",
+             {}, "", "Frozen", "Fine-tuning", false, false});
+        if (!frozen::LayerNodeHasFrozenStatistics(type)) continue;
+        ParameterDefinition statistics{
+            frozen::kStatistics, "enum", frozen::kStatisticsKeep,
+            "What a frozen BatchNorm does with its running mean and variance. Keep its statistics: it normalises "
+            "with the loaded values, as in evaluation (usual for fine-tuning on small data). Keep updating "
+            "statistics: the weights stay but the statistics follow the new data, as PyTorch does when only "
+            "requires_grad is off",
+            {frozen::kStatisticsKeep, frozen::kStatisticsUpdate}, "", "When frozen", "Fine-tuning", false, false};
+        statistics.enum_labels = {"Keep its statistics", "Keep updating statistics"};
+        metadata.parameters.push_back(std::move(statistics));
+    }
 }
 
 void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
@@ -1122,11 +1147,32 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
 
     spdlog::debug("NodeMetadataRegistry: Loaded {} template nodes from {}", loaded_count, directory);
 }
-void NodeMetadataRegistry::SaveUserPreferences() {
-    spdlog::debug("NodeMetadataRegistry: SaveUserPreferences not yet implemented");
+std::vector<NodeType> NodeMetadataRegistry::FavoriteTypes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {favorites_.begin(), favorites_.end()};
 }
-void NodeMetadataRegistry::LoadUserPreferences() {
-    spdlog::debug("NodeMetadataRegistry: LoadUserPreferences not yet implemented");
+
+std::vector<NodeType> NodeMetadataRegistry::RecentTypes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return recent_nodes_;
+}
+
+void NodeMetadataRegistry::SetUserNodes(const std::vector<NodeType>& favorites, const std::vector<NodeType>& recent) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    favorites_.clear();
+    for (auto& [type, meta] : metadata_) meta.is_favorite = false;
+    for (NodeType type : favorites) {
+        auto it = metadata_.find(type);
+        if (it == metadata_.end()) continue;  // a type this build does not have
+        favorites_.insert(type);
+        it->second.is_favorite = true;
+    }
+    recent_nodes_.clear();
+    for (NodeType type : recent) {
+        if (metadata_.count(type) && std::find(recent_nodes_.begin(), recent_nodes_.end(), type) == recent_nodes_.end())
+            recent_nodes_.push_back(type);
+        if (recent_nodes_.size() == MAX_RECENT) break;
+    }
 }
 
 bool NodeMetadataRegistry::MatchesQuery(const NodeMetadata& metadata, const std::string& query) const {
@@ -1164,6 +1210,9 @@ void NodeMetadataRegistry::InitializeCatalogPreviewNodes() {
         {NodeType::ELU, NodeCategory::Activation, "ELU", {"activation"}},
         {NodeType::Swish, NodeCategory::Activation, "Swish", {"activation"}},
         {NodeType::Mish, NodeCategory::Activation, "Mish", {"activation"}},
+        {NodeType::Hardswish, NodeCategory::Activation, "Hardswish", {"activation"}},
+        {NodeType::Hardsigmoid, NodeCategory::Activation, "Hardsigmoid", {"activation"}},
+        {NodeType::ReLU6, NodeCategory::Activation, "ReLU6", {"activation"}},
         {NodeType::Parameter, NodeCategory::Utility, "Parameter", {"parameter", "constant"}},
         {NodeType::SineWave, NodeCategory::Signal, "Sine Wave", {"signal", "sine", "wave"}},
         {NodeType::StepSignal, NodeCategory::Signal, "Step Signal", {"signal", "step"}},
@@ -1278,7 +1327,14 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"checkpoint_dir", "directory", "", "Checkpoint output directory", {}, "", "", "Checkpoint", false, true},
          {"initialize_from_checkpoint", "directory", "",
           "A checkpoint folder from an earlier run (for example checkpoints/<run>/train-<id>/best). Its weights become this model's starting point (warm start): every layer starts from the trained values and keeps training on this run's data (full fine-tuning; no layers are frozen). Only the weights are loaded: the optimizer, learning-rate schedule, epochs and random seed start fresh. Layer names and shapes, and for language models the tokenizer, must match the checkpoint exactly, or the run stops with the reason and the model is left untouched. New checkpoints record this folder as initialized_from. Empty = start from random weights.",
-          {}, "", "Start from", "Checkpoint", false, true}},
+          {}, "", "Start from", "Checkpoint", false, true},
+         {"initialize_from_weights_file", "file", "",
+          "A published weight file: a PyTorch state-dict (.pth, .pt) or a .safetensors file. A layer takes the "
+          "entries named after its node (node conv1 takes conv1.weight), with PyTorch's layouts converted. A layer "
+          "the file has no fitting weights for starts fresh, and the run says which; the run stops only when no "
+          "layer matches. The file is read as data and never run. Optimizer, schedule, epochs and seed start "
+          "fresh. Use this or Start from, not both. Empty = not used.",
+          {}, "", "Start from weights file", "Checkpoint", false, true}},
         NodeImplementationStatus::Implemented, 0});
 
     // DataSplit is a graph-level training configuration node. It has a
@@ -1921,17 +1977,27 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ImageEdges, NodeCategory::Preprocessing, "Image Edges", ICON_FA_DRAW_POLYGON,
-        {"image", "edges", "canny", "sobel", "laplacian", "scharr", "opencv", "once"}, 0, false,
+        {"image", "edges", "canny", "sobel", "laplacian", "scharr", "log", "dog", "gradient", "opencv", "once"}, 0,
+        false,
         "Turn every image into an edge map",
-        "Canny gives white edges on black; Sobel, Laplacian and Scharr give the edge strength. Colour images "
+        "Canny gives white edges on black; Sobel, Laplacian and Scharr give the edge strength. Sobel and Scharr "
+        "can give one direction (x: left-right changes, y: top-bottom) or the gradient's angle. LoG smooths "
+        "with sigma before the Laplacian; DoG is the difference of two blurs (sigma, sigma 2). Colour images "
         "are made grey first, so the output has one channel and the model's input becomes [H, W, 1]. " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
         "Resize -> Image Edges -> Normalize -> Conv2D",
         {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
-        {{"Output", PinType::Tensor, true, "Edge maps [H, W, 1]"}},
-        {{"method", "enum", "canny", "Edge detector", {"canny", "sobel", "laplacian", "scharr"}, "", "Method"},
+        {{"Output", PinType::Tensor, true, "Edge maps [H, W, 1]; with Keep image, the image and the map [H, W, C + 1]"}},
+        {{"method", "enum", "canny", "Edge detector", {"canny", "sobel", "laplacian", "scharr", "log", "dog"}, "",
+          "Method"},
+         {"direction", "enum", "magnitude", "Sobel and Scharr: both directions' size, one direction, or the angle",
+          {"magnitude", "x", "y", "angle"}, "", "Direction"},
          {"threshold1", "float", "50", "Canny: weak edge threshold (0 to 255 scale)", {}, ">=0", "Low threshold"},
          {"threshold2", "float", "150", "Canny: strong edge threshold, at least the low one", {}, ">=0", "High threshold"},
-         {"kernel_size", "int", "3", "Sobel: 1, 3, 5 or 7; Laplacian: odd up to 31; not used by Canny and Scharr", {}, ">0", "Kernel size"}},
+         {"kernel_size", "int", "3", "Sobel: 1, 3, 5 or 7; Laplacian and LoG: odd up to 31; not used by Canny, Scharr and DoG", {}, ">0", "Kernel size"},
+         {"sigma", "float", "1.0", "LoG: the smoothing before the Laplacian; DoG: the finer blur, in pixels", {}, ">0", "Sigma"},
+         {"sigma2", "float", "1.6", "DoG: the coarser blur, greater than sigma", {}, ">0", "Sigma 2"},
+         {"keep_image", "bool", "false",
+          "Keep the image and add the edge map as one more channel (RGB + edges: 4 channels)", {}, "", "Keep image"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::ImageSmooth, NodeCategory::Preprocessing, "Image Smooth", ICON_FA_BRUSH,
@@ -1982,6 +2048,58 @@ void NodeMetadataRegistry::InitializeDataTransformNodes() {
         {{"Output", PinType::Tensor, true, "Images; down halves and up doubles each side per level"}},
         {{"operation", "enum", "down", "Pyramid step", {"down", "up", "detail"}, "", "Operation"},
          {"levels", "int", "1", "How many times; detail: which level (1 = the finest)", {}, ">0", "Levels"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageFilter, NodeCategory::Preprocessing, "Image Filter", ICON_FA_TABLE_CELLS,
+        {"image", "filter", "kernel", "convolution", "sharpen", "emboss", "outline", "prewitt", "roberts",
+         "kirsch", "robinson", "box", "opencv", "once"}, 0, false,
+        "Run one fixed kernel over every image",
+        "Each output pixel is the sum of its neighbours times the kernel, the kernel's centre on the pixel, each "
+        "channel alone (cv::filter2D). Pick a classic kernel or type your own: rows split by ';', numbers by "
+        "spaces. A kernel that sums to 0 (outline, Prewitt, Roberts, Kirsch, Robinson) answers with both signs: "
+        "output absolute keeps its size, offset stores it around mid-grey (128 = no response). " "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Filter -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images, same shape"}},
+        {{"preset", "enum", "sharpen", "The kernel: a classic one, or custom to type it",
+          {"custom", "identity", "box", "sharpen", "emboss", "outline", "prewitt_x", "prewitt_y", "roberts_x",
+           "roberts_y", "kirsch", "robinson"}, "", "Kernel"},
+         {"direction", "enum", "n", "Kirsch and Robinson: the side an edge is brighter on",
+          {"n", "ne", "e", "se", "s", "sw", "w", "nw"}, "", "Direction"},
+         {"kernel", "string", "0 -1 0; -1 5 -1; 0 -1 0",
+          "custom: rows split by ';', numbers by spaces or commas; up to 31 each way", {}, "", "Custom kernel"},
+         {"normalize", "bool", "false", "Divide the kernel by its sum (when not 0), so brightness stays", {}, "",
+          "Normalize"},
+         {"border", "enum", "reflect_101", "What the kernel reads past the image's edge",
+          {"reflect_101", "reflect", "replicate", "zero"}, "", "Border"},
+         {"output", "enum", "clip", "A response outside 0 to 1: cut, its size, or around mid-grey",
+          {"clip", "absolute", "offset"}, "", "Output"}},
+        NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ImageGabor, NodeCategory::Preprocessing, "Image Gabor", ICON_FA_WAVE_SQUARE,
+        {"image", "gabor", "filter", "bank", "texture", "orientation", "stripes", "wavelength", "opencv", "once"}, 0, false,
+        "A bank of striped kernels: one channel per orientation and wavelength",
+        "Each filter is a small patch of stripes under a Gaussian window: it answers where the image has stripes "
+        "of that direction and spacing (texture, fur, edges of one direction). The bank runs every orientation at "
+        "every wavelength over the grey image and gives one channel each. Energy is the answer's size whatever "
+        "the stripes' phase; even and odd keep one phase, stored around mid-grey (128 = no response). "
+        "Done once when the images are prepared: OpenCV on the CPU workers, in canvas order with the other steps "
+        "done once; every epoch reads the result. Same result in training, validation and test.",
+        "Resize -> Image Gabor -> Normalize -> Conv2D",
+        {{"Input", PinType::Tensor, true, "Images [H, W, C] in [0, 1], grey or RGB, after Resize"}},
+        {{"Output", PinType::Tensor, true, "Images [H, W, orientations x wavelengths] (after the image's own channels when kept)"}},
+        {{"orientations", "int", "4", "How many directions, spread over 180 degrees (4: 0, 45, 90, 135)", {}, "",
+          "Orientations"},
+         {"wavelengths", "string", "3, 5", "The stripes' spacing in pixels per cycle; one set of orientations each", {}, "",
+          "Wavelengths"},
+         {"bandwidth", "float", "1.0", "In octaves: smaller is a wider window that answers to a narrower range of spacings",
+          {}, "", "Bandwidth"},
+         {"aspect", "float", "0.5", "The window's width across the stripes over its length along them (1 = round)", {}, "",
+          "Aspect"},
+         {"response", "enum", "energy", "energy: both phases' size; even or odd: one phase, around mid-grey",
+          {"energy", "even", "odd"}, "", "Response"},
+         {"keep_image", "bool", "false", "Keep the image's channels and add the bank's after them", {}, "",
+          "Keep image"}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AugmentationPreset, NodeCategory::Preprocessing, "Augmentation Preset", ICON_FA_WAND_MAGIC_SPARKLES,
@@ -2713,7 +2831,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"stride", "int", "1", "Spatial step between kernel applications", {}, "1-1048576",
           "Stride", "Convolution", true, false},
          {"padding", "enum", "same", "'same' keeps the size at stride 1 (odd kernels); 'valid' adds none",
-          {"same", "valid"}, "", "Padding", "Convolution", true, false}},
+          {"same", "valid"}, "", "Padding", "Convolution", true, false},
+         {"use_bias", "bool", "true", "Adds a learned value per output channel. Turn it off when a BatchNorm "
+          "follows (the BatchNorm's shift does the same job), as torchvision's ResNet and MobileNet do", {}, "",
+          "Bias", "Convolution", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv1D, NodeCategory::Layers, "Conv1D", ICON_FA_BORDER_ALL,
@@ -2737,7 +2858,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
           "Stride", "Convolution", true, false},
          {"padding", "enum", "same", "same: (kernel_size - 1) / 2 zeros each side (odd kernels), keeps L at "
           "stride 1; valid: none",
-          {"same", "valid"}, "", "Padding", "Convolution", true, false}},
+          {"same", "valid"}, "", "Padding", "Convolution", true, false},
+         {"use_bias", "bool", "true", "Adds a learned value per output channel. Turn it off when a BatchNorm "
+          "follows (the BatchNorm's shift does the same job), as torchvision's ResNet and MobileNet do", {}, "",
+          "Bias", "Convolution", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Conv3D, NodeCategory::Layers, "Conv3D", ICON_FA_BORDER_ALL,
@@ -2761,7 +2885,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"stride", "int", "1", "Step between kernel applications on each axis", {}, "1-1048576",
           "Stride", "Convolution", true, false},
          {"padding", "enum", "same", "'same' keeps the size at stride 1 (odd kernels); 'valid' adds none",
-          {"same", "valid"}, "", "Padding", "Convolution", true, false}},
+          {"same", "valid"}, "", "Padding", "Convolution", true, false},
+         {"use_bias", "bool", "true", "Adds a learned value per output channel. Turn it off when a BatchNorm "
+          "follows (the BatchNorm's shift does the same job), as torchvision's ResNet and MobileNet do", {}, "",
+          "Bias", "Convolution", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::DepthwiseConv2D, NodeCategory::Layers,
@@ -2781,7 +2908,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"padding", "enum", "same", "same: (kernel_size - 1) / 2 zeros each side (odd kernels); valid: none",
           {"same", "valid"}, "", "Padding", "Convolution", true, false},
          {"depth_multiplier", "int", "1", "Output channels per input channel (M)", {}, "1-1048576",
-          "Depth Multiplier", "Convolution", true, false}},
+          "Depth Multiplier", "Convolution", true, false},
+         {"use_bias", "bool", "true", "Adds a learned value per output channel. Turn it off when a BatchNorm "
+          "follows (the BatchNorm's shift does the same job), as torchvision's ResNet and MobileNet do", {}, "",
+          "Bias", "Convolution", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::LSTM, NodeCategory::Recurrent, "LSTM", ICON_FA_REPEAT,
@@ -2938,6 +3068,41 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"affine", "bool", "true", "Learn one scale and bias per channel", {}, "",
           "Affine", "Normalization", false, true}},
         NodeImplementationStatus::Implemented, 0});
+
+    {
+        // One node, six steps inside; Properties lists them under "Inside this layer".
+        ParameterDefinition width_mode{"width_mode", "enum", "reduction",
+                                       "How the gate's hidden width is set: the channels divided by Reduction, or "
+                                       "a number you type (pretrained MobileNetV3 uses widths no reduction gives)",
+                                       {"reduction", "exact"}, "", "Hidden width"};
+        width_mode.enum_labels = {"Channels / reduction", "Exact number"};
+        ParameterDefinition inner{"inner_activation", "enum", "relu",
+                                  "The activation between the two Dense steps",
+                                  {"relu", "hardswish", "swish"}, "", "Inner activation"};
+        inner.enum_labels = {"ReLU", "Hardswish", "Swish"};
+        ParameterDefinition gate{"gate", "enum", "sigmoid",
+                                 "What turns the last Dense step into one value between 0 and 1 per channel. "
+                                 "Hardsigmoid is MobileNetV3's",
+                                 {"sigmoid", "hardsigmoid"}, "", "Gate"};
+        gate.enum_labels = {"Sigmoid", "Hardsigmoid"};
+        RegisterNode({NodeType::SqueezeExcitation, NodeCategory::Normalization, "Squeeze-Excitation", ICON_FA_SCALE_BALANCED,
+            {"squeeze", "excitation", "se", "se block", "channel attention", "attention", "gate", "mobilenet", "senet"}, 0, false,
+            "Scale each channel of a feature map by a learned gate",
+            "Squeeze: each channel's mean over the map. Excite: Dense(C -> hidden width) - activation - Dense(-> C) - gate "
+            "gives one value between 0 and 1 per channel, and the map is multiplied by it. The model learns which "
+            "channels matter for each image. With the defaults (ReLU, Sigmoid) it is the paper's block; same as "
+            "torchvision.ops.SqueezeExcitation. The channel count comes from the layer before it.",
+            "Conv2D -> BatchNorm -> ReLU -> Squeeze-Excitation -> ...",
+            {{"Input", PinType::Tensor, true, "Image feature map [H, W, C] per sample."}},
+            {{"Output", PinType::Tensor, true, "The feature map with each channel scaled, same shape."}},
+            {width_mode,
+             {"reduction", "int", "16", "The gate's hidden width is C / reduction (at least 1). 16 is the paper's value; "
+              "4 is usual for small models", {}, "1-1024", "Reduction"},
+             {"squeeze_channels", "int", "8", "The gate's hidden width, as typed", {}, "1-65536", "Width"},
+             inner, gate,
+             {"use_bias", "bool", "true", "A bias on both Dense steps", {}, "", "Bias"}},
+            NodeImplementationStatus::Implemented, 0});
+    }
 
     RegisterNode({NodeType::InstanceNorm, NodeCategory::Normalization, "InstanceNorm", ICON_FA_SCALE_BALANCED,
         {"instancenorm", "instance normalization", "style transfer", "channels"}, 0, false,
@@ -3156,7 +3321,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"pool_size", "int", "2", "Square pooling-window size", {}, "1-1048576",
           "Pool Size", "Pooling", true, false},
          {"stride", "int", "2", "Spatial pooling stride", {}, "1-1048576",
-          "Stride", "Pooling", true, false}},
+          "Stride", "Pooling", true, false},
+         {"padding", "int", "0", "Cells added on every side before pooling, at most half the pool size "
+          "(torch padding). ResNet's first pool is size 3, stride 2, padding 1", {}, "0-524288",
+          "Padding", "Pooling", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::AvgPool2D, NodeCategory::Pooling, "AvgPool2D", ICON_FA_COMPRESS,
@@ -3170,7 +3338,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
         {{"pool_size", "int", "2", "Square pooling-window size", {}, "1-1048576",
           "Pool Size", "Pooling", true, false},
          {"stride", "int", "2", "Spatial pooling stride", {}, "1-1048576",
-          "Stride", "Pooling", true, false}},
+          "Stride", "Pooling", true, false},
+         {"padding", "int", "0", "Cells added on every side before pooling, at most half the pool size "
+          "(torch padding). ResNet's first pool is size 3, stride 2, padding 1", {}, "0-524288",
+          "Padding", "Pooling", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::GlobalMaxPool, NodeCategory::Pooling, "Global Max Pool", ICON_FA_COMPRESS,
@@ -3228,7 +3399,10 @@ void NodeMetadataRegistry::InitializeLayerNodes() {
          {"padding", "int", "1", "Symmetric input padding", {}, "0-1048576",
           "Padding", "Transposed Convolution", true, false},
          {"output_padding", "int", "1", "Extra size on one side of the output (smaller than the stride)", {}, "0-1048576",
-          "Output Padding", "Transposed Convolution", true, false}},
+          "Output Padding", "Transposed Convolution", true, false},
+         {"use_bias", "bool", "true", "Adds a learned value per output channel. Turn it off when a BatchNorm "
+          "follows (the BatchNorm's shift does the same job), as torchvision's ResNet and MobileNet do", {}, "",
+          "Bias", "Transposed Convolution", false, false}},
         NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::Upsample, NodeCategory::Upsampling, "Upsample", ICON_FA_EXPAND,
@@ -3610,6 +3784,36 @@ void NodeMetadataRegistry::InitializeActivationNodes() {
         {{"Input", PinType::Tensor, true, "Input"}},
         {{"Output", PinType::Tensor, true, "Activated"}},
         {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::ReLU6, NodeCategory::Activation, "ReLU6", ICON_FA_BOLT,
+        {"relu6", "relu 6", "capped relu", "activation", "mobilenet"}, 0, false,
+        "ReLU6 activation: min(max(x, 0), 6)",
+        "ReLU with a ceiling: 0 below 0, x up to 6, 6 above. "
+        "MobileNetV1 and MobileNetV2 use it after every convolution. Same as torch.nn.ReLU6.",
+        "Conv2D -> BatchNorm -> ReLU6",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "A value between 0 and 6"}},
+        {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Hardsigmoid, NodeCategory::Activation, "Hardsigmoid", ICON_FA_BOLT,
+        {"hardsigmoid", "hard sigmoid", "h-sigmoid", "activation", "gate", "mobilenet"}, 0, false,
+        "Hardsigmoid activation: relu6(x + 3) / 6",
+        "A sigmoid made of straight pieces: 0 below -3, 1 above 3, (x + 3) / 6 between. "
+        "Cheap to compute; MobileNetV3 uses it as the gate of its Squeeze-Excitation blocks. Same as torch.nn.Hardsigmoid.",
+        "Dense -> Hardsigmoid",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "A value between 0 and 1"}},
+        {}, NodeImplementationStatus::Implemented, 0});
+
+    RegisterNode({NodeType::Hardswish, NodeCategory::Activation, "Hardswish", ICON_FA_BOLT,
+        {"hardswish", "hard swish", "h-swish", "activation", "mobilenet"}, 0, false,
+        "Hardswish activation: x * relu6(x + 3) / 6",
+        "Swish with its sigmoid replaced by a straight piece: 0 below -3, x above 3, x * (x + 3) / 6 between. "
+        "Cheap to compute; MobileNetV3 and EfficientNet-Lite use it. Same as torch.nn.Hardswish.",
+        "Conv2D -> BatchNorm -> Hardswish",
+        {{"Input", PinType::Tensor, true, "Input"}},
+        {{"Output", PinType::Tensor, true, "Activated"}},
+        {}, NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================
@@ -3768,9 +3972,9 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"beta1", "float", "0.9", "First-moment decay coefficient in [0, 1)", {}, ""},
          {"beta2", "float", "0.999", "Second-moment decay coefficient in [0, 1)", {}, ""},
          {"epsilon", "float", "1e-8", "Positive denominator stability constant", {}, ""},
-         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant"}, "",
+         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant. one_cycle (torch OneCycleLR, the usual CNN recipe with SGD): a cosine from learning_rate / 25 up to learning_rate over warmup_ratio of the updates (0.3 is usual), then a cosine down to learning_rate / 250,000; min_lr_ratio is not used.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant", "one_cycle"}, "",
           "LR Schedule", "Schedule", false, false},
-         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical).", {}, "0.0-0.99",
+         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical). With one_cycle: the share of the updates the rate rises over (0.3 is usual).", {}, "0.0-0.99",
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
@@ -3780,14 +3984,21 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
 
     RegisterNode({NodeType::SGD, NodeCategory::Training, "SGD", ICON_FA_GRADUATION_CAP,
         {"sgd", "stochastic gradient descent", "optimizer", "optimization", "training"},
-        0, false, "Stochastic gradient descent with optional momentum", "", "",
+        0, false, "Stochastic gradient descent with momentum, Nesterov and weight decay", "", "",
         {{"Loss", PinType::Loss, true, "Scalar training loss used for backpropagation"}},
         {{"State", PinType::Optimizer, false, "Optional optimizer-state handle"}},
         {{"learning_rate", "float", "0.01", "Positive parameter-update step size", {}, ""},
          {"momentum", "float", "0.9", "Momentum coefficient in [0, 1)", {}, ""},
-         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant"}, "",
+         {"nesterov", "bool", "false", "Nesterov momentum: step along gradient + momentum x velocity (the look-ahead form). "
+          "Needs momentum above 0. The usual choice for CNNs trained with SGD.", {}, "", "Nesterov"},
+         {"weight_decay", "float", "0", "L2 weight decay added to the gradient (weight_decay x weight); 0.0001 to 0.0005 "
+          "is usual for CNNs. 0 = off.", {}, "", "Weight Decay"},
+         {"weight_decay_exclude", "enum", "none", "Parameters that skip weight decay. norms_and_biases: every 1-D tensor - "
+          "biases and normalization scales. none: decay everything (torch.optim.SGD's default).",
+          {"none", "norms_and_biases"}, "", "Weight Decay Exclude", "Schedule", false, false},
+         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant. one_cycle (torch OneCycleLR, the usual CNN recipe with SGD): a cosine from learning_rate / 25 up to learning_rate over warmup_ratio of the updates (0.3 is usual), then a cosine down to learning_rate / 250,000; min_lr_ratio is not used.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant", "one_cycle"}, "",
           "LR Schedule", "Schedule", false, false},
-         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical).", {}, "0.0-0.99",
+         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical). With one_cycle: the share of the updates the rate rises over (0.3 is usual).", {}, "0.0-0.99",
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
@@ -3805,9 +4016,9 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"beta2", "float", "0.999", "Second-moment decay coefficient in [0, 1)", {}, ""},
          {"epsilon", "float", "1e-8", "Positive denominator stability constant", {}, ""},
          {"weight_decay", "float", "0.01", "Non-negative decoupled weight-decay coefficient", {}, ""},
-         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant"}, "",
+         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant. one_cycle (torch OneCycleLR, the usual CNN recipe with SGD): a cosine from learning_rate / 25 up to learning_rate over warmup_ratio of the updates (0.3 is usual), then a cosine down to learning_rate / 250,000; min_lr_ratio is not used.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant", "one_cycle"}, "",
           "LR Schedule", "Schedule", false, false},
-         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical).", {}, "0.0-0.99",
+         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical). With one_cycle: the share of the updates the rate rises over (0.3 is usual).", {}, "0.0-0.99",
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
@@ -3826,9 +4037,9 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"alpha", "float", "0.99", "Squared-gradient moving-average coefficient in [0, 1)", {}, ""},
          {"epsilon", "float", "1e-8", "Positive denominator stability constant", {}, ""},
          {"momentum", "float", "0.0", "Momentum coefficient in [0, 1)", {}, ""},
-         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant"}, "",
+         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant. one_cycle (torch OneCycleLR, the usual CNN recipe with SGD): a cosine from learning_rate / 25 up to learning_rate over warmup_ratio of the updates (0.3 is usual), then a cosine down to learning_rate / 250,000; min_lr_ratio is not used.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant", "one_cycle"}, "",
           "LR Schedule", "Schedule", false, false},
-         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical).", {}, "0.0-0.99",
+         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical). With one_cycle: the share of the updates the rate rises over (0.3 is usual).", {}, "0.0-0.99",
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
@@ -3843,9 +4054,9 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
         {{"State", PinType::Optimizer, false, "Optional optimizer-state handle"}},
         {{"learning_rate", "float", "0.01", "Positive initial parameter-update step size", {}, ""},
          {"epsilon", "float", "1e-10", "Positive denominator stability constant", {}, ""},
-         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant"}, "",
+         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant. one_cycle (torch OneCycleLR, the usual CNN recipe with SGD): a cosine from learning_rate / 25 up to learning_rate over warmup_ratio of the updates (0.3 is usual), then a cosine down to learning_rate / 250,000; min_lr_ratio is not used.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant", "one_cycle"}, "",
           "LR Schedule", "Schedule", false, false},
-         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical).", {}, "0.0-0.99",
+         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical). With one_cycle: the share of the updates the rate rises over (0.3 is usual).", {}, "0.0-0.99",
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},
@@ -3862,9 +4073,9 @@ void NodeMetadataRegistry::InitializeTrainingNodes() {
          {"beta1", "float", "0.9", "First-moment decay coefficient in [0, 1)", {}, ""},
          {"beta2", "float", "0.999", "Second-moment decay coefficient in [0, 1)", {}, ""},
          {"epsilon", "float", "1e-8", "Positive denominator stability constant", {}, ""},
-         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant"}, "",
+         {"lr_schedule", "enum", "none", "Learning-rate schedule over optimizer updates. none: constant learning_rate. warmup_cosine (the usual LLM recipe): rise linearly from 0 to learning_rate over warmup_ratio of the updates, then follow a cosine down to min_lr_ratio x learning_rate. warmup_linear: linear decay instead. warmup_constant: warmup, then constant. one_cycle (torch OneCycleLR, the usual CNN recipe with SGD): a cosine from learning_rate / 25 up to learning_rate over warmup_ratio of the updates (0.3 is usual), then a cosine down to learning_rate / 250,000; min_lr_ratio is not used.", {"none", "warmup_cosine", "warmup_linear", "warmup_constant", "one_cycle"}, "",
           "LR Schedule", "Schedule", false, false},
-         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical).", {}, "0.0-0.99",
+         {"warmup_ratio", "float", "0.02", "Fraction of all optimizer updates used for linear warmup (0.01-0.05 is typical). With one_cycle: the share of the updates the rate rises over (0.3 is usual).", {}, "0.0-0.99",
           "Warmup Ratio", "Schedule", false, false},
          {"min_lr_ratio", "float", "0.1", "Where the decay ends, as a fraction of learning_rate (0.1 is common).", {}, "0.0-1.0",
           "Minimum LR Ratio", "Schedule", false, false},

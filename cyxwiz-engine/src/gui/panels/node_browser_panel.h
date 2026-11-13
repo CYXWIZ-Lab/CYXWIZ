@@ -105,6 +105,11 @@ private:
     // Render helpers
     void RenderHeader();
     void RenderStudioSection();    // CyxWiz Studio quick actions, examples, description
+    // Favourites (cards) and Recent (chips, newest first) above Studio Tools,
+    // saved with the Engine settings (EngineConfig nodes_panel).
+    void RenderFavouritesSection();
+    void RenderRecentSection();
+    void SyncUserNodes();
     void RenderSearchBar();
     void RenderFilterTags();
     void RenderCategorySection(cyxwiz::NodeCategory category);
@@ -140,6 +145,7 @@ private:
         Training,
         UiOnly,
         Blocked,
+        Favourites,
     };
     const char* GetSupportFilterLabel(SupportFilterMode mode) const;
 
@@ -170,6 +176,11 @@ private:
     std::unordered_map<cyxwiz::NodeCategory, bool> category_show_all_;
 
     SupportFilterMode support_filter_mode_ = SupportFilterMode::All;
+
+    // The favourites and recent nodes as last saved (NodeType numbers).
+    bool user_nodes_loaded_ = false;
+    std::vector<int> saved_favourites_;
+    std::vector<int> saved_recent_;
 
     // Drag-drop state
     const cyxwiz::NodeMetadata* dragging_node_ = nullptr;

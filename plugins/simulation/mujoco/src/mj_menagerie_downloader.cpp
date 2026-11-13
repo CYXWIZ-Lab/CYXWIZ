@@ -1,4 +1,5 @@
 #include "mj_menagerie_downloader.h"
+#include "env/mj_model_ref.h"
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
@@ -48,8 +49,30 @@ std::string MjMenagerieDownloader::GetStatusText() const {
     return status_text_;
 }
 
+std::string MjMenagerieDownloader::HeadCommit() {
+    httplib::SSLClient cli(kGitHubApiHost, 443);
+    cli.set_connection_timeout(10);
+    cli.set_read_timeout(30);
+    const httplib::Headers headers = {{"User-Agent", "CyxWiz-Engine/1.0"}, {"Accept", "application/vnd.github.sha"}};
+    auto res = cli.Get("/repos/" + std::string(kMenagerieRepo) + "/commits/" + kBranch, headers);
+    if (!res || res->status != 200) {
+        std::lock_guard lock(status_mutex_);
+        error_ = HttpFailure(res, kGitHubApiHost);
+        return {};
+    }
+    std::string sha = res->body;
+    while (!sha.empty() && (sha.back() == '\n' || sha.back() == '\r' || sha.back() == ' ')) sha.pop_back();
+    const bool hex = sha.size() == 40 && sha.find_first_not_of("0123456789abcdef") == std::string::npos;
+    if (!hex) {
+        std::lock_guard lock(status_mutex_);
+        error_ = "GitHub did not name the Menagerie's current version.";
+        return {};
+    }
+    return sha;
+}
+
 std::vector<MjMenagerieDownloader::FileEntry> MjMenagerieDownloader::ListGitHubDir(
-    const std::string& api_path)
+    const std::string& api_path, const std::string& ref)
 {
     std::vector<FileEntry> entries;
 
@@ -62,7 +85,7 @@ std::vector<MjMenagerieDownloader::FileEntry> MjMenagerieDownloader::ListGitHubD
         {"Accept", "application/vnd.github.v3+json"}
     };
 
-    std::string url = "/repos/" + std::string(kMenagerieRepo) + "/contents/" + api_path + "?ref=" + kBranch;
+    std::string url = "/repos/" + std::string(kMenagerieRepo) + "/contents/" + api_path + "?ref=" + ref;
     auto res = cli.Get(url, headers);
 
     if (!res || res->status != 200) {
@@ -122,14 +145,30 @@ bool MjMenagerieDownloader::DownloadFile(const std::string& url_path, const std:
     return true;
 }
 
-bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const std::string& dest_dir) {
+bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const std::string& root,
+                                          const std::string& wanted_commit) {
     downloading_ = true;
     progress_ = 0.0f;
 
     {
         std::lock_guard lock(status_mutex_);
         error_.clear();
-        status_text_ = "Listing files...";
+        status_text_ = wanted_commit.empty() ? "Finding the latest version..." : "Listing files...";
+    }
+    // One commit for every file: the one asked for, else the branch's head now
+    const std::string commit = wanted_commit.empty() ? HeadCommit() : wanted_commit;
+    if (!commit.empty() && !ValidCommit(commit)) {
+        std::lock_guard lock(status_mutex_);
+        error_ = "\"" + commit + "\" is not a Menagerie version (a commit id).";
+    }
+    if (commit.empty() || !ValidCommit(commit) || repo_path.find_first_of("/\\.") != std::string::npos) {
+        downloading_ = false;
+        return false;
+    }
+    const std::string dest_dir = MenagerieFolder(root, repo_path, commit).string();
+    {
+        std::lock_guard lock(status_mutex_);
+        status_text_ = "Listing files of version " + ShortCommit(commit) + "...";
     }
 
     // Recursively list all files in the model directory
@@ -146,7 +185,7 @@ bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const st
         auto dir = dirs_to_scan.back();
         dirs_to_scan.pop_back();
 
-        auto entries = ListGitHubDir(dir.api_path);
+        auto entries = ListGitHubDir(dir.api_path, commit);
         for (const auto& entry : entries) {
             if (cancel_requested_) break;
 
@@ -160,7 +199,7 @@ bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const st
                 dirs_to_scan.push_back({entry.path, rel_path});
             } else {
                 // Build raw.githubusercontent.com path
-                std::string raw_path = "/" + std::string(kMenagerieRepo) + "/" + kBranch + "/" + entry.path;
+                std::string raw_path = "/" + std::string(kMenagerieRepo) + "/" + commit + "/" + entry.path;
                 std::string local_file = (fs::path(dest_dir) / rel_path).string();
                 files_to_download.push_back({raw_path, local_file});
             }
@@ -214,23 +253,39 @@ bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const st
         status_text_ = cancel_requested_ ? "Cancelled" : "Complete";
     }
 
-    downloading_ = false;
     bool success = !cancel_requested_;
+    if (success) {
+        // The manifest last: it marks the download finished and names its version
+        MjModelManifest manifest;
+        manifest.robot = repo_path;
+        manifest.commit = commit;
+        manifest.date = NowText();
+        manifest.files = downloaded;
+        std::error_code ec;
+        for (fs::recursive_directory_iterator it(dest_dir, ec), end; !ec && it != end; it.increment(ec))
+            if (it->is_regular_file(ec)) manifest.bytes += it->file_size(ec);
+        std::string manifest_error;
+        if (!WriteModelManifest(dest_dir, manifest, manifest_error)) {
+            std::lock_guard lock(status_mutex_);
+            error_ = manifest_error;
+            success = false;
+        }
+    }
+    downloading_ = false;
 
     if (success) {
-        spdlog::info("MenagerieDownloader: Successfully downloaded '{}' ({} files)",
-                     repo_path, downloaded);
+        spdlog::info("MenagerieDownloader: Successfully downloaded '{}' at {} ({} files)",
+                     repo_path, ShortCommit(commit), downloaded);
     }
     return success;
 }
 
-void MjMenagerieDownloader::DownloadModelAsync(const std::string& repo_path,
-                                                const std::string& dest_dir,
-                                                DoneCallback done_cb) {
+void MjMenagerieDownloader::DownloadModelAsync(const std::string& repo_path, const std::string& root,
+                                                const std::string& commit, DoneCallback done_cb) {
     CancelDownload();  // Cancel any previous download
 
-    download_thread_ = std::thread([this, repo_path, dest_dir, done_cb]() {
-        bool ok = DownloadModel(repo_path, dest_dir);
+    download_thread_ = std::thread([this, repo_path, root, commit, done_cb]() {
+        bool ok = DownloadModel(repo_path, root, commit);
         if (done_cb) {
             done_cb(ok, GetError());
         }

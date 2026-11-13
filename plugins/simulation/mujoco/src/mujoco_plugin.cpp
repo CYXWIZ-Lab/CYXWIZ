@@ -68,9 +68,9 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     assets_dir_ = (ctx.GetPluginDir() / "assets").string();
     env_library_.SetAssetsDir(assets_dir_);
 
-    // Scan for previously downloaded Menagerie models and earlier imports
-    env_library_.ScanDownloadedModels();
-    env_library_.ScanImportedModels();
+    // Where each model is: shared downloads and their versions, earlier imports
+    // (the open project's own models are read when the Library first draws)
+    env_library_.Rescan();
 
     // Wire browser panel load callback and downloader; the viewport shows the
     // loaded model's name and where it comes from.
@@ -78,6 +78,8 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
         if (!LoadEnvironment(path)) return false;
         if (info.source == EnvSource::Imported) {
             viewport_panel_.SetModelLabel(info.name, "Imported from URL");
+        } else if (info.source == EnvSource::Project) {
+            viewport_panel_.SetModelLabel(info.name, "In this project");
         } else {
             const char* source = info.source == EnvSource::Menagerie ? "Menagerie" : "Built-in";
             viewport_panel_.SetModelLabel(info.name, std::string(source) + " \xC2\xB7 " + info.category);
@@ -195,6 +197,24 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
     viewport_panel_.SetHistory(&history_);
     viewport_panel_.SetSimExecutor(&sim_executor_);
     viewport_panel_.SetReloadModel([this](std::string& error) { return ReloadModel(error); });
+    viewport_panel_.SetModelPlaceFn([this](const std::string& path) {
+        const MjModelRoots roots = ModelRoots();
+        MjViewportPanel::ModelPlace place;
+        place.ref = RefForFile(path, roots);
+        place.shared = place.ref.kind == MjRefKind::Menagerie && InFolder(path, roots.menagerie);
+        return place;
+    });
+    viewport_panel_.SetCopyModel([this](const MjModelRef& ref, const std::string& path) {
+        ModelRoots();  // the library knows the open project
+        if (ref.kind == MjRefKind::Path) {
+            browser_panel_.RequestCopyFile(env_library_, path);
+        } else {
+            for (const auto& e : env_library_.GetAll())
+                if (e.source == EnvSource::Menagerie && e.repo_path == ref.robot)
+                    browser_panel_.RequestCopy(env_library_, e.id, ref.commit);
+        }
+        if (ctx_) ctx_->ShowPanel("mujoco_env_browser");
+    });
 
     // NOTE: Renderer is NOT initialized here. It will be lazily initialized
     // by the viewport panel on first render, using the engine's GL context
@@ -750,14 +770,34 @@ PluginSimulationBeginResult MuJoCoPlugin::BeginGraphRun(const std::vector<Plugin
             const auto it = node.parameters.find(key);
             return it == node.parameters.end() ? std::string() : it->second;
         };
+        // A reference names the same model on every machine; the file it names here is compared
+        const MjModelRoots roots = ModelRoots();
+        const auto file_of = [&roots](const std::string& text, std::string& why) -> std::string {
+            const auto ref = ParseModelRef(text);
+            if (!ref) return {};
+            const MjResolvedModel resolved = ResolveModelRef(*ref, roots);
+            why = resolved.why;
+            return resolved.file.string();
+        };
         const std::string node_model = param("mjcf_path");
         const std::string synced_model = param("_meta_loaded_path");
-        if (!node_model.empty() && !SameModelFile(node_model, loaded_mjcf_path_))
-            return refuse("The MuJoCo Plant's model '" + node_model + "' is not the model loaded in the viewport ('" +
-                          loaded_mjcf_path_ + "'). Load it from the Environment Library.");
-        if (node_model.empty() && !synced_model.empty() && !SameModelFile(synced_model, loaded_mjcf_path_))
-            return refuse("The MuJoCo Plant's pins were made for '" + synced_model + "' but the viewport has '" +
-                          loaded_mjcf_path_ + "' loaded. Sync the node again or load that model.");
+        std::string why;
+        if (!node_model.empty()) {
+            const std::string file = file_of(node_model, why);
+            if (file.empty())
+                return refuse("The MuJoCo Plant's model is not on this PC. " + why +
+                              (node_model.rfind("menagerie:", 0) == 0 ? " Download it from the Environment Library."
+                                                                      : " Pick its file with Change... on the node."));
+            if (!SameModelFile(file, loaded_mjcf_path_))
+                return refuse("The MuJoCo Plant's model '" + file + "' is not the model loaded in the viewport ('" +
+                              loaded_mjcf_path_ + "'). Load it from the Environment Library.");
+        }
+        if (node_model.empty() && !synced_model.empty()) {
+            const std::string file = file_of(synced_model, why);
+            if (file.empty() || !SameModelFile(file, loaded_mjcf_path_))
+                return refuse("The MuJoCo Plant's pins were made for '" + synced_model + "' but the viewport has '" +
+                              loaded_mjcf_path_ + "' loaded. Sync the node again or load that model.");
+        }
     }
     if (!steps_physics) return {};
     // One driver at a time: the viewport's own run is not stopped behind the user's back.
@@ -986,30 +1026,87 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
     return result;
 }
 
+MjModelRoots MuJoCoPlugin::ModelRoots() {
+    MjModelRoots roots = env_library_.Roots();
+    if (ctx_) roots.project = ctx_->GetProjectDir();
+    if (roots.project != needed_project_) {  // another project: its own needs
+        needed_project_ = roots.project;
+        needed_refs_.clear();
+        env_library_.SetNeeded({});
+        if (env_library_.Roots().project != roots.project) {
+            env_library_.SetProjectDir(roots.project.string());
+            env_library_.Rescan();
+        }
+    }
+    return roots;
+}
+
+std::string MuJoCoPlugin::ModelTitle(const MjModelRef& ref, const MjResolvedModel& resolved) const {
+    const std::string dot = " \xC2\xB7 ";
+    // The Library's name for a robot or built-in model, else the file's name
+    std::string name;
+    for (const auto& e : env_library_.GetAll()) {
+        if ((ref.kind == MjRefKind::Menagerie && e.source == EnvSource::Menagerie && e.repo_path == ref.robot) ||
+            (ref.kind == MjRefKind::Builtin && e.source == EnvSource::Builtin && e.filename == ref.file))
+            name = e.name;
+    }
+    switch (ref.kind) {
+        case MjRefKind::Builtin: return (name.empty() ? ref.file : name) + dot + "built in";
+        case MjRefKind::Menagerie:
+            return (name.empty() ? ref.robot : name) + dot + "Menagerie " + ShortCommit(ref.commit);
+        case MjRefKind::Project: return std::filesystem::path(ref.file).filename().string() + dot + "in this project";
+        case MjRefKind::Path: return resolved.file.empty() ? ref.path : resolved.file.string();
+    }
+    return ref.path;
+}
+
+void MuJoCoPlugin::NoteNeeded(const MjModelRef& ref, bool missing) {
+    const auto it = std::find(needed_refs_.begin(), needed_refs_.end(), ref);
+    if (missing && it == needed_refs_.end()) needed_refs_.push_back(ref);
+    else if (!missing && it != needed_refs_.end()) needed_refs_.erase(it);
+    else return;
+    env_library_.SetNeeded(needed_refs_);
+}
+
 DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
     const std::string& node_type_name,
     const std::map<std::string, std::string>& parameters)
 {
     if (node_type_name != "MuJoCoPlant") return {};
 
+    // The node's model: its reference (a path picked or typed is one kind), else
+    // the model loaded in the Viewport
+    const MjModelRoots roots = ModelRoots();
     auto it = parameters.find("mjcf_path");
-    std::string mjcf_path;
-    if (it != parameters.end() && !it->second.empty()) {
-        mjcf_path = it->second;
-    } else if (!loaded_mjcf_path_.empty()) {
-        mjcf_path = loaded_mjcf_path_;
-    } else {
-        return {};
-    }
+    const bool own = it != parameters.end() && !it->second.empty();
+    std::optional<MjModelRef> ref;
+    if (own) ref = ParseModelRef(it->second);
+    else if (!loaded_mjcf_path_.empty()) ref = RefForFile(loaded_mjcf_path_, roots);
+    if (!ref) return {};
+    const MjResolvedModel resolved = ResolveModelRef(*ref, roots);
+    // A picked file is saved by the reference it has (the same on every machine where it can be)
+    const MjModelRef saved = resolved.file.empty() || ref->kind != MjRefKind::Path ? *ref : RefForFile(resolved.file, roots);
+    NoteNeeded(saved, resolved.file.empty());
+
+    DynamicPinResult result;
+    // The value the node saves for its model (a picked path becomes its portable
+    // reference): the Engine writes it back into mjcf_path
+    if (own) result.metadata["canonical_trigger"] = FormatModelRef(saved);
+    result.metadata["model_title"] = ModelTitle(saved, resolved);
+    result.metadata["model_status"] = resolved.file.empty() ? "missing" : resolved.portable ? "portable" : "not portable";
+    result.metadata["model_note"] = DescribeWhere(resolved);
+    if (!own) result.metadata["loaded_path"] = FormatModelRef(saved);
+    if (resolved.file.empty()) return result;  // no pins: the node keeps its own and says why
+    const std::string mjcf_path = resolved.file.string();
 
     // Parse the MJCF file to discover actuators and sensors
     MjcfModelInfo info = ParseMjcfFile(mjcf_path);
     if (!info.valid) {
         spdlog::warn("MuJoCoPlant: Failed to parse MJCF '{}': {}", mjcf_path, info.error);
-        return {};
+        result.metadata["model_status"] = "missing";
+        result.metadata["model_note"] = "The model file does not read: " + info.error;
+        return result;
     }
-
-    DynamicPinResult result;
 
     // Check interface mode
     auto iface_it = parameters.find("interface");
@@ -1058,7 +1155,6 @@ DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
 
     // Metadata
     result.metadata["model_name"] = info.model_name;
-    result.metadata["loaded_path"] = mjcf_path;
     result.metadata["nu"] = std::to_string(info.nu);
     result.metadata["nq"] = std::to_string(info.nq);
     result.metadata["nv"] = std::to_string(info.nv);

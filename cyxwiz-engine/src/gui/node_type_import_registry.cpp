@@ -5,7 +5,7 @@
 namespace gui {
 namespace {
 
-constexpr std::array<NodeTypeImportName, 245> kNodeTypeImportNames = {{
+constexpr std::array<NodeTypeImportName, 251> kNodeTypeImportNames = {{
         {"Dense", NodeType::Dense},
         {"Conv1D", NodeType::Conv1D},
         {"Conv2D", NodeType::Conv2D},
@@ -21,6 +21,7 @@ constexpr std::array<NodeTypeImportName, 245> kNodeTypeImportNames = {{
         {"LayerNorm", NodeType::LayerNorm},
         {"GroupNorm", NodeType::GroupNorm},
         {"InstanceNorm", NodeType::InstanceNorm},
+        {"SqueezeExcitation", NodeType::SqueezeExcitation},
         {"Dropout", NodeType::Dropout},
         {"Flatten", NodeType::Flatten},
         {"RNN", NodeType::RNN},
@@ -42,6 +43,9 @@ constexpr std::array<NodeTypeImportName, 245> kNodeTypeImportNames = {{
         {"GELU", NodeType::GELU},
         {"Swish", NodeType::Swish},
         {"Mish", NodeType::Mish},
+        {"Hardswish", NodeType::Hardswish},
+        {"Hardsigmoid", NodeType::Hardsigmoid},
+        {"ReLU6", NodeType::ReLU6},
         {"Sigmoid", NodeType::Sigmoid},
         {"Tanh", NodeType::Tanh},
         {"Softmax", NodeType::Softmax},
@@ -224,6 +228,8 @@ constexpr std::array<NodeTypeImportName, 245> kNodeTypeImportNames = {{
         {"ImageSmooth", NodeType::ImageSmooth},
         {"ImageWarp", NodeType::ImageWarp},
         {"ImagePyramid", NodeType::ImagePyramid},
+        {"ImageFilter", NodeType::ImageFilter},
+        {"ImageGabor", NodeType::ImageGabor},
         {"RandomResizedCrop", NodeType::RandomResizedCrop},
         {"RandomAffine", NodeType::RandomAffine},
         {"RandomPerspective", NodeType::RandomPerspective},

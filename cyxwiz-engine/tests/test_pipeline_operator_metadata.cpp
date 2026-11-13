@@ -906,6 +906,9 @@ void CheckPropertyTruthInventory(cyxwiz::NodeMetadataRegistry& metadata) {
         gui::NodeType::ELU,
         gui::NodeType::Swish,
         gui::NodeType::Mish,
+        gui::NodeType::Hardswish,
+        gui::NodeType::Hardsigmoid,
+        gui::NodeType::ReLU6,
         gui::NodeType::Resize,  // TOFIX140 A1: the image input shape comes from it
         gui::NodeType::PReLU,   // TOFIX140 A2
         gui::NodeType::SELU,    // TOFIX140 A2
@@ -1521,12 +1524,13 @@ void CheckConv2DReferenceContract(
     Check(HasInputType(meta, "Input", gui::PinType::Tensor) &&
               HasOutputType(meta, "Output", gui::PinType::Tensor),
           "Conv2D metadata should preserve its saved-graph pin contract");
-    Check(meta->parameters.size() == 4,
+    Check(meta->parameters.size() == 6,
           "Conv2D metadata should expose only its preserved layer fields");
     Check(ParameterMatches(meta, "filters", "int", "32") &&
               ParameterMatches(meta, "kernel_size", "int", "3") &&
               ParameterMatches(meta, "stride", "int", "1") &&
-              ParameterMatches(meta, "padding", "enum", "same"),
+              ParameterMatches(meta, "padding", "enum", "same") &&
+              ParameterMatches(meta, "use_bias", "bool", "true"),
           "Conv2D metadata defaults should match the preserved graph contract");
     Check(!HasParameter(meta, "activation"),
           "Conv2D must not advertise an unexecuted inline activation");
@@ -1546,11 +1550,12 @@ void CheckConvolutionPoolingFamilyContract(
     for (const auto type : {gui::NodeType::Conv1D,
                             gui::NodeType::Conv3D}) {
         const auto* meta = metadata.GetMetadata(type);
-        Check(meta->parameters.size() == 4 &&
+        Check(meta->parameters.size() == 6 &&
                   ParameterMatches(meta, "filters", "int", "32") &&
                   ParameterMatches(meta, "kernel_size", "int", "3") &&
                   ParameterMatches(meta, "stride", "int", "1") &&
                   ParameterMatches(meta, "padding", "enum", "same") &&
+                  ParameterMatches(meta, "use_bias", "bool", "true") &&
                   !HasParameter(meta, "activation"),
               "convolution contract keeps exactly its saved fields: " +
                   TypeId(type));
@@ -1558,7 +1563,8 @@ void CheckConvolutionPoolingFamilyContract(
 
     const auto* depthwise =
         metadata.GetMetadata(gui::NodeType::DepthwiseConv2D);
-    Check(depthwise->parameters.size() == 4 &&
+    Check(depthwise->parameters.size() == 6 &&
+              ParameterMatches(depthwise, "use_bias", "bool", "true") &&
               !HasParameter(depthwise, "filters") &&
               ParameterMatches(depthwise, "kernel_size", "int", "3") &&
               ParameterMatches(depthwise, "stride", "int", "1") &&
@@ -1570,11 +1576,12 @@ void CheckConvolutionPoolingFamilyContract(
     for (const auto type : {gui::NodeType::MaxPool2D,
                             gui::NodeType::AvgPool2D}) {
         const auto* meta = metadata.GetMetadata(type);
-        Check(meta->parameters.size() == 2 &&
+        Check(meta->parameters.size() == 3 &&
                   ParameterMatches(meta, "pool_size", "int", "2") &&
                   ParameterMatches(meta, "stride", "int", "2") &&
+                  ParameterMatches(meta, "padding", "int", "0") &&
                   !HasParameter(meta, "kernel_size"),
-              "pooling metadata must use the saved pool_size/stride contract: " +
+              "pooling metadata must use the saved pool_size/stride/padding contract: " +
                   TypeId(type));
     }
 
@@ -1599,15 +1606,16 @@ void CheckBlockedUpsamplingFamilyContract(
 
     const auto* transpose =
         metadata.GetMetadata(gui::NodeType::ConvTranspose2D);
-    Check(transpose->parameters.size() == 6 &&
+    Check(transpose->parameters.size() == 8 &&
               ParameterMatches(transpose, "in_channels", "int", "64") &&
               ParameterMatches(transpose, "out_channels", "int", "32") &&
               ParameterMatches(transpose, "kernel_size", "int", "3") &&
               ParameterMatches(transpose, "stride", "int", "2") &&
               ParameterMatches(transpose, "padding", "int", "1") &&
               ParameterMatches(transpose, "output_padding", "int", "1") &&
+              ParameterMatches(transpose, "use_bias", "bool", "true") &&
               !HasParameter(transpose, "filters"),
-          "ConvTranspose2D metadata must preserve its six saved fields");
+          "ConvTranspose2D metadata must preserve its seven saved fields");
 
     const auto* upsample = metadata.GetMetadata(gui::NodeType::Upsample);
     Check(upsample->parameters.size() == 2 &&
@@ -1635,7 +1643,7 @@ void CheckBlockedNormalizationFamilyContract(
     }
 
     const auto* group = metadata.GetMetadata(gui::NodeType::GroupNorm);
-    Check(group->parameters.size() == 4 &&
+    Check(group->parameters.size() == 5 &&
               ParameterMatches(group, "num_groups", "int", "32") &&
               ParameterMatches(group, "num_channels", "int", "256") &&
               ParameterMatches(group, "eps", "float", "1e-5") &&
@@ -1644,7 +1652,7 @@ void CheckBlockedNormalizationFamilyContract(
           "GroupNorm metadata must match its backend constructor and canonical fields");
 
     const auto* instance = metadata.GetMetadata(gui::NodeType::InstanceNorm);
-    Check(instance->parameters.size() == 3 &&
+    Check(instance->parameters.size() == 4 &&
               ParameterMatches(instance, "num_features", "int", "64") &&
               ParameterMatches(instance, "eps", "float", "1e-5") &&
               ParameterMatches(instance, "affine", "bool", "false") &&
@@ -1691,7 +1699,7 @@ void CheckAttentionFamilyContract(
           "Cross Attention inputs: Query, Key, Value (torch nn.MultiheadAttention(q, k, v))");
     Check(cross->outputs.size() == 1 && cross->outputs[0].name == "Output" && cross->outputs[0].required,
           "Cross Attention output: the attention result");
-    Check(cross->parameters.size() == 4 &&
+    Check(cross->parameters.size() == 5 &&
               ParameterMatches(cross, "embed_dim", "int", "512") &&
               ParameterMatches(cross, "num_heads", "int", "8") &&
               ParameterMatches(cross, "dropout", "float", "0.0") &&
@@ -1707,7 +1715,7 @@ void CheckAttentionFamilyContract(
     Check(linear->inputs.size() == 1 && linear->inputs[0].name == "Input" && linear->inputs[0].required &&
               linear->outputs.size() == 1 && linear->outputs[0].name == "Output" && linear->outputs[0].required,
           "Linear Attention: one sequence in, one out (self-attention)");
-    Check(linear->parameters.size() == 6 &&
+    Check(linear->parameters.size() == 7 &&
               ParameterMatches(linear, "embed_dim", "int", "512") &&
               ParameterMatches(linear, "num_heads", "int", "8") &&
               ParameterMatches(linear, "feature_map", "enum", "elu") &&
@@ -1734,7 +1742,7 @@ void CheckImplementedRecurrentConfigurationContract(
                   meta->outputs[1].name == "Hidden" && !meta->outputs[1].required,
               "recurrent pins must preserve saved order and optional Hidden compatibility: " +
                   TypeId(type));
-        Check(meta->parameters.size() == 6 &&
+        Check(meta->parameters.size() == 7 &&
                   ParameterMatches(meta, "input_size", "int", "0") &&
                   ParameterMatches(meta, "hidden_size", "int", "256") &&
                   ParameterMatches(meta, "num_layers", "int", "1") &&
@@ -1764,7 +1772,7 @@ void CheckImplementedRecurrentConfigurationContract(
               rnn->outputs[1].description.find("does not route") !=
                   std::string::npos,
           "RNN pins must match the recurrent pin contract");
-    Check(rnn->parameters.size() == 7 &&
+    Check(rnn->parameters.size() == 8 &&
               ParameterMatches(rnn, "input_size", "int", "0") &&
               ParameterMatches(rnn, "hidden_size", "int", "256") &&
               ParameterMatches(rnn, "num_layers", "int", "1") &&
@@ -3443,8 +3451,10 @@ void CheckOptimizerFamilyContract(cyxwiz::NodeMetadataRegistry& metadata) {
                            "learning_rate", "float", "0.01") &&
               ParameterMatches(metadata.GetMetadata(gui::NodeType::SGD),
                                "momentum", "float", "0.9") &&
-              !HasParameter(metadata.GetMetadata(gui::NodeType::SGD),
-                            "weight_decay"),
+              ParameterMatches(metadata.GetMetadata(gui::NodeType::SGD),
+                               "weight_decay", "float", "0") &&
+              ParameterMatches(metadata.GetMetadata(gui::NodeType::SGD),
+                               "nesterov", "bool", "false"),
           "SGD metadata should match the backend constructor contract");
 
     for (const auto type : {gui::NodeType::Adam, gui::NodeType::NAdam}) {
@@ -3485,6 +3495,9 @@ void CheckDenseActivationCodegenContract() {
         gui::NodeType::GELU,
         gui::NodeType::Swish,
         gui::NodeType::Mish,
+        gui::NodeType::Hardswish,
+        gui::NodeType::Hardsigmoid,
+        gui::NodeType::ReLU6,
         gui::NodeType::Sigmoid,
         gui::NodeType::Tanh,
         gui::NodeType::Softmax,
@@ -5144,6 +5157,9 @@ int main() {
         gui::NodeType::ELU,
         gui::NodeType::Swish,
         gui::NodeType::Mish,
+        gui::NodeType::Hardswish,
+        gui::NodeType::Hardsigmoid,
+        gui::NodeType::ReLU6,
         gui::NodeType::MSELoss,
         gui::NodeType::CrossEntropyLoss,
         gui::NodeType::BCELoss,
@@ -5269,6 +5285,9 @@ int main() {
         gui::NodeType::ELU,
         gui::NodeType::Swish,
         gui::NodeType::Mish,
+        gui::NodeType::Hardswish,
+        gui::NodeType::Hardsigmoid,
+        gui::NodeType::ReLU6,
         gui::NodeType::MSELoss,
         gui::NodeType::CrossEntropyLoss,
         gui::NodeType::BCELoss,
@@ -5558,6 +5577,9 @@ int main() {
         gui::NodeType::GELU,
         gui::NodeType::Swish,
         gui::NodeType::Mish,
+        gui::NodeType::Hardswish,
+        gui::NodeType::Hardsigmoid,
+        gui::NodeType::ReLU6,
         gui::NodeType::Sigmoid,
         gui::NodeType::Tanh,
         gui::NodeType::Softmax,
@@ -5641,6 +5663,9 @@ int main() {
         {gui::NodeType::GELU, "activation"},
         {gui::NodeType::Swish, "activation"},
         {gui::NodeType::Mish, "activation"},
+        {gui::NodeType::Hardswish, "activation"},
+        {gui::NodeType::Hardsigmoid, "activation"},
+        {gui::NodeType::ReLU6, "activation"},
         {gui::NodeType::MSELoss, "loss"},
         {gui::NodeType::CrossEntropyLoss, "loss"},
         {gui::NodeType::BCELoss, "loss"},

@@ -314,6 +314,15 @@ set(ENGINE_SOURCES
     src/core/image_utils.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
+    src/core/debug_model_session.cpp
+    src/core/occlusion.cpp
+    src/core/saliency.cpp
+    src/core/top_images.cpp
+    src/core/dense_contributions.cpp
+    src/core/layer_embedding.cpp
+    src/core/unit_weights.cpp
+    src/core/training_snapshots_presentation.cpp
+    src/core/debug_sample_source.cpp
     src/core/debug_numerics.cpp
     src/core/debug_batch_inspector.cpp
     src/core/debug_node_inspector.cpp
@@ -335,7 +344,13 @@ set(ENGINE_SOURCES
     src/core/debug_recommendation_engine.cpp
     src/core/debug_run_store.cpp
     src/core/studio_debugger_presentation.cpp
+    src/core/layer_view_presentation.cpp
+    src/core/where_it_looks_presentation.cpp
+    src/core/layer_capture_settings.cpp
+    src/core/layer_tensor_reader.cpp
     src/core/training_manager.cpp
+    src/core/training_recipe.cpp
+    src/core/trial_runner.cpp
     src/core/active_model_use.cpp
     src/core/cross_validation_runner.cpp
     src/core/cross_validation_presentation.cpp
@@ -423,6 +438,7 @@ set(ENGINE_SOURCES
     src/core/graph_compile_task.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/language_model_training.cpp
     src/core/model_converter.cpp
     src/core/file_dialogs.cpp
@@ -447,6 +463,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_codegen.cpp
     src/gui/node_editor_connection.cpp
     src/gui/node_editor_context_menu.cpp
+    src/gui/node_editor_freeze.cpp
     src/gui/node_editor_io.cpp
     src/gui/node_editor_subgraph.cpp
     src/gui/subgraph_document.cpp
@@ -505,6 +522,9 @@ set(ENGINE_SOURCES
     src/core/model_export_presentation.cpp
     src/core/model_open_presentation.cpp
     src/core/properties_presentation.cpp
+    src/core/layer_inside_presentation.cpp
+    src/core/weight_report_presentation.cpp
+    src/core/freeze_actions.cpp
     src/core/node_presets.cpp
     src/core/menu_presentation.cpp
     src/core/extension_properties_presentation.cpp
@@ -591,6 +611,10 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_account_dialogs.cpp
     src/gui/panels/toolbar_preferences_dialog.cpp
     src/gui/panels/toolbar_preferences_storage.cpp
+    src/gui/panels/toolbar_preferences_studio_debugger.cpp
+    src/gui/panels/toolbar_preferences_training.cpp
+    src/gui/panels/toolbar_preferences_nodes_panel.cpp
+    src/gui/panels/toolbar_preferences_search.cpp
     src/gui/panels/toolbar_preferences_servers.cpp
     src/gui/panels/toolbar_backend_manager.cpp
     src/gui/panels/toolbar_compute_devices.cpp
@@ -710,9 +734,23 @@ set(ENGINE_SOURCES
     src/gui/model_images.cpp
     src/gui/panels/studio_debugger_panel.cpp
     src/gui/panels/studio_debugger_panel_layout.cpp
+    src/gui/panels/studio_debugger_layers.cpp
+    src/gui/panels/studio_debugger_where_it_looks.cpp
+    src/gui/panels/studio_debugger_runs.cpp
+    src/gui/panels/studio_debugger_top_images.cpp
+    src/gui/panels/studio_debugger_contributions.cpp
+    src/gui/panels/studio_debugger_items_run.cpp
+    src/gui/panels/studio_debugger_embedding.cpp
+    src/gui/panels/studio_debugger_unit_weights.cpp
+    src/gui/panels/studio_debugger_capture.cpp
+    src/gui/panels/layer_capture_controls.cpp
     src/gui/panels/feature_importance_panel.cpp
     src/gui/panels/hyperparam_search_panel.cpp
+    src/gui/panels/nas_panel.cpp
     src/core/hyperparam_search.cpp
+    src/core/hyperparam_search_presentation.cpp
+    src/core/nas_presentation.cpp
+    src/core/nas_evaluator.cpp
     src/gui/panels/serving_panel.cpp
     src/serving/inference_server.cpp
     src/gui/panels/linear_algebra_panel.cpp
@@ -875,6 +913,15 @@ set(ENGINE_HEADERS
     src/core/sequence_training_step.h
     src/core/model_builder.h
     src/core/debug_executor.h
+    src/core/debug_model_session.h
+    src/core/occlusion.h
+    src/core/saliency.h
+    src/core/top_images.h
+    src/core/dense_contributions.h
+    src/core/layer_embedding.h
+    src/core/unit_weights.h
+    src/core/training_snapshots_presentation.h
+    src/core/where_it_looks_presentation.h
     src/core/synthetic_batch.h
     src/core/training_executor.h
     src/core/training_manager.h
@@ -983,7 +1030,11 @@ set(ENGINE_HEADERS
     src/gui/model_images.h
     src/gui/panels/feature_importance_panel.h
     src/gui/panels/hyperparam_search_panel.h
+    src/gui/panels/nas_panel.h
     src/core/hyperparam_search.h
+    src/core/hyperparam_search_presentation.h
+    src/core/nas_presentation.h
+    src/core/nas_evaluator.h
     src/gui/panels/serving_panel.h
     src/serving/inference_server.h
     src/gui/panels/linear_algebra_panel.h
@@ -1877,7 +1928,18 @@ add_executable(test_debug_executor
     tests/test_debug_executor.cpp
     src/core/synthetic_batch.cpp
     src/core/debug_executor.cpp
+    src/core/debug_model_session.cpp
+    src/core/occlusion.cpp
+    src/core/saliency.cpp
+    src/core/top_images.cpp
+    src/core/dense_contributions.cpp
+    src/core/layer_embedding.cpp
+    src/core/unit_weights.cpp
+    src/core/training_snapshots_presentation.cpp
+    src/core/where_it_looks_presentation.cpp
     src/core/debug_numerics.cpp
+    src/core/layer_view_presentation.cpp
+    src/core/layer_tensor_reader.cpp
     src/core/debug_loss_metric_explainer.cpp
     src/core/node_executors/text_tokenizer_operator.cpp
     src/core/node_executors/word_embeddings_operator.cpp
@@ -1888,8 +1950,15 @@ add_executable(test_debug_executor
     src/core/node_executors/text_token_windows.cpp
     src/core/text_arrow_adapter.cpp
     src/core/formats/text_dataset.cpp
+    src/gui/node_type_import_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
 )
 target_link_libraries(test_debug_executor PRIVATE cyxwiz-training-core)
+# The ResNet example's Local Debug (TOFIX178 6.0a) opens it from the source tree.
+target_compile_definitions(test_debug_executor PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
 
 target_include_directories(test_debug_executor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -1917,6 +1986,37 @@ set_target_properties(test_debug_executor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME debug_executor COMMAND test_debug_executor)
+
+# ===== Test: training-step memory estimate for every layer kind (TOFIX178 6.0d) =====
+# Compiles example graphs without their data and checks the estimate against
+# ArrayFire's measured allocation over one training step.
+add_executable(test_model_memory_estimate
+    tests/test_model_memory_estimate.cpp
+    src/core/synthetic_batch.cpp
+    src/gui/node_type_import_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+)
+target_compile_definitions(test_model_memory_estimate PRIVATE CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+target_include_directories(test_model_memory_estimate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_model_memory_estimate PRIVATE
+    cyxwiz-training-core
+    Arrow::arrow_shared
+    Parquet::parquet_shared
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    OpenSSL::Crypto
+    cyxwiz-backend
+)
+if(WIN32)
+    target_compile_definitions(test_model_memory_estimate PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_model_memory_estimate PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME model_memory_estimate COMMAND test_model_memory_estimate)
 
 # ===== Test: Siamese Backend Smoke =====
 add_executable(test_siamese_backend_smoke
@@ -3102,6 +3202,7 @@ add_executable(test_extension_model_files
     src/core/node_executors/gradient_boosting_model.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -4428,6 +4529,7 @@ add_executable(test_cyxmodel_layernorm_roundtrip
     tests/test_cyxmodel_layernorm_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -4468,6 +4570,7 @@ add_executable(test_cyxmodel_mha_roundtrip
     tests/test_cyxmodel_mha_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -4508,6 +4611,7 @@ add_executable(test_cyxmodel_transformer_encoder_roundtrip
     tests/test_cyxmodel_transformer_encoder_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -4547,6 +4651,7 @@ add_executable(test_cyxmodel_transformer_decoder_roundtrip
     tests/test_cyxmodel_transformer_decoder_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -4586,6 +4691,7 @@ add_executable(test_cyxmodel_causal_lm_generation_roundtrip
     tests/test_cyxmodel_causal_lm_generation_roundtrip.cpp
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp
     src/core/dataset_catalog.cpp
@@ -5824,6 +5930,7 @@ configure_training_executor_harness(test_training_scheduler_lifecycle)
 add_executable(test_training_manager_session
     tests/test_training_manager_session.cpp
     src/core/training_manager.cpp
+    src/core/training_recipe.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
     src/gui/generation_preview_view.cpp
@@ -6086,6 +6193,61 @@ endif()
 set_target_properties(test_studio_debugger_presentation PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+# ===== Test: Studio Debugger layer views (TOFIX178 6.2) =====
+add_executable(test_layer_view_presentation
+    tests/test_layer_view_presentation.cpp
+    src/core/layer_view_presentation.cpp
+    src/core/layer_capture_settings.cpp
+)
+
+target_include_directories(test_layer_view_presentation PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(test_layer_view_presentation PRIVATE
+    imgui::imgui
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    fmt::fmt
+    cyxwiz-backend
+)
+
+if(WIN32)
+    target_compile_definitions(test_layer_view_presentation PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+endif()
+
+set_target_properties(test_layer_view_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ===== Test: NAS mutations keep the graph connected =====
+add_executable(test_nas_mutation
+    tests/test_nas_mutation.cpp
+    src/core/nas_evaluator.cpp
+    src/core/model_summary_presentation.cpp src/core/compiled_node_presentation.cpp
+)
+configure_training_executor_harness(test_nas_mutation)
+set_target_properties(test_nas_mutation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+# ===== Test: Nodes panel Favourites and Recent (Engine settings, registry) =====
+add_executable(test_nodes_panel_user_nodes
+    tests/test_nodes_panel_user_nodes.cpp
+    src/core/engine_config.cpp
+    src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
+    src/core/extension_node_registry.cpp
+)
+target_include_directories(test_nodes_panel_user_nodes PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_nodes_panel_user_nodes PRIVATE cyxwiz-protocol imgui::imgui nlohmann_json::nlohmann_json
+                      spdlog::spdlog fmt::fmt cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_nodes_panel_user_nodes PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_nodes_panel_user_nodes PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_nodes_panel_user_nodes COMMAND test_nodes_panel_user_nodes)
 
 # ===== Test: Saved Text Smoke Graph Patterns =====
 add_executable(test_text_smoke_graph_patterns
@@ -7032,8 +7194,23 @@ set_target_properties(test_cnn_graph_training PROPERTIES
 # The residual CNN graph checked against PyTorch (TOFIX178 1.2).
 target_compile_definitions(test_cnn_graph_training PRIVATE
     CYXWIZ_CNN_GRAPH_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/cnn_graph_pytorch.json"
+    CYXWIZ_WEIGHT_FILE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/weight_files"
 )
 add_test(NAME cnn_graph_training_contract COMMAND test_cnn_graph_training)
+
+# ===== Test: weight files (PyTorch state-dict, safetensors) read without PyTorch (TOFIX178 1.9c) =====
+add_executable(test_weight_file
+    tests/test_weight_file.cpp
+    src/core/weight_file.cpp
+)
+target_compile_features(test_weight_file PRIVATE cxx_std_20)
+target_include_directories(test_weight_file PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_weight_file PRIVATE nlohmann_json::nlohmann_json)
+set_target_properties(test_weight_file PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+target_compile_definitions(test_weight_file PRIVATE
+    CYXWIZ_WEIGHT_FILE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/weight_files"
+)
+add_test(NAME weight_file_contract COMMAND test_weight_file)
 
 set(CYXWIZ_BRANCH_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/branch_graph_pytorch.json"
@@ -7044,6 +7221,7 @@ add_executable(test_branch_graph_training
     # Save / Export / Import of the graph model (TOFIX157)
     src/core/model_exporter.cpp
     src/core/model_importer.cpp
+    src/core/weight_file.cpp
     src/inference/text_inference_input.cpp
     src/core/node_executors/tree_model_artifact.cpp
     src/core/node_executors/tree_classification_utils.cpp
@@ -7971,6 +8149,32 @@ set_target_properties(test_quality_analyzer_presentation PROPERTIES
 )
 add_test(NAME quality_analyzer_presentation COMMAND test_quality_analyzer_presentation)
 
+# ===== Test: the canvas Freeze actions and the Trainable / Frozen count (TOFIX178 1.9e) =====
+add_executable(test_freeze_actions
+    tests/test_freeze_actions.cpp
+    src/core/freeze_actions.cpp
+)
+target_compile_features(test_freeze_actions PRIVATE cxx_std_20)
+target_include_directories(test_freeze_actions PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_freeze_actions PRIVATE cyxwiz-backend nlohmann_json::nlohmann_json spdlog::spdlog fmt::fmt)
+set_target_properties(test_freeze_actions PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME freeze_actions COMMAND test_freeze_actions)
+
+# ===== Test: the Data Loader dialog's weights file card and match report (TOFIX178 1.9d) =====
+add_executable(test_weight_report_presentation
+    tests/test_weight_report_presentation.cpp
+    src/core/weight_report_presentation.cpp
+    src/core/weight_match.cpp
+)
+target_compile_features(test_weight_report_presentation PRIVATE cxx_std_20)
+target_include_directories(test_weight_report_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_weight_report_presentation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME weight_report_presentation COMMAND test_weight_report_presentation)
+
 # ===== Test: Word Embeddings dialog view model (TOFIX152) =====
 add_executable(test_word_embeddings_presentation
     tests/test_word_embeddings_presentation.cpp
@@ -7998,6 +8202,9 @@ add_test(NAME word_vector_runs COMMAND test_word_vector_runs)
 add_executable(test_properties_presentation
     tests/test_properties_presentation.cpp
     src/core/properties_presentation.cpp
+    src/core/layer_inside_presentation.cpp
+    src/core/weight_report_presentation.cpp
+    src/core/freeze_actions.cpp
     src/core/compiled_node_presentation.cpp
     src/gui/properties_parameter_rules.cpp
     src/gui/properties_truth.cpp
@@ -8738,10 +8945,12 @@ endif()
 # ===== Test: Engine vs Server Node training parity (TOFIX118 P2 slice 4) =====
 # The Engine path (launcher preparation + MainWindow's dispatch + TrainingManager)
 # and the node path (RunGraphTrainingJob) train the same graph, data and seed.
-add_executable(test_engine_node_parity
-    tests/test_engine_node_parity.cpp
+# Train's whole path in one process: launcher, dispatch, recipes, TrainingManager
+# and the pipeline operators the launcher prepares data with.
+set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/gui/engine_graph_training_dispatch.cpp
     src/core/training_manager.cpp
+    src/core/training_recipe.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/gui/generation_preview_view.cpp
@@ -8847,26 +9056,40 @@ add_executable(test_engine_node_parity
     src/core/dataset_catalog.cpp
     src/core/dataset_catalog_registry.cpp
 )
-target_link_libraries(test_engine_node_parity PRIVATE duckdb Parquet::parquet_shared)
+function(configure_train_path_test target_name)
+    target_link_libraries(${target_name} PRIVATE duckdb Parquet::parquet_shared)
+    target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${Stb_INCLUDE_DIR})
+    target_link_libraries(${target_name} PRIVATE cyxwiz-implot3d cyxwiz-training-core imgui::imgui implot::implot)
+    target_compile_definitions(${target_name} PRIVATE CYXWIZ_DASHBOARD_WITHOUT_TRAINING
+        CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+    set_target_properties(${target_name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endfunction()
+add_executable(test_engine_node_parity tests/test_engine_node_parity.cpp ${CYXWIZ_TRAIN_PATH_TEST_SOURCES})
+configure_train_path_test(test_engine_node_parity)
+# A search trial trains from Train's recipe like Train (TOFIX178 trial runner).
+add_executable(test_trial_runner tests/test_trial_runner.cpp src/core/trial_runner.cpp
+    ${CYXWIZ_TRAIN_PATH_TEST_SOURCES})
+configure_train_path_test(test_trial_runner)
+# Hyperparameter search logic: strategies, failures, Bayesian, CSV (TOFIX178 T3).
+add_executable(test_hyperparam_search tests/test_hyperparam_search.cpp src/core/hyperparam_search.cpp)
+configure_training_executor_harness(test_hyperparam_search)
+set_target_properties(test_hyperparam_search PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME hyperparam_search COMMAND test_hyperparam_search)
 
-target_include_directories(test_engine_node_parity PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${Stb_INCLUDE_DIR}
-)
-target_link_libraries(test_engine_node_parity PRIVATE
-    cyxwiz-implot3d
-    cyxwiz-training-core
-    imgui::imgui
-    implot::implot
-)
-target_compile_definitions(test_engine_node_parity PRIVATE
-    CYXWIZ_DASHBOARD_WITHOUT_TRAINING
-    CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
-    CYXWIZ_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
-)
-set_target_properties(test_engine_node_parity PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
+add_executable(test_hyperparam_search_presentation tests/test_hyperparam_search_presentation.cpp
+    src/core/hyperparam_search_presentation.cpp src/core/hyperparam_search.cpp src/core/nas_evaluator.cpp
+    src/core/model_summary_presentation.cpp src/core/compiled_node_presentation.cpp src/core/engine_config.cpp)
+configure_training_executor_harness(test_hyperparam_search_presentation)
+set_target_properties(test_hyperparam_search_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME hyperparam_search_presentation COMMAND test_hyperparam_search_presentation)
+
+# Neural Architecture Search's presentation (TOFIX178 T4 H2).
+add_executable(test_nas_presentation tests/test_nas_presentation.cpp
+    src/core/nas_presentation.cpp src/core/nas_evaluator.cpp src/core/model_summary_presentation.cpp
+    src/core/compiled_node_presentation.cpp src/core/engine_config.cpp)
+configure_training_executor_harness(test_nas_presentation)
+set_target_properties(test_nas_presentation PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME nas_presentation COMMAND test_nas_presentation)
 
 # ===== Tool: training throughput profile (TOFIX118 P8) =====
 add_executable(cyxwiz-training-profile tests/tool_training_profile.cpp)
@@ -8937,3 +9160,13 @@ cyxwiz_enable_pch(test_conv3d_training)
 cyxwiz_enable_pch(test_cnn_image_training_smoke)
 cyxwiz_enable_pch(test_prepared_data_cache)
 cyxwiz_enable_pch(test_engine_node_parity)
+cyxwiz_enable_pch(test_trial_runner)
+
+# Tests write their run records (training traces, crash envelopes, Studio
+# Debugger runs) under the build tree, never into the user's own debug-run
+# folder (CYXWIZ_DEBUG_RUN_ROOT, core/debug_run_paths.h).
+get_property(_cyxwiz_engine_tests DIRECTORY PROPERTY TESTS)
+if(_cyxwiz_engine_tests)
+    set_property(TEST ${_cyxwiz_engine_tests} APPEND PROPERTY ENVIRONMENT
+        "CYXWIZ_DEBUG_RUN_ROOT=${CMAKE_BINARY_DIR}/test_debug_runs")
+endif()

@@ -80,6 +80,28 @@ private:
     cyxwiz::Tensor grad_a_;
 };
 
+// Scale that also keeps a tensor beside its weight (like BatchNorm's running
+// statistics): declared as state, or not.
+class ScaleWithState : public Scale {
+public:
+    explicit ScaleWithState(bool declared) : Scale(false), declared_(declared) {
+        const float seen = 0.0f;
+        seen_ = cyxwiz::Tensor(std::vector<size_t>{1}, &seen);
+    }
+    std::map<std::string, cyxwiz::Tensor> GetParameters() override {
+        auto params = Scale::GetParameters();
+        params["seen"] = seen_;
+        return params;
+    }
+    std::vector<std::string> GetStateNames() const override {
+        return declared_ ? std::vector<std::string>{"seen"} : std::vector<std::string>{};
+    }
+
+private:
+    bool declared_;
+    cyxwiz::Tensor seen_;
+};
+
 // y = x + sin^2(a x) / a with a = 0.8: its true gradient 1 + sin(2ax) comes
 // close to zero, where 32-bit rounding must not read as a failure.
 class SnakeLike : public cyxwiz::Module {
@@ -122,6 +144,16 @@ int main() {
         const auto r = cyxwiz::CheckModuleGradients(
             [](const std::vector<size_t>&) { return std::make_unique<SnakeLike>(); }, options);
         Check(r.passed, "a gradient that passes near zero (Snake-like): " + cyxwiz::DescribeGradientCheck(r));
+    }
+    std::cout << "state the module declares has no gradient to check\n";
+    {
+        const auto r = cyxwiz::CheckModuleGradients(
+            [](const std::vector<size_t>&) { return std::make_unique<ScaleWithState>(true); });
+        Check(r.passed && r.error.empty(), "Scale with declared state: " + cyxwiz::DescribeGradientCheck(r));
+        const auto undeclared = cyxwiz::CheckModuleGradients(
+            [](const std::vector<size_t>&) { return std::make_unique<ScaleWithState>(false); });
+        Check(!undeclared.passed && undeclared.error.find("'seen'") != std::string::npos,
+              "an undeclared parameter without a gradient fails: " + cyxwiz::DescribeGradientCheck(undeclared));
     }
     std::cout << "built-in modules pass (the checker is not too strict)\n";
     {

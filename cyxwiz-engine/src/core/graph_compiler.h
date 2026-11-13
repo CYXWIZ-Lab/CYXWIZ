@@ -109,6 +109,7 @@ struct GraphPreprocessingConfig {
     std::string norm_statistics = "same";
     std::vector<float> norm_channel_mean, norm_channel_std;
     size_t norm_channels = 0;  // the images' channels where Normalize sits (image graphs)
+    std::vector<std::string> norm_channel_names;  // what they are: R, G, B, edges, ...
     int norm_node_id = -1;
 
     bool has_onehot = false;
@@ -186,7 +187,7 @@ struct TextPreprocessingConfig {
 };
 
 // Sequence tagging / NER batch contract. Compile identifies the intended
-// named payloads. Runtime training must enter through StartTrainingSequence
+// named payloads. Runtime training must enter through SequenceTrainingRecipe
 // with a prebuilt ISequenceBatcher; generic tabular dispatch still fails closed.
 struct SequenceBatchConfig {
     // Runtime-only identity captured when preparing the active model.
@@ -211,7 +212,7 @@ struct SequenceBatchConfig {
 
 inline std::string SequenceBatchRuntimeUnsupportedMessage() {
     return "Sequence/NER graph training requires a prebuilt ISequenceBatcher. "
-           "Use the Studio graph-training launcher or StartTrainingSequence; "
+           "Use the Studio graph-training launcher or SequenceTrainingRecipe; "
            "generic tabular TrainingExecutor dispatch cannot consume named "
            "sequence payloads.";
 }
@@ -498,6 +499,9 @@ struct TrainingConfiguration {
     int early_stopping_patience = 5;    // stop after this many non-improving epochs
     std::string checkpoint_dir;         // optional override, defaults to run-local path
     std::string initialize_from_checkpoint; // warm start: model weights only (TOFIX143)
+    // A published weight file (.pth / .pt state-dict, .safetensors): layers named
+    // as the file's entries start from its weights, the others start fresh.
+    std::string initialize_from_weights_file;
     PinMemoryTransferStatus pin_memory_transfer;
 
     // Preprocessing — tabular config (backward-compatible)
@@ -523,6 +527,9 @@ struct TrainingConfiguration {
     // The OpenCV image steps (TOFIX178 1.3f), done once when the images are
     // prepared; each one's position places it among image_augmentation.ops.
     std::vector<cyxwiz::CvImageStep> image_cv_steps;
+    // What the model input's channels are after those steps (image graphs):
+    // R, G, B; grey; R, G, B, edges.
+    cyxwiz::ImageChannelLayout image_channels;
     // The Advanced Augment node that set image_augmentation.mix (mixup / cutmix).
     int image_mix_node_id = -1;
     // The Quality Analyzer node and the files its analysis leaves out of
@@ -578,11 +585,12 @@ struct TrainingConfiguration {
     float weight_decay = 0.0f;
     // Training recipe (optimizer node, all optimizers): per-update learning-rate
     // schedule, global-norm gradient clipping, AdamW weight-decay exclusions.
-    std::string lr_schedule = "none";   // none | warmup_cosine | warmup_linear | warmup_constant
+    std::string lr_schedule = "none";   // none | warmup_cosine | warmup_linear | warmup_constant | one_cycle
     float warmup_ratio = 0.02f;         // fraction of all optimizer updates spent warming up
     float min_lr_ratio = 0.1f;          // decay floor as a fraction of learning_rate
     float grad_clip_norm = 0.0f;        // 0 = off
     std::string weight_decay_exclude = "none";  // none | norms_and_biases | norms_biases_embeddings
+    bool nesterov = false;              // SGD: Nesterov momentum
     // Scheduler node on the training optimizer (TOFIX140 A3). TrainingExecutor
     // attaches it unless a scheduler is configured on the executor directly.
     std::optional<TrainingSchedulerSpec> scheduler;

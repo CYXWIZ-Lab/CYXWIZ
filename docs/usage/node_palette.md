@@ -33,8 +33,25 @@ Search lists what runs first (best match first), then up to five table steps,
 marked *Advanced operation - Rows* and so on.
 
 The Nodes panel's filter (**All**, **Pipeline**, **Training**, **UI-only**,
-**Blocked**) narrows the cards; with a filter other than *All*, each group
-lists every node that passes it, in its own group.
+**Blocked**, **Favourites**) narrows the cards; with a filter other than
+*All*, each group lists every node that passes it, in its own group.
+
+## Favourites and Recent
+
+At the top of the Nodes panel, above Studio Tools:
+
+- **Favourites**: click the star at the top right of a card (or right-click
+  the card, *Add to Favourites*) to keep the node here; click the star again,
+  or *Remove from Favourites*, to take it off. The filter's *Favourites*
+  shows only these, in their groups.
+- **Recent**: the last nodes you added to the canvas, newest first, from the
+  panel, the canvas search, the right-click menu or the toolbar menus. Click
+  a chip to add the node again, or drag it onto the canvas. Plugin nodes
+  are not kept in Favourites or Recent yet.
+
+Both are saved with your Engine settings, so they are the same in every
+project. **File > Preferences > Nodes panel** turns Recent off, sets how
+many it shows (8 by default, up to 20) and clears it.
 
 ## Learning what a node does
 

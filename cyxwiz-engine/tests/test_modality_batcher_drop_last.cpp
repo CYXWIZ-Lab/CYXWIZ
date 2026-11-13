@@ -2,6 +2,7 @@
 #include "../src/core/image_dataset_batcher.h"
 #include "../src/core/image_utils.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -439,6 +441,61 @@ void TestAudioBatcher(const fs::path& root) {
     cyxwiz::AudioDatasetBatcher wired(entry, preprocessing, 2, whole_val, true, 0, 1);
     cyxwiz::AudioDatasetBatcher wired_other(entry, preprocessing, 2, whole_val, true, 0, 77);
     CheckThreeParts(wired, wired_other, 4, 0, 4, 0, "AudioDatasetBatcher wired as validation");
+
+    // The AudioAugmentation node's noise is for training clips only:
+    // validation reads each clip as it is (it used to be noised too).
+    cyxwiz::AudioPreprocessingConfig augmented = preprocessing;
+    augmented.has_augmentation = true;
+    augmented.noise_level = 0.5f;
+    const cyxwiz::SampleSplitSettings halves{0.5f, 0.5f, 0.0f, false, 23};
+    const auto read_part = [&](const cyxwiz::AudioPreprocessingConfig& config, cyxwiz::BatcherPhase phase) {
+        cyxwiz::AudioDatasetBatcher reader(entry, config, 4, halves, false, 0, 23);
+        reader.SetPhase(phase);
+        reader.Reset();
+        const auto batch = reader.GetNextBatch();
+        const float* values = batch.data.ReadData<float>();
+        return std::vector<float>(values, values + batch.data.NumElements());
+    };
+    const auto clean_val = read_part(preprocessing, cyxwiz::BatcherPhase::Val);
+    Check(!clean_val.empty() && read_part(augmented, cyxwiz::BatcherPhase::Val) == clean_val,
+          "AudioDatasetBatcher does not augment validation clips");
+    Check(read_part(augmented, cyxwiz::BatcherPhase::Train) != read_part(preprocessing, cyxwiz::BatcherPhase::Train),
+          "AudioDatasetBatcher still augments training clips");
+
+    // Clips by number (TOFIX178 6.0b, Local Debug's picked sample): a clip as
+    // validation reads it, even from a training clip of an augmented graph,
+    // with its part.
+    cyxwiz::AudioDatasetBatcher picker(entry, augmented, 4, halves, false, 0, 23);
+    const auto& val_part = picker.Part(cyxwiz::BatcherPhase::Val);
+    Check(!val_part.empty(), "the audio split has a validation clip");
+    const size_t sample_dim = static_cast<size_t>(picker.GetFeatureRows() * picker.GetFeatureCols());
+    for (size_t clip = 0; clip < 4; ++clip) {
+        const auto picked = picker.GetSourceSamples({clip});
+        Check(picked && picked->size == 1 && picked->data.NumElements() == sample_dim,
+              "an audio clip is picked by number");
+        const auto part = picker.SourceSamplePart(clip);
+        const auto& members = picker.Part(part ? *part : cyxwiz::BatcherPhase::Train);
+        Check(part && std::find(members.begin(), members.end(), clip) != members.end(),
+              "a picked clip names its part");
+        const auto again = picker.GetSourceSamples({clip});
+        const float* first = picked->data.ReadData<float>();
+        const float* second = again->data.ReadData<float>();
+        Check(std::vector<float>(first, first + sample_dim) == std::vector<float>(second, second + sample_dim),
+              "a picked clip is read without augmentation");
+    }
+    // The unshuffled validation batch starts with the part's first clip.
+    const auto picked_val = picker.GetSourceSamples({val_part.front()});
+    const float* picked_values = picked_val->data.ReadData<float>();
+    Check(std::vector<float>(picked_values, picked_values + sample_dim) ==
+              std::vector<float>(clean_val.begin(), clean_val.begin() + static_cast<std::ptrdiff_t>(sample_dim)),
+          "a picked validation clip equals the validation batch's clip");
+    bool past_refused = false;
+    try {
+        picker.GetSourceSamples({4});
+    } catch (const std::out_of_range&) {
+        past_refused = true;
+    }
+    Check(past_refused, "a clip past the dataset is past_refused");
 }
 
 } // namespace

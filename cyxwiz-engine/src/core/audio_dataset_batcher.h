@@ -7,6 +7,7 @@
 #include "formats/audio_dataset.h"
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <random>
 #include <vector>
 
@@ -54,6 +55,14 @@ public:
     bool IsEpochComplete() const override;
     size_t GetNumBatches() const override;
     size_t GetNumSamples() const override;
+    // Clips by number, as validation sees them: no augmentation (TOFIX178
+    // 6.0b, Local Debug's picked sample).
+    std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    size_t SourceSampleCount() const override;
+    // The part (of the three this batcher holds) the clip falls in.
+    std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::string SourceSampleName(size_t index) const override;
+    std::vector<std::string> ClassNames() const override;
 
     void SetNormalization(float mean, float std_dev) override;
     void SetOneHotEncoding(size_t num_classes) override;
@@ -70,6 +79,10 @@ public:
     const std::vector<size_t>& Part(BatcherPhase phase) const;
 
 private:
+    // These clips as one batch: the features, per-clip z-score, Normalize and
+    // the label form; augmented when `augment`.
+    Batch AssembleBatch(const size_t* indices, size_t n, bool augment);
+
     std::shared_ptr<AudioDataset> dataset_;
 
     int batch_size_;
@@ -102,5 +115,17 @@ private:
     std::mt19937 rng_;
     uint32_t augmentation_round_ = 0;  // training epochs begun (augmentation draws)
 };
+
+// The Data Split's settings for the training dataset's audio batcher.
+SampleSplitSettings AudioTrainingSplit(const TrainingConfiguration& config);
+// The audio batcher training reads for `entry` (TrainingManager, Local
+// Debug): the graph's feature node, `split`'s parts, drop-last, Normalize and
+// the label form.
+std::shared_ptr<AudioDatasetBatcher> MakeAudioTrainingBatcher(const DataRegistry::AudioDatasetEntry& entry,
+                                                              const TrainingConfiguration& config, int batch_size,
+                                                              const SampleSplitSettings& split);
+// The model input the batcher's features give: rows x cols flattened, the
+// [bins, frames] shape and, for a Conv1D, [frames, bins].
+void ApplyAudioInputShape(const AudioDatasetBatcher& batcher, TrainingConfiguration& config);
 
 } // namespace cyxwiz

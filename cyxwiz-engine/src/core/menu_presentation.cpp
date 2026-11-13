@@ -570,6 +570,25 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                            Opts{need_sel}));
         i.push_back(Action(f, "nodes.delete", "Delete Selected", "Deletes the selected nodes.", Opts{need_sel}));
         i.push_back(Sep());
+        {
+            const std::string on_canvas = in_canvas ? "" : "Click on the Studio canvas first.";
+            i.push_back(Sub("nodes.freeze", "Freeze", "Keeps layers' weights as they are while the rest trains.",
+                            {Action(f, "nodes.freeze_selected", "Freeze Selected",
+                                    "Freezes the selected layers that hold weights.", Opts{need_sel}),
+                             Action(f, "nodes.unfreeze_selected", "Unfreeze Selected",
+                                    "Lets the selected layers train again.", Opts{need_sel}),
+                             Sep(),
+                             Action(f, "nodes.freeze_loaded", "Freeze Every Layer Loaded from the File",
+                                    "Freezes the layers the Data Loader's weights file fills.", Opts{on_canvas}),
+                             Action(f, "nodes.freeze_but_head", "Freeze All but the Head",
+                                    "Freezes every layer with weights except the last.", Opts{on_canvas}),
+                             Action(f, "nodes.freeze_but_last", "Freeze All but the Last N Layers...",
+                                    "Asks how many layers keep training, counted from the output.", Opts{on_canvas}),
+                             Sep(),
+                             Action(f, "nodes.unfreeze_all", "Unfreeze All", "Lets every layer train.",
+                                    Opts{on_canvas})}));
+        }
+        i.push_back(Sep());
         i.push_back(Action(f, "nodes.custom_node_editor", "Custom Node Editor...", "Create or edit your own node type."));
         model.menus.push_back(std::move(m));
     }
@@ -664,7 +683,10 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Action(f, "tools.model_health", "Training Health",
                                 "Opens the Model window on Health: weights, gradients and dead units of each layer, epoch by epoch."),
                          Action(f, "tools.projector", "Embedding Projector",
-                                "Opens the Model window on Projector: what a layer makes of the test rows, in two dimensions.")}));
+                                "Opens the Model window on Projector: what a layer makes of the test rows, in two dimensions."),
+                         Sep(),
+                         Action(f, "tools.nas", "Neural Architecture Search",
+                                "Changed versions of the graph, scored, and the best ones trained the way Train does.")}));
         i.push_back(Sub("tools.evaluation", "Evaluation", "Measure how well a model performs.",
                         {Action(f, "tools.cross_validation", "Cross-Validation",
                                 "Opens Data Studio > Results > Cross-validation: the graph trained once per fold, each fold scored once."),

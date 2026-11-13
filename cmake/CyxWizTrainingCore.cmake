@@ -44,6 +44,9 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/arrow_dataset_batcher.cpp
     ${_cyxwiz_engine_src}/core/label_vocabulary.cpp
     ${_cyxwiz_engine_src}/core/model_builder.cpp
+    ${_cyxwiz_engine_src}/core/model_memory_estimate.cpp
+    ${_cyxwiz_engine_src}/core/layer_capture.cpp
+    ${_cyxwiz_engine_src}/core/layer_capture_store.cpp
     ${_cyxwiz_engine_src}/core/guarded_extension_module.cpp
     ${_cyxwiz_engine_src}/core/stacked_metric_loss.cpp
     ${_cyxwiz_engine_src}/core/metric_learning_mining.cpp
@@ -55,6 +58,10 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/parquet_arrow_batcher.cpp
     ${_cyxwiz_engine_src}/core/dataset_base.cpp
     ${_cyxwiz_engine_src}/core/checkpoint_manager.cpp
+    ${_cyxwiz_engine_src}/core/weight_file.cpp
+    ${_cyxwiz_engine_src}/core/weight_match.cpp
+    ${_cyxwiz_engine_src}/core/weight_start.cpp
+    ${_cyxwiz_engine_src}/core/tensor_file.cpp
     ${_cyxwiz_engine_src}/core/checkpoint_tokenizer.cpp
     ${_cyxwiz_engine_src}/core/crash_run_recorder.cpp
     ${_cyxwiz_engine_src}/core/training_trace_collector.cpp

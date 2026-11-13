@@ -180,13 +180,54 @@ class Snake(cyx.Module):
 | `parameter(name)` | Its current value. Read it in `forward`: the optimizer replaces it after each step |
 | `set_gradient(name, tensor)` | In `backward`: the loss gradient of the parameter, with the parameter's shape (another shape is refused) |
 | `gradient(name)`, `parameter_names()` | Read back what you stored |
+| `add_state(name, tensor)` | Declare a tensor the module keeps but does not train, such as a running mean. It is saved and loaded with the parameters and takes no gradient |
+| `state(name)`, `set_state(name, tensor)` | Read it, and replace it with a tensor of the same shape (in `forward`, while `is_training()`) |
+| `state_names()` | The names added with `add_state` |
 
 A parameter's name is the key its value is saved under; read
 [python-nodes.md](python-nodes.md) section 8 before renaming one.
 Parameters are added only to modules defined in Python; built-in modules such
 as `LinearModule` refuse `add_parameter`. You may instead override
 `get_parameters`, `set_parameters`, `get_gradients` and `has_parameters`
-yourself; the helpers above do it for you.
+yourself; the helpers above do it for you. If you do, and `get_parameters`
+returns state with no gradient, also override `get_state_names` to name it.
+
+State, as BatchNorm keeps its running mean, is updated in `forward`, not by
+the optimizer, and used in evaluation:
+
+```python
+class RunningCenter(cyx.Module):
+    """scale * (x - running_mean)"""
+
+    def __init__(self, features, momentum=0.1):
+        super().__init__()
+        self.momentum = momentum
+        self.add_parameter("scale", cyx.Tensor.full([1], 1.0))
+        self.add_state("running_mean", cyx.Tensor.full([1, features], 0.0))
+
+    def forward(self, x):
+        if self.is_training():
+            mean = self.state("running_mean")
+            self.set_state("running_mean", mean * (1.0 - self.momentum) + x.mean(0, True) * self.momentum)
+        self.centered = x - self.state("running_mean").broadcast_to(x.shape())
+        self.s = self.parameter("scale").broadcast_to(x.shape())
+        return self.centered * self.s
+
+    def backward(self, grad_output):
+        self.set_gradient("scale", (grad_output * self.centered).sum().reshape([1]))
+        return grad_output * self.s
+```
+
+`parameter` and `set_gradient` refuse a state name, and `gradcheck` skips
+state.
+
+The Engine's training-memory estimate (Compile, F7) counts each layer's
+output. A module that keeps more for `backward`, such as attention weights,
+can say how much by defining `cached_elements_per_sample(self,
+sample_input_shape)`; one whose `backward` allocates large temporaries can
+define `backward_working_elements_per_sample(self, sample_input_shape)`. Both
+return a number of elements per sample (the shape has no batch axis) and
+default to 0.
 
 ## 5. Training and evaluation mode
 

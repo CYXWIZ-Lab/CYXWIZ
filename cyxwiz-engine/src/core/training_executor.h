@@ -2,6 +2,8 @@
 
 #include "executable_model.h"
 #include "graph_compiler.h"
+#include "layer_capture.h"
+#include "layer_capture_store.h"
 #include "training_health.h"
 #include "metric_learning_metrics.h"
 #include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
@@ -143,7 +145,7 @@ struct TrainingMetrics {
 
     // Resume checkpoints (TOFIX118 P4e).
     std::string last_resume_checkpoint;  // newest complete one written by this run
-    std::string initialized_from;        // warm-start checkpoint (model weights only)
+    std::string initialized_from;        // warm-start checkpoint or weights file (model weights only)
     int resumed_after_epoch = 0;         // > 0: this run continued a checkpoint
     bool resume_exact = false;           // seeds and data order replay exactly
 };
@@ -292,6 +294,41 @@ public:
         resume_checkpoint_callback_ = std::move(callback);
     }
 
+    // Layer snapshots (TOFIX178 6.1b). Enable before Train: after every
+    // `every_epochs`-th epoch and after the last one (an early stop's too),
+    // CaptureStep on `features` / `labels`, batch first as a batcher hands
+    // them out; or, when `source_count` > 0, on items `source_index` ..
+    // `source_index + source_count - 1` taken from the run's own batchers at
+    // the start of Train (as validation sees them, GetSourceSampleRange;
+    // snapshots are off when no batcher reaches items by number). Each is saved with the training run in the debug run store
+    // (layer_capture_store.h, label EpochCaptureLabel) when `save`, and the
+    // captures of all but the last `keep_runs` runs are then deleted (6.1c).
+    // A snapshot that fails is logged and training goes on.
+    struct LayerSnapshotSchedule {
+        LayerCaptureOptions options;
+        int every_epochs = 5;
+        Tensor features;
+        Tensor labels;
+        size_t source_index = 0;
+        size_t source_count = 0;
+        bool save = true;
+        size_t keep_runs = 10;
+        std::string graph_name;   // saved with the run's epochs (training.json)
+        std::string output_rule;  // how the output reads (layer_view::OutputRuleKey), saved there too
+    };
+    void EnableLayerSnapshots(LayerSnapshotSchedule schedule);
+    struct LayerSnapshot {
+        int epoch = 0;
+        // The tensors, for a snapshot that is not saved; a saved one is read
+        // back from the run store (LoadLayerCapture) and holds none here.
+        std::shared_ptr<const LayerCapture> capture;
+        // The run and label it is saved under; empty when not saved.
+        std::string run_id;
+        std::string label;
+    };
+    // The snapshots taken so far, in epoch order (any thread).
+    std::vector<LayerSnapshot> LayerSnapshots() const;
+
     /**
      * Pause training (thread-safe)
      */
@@ -433,6 +470,13 @@ private:
     ResumeCheckpointCallback resume_checkpoint_callback_;
     int last_mid_epoch_checkpoint_step_ = -1;
     std::optional<TrainingEpochProgress> pending_epoch_resume_;
+    std::optional<LayerSnapshotSchedule> layer_snapshot_schedule_;
+    std::vector<BuiltModuleProvenance> module_provenance_;
+    mutable std::mutex layer_snapshots_mutex_;
+    std::vector<LayerSnapshot> layer_snapshots_;
+    // Every epoch's metrics while snapshots are on, saved with each snapshot.
+    TrainingRunRecord snapshot_run_record_;
+    void TakeLayerSnapshot(int epoch, const std::string& run_id);
     // Generation previews (TOFIX159): bound for the duration of Train.
     std::unique_ptr<TrainingGenerationPreview> generation_preview_;
     // The range test of a learning_rate_range run; the loss of the batch

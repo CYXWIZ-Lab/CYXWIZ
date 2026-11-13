@@ -7,6 +7,9 @@
 #include <cstring>
 #include <limits>
 #include <numeric>
+#include <stdexcept>
+#include <filesystem>
+#include <string>
 #include <unordered_set>
 #include <utility>
 
@@ -149,14 +152,46 @@ Tensor ImageDatasetBatcher::GatherRows(const size_t* indices, size_t n) {
 }
 
 Batch ImageDatasetBatcher::GetNextBatch() {
+    if (!images_ || IsEpochComplete()) return {};
+    const size_t actual_size = std::min(static_cast<size_t>(batch_size_), epoch_order_.size() - current_idx_);
+    if (actual_size == 0) return {};
+    Batch batch = AssembleBatch(epoch_order_.data() + current_idx_, actual_size,
+                                current_phase_ == BatcherPhase::Train);
+    current_idx_ += actual_size;
+    return batch;
+}
+
+size_t ImageDatasetBatcher::SourceSampleCount() const {
+    return images_ ? images_->Count() : 0;
+}
+
+std::optional<Batch> ImageDatasetBatcher::GetSourceSamples(const std::vector<size_t>& indices) {
+    if (!images_ || indices.empty()) return std::nullopt;
+    for (size_t index : indices) {
+        if (index >= images_->Count())
+            throw std::out_of_range("image " + std::to_string(index) + " is outside the " +
+                                    std::to_string(images_->Count()) + " images");
+    }
+    return AssembleBatch(indices.data(), indices.size(), /*train=*/false);
+}
+
+std::optional<BatcherPhase> ImageDatasetBatcher::SourceSamplePart(size_t index) const {
+    for (BatcherPhase phase : {BatcherPhase::Train, BatcherPhase::Val, BatcherPhase::Test}) {
+        const auto& part = Part(phase);
+        if (std::find(part.begin(), part.end(), index) != part.end()) return phase;
+    }
+    return std::nullopt;
+}
+
+std::string ImageDatasetBatcher::SourceSampleName(size_t index) const {
+    const auto& files = Files();
+    return index < files.size() ? std::filesystem::path(files[index]).filename().string() : std::string();
+}
+
+// The images with these numbers as one batch: labels, the transforms (random
+// ones on train batches only), the batch mix and Normalize on the device.
+Batch ImageDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_size, bool train) {
     Batch batch;
-    if (!images_ || IsEpochComplete()) return batch;
-
-    size_t actual_size = std::min(static_cast<size_t>(batch_size_),
-                                   epoch_order_.size() - current_idx_);
-    if (actual_size == 0) return batch;
-
-    const size_t* indices = epoch_order_.data() + current_idx_;
     const bool onehot = !scalar_label_mode_ && do_onehot_ && num_classes_ > 0;
     std::vector<float> batch_labels(onehot ? actual_size * num_classes_ : actual_size, 0.0f);
     for (size_t i = 0; i < actual_size; ++i) {
@@ -180,8 +215,7 @@ Batch ImageDatasetBatcher::GetNextBatch() {
     // Normalize on the device; the batch stays there for the model.
     Tensor rows = GatherRows(indices, actual_size);
     if (!augmentation_.Empty()) {
-        rows = augmentation_.Apply(rows, decoded_shape_, current_phase_ == BatcherPhase::Train,
-                                   augmentation_rng_, onehot ? &batch.labels : nullptr);
+        rows = augmentation_.Apply(rows, decoded_shape_, train, augmentation_rng_, onehot ? &batch.labels : nullptr);
     }
     batch.data = flatten_
         ? rows
@@ -191,8 +225,6 @@ Batch ImageDatasetBatcher::GetNextBatch() {
     // test results name the files with them.
     batch.row_ids.assign(indices, indices + actual_size);
     batch.size = actual_size;
-    current_idx_ += actual_size;
-
     return batch;
 }
 

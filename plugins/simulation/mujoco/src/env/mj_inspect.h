@@ -8,6 +8,8 @@
 
 #include "mj_scene.h"
 
+#include "mj_model_ref.h"
+
 #include <mujoco/mujoco.h>
 
 #include <array>
@@ -76,8 +78,9 @@ bool ApplyKeyframe(const mjModel* m, mjData* d, const MjKeyframe& keyframe, std:
 // The model file's own <key> elements: their names
 std::vector<std::string> ModelKeyframes(const mjModel* m);
 
-// <project>/mujoco/keyframes/<model file name without extension>.json
-std::filesystem::path KeyframesFile(const std::filesystem::path& project, const std::string& model_path);
+// <project>/mujoco/keyframes/<model file name>-<id>.json, the id from the
+// model's reference (TOFIX219), so another PC finds the same keyframes
+std::filesystem::path KeyframesFile(const std::filesystem::path& project, const MjModelRef& model);
 std::string EncodeKeyframes(const std::vector<MjKeyframe>& keyframes, const std::string& model_path);
 std::vector<MjKeyframe> DecodeKeyframes(const std::string& text);  // broken text: none
 bool SaveKeyframes(const std::filesystem::path& file, const std::vector<MjKeyframe>& keyframes,

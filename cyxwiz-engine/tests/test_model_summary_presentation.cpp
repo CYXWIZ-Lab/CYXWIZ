@@ -175,6 +175,21 @@ Graph ImageMix() {
     return g;
 }
 
+// Squeeze-Excitation (torchvision.ops.SqueezeExcitation(16, 4)): its two
+// gate layers are counted, the pooling and the scaling are not.
+Graph SeBlock() {
+    Graph g;
+    const int loader = g.Data("tabular", "[8, 8, 3]");
+    const int last = g.Chain(loader, {
+        g.Add(gui::NodeType::Conv2D, "Conv same", {{"filters", "16"}, {"kernel_size", "3"}, {"padding", "same"}}),
+        g.Add(gui::NodeType::SqueezeExcitation, "SE", {{"width_mode", "exact"}, {"squeeze_channels", "4"}}),
+        g.Add(gui::NodeType::GlobalAvgPool, "Global pool"),
+        g.Add(gui::NodeType::Dense, "Head", {{"units", "3"}}),
+    });
+    g.Finish(loader, last);
+    return g;
+}
+
 Graph Residual() {
     Graph g;
     const int loader = g.Data("tabular", "[8]");
@@ -366,7 +381,7 @@ int main(int argc, char** argv) {
     if (file.good()) file >> fixture;
     const std::vector<std::pair<std::string, Builder>> cases = {
         {"mnist_cnn", MnistCnn}, {"image_mix", ImageMix}, {"residual", Residual},
-        {"recurrent", Recurrent}, {"attention", Attention}};
+        {"recurrent", Recurrent}, {"attention", Attention}, {"se_block", SeBlock}};
     // MNIST from a CSV: the leading Reshape reads each row as a 28 x 28 x 1
     // image (it is the data's shape), so the CNN builds.
     {

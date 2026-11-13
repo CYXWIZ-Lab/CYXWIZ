@@ -147,6 +147,19 @@ void CheckNer() {
               lstm.parameters == "647,168" && lstm.output_memory == "3.00 MB",
           "BiLSTM compiled facts");
 
+    Check(lstm.parameters_label == "Learnable parameters", "a trained layer's weights are learnable parameters");
+    {
+        // The node's Frozen setting: the weights are counted, not learned.
+        Compiled frozen = ner;
+        for (auto& layer : frozen.config.layers) {
+            if (layer.name == "BiLSTM Sequence Encoder") layer.parameters["frozen"] = "true";
+        }
+        const auto card = Card(frozen, "BiLSTM Sequence Encoder", "LSTM");
+        Check(card.parameters_label == "Weights" && card.parameters == "647,168 frozen" &&
+                  card.parameter_note == "Frozen: these weights stay as they are while the rest trains.",
+              "a frozen layer's card: " + card.parameters_label + " " + card.parameters);
+    }
+
     const auto dropout = Card(ner, "Dropout", "Dropout");
     Check(dropout.parameters == "0" && dropout.output_sample == "[96, 256]", "Dropout has no parameters");
 

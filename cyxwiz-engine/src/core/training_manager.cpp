@@ -1,6 +1,7 @@
 #include "training_progress_estimate.h"
 #include <chrono>
 #include "training_manager.h"
+#include "training_recipe.h"
 #include "sequence_arrow_batcher.h"
 #include "classification_decision.h"
 #include "model_builder.h"
@@ -8,15 +9,8 @@
 #include <cstdint>
 #include "crash_run_recorder.h"
 #include "training_report_window.h"
-#include "image_batchers.h"
-#include "image_dataset_batcher.h"
-#include <stdexcept>
-#include "audio_dataset_batcher.h"
-#include <cyxwiz/error_codes.h>
-#include "training_batcher_setup.h"
 #include "training_trace_collector.h"
 #include "training_run_comparison.h"
-#include "worker_defaults.h"
 #include "../gui/panels/training_plot_panel.h"
 #include <spdlog/spdlog.h>
 
@@ -35,19 +29,6 @@ std::optional<ProcessDeviceSelection> CurrentThreadModelDevice() {
     return std::nullopt;
 }
 
-
-void NormalizeTrainingNumWorkers(TrainingConfiguration& config,
-                                 const char* context) {
-    const int requested = config.num_workers;
-    const int normalized = ClampNumWorkersToPlatform(requested);
-    if (normalized != requested) {
-        spdlog::warn("{}: clamping num_workers from {} to {} based on platform",
-                     context, requested, normalized);
-        config.num_workers = normalized;
-    } else if (config.num_workers > 0) {
-        spdlog::info("{}: using num_workers={}", context, config.num_workers);
-    }
-}
 
 std::string BuildTrainingTaskTerminalMessage(
     const TrainingMetrics& metrics) {
@@ -116,8 +97,8 @@ bool TrainingManager::StartTrainingCommon(
 {
     // Caller has already verified !is_training_.load() and acquired
     // mutex_. This helper carries the common plumbing that used to
-    // be duplicated across StartTraining{Legacy, Arrow, Parquet,
-    // Image, Audio, Text} verbatim.
+    // be duplicated across the per-data start functions (legacy, Arrow, Parquet,
+    // image, audio, text) verbatim.
     is_training_.store(true);
     stop_requested_.store(false);
     {
@@ -125,6 +106,11 @@ bool TrainingManager::StartTrainingCommon(
         cached_metrics_ = TrainingMetrics();
         cached_metrics_.total_epochs = epochs;
         cached_metrics_.is_training = true;
+    }
+    {
+        std::lock_guard<std::mutex> lock(next_layer_snapshots_mutex_);
+        if (executor && next_layer_snapshots_) executor->EnableLayerSnapshots(std::move(*next_layer_snapshots_));
+        next_layer_snapshots_.reset();
     }
     const bool sequence_mode =
         executor && executor->GetConfig().sequence_batch.enabled;
@@ -251,61 +237,35 @@ bool TrainingManager::StartTrainingCommon(
     return true;
 }
 
-#ifndef CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
-bool TrainingManager::StartTraining(
+bool TrainingManager::StartTrainingRecipe(
+    const TrainingRecipe& recipe,
     TrainingConfiguration config,
-    ExternalBatcherFactory batcher_factory,
     int epochs,
     int batch_size,
     std::weak_ptr<TrainingPlotPanel> plot_panel,
     std::function<void(bool)> node_editor_callback)
 {
-    // Check if already training
+    if (!recipe) {
+        spdlog::error("TrainingManager: Cannot start training - {}", recipe.error);
+        return false;
+    }
     if (is_training_.load()) {
         spdlog::warn("TrainingManager: Cannot start training - already training");
         return false;
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // Double-check after acquiring lock
-    if (is_training_.load()) {
-        return false;
-    }
-
-    NormalizeTrainingNumWorkers(config, "TrainingManager");
-
-    auto executor = std::make_unique<TrainingExecutor>(
-        std::move(config), std::move(batcher_factory));
-    return StartTrainingCommon(
-        std::move(executor), epochs, batch_size, plot_panel,
-        std::move(node_editor_callback),
-        "Training Model", "Training from Node Graph");
-}
-#endif
-
-bool TrainingManager::StartTrainingExternal(
-    TrainingConfiguration config,
-    ResolvedExternalBatchers batchers,
-    int epochs,
-    int batch_size,
-    std::weak_ptr<TrainingPlotPanel> plot_panel,
-    std::function<void(bool)> node_editor_callback)
-{
-    if (is_training_.load() || !batchers.train) {
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
     if (is_training_.load()) return false;
 
-    NormalizeTrainingNumWorkers(config, "TrainingManager");
-    auto executor = std::make_unique<TrainingExecutor>(
-        std::move(config), std::move(batchers));
+    std::string error;
+    auto executor = recipe.make(std::move(config), batch_size, error);
+    if (!executor) {
+        spdlog::error("TrainingManager: Cannot start training - {}", error);
+        return false;
+    }
     return StartTrainingCommon(
         std::move(executor), epochs, batch_size, plot_panel,
-        std::move(node_editor_callback),
-        "Training Model (Resolved Roles)", "Training from resolved dataset roles");
+        std::move(node_editor_callback), recipe.task_name, recipe.start_message);
 }
 
 std::shared_ptr<IExecutableModel> TrainingManager::GetActiveModel() const {
@@ -558,395 +518,6 @@ CheckpointEvaluationLoadResult TrainingManager::LoadCheckpointForEvaluation(
         result.metadata.val_loss);
     return result;
 }
-bool TrainingManager::StartTrainingArrow(
-    TrainingConfiguration config,
-    std::shared_ptr<ArrowDataset> arrow_dataset,
-    const std::string& label_column,
-    int epochs,
-    int batch_size,
-    std::weak_ptr<TrainingPlotPanel> plot_panel,
-    std::function<void(bool)> node_editor_callback)
-{
-    // Check if already training
-    if (is_training_.load()) {
-        spdlog::warn("TrainingManager: Cannot start training - already training");
-        return false;
-    }
-
-    if (!arrow_dataset) {
-        spdlog::error("TrainingManager: Arrow dataset is null");
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // Double-check after acquiring lock
-    if (is_training_.load()) {
-        return false;
-    }
-
-    // Update input size from actual data
-    size_t num_cols = arrow_dataset->GetNumColumns();
-    size_t num_rows = arrow_dataset->GetNumRows();
-
-    // Input size = all columns except label
-    // ArrowDatasetBatcher auto-detects label columns, so always reserve one column for label
-    // when dataset has multiple columns (typical ML dataset structure).
-    //
-    // Phase 4 Time-Series: trust the GraphCompiler's input_size override.
-    // For TS graphs GraphCompiler sets input_size from the TimeSeriesWindow
-    // operator's input_width param. The materialized Arrow table ALSO has
-    // an extra `__partition__` metadata column, so `num_cols - 1` would
-    // double-count it as a feature and build a Linear layer of the wrong
-    // size (crash at first forward pass due to dimension mismatch with the
-    // batch tensor, which correctly excludes both label AND __partition__).
-    const auto input_resolution =
-        ResolveTabularTrainingInputSize(config, arrow_dataset->GetSchema(), label_column);
-    config.input_size = input_resolution.input_size;
-
-    if (input_resolution.used_compiled_override) {
-        spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, "
-                     "input_size={} (from GraphCompiler's TimeSeriesWindow override)",
-                     num_rows, num_cols, config.input_size);
-    } else if (input_resolution.has_separate_label_column) {
-        spdlog::info("TrainingManager: Arrow dataset has {} rows, {} cols, input_size={} (label '{}')",
-                     num_rows, num_cols, config.input_size, label_column);
-    } else {
-        spdlog::warn("TrainingManager: Arrow dataset has no label column '{}' ({} cols, input_size={})", label_column,
-                     num_cols, config.input_size);
-    }
-
-    NormalizeTrainingNumWorkers(config, "TrainingManager");
-    spdlog::info("TrainingManager: resolving Arrow class-weight/balancing hints");
-    TryApplyBalancedClassWeightsFromArrowTable(
-        config,
-        arrow_dataset ? arrow_dataset->GetArrowTable() : nullptr,
-        label_column,
-        /*partition_column=*/"",
-        "TrainingManager Arrow");
-    spdlog::info("TrainingManager: Arrow class-weight/balancing hint resolution complete");
-
-    spdlog::info("TrainingManager: creating Arrow TrainingExecutor");
-    auto executor = std::make_unique<TrainingExecutor>(std::move(config), arrow_dataset, label_column);
-    spdlog::info("TrainingManager: Arrow TrainingExecutor created");
-    return StartTrainingCommon(
-        std::move(executor), epochs, batch_size, plot_panel,
-        std::move(node_editor_callback),
-        "Training Model (Arrow)", "Training from Arrow Dataset");
-}
-
-bool TrainingManager::StartTrainingParquet(
-    TrainingConfiguration config,
-    std::shared_ptr<ParquetBackedDataset> parquet_dataset,
-    const std::string& label_column,
-    int epochs,
-    int batch_size,
-    std::weak_ptr<TrainingPlotPanel> plot_panel,
-    std::function<void(bool)> node_editor_callback)
-{
-    // Mirrors StartTrainingArrow; the only difference is the dataset type
-    // carried through to the TrainingExecutor, which picks its Parquet
-    // batcher based on that type.
-    if (is_training_.load()) {
-        spdlog::warn("TrainingManager: Cannot start training - already training");
-        return false;
-    }
-
-    if (!parquet_dataset) {
-        spdlog::error("TrainingManager: Parquet dataset is null");
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (is_training_.load()) {
-        return false;
-    }
-
-    // Update input size from actual data (same logic as StartTrainingArrow).
-    // Parquet column counts come from the dataset's cached schema, so this
-    // is a metadata lookup, not a disk read.
-    size_t num_cols = parquet_dataset->GetNumColumns();
-    size_t num_rows = parquet_dataset->GetNumRows();
-    const auto input_resolution =
-        ResolveTabularTrainingInputSize(config, parquet_dataset->GetSchema(), label_column);
-    config.input_size = input_resolution.input_size;
-
-    if (input_resolution.used_compiled_override) {
-        spdlog::info("TrainingManager: Parquet dataset has {} rows, {} cols, "
-                     "input_size={} (from GraphCompiler's TimeSeriesWindow override)",
-                     num_rows, num_cols, config.input_size);
-    } else if (input_resolution.has_separate_label_column) {
-        spdlog::info("TrainingManager: Parquet dataset has {} rows, {} cols, input_size={} (label '{}')",
-                     num_rows, num_cols, config.input_size, label_column);
-    } else {
-        spdlog::warn("TrainingManager: Parquet dataset has no label column '{}' ({} cols, input_size={})", label_column,
-                     num_cols, config.input_size);
-    }
-
-    NormalizeTrainingNumWorkers(config, "TrainingManager");
-
-    auto executor = std::make_unique<TrainingExecutor>(std::move(config), parquet_dataset, label_column);
-    return StartTrainingCommon(
-        std::move(executor), epochs, batch_size, plot_panel,
-        std::move(node_editor_callback),
-        "Training Model (Parquet)", "Training from Parquet-backed Dataset");
-}
-
-bool TrainingManager::StartTrainingSequence(
-    TrainingConfiguration config,
-    std::unique_ptr<ISequenceBatcher> sequence_batcher,
-    std::vector<std::string> id_to_label,
-    int epochs,
-    int batch_size,
-    std::weak_ptr<TrainingPlotPanel> plot_panel,
-    std::function<void(bool)> node_editor_callback)
-{
-    if (is_training_.load()) {
-        spdlog::warn("TrainingManager: Cannot start sequence training - already training");
-        return false;
-    }
-
-    if (!sequence_batcher) {
-        spdlog::error("TrainingManager: sequence batcher is null");
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (is_training_.load()) {
-        return false;
-    }
-
-    NormalizeTrainingNumWorkers(config, "TrainingManager");
-
-    auto executor = std::make_unique<TrainingExecutor>(
-        std::move(config), std::move(sequence_batcher), std::move(id_to_label));
-    return StartTrainingCommon(
-        std::move(executor), epochs, batch_size, plot_panel,
-        std::move(node_editor_callback),
-        "Training Model (Sequence)", "Training from sequence dataset");
-}
-
-#ifndef CYXWIZ_TRAINING_MANAGER_ARROW_HARNESS
-bool TrainingManager::StartTrainingImage(
-    TrainingConfiguration config,
-    const DataRegistry::ImageDatasetEntry& image_entry,
-    int epochs,
-    int batch_size,
-    std::weak_ptr<TrainingPlotPanel> plot_panel,
-    std::function<void(bool)> node_editor_callback)
-{
-    if (is_training_.load()) {
-        spdlog::warn("TrainingManager: Cannot start training - already training");
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (is_training_.load()) return false;
-
-    NormalizeTrainingNumWorkers(config, "TrainingManager");
-
-    // A Validation or Test image dataset wired to the Data Split (TOFIX178
-    // 1.5): read in full as that part, through the same image steps.
-    std::optional<DataRegistry::ImageDatasetEntry> dev_entry, test_entry;
-    for (auto [role, entry] : {std::pair{&config.dataset_roles.dev, &dev_entry},
-                               std::pair{&config.dataset_roles.test, &test_entry}}) {
-        if (!role->IsSupplied() || role->joined_to_training) continue;
-        const auto* found = DataRegistry::Instance().GetImageDatasetEntry(role->dataset_name);
-        if (!found) {
-            spdlog::error("TrainingManager: '{}' is wired as {} but is not a loaded image dataset", role->dataset_name,
-                          role == &config.dataset_roles.dev ? "validation" : "test");
-            return false;
-        }
-        *entry = *found;
-    }
-
-    // On the training thread: the images decoded once at the graph's Resize
-    // size and mode (from the project's cache/images when they were before;
-    // TOFIX178 1.3b), then the batcher gathers from them and runs the image
-    // transforms and Normalize on the device. A Stop stops the decoding.
-    auto stop_requested = std::make_shared<std::function<bool()>>();
-    ExternalBatcherFactory factory = [image_entry, dev_entry, test_entry, stop_requested](
-                                         const TrainingConfiguration& run, int run_batch_size) {
-        const auto stop = [stop_requested] { return *stop_requested && (*stop_requested)(); };
-        const auto make_batcher = [&](const DataRegistry::ImageDatasetEntry& entry, const SampleSplitSettings& split) {
-            return std::shared_ptr<ImageDatasetBatcher>(MakeImageBatcher(entry, run, run_batch_size, split, stop));
-        };
-        // The Data Split's shares (a wired role's share is 0: the compiler
-        // gave it to train) and its seed, by class when stratified.
-        const SampleSplitSettings split = ImageSplitOf(run);
-        auto batcher = make_batcher(image_entry, split);
-        if (batcher->SamplesIn(BatcherPhase::Train) == 0)
-            throw std::runtime_error("the image dataset has no images to train on");
-
-        // The compiler set input_shape [H, W, C] from the same Resize size and
-        // transforms (ApplyImageInputShape), so the model and the batches agree.
-        spdlog::info("TrainingManager: Image dataset {} train / {} validation / {} test images, input_size={}, {} "
-                     "image steps, split seed={}", batcher->SamplesIn(BatcherPhase::Train),
-                     batcher->SamplesIn(BatcherPhase::Val), batcher->SamplesIn(BatcherPhase::Test), run.input_size,
-                     run.image_augmentation.ops.size() + run.image_cv_steps.size(), run.split_seed);
-
-        // One batcher, three parts by phase; a wired role reads its own set.
-        ResolvedExternalBatchers batchers;
-        batchers.train = batcher;
-        if (dev_entry) {
-            batchers.dev = make_batcher(*dev_entry, SampleSplitSettings{0.0f, 1.0f, 0.0f, false, split.seed});
-        } else if (batcher->SamplesIn(BatcherPhase::Val) > 0) {
-            batchers.dev = batcher;
-        }
-        if (test_entry) {
-            batchers.test = make_batcher(*test_entry, SampleSplitSettings{0.0f, 0.0f, 1.0f, false, split.seed});
-        } else if (batcher->SamplesIn(BatcherPhase::Test) > 0) {
-            batchers.test = batcher;
-        }
-        return batchers;
-    };
-
-    auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(factory));
-    *stop_requested = [run = executor.get()] { return run->StopRequested(); };
-    return StartTrainingCommon(
-        std::move(executor), epochs, batch_size, plot_panel,
-        std::move(node_editor_callback),
-        "Training Model (Image)", "Training from Image Dataset");
-}
-
-bool TrainingManager::StartTrainingAudio(
-    TrainingConfiguration config,
-    const DataRegistry::AudioDatasetEntry& audio_entry,
-    int epochs,
-    int batch_size,
-    std::weak_ptr<TrainingPlotPanel> plot_panel,
-    std::function<void(bool)> node_editor_callback)
-{
-    if (is_training_.load()) {
-        spdlog::warn("TrainingManager: Cannot start training - already training");
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (is_training_.load()) return false;
-
-    if (!config.audio_preprocessing.has_feature_node) {
-        spdlog::error("TrainingManager: [{}] {}", errors::Compiler::AudioFeaturesMissing,
-                      kAudioFeaturesMissingMessage);
-        return false;
-    }
-
-    NormalizeTrainingNumWorkers(config, "TrainingManager");
-
-    // AudioDatasetBatcher loads with the entry's settings, extracts the
-    // features config.audio_preprocessing describes (Spectrogram /
-    // MelSpectrogram / MFCC / AudioAugmentation nodes) and probes a sample
-    // for the actual feature shape.
-    auto batcher = std::make_shared<AudioDatasetBatcher>(
-        audio_entry,
-        config.audio_preprocessing,
-        batch_size,
-        SampleSplitSettings{config.train_ratio, config.val_ratio, config.test_ratio, config.stratified,
-                            static_cast<uint32_t>(config.split_seed)},
-        config.shuffle, config.num_workers, static_cast<uint32_t>(config.dataloader_seed));
-    batcher->SetDropLast(config.drop_last);
-
-    if (batcher->GetNumSamples() == 0) {
-        spdlog::error("TrainingManager: Audio dataset has 0 samples");
-        return false;
-    }
-
-    // input_size is feature_rows × feature_cols (the flattened feature map
-    // — Spectrogram or MelSpec or MFCC). The model's first Dense layer
-    // sees this many features.
-    config.input_size = static_cast<size_t>(batcher->GetFeatureRows()) *
-                        static_cast<size_t>(batcher->GetFeatureCols());
-    config.input_shape = {
-        static_cast<size_t>(batcher->GetFeatureRows()),
-        static_cast<size_t>(batcher->GetFeatureCols())
-    };
-    // [rows, cols] = [bins, frames] per sample, torch [N, C, L]: a Conv1D
-    // convolves over the frames with one channel per bin.
-    config.sequence_input_shape = {
-        static_cast<size_t>(batcher->GetFeatureCols()),
-        static_cast<size_t>(batcher->GetFeatureRows())
-    };
-
-    spdlog::info("TrainingManager: Audio dataset {} train / {} validation / {} test clips, input_size={} ({}x{}), "
-                 "num_workers={}, split seed={}", batcher->SamplesIn(BatcherPhase::Train),
-                 batcher->SamplesIn(BatcherPhase::Val), batcher->SamplesIn(BatcherPhase::Test), config.input_size,
-                 batcher->GetFeatureRows(), batcher->GetFeatureCols(), config.num_workers, config.split_seed);
-
-    // A Validation or Test audio dataset wired to the Data Split (the
-    // compiler gave its share to train): read whole as that part, with the
-    // same features. Its classes must be the training set's, in the same
-    // order, and its features the same shape, or the model's inputs and
-    // outputs would not line up.
-    std::shared_ptr<AudioDatasetBatcher> wired_dev, wired_test;
-    for (auto [role, wired] : {std::pair{&config.dataset_roles.dev, &wired_dev},
-                               std::pair{&config.dataset_roles.test, &wired_test}}) {
-        if (!role->IsSupplied() || role->joined_to_training) continue;
-        const bool dev = role == &config.dataset_roles.dev;
-        const char* part = dev ? "validation" : "test";
-        const auto* entry = DataRegistry::Instance().GetAudioDatasetEntry(role->dataset_name);
-        if (!entry) {
-            spdlog::error("TrainingManager: '{}' is wired as {} but is not a loaded audio dataset",
-                          role->dataset_name, part);
-            return false;
-        }
-        if (!entry->class_names.empty() && !audio_entry.class_names.empty() &&
-            entry->class_names != audio_entry.class_names) {
-            spdlog::error("TrainingManager: '{}' (wired as {}) has other classes than the training dataset; "
-                          "they must be the same, in the same order", role->dataset_name, part);
-            return false;
-        }
-        auto set = std::make_shared<AudioDatasetBatcher>(
-            *entry, config.audio_preprocessing, batch_size,
-            SampleSplitSettings{0.0f, dev ? 1.0f : 0.0f, dev ? 0.0f : 1.0f, false,
-                                static_cast<uint32_t>(config.split_seed)},
-            config.shuffle, config.num_workers, static_cast<uint32_t>(config.dataloader_seed));
-        set->SetDropLast(config.drop_last);
-        if (set->SamplesIn(dev ? BatcherPhase::Val : BatcherPhase::Test) == 0) {
-            spdlog::error("TrainingManager: '{}' (wired as {}) has no clips", role->dataset_name, part);
-            return false;
-        }
-        if (set->GetFeatureRows() != batcher->GetFeatureRows() || set->GetFeatureCols() != batcher->GetFeatureCols()) {
-            spdlog::error("TrainingManager: '{}' (wired as {}) gives {}x{} features, the training dataset {}x{}; "
-                          "load it with the same sample rate and duration", role->dataset_name, part,
-                          set->GetFeatureRows(), set->GetFeatureCols(), batcher->GetFeatureRows(),
-                          batcher->GetFeatureCols());
-            return false;
-        }
-        spdlog::info("TrainingManager: '{}' is the {} part: {} clips", role->dataset_name, part,
-                     set->SamplesIn(dev ? BatcherPhase::Val : BatcherPhase::Test));
-        *wired = std::move(set);
-    }
-
-    // Mirror image path: hand normalization / one-hot through to the batchers.
-    for (AudioDatasetBatcher* b : {batcher.get(), wired_dev.get(), wired_test.get()}) {
-        if (!b) continue;
-        if (config.preprocessing.has_normalization) {
-            b->SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);
-        }
-        if (UsesScalarBinaryTargets(config.loss_type)) {
-            b->SetScalarLabelMode(true);
-        } else if (config.preprocessing.has_onehot && config.preprocessing.num_classes > 0) {
-            b->SetOneHotEncoding(config.preprocessing.num_classes);
-        }
-    }
-
-    // One batcher, three parts by phase (the held-out test runs at the end);
-    // a wired role reads its own set.
-    ResolvedExternalBatchers batchers;
-    batchers.train = batcher;
-    if (wired_dev) batchers.dev = wired_dev;
-    else if (batcher->SamplesIn(BatcherPhase::Val) > 0) batchers.dev = batcher;
-    if (wired_test) batchers.test = wired_test;
-    else if (batcher->SamplesIn(BatcherPhase::Test) > 0) batchers.test = batcher;
-    auto executor = std::make_unique<TrainingExecutor>(std::move(config), std::move(batchers));
-    return StartTrainingCommon(
-        std::move(executor), epochs, batch_size, plot_panel,
-        std::move(node_editor_callback),
-        "Training Model (Audio)", "Training from Audio Dataset");
-}
-#endif
-
 void TrainingManager::StopTraining() {
     if (!is_training_.load()) {
         return;

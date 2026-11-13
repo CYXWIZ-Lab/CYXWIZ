@@ -5,6 +5,7 @@
 #include "../core/normalization_regularization_configuration_policy.h"
 #include "../core/transformer_configuration_policy.h"
 #include "../core/sequence_fusion_presentation.h"
+#include "../core/frozen_layers.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1094,7 +1095,7 @@ void AddOptimizerTruth(NodeTruthReport& report, const MLNode& node) {
         RequireFloatAtLeast(clip, "grad_clip_norm", 0.0, true);
         report.properties.push_back(std::move(clip));
     }
-    if (node.type == NodeType::AdamW) {
+    if (node.type == NodeType::AdamW || node.type == NodeType::SGD) {
         report.properties.push_back(ResolveStringProperty(
             node, "Weight decay exclude", "weight_decay_exclude", "none",
             TruthOwner::Runtime, true, false, false));
@@ -1104,10 +1105,14 @@ void AddOptimizerTruth(NodeTruthReport& report, const MLNode& node) {
         case NodeType::SGD:
             add_bounded("momentum", "Momentum", "0.9", 0.0, true,
                         1.0, false);
-            AddUnsupportedOptimizerParameterTruth(
-                report, node, "weight_decay", "Weight decay",
-                "The current SGD backend has no weight-decay term; use AdamW "
-                "or an explicit supported regularization path.");
+            {
+                auto decay = ResolveFloatProperty(node, "Weight decay", "weight_decay", "0",
+                                                  TruthOwner::Runtime, true, false);
+                RequireFloatAtLeast(decay, "weight_decay", 0.0, true);
+                report.properties.push_back(std::move(decay));
+            }
+            report.properties.push_back(ResolveBoolProperty(
+                node, "Nesterov", "nesterov", false, TruthOwner::Runtime, true, false));
             break;
         case NodeType::Adam:
         case NodeType::NAdam:
@@ -2869,6 +2874,9 @@ const std::vector<NodeType>& SpecializedTruthCoverageNodeTypes() {
         NodeType::ELU,
         NodeType::Swish,
         NodeType::Mish,
+        NodeType::Hardswish,
+        NodeType::Hardsigmoid,
+        NodeType::ReLU6,
         NodeType::Flatten,
         NodeType::Reshape,
         NodeType::View,
@@ -3452,6 +3460,26 @@ NodeTruthReport ResolveNodeTruth(const MLNode& node,
             width.message = "No upstream Dense/TimeDistributed output width was found.";
         }
         report.properties.push_back(std::move(width));
+    }
+
+    // Freezing: the model builder reads both settings on every layer node
+    // that holds weights (and only "frozen" / "keep" / "update").
+    if (cyxwiz::frozen::LayerNodeHoldsWeights(node.type)) {
+        report.properties.push_back(ResolveBoolProperty(
+            node, "Frozen", cyxwiz::frozen::kFrozen, false, TruthOwner::Runtime, true, false,
+            "ModelBuilder freezes this layer's modules: no gradient step, no weight decay, no optimizer state."));
+        if (cyxwiz::frozen::LayerNodeHasFrozenStatistics(node.type)) {
+            auto statistics = ResolveStringProperty(
+                node, "When frozen", cyxwiz::frozen::kStatistics, cyxwiz::frozen::kStatisticsKeep,
+                TruthOwner::Runtime, true, false, false,
+                "A frozen BatchNorm keeps its running statistics (keep) or keeps updating them (update).");
+            if (statistics.effective_value != cyxwiz::frozen::kStatisticsKeep &&
+                statistics.effective_value != cyxwiz::frozen::kStatisticsUpdate) {
+                AddStatus(statistics, TruthStatus::Unsupported);
+                statistics.message = "Only keep or update is read; anything else keeps the statistics.";
+            }
+            report.properties.push_back(std::move(statistics));
+        }
     }
 
     AddRawParameters(report, node, context);

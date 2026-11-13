@@ -240,8 +240,8 @@ void DistributedDataParallel::UpdateParameters(Optimizer* optimizer) {
         return;
     }
 
-    // Get parameters
-    auto params = model_->GetParameters();
+    // Get parameters (frozen layers are neither stepped nor written back)
+    auto params = model_->GetTrainableParameters();
 
     // Sync gradients across all ranks
     auto synced_grads = SyncGradients();

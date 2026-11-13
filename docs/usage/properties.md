@@ -48,8 +48,10 @@ Hover the mark for the source key, the owner (Compiler, Runtime, Loader,
 Materializer, ...) and the rule's message. **▸ Details** under the rows shows
 them under every row. Settings are grouped as their node type declares
 (Training, Generation previews, Advanced settings, ...); a group's words are
-dropped from its labels ("Max new tokens" under Generation previews). *Reset*
-appears on a row whose value differs from its default. A value is written to
+dropped from its labels ("Max new tokens" under Generation previews). A reset
+arrow appears after the label of a row whose value differs from its default
+(beside the value when the label fills its column); hover it for the default,
+click it to go back. The value keeps its - / + steps. A value is written to
 the node only when you change it: looking at a node changes nothing.
 
 Numbers are typed fields with - / + steps, never sliders: type the exact

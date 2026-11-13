@@ -111,6 +111,19 @@ def image_mix():
     return run_chain(steps, torch.randn(1, 3, 32, 32))[0]
 
 
+def se_block():
+    # torchvision's SE block (two 1x1 convolutions on the pooled channels):
+    # the flop counter counts the two convolutions, not the pooling or the scaling.
+    from torchvision.ops import SqueezeExcitation
+    steps = [
+        Step("Conv same", nn.Conv2d(3, 16, 3, padding=1), image),
+        Step("SE", SqueezeExcitation(16, 4), image),
+        Step("Global pool", nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten())),
+        Step("Head", nn.Linear(16, 3)),
+    ]
+    return run_chain(steps, torch.randn(1, 3, 8, 8))[0]
+
+
 def residual():
     x = torch.randn(1, 8)
     a, b, head = nn.Linear(8, 6), nn.Linear(8, 6), nn.Linear(6, 3)
@@ -183,8 +196,9 @@ fixture = {
     "residual": case(residual()),
     "recurrent": case(recurrent()),
     "attention": case(attention()),
+    "se_block": case(se_block()),
 }
 out = Path(__file__).resolve().parent.parent / "fixtures" / "model_summary_pytorch.json"
 out.write_text(json.dumps(fixture, indent=1) + "\n", encoding="utf-8")
-for name in ("mnist_cnn", "image_mix", "residual", "recurrent", "attention"):
+for name in ("mnist_cnn", "image_mix", "residual", "recurrent", "attention", "se_block"):
     print(name, fixture[name]["parameters"], fixture[name]["multiply_adds"])

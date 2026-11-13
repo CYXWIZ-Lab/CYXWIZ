@@ -33,7 +33,8 @@ enum class LayerCostKind {
     RNN,
     Attention,        // multi-head self-attention
     TransformerBlock, // self-attention + feed-forward
-    LinearAttention
+    LinearAttention,
+    SqueezeExcitation // the gate's two small dense layers on the pooled channels (hidden = squeeze width)
 };
 
 // One layer, for one sample. Shapes in CyxWiz's layout: [features],
@@ -42,7 +43,7 @@ struct CYXWIZ_API LayerCostInput {
     LayerCostKind kind = LayerCostKind::None;
     std::vector<size_t> input, output;
     long long kernel = 0;            // convolutions: the (square / cubic) kernel side
-    long long hidden = 0;            // recurrent: hidden size
+    long long hidden = 0;            // recurrent: hidden size; squeeze-excitation: squeeze width
     long long stacked = 1;           // recurrent: layers stacked in this one
     bool bidirectional = false;      // recurrent
     long long heads = 1;             // attention

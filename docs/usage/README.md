@@ -24,11 +24,13 @@ To write your own nodes in Python or C++, see
 | [Adding nodes](node_palette.md) | The Nodes panel, search and the right-click menu |
 | [Node dialogs](node_dialogs.md) | Configuring a node in its dialog |
 | [Branched graphs](branched_graphs.md) | Split and merge inside a model |
+| [Groups, frames and names](canvas_groups_frames.md) | Grouping and naming nodes, frames, copy and paste, renaming |
 | [Your own nodes](extension_nodes.md) | Python node bundles and C++ plugins in the Engine: install, approve, use |
 | [Graph simulation](graph_simulation.md) | Run Sim, the Simulation menu and the Simulation Monitor |
 | [Environments for reinforcement learning](rl_environments.md) | Plugin environments (MuJoCo tasks), their settings, and `pycyxwiz.rl` for Gymnasium and Stable-Baselines3 |
 | [Training a policy (PPO)](rl_training.md) | The RL graph (Environment, layers, Policy / Value Head, PPO), its settings, Train and the RL Training Dashboard |
 | [The MuJoCo Viewport](mujoco_viewport.md) | The 3D view: run a model, cameras (follow a body, the model's cameras), View options, live numbers, screenshots and recordings, the Stress panel, Inspect (bodies, joints, controls, keyframes, physics), the timeline and plots |
+| [MuJoCo models](mujoco_models.md) | The Environment Library; downloads shared by every project and pinned to a version; a project names its models so another PC downloads the same one; Copy into the project; Import from URL |
 | [Train, play and export a policy](rl_walkthrough.md) | Step by step: CartPole, InvertedPendulum and HalfCheetah from Studio, playing and saving the policy, export, and what a real robot needs |
 
 ## Data
@@ -63,6 +65,8 @@ To write your own nodes in Python or C++, see
 | [Utilities](utilities.md) | Tools > Utilities: calculator, exact unit conversion, seeded random values and UUIDs, hashes of text and files, JSON check and tree, regex with multiline and replace |
 | [Optimization and calculus](optimization_calculus.md) | Tools > Optimization and Calculus (optimizer paths, linear and quadratic programs, integrals, derivatives, curvature), the Portfolio Weights node |
 | [Feature Importance](feature_importance.md) | Which columns matter to a model |
+| [Hyperparameter Search](hyperparameter_search.md) | Train the graph with different property values and keep the best |
+| [Neural Architecture Search](neural_architecture_search.md) | Score the model, change its layers, search, train the best versions, put one on the canvas |
 | [Analysis demo graph](analysis_demo_graph.md) | Analysis nodes working together on one dataset |
 | [Plotting](plotting.md) | Plots, the Plot node and Python plotting |
 | [Dashboard node](dashboard.md) | A summary and grid of the data at a point in the graph |
@@ -73,6 +77,7 @@ To write your own nodes in Python or C++, see
 | --- | --- |
 | [Classic ML models](classic_ml.md) | Naive Bayes, KNN, logistic regression, SVM |
 | [Convolutional layers](cnn_layers.md) | Training image graphs as CNNs |
+| [Starting from published weights](pretrained_weights.md) | Training from a PyTorch or safetensors weight file |
 | [Image classifier: a ResNet from scratch](image_classifier_resnet.md) | The cats vs dogs ResNet example, from data to a test score |
 | [Conv3D](conv3d.md) | Convolution over volumes |
 | [Cross Attention](cross_attention.md) | One sequence attending to another |

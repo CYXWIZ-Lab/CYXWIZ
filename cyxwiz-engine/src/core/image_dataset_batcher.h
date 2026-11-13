@@ -54,6 +54,11 @@ public:
     // rest again, as if the dataset never had them.
     void ExcludeFiles(const std::vector<std::string>& files);
 
+    std::optional<Batch> GetSourceSamples(const std::vector<size_t>& indices) override;
+    size_t SourceSampleCount() const override;
+    std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::string SourceSampleName(size_t index) const override;
+
     // The images in a part (Train, Val or Test), whatever the current phase.
     size_t SamplesIn(BatcherPhase phase) const { return Part(phase).size(); }
     // The image numbers of a part, in set order (row ids of the prepared set).
@@ -66,6 +71,7 @@ public:
 private:
     // The three parts of these image numbers (SplitImages).
     void Split(const std::vector<size_t>& usable);
+    Batch AssembleBatch(const size_t* indices, size_t n, bool train);
     // The batch's images as float rows [n, H * W * 3] in [0, 1] on the device.
     Tensor GatherRows(const size_t* indices, size_t n);
 

@@ -106,6 +106,18 @@ std::unique_ptr<cyxwiz::LRScheduler> CreateFixtureScheduler(
 
 } // namespace
 
+TEST_CASE("OneCycleLR with no rising phase starts on the falling one, as torch does", "[scheduler][pytorch]") {
+    // torch 2.10.0: OneCycleLR(max_lr=0.1, total_steps=10, pct_start=0.0, cycle_momentum=False)
+    cyxwiz::SGDOptimizer optimizer(1.0);
+    cyxwiz::OneCycleLR cycle(&optimizer, 0.1, 10, 0.0);
+    CHECK(cycle.GetLR() == Catch::Approx(0.09755283560345443).margin(1e-12));
+    CHECK(optimizer.GetLearningRate() == Catch::Approx(0.09755283560345443).margin(1e-12));
+    cycle.Step(1);
+    CHECK(cycle.GetLR() == Catch::Approx(0.0904508879153485).margin(1e-12));
+    cycle.Reset();
+    CHECK(cycle.GetLR() == Catch::Approx(0.09755283560345443).margin(1e-12));
+}
+
 TEST_CASE("Learning-rate schedulers match PyTorch sequences and reset",
           "[scheduler][pytorch]") {
     const auto cases = LoadSchedulerFixture();

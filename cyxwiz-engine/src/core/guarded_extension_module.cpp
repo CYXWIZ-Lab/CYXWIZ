@@ -89,7 +89,9 @@ void GuardedExtensionModule::SetParameters(const std::map<std::string, Tensor>& 
 std::map<std::string, Tensor> GuardedExtensionModule::GetGradients() {
     auto gradients = inner_->GetGradients();
     if (!gradients_checked_) {
-        const auto parameters = inner_->GetParameters();
+        // State the module keeps without training it takes no gradient.
+        auto parameters = inner_->GetParameters();
+        for (const auto& name : inner_->GetStateNames()) parameters.erase(name);
         std::set<std::string> parameter_keys;
         std::set<std::string> gradient_keys;
         for (const auto& [key, value] : parameters) parameter_keys.insert(key);
@@ -110,6 +112,16 @@ std::map<std::string, Tensor> GuardedExtensionModule::GetGradients() {
 }
 
 bool GuardedExtensionModule::HasParameters() const { return inner_->HasParameters(); }
+
+std::vector<std::string> GuardedExtensionModule::GetStateNames() const { return inner_->GetStateNames(); }
+
+size_t GuardedExtensionModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return inner_->CachedElementsPerSample(sample_input_shape);
+}
+
+size_t GuardedExtensionModule::BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return inner_->BackwardWorkingElementsPerSample(sample_input_shape);
+}
 
 std::string GuardedExtensionModule::GetName() const { return inner_->GetName(); }
 

@@ -69,4 +69,9 @@ inline std::string ChannelName(size_t index, size_t channels) {
     return "channel " + std::to_string(index + 1);
 }
 
+// The compiled name where the compile gave one per channel ("edges"), else the rule above.
+inline std::string ChannelName(size_t index, size_t channels, const std::vector<std::string>& names) {
+    return names.size() == channels && index < channels ? names[index] : ChannelName(index, channels);
+}
+
 }  // namespace cyxwiz

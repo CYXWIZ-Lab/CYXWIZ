@@ -55,9 +55,6 @@ public:
 
     bool SaveToHDF5(const std::string& filepath, const std::string& dataset_name = "data") const;
 
-    // Python-based loaders (uses ScriptingEngine)
-    bool LoadFromExcel(const std::string& filepath, const std::string& sheet_name = "");
-
     // Metadata
     void SetName(const std::string& name) { name_ = name; }
     const std::string& GetName() const { return name_; }

@@ -1,4 +1,5 @@
 #include "compiled_node_presentation.h"
+#include "frozen_layers.h"
 #include "rl_graph_compile.h"
 #include "normalize_statistics.h"
 
@@ -317,6 +318,19 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         const auto counted = inputs.layer_parameters.find(index);
         SetParameters(card, inputs, counted != inputs.layer_parameters.end() || inputs.parameters_counted,
                       counted == inputs.layer_parameters.end() ? 0 : counted->second);
+        // A frozen layer keeps its weights: they are counted, not learned.
+        if (Param(layer.parameters, frozen::kFrozen) == "true" && counted != inputs.layer_parameters.end() &&
+            counted->second > 0) {
+            card.parameters_label = "Weights";
+            card.parameters += " frozen";
+            if (frozen::LayerNodeHasFrozenStatistics(layer.type)) {
+                card.parameter_note = Param(layer.parameters, frozen::kStatistics) == frozen::kStatisticsUpdate
+                    ? "Frozen: the weights stay as they are; the running statistics keep following the data."
+                    : "Frozen: the weights and the running statistics stay as they are.";
+            } else {
+                card.parameter_note = "Frozen: these weights stay as they are while the rest trains.";
+            }
+        }
         card.details.emplace_back("Layer index", std::to_string(index));
         for (const auto& [key, value] : layer.parameters) {
             if (key == "sequence_feature_fusion" || value.empty()) continue;
@@ -383,7 +397,7 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         if (per_channel) {
             std::string mean, std_dev;
             for (size_t c = 0; c < pre.norm_channel_mean.size(); ++c) {
-                const std::string name = ChannelName(c, pre.norm_channel_mean.size());
+                const std::string name = ChannelName(c, pre.norm_channel_mean.size(), pre.norm_channel_names);
                 std::snprintf(text, sizeof(text), "%s%s %.4f", c ? ", " : "", name.c_str(), pre.norm_channel_mean[c]);
                 mean += text;
                 std::snprintf(text, sizeof(text), "%s%s %.4f", c ? ", " : "", name.c_str(), pre.norm_channel_std[c]);

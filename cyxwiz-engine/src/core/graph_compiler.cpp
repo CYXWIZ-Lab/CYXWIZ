@@ -2079,6 +2079,8 @@ void ApplyImageInputShape(TrainingConfiguration& config) {
         cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
     config.input_shape = {shape.height, shape.width, shape.channels};
     config.input_size = shape.Size();
+    config.image_channels =
+        cyxwiz::CompiledImageChannels(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
 }
 
 void ApplyTextInputShape(TrainingConfiguration& config) {
@@ -2804,6 +2806,7 @@ void ExtractOptimizerConfiguration(const gui::MLNode& node,
     config.epsilon = 1e-8f;
     config.rmsprop_alpha = 0.99f;
     config.weight_decay = 0.0f;
+    config.nesterov = false;
 
     switch (node.type) {
         case gui::NodeType::SGD:
@@ -2887,7 +2890,7 @@ void ExtractOptimizerConfiguration(const gui::MLNode& node,
         }
         destination = it->second;
     };
-    parse_choice("lr_schedule", {"none", "warmup_cosine", "warmup_linear", "warmup_constant"},
+    parse_choice("lr_schedule", {"none", "warmup_cosine", "warmup_linear", "warmup_constant", "one_cycle"},
                  config.lr_schedule);
     parse("warmup_ratio", config.warmup_ratio, 0.0f, true, 1.0f, false, config.warmup_ratio);
     parse("min_lr_ratio", config.min_lr_ratio, 0.0f, true, 1.0f, true, config.min_lr_ratio);
@@ -2898,12 +2901,21 @@ void ExtractOptimizerConfiguration(const gui::MLNode& node,
         case gui::NodeType::SGD:
             parse("momentum", config.momentum, 0.0f, true, 1.0f, false,
                   config.momentum);
-            if (node.parameters.count("weight_decay")) {
-                AddIssue(config, IssueLevel::Warning,
-                         "SGD weight_decay is not supported by the backend and "
-                         "will be ignored",
-                         node.id, node.name,
-                         errors::Compiler::UnsupportedTrainingNode);
+            parse("weight_decay", config.weight_decay, 0.0f, true,
+                  std::numeric_limits<float>::max(), true, config.weight_decay);
+            parse_choice("weight_decay_exclude", {"none", "norms_and_biases"}, config.weight_decay_exclude);
+            if (const auto it = node.parameters.find("nesterov"); it != node.parameters.end() && !it->second.empty()) {
+                if (it->second != "true" && it->second != "false") {
+                    AddIssue(config, IssueLevel::Error, "Invalid optimizer parameter 'nesterov': must be true or false",
+                             node.id, node.name, errors::Compiler::InvalidParameter);
+                }
+                config.nesterov = it->second == "true";
+            }
+            if (config.nesterov && !(config.momentum > 0.0f)) {
+                AddIssue(config, IssueLevel::Error,
+                         "Nesterov momentum looks ahead along the momentum: set momentum above 0 (0.9 is usual) "
+                         "or turn Nesterov off",
+                         node.id, node.name, errors::Compiler::InvalidParameter);
             }
             break;
         case gui::NodeType::Adam:
@@ -5129,6 +5141,8 @@ TrainingConfiguration GraphCompiler::Compile(
                 config.checkpoint_dir = loader_node->parameters.at("checkpoint_dir");
             if (loader_node->parameters.count("initialize_from_checkpoint"))
                 config.initialize_from_checkpoint = loader_node->parameters.at("initialize_from_checkpoint");
+            if (loader_node->parameters.count("initialize_from_weights_file"))
+                config.initialize_from_weights_file = loader_node->parameters.at("initialize_from_weights_file");
         } catch (const std::exception& e) {
             spdlog::warn("GraphCompiler: DataLoader param parse error ({}) - using defaults", e.what());
         }
@@ -6248,68 +6262,6 @@ TrainingConfiguration GraphCompiler::Compile(
                 }
             }
 
-            // Check 3: Memory estimation for image models.
-            // Estimate total model memory (weights + gradients + optimizer)
-            // and warn if it's likely to exceed reasonable GPU memory.
-            if (has_resize && config.image_preprocessing.target_width > 0) {
-                // The model's input after the image steps (crops, Grayscale, OpenCV steps).
-                const auto image_shape = cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps,
-                                                                    DecodedImageShape(config));
-                size_t img_features = image_shape.Size();
-                size_t total_params = 0;
-                size_t prev_size = img_features;
-                for (const auto& layer : config.layers) {
-                    if (layer.type == gui::NodeType::Dense) {
-                        total_params += prev_size * layer.units + layer.units;
-                        prev_size = layer.units;
-                    } else if (layer.type == gui::NodeType::Flatten) {
-                        // prev_size stays the same (just reshaped)
-                    }
-                }
-                // Memory = weights × 4 (weights + grads + adam_m + adam_v)
-                // + batch activations (batch_size × largest_layer)
-                size_t model_bytes = total_params * 4 * sizeof(float);
-                size_t batch_bytes = static_cast<size_t>(config.batch_size) *
-                    img_features * sizeof(float);
-                size_t total_est = model_bytes + batch_bytes;
-
-                double est_mb = total_est / (1024.0 * 1024.0);
-
-                std::ostringstream mem_msg;
-                mem_msg << "Estimated GPU memory: " << std::fixed
-                        << std::setprecision(0) << est_mb << " MB ("
-                        << total_params << " parameters, batch_size="
-                        << config.batch_size << ", input="
-                        << image_shape.width << "x" << image_shape.height << "x"
-                        << image_shape.channels << ")";
-
-                // Real GPU usage is ~3-5x the raw parameter estimate due to
-                // CUDA context (~300 MB), forward/backward activations,
-                // matmul temporaries, and optimizer state. Use a 4x
-                // multiplier for a realistic bound.
-                double realistic_mb = est_mb * 4.0;
-
-                if (realistic_mb > 3000) {
-                    // Suggest a smaller size that would fit
-                    int safe_features = 64 * 64 * 3;  // 12288
-                    mem_msg << ". WARNING: real GPU usage is ~"
-                            << std::setprecision(0) << realistic_mb
-                            << " MB (incl. activations + optimizer + CUDA "
-                            << "overhead). This will likely OOM on your GPU. "
-                            << "Set the Resize node to a smaller size "
-                            << "(e.g. 64x64 for " << safe_features
-                            << " features)";
-                    AddIssue(config, IssueLevel::Error, mem_msg.str());
-                } else if (realistic_mb > 2000) {
-                    mem_msg << ". This is close to typical GPU memory limits "
-                            << "— consider reducing Resize dimensions or "
-                            << "batch_size if training crashes";
-                    AddIssue(config, IssueLevel::Warning, mem_msg.str());
-                } else {
-                    AddIssue(config, IssueLevel::Info, mem_msg.str());
-                }
-            }
-
             // mixup / cutmix mix the one-hot labels, which only Cross Entropy takes.
             if (config.image_mix_node_id >= 0 &&
                 (!config.preprocessing.has_onehot || UsesScalarBinaryTargets(config.loss_type))) {
@@ -6913,6 +6865,7 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::Dropout:
         case gui::NodeType::BatchNorm:
         case gui::NodeType::LayerNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::PReLU:  // learned slopes: a layer, not an inline activation
         case gui::NodeType::MultiHeadAttention:
         case gui::NodeType::CrossAttention:
@@ -7079,6 +7032,7 @@ static void ExtractImageResize(const gui::MLNode& node, TrainingConfiguration& c
 }
 
 cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config);
+std::vector<std::string> CurrentImageChannelNames(const TrainingConfiguration& config);
 
 static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration& config) {
     // Every batcher takes mean / std through SetNormalization; the image
@@ -7109,11 +7063,17 @@ static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration
     }
     const size_t channels = CurrentImageShape(config).channels;
     pre.norm_channels = channels;
+    pre.norm_channel_names = CurrentImageChannelNames(config);
     if (pre.norm_statistics == "imagenet") {
         if (channels != 3)
             return issue(IssueLevel::Error, "ImageNet statistics are for RGB images: the images have " +
                                                 std::to_string(channels) + " channel" + (channels == 1 ? "" : "s") +
-                                                " here.");
+                                                " here" +
+                                                (channels > 3 ? " (" + JoinedChannelNames(pre.norm_channel_names) +
+                                                                    "). Use Per channel with this data's own "
+                                                                    "statistics (Data Studio > Profile > Use in "
+                                                                    "Normalize)."
+                                                              : std::string(".")));
         pre.norm_channel_mean = cyxwiz::ImageNetChannelMean();
         pre.norm_channel_std = cyxwiz::ImageNetChannelStd();
         issue(IssueLevel::Info, "ImageNet statistics: right for a model pretrained on ImageNet; for training from "
@@ -7135,14 +7095,17 @@ static void ExtractImageNormalize(const gui::MLNode& node, TrainingConfiguration
         return issue(IssueLevel::Error,
                      std::to_string(given) + what + (given == 1 ? "" : "s") + " for " + std::to_string(channels) +
                          " channel" + (channels == 1 ? "" : "s") + ": the images have " + std::to_string(channels) +
-                         " here" + (channels == 1 ? " (Grayscale or Image Edges before Normalize)" : "") +
+                         " here" +
+                         (channels == 1   ? std::string(" (Grayscale or Image Edges before Normalize)")
+                          : channels > 3 ? " (" + JoinedChannelNames(pre.norm_channel_names) + ")"
+                                         : std::string()) +
                          ". Give one mean and one std per channel (Use in Normalize does).");
     }
     for (size_t c = 0; c < channels; ++c) {
         if (!(std_dev[c] > 0.0f)) {
             char value[32];
             std::snprintf(value, sizeof(value), "%g", std_dev[c]);
-            return issue(IssueLevel::Error, "Std " + cyxwiz::ChannelName(c, channels) + " is " + value +
+            return issue(IssueLevel::Error, "Std " + cyxwiz::ChannelName(c, channels, pre.norm_channel_names) + " is " + value +
                                                 ": every std must be greater than 0.");
         }
     }
@@ -7176,6 +7139,13 @@ bool ParseChoiceParam(const std::map<std::string, std::string>& params, const st
 cyxwiz::image::ImageShape CurrentImageShape(const TrainingConfiguration& config) {
     return cyxwiz::CompiledImageShape(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config));
 }
+
+// What that image's channels are: "R", "G", "B", "edges".
+std::vector<std::string> CurrentImageChannelNames(const TrainingConfiguration& config) {
+    return cyxwiz::CompiledImageChannels(config.image_augmentation, config.image_cv_steps, DecodedImageShape(config))
+        .names;
+}
+
 
 const std::vector<std::pair<std::string, cyxwiz::image::Interpolation>> kInterpolations = {
     {"nearest", cyxwiz::image::Interpolation::Nearest}, {"bilinear", cyxwiz::image::Interpolation::Bilinear}};
@@ -7535,11 +7505,22 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
                                                    {{"canny", cyxwiz::CvEdgeMethod::Canny},
                                                     {"sobel", cyxwiz::CvEdgeMethod::Sobel},
                                                     {"laplacian", cyxwiz::CvEdgeMethod::Laplacian},
-                                                    {"scharr", cyxwiz::CvEdgeMethod::Scharr}},
+                                                    {"scharr", cyxwiz::CvEdgeMethod::Scharr},
+                                                    {"log", cyxwiz::CvEdgeMethod::LoG},
+                                                    {"dog", cyxwiz::CvEdgeMethod::DoG}},
                                                    s.edge_method, error) &&
+                ParseChoiceParam<cyxwiz::CvEdgeDirection>(p, "direction", "magnitude",
+                                                   {{"magnitude", cyxwiz::CvEdgeDirection::Magnitude},
+                                                    {"x", cyxwiz::CvEdgeDirection::X},
+                                                    {"y", cyxwiz::CvEdgeDirection::Y},
+                                                    {"angle", cyxwiz::CvEdgeDirection::Angle}},
+                                                   s.edge_direction, error) &&
+                ParseFloatParam(p, "sigma", 1.0f, s.edge_sigma, error) &&
+                ParseFloatParam(p, "sigma2", 1.6f, s.edge_sigma2, error) &&
                 ParseFloatParam(p, "threshold1", 50.0f, s.threshold1, error) &&
                 ParseFloatParam(p, "threshold2", 150.0f, s.threshold2, error) &&
                 ParseIntParam(p, "kernel_size", 3, s.edge_kernel, error));
+            s.edge_keep_image = ParseBoolParam(p, "keep_image", false);
             break;
         case gui::NodeType::ImageSmooth:
             s.kind = CvImageStepKind::Smooth;
@@ -7596,6 +7577,55 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
                                                          s.pyramid, error) &&
                 ParseIntParam(p, "levels", 1, s.levels, error));
             break;
+        case gui::NodeType::ImageFilter: {
+            using cyxwiz::CvFilterPreset;
+            using cyxwiz::CvFilterDirection;
+            s.kind = CvImageStepKind::Filter;
+            (void)(ParseChoiceParam<CvFilterPreset>(
+                       p, "preset", "sharpen",
+                       {{"custom", CvFilterPreset::Custom},        {"identity", CvFilterPreset::Identity},
+                        {"box", CvFilterPreset::Box},              {"sharpen", CvFilterPreset::Sharpen},
+                        {"emboss", CvFilterPreset::Emboss},        {"outline", CvFilterPreset::Outline},
+                        {"prewitt_x", CvFilterPreset::PrewittX},   {"prewitt_y", CvFilterPreset::PrewittY},
+                        {"roberts_x", CvFilterPreset::RobertsX},   {"roberts_y", CvFilterPreset::RobertsY},
+                        {"kirsch", CvFilterPreset::Kirsch},        {"robinson", CvFilterPreset::Robinson}},
+                       s.filter_preset, error) &&
+                   ParseChoiceParam<CvFilterDirection>(
+                       p, "direction", "n",
+                       {{"n", CvFilterDirection::N}, {"ne", CvFilterDirection::NE}, {"e", CvFilterDirection::E},
+                        {"se", CvFilterDirection::SE}, {"s", CvFilterDirection::S}, {"sw", CvFilterDirection::SW},
+                        {"w", CvFilterDirection::W}, {"nw", CvFilterDirection::NW}},
+                       s.filter_direction, error) &&
+                   ParseChoiceParam<cyxwiz::CvFilterBorder>(
+                       p, "border", "reflect_101",
+                       {{"reflect_101", cyxwiz::CvFilterBorder::Reflect101},
+                        {"reflect", cyxwiz::CvFilterBorder::Reflect},
+                        {"replicate", cyxwiz::CvFilterBorder::Replicate},
+                        {"zero", cyxwiz::CvFilterBorder::Zero}},
+                       s.filter_border, error) &&
+                   ParseChoiceParam<cyxwiz::CvFilterOutput>(
+                       p, "output", "clip",
+                       {{"clip", cyxwiz::CvFilterOutput::Clip},
+                        {"absolute", cyxwiz::CvFilterOutput::Absolute},
+                        {"offset", cyxwiz::CvFilterOutput::Offset}},
+                       s.filter_output, error));
+            if (const auto typed = p.find("kernel"); typed != p.end()) s.filter_kernel = typed->second;
+            s.filter_normalize = ParseBoolParam(p, "normalize", false);
+            break;
+        }
+        case gui::NodeType::ImageGabor:
+            s.kind = CvImageStepKind::Gabor;
+            (void)(ParseIntParam(p, "orientations", 4, s.gabor_orientations, error) &&
+                   ParseFloatParam(p, "bandwidth", 1.0f, s.gabor_bandwidth, error) &&
+                   ParseFloatParam(p, "aspect", 0.5f, s.gabor_aspect, error) &&
+                   ParseChoiceParam<cyxwiz::CvGaborResponse>(p, "response", "energy",
+                                                            {{"energy", cyxwiz::CvGaborResponse::Energy},
+                                                             {"even", cyxwiz::CvGaborResponse::Even},
+                                                             {"odd", cyxwiz::CvGaborResponse::Odd}},
+                                                            s.gabor_response, error));
+            if (const auto typed = p.find("wavelengths"); typed != p.end()) s.gabor_wavelengths = typed->second;
+            s.gabor_keep_image = ParseBoolParam(p, "keep_image", false);
+            break;
         default:
             return;
     }
@@ -7621,7 +7651,7 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
         // and the search window.
         const double ms = 44.5 * static_cast<double>(shape.height * shape.width) / (64.0 * 64.0) *
                           (static_cast<double>(s.search_size) * s.search_size) / (21.0 * 21.0) *
-                          (shape.channels == 1 ? 0.5 : 1.0);
+                          (shape.channels == 3 ? 1.0 : 0.5 * static_cast<double>(shape.channels));
         const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
         char text[256];
         std::snprintf(text, sizeof(text),
@@ -7630,9 +7660,33 @@ static void ExtractImageCvStep(const gui::MLNode& node, TrainingConfiguration& c
                       ms, shape.width, shape.height, ms * 10000.0 / 1000.0 / cores, cores);
         issue(IssueLevel::Warning, text);
     }
-    if (s.kind == CvImageStepKind::Edges && shape.channels > 1)
+    if (s.kind == CvImageStepKind::Edges && s.edge_keep_image) {
+        auto names = CurrentImageChannelNames(config);
+        names.push_back("edges");
+        issue(IssueLevel::Info, "Adds one channel: the images become " + std::to_string(after.width) + " × " +
+                                    std::to_string(after.height) + " × " + std::to_string(after.channels) +
+                                    " here (" + JoinedChannelNames(names) +
+                                    "). Colour transforms and ImageNet statistics need RGB: put them before, "
+                                    "and give Normalize one mean and std per channel");
+    } else if (s.kind == CvImageStepKind::Edges && shape.channels > 1) {
         issue(IssueLevel::Info, "Gives one channel: the images become " + std::to_string(after.width) +
                                     " × " + std::to_string(after.height) + " × 1 here");
+    }
+    if (s.kind == CvImageStepKind::Gabor) {
+        auto names = s.gabor_keep_image ? CurrentImageChannelNames(config) : std::vector<std::string>();
+        for (auto& name : cyxwiz::GaborChannelNames(s)) names.push_back(std::move(name));
+        issue(IssueLevel::Info, "One channel per filter: the images become " + std::to_string(after.width) + " × " +
+                                    std::to_string(after.height) + " × " + std::to_string(after.channels) +
+                                    " here (" + JoinedChannelNames(names) +
+                                    "). Colour transforms and ImageNet statistics need RGB: put them before, "
+                                    "and give Normalize one mean and std per channel");
+    }
+    if (s.kind == CvImageStepKind::Filter && s.filter_output == cyxwiz::CvFilterOutput::Clip) {
+        cyxwiz::FilterKernel kernel;
+        if (cyxwiz::ResolveFilterKernel(s, kernel) && std::fabs(kernel.Sum()) < 1e-6f)
+            issue(IssueLevel::Info, "This kernel sums to 0: flat areas become black and negative responses are cut. "
+                                    "Output absolute keeps both signs' size; offset stores them around mid-grey");
+    }
     config.image_cv_steps.push_back(std::move(s));
 }
 
@@ -7781,6 +7835,8 @@ static const PreprocessingNodeSpec kPreprocessingSpecs[] = {
     {gui::NodeType::ImageSmooth,        PreprocessingDomain::Image,       ExtractImageCvStep},
     {gui::NodeType::ImageWarp,          PreprocessingDomain::Image,       ExtractImageCvStep},
     {gui::NodeType::ImagePyramid,       PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageFilter,        PreprocessingDomain::Image,       ExtractImageCvStep},
+    {gui::NodeType::ImageGabor,         PreprocessingDomain::Image,       ExtractImageCvStep},
     // Augmentation steps drawn per batch (TOFIX178 1.6b)
     {gui::NodeType::RandomResizedCrop,  PreprocessingDomain::Image,       ExtractImageTransform},
     {gui::NodeType::RandomAffine,       PreprocessingDomain::Image,       ExtractImageTransform},
@@ -8030,6 +8086,7 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::GroupNorm:
         case gui::NodeType::InstanceNorm:
+        case gui::NodeType::SqueezeExcitation:
         case gui::NodeType::AdaptiveAvgPool:
         case gui::NodeType::DepthwiseConv2D:
             // spatial_layer_shapes.h; the compile loop reports the reasons.
@@ -8125,6 +8182,9 @@ std::vector<size_t> GraphCompiler::InferOutputShape(
         case gui::NodeType::GELU:
         case gui::NodeType::Swish:
         case gui::NodeType::Mish:
+        case gui::NodeType::Hardswish:
+        case gui::NodeType::Hardsigmoid:
+        case gui::NodeType::ReLU6:
         case gui::NodeType::Sigmoid:
         case gui::NodeType::Tanh:
         case gui::NodeType::Softmax:
@@ -8713,6 +8773,7 @@ void ResolveProjectRelativePaths(TrainingConfiguration& config, const std::strin
         }
     }
     absolute(config.initialize_from_checkpoint);
+    absolute(config.initialize_from_weights_file);
 }
 
 } // namespace cyxwiz
