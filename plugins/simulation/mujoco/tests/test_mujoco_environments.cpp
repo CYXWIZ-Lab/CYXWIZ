@@ -805,6 +805,10 @@ void CheckGhostCopy() {
     Check(ghost->ShowCopyAsGhost(-1, {}) && view->ghost.owner == nullptr && view->owner == played,
           "ShowCopyAsGhost(-1) removes the ghost, the shown copy stays");
     ghost->ShowCopyAsGhost(0, "robust");
+    IEnvironmentBatch* other = MjEnvBatch::Create(spec, ModelPath(spec), {}, 1, view, error);
+    Check(other && other->ShowCopy(0) && view->owner == other && view->ghost.owner == nullptr,
+          "a batch that takes the view takes it without the other copy's ghost");
+    if (other) other->Release();
     ghost->Release();
     Check(view->ghost.owner == nullptr, "releasing the ghost's batch frees it");
     played->Release();

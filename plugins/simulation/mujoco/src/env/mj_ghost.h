@@ -20,8 +20,9 @@ public:
     // Puts `state` (mjSTATE_FULLPHYSICS) on model `m` and computes where its
     // bodies are; false when it does not fit the model
     bool Apply(const mjModel* m, const std::vector<mjtNum>& state);
-    // Nothing to draw (until the next Apply)
-    void Clear() { state_.clear(); }
+    // Nothing to draw (until the next Apply); its data goes with it, since
+    // the model it was made for may be freed
+    void Clear();
     // The ghost to draw on model `m`; null when none was applied for it
     mjData* Data(const mjModel* m) const;
     // The state last applied; empty: none
@@ -35,6 +36,8 @@ private:
     mjtSize nq_ = 0;
     mjtSize nv_ = 0;
     mjtSize nbody_ = 0;
+    mjtSize nbuffer_ = 0;  // every size of the model goes into these two
+    mjtSize narena_ = 0;
     mjData* data_ = nullptr;
     std::vector<mjtNum> state_;
 };

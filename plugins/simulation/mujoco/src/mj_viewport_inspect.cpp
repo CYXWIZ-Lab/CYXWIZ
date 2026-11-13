@@ -353,7 +353,7 @@ void MjViewportPanel::RenderInspectPanel(MjEnvManager& env, MjRenderer& renderer
         static const char* kAxes[3] = {"##gx", "##gy", "##gz"};
         for (int i = 0; i < 3; ++i) {
             if (i) ImGui::SameLine();
-            changed |= ui->NumberField(kAxes[i], &option.gravity[i], -100.0, 100.0, 0.0, "%.2f", 52.0f,
+            changed |= ui->NumberField(kAxes[i], &option.gravity[i], -100.0, 100.0, 0.5, "%.2f", 52.0f,
                                        "m/s\xC2\xB2 along x, y, z");
         }
         float row = 0.0f;

@@ -104,7 +104,6 @@ public:
         selected_ = body;
         for (int i = 0; i < 4; ++i) marker_rgba_[i] = rgba[i];
     }
-    int Selected() const { return selected_; }
     int PushedBody() const { return pert_.select; }
 
     // Render settings

@@ -625,7 +625,15 @@ void CheckInspect(const std::filesystem::path& dir) {
     Check(!ApplyKeyframe(m, d, other, error) && error.find("another version") != std::string::npos,
           "a keyframe of another version of the model is refused: " + error);
     const auto file = KeyframesFile(dir, path);
-    Check(file == dir / "mujoco" / "keyframes" / "half_cheetah.json", "saved per model file in the project");
+    Check(file.parent_path() == dir / "mujoco" / "keyframes" && file.stem().string().rfind("half_cheetah-", 0) == 0 &&
+              file.extension() == ".json",
+          "saved in the project, named after the model file: " + file.filename().string());
+    Check(KeyframesFile(dir, path) == file, "the same model file, the same keyframes");
+    Check(KeyframesFile(dir, "D:/robots/a/scene.xml") != KeyframesFile(dir, "D:/robots/b/scene.xml"),
+          "two models with one file name keep their own keyframes (Menagerie's scene.xml)");
+    Check(KeyframesFile(dir, (dir / "models" / "arm.xml").string()) ==
+              KeyframesFile(dir, (dir / "models" / "." / "arm.xml").string()),
+          "a model inside the project is keyed by its path there");
     Check(SaveKeyframes(file, {crouch}, path, error), "saved: " + error);
     const auto loaded = LoadKeyframes(file);
     Check(loaded.size() == 1 && loaded[0].name == "crouch" && loaded[0].saved == "12:04" && loaded[0].state == crouch.state,
@@ -768,6 +776,7 @@ void CheckGhost() {
     }
     ghost.Clear();
     Check(ghost.Data(m) == nullptr && ghost.State().empty(), "Clear leaves nothing to draw");
+    Check(ghost.Apply(m, state) && ghost.Data(m) != nullptr, "and a state is put on the model again after it");
     mj_deleteData(d);
     mj_deleteModel(m);
 }

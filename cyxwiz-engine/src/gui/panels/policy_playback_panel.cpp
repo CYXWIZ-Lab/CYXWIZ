@@ -331,9 +331,12 @@ void PolicyPlaybackPanel::RenderGhost(const std::shared_ptr<rl::TrainedPolicy>& 
             ghost_policy_.reset();
             playback_.RemoveGhost();
         }
-    } else if (ui::SecondaryButton("Show as a ghost", compare_policy_ != nullptr,
-                                   "Load a saved policy of the same environment in Compare with first.",
-                                   ui::ButtonSize::Regular)) {
+    } else if (ui::SecondaryButton(
+                   "Show as a ghost",
+                   compare_policy_ && compare_policy_->config.environment_key == policy->config.environment_key,
+                   compare_policy_ ? "The policy in Compare with plays another environment than this one."
+                                   : "Load a saved policy of the same environment in Compare with first.",
+                   ui::ButtonSize::Regular)) {
         ghost_policy_ = compare_policy_;
         ghost_file_ = compare_name_;
         StartAgain(policy);  // both start on one seed

@@ -79,6 +79,11 @@ public:
     // episode strip says ("Inverted Pendulum · copy 0").
     void SetPlayback(bool active, std::string label = {}) {
         if (active && !playback_) camera_default_pending_ = true;  // playback starts with its camera
+        if (active != playback_) {  // its start or end: no step back of the run before stays shown
+            scrub_index_ = -1;
+            resume_after_scrub_ = false;
+            ghost_.Clear();
+        }
         playback_ = active;
         playback_label_ = std::move(label);
     }

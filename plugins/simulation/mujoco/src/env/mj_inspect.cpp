@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <system_error>
@@ -112,7 +114,17 @@ std::vector<std::string> ModelKeyframes(const mjModel* m) {
 }
 
 std::filesystem::path KeyframesFile(const std::filesystem::path& project, const std::string& model_path) {
-    return project / "mujoco" / "keyframes" / (std::filesystem::path(model_path).stem().string() + ".json");
+    // The model file within the project (it moves with it), else its full path;
+    // FNV-1a, the same on every machine
+    const std::filesystem::path model = std::filesystem::path(model_path).lexically_normal();
+    const std::filesystem::path inside = model.lexically_relative(project.lexically_normal());
+    const bool in_project = !inside.empty() && *inside.begin() != "..";
+    const std::string key = (in_project ? inside : model).generic_string();
+    uint32_t hash = 2166136261u;
+    for (const unsigned char c : key) hash = (hash ^ c) * 16777619u;
+    char suffix[16];
+    std::snprintf(suffix, sizeof(suffix), "-%08x", hash);
+    return project / "mujoco" / "keyframes" / (model.stem().string() + suffix + ".json");
 }
 
 std::string EncodeKeyframes(const std::vector<MjKeyframe>& keyframes, const std::string& model_path) {

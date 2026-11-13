@@ -107,6 +107,10 @@ bool MjEnvBatch::ShowCopy(int copy) {
         shown_copy_ = -1;
         return copy < 0;
     }
+    if (view_->owner != this && view_->ghost.owner) {  // a ghost belongs to the copy it was shown beside
+        view_->ghost.owner = nullptr;
+        ++view_->ghost.version;
+    }
     view_->owner = this;
     view_->model_path = model_path_;
     view_->title = title_;

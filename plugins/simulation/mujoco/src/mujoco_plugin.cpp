@@ -188,7 +188,9 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
     {
         std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
         history_.Clear();
-        history_.SetLimit(30.0, 100000);  // the own run: the last 30 s
+        // The own run: the last 30 s; a played episode (its model loaded here) whole
+        if (playback_) history_.SetLimit(0.0, 20000);
+        else history_.SetLimit(30.0, 100000);
     }
     viewport_panel_.SetHistory(&history_);
     viewport_panel_.SetSimExecutor(&sim_executor_);
@@ -256,7 +258,7 @@ void MuJoCoPlugin::SyncPlayback() {
             ghost.last_return = g.last_return;
             ghost_path = g.model_path;
             ghost_scene = g.scene;
-            if (g.version != ghost_version_) {
+            if (g.version != ghost_version_ && !viewport_panel_.Scrubbing()) {  // taken when shown
                 ghost_version_ = g.version;
                 ghost_state = g.state;
             }
@@ -285,7 +287,9 @@ void MuJoCoPlugin::SyncPlayback() {
             numbers.rows = view_slot_->label.rows;
             subtitle = view_slot_->label.subtitle.empty() ? "Policy playback" : view_slot_->label.subtitle;
             // A changed scene is built first: its state is then applied, even unchanged
-            if (view_slot_->version != shown_version_ || (scene != env_manager_.Scene() && !SceneFailed(scene))) {
+            // (not while a step back is shown: Back to live takes the newest)
+            if (!viewport_panel_.Scrubbing() &&
+                (view_slot_->version != shown_version_ || (scene != env_manager_.Scene() && !SceneFailed(scene)))) {
                 shown_version_ = view_slot_->version;
                 state = view_slot_->state;
             }

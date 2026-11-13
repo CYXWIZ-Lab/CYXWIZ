@@ -150,7 +150,8 @@ model, it shows and changes nothing.
   **Set all to 0**.
 - **Keyframes**: **Save the state** under a name; **Load** puts it back (the
   joints, velocities and controls), **Delete** removes it. They are saved with
-  the project in `mujoco/keyframes/<model file>.json`, so they come back next
+  the project in `mujoco/keyframes/<model file name>-<id>.json` (one file a model
+  file, also when two models share a file name), so they come back next
   time; a keyframe saved for another version of the model file is refused with
   the reason. A model file's own `<key>` elements are listed too.
 - **Physics** (the Viewport's own run): the **timestep** (with the
