@@ -227,9 +227,11 @@ Tensor EmbeddingModule::Forward(const Tensor& input) {
         if (first_bad.elements() > 0) {
             const Tensor position = Tensor::FromRowMajorFlatArray(first_bad(0), {1});
             const unsigned at = static_cast<unsigned>(position.ReadData<int64_t>()[0]);  // af::where: u32 -> Int64
-            const Tensor value = Tensor::FromRowMajorFlatArray(ids(at).as(f64), {1});
+            // Read in the device's precision: .as(f64) throws on devices
+            // without float64 and hid this message behind that error.
+            const double value = DeviceToHostValues(ids(at), "EmbeddingModule bad token id")[0];
             throw std::runtime_error(
-                "EmbeddingModule: token id " + std::to_string(value.ReadData<double>()[0]) +
+                "EmbeddingModule: token id " + std::to_string(value) +
                 " at position " + std::to_string(at) + " is not an integer in the vocabulary range [0, " +
                 std::to_string(num_embeddings_) + ")");
         }
