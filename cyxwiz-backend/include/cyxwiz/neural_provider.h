@@ -422,6 +422,10 @@ public:
     static NeuralProviderRegistry& Instance();
 
     void Register(std::shared_ptr<INeuralNetworkProvider> provider);
+    // Test-only: removes the providers registered under `provider_id`, so a
+    // test's stub does not outlive the test (the registry is process-wide and
+    // tests run in random order). Never called in production code.
+    void UnregisterForTesting(const std::string& provider_id);
     std::vector<std::shared_ptr<INeuralNetworkProvider>> List() const;
     // Registered providers whose Platform() serves the target's device
     // family (device-keyed dispatch: stage 1 of lookup).

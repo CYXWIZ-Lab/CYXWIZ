@@ -237,6 +237,14 @@ void NeuralProviderRegistry::Register(
     state.providers.push_back(std::move(provider));
 }
 
+void NeuralProviderRegistry::UnregisterForTesting(const std::string& provider_id) {
+    auto& state = GetState();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    std::erase_if(state.providers, [&](const std::shared_ptr<INeuralNetworkProvider>& provider) {
+        return provider->ProviderId() == provider_id;
+    });
+}
+
 // Operator escape hatch: CYXWIZ_DISABLE_NEURAL_PROVIDERS=1 hides every
 // provider for the process (portable path everywhere). Read once.
 static bool NeuralProvidersDisabledByEnvironment() {
