@@ -1207,10 +1207,24 @@ void DataLoaderDialog::RenderStartFrom() {
     bool committed = false;
     if (start_from_ == 1) {
         Field("Checkpoint");
-        ImGui::SetNextItemWidth(-1);
+        ImGui::SetNextItemWidth(-(browse + spacing));
         if (ImGui::InputText("##initialize_from_checkpoint", initialize_from_checkpoint_,
                              sizeof(initialize_from_checkpoint_)))
             has_changes_ = true;
+        ImGui::SameLine();
+        if (cyxwiz::ui::SecondaryButton("Browse...##checkpoint", true, nullptr, cyxwiz::ui::ButtonSize::Regular)) {
+            // Start in the project's checkpoints folder when nothing is chosen yet.
+            std::string start = initialize_from_checkpoint_;
+            if (start.empty()) {
+                const std::string& root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+                if (!root.empty()) start = (std::filesystem::path(root) / "checkpoints").string();
+            }
+            if (auto picked = cyxwiz::FileDialogs::SelectFolder("Choose a checkpoint folder (.../train-<id>/best)",
+                                                                start.empty() ? nullptr : start.c_str())) {
+                CopyToBuffer(initialize_from_checkpoint_, sizeof(initialize_from_checkpoint_), *picked);
+                has_changes_ = true;
+            }
+        }
         hint = "A checkpoint folder from an earlier run (e.g. .../train-<id>/best). Its weights are this model's "
                "starting point and every layer keeps training on this data. Optimizer, schedule, epochs and seed "
                "start fresh. Layer names, shapes and the tokenizer must match.";
