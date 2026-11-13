@@ -29,6 +29,7 @@ To write your own nodes in Python or C++, see
 | [Environments for reinforcement learning](rl_environments.md) | Plugin environments (MuJoCo tasks), their settings, and `pycyxwiz.rl` for Gymnasium and Stable-Baselines3 |
 | [Training a policy (PPO)](rl_training.md) | The RL graph (Environment, layers, Policy / Value Head, PPO), its settings, Train and the RL Training Dashboard |
 | [The MuJoCo Viewport](mujoco_viewport.md) | The 3D view: run a model, cameras (follow a body, the model's cameras), View options, live numbers, screenshots and recordings, the Stress panel, Inspect (bodies, joints, controls, keyframes, physics), the timeline and plots |
+| [MuJoCo models](mujoco_models.md) | The Environment Library; downloads shared by every project and pinned to a version; a project names its models so another PC downloads the same one; Copy into the project; Import from URL |
 | [Train, play and export a policy](rl_walkthrough.md) | Step by step: CartPole, InvertedPendulum and HalfCheetah from Studio, playing and saving the policy, export, and what a real robot needs |
 
 ## Data

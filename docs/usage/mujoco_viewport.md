@@ -167,6 +167,10 @@ model, it shows and changes nothing.
   played one (Policy Playback: **Compare with**, then **Show as a ghost**),
   or why it is not drawn (it plays another model file or ground). Choosing
   and removing it is done in Policy Playback.
+- **Model**: where the open model lives (built in, a Menagerie robot with its
+  version and whether it is the shared download or the project's copy, a file
+  in or outside the project); a shared download offers **Copy into the
+  project** before you edit its file. See [MuJoCo models](mujoco_models.md).
 - **Reload the model file** reads the file again (after editing it on disk),
   keeping the camera and the scene; the state starts over. A file that does not
   build any more leaves the model as it was and says why.
