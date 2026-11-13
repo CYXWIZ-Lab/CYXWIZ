@@ -430,6 +430,9 @@ public:
     // Data Loader's weights file fills), "but_head", "but_last" (asks how
     // many), "unfreeze_all".
     void RunFreezeCommand(const std::string& command);
+    // The user's saved defaults (Preferences) for a node just added from the
+    // palette or a pattern; not for a node loaded, pasted or duplicated.
+    void ApplyUserNodeDefaults(MLNode& node) const;
     bool HasLayersWithWeights() const;
     bool IsTrainingActive() const { return is_training_; }
 
@@ -834,8 +837,6 @@ private:
     void RenderFreezeMenuItems();
     void RenderFreezePopups();
     std::string FrozenTotalsText() const;
-    // The user's saved defaults for a node just added from the palette.
-    void ApplyUserNodeDefaults(MLNode& node) const;
     bool freeze_last_popup_ = false;
     int freeze_keep_layers_ = 1;
     std::string freeze_message_;

@@ -140,11 +140,10 @@ def example() -> None:
     graph = Graph()
     data_names = ["Cats_Dogs Data", "Quality Analyzer", "Split 80/10/10", "Data Loader", "Resize 72", "Center Crop 64",
                   "Random Resized Crop", "Horizontal Flip", "Color Jitter", "Normalize (ImageNet)"]
-    rename: dict[str, str] = {}
     ids = []
     for i, name in enumerate(data_names):
         template = by_name[name]
-        node_id = graph.node(template["type"], rename.get(name, name), i * STEP_X, 300.0, template=template)
+        node_id = graph.node(template["type"], name, i * STEP_X, 300.0, template=template)
         ids.append(node_id)
     node = {n["name"]: n for n in graph.nodes}
     node["Data Loader"]["parameters"].update({"batch_size": "64", "epochs": "3",

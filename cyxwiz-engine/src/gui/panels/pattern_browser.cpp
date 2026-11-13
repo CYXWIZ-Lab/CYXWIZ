@@ -431,7 +431,9 @@ void PatternBrowserPanel::InsertPattern(const std::string& pattern_id) {
     if (node_editor_) {
         // Create a node creator callback that uses NodeEditor::CreateNode
         ::gui::patterns::NodeCreatorCallback creator = [this](::gui::NodeType type, const std::string& name) {
-            return node_editor_->CreateNode(type, name);
+            ::gui::MLNode node = node_editor_->CreateNode(type, name);
+            node_editor_->ApplyUserNodeDefaults(node);
+            return node;
         };
 
         success = library.InstantiatePatternWithCreator(

@@ -137,9 +137,11 @@ line under the canvas reads "Trainable N · Frozen M" once anything is frozen.
 | Freeze all but the last N layers... | Asks for N; layers are counted from the output back, and the last N are unfrozen. |
 | Unfreeze all | Every layer trains again. |
 
-Each command is one undo step. The last three need a graph that compiles
-without errors, because the order of the layers comes from the compiled
-model. The commands are not available while training runs.
+Each command is one undo step. **Freeze every layer loaded from the file**,
+**Freeze all but the head** and **Freeze all but the last N layers** need a
+graph that compiles without errors, because the file is matched to the
+compiled model and the order of the layers comes from it. None of the commands
+runs while training runs.
 
 The default for a new BatchNorm node's **When frozen** is set in
 **Preferences > Training**.

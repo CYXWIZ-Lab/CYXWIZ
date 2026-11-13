@@ -92,7 +92,7 @@ def thin() -> None:
         evaluated = model.eval()(x)
         trained = copy.deepcopy(model).train()(x)  # batch statistics; the copy keeps the saved running statistics
     fixture = {"generator": "generate_resnet18_fixtures.py", "torch_version": torch.__version__,
-               "torchvision_version": torchvision.__version__, "tolerance": {"atol": 2e-3, "rtol": 2e-3},
+               "torchvision_version": torchvision.__version__, "tolerance": {"atol": 1e-4, "rtol": 1e-4},
                "layers_with_weights": sum(isinstance(m, (nn.Conv2d, nn.BatchNorm2d, nn.Linear)) for m in model.modules()),
                "input": hwcn(x), "output_eval": plain(evaluated), "output_train": plain(trained)}
     (FIXTURES / "resnet18_pytorch.json").write_text(json.dumps(fixture) + "\n", encoding="utf-8")

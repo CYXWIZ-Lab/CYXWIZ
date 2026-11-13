@@ -673,7 +673,9 @@ void NodeBrowserPanel::RenderStudioSection() {
                             ImVec2 base_pos(200.0f, 200.0f);
 
                             patterns::NodeCreatorCallback creator = [this](NodeType type, const std::string& name) {
-                                return node_editor_->CreateNode(type, name);
+                                MLNode node = node_editor_->CreateNode(type, name);
+                                node_editor_->ApplyUserNodeDefaults(node);
+                                return node;
                             };
 
                             if (pattern_lib.InstantiatePatternWithCreator(

@@ -13,13 +13,13 @@
 #include "../core/freeze_actions.h"
 #include "../core/live_graph_compile.h"
 #include "../core/project_manager.h"
+#include "../core/training_manager.h"
 #include "../core/weight_file.h"
 #include "../core/weight_match.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 
-#include <filesystem>
 #include <functional>
 #include <set>
 #include <string>
@@ -28,26 +28,6 @@ namespace gui {
 
 namespace frozen = cyxwiz::frozen;
 namespace ui = cyxwiz::ui;
-
-namespace {
-
-// The weights file the graph's Data Loader starts from, as the run resolves it; empty when none is set.
-std::string WeightsFileOf(const std::vector<MLNode>& nodes) {
-    for (const auto& node : nodes) {
-        if (node.type != NodeType::DataLoader) continue;
-        const auto it = node.parameters.find("initialize_from_weights_file");
-        if (it == node.parameters.end() || it->second.empty()) continue;
-        std::filesystem::path path = it->second;
-        if (!path.is_absolute()) {
-            const std::string& root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
-            if (!root.empty()) path = (std::filesystem::path(root) / path).lexically_normal();
-        }
-        return path.string();
-    }
-    return {};
-}
-
-}  // namespace
 
 bool NodeEditor::HasLayersWithWeights() const {
     for (const auto& node : nodes_) {
@@ -60,15 +40,17 @@ bool NodeEditor::HasLayersWithWeights() const {
 // no undo step. One outcome line per action; `nothing` says why no node changed.
 void NodeEditor::ApplyFreeze(const std::function<size_t(std::vector<MLNode>&)>& action, const std::string& what,
                              const std::string& nothing) {
-    std::vector<MLNode> changed_nodes = nodes_;
-    const size_t changed = action(changed_nodes);
-    if (changed == 0) {
+    // Counted on a copy first, so an action that changes nothing leaves no undo
+    // step; then applied to the graph in place, so no pointer to a node (the
+    // Properties panel holds one) is left dangling.
+    std::vector<MLNode> trial = nodes_;
+    if (action(trial) == 0) {
         freeze_message_ = nothing;
         spdlog::info("Freeze: {}: nothing changed", what);
         return;
     }
     SaveUndoState();
-    nodes_ = std::move(changed_nodes);
+    const size_t changed = action(nodes_);
     spdlog::info("Freeze: {}: {} node{} changed", what, changed, changed == 1 ? "" : "s");
 }
 
@@ -99,14 +81,18 @@ void NodeEditor::FreezeAllButLastLayers(size_t keep) {
 }
 
 void NodeEditor::FreezeLayersLoadedFromFile() {
-    const std::string path = WeightsFileOf(nodes_);
+    const cyxwiz::TrainingConfiguration* clean = live_compile_ ? live_compile_->CleanConfig() : nullptr;
+    if (!clean || live_compile_->WeightSlots().empty()) {
+        freeze_message_ = "The graph has to compile without errors first, so the file can be matched to its layers.";
+        return;
+    }
+    // The path as the run resolves it (relative to the project).
+    cyxwiz::TrainingConfiguration resolved = *clean;
+    cyxwiz::ResolveProjectRelativePaths(resolved, cyxwiz::ProjectManager::Instance().GetProjectRoot());
+    const std::string path = resolved.initialize_from_weights_file;
     if (path.empty()) {
         freeze_message_ = "No weights file is chosen. Set Start from to A weights file on the Data Loader "
                           "(Checkpoints tab) first.";
-        return;
-    }
-    if (!live_compile_ || !live_compile_->UpToDate() || live_compile_->WeightSlots().empty()) {
-        freeze_message_ = "The graph has to compile without errors first, so the file can be matched to its layers.";
         return;
     }
     // Names, shapes and types only: no tensor is read, so this is quick.
@@ -139,6 +125,10 @@ void NodeEditor::ApplyUserNodeDefaults(MLNode& node) const {
 }
 
 void NodeEditor::RunFreezeCommand(const std::string& command) {
+    if (is_training_ || cyxwiz::TrainingManager::Instance().IsTrainingActive()) {
+        freeze_message_ = "Training is running. Freeze or unfreeze layers once it has finished.";
+        return;
+    }
     if (command == "selected") FreezeSelectedNodes(true);
     else if (command == "unselected") FreezeSelectedNodes(false);
     else if (command == "loaded") FreezeLayersLoadedFromFile();

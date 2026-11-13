@@ -1536,14 +1536,22 @@ public:
     // fine-tuning on small data wants). Off, the default, is PyTorch's
     // behaviour when only requires_grad is off: the weights stay and the
     // statistics keep following the data.
-    void SetKeepStatisticsWhenFrozen(bool keep) { keep_statistics_when_frozen_ = keep; }
+    // Applied at once (the builder freezes the module first), so the module
+    // does not wait for the next SetTraining to take its frozen mode. After a
+    // later Unfreeze the next SetTraining restores the mode it last asked for.
+    void SetKeepStatisticsWhenFrozen(bool keep) {
+        keep_statistics_when_frozen_ = keep;
+        SetTraining(requested_training_);
+    }
     bool KeepsStatisticsWhenFrozen() const { return keep_statistics_when_frozen_; }
     void SetTraining(bool training) override {
+        requested_training_ = training;
         Module::SetTraining(training && !(keep_statistics_when_frozen_ && !IsTrainable()));
     }
 
 private:
     bool keep_statistics_when_frozen_ = false;
+    bool requested_training_ = true;
     size_t num_features_;
     float eps_;
     float momentum_;
@@ -1676,14 +1684,22 @@ public:
     // fine-tuning on small data wants). Off, the default, is PyTorch's
     // behaviour when only requires_grad is off: the weights stay and the
     // statistics keep following the data.
-    void SetKeepStatisticsWhenFrozen(bool keep) { keep_statistics_when_frozen_ = keep; }
+    // Applied at once (the builder freezes the module first), so the module
+    // does not wait for the next SetTraining to take its frozen mode. After a
+    // later Unfreeze the next SetTraining restores the mode it last asked for.
+    void SetKeepStatisticsWhenFrozen(bool keep) {
+        keep_statistics_when_frozen_ = keep;
+        SetTraining(requested_training_);
+    }
     bool KeepsStatisticsWhenFrozen() const { return keep_statistics_when_frozen_; }
     void SetTraining(bool training) override {
+        requested_training_ = training;
         Module::SetTraining(training && !(keep_statistics_when_frozen_ && !IsTrainable()));
     }
 
 private:
     bool keep_statistics_when_frozen_ = false;
+    bool requested_training_ = true;
     std::unique_ptr<BatchNorm2DLayer> layer_;
     int num_features_;
     float eps_;

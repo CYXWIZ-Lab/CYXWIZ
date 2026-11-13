@@ -20,6 +20,7 @@ inline constexpr const char* kStatisticsUpdate = "update";
 inline bool LayerNodeHoldsWeights(gui::NodeType type) {
     switch (type) {
         case gui::NodeType::Dense:
+        case gui::NodeType::PReLU:
         case gui::NodeType::Conv1D:
         case gui::NodeType::Conv2D:
         case gui::NodeType::Conv3D:
