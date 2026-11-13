@@ -295,6 +295,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- The node icon packs (View > Node Icon Pack: Tabler, Remix, Lucide, Iconoir,
+  Phosphor) drew the right icons only by chance: most nodes showed "?",
+  nothing, or a Font Awesome icon. Each pack now draws the icons it names,
+  from a font of its own.
 - Font Awesome icons that showed the wrong picture or nothing: the circle of
   nodes (an envelope before), circle pause (an exit arrow), share, compare,
   ranking, left-right arrows, the poll chart, the rockslide (a money

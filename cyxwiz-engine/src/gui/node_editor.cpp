@@ -1893,7 +1893,8 @@ void NodeEditor::RenderNodes() {
 
             // Draw centered icon (55% of box height, like Node Browser)
             const char* icon = GetNodeIcon(node.type);
-            ImFont* font = ImGui::GetFont();
+            ImFont* font = NodeIconFont(icon_pack_);
+            if (!font) font = ImGui::GetFont();
             float scaled_icon_size = ICON_BOX_SIZE * 0.55f;
             ImVec2 icon_text_size = font->CalcTextSizeA(scaled_icon_size, FLT_MAX, 0.0f, icon);
             ImVec2 icon_text_pos(

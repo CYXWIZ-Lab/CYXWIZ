@@ -81,6 +81,15 @@ const char* NodeIconFor(IconPack pack, NodeType type);
 // at the end). The font atlas keeps only these from the extra packs instead
 // of their whole ranges (thousands of icons at every size).
 std::vector<ImWchar> NodeIconGlyphRanges(IconPack pack);
+// The font a pack's node icons are drawn with. Each extra pack is a font of its
+// own: merged into the interface font, its codepoints collided with Font
+// Awesome's (the first glyph at a codepoint wins). Font Awesome and a pack whose
+// font did not load give nullptr: draw with the current font.
+void RegisterNodeIconFont(IconPack pack, ImFont* font);
+ImFont* NodeIconFont(IconPack pack);
+// The font file of an extra pack in resources/fonts ("" for Font Awesome, which
+// is merged into the interface fonts).
+const char* NodeIconFontFile(IconPack pack);
 
 struct DataBoundaryMigrationResult {
     bool success = false;

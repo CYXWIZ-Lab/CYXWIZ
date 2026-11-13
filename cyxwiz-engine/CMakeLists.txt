@@ -4960,6 +4960,11 @@ add_test(NAME device_random COMMAND test_device_random)
 if(Python3_EXECUTABLE)
     add_test(NAME random_sources_check
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/checks/check_random_sources.py" "${CMAKE_SOURCE_DIR}")
+    # Every icon macro (icons.h and the node icon pack headers) draws the glyph
+    # its comment names in its font file; skipped where fontTools is missing.
+    add_test(NAME icon_headers_check
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/checks/check_icon_headers.py" "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(icon_headers_check PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # ===== Test: the Row Filter's condition as dialog rows (TOFIX129 B-5) =====
