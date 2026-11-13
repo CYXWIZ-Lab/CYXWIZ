@@ -105,8 +105,11 @@ GradientCheckResult CheckModuleGradients(
                 Record(result, RelativeError(analytic_input.at(i), numeric, options.absolute_floor), "input");
             }
 
-            // Parameter gradients.
+            // Parameter gradients; state the module keeps (GetStateNames) is
+            // not trained and has none.
+            const auto state = module->GetStateNames();
             for (const auto& [key, value] : parameters) {
+                if (std::find(state.begin(), state.end(), key) != state.end()) continue;
                 const auto base = Host(value);
                 const auto gradient = analytic_params.find(key);
                 if (gradient == analytic_params.end()) {

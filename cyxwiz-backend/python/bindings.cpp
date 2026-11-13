@@ -416,10 +416,12 @@ PYBIND11_MODULE(pycyxwiz, m) {
 
     // SGD Optimizer
     py::class_<cyxwiz::SGDOptimizer, cyxwiz::Optimizer>(m, "SGD")
-        .def(py::init<double, double>(),
+        .def(py::init<double, double, double, bool>(),
              py::arg("learning_rate") = 0.01,
              py::arg("momentum") = 0.0,
-             "SGD optimizer with optional momentum")
+             py::arg("weight_decay") = 0.0,
+             py::arg("nesterov") = false,
+             "SGD optimizer with optional momentum, Nesterov momentum and L2 weight decay (torch.optim.SGD, dampening 0)")
         .def("step", &cyxwiz::SGDOptimizer::Step,
              py::arg("parameters"), py::arg("gradients"))
         .def("zero_grad", &cyxwiz::SGDOptimizer::ZeroGrad);
@@ -1397,6 +1399,21 @@ PYBIND11_MODULE(pycyxwiz, m) {
         return act.Forward(x);
     }, py::arg("input"), "Apply Mish activation");
 
+    m.def("hardswish", [](const cyxwiz::Tensor& x) {
+        cyxwiz::HardswishActivation act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply Hardswish activation: x * relu6(x + 3) / 6");
+
+    m.def("hardsigmoid", [](const cyxwiz::Tensor& x) {
+        cyxwiz::HardsigmoidActivation act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply Hardsigmoid activation: relu6(x + 3) / 6");
+
+    m.def("relu6", [](const cyxwiz::Tensor& x) {
+        cyxwiz::ReLU6Activation act;
+        return act.Forward(x);
+    }, py::arg("input"), "Apply ReLU6 activation: min(max(x, 0), 6)");
+
     // Layer-like functional operations
     m.def("flatten", [](const cyxwiz::Tensor& x) {
         cyxwiz::FlattenLayer layer;
@@ -2224,6 +2241,8 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("SiLU", cyxwiz::ActivationType::SiLU)
         .value("Mish", cyxwiz::ActivationType::Mish)
         .value("Hardswish", cyxwiz::ActivationType::Hardswish)
+        .value("Hardsigmoid", cyxwiz::ActivationType::Hardsigmoid)
+        .value("ReLU6", cyxwiz::ActivationType::ReLU6)
         .value("SELU", cyxwiz::ActivationType::SELU)
         .value("PReLU", cyxwiz::ActivationType::PReLU)
         .value("SquaredReLU", cyxwiz::ActivationType::SquaredReLU)
@@ -2313,6 +2332,18 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .def("forward", &cyxwiz::HardswishActivation::Forward)
         .def("backward", &cyxwiz::HardswishActivation::Backward);
 
+    // Hardsigmoid Activation
+    py::class_<cyxwiz::HardsigmoidActivation, cyxwiz::Activation>(m, "Hardsigmoid")
+        .def(py::init<>(), "Create Hardsigmoid activation")
+        .def("forward", &cyxwiz::HardsigmoidActivation::Forward)
+        .def("backward", &cyxwiz::HardsigmoidActivation::Backward);
+
+    // ReLU6 Activation
+    py::class_<cyxwiz::ReLU6Activation, cyxwiz::Activation>(m, "ReLU6")
+        .def(py::init<>(), "Create ReLU6 activation")
+        .def("forward", &cyxwiz::ReLU6Activation::Forward)
+        .def("backward", &cyxwiz::ReLU6Activation::Backward);
+
     // SELU Activation (Scaled Exponential Linear Unit)
     py::class_<cyxwiz::SELUActivation, cyxwiz::Activation>(m, "SELU")
         .def(py::init<>(), "Create SELU activation (self-normalizing)")
@@ -2356,6 +2387,8 @@ PYBIND11_MODULE(pycyxwiz, m) {
         .value("GELU", cyxwiz::ModuleType::GELU)
         .value("Swish", cyxwiz::ModuleType::Swish)
         .value("Mish", cyxwiz::ModuleType::Mish)
+        // ModuleType::Hardswish is not listed: export_values() below would put its name over the
+        // Hardswish activation class. Use HardswishModule or Sequential.add_hardswish().
         .export_values();
 
     // Module base class; Python subclasses become real modules (TOFIX125 P3).
@@ -2419,6 +2452,35 @@ PYBIND11_MODULE(pycyxwiz, m) {
     // MishModule
     py::class_<cyxwiz::MishModule, cyxwiz::Module>(m, "MishModule")
         .def(py::init<>(), "Create a Mish module");
+
+    // Squeeze-and-Excitation on [H,W,C,N]
+    py::class_<cyxwiz::SqueezeExcitationModule, cyxwiz::Module>(m, "SqueezeExcitation")
+        .def(py::init([](size_t channels, size_t squeeze_channels, cyxwiz::ActivationType activation,
+                         cyxwiz::ActivationType gate, bool bias) {
+                 cyxwiz::SqueezeExcitationOptions options;
+                 options.activation = activation;
+                 options.gate = gate;
+                 options.use_bias = bias;
+                 return std::make_unique<cyxwiz::SqueezeExcitationModule>(channels, squeeze_channels, options);
+             }),
+             py::arg("channels"), py::arg("squeeze_channels"),
+             py::arg("activation") = cyxwiz::ActivationType::ReLU,
+             py::arg("gate") = cyxwiz::ActivationType::Sigmoid, py::arg("bias") = true,
+             "Squeeze-and-Excitation: scale each channel of a feature map [H,W,C,N] by a learned gate "
+             "(torchvision.ops.SqueezeExcitation). activation: ActivationType.ReLU, Hardswish or Swish; "
+             "gate: ActivationType.Sigmoid or Hardsigmoid");
+
+    // HardswishModule
+    py::class_<cyxwiz::HardswishModule, cyxwiz::Module>(m, "HardswishModule")
+        .def(py::init<>(), "Create a Hardswish module");
+
+    // HardsigmoidModule (ModuleType::Hardsigmoid is not listed in the enum above, for the same reason as Hardswish)
+    py::class_<cyxwiz::HardsigmoidModule, cyxwiz::Module>(m, "HardsigmoidModule")
+        .def(py::init<>(), "Create a Hardsigmoid module");
+
+    // ReLU6Module (ModuleType::ReLU6 is not listed in the enum above, for the same reason as Hardsigmoid)
+    py::class_<cyxwiz::ReLU6Module, cyxwiz::Module>(m, "ReLU6Module")
+        .def(py::init<>(), "Create a ReLU6 module");
 
     // Deterministic sinusoidal positional encoding used by Studio Transformer graphs.
     py::class_<cyxwiz::PositionalEncodingModule, cyxwiz::Module>(
@@ -2520,6 +2582,18 @@ PYBIND11_MODULE(pycyxwiz, m) {
             self.Add<cyxwiz::MishModule>();
         }, "Add a Mish activation")
 
+        .def("add_hardswish", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::HardswishModule>();
+        }, "Add a Hardswish activation")
+
+        .def("add_hardsigmoid", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::HardsigmoidModule>();
+        }, "Add a Hardsigmoid activation")
+
+        .def("add_relu6", [](cyxwiz::SequentialModel& self) {
+            self.Add<cyxwiz::ReLU6Module>();
+        }, "Add a ReLU6 activation")
+
         // Core methods
         .def("forward", &cyxwiz::SequentialModel::Forward,
              py::arg("input"),
@@ -2528,10 +2602,14 @@ PYBIND11_MODULE(pycyxwiz, m) {
              py::arg("grad_output"),
              "Backward pass through all layers (reverse order)")
         .def("get_parameters", &cyxwiz::SequentialModel::GetParameters,
-             "Get all trainable parameters")
+             "Get every parameter of the model, frozen layers included")
+        .def("get_trainable_parameters", &cyxwiz::SequentialModel::GetTrainableParameters,
+             "Get the parameters of the layers that are not frozen")
+        .def("get_frozen_parameter_names", &cyxwiz::SequentialModel::GetFrozenParameterNames,
+             "Names of the parameters that belong to frozen layers")
         .def("set_parameters", &cyxwiz::SequentialModel::SetParameters,
              py::arg("params"),
-             "Set all trainable parameters")
+             "Set parameters by name")
         .def("get_gradients", &cyxwiz::SequentialModel::GetGradients,
              "Get all parameter gradients")
         .def("update_parameters", &cyxwiz::SequentialModel::UpdateParameters,

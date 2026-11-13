@@ -399,7 +399,10 @@ short:
 - `Backward` returns the gradient for the input of the last `Forward`, with
   that input's shape, and stores the gradients of your weights.
 - `GetParameters`, `GetGradients` and `SetParameters` use the same keys;
-  `HasParameters` returns `true` when there are any.
+  `HasParameters` returns `true` when there are any. State you keep beside
+  the weights without training it (a running mean, as BatchNorm does) goes in
+  `GetParameters` and `SetParameters` only, so saved models keep it, and
+  `GetStateNames` names those keys: they need no gradient.
 - `SetParameters` may receive only some of your keys (the gradient check
   sets one at a time): update the ones it holds and keep the others, as
   `SnakeModule` does.
@@ -502,7 +505,7 @@ directly, so your plugin must be built the way the Engine was.
 compiler that builds your plugin, for example
 
 ```
-sdk=0.2;api=1.2;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=none
+sdk=0.2;api=1.3;compiler=msvc-19;stdlib=msvc-stl;build=release;ptr=64;arrayfire=none
 ```
 
 The Engine loads your library, then compares the fingerprint with its own

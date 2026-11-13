@@ -87,6 +87,8 @@ public:
     void SetDeleteNodesCallback(std::function<void()> cb) { delete_nodes_callback_ = cb; }
     void SetGroupNodesCallback(std::function<void()> cb) { group_nodes_callback_ = cb; }
     void SetUngroupNodesCallback(std::function<void()> cb) { ungroup_nodes_callback_ = cb; }
+    // Nodes > Freeze: the command is one of NodeEditor::RunFreezeCommand's.
+    void SetFreezeNodesCallback(std::function<void(const std::string&)> cb) { freeze_nodes_callback_ = cb; }
 
     // Icon pack selection callbacks
     void SetSetIconPackCallback(std::function<void(int)> cb) { set_icon_pack_callback_ = cb; }
@@ -229,6 +231,7 @@ public:
     void SetOpenDimReductionCallback(std::function<void()> cb) { open_dim_reduction_callback_ = cb; }
     void SetOpenFeatureImportanceCallback(std::function<void()> cb) { open_feature_importance_callback_ = cb; }
     void SetOpenHyperparamSearchCallback(std::function<void()> cb) { open_hyperparam_search_callback_ = cb; }
+    void SetOpenNASCallback(std::function<void()> cb) { open_nas_callback_ = cb; }
     void SetOpenServingCallback(std::function<void()> cb) { open_serving_callback_ = cb; }
     // Apps > a loaded plugin: show its nodes in the Node Browser (TOFIX125).
     void SetShowPluginNodesCallback(std::function<void(const std::string&)> cb) { show_plugin_nodes_callback_ = std::move(cb); }
@@ -361,6 +364,13 @@ private:
     void ApplyServerCaFile(const std::string& path);
     void SignOut();
     void RenderAppearancePreferences();  // Preferences > Appearance
+    // Preferences > Studio Debugger (toolbar_preferences_studio_debugger.cpp)
+    void RenderStudioDebuggerPreferences();
+    // Preferences > Nodes panel (toolbar_preferences_nodes_panel.cpp)
+    void RenderNodesPanelPreferences();
+    void RenderTrainingPreferences();
+    // Preferences > Search (toolbar_preferences_search.cpp)
+    void RenderSearchPreferences();
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
     bool RenderBackendManagerSection(bool training_active);
     // Compute devices: one card per physical device (tofix119 C).
@@ -436,6 +446,7 @@ private:
     std::function<void()> delete_nodes_callback_;
     std::function<void()> group_nodes_callback_;
     std::function<void()> ungroup_nodes_callback_;
+    std::function<void(const std::string&)> freeze_nodes_callback_;
 
     // Icon pack selection callbacks
     std::function<void(int)> set_icon_pack_callback_;
@@ -712,6 +723,7 @@ private:
     std::function<void()> open_dim_reduction_callback_;
     std::function<void()> open_feature_importance_callback_;
     std::function<void()> open_hyperparam_search_callback_;
+    std::function<void()> open_nas_callback_;
     std::function<void()> open_serving_callback_;
     std::function<void(const std::string&)> show_plugin_nodes_callback_;
 

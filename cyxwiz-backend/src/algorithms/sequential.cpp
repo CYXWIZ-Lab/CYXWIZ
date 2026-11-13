@@ -254,17 +254,31 @@ void SequentialModel::BackwardSparseCsr(
 std::map<std::string, Tensor> SequentialModel::GetParameters() {
     std::map<std::string, Tensor> all_params;
 
+    // Frozen layers are part of the model: a checkpoint, an export or a
+    // comparison that left them out would lose their weights.
     for (size_t i = 0; i < modules_.size(); ++i) {
-        // Skip frozen layers - their parameters won't be updated
-        if (modules_[i]->HasParameters() && modules_[i]->IsTrainable()) {
-            auto params = modules_[i]->GetParameters();
-            for (auto& [key, tensor] : params) {
-                all_params["layer" + std::to_string(i) + "." + key] = tensor;
-            }
+        if (!modules_[i]->HasParameters()) continue;
+        auto params = modules_[i]->GetParameters();
+        for (auto& [key, tensor] : params) {
+            all_params["layer" + std::to_string(i) + "." + key] = tensor;
         }
     }
 
     return all_params;
+}
+
+std::map<std::string, Tensor> SequentialModel::GetTrainableParameters() {
+    std::map<std::string, Tensor> trainable;
+
+    for (size_t i = 0; i < modules_.size(); ++i) {
+        if (!modules_[i]->HasParameters() || !modules_[i]->IsTrainable()) continue;
+        auto params = modules_[i]->GetParameters();
+        for (auto& [key, tensor] : params) {
+            trainable["layer" + std::to_string(i) + "." + key] = tensor;
+        }
+    }
+
+    return trainable;
 }
 
 void SequentialModel::SetParameters(const std::map<std::string, Tensor>& params) {
@@ -307,13 +321,35 @@ std::map<std::string, Tensor> SequentialModel::GetGradients() {
     return all_grads;
 }
 
+std::set<std::string> SequentialModel::GetStateParameterNames() const {
+    std::set<std::string> names;
+    // The same modules GetParameters reports.
+    for (size_t i = 0; i < modules_.size(); ++i) {
+        if (!modules_[i]->HasParameters()) continue;
+        for (const auto& name : modules_[i]->GetStateNames()) names.insert("layer" + std::to_string(i) + "." + name);
+    }
+    return names;
+}
+
+std::set<std::string> SequentialModel::GetFrozenParameterNames() const {
+    std::set<std::string> names;
+    for (size_t i = 0; i < modules_.size(); ++i) {
+        if (!modules_[i]->HasParameters() || modules_[i]->IsTrainable()) continue;
+        for (const auto& [key, tensor] : modules_[i]->GetParameters()) {
+            names.insert("layer" + std::to_string(i) + "." + key);
+        }
+    }
+    return names;
+}
+
 void SequentialModel::UpdateParameters(Optimizer* optimizer) {
     if (!optimizer) {
         spdlog::error("SequentialModel::UpdateParameters: No optimizer provided");
         return;
     }
 
-    auto params = GetParameters();
+    // Frozen layers are neither stepped nor written back.
+    auto params = GetTrainableParameters();
     auto grads = GetGradients();
 
     optimizer->Step(params, grads);
@@ -567,17 +603,181 @@ std::unique_ptr<Module> CreateModule(
         case ModuleType::Mish:
             return std::make_unique<MishModule>();
 
+        case ModuleType::Hardswish:
+            return std::make_unique<HardswishModule>();
+
+        case ModuleType::Hardsigmoid:
+            return std::make_unique<HardsigmoidModule>();
+
+        case ModuleType::ReLU6:
+            return std::make_unique<ReLU6Module>();
+
         default:
             spdlog::error("CreateModule: Unknown module type {}", static_cast<int>(type));
             return nullptr;
     }
 }
 
+// Memory estimates (CachedElementsPerSample, BackwardWorkingElementsPerSample).
+// Sequence modules take a
+// [seq_len, features] sample; the counts follow each layer's forward caches.
+namespace {
+
+size_t SequenceLength(const std::vector<size_t>& shape) { return shape.size() >= 2 ? shape[0] : 1; }
+size_t FeatureCount(const std::vector<size_t>& shape) { return shape.empty() ? 0 : shape.back(); }
+size_t ElementCount(const std::vector<size_t>& shape) {
+    size_t n = shape.empty() ? 0 : 1;
+    for (size_t d : shape) n *= d;
+    return n;
+}
+
+// A convolution's output length along one axis.
+size_t ConvOutput(size_t in, int kernel, int stride, int padding, int dilation = 1) {
+    const long long span = static_cast<long long>(dilation) * (kernel - 1) + 1;
+    const long long out = (static_cast<long long>(in) + 2LL * padding - span) / (std::max)(1, stride) + 1;
+    return out > 0 ? static_cast<size_t>(out) : 0;
+}
+
+}  // namespace
+
+// Convolutions run as matrix products over unfolded input columns; backward
+// holds the columns and their gradient together.
+size_t Conv1DModule::BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    // [length, channels]
+    if (sample_input_shape.size() < 2) return 0;
+    const size_t out = ConvOutput(sample_input_shape[0], kernel_size_, stride_, padding_, dilation_);
+    return 2 * static_cast<size_t>(in_channels_) * kernel_size_ * out;
+}
+
+size_t Conv2DModule::BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    // [H, W, C]
+    if (sample_input_shape.size() < 2) return 0;
+    const size_t out_h = ConvOutput(sample_input_shape[0], kernel_size_, stride_, padding_);
+    const size_t out_w = ConvOutput(sample_input_shape[1], kernel_size_, stride_, padding_);
+    return 2 * static_cast<size_t>(in_channels_) * kernel_size_ * kernel_size_ * out_h * out_w;
+}
+
+size_t DepthwiseConv2DModule::BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    if (sample_input_shape.size() < 2) return 0;
+    const size_t out_h = ConvOutput(sample_input_shape[0], kernel_size_, stride_, padding_);
+    const size_t out_w = ConvOutput(sample_input_shape[1], kernel_size_, stride_, padding_);
+    return 2 * static_cast<size_t>(channels_) * kernel_size_ * kernel_size_ * out_h * out_w;
+}
+
+size_t ConvTranspose2DModule::BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    // Each input position's k x k output patch, for every output channel.
+    if (sample_input_shape.size() < 2) return 0;
+    return 2 * sample_input_shape[0] * sample_input_shape[1] * static_cast<size_t>(kernel_size_) * kernel_size_ *
+           static_cast<size_t>(out_channels_);
+}
+
+size_t Conv3DModule::BackwardWorkingElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    (void)sample_input_shape;  // the geometry is fixed at construction
+    return 2 * column_size_ * patches_;
+}
+
+namespace {
+
+// MultiHeadAttentionLayer without the fused provider (the larger case):
+// Q, K and V, the context, and the [heads, seq, seq] weights, with their
+// dropout mask while attention dropout is on.
+size_t AttentionCache(size_t seq, size_t embed, size_t heads, bool dropout) {
+    return 4 * seq * embed + heads * seq * seq * (dropout ? 2 : 1);
+}
+
+// One transformer block: its attention, the attention output and two
+// residual sums, two norms (input and normalized), and the feed-forward
+// hidden activation before and after its non-linearity.
+size_t TransformerBlockCache(size_t seq, size_t embed, size_t heads, size_t feedforward, bool dropout) {
+    return AttentionCache(seq, embed, heads, dropout) + 7 * seq * embed + 2 * seq * feedforward;
+}
+
+}  // namespace
+
+size_t LSTMModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    // Per level and direction: its input, the four gates, the cell and the
+    // hidden states at every step.
+    const size_t seq = SequenceLength(sample_input_shape);
+    const size_t dirs = bidirectional_ ? 2 : 1;
+    size_t total = 0;
+    size_t input = FeatureCount(sample_input_shape);
+    for (int level = 0; level < layer_->GetNumLayers(); ++level) {
+        total += dirs * seq * (input + 6 * hidden_size_);
+        input = hidden_size_ * dirs;
+    }
+    return total;
+}
+
+size_t GRUModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    // Per level and direction: its input, the three gates and the hidden state.
+    const size_t seq = SequenceLength(sample_input_shape);
+    const size_t dirs = bidirectional_ ? 2 : 1;
+    size_t total = 0;
+    size_t input = FeatureCount(sample_input_shape);
+    for (int level = 0; level < layer_->GetNumLayers(); ++level) {
+        total += dirs * seq * (input + 4 * hidden_size_);
+        input = hidden_size_ * dirs;
+    }
+    return total;
+}
+
+size_t RNNModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    // Per level and direction: its input and the hidden state.
+    const size_t seq = SequenceLength(sample_input_shape);
+    const size_t dirs = bidirectional_ ? 2 : 1;
+    size_t total = 0;
+    size_t input = FeatureCount(sample_input_shape);
+    for (int level = 0; level < layer_->GetNumLayers(); ++level) {
+        total += dirs * seq * (input + hidden_size_);
+        input = hidden_size_ * dirs;
+    }
+    return total;
+}
+
+size_t TransformerEncoderModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return TransformerBlockCache(SequenceLength(sample_input_shape), d_model_, num_heads_, dim_feedforward_,
+                                 dropout_ > 0.0f);
+}
+
+size_t TransformerDecoderModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return TransformerBlockCache(SequenceLength(sample_input_shape), d_model_, num_heads_, dim_feedforward_,
+                                 dropout_ > 0.0f);
+}
+
+size_t MultiHeadAttentionModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return AttentionCache(SequenceLength(sample_input_shape), embed_dim_, num_heads_, dropout_ > 0.0f);
+}
+
+size_t CrossAttentionModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    // The key/value input is not in the shape; taken as long as the query.
+    return AttentionCache(SequenceLength(sample_input_shape), embed_dim_, num_heads_, false);
+}
+
+size_t LinearAttentionModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    // Q, K, V and their feature maps, the context, and the per-head
+    // [head_dim, head_dim] key-value summary.
+    const size_t seq = SequenceLength(sample_input_shape);
+    return 6 * seq * embed_dim_ + num_heads_ * head_dim_ * head_dim_;
+}
+
+size_t DropoutModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return p_ > 0.0f ? ElementCount(sample_input_shape) : 0;  // the mask
+}
+
+size_t BatchNormModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return ElementCount(sample_input_shape);  // the normalized input
+}
+
+size_t BatchNorm2DModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return ElementCount(sample_input_shape);
+}
+
+size_t LayerNormModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return ElementCount(sample_input_shape);
+}
+
+size_t GroupNormModule::CachedElementsPerSample(const std::vector<size_t>& sample_input_shape) const {
+    return ElementCount(sample_input_shape);
+}
+
 } // namespace cyxwiz
-
-
-
-
-
-
-

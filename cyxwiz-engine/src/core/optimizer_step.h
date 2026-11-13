@@ -3,7 +3,8 @@
 // One optimizer update of a model from its finished gradients, shared by
 // the supervised trainer and the reinforcement learning trainer (TOFIX195
 // S4.0): the L1/L2 penalty's gradient, clipping by global norm, the
-// optimizer's step and the new parameters back into the model, in the order
+// optimizer's step and the new parameters back into the model (frozen layers
+// excluded: IExecutableModel::GetTrainableParameters), in the order
 // torch gives (backward of loss + penalty, clip_grad_norm_, step).
 
 #include "executable_model.h"

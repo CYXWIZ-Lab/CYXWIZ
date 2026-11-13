@@ -12,10 +12,41 @@
 
 #include <imgui_internal.h>  // ImTextCharFromUtf8
 
+#include <array>
+
 namespace gui {
+
+namespace {
+constexpr size_t kIconPackCount = static_cast<size_t>(IconPack::Phosphor) + 1;
+std::array<ImFont*, kIconPackCount> g_node_icon_fonts{};
+}  // namespace
 
 // ========== Icon Implementation ==========
 const char* NodeEditor::GetNodeIcon(NodeType type) { return NodeIconFor(icon_pack_, type); }
+
+void RegisterNodeIconFont(IconPack pack, ImFont* font) {
+    const auto index = static_cast<size_t>(pack);
+    if (index < kIconPackCount && pack != IconPack::FontAwesome) g_node_icon_fonts[index] = font;
+}
+
+ImFont* NodeIconFont(IconPack pack) {
+    const auto index = static_cast<size_t>(pack);
+    return index < kIconPackCount ? g_node_icon_fonts[index] : nullptr;
+}
+
+void ClearNodeIconFonts() { g_node_icon_fonts.fill(nullptr); }
+
+const char* NodeIconFontFile(IconPack pack) {
+    switch (pack) {
+        case IconPack::Tabler: return FONT_ICON_FILE_NAME_TI;
+        case IconPack::Remix: return FONT_ICON_FILE_NAME_RI;
+        case IconPack::Lucide: return FONT_ICON_FILE_NAME_LU;
+        case IconPack::Iconoir: return FONT_ICON_FILE_NAME_IO;
+        case IconPack::Phosphor: return FONT_ICON_FILE_NAME_PH;
+        case IconPack::FontAwesome: break;
+    }
+    return "";
+}
 
 std::vector<ImWchar> NodeIconGlyphRanges(IconPack pack) {
     ImFontGlyphRangesBuilder builder;
@@ -39,7 +70,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::DatasetInput:
                 return ICON_TI_DATABASE;
             case NodeType::DataLoader:
-                return ICON_TI_LOADER;
+                return ICON_TI_LOADER_2;
             case NodeType::DataSplit:
                 return ICON_TI_SITEMAP;
             case NodeType::Normalize:
@@ -73,6 +104,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
                 return ICON_TI_CHART_BAR;
 
             // Regularization
@@ -92,7 +124,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::MultiHeadAttention:
             case NodeType::CrossAttention:
             case NodeType::LinearAttention:
-                return ICON_TI_FOCUS;
+                return ICON_TI_FOCUS_2;
             case NodeType::TransformerEncoder:
             case NodeType::TransformerDecoder:
                 return ICON_TI_CPU;
@@ -108,6 +140,9 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::GELU:
             case NodeType::Swish:
             case NodeType::Mish:
+            case NodeType::Hardswish:
+            case NodeType::Hardsigmoid:
+            case NodeType::ReLU6:
                 return ICON_TI_BOLT;
             case NodeType::Sigmoid:
                 return ICON_TI_ACTIVITY;
@@ -262,7 +297,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
 
             // RL
             case NodeType::RLEnvironment:
-                return ICON_TI_FOCUS;
+                return ICON_TI_FOCUS_2;
             case NodeType::PolicyHead:
             case NodeType::ValueHead:
                 return ICON_TI_BRAIN;
@@ -475,6 +510,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
                 return ICON_RI_BAR_CHART;
 
             // Core Layers
@@ -557,6 +593,9 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::GELU:
             case NodeType::Swish:
             case NodeType::Mish:
+            case NodeType::Hardswish:
+            case NodeType::Hardsigmoid:
+            case NodeType::ReLU6:
                 return ICON_RI_FLASHLIGHT;
             case NodeType::Sigmoid:
             case NodeType::Spectrogram:
@@ -834,6 +873,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
             case NodeType::DescribeStats:
             case NodeType::FeatureImportanceNode:
                 return ICON_LU_BAR_CHART;
@@ -933,6 +973,9 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::GELU:
             case NodeType::Swish:
             case NodeType::Mish:
+            case NodeType::Hardswish:
+            case NodeType::Hardsigmoid:
+            case NodeType::ReLU6:
                 return ICON_LU_ZAP;
             case NodeType::Sigmoid:
             case NodeType::Spectrogram:
@@ -1108,7 +1151,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::SortRows:
                 return ICON_LU_SORT_ASC;
             case NodeType::RemoveDuplicateRows:
-                return ICON_LU_TRASH;
+                return ICON_LU_TRASH_2;
             case NodeType::RenameColumns:
             case NodeType::RowToColumnNames:
                 return ICON_LU_EDIT;
@@ -1156,6 +1199,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
             case NodeType::DescribeStats:
             case NodeType::FeatureImportanceNode:
                 return ICON_IO_STATS_UP;
@@ -1255,6 +1299,9 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::GELU:
             case NodeType::Swish:
             case NodeType::Mish:
+            case NodeType::Hardswish:
+            case NodeType::Hardsigmoid:
+            case NodeType::ReLU6:
                 return ICON_IO_FLASH;
             case NodeType::Sigmoid:
             case NodeType::Spectrogram:
@@ -1478,6 +1525,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::LayerNorm:
             case NodeType::GroupNorm:
             case NodeType::InstanceNorm:
+            case NodeType::SqueezeExcitation:
             case NodeType::DescribeStats:
             case NodeType::FeatureImportanceNode:
                 return ICON_PH_CHART_BAR;
@@ -1577,6 +1625,9 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::GELU:
             case NodeType::Swish:
             case NodeType::Mish:
+            case NodeType::Hardswish:
+            case NodeType::Hardsigmoid:
+            case NodeType::ReLU6:
                 return ICON_PH_LIGHTNING;
             case NodeType::Sigmoid:
             case NodeType::Spectrogram:
@@ -1814,6 +1865,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
         case NodeType::LayerNorm:
         case NodeType::GroupNorm:
         case NodeType::InstanceNorm:
+        case NodeType::SqueezeExcitation:
             return ICON_FA_CHART_BAR;
 
         // Regularization
@@ -1849,6 +1901,9 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
         case NodeType::GELU:
         case NodeType::Swish:
         case NodeType::Mish:
+        case NodeType::Hardswish:
+        case NodeType::Hardsigmoid:
+        case NodeType::ReLU6:
             return ICON_FA_BOLT;
         case NodeType::Sigmoid:
             return ICON_FA_SIGNAL;

@@ -10,9 +10,12 @@
 // Set CYXWIZ_PROFILE_STAGE_SYNC=1 to charge device time to the stage that
 // issued it (removes CPU/GPU overlap; compare both runs).
 #include "../src/core/compute_runtime_paths.h"
+#include "../src/core/graph_document.h"
 #include "../src/core/graph_job_memory_probe.h"
 #include "../src/core/graph_training_job.h"
 #include "../src/core/machine_compute_preference.h"
+#include "../src/core/model_builder.h"
+#include "../src/core/model_memory_estimate.h"
 #include "../src/core/route_qualification_snapshot.h"
 #include "../src/core/training_trace_collector.h"
 
@@ -115,12 +118,31 @@ int main(int argc, char** argv) {
         cyxwiz::GraphTrainingJobRequest probe_request;
         probe_request.graph_json = buffer.str();
         const auto probe = cyxwiz::ProbeGraphJobMemory(probe_request);
-        const json report{{"graph", graph_path.string()},
-                          {"ok", probe.ok},
-                          {"error", probe.error},
-                          {"backend", probe.backend},
-                          {"training_bytes", probe.training_bytes},
-                          {"training_mb", static_cast<double>(probe.training_bytes) / (1024.0 * 1024.0)}};
+        json report{{"graph", graph_path.string()},
+                    {"ok", probe.ok},
+                    {"error", probe.error},
+                    {"backend", probe.backend},
+                    {"training_bytes", probe.training_bytes},
+                    {"training_mb", static_cast<double>(probe.training_bytes) / (1024.0 * 1024.0)}};
+        // The compile-time estimate beside the measurement. The probe's
+        // baseline already holds the weights and kept state, so its growth
+        // compares with the rest of the estimate.
+        cyxwiz::GraphDocument document;
+        std::string parse_error;
+        if (cyxwiz::ParseGraphDocument(buffer.str(), document, parse_error)) {
+            const auto config = cyxwiz::GraphCompiler{}.Compile(document.nodes, document.links, true);
+            auto built = cyxwiz::BuildExecutableFromConfig(config);
+            const auto estimate = cyxwiz::EstimateTrainingMemory(built, config.input_shape, config.batch_size);
+            if (estimate.available) {
+                const uint64_t growth = estimate.total_bytes - estimate.parameter_bytes - estimate.state_bytes;
+                report["estimate"] = {{"total_mb", static_cast<double>(estimate.total_bytes) / (1024.0 * 1024.0)},
+                                      {"weights_mb", static_cast<double>(estimate.parameter_bytes) / (1024.0 * 1024.0)},
+                                      {"optimizer_mb", static_cast<double>(estimate.optimizer_bytes) / (1024.0 * 1024.0)},
+                                      {"activations_mb", static_cast<double>(estimate.activation_bytes) / (1024.0 * 1024.0)},
+                                      {"step_growth_mb", static_cast<double>(growth) / (1024.0 * 1024.0)},
+                                      {"batch_size", estimate.batch_size}};
+            }
+        }
         std::cout << report.dump(2) << "\n";
         return probe.ok ? 0 : 1;
     }

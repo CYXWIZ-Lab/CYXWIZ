@@ -4,8 +4,10 @@
 #include <cyxwiz/sequential.h>
 #include <cyxwiz/tensor.h>
 
+#include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -20,6 +22,18 @@ namespace cyxwiz {
  */
 class IExecutableModel {
 public:
+    // Called after each layer module's forward, in run order: the module's
+    // index in the model, its (first) input, its output and the time it took
+    // (Local Debug's per-layer trace, TOFIX178 6.0a). While unset nothing is
+    // called and the forward runs as usual.
+    using LayerForwardObserver = std::function<void(
+        size_t module_index, const Tensor& input, const Tensor& output, float forward_ms)>;
+    // Called in Backward with the gradient that reached each layer module's
+    // output (summed over its consumers), before the module's own backward
+    // (the Studio Debugger's gradient at a layer, TOFIX204). While unset
+    // nothing is called and the backward runs as usual.
+    using LayerBackwardObserver = std::function<void(size_t module_index, const Tensor& grad_output)>;
+
     virtual ~IExecutableModel() = default;
 
     virtual Tensor Forward(const Tensor& input) = 0;
@@ -41,14 +55,35 @@ public:
     virtual std::map<std::string, Tensor> GetParameters() = 0;
     virtual void SetParameters(const std::map<std::string, Tensor>& params) = 0;
     virtual std::map<std::string, Tensor> GetGradients() = 0;
+    // The GetParameters() keys that are state, not trained (BatchNorm's
+    // running statistics): no gradient is expected for them.
+    virtual std::set<std::string> GetStateParameterNames() const { return {}; }
+    // GetParameters() without the frozen layers: what the optimizer steps.
+    virtual std::map<std::string, Tensor> GetTrainableParameters() { return GetParameters(); }
+    // The GetParameters() keys of frozen layers: kept and saved, never
+    // stepped, and no gradient is expected for them.
+    virtual std::set<std::string> GetFrozenParameterNames() const { return {}; }
     virtual void UpdateParameters(Optimizer* optimizer) = 0;
     // Layers that hold parameters (graph operations such as Add are not counted).
     virtual size_t LayerCount() const = 0;
+    // The layer module at a module index (BuiltModuleProvenance::module_index).
+    virtual Module* LayerModule(size_t module_index) = 0;
+
+    void SetLayerForwardObserver(LayerForwardObserver observer) {
+        layer_forward_observer_ = std::move(observer);
+    }
+    void SetLayerBackwardObserver(LayerBackwardObserver observer) {
+        layer_backward_observer_ = std::move(observer);
+    }
 
     // For checkpoint / export / save paths that still need a real
     // SequentialModel; a graph model (GraphExecutableModel) returns nullptr.
     virtual SequentialModel* AsSequentialModel() { return nullptr; }
     virtual const SequentialModel* AsSequentialModel() const { return nullptr; }
+
+protected:
+    LayerForwardObserver layer_forward_observer_;
+    LayerBackwardObserver layer_backward_observer_;
 };
 
 class SequentialExecutableModel final : public IExecutableModel {
@@ -69,8 +104,12 @@ public:
     std::map<std::string, Tensor> GetParameters() override;
     void SetParameters(const std::map<std::string, Tensor>& params) override;
     std::map<std::string, Tensor> GetGradients() override;
+    std::set<std::string> GetStateParameterNames() const override { return model_->GetStateParameterNames(); }
+    std::map<std::string, Tensor> GetTrainableParameters() override { return model_->GetTrainableParameters(); }
+    std::set<std::string> GetFrozenParameterNames() const override { return model_->GetFrozenParameterNames(); }
     void UpdateParameters(Optimizer* optimizer) override;
     size_t LayerCount() const override { return model_->Size(); }
+    Module* LayerModule(size_t module_index) override { return model_->GetModule(module_index); }
 
     SequentialModel* AsSequentialModel() override { return model_.get(); }
     const SequentialModel* AsSequentialModel() const override { return model_.get(); }

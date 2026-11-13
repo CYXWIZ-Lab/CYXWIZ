@@ -421,6 +421,10 @@ NodeEditor::FindUnsupportedSequentialLayerError(
             return EffectiveNodeName(*node) +
                    ": code export does not support Cross Attention (a two-input layer) yet; train it in Studio";
         }
+        if (node->type == NodeType::SqueezeExcitation) {
+            return EffectiveNodeName(*node) +
+                   ": code export does not write Squeeze-Excitation yet; train it in Studio";
+        }
         if (node->type == NodeType::LinearAttention) {
             return EffectiveNodeName(*node) +
                    ": code export does not support Linear Attention yet (frameworks have no built-in layer for it); "
@@ -450,6 +454,8 @@ NodeEditor::FindUnsupportedSequentialLayerError(
             case NodeType::ImageSmooth:
             case NodeType::ImageWarp:
             case NodeType::ImagePyramid:
+            case NodeType::ImageFilter:
+            case NodeType::ImageGabor:
             case NodeType::RandomResizedCrop:
             case NodeType::RandomAffine:
             case NodeType::RandomPerspective:
@@ -945,23 +951,30 @@ std::string NodeEditor::PyTorchOptimizerSetup() const {
     const std::string eps = GetParamOrDefault(*node, "epsilon", "1e-8");
     std::string code;
     std::string params = "model.parameters()";
+    // weight_decay_exclude: the tensors that skip decay go in their own parameter group.
+    const auto decay_groups = [&](const std::string& decay) {
+        const std::string exclude = GetParamOrDefault(*node, "weight_decay_exclude", "none");
+        if (exclude == "none") return;
+        code += "    # weight_decay_exclude=" + exclude + ": 1-D tensors (biases, norm scales)";
+        code += exclude == "norms_biases_embeddings" ? " and embedding tables skip decay\n" : " skip decay\n";
+        if (exclude == "norms_biases_embeddings")
+            code += "    embedding_ids = {id(m.weight) for m in model.modules() if isinstance(m, (nn.Embedding, LearnedPositionalEncoding))}\n";
+        code += "    no_decay = [p for p in model.parameters() if p.ndim < 2";
+        code += exclude == "norms_biases_embeddings" ? " or id(p) in embedding_ids]\n" : "]\n";
+        code += "    decay = [p for p in model.parameters() if all(p is not q for q in no_decay)]\n";
+        params = "[{'params': decay, 'weight_decay': " + decay + "}, {'params': no_decay, 'weight_decay': 0.0}]";
+    };
     switch (node->type) {
         case NodeType::SGD:
+            decay_groups(GetParamOrDefault(*node, "weight_decay", "0"));
             code += "    optimizer = optim.SGD(" + params + ", lr=" + lr + ", momentum=" +
-                    GetParamOrDefault(*node, "momentum", "0.9") + ")\n";
+                    GetParamOrDefault(*node, "momentum", "0.9") + ", weight_decay=" +
+                    GetParamOrDefault(*node, "weight_decay", "0") +
+                    (GetParamOrDefault(*node, "nesterov", "false") == "true" ? ", nesterov=True" : "") + ")\n";
             break;
         case NodeType::AdamW: {
             const std::string decay = GetParamOrDefault(*node, "weight_decay", "0.01");
-            const std::string exclude = GetParamOrDefault(*node, "weight_decay_exclude", "none");
-            if (exclude != "none") {
-                code += "    # weight_decay_exclude=" + exclude + ": 1-D tensors (biases, norm scales)";
-                code += exclude == "norms_biases_embeddings" ? " and embedding tables skip decay\n" : " skip decay\n";
-                code += "    embedding_ids = {id(m.weight) for m in model.modules() if isinstance(m, (nn.Embedding, LearnedPositionalEncoding))}\n";
-                code += "    no_decay = [p for p in model.parameters() if p.ndim < 2";
-                code += exclude == "norms_biases_embeddings" ? " or id(p) in embedding_ids]\n" : "]\n";
-                code += "    decay = [p for p in model.parameters() if all(p is not q for q in no_decay)]\n";
-                params = "[{'params': decay, 'weight_decay': " + decay + "}, {'params': no_decay, 'weight_decay': 0.0}]";
-            }
+            decay_groups(decay);
             code += "    optimizer = optim.AdamW(" + params + ", lr=" + lr + ", betas=" + betas + ", eps=" + eps +
                     ", weight_decay=" + decay + ")\n";
             break;
@@ -983,7 +996,12 @@ std::string NodeEditor::PyTorchOptimizerSetup() const {
             break;
     }
     const std::string schedule = GetParamOrDefault(*node, "lr_schedule", "none");
-    if (schedule != "none") {
+    if (schedule == "one_cycle") {
+        code += "    # lr_schedule=one_cycle per optimizer update: lr is the peak, warmup_ratio the rising share\n";
+        code += "    total_updates = 1000  # TODO: epochs * ceil(batches_per_epoch / grad_accum_steps)\n";
+        code += "    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=" + lr + ", total_steps=total_updates, pct_start=" +
+                GetParamOrDefault(*node, "warmup_ratio", "0.02") + ", cycle_momentum=False)\n";
+    } else if (schedule != "none") {
         const std::string decay = schedule == "warmup_linear" ? "linear"
                                 : schedule == "warmup_constant" ? "constant" : "cosine";
         code += "    # lr_schedule=" + schedule + " per optimizer update (CyxWiz WarmupDecayLR)\n";

@@ -126,7 +126,7 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
     size_t silent_probes = 0;
     const size_t kMaxProbeAttempts = 32;
     for (size_t i = 0; i < file_paths_.size() && i < kMaxProbeAttempts; ++i) {
-        AudioFeatures probe = ExtractFeatures(file_paths_[i], i);
+        AudioFeatures probe = ExtractFeatures(file_paths_[i], i, false);
         if (probe.valid && probe.rows > 0 && probe.cols > 0) {
             probed_rows = probe.rows;
             probed_cols = probe.cols;
@@ -399,7 +399,7 @@ void AudioDataset::LoadFromCSV(const std::string& directory) {
     for (size_t i = 0; i < file_paths_.size(); ++i) all_indices_[i] = i;
 }
 
-AudioFeatures AudioDataset::ExtractFeatures(const std::string& filepath, size_t index) const {
+AudioFeatures AudioDataset::ExtractFeatures(const std::string& filepath, size_t index, bool augment) const {
     // Load audio
     AudioData audio = AudioProcessing::LoadAudio(filepath, config_.target_sr);
     if (!audio.valid) {
@@ -448,13 +448,13 @@ AudioFeatures AudioDataset::ExtractFeatures(const std::string& filepath, size_t 
     // replace the hardcoded values with the user-configured range.
     std::mt19937 rng(config_.augmentation_seed ^ (augmentation_round_.load() * 0x85EBCA6Bu) ^
                      (static_cast<uint32_t>(index) * 0x9E3779B1u));
-    if (config_.noise_level > 0.0f) {
+    if (augment && config_.noise_level > 0.0f) {
         audio = AudioProcessing::AddNoise(audio, config_.noise_level, static_cast<uint32_t>(rng()));
     }
-    if (config_.time_stretch) {
+    if (augment && config_.time_stretch) {
         audio = AudioProcessing::TimeStretch(audio, cyxwiz::portable::UniformFloat(rng, 0.9f, 1.1f));
     }
-    if (config_.pitch_shift) {
+    if (augment && config_.pitch_shift) {
         audio = AudioProcessing::PitchShift(audio, cyxwiz::portable::UniformFloat(rng, -2.0f, 2.0f));
     }
 
@@ -507,12 +507,12 @@ size_t AudioDataset::Size() const {
     return file_paths_.size();
 }
 
-std::pair<std::vector<float>, int> AudioDataset::GetItem(size_t index) const {
+std::pair<std::vector<float>, int> AudioDataset::GetItem(size_t index, bool augment) const {
     if (index >= file_paths_.size()) {
         return {{}, -1};
     }
 
-    AudioFeatures features = ExtractFeatures(file_paths_[index], index);
+    AudioFeatures features = ExtractFeatures(file_paths_[index], index, augment);
     if (!features.valid) {
         // Rate-limit the warning spam. Real-world datasets (e.g. the
         // Kaggle Binary Drone Audio set) can have hundreds of silent

@@ -663,6 +663,19 @@ enum class NodeType {
     ValueHead,          // Ends the value layers: one output, the expected return
     PPO,                // Proximal Policy Optimization over an environment, a policy and a value network
 
+    // ===== Appended classic image filters (TOFIX178 1.10) =====
+    // Done once when the images are prepared, on the CPU workers.
+    ImageFilter,        // a typed kernel or a classic one (cv::filter2D)
+    ImageGabor,         // a bank of oriented kernels, one channel each
+
+    // ===== Appended activations =====
+    Hardswish,          // x * relu6(x + 3) / 6 (torch.nn.Hardswish)
+
+    // ===== Appended layers =====
+    SqueezeExcitation,  // each channel of a feature map scaled by a learned gate (SE block)
+    Hardsigmoid,        // relu6(x + 3) / 6 (torch.nn.Hardsigmoid)
+    ReLU6,              // min(max(x, 0), 6) (torch.nn.ReLU6)
+
     // Special sentinel value
     Unknown
 };

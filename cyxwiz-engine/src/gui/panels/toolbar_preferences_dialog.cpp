@@ -88,8 +88,19 @@ void ToolbarPanel::RenderPreferencesDialog() {
         // clipped the OK / Cancel footer.
         const ImVec2 viewport = ImGui::GetMainViewport()->WorkSize;
         const ImVec2 limit(viewport.x * 0.92f, viewport.y * 0.92f);
+        // Wide enough for every tab's whole name when the Engine window allows
+        // it; narrower, the tabs scroll and the list button names them all.
+        static const char* const kTabLabels[] = {
+            ICON_FA_GEAR " General", ICON_FA_PEN " Editor", ICON_FA_PALETTE " Appearance", ICON_FA_FILE " Files",
+            ICON_FA_CODE " Python", ICON_FA_KEYBOARD " Shortcuts", ICON_FA_MICROCHIP " Devices",
+            ICON_FA_BUG " Studio Debugger", ICON_FA_GRADUATION_CAP " Training", ICON_FA_CUBES " Nodes panel",
+            ICON_FA_SLIDERS " Search", ICON_FA_HARD_DRIVE " Storage", ICON_FA_SERVER " Servers"};
+        const ImGuiStyle& style = ImGui::GetStyle();
+        float tabs_width = style.WindowPadding.x * 2.0f + ImGui::GetFrameHeight() * 2.0f;
+        for (const char* label : kTabLabels)
+            tabs_width += ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x;
         ImGui::SetNextWindowSize(
-            ImVec2((std::min)(1000.0f, limit.x), (std::min)(760.0f, limit.y)),
+            ImVec2((std::min)((std::max)(1000.0f, tabs_width), limit.x), (std::min)(760.0f, limit.y)),
             ImGuiCond_Appearing);
         ImGui::SetNextWindowSizeConstraints(
             ImVec2((std::min)(560.0f, limit.x), (std::min)(360.0f, limit.y)), limit);
@@ -101,7 +112,8 @@ void ToolbarPanel::RenderPreferencesDialog() {
                 ImGui::GetStyle().ItemSpacing.y * 4.0f + 6.0f;
             ImGui::BeginChild("PreferencesBody", ImVec2(0.0f, -footer_height));
             // Tab bar for different preference sections
-            if (ImGui::BeginTabBar("PreferenceTabs")) {
+            if (ImGui::BeginTabBar("PreferenceTabs",
+                                   ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_TabListPopupButton)) {
 
                 // ========== General Tab ==========
                 if (ImGui::BeginTabItem(ICON_FA_GEAR " General")) {
@@ -1595,6 +1607,26 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Separator();
                     ImGui::Spacing();
 
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem(ICON_FA_BUG " Studio Debugger")) {
+                    RenderStudioDebuggerPreferences();
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem(ICON_FA_GRADUATION_CAP " Training")) {
+                    RenderTrainingPreferences();
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem(ICON_FA_CUBES " Nodes panel")) {
+                    RenderNodesPanelPreferences();
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem(ICON_FA_SLIDERS " Search")) {
+                    RenderSearchPreferences();
                     ImGui::EndTabItem();
                 }
 

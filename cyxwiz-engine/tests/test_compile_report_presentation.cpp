@@ -162,6 +162,55 @@ void CheckReady() {
     Check(BuildReport(in).verdict == "Ready to train, with 1 warning", "ready with a warning");
 }
 
+// The training-step memory (TOFIX178 6.0d): a tile and a breakdown group,
+// with the share of the device when its size is known.
+void CheckTrainingMemory() {
+    Input in = SentimentNotLoaded();
+    in.compiled_ok = true;
+    in.issues.erase(in.issues.begin() + 1);
+    in.config.parameters = 1228097;
+    in.config.optimizer = "Adam";
+    ModelMemoryEstimate& m = in.config.memory;
+    m.available = true;
+    m.batch_size = 64;
+    m.trained_elements = 1228097;
+    m.state_elements = 2880;
+    m.optimizer_tensors_per_parameter = 2;
+    m.parameter_bytes = m.gradient_bytes = 1228097ull * 4;
+    m.optimizer_bytes = 1228097ull * 8;
+    m.state_bytes = 2880ull * 4;
+    m.activation_bytes = 1400ull * 1024 * 1024;
+    m.total_bytes = m.parameter_bytes * 4 + m.state_bytes + m.activation_bytes;
+    Report r = BuildReport(in);
+    Check(r.tiles.size() == 5 && r.tiles[4].value == "about 1.39 GB" &&
+              r.tiles[4].label == "per training step, batch 64",
+          "memory tile: " + (r.tiles.size() > 4 ? r.tiles[4].value + " / " + r.tiles[4].label : std::string()));
+    const auto& group = r.config.back();
+    Check(group.title == "Memory of a training step (estimate)" && group.rows.size() == 6, "memory group");
+    Check(group.rows[0].first == "Weights" && Contains(group.rows[0].second, "1,228,097 parameters"), "weights row");
+    Check(group.rows[2].first == "Optimizer state" && Contains(group.rows[2].second, "Adam keeps 2 per parameter"),
+          "optimizer row: " + group.rows[2].second);
+    Check(group.rows[3].first == "Kept state" && Contains(group.rows[3].second, "BatchNorm running statistics"),
+          "kept state row");
+    Check(group.rows[4].first == "Activations" && Contains(group.rows[4].second, "batch 64"), "activations row");
+    Check(group.rows[5].first == "Total" && Contains(group.rows[5].second, "device runtime"), "total row");
+
+    m.device_name = "NVIDIA GeForce GTX 1050 Ti";
+    m.device_memory_bytes = 4ull * 1024 * 1024 * 1024;
+    r = BuildReport(in);
+    Check(r.config.back().rows.back().first == "Device" &&
+              Contains(r.config.back().rows.back().second, "GTX 1050 Ti, 4.00 GB: the estimate is 35% of it"),
+          "device row: " + r.config.back().rows.back().second);
+    m.device_memory_bytes = 1ull * 1024 * 1024 * 1024;
+    r = BuildReport(in);
+    Check(r.tiles[4].label == "per training step: more than the device has" &&
+              Contains(r.config.back().rows.back().second, "Lower the batch size"),
+          "too large for the device: " + r.tiles[4].label);
+
+    in.config.memory = {};
+    Check(BuildReport(in).tiles.size() == 4, "no memory tile while not estimated");
+}
+
 void CheckBlocked() {
     Input in = SentimentNotLoaded();
     in.mode = Mode::TrainBlocked;
@@ -255,11 +304,12 @@ void CheckTextNotTokenized() {
 int main() {
     CheckFailedCompile();
     CheckReady();
+    CheckTrainingMemory();
     CheckBlocked();
     CheckAttentionFirst();
     CheckMemoryRisk();
     CheckTextNotTokenized();
-    std::cout << "compile report presentation: failed, ready, blocked, placement, memory risk, text not "
+    std::cout << "compile report presentation: failed, ready, training memory, blocked, placement, memory risk, text not "
                  "tokenized. OK\n";
     return 0;
 }

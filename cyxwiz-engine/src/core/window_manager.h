@@ -54,29 +54,6 @@ public:
     static bool RestartEngine(const std::string& project_path);
 
     /**
-     * @brief Switch the current window to a different project.
-     *
-     * This will:
-     * 1. Save the current project (if needed)
-     * 2. Close the current window
-     * 3. Launch a new engine instance with the new project
-     *
-     * @param new_project_path Path to .cyxproj file or project directory
-     */
-    static void SwitchProject(const std::string& new_project_path);
-
-    /**
-     * @brief Get all running CyxWiz Engine instances.
-     *
-     * Returns a list of project paths currently open in other windows.
-     * Implementation varies by platform (Process enumeration on Windows,
-     * /proc on Linux, ps on macOS).
-     *
-     * @return Vector of project paths for running instances
-     */
-    static std::vector<std::string> GetRunningProjects();
-
-    /**
      * @brief Get the executable path for the current engine instance.
      *
      * Used to spawn new instances of the same executable.

@@ -1802,24 +1802,6 @@ std::shared_ptr<ArrowDataset> DataRegistry::LoadJSONToArrow(
     return dataset;
 }
 
-std::shared_ptr<ArrowDataset> DataRegistry::LoadExcelToArrow(
-    const std::string& path, const std::string& name, int sheet_idx) {
-
-    std::string unique_name = GenerateUniqueName(name.empty() ? fs::path(path).stem().string() : name);
-
-    try {
-        // Excel requires external library (xlsxio or similar)
-        // For now, log and return nullptr - pipeline should handle gracefully
-        spdlog::warn("LoadExcelToArrow: Excel support requires additional library (sheet {})", sheet_idx);
-        // TODO: Integrate xlsxio or use DuckDB's Excel extension
-        return nullptr;
-
-    } catch (const std::exception& e) {
-        spdlog::error("LoadExcelToArrow exception: {}", e.what());
-        return nullptr;
-    }
-}
-
 std::shared_ptr<ArrowDataset> DataRegistry::LoadMLDatasetToArrow(
     const std::string& ml_type, const std::string& name) {
 

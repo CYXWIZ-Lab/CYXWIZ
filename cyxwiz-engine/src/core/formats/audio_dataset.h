@@ -91,7 +91,10 @@ public:
 
     // Dataset interface
     size_t Size() const override;
-    std::pair<std::vector<float>, int> GetItem(size_t index) const override;
+    std::pair<std::vector<float>, int> GetItem(size_t index) const override { return GetItem(index, true); }
+    // augment false: the clip without the AudioAugmentation node's random
+    // noise, stretch and pitch shift (validation, test, Local Debug).
+    std::pair<std::vector<float>, int> GetItem(size_t index, bool augment) const;
     DatasetInfo GetInfo() const override;
 
     // Class label info
@@ -118,7 +121,7 @@ private:
 
     void ScanDirectory(const std::string& directory);
     void LoadFromCSV(const std::string& directory);  // FlatWithCSV mode
-    AudioFeatures ExtractFeatures(const std::string& filepath, size_t index) const;
+    AudioFeatures ExtractFeatures(const std::string& filepath, size_t index, bool augment = true) const;
     std::atomic<uint32_t> augmentation_round_{0};
 };
 

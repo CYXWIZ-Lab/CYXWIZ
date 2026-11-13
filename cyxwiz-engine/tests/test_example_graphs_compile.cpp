@@ -138,6 +138,11 @@ int main() {
         root / "text" / "test_04_sentiment_gru_mini.cyxgraph",
         root / "text" / "test_05_sentiment_transformer_mini.cyxgraph",
         root / "cats_dogs_resnet_scratch.cyxgraph",
+        root / "cats_dogs_image_filter.cyxgraph",
+        root / "cats_dogs_edges_channel.cyxgraph",
+        root / "cats_dogs_gabor_bank.cyxgraph",
+        root / "cats_dogs_se_hardswish.cyxgraph",
+        root / "cats_dogs_resnet18_finetune.cyxgraph",
     };
     for (const auto& path : graphs) {
         std::vector<gui::MLNode> nodes;

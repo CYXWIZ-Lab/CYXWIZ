@@ -240,14 +240,14 @@ bool JobTab(const char* id, const char* label, const char* caption, bool chosen)
     return clicked;
 }
 
-float ChipButtonWidth(const char* label) {
-    return ImGui::CalcTextSize(label, nullptr, true).x + 22.0f;
+float ChipButtonWidth(const char* label, bool swatch) {
+    return ImGui::CalcTextSize(label, nullptr, true).x + 22.0f + (swatch ? 14.0f : 0.0f);
 }
 
-bool ChipButton(const char* label) {
+bool ChipButton(const char* label, unsigned int swatch) {
     RefreshColors();
     const float height = ImGui::GetFrameHeight() - 2.0f;
-    const float width = ChipButtonWidth(label);
+    const float width = ChipButtonWidth(label, swatch != 0);
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const bool clicked = ImGui::InvisibleButton(label, ImVec2(width, height));
     const bool hovered = ImGui::IsItemHovered();
@@ -256,8 +256,15 @@ bool ChipButton(const char* label) {
     dl->AddRectFilled(pos, max,
                       ImGui::GetColorU32(hovered ? kSecondaryHover : kChipBg),
                       height * 0.5f);
+    float text_x = pos.x + 11.0f;
+    if (swatch != 0) {
+        const float side = 8.0f;
+        const float y = pos.y + (height - side) * 0.5f;
+        dl->AddRectFilled(ImVec2(text_x, y), ImVec2(text_x + side, y + side), swatch, 2.0f);
+        text_x += 14.0f;
+    }
     const char* end = ImGui::FindRenderedTextEnd(label);
-    dl->AddText(ImVec2(pos.x + 11.0f, pos.y + (height - ImGui::GetTextLineHeight()) * 0.5f),
+    dl->AddText(ImVec2(text_x, pos.y + (height - ImGui::GetTextLineHeight()) * 0.5f),
                 ImGui::GetColorU32(hovered ? kChipTextHover : kChipText),
                 label, end);
     if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);

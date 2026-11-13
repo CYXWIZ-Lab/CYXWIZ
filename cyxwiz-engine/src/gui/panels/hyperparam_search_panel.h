@@ -1,8 +1,12 @@
 #pragma once
 
 #include "gui/panel.h"
+#include "core/engine_config.h"
 #include "core/hyperparam_search.h"
+
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -12,14 +16,22 @@ class NodeEditor;
 
 namespace cyxwiz {
 
+// How to search: the strategy, trials, time limit and score of `config`
+// (the panel's Setup and Preferences > Search). Grid shows its
+// number of combinations when `show_combinations`. True when one changed.
+bool SearchSettingsFields(SearchConfig& config, bool show_combinations);
+
 /**
- * Hyperparameter Search Panel
+ * Hyperparameter Search (TOFIX178 T4 H1, approved mockup)
  *
- * Provides UI for configuring and running hyperparameter optimization:
- * - Define search space (parameters with ranges)
- * - Select search strategy (Grid, Random, Bayesian)
- * - View real-time progress and results
- * - Compare trial results in sortable table
+ * Setup: what to vary, picked from the compiled graph's properties a trial
+ * can change; how to search (Grid / Random / Bayesian), the trial count, the
+ * time limit and the score. Start search goes through Train's checks and data
+ * preparation (MainWindow); each trial then trains the graph the way Train
+ * does with the values set (core/trial_runner).
+ *
+ * Trials: progress, the best trial so far (Apply it to the graph, Ctrl+Z
+ * undoes; Export CSV), the score per trial and a row per trial.
  */
 class HyperparamSearchPanel : public Panel {
 public:
@@ -28,55 +40,57 @@ public:
 
     void Render() override;
 
-    // Set node editor for getting model configuration
     void SetNodeEditor(gui::NodeEditor* editor) { node_editor_ = editor; }
 
-private:
-    void RenderSearchConfig();
-    void RenderParameterSpace();
-    void RenderProgress();
-    void RenderResults();
-    void RenderAddParameterDialog();
+    // Start search: Train's checks and preparation, ending in BeginTrials
+    // or NotStarted. `launch_pending` is true while that launch waits (data
+    // loads, the memory question).
+    void SetStartCallback(std::function<void()> start, std::function<bool()> launch_pending) {
+        start_ = std::move(start);
+        launch_pending_ = std::move(launch_pending);
+    }
+    // What Train would train, prepared: the trials start (main thread).
+    void BeginTrials(TrialSetup setup);
+    // The launch stopped before the trials ("Not started: ...").
+    void NotStarted(const std::string& why);
 
-    // Actions
+    // Preparing or running trials.
+    bool IsSearching() const;
+
+private:
+    enum class Stage { Setup, Preparing, Running, Finished };
+
+    void RenderHeader();
+    void RenderSetup();
+    void RenderParameters();
+    void RenderPicker();
+    void RenderHowToSearch();
+    void RenderTrials();
+    void RenderBest(const std::vector<TrialResult>& results, int best_id);
+    void RenderScoreBars(const std::vector<TrialResult>& results, int best_id);
+    void RenderTrialTable(const std::vector<TrialResult>& results, int best_id);
+
     void StartSearch();
-    void StopSearch();
-    void AddParameter();
-    void RemoveParameter(size_t index);
+    void ApplyBest();
+    void ExportCsv();
+    // Why Start search cannot run now ("" when it can).
+    std::string StartBlocker() const;
 
     gui::NodeEditor* node_editor_ = nullptr;
+    std::function<void()> start_;
+    std::function<bool()> launch_pending_;
 
-    // Search engine
     std::unique_ptr<HyperparamSearch> search_engine_;
-    SearchConfig config_;
+    SearchConfig config_;  // as set up; the search runs a copy
 
-    // UI state
-    bool show_add_param_dialog_ = false;
-    bool is_running_ = false;
-
-    // Add parameter dialog state
-    char param_name_[128] = "";
-    int param_type_ = 0;  // 0=continuous, 1=discrete, 2=logscale, 3=categorical
-    float param_min_ = 0.0f;
-    float param_max_ = 1.0f;
-    int param_step_ = 1;
-    char param_options_[512] = "";  // Comma-separated for categorical
-
-    // Results state
-    std::vector<TrialResult> cached_results_;
-    int sort_column_ = 0;
-    bool sort_ascending_ = true;
-
-    // Progress state
-    int current_trial_ = 0;
-    int total_trials_ = 0;
-    float current_progress_ = 0.0f;
-    float elapsed_seconds_ = 0.0f;
-
-    // Best result tracking
-    int best_trial_id_ = -1;
-    float best_val_loss_ = std::numeric_limits<float>::max();
-    float best_val_accuracy_ = 0.0f;
+    Stage stage_ = Stage::Setup;
+    bool show_trials_ = false;   // the Trials view, else Setup
+    bool picker_open_ = false;
+    std::string not_started_;    // why the last Start search did not start
+    // The saved defaults last set on config_: when Preferences changes them,
+    // the setup follows (not while a search runs).
+    std::optional<core::HyperparamSearchDefaults> followed_defaults_;
+    std::string applied_note_;   // after Apply best
 };
 
 } // namespace cyxwiz

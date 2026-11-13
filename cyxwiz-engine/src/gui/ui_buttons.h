@@ -35,9 +35,10 @@ bool DangerButton(const char* label, bool enabled = true,
 // widget identity stable while the count text changes.
 bool ToggleChip(const char* id, const char* label, const char* count, bool on,
                 unsigned int accent_rgba, bool emphasise = false);
-// Pill-shaped action (quick commands): monospace-friendly label, bordered.
-bool ChipButton(const char* label);
-float ChipButtonWidth(const char* label);
+// Pill-shaped action (quick commands, recent items). `swatch` (an ImU32,
+// 0 = none) draws a small colour square before the label.
+bool ChipButton(const char* label, unsigned int swatch = 0);
+float ChipButtonWidth(const char* label, bool swatch = false);
 
 // Segmented choice (one of several options side by side). Returns true when
 // the selection changed; `selected` is updated.

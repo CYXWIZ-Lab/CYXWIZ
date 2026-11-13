@@ -78,6 +78,15 @@ inline ActivationCodegenResult BuildActivationCodegen(
             case NodeType::Mish:
                 result.expression = "F.mish(" + input_expression + ")";
                 break;
+            case NodeType::Hardswish:
+                result.expression = "F.hardswish(" + input_expression + ")";
+                break;
+            case NodeType::Hardsigmoid:
+                result.expression = "F.hardsigmoid(" + input_expression + ")";
+                break;
+            case NodeType::ReLU6:
+                result.expression = "F.relu6(" + input_expression + ")";
+                break;
             case NodeType::SELU:
                 result.expression = "F.selu(" + input_expression + ")";
                 break;
@@ -122,6 +131,15 @@ inline ActivationCodegenResult BuildActivationCodegen(
                 result.expression = input_expression +
                     " * tf.math.tanh(tf.math.softplus(" + input_expression + "))";
                 break;
+            case NodeType::Hardswish:
+                result.expression = input_expression + " * tf.nn.relu6(" + input_expression + " + 3.0) / 6.0";
+                break;
+            case NodeType::Hardsigmoid:
+                result.expression = "tf.nn.relu6(" + input_expression + " + 3.0) / 6.0";
+                break;
+            case NodeType::ReLU6:
+                result.expression = "tf.nn.relu6(" + input_expression + ")";
+                break;
             case NodeType::SELU:
                 result.expression = "tf.nn.selu(" + input_expression + ")";
                 break;
@@ -163,6 +181,15 @@ inline ActivationCodegenResult BuildActivationCodegen(
             case NodeType::Mish:
                 result.expression = "cx.mish(" + input_expression + ")";
                 break;
+            case NodeType::Hardswish:
+                result.expression = "cx.hardswish(" + input_expression + ")";
+                break;
+            case NodeType::Hardsigmoid:
+                result.expression = "cx.hardsigmoid(" + input_expression + ")";
+                break;
+            case NodeType::ReLU6:
+                result.expression = "cx.relu6(" + input_expression + ")";
+                break;
             case NodeType::SELU:
                 result.expression = "cx.SELU().forward(" + input_expression + ")";
                 break;
@@ -202,6 +229,15 @@ inline ActivationCodegenResult BuildActivationCodegen(
         case NodeType::Mish:
             result.expression =
                 "layers.Lambda(lambda x: x * tf.math.tanh(tf.math.softplus(x)))";
+            break;
+        case NodeType::Hardswish:
+            result.expression = "layers.Lambda(lambda x: x * tf.nn.relu6(x + 3.0) / 6.0)";
+            break;
+        case NodeType::Hardsigmoid:
+            result.expression = "layers.Lambda(lambda x: tf.nn.relu6(x + 3.0) / 6.0)";
+            break;
+        case NodeType::ReLU6:
+            result.expression = "layers.ReLU(max_value=6.0)";
             break;
         case NodeType::SELU:
             result.expression = "layers.Activation('selu')";

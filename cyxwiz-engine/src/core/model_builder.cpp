@@ -1,6 +1,7 @@
 #include "extension_node_registry.h"
 #include "guarded_extension_module.h"
 #include "model_builder.h"
+#include "frozen_layers.h"
 #include "dense_activation_configuration_policy.h"
 #include "error_codes.h"
 #include "graph_executable_model.h"
@@ -1163,6 +1164,24 @@ bool BuildSequential(
                 break;
             }
 
+            case gui::NodeType::Hardswish: {
+                model.Add<HardswishModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Hardswish", i);
+                break;
+            }
+
+            case gui::NodeType::Hardsigmoid: {
+                model.Add<HardsigmoidModule>();
+                CYXWIZ_BUILDER_INFO("  [{}] Hardsigmoid", i);
+                break;
+            }
+
+            case gui::NodeType::ReLU6: {
+                model.Add<ReLU6Module>();
+                CYXWIZ_BUILDER_INFO("  [{}] ReLU6", i);
+                break;
+            }
+
             case gui::NodeType::Softmax: {
                 model.Add<SoftmaxModule>();
                 CYXWIZ_BUILDER_INFO("  [{}] Softmax", i);
@@ -1186,6 +1205,7 @@ bool BuildSequential(
             case gui::NodeType::AvgPool2D:
             case gui::NodeType::ConvTranspose2D:
             case gui::NodeType::GroupNorm:
+            case gui::NodeType::SqueezeExcitation:
             case gui::NodeType::InstanceNorm: {
                 if (!spatial_head || i >= spatial_head->input_shapes.size()) {
                     throw std::runtime_error(
@@ -1208,13 +1228,13 @@ bool BuildSequential(
                 }
                 switch (layer_cfg.type) {
                     case gui::NodeType::Conv2D:
-                        model.Add<Conv2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding, true);
+                        model.Add<Conv2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding, g.use_bias);
                         CYXWIZ_BUILDER_INFO("  [{}] Conv2D({} -> {}, k={}, s={}, p={})", i, channels,
                                             g.channels_out, g.kernel, g.stride, g.padding);
                         break;
                     case gui::NodeType::DepthwiseConv2D:
                         model.Add<DepthwiseConv2DModule>(channels, g.depth_multiplier, g.kernel, g.stride,
-                                                         g.padding, true);
+                                                         g.padding, g.use_bias);
                         CYXWIZ_BUILDER_INFO("  [{}] DepthwiseConv2D({} x {}, k={}, s={}, p={})", i, channels,
                                             g.depth_multiplier, g.kernel, g.stride, g.padding);
                         break;
@@ -1228,7 +1248,7 @@ bool BuildSequential(
                         break;
                     case gui::NodeType::ConvTranspose2D:
                         model.Add<ConvTranspose2DModule>(channels, g.channels_out, g.kernel, g.stride, g.padding,
-                                                         g.output_padding, true);
+                                                         g.output_padding, g.use_bias);
                         CYXWIZ_BUILDER_INFO("  [{}] ConvTranspose2D({} -> {}, k={}, s={}, p={}, op={})", i, channels,
                                             g.channels_out, g.kernel, g.stride, g.padding, g.output_padding);
                         break;
@@ -1244,6 +1264,26 @@ bool BuildSequential(
                         const bool affine = ParseBoolParam(layer_cfg, "affine", false);
                         model.Add<InstanceNorm2DModule>(channels, eps, affine);
                         CYXWIZ_BUILDER_INFO("  [{}] InstanceNorm2D(channels={})", i, channels);
+                        break;
+                    }
+                    case gui::NodeType::SqueezeExcitation: {
+                        spatial::SqueezeExcitationSettings settings;
+                        try {
+                            settings = spatial::ResolveSqueezeExcitation(static_cast<size_t>(channels), layer_cfg.parameters);
+                        } catch (const std::invalid_argument& error) {
+                            throw std::runtime_error("invalid layer configuration at index " + std::to_string(i) +
+                                                     ": " + error.what());
+                        }
+                        SqueezeExcitationOptions options;
+                        options.activation = settings.inner_activation == "hardswish" ? ActivationType::Hardswish
+                                             : settings.inner_activation == "swish" ? ActivationType::Swish
+                                                                                    : ActivationType::ReLU;
+                        options.gate = settings.gate == "hardsigmoid" ? ActivationType::Hardsigmoid : ActivationType::Sigmoid;
+                        options.use_bias = settings.use_bias;
+                        model.Add<SqueezeExcitationModule>(static_cast<size_t>(channels), settings.squeeze, options);
+                        CYXWIZ_BUILDER_INFO("  [{}] SqueezeExcitation(channels={}, squeeze={}, activation={}, gate={}, bias={})",
+                                            i, channels, settings.squeeze, settings.inner_activation, settings.gate,
+                                            settings.use_bias);
                         break;
                     }
                     default:
@@ -1306,7 +1346,7 @@ bool BuildSequential(
                 }
                 auto conv = std::make_unique<Conv3DModule>(in_shape[0], in_shape[1], in_shape[2], in_shape[3],
                                                            static_cast<size_t>(g.channels_out), g.kernel,
-                                                           g.stride, g.padding, true);
+                                                           g.stride, g.padding, g.use_bias);
                 const auto out_shape = conv->OutputSample();
                 if (out_shape != layer_cfg.output_shape) {
                     throw std::runtime_error("Conv3D at index " + std::to_string(i) +
@@ -1337,7 +1377,7 @@ bool BuildSequential(
                 }
                 const auto g = spatial::ResolveGeometry(layer_cfg.type, layer_cfg.parameters, in_shape[1]);
                 model.Add<Conv1DModule>(static_cast<int>(in_shape[1]), g.channels_out, g.kernel,
-                                        g.stride, g.padding, 1, true);
+                                        g.stride, g.padding, 1, g.use_bias);
                 CYXWIZ_BUILDER_INFO("  [{}] Conv1D({} -> {}, k={}, s={}, p={}) on [L={}, C={}]", i,
                                     in_shape[1], g.channels_out, g.kernel, g.stride, g.padding,
                                     in_shape[0], in_shape[1]);
@@ -1700,6 +1740,24 @@ bool BuildSequential(
                 break;
         }
 
+        // The node's Frozen setting: its modules keep their weights while the
+        // rest trains; a BatchNorm also keeps its running statistics unless
+        // the node says to keep updating them.
+        if (ParseBoolParam(layer_cfg, frozen::kFrozen, false)) {
+            const bool keep_statistics =
+                ParseStringParam(layer_cfg, frozen::kStatistics, frozen::kStatisticsKeep) != frozen::kStatisticsUpdate;
+            size_t frozen_modules = 0;
+            for (size_t module_index = module_count_before; module_index < model.Size(); ++module_index) {
+                Module* module = model.GetModule(module_index);
+                if (!module || !module->HasParameters()) continue;
+                module->SetTrainable(false);
+                ++frozen_modules;
+                if (auto* norm = dynamic_cast<BatchNormModule*>(module)) norm->SetKeepStatisticsWhenFrozen(keep_statistics);
+                if (auto* norm = dynamic_cast<BatchNorm2DModule*>(module)) norm->SetKeepStatisticsWhenFrozen(keep_statistics);
+            }
+            if (frozen_modules) CYXWIZ_BUILDER_INFO("  [{}] {} is frozen", i, layer_cfg.name);
+        }
+
         if (provenance) {
             const size_t module_count_after = model.Size();
             if (module_count_after == module_count_before) {
@@ -1777,6 +1835,8 @@ ResolvedOptimizerConfiguration ResolveOptimizerConfigurationImpl(
     switch (config.optimizer_type) {
         case gui::NodeType::SGD:
             out.momentum = config.momentum;
+            out.weight_decay = config.weight_decay;
+            out.nesterov = config.nesterov;
             break;
         case gui::NodeType::Adam:
         case gui::NodeType::NAdam:
@@ -1812,7 +1872,8 @@ std::unique_ptr<Optimizer> BuildOptimizerFromConfigImpl(
     switch (config.optimizer_type) {
         case gui::NodeType::SGD:
             return std::make_unique<SGDOptimizer>(
-                resolved.learning_rate, resolved.momentum.value());
+                resolved.learning_rate, resolved.momentum.value(),
+                resolved.weight_decay.value(), resolved.nesterov.value());
         case gui::NodeType::Adam:
             return std::make_unique<AdamOptimizer>(
                 resolved.learning_rate, resolved.beta1.value(),
@@ -2279,6 +2340,7 @@ BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& conf
     BuiltModel sequential = BuildSequentialFromConfig(config);
     if (!sequential.ok()) {
         out.error_message = sequential.error_message;
+        out.module_provenance = std::move(sequential.module_provenance);
         return out;
     }
 
@@ -2286,6 +2348,7 @@ BuiltExecutableModel BuildExecutableFromConfig(const TrainingConfiguration& conf
         std::move(sequential.model));
     out.loss = std::move(sequential.loss);
     out.optimizer = std::move(sequential.optimizer);
+    out.module_provenance = std::move(sequential.module_provenance);
     return out;
 }
 
@@ -2339,6 +2402,7 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
         sequential = BuildSequentialFromConfig(config);
         if (!sequential.ok()) {
             out.error_message = sequential.error_message;
+            out.module_provenance = std::move(sequential.module_provenance);
             return out;
         }
     } else {
@@ -2370,6 +2434,7 @@ BuiltExecutableModel BuildGraphExecutableFromConfig(const TrainingConfiguration&
         config.graph_op_node_ids);
     out.loss = std::move(sequential.loss);
     out.optimizer = std::move(sequential.optimizer);
+    out.module_provenance = std::move(sequential.module_provenance);
     return out;
 }
 

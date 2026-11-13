@@ -1,5 +1,6 @@
 #include "studio_debugger_panel.h"
 #include "studio_debugger_colors.h"
+#include "studio_debugger_widgets.h"
 #include "../ui_buttons.h"
 
 #include <algorithm>
@@ -26,8 +27,9 @@ constexpr std::array<RunModeOption, 5> kRunModeOptions = {{
      "Compiles the graph and checks dataset, preprocessing, shape, loss and "
      "training readiness. It does not execute model forward or backward passes."},
     {StudioDebuggerRunMode::LocalDebug,
-     "Compiles and validates the graph, then executes one bounded synthetic "
-     "batch through forward, loss, backward, gradient and optimizer checks. "
+     "Compiles and validates the graph, then runs the picked sample (a "
+     "synthetic one when the data cannot hand it over) through forward, loss, "
+     "backward, gradient and optimizer checks. "
      "Timings are host wall-clock evidence; device kernel time is not claimed."},
     {StudioDebuggerRunMode::SmokeRun,
      "Exercises preprocessing and a bounded real-data training sample before "
@@ -78,65 +80,6 @@ std::string FormatSecondsShort(double seconds) {
     char buffer[32];
     std::snprintf(buffer, sizeof(buffer), seconds < 10.0 ? "%.1f s" : "%.0f s", seconds);
     return buffer;
-}
-
-// Sub-view selector: a segmented control when it fits, a combo otherwise,
-// so no view depends on widening the panel.
-void SubViewSelector(const char* id, const char* const* labels, int count, int* selected) {
-    if (count <= 1) {
-        return;
-    }
-    float needed = 0.0f;
-    for (int i = 0; i < count; ++i) {
-        needed += ImGui::CalcTextSize(labels[i]).x + 24.0f;
-    }
-    if (needed <= ImGui::GetContentRegionAvail().x) {
-        ui::SegmentedControl(id, labels, count, selected);
-        return;
-    }
-    ImGui::SetNextItemWidth(std::min(260.0f, ImGui::GetContentRegionAvail().x));
-    ImGui::PushID(id);
-    if (ImGui::BeginCombo("##view", labels[*selected])) {
-        for (int i = 0; i < count; ++i) {
-            if (ImGui::Selectable(labels[i], *selected == i)) {
-                *selected = i;
-            }
-        }
-        ImGui::EndCombo();
-    }
-    ImGui::PopID();
-}
-
-// Right-aligns the next item group of `width` on the current line when it
-// fits; otherwise it starts on a new line.
-void RightAlignOnLine(float width) {
-    ImGui::SameLine();
-    const float available = ImGui::GetContentRegionAvail().x;
-    if (available >= width) {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + available - width);
-    } else {
-        ImGui::NewLine();
-    }
-}
-
-bool BeginCard(const char* id) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, DebuggerPanelBg());
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
-    return ImGui::BeginChild(id, ImVec2(0.0f, 0.0f),
-                             ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-}
-
-void EndCard() {
-    ImGui::EndChild();
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor();
-}
-
-void CardHeading(const char* text) {
-    ImGui::PushStyleColor(ImGuiCol_Text, DebuggerBright());
-    ImGui::TextUnformatted(text);
-    ImGui::PopStyleColor();
 }
 
 } // namespace
@@ -191,8 +134,9 @@ void StudioDebuggerPanel::RenderSampleStepper() {
     ImGui::EndGroup();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip(
-            "Dataset row inspected by preprocessing traces.\n"
-            "It does not change the Local Debug synthetic batch or the Smoke Run set.");
+            "Dataset item that Local Debug runs and preprocessing traces inspect;\n"
+            "a layer capture on a batch takes the items after it too.\n"
+            "It does not change the Smoke Run set.");
     }
 }
 
@@ -278,11 +222,15 @@ void StudioDebuggerPanel::RenderToolbar() {
     }
     ImGui::SameLine(0.0f, 16.0f);
     RenderSampleStepper();
+    RenderCaptureControl();
 
     // Saved runs and options, right-aligned when they fit.
     const float saved_width = 230.0f;
     const float gear_width = ui::ButtonWidth(ICON_FA_GEAR, ui::ButtonSize::Small);
-    RightAlignOnLine(saved_width + gear_width + ImGui::GetStyle().ItemSpacing.x);
+    const char* const full_label = full_size_ ? ICON_FA_COMPRESS "##StudioDebuggerFullSize"
+                                              : ICON_FA_EXPAND "##StudioDebuggerFullSize";
+    const float full_width = ui::ButtonWidth(full_label, ui::ButtonSize::Small);
+    RightAlignOnLine(saved_width + full_width + gear_width + 2.0f * ImGui::GetStyle().ItemSpacing.x);
     const std::string saved_preview = session_.run_id.empty()
         ? std::string("Saved runs")
         : "Saved: " + CompactRunLabel(session_.run_id);
@@ -321,6 +269,12 @@ void StudioDebuggerPanel::RenderToolbar() {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !session_.run_id.empty()) {
         ImGui::SetTooltip("Showing run %s", session_.run_id.c_str());
     }
+    ImGui::SameLine();
+    if (ui::GhostButton(full_label, true, nullptr, full_size_)) SetFullSize(!full_size_);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(full_size_ ? "Bring back the side panels"
+                                     : "Full size: hide the side panels (Asset Browser, Nodes, Properties, Info) "
+                                       "while the debugger is shown");
     ImGui::SameLine();
     if (ui::SecondaryButton(ICON_FA_GEAR "##StudioDebuggerOptions")) {
         open_options_popup = true;
@@ -682,12 +636,14 @@ void StudioDebuggerPanel::RenderActiveWorkspace() {
             RenderBatchInspector();
             return;
         case StudioDebuggerSection::Model: {
-            static const char* const kViews[] = {"Construction", "Shape comparison", "Graph path"};
-            selector("StudioDebuggerModelViews", kViews, 3);
+            static const char* const kViews[] = {"Layers", "Construction", "Shape comparison", "Graph path"};
+            selector("StudioDebuggerModelViews", kViews, 4);
             active_lens_ = StudioDebuggerLens::Shapes;
             if (view == 0) {
-                RenderModelConstructionTrace();
+                RenderLayersView();
             } else if (view == 1) {
+                RenderModelConstructionTrace();
+            } else if (view == 2) {
                 RenderShapeProphecyTrace();
             } else {
                 RenderGraphTraceView();
@@ -782,45 +738,51 @@ void StudioDebuggerPanel::RenderInspectorPane() {
         return;
     }
     if (ImGui::BeginTabItem("Inspector")) {
-        RenderInspectorHeader();
-        const bool has_trace = selected_trace_index_ >= 0 &&
-            selected_trace_index_ < static_cast<int>(session_.traces.size());
-        if (!has_trace && selected_graph_node_ >= 0) {
-            ImGui::BeginChild("StudioDebuggerNodeFindings", ImVec2(0.0f, 0.0f), false);
-            ImGui::PushTextWrapPos(0.0f);
-            bool any = false;
-            for (const auto& issue : session_.issues) {
-                if (issue.node_id != selected_graph_node_) continue;
-                any = true;
-                const DebuggerTone tone = issue.level == IssueLevel::Error ? DebuggerTone::Danger
-                    : issue.level == IssueLevel::Warning ? DebuggerTone::Warning
-                                                         : DebuggerTone::Info;
-                ImGui::TextColored(DebuggerToneColor(tone), ICON_FA_CIRCLE);
-                ImGui::SameLine(0.0f, 6.0f);
-                ImGui::TextUnformatted(issue.message.c_str());
-                if (!issue.error_code.empty()) {
-                    ImGui::TextColored(DebuggerFaint(), "%s", issue.error_code.c_str());
-                }
-                ImGui::Spacing();
-            }
-            for (const auto& rec : session_.recommendations) {
-                if (rec.node_id != selected_graph_node_) continue;
-                any = true;
-                ImGui::TextColored(DebuggerAccentText(), "Fix: %s", rec.title.c_str());
-                if (!rec.action.empty()) {
-                    ImGui::TextColored(DebuggerMuted(), "%s", rec.action.c_str());
-                }
-                ImGui::Spacing();
-            }
-            if (!any) {
-                ImGui::TextColored(DebuggerMuted(), "No traces or findings for this node in this run.");
-            }
-            ImGui::PopTextWrapPos();
-            ImGui::EndChild();
+        const bool layers_view = active_section_ == StudioDebuggerSection::Model &&
+                                 section_view_[static_cast<int>(StudioDebuggerSection::Model)] == 0;
+        if (layers_view && RenderLayersInspector()) {
+            ImGui::EndTabItem();
         } else {
-            RenderSelectedTraceDetails();
+            RenderInspectorHeader();
+            const bool has_trace = selected_trace_index_ >= 0 &&
+                selected_trace_index_ < static_cast<int>(session_.traces.size());
+            if (!has_trace && selected_graph_node_ >= 0) {
+                ImGui::BeginChild("StudioDebuggerNodeFindings", ImVec2(0.0f, 0.0f), false);
+                ImGui::PushTextWrapPos(0.0f);
+                bool any = false;
+                for (const auto& issue : session_.issues) {
+                    if (issue.node_id != selected_graph_node_) continue;
+                    any = true;
+                    const DebuggerTone tone = issue.level == IssueLevel::Error ? DebuggerTone::Danger
+                        : issue.level == IssueLevel::Warning ? DebuggerTone::Warning
+                                                             : DebuggerTone::Info;
+                    ImGui::TextColored(DebuggerToneColor(tone), ICON_FA_CIRCLE);
+                    ImGui::SameLine(0.0f, 6.0f);
+                    ImGui::TextUnformatted(issue.message.c_str());
+                    if (!issue.error_code.empty()) {
+                        ImGui::TextColored(DebuggerFaint(), "%s", issue.error_code.c_str());
+                    }
+                    ImGui::Spacing();
+                }
+                for (const auto& rec : session_.recommendations) {
+                    if (rec.node_id != selected_graph_node_) continue;
+                    any = true;
+                    ImGui::TextColored(DebuggerAccentText(), "Fix: %s", rec.title.c_str());
+                    if (!rec.action.empty()) {
+                        ImGui::TextColored(DebuggerMuted(), "%s", rec.action.c_str());
+                    }
+                    ImGui::Spacing();
+                }
+                if (!any) {
+                    ImGui::TextColored(DebuggerMuted(), "No traces or findings for this node in this run.");
+                }
+                ImGui::PopTextWrapPos();
+                ImGui::EndChild();
+            } else {
+                RenderSelectedTraceDetails();
+            }
+            ImGui::EndTabItem();
         }
-        ImGui::EndTabItem();
     }
     const std::string issues = "Issues (" + std::to_string(session_.issues.size()) + ")###Issues";
     if (ImGui::BeginTabItem(issues.c_str())) {
@@ -971,8 +933,15 @@ void StudioDebuggerPanel::RenderLensContent() {
     RenderTraceDrawer(drawer_height);
 }
 
+void StudioDebuggerPanel::SetFullSize(bool on) {
+    if (full_size_ == on) return;
+    full_size_ = on;
+    if (full_size_callback_) full_size_callback_(on);
+}
+
 void StudioDebuggerPanel::Render() {
     if (!visible_) {
+        SetFullSize(false);
         return;
     }
 
@@ -982,13 +951,16 @@ void StudioDebuggerPanel::Render() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(640.0f, 420.0f), ImVec2(FLT_MAX, FLT_MAX));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
     const std::string title = std::string(ICON_FA_BUG) + " Studio Debugger###StudioDebuggerPanel";
-    if (ImGui::Begin(title.c_str(), &visible_)) {
+    const bool shown = ImGui::Begin(title.c_str(), &visible_);
+    if (shown) {
         RenderToolbar();
         RenderSessionStatusStrip();
         ImGui::Separator();
         RenderLensContent();
     }
     ImGui::End();
+    // Full size lasts while the debugger's tab is the one shown.
+    if (!shown || !visible_) SetFullSize(false);
     ImGui::PopStyleVar();
 }
 

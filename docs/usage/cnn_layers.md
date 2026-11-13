@@ -17,15 +17,57 @@ The Resize node sets the input shape (`[height, width, 3]`); the Properties
 
 | Node | Output shape | PyTorch |
 | --- | --- | --- |
-| Conv2D (`filters`, `kernel_size`, `stride`, `padding`: a number, `same` or `valid`) | `[floor((H + 2p - k) / s) + 1, ..., filters]` | `nn.Conv2d` |
+| Conv2D (`filters`, `kernel_size`, `stride`, `padding`: a number, `same` or `valid`, `use_bias`) | `[floor((H + 2p - k) / s) + 1, ..., filters]` | `nn.Conv2d` |
 | Depthwise Conv2D (`kernel_size`, `stride`, `padding`, `depth_multiplier` M) | same formula, `C x M` channels; channel `c*M + m` sees only input channel `c` | `nn.Conv2d(C, C*M, k, groups=C)` |
-| MaxPool2D / AvgPool2D (`pool_size`, `stride`) | same formula, channels kept | `nn.MaxPool2d` / `nn.AvgPool2d` |
+| MaxPool2D / AvgPool2D (`pool_size`, `stride`, `padding`: at most half the pool size) | same formula, channels kept | `nn.MaxPool2d` / `nn.AvgPool2d` |
 | ConvTranspose2D | `(H - 1) x s - 2p + k + output_padding` | `nn.ConvTranspose2d` |
 | BatchNorm (`eps`, `momentum`) | unchanged; one mean and variance per channel over the batch and every pixel | `nn.BatchNorm2d` (after Flatten the same node is `nn.BatchNorm1d`) |
 | GroupNorm, InstanceNorm | unchanged | `nn.GroupNorm` / `nn.InstanceNorm2d` |
+| Squeeze-Excitation (`reduction` r or an exact hidden width, inner activation, gate, bias) | unchanged; each channel is multiplied by a learned value between 0 and 1 | `torchvision.ops.SqueezeExcitation(C, C // r)`; with the Hardsigmoid gate, MobileNetV3's block |
 | Adaptive Avg Pool (`output_size` s) | `[s, s, C]` for any H, W (cell i averages rows `floor(i*H/s)` to `ceil((i+1)*H/s) - 1`) | `nn.AdaptiveAvgPool2d(s)` |
 | Upsample, PixelShuffle | scaled | `nn.Upsample` / `nn.PixelShuffle` |
 | Activations, Dropout | unchanged | PReLU only with one shared slope (`num_parameters` 1) |
+
+**Squeeze-Excitation** lets the model weigh its channels for each image. It
+takes each channel's mean over the map (squeeze), passes the `C` means through
+Dense(`C / reduction`) - ReLU - Dense(`C`) - Sigmoid (excite), and multiplies
+every channel of the map by its value. Put it after a convolution block
+(Conv2D - BatchNorm - activation), as SENet, MobileNetV3 and EfficientNet do.
+`reduction` 16 is the paper's value; use 4 where the layer has few channels
+(the hidden width is never below 1). It adds about `2 x C x C / reduction`
+parameters.
+
+Its other settings, all in Properties:
+
+- **Hidden width**: channels / Reduction (default), or an exact number. Pretrained
+  MobileNetV3 uses widths no reduction gives (32 for 120 channels).
+- **Inner activation**: ReLU (default), Hardswish or Swish, between the two Dense steps.
+- **Gate**: Sigmoid (default) or Hardsigmoid, the gate MobileNetV3 uses.
+- **Bias**: on (default) or off, for both Dense steps.
+
+The node is one box on the canvas with six steps inside. **Inside this layer** in
+Properties lists them in order (mean over the map, Dense, activation, Dense, gate,
+multiply) with each step's output for one image and the weights of the two Dense
+steps. The defaults are the paper's block, so graphs saved before these settings
+existed train the same.
+
+**Hardswish** (`x * relu6(x + 3) / 6`) is the activation those
+small models pair it with, and **Hardsigmoid** (`relu6(x + 3) / 6`) the cheap
+sigmoid MobileNetV3 uses as its gate. **ReLU6** (`min(max(x, 0), 6)`) is the
+activation of MobileNetV1 and MobileNetV2.
+
+## Settings a published network needs
+
+- **Bias** on Conv2D, Depthwise Conv2D, Conv1D, Conv3D and ConvTranspose2D is
+  on by default. Turn it off for a convolution that a BatchNorm follows:
+  torchvision's ResNet and MobileNet are built that way (`bias=False`), and
+  their weight files have no bias for those layers.
+- **Padding** on MaxPool2D and AvgPool2D adds cells on every side before
+  pooling (at most half the pool size). ResNet's first pool is size 3,
+  stride 2, padding 1. AvgPool2D counts the added zeros in its average, as
+  `torch.nn.AvgPool2d` does by default.
+- Conv2D with `same` padding gives ResNet's paddings: 3 for the 7 x 7
+  convolution, 1 for 3 x 3, 0 for 1 x 1.
 
 ## Ending the convolution section
 
@@ -115,7 +157,8 @@ identity residual block and a downsampling block, and sets torch's weights on a
 residual CNN (stem, downsampling block with a projection shortcut, Global Avg
 Pool, Dense) to match torch's logits, input gradient, every layer's gradients and
 BatchNorm's running statistics on CUDA, OpenCL and CPU
-(`tests/computation_truth/fixtures/cnn_graph_pytorch.json`). `conv1d_graph_pytorch_parity` builds a Conv1D
+(`tests/computation_truth/fixtures/cnn_graph_pytorch.json`). The same fixture
+holds a stem followed by the Squeeze-Excitation node, matched the same way. `conv1d_graph_pytorch_parity` builds a Conv1D
 graph on table rows (Flatten) and on an Embedding (Global Avg Pool, and the
 text CNN with Global Max Pool), sets
 torch's parameters on the built model and matches torch's output and every

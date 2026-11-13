@@ -97,13 +97,14 @@ void MainWindow::ShowCompileReport(cyxwiz::compile_report::Mode mode, std::strin
     in.placements = compile_result_backend_placements_;
     in.has_config = compile_result_has_config_;
     in.config = compile_result_config_;
-    // Parameters: the layers' counts of the live compile (the AS COMPILED
-    // cards' numbers), when it compiled the same layers.
+    // Parameters and the training-step memory: from the live compile's build
+    // (the AS COMPILED cards' numbers), when it compiled the same layers.
     if (in.has_config && live_compile_ && live_compile_->ParametersCounted() && live_compile_->Config() &&
         live_compile_->Config()->layers.size() == in.config.layers) {
         long long total = 0;
         for (const auto& [layer, count] : live_compile_->LayerParameters()) total += count;
         in.config.parameters = total;
+        in.config.memory = live_compile_->Memory();
     }
     compile_report_ = report::BuildReport(in);
     compile_report_mode_ = mode;
@@ -474,7 +475,7 @@ void MainWindow::RenderMaterializationMemoryConfirmationPopup() {
         if (training_plot_panel_)
             training_plot_panel_->SetPreparationFailed("Training not started: cancelled at the memory-risk question.");
         spdlog::info("StartTrainingFromGraph: materialization memory confirmation cancelled by user");
-        EndFoldsLaunch("Not started: cancelled at the memory question.");
+        EndMarkedLaunch("Not started: cancelled at the memory question.");
     } else if (continue_training) {
         auto nodes = std::move(pending_memory_confirmation_nodes_);
         auto links = std::move(pending_memory_confirmation_links_);

@@ -35,6 +35,27 @@ trains epochs 1-2 at 0.0625, epochs 3-4 at 0.03125, epochs 5-6 at 0.015625.
 Cosine LR past `T_max` rises again, as in PyTorch; set `T_max` to the run's
 epoch count to end at `eta_min`.
 
+## The optimizer's own schedule (per update)
+
+Every optimizer node also has **LR Schedule** (`lr_schedule`), which changes
+the rate after every optimizer update instead of every epoch. It needs no
+scheduler node; the Engine counts the run's updates itself (epochs x batches,
+with gradient accumulation).
+
+| `lr_schedule` | The rate over the run |
+| --- | --- |
+| `none` | `learning_rate` throughout |
+| `warmup_cosine` | linear rise from 0 to `learning_rate` over `warmup_ratio` of the updates, then a cosine down to `min_lr_ratio x learning_rate` |
+| `warmup_linear` | the same rise, then a straight line down |
+| `warmup_constant` | the rise, then constant |
+| `one_cycle` | `torch.optim.lr_scheduler.OneCycleLR`: a cosine from `learning_rate / 25` up to `learning_rate` over `warmup_ratio` of the updates, then a cosine down to `learning_rate / 250,000` |
+
+`one_cycle` is the usual schedule for CNNs trained with SGD: set
+`learning_rate` to the peak (for example 0.1), `warmup_ratio` to 0.3,
+momentum 0.9 with Nesterov, and a small `weight_decay`. It follows torch with
+`cycle_momentum=False` (the momentum stays as set); `min_lr_ratio` is not
+used.
+
 ## Rules the compiler checks
 
 - The scheduler must be connected to the optimizer that trains the model.

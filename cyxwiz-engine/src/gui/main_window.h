@@ -66,6 +66,8 @@ class ModelPanel;
 class StudioDebuggerPanel;
 class FeatureImportancePanel;
 class HyperparamSearchPanel;
+class NASPanel;
+struct TrialSetup;
 class ServingPanel;
 // Model Evaluation panels (Phase 6B)
 // Linear Algebra panels (Phase 7)
@@ -194,10 +196,25 @@ private:
         const std::vector<NodeLink>& links, cyxwiz::TrainingConfiguration config);
     std::shared_ptr<cyxwiz::AsyncTask> test_preparation_task_;
     std::shared_ptr<int> test_callback_lifetime_ = std::make_shared<int>(0);
-    // Results > Cross-validation / Learning curve (TOFIX129 D4): Run marks the
-    // next Train launch as theirs; it goes through Train's checks, data loads,
-    // memory question and preparation, and only the dispatch differs: the
-    // prepared table goes to core/cross_validation_runner on a task.
+    // A launch marked for another runner: Results > Cross-validation / Learning
+    // curve (TOFIX129 D4), Hyperparameter Search and Neural Architecture
+    // Search's Train the best N (TOFIX178 T4) mark the next
+    // Train launch as theirs; it goes through Train's checks, data loads,
+    // memory question and preparation, and only the dispatch differs.
+    struct MarkedLaunch {
+        std::string what;  // "Cross-validation", for the log
+        ::gui::GraphTrainingDispatch dispatch;
+        std::function<void(const std::string&)> not_started;  // it stopped before its dispatch: why
+    };
+    std::optional<MarkedLaunch> marked_launch_;
+    void EndMarkedLaunch(const std::string& why);
+    // The searches that train through a marked launch.
+    enum class SearchRunner { None, Parameters, Architecture };
+    // Why another run cannot start now ("" when it can); `starting` is not
+    // counted (it is already preparing its own launch).
+    std::string LaunchBlocker(SearchRunner starting = SearchRunner::None) const;
+    // Cross-validation / learning curve: the prepared table goes to
+    // core/cross_validation_runner on a task.
     struct FoldsLaunch {
         std::shared_ptr<cyxwiz::FoldsView> view;
         cyxwiz::CrossValidationSettings settings;
@@ -214,21 +231,20 @@ private:
     std::optional<FoldsNode> FindFoldsNode(bool learning_curve) const;
     // Results' Add to the graph: the node after the graph's Data Input.
     std::string AddFoldsNode(bool learning_curve, const cyxwiz::CrossValidationSettings& settings);
-    std::optional<FoldsLaunch> folds_launch_;
     uint64_t folds_task_ = 0;  // the running cross-validation / learning curve task
     void StartFoldsFromGraph(std::shared_ptr<cyxwiz::FoldsView> view, const cyxwiz::CrossValidationSettings& settings);
-    // A marked launch that stopped before its task (folds, or a range test):
-    // the view or the Model window says why.
-    void EndFoldsLaunch(const std::string& why);
-    std::string FoldsBlocker() const;
     ::gui::GraphTrainingDispatch MakeFoldsDispatch(const FoldsLaunch& launch);
-    // The Model window's learning rate range test (TOFIX129 D11): marks the
-    // next Train launch as a range test, like a cross-validation; the
-    // dispatch then trains with config.learning_rate_range and the trained
-    // model in use is kept. "" when it starts (or waits for the data), else why not.
+    // Hyperparameter Search's trials and Architecture Search's versions: the
+    // prepared data becomes a TrialSetup for the runner's panel.
+    void StartTrialsFromGraph(SearchRunner runner, std::vector<MLNode> nodes, std::vector<NodeLink> links);
+    ::gui::GraphTrainingDispatch MakeTrialsDispatch(std::vector<MLNode> nodes, std::vector<NodeLink> links,
+                                                    std::function<void(cyxwiz::TrialSetup)> begin,
+                                                    std::function<void(const std::string&)> not_started);
+    // The Model window's learning rate range test (TOFIX129 D11): a marked
+    // launch whose dispatch trains with config.learning_rate_range; the
+    // trained model in use is kept. "" when it starts (or waits for the
+    // data), else why not.
     std::string StartLearningRateRangeTest(const cyxwiz::LearningRateRangeSettings& settings);
-    std::optional<cyxwiz::LearningRateRangeSettings> range_launch_;
-    void EndRangeLaunch(const std::string& why);
 
 
     // Compile the current graph as a dry-run (no training) and show results in a popup
@@ -301,17 +317,28 @@ private:
     std::vector<MLNode> pending_memory_confirmation_nodes_;
     std::vector<NodeLink> pending_memory_confirmation_links_;
 
-    // Train on a reopened project: the Data Inputs it has not loaded load
-    // first, each through an unshown Data Input dialog (the same Apply as its
-    // OK), then training starts with the loaded graph.
+    // Train or a Studio Debugger run on a reopened project: the Data Inputs
+    // it has not loaded load first, each through an unshown Data Input dialog
+    // (the same Apply as its OK), then what asked starts with the loaded graph.
     struct DataInputLoad {
         int node_id = -1;
         std::string node_name;
         std::unique_ptr<DataInputDialog> dialog;
     };
+    struct DebugRunAfterLoads {
+        cyxwiz::StudioDebuggerRunMode mode;
+        int sample_index = 0;
+        int explain_node_id = -1;
+    };
     std::vector<DataInputLoad> data_input_loads_;
     std::string data_input_loads_project_;
-    bool StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    std::string data_input_loads_names_;
+    bool train_after_loads_ = false;
+    bool data_items_after_loads_ = false;  // a debugger view waits for the loads
+    std::optional<DebugRunAfterLoads> debug_run_after_loads_;
+    // The names of the Data Inputs loading for the graph (started here when
+    // none are), empty when its data is loaded.
+    std::string StartDataInputLoads(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
     // Train on a graph whose Training Dataset path has pipeline-run steps
     // (SQL, Text Clean ...): run them first, then train on the result.
     bool StartTrainingPipelineRun(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
@@ -378,6 +405,9 @@ private:
     std::unique_ptr<gui::WalletPanel> wallet_panel_;
     std::unique_ptr<cyxwiz::TaskProgressPanel> task_progress_panel_;
     std::unique_ptr<cyxwiz::PatternBrowserPanel> pattern_browser_;
+    // The side panels the Studio Debugger's Full size hid, shown again when
+    // it turns off (TOFIX178 D1).
+    std::vector<bool*> debugger_hidden_panels_;
     std::unique_ptr<cyxwiz::QueryConsolePanel> query_console_;
     std::unique_ptr<gui::CustomNodeEditorPanel> custom_node_editor_;
     std::unique_ptr<gui::ThemeEditorPanel> theme_editor_;
@@ -397,6 +427,7 @@ private:
     // Advanced Tools panels (Phase 5)
     std::unique_ptr<cyxwiz::FeatureImportancePanel> feature_importance_panel_;
     std::unique_ptr<cyxwiz::HyperparamSearchPanel> hyperparam_search_panel_;
+    std::unique_ptr<cyxwiz::NASPanel> nas_panel_;
     std::unique_ptr<cyxwiz::ServingPanel> serving_panel_;
 
     // Clustering panels (Phase 6A)

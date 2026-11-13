@@ -10,6 +10,8 @@
 #include "metric_learning_evaluation.h"
 #include "metric_learning_sampling.h"
 #include "checkpoint_manager.h"
+#include "weight_start.h"
+#include "layer_capture_store.h"
 #include "sequence_arrow_batcher.h"
 #include "crash_run_recorder.h"
 #include "error_codes.h"
@@ -673,6 +675,7 @@ bool TrainingExecutor::Initialize(int /*batch_size*/) {
         return false;
     }
     model_ = std::move(built.model);
+    module_provenance_ = std::move(built.module_provenance);
     loss_ = std::move(built.loss);
     optimizer_ = std::move(built.optimizer);
     scheduler_controller_.reset();
@@ -1075,6 +1078,58 @@ void TrainingExecutor::Train(
         return;
     }
 
+    // Layer snapshots on items by number (6.1c): from the batchers built
+    // here, before any metric sampler wraps them.
+    if (layer_snapshot_schedule_) snapshot_run_record_ = {};
+    if (layer_snapshot_schedule_ && layer_snapshot_schedule_->source_count > 0) {
+        auto& schedule = *layer_snapshot_schedule_;
+        std::optional<Batch> items;
+        std::string off;
+        for (IBatcher* source : {active_val_ibatcher, active_train_ibatcher, active_test_ibatcher}) {
+            if (!source || items || !off.empty()) continue;
+            try {
+                items = GetSourceSampleRange(*source, schedule.source_index, schedule.source_count);
+            } catch (const std::exception& e) {
+                off = "item " + std::to_string(schedule.source_index) + " is not in the data (" + e.what() + ")";
+            }
+        }
+        if (off.empty() && !items) off = "this data's batchers cannot reach an item by number";
+        if (off.empty() && items->data.NumElements() == 0) off = "this data's batches carry sparse (CSR) features";
+        if (off.empty()) {
+            schedule.features = items->data;
+            schedule.labels = items->labels;
+            // The items' names and classes, saved with the run's epochs.
+            for (IBatcher* source : {active_val_ibatcher, active_train_ibatcher, active_test_ibatcher}) {
+                if (!source || !snapshot_run_record_.class_names.empty() || !snapshot_run_record_.item_names.empty())
+                    continue;
+                for (size_t i = 0; i < schedule.source_count; ++i)
+                    snapshot_run_record_.item_names.push_back(source->SourceSampleName(schedule.source_index + i));
+                if (std::all_of(snapshot_run_record_.item_names.begin(), snapshot_run_record_.item_names.end(),
+                                [](const std::string& n) { return n.empty(); }))
+                    snapshot_run_record_.item_names.clear();
+                snapshot_run_record_.class_names = source->ClassNames();
+            }
+        } else {
+            spdlog::warn("TrainingExecutor: layer snapshots are off: {}", off);
+            layer_snapshot_schedule_.reset();
+        }
+    }
+    // The snapshot items' labels (a few values: one small read) and how the
+    // output reads, saved with the run's epochs too.
+    if (layer_snapshot_schedule_) {
+        const Tensor& labels = layer_snapshot_schedule_->labels;
+        if (labels.NumElements() > 0 && labels.NumElements() <= 4096) {
+            const af::array flat = labels.GetRowMajorFlatArray();
+            snapshot_run_record_.label_values.resize(static_cast<size_t>(flat.elements()));
+            MaterializeArrayFireToHost(flat.as(f32), snapshot_run_record_.label_values.data(),
+                                       ArrayFireHostSyncCategory::DebugSampleDump, "TrainingExecutor::SnapshotLabels",
+                                       "arrayfire_column_major", "bounded_debug_readback",
+                                       "the snapshot items' labels (at most 4096 values)");
+            snapshot_run_record_.label_shape = labels.Shape();
+        }
+        snapshot_run_record_.output_rule = layer_snapshot_schedule_->output_rule;
+    }
+
     if (config_.metric_sampling != MetricSampling::None) {
         // Table batchers hand out class-index labels; the image, audio and
         // text batchers only one-hot to the model width (the embedding size).
@@ -1229,6 +1284,11 @@ void TrainingExecutor::Train(
             "Training loop attached to existing setup trace");
     }
     ReportPinMemoryTransferStatus(config_);
+    {
+        std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
+        layer_snapshots_.clear();
+    }
+    snapshot_run_record_.epochs.clear();
     gradient_accumulator_.clear();
     gradient_accumulated_batches_ = 0;
     gradient_accumulation_weight_ = 0.0f;
@@ -1277,14 +1337,10 @@ void TrainingExecutor::Train(
             fail_run("warm_start_failed: a run either resumes a checkpoint or starts from one, not both");
             return;
         }
-        SequentialModel* sequential = model_->AsSequentialModel();
-        if (!sequential) {
-            fail_run("warm_start_failed: starting from a checkpoint needs a sequential model");
-            return;
-        }
+        // Any executable model: a layer stack or a graph with branches.
         const std::filesystem::path source = std::filesystem::absolute(config_.initialize_from_checkpoint);
         std::string warm_error;
-        const auto loaded = LoadWarmStartCheckpoint(source, *sequential, tokenizer_sha256, warm_error);
+        const auto loaded = LoadWarmStartCheckpoint(source, *model_, tokenizer_sha256, warm_error);
         if (!loaded) {
             fail_run("warm_start_failed: " + warm_error);
             return;
@@ -1294,6 +1350,31 @@ void TrainingExecutor::Train(
         spdlog::info("TrainingExecutor: initialized model weights from {} (source epoch {}, val_loss {}); "
                      "optimizer, schedule and epochs start fresh", initialized_from, loaded->epoch, loaded->val_loss);
         TrainingTraceCollector::Instance().RecordRuntimeEvent("WarmStart", initialized_from);
+    }
+    // A published weight file: matched by node name; layers without fitting
+    // weights start fresh. Optimizer, schedule, data order and epochs start fresh.
+    if (!config_.initialize_from_weights_file.empty()) {
+        if (!resume_from_.empty() || !config_.initialize_from_checkpoint.empty()) {
+            fail_run("weights_file_failed: a run starts from a weights file, starts from a checkpoint or resumes "
+                     "one; choose one");
+            return;
+        }
+        const std::filesystem::path source = std::filesystem::absolute(config_.initialize_from_weights_file);
+        weight_match::Report report;
+        std::string weights_error;
+        if (!StartFromWeightsFile(source, *model_, module_provenance_, report, weights_error)) {
+            fail_run("weights_file_failed: " + source.filename().string() + ": " + weights_error);
+            return;
+        }
+        initialized_from = source.lexically_normal().string();
+        const std::string summary = report.Summary();
+        UpdateMetrics([&](TrainingMetrics& m) { m.initialized_from = initialized_from; });
+        spdlog::info("TrainingExecutor: started from {} ({}): {}; optimizer, schedule and epochs start fresh",
+                     source.filename().string(), report.format, summary);
+        for (const auto& row : report.layers) {
+            if (!row.loaded) spdlog::debug("TrainingExecutor: {} ({}) starts fresh: {}", row.node_name, row.type_label, row.reason);
+        }
+        TrainingTraceCollector::Instance().RecordRuntimeEvent("WeightsFile", initialized_from + ": " + summary);
     }
     checkpoint_manager->SetProvenance(tokenizer_sha256,
                                       static_cast<int>(config_.sequence_batch.enabled ? config_.input_size : 0),
@@ -1555,7 +1636,8 @@ void TrainingExecutor::Train(
 
         if (observed) observed->SetForwardObserver({});
         if (health_) {
-            EpochHealth epoch_health = health_->EndEpoch(epoch, model_->GetParameters());
+            // Frozen layers get no gradients: judged, they would read as vanishing.
+            EpochHealth epoch_health = health_->EndEpoch(epoch, model_->GetTrainableParameters());
             if (!validation_ran_this_epoch) epoch_health.relus.clear();
             UpdateMetrics([&epoch_health](TrainingMetrics& m) { m.health.epochs.push_back(std::move(epoch_health)); });
         }
@@ -1719,6 +1801,26 @@ void TrainingExecutor::Train(
             point.step = GetMetrics().optimizer_step_count;
             if (validation_ran_this_epoch) point.validation_loss = current.val_loss;
             if (!RunGenerationPreview(point)) break;
+        }
+
+        if (layer_snapshot_schedule_) {
+            const TrainingMetrics m = GetMetrics();
+            TrainingEpochRecord record;
+            record.epoch = epoch;
+            record.train_loss = m.train_loss;
+            record.train_metric = regression_metrics ? m.train_mae : m.train_accuracy;
+            if (validation_ran_this_epoch) {
+                record.val_loss = m.val_loss;
+                record.val_metric = regression_metrics ? m.val_mae : m.val_accuracy;
+            }
+            snapshot_run_record_.run_id = training_run_id;
+            snapshot_run_record_.graph_name = layer_snapshot_schedule_->graph_name;
+            snapshot_run_record_.total_epochs = epochs;
+            snapshot_run_record_.regression = regression_metrics;
+            snapshot_run_record_.epochs.push_back(record);
+            if (epoch % std::max(1, layer_snapshot_schedule_->every_epochs) == 0 || epoch == epochs ||
+                stop_after_epoch)
+                TakeLayerSnapshot(epoch, training_run_id);
         }
 
         // Notify plugin hooks: epoch end
@@ -2336,6 +2438,52 @@ bool TrainingExecutor::AccumulateGradientsAndMaybeStep(
     return true;
 }
 
+void TrainingExecutor::EnableLayerSnapshots(LayerSnapshotSchedule schedule) {
+    layer_snapshot_schedule_ = std::move(schedule);
+}
+
+std::vector<TrainingExecutor::LayerSnapshot> TrainingExecutor::LayerSnapshots() const {
+    std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
+    return layer_snapshots_;
+}
+
+void TrainingExecutor::TakeLayerSnapshot(int epoch, const std::string& run_id) {
+    const auto& schedule = *layer_snapshot_schedule_;
+    try {
+        const Tensor input = UsesSpatialSequentialInput(config_)
+                                 ? SpatialBatchFromRows(schedule.features, config_.input_shape)
+                                 : schedule.features;
+        LayerCaptureOptions options = schedule.options;
+        options.images_batch_first = !UsesSpatialSequentialInput(config_);  // TOFIX207
+        options.input_channels = config_.image_channels;
+        auto capture = CaptureStep(*model_, *loss_, input, schedule.labels, options, module_provenance_);
+        spdlog::info("TrainingExecutor: layer snapshot after epoch {} ({} layers, {:.1f} MB{})", epoch,
+                     capture->Layers().size(), capture->BytesHeld() / 1048576.0,
+                     capture->Truncated() ? ", over the budget: some tensors left out" : "");
+        LayerSnapshot snapshot{epoch, std::move(capture), {}, {}};
+        if (schedule.save) {
+            const std::string label = EpochCaptureLabel(epoch);
+            std::string error;
+            if (SaveLayerCapture(*snapshot.capture, run_id, label, &error)) {
+                snapshot.run_id = run_id;
+                snapshot.label = label;
+                // It is on disk now: holding every epoch's tensors on the device
+                // would grow with the run.
+                snapshot.capture.reset();
+                if (!SaveTrainingRunRecord(snapshot_run_record_, &error))
+                    spdlog::warn("TrainingExecutor: the run's epochs were not saved with the snapshot: {}", error);
+                PruneLayerCaptures(schedule.keep_runs);
+            } else {
+                spdlog::warn("TrainingExecutor: the layer snapshot after epoch {} was not saved: {}", epoch, error);
+            }
+        }
+        std::lock_guard<std::mutex> lock(layer_snapshots_mutex_);
+        layer_snapshots_.push_back(std::move(snapshot));
+    } catch (const std::exception& e) {
+        spdlog::warn("TrainingExecutor: layer snapshot after epoch {} failed: {}", epoch, e.what());
+    }
+}
+
 bool TrainingExecutor::RunGenerationPreview(GenerationPreviewPoint point) {
     const std::string where = point.kind == "baseline" ? std::string("before training")
         : point.kind == "step" ? "step " + std::to_string(point.step)
@@ -2380,37 +2528,35 @@ bool TrainingExecutor::RunGenerationPreview(GenerationPreviewPoint point) {
 void TrainingExecutor::ConfigureWeightDecayExclusions() {
     if (config_.weight_decay_exclude == "none") return;
     auto* adam = dynamic_cast<AdamOptimizer*>(optimizer_.get());
-    if (!adam) {
-        throw std::runtime_error("TrainingExecutor: weight_decay_exclude needs the AdamW optimizer");
+    auto* sgd = dynamic_cast<SGDOptimizer*>(optimizer_.get());
+    if (!adam && !sgd) {
+        throw std::runtime_error("TrainingExecutor: weight_decay_exclude needs the AdamW or SGD optimizer");
     }
     // 1-D tensors are biases and normalization scales/shifts; embedding tables
-    // are the Embedding and learned-position modules (SequentialModel names
-    // parameters "layer<i>.<name>").
+    // are the Embedding and learned-position modules (parameters are named
+    // "layer<i>.<name>" by module index, in a layer stack and in a graph with
+    // branches alike).
     std::set<std::string> excluded;
     std::set<std::string> embedding_prefixes;
     if (config_.weight_decay_exclude == "norms_biases_embeddings") {
-        SequentialModel* sequential = model_->AsSequentialModel();
-        if (!sequential) {
-            throw std::runtime_error(
-                "TrainingExecutor: weight_decay_exclude=norms_biases_embeddings needs a sequential model");
-        }
-        for (size_t i = 0; i < sequential->Size(); ++i) {
-            Module* module = sequential->GetModule(i);
+        for (size_t i = 0; i < model_->LayerCount(); ++i) {
+            Module* module = model_->LayerModule(i);
             if (dynamic_cast<EmbeddingModule*>(module) || dynamic_cast<LearnedPositionalEmbeddingModule*>(module)) {
                 embedding_prefixes.insert("layer" + std::to_string(i) + ".");
             }
         }
     }
     size_t total = 0;
-    for (const auto& [name, tensor] : model_->GetParameters()) {
+    for (const auto& [name, tensor] : model_->GetTrainableParameters()) {
         ++total;
         bool embedding = false;
         for (const auto& prefix : embedding_prefixes) embedding = embedding || name.rfind(prefix, 0) == 0;
         if (tensor.Shape().size() < 2 || embedding) excluded.insert(name);
     }
-    spdlog::info("TrainingExecutor: AdamW weight decay skips {} of {} parameter tensors ({})",
+    spdlog::info("TrainingExecutor: {} weight decay skips {} of {} parameter tensors ({})", adam ? "AdamW" : "SGD",
                  excluded.size(), total, config_.weight_decay_exclude);
-    adam->SetNoDecayParameters(std::move(excluded));
+    if (adam) adam->SetNoDecayParameters(std::move(excluded));
+    else sgd->SetNoDecayParameters(std::move(excluded));
 }
 
 void TrainingExecutor::EnableResumeCheckpoints(std::filesystem::path root, TrainingResumeIdentity identity,
@@ -2487,6 +2633,27 @@ void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
     if (total > std::numeric_limits<int>::max()) {
         throw std::runtime_error("TrainingExecutor: lr_schedule step count exceeds the supported range");
     }
+    std::string error;
+    const auto resume_state = std::exchange(graph_schedule_resume_, std::nullopt);
+    if (config_.lr_schedule == "one_cycle") {
+        // torch.optim.lr_scheduler.OneCycleLR (cos, two phases, cycle_momentum off): from
+        // learning_rate / 25 up to learning_rate over warmup_ratio of the updates, then
+        // down to learning_rate / 250,000.
+        OneCycleLRSchedulerSpec cycle;
+        cycle.max_lr = config_.learning_rate;
+        cycle.total_steps = static_cast<int>(total);
+        cycle.pct_start = config_.warmup_ratio;
+        scheduler_controller_ = std::make_unique<TrainingSchedulerController>(cycle);
+        if (!scheduler_controller_->Attach(*optimizer_, resume_state, error)) {
+            scheduler_controller_.reset();
+            throw std::runtime_error("TrainingExecutor: lr_schedule could not be attached: " + error);
+        }
+        const double first_lr = scheduler_controller_->GetScheduler()->GetLR();
+        spdlog::info("TrainingExecutor: lr_schedule=one_cycle max_lr={:.6g} rise={:.3g} of {} updates first_lr={:.6g}",
+                     cycle.max_lr, cycle.pct_start, cycle.total_steps, first_lr);
+        UpdateMetrics([first_lr](TrainingMetrics& m) { m.learning_rate = first_lr; });
+        return;
+    }
     WarmupDecayLRSchedulerSpec spec;
     spec.peak_lr = config_.learning_rate;
     spec.total_steps = static_cast<int>(total);
@@ -2495,8 +2662,6 @@ void TrainingExecutor::AttachGraphScheduleIfPending(size_t batches_per_epoch) {
                : config_.lr_schedule == "warmup_constant" ? "constant" : "cosine";
     spec.min_lr_ratio = config_.min_lr_ratio;
     scheduler_controller_ = std::make_unique<TrainingSchedulerController>(spec);
-    std::string error;
-    const auto resume_state = std::exchange(graph_schedule_resume_, std::nullopt);
     if (!scheduler_controller_->Attach(*optimizer_, resume_state, error)) {
         scheduler_controller_.reset();
         throw std::runtime_error("TrainingExecutor: lr_schedule could not be attached: " + error);

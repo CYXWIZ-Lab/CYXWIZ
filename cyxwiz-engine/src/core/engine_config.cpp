@@ -120,6 +120,24 @@ std::filesystem::path GetExecutableDir() {
 #endif
 }
 
+HyperparamSearchDefaults ClampedSearchDefaults(HyperparamSearchDefaults value) {
+    if (value.strategy != "grid" && value.strategy != "bayesian") value.strategy = "random";
+    if (value.objective != "val_accuracy" && value.objective != "val_mae") value.objective = "val_loss";
+    value.trials = std::clamp(value.trials, 1, kSearchMaxTrials);
+    value.hours = std::clamp(value.hours, kSearchMinHours, kSearchMaxHours);
+    return value;
+}
+
+ArchitectureSearchDefaults ClampedArchitectureSearchDefaults(ArchitectureSearchDefaults value) {
+    value.versions = std::clamp(value.versions, 2, kArchitectureSearchMaxVersions);
+    value.rounds = std::clamp(value.rounds, 1, kArchitectureSearchMaxRounds);
+    value.kept = std::clamp(value.kept, 0, value.versions - 1);
+    value.changed_percent = std::clamp(value.changed_percent, 0, 100);
+    value.mixed_percent = std::clamp(value.mixed_percent, 0, 100);
+    value.train_best = std::clamp(value.train_best, 1, kArchitectureSearchMaxTrain);
+    return value;
+}
+
 // The Stress test's defaults within the panel's ranges
 PolicyStressDefaults ClampStressDefaults(PolicyStressDefaults d) {
     d.kind = std::clamp(d.kind, 0, 4);  // the five disturbances of rl::StressKind
@@ -417,6 +435,60 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             }
         }
 
+        training_defaults_ = TrainingDefaultsConfig{};
+        if (config.contains("training_defaults") && config["training_defaults"].is_object()) {
+            training_defaults_.frozen_batchnorm_keeps_statistics =
+                config["training_defaults"].value("frozen_batchnorm_keeps_statistics", true);
+        }
+
+        studio_debugger_ = StudioDebuggerConfig{};
+        if (config.contains("studio_debugger") && config["studio_debugger"].is_object()) {
+            const auto& sd = config["studio_debugger"];
+            StudioDebuggerConfig loaded;
+            const std::string when = sd.value("capture_when", std::string("off"));
+            loaded.capture_when = when == "local_debug" ? LayerCaptureWhen::LocalDebug
+                                : when == "training"    ? LayerCaptureWhen::Training
+                                                        : LayerCaptureWhen::Off;
+            loaded.capture_every_epochs = std::clamp(sd.value("capture_every_epochs", 5), 1, 1000);
+            loaded.capture_activations = sd.value("capture_activations", true);
+            loaded.capture_parameters = sd.value("capture_parameters", true);
+            loaded.capture_gradients = sd.value("capture_gradients", true);
+            loaded.capture_batch = sd.value("capture_batch", false);
+            loaded.feature_map_colour = sd.value("feature_map_colour", std::string("heat")) == "grayscale"
+                                            ? FeatureMapColour::Grayscale
+                                            : FeatureMapColour::Heat;
+            const std::string sort = sd.value("channel_sort", std::string("strongest"));
+            loaded.channel_sort = sort == "peak"     ? ChannelSort::Peak
+                                : sort == "number"   ? ChannelSort::Number
+                                                     : ChannelSort::Strongest;
+            loaded.where_it_looks_method = sd.value("where_it_looks_method", std::string("occlusion")) == "saliency"
+                                               ? WhereItLooksMethod::Saliency
+                                               : WhereItLooksMethod::Occlusion;
+            loaded.saliency_show = sd.value("saliency_show", std::string("size")) == "times_input"
+                                       ? SaliencyShow::TimesInput
+                                       : SaliencyShow::Size;
+            const std::string channels = sd.value("top_images_channels", std::string("head_votes"));
+            loaded.top_images_channels = channels == "clicked"     ? TopImagesChannels::Clicked
+                                       : channels == "strongest" ? TopImagesChannels::Strongest
+                                                                 : TopImagesChannels::HeadVotes;
+            loaded.top_images_rank = sd.value("top_images_rank", std::string("maximum")) == "mean"
+                                         ? TopImagesRank::Mean
+                                         : TopImagesRank::Maximum;
+            const std::string embedding = sd.value("embedding_method", std::string("pca"));
+            loaded.embedding_method = embedding == "tsne"   ? EmbeddingMethod::Tsne
+                                    : embedding == "umap" ? EmbeddingMethod::Umap
+                                                          : EmbeddingMethod::Pca;
+            loaded.embedding_colour =
+                sd.value("embedding_colour", std::string("true_class")) == "predicted_class"
+                    ? EmbeddingColour::PredictedClass
+                    : EmbeddingColour::TrueClass;
+            loaded.unit_weights_order = sd.value("unit_weights_order", std::string("norm")) == "number"
+                                            ? UnitWeightsOrder::Number
+                                            : UnitWeightsOrder::Norm;
+            loaded.keep_capture_runs = std::clamp(sd.value("keep_capture_runs", 10), 1, 1000);
+            studio_debugger_ = loaded;
+        }
+
         if (config.contains("appearance") && config["appearance"].is_object()) {
             const auto& look = config["appearance"];
             AppearanceConfig loaded;
@@ -426,6 +498,49 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.sidebar_left = look.value("sidebar_left", loaded.sidebar_left);
             loaded.custom_theme_file = look.value("custom_theme_file", std::string());
             appearance_ = loaded;
+        }
+
+        nodes_panel_ = NodesPanelConfig{};
+        if (config.contains("nodes_panel") && config["nodes_panel"].is_object()) {
+            const auto& panel = config["nodes_panel"];
+            NodesPanelConfig loaded;
+            const auto types = [&panel](const char* key) {
+                std::vector<int> out;
+                if (panel.contains(key) && panel[key].is_array())
+                    for (const auto& v : panel[key])
+                        if (v.is_number_integer()) out.push_back(v.get<int>());
+                return out;
+            };
+            loaded.favourites = types("favourites");
+            loaded.recent = types("recent");
+            loaded.show_recent = panel.value("show_recent", loaded.show_recent);
+            loaded.recent_count = std::clamp(panel.value("recent_count", loaded.recent_count), 1, kNodesPanelMaxRecent);
+            if (loaded.recent.size() > static_cast<size_t>(kNodesPanelMaxRecent)) loaded.recent.resize(kNodesPanelMaxRecent);
+            nodes_panel_ = loaded;
+        }
+
+        search_defaults_ = HyperparamSearchDefaults{};
+        if (config.contains("hyperparam_search") && config["hyperparam_search"].is_object()) {
+            const auto& search = config["hyperparam_search"];
+            HyperparamSearchDefaults loaded;
+            loaded.strategy = search.value("strategy", loaded.strategy);
+            loaded.trials = search.value("trials", loaded.trials);
+            loaded.hours = search.value("hours", loaded.hours);
+            loaded.objective = search.value("objective", loaded.objective);
+            search_defaults_ = ClampedSearchDefaults(loaded);
+        }
+
+        architecture_search_defaults_ = ArchitectureSearchDefaults{};
+        if (config.contains("architecture_search") && config["architecture_search"].is_object()) {
+            const auto& search = config["architecture_search"];
+            ArchitectureSearchDefaults loaded;
+            loaded.versions = search.value("versions", loaded.versions);
+            loaded.rounds = search.value("rounds", loaded.rounds);
+            loaded.kept = search.value("kept", loaded.kept);
+            loaded.changed_percent = search.value("changed_percent", loaded.changed_percent);
+            loaded.mixed_percent = search.value("mixed_percent", loaded.mixed_percent);
+            loaded.train_best = search.value("train_best", loaded.train_best);
+            architecture_search_defaults_ = ClampedArchitectureSearchDefaults(loaded);
         }
 
         if (config.contains("utilities") && config["utilities"].is_object()) try {
@@ -647,6 +762,43 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"saved_filters", std::move(saved_runtime_filters)}
         };
 
+        config["training_defaults"] = {
+            {"frozen_batchnorm_keeps_statistics", training_defaults_.frozen_batchnorm_keeps_statistics}
+        };
+
+        config["studio_debugger"] = {
+            {"capture_when", studio_debugger_.capture_when == LayerCaptureWhen::LocalDebug ? "local_debug"
+                             : studio_debugger_.capture_when == LayerCaptureWhen::Training ? "training"
+                                                                                           : "off"},
+            {"capture_every_epochs", studio_debugger_.capture_every_epochs},
+            {"capture_activations", studio_debugger_.capture_activations},
+            {"capture_parameters", studio_debugger_.capture_parameters},
+            {"capture_gradients", studio_debugger_.capture_gradients},
+            {"capture_batch", studio_debugger_.capture_batch},
+            {"feature_map_colour",
+             studio_debugger_.feature_map_colour == FeatureMapColour::Grayscale ? "grayscale" : "heat"},
+            {"channel_sort", studio_debugger_.channel_sort == ChannelSort::Peak     ? "peak"
+                             : studio_debugger_.channel_sort == ChannelSort::Number ? "number"
+                                                                                    : "strongest"},
+            {"where_it_looks_method",
+             studio_debugger_.where_it_looks_method == WhereItLooksMethod::Saliency ? "saliency" : "occlusion"},
+            {"saliency_show", studio_debugger_.saliency_show == SaliencyShow::TimesInput ? "times_input" : "size"},
+            {"top_images_channels",
+             studio_debugger_.top_images_channels == TopImagesChannels::Clicked     ? "clicked"
+             : studio_debugger_.top_images_channels == TopImagesChannels::Strongest ? "strongest"
+                                                                                    : "head_votes"},
+            {"top_images_rank", studio_debugger_.top_images_rank == TopImagesRank::Mean ? "mean" : "maximum"},
+            {"embedding_method", studio_debugger_.embedding_method == EmbeddingMethod::Tsne   ? "tsne"
+                                 : studio_debugger_.embedding_method == EmbeddingMethod::Umap ? "umap"
+                                                                                              : "pca"},
+            {"embedding_colour", studio_debugger_.embedding_colour == EmbeddingColour::PredictedClass
+                                     ? "predicted_class"
+                                     : "true_class"},
+            {"unit_weights_order",
+             studio_debugger_.unit_weights_order == UnitWeightsOrder::Number ? "number" : "norm"},
+            {"keep_capture_runs", studio_debugger_.keep_capture_runs}
+        };
+
         config["appearance"] = {
             {"theme_preset", appearance_.theme_preset},
             {"ui_text_px", appearance_.ui_text_px},
@@ -671,6 +823,29 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"log_frame_rate", monitor_.log_frame_rate},
             {"log_python_commands", monitor_.log_python_commands},
             {"frame_overlay", monitor_.frame_overlay}
+        };
+
+        config["nodes_panel"] = {
+            {"favourites", nodes_panel_.favourites},
+            {"recent", nodes_panel_.recent},
+            {"show_recent", nodes_panel_.show_recent},
+            {"recent_count", nodes_panel_.recent_count}
+        };
+
+        config["hyperparam_search"] = {
+            {"strategy", search_defaults_.strategy},
+            {"trials", search_defaults_.trials},
+            {"hours", search_defaults_.hours},
+            {"objective", search_defaults_.objective}
+        };
+
+        config["architecture_search"] = {
+            {"versions", architecture_search_defaults_.versions},
+            {"rounds", architecture_search_defaults_.rounds},
+            {"kept", architecture_search_defaults_.kept},
+            {"changed_percent", architecture_search_defaults_.changed_percent},
+            {"mixed_percent", architecture_search_defaults_.mixed_percent},
+            {"train_best", architecture_search_defaults_.train_best}
         };
 
         // Recent projects
@@ -997,6 +1172,35 @@ void EngineConfig::SetRequireDebugBeforeTrain(bool require) {
     }
 }
 
+StudioDebuggerConfig EngineConfig::GetStudioDebugger() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return studio_debugger_;
+}
+
+void EngineConfig::SetStudioDebugger(const StudioDebuggerConfig& studio_debugger) {
+    StudioDebuggerConfig value = studio_debugger;
+    value.capture_every_epochs = std::clamp(value.capture_every_epochs, 1, 1000);
+    value.keep_capture_runs = std::clamp(value.keep_capture_runs, 1, 1000);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(studio_debugger_ == value)) {
+        studio_debugger_ = value;
+        modified_ = true;
+    }
+}
+
+TrainingDefaultsConfig EngineConfig::GetTrainingDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return training_defaults_;
+}
+
+void EngineConfig::SetTrainingDefaults(const TrainingDefaultsConfig& training_defaults) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(training_defaults_ == training_defaults)) {
+        training_defaults_ = training_defaults;
+        modified_ = true;
+    }
+}
+
 AppearanceConfig EngineConfig::GetAppearance() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return appearance_;
@@ -1006,6 +1210,50 @@ void EngineConfig::SetAppearance(const AppearanceConfig& appearance) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!(appearance_ == appearance)) {
         appearance_ = appearance;
+        modified_ = true;
+    }
+}
+
+NodesPanelConfig EngineConfig::GetNodesPanel() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return nodes_panel_;
+}
+
+void EngineConfig::SetNodesPanel(const NodesPanelConfig& nodes_panel) {
+    NodesPanelConfig value = nodes_panel;
+    value.recent_count = std::clamp(value.recent_count, 1, kNodesPanelMaxRecent);
+    if (value.recent.size() > static_cast<size_t>(kNodesPanelMaxRecent)) value.recent.resize(kNodesPanelMaxRecent);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(nodes_panel_ == value)) {
+        nodes_panel_ = value;
+        modified_ = true;
+    }
+}
+
+HyperparamSearchDefaults EngineConfig::GetSearchDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return search_defaults_;
+}
+
+void EngineConfig::SetSearchDefaults(const HyperparamSearchDefaults& defaults) {
+    const HyperparamSearchDefaults value = ClampedSearchDefaults(defaults);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(search_defaults_ == value)) {
+        search_defaults_ = value;
+        modified_ = true;
+    }
+}
+
+ArchitectureSearchDefaults EngineConfig::GetArchitectureSearchDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return architecture_search_defaults_;
+}
+
+void EngineConfig::SetArchitectureSearchDefaults(const ArchitectureSearchDefaults& defaults) {
+    const ArchitectureSearchDefaults value = ClampedArchitectureSearchDefaults(defaults);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(architecture_search_defaults_ == value)) {
+        architecture_search_defaults_ = value;
         modified_ = true;
     }
 }

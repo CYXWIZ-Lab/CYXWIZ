@@ -101,6 +101,15 @@ LayerCost CountMultiplyAdds(const LayerCostInput& layer) {
     switch (layer.kind) {
         case LayerCostKind::None:
             return {true, 0, ""};
+        case LayerCostKind::SqueezeExcitation: {
+            // C -> squeeze -> C on the pooled channels (torchvision's two 1x1
+            // convolutions); pooling and the channel scaling count nothing.
+            const long long channels = in.empty() ? 0 : static_cast<long long>(in.back());
+            if (channels <= 0 || layer.hidden <= 0) return NotCounted("its input has no channels yet");
+            return Counted(2 * channels * layer.hidden, std::to_string(channels) + "·" + std::to_string(layer.hidden) +
+                                                            " + " + std::to_string(layer.hidden) + "·" +
+                                                            std::to_string(channels));
+        }
         case LayerCostKind::Dense: {
             // Each output value is a dot product over the input features of
             // its position: a sequence keeps its positions.
@@ -214,6 +223,13 @@ LayerCostInput LinearModule::CostInput(const std::vector<size_t>& input, const s
     return cost;
 }
 
+LayerCostInput SqueezeExcitationModule::CostInput(const std::vector<size_t>& input,
+                                                  const std::vector<size_t>& output) const {
+    auto cost = Shaped(LayerCostKind::SqueezeExcitation, input, output);
+    cost.hidden = static_cast<long long>(squeeze_channels_);
+    return cost;
+}
+
 LayerCostInput TimeDistributedDenseModule::CostInput(const std::vector<size_t>& input, const std::vector<size_t>& output) const {
     auto cost = Shaped(LayerCostKind::Dense, input, output);
     return cost;
@@ -289,6 +305,7 @@ LayerCostInput ModuleCostInput(const Module& module, const std::vector<size_t>& 
     if (const auto* typed = dynamic_cast<const TransformerDecoderModule*>(&module)) return typed->CostInput(input, output);
     if (const auto* typed = dynamic_cast<const MultiHeadAttentionModule*>(&module)) return typed->CostInput(input, output);
     if (const auto* typed = dynamic_cast<const LinearAttentionModule*>(&module)) return typed->CostInput(input, output);
+    if (const auto* typed = dynamic_cast<const SqueezeExcitationModule*>(&module)) return typed->CostInput(input, output);
     return Shaped(LayerCostKind::None, input, output);
 }
 

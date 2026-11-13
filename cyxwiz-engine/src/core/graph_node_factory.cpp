@@ -82,7 +82,10 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::PReLU:
         case NodeType::GELU:
         case NodeType::Swish:
-        case NodeType::Mish: {
+        case NodeType::Mish:
+        case NodeType::Hardswish:
+        case NodeType::Hardsigmoid:
+        case NodeType::ReLU6: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
         }
@@ -126,6 +129,7 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::BatchNorm:
         case NodeType::LayerNorm:
         case NodeType::GroupNorm:
+        case NodeType::SqueezeExcitation:
         case NodeType::InstanceNorm: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;
@@ -187,6 +191,8 @@ MLNode CreateGraphNode(NodeType type,
         case NodeType::ImageSmooth:
         case NodeType::ImageWarp:
         case NodeType::ImagePyramid:
+        case NodeType::ImageFilter:
+        case NodeType::ImageGabor:
         case NodeType::RandomResizedCrop:
         case NodeType::RandomAffine:
         case NodeType::RandomPerspective:

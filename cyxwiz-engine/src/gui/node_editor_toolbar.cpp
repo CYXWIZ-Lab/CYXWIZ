@@ -316,7 +316,7 @@ void NodeEditor::DrawStepItems(bool compile, bool debug) {
     if (debug && debug_callback_) {
         const st::StepChip chip = st::LocalDebugChip(local_debug_status_);
         ImGui::TextColored(tone(chip.tone), ICON_FA_BUG "  %s", chip.headline.c_str());
-        ImGui::TextColored(t.text_dim, "One synthetic batch: build, forward, loss, backward, step");
+        ImGui::TextColored(t.text_dim, "The picked sample: build, forward, loss, backward, step");
         if (ItemOrReason("Run Local Debug", "F6", st::LocalDebugStart(local_debug_status_, nodes_.size())))
             debug_callback_();
         st::Availability open;
@@ -854,6 +854,11 @@ void NodeEditor::RenderCanvasFooter() {
             ImGui::TextColored(t.text_dim, " \xC2\xB7 ");
             ImGui::SameLine(0.0f, 0.0f);
             ImGui::TextColored(t.accent_text, "%s", st::SelectionText(num_selected).c_str());
+        }
+        // What a run will change, once any layer is frozen.
+        if (const std::string totals = FrozenTotalsText(); !totals.empty()) {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextColored(t.text_dim, " Â· %s", totals.c_str());
         }
         // The right side, cut with "..." when it would run into the counts.
         ImGui::SameLine(0.0f, 24.0f);

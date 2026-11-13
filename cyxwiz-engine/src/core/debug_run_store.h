@@ -81,6 +81,14 @@ struct DebugReplayCompiledConfigSummary {
     float epsilon = 0.0f;
     float rmsprop_alpha = 0.0f;
     float weight_decay = 0.0f;
+    // The optimizer node's training recipe; two runs that differ only here
+    // are different runs.
+    std::string weight_decay_exclude;
+    bool nesterov = false;
+    std::string lr_schedule;
+    float warmup_ratio = 0.0f;
+    float min_lr_ratio = 0.0f;
+    float grad_clip_norm = 0.0f;
     std::string compiler_placement_fingerprint;
     size_t backend_placement_count = 0;
     bool strict_execution = false;

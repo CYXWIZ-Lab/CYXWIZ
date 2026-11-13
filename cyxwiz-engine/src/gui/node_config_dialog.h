@@ -11,6 +11,7 @@
 #undef CreateDialogW
 #endif
 
+#include "../core/weight_report_presentation.h"
 #include "../core/cloud_source_presentation.h"
 #include <string>
 #include <map>
@@ -702,6 +703,24 @@ private:
     int early_stopping_patience_ = 5;
     char checkpoint_dir_[512] = "";
     char initialize_from_checkpoint_[512] = "";
+    // Start from: 0 random weights, 1 a checkpoint of an earlier run, 2 a weights file.
+    int start_from_ = 0;
+    char initialize_from_weights_file_[512] = "";
+    // The weights file read and matched to the compiled graph off the UI
+    // thread; the state is shared with the worker, so closing the dialog
+    // mid-read is safe.
+    struct WeightsProbe;
+    std::shared_ptr<WeightsProbe> weights_probe_;
+    std::string weights_probe_key_;      // the file and compile the shown result is of
+    bool weights_view_ready_ = false;
+    cyxwiz::WeightReportView weights_view_;
+    std::string weights_error_;
+    bool weights_report_open_ = false;
+    int weights_report_filter_ = 0;
+    void LoadStartFrom(const std::map<std::string, std::string>& parameters);
+    void RenderStartFrom();
+    void RenderWeightsCard(bool path_committed);
+    void RenderWeightsReport();
     DataLoaderGenerationTab generation_tab_;
     GenerationTabDataset generation_dataset_;
     bool generation_dataset_resolved_ = false;

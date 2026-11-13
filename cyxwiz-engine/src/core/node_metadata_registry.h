@@ -116,14 +116,12 @@ public:
     void LoadTemplates(const std::string& directory);
 
     /**
-     * Save user preferences (favorites, usage counts)
+     * The user's favourites and recent nodes (newest first), as the Nodes
+     * panel saves them in the Engine settings; SetUserNodes restores them.
      */
-    void SaveUserPreferences();
-
-    /**
-     * Load user preferences
-     */
-    void LoadUserPreferences();
+    std::vector<NodeType> FavoriteTypes() const;
+    std::vector<NodeType> RecentTypes() const;
+    void SetUserNodes(const std::vector<NodeType>& favorites, const std::vector<NodeType>& recent);
 
     /**
      * Register a node (used during initialization)
@@ -192,6 +190,7 @@ private:
 
     // Initialize utility nodes
     void InitializeUtilityNodes();
+    void AddFrozenSettings();
 
     // Tool-to-Node Migration (Phase 5)
     void InitializeLinearAlgebraNodes();
@@ -217,7 +216,7 @@ private:
     static const std::vector<NodeCategory> category_order_;
 
     // Maximum recent nodes to track
-    static constexpr size_t MAX_RECENT = 10;
+    static constexpr size_t MAX_RECENT = 20;
 };
 
 } // namespace cyxwiz

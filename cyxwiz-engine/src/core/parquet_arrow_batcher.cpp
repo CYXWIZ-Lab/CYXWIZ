@@ -788,309 +788,8 @@ Batch ParquetArrowBatcher::GetNextBatch() {
             batch.row_ids.push_back(current_group_first_row_ +
                                     static_cast<int64_t>(current_row_indices_[current_row_cursor_ + b]));
 
-        // Extract feature columns for the selected rows. Parquet row group
-        // tables are usually single-chunked (one chunk per column), so take
-        // the fast path when possible and fall back to chunked access only
-        // if a column turns out to be chunked.
-        const int num_cols_in_table = current_table_->num_columns();
-
-        auto process_feature_range = [&](size_t feat_begin, size_t feat_end) {
-        for (size_t feat_idx = feat_begin; feat_idx < feat_end; ++feat_idx) {
-            const int col_idx = feature_cols_[feat_idx];
-            if (col_idx < 0 || col_idx >= num_cols_in_table) continue;
-
-            auto column = current_table_->column(col_idx);
-            if (!column || column->num_chunks() == 0) continue;
-
-            // Single-chunk fast path (overwhelming common case for Parquet row groups)
-            if (column->num_chunks() == 1) {
-                auto chunk = column->chunk(0);
-                switch (chunk->type_id()) {
-                    case arrow::Type::DOUBLE: {
-                        auto arr = std::static_pointer_cast<arrow::DoubleArray>(chunk);
-                        const double* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            batch_data[(rows_filled + b) * num_features_ + feat_idx] =
-                                static_cast<float>(data[local_row]);
-                        }
-                        break;
-                    }
-                    case arrow::Type::FLOAT: {
-                        auto arr = std::static_pointer_cast<arrow::FloatArray>(chunk);
-                        const float* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            batch_data[(rows_filled + b) * num_features_ + feat_idx] =
-                                data[local_row];
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT64: {
-                        auto arr = std::static_pointer_cast<arrow::Int64Array>(chunk);
-                        const int64_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            batch_data[(rows_filled + b) * num_features_ + feat_idx] =
-                                static_cast<float>(data[local_row]);
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT32: {
-                        auto arr = std::static_pointer_cast<arrow::Int32Array>(chunk);
-                        const int32_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            batch_data[(rows_filled + b) * num_features_ + feat_idx] =
-                                static_cast<float>(data[local_row]);
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT16: {
-                        auto arr = std::static_pointer_cast<arrow::Int16Array>(chunk);
-                        const int16_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            batch_data[(rows_filled + b) * num_features_ + feat_idx] =
-                                static_cast<float>(data[local_row]);
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT8: {
-                        auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
-                        const int8_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            batch_data[(rows_filled + b) * num_features_ + feat_idx] =
-                                static_cast<float>(data[local_row]);
-                        }
-                        break;
-                    }
-                    case arrow::Type::UINT8: {
-                        auto arr = std::static_pointer_cast<arrow::UInt8Array>(chunk);
-                        const uint8_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            batch_data[(rows_filled + b) * num_features_ + feat_idx] =
-                                static_cast<float>(data[local_row]);
-                        }
-                        break;
-                    }
-                    case arrow::Type::UINT16: {
-                        auto arr = std::static_pointer_cast<arrow::UInt16Array>(chunk);
-                        const uint16_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            batch_data[(rows_filled + b) * num_features_ + feat_idx] =
-                                static_cast<float>(data[local_row]);
-                        }
-                        break;
-                    }
-                    case arrow::Type::UINT32: {
-                        auto arr = std::static_pointer_cast<arrow::UInt32Array>(chunk);
-                        const uint32_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            batch_data[(rows_filled + b) * num_features_ + feat_idx] =
-                                static_cast<float>(data[local_row]);
-                        }
-                        break;
-                    }
-                    default:
-                        // Unsupported type - leave as 0 and log once.
-                        if (feat_idx == 0) {
-                            spdlog::warn("ParquetArrowBatcher: unsupported feature type {}",
-                                         chunk->type()->ToString());
-                        }
-                        break;
-                }
-            }
-            // Multi-chunk fallback omitted in first pass - row-group tables
-            // from Parquet are typically single-chunked. If we ever see a
-            // chunked column the above branch simply leaves zeros and logs.
-        }
-        };
-
-        if (num_workers_ > 1 && feature_cols_.size() > 1) {
-            size_t worker_count = std::min(static_cast<size_t>(num_workers_), feature_cols_.size());
-            size_t chunk_size = (feature_cols_.size() + worker_count - 1) / worker_count;
-            std::vector<std::thread> workers;
-            workers.reserve(worker_count);
-
-            for (size_t worker = 0; worker < worker_count; ++worker) {
-                size_t begin = worker * chunk_size;
-                size_t end = std::min(feature_cols_.size(), begin + chunk_size);
-                if (begin >= end) break;
-                workers.emplace_back(process_feature_range, begin, end);
-            }
-
-            for (auto& worker : workers) {
-                worker.join();
-            }
-        } else {
-            process_feature_range(0, feature_cols_.size());
-        }
-
-        // Extract labels for the same rows
-        if (label_col_idx_ >= 0 && label_col_idx_ < num_cols_in_table) {
-            auto label_column = current_table_->column(label_col_idx_);
-            if (label_column && label_column->num_chunks() > 0) {
-                auto chunk = label_column->chunk(0);
-                switch (chunk->type_id()) {
-                    case arrow::Type::DOUBLE: {
-                        auto arr = std::static_pointer_cast<arrow::DoubleArray>(chunk);
-                        const double* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (scalar_label_mode_) {
-                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                            } else {
-                                batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::FLOAT: {
-                        auto arr = std::static_pointer_cast<arrow::FloatArray>(chunk);
-                        const float* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (scalar_label_mode_) {
-                                batch_labels_float[(rows_filled + b) * regression_target_width] = data[local_row];
-                            } else {
-                                batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT64: {
-                        auto arr = std::static_pointer_cast<arrow::Int64Array>(chunk);
-                        const int64_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (scalar_label_mode_) {
-                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                            } else {
-                                batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT32: {
-                        auto arr = std::static_pointer_cast<arrow::Int32Array>(chunk);
-                        const int32_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (scalar_label_mode_) {
-                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                            } else {
-                                batch_labels[rows_filled + b] = data[local_row];
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::UINT8: {
-                        auto arr = std::static_pointer_cast<arrow::UInt8Array>(chunk);
-                        const uint8_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (scalar_label_mode_) {
-                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                            } else {
-                                batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::UINT16: {
-                        auto arr = std::static_pointer_cast<arrow::UInt16Array>(chunk);
-                        const uint16_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (scalar_label_mode_) {
-                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                            } else {
-                                batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::UINT32: {
-                        auto arr = std::static_pointer_cast<arrow::UInt32Array>(chunk);
-                        const uint32_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (scalar_label_mode_) {
-                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                            } else {
-                                batch_labels[rows_filled + b] = static_cast<int>(data[local_row]);
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT16: {
-                        auto arr = std::static_pointer_cast<arrow::Int16Array>(chunk);
-                        const int16_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (scalar_label_mode_) {
-                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                            } else {
-                                batch_labels[rows_filled + b] = data[local_row];
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::INT8: {
-                        auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
-                        const int8_t* data = arr->raw_values();
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            if (scalar_label_mode_) {
-                                batch_labels_float[(rows_filled + b) * regression_target_width] = static_cast<float>(data[local_row]);
-                            } else {
-                                batch_labels[rows_filled + b] = data[local_row];
-                            }
-                        }
-                        break;
-                    }
-                    case arrow::Type::STRING:
-                    case arrow::Type::LARGE_STRING: {
-                        // Text class labels through the shared vocabulary.
-                        for (size_t b = 0; b < rows_this_sweep; ++b) {
-                            const size_t local_row = current_row_indices_[current_row_cursor_ + b];
-                            const std::string value =
-                                chunk->type_id() == arrow::Type::STRING
-                                    ? std::string(std::static_pointer_cast<arrow::StringArray>(chunk)->GetView(local_row))
-                                    : std::string(std::static_pointer_cast<arrow::LargeStringArray>(chunk)->GetView(local_row));
-                            const int32_t index = label_vocabulary_ ? label_vocabulary_->IndexOf(value) : -1;
-                            if (index < 0) spdlog::error("ParquetArrowBatcher: label '{}' is not a known class", value);
-                            batch_labels[rows_filled + b] = std::max(0, index);
-                        }
-                        break;
-                    }
-                    default:
-                        spdlog::warn("ParquetArrowBatcher: unsupported label type {}",
-                                     chunk->type()->ToString());
-                        break;
-                }
-            }
-        }
-
-        if (scalar_label_mode_ && label_col_indices_.size() > 1) {
-            for (size_t target = 1; target < label_col_indices_.size(); ++target) {
-                const int column_index = label_col_indices_[target];
-                if (column_index < 0 || column_index >= num_cols_in_table) continue;
-                const auto& target_column = current_table_->column(column_index);
-                for (size_t b = 0; b < rows_this_sweep; ++b) {
-                    const size_t local_row =
-                        current_row_indices_[current_row_cursor_ + b];
-                    batch_labels_float[
-                        (rows_filled + b) * regression_target_width + target] =
-                        ReadParquetNumericValue(target_column, local_row);
-                }
-            }
-        }
+        FillRows(*current_table_, current_row_indices_.data() + current_row_cursor_, rows_this_sweep,
+                 rows_filled, batch_data, batch_labels, batch_labels_float);
 
         rows_filled += rows_this_sweep;
         current_row_cursor_ += rows_this_sweep;
@@ -1103,6 +802,327 @@ Batch ParquetArrowBatcher::GetNextBatch() {
         return batch;
     }
 
+    FinishBatch(batch, rows_filled, batch_data, batch_labels, batch_labels_float);
+    return batch;
+}
+
+// Rows `local_rows` (n of them) of a loaded row group into the batch buffers
+// from row `dst`: the feature columns, the label, the regression targets.
+void ParquetArrowBatcher::FillRows(const arrow::Table& table, const size_t* local_rows, size_t n, size_t dst,
+                                   std::vector<float>& batch_data, std::vector<int>& batch_labels,
+                                   std::vector<float>& batch_labels_float) const {
+    const size_t regression_target_width = std::max<size_t>(1, label_col_indices_.size());
+    // Extract feature columns for the selected rows. Parquet row group
+    // tables are usually single-chunked (one chunk per column), so take
+    // the fast path when possible and fall back to chunked access only
+    // if a column turns out to be chunked.
+    const int num_cols_in_table = table.num_columns();
+
+    auto process_feature_range = [&](size_t feat_begin, size_t feat_end) {
+    for (size_t feat_idx = feat_begin; feat_idx < feat_end; ++feat_idx) {
+        const int col_idx = feature_cols_[feat_idx];
+        if (col_idx < 0 || col_idx >= num_cols_in_table) continue;
+
+        auto column = table.column(col_idx);
+        if (!column || column->num_chunks() == 0) continue;
+
+        // Single-chunk fast path (overwhelming common case for Parquet row groups)
+        if (column->num_chunks() == 1) {
+            auto chunk = column->chunk(0);
+            switch (chunk->type_id()) {
+                case arrow::Type::DOUBLE: {
+                    auto arr = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+                    const double* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        batch_data[(dst + b) * num_features_ + feat_idx] =
+                            static_cast<float>(data[local_row]);
+                    }
+                    break;
+                }
+                case arrow::Type::FLOAT: {
+                    auto arr = std::static_pointer_cast<arrow::FloatArray>(chunk);
+                    const float* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        batch_data[(dst + b) * num_features_ + feat_idx] =
+                            data[local_row];
+                    }
+                    break;
+                }
+                case arrow::Type::INT64: {
+                    auto arr = std::static_pointer_cast<arrow::Int64Array>(chunk);
+                    const int64_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        batch_data[(dst + b) * num_features_ + feat_idx] =
+                            static_cast<float>(data[local_row]);
+                    }
+                    break;
+                }
+                case arrow::Type::INT32: {
+                    auto arr = std::static_pointer_cast<arrow::Int32Array>(chunk);
+                    const int32_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        batch_data[(dst + b) * num_features_ + feat_idx] =
+                            static_cast<float>(data[local_row]);
+                    }
+                    break;
+                }
+                case arrow::Type::INT16: {
+                    auto arr = std::static_pointer_cast<arrow::Int16Array>(chunk);
+                    const int16_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        batch_data[(dst + b) * num_features_ + feat_idx] =
+                            static_cast<float>(data[local_row]);
+                    }
+                    break;
+                }
+                case arrow::Type::INT8: {
+                    auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
+                    const int8_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        batch_data[(dst + b) * num_features_ + feat_idx] =
+                            static_cast<float>(data[local_row]);
+                    }
+                    break;
+                }
+                case arrow::Type::UINT8: {
+                    auto arr = std::static_pointer_cast<arrow::UInt8Array>(chunk);
+                    const uint8_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        batch_data[(dst + b) * num_features_ + feat_idx] =
+                            static_cast<float>(data[local_row]);
+                    }
+                    break;
+                }
+                case arrow::Type::UINT16: {
+                    auto arr = std::static_pointer_cast<arrow::UInt16Array>(chunk);
+                    const uint16_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        batch_data[(dst + b) * num_features_ + feat_idx] =
+                            static_cast<float>(data[local_row]);
+                    }
+                    break;
+                }
+                case arrow::Type::UINT32: {
+                    auto arr = std::static_pointer_cast<arrow::UInt32Array>(chunk);
+                    const uint32_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        batch_data[(dst + b) * num_features_ + feat_idx] =
+                            static_cast<float>(data[local_row]);
+                    }
+                    break;
+                }
+                default:
+                    // Unsupported type - leave as 0 and log once.
+                    if (feat_idx == 0) {
+                        spdlog::warn("ParquetArrowBatcher: unsupported feature type {}",
+                                     chunk->type()->ToString());
+                    }
+                    break;
+            }
+        }
+        // Multi-chunk fallback omitted in first pass - row-group tables
+        // from Parquet are typically single-chunked. If we ever see a
+        // chunked column the above branch simply leaves zeros and logs.
+    }
+    };
+
+    if (num_workers_ > 1 && feature_cols_.size() > 1) {
+        size_t worker_count = std::min(static_cast<size_t>(num_workers_), feature_cols_.size());
+        size_t chunk_size = (feature_cols_.size() + worker_count - 1) / worker_count;
+        std::vector<std::thread> workers;
+        workers.reserve(worker_count);
+
+        for (size_t worker = 0; worker < worker_count; ++worker) {
+            size_t begin = worker * chunk_size;
+            size_t end = std::min(feature_cols_.size(), begin + chunk_size);
+            if (begin >= end) break;
+            workers.emplace_back(process_feature_range, begin, end);
+        }
+
+        for (auto& worker : workers) {
+            worker.join();
+        }
+    } else {
+        process_feature_range(0, feature_cols_.size());
+    }
+
+    // Extract labels for the same rows
+    if (label_col_idx_ >= 0 && label_col_idx_ < num_cols_in_table) {
+        auto label_column = table.column(label_col_idx_);
+        if (label_column && label_column->num_chunks() > 0) {
+            auto chunk = label_column->chunk(0);
+            switch (chunk->type_id()) {
+                case arrow::Type::DOUBLE: {
+                    auto arr = std::static_pointer_cast<arrow::DoubleArray>(chunk);
+                    const double* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        if (scalar_label_mode_) {
+                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
+                        } else {
+                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
+                        }
+                    }
+                    break;
+                }
+                case arrow::Type::FLOAT: {
+                    auto arr = std::static_pointer_cast<arrow::FloatArray>(chunk);
+                    const float* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        if (scalar_label_mode_) {
+                            batch_labels_float[(dst + b) * regression_target_width] = data[local_row];
+                        } else {
+                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
+                        }
+                    }
+                    break;
+                }
+                case arrow::Type::INT64: {
+                    auto arr = std::static_pointer_cast<arrow::Int64Array>(chunk);
+                    const int64_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        if (scalar_label_mode_) {
+                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
+                        } else {
+                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
+                        }
+                    }
+                    break;
+                }
+                case arrow::Type::INT32: {
+                    auto arr = std::static_pointer_cast<arrow::Int32Array>(chunk);
+                    const int32_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        if (scalar_label_mode_) {
+                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
+                        } else {
+                            batch_labels[dst + b] = data[local_row];
+                        }
+                    }
+                    break;
+                }
+                case arrow::Type::UINT8: {
+                    auto arr = std::static_pointer_cast<arrow::UInt8Array>(chunk);
+                    const uint8_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        if (scalar_label_mode_) {
+                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
+                        } else {
+                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
+                        }
+                    }
+                    break;
+                }
+                case arrow::Type::UINT16: {
+                    auto arr = std::static_pointer_cast<arrow::UInt16Array>(chunk);
+                    const uint16_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        if (scalar_label_mode_) {
+                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
+                        } else {
+                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
+                        }
+                    }
+                    break;
+                }
+                case arrow::Type::UINT32: {
+                    auto arr = std::static_pointer_cast<arrow::UInt32Array>(chunk);
+                    const uint32_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        if (scalar_label_mode_) {
+                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
+                        } else {
+                            batch_labels[dst + b] = static_cast<int>(data[local_row]);
+                        }
+                    }
+                    break;
+                }
+                case arrow::Type::INT16: {
+                    auto arr = std::static_pointer_cast<arrow::Int16Array>(chunk);
+                    const int16_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        if (scalar_label_mode_) {
+                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
+                        } else {
+                            batch_labels[dst + b] = data[local_row];
+                        }
+                    }
+                    break;
+                }
+                case arrow::Type::INT8: {
+                    auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
+                    const int8_t* data = arr->raw_values();
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        if (scalar_label_mode_) {
+                            batch_labels_float[(dst + b) * regression_target_width] = static_cast<float>(data[local_row]);
+                        } else {
+                            batch_labels[dst + b] = data[local_row];
+                        }
+                    }
+                    break;
+                }
+                case arrow::Type::STRING:
+                case arrow::Type::LARGE_STRING: {
+                    // Text class labels through the shared vocabulary.
+                    for (size_t b = 0; b < n; ++b) {
+                        const size_t local_row = local_rows[b];
+                        const std::string value =
+                            chunk->type_id() == arrow::Type::STRING
+                                ? std::string(std::static_pointer_cast<arrow::StringArray>(chunk)->GetView(local_row))
+                                : std::string(std::static_pointer_cast<arrow::LargeStringArray>(chunk)->GetView(local_row));
+                        const int32_t index = label_vocabulary_ ? label_vocabulary_->IndexOf(value) : -1;
+                        if (index < 0) spdlog::error("ParquetArrowBatcher: label '{}' is not a known class", value);
+                        batch_labels[dst + b] = std::max(0, index);
+                    }
+                    break;
+                }
+                default:
+                    spdlog::warn("ParquetArrowBatcher: unsupported label type {}",
+                                 chunk->type()->ToString());
+                    break;
+            }
+        }
+    }
+
+    if (scalar_label_mode_ && label_col_indices_.size() > 1) {
+        for (size_t target = 1; target < label_col_indices_.size(); ++target) {
+            const int column_index = label_col_indices_[target];
+            if (column_index < 0 || column_index >= num_cols_in_table) continue;
+            const auto& target_column = table.column(column_index);
+            for (size_t b = 0; b < n; ++b) {
+                const size_t local_row =
+                    local_rows[b];
+                batch_labels_float[
+                    (dst + b) * regression_target_width + target] =
+                    ReadParquetNumericValue(target_column, local_row);
+            }
+        }
+    }
+}
+
+// The filled rows as the batch: Normalize, the feature tensor and the label
+// form.
+void ParquetArrowBatcher::FinishBatch(Batch& batch, size_t rows_filled, std::vector<float>& batch_data,
+                                      const std::vector<int>& batch_labels,
+                                      const std::vector<float>& batch_labels_float) const {
+    const size_t regression_target_width = std::max<size_t>(1, label_col_indices_.size());
     // Apply normalization in place if enabled
     if (normalize_ && norm_std_ != 0.0f) {
         const size_t n = rows_filled * num_features_;
@@ -1144,7 +1164,66 @@ Batch ParquetArrowBatcher::GetNextBatch() {
     }
 
     batch.size = rows_filled;
+}
+
+size_t ParquetArrowBatcher::SourceSampleCount() const {
+    return dataset_ ? static_cast<size_t>(dataset_->GetNumRows()) : 0;
+}
+
+std::optional<Batch> ParquetArrowBatcher::GetSourceSamples(const std::vector<size_t>& indices) {
+    if (!dataset_ || indices.empty()) return std::nullopt;
+    const size_t total = static_cast<size_t>(dataset_->GetNumRows());
+    const size_t regression_target_width = std::max<size_t>(1, label_col_indices_.size());
+    std::vector<float> batch_data(indices.size() * num_features_, 0.0f);
+    std::vector<int> batch_labels(indices.size(), 0);
+    std::vector<float> batch_labels_float(scalar_label_mode_ ? indices.size() * regression_target_width : 0, 0.0f);
+    Batch batch;
+    int loaded_group = -1;
+    std::shared_ptr<arrow::Table> table;
+    int64_t group_first = 0;
+    for (size_t i = 0; i < indices.size(); ++i) {
+        const size_t index = indices[i];
+        if (index >= total)
+            throw std::out_of_range("row " + std::to_string(index) + " is outside the " + std::to_string(total) +
+                                    " rows");
+        // The row group that holds the row, read once for consecutive rows.
+        int group = 0;
+        int64_t first = 0;
+        while (group + 1 < dataset_->GetNumRowGroups() &&
+               first + dataset_->GetRowGroupSize(group) <= static_cast<int64_t>(index))
+            first += dataset_->GetRowGroupSize(group++);
+        if (group != loaded_group) {
+            table = dataset_->ReadRowGroup(group);
+            if (!table) throw std::runtime_error("row group " + std::to_string(group) + " could not be read");
+            loaded_group = group;
+            group_first = first;
+        }
+        const size_t local = index - static_cast<size_t>(group_first);
+        FillRows(*table, &local, 1, i, batch_data, batch_labels, batch_labels_float);
+        batch.row_ids.push_back(static_cast<int64_t>(index));
+    }
+    FinishBatch(batch, indices.size(), batch_data, batch_labels, batch_labels_float);
     return batch;
 }
+
+std::optional<BatcherPhase> ParquetArrowBatcher::SourceSamplePart(size_t index) const {
+    // This batcher holds one part: the row is in it when its row group is
+    // assigned here and, with a row split, its bucket is this part's.
+    if (!dataset_ || index >= static_cast<size_t>(dataset_->GetNumRows())) return std::nullopt;
+    int group = 0;
+    int64_t first = 0;
+    while (group + 1 < dataset_->GetNumRowGroups() &&
+           first + dataset_->GetRowGroupSize(group) <= static_cast<int64_t>(index))
+        first += dataset_->GetRowGroupSize(group++);
+    if (std::find(assigned_row_groups_.begin(), assigned_row_groups_.end(), group) == assigned_row_groups_.end())
+        return std::nullopt;
+    if (!partition_column_.empty()) return std::nullopt;  // a partition column's value is not read here
+    if (row_split_) {
+        const uint8_t phase = split_phase_ == BatcherPhase::Val ? 1 : split_phase_ == BatcherPhase::Test ? 2 : 0;
+        if (index >= row_split_->bucket.size() || row_split_->bucket[index] != phase) return std::nullopt;
+    }
+    return split_phase_;
+}
+
 
 } // namespace cyxwiz

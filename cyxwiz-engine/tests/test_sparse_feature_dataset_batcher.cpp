@@ -305,11 +305,54 @@ void TestOneSplitForEveryPhase() {
     Check(all == std::vector<int>({0, 1, 2, 3, 4, 11}), "train, validation and test are disjoint and cover every row");
 }
 
+// Rows by number (TOFIX178 6.0b, Local Debug's picked sample): any row, from
+// any phase's batcher, read as validation reads it, with the part it is in.
+void TestPickedRows() {
+    auto dataset = MakeDataset();
+    const cyxwiz::SparseSplitRule rule{true, true, 17, 0.3f};
+    const auto make = [&](bool training, cyxwiz::BatcherPhase phase) {
+        return std::make_unique<cyxwiz::SparseFeatureDatasetBatcher>(
+            dataset, 1, false, 0.5f, training, phase, 0.2f, 99, false, "none", "max", 42,
+            cyxwiz::MaterializationMemoryContext{}, false, false, false, rule);
+    };
+    auto train = make(true, cyxwiz::BatcherPhase::Train);
+    auto val = make(false, cyxwiz::BatcherPhase::Val);
+    auto test = make(false, cyxwiz::BatcherPhase::Test);
+    const std::vector<float> row_sums{1.0f, 2.0f, 0.0f, 3.0f, 4.0f, 11.0f};
+    const std::vector<float> labels{0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f};
+    std::vector<int> per_part(3, 0);
+    for (size_t row = 0; row < row_sums.size(); ++row) {
+        const auto picked = val->GetSourceSamples({row});
+        Check(picked && picked->size == 1 && picked->data.Shape() == std::vector<size_t>({1, 4}),
+              "a sparse row is picked by number");
+        const auto* data = picked->data.ReadData<float>();
+        CheckNear(data[0] + data[1] + data[2] + data[3], row_sums[row], "a picked sparse row holds that row");
+        CheckNear(picked->labels.ReadData<float>()[0], labels[row], "a picked sparse row carries its label");
+        int parts = 0;
+        for (const auto* batcher : {train.get(), val.get(), test.get()}) {
+            if (const auto part = batcher->SourceSamplePart(row)) {
+                ++parts;
+                ++per_part[static_cast<size_t>(*part)];
+            }
+        }
+        Check(parts == 1, "a sparse row is in exactly one part");
+    }
+    Check(per_part == std::vector<int>({3, 1, 2}), "the picked rows' parts are the split's 3 / 1 / 2");
+    bool refused = false;
+    try {
+        val->GetSourceSamples({row_sums.size()});
+    } catch (const std::out_of_range&) {
+        refused = true;
+    }
+    Check(refused, "a row past the dataset is refused");
+}
+
 int main() {
     TestDenseBatchAndLabelModes();
     TestSplitsDropLastShuffleAndBalancing();
     TestMemoryAndFailurePropagation();
     TestOneSplitForEveryPhase();
+    TestPickedRows();
     std::cout << "Sparse feature dataset batcher tests passed\n";
     return 0;
 }

@@ -210,4 +210,62 @@ raising = cyx.gradcheck(lambda shape: Broken())
 check(not raising and "deliberate failure in forward" in raising.error,
       "an error in forward is reported, not raised: %s" % raising.error.splitlines()[0])
 
+# --- add_state: a tensor kept but not trained (a running mean) ---------------
+class RunningCenter(cyx.Module):
+    """scale * (x - running_mean), the running mean updated while training"""
+
+    def __init__(self, features, momentum=0.5):
+        super().__init__()
+        self.momentum = momentum
+        self.add_parameter("scale", cyx.Tensor.full([1], 1.0))
+        self.add_state("running_mean", cyx.Tensor.full([1, features], 0.0))
+
+    def forward(self, x):
+        if self.is_training():
+            mean = self.state("running_mean")
+            self.set_state("running_mean", mean * (1.0 - self.momentum) + x.mean(0, True) * self.momentum)
+        self.centered = x - self.state("running_mean").broadcast_to(x.shape())
+        self.s = self.parameter("scale").broadcast_to(x.shape())
+        return self.centered * self.s
+
+    def backward(self, grad_output):
+        self.set_gradient("scale", (grad_output * self.centered).sum().reshape([1]))
+        return grad_output * self.s
+
+
+center = RunningCenter(4)
+check(center.get_state_names() == ["running_mean"] and center.state_names() == ["running_mean"],
+      "add_state names the tensor as state")
+check(center.parameter_names() == ["scale"], "parameter_names lists only the trained tensors")
+check(sorted(center.get_parameters()) == ["running_mean", "scale"],
+      "get_parameters keeps the state, so it is saved with the weights")
+check(sorted(center.get_gradients()) == ["scale"], "state has no gradient")
+for misuse, call in (("parameter", lambda: center.parameter("running_mean")),
+                     ("set_gradient", lambda: center.set_gradient("running_mean", cyx.Tensor.full([1, 4], 0.0)))):
+    try:
+        call()
+        check(False, misuse + " refuses a state name")
+    except KeyError as error:
+        check("is state" in str(error), misuse + " refuses a state name: " + str(error))
+try:
+    center.set_state("running_mean", cyx.Tensor.full([4], 0.0))
+    check(False, "set_state refuses another shape")
+except ValueError:
+    check(True, "set_state refuses another shape")
+check(bool(cyx.gradcheck(lambda shape: RunningCenter(shape[-1]), input_shapes=[[3, 4]])),
+      "gradcheck skips the state")
+
+model = cyx.Sequential()
+model.add_linear(4, 4)
+model.add(center)
+model.add_linear(4, 1)
+train(model, steps=20)
+mean = values(center.state("running_mean"))
+check(any(abs(v) > 1e-4 for v in mean), "forward updates the state while training (%s)" % mean)
+check("layer1.running_mean" in model.get_parameters() and "layer1.running_mean" not in model.get_gradients(),
+      "the model saves layer1.running_mean and asks no gradient for it")
+reloaded = RunningCenter(4)
+reloaded.set_parameters({"running_mean": center.state("running_mean"), "scale": center.parameter("scale")})
+check(values(reloaded.state("running_mean")) == mean, "set_parameters restores the state")
+
 check.finish("test_python_modules")

@@ -1,4 +1,4 @@
-// ApplyCvImageStep: the Engine's OpenCV classes (ImageEnhancer,
+// ApplyCvImageStep: the Engine's OpenCV classes (ImageEnhancer incl. its kernel filter,
 // BlurTransform, PerspectiveTransform, PyramidTransform) on one uint8 image.
 // They work on float [0, 1]; uint8 in and rounding once at the end keeps
 // the prepared set's values what the classes give.
@@ -33,8 +33,20 @@ ImageEnhancer::EdgeDetectorType ToEdge(CvEdgeMethod m) {
         case CvEdgeMethod::Sobel: return ImageEnhancer::EdgeDetectorType::Sobel;
         case CvEdgeMethod::Laplacian: return ImageEnhancer::EdgeDetectorType::Laplacian;
         case CvEdgeMethod::Scharr: return ImageEnhancer::EdgeDetectorType::Scharr;
+        case CvEdgeMethod::LoG: return ImageEnhancer::EdgeDetectorType::LoG;
+        case CvEdgeMethod::DoG: return ImageEnhancer::EdgeDetectorType::DoG;
     }
     return ImageEnhancer::EdgeDetectorType::Canny;
+}
+
+ImageEnhancer::EdgeDirection ToDirection(CvEdgeDirection d) {
+    switch (d) {
+        case CvEdgeDirection::Magnitude: return ImageEnhancer::EdgeDirection::Magnitude;
+        case CvEdgeDirection::X: return ImageEnhancer::EdgeDirection::X;
+        case CvEdgeDirection::Y: return ImageEnhancer::EdgeDirection::Y;
+        case CvEdgeDirection::Angle: return ImageEnhancer::EdgeDirection::Angle;
+    }
+    return ImageEnhancer::EdgeDirection::Magnitude;
 }
 
 // CLAHE on each channel alone, as a grey image.
@@ -59,8 +71,25 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
     };
     int w = static_cast<int>(input.width), h = static_cast<int>(input.height);
     const int c = static_cast<int>(input.channels);
+    // Neither grey nor RGB: the step on each channel alone, as a grey image.
+    // (Image Filter's kernel already runs per channel for any count.)
+    if (c != 1 && c != 3 && s.kind != CvImageStepKind::Filter) {
+        const image::ImageShape plane_in{input.height, input.width, 1};
+        const image::ImageShape plane_out = CvImageShapeAfter(s, plane_in);
+        if (s.kind == CvImageStepKind::Edges || s.kind == CvImageStepKind::Gabor || plane_out.channels != 1)
+            return fail("needs grey or RGB images");
+        const size_t pixels_in = input.height * input.width, pixels_out = plane_out.height * plane_out.width;
+        std::vector<uint8_t> one(pixels_in), result(pixels_out);
+        for (int k = 0; k < c; ++k) {
+            for (size_t i = 0; i < pixels_in; ++i) one[i] = in[i * c + k];
+            if (!ApplyCvImageStep(s, plane_in, one.data(), result.data(), error)) return false;
+            for (size_t i = 0; i < pixels_out; ++i) out[i * c + k] = result[i];
+        }
+        return true;
+    }
     std::vector<float> x(input.Size());
     for (size_t i = 0; i < x.size(); ++i) x[i] = in[i] / 255.0f;
+    const std::vector<float> original = s.kind == CvImageStepKind::Edges && s.edge_keep_image ? x : std::vector<float>();
     bool ok = false;
     switch (s.kind) {
         case CvImageStepKind::Contrast:
@@ -76,10 +105,20 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
             break;
         case CvImageStepKind::Edges:
             ok = ImageEnhancer::ApplyEdgeDetection(x, w, h, c, ToEdge(s.edge_method), s.threshold1, s.threshold2,
-                                                   s.edge_kernel);
+                                                   s.edge_kernel, ToDirection(s.edge_direction),
+                                                   s.edge_sigma, s.edge_sigma2);
             if (ok && c > 1) {  // the class repeats the edge map in each channel: keep one
                 for (size_t i = 0, n = static_cast<size_t>(w) * h; i < n; ++i) x[i] = x[i * c];
                 x.resize(static_cast<size_t>(w) * h);
+            }
+            if (ok && s.edge_keep_image) {  // the image's channels, then the edge map
+                const size_t pixels = static_cast<size_t>(w) * h, width = static_cast<size_t>(c) + 1;
+                std::vector<float> joined(pixels * width);
+                for (size_t i = 0; i < pixels; ++i) {
+                    for (int k = 0; k < c; ++k) joined[i * width + k] = original[i * c + k];
+                    joined[i * width + c] = x[i];
+                }
+                x = std::move(joined);
             }
             break;
         case CvImageStepKind::Smooth: {
@@ -111,6 +150,65 @@ bool ApplyCvImageStep(const CvImageStep& s, const image::ImageShape& input, cons
             config.output_width = s.out_width;
             config.output_height = s.out_height;
             ok = PerspectiveTransform::Apply(x, w, h, c, config);
+            break;
+        }
+        case CvImageStepKind::Filter: {
+            FilterKernel k;
+            std::string why;
+            if (!ResolveFilterKernel(s, k, &why)) return fail(why);
+            const auto border = s.filter_border == CvFilterBorder::Reflect     ? ImageEnhancer::KernelBorder::Reflect
+                                : s.filter_border == CvFilterBorder::Replicate ? ImageEnhancer::KernelBorder::Replicate
+                                : s.filter_border == CvFilterBorder::Zero      ? ImageEnhancer::KernelBorder::Zero
+                                                                               : ImageEnhancer::KernelBorder::Reflect101;
+            ok = ImageEnhancer::ApplyKernel(x, w, h, c, k.values, k.rows, k.cols, border);
+            // Stored 0 to 255: the response's size, or around mid-grey (128 = no response).
+            if (ok && s.filter_output == CvFilterOutput::Absolute)
+                for (float& v : x) v = std::fabs(v);
+            if (ok && s.filter_output == CvFilterOutput::Offset)
+                for (float& v : x) v += 128.0f / 255.0f;
+            break;
+        }
+        case CvImageStepKind::Gabor: {
+            // The kernels are built once per worker thread and step, not per image.
+            thread_local std::string bank_key;
+            thread_local std::vector<GaborFilter> bank;
+            const std::string key = std::to_string(s.gabor_orientations) + "|" + s.gabor_wavelengths + "|" +
+                                    std::to_string(s.gabor_bandwidth) + "|" + std::to_string(s.gabor_aspect);
+            if (bank.empty() || bank_key != key) {
+                std::string why;
+                bank_key.clear();
+                if (!ResolveGaborBank(s, bank, &why)) return fail(why);
+                bank_key = key;
+            }
+            const size_t pixels = static_cast<size_t>(w) * h;
+            // RGB is read as grey (the luma weights OpenCV's RGB2GRAY uses).
+            std::vector<float> grey(pixels);
+            for (size_t i = 0; i < pixels; ++i)
+                grey[i] = c == 1 ? x[i] : 0.299f * x[i * 3] + 0.587f * x[i * 3 + 1] + 0.114f * x[i * 3 + 2];
+            const size_t kept = s.gabor_keep_image ? static_cast<size_t>(c) : 0, width = kept + bank.size();
+            std::vector<float> joined(pixels * width);
+            for (size_t i = 0; i < pixels; ++i)
+                for (size_t k = 0; k < kept; ++k) joined[i * width + k] = x[i * c + k];
+            const auto run = [&](std::vector<float>& plane, const FilterKernel& k) {
+                plane = grey;
+                return ImageEnhancer::ApplyKernel(plane, w, h, 1, k.values, k.rows, k.cols);
+            };
+            ok = true;
+            std::vector<float> even, odd;
+            for (size_t g = 0; ok && g < bank.size(); ++g) {
+                const bool energy = s.gabor_response == CvGaborResponse::Energy;
+                if (energy || s.gabor_response == CvGaborResponse::Even) ok = run(even, bank[g].even);
+                if (ok && (energy || s.gabor_response == CvGaborResponse::Odd)) ok = run(odd, bank[g].odd);
+                if (!ok) break;
+                // A phase answers within -0.5..0.5 (the kernel's positive weights sum to a half). Energy,
+                // both phases' size, is scaled to fill 0..1; one phase is stored around mid-grey
+                // (128 = no response). Neither can clip.
+                const std::vector<float>& one = s.gabor_response == CvGaborResponse::Odd ? odd : even;
+                for (size_t i = 0; i < pixels; ++i)
+                    joined[i * width + kept + g] =
+                        energy ? 1.41421356f * std::sqrt(even[i] * even[i] + odd[i] * odd[i]) : 0.5f + one[i];
+            }
+            x = std::move(joined);
             break;
         }
         case CvImageStepKind::Pyramid:

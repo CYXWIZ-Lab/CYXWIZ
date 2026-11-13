@@ -33,10 +33,11 @@ const char* kRowPayload = "CYXWIZ_RECIPE_ROW";
 const NodeType kOnceSteps[] = {NodeType::CenterCrop,   NodeType::Grayscale,     NodeType::ImageGaussianBlur,
                                NodeType::MorphologyTransform, NodeType::ImageContrast, NodeType::ImageDenoise,
                                NodeType::ImageSharpen, NodeType::ImageEdges,    NodeType::ImageSmooth,
-                               NodeType::ImageWarp,    NodeType::ImagePyramid};
+                               NodeType::ImageWarp,    NodeType::ImagePyramid,  NodeType::ImageFilter,
+                               NodeType::ImageGabor};
 const NodeType kOpenCvSteps[] = {NodeType::ImageContrast, NodeType::ImageDenoise, NodeType::ImageSharpen,
                                  NodeType::ImageEdges,    NodeType::ImageSmooth,  NodeType::ImageWarp,
-                                 NodeType::ImagePyramid};
+                                 NodeType::ImagePyramid,  NodeType::ImageFilter, NodeType::ImageGabor};
 const NodeType kPerBatchSteps[] = {NodeType::RandomCrop,        NodeType::RandomResizedCrop, NodeType::HorizontalFlip,
                                    NodeType::VerticalFlip,      NodeType::ImageRotate,       NodeType::RandomAffine,
                                    NodeType::RandomPerspective, NodeType::ColorJitter,       NodeType::RandomGrayscale,
@@ -77,6 +78,8 @@ void ImageRecipeView::ReleaseTextures() {
         if (id) textures.DeleteTexture(id);
     textures_.clear();
     row_texture_.clear();
+    row_sheet_.clear();
+    sheet_aspect_.clear();
     row_draws_.clear();
     sample_texture_ = 0;
 }
@@ -154,6 +157,18 @@ void ImageRecipeView::UpdatePreviews(const TrainingConfiguration& config, const 
                 return id;
             };
             sample_texture_ = keep(Upload(previews_->full.decoded));
+            // A picture's whole sheet: its texture first, then its further channels.
+            const auto sheet_of = [&](const PreviewPicture& p, uint32_t first) {
+                std::vector<ui::SheetTile> tiles;
+                if (p.more.empty()) return tiles;
+                tiles.push_back({static_cast<ImTextureID>(first), p.first_name});
+                for (const auto& tile : p.more)
+                    tiles.push_back({static_cast<ImTextureID>(keep(TextureManager::Instance().CreateTextureFromUint8Data(
+                                         tile.rgba.data(), static_cast<int>(tile.width), static_cast<int>(tile.height), 4))),
+                                     tile.name});
+                sheet_aspect_[first] = p.width > 0 ? static_cast<float>(p.height) / static_cast<float>(p.width) : 1.0f;
+                return tiles;
+            };
             // Pictures done once: one per merged step, in order; a row takes
             // the last of its steps (a preset's ops share a row).
             size_t picture = 0, ops_seen = 0;
@@ -166,21 +181,37 @@ void ImageRecipeView::UpdatePreviews(const TrainingConfiguration& config, const 
                 const size_t steps_in_row = row.opencv ? 1 : row.ops_through - ops_seen;
                 if (!row.opencv) ops_seen = row.ops_through;
                 picture += steps_in_row;
-                if (picture >= 1 && picture <= previews_->full.fixed.size() && row.node_id >= 0)
-                    row_texture_[row.node_id] = keep(Upload(previews_->full.fixed[picture - 1]));
+                if (picture >= 1 && picture <= previews_->full.fixed.size() && row.node_id >= 0) {
+                    const PreviewPicture& p = previews_->full.fixed[picture - 1];
+                    const uint32_t first = keep(Upload(p));
+                    row_texture_[row.node_id] = first;
+                    if (auto tiles = sheet_of(p, first); !tiles.empty()) row_sheet_[row.node_id] = std::move(tiles);
+                }
             }
             uint32_t model_input = sample_texture_;
+            std::vector<ui::SheetTile> model_sheet;
             for (const auto& row : view.rows)
                 if (row.group == ir::Group::Once || row.group == ir::Group::Resize)
-                    if (const auto at = row_texture_.find(row.node_id); at != row_texture_.end()) model_input = at->second;
+                    if (const auto at = row_texture_.find(row.node_id); at != row_texture_.end()) {
+                        model_input = at->second;
+                        const auto sheet = row_sheet_.find(row.node_id);
+                        model_sheet = sheet == row_sheet_.end() ? std::vector<ui::SheetTile>() : sheet->second;
+                    }
             for (const auto& [node, preview] : previews_->per_row) {
                 auto& draws = row_draws_[node];
                 for (const auto& p : preview.draws) draws.push_back(keep(Upload(p)));
-                if (!draws.empty() && draws.front()) model_input = draws.front();
+                if (!draws.empty() && draws.front()) {
+                    model_input = draws.front();
+                    model_sheet = sheet_of(preview.draws.front(), draws.front());
+                    if (!model_sheet.empty()) row_sheet_[node] = model_sheet;
+                }
             }
             // Normalize: the picture the model gets (it scales values, not pixels).
             for (const auto& row : view.rows)
-                if (row.group == ir::Group::Normalize && row.node_id >= 0) row_texture_[row.node_id] = model_input;
+                if (row.group == ir::Group::Normalize && row.node_id >= 0) {
+                    row_texture_[row.node_id] = model_input;
+                    if (!model_sheet.empty()) row_sheet_[row.node_id] = model_sheet;
+                }
         },
         alive_);
 }
@@ -280,6 +311,12 @@ void ImageRecipeView::RenderRow(::gui::NodeEditor* editor, const ir::View& view,
     const auto picture = row_texture_.find(row.node_id);
     const ImVec2 at = ImGui::GetCursorScreenPos();
     ImGui::Dummy(ImVec2(kThumb, kThumb));
+    // A sheet shows its first tile here, with the count; hover for all of it.
+    const auto sheet = row_sheet_.find(row.node_id);
+    if (sheet != row_sheet_.end()) {
+        const auto aspect = sheet_aspect_.find(static_cast<uint32_t>(sheet->second.front().texture));
+        ui::SheetTooltip(sheet->second, aspect == sheet_aspect_.end() ? 1.0f : aspect->second);
+    }
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(at, ImVec2(at.x + kThumb, at.y + kThumb), ui::ToU32(t.bg_input), 4.0f);
     if (picture != row_texture_.end() && picture->second)
@@ -289,6 +326,8 @@ void ImageRecipeView::RenderRow(::gui::NodeEditor* editor, const ir::View& view,
     if (draws != row_draws_.end() && !draws->second.empty() && draws->second.front())
         dl->AddImageRounded(static_cast<ImTextureID>(draws->second.front()), at, ImVec2(at.x + kThumb, at.y + kThumb),
                             ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 4.0f);
+    if (sheet != row_sheet_.end())
+        ui::SheetCountMark(dl, ImVec2(at.x + kThumb, at.y + kThumb), sheet->second.size() - 1);
     ImGui::SameLine(0.0f, 12.0f);
     // Window-local x of the panel's right edge: nothing runs past it.
     const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;

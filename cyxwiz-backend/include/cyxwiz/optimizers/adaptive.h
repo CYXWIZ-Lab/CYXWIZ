@@ -21,6 +21,7 @@ public:
               const std::map<std::string, Tensor>& gradients) override;
 
     void ZeroGrad() override;
+    size_t StateTensorsPerParameter() const override { return momentum_ > 0.0 ? 2 : 1; }  // v, buffer
     bool ExportState(OptimizerState& state, std::string& error) const override;
     bool ImportState(const OptimizerState& state, std::string& error) override;
 
@@ -41,6 +42,7 @@ public:
               const std::map<std::string, Tensor>& gradients) override;
 
     void ZeroGrad() override;
+    size_t StateTensorsPerParameter() const override { return 1; }  // cache
     bool ExportState(OptimizerState& state, std::string& error) const override;
     bool ImportState(const OptimizerState& state, std::string& error) override;
 
@@ -58,6 +60,7 @@ public:
               const std::map<std::string, Tensor>& gradients) override;
 
     void ZeroGrad() override;
+    size_t StateTensorsPerParameter() const override { return 2; }  // acc_grad, acc_delta
     bool ExportState(OptimizerState& state, std::string& error) const override;
     bool ImportState(const OptimizerState& state, std::string& error) override;
 

@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <numeric>
+#include <sstream>
 
 namespace cyxwiz {
 
@@ -57,6 +60,8 @@ const char* EdgeName(CvEdgeMethod m) {
         case CvEdgeMethod::Sobel: return "Sobel";
         case CvEdgeMethod::Laplacian: return "Laplacian";
         case CvEdgeMethod::Scharr: return "Scharr";
+        case CvEdgeMethod::LoG: return "LoG";
+        case CvEdgeMethod::DoG: return "DoG";
     }
     return "edges";
 }
@@ -71,13 +76,245 @@ const char* WarpName(CvWarpMethod m) {
     return "warp";
 }
 
+bool Gradient(CvEdgeMethod m) { return m == CvEdgeMethod::Sobel || m == CvEdgeMethod::Scharr; }
+
+// ", x" for a Sobel or Scharr direction other than the magnitude.
+const char* EdgeDirectionSuffix(const CvImageStep& s) {
+    if (!Gradient(s.edge_method)) return "";
+    switch (s.edge_direction) {
+        case CvEdgeDirection::Magnitude: return "";
+        case CvEdgeDirection::X: return ", x";
+        case CvEdgeDirection::Y: return ", y";
+        case CvEdgeDirection::Angle: return ", angle";
+    }
+    return "";
+}
+
 bool Polar(CvWarpMethod m) { return m == CvWarpMethod::LogPolar || m == CvWarpMethod::LinearPolar; }
+
+const char* FilterPresetName(CvFilterPreset p) {
+    switch (p) {
+        case CvFilterPreset::Custom: return "custom";
+        case CvFilterPreset::Identity: return "Identity";
+        case CvFilterPreset::Box: return "Box";
+        case CvFilterPreset::Sharpen: return "Sharpen";
+        case CvFilterPreset::Emboss: return "Emboss";
+        case CvFilterPreset::Outline: return "Outline";
+        case CvFilterPreset::PrewittX: return "Prewitt x";
+        case CvFilterPreset::PrewittY: return "Prewitt y";
+        case CvFilterPreset::RobertsX: return "Roberts x";
+        case CvFilterPreset::RobertsY: return "Roberts y";
+        case CvFilterPreset::Kirsch: return "Kirsch";
+        case CvFilterPreset::Robinson: return "Robinson";
+    }
+    return "custom";
+}
+
+bool Compass(CvFilterPreset p) { return p == CvFilterPreset::Kirsch || p == CvFilterPreset::Robinson; }
+
+// "4, 8": pixels per cycle, split by spaces or commas.
+bool ReadWavelengths(const std::string& text, std::vector<float>& out, std::string& why) {
+    std::string spaced = text;
+    std::replace(spaced.begin(), spaced.end(), ',', ' ');
+    std::istringstream in(spaced);
+    for (std::string token; in >> token;) {
+        char* end = nullptr;
+        const float v = std::strtof(token.c_str(), &end);
+        if (end != token.c_str() + token.size() || !std::isfinite(v)) {
+            why = "the wavelengths have something that is not a number: " + token;
+            return false;
+        }
+        if (!(v >= 2.0f)) {
+            why = "a wavelength must be 2 pixels or more (a stripe and its gap)";
+            return false;
+        }
+        if (std::find(out.begin(), out.end(), v) != out.end()) {
+            why = "wavelength " + Number(v) + " is given twice";
+            return false;
+        }
+        out.push_back(v);
+    }
+    if (out.empty()) why = "give at least one wavelength, in pixels";
+    return !out.empty();
+}
+
+// The envelope's sigma for a half-response bandwidth in octaves.
+float GaborSigma(float wavelength, float bandwidth) {
+    const float p = std::pow(2.0f, bandwidth);
+    return wavelength / 3.14159265358979f * std::sqrt(std::log(2.0f) / 2.0f) * (p + 1.0f) / (p - 1.0f);
+}
+
+// cv::getGaborKernel's values (the same axes and storage order), then zero
+// mean and absolute values that sum to 1.
+FilterKernel GaborKernel(int side, float sigma, float theta, float wavelength, float aspect, float phase) {
+    FilterKernel k{side, side, std::vector<float>(static_cast<size_t>(side) * side)};
+    const int r = side / 2;
+    const double sx = sigma, sy = sigma / aspect, c = std::cos(theta), s = std::sin(theta);
+    for (int y = -r; y <= r; ++y)
+        for (int x = -r; x <= r; ++x) {
+            const double along = x * c + y * s, across = -x * s + y * c;
+            const double v = std::exp(-0.5 * (along * along / (sx * sx) + across * across / (sy * sy))) *
+                             std::cos(2.0 * 3.14159265358979323846 * along / wavelength + phase);
+            k.values[static_cast<size_t>(r - y) * side + static_cast<size_t>(r - x)] = static_cast<float>(v);
+        }
+    const float mean = k.Sum() / static_cast<float>(k.values.size());
+    float size = 0.0f;
+    for (float& v : k.values) {
+        v -= mean;
+        size += std::fabs(v);
+    }
+    if (size > 0.0f)
+        for (float& v : k.values) v /= size;
+    return k;
+}
+
+// A 3 x 3 compass kernel facing north, turned clockwise in steps of 45
+// degrees: its eight outer values move round the ring.
+FilterKernel Turned(const std::array<float, 9>& north, int steps) {
+    static const int kRing[8] = {0, 1, 2, 5, 8, 7, 6, 3};
+    FilterKernel k{3, 3, std::vector<float>(north.begin(), north.end())};
+    for (int i = 0; i < 8; ++i) k.values[static_cast<size_t>(kRing[(i + steps) % 8])] = north[static_cast<size_t>(kRing[i])];
+    return k;
+}
+
+// Rows split by ';' or a new line, numbers by spaces or commas.
+bool ReadKernel(const std::string& text, FilterKernel& kernel, std::string& why) {
+    kernel = {};
+    std::string rows_text = text;
+    std::replace(rows_text.begin(), rows_text.end(), '\n', ';');
+    std::istringstream rows(rows_text);
+    for (std::string row; std::getline(rows, row, ';');) {
+        std::replace(row.begin(), row.end(), ',', ' ');
+        std::istringstream in(row);
+        std::vector<float> values;
+        bool numbers = true;
+        for (std::string token; numbers && in >> token;) {
+            char* end = nullptr;
+            const float v = std::strtof(token.c_str(), &end);
+            numbers = end == token.c_str() + token.size() && std::isfinite(v);
+            if (numbers) values.push_back(v);
+        }
+        if (!numbers) {
+            why = "the kernel has something that is not a number in row " + std::to_string(kernel.rows + 1);
+            return false;
+        }
+        if (values.empty()) continue;  // a trailing ';' or an empty line
+        if (kernel.rows > 0 && static_cast<int>(values.size()) != kernel.cols) {
+            why = "the kernel's rows differ in length: row " + std::to_string(kernel.rows + 1) + " has " +
+                  std::to_string(values.size()) + ", the rows before it " + std::to_string(kernel.cols);
+            return false;
+        }
+        kernel.cols = static_cast<int>(values.size());
+        ++kernel.rows;
+        kernel.values.insert(kernel.values.end(), values.begin(), values.end());
+    }
+    if (kernel.rows == 0) {
+        why = "the kernel is empty: type its rows, split by ';' (0 -1 0; -1 5 -1; 0 -1 0)";
+        return false;
+    }
+    if (kernel.rows > kFilterKernelMaxSide || kernel.cols > kFilterKernelMaxSide) {
+        why = "the kernel is " + std::to_string(kernel.rows) + " rows by " + std::to_string(kernel.cols) +
+              " numbers: at most " + std::to_string(kFilterKernelMaxSide) + " each way";
+        return false;
+    }
+    return true;
+}
 
 }  // namespace
 
+float FilterKernel::Sum() const { return std::accumulate(values.begin(), values.end(), 0.0f); }
+
+bool DescribeGaborBank(const CvImageStep& s, std::vector<GaborFilter>& bank, std::string* why) {
+    bank.clear();
+    const auto fail = [&](const std::string& reason) {
+        if (why) *why = reason;
+        return false;
+    };
+    if (s.gabor_orientations < 1 || s.gabor_orientations > 16) return fail("orientations must be from 1 to 16");
+    if (!(s.gabor_bandwidth >= 0.25f && s.gabor_bandwidth <= 4.0f)) return fail("bandwidth must be from 0.25 to 4 octaves");
+    if (!(s.gabor_aspect >= 0.1f && s.gabor_aspect <= 1.0f)) return fail("aspect must be from 0.1 to 1");
+    std::vector<float> wavelengths;
+    std::string reason;
+    if (!ReadWavelengths(s.gabor_wavelengths, wavelengths, reason)) return fail(reason);
+    const size_t count = wavelengths.size() * static_cast<size_t>(s.gabor_orientations);
+    if (count > kGaborMaxChannels)
+        return fail(std::to_string(s.gabor_orientations) + " orientations" + kTimes + std::to_string(wavelengths.size()) +
+                    " wavelengths is " + std::to_string(count) + " channels: at most " +
+                    std::to_string(kGaborMaxChannels));
+    for (const float wavelength : wavelengths) {
+        const float sigma = GaborSigma(wavelength, s.gabor_bandwidth);
+        // Two sigmas of the window's longer side (along the stripes) each way.
+        const double reach = std::ceil(2.0 * static_cast<double>(sigma) / s.gabor_aspect);
+        if (!(2.0 * reach + 1.0 <= kGaborKernelMaxSide)) {
+            bank.clear();
+            return fail("wavelength " + Number(wavelength) + " needs a kernel wider than " +
+                        std::to_string(kGaborKernelMaxSide) + " pixels: use a shorter wavelength, a wider "
+                        "bandwidth or a rounder aspect");
+        }
+        const int side = 2 * static_cast<int>(reach) + 1;
+        for (int k = 0; k < s.gabor_orientations; ++k)
+            bank.push_back({180.0f * static_cast<float>(k) / static_cast<float>(s.gabor_orientations), wavelength,
+                            sigma, side, {}, {}});
+    }
+    return true;
+}
+
+bool ResolveGaborBank(const CvImageStep& s, std::vector<GaborFilter>& bank, std::string* why) {
+    if (!DescribeGaborBank(s, bank, why)) return false;
+    for (auto& g : bank) {
+        const float theta = g.degrees * 3.14159265358979f / 180.0f;
+        g.even = GaborKernel(g.side, g.sigma, theta, g.wavelength, s.gabor_aspect, 0.0f);
+        g.odd = GaborKernel(g.side, g.sigma, theta, g.wavelength, s.gabor_aspect, -1.5707963267949f);
+    }
+    return true;
+}
+
+std::vector<std::string> GaborChannelNames(const CvImageStep& s) {
+    std::vector<GaborFilter> bank;
+    std::vector<std::string> names;
+    if (DescribeGaborBank(s, bank))
+        for (const auto& f : bank) names.push_back("gabor " + Number(f.degrees) + " deg " + Number(f.wavelength) + " px");
+    return names;
+}
+
+bool ResolveFilterKernel(const CvImageStep& s, FilterKernel& k, std::string* why) {
+    const int turn = static_cast<int>(s.filter_direction);
+    switch (s.filter_preset) {
+        case CvFilterPreset::Custom: {
+            std::string reason;
+            if (!ReadKernel(s.filter_kernel, k, reason)) {
+                if (why) *why = reason;
+                return false;
+            }
+            break;
+        }
+        case CvFilterPreset::Identity: k = {3, 3, {0, 0, 0, 0, 1, 0, 0, 0, 0}}; break;
+        case CvFilterPreset::Box: k = {3, 3, std::vector<float>(9, 1.0f / 9.0f)}; break;
+        case CvFilterPreset::Sharpen: k = {3, 3, {0, -1, 0, -1, 5, -1, 0, -1, 0}}; break;
+        case CvFilterPreset::Emboss: k = {3, 3, {-2, -1, 0, -1, 1, 1, 0, 1, 2}}; break;
+        case CvFilterPreset::Outline: k = {3, 3, {-1, -1, -1, -1, 8, -1, -1, -1, -1}}; break;
+        case CvFilterPreset::PrewittX: k = {3, 3, {-1, 0, 1, -1, 0, 1, -1, 0, 1}}; break;
+        case CvFilterPreset::PrewittY: k = {3, 3, {-1, -1, -1, 0, 0, 0, 1, 1, 1}}; break;
+        case CvFilterPreset::RobertsX: k = {2, 2, {1, 0, 0, -1}}; break;
+        case CvFilterPreset::RobertsY: k = {2, 2, {0, 1, -1, 0}}; break;
+        case CvFilterPreset::Kirsch: k = Turned({5, 5, 5, -3, 0, -3, -3, -3, -3}, turn); break;
+        case CvFilterPreset::Robinson: k = Turned({1, 2, 1, 0, 0, 0, -1, -2, -1}, turn); break;
+    }
+    if (s.filter_normalize) {
+        const float sum = k.Sum();
+        if (std::fabs(sum) > 1e-6f)
+            for (float& v : k.values) v /= sum;
+    }
+    return true;
+}
+
 std::string ValidateCvImageStep(const CvImageStep& s, const image::ImageShape& in) {
     if (in.height == 0 || in.width == 0) return "the image has no pixels";
-    if (in.channels != 1 && in.channels != 3) return "needs grey or RGB images (1 or 3 channels)";
+    if (in.channels == 0) return "the image has no channels";
+    // Every other step runs on each channel alone when the image is neither grey nor RGB.
+    if ((s.kind == CvImageStepKind::Edges || s.kind == CvImageStepKind::Gabor) && in.channels != 1 && in.channels != 3)
+        return "needs grey or RGB images: these have " + std::to_string(in.channels) +
+               " channels. Put it before the step that adds channels";
     const size_t side = std::min(in.height, in.width);
     switch (s.kind) {
         case CvImageStepKind::Contrast:
@@ -106,8 +343,36 @@ std::string ValidateCvImageStep(const CvImageStep& s, const image::ImageShape& i
                     return "kernel size must be 1, 3, 5 or 7 for Sobel";
             } else if (s.edge_method == CvEdgeMethod::Laplacian) {
                 if (!Odd(s.edge_kernel) || s.edge_kernel > 31) return "kernel size must be odd, at most 31, for Laplacian";
+            } else if (s.edge_method == CvEdgeMethod::LoG) {
+                if (!Odd(s.edge_kernel) || s.edge_kernel > 31) return "kernel size must be odd, at most 31, for LoG";
+                if (!(s.edge_sigma > 0.0f)) return "sigma must be greater than 0";
+            } else if (s.edge_method == CvEdgeMethod::DoG) {
+                if (!(s.edge_sigma > 0.0f)) return "sigma must be greater than 0";
+                if (!(s.edge_sigma2 > s.edge_sigma))
+                    return "the second sigma must be greater than the first (" + Number(s.edge_sigma) + ")";
             }
             return "";
+        case CvImageStepKind::Filter: {
+            FilterKernel k;
+            std::string why;
+            if (!ResolveFilterKernel(s, k, &why)) return why;
+            if (static_cast<size_t>(std::max(k.rows, k.cols)) > side)
+                return "the kernel is " + std::to_string(k.cols) + kTimes + std::to_string(k.rows) +
+                       ": at most " + std::to_string(side) + " each way here (the image's shorter side)";
+            return "";
+        }
+        case CvImageStepKind::Gabor: {
+            std::vector<GaborFilter> bank;
+            std::string why;
+            if (!DescribeGaborBank(s, bank, &why)) return why;
+            for (const auto& f : bank)
+                if (static_cast<size_t>(f.side) > side)
+                    return "wavelength " + Number(f.wavelength) + " needs a " + std::to_string(f.side) + kTimes +
+                           std::to_string(f.side) + " kernel: at most " + std::to_string(side) +
+                           " each way here (the image's shorter side). Use a shorter wavelength, a wider "
+                           "bandwidth or a rounder aspect";
+            return "";
+        }
         case CvImageStepKind::Smooth:
             if (!Odd(s.kernel_size)) return "kernel size must be an odd number of pixels";
             if (static_cast<size_t>(s.kernel_size) > side)
@@ -170,8 +435,16 @@ image::ImageShape CvImageShapeAfter(const CvImageStep& s, const image::ImageShap
     image::ImageShape out = in;
     switch (s.kind) {
         case CvImageStepKind::Edges:
-            out.channels = 1;
+            out.channels = s.edge_keep_image ? in.channels + 1 : 1;
             break;
+        case CvImageStepKind::Gabor: {
+            // One channel per filter; a bank that cannot be read is refused before it runs.
+            std::vector<GaborFilter> bank;
+            DescribeGaborBank(s, bank);
+            const size_t filters = std::max<size_t>(1, bank.size());
+            out.channels = (s.gabor_keep_image ? in.channels : 0) + filters;
+            break;
+        }
         case CvImageStepKind::Warp:
             if (s.out_width > 0) out.width = static_cast<size_t>(s.out_width);
             if (s.out_height > 0) out.height = static_cast<size_t>(s.out_height);
@@ -206,11 +479,19 @@ std::string CvImageStepText(const CvImageStep& s) {
         case CvImageStepKind::Sharpen:
             return "Sharpen " + Setting(s.amount) + ", radius " + Setting(s.radius) +
                    (s.threshold > 0.0f ? ", threshold " + Number(s.threshold) : "");
-        case CvImageStepKind::Edges:
+        case CvImageStepKind::Edges: {
+            const char* kept = s.edge_keep_image ? ", image kept" : "";
             if (s.edge_method == CvEdgeMethod::Canny)
-                return "Edges (Canny " + Number(s.threshold1) + " / " + Number(s.threshold2) + ")";
-            if (s.edge_method == CvEdgeMethod::Scharr) return "Edges (Scharr)";
-            return std::string("Edges (") + EdgeName(s.edge_method) + " " + std::to_string(s.edge_kernel) + ")";
+                return "Edges (Canny " + Number(s.threshold1) + " / " + Number(s.threshold2) + ")" + kept;
+            if (s.edge_method == CvEdgeMethod::Scharr)
+                return std::string("Edges (Scharr") + EdgeDirectionSuffix(s) + ")" + kept;
+            if (s.edge_method == CvEdgeMethod::LoG)
+                return "Edges (LoG " + std::to_string(s.edge_kernel) + ", sigma " + Number(s.edge_sigma) + ")" + kept;
+            if (s.edge_method == CvEdgeMethod::DoG)
+                return "Edges (DoG " + Number(s.edge_sigma) + " / " + Number(s.edge_sigma2) + ")" + kept;
+            return std::string("Edges (") + EdgeName(s.edge_method) + " " + std::to_string(s.edge_kernel) +
+                   EdgeDirectionSuffix(s) + ")" + kept;
+        }
         case CvImageStepKind::Smooth: {
             const std::string k = std::to_string(s.kernel_size) + kTimes + std::to_string(s.kernel_size);
             if (s.smooth_method == CvSmoothMethod::Box) return "Box " + k;
@@ -224,6 +505,30 @@ std::string CvImageStepText(const CvImageStep& s) {
                 text += " to " + (s.out_width > 0 ? std::to_string(s.out_width) : std::string("same")) + kTimes +
                         (s.out_height > 0 ? std::to_string(s.out_height) : std::string("same"));
             return text;
+        }
+        case CvImageStepKind::Filter: {
+            static const char* kDirections[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+            std::string text = std::string("Filter (") + FilterPresetName(s.filter_preset);
+            FilterKernel k;
+            if (Compass(s.filter_preset)) text += std::string(" ") + kDirections[static_cast<int>(s.filter_direction)];
+            else if (ResolveFilterKernel(s, k)) text += " " + std::to_string(k.cols) + kTimes + std::to_string(k.rows);
+            if (s.filter_output == CvFilterOutput::Absolute) text += ", absolute";
+            if (s.filter_output == CvFilterOutput::Offset) text += ", around mid-grey";
+            return text + ")";
+        }
+        case CvImageStepKind::Gabor: {
+            // The wavelengths as they are read ("3.0" is 3); the typed text when they cannot be.
+            std::vector<float> read;
+            std::string unread, lengths;
+            if (ReadWavelengths(s.gabor_wavelengths, read, unread))
+                for (const float v : read) lengths += (lengths.empty() ? "" : " / ") + Number(v);
+            else
+                lengths = s.gabor_wavelengths;
+            std::string text = "Gabor (" + std::to_string(s.gabor_orientations) +
+                               (s.gabor_orientations == 1 ? " orientation" : " orientations") + ", wavelengths " + lengths;
+            if (s.gabor_response == CvGaborResponse::Even) text += ", even";
+            if (s.gabor_response == CvGaborResponse::Odd) text += ", odd";
+            return text + ")" + (s.gabor_keep_image ? ", image kept" : "");
         }
         case CvImageStepKind::Pyramid: {
             const char* op = s.pyramid == CvPyramidOperation::Down ? "down"
@@ -259,6 +564,12 @@ nlohmann::json CvImageStepIdentity(const CvImageStep& s) {
             j["threshold1"] = f(s.threshold1);
             j["threshold2"] = f(s.threshold2);
             j["kernel"] = s.edge_kernel;
+            // Only where they are read, so the sets prepared before these settings keep their key.
+            if (Gradient(s.edge_method) && s.edge_direction != CvEdgeDirection::Magnitude)
+                j["direction"] = static_cast<int>(s.edge_direction);
+            if (s.edge_method == CvEdgeMethod::LoG || s.edge_method == CvEdgeMethod::DoG) j["sigma"] = f(s.edge_sigma);
+            if (s.edge_method == CvEdgeMethod::DoG) j["sigma2"] = f(s.edge_sigma2);
+            if (s.edge_keep_image) j["keep_image"] = true;
             break;
         case CvImageStepKind::Smooth:
             j["method"] = static_cast<int>(s.smooth_method);
@@ -280,6 +591,31 @@ nlohmann::json CvImageStepIdentity(const CvImageStep& s) {
             j["max_radius"] = f(s.max_radius);
             j["inverse"] = s.inverse;
             j["out"] = {s.out_width, s.out_height};
+            break;
+        }
+        case CvImageStepKind::Filter: {
+            // The numbers applied, so a preset and the same kernel typed agree.
+            FilterKernel k;
+            nlohmann::json values = nlohmann::json::array();
+            if (ResolveFilterKernel(s, k))
+                for (float v : k.values) values.push_back(f(v));
+            j["rows"] = k.rows;
+            j["kernel"] = values;
+            j["border"] = static_cast<int>(s.filter_border);
+            j["output"] = static_cast<int>(s.filter_output);
+            break;
+        }
+        case CvImageStepKind::Gabor: {
+            // The filters applied, so "4, 8" and "4 8" are one set.
+            std::vector<GaborFilter> bank;
+            nlohmann::json filters = nlohmann::json::array();
+            if (DescribeGaborBank(s, bank))
+                for (const auto& g : bank) filters.push_back({f(g.degrees), f(g.wavelength)});
+            j["filters"] = filters;
+            j["bandwidth"] = f(s.gabor_bandwidth);
+            j["aspect"] = f(s.gabor_aspect);
+            j["response"] = static_cast<int>(s.gabor_response);
+            if (s.gabor_keep_image) j["keep_image"] = true;
             break;
         }
         case CvImageStepKind::Pyramid:
@@ -358,6 +694,42 @@ std::vector<FixedImageStep> MergeImageSteps(const image::ImageAugmentation& comp
     }
     for (; next < cv_steps.size(); ++next) steps.emplace_back(cv_steps[next]);
     return steps;
+}
+
+ImageChannelLayout ChannelLayoutAfter(const FixedImageStep& step, const ImageChannelLayout& input,
+                                      size_t output_channels) {
+    if (const auto* cv = std::get_if<CvImageStep>(&step); cv && cv->kind == CvImageStepKind::Edges) {
+        if (!cv->edge_keep_image && output_channels == 1) return {{"edges"}, 0};
+        if (output_channels == input.names.size() + 1) {  // the image kept, the edge map added
+            ImageChannelLayout layout = input;
+            layout.names.push_back("edges");
+            return layout;
+        }
+    }
+    if (const auto* cv = std::get_if<CvImageStep>(&step); cv && cv->kind == CvImageStepKind::Gabor) {
+        // The image when kept, then one named channel per filter.
+        ImageChannelLayout layout = cv->gabor_keep_image ? input : ImageChannelLayout{};
+        for (auto& name : GaborChannelNames(*cv)) layout.names.push_back(std::move(name));
+        if (layout.names.size() == output_channels) return layout;
+    }
+    // A step that keeps the count changes pixels, not what the channels are.
+    if (output_channels == input.names.size()) return input;
+    // Another count: grey for one channel, else numbered. No colour picture is known.
+    if (output_channels == 3) return {{"channel 1", "channel 2", "channel 3"}, 0};
+    return DecodedChannelLayout(output_channels);
+}
+
+ImageChannelLayout CompiledImageChannels(const image::ImageAugmentation& compiled,
+                                         const std::vector<CvImageStep>& cv_steps,
+                                         const image::ImageShape& decoded) {
+    image::ImageShape shape = decoded;
+    ImageChannelLayout layout = DecodedChannelLayout(decoded.channels);
+    for (const auto& step : MergeImageSteps(compiled, cv_steps)) {
+        if (const auto* op = std::get_if<image::ImageOp>(&step)) shape = image::ImageShapeAfter(*op, shape);
+        else shape = CvImageShapeAfter(std::get<CvImageStep>(step), shape);
+        layout = ChannelLayoutAfter(step, layout, shape.channels);
+    }
+    return layout;
 }
 
 image::ImageShape CompiledImageShape(const image::ImageAugmentation& compiled,

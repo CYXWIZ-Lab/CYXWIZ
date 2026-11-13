@@ -44,6 +44,8 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 | `get_version() -> str` | Get version string |
 | `gradcheck(make: Callable, input_shapes: Sequence[Sequence[int]] = [], seed: int = 125, tolerance: float = 0.02, step: float = 0.01, input_range: float = 2.0) -> GradientCheckResult` | Check a module's backward against central differences of its forward, for the input and every parameter. make(input_shape) returns a fresh module; input_shape includes the batch. Default shapes [2, 3] and [3, 4, 5]. The same checker as the Engine's Check gradient. |
 | `gradcheck_loss(make: Callable, targets: str = 'one_hot', input_shapes: Sequence[Sequence[int]] = [], seed: int = 125, tolerance: float = 0.02, step: float = 0.01, input_range: float = 2.0) -> GradientCheckResult` | Check a loss's backward against central differences of its forward. make() returns a fresh loss; targets 'one_hot' (rows over the last dimension) or 'values'. Default predictions shapes [2, 3] and [4, 5]. The same checker as the Engine's Check gradient. |
+| `hardsigmoid(input: Tensor) -> Tensor` | Apply Hardsigmoid activation: relu6(x + 3) / 6 |
+| `hardswish(input: Tensor) -> Tensor` | Apply Hardswish activation: x * relu6(x + 3) / 6 |
 | `initialize() -> bool` | Initialize the CyxWiz backend |
 | `is_sentencepiece_tokenizer_available() -> bool` | Return true when the optional SentencePiece tokenizer provider adapter is available |
 | `leaky_relu(input: Tensor, negative_slope: float = 0.009999999776482582) -> Tensor` | Apply LeakyReLU activation |
@@ -52,6 +54,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 | `oneapi_available() -> bool` | Check if oneAPI is available |
 | `opencl_available() -> bool` | Check if OpenCL is available |
 | `relu(input: Tensor) -> Tensor` | Apply ReLU activation: f(x) = max(0, x) |
+| `relu6(input: Tensor) -> Tensor` | Apply ReLU6 activation: min(max(x, 0), 6) |
 | `rl_set_metric_callback(callback: object) -> None` | Set a callback function(name: str, value: float) for RL metric updates |
 | `rl_update_metric(name: str, value: float) -> None` | Update an RL metric on the dashboard (thread-safe) |
 | `sentencepiece_tokenizer_unavailable_message() -> str` | Return the canonical explanation for unavailable SentencePiece tokenizer support |
@@ -65,7 +68,7 @@ Python nodes use mainly `Tensor`, `Module`, `gradcheck` / `gradcheck_loss` and t
 
 ### Enumerations
 
-- `ActivationType`: `ReLU`, `Sigmoid`, `Tanh`, `Softmax`, `LeakyReLU`, `ELU`, `GELU`, `Swish`, `SiLU`, `Mish`, `Hardswish`, `SELU`, `PReLU`, `SquaredReLU`, `GELUExact`
+- `ActivationType`: `ReLU`, `Sigmoid`, `Tanh`, `Softmax`, `LeakyReLU`, `ELU`, `GELU`, `Swish`, `SiLU`, `Mish`, `Hardswish`, `Hardsigmoid`, `ReLU6`, `SELU`, `PReLU`, `SquaredReLU`, `GELUExact`
 - `BPEInitialUnit`: `Byte`, `UnicodeCharacter`
 - `ByteBPEPiecePolicy`: `WhitespaceV1`, `LeadingSpaceV2`
 - `DataType`: `Float32`, `Float64`, `Int32`, `Int64`, `UInt8`
@@ -597,6 +600,24 @@ Derives from `Layer`.
 | `get_parameters(self: GroupNorm) -> dict[str, Tensor]` | Get parameters {'gamma': Tensor, 'beta': Tensor} |
 | `set_parameters(self: GroupNorm, params: Mapping[str, Tensor]) -> None` | Set parameters from dict |
 
+### `Hardsigmoid`
+
+Derives from `Activation`.
+
+| Member | What it does |
+|---|---|
+| `Hardsigmoid(self: Hardsigmoid) -> None` | Create Hardsigmoid activation |
+| `backward(self: Hardsigmoid, arg0: Tensor, arg1: Tensor) -> Tensor` |  |
+| `forward(self: Hardsigmoid, arg0: Tensor) -> Tensor` |  |
+
+### `HardsigmoidModule`
+
+Derives from `Module`.
+
+| Member | What it does |
+|---|---|
+| `HardsigmoidModule(self: HardsigmoidModule) -> None` | Create a Hardsigmoid module |
+
 ### `Hardswish`
 
 Derives from `Activation`.
@@ -606,6 +627,14 @@ Derives from `Activation`.
 | `Hardswish(self: Hardswish) -> None` | Create Hardswish activation |
 | `backward(self: Hardswish, arg0: Tensor, arg1: Tensor) -> Tensor` |  |
 | `forward(self: Hardswish, arg0: Tensor) -> Tensor` |  |
+
+### `HardswishModule`
+
+Derives from `Module`.
+
+| Member | What it does |
+|---|---|
+| `HardswishModule(self: HardswishModule) -> None` | Create a Hardswish module |
 
 ### `InstanceNorm2D`
 
@@ -812,12 +841,16 @@ Base class of every module. Subclass it in Python to write your own: define forw
 |---|---|
 | `Module(self: Module) -> None` | Create a module (for Python subclasses) |
 | `add_parameter(self: Module, name: str, value: Tensor) -> None` | Declare a learnable tensor. The optimizer updates it; read it with parameter(name) |
+| `add_state(self: Module, name: str, value: Tensor) -> None` | Declare a tensor the module keeps but does not train, such as a running mean. It is saved with the weights and takes no gradient; update it with set_state |
 | `backward(self: Module, grad_output: Tensor) -> Tensor` | Backward pass |
+| `backward_working_elements_per_sample(self: Module, sample_input_shape: Sequence[int]) -> int` | For memory estimates: elements backward holds at once while it runs, per sample; 0 by default |
+| `cached_elements_per_sample(self: Module, sample_input_shape: Sequence[int]) -> int` | For memory estimates: elements one training forward keeps for backward beyond the output, per sample of this shape (no batch axis); 0 by default |
 | `forward(self: Module, input: Tensor) -> Tensor` | Forward pass through the module |
 | `freeze(self: Module) -> None` | Freeze module (disable parameter updates) |
 | `get_gradients(self: Module) -> dict[str, Tensor]` | Get parameter gradients |
 | `get_name(self: Module) -> str` | Get module name |
 | `get_parameters(self: Module) -> dict[str, Tensor]` | Get module parameters |
+| `get_state_names(self: Module) -> list[str]` | Names of the get_parameters entries kept but not trained (no gradient) |
 | `gradient(self: Module, name: str) -> Tensor` | The last gradient stored for a parameter |
 | `has_parameters(self: Module) -> bool` | Check if module has trainable parameters |
 | `is_trainable(self: Module) -> bool` | Check if module is trainable |
@@ -826,7 +859,10 @@ Base class of every module. Subclass it in Python to write your own: define forw
 | `parameter_names(self: Module) -> list[str]` | Names of the parameters added with add_parameter |
 | `set_gradient(self: Module, name: str, gradient: Tensor) -> None` | Store the loss gradient of a parameter; call it in backward |
 | `set_parameters(self: Module, params: Mapping[str, Tensor]) -> None` | Set module parameters |
+| `set_state(self: Module, name: str, value: Tensor) -> None` | Replace a state tensor (same shape) |
 | `set_training(self: Module, training: bool) -> None` | Set training mode |
+| `state(self: Module, name: str) -> Tensor` | The current value of a state tensor |
+| `state_names(self: Module) -> list[str]` | Names of the state tensors added with add_state |
 | `unfreeze(self: Module) -> None` | Unfreeze module (enable parameter updates) |
 
 ### `MultiHeadAttention`
@@ -962,6 +998,24 @@ Derives from `Layer`.
 | `reset_state(self: RNN) -> None` | Reset hidden state |
 | `set_parameters(self: RNN, params: Mapping[str, Tensor]) -> None` | Set RNN parameters |
 
+### `ReLU6`
+
+Derives from `Activation`.
+
+| Member | What it does |
+|---|---|
+| `ReLU6(self: ReLU6) -> None` | Create ReLU6 activation |
+| `backward(self: ReLU6, arg0: Tensor, arg1: Tensor) -> Tensor` |  |
+| `forward(self: ReLU6, arg0: Tensor) -> Tensor` |  |
+
+### `ReLU6Module`
+
+Derives from `Module`.
+
+| Member | What it does |
+|---|---|
+| `ReLU6Module(self: ReLU6Module) -> None` | Create a ReLU6 module |
+
 ### `ReLUModule`
 
 Derives from `Module`.
@@ -1002,7 +1056,7 @@ Derives from `Optimizer`.
 
 | Member | What it does |
 |---|---|
-| `SGD(self: SGD, learning_rate: float = 0.01, momentum: float = 0.0) -> None` | SGD optimizer with optional momentum |
+| `SGD(self: SGD, learning_rate: float = 0.01, momentum: float = 0.0, weight_decay: float = 0.0, nesterov: bool = False) -> None` | SGD optimizer with optional momentum, Nesterov momentum and L2 weight decay (torch.optim.SGD, dampening 0) |
 | `step(self: SGD, parameters: Mapping[str, Tensor], gradients: Mapping[str, Tensor]) -> None` |  |
 | `zero_grad(self: SGD) -> None` |  |
 
@@ -1019,10 +1073,13 @@ Sequential model container for building neural networks
 | `add_elu(self: Sequential, alpha: float = 1.0) -> None` | Add an ELU activation |
 | `add_flatten(self: Sequential, start_dim: int = 1) -> None` | Add a Flatten layer |
 | `add_gelu(self: Sequential) -> None` | Add a GELU activation |
+| `add_hardsigmoid(self: Sequential) -> None` | Add a Hardsigmoid activation |
+| `add_hardswish(self: Sequential) -> None` | Add a Hardswish activation |
 | `add_leaky_relu(self: Sequential, negative_slope: float = 0.009999999776482582) -> None` | Add a LeakyReLU activation |
 | `add_linear(self: Sequential, in_features: int, out_features: int, use_bias: bool = True) -> None` | Add a Linear layer |
 | `add_mish(self: Sequential) -> None` | Add a Mish activation |
 | `add_relu(self: Sequential) -> None` | Add a ReLU activation |
+| `add_relu6(self: Sequential) -> None` | Add a ReLU6 activation |
 | `add_sigmoid(self: Sequential) -> None` | Add a Sigmoid activation |
 | `add_softmax(self: Sequential, dim: int = -1) -> None` | Add a Softmax activation |
 | `add_swish(self: Sequential) -> None` | Add a Swish activation |
@@ -1034,15 +1091,17 @@ Sequential model container for building neural networks
 | `freeze_layer(self: Sequential, layer_idx: int) -> None` | Freeze a specific layer by index |
 | `freeze_up_to(self: Sequential, layer_idx: int) -> None` | Freeze all layers up to (not including) the given index |
 | `get_description(self: Sequential) -> str` | Get model description |
+| `get_frozen_parameter_names(self: Sequential) -> set[str]` | Names of the parameters that belong to frozen layers |
 | `get_gradients(self: Sequential) -> dict[str, Tensor]` | Get all parameter gradients |
 | `get_name(self: Sequential) -> str` | Get model name |
-| `get_parameters(self: Sequential) -> dict[str, Tensor]` | Get all trainable parameters |
+| `get_parameters(self: Sequential) -> dict[str, Tensor]` | Get every parameter of the model, frozen layers included |
+| `get_trainable_parameters(self: Sequential) -> dict[str, Tensor]` | Get the parameters of the layers that are not frozen |
 | `is_layer_trainable(self: Sequential, layer_idx: int) -> bool` | Check if a layer is trainable |
 | `load(self: Sequential, path: str) -> bool` | Load model weights from file |
 | `save(self: Sequential, path: str) -> bool` | Save model to file |
 | `set_description(self: Sequential, description: str) -> None` | Set model description |
 | `set_name(self: Sequential, name: str) -> None` | Set model name |
-| `set_parameters(self: Sequential, params: Mapping[str, Tensor]) -> None` | Set all trainable parameters |
+| `set_parameters(self: Sequential, params: Mapping[str, Tensor]) -> None` | Set parameters by name |
 | `set_training(self: Sequential, training: bool) -> None` | Set training mode for all modules |
 | `size(self: Sequential) -> int` | Get number of modules |
 | `summary(self: Sequential) -> None` | Print model summary |
@@ -1097,6 +1156,14 @@ Derives from `Module`.
 | `n_fft` (property) |  |
 | `win_length` (property) |  |
 | `window_type` (property) |  |
+
+### `SqueezeExcitation`
+
+Derives from `Module`.
+
+| Member | What it does |
+|---|---|
+| `SqueezeExcitation(self: SqueezeExcitation, channels: int, squeeze_channels: int, activation: ActivationType = ActivationType.ReLU, gate: ActivationType = ActivationType.Sigmoid, bias: bool = True) -> None` | Squeeze-and-Excitation: scale each channel of a feature map [H,W,C,N] by a learned gate (torchvision.ops.SqueezeExcitation). activation: ActivationType.ReLU, Hardswish or Swish; gate: ActivationType.Sigmoid or Hardsigmoid |
 
 ### `StepResult`
 

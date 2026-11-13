@@ -10,12 +10,11 @@
 #include <thread>
 #include <limits>
 #include <random>
+#include <chrono>
+
+#include "trial_runner.h"
 
 namespace cyxwiz {
-
-// Forward declarations
-class TrainingExecutor;
-class DatasetHandle;
 
 // Parameter types for search space
 enum class ParamType {
@@ -29,6 +28,12 @@ enum class ParamType {
 struct SearchParameter {
     std::string name;
     ParamType type = ParamType::Continuous;
+
+    // The node property a trial sets to the sampled value (trial_runner.h:
+    // a layer's, the optimizer's, the scheduler's, the DataLoader's batch
+    // size / epochs). Every parameter of a search names one.
+    int node_id = -1;
+    std::string property;
 
     // For continuous/discrete/logscale
     float min_value = 0.0f;
@@ -53,12 +58,6 @@ struct SearchParameter {
 struct SearchSpace {
     std::vector<SearchParameter> parameters;
 
-    // Convenience methods to add parameters
-    void AddContinuous(const std::string& name, float min, float max);
-    void AddDiscrete(const std::string& name, int min, int max, int step = 1);
-    void AddLogScale(const std::string& name, float min, float max);
-    void AddCategorical(const std::string& name, const std::vector<std::string>& options);
-
     // Calculate total combinations for grid search
     size_t GetTotalCombinations() const;
 
@@ -73,8 +72,12 @@ struct SearchSpace {
 enum class SearchStrategy {
     Grid,      // Exhaustive grid search (all combinations)
     Random,    // Random sampling from parameter space
-    Bayesian   // Gaussian Process-based optimization (future)
+    Bayesian   // Gaussian process + expected improvement after a few random trials
 };
+
+// Why a search ended: all its trials ran, Stop, its time limit, or three
+// failed trials in a row.
+enum class SearchEnd { AllTrials, Stopped, TimeLimit, Failures };
 
 // Result of a single trial
 struct TrialResult {
@@ -84,6 +87,9 @@ struct TrialResult {
 
     float val_loss = std::numeric_limits<float>::max();
     float val_accuracy = 0.0f;
+    float val_mae = 0.0f;   // numbers (regression)
+    float val_rmse = 0.0f;
+    bool regression = false;
     float train_loss = 0.0f;
     float train_accuracy = 0.0f;
 
@@ -100,27 +106,39 @@ struct SearchConfig {
     SearchStrategy strategy = SearchStrategy::Random;
     SearchSpace space;
 
+    // Each trial trains as Train does: the DataLoader's epochs, batch size
+    // and early stopping and the graph's Data Split apply unless varied.
     int max_trials = 20;
-    int epochs_per_trial = 10;
-    int early_stopping_patience = 3;
 
-    std::string objective = "val_loss";  // "val_loss" or "val_accuracy"
-    bool minimize = true;  // true for loss, false for accuracy
+    std::string objective = "val_loss";  // "val_loss", "val_accuracy" or "val_mae"
+    bool minimize = true;  // true for loss and MAE, false for accuracy
 
     // Resource limits
     float max_time_seconds = 3600.0f;  // 1 hour default
 
-    // Dataset configuration
-    float validation_split = 0.2f;
-    int batch_size = 32;
-
     // Seed for reproducibility (0 = random)
     unsigned int random_seed = 0;
+
+    // Bayesian: random trials before the Gaussian process guides (0 = the
+    // number of parameters + 1, at least 3).
+    int initial_random_trials = 0;
 };
+
+// The objective's value for a finished trial.
+float ObjectiveValue(const SearchConfig& config, const TrialResult& result);
+
+// The node property changes a trial makes for sampled values.
+std::vector<TrialChange> TrialChangesFor(const SearchSpace& space, const std::map<std::string, float>& params,
+                                         const std::map<std::string, std::string>& categorical_params);
+
+// The results as CSV: one row per trial (id, each parameter, the scores,
+// seconds, the error of a failed trial), the best trial marked.
+std::string SearchResultsCsv(const SearchConfig& config, const std::vector<TrialResult>& results, int best_trial_id);
 
 /**
  * Hyperparameter Search Engine
- * Coordinates search strategy with TrainingExecutor
+ * Samples values for the parameters and trains each trial through the trial
+ * function (the Engine's: RunTrial on Train's recipe for the graph).
  */
 class HyperparamSearch {
 public:
@@ -131,8 +149,13 @@ public:
     void SetConfig(const SearchConfig& config);
     const SearchConfig& GetConfig() const { return config_; }
 
-    // Search control
-    void Start();
+    // Trains one trial: the node property changes, cancel and epoch callbacks.
+    using TrialFunction = std::function<TrialOutcome(const std::vector<TrialChange>&, const TrialCallbacks&)>;
+    void SetTrialFunction(TrialFunction trial_function) { trial_function_ = std::move(trial_function); }
+
+    // Search control. False (with the reason logged) when the space is
+    // invalid or no trial function is set.
+    bool Start();
     void Stop();
     void Pause();
     void Resume();
@@ -140,12 +163,18 @@ public:
     bool IsRunning() const { return is_running_.load(); }
     bool IsPaused() const { return is_paused_.load(); }
     bool IsComplete() const { return is_complete_.load(); }
+    // Why the last search ended (AllTrials while one runs).
+    SearchEnd GetEnd() const { return end_.load(); }
 
     // Progress
     int GetCurrentTrial() const { return current_trial_.load(); }
     int GetTotalTrials() const;
     float GetProgress() const;
     float GetElapsedSeconds() const;
+    // The running trial's last finished epoch and its epoch count (0 before
+    // its first epoch).
+    int GetTrialEpoch() const { return trial_epoch_.load(); }
+    int GetTrialEpochs() const { return trial_epochs_.load(); }
 
     // Results
     std::vector<TrialResult> GetResults() const;
@@ -182,7 +211,10 @@ private:
     std::atomic<bool> is_paused_{false};
     std::atomic<bool> stop_requested_{false};
     std::atomic<bool> is_complete_{false};
+    std::atomic<SearchEnd> end_{SearchEnd::AllTrials};
     std::atomic<int> current_trial_{0};
+    std::atomic<int> trial_epoch_{0};
+    std::atomic<int> trial_epochs_{0};
 
     mutable std::mutex results_mutex_;
     std::vector<TrialResult> results_;
@@ -196,6 +228,8 @@ private:
     TrialProgressCallback on_trial_progress_;
     TrialCompleteCallback on_trial_complete_;
     SearchCompleteCallback on_search_complete_;
+
+    TrialFunction trial_function_;
 
     // Random number generator
     std::mt19937 rng_;

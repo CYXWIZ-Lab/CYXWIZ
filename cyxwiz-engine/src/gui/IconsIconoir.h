@@ -1,166 +1,61 @@
-// Iconoir Icons - Icon Font Definitions
-// https://iconoir.com/
+// Iconoir - https://iconoir.com/
 // MIT License
 //
-// Node Editor Icon Pack - Simple, consistent stroke icons
+// The node editor's Iconoir icon pack (stroke icons): the icons node_editor_icons.cpp uses.
+// Each codepoint is the one iconoir.ttf maps to the glyph named in its comment;
+// scripts/checks/check_icon_headers.py checks them against the font.
 
 #pragma once
 
 #define FONT_ICON_FILE_NAME_IO "iconoir.ttf"
 
-// Icon range for Iconoir (Private Use Area)
-#define ICON_MIN_IO 0xE900
-#define ICON_MAX_IO 0xEFFF
-
-// UTF-8 encoding: For U+XXXX where XXXX is 0x0800-0xFFFF
-// Byte1 = 0xE0 | ((cp >> 12) & 0x0F)
-// Byte2 = 0x80 | ((cp >> 6) & 0x3F)
-// Byte3 = 0x80 | (cp & 0x3F)
-
-// ============================================
-// Data & Database
-// ============================================
-#define ICON_IO_DATABASE        "\xee\xa4\x80"  // database
-#define ICON_IO_DATABASE_EXPORT "\xee\xa4\x84"  // database-export
-#define ICON_IO_SERVER          "\xee\xab\x80"  // server
-#define ICON_IO_CLOUD           "\xee\xa3\x90"  // cloud-upload
-
-// ============================================
-// Files & Documents
-// ============================================
-#define ICON_IO_FILE            "\xee\xa5\x80"  // page
-#define ICON_IO_FILE_EDIT       "\xee\xa5\x88"  // page-edit
-#define ICON_IO_FILE_SEARCH     "\xee\xa5\x8c"  // page-search
-#define ICON_IO_FOLDER          "\xee\xa5\x90"  // folder
-#define ICON_IO_IMPORT          "\xee\xa6\x98"  // import
-#define ICON_IO_DOWNLOAD        "\xee\xa4\x90"  // download
-
-// ============================================
-// Neural Network & AI
-// ============================================
-#define ICON_IO_BRAIN           "\xee\xa3\x80"  // brain
-#define ICON_IO_CPU             "\xee\xa4\x88"  // cpu
-#define ICON_IO_SPARKS          "\xee\xab\x88"  // sparks
-#define ICON_IO_MAGIC_WAND      "\xee\xa8\x80"  // magic-wand
-
-// ============================================
-// Layers & Structure
-// ============================================
-#define ICON_IO_LAYERS          "\xee\xa7\x80"  // layers
-#define ICON_IO_BOX             "\xee\xa3\x84"  // box
-#define ICON_IO_CUBE            "\xee\xa4\x84"  // cube
-#define ICON_IO_VIEW_GRID       "\xee\xac\x80"  // view-grid
-#define ICON_IO_GRID            "\xee\xa6\x80"  // grid
-
-// ============================================
-// Math & Functions
-// ============================================
-#define ICON_IO_CALCULATOR      "\xee\xa3\x88"  // calculator
-#define ICON_IO_PLUS            "\xee\xa9\x80"  // plus
-#define ICON_IO_MINUS           "\xee\xa8\x88"  // minus
-#define ICON_IO_DIVIDE          "\xee\xa4\x94"  // divide
-#define ICON_IO_SIGMA           "\xee\xab\x84"  // sigma-function
-#define ICON_IO_PERCENTAGE      "\xee\xa9\x84"  // percentage
-
-// ============================================
-// Charts & Analytics
-// ============================================
-#define ICON_IO_STATS_UP        "\xee\xab\x90"  // stats-up-square
-#define ICON_IO_STATS_DOWN      "\xee\xab\x94"  // stats-down-square
-#define ICON_IO_GRAPH_UP        "\xee\xa6\x84"  // graph-up
-#define ICON_IO_GRAPH_DOWN      "\xee\xa6\x88"  // graph-down
-#define ICON_IO_PIE_CHART       "\xee\xa9\x88"  // pie-chart
-#define ICON_IO_HISTOGRAM       "\xee\xa6\x90"  // histogram
-
-// ============================================
-// Arrows & Navigation
-// ============================================
-#define ICON_IO_ARROW_UP        "\xee\xa2\x90"  // arrow-up
-#define ICON_IO_ARROW_DOWN      "\xee\xa2\x88"  // arrow-down
-#define ICON_IO_ARROW_LEFT      "\xee\xa2\x8c"  // arrow-left
-#define ICON_IO_ARROW_RIGHT     "\xee\xa2\x94"  // arrow-right
-#define ICON_IO_SHUFFLE         "\xee\xab\x8c"  // shuffle
-#define ICON_IO_REFRESH         "\xee\xaa\x80"  // refresh
-#define ICON_IO_UNDO            "\xee\xac\x84"  // undo
-#define ICON_IO_REDO            "\xee\xaa\x84"  // redo
-
-// ============================================
-// Actions & Operations
-// ============================================
-#define ICON_IO_FILTER          "\xee\xa5\x94"  // filter
-#define ICON_IO_SORT            "\xee\xab\x98"  // sort
-#define ICON_IO_SEARCH          "\xee\xaa\x88"  // search
-#define ICON_IO_TRASH           "\xee\xac\x88"  // trash
-#define ICON_IO_EDIT            "\xee\xa4\xa0"  // edit
-#define ICON_IO_COPY            "\xee\xa4\x80"  // copy
-#define ICON_IO_CUT             "\xee\xa4\x8c"  // cut
-#define ICON_IO_CROP            "\xee\xa4\x88"  // crop
-
-// ============================================
-// Machine Learning
-// ============================================
-#define ICON_IO_NETWORK         "\xee\xa8\x90"  // network
-#define ICON_IO_GIT_BRANCH      "\xee\xa5\xb8"  // git-branch
-#define ICON_IO_GIT_MERGE       "\xee\xa5\xbc"  // git-merge
-#define ICON_IO_TREE            "\xee\xac\x8c"  // tree
-
-// ============================================
-// Shapes & UI
-// ============================================
-#define ICON_IO_CIRCLE          "\xee\xa3\x94"  // circle
-#define ICON_IO_SQUARE          "\xee\xab\x9c"  // square
-#define ICON_IO_TRIANGLE        "\xee\xac\x90"  // triangle
-#define ICON_IO_CHECK           "\xee\xa3\x9c"  // check
-#define ICON_IO_CHECK_CIRCLE    "\xee\xa3\xa0"  // check-circle
-
-// ============================================
-// Signals & Waves
-// ============================================
-#define ICON_IO_WAVE            "\xee\xac\x94"  // sine-wave
-#define ICON_IO_SOUND_HIGH      "\xee\xab\xa0"  // sound-high
-#define ICON_IO_TUNNING         "\xee\xac\x98"  // tuning
-
-// ============================================
-// Text & Typography
-// ============================================
-#define ICON_IO_TEXT            "\xee\xab\xb8"  // text
-#define ICON_IO_ALIGN_LEFT      "\xee\xa2\x80"  // align-left
-#define ICON_IO_LIST            "\xee\xa7\x88"  // list
-#define ICON_IO_HASHTAG         "\xee\xa6\x8c"  // hashtag
-#define ICON_IO_TAG             "\xee\xab\xbc"  // tag
-
-// ============================================
-// Media & Images
-// ============================================
-#define ICON_IO_IMAGE           "\xee\xa6\x94"  // media-image
-#define ICON_IO_MUSIC           "\xee\xa8\x94"  // music
-#define ICON_IO_VIDEO           "\xee\xac\x9c"  // video-camera
-
-// ============================================
-// Settings & Config
-// ============================================
-#define ICON_IO_SETTINGS        "\xee\xab\xa4"  // settings
-#define ICON_IO_TOOLS           "\xee\xac\xa0"  // tools
-#define ICON_IO_CODE            "\xee\xa3\xb0"  // code
-#define ICON_IO_TERMINAL        "\xee\xac\xa4"  // terminal
-#define ICON_IO_BUG             "\xee\xa3\x8c"  // bug
-#define ICON_IO_PLUG            "\xee\xa9\x8c"  // plug
-
-// ============================================
-// Table Operations
-// ============================================
-#define ICON_IO_TABLE           "\xee\xab\xac"  // table
-#define ICON_IO_TABLE_ROWS      "\xee\xab\xb0"  // table-rows
-#define ICON_IO_VIEW_COLUMNS    "\xee\xac\xa8"  // view-columns
-#define ICON_IO_COMBINE         "\xee\xa3\xb8"  // combine
-
-// ============================================
-// Misc & Default
-// ============================================
-#define ICON_IO_LINK            "\xee\xa7\x8c"  // link
-#define ICON_IO_UNLINK          "\xee\xac\xac"  // link-off
-#define ICON_IO_TARGET          "\xee\xab\xb4"  // target
-#define ICON_IO_FOCUS           "\xee\xa5\xa0"  // focus
-#define ICON_IO_FLASH           "\xee\xa5\x98"  // flash
-#define ICON_IO_LIGHTBULB       "\xee\xa7\x90"  // light-bulb
-#define ICON_IO_APPS            "\xee\xa2\x84"  // app-window
+#define ICON_IO_DATABASE     "\xee\x85\x96"  // U+E156 database
+#define ICON_IO_SERVER       "\xee\x90\xa4"  // U+E424 server
+#define ICON_IO_FILE         "\xee\x8d\xb7"  // U+E377 page
+#define ICON_IO_IMPORT       "\xee\x89\xbe"  // U+E27E import
+#define ICON_IO_DOWNLOAD     "\xee\x86\x82"  // U+E182 download
+#define ICON_IO_BRAIN        "\xee\x82\xae"  // U+E0AE brain
+#define ICON_IO_CPU          "\xee\x84\xa4"  // U+E124 cpu
+#define ICON_IO_SPARKS       "\xee\x91\xaf"  // U+E46F sparks
+#define ICON_IO_LAYERS       "\xee\x94\x8d"  // U+E50D view-structure-down
+#define ICON_IO_BOX          "\xee\x82\xa9"  // U+E0A9 box
+#define ICON_IO_CUBE         "\xee\x84\xb7"  // U+E137 cube
+#define ICON_IO_GRID         "\xee\x94\x8c"  // U+E50C view-grid
+#define ICON_IO_CALCULATOR   "\xee\x83\x84"  // U+E0C4 calculator
+#define ICON_IO_PLUS         "\xee\x8e\xba"  // U+E3BA plus
+#define ICON_IO_MINUS        "\xee\x8c\x95"  // U+E315 minus
+#define ICON_IO_SIGMA        "\xee\x91\x8e"  // U+E44E sigma-function
+#define ICON_IO_STATS_UP     "\xee\x92\x85"  // U+E485 stats-up-square
+#define ICON_IO_GRAPH_UP     "\xee\x88\xbf"  // U+E23F graph-up
+#define ICON_IO_PIE_CHART    "\xee\x92\x84"  // U+E484 stats-report
+#define ICON_IO_ARROW_UP     "\xee\x81\x9b"  // U+E05B arrow-up
+#define ICON_IO_SHUFFLE      "\xee\x91\x8b"  // U+E44B shuffle
+#define ICON_IO_REFRESH      "\xee\x8f\xa4"  // U+E3E4 refresh
+#define ICON_IO_FILTER       "\xee\x87\xac"  // U+E1EC filter
+#define ICON_IO_SORT         "\xee\x91\xa8"  // U+E468 sort
+#define ICON_IO_SEARCH       "\xee\x90\x94"  // U+E414 search
+#define ICON_IO_TRASH        "\xee\x93\x8e"  // U+E4CE trash
+#define ICON_IO_EDIT         "\xee\x86\x9b"  // U+E19B edit
+#define ICON_IO_COPY         "\xee\x84\x9d"  // U+E11D copy
+#define ICON_IO_NETWORK      "\xee\x8c\xbf"  // U+E33F network
+#define ICON_IO_TREE         "\xee\x93\x90"  // U+E4D0 tree
+#define ICON_IO_CIRCLE       "\xee\x83\xac"  // U+E0EC circle
+#define ICON_IO_SQUARE       "\xee\x91\xbc"  // U+E47C square
+#define ICON_IO_CHECK_CIRCLE "\xee\x83\xa2"  // U+E0E2 check-circle
+#define ICON_IO_WAVE         "\xee\x91\x90"  // U+E450 sine-wave
+#define ICON_IO_TEXT         "\xee\x92\xb3"  // U+E4B3 text
+#define ICON_IO_ALIGN_LEFT   "\xee\x80\x9e"  // U+E01E align-left
+#define ICON_IO_LIST         "\xee\x8b\x84"  // U+E2C4 list
+#define ICON_IO_HASHTAG      "\xee\x95\x8f"  // U+E54F hashtag
+#define ICON_IO_TAG          "\xee\x8a\xa8"  // U+E2A8 label
+#define ICON_IO_IMAGE        "\xee\x8b\xbb"  // U+E2FB media-image
+#define ICON_IO_MUSIC        "\xee\x8c\xb3"  // U+E333 music-note
+#define ICON_IO_SETTINGS     "\xee\x90\xa6"  // U+E426 settings
+#define ICON_IO_CODE         "\xee\x83\xbf"  // U+E0FF code
+#define ICON_IO_BUG          "\xee\x94\x9b"  // U+E51B warning-circle
+#define ICON_IO_PLUG         "\xee\x87\x86"  // U+E1C6 ev-plug
+#define ICON_IO_TABLE        "\xee\x92\xa1"  // U+E4A1 table
+#define ICON_IO_LINK         "\xee\x8b\x80"  // U+E2C0 link
+#define ICON_IO_TARGET       "\xee\x88\xbc"  // U+E23C gps
+#define ICON_IO_FLASH        "\xee\x87\xbb"  // U+E1FB flash
+#define ICON_IO_APPS         "\xee\x80\xab"  // U+E02B app-window

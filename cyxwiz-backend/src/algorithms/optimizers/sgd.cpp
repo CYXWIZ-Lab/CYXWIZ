@@ -16,8 +16,8 @@ namespace cyxwiz {
 // SGD Optimizer
 // ============================================================================
 
-SGDOptimizer::SGDOptimizer(double learning_rate, double momentum)
-    : momentum_(momentum) {
+SGDOptimizer::SGDOptimizer(double learning_rate, double momentum, double weight_decay, bool nesterov)
+    : momentum_(momentum), weight_decay_(weight_decay), nesterov_(nesterov) {
     if (!std::isfinite(learning_rate) || learning_rate < 0.0) {
         throw std::invalid_argument(
             "SGD optimizer requires a finite non-negative learning rate");
@@ -26,8 +26,23 @@ SGDOptimizer::SGDOptimizer(double learning_rate, double momentum)
         throw std::invalid_argument(
             "SGD optimizer requires finite non-negative momentum");
     }
+    if (!std::isfinite(weight_decay_) || weight_decay_ < 0.0) {
+        throw std::invalid_argument(
+            "SGD optimizer requires finite non-negative weight decay");
+    }
+    if (nesterov_ && !(momentum_ > 0.0)) {
+        throw std::invalid_argument(
+            "SGD optimizer: Nesterov momentum requires momentum above 0");
+    }
     learning_rate_ = learning_rate;
     step_count_ = 0;
+}
+
+std::map<std::string, double> SGDOptimizer::Hyperparameters() const {
+    std::map<std::string, double> values{{"momentum", momentum_}};
+    if (weight_decay_ > 0.0) values.emplace("weight_decay", weight_decay_);
+    if (nesterov_) values.emplace("nesterov", 1.0);
+    return values;
 }
 
 void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
@@ -63,6 +78,9 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
             const std::vector<size_t> parameter_shape = param.Shape();
             af::array param_gpu = param.GetSemanticArray();
             af::array grad_gpu = grad.GetSemanticArray();
+            // L2 weight decay joins the gradient, as torch.optim.SGD does.
+            if (weight_decay_ > 0.0 && !no_decay_parameters_.count(name))
+                grad_gpu = grad_gpu + static_cast<float>(weight_decay_) * param_gpu;
 
             if (momentum_ > 0.0) {
                 // Initialize velocity if needed
@@ -76,8 +94,9 @@ void SGDOptimizer::Step(std::map<std::string, Tensor>& parameters,
 
                 // v = momentum * v + grad
                 v_gpu = static_cast<float>(momentum_) * v_gpu + grad_gpu;
-                // param = param - lr * v
-                param_gpu = param_gpu - static_cast<float>(learning_rate_) * v_gpu;
+                // param = param - lr * v; Nesterov looks ahead: grad + momentum * v
+                const af::array step = nesterov_ ? grad_gpu + static_cast<float>(momentum_) * v_gpu : v_gpu;
+                param_gpu = param_gpu - static_cast<float>(learning_rate_) * step;
                 v_gpu.eval();
                 param_gpu.eval();
 
@@ -115,7 +134,7 @@ bool SGDOptimizer::ExportState(OptimizerState& state, std::string& error) const 
     exported.optimizer_type = "SGD";
     exported.learning_rate = learning_rate_;
     exported.step_count = step_count_;
-    exported.hyperparameters = {{"momentum", momentum_}};
+    exported.hyperparameters = Hyperparameters();
     for (const auto& [name, velocity] : velocity_) {
         exported.tensors.emplace("velocity/" + name, velocity);
     }
@@ -148,8 +167,7 @@ bool SGDOptimizer::ImportState(
         error = "SGD optimizer state has a negative step count.";
         return false;
     }
-    if (state.hyperparameters !=
-        std::map<std::string, double>{{"momentum", momentum_}}) {
+    if (state.hyperparameters != Hyperparameters()) {
         error =
             "SGD optimizer state configuration does not match the active "
             "optimizer.";

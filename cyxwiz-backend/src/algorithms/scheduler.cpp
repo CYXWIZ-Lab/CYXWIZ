@@ -609,7 +609,7 @@ OneCycleLR::OneCycleLR(
     initial_lr_ = max_lr / div_factor;
     final_lr_ = initial_lr_ / final_div_factor;
     base_lr_ = max_lr;
-    current_lr_ = initial_lr_;
+    current_lr_ = RateAt(0);
 
     optimizer_->SetLearningRate(current_lr_);
 
@@ -625,7 +625,17 @@ void OneCycleLR::Step(int epoch, float /*metric*/) {
     }
 
     current_step_ = epoch;
+    current_lr_ = RateAt(current_step_);
+    optimizer_->SetLearningRate(current_lr_);
+    spdlog::debug("OneCycleLR: Step {} - LR = {:.6f}", current_step_, current_lr_);
+}
 
+// torch's two-phase cosine. With no rising phase (pct_start x total_steps
+// below 1) every step, the first included, is on the falling one. torch
+// allows the step numbered total_steps (one past the cycle's last value) and
+// extrapolates the cosine there; so does this.
+double OneCycleLR::RateAt(int step) const {
+    const double at = static_cast<double>(step);
     const double first_phase_end = pct_start_ * total_steps_ - 1.0;
     const double second_phase_end = static_cast<double>(total_steps_ - 1);
     const auto cosine_anneal = [](double start, double end, double progress) {
@@ -633,24 +643,18 @@ void OneCycleLR::Step(int epoch, float /*metric*/) {
         return end + (start - end) * cosine / 2.0;
     };
 
-    if (static_cast<double>(current_step_) <= first_phase_end) {
-        const double progress =
-            static_cast<double>(current_step_) / first_phase_end;
-        current_lr_ = cosine_anneal(initial_lr_, max_lr_, progress);
-    } else {
-        const double progress =
-            (static_cast<double>(current_step_) - first_phase_end) /
-            (second_phase_end - first_phase_end);
-        current_lr_ = cosine_anneal(max_lr_, final_lr_, progress);
+    if (at <= first_phase_end && first_phase_end > 0.0) {
+        return cosine_anneal(initial_lr_, max_lr_, at / first_phase_end);
     }
-
-    optimizer_->SetLearningRate(current_lr_);
-    spdlog::debug("OneCycleLR: Step {} - LR = {:.6f}", current_step_, current_lr_);
+    const double progress = second_phase_end > first_phase_end
+        ? std::max(0.0, at - first_phase_end) / (second_phase_end - first_phase_end)
+        : 1.0;
+    return cosine_anneal(max_lr_, final_lr_, progress);
 }
 
 void OneCycleLR::Reset() {
     current_step_ = 0;
-    current_lr_ = initial_lr_;
+    current_lr_ = RateAt(0);
     if (optimizer_) {
         optimizer_->SetLearningRate(current_lr_);
     }

@@ -144,6 +144,10 @@ void ImageGalleryView::ReleasePipeline() {
     for (uint32_t id : pipeline_textures_)
         if (id) TextureManager::Instance().DeleteTexture(id);
     pipeline_textures_.clear();
+    for (const auto& sheet : pipeline_sheets_)
+        for (const auto& tile : sheet)
+            if (tile.texture) TextureManager::Instance().DeleteTexture(static_cast<uint32_t>(tile.texture));
+    pipeline_sheets_.clear();
 }
 
 // The picked image through the graph's Resize and image steps (training's own
@@ -175,6 +179,12 @@ void ImageGalleryView::UpdatePipeline(const ig::Row& row) {
             auto& textures = TextureManager::Instance();
             const auto upload = [&](const PreviewPicture& p) {
                 pipeline_textures_.push_back(p.rgba.empty() ? 0u : textures.CreateTextureFromUint8Data(p.rgba.data(), p.width, p.height, 4));
+                std::vector<ui::SheetTile> more;
+                for (const auto& tile : p.more)
+                    more.push_back({static_cast<ImTextureID>(textures.CreateTextureFromUint8Data(
+                                        tile.rgba.data(), static_cast<int>(tile.width), static_cast<int>(tile.height), 4)),
+                                    tile.name});
+                pipeline_sheets_.push_back(std::move(more));
             };
             upload(pipeline_.decoded);
             for (const auto& p : pipeline_.fixed) upload(p);
@@ -223,7 +233,7 @@ void ImageGalleryView::RenderPipeline(const ig::Row& row) {
     // A picture, 2x (at most 160 px), its title and what was done.
     const float right_edge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
     bool first = true;
-    const auto picture = [&](const PreviewPicture& p, uint32_t texture) {
+    const auto picture = [&](const PreviewPicture& p, uint32_t texture, const std::vector<ui::SheetTile>& more) {
         const float scale = std::min(2.0f, 160.0f / static_cast<float>(std::max(p.width, p.height)));
         const ImVec2 size(p.width * scale, p.height * scale);
         const float w = std::max(size.x, std::max(ImGui::CalcTextSize(p.title.c_str()).x, ImGui::CalcTextSize(p.detail.c_str()).x));
@@ -233,7 +243,14 @@ void ImageGalleryView::RenderPipeline(const ig::Row& row) {
         }
         first = false;
         ImGui::BeginGroup();
-        if (texture) ImGui::Image(static_cast<ImTextureID>(texture), size);
+        if (more.empty()) {
+            if (texture) ImGui::Image(static_cast<ImTextureID>(texture), size);
+        } else {
+            // A sheet: the picture, then each further channel, named.
+            std::vector<ui::SheetTile> tiles{{static_cast<ImTextureID>(texture), p.first_name}};
+            tiles.insert(tiles.end(), more.begin(), more.end());
+            ui::SheetTiles(tiles, size.x, size.y / std::max(1.0f, size.x));
+        }
         ImGui::TextUnformatted(p.title.c_str());
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(size.x, 160.0f));
         ImGui::TextColored(t.text_dim, "%s", p.detail.c_str());
@@ -241,8 +258,12 @@ void ImageGalleryView::RenderPipeline(const ig::Row& row) {
         ImGui::EndGroup();
     };
     size_t k = 0;
-    picture(pipeline_.decoded, pipeline_textures_[k++]);
-    for (const auto& p : pipeline_.fixed) picture(p, pipeline_textures_[k++]);
+    picture(pipeline_.decoded, pipeline_textures_[k], pipeline_sheets_[k]);
+    ++k;
+    for (const auto& p : pipeline_.fixed) {
+        picture(p, pipeline_textures_[k], pipeline_sheets_[k]);
+        ++k;
+    }
     ImGui::Spacing();
     ImGui::TextColored(t.text_dim, "Random steps \xC2\xB7 per batch");
     if (pipeline_.draws.empty()) {
@@ -253,7 +274,10 @@ void ImageGalleryView::RenderPipeline(const ig::Row& row) {
         ImGui::SameLine();
         ImGui::TextColored(t.text_faint, "(%s)", ops.c_str());
         first = true;
-        for (const auto& p : pipeline_.draws) picture(p, pipeline_textures_[k++]);
+        for (const auto& p : pipeline_.draws) {
+            picture(p, pipeline_textures_[k], pipeline_sheets_[k]);
+            ++k;
+        }
     }
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_faint, "Run with the code training runs, on the ArrayFire device; Normalize is left out "

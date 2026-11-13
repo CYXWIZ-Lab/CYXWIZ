@@ -8,9 +8,10 @@ Blur**, **Grayscale**, **Morphology Transform** and **Advanced Augment**. They
 follow `torchvision.transforms` (morphology follows `kornia.morphology`): each
 one gives the same pixels as the torchvision transform with the same draws.
 
-Seven more run OpenCV once, when the images are prepared:
+Nine more run OpenCV once, when the images are prepared:
 **Image Contrast (CLAHE)**, **Image Denoise**, **Image Sharpen**,
-**Image Edges**, **Image Smooth**, **Image Warp** and **Image Pyramid** (see
+**Image Edges**, **Image Smooth**, **Image Warp**, **Image Pyramid**,
+**Image Filter** and **Image Gabor** (see
 [OpenCV steps done once](#opencv-steps-done-once)). Node search marks them
 `once`.
 
@@ -253,10 +254,12 @@ Horizontal Flip and Normalize run on each batch.
 | Image Contrast (CLAHE) | `clip_limit` (2.0), `tile_grid` (8), `colour` (lightness / each_channel) | Contrast Limited Adaptive Histogram Equalization on each tile. `lightness` changes only Lab L, so colours stay; `each_channel` equalizes R, G and B alone. | same |
 | Image Denoise | `strength` (10), `colour_strength` (10), `patch_size` (7, odd), `search_size` (21, odd) | Non-local means (`fastNlMeansDenoisingColored`; `fastNlMeansDenoising` for grey). Slow: about 45 ms an image at 64 x 64, so the compiler shows the time; it is spent once. | same |
 | Image Sharpen | `amount` (1.0), `radius` (1.0), `threshold` (0, from 0 to 1) | Unsharp mask: image + amount x (image - Gaussian blur of sigma `radius`). With a threshold, only pixels whose detail is above it change. | same |
-| Image Edges | `method` (canny / sobel / laplacian / scharr), `threshold1` / `threshold2` (50 / 150, Canny), `kernel_size` (3; Sobel 1, 3, 5 or 7; Laplacian odd up to 31) | Colour images are made grey first. Canny gives white edges on black; the others the edge strength. | one channel: `[H, W, 1]` |
+| Image Edges | `method` (canny / sobel / laplacian / scharr / log / dog), `threshold1` / `threshold2` (50 / 150, Canny), `kernel_size` (3; Sobel 1, 3, 5 or 7; Laplacian and LoG odd up to 31), `direction` (magnitude / x / y / angle, Sobel and Scharr), `sigma` (1.0, LoG and DoG), `sigma2` (1.6, DoG), `keep_image` (false) | Colour images are made grey first. Canny gives white edges on black; the others the edge strength. See [Image Edges](#image-edges). | one channel: `[H, W, 1]`; with `keep_image`, `[H, W, C + 1]` |
 | Image Smooth | `method` (box / median / bilateral), `kernel_size` (5, odd), `sigma_color` / `sigma_space` (75 / 75, bilateral) | Box averages, median takes the middle value (removes specks, keeps edges), bilateral mixes only similar colours. A Gaussian blur is Image Gaussian Blur, on the GPU. | same |
 | Image Warp | `method` (four_corners / three_points / log_polar / linear_polar), `source_points`, `target_points` (`0,0, 1,0, 1,1, 0,1`), `interpolation` (linear), `width` / `height` (0), `center_x` / `center_y` (0.5), `max_radius` (0.5), `inverse` | The same warp for every image. Points are `x, y` fractions of the image, top-left first, clockwise: four for four_corners, three for three_points. Polar warps unroll the image around the centre, so a rotation becomes a shift; they keep the size. | same, or `width` x `height` |
 | Image Pyramid | `operation` (down / up / detail), `levels` (1) | down: Gaussian smoothing then half the size, per level; up: double the size, per level; detail: the Laplacian level `levels - 1` halvings down (the image minus its smoothed copy). | down halves each side per level (rounding up); detail at level 1 keeps it |
+| Image Gabor | `orientations` (4; 1 to 16), `wavelengths` (`3, 5`, pixels per cycle), `bandwidth` (1.0 octave; 0.25 to 4), `aspect` (0.5; 0.1 to 1), `response` (energy / even / odd), `keep_image` (false) | A bank of striped kernels over the grey image, one channel per orientation and wavelength. See [Image Gabor](#image-gabor). | `[H, W, orientations x wavelengths]`; with `keep_image`, the image's channels first |
+| Image Filter | `preset` (sharpen; custom / identity / box / emboss / outline / prewitt_x / prewitt_y / roberts_x / roberts_y / kirsch / robinson), `direction` (n; ne / e / se / s / sw / w / nw, Kirsch and Robinson), `kernel` (`0 -1 0; -1 5 -1; 0 -1 0`, custom), `normalize` (false), `border` (reflect_101 / reflect / replicate / zero), `output` (clip / absolute / offset) | One fixed kernel over every channel (`cv::filter2D`): each output pixel is the sum of its neighbours times the kernel, the kernel's centre on the pixel. See [Image Filter](#image-filter). | same |
 
 - The prepared images are 8-bit, so each step's result is stored as 0 to 255:
   edge strength as its magnitude, pyramid detail around mid-grey (128 = no
@@ -279,6 +282,172 @@ Horizontal Flip and Normalize run on each batch.
   picked image, an OpenCV step as `56 x 56, once on the CPU`. The Properties
   panel's AS COMPILED card shows the step's input and output shapes.
 - Same result in training, validation and test.
+
+### Image Edges
+
+| `method` | What it computes | Settings it reads |
+| --- | --- | --- |
+| `canny` | thin white edges on black (two thresholds, 0 to 255 scale) | `threshold1`, `threshold2` |
+| `sobel` | the first derivative, smoothed | `kernel_size` (1, 3, 5 or 7), `direction` |
+| `scharr` | the same with a more accurate 3 x 3 kernel | `direction` |
+| `laplacian` | the second derivative: answers to any direction, and to noise | `kernel_size` |
+| `log` | Laplacian of Gaussian: a blur of `sigma` first, so it answers to edges of that scale and not to noise | `sigma`, `kernel_size` |
+| `dog` | Difference of Gaussians: blur `sigma` minus blur `sigma2`, the detail between the two scales (close to LoG when `sigma2` is 1.6 x `sigma`) | `sigma`, `sigma2` (greater than `sigma`) |
+
+`direction` (Sobel and Scharr):
+
+- `magnitude` (default): the mean of both directions' sizes, 0.5 |gx| + 0.5 |gy|.
+- `x`: |gx|, changes from left to right, so vertical edges light up.
+- `y`: |gy|, changes from top to bottom, so horizontal edges light up.
+- `angle`: the gradient's direction, 0 to 360 degrees stored as 0 to 255. 0 is
+  brighter to the right, 64 brighter downwards, 128 brighter to the left, 191
+  brighter upwards. Flat areas are 0. The value wraps (255 is next to 0), so
+  it suits looking at more than feeding a model.
+
+Strengths are stored as their size, cut at 255. Sets prepared before these
+settings existed keep their key and are not prepared again.
+
+**Keep image** (`keep_image`) keeps the image and adds the edge map as one
+more channel: an RGB image becomes 4 channels (R, G, B, edges), a grey one 2.
+The model's first layer then reads `[H, W, 4]`. See
+[More than three channels](#more-than-three-channels).
+
+### More than three channels
+
+An image with channels added (Image Edges with Keep image, or an Image
+Gabor bank) is neither grey nor RGB. What changes:
+
+- **Steps after it run on each channel alone**: Image Contrast, Denoise,
+  Sharpen, Smooth, Warp, Pyramid and Image Filter, and the transforms that
+  move pixels (crops, flips, rotate, affine, blur, morphology, noise). Each
+  channel gets the same crop, flip or warp.
+- **Colour steps need RGB**: Color Jitter, Grayscale, Random Grayscale and
+  the Advanced Augment policies do not compile after it (`Color Jitter needs
+  a 1- or 3-channel image`). Put them before the step that adds the channel.
+  A second Image Edges, or an Image Gabor, is refused the same way.
+- **Normalize**: ImageNet statistics are for RGB and are refused (`the images
+  have 4 channels here (R, G, B, edges)`). Use `same`, or Per channel with
+  one mean and std per channel; the rows are named R, G, B, edges, and Data
+  Studio > Explore > Profile > Use in Normalize fills all four.
+- **Pictures**: wherever such an image is shown it is a sheet: the colour
+  picture, then each further channel as a grey tile with its name, each on
+  its own scale. Small thumbnails (Data Studio > Prepare) show the picture
+  with `+1` (the count of further tiles); hover for the whole sheet. Data Studio > Explore > Images and
+  the Studio Debugger's Inspector show every tile.
+- **Studio Debugger**: Where it looks draws its heat over the colour
+  picture and covers or differentiates every channel. Filters and Unit
+  weights are not offered for a first layer that reads more than three
+  channels.
+
+```
+Data Input (images) -> Resize 72 -> Image Edges (canny, keep image)
+  -> Center Crop 64 -> Normalize (same 0.5 / 0.5) -> Conv2D -> ...
+```
+
+### Image Gabor
+
+Image Gabor runs a bank of striped kernels over every image and gives one
+channel per kernel. Each kernel is a small patch of stripes under a Gaussian
+window; it answers where the image has stripes of that direction and
+spacing, which is what fur, grass, fabric and the edges of one direction
+look like up close.
+
+- **Orientations** spread over 180 degrees: 4 gives 0, 45, 90 and 135. The
+  angle is the direction the brightness changes in, so 0 degrees answers to
+  vertical stripes and 90 to horizontal ones.
+- **Wavelengths** are the stripes' spacing in pixels per cycle, split by
+  commas or spaces, each 2 or more and given once. Every wavelength gets the
+  whole set of orientations: `3, 5` with 4 orientations is 8 channels. At
+  most 32.
+- **Bandwidth** (octaves) sets the window's size from the wavelength: at 1
+  the window's sigma is about 0.56 wavelengths. A smaller bandwidth is a
+  wider window that answers to a narrower range of spacings. **Aspect** is
+  the window's width across the stripes over its length along them.
+- The kernel reaches two sigmas of the window's longer side each way. At
+  bandwidth 1 and aspect 0.5 that is 15 x 15 for wavelength 3, 25 x 25 for
+  5 and 29 x 29 for 6. A kernel larger than the image's shorter side is
+  refused with the size it needs: use a shorter wavelength, a wider
+  bandwidth or a rounder aspect.
+- **Response**: `energy` is the size of both phases together (the even,
+  cosine kernel and the odd, sine one), so it does not depend on where
+  exactly a stripe falls. `even` and `odd` keep one phase with its sign,
+  stored around mid-grey (128 = no response). Every kernel has zero mean, so
+  a flat area answers 0, and absolute values that sum to 1; the stored
+  values are scaled so the strongest possible answer just fills the range
+  and nothing is cut.
+- The bank runs once, before the random steps. A later flip or rotation
+  moves each channel's picture but does not swap the channels: after a
+  horizontal flip the `45 deg` channel holds what a bank on the flipped
+  photo would put in `135 deg`. With flips in the graph, read the diagonal
+  channels as a pair.
+- Colour images are read as grey. **Keep image** keeps the image's channels
+  and adds the bank's after them (`[H, W, 3 + 8]`); without it the model
+  sees the bank alone.
+- The channels are named `gabor 45 deg 3 px`: each wavelength, its
+  orientations in turn. Normalize's Per channel rows and the sheet use the
+  names. See [More than three channels](#more-than-three-channels).
+
+```
+Data Input (images) -> Resize 64 -> Image Gabor (4 orientations, 3 and 5 px, keep image)
+  -> Normalize (same 0.5 / 0.5) -> Conv2D -> ...
+```
+
+`examples/cyxgraph/cats_dogs_gabor_bank.cyxgraph` is a small cats-vs-dogs CNN
+that reads the photo and the bank; see
+`examples/cyxgraph/cats_dogs_gabor_bank.md`.
+
+### Image Filter
+
+Image Filter runs one kernel you choose over every image, each channel alone.
+It is what a Conv2D filter does, with numbers you set instead of learned
+ones, so it is a good way to see what a kernel does before a network learns
+its own (compare with Studio Debugger > Model > Layers > Filters).
+
+| `preset` | Kernel | What you get |
+| --- | --- | --- |
+| `identity` | `0 0 0; 0 1 0; 0 0 0` | the image unchanged |
+| `box` | nine times 1/9 | a 3 x 3 average (blur) |
+| `sharpen` | `0 -1 0; -1 5 -1; 0 -1 0` | stronger edges, same brightness |
+| `emboss` | `-2 -1 0; -1 1 1; 0 1 2` | a relief lit from the top-left |
+| `outline` | `-1 -1 -1; -1 8 -1; -1 -1 -1` | edges in every direction |
+| `prewitt_x`, `prewitt_y` | `-1 0 1` in each row; `-1 -1 -1; 0 0 0; 1 1 1` | left-right and top-bottom changes |
+| `roberts_x`, `roberts_y` | `1 0; 0 -1` and `0 1; -1 0` | diagonal changes, 2 x 2 |
+| `kirsch` | `5 5 5; -3 0 -3; -3 -3 -3` turned to `direction` | edges brighter on that side, strong |
+| `robinson` | `1 2 1; 0 0 0; -1 -2 -1` turned to `direction` | the same, gentler (Sobel weights) |
+| `custom` | the `kernel` you type | anything |
+
+- **Typing a kernel.** Rows are split by `;` (or a new line), numbers by
+  spaces or commas: `1 2 1; 2 4 2; 1 2 1`. Rows must have the same length; a
+  kernel may be 1 to 31 numbers each way and need not be square, but not
+  larger than the image. `normalize` divides it by its sum, so `1 2 1; 2 4 2;
+  1 2 1` becomes a blur that keeps the brightness; a kernel that sums to 0 is
+  left as typed.
+- **It is a correlation**, as in OpenCV and in Conv2D: the kernel is laid on
+  the image as written, not flipped. Flip your kernel yourself for a
+  textbook convolution; symmetric kernels are the same either way.
+- **`direction`** (Kirsch and Robinson) is the side the edge is brighter on:
+  `n` answers to a bright band above a dark one, `e` to bright on the right,
+  and so on, in steps of 45 degrees.
+- **`border`** is what the kernel reads past the edge: `reflect_101` mirrors
+  without repeating the edge pixel (OpenCV's default), `reflect` mirrors with
+  it, `replicate` repeats the edge pixel, `zero` reads black.
+- **`output`.** The images are stored as 0 to 255, and an edge kernel answers
+  with negative numbers too. `clip` cuts below 0 and above 255 (right for
+  blurs and sharpening); `absolute` keeps the size of the answer (an edge
+  map, either sign); `offset` stores it around mid-grey, 128 = no answer
+  (keeps the sign; this is how emboss is usually shown). With `clip` and a
+  kernel that sums to 0 the compile report says so.
+- The channels stay: a colour image stays colour. Put **Grayscale** before
+  the filter for one channel.
+
+```
+Data Input (images) -> Resize 64 -> Image Filter (outline, absolute)
+  -> Normalize -> Conv2D -> ...
+```
+
+`examples/cyxgraph/cats_dogs_image_filter.cyxgraph` is a small cats-vs-dogs
+CNN with a typed kernel in front; see
+`examples/cyxgraph/cats_dogs_image_filter.md`.
 
 ## Checked against torchvision
 

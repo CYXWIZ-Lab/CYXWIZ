@@ -35,6 +35,13 @@ clipping, which is where torch's `(loss + penalty).backward()` puts it.
   the moment estimates, so it is not the same as Adam's `weight_decay`; AdamW's
   `weight_decay` is decoupled from the loss altogether. Using both is allowed:
   they add up.
+- The SGD node has its own **Weight Decay** (`weight_decay`, 0 = off): it adds
+  `weight_decay x weight` to each gradient before the momentum, as
+  `torch.optim.SGD` does. **Weight Decay Exclude** `norms_and_biases` leaves
+  every 1-D tensor (biases, normalization scales) out, the usual choice for
+  CNNs with BatchNorm. **Nesterov** steps along `gradient + momentum x
+  velocity` instead of the velocity; it needs momentum above 0. A common CNN
+  recipe: learning_rate 0.1, momentum 0.9, Nesterov on, weight_decay 0.0005.
 
 Example: SGD with learning_rate 0.0625 and L1 Regularization lambda 0.05 moves
 every weight 0.003125 towards 0 on each step, on top of the data gradient.

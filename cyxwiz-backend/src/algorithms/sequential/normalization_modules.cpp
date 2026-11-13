@@ -87,10 +87,13 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
                 af::flat((1.0f - momentum_) * FeatureRow(running_mean_) + momentum_ * mean), feature_shape);
             running_var_ = Tensor::FromSemanticArray(
                 af::flat((1.0f - momentum_) * FeatureRow(running_var_) + momentum_ * unbiased * var), feature_shape);
-            std_inv_ = Tensor::FromSemanticArray(af::flat(inverse), feature_shape);
-            normalized_ = Tensor::FromSemanticArray(normalized, shape);
-            input_cache_ = input;
         }
+        // Kept in eval too: a gradient through the evaluated model (saliency)
+        // goes back through the running statistics.
+        std_inv_ = Tensor::FromSemanticArray(af::flat(inverse), std::vector<size_t>{num_features_});
+        normalized_ = Tensor::FromSemanticArray(normalized, shape);
+        input_cache_ = input;
+        forward_training_ = is_training_;
         return Tensor::FromSemanticArray(y, shape);
     } catch (const af::exception& e) {
         throw std::runtime_error(std::string("BatchNormModule::Forward failed on the ArrayFire device: ") + e.what());
@@ -99,11 +102,9 @@ Tensor BatchNormModule::Forward(const Tensor& input) {
 
 Tensor BatchNormModule::Backward(const Tensor& grad_output) {
     const auto& shape = grad_output.Shape();
-    if (!is_training_ || input_cache_.Shape().size() != 2 ||
-        grad_output.GetDataType() != DataType::Float32 ||
+    if (input_cache_.Shape().size() != 2 || grad_output.GetDataType() != DataType::Float32 ||
         shape != input_cache_.Shape() || shape[1] != num_features_) {
-        throw std::invalid_argument(
-            "BatchNormModule: backward requires a matching training-mode forward pass");
+        throw std::invalid_argument("BatchNormModule: backward requires a matching forward pass");
     }
     try {
         const af::array dy = grad_output.GetSemanticArray();
@@ -111,9 +112,14 @@ Tensor BatchNormModule::Backward(const Tensor& grad_output) {
         const af::dim4 down(static_cast<dim_t>(shape[0]));
         const float count = static_cast<float>(shape[0]);
         const af::array weighted = dy * af::tile(FeatureRow(gamma_), down);
-        const af::array dx = af::tile(FeatureRow(std_inv_), down) / count *
-                             (count * weighted - af::tile(af::sum(weighted, 0), down) -
-                              normalized * af::tile(af::sum(weighted * normalized, 0), down));
+        // Batch statistics depend on every row; running ones (eval) are
+        // constants, so the input gradient is only the per-feature scale, as
+        // BatchNorm2DLayer does. The mode is the one the forward ran in.
+        const af::array dx = forward_training_
+            ? af::tile(FeatureRow(std_inv_), down) / count *
+                  (count * weighted - af::tile(af::sum(weighted, 0), down) -
+                   normalized * af::tile(af::sum(weighted * normalized, 0), down))
+            : weighted * af::tile(FeatureRow(std_inv_), down);
         const af::array grad_gamma = af::flat(af::sum(dy * normalized, 0));
         const af::array grad_beta = af::flat(af::sum(dy, 0));
         dx.eval();

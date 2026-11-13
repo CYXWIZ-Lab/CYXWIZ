@@ -105,6 +105,56 @@
           0.4756295084953308
         ]
       }
+    },
+    {
+      "name": "sgd_weight_decay",
+      "optimizer": {
+        "momentum": "0",
+        "weight_decay": "0.1"
+      },
+      "parameters_after": {
+        "layer0.weight": [
+          -0.4853626787662506,
+          1.024303674697876
+        ],
+        "layer0.bias": [
+          0.4859568476676941
+        ]
+      }
+    },
+    {
+      "name": "sgd_nesterov",
+      "optimizer": {
+        "momentum": "0.9",
+        "nesterov": "true"
+      },
+      "parameters_after": {
+        "layer0.weight": [
+          0.034391146153211594,
+          1.570703387260437
+        ],
+        "layer0.bias": [
+          0.7865918278694153
+        ]
+      }
+    },
+    {
+      "name": "sgd_nesterov_decay_no_bias",
+      "optimizer": {
+        "momentum": "0.9",
+        "nesterov": "true",
+        "weight_decay": "0.05",
+        "weight_decay_exclude": "norms_and_biases"
+      },
+      "parameters_after": {
+        "layer0.weight": [
+          0.07137991487979889,
+          1.5020970106124878
+        ],
+        "layer0.bias": [
+          0.7893659472465515
+        ]
+      }
     }
   ]
 }

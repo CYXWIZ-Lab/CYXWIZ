@@ -795,6 +795,12 @@ bool StudioDebuggerPanel::StartRun(StudioDebuggerRunMode mode,
     if (run_in_progress_ || !run_debug_callback_) {
         return false;
     }
+    if (run_wait_callback_) {
+        if (auto waiting = run_wait_callback_(mode, sample_index, explain_node_id)) {
+            run_status_message_ = std::move(*waiting);
+            return true;
+        }
+    }
     auto task = std::make_shared<std::function<StudioDebuggerSnapshot(
         const StudioDebuggerRunControl&)>>(
         run_debug_callback_(mode, sample_index, explain_node_id));
@@ -814,6 +820,7 @@ bool StudioDebuggerPanel::StartRun(StudioDebuggerRunMode mode,
     pending_explain_node_id_ = explain_node_id;
     run_status_message_.clear();
     run_in_progress_ = true;
+    shown_training_run_.clear();
     pending_task_id_ = AsyncTaskManager::Instance().RunAsync(
         std::string("Studio Debugger: ") + StudioDebuggerRunModeLabel(mode),
         [task, state](LambdaTask& async_task) {
@@ -900,17 +907,26 @@ void StudioDebuggerPanel::RequestRunHistoryRefresh() {
     }
     history_refresh_in_progress_ = true;
     auto state = std::make_shared<AsyncLoadState>();
+    auto training = std::make_shared<std::vector<training_snapshots::RunRow>>();
     AsyncTaskManager::Instance().RunAsync(
         "Studio Debugger: saved runs",
-        [state](LambdaTask&) {
+        [state, training](LambdaTask&) {
             auto history = DebugRunStore::ListRecent(8);
+            // Training runs that kept layer snapshots (6.3d), the newest 8.
+            for (const auto& id : ListRunsWithLayerCaptures()) {
+                const auto captures = ListLayerCaptureInfo(id);
+                if (std::none_of(captures.begin(), captures.end(), [](const auto& c) { return c.epoch > 0; })) continue;
+                training->push_back(training_snapshots::TrainingRunRow(id, LoadTrainingRunRecord(id), captures));
+                if (training->size() >= 8) break;
+            }
             std::lock_guard<std::mutex> lock(state->mutex);
             state->history = std::move(history);
         },
         nullptr,
-        [this, state](bool, const std::string&) {
+        [this, state, training](bool, const std::string&) {
             history_refresh_in_progress_ = false;
             history_loaded_ = true;
+            training_run_rows_ = std::move(*training);
             std::lock_guard<std::mutex> lock(state->mutex);
             session_.run_history = state->history;
             if (parked_latest_) {
@@ -1105,7 +1121,6 @@ const char* StudioDebuggerPanel::ActiveLensName() const {
         case StudioDebuggerLens::Gradients: return "Gradients";
         case StudioDebuggerLens::Runtime: return "Runtime";
         case StudioDebuggerLens::StudioEvents: return "Studio Events";
-        case StudioDebuggerLens::Recommendations: return "Recommendations";
     }
     return "Overview";
 }
@@ -1126,14 +1141,6 @@ bool StudioDebuggerPanel::TraceMatchesActiveLens(const DebugTraceRecord& trace) 
             return IsRuntimeTrace(trace);
         case StudioDebuggerLens::StudioEvents:
             return trace.role == DebugTraceRole::StudioEvent;
-        case StudioDebuggerLens::Recommendations:
-            return trace.status == "warning" ||
-                trace.status == "failed" ||
-                trace.status == "shape_mismatch" ||
-                trace.status == "zero" ||
-                trace.status == "nan" ||
-                trace.role == DebugTraceRole::Warning ||
-                trace.role == DebugTraceRole::Error;
     }
     return true;
 }
@@ -1270,6 +1277,7 @@ void StudioDebuggerPanel::LoadStoredRun(const std::string& run_id) {
     if (load_in_progress_ || run_in_progress_) {
         return;
     }
+    shown_training_run_.clear();
     if (run_id == current_run_id_ && parked_latest_) {
         auto history = std::move(session_.run_history);
         session_ = std::move(*parked_latest_);
@@ -1334,6 +1342,10 @@ void StudioDebuggerPanel::LoadStoredRun(const std::string& run_id) {
 }
 
 void StudioDebuggerPanel::RenderRunComparison() {
+    if (!shown_training_run_.empty()) {
+        RenderSnapshotTable();
+        return;
+    }
     if (!has_session_) {
         return;
     }
@@ -1964,81 +1976,6 @@ void StudioDebuggerPanel::RenderGraphTraceView(float height) {
     ImGui::EndChild();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
-}
-
-void StudioDebuggerPanel::RenderRunHistory() {
-    if (!history_loaded_) {
-        RequestRunHistoryRefresh();
-    }
-
-    ImGui::Text("Run History");
-    ImGui::BeginChild("StudioDebuggerRunHistory", ImVec2(0, 0), false);
-
-    if (session_.run_history.empty()) {
-        ImGui::TextDisabled("No saved debugger runs.");
-        ImGui::EndChild();
-        return;
-    }
-
-    for (int i = 0; i < static_cast<int>(session_.run_history.size()); ++i) {
-        const auto& run = session_.run_history[i];
-        ImGui::PushID(i);
-        const bool current = !current_run_id_.empty() && run.run_id == current_run_id_;
-        const ImVec4 status_color = run.success
-            ? DebuggerSuccess()
-            : DebuggerWarning();
-
-        ImGui::PushStyleColor(ImGuiCol_Text, status_color);
-        const bool selected = run.run_id == session_.run_id;
-        const std::string label = std::string(run.success ? "passed  " : "needs attention  ") +
-            run.run_id + (current ? "  (current)" : "") + "##run_history_" + std::to_string(i);
-        if (ImGui::Selectable(label.c_str(), selected)) {
-            LoadStoredRun(run.run_id);
-            ImGui::PopStyleColor();
-            ImGui::PopID();
-            continue;
-        }
-        ImGui::PopStyleColor();
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", run.timestamp.c_str());
-        ImGui::TextDisabled("issues=%zu traces=%zu events=%zu recommendations=%zu graph=0x%016llx",
-                            run.issue_count, run.trace_count, run.event_count,
-                            run.recommendation_count,
-                            static_cast<unsigned long long>(run.graph_hash));
-        if (run.execution.available) {
-            ImGui::TextDisabled(
-                "training=%s evidence=%s effective=%s:%d device=%s residency=%s",
-                run.execution.training_run_id.c_str(),
-                run.execution.evidence_scope.c_str(),
-                run.execution.effective_backend.empty()
-                    ? "unknown"
-                    : run.execution.effective_backend.c_str(),
-                run.execution.effective_device_id,
-                run.execution.effective_device_name.empty()
-                    ? "unknown"
-                    : run.execution.effective_device_name.c_str(),
-                run.execution.residency_verdict.empty()
-                    ? "unknown"
-                    : run.execution.residency_verdict.c_str());
-            ImGui::TextDisabled(
-                "transfers=%zu/%s syncs=%zu/%s",
-                run.execution.transfer_event_count,
-                FormatBytesCompact(run.execution.transfer_known_bytes).c_str(),
-                run.execution.synchronization_event_count,
-                FormatBytesCompact(
-                    run.execution.synchronization_known_bytes).c_str());
-        }
-        if (!run.summary.empty()) {
-            ImGui::TextWrapped("  %s", run.summary.c_str());
-        }
-        if (ImGui::IsItemHovered() && !run.file_path.empty()) {
-            ImGui::SetTooltip("%s", run.file_path.c_str());
-        }
-        ImGui::Separator();
-        ImGui::PopID();
-    }
-
-    ImGui::EndChild();
 }
 
 void StudioDebuggerPanel::RenderLastRun() {
@@ -3217,8 +3154,8 @@ void StudioDebuggerPanel::RenderGradientHealth() {
                         JsonNumber(payload, "attention_layer_count"),
                         JsonNumber(payload, "unobserved_layer_count"));
     ImGui::TextDisabled(
-        "One synthetic Local Debug step; derived from existing bounded scalar "
-        "evidence with no added Tensor reads.");
+        "One Local Debug step on the run's sample (the Sample line names it); "
+        "BatchNorm running statistics are state and not listed.");
     if (JsonBool(payload, "layers_truncated", false)) {
         ImGui::TextDisabled("Detail is bounded to %.0f of %.0f layers.",
                             JsonNumber(payload, "retained_layer_count"),
@@ -3663,6 +3600,10 @@ void StudioDebuggerPanel::RenderModelConstructionTrace() {
                     payload, "parameter_numel"));
                 ImGui::TextDisabled("%.0f tensors", JsonNumber(
                     payload, "parameter_tensor_count"));
+                if (JsonNumber(payload, "state_tensor_count") > 0) {
+                    ImGui::TextDisabled("+ %.0f state (not trained)", JsonNumber(
+                        payload, "state_numel"));
+                }
                 if (JsonBool(payload, "parameter_numel_overflow", false)) {
                     ImGui::TextColored(DebuggerDanger(),
                                        "count overflow");

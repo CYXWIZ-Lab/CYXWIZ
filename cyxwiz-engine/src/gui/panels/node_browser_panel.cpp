@@ -4,6 +4,7 @@
 #include "../../core/node_metadata_registry.h"
 #include "../../core/node_palette.h"
 #include "../../core/extension_node_registry.h"
+#include "../../core/engine_config.h"
 #include "../../plugin/plugin_manager.h"
 #include "../ui_buttons.h"
 #include "../ui_tokens.h"
@@ -20,6 +21,39 @@ namespace gui {
 namespace ui = cyxwiz::ui;
 
 namespace {
+
+// A dimmed section title with a soft line running to the right edge.
+void SectionTitle(const char* title, const char* count = nullptr) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
+    ImGui::TextUnformatted(title);
+    float text_width = ImGui::CalcTextSize(title).x + 8;
+    if (count) {
+        ImGui::SameLine(0, 6);
+        ImGui::TextDisabled("%s", count);
+        text_width += ImGui::CalcTextSize(count).x + 6;
+    }
+    ImGui::PopStyleColor();
+    ImVec2 line_start = ImGui::GetCursorScreenPos();
+    line_start.y -= 2;
+    const ImVec2 line_end(line_start.x + ImGui::GetContentRegionAvail().x, line_start.y);
+    line_start.x += text_width;
+    ImGui::GetWindowDrawList()->AddLine(line_start, line_end, ui::ToU32(t.border_soft), 1.0f);
+}
+
+std::vector<int> TypeNumbers(const std::vector<cyxwiz::NodeType>& types) {
+    std::vector<int> out;
+    out.reserve(types.size());
+    for (auto type : types) out.push_back(static_cast<int>(type));
+    return out;
+}
+
+std::vector<cyxwiz::NodeType> NodeTypes(const std::vector<int>& numbers) {
+    std::vector<cyxwiz::NodeType> out;
+    out.reserve(numbers.size());
+    for (int n : numbers) out.push_back(static_cast<cyxwiz::NodeType>(n));
+    return out;
+}
 
 bool HasSupportedAxis(const cyxwiz::NodeMetadata* metadata,
                       const char* axis_name) {
@@ -157,12 +191,13 @@ NodeBrowserPanel::NodeBrowserPanel() {
 }
 
 void NodeBrowserPanel::Render() {
-    if (!visible_) return;
-
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
     if (!registry.IsInitialized()) {
         registry.Initialize();
     }
+    // Also while hidden: nodes added from the menus and the canvas count.
+    SyncUserNodes();
+    if (!visible_) return;
 
     ImGui::SetNextWindowSizeConstraints(ImVec2(PANEL_MIN_WIDTH, 300), ImVec2(450, FLT_MAX));
 
@@ -181,8 +216,13 @@ void NodeBrowserPanel::Render() {
         // Main content area with scrolling
         ImGui::BeginChild("NodeGrid", ImVec2(0, 0), false);
 
-        // CyxWiz Studio section (always at top when not searching/in category)
+        // Favourites, Recent and Studio Tools (at the top when not searching
+        // or in a category)
         if (search_query_.empty() && !showing_all_in_category_) {
+            if (support_filter_mode_ == SupportFilterMode::All) {
+                RenderFavouritesSection();
+                RenderRecentSection();
+            }
             RenderStudioSection();
             ImGui::Spacing();
         }
@@ -372,18 +412,7 @@ bool NodeBrowserPanel::HandleKeyboardShortcuts() {
 
 void NodeBrowserPanel::RenderStudioSection() {
     const ui::Tokens& t = ui::CurrentTokens();
-    // CyxWiz Studio section header (same style as category headers)
-    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
-    ImGui::TextUnformatted("Studio Tools");
-
-    // Horizontal separator line
-    ImVec2 line_start = ImGui::GetCursorScreenPos();
-    line_start.y -= 2;
-    float text_width = ImGui::CalcTextSize("Studio Tools").x + 8;
-    ImVec2 line_end = ImVec2(line_start.x + ImGui::GetContentRegionAvail().x, line_start.y);
-    line_start.x += text_width;
-    ImGui::GetWindowDrawList()->AddLine(line_start, line_end, ui::ToU32(t.border_soft), 1.0f);
-    ImGui::PopStyleColor();
+    SectionTitle("Studio Tools");
 
     // Calculate card dimensions (same as node cards)
     float available_width = ImGui::GetContentRegionAvail().x;
@@ -644,7 +673,9 @@ void NodeBrowserPanel::RenderStudioSection() {
                             ImVec2 base_pos(200.0f, 200.0f);
 
                             patterns::NodeCreatorCallback creator = [this](NodeType type, const std::string& name) {
-                                return node_editor_->CreateNode(type, name);
+                                MLNode node = node_editor_->CreateNode(type, name);
+                                node_editor_->ApplyUserNodeDefaults(node);
+                                return node;
                             };
 
                             if (pattern_lib.InstantiatePatternWithCreator(
@@ -718,6 +749,7 @@ void NodeBrowserPanel::RenderFilterTags() {
             SupportFilterMode::Training,
             SupportFilterMode::UiOnly,
             SupportFilterMode::Blocked,
+            SupportFilterMode::Favourites,
         };
         for (SupportFilterMode mode : modes) {
             const bool selected = support_filter_mode_ == mode;
@@ -824,22 +856,8 @@ void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
     if (nodes.empty()) return;
 
     const ui::Tokens& t = ui::CurrentTokens();
-    // Category header with horizontal line
-    ImGui::PushStyleColor(ImGuiCol_Text, t.text_dim);
-
     std::string cat_name = cyxwiz::GetCategoryDisplayName(category);
-    ImGui::TextUnformatted(cat_name.c_str());
-
-    // Horizontal separator line
-    ImVec2 line_start = ImGui::GetCursorScreenPos();
-    line_start.y -= 2;
-    float text_width = ImGui::CalcTextSize(cat_name.c_str()).x + 8;
-    ImVec2 line_end = ImVec2(line_start.x + ImGui::GetContentRegionAvail().x, line_start.y);
-    line_start.x += text_width;
-    ImGui::GetWindowDrawList()->AddLine(line_start, line_end,
-                                        ui::ToU32(t.border_soft), 1.0f);
-
-    ImGui::PopStyleColor();
+    SectionTitle(cat_name.c_str());
 
     // Determine how many nodes to show
     int max_visible = category_show_all_[category] ? -1 : (GRID_COLUMNS * VISIBLE_ROWS_COLLAPSED);
@@ -870,6 +888,77 @@ void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
     }
 
     ImGui::Spacing();
+    ImGui::Spacing();
+}
+
+void NodeBrowserPanel::SyncUserNodes() {
+    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+    if (!user_nodes_loaded_) {
+        const cyxwiz::core::NodesPanelConfig saved = engine_config.GetNodesPanel();
+        registry.SetUserNodes(NodeTypes(saved.favourites), NodeTypes(saved.recent));
+        saved_favourites_ = saved.favourites;
+        saved_recent_ = saved.recent;
+        user_nodes_loaded_ = true;
+    }
+    std::vector<int> favourites = TypeNumbers(registry.FavoriteTypes());
+    std::vector<int> recent = TypeNumbers(registry.RecentTypes());
+    if (favourites == saved_favourites_ && recent == saved_recent_) return;
+    cyxwiz::core::NodesPanelConfig config = engine_config.GetNodesPanel();
+    config.favourites = favourites;
+    config.recent = recent;
+    engine_config.SetNodesPanel(config);
+    engine_config.Save();
+    saved_favourites_ = std::move(favourites);
+    saved_recent_ = std::move(recent);
+}
+
+void NodeBrowserPanel::RenderFavouritesSection() {
+    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
+    const auto favourites = registry.GetFavorites();
+    const std::string count = std::to_string(favourites.size());
+    SectionTitle(ICON_FA_STAR " Favourites", count.c_str());
+    if (favourites.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Click the star on a node, or right-click it, to keep it here.");
+        ImGui::PopTextWrapPos();
+    } else {
+        RenderNodeGrid(favourites);
+    }
+    ImGui::Spacing();
+}
+
+void NodeBrowserPanel::RenderRecentSection() {
+    const cyxwiz::core::NodesPanelConfig config = cyxwiz::core::EngineConfig::Instance().GetNodesPanel();
+    if (!config.show_recent) return;
+    const auto recent = cyxwiz::NodeMetadataRegistry::Instance().GetRecent(static_cast<size_t>(config.recent_count));
+    if (recent.empty()) return;
+    SectionTitle("Recent");
+    const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    for (size_t i = 0; i < recent.size(); ++i) {
+        const cyxwiz::NodeMetadata* metadata = recent[i];
+        ImGui::PushID(static_cast<int>(metadata->type));
+        const float width = ui::ChipButtonWidth(metadata->name.c_str(), true);
+        if (i > 0) {
+            ImGui::SameLine(0, 6);
+            if (ImGui::GetCursorScreenPos().x + width > right) ImGui::NewLine();
+        }
+        const bool can_add = !metadata->IsTemplate() && !IsSupportBlocked(metadata) && metadata->made_by.empty();
+        if (ui::ChipButton(metadata->name.c_str(), GetNodeColor(metadata->category)) && can_add) {
+            CreateNodeAtMouse(metadata);
+        }
+        if (can_add && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+            ImGui::SetDragDropPayload("NODE_TYPE", &metadata->type, sizeof(cyxwiz::NodeType));
+            ImGui::Text("%s %s", metadata->icon.c_str(), metadata->name.c_str());
+            ImGui::EndDragDropSource();
+        } else if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", can_add ? "Click to add again; drag onto the canvas" : "Can't be added to the graph");
+        }
+        ImGui::PopID();
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("The last nodes you added, newest first.");
+    ImGui::PopTextWrapPos();
     ImGui::Spacing();
 }
 
@@ -1044,15 +1133,28 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     const bool support_blocked = IsSupportBlocked(metadata);
     const bool can_add_to_graph = !metadata->IsTemplate() && !support_blocked && metadata->made_by.empty();
 
-    // Single click pins the node in the Info Panel.
+    // The favourite star, top right (favourites are kept per NodeType;
+    // extension nodes share one).
+    const bool has_star = !extension && can_add_to_graph;
+    const float star_size = ImGui::GetFontSize();
+    const ImVec2 star_min(cursor_start.x + card_width - star_size - 4.0f, cursor_start.y + 3.0f);
+    const ImVec2 star_max(star_min.x + star_size, star_min.y + star_size);
+    const bool star_hovered = has_star && hovered && ImGui::IsMouseHoveringRect(star_min, star_max);
+    const char* const favourite_label = metadata->is_favorite ? "Remove from Favourites" : "Add to Favourites";
+
+    // Single click pins the node in the Info Panel; on the star it toggles
+    // the favourite.
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-        select();
+        if (star_hovered) {
+            registry.ToggleFavorite(metadata->type);
+        } else {
+            select();
+        }
     }
 
     // Handle double-click to create node
-    if (hovered && ImGui::IsMouseDoubleClicked(0) && can_add_to_graph) {
+    if (hovered && !star_hovered && ImGui::IsMouseDoubleClicked(0) && can_add_to_graph) {
         CreateNodeAtMouse(metadata, extension);
-        if (!extension) registry.RecordUsage(metadata->type);
     }
 
     // Handle drag-drop source (only for graph-addable nodes)
@@ -1076,11 +1178,9 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
         if (can_add_to_graph) {
             if (ImGui::MenuItem(ICON_FA_PLUS " Add to Canvas", "Double-click")) {
                 CreateNodeAtMouse(metadata, extension);
-                if (!extension) registry.RecordUsage(metadata->type);
             }
 
-            // Favourites are kept per NodeType; extension nodes share one.
-            if (!extension && ImGui::MenuItem(ICON_FA_STAR " Toggle Favorite")) {
+            if (has_star && ImGui::MenuItem((std::string(ICON_FA_STAR " ") + favourite_label).c_str())) {
                 registry.ToggleFavorite(metadata->type);
             }
         } else if (!metadata->made_by.empty()) {
@@ -1102,7 +1202,7 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem(ICON_FA_CIRCLE_INFO " View Documentation")) {
+        if (ImGui::MenuItem(ICON_FA_CIRCLE_INFO " Show details")) {
             // Pin this node in the Info Panel
             select();
         }
@@ -1115,7 +1215,9 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     }
 
     // Tooltip
-    if (hovered && !ImGui::IsMouseDragging(0)) {
+    if (star_hovered) {
+        ImGui::SetTooltip("%s", favourite_label);
+    } else if (hovered && !ImGui::IsMouseDragging(0)) {
         RenderNodeTooltip(metadata);
     }
 
@@ -1155,6 +1257,13 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
 
     // Draw port indicators
     RenderPortIndicators(metadata, icon_pos, icon_size);
+
+    if (has_star) {
+        const ImVec4 star_colour = metadata->is_favorite ? t.accent_text
+                                   : star_hovered        ? t.text_dim
+                                                         : ui::WithAlpha(t.text_faint, 0.55f);
+        draw_list->AddText(nullptr, star_size, star_min, ui::ToU32(star_colour), ICON_FA_STAR);
+    }
 
     // Draw node name (centered, below icon)
     std::string display_name = metadata->name;
@@ -1471,6 +1580,8 @@ bool NodeBrowserPanel::NodeMatchesSupportFilter(
         return IsUiOnly(metadata);
     case SupportFilterMode::Blocked:
         return blocked;
+    case SupportFilterMode::Favourites:
+        return metadata->is_favorite;
     case SupportFilterMode::All:
         return true;
     }
@@ -1525,6 +1636,8 @@ const char* NodeBrowserPanel::GetSupportFilterLabel(
         return "UI-only";
     case SupportFilterMode::Blocked:
         return "Blocked";
+    case SupportFilterMode::Favourites:
+        return "Favourites";
     case SupportFilterMode::All:
         return "All";
     }
