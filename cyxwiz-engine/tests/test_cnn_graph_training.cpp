@@ -5,6 +5,7 @@
 // and a forward pass on an HWC-flattened batch must produce [N, 2] logits.
 #include "core/weight_start.h"
 #include "../src/core/graph_compiler.h"
+#include "../src/core/graph_document.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/model_builder.h"
 #include "../src/core/spatial_batch_layout.h"
@@ -12,6 +13,7 @@
 #include "../src/gui/loaders/data_loader.h"
 #include "computation_truth/test_device_selection.h"
 
+#include <sstream>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 
@@ -656,6 +658,75 @@ void CheckFrozenStemAgainstPyTorch(cyxwiz::GraphCompiler& compiler, size_t case_
     std::cout << "Frozen stem (" << case_name << ") matches PyTorch with requires_grad off\n";
 }
 
+// A whole ResNet-18 graph, as scripts/examples/make_resnet18_graphs.py writes
+// it (torchvision's layer names, convolutions without bias, the padded first
+// pool), filled from a PyTorch state-dict and compared with PyTorch's logits.
+// Returns false when the graph or the weights could not be used.
+bool CheckResNet18Graph(cyxwiz::GraphCompiler& compiler, const std::filesystem::path& graph_path,
+                        const std::filesystem::path& weights, const nlohmann::json& expected, const std::string& label,
+                        bool training_mode_too) {
+    std::ifstream in(graph_path, std::ios::binary);
+    Check(in.good(), label + ": cannot open " + graph_path.string());
+    std::stringstream text;
+    text << in.rdbuf();
+    cyxwiz::GraphDocument document;
+    std::string error;
+    const bool parsed = cyxwiz::ParseGraphDocument(text.str(), document, error);
+    Check(parsed, label + ": the graph file loads: " + error);
+    if (!parsed) return false;
+    const auto config = compiler.Compile(document.nodes, document.links, true);
+    for (const auto& issue : config.issues) {
+        if (issue.level == cyxwiz::IssueLevel::Error) std::cerr << "  issue: " << issue.node_name << ": " << issue.message << "\n";
+    }
+    Check(config.is_valid, label + ": the graph compiles");
+    if (!config.is_valid) return false;
+
+    const auto run = [&](bool training, const char* output_key) {
+        auto built = cyxwiz::BuildExecutableFromConfig(config);
+        Check(built.ok(), label + ": the model builds: " + built.error_message);
+        if (!built.ok()) return false;
+        cyxwiz::weight_match::Report report;
+        std::string load_error;
+        const bool started = cyxwiz::StartFromWeightsFile(weights, *built.model, built.module_provenance, report, load_error);
+        Check(started, label + ": starts from " + weights.filename().string() + ": " + load_error);
+        if (!started) return false;
+        // 20 convolutions, 20 BatchNorm and fc: every one of them filled by name.
+        Check(report.loaded == 41 && report.fresh == 0, label + ": all 41 layers take their weights: " + report.Summary());
+        for (const auto& unused : report.unused)
+            Check(unused.reason.find("counter") != std::string::npos, label + ": left over: " + unused.name + " (" + unused.reason + ")");
+        built.model->SetTraining(training);
+        CheckClose(built.model->Forward(ReadTensor(expected.at("input"))), expected.at(output_key), expected.at("tolerance"),
+                   label + (training ? " logits in training mode" : " logits in evaluation"));
+        return true;
+    };
+    if (!run(false, "output_eval")) return false;
+    return !training_mode_too || run(true, "output_train");
+}
+
+void CheckResNet18AgainstPyTorch(cyxwiz::GraphCompiler& compiler) {
+    const std::filesystem::path fixtures = std::filesystem::path(CYXWIZ_WEIGHT_FILE_FIXTURES).parent_path();
+    const auto read = [](const std::filesystem::path& path) {
+        std::ifstream in(path);
+        Check(in.good(), "cannot open " + path.string());
+        return nlohmann::json::parse(in);
+    };
+    // Always: the network an eighth as wide, with weights PyTorch wrote.
+    if (CheckResNet18Graph(compiler, fixtures / "resnet18_thin.cyxgraph", fixtures / "weight_files" / "resnet18_thin.pth",
+                           read(fixtures / "resnet18_pytorch.json"), "thin ResNet-18", true))
+        std::cout << "ResNet-18 graph (an eighth as wide) matches PyTorch in evaluation and in training mode\n";
+
+    // With the published file at hand: the full network against torchvision.
+    const char* published = std::getenv("CYXWIZ_RESNET18_WEIGHTS");
+    if (!published || !*published) {
+        std::cout << "ResNet-18 with the published ImageNet weights: skipped (set CYXWIZ_RESNET18_WEIGHTS to "
+                     "resnet18-f37072fd.pth to run it)\n";
+        return;
+    }
+    if (CheckResNet18Graph(compiler, fixtures / "resnet18_imagenet.cyxgraph", published,
+                           read(fixtures / "resnet18_imagenet_pytorch.json"), "ImageNet ResNet-18", false))
+        std::cout << "ResNet-18 graph with the published ImageNet weights matches torchvision's logits\n";
+}
+
 }  // namespace
 
 int main() {
@@ -1080,6 +1151,7 @@ int main() {
     CheckFlattenHeadAgainstPyTorch(compiler);
     CheckFrozenStemAgainstPyTorch(compiler, 5, "frozen_stem_keep", "keep");
     CheckFrozenStemAgainstPyTorch(compiler, 6, "frozen_stem_update", "update");
+    CheckResNet18AgainstPyTorch(compiler);
     CheckSqueezeExcitationAgainstPyTorch(compiler, 2, "squeeze_excitation_hard",
                                          {{"width_mode", "exact"}, {"squeeze_channels", "3"}, {"inner_activation", "hardswish"},
                                           {"gate", "hardsigmoid"}, {"use_bias", "false"}});
