@@ -172,6 +172,9 @@ private:
     void ForwardStressRequests();
     // The played copy's scene in the Viewport's model (the same build as the batch's)
     void MirrorPlaybackScene(const MjScene& scene);
+    // Inspect's Reload: the open model file read again, the camera and the
+    // scene kept; false with the reason (the model stays as it was)
+    bool ReloadModel(std::string& error);
     bool SceneFailed(const MjScene& scene) const;  // the played scene did not build here
     std::optional<MjScene> failed_scene_;
     MjStressRun local_stress_;

@@ -182,13 +182,33 @@ unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data) {
     MakeCompatContextCurrent();
 
     // Update abstract scene (lock physics mutex to prevent concurrent mjData access)
+    // The pull while held, else the selected body: MuJoCo draws it highlighted,
+    // and names it when no labels are on
+    mjvPerturb selection;
+    mjv_defaultPerturb(&selection);
+    const bool selected = !IsPushing() && selected_ > 0 && selected_ < model->nbody;
+    selection.select = selected ? selected_ : 0;
+    const mjvPerturb* pert = IsPushing() ? &pert_ : selected ? &selection : nullptr;
+    mjvOption opt = opt_;
+    if (selected && opt.label == mjLABEL_NONE) opt.label = mjLABEL_SELECTION;
+    mjtNum marker[3] = {0.0, 0.0, 0.0};
+    const auto update = [&]() {
+        mjv_updateScene(model, const_cast<mjData*>(data), &opt, pert, &cam_, mjCAT_ALL, &scn_);
+        if (selected) mju_copy3(marker, data->xipos + 3 * selected_);
+    };
     if (physics_mutex_) {
         std::lock_guard<std::mutex> phys_lock(*physics_mutex_);
-        mjv_updateScene(model, const_cast<mjData*>(data), &opt_, IsPushing() ? &pert_ : nullptr, &cam_,
-                        mjCAT_ALL, &scn_);
+        update();
     } else {
-        mjv_updateScene(model, const_cast<mjData*>(data), &opt_, IsPushing() ? &pert_ : nullptr, &cam_,
-                        mjCAT_ALL, &scn_);
+        update();
+    }
+    // A small sphere at the selected body's centre of mass
+    if (selected && marker_rgba_[3] > 0.0f && scn_.ngeom < scn_.maxgeom) {
+        const mjtNum size[3] = {0.03, 0.03, 0.03};
+        const mjtNum identity[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+        mjvGeom* geom = scn_.geoms + scn_.ngeom++;
+        mjv_initGeom(geom, mjGEOM_SPHERE, size, marker, identity, marker_rgba_);
+        geom->category = mjCAT_DECOR;
     }
 
     if (endless_floor_) MoveFloorUnderView(model);

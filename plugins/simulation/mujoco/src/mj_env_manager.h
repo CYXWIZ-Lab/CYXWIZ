@@ -52,8 +52,13 @@ public:
     // The same model file with another scene, the state carried over. The
     // caller holds the physics lock. False with the reason: the model is kept.
     bool ChangeScene(const MjScene& scene, std::string& error);
+    // The model file read again (it may have changed on disk) with the scene
+    // in use. The model is replaced only when the file builds: false with the
+    // reason keeps it. The state starts over. The caller holds the physics lock.
+    bool Reload(std::string& error);
     const MjScene& Scene() const { return scene_; }
     const MjRobotSize& Robot() const { return builder_.Robot(); }
+    const std::string& ModelPath() const { return builder_.Path(); }
     bool LoadModelFromString(const std::string& xml);
     void Close();
     bool IsLoaded() const { return model_ != nullptr; }

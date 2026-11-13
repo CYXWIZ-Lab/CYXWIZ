@@ -91,6 +91,14 @@ public:
     int PushForce(const mjModel* model, mjData* data, mjtNum force[6]);
     void EndPush();
     bool IsPushing() const { return pert_.select > 0; }
+    // The body the Inspect panel selected (-1: none): drawn highlighted, its
+    // name shown when no labels are on, and a marker at its centre of mass in
+    // `rgba` (the theme's colour; alpha 0: no marker)
+    void Select(int body, const float rgba[4]) {
+        selected_ = body;
+        for (int i = 0; i < 4; ++i) marker_rgba_[i] = rgba[i];
+    }
+    int Selected() const { return selected_; }
     int PushedBody() const { return pert_.select; }
 
     // Render settings
@@ -145,6 +153,8 @@ private:
     mjvScene scn_{};
     mjrContext con_{};
     mjvPerturb pert_{};  // the Ctrl+drag pull, drawn with the scene while held
+    int selected_ = -1;  // Select
+    float marker_rgba_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
     // Hidden GLFW window for compatibility context
     GLFWwindow* compat_window_ = nullptr;

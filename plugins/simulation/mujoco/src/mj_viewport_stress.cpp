@@ -5,6 +5,7 @@
 // run (env/mj_stress.h).
 
 #include "mj_viewport_panel.h"
+#include "mj_simulation_executor.h"
 #include "mj_ui_helpers.h"
 
 #include "plugin/plugin_context.h"
@@ -29,6 +30,10 @@ std::string LowerFirst(std::string text) {
 }  // namespace
 
 void MjViewportPanel::ResetStress() {
+    selected_body_ = -1;
+    typed_controls_.clear();
+    keyframes_model_.clear();  // read again for the model
+    if (sim_executor_) sim_executor_->SetHeldControls({});  // the executor is stopped here
     pushing_ = false;
     stress_requests_.clear();
     stress_log_.Clear();

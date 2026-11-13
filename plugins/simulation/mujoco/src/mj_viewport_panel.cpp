@@ -67,6 +67,8 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
         defaults_ = LoadViewportDefaults(*ctx_);
         live_numbers_ = defaults_.live_numbers;
         stress_ = defaults_.stress;
+        inspect_ = defaults_.inspect;
+        if (inspect_.panel_open && stress_.panel_open) inspect_.panel_open = false;  // one side panel
         defaults_loaded_ = true;
     }
 
@@ -103,8 +105,8 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
         }
         RenderControls(env, renderer);
         WatchStress(env);
-        if (stress_.panel_open) {
-            // The scene and the Stress panel side by side
+        if (stress_.panel_open || inspect_.panel_open) {
+            // The scene and the Stress or Inspect panel side by side
             constexpr float kStressWidth = 390.0f;
             const ImVec2 avail = ImGui::GetContentRegionAvail();
             const float spacing = ImGui::GetStyle().ItemSpacing.x;
@@ -119,8 +121,9 @@ void MjViewportPanel::Render(MjEnvManager& env, MjRenderer& renderer, bool* visi
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ToImVec4(colors.bg_panel));
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
-            ImGui::BeginChild("##stress_panel", ImVec2(kStressWidth, avail.y), ImGuiChildFlags_AlwaysUseWindowPadding);
-            RenderStressPanel(env);
+            ImGui::BeginChild("##side_panel", ImVec2(kStressWidth, avail.y), ImGuiChildFlags_AlwaysUseWindowPadding);
+            if (stress_.panel_open) RenderStressPanel(env);
+            else RenderInspectPanel(env, renderer);
             ImGui::EndChild();
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor();
@@ -302,7 +305,9 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     const float view_w = ui->ButtonWidth("View", UiButtonSize::Regular);
     const char* stress = stress_.panel_open ? "Hide Stress" : "Stress";
     const float stress_w = ui->ButtonWidth(stress, UiButtonSize::Regular);
-    const float right_w = camera_w + record_w + pill_w + view_w + stress_w + spacing * 4;
+    const char* inspect = inspect_.panel_open ? "Hide Inspect" : "Inspect";
+    const float inspect_w = ui->ButtonWidth(inspect, UiButtonSize::Regular);
+    const float right_w = camera_w + record_w + pill_w + view_w + stress_w + inspect_w + spacing * 5;
     next(right_w, button_h);
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - right_w));
     if (ui->SecondaryButton(camera.c_str())) ImGui::OpenPopup("mujoco_camera_menu");
@@ -321,9 +326,19 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     if (ui->SecondaryButton("View")) ImGui::OpenPopup("mujoco_view_menu");
     RenderViewMenu(env, renderer);
     next(stress_w, button_h);
-    if (ui->SecondaryButton(stress)) stress_.panel_open = !stress_.panel_open;
+    if (ui->SecondaryButton(stress)) {
+        stress_.panel_open = !stress_.panel_open;
+        if (stress_.panel_open) inspect_.panel_open = false;  // one side panel at a time
+    }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Kick the robot, throw objects at it, change the ground: does the policy cope?");
+    next(inspect_w, button_h);
+    if (ui->SecondaryButton(inspect)) {
+        inspect_.panel_open = !inspect_.panel_open;
+        if (inspect_.panel_open) stress_.panel_open = false;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("The selected body, its joints, the actuators, keyframes, Reload the model file");
 
     ImGui::SetCursorPosY(line_y + row_h + ImGui::GetStyle().ItemSpacing.y);
 }
@@ -396,12 +411,21 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) renderer.PanCamera(io.MouseDelta.x, io.MouseDelta.y);
     }
     if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) renderer.ZoomCamera(io.MouseWheel);
-    // Double-click a body to follow it
+    // Double-click a body: select it (Inspect shows it); with Inspect closed the
+    // camera also follows it, as before Inspect
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         const float x = (io.MousePos.x - p0.x) / std::max(1.0f, p1.x - p0.x);
         const float y = (io.MousePos.y - p0.y) / std::max(1.0f, p1.y - p0.y);
         const int body = renderer.BodyAt(env.GetModel(), env.GetData(), x, y);
-        if (body > 0) renderer.FollowBody(env.GetModel(), env.GetData(), body);
+        if (body > 0) {
+            selected_body_ = body;
+            if (!inspect_.panel_open) renderer.FollowBody(env.GetModel(), env.GetData(), body);
+        }
+    }
+    {
+        const UiColor marker = ctx_->GetUi()->Colors().success;
+        const float rgba[4] = {marker.r, marker.g, marker.b, marker.a};
+        renderer.Select(selected_body_, rgba);
     }
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -484,7 +508,9 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
     } else {
         switch (renderer.GetCameraMode()) {
             case MjRenderer::CameraMode::Free:
-                hint = "Drag to orbit  |  Right-drag to pan  |  Scroll to zoom  |  Double-click a body to follow it";
+                hint = inspect_.panel_open
+                           ? "Drag to orbit  |  Right-drag to pan  |  Scroll to zoom  |  Double-click a body to select it"
+                           : "Drag to orbit  |  Right-drag to pan  |  Scroll to zoom  |  Double-click a body to follow it";
                 break;
             case MjRenderer::CameraMode::FollowBody:
                 hint = "Following a body: drag to orbit  |  Scroll to zoom  |  Camera > Free to pan";

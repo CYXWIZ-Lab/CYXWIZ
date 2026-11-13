@@ -91,6 +91,30 @@ bool MjEnvManager::LoadModel(const std::string& path, const MjScene& wanted) {
     return true;
 }
 
+bool MjEnvManager::Reload(std::string& error) {
+    if (!model_ || builder_.Path().empty()) {
+        error = "No model file is open.";
+        return false;
+    }
+    MjSceneBuilder builder;
+    if (!builder.Load(builder_.Path(), error)) return false;
+    mjModel* model = builder.Build(scene_, error);
+    if (!model) return false;
+    mjData* data = mj_makeData(model);
+    if (!data) {
+        mj_deleteModel(model);
+        error = "MuJoCo could not make the model's state (out of memory?).";
+        return false;
+    }
+    mj_deleteData(data_);
+    mj_deleteModel(model_);
+    model_ = model;
+    data_ = data;
+    builder_ = std::move(builder);
+    Reset();
+    return true;
+}
+
 bool MjEnvManager::ChangeScene(const MjScene& scene, std::string& error) {
     if (!model_ || !data_) {
         error = "No model is open.";

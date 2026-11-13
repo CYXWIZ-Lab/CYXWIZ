@@ -15,6 +15,7 @@
 #include "mj_renderer.h"
 #include "mj_env_manager.h"
 #include "mj_recorder.h"
+#include "env/mj_inspect.h"
 #include "mj_viewport_settings.h"
 
 #include <atomic>
@@ -37,6 +38,8 @@ class MjViewportPanel {
 public:
     // Opens a model file the user picked (the plugin's LoadEnvironment).
     using OpenModelFn = std::function<bool(const std::string& mjcf_path)>;
+    // Reads the open model file again (Inspect's Reload); false with the reason
+    using ReloadModelFn = std::function<bool(std::string& error)>;
 
     MjViewportPanel() = default;
     ~MjViewportPanel() = default;
@@ -44,6 +47,7 @@ public:
     // The Engine's widgets, and the Environment Library panel to open.
     void SetContext(PluginContext* ctx) { ctx_ = ctx; }
     void SetOpenModel(OpenModelFn fn) { open_model_ = std::move(fn); }
+    void SetReloadModel(ReloadModelFn fn) { reload_model_ = std::move(fn); }
 
     // Render the panel. Call each frame from IPanelProvider::RenderPanel.
     // |env| and |renderer| must be valid. |visible| controls panel open state.
@@ -107,7 +111,8 @@ public:
     }
     // A request could not be done (shown on the scene for a few seconds)
     void StressFailed(const std::string& why) { Notify("Stress: " + why, true); }
-    // Another model was opened: the events and the held push belong to the old one
+    // Another model was opened (or the file read again): the events, the held
+    // push, the selected body and the held controls belong to the old one
     void ResetStress();
     const std::string& ModelTitle() const { return model_title_; }
     const std::string& ModelSubtitle() const { return model_subtitle_; }
@@ -140,6 +145,13 @@ private:
     void RenderScene(MjEnvManager& env, MjRenderer& renderer);
     void RenderEpisodeStrip(MjEnvManager& env);
     void RenderLiveNumbers(float scene_left, float scene_top, const MjGround& ground);
+    // The Inspect panel (mj_viewport_inspect.cpp): the selected body, its
+    // joints, the actuators, keyframes, Reload
+    void RenderInspectPanel(MjEnvManager& env, MjRenderer& renderer);
+    // Why Inspect cannot change the model now; empty: it can
+    std::string InspectBlocked(MjEnvManager& env) const;
+    // The held controls to the run (under the physics lock)
+    void ApplyHeldControls(MjEnvManager& env);
     // The Stress panel (mj_viewport_stress.cpp)
     void RenderStressPanel(MjEnvManager& env);
     // Why the Stress panel cannot act now; empty: it can
@@ -185,6 +197,14 @@ private:
 
     PluginContext* ctx_ = nullptr;
     OpenModelFn open_model_;
+    ReloadModelFn reload_model_;
+    // Inspect
+    InspectOptions inspect_;
+    int selected_body_ = -1;              // double-clicked; -1: none
+    std::vector<double> typed_controls_;  // the actuator controls typed in Inspect
+    std::vector<MjKeyframe> keyframes_;   // saved for keyframes_model_ (in the project)
+    std::string keyframes_model_;
+    char keyframe_name_[64] = "";
     MjSimulationExecutor* sim_executor_ = nullptr;
     std::string model_title_;
     std::string model_subtitle_;

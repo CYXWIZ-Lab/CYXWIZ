@@ -17,6 +17,7 @@ constexpr const char* kRecordFormat = "viewport.record_format";
 constexpr const char* kRecordLength = "viewport.record_length";
 constexpr const char* kScene = "viewport.scene";
 constexpr const char* kStress = "viewport.stress";
+constexpr const char* kInspect = "viewport.inspect";
 
 // The switches of SceneOptions by their saved names
 struct Switch {
@@ -83,6 +84,23 @@ std::string EncodeStress(const StressOptions& s) {
     j["difficulty"] = s.ground.difficulty;
     j["seed"] = s.ground.seed;
     return j.dump();
+}
+
+std::string EncodeInspect(const InspectOptions& i) {
+    nlohmann::json j;
+    j["panel_open"] = i.panel_open;
+    j["hold_controls"] = i.hold_controls;
+    return j.dump();
+}
+
+InspectOptions DecodeInspect(const std::string& text) {
+    InspectOptions i;
+    if (text.empty()) return i;
+    const nlohmann::json j = nlohmann::json::parse(text, nullptr, false);
+    if (!j.is_object()) return i;
+    ReadBool(j, "panel_open", i.panel_open);
+    ReadBool(j, "hold_controls", i.hold_controls);
+    return i;
 }
 
 StressOptions DecodeStress(const std::string& text) {
@@ -196,6 +214,7 @@ ViewportDefaults LoadViewportDefaults(const PluginContext& ctx) {
     d.record_until_stop = ctx.GetSetting(kRecordLength, "episode") == "stop";
     d.scene = DecodeScene(ctx.GetSetting(kScene));
     d.stress = DecodeStress(ctx.GetSetting(kStress));
+    d.inspect = DecodeInspect(ctx.GetSetting(kInspect));
     return d;
 }
 
@@ -206,6 +225,7 @@ void SaveViewportDefaults(PluginContext& ctx, const ViewportDefaults& d) {
     ctx.SetSetting(kRecordLength, d.record_until_stop ? "stop" : "episode");
     ctx.SetSetting(kScene, EncodeScene(d.scene));
     ctx.SetSetting(kStress, EncodeStress(d.stress));
+    ctx.SetSetting(kInspect, EncodeInspect(d.inspect));
 }
 
 SceneOptions ReadScene(const MjRenderer& r) {

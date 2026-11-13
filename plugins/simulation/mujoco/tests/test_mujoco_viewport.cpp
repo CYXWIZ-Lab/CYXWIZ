@@ -6,6 +6,7 @@
 #include "mj_gif_writer.h"
 #include "mj_recorder.h"
 #include "env/mj_stress.h"
+#include "env/mj_inspect.h"
 #include "mj_viewport_settings.h"
 
 #include "plugin/plugin_context.h"
@@ -563,6 +564,83 @@ void CheckStressSettings() {
     Check(DecodeStress("not json") == StressOptions{}, "broken text gives the defaults");
 }
 
+// Inspect (P2): the selected body, a joint set within its range, the
+// actuators, keyframes and the panel's saved choices, on HalfCheetah
+void CheckInspect(const std::filesystem::path& dir) {
+    const std::string path = std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/half_cheetah.xml";
+    MjSceneBuilder builder;
+    std::string error;
+    Check(builder.Load(path, error) && builder.Path() == path, "the builder reads HalfCheetah and keeps its path: " + error);
+    mjModel* m = builder.Build(MjScene{}, error);
+    Check(m != nullptr, "HalfCheetah builds: " + error);
+    if (!m) return;
+    mjData* d = mj_makeData(m);
+    mj_forward(m, d);
+    const int bthigh = mj_name2id(m, mjOBJ_BODY, "bthigh");
+    const MjBodyInfo info = InspectBody(m, d, bthigh, builder.Robot());
+    double robot_mass = 0.0;
+    for (int b = 1; b < m->nbody; ++b) robot_mass += m->body_mass[b];
+    Check(info.name == "bthigh" && info.parent_name == "torso" && info.mass > 0.0 &&
+              std::abs(info.robot_mass - robot_mass) < 1e-9,
+          "bthigh: its parent, its mass and the robot's");
+    Check(info.joints.size() == 1 && info.joints[0].name == "bthigh" && info.joints[0].scalar &&
+              info.joints[0].limited && std::abs(info.joints[0].low + 0.52) < 1e-9 &&
+              std::abs(info.joints[0].high - 1.05) < 1e-9 && info.joints[0].stiffness == 240.0,
+          "its hinge: range -0.52..1.05, stiffness 240");
+    const MjBodyInfo torso = InspectBody(m, d, mj_name2id(m, mjOBJ_BODY, "torso"), builder.Robot());
+    Check(torso.joints.size() == 3 && torso.joints[0].type == mjJNT_SLIDE && !torso.joints[0].limited &&
+              torso.parent_name == "the world",
+          "the torso: rootx, rootz, rooty, unlimited, on the world");
+    Check(InspectBody(m, d, 0, builder.Robot()).id == -1 && InspectBody(m, d, static_cast<int>(m->nbody), builder.Robot()).id == -1,
+          "the world body or none: nothing to inspect");
+
+    const int bshin = mj_name2id(m, mjOBJ_BODY, "bshin");
+    const double before = d->xipos[3 * bshin + 2];
+    Check(SetJointValue(m, d, info.joints[0].id, 5.0) && d->qpos[m->jnt_qposadr[info.joints[0].id]] == 1.05,
+          "a joint set past its range stops at the range");
+    Check(d->xipos[3 * bshin + 2] != before, "the state is computed again: the shin below it moved");
+    Check(!SetJointValue(m, d, -1, 0.0), "no joint: nothing set");
+
+    const auto actuators = InspectActuators(m, d);
+    Check(actuators.size() == 6 && actuators[0].name == "bthigh" && actuators[0].limited && actuators[0].low == -1.0,
+          "six actuators, controls -1..1");
+    d->ctrl[0] = 0.4;
+    mj_forward(m, d);
+    Check(std::abs(InspectActuators(m, d)[0].force - 48.0) < 1e-9, "bthigh at 0.4: 48 N m at the joint (gear 120)");
+
+    // Keyframes
+    const MjKeyframe crouch = CaptureKeyframe(m, d, "crouch", "12:04");
+    Check(crouch.state.size() == static_cast<size_t>(mj_stateSize(m, kKeyframeState)), "a keyframe holds the state");
+    mj_resetData(m, d);
+    mj_forward(m, d);
+    Check(ApplyKeyframe(m, d, crouch, error) && d->qpos[m->jnt_qposadr[info.joints[0].id]] == 1.05 &&
+              d->ctrl[0] == 0.4,
+          "loading it puts the joint and the controls back: " + error);
+    MjKeyframe other = crouch;
+    other.state.pop_back();
+    Check(!ApplyKeyframe(m, d, other, error) && error.find("another version") != std::string::npos,
+          "a keyframe of another version of the model is refused: " + error);
+    const auto file = KeyframesFile(dir, path);
+    Check(file == dir / "mujoco" / "keyframes" / "half_cheetah.json", "saved per model file in the project");
+    Check(SaveKeyframes(file, {crouch}, path, error), "saved: " + error);
+    const auto loaded = LoadKeyframes(file);
+    Check(loaded.size() == 1 && loaded[0].name == "crouch" && loaded[0].saved == "12:04" && loaded[0].state == crouch.state,
+          "and read back");
+    Check(DecodeKeyframes("not json").empty() && LoadKeyframes(dir / "none.json").empty(), "broken or missing: none");
+    Check(ModelKeyframes(m).empty(), "HalfCheetah's file has no keyframes of its own");
+
+    // The panel's saved choices
+    SettingsContext ctx;
+    Check(LoadViewportDefaults(ctx).inspect == InspectOptions{}, "nothing saved: Inspect closed, controls not held");
+    ViewportDefaults saved;
+    saved.inspect = InspectOptions{true, true};
+    SaveViewportDefaults(ctx, saved);
+    Check(LoadViewportDefaults(ctx).inspect == saved.inspect, "Inspect's choices read back");
+    Check(DecodeInspect("[1]") == InspectOptions{}, "broken text gives the defaults");
+    mj_deleteData(d);
+    mj_deleteModel(m);
+}
+
 }  // namespace
 
 int main() {
@@ -578,6 +656,7 @@ int main() {
     CheckObjectSlots();
     CheckStressLog();
     CheckStressSettings();
+    CheckInspect(dir);
     std::filesystem::remove_all(dir, ec);
     if (failures == 0) std::printf("test_mujoco_viewport: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

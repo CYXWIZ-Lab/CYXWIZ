@@ -462,6 +462,16 @@ void RenderViewportPreferences(PluginContext& ctx) {
             changed = true;
         }
 
+        // The Inspect panel: shown or not, and whether typed controls are held
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Inspect panel");
+        ImGui::TableNextColumn();
+        if (ImGui::Checkbox("Show it beside the scene when the Viewport starts##inspect_open", &d.inspect.panel_open))
+            changed = true;
+        if (ImGui::Checkbox("Hold the typed actuator controls while the run steps", &d.inspect.hold_controls))
+            changed = true;
+
         // The Stress panel: shown or not, and what it offers first
         using L = StressLimits;
         StressOptions& st = d.stress;

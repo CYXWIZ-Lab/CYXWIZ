@@ -176,6 +176,7 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
                                     return local_stress_.next_ground.has_value();
                                 }});
     viewport_panel_.SetSimExecutor(&sim_executor_);
+    viewport_panel_.SetReloadModel([this](std::string& error) { return ReloadModel(error); });
 
     // NOTE: Renderer is NOT initialized here. It will be lazily initialized
     // by the viewport panel on first render, using the engine's GL context
@@ -326,6 +327,24 @@ void MuJoCoPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
 }
 
 bool MuJoCoPlugin::SceneFailed(const MjScene& scene) const { return failed_scene_ && *failed_scene_ == scene; }
+
+bool MuJoCoPlugin::ReloadModel(std::string& error) {
+    if (viewport_panel_.IsGraphSimActive() || playback_) {
+        error = "The model is in use (a graph run or a policy playback).";
+        return false;
+    }
+    sim_executor_.Stop();  // nothing steps the model while it is replaced
+    {
+        std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
+        if (!env_manager_.Reload(error)) return false;
+        local_stress_ = MjStressRun{};
+    }
+    local_episodes_seen_ = 0;
+    viewport_panel_.ResetStress();
+    if (renderer_.IsInitialized() && !renderer_.ChangeModel(env_manager_.GetModel())) renderer_needs_init_ = true;
+    spdlog::info("[MuJoCo] Reloaded {}", loaded_mjcf_path_);
+    return true;
+}
 
 void MuJoCoPlugin::MirrorPlaybackScene(const MjScene& scene) {
     bool built = false;

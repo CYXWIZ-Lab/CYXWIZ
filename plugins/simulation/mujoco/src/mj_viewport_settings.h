@@ -76,6 +76,14 @@ struct StressOptions {
     bool operator==(const StressOptions&) const = default;
 };
 
+// The Inspect panel's choices: shown, and the typed controls held while the run steps
+struct InspectOptions {
+    bool panel_open = false;
+    bool hold_controls = false;
+
+    bool operator==(const InspectOptions&) const = default;
+};
+
 // Limits of the Stress panel's typed fields (the panel and the saved text)
 struct StressLimits {
     static constexpr double kKickMin = 0.1, kKickMax = 20.0;
@@ -99,6 +107,7 @@ struct ViewportDefaults {
     bool record_until_stop = false;  // false: until the episode ends
     SceneOptions scene;              // what View shows when the Viewport starts
     StressOptions stress;            // the Stress panel when the Viewport starts
+    InspectOptions inspect;          // the Inspect panel when the Viewport starts
 };
 
 // Saved text <-> values. Unknown or broken text gives the default.
@@ -106,6 +115,8 @@ std::string EncodeScene(const SceneOptions& scene);
 SceneOptions DecodeScene(const std::string& text);
 std::string EncodeStress(const StressOptions& stress);
 StressOptions DecodeStress(const std::string& text);
+std::string EncodeInspect(const InspectOptions& inspect);
+InspectOptions DecodeInspect(const std::string& text);
 const char* PlaybackCameraKey(PlaybackCamera camera);
 PlaybackCamera PlaybackCameraFromKey(const std::string& key);
 
