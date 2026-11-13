@@ -179,7 +179,7 @@ void TableGrid::RenderColumnContextMenu(int column) {
         if (ImGui::MenuItem(ICON_FA_CUBE " Box Plot")) on_plot(column, plot::Kind::Box);
         ImGui::Separator();
         // The Y column is chosen in the Plot window.
-        if (ImGui::MenuItem(ICON_FA_CHART_SCATTER " Use as X-axis for Scatter")) on_plot(column, plot::Kind::Scatter);
+        if (ImGui::MenuItem(ICON_FA_BRAILLE " Use as X-axis for Scatter")) on_plot(column, plot::Kind::Scatter);
         ImGui::EndMenu();
     }
     if (on_plot) ImGui::Separator();
