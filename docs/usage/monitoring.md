@@ -127,6 +127,36 @@ on after a restart, and are also in **Preferences > General**.
 | Log Every Python Command | A log line when a command, script or run sent to Python starts and one when it ends, with its duration: `Python command took 3.2 ms: x = 1 + 1`. A command that never ends still shows its start |
 | Frame Time Overlay | A small panel at the top right with the two frame times and the three costliest windows; its link opens Monitor > Frames |
 
+## The Runtime Timeline (Studio Debugger)
+
+**Studio Debugger > Runtime > Timeline** shows the events of the last
+training run, one lane per thread, on a time axis from the run's start
+(a run recorded before events carried their time is drawn in order, without
+an axis, and the view says so).
+
+- **Zoom**: drag across the lanes to show that time range. The range is named
+  beside the title (`3.590 s - 3.613 s of 3.48 s - 4.36 s`); **Whole run**,
+  or a double-click, goes back. The axis marks get finer as you zoom in (down
+  to thousandths of a millisecond).
+- **Clusters**: short events of one thread that would be drawn on top of
+  each other at this zoom merge into one grey bar marked with their count
+  (`x84`). Hover it for what is inside (each stage, how many, time in all,
+  the longest); click it to zoom into it. Zoomed in far enough, the events
+  come apart.
+- **Spans**: a long event that other events of its thread happened during
+  (a validation pass and the steps inside it) is a thinner band along the
+  lane's bottom, under them.
+- **Colours**: Forward green, Backward lavender, batch and data blue,
+  validation pink; a failed event red and a warning amber (any other status,
+  such as `device_resident` or `early_stopped`, keeps its stage's colour). A
+  legend sits under the lanes.
+- Every event the trace keeps is drawn (200 most recent). Hover a bar for its
+  stage, thread, epoch and batch, duration, end time, status and message;
+  click it to show it in **Selected Runtime Event** below.
+
+A dense model trained on the fused fast path records no per-batch events, so
+its Timeline shows only the run's setup events.
+
 ## Python
 
 `pycyxwiz.system` gives the Engine's memory figures to scripts:

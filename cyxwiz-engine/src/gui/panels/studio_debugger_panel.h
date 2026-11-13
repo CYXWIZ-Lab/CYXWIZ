@@ -10,6 +10,7 @@
 #include "../../core/debug_run_store.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/studio_debugger_presentation.h"
+#include "../../core/runtime_timeline_layout.h"
 #include "../icons.h"
 #include <atomic>
 #include <cstddef>
@@ -222,6 +223,11 @@ private:
     StudioDebuggerRunMode run_mode_ = StudioDebuggerRunMode::FullWorkflow;
     int selected_sample_index_ = 0;
     std::string selected_runtime_event_key_;
+    // Runtime Timeline zoom: the time window shown (none: the whole run), the
+    // run it belongs to (a new run starts whole) and where a drag began.
+    std::optional<TimelineWindow> timeline_zoom_;
+    std::string timeline_zoom_run_;
+    float timeline_drag_x0_ = 0.0f;
     std::chrono::steady_clock::time_point last_run_lookup_{};  // the Crash view's last look on disk
     std::optional<DebugTraceRecord> run_comparison_trace_;
     std::string run_comparison_baseline_id_;
