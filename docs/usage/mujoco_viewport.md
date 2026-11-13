@@ -122,6 +122,34 @@ The policy plays on: a disturbance never changes what it observes (the
 robot's own joints), only what happens to it. HalfCheetah never ends an
 episode by itself, so for it a fall shows as **flipped over**.
 
+## Inspect: look inside the model
+
+**Inspect** (beside Stress; the two share the side of the scene) shows and
+changes the Viewport's own run. While a policy plays or a graph run steps the
+model, it shows and changes nothing.
+
+- **Select a body** by double-clicking it in the scene (with Inspect closed a
+  double-click also follows the body with the camera, as before). The body is
+  drawn highlighted with its name and a dot at its centre of mass. Inspect
+  shows its **mass** (and the robot's), its **centre of mass** and its
+  **speed**; **Follow it with the camera**, **Select parent**, **Clear**.
+- **Its joints**: a hinge or slide joint's position is typed in while the run
+  is paused (kept within the joint's range; the state is computed again), with
+  its velocity, stiffness and damping.
+- **Actuators**: each actuator's control typed in (within its range), with
+  the force it puts on its joint (gear times the actuator's force: 0.40 on
+  HalfCheetah's bthigh is 48 N·m). Paused, the force shows at once; a run
+  steps with zeros unless **Hold these controls while it runs** is on.
+  **Set all to 0**.
+- **Keyframes**: **Save the state** under a name; **Load** puts it back (the
+  joints, velocities and controls), **Delete** removes it. They are saved with
+  the project in `mujoco/keyframes/<model file>.json`, so they come back next
+  time; a keyframe saved for another version of the model file is refused with
+  the reason. A model file's own `<key>` elements are listed too.
+- **Reload the model file** reads the file again (after editing it on disk),
+  keeping the camera and the scene; the state starts over. A file that does not
+  build any more leaves the model as it was and says why.
+
 ## Preferences > Simulation > MuJoCo Viewport
 
 | Setting | Default |
@@ -130,6 +158,7 @@ episode by itself, so for it a fall shows as **flipped over**.
 | **Live numbers** | On |
 | **Record video** | GIF, until the episode ends |
 | **Scene options** | MuJoCo's; **Use MuJoCo's** resets options kept from the View menu |
+| **Inspect panel** | Closed; typed controls not held |
 | **Stress panel** | Closed; a sudden 1.5 m/s kick; a 0.2 m 2 kg ball at 6 m/s from 3 m ahead, no tumble; no random kicks (every 3 s when on) or throws (every 1.5 s, size × 0.5-2, mass × 0.5-3); Rough 0.40 seed 7 offered |
 
 Changing a choice in the Viewport does not change these, except **View >
@@ -146,9 +175,8 @@ policy** whenever you want to watch it: no training run is needed. See
 ## Limits
 
 - The Viewport shows one copy of a training run's environments (the first).
-- Typed joint and actuator values, keyframes and physics options are
-  planned (the Inspect panel), as are a timeline to scrub a played episode
-  and side-by-side policies.
+- Physics options, a timeline to scrub a played episode, live plots and a
+  second policy as a ghost are being built (Inspect's next part).
 - Training with pushes and rough ground, and the stress test that compares
   two saved policies by difficulty, are in the
   [RL walkthrough](rl_walkthrough.md) (Robustness, and Stress test).
