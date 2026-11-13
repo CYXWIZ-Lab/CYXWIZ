@@ -1,4 +1,5 @@
 #include "device_identity.h"
+#include "loaded_library.h"
 
 #include <algorithm>
 #include <array>
@@ -149,19 +150,16 @@ bool HasOpenClExtension(const std::string& extensions,
 
 void EnrichOpenClIdentity(DeviceInfo& info) {
 #ifdef _WIN32
-    DynamicLibrary arrayfire_opencl(L"afopencl.dll", true);
     DynamicLibrary opencl(L"OpenCL.dll");
 #elif defined(__APPLE__)
-    DynamicLibrary arrayfire_opencl("libafopencl.dylib", true);
     DynamicLibrary opencl("/System/Library/Frameworks/OpenCL.framework/OpenCL");
 #else
-    DynamicLibrary arrayfire_opencl("libafopencl.so", true);
     DynamicLibrary opencl("libOpenCL.so.1");
 #endif
 
     using AfGetDeviceId = af_err (*)(ClDeviceId*);
-    const auto af_get_device_id =
-        FindFunction<AfGetDeviceId>(arrayfire_opencl, "afcl_get_device_id");
+    const auto af_get_device_id = reinterpret_cast<AfGetDeviceId>(
+        FindLoadedSymbol("afopencl", "afcl_get_device_id"));
     OpenClIdentityApi api;
     api.get_device_info = FindFunction<OpenClIdentityApi::GetDeviceInfo>(
         opencl, "clGetDeviceInfo");
@@ -262,10 +260,8 @@ struct CudaUuid {
 
 void EnrichCudaIdentity(DeviceInfo& info) {
 #ifdef _WIN32
-    DynamicLibrary arrayfire_cuda(L"afcuda.dll", true);
     DynamicLibrary cuda_driver(L"nvcuda.dll");
 #else
-    DynamicLibrary arrayfire_cuda("libafcuda.so", true);
     DynamicLibrary cuda_driver("libcuda.so.1");
 #endif
 
@@ -276,8 +272,8 @@ void EnrichCudaIdentity(DeviceInfo& info) {
     using CuDeviceGetAttribute = int (*)(int*, int, int);
     using CuDeviceTotalMem = int (*)(size_t*, int);
 
-    const auto af_get_native_id =
-        FindFunction<AfGetNativeId>(arrayfire_cuda, "afcu_get_native_id");
+    const auto af_get_native_id = reinterpret_cast<AfGetNativeId>(
+        FindLoadedSymbol("afcuda", "afcu_get_native_id"));
     const auto cu_init = FindFunction<CuInit>(cuda_driver, "cuInit");
     const auto cu_device_get =
         FindFunction<CuDeviceGet>(cuda_driver, "cuDeviceGet");

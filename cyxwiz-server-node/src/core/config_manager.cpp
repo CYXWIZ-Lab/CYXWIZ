@@ -47,6 +47,7 @@ bool ConfigManager::LoadConfig(const std::string& path, NodeConfig& config) {
         if (yaml["network"]) {
             auto network = yaml["network"];
             if (network["cyxwiz_server"]) config.cyxwiz_server = network["cyxwiz_server"].as<std::string>();
+            if (network["server_ca_file"]) config.server_ca_file = network["server_ca_file"].as<std::string>();
             if (network["central_server"]) config.central_server = network["central_server"].as<std::string>();
             if (network["auth_api_url"]) config.auth_api_url = network["auth_api_url"].as<std::string>();
             if (network["ipc_address"]) config.ipc_address = network["ipc_address"].as<std::string>();
@@ -65,7 +66,11 @@ bool ConfigManager::LoadConfig(const std::string& path, NodeConfig& config) {
             if (network["cert_path"]) config.cert_path = network["cert_path"].as<std::string>();
             if (network["key_path"]) config.key_path = network["key_path"].as<std::string>();
             if (network["ca_path"]) config.ca_path = network["ca_path"].as<std::string>();
-            if (network["p2p_secret"]) config.p2p_secret = network["p2p_secret"].as<std::string>();
+            if (network["p2p_secret_file"]) config.p2p_secret_file = network["p2p_secret_file"].as<std::string>();
+            if (network["p2p_secret"] && !network["p2p_secret"].as<std::string>().empty()) {
+                spdlog::error("{}: network.p2p_secret is not read; put the secret in a file kept to "
+                              "its owner and set network.p2p_secret_file to it", path);
+            }
         }
 
         // Training settings
@@ -114,6 +119,13 @@ bool ConfigManager::LoadConfig(const std::string& path, NodeConfig& config) {
             if (logging["file"]) config.log_file = logging["file"].as<std::string>();
         }
 
+        // Every connection to the server verifies it with this CA from now on
+        cyxwiz::protocol::SetServerCaFile(config.server_ca_file);
+        if (const std::string ca_error = cyxwiz::protocol::ServerCaError(); !ca_error.empty()) {
+            spdlog::warn("network.server_ca_file: {}; connections to an https:// server will fail until it is fixed",
+                         ca_error);
+        }
+
         spdlog::info("Config loaded from: {}", path);
         return true;
 
@@ -149,6 +161,7 @@ bool ConfigManager::SaveConfig(const NodeConfig& config, const std::string& path
         // Network settings
         out << YAML::Key << "network" << YAML::Value << YAML::BeginMap;
         out << YAML::Key << "cyxwiz_server" << YAML::Value << config.cyxwiz_server;
+        out << YAML::Key << "server_ca_file" << YAML::Value << config.server_ca_file;
         out << YAML::Key << "central_server" << YAML::Value << config.central_server;
         out << YAML::Key << "auth_api_url" << YAML::Value << config.auth_api_url;
         out << YAML::Key << "ipc_address" << YAML::Value << config.ipc_address;
@@ -162,7 +175,7 @@ bool ConfigManager::SaveConfig(const NodeConfig& config, const std::string& path
         out << YAML::Key << "cert_path" << YAML::Value << config.cert_path;
         out << YAML::Key << "key_path" << YAML::Value << config.key_path;
         out << YAML::Key << "ca_path" << YAML::Value << config.ca_path;
-        out << YAML::Key << "p2p_secret" << YAML::Value << config.p2p_secret;
+        out << YAML::Key << "p2p_secret_file" << YAML::Value << config.p2p_secret_file;
         out << YAML::EndMap;
 
         // Training settings

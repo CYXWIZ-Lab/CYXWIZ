@@ -600,7 +600,8 @@ bool P2PClient::SendReservationExtension(const std::string& p2p_auth_token) {
 
 bool P2PClient::RegisterJobDatasets(const std::string& job_id, const std::string& graph_json, DataStreamClient* cloud,
                                     const std::string& cloud_gateway_address, int64_t cloud_token_ttl_seconds,
-                                    cyxwiz::protocol::JobConfig& config, std::string& error) {
+                                    cyxwiz::protocol::JobConfig& config, std::string& error,
+                                    std::vector<std::string>* cloud_token_ids) {
     auto& projects = cyxwiz::ProjectManager::Instance();
     const std::filesystem::path root = projects.HasActiveProject()
         ? std::filesystem::path(projects.GetProjectRoot()) / ".cyxwiz" / "remote-datasets"
@@ -615,7 +616,8 @@ bool P2PClient::RegisterJobDatasets(const std::string& job_id, const std::string
     // so no token is minted for a job that will not be sent.
     cyxwiz::GraphJobDatasetPlan plan;
     if (!cyxwiz::PlanGraphJobDatasets(graph_json, plan, error) ||
-        !FillCloudJobDatasets(plan, cloud, cloud_gateway_address, cloud_token_ttl_seconds, config, error)) {
+        !FillCloudJobDatasets(plan, cloud, cloud_gateway_address, cloud_token_ttl_seconds, config, error,
+                              cloud_token_ids)) {
         dataset_files_.UnregisterJob(job_id);
         return false;
     }

@@ -14,6 +14,7 @@
 #include "cyxwiz/neural_provider.h"
 
 #include "../../../oneapi/cyxwiz_oneapi_kernels.h"
+#include "../../core/loaded_library.h"
 
 #include <spdlog/spdlog.h>
 
@@ -40,10 +41,8 @@ constexpr const char* kProviderSemver = "0.1.0";
 
 #ifdef _WIN32
 constexpr const char* kKernelLibrary = "cyxwiz-oneapi-kernels.dll";
-constexpr const char* kArrayFireOneapiLibrary = "afoneapi.dll";
 #else
 constexpr const char* kKernelLibrary = "libcyxwiz-oneapi-kernels.so";
-constexpr const char* kArrayFireOneapiLibrary = "libafoneapi.so";
 #endif
 
 // Directory of the module holding this code (the backend library).
@@ -65,15 +64,7 @@ std::filesystem::path BackendDirectory() {
 #endif
 }
 
-bool ArrayFireOneapiLoaded() {
-#ifdef _WIN32
-    return GetModuleHandleA(kArrayFireOneapiLibrary) != nullptr;
-#else
-    void* handle = dlopen(kArrayFireOneapiLibrary, RTLD_LAZY | RTLD_NOLOAD);
-    if (handle) dlclose(handle);
-    return handle != nullptr;
-#endif
-}
+bool ArrayFireOneapiLoaded() { return detail::IsLibraryLoaded("afoneapi"); }
 
 // Lazily loaded kernel library (never unloaded: SYCL objects it owns live
 // for the process).

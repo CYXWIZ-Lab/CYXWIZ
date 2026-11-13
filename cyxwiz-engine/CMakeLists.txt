@@ -1138,6 +1138,10 @@ target_link_libraries(cyxwiz-engine PRIVATE
     Parquet::parquet_shared
     duckdb
 )
+# cpp-httplib is header-only: every file that includes it must agree on TLS
+# support, or the program holds two layouts of the same class (as the
+# server node, TOFIX136)
+target_compile_definitions(cyxwiz-engine PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
 
 # Optional: Link HDF5 if found
 if(HighFive_FOUND)
@@ -3690,6 +3694,25 @@ set_target_properties(test_server_address PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 add_test(NAME test_server_address COMMAND test_server_address)
+
+add_executable(test_server_ca_view
+    tests/test_server_ca_view.cpp
+)
+target_link_libraries(test_server_ca_view PRIVATE cyxwiz-protocol)
+set_target_properties(test_server_ca_view PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_server_ca_view COMMAND test_server_ca_view)
+
+# HTTP clients fall back to the next address (cmake/CyxWizHttplib.cmake)
+add_executable(test_http_address_fallback
+    tests/test_http_address_fallback.cpp
+)
+target_link_libraries(test_http_address_fallback PRIVATE httplib::httplib)
+set_target_properties(test_http_address_fallback PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+add_test(NAME test_http_address_fallback COMMAND test_http_address_fallback)
 
 add_executable(test_server_address_view
     tests/test_server_address_view.cpp

@@ -49,6 +49,20 @@ private Data Studio tickets (`tofix*/track*`).
     keeps its state on the bar.
   - Undoing back to the saved layout clears the unsaved dot (positions are
     saved to a hundredth of a grid unit).
+- **The menu bar's right end** (guide in `docs/usage/menu_bar.md`): your
+  account sits in the window's top-right corner as initials, name and plan
+  (it was a bare icon with the email as a tooltip), its menu says who you are
+  and adds **Servers...**; the project name opens Show in Explorer, Copy Path
+  and Close Project. New items: File > Show Project Folder, View > Full
+  Screen (F11), Help > Documentation (F1), API Reference, What's New, Known
+  Issues and Open Logs Folder (the first two were planned).
+- **Studio Debugger > Runtime > Timeline zooms and clusters** (guide in
+  `docs/usage/monitoring.md`): drag across the lanes to zoom, **Whole run**
+  to go back; short events that would overlap merge into a bar with their
+  count (hover lists them, click zooms in); a long event others happened
+  during is a band under them; only failed events are red and warnings
+  amber (a `device_resident` loss step was drawn red); every event the
+  trace keeps is drawn, not the last 42 a thread; a legend.
 - **The font atlas uses a quarter of the GPU memory** (32 MB instead of
   128 MB): glyphs are no longer oversampled (they are pixel-snapped, so it
   bought nothing), and the five extra icon packs keep only the node icons

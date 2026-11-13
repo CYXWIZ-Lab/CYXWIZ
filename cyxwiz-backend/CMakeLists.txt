@@ -133,6 +133,8 @@ set(BACKEND_SOURCES
     src/core/debug_hooks.cpp
     src/core/device_identity.cpp
     src/core/device_identity.h
+    src/core/loaded_library.cpp
+    src/core/loaded_library.h
     src/core/device_memory.cpp
     src/core/dynamic_library.h
     src/core/device_probe.h

@@ -12,6 +12,7 @@
 #include "../icons.h"
 #include "../theme.h"
 #include "../ui_platform.h"
+#include "../ui_tokens.h"
 #include "../tutorial/tutorial_system.h"
 #include "../../auth/auth_client.h"
 #include "../../core/file_dialogs.h"
@@ -24,10 +25,12 @@
 #include "../separate_windows.h"
 #include "../python_bundle_ui.h"
 
+#include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -88,6 +91,10 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"help.tutorials", ICON_FA_LIGHTBULB}, {"help.shortcuts", ICON_FA_KEYBOARD},
         {"help.documentation", ICON_FA_BOOK}, {"help.api_reference", ICON_FA_CODE}, {"help.report_issue", ICON_FA_BUG},
         {"help.check_updates", ICON_FA_DOWNLOAD}, {"help.about", ICON_FA_CIRCLE_INFO},
+        {"help.whats_new", ICON_FA_GIFT}, {"help.known_issues", ICON_FA_TRIANGLE_EXCLAMATION},
+        {"help.open_logs", ICON_FA_FILE_LINES}, {"view.fullscreen", ICON_FA_EXPAND},
+        {"file.show_project_folder", ICON_FA_FOLDER_OPEN}, {"file.copy_project_path", ICON_FA_COPY},
+        {"account.servers", ICON_FA_SERVER},
         {"account.settings", ICON_FA_USER}, {"account.wallet", ICON_FA_WALLET},
         {"account.sign_out", ICON_FA_RIGHT_FROM_BRACKET}, {"account.sign_in", ICON_FA_RIGHT_TO_BRACKET}};
     auto it = icons.find(id);
@@ -95,6 +102,81 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
 }
 
 namespace {
+
+// Help > Documentation, API Reference, What's New: the guides online (only
+// KNOWN_ISSUES.md ships beside the Engine).
+constexpr const char* kDocsUrl = "https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/docs/usage/README.md";
+constexpr const char* kApiUrl = "https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/docs/extending/python-api-reference.md";
+constexpr const char* kReleaseNotesUrl = "https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/docs/RELEASE_NOTES.md";
+
+// KNOWN_ISSUES.md beside the Engine (a release), or up its folders (a
+// development build); empty when there is none. Looked up once.
+const std::string& KnownIssuesPath() {
+    static const std::string path = [] {
+        std::error_code ec;
+        std::filesystem::path dir = core::ExecutableDirectory();
+        for (int up = 0; up < 5 && !dir.empty(); ++up) {
+            const auto candidate = dir / "KNOWN_ISSUES.md";
+            if (std::filesystem::is_regular_file(candidate, ec)) return candidate.string();
+            if (dir.parent_path() == dir) break;
+            dir = dir.parent_path();
+        }
+        return std::string();
+    }();
+    return path;
+}
+
+// View > Full Screen: the main window without its frame over the whole
+// monitor it is on (not exclusive full screen, which minimises itself when a
+// panel's own window takes the focus). F11 again puts it back as it was.
+struct WindowedPlacement {
+    bool fullscreen = false;
+    bool maximized = false;
+    int x = 100, y = 100, width = 1280, height = 720;
+};
+WindowedPlacement& Placement() {
+    static WindowedPlacement placement;
+    return placement;
+}
+GLFWwindow* MainGlfwWindow() { return static_cast<GLFWwindow*>(ImGui::GetMainViewport()->PlatformHandle); }
+bool IsFullscreen() { return Placement().fullscreen; }
+void ToggleFullscreen() {
+    GLFWwindow* window = MainGlfwWindow();
+    if (!window) return;
+    WindowedPlacement& p = Placement();
+    if (p.fullscreen) {
+        glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_TRUE);
+        glfwSetWindowMonitor(window, nullptr, p.x, p.y, p.width, p.height, GLFW_DONT_CARE);
+        if (p.maximized) glfwMaximizeWindow(window);
+        p.fullscreen = false;
+        spdlog::info("Full screen off");
+        return;
+    }
+    p.maximized = glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == GLFW_TRUE;
+    if (p.maximized) glfwRestoreWindow(window);
+    glfwGetWindowPos(window, &p.x, &p.y);
+    glfwGetWindowSize(window, &p.width, &p.height);
+    // The monitor under the window's centre.
+    int count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    GLFWmonitor* target = glfwGetPrimaryMonitor();
+    const int cx = p.x + p.width / 2, cy = p.y + p.height / 2;
+    for (int i = 0; i < count; ++i) {
+        int mx = 0, my = 0;
+        glfwGetMonitorPos(monitors[i], &mx, &my);
+        const GLFWvidmode* mode = glfwGetVideoMode(monitors[i]);
+        if (mode && cx >= mx && cx < mx + mode->width && cy >= my && cy < my + mode->height) target = monitors[i];
+    }
+    const GLFWvidmode* mode = target ? glfwGetVideoMode(target) : nullptr;
+    if (!mode) return;
+    int mx = 0, my = 0;
+    glfwGetMonitorPos(target, &mx, &my);
+    glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_FALSE);
+    glfwSetWindowPos(window, mx, my);
+    glfwSetWindowSize(window, mode->width, mode->height);
+    p.fullscreen = true;
+    spdlog::info("Full screen on ({} x {})", mode->width, mode->height);
+}
 
 
 void ShowSidebarPanel(const std::string& name, bool toggle) {
@@ -128,7 +210,15 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
     auto& pm = ProjectManager::Instance();
     in.has_project = pm.HasActiveProject();
     in.signed_in = is_logged_in_;
-    in.user_display_name = logged_in_user_;
+    if (is_logged_in_) {
+        const auth::UserInfo user = auth::AuthClient::Instance().GetUserInfo();
+        in.user_name = user.name;
+        in.user_username = user.username;
+        in.user_email = user.email.empty() ? logged_in_user_ : user.email;
+        in.user_role = user.role;
+    }
+    in.fullscreen = IsFullscreen();
+    in.known_issues_found = !KnownIssuesPath().empty();
 #ifdef CYXWIZ_HAS_ONNX_EXPORT
     in.onnx_export_available = true;
 #endif
@@ -262,25 +352,113 @@ void ToolbarPanel::RenderMenuBar() {
     }
     ImGui::PopStyleVar();
 
-    // Right side: project name, then the account menu.
+    // Right side (TOFIX129 A3b): the project chip, then the account in the
+    // top-right corner, flush with the window's right edge.
+    const ui::Tokens& t = ui::CurrentTokens();
     auto& pm = ProjectManager::Instance();
     const std::string project = pm.HasActiveProject() ? pm.GetProjectName() : "";
-    const std::string account_label = is_logged_in_ ? std::string(ICON_FA_USER) : std::string("Sign in");
-    const float right_width = ImGui::CalcTextSize(account_label.c_str()).x +
-                              (project.empty() ? 0.0f : ImGui::CalcTextSize(project.c_str()).x + 40.0f) + 40.0f;
-    const float x = ImGui::GetWindowContentRegionMax().x - right_width;
-    if (x > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(x);
+    const menu::AccountChip& chip = model.account_chip;
+    const float pad = 10.0f, gap = 6.0f;
+    const float bar_top = ImGui::GetWindowPos().y;
+    const float bar_h = ImGui::GetWindowHeight();
+    const float avatar = std::round(ImGui::GetFontSize() * 1.25f);
+    const float badge_pad = 5.0f;
+    const char* chevron = ICON_FA_CHEVRON_DOWN;
+    const float chevron_w = ImGui::CalcTextSize(chevron).x;
+    const std::string sign_in = std::string(ICON_FA_USER) + "  Sign in";
+    const float account_w =
+        is_logged_in_
+            ? pad + avatar + gap + ImGui::CalcTextSize(chip.short_name.c_str()).x +
+                  (chip.plan.empty() ? 0.0f : gap + ImGui::CalcTextSize(chip.plan.c_str()).x + 2.0f * badge_pad) + gap +
+                  chevron_w + pad
+            : 2.0f * pad + ImGui::CalcTextSize(sign_in.c_str()).x;
+    const std::string project_text = std::string(ICON_FA_FOLDER) + "  " + project;
+    const float project_w = project.empty() ? 0.0f : 2.0f * pad + ImGui::CalcTextSize(project_text.c_str()).x + gap + chevron_w;
+    const float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowWidth();
+    float x = std::max(right_edge - account_w - project_w, ImGui::GetCursorScreenPos().x + 12.0f);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const auto text_y = [&](float text_h) { return bar_top + (bar_h - text_h) * 0.5f; };
+    // A chip: the whole bar's height, the menu hover colour while hovered or open.
+    const auto chip_button = [&](const char* id, const char* popup, float width, ImVec2& min, ImVec2& max) {
+        min = ImVec2(x, bar_top);
+        max = ImVec2(x + width, bar_top + bar_h);
+        ImGui::SetCursorScreenPos(min);
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, bar_h));
+        if (ImGui::IsItemHovered() || ImGui::IsPopupOpen(popup))
+            draw->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+        x += width;
+        return clicked;
+    };
+    const auto badge = [&](const ImVec2& at, const std::string& label) {
+        const ImVec2 size = ImGui::CalcTextSize(label.c_str());
+        draw->AddRectFilled(ImVec2(at.x, at.y - 1.0f), ImVec2(at.x + size.x + 2.0f * badge_pad, at.y + size.y + 1.0f),
+                            ImGui::GetColorU32(ui::WithAlpha(t.accent_text, 0.18f)), 3.0f);
+        draw->AddText(ImVec2(at.x + badge_pad, at.y), ImGui::GetColorU32(t.accent_text), label.c_str());
+        return size.x + 2.0f * badge_pad;
+    };
+    const auto avatar_circle = [&](const ImVec2& centre, float diameter) {
+        draw->AddCircleFilled(centre, diameter * 0.5f, ImGui::GetColorU32(t.accent), 24);
+        const ImVec2 size = ImGui::CalcTextSize(chip.initials.c_str());
+        draw->AddText(ImVec2(centre.x - size.x * 0.5f, centre.y - size.y * 0.5f), ImGui::GetColorU32(ui::ReadableOn(t, t.accent)),
+                      chip.initials.c_str());
+    };
+
     if (!project.empty()) {
-        ImGui::TextDisabled("%s %s", ICON_FA_FOLDER, project.c_str());
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", pm.GetProjectFilePath().c_str());
+        ImVec2 min, max;
+        if (chip_button("##project_chip", "##project_menu", project_w, min, max)) ImGui::OpenPopup("##project_menu");
+        if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##project_menu"))
+            ImGui::SetTooltip("%s", pm.GetProjectFilePath().c_str());
+        const float ty = text_y(ImGui::GetTextLineHeight());
+        draw->AddText(ImVec2(min.x + pad, ty), ImGui::GetColorU32(t.text_dim), project_text.c_str());
+        draw->AddText(ImVec2(max.x - pad - chevron_w, ty), ImGui::GetColorU32(t.text_faint), chevron);
+        ImGui::SetNextWindowPos(ImVec2(max.x, max.y), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+        if (ImGui::BeginPopup("##project_menu")) {
+            RenderMenuItems(model.project.items);
+            ImGui::EndPopup();
+        }
     }
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
-    if (ImGui::BeginMenu(account_label.c_str())) {
-        RenderMenuItems(model.account.items);
-        ImGui::EndMenu();
+    {
+        ImVec2 min, max;
+        if (chip_button("##account_chip", "##account_menu", account_w, min, max)) ImGui::OpenPopup("##account_menu");
+        if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##account_menu"))
+            ImGui::SetTooltip("%s", is_logged_in_ ? chip.email.c_str() : "Sign in to CyxWiz");
+        const float ty = text_y(ImGui::GetTextLineHeight());
+        if (is_logged_in_) {
+            float cx = min.x + pad;
+            avatar_circle(ImVec2(cx + avatar * 0.5f, bar_top + bar_h * 0.5f), avatar);
+            cx += avatar + gap;
+            draw->AddText(ImVec2(cx, ty), ImGui::GetColorU32(t.text), chip.short_name.c_str());
+            cx += ImGui::CalcTextSize(chip.short_name.c_str()).x + gap;
+            if (!chip.plan.empty()) cx += badge(ImVec2(cx, ty), chip.plan) + gap;
+            draw->AddText(ImVec2(cx, ty), ImGui::GetColorU32(t.text_faint), chevron);
+        } else {
+            draw->AddText(ImVec2(min.x + pad, ty), ImGui::GetColorU32(t.text), sign_in.c_str());
+        }
+        ImGui::SetNextWindowPos(ImVec2(max.x, max.y), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+        if (ImGui::BeginPopup("##account_menu")) {
+            if (is_logged_in_) {
+                // Who you are: initials, name and plan, email.
+                const float big = std::round(avatar * 1.6f);
+                const ImVec2 at = ImGui::GetCursorScreenPos();
+                draw = ImGui::GetWindowDrawList();
+                avatar_circle(ImVec2(at.x + big * 0.5f, at.y + big * 0.5f), big);
+                ImGui::Dummy(ImVec2(big, big));
+                ImGui::SameLine(0.0f, 10.0f);
+                ImGui::BeginGroup();
+                ImGui::TextColored(t.text_bright, "%s", chip.full_name.c_str());
+                if (!chip.plan.empty()) {
+                    ImGui::SameLine(0.0f, gap);
+                    const float w = badge(ImGui::GetCursorScreenPos(), chip.plan);
+                    ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight()));
+                }
+                ImGui::TextColored(t.text_dim, "%s", chip.email.c_str());
+                ImGui::EndGroup();
+                ImGui::Separator();
+            }
+            RenderMenuItems(model.account.items);
+            ImGui::EndPopup();
+        }
     }
-    if (ImGui::IsItemHovered() && is_logged_in_) ImGui::SetTooltip("%s", logged_in_user_.c_str());
-    ImGui::PopStyleVar();
     ImGui::EndMainMenuBar();
 }
 
@@ -621,12 +799,38 @@ void ToolbarPanel::BuildActionHandlers() {
     h["help.browse_tutorials"] = [](const std::string&) { TutorialSystem::Instance().OpenTutorialBrowser(); };
     h["help.shortcuts"] = [this](const std::string&) { OpenPreferences("Shortcuts"); };
     h["help.report_issue"] = [](const std::string&) { ui::OpenUrl("https://github.com/CYXWIZ-Lab/CYXWIZ/issues"); };
+    h["help.documentation"] = [](const std::string&) { ui::OpenUrl(kDocsUrl); };
+    h["help.api_reference"] = [](const std::string&) { ui::OpenUrl(kApiUrl); };
+    h["help.whats_new"] = [](const std::string&) { ui::OpenUrl(kReleaseNotesUrl); };
+    h["help.known_issues"] = [](const std::string&) {
+        const std::string& path = KnownIssuesPath();
+        if (path.empty()) return;
+        // No program opens .md files on some machines: then show the file.
+        if (!ui::OpenUrl(path)) ui::ShowInFileManager(path);
+    };
+    h["help.open_logs"] = [](const std::string&) {
+        const auto log = core::ExecutableDirectory() / "engine_log.txt";
+        std::error_code ec;
+        ui::ShowInFileManager(std::filesystem::exists(log, ec) ? log.string() : log.parent_path().string());
+    };
+    h["view.fullscreen"] = [](const std::string&) { ToggleFullscreen(); };
+    h["file.show_project_folder"] = [](const std::string&) {
+        auto& projects = ProjectManager::Instance();
+        if (projects.HasActiveProject()) ui::ShowInFileManager(projects.GetProjectRoot());
+    };
+    h["file.copy_project_path"] = [](const std::string&) {
+        auto& projects = ProjectManager::Instance();
+        if (!projects.HasActiveProject()) return;
+        ImGui::SetClipboardText(projects.GetProjectFilePath().c_str());
+        spdlog::info("Copied the project's path: {}", projects.GetProjectFilePath());
+    };
     h["help.about"] = [this](const std::string&) { about_dialog_.Open(); };
 
     // Account
     h["account.settings"] = [this](const std::string&) { show_account_settings_dialog_ = true; };
     h["account.sign_in"] = [this](const std::string&) { show_account_settings_dialog_ = true; };
     h["account.wallet"] = [](const std::string&) { ShowSidebarPanel("Wallet", false); };
+    h["account.servers"] = [this](const std::string&) { OpenPreferences("Servers"); };
     h["account.sign_out"] = [this](const std::string&) {
         auth::AuthClient::Instance().Logout();
         is_logged_in_ = false;

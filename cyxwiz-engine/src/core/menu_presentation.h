@@ -76,7 +76,14 @@ struct MenuInputs {
     int selected_nodes = 0;
     TrainingState training = TrainingState::Idle;
     bool signed_in = false;
-    std::string user_display_name;
+    // The signed-in account (auth::UserInfo): name, user name, email, plan.
+    std::string user_name;
+    std::string user_username;
+    std::string user_email;
+    std::string user_role;  // "user", "pro", "admin"
+    bool fullscreen = false;
+    // KNOWN_ISSUES.md ships beside the Engine (found by the toolbar).
+    bool known_issues_found = false;
     bool script_open = false;
     bool script_running = false;
     bool onnx_export_available = false;
@@ -133,9 +140,22 @@ struct Menu {
     std::vector<MenuItem> items;
 };
 
+// The account at the top-right corner of the menu bar (TOFIX129 A3b).
+struct AccountChip {
+    std::string initials;    // "SU": the first letters of the name's first two words
+    std::string short_name;  // shown on the bar: the first name when the whole is long
+    std::string full_name;   // the name, else the user name, else the email
+    std::string email;
+    std::string plan;        // "Pro", "Admin"; empty for the free plan
+};
+AccountChip AccountChipFor(const std::string& name, const std::string& username, const std::string& email,
+                           const std::string& role);
+
 struct MenuModel {
     std::vector<Menu> menus;  // File to Help, in drawn order
-    Menu account;             // the avatar menu at the right of the bar
+    Menu account;             // the account menu at the right of the bar
+    AccountChip account_chip; // signed in only
+    Menu project;             // the open project's menu, left of the account
 };
 
 MenuModel BuildMenuModel(const MenuInputs& inputs);

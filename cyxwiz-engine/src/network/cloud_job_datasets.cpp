@@ -22,7 +22,8 @@ int64_t CloudAccessTtlSeconds(int64_t reservation_end_unix, int64_t now_unix) {
 
 bool FillCloudJobDatasets(const cyxwiz::GraphJobDatasetPlan& plan, DataStreamClient* client,
                           const std::string& gateway_address, int64_t ttl_seconds,
-                          cyxwiz::protocol::JobConfig& config, std::string& error) {
+                          cyxwiz::protocol::JobConfig& config, std::string& error,
+                          std::vector<std::string>* token_ids) {
     if (plan.cloud.empty()) {
         config.clear_cloud_datasets();
         return true;
@@ -39,6 +40,7 @@ bool FillCloudJobDatasets(const cyxwiz::GraphJobDatasetPlan& plan, DataStreamCli
 
     // One token per dataset; several files of one dataset share it.
     std::map<std::string, std::string> tokens;
+    std::vector<std::string> issued_ids;
     google::protobuf::RepeatedPtrField<cyxwiz::protocol::CloudDatasetSource> sources;
     for (const auto& entry : plan.cloud) {
         auto token = tokens.find(entry.dataset_id);
@@ -47,8 +49,10 @@ bool FillCloudJobDatasets(const cyxwiz::GraphJobDatasetPlan& plan, DataStreamCli
             if (!client->CreateAccessToken(entry.dataset_id, issued, /*node_id=*/"", ttl_seconds)) {
                 error = "CyxCloud refused an access token for dataset '" + entry.dataset_name + "': " +
                         client->GetLastError();
+                RevokeCloudJobTokens(client, issued_ids);  // the job is not sent
                 return false;
             }
+            issued_ids.push_back(issued.token_id);
             token = tokens.emplace(entry.dataset_id, issued.token).first;
         }
         auto* source = sources.Add();
@@ -60,9 +64,30 @@ bool FillCloudJobDatasets(const cyxwiz::GraphJobDatasetPlan& plan, DataStreamCli
         source->set_file_name(entry.file_name);
     }
     config.mutable_cloud_datasets()->Swap(&sources);
+    if (token_ids) token_ids->insert(token_ids->end(), issued_ids.begin(), issued_ids.end());
     spdlog::info("Job {}: {} dataset(s) come from CyxCloud at {} ({} token(s), {} s)", config.job_id(),
                  plan.cloud.size(), gateway_address, tokens.size(), ttl_seconds);
     return true;
+}
+
+int RevokeCloudJobTokens(DataStreamClient* client, const std::vector<std::string>& token_ids) {
+    if (token_ids.empty()) return 0;
+    if (!client || !client->IsConnected()) {
+        spdlog::warn("{} CyxCloud dataset token(s) not revoked: no CyxCloud connection (they expire with their TTL)",
+                     token_ids.size());
+        return 0;
+    }
+    int revoked = 0;
+    for (const auto& id : token_ids) {
+        if (id.empty()) continue;
+        if (client->RevokeAccessToken(id)) {
+            ++revoked;
+        } else {
+            spdlog::warn("CyxCloud dataset token {} not revoked: {}", id, client->GetLastError());
+        }
+    }
+    spdlog::info("Revoked {} of {} CyxCloud dataset token(s)", revoked, token_ids.size());
+    return revoked;
 }
 
 }  // namespace network

@@ -117,6 +117,13 @@ public:
     std::string GetServerAddress() const;
     void SetServerAddress(const std::string& address);
 
+    // The server's private CA (a PEM file, a test server's ca.crt), for an
+    // https:// server whose certificate no public authority signed; empty
+    // means the system's trusted roots. Saved with the server address and
+    // applied to every connection at once (cyxwiz-protocol SetServerCaFile).
+    std::string GetServerCaFile() const;
+    void SetServerCaFile(const std::string& path);
+
     // The per-service keys as saved, for Preferences > Servers; the getters
     // below give the addresses in effect. An empty gateway follows central.
     struct SeparateAddresses {
@@ -303,6 +310,7 @@ private:
 
     // Server addresses
     std::string server_address_;  // servers.cyxwiz; empty = the keys below
+    std::string server_ca_file_;  // servers.ca_file; empty = the system's roots
     std::string central_server_address_;
     std::string cloud_gateway_address_;  // as configured; empty = derived
     std::string auth_api_url_;

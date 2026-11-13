@@ -65,6 +65,7 @@ add_library(cyxwiz-protocol STATIC
     common/server_address.cpp
     common/server_address_view.cpp
     common/server_address_probe.cpp
+    common/server_ca_view.cpp
 )
 
 target_include_directories(cyxwiz-protocol
@@ -82,6 +83,8 @@ target_link_libraries(cyxwiz-protocol PUBLIC
     gRPC::grpc++
     gRPC::grpc++_reflection
 )
+# server_ca_view: the CA certificate's SHA-256 fingerprint
+target_link_libraries(cyxwiz-protocol PRIVATE OpenSSL::Crypto)
 
 # Protobuf compatibility flags for Windows
 if(WIN32)

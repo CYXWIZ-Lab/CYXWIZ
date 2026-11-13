@@ -5,6 +5,7 @@
 // CPPHTTPLIB_OPENSSL_SUPPORT comes from CMake for the whole target, so every
 // file that includes httplib.h sees the same class layout.
 #include <httplib.h>
+#include "common/server_http_trust.h"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <fstream>
@@ -230,9 +231,9 @@ AuthResult AuthManager::DoLogin(const std::string& endpoint, const std::string& 
         if (use_ssl) {
             // Use SSL client for HTTPS
             httplib::SSLClient ssl_client(host, port);
+            cyxwiz::protocol::TrustServer(ssl_client);
             ssl_client.set_connection_timeout(10);
             ssl_client.set_read_timeout(30);
-            ssl_client.enable_server_certificate_verification(true);
             res = ssl_client.Post(full_path.c_str(), json_body, "application/json");
         } else {
             // Use regular client for HTTP
@@ -361,6 +362,7 @@ bool AuthManager::FetchUserProfile() {
         // The scheme decides TLS: this call used plain HTTP even for an
         // https:// service (TOFIX168)
         httplib::Client client((https ? "https://" : "http://") + host + ":" + port);
+        cyxwiz::protocol::TrustServer(client);
         client.set_connection_timeout(10);
         client.set_read_timeout(30);
 
@@ -617,9 +619,9 @@ int AuthManager::HttpGet(const std::string& url, std::string* body) {
         httplib::Result res;
         if (use_ssl) {
             httplib::SSLClient client(host, port);
+            cyxwiz::protocol::TrustServer(client);
             client.set_connection_timeout(3);
             client.set_read_timeout(3);
-            client.enable_server_certificate_verification(true);
             res = client.Get(path);
         } else {
             httplib::Client client(host, port);
@@ -1007,9 +1009,9 @@ std::future<NodeRegistrationResult> AuthManager::RegisterNodeWithApi(
 
             if (use_ssl) {
                 httplib::SSLClient ssl_client(host, port);
+                cyxwiz::protocol::TrustServer(ssl_client);
                 ssl_client.set_connection_timeout(10);
                 ssl_client.set_read_timeout(30);
-                ssl_client.enable_server_certificate_verification(true);
 
                 httplib::Headers headers = {
                     {"Authorization", "Bearer " + jwt},
@@ -1149,6 +1151,7 @@ bool AuthManager::SendHeartbeatToApi(bool is_online) {
 
         if (use_ssl) {
             httplib::SSLClient ssl_client(host, port);
+            cyxwiz::protocol::TrustServer(ssl_client);
             ssl_client.set_connection_timeout(5);
             ssl_client.set_read_timeout(10);
             res = ssl_client.Post(full_path.c_str(), body.dump(), "application/json");
@@ -1273,6 +1276,7 @@ bool AuthManager::SyncNodeIdWithWebApi(const std::string& central_server_node_id
         // used plain HTTP for an https:// service and turned verification
         // off (TOFIX168)
         auto cli = std::make_unique<httplib::Client>(protocol + "://" + host + ":" + std::to_string(port));
+        cyxwiz::protocol::TrustServer(*cli);
         cli->set_connection_timeout(10);
         cli->set_read_timeout(10);
         

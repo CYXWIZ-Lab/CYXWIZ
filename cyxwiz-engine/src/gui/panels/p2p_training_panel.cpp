@@ -117,6 +117,10 @@ void P2PTrainingPanel::StartMonitoring(const std::string& job_id, const std::str
         checkpoints_job_id_ = job_id;
     }
     log_entries_.clear();
+    // The previous job's weights and export path belong to that job: a new
+    // job on another node otherwise offered them, and its export overwrote
+    // the first job's file (found 2026-11-11, Dell then Mac).
+    ResetDownloadState();
 
     // Re-enable control buttons for new training
     pause_button_enabled_ = true;
@@ -125,6 +129,16 @@ void P2PTrainingPanel::StartMonitoring(const std::string& job_id, const std::str
     checkpoint_button_enabled_ = true;
 
     AddLogEntry("INFO", "Started monitoring job " + job_id);
+}
+
+void P2PTrainingPanel::ResetDownloadState() {
+    model_weights_location_.clear();
+    model_available_ = false;
+    downloading_model_ = false;
+    download_progress_ = 0.0f;
+    download_error_.clear();
+    std::memset(download_path_, 0, sizeof(download_path_));
+    export_format_ = 0;
 }
 
 void P2PTrainingPanel::StopMonitoring() {
@@ -168,14 +182,7 @@ void P2PTrainingPanel::Clear() {
     checkpoint_history_.clear();
     log_entries_.clear();
 
-    // Reset download state
-    model_weights_location_.clear();
-    model_available_ = false;
-    downloading_model_ = false;
-    download_progress_ = 0.0f;
-    download_error_.clear();
-    std::memset(download_path_, 0, sizeof(download_path_));
-    export_format_ = 0;
+    ResetDownloadState();
 
     // Reset training config
     graph_json_.clear();

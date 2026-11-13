@@ -45,8 +45,10 @@ network:
   key_path: ""
   ca_path: ""
 
-  # P2P authentication secret (must match Central Server)
-  p2p_secret: "your-super-secret-jwt-key-change-in-production"
+  # File holding the P2P secret (the central server's jwt.p2p_secret), which
+  # validates the Engine's tokens. Relative to this file's folder; keep the file
+  # to its owner (chmod 600). Never put the secret itself here.
+  p2p_secret_file: "p2p.secret"
 
 training:
   enabled: true

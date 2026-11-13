@@ -137,7 +137,14 @@ TEST_CASE("Neural provider registry answers truthfully",
          "device is present");
     CHECK(found_nvidia);
 #else
-    CHECK(providers.empty());
+    // No NVIDIA provider in this build. Other built-in tenants (OpenCL,
+    // oneAPI) register themselves when their probe succeeds, which
+    // depends on the device active when the registry is first used: after
+    // earlier tests switched ArrayFire to OpenCL, the OpenCL tenant is
+    // there. So only a CUDA provider must be absent.
+    for (const auto& provider : providers) {
+        CHECK(provider->Platform() != cyxwiz::DeviceType::CUDA);
+    }
 #endif
 }
 
@@ -145,6 +152,16 @@ TEST_CASE("Neural provider registry dispatches on the selected device",
           "[gpu_execution][neural_provider]") {
     using cyxwiz::DeviceType;
     auto& registry = cyxwiz::NeuralProviderRegistry::Instance();
+    // The stubs leave the process-wide registry when this test ends, pass or
+    // fail: tests run in random order, and a CUDA stub left behind made later
+    // tests see a CUDA provider that serves nothing.
+    struct StubsRemoved {
+        cyxwiz::NeuralProviderRegistry& registry;
+        ~StubsRemoved() {
+            registry.UnregisterForTesting("cyxwiz.test-stub-cuda");
+            registry.UnregisterForTesting("cyxwiz.test-stub-opencl");
+        }
+    } stubs_removed{registry};
     registry.Register(std::make_shared<PlatformStubProvider>(
         "cyxwiz.test-stub-cuda", DeviceType::CUDA));
     registry.Register(std::make_shared<PlatformStubProvider>(

@@ -59,6 +59,8 @@ void AllocationPanel::Update() {
         devices_initialized_ = true;
     }
 
+    FinishCentralCallIfDone();
+
     // Rate-limit daemon status checks to avoid excessive polling
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_status_check_).count();
@@ -513,7 +515,7 @@ void AllocationPanel::RenderActionButtons() {
     ImGui::PushStyleColor(ImGuiCol_Button, AllocColors::ButtonApply);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AllocColors::ButtonApplyHover);
 
-    ImGui::BeginDisabled(!HasAllocations() || is_applying_);
+    ImGui::BeginDisabled(!HasAllocations() || IsCentralCallRunning());
     if (ImGui::Button(ICON_FA_CHECK " Apply", ImVec2(100, 30))) {
         ApplyAllocations();
     }
@@ -528,7 +530,7 @@ void AllocationPanel::RenderActionButtons() {
         ImGui::PushStyleColor(ImGuiCol_Button, AllocColors::AccentRed);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.50f, 0.50f, 1.0f));
 
-        ImGui::BeginDisabled(is_applying_);
+        ImGui::BeginDisabled(IsCentralCallRunning());
         if (ImGui::Button(ICON_FA_LINK_SLASH " Disconnect", ImVec2(100, 30))) {
             DisconnectFromCentral();
         }
@@ -537,16 +539,17 @@ void AllocationPanel::RenderActionButtons() {
         ImGui::PopStyleColor(2);
     }
 
-    // Retry button (shown when connection failed)
+    // Retry (shown when connection failed) sends Apply again: the allocations
+    // with the signed-in user's token, the one way a node registers.
     if (show_retry_button_ && !is_connected_to_central_) {
         ImGui::SameLine();
 
         ImGui::PushStyleColor(ImGuiCol_Button, AllocColors::AccentOrange);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.75f, 0.45f, 1.0f));
 
-        ImGui::BeginDisabled(is_applying_);
+        ImGui::BeginDisabled(IsCentralCallRunning());
         if (ImGui::Button(ICON_FA_ROTATE_RIGHT " Retry", ImVec2(100, 30))) {
-            RetryConnection();
+            ApplyAllocations();
         }
         ImGui::EndDisabled();
 
@@ -554,7 +557,10 @@ void AllocationPanel::RenderActionButtons() {
     }
 
     // Status message
-    if (!status_message_.empty()) {
+    if (IsCentralCallRunning()) {
+        ImGui::Spacing();
+        ImGui::TextColored(AllocColors::TextSecondary, "%s %s", ICON_FA_SPINNER, central_call_label_.c_str());
+    } else if (!status_message_.empty()) {
         ImGui::Spacing();
         ImVec4 msg_color = connection_failed_ ? AllocColors::AccentRed : AllocColors::AccentGreen;
         ImGui::TextColored(msg_color, "%s", status_message_.c_str());
@@ -722,20 +728,17 @@ void AllocationPanel::ApplyAllocations() {
     // Reset state
     show_retry_button_ = false;
     connection_failed_ = false;
-    is_applying_ = true;
 
     // Check if user is logged in
     auto& auth = auth::AuthManager::Instance();
     if (!auth.IsAuthenticated()) {
         status_message_ = "Please log in first to connect to Central Server";
-        is_applying_ = false;
         return;
     }
 
     // Check if daemon is connected
     if (!IsDaemonConnected() || !GetDaemonClient()) {
         status_message_ = "Not connected to daemon";
-        is_applying_ = false;
         return;
     }
 
@@ -760,74 +763,35 @@ void AllocationPanel::ApplyAllocations() {
     // Get JWT token
     std::string jwt_token = auth.GetJwtToken();
 
-    // Call daemon to set allocations and connect to Central Server
-    auto result = GetDaemonClient()->SetAllocations(ipc_allocations, jwt_token, true);
-
-    is_applying_ = false;
-
-    if (result.success) {
-        if (result.connected_to_central) {
-            status_message_ = "Connected to Central Server! Node ID: " + result.node_id;
-            show_retry_button_ = false;
-            connection_failed_ = false;
-            is_connected_to_central_ = true;
-
-            // Sync node_id with Web API so website shows Central Server ID
-            if (!result.node_id.empty()) {
-                bool synced = auth.SyncNodeIdWithWebApi(result.node_id);
-                if (synced) {
-                    spdlog::info("Node ID synced with Web API: {}", result.node_id);
-                } else {
-                    spdlog::warn("Failed to sync node_id with Web API");
+    // Set the allocations and connect to Central Server, then tell the web API
+    auto* daemon = GetDaemonClient();
+    StartCentralCall("Connecting to Central Server...",
+        [daemon, ipc_allocations = std::move(ipc_allocations), jwt_token = std::move(jwt_token)]() {
+            CentralCallOutcome outcome;
+            outcome.kind = CentralCallOutcome::Kind::Apply;
+            auto result = daemon->SetAllocations(ipc_allocations, jwt_token, true);
+            outcome.success = result.success;
+            outcome.connected = result.connected_to_central;
+            outcome.node_id = result.node_id;
+            outcome.message = result.message;
+            if (result.success && result.connected_to_central) {
+                auto& auth = auth::AuthManager::Instance();
+                // Sync node_id with Web API so website shows Central Server ID
+                if (!result.node_id.empty()) {
+                    if (auth.SyncNodeIdWithWebApi(result.node_id)) {
+                        spdlog::info("Node ID synced with Web API: {}", result.node_id);
+                    } else {
+                        spdlog::warn("Failed to sync node_id with Web API");
+                    }
+                }
+                // Send immediate online heartbeat to Web API
+                if (auth.IsNodeRegistered()) {
+                    spdlog::info("Sending online heartbeat to Web API...");
+                    auth.SendHeartbeatToApi(true);  // true = online
                 }
             }
-
-            // Send immediate online heartbeat to Web API
-            if (auth.IsNodeRegistered()) {
-                spdlog::info("Sending online heartbeat to Web API...");
-                auth.SendHeartbeatToApi(true);  // true = online
-            }
-        } else {
-            status_message_ = "Allocations saved (offline mode)";
-        }
-    } else {
-        status_message_ = "Connection failed: " + result.message;
-        show_retry_button_ = true;
-        connection_failed_ = true;
-    }
-}
-
-void AllocationPanel::RetryConnection() {
-    if (!IsDaemonConnected() || !GetDaemonClient()) {
-        status_message_ = "Not connected to daemon";
-        return;
-    }
-
-    is_applying_ = true;
-    auto result = GetDaemonClient()->RetryConnection();
-    is_applying_ = false;
-
-    if (result.success && result.connected) {
-        status_message_ = "Connected to Central Server! Node ID: " + result.node_id;
-        show_retry_button_ = false;
-        connection_failed_ = false;
-        is_connected_to_central_ = true;
-
-        // Sync node_id with Web API so website shows Central Server ID
-        if (!result.node_id.empty()) {
-            auto& auth = auth::AuthManager::Instance();
-            bool synced = auth.SyncNodeIdWithWebApi(result.node_id);
-            if (synced) {
-                spdlog::info("Node ID synced with Web API: {}", result.node_id);
-            } else {
-                spdlog::warn("Failed to sync node_id with Web API");
-            }
-        }
-    } else {
-        status_message_ = "Retry failed: " + result.message;
-        show_retry_button_ = true;
-        connection_failed_ = true;
-    }
+            return outcome;
+        });
 }
 
 void AllocationPanel::DisconnectFromCentral() {
@@ -836,27 +800,66 @@ void AllocationPanel::DisconnectFromCentral() {
         return;
     }
 
-    is_applying_ = true;
-    auto result = GetDaemonClient()->DisconnectFromCentral();
-    is_applying_ = false;
+    auto* daemon = GetDaemonClient();
+    StartCentralCall("Disconnecting from Central Server...", [daemon]() {
+        CentralCallOutcome outcome;
+        outcome.kind = CentralCallOutcome::Kind::Disconnect;
+        auto result = daemon->DisconnectFromCentral();
+        outcome.success = result.success;
+        outcome.message = result.message;
+        if (result.success) {
+            spdlog::info("Disconnected from Central Server");
+            // Send immediate offline heartbeat to Web API
+            auto& auth = auth::AuthManager::Instance();
+            if (auth.IsNodeRegistered()) {
+                spdlog::info("Sending offline heartbeat to Web API...");
+                auth.SendHeartbeatToApi(false);  // false = offline
+            }
+        } else {
+            spdlog::error("Failed to disconnect: {}", result.message);
+        }
+        return outcome;
+    });
+}
 
-    if (result.success) {
-        status_message_ = "Disconnected from Central Server";
-        is_connected_to_central_ = false;
+void AllocationPanel::StartCentralCall(std::string label, std::function<CentralCallOutcome()> call) {
+    if (IsCentralCallRunning()) return;
+    central_call_label_ = std::move(label);
+    central_call_ = std::async(std::launch::async, std::move(call));
+}
+
+void AllocationPanel::FinishCentralCallIfDone() {
+    if (!IsCentralCallRunning() ||
+        central_call_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return;
+    }
+    const CentralCallOutcome outcome = central_call_.get();
+    using Kind = CentralCallOutcome::Kind;
+
+    if (outcome.kind == Kind::Disconnect) {
+        if (outcome.success) {
+            status_message_ = "Disconnected from Central Server";
+            is_connected_to_central_ = false;
+            show_retry_button_ = false;
+            connection_failed_ = false;
+        } else {
+            status_message_ = "Disconnect failed: " + outcome.message;
+            connection_failed_ = true;
+        }
+        return;
+    }
+
+    if (outcome.success && outcome.connected) {
+        status_message_ = "Connected to Central Server! Node ID: " + outcome.node_id;
         show_retry_button_ = false;
         connection_failed_ = false;
-        spdlog::info("Disconnected from Central Server");
-
-        // Send immediate offline heartbeat to Web API
-        auto& auth = auth::AuthManager::Instance();
-        if (auth.IsNodeRegistered()) {
-            spdlog::info("Sending offline heartbeat to Web API...");
-            auth.SendHeartbeatToApi(false);  // false = offline
-        }
+        is_connected_to_central_ = true;
+    } else if (outcome.kind == Kind::Apply && outcome.success) {
+        status_message_ = "Allocations saved (offline mode)";
     } else {
-        status_message_ = "Disconnect failed: " + result.message;
+        status_message_ = "Connection failed: " + outcome.message;
+        show_retry_button_ = true;
         connection_failed_ = true;
-        spdlog::error("Failed to disconnect: {}", result.message);
     }
 }
 

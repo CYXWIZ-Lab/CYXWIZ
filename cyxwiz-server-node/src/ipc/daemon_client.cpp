@@ -101,6 +101,7 @@ bool DaemonClient::Connect(const std::string& address) {
 }
 
 bool DaemonClient::Connect(const std::string& address, const TLSConnectionSettings& tls_settings) {
+    StopWatch();  // it reads channel_, which is replaced below
     if (connected_.load()) {
         Disconnect();
     }
@@ -120,6 +121,9 @@ bool DaemonClient::Connect(const std::string& address, const TLSConnectionSettin
     grpc::ChannelArguments args;
     args.SetInt(GRPC_ARG_KEEPALIVE_TIME_MS, 10000);
     args.SetInt(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 5000);
+    // A restarted daemon is found within ~2 s (gRPC's default back-off grows to 2 min).
+    args.SetInt(GRPC_ARG_INITIAL_RECONNECT_BACKOFF_MS, 500);
+    args.SetInt(GRPC_ARG_MAX_RECONNECT_BACKOFF_MS, 2000);
 
     // Override server name if specified (for TLS verification)
     if (tls_settings.enabled && !tls_settings.target_name_override.empty()) {
@@ -134,19 +138,22 @@ bool DaemonClient::Connect(const std::string& address, const TLSConnectionSettin
         return false;
     }
 
+    // The stub exists from here on, so the watch can mark the client connected
+    // when a daemon that is not up yet starts.
+    stub_ = std::make_unique<DaemonServiceStub>();
+    stub_->stub = DaemonService::NewStub(channel_);
+    tls_enabled_.store(tls_settings.enabled);
+
     // Wait for connection with timeout
     auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
     if (!channel_->WaitForConnected(deadline)) {
-        spdlog::error("Failed to connect to daemon at {} (timeout)", address);
+        spdlog::error("Failed to connect to daemon at {} (timeout); retrying in the background", address);
+        StartWatch();
         return false;
     }
 
-    // Create stub
-    stub_ = std::make_unique<DaemonServiceStub>();
-    stub_->stub = DaemonService::NewStub(channel_);
-
     connected_.store(true);
-    tls_enabled_.store(tls_settings.enabled);
+    StartWatch();
 
     if (tls_settings.enabled) {
         spdlog::info("Connected to daemon at {} with TLS encryption", address);
@@ -218,7 +225,32 @@ void DaemonClient::ConnectAsync(const std::string& address) {
     }).detach();
 }
 
+void DaemonClient::StartWatch() {
+    StopWatch();
+    watch_stop_.store(false);
+    watch_thread_ = std::thread([this, address = address_]() {
+        while (!watch_stop_.load()) {
+            if (!connected_.load() && channel_ && stub_) {
+                // Asks the channel to connect; returns once it is ready or after 1 s.
+                if (channel_->WaitForConnected(std::chrono::system_clock::now() + std::chrono::seconds(1))) {
+                    connected_.store(true);
+                    spdlog::info("Connected to daemon at {} (it answered after a wait)", address);
+                }
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+        }
+    });
+}
+
+void DaemonClient::StopWatch() {
+    watch_stop_.store(true);
+    if (watch_thread_.joinable()) watch_thread_.join();
+}
+
 void DaemonClient::Disconnect() {
+    StopWatch();  // it reads channel_, which is reset below
+
     // Stop all streams
     StopMetricsStream();
     StopJobUpdatesStream();
@@ -1542,41 +1574,6 @@ SetAllocationsResult DaemonClient::SetAllocations(
                      result.connected_to_central, result.node_id);
     } else {
         spdlog::warn("SetAllocations failed: {}", result.message);
-    }
-
-    return result;
-}
-
-RetryConnectionResult DaemonClient::RetryConnection() {
-    RetryConnectionResult result;
-
-    if (!connected_.load() || !stub_) {
-        result.message = "Not connected to daemon";
-        return result;
-    }
-
-    grpc::ClientContext context;
-    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(30));
-
-    RetryConnectionRequest request;
-    RetryConnectionResponse response;
-
-    auto status = stub_->stub->RetryConnection(&context, request, &response);
-    if (!status.ok()) {
-        result.message = "RPC failed: " + status.error_message();
-        spdlog::error("RetryConnection RPC failed: {}", status.error_message());
-        return result;
-    }
-
-    result.success = response.success();
-    result.message = response.error_message();
-    result.connected = response.connected_to_central();
-    result.node_id = response.node_id();
-
-    if (result.success) {
-        spdlog::info("RetryConnection succeeded: connected={}", result.connected);
-    } else {
-        spdlog::warn("RetryConnection failed: {}", result.message);
     }
 
     return result;

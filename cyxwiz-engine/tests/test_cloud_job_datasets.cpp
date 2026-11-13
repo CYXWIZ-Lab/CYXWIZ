@@ -26,16 +26,27 @@ bool Contains(const std::string& text, const std::string& part) { return text.fi
 class FakeDataStream final : public cyxcloud::datastream::DataStreamService::Service {
 public:
     std::vector<cyxcloud::datastream::CreateAccessTokenRequest> requests;
+    std::vector<std::string> revoked;
     bool refuse = false;
+    size_t refuse_from = 0;  // refuse the n-th and later requests (0: as `refuse`)
 
     grpc::Status CreateAccessToken(grpc::ServerContext*, const cyxcloud::datastream::CreateAccessTokenRequest* request,
                                    cyxcloud::datastream::AccessTokenResponse* response) override {
         requests.push_back(*request);
-        if (refuse) return grpc::Status(grpc::StatusCode::PERMISSION_DENIED, "No access to dataset");
+        if (refuse || (refuse_from > 0 && requests.size() >= refuse_from)) {
+            return grpc::Status(grpc::StatusCode::PERMISSION_DENIED, "No access to dataset");
+        }
         response->set_token("tok-" + request->dataset_id());
         response->set_token_id("id-" + request->dataset_id());
         response->set_expires_at(1'900'000'000);
         for (const auto& scope : request->scopes()) response->add_scopes(scope);
+        return grpc::Status::OK;
+    }
+
+    grpc::Status RevokeAccessToken(grpc::ServerContext*, const cyxcloud::datastream::RevokeAccessTokenRequest* request,
+                                   cyxcloud::datastream::RevokeAccessTokenResponse* response) override {
+        revoked.push_back(request->token_id());
+        response->set_success(true);
         return grpc::Status::OK;
     }
 };
@@ -136,6 +147,35 @@ int main() {
         std::string error;
         Check(network::FillCloudJobDatasets({}, nullptr, "", 0, config, error), "nothing to do");
         Check(config.cloud_datasets_size() == 0, "cleared");
+    }
+
+    std::cout << "a finished job's tokens are revoked\n";
+    {
+        service.requests.clear();
+        service.revoked.clear();
+        cyxwiz::protocol::JobConfig config;
+        std::string error;
+        std::vector<std::string> ids;
+        Check(network::FillCloudJobDatasets(plan, &client, "gw.local:50060", 3600, config, error, &ids),
+              "filled: " + error);
+        Check(ids == std::vector<std::string>{"id-dataset-a", "id-dataset-b"}, "the minted token ids come back");
+        Check(network::RevokeCloudJobTokens(&client, ids) == 2, "both revoked");
+        Check(service.revoked == ids, "the gateway was asked to revoke exactly those");
+        Check(network::RevokeCloudJobTokens(nullptr, ids) == 0, "no client: nothing revoked, no crash");
+    }
+
+    std::cout << "a refusal half way revokes the tokens already minted\n";
+    {
+        service.requests.clear();
+        service.revoked.clear();
+        service.refuse_from = 2;  // the second dataset is refused
+        cyxwiz::protocol::JobConfig config;
+        std::string error;
+        std::vector<std::string> ids;
+        Check(!network::FillCloudJobDatasets(plan, &client, "gw.local:50060", 3600, config, error, &ids), "refused");
+        Check(ids.empty(), "no ids handed back for a job that is not sent");
+        Check(service.revoked == std::vector<std::string>{"id-dataset-a"}, "the first dataset's token was revoked");
+        service.refuse_from = 0;
     }
 
     std::cout << "token life follows the reservation\n";

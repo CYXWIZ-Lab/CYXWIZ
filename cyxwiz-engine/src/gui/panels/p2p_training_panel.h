@@ -102,6 +102,9 @@ private:
     // Helper methods
     void UpdateETA();
     void AddLogEntry(const std::string& level, const std::string& message);
+    // Forgets the last job's weights: where they are, the export path and
+    // download progress (caller holds data_mutex_).
+    void ResetDownloadState();
     std::string FormatDuration(uint64_t seconds);
 
     // P2P client

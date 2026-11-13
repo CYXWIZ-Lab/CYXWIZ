@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace network {
 
@@ -20,9 +21,17 @@ class DataStreamClient;
 // address the node will call). Files of one dataset share its token. False
 // with the reason (no CyxCloud connection, gateway refusal); config is then
 // left as it was. An empty plan.cloud clears config.cloud_datasets.
+// `token_ids`, when given, receives the id of every token minted, so the
+// caller can revoke them when the job ends.
 bool FillCloudJobDatasets(const cyxwiz::GraphJobDatasetPlan& plan, DataStreamClient* client,
                           const std::string& gateway_address, int64_t ttl_seconds,
-                          cyxwiz::protocol::JobConfig& config, std::string& error);
+                          cyxwiz::protocol::JobConfig& config, std::string& error,
+                          std::vector<std::string>* token_ids = nullptr);
+
+// Revoke a finished job's dataset access tokens (the node has its files by
+// then). Best effort: a token that cannot be revoked still expires with its
+// TTL; each refusal is logged. Returns how many were revoked.
+int RevokeCloudJobTokens(DataStreamClient* client, const std::vector<std::string>& token_ids);
 
 // How long a job's dataset access tokens live: until the reservation ends
 // plus a margin, or a day when the end is unknown (TOFIX164).

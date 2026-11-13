@@ -6,6 +6,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
+#include <fstream>
+#include <mutex>
+#include <sstream>
 
 namespace cyxwiz::protocol {
 namespace {
@@ -53,7 +57,150 @@ ServerEndpoints Error(std::string message) {
     return e;
 }
 
+std::string Lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+    return s;
+}
+
+bool EndsWith(const std::string& s, const std::string& suffix) {
+    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// "a.b.c.d" -> the four octets
+bool ParseIpv4(const std::string& s, unsigned out[4]) {
+    std::istringstream in(s);
+    std::string part;
+    int n = 0;
+    while (std::getline(in, part, '.')) {
+        // a leading zero is octal to the system resolver ("010" is 8): not
+        // the number it looks like, so not an address we judge
+        if (n == 4 || part.empty() || part.size() > 3 || (part.size() > 1 && part[0] == '0') ||
+            !std::all_of(part.begin(), part.end(), [](unsigned char c) { return std::isdigit(c); })) {
+            return false;
+        }
+        const unsigned v = static_cast<unsigned>(std::stoul(part));
+        if (v > 255) return false;
+        out[n++] = v;
+    }
+    return n == 4 && s.back() != '.';
+}
+
+bool PrivateIpv4(const unsigned o[4]) {
+    return o[0] == 127 || o[0] == 10 || (o[0] == 172 && o[1] >= 16 && o[1] <= 31) ||
+           (o[0] == 192 && o[1] == 168) || (o[0] == 169 && o[1] == 254) ||
+           (o[0] == 100 && (o[1] & 0xc0) == 64);
+}
+
+// The first 16-bit group of an IPv6 literal and whether it is "::1"; an
+// "::ffff:a.b.c.d" literal gives its IPv4 part instead.
+bool PrivateIpv6(const std::string& ip) {
+    if (ip == "::1") return true;
+    const auto last_colon = ip.rfind(':');
+    if (StartsWith(ip, "::ffff:") && last_colon != std::string::npos) {
+        unsigned o[4];
+        return ParseIpv4(ip.substr(last_colon + 1), o) && PrivateIpv4(o);
+    }
+    const auto first_colon = ip.find(':');
+    if (first_colon == 0 || first_colon == std::string::npos || first_colon > 4) return false;
+    const std::string group = ip.substr(0, first_colon);
+    if (!std::all_of(group.begin(), group.end(), [](unsigned char c) { return std::isxdigit(c); })) return false;
+    const unsigned first = static_cast<unsigned>(std::stoul(group, nullptr, 16));
+    return (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80;
+}
+
+std::string StripBrackets(std::string host) {
+    host = Trim(host);
+    if (!host.empty() && host.front() == '[') host.erase(0, 1);
+    if (!host.empty() && host.back() == ']') host.pop_back();
+    while (!host.empty() && host.back() == '.') host.pop_back();
+    return Lower(host);
+}
+
+ServerEndpoints PlainToThePublic(const std::string& typed, const std::string& host) {
+    return Error("'" + typed + "' is plain http:// to " + host +
+                 ", which is not on this machine or a private network: your sign-in would cross the "
+                 "internet unencrypted. Use the server's https:// address.");
+}
+
+// A root set that holds no usable certificate: every handshake fails.
+constexpr const char* kNoRootVerifies = "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n";
+
+std::mutex& CaMutex() {
+    static std::mutex m;
+    return m;
+}
+std::string& CaPath() {
+    static std::string path;
+    return path;
+}
+
+// The CA's PEM text; "" with `error` set when the file cannot be used.
+std::string ReadCaPem(const std::string& path, std::string* error) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        *error = "the server's CA file " + path + " cannot be read";
+        return {};
+    }
+    std::ostringstream text;
+    text << in.rdbuf();
+    std::string pem = text.str();
+    if (pem.find("-----BEGIN CERTIFICATE-----") == std::string::npos) {
+        *error = "the server's CA file " + path + " holds no PEM certificate";
+        return {};
+    }
+    error->clear();
+    return pem;
+}
+
 }  // namespace
+
+bool PlainHttpAllowed(const std::string& host_in) {
+    const std::string host = StripBrackets(host_in);
+    if (host.empty()) return false;
+    // Only what a host name or an IP literal holds: "]", "#", "@", "\" and
+    // the like are URL tricks that move the real host, not a LAN host
+    if (!std::all_of(host.begin(), host.end(),
+                     [](unsigned char c) { return std::isalnum(c) || c == '.' || c == '-' || c == ':'; })) {
+        return false;
+    }
+    unsigned o[4];
+    if (ParseIpv4(host, o)) return PrivateIpv4(o);
+    if (host.find(':') != std::string::npos) return PrivateIpv6(host);
+    if (host == "localhost" || EndsWith(host, ".localhost")) return true;
+    if (host.find('.') == std::string::npos) {
+        // One label is a LAN name, unless it is a number the resolver reads
+        // as an IPv4 address ("134744072" and "0x8080808" are 8.8.8.8)
+        const bool number = std::all_of(host.begin(), host.end(), [](unsigned char c) { return std::isdigit(c); }) ||
+                            StartsWith(host, "0x");
+        return !number;
+    }
+    for (const char* suffix : {".local", ".lan", ".internal", ".home.arpa"}) {
+        if (EndsWith(host, suffix)) return true;
+    }
+    return false;
+}
+
+void SetServerCaFile(const std::string& path) {
+    std::lock_guard<std::mutex> lock(CaMutex());
+    CaPath() = Trim(path);
+}
+
+std::string ServerCaFile() {
+    {
+        std::lock_guard<std::mutex> lock(CaMutex());
+        if (!CaPath().empty()) return CaPath();
+    }
+    const char* env = std::getenv("CYXWIZ_CA_FILE");
+    return env ? Trim(env) : std::string();
+}
+
+std::string ServerCaError() {
+    const std::string path = ServerCaFile();
+    if (path.empty()) return {};
+    std::string error;
+    ReadCaPem(path, &error);
+    return error;
+}
 
 ServerEndpoints ResolveServerAddress(const std::string& typed) {
     std::string address = Trim(typed);
@@ -75,6 +222,10 @@ ServerEndpoints ResolveServerAddress(const std::string& typed) {
     const bool has_port = SplitPort(rest, &host, &port);
     if (host.empty() || (has_port && !ValidPort(port))) {
         return Error("'" + typed + "' has no usable host or port");
+    }
+
+    if (!https && !PlainHttpAllowed(host)) {
+        return PlainToThePublic(typed, host);
     }
 
     ServerEndpoints e;
@@ -131,9 +282,19 @@ std::shared_ptr<grpc::Channel> CreateServerChannel(const std::string& address) {
 std::shared_ptr<grpc::Channel> CreateServerChannel(const std::string& address,
                                                    const grpc::ChannelArguments& args) {
     const GrpcTarget t = ParseGrpcAddress(address);
-    auto credentials = t.tls ? grpc::SslCredentials(grpc::SslCredentialsOptions())
-                             : grpc::InsecureChannelCredentials();
-    return grpc::CreateCustomChannel(t.target, credentials, args);
+    if (!t.tls) {
+        return grpc::CreateCustomChannel(t.target, grpc::InsecureChannelCredentials(), args);
+    }
+    grpc::SslCredentialsOptions options;  // empty roots: the system's
+    const std::string ca_path = ServerCaFile();
+    if (!ca_path.empty()) {
+        std::string error;
+        options.pem_root_certs = ReadCaPem(ca_path, &error);
+        // A CA that cannot be read must not fall back to the public roots
+        // (they were not what the user asked to trust): no root verifies.
+        if (options.pem_root_certs.empty()) options.pem_root_certs = kNoRootVerifies;
+    }
+    return grpc::CreateCustomChannel(t.target, grpc::SslCredentials(options), args);
 }
 
 }  // namespace cyxwiz::protocol

@@ -41,9 +41,13 @@ What a node needs to agree on with the network:
 
 - **Central server address** (`--central-server=`): `localhost:50051` on the same
   PC; another machine on the LAN uses this PC's address, e.g. `192.168.1.10:50051`.
-- **P2P secret** (`--p2p-secret=`): must equal the central server's
-  `jwt.p2p_secret`, or the Engine's connection is refused with "Invalid or expired
-  auth token".
+- **P2P secret**: a file holding the central server's `jwt.p2p_secret`, passed
+  with `--p2p-secret-file=` (or `network.p2p_secret_file` in the config). The
+  daemon does not start without it, and outside Windows the file must be
+  readable by its owner only (`chmod 600`). Never pass the secret itself on the
+  command line: every user of the machine can read it in the process list. A
+  wrong secret makes the Engine's connection fail with "Invalid or expired auth
+  token".
 - **An account** on the website: the GUI signs in with it (web API at
   `http://127.0.0.1:3002/api`), and the node is registered to that owner.
 
@@ -51,7 +55,9 @@ What a node needs to agree on with the network:
 
 ```powershell
 cd D:\Dev\CyxWiz_Engine\build-tofix118\bin\Release
-.\cyxwiz-server-daemon.exe --central-server=localhost:50051 --p2p-secret=<P2P secret>
+# once: the secret in a file only you can read (P2P_SECRET of the server side)
+Set-Content -NoNewline -Path p2p.secret -Value '<P2P secret>'
+.\cyxwiz-server-daemon.exe --central-server=localhost:50051 --p2p-secret-file=p2p.secret
 .\cyxwiz-server-gui.exe     # second window
 ```
 
@@ -63,7 +69,8 @@ waiting for user allocation".
 ### On another machine on your network
 
 Copy the node build to the machine, then start the daemon with the central
-server PC's LAN address for `--central-server` and the same `--p2p-secret`. The central server's gRPC port (50051) must be reachable through
+server PC's LAN address for `--central-server` and a copy of the same secret
+file for `--p2p-secret-file` (`chmod 600` it on macOS and Linux). The central server's gRPC port (50051) must be reachable through
 the Windows firewall.
 
 ## 4. Options
@@ -71,11 +78,11 @@ the Windows firewall.
 | Option | Default | Meaning |
 |---|---|---|
 | `--central-server=ADDR` | `localhost:50051` | central server gRPC address |
-| `--p2p-secret=SECRET` | from the config file | verifies the Engine's tokens (central `jwt.p2p_secret`) |
+| `--p2p-secret-file=PATH` | `network.p2p_secret_file` (relative to the config file) | file holding the secret that verifies the Engine's tokens (central `jwt.p2p_secret`); required |
 | `--ipc-address=ADDR` | `localhost:50054` | where the GUI connects |
 | `--http-port=PORT` | `8082` | REST inference API (`/v1/predict`) |
 | `--inference-addr=ADDR` | `0.0.0.0:50057` | gRPC inference service |
-| `--config=PATH` | `~/.cyxwiz/daemon.yaml` | config file (the options above override it) |
+| `--config=PATH` | the first of `./config/server_config.yaml`, `./server_config.yaml`, `../config/server_config.yaml`, `%APPDATA%\CyxWiz\server_config.yaml` (`~/.config/cyxwiz/` elsewhere) | config file; the options above override it. A `--config` file that does not exist stops the daemon |
 | `--tls`, `--tls-cert=`, `--tls-key=`, `--tls-ca=`, `--tls-auto` | off | TLS for the gRPC servers |
 | `--doctor`, `--benchmark` | | one-shot checks (section 2) |
 
@@ -137,11 +144,16 @@ $env:CYXWIZ_TEST_CENTRAL_JWT_SECRET = '<central server jwt.secret>'
 
 | Symptom | Cause and fix |
 |---|---|
-| Engine: "Invalid or expired auth token" | `--p2p-secret` differs from the central server's `jwt.p2p_secret`, or the node registered under another id (restart the GUI and Apply again) |
+| Engine: "Invalid or expired auth token" | the secret in `--p2p-secret-file` differs from the central server's `jwt.p2p_secret`, or the node registered under another id (restart the GUI and Apply again) |
 | Node never appears in the Engine's list | not registered yet (Apply in the GUI), or it cannot reach the central server address |
 | `--doctor` FAIL on a device route | the device's compute route is not verified on this machine; see the Engine's Compute Devices preferences |
 | Job refused "Device problem" / "Out of memory" | the node's admission check: the job does not fit or the route is not verified |
+| Job refused "compute route arrayfire_oneapi:0 is not verified" while `--doctor` lists another verified route (for example `arrayfire_opencl:0`) | a daemon older than 2026-11-11 checked the wrong route on Intel-only machines; update the node. Jobs are checked against, and train on, the route the daemon activated at startup (or the saved compute preference) |
 | Deployed model not loaded, log "the Server Node cannot run extension nodes yet" | the model has an extension node (a user's C++ plugin or Python node) whose code the node does not have; serve it from the Engine for now |
+| Daemon exits at start: "No P2P secret" or "P2P secret: ... can be read by other users; run chmod 600 on it" | give it the secret file (`--p2p-secret-file=`), readable by its owner only |
+| Daemon exits at start: "--p2p-secret= puts the secret where every user ... can read it" | write the secret to a file and pass `--p2p-secret-file=PATH` instead |
+| Daemon exits at start: "Failed to start NodeService gRPC server on 0.0.0.0:50055; is the port in use (another cyxwiz-server-daemon already running)?" | another daemon already owns the node's ports. One daemon per machine: stop the old one (by its PID) or keep using it. Before this check, macOS and Linux let a second daemon share the ports and the GUI talked to either one at random |
+| Apply fails with "Failed to connect to Central Server", daemon log "No route to host" | the machine cannot reach the server side (often right after waking from sleep). Check the network, then press Retry: Retry sends Apply again, with the allocations and your sign-in |
 
 ## Related
 

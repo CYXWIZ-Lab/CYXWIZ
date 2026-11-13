@@ -10,6 +10,7 @@ To write your own nodes in Python or C++, see
 
 | Page | What it covers |
 | --- | --- |
+| [The menu bar](menu_bar.md) | File to Help, the project and your account at the top right |
 | [The CyxWiz Studio bar](studio_toolbar.md) | The bar at the top of the canvas |
 | [Windows of their own](windows.md) | Moving the big windows out of the main window |
 | [Asset Browser](asset_browser.md) | The project's folders and files, previews, new files |

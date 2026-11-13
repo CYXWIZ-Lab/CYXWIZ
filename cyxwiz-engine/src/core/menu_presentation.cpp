@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <iterator>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace cyxwiz::menu {
 
@@ -211,8 +213,8 @@ const std::vector<ShortcutEntry>& ShortcutTable() {
         add(any, "train.compile", "Compile Graph", "F7", "Train");
         add(any, "train.run_test", "Run Test", "F8", "Train > Test");
         add(any, "script.python_console", "Open Python Console (go to definition when the Script Editor is focused)", "F12", "Script");
-        add(any, "help.documentation", "Documentation", "F1", "Help", false, true);
-        add(any, "view.fullscreen", "Fullscreen", "F11", "View", false, true);
+        add(any, "help.documentation", "Documentation", "F1", "Help");
+        add(any, "view.fullscreen", "Full Screen", "F11", "View");
         add(any, "file.exit", "Exit", "Alt+F4", "File", true);
 
         // Studio canvas: the node editor handles these itself.
@@ -387,6 +389,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         }
         i.push_back(Action(f, "file.close_project", "Close Project", "Saves settings and closes the project.",
                            Opts{need_project}));
+        i.push_back(Action(f, "file.show_project_folder", "Show Project Folder",
+                           "Opens the project's folder in the file manager.", Opts{need_project}));
         i.push_back(Sep());
         i.push_back(Action(f, "file.new_window", "New Window", "Starts a second Engine window."));
         {
@@ -543,7 +547,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                          Toggle(f, "view.script_minimap", "Script Editor Minimap",
                                 "Shows the overview map beside the script.", in.script_minimap)}));
         i.push_back(Sep());
-        i.push_back(Planned(f, "view.fullscreen", "Fullscreen", "Fills the screen with the Engine window."));
+        i.push_back(Toggle(f, "view.fullscreen", "Full Screen",
+                           "Fills the screen with the Engine window; F11 again goes back.", in.fullscreen));
         model.menus.push_back(std::move(m));
     }
 
@@ -933,10 +938,20 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                             std::move(tutorials)));
         }
         i.push_back(Action(f, "help.shortcuts", "Keyboard Shortcuts...", "Opens the list of shortcuts."));
-        i.push_back(Planned(f, "help.documentation", "Documentation", "Opens the user guide."));
-        i.push_back(Planned(f, "help.api_reference", "API Reference", "Opens the pycyxwiz reference."));
+        i.push_back(Action(f, "help.documentation", "Documentation", "Opens the usage guides in your browser."));
+        i.push_back(Action(f, "help.api_reference", "API Reference",
+                           "Opens the pycyxwiz Python reference in your browser."));
+        i.push_back(Action(f, "help.whats_new", "What's New", "Opens the release notes in your browser."));
+        {
+            Opts opts;
+            opts.why = in.known_issues_found ? "" : "KNOWN_ISSUES.md is not beside the Engine.";
+            i.push_back(Action(f, "help.known_issues", "Known Issues",
+                               "Opens KNOWN_ISSUES.md, the problems known in this release.", opts));
+        }
         i.push_back(Sep());
         i.push_back(Action(f, "help.report_issue", "Report Issue...", "Opens the issue page in your browser."));
+        i.push_back(Action(f, "help.open_logs", "Open Logs Folder",
+                           "Shows engine_log.txt in the file manager, for a bug report."));
         i.push_back(Planned(f, "help.check_updates", "Check for Updates...", "Looks for a newer Engine."));
         i.push_back(Sep());
         i.push_back(Action(f, "help.about", "About CyxWiz...", "Shows the version and licence."));
@@ -948,9 +963,12 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         Menu m{"account", "Account", {}};
         auto& i = m.items;
         if (in.signed_in) {
-            i.push_back(Head("Signed in as " + in.user_display_name));
+            // Who you are is drawn above these (the chip's initials, name, email, plan).
+            model.account_chip = AccountChipFor(in.user_name, in.user_username, in.user_email, in.user_role);
             i.push_back(Action(f, "account.settings", "Account Settings...", "Opens your account settings."));
             i.push_back(Action(f, "account.wallet", "Wallet", "Opens the Wallet panel."));
+            i.push_back(Action(f, "account.servers", "Servers...",
+                               "Opens Preferences > Servers: the central server and your nodes."));
             i.push_back(Sep());
             i.push_back(Action(f, "account.sign_out", "Sign out", "Signs you out and clears the session."));
         } else {
@@ -959,7 +977,60 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
         model.account = std::move(m);
     }
 
+    // ------------------------------------------------------------- Project
+    if (in.has_project) {
+        Menu m{"project", "Project", {}};
+        auto& i = m.items;
+        i.push_back(Action(f, "file.show_project_folder", "Show in Explorer",
+                           "Opens the project's folder in the file manager."));
+        i.push_back(Action(f, "file.copy_project_path", "Copy Path", "Copies the project file's path."));
+        i.push_back(Sep());
+        i.push_back(Action(f, "file.close_project", "Close Project", "Saves settings and closes the project."));
+        model.project = std::move(m);
+    }
+
     return model;
+}
+
+AccountChip AccountChipFor(const std::string& name, const std::string& username, const std::string& email,
+                           const std::string& role) {
+    AccountChip chip;
+    chip.email = email;
+    const auto trim = [](std::string t) {
+        while (!t.empty() && t.front() == ' ') t.erase(t.begin());
+        while (!t.empty() && t.back() == ' ') t.pop_back();
+        return t;
+    };
+    chip.full_name = trim(name);
+    if (chip.full_name.empty()) chip.full_name = trim(username);
+    if (chip.full_name.empty()) chip.full_name = email.substr(0, email.find('@'));
+    if (chip.full_name.empty()) chip.full_name = "Account";
+    // Initials: the first letters of the first two words ("Sample User" -> "SU");
+    // one word gives its first two letters.
+    std::vector<std::string> words;
+    std::string word;
+    for (char c : chip.full_name) {
+        if (c == ' ' || c == '.' || c == '_' || c == '-') {
+            if (!word.empty()) words.push_back(word);
+            word.clear();
+        } else {
+            word += c;
+        }
+    }
+    if (!word.empty()) words.push_back(word);
+    const auto upper = [](char c) { return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c; };
+    if (words.size() >= 2) {
+        chip.initials = {upper(words[0][0]), upper(words[1][0])};
+    } else if (!words.empty()) {
+        chip.initials = std::string(1, upper(words[0][0]));
+        if (words[0].size() > 1) chip.initials += upper(words[0][1]);
+    }
+    // On the bar: the whole name when short, else the first word.
+    chip.short_name = chip.full_name.size() <= 14 || words.empty() ? chip.full_name : words[0];
+    if (chip.short_name.size() > 14) chip.short_name = chip.short_name.substr(0, 13) + "\xe2\x80\xa6";  // "...": one character
+    if (role == "pro") chip.plan = "Pro";
+    else if (role == "admin") chip.plan = "Admin";
+    return chip;
 }
 
 namespace {
