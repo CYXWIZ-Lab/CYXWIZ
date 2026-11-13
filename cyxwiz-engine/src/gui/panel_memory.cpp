@@ -53,7 +53,7 @@ void InstallPanelMemory() {
 void ApplyRememberedPanels() {
     int applied = 0;
     for (const auto& panel : GetDockStyle().GetPanels()) {
-        if (!panel.visible_ptr) continue;
+        if (!panel.visible_ptr || !panel.remembered) continue;
         const auto it = Remembered().find(panel.name);
         if (it == Remembered().end()) continue;
         *panel.visible_ptr = it->second;
@@ -65,7 +65,7 @@ void ApplyRememberedPanels() {
 void TrackPanelChanges() {
     bool changed = false;
     for (const auto& panel : GetDockStyle().GetPanels()) {
-        if (!panel.visible_ptr) continue;
+        if (!panel.visible_ptr || !panel.remembered) continue;
         auto [it, inserted] = Remembered().try_emplace(panel.name, *panel.visible_ptr);
         if (inserted || it->second != *panel.visible_ptr) {
             it->second = *panel.visible_ptr;

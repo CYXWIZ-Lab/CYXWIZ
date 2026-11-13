@@ -381,6 +381,7 @@ DataInputDialog::DataInputDialog(MLNode* node)
 
 void DataInputDialog::Reset() {
     hdf5_loaded_source_.Cancel();
+    hdf5_apply_.Cancel();
     hdf5_inspector_.Reset();
     hdf5_source_path_.clear();
     if (!node_) return;
@@ -396,6 +397,7 @@ void DataInputDialog::RenderContent() {
     SyncHdf5InspectorSource();
     hdf5_inspector_.Poll();
     PollHdf5LoadedSourceVerification();
+    PollHdf5Apply();
     // Pick up the async load result, if the worker has finished, and apply
     // it to the dialog/node state. Cheap when no load is in flight.
     PollAsyncLoadResult();

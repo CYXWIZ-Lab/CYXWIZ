@@ -8,32 +8,25 @@ namespace cyxwiz {
 /**
  * SentimentAnalyzerOperator — Cat-1 Band 1 pipeline operator.
  *
- * Lexicon-based sentiment analysis. Reads a text column, runs each
- * document through `TextProcessing::AnalyzeSentiment` using one of the
- * built-in lexicons ("simple", "vader", "afinn"), and emits a wide
- * Arrow table:
- *   `polarity (f32), subjectivity (f32), sentiment_label (i32: 0=neg,
- *    1=neu, 2=pos), confidence (f32), y (i32, optional)`
- *
- * No external model files or pretrained weights — the backend ships the
- * lexicons in-binary. Useful both as a classification output itself
- * (`y = sentiment_label` for sentiment tasks) or as a feature block
- * feeding into a downstream classifier when combined with TFIDF/
- * CountVectorizer.
- *
- * Closes the SentimentAnalyzer dead NodeType from the "Tool-to-Node
- * Migration — text analytics" block in tofix.md. Pretrained BERT-style
- * sentiment models are intentionally deferred.
+ * VADER sentiment (TextProcessing::Vader, vaderSentiment 3.3.2's rules and
+ * lexicon) of a text column, added beside the input's columns so the label
+ * and the split stay (TOFIX129 D8):
+ *   `<text_col>_compound`  (f64, -1 .. 1: the valences summed and normalised)
+ *   `<text_col>_positive`, `_neutral`, `_negative` (f64, the shares of the
+ *                          text's weight, summing to 1)
+ *   `<text_col>_sentiment` (string: "positive" from compound 0.05,
+ *                          "negative" at -0.05 and below, else "neutral")
+ * A row without text gets nulls. Training reads the columns as features;
+ * `<text_col>_sentiment` can be a target through a Label Encoder.
  *
  * Params:
- *   text_col   (required)                     — column containing text.
- *   label_col  (optional)                     — passthrough to `y` int32.
- *   method     (default "vader")              — "simple" / "vader" / "afinn".
+ *   text_col   (required)  — column containing text.
  */
 class SentimentAnalyzerOperator : public IPipelineOperator {
 public:
     std::string GetName() const override { return "SentimentAnalyzer"; }
     PipelineBand GetBand() const override { return PipelineBand::DataPrep; }
+
     void SetProgressCallback(PipelineOperatorProgressCallback callback) override {
         progress_callback_ = std::move(callback);
     }
@@ -47,8 +40,6 @@ public:
 
 private:
     std::string text_col_;
-    std::string label_col_;
-    std::string method_ = "vader";
     PipelineOperatorProgressCallback progress_callback_;
 };
 

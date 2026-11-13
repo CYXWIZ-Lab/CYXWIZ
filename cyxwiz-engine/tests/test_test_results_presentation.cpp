@@ -523,11 +523,66 @@ void CheckOpenModel() {
     bad.error_message = "Not a model file";
     const model_open::View b = model_open::BuildView(bad);
     Check(!b.readable && b.error == "Not a model file" && !b.can_open_graph, "an unreadable file says why");
+
+    // A trained PPO policy (TOFIX195 S5)
+    cyxwiz::ProbeResult policy;
+    policy.valid = true;
+    policy.format = cyxwiz::ModelFormat::CyxModel;
+    policy.format_version = "CYXW v3";
+    policy.model_name = "ppo_cartpole";
+    policy.num_parameters = 9283;
+    policy.num_layers = 6;
+    policy.file_size = 120000;
+    policy.has_graph = true;
+    policy.has_optimizer_state = true;
+    policy.has_rl_policy = true;
+    policy.custom_metadata["rl_environment"] = "CartPole-v1";
+    policy.custom_metadata["rl_steps"] = "88320";
+    policy.custom_metadata["rl_mean_return"] = "475.1";
+    policy.epochs_trained = 0;  // the package's supervised fields are empty for a policy
+    const model_open::View p = model_open::BuildView(policy);
+    bool policy_row = false;
+    for (const auto& [k, value] : p.rows) policy_row = policy_row || (k == "Policy" && value == "PPO on CartPole-v1");
+    Check(p.can_play_policy && p.can_open_graph && policy_row && Contains(p.note, "Play policy loads it"),
+          "an RL policy offers Play policy and names its environment");
+    bool contains = false;
+    for (const auto& [k, value] : p.rows)
+        contains = contains || (k == "Contains" && value == "graph, weights, optimizer state and RL policy settings");
+    Check(contains, "it says it holds the RL policy settings");
+    bool trained = false;
+    for (const auto& [k, value] : p.rows)
+        trained = trained || (k == "Trained" && value == "88,320 environment steps, mean return 475.1");
+    Check(trained, "a policy's training is in environment steps, not epochs");
+    Check(!v.can_play_policy, "a supervised model has no Play policy");
 }
 
 }  // namespace
 
+// Results > Test > Errors (TOFIX129 D11): mistakes by pair and the sentence.
+void CheckErrors() {
+    TestingMetrics m = SentimentRun(true);
+    m.predictions = {1, 2, 0, 1, 2, 2, 3};
+    m.ground_truth = {0, 0, 0, 1, 0, 0, 2};
+    m.confidences = {0.93f, 0.38f, 0.34f, 0.9f, 0.7f, 0.6f, 0.99f};
+    const auto pairs = MistakePairs(m);
+    Check(pairs.size() == 3 && pairs[0].truth == 0 && pairs[0].predicted == 2 && pairs[0].count == 3 &&
+              pairs[1].count == 1 && pairs[2].count == 1,
+          "mistake pairs, the commonest first");
+    const View v = BuildView(m, nullptr);
+    Check(ErrorsHeadline(m, v) == "5 of the 7 test rows are wrong (28.57 % right). The commonest mistake is an Anxiety read "
+                                  "as Depression (3 rows). Most confident first: these are the ones the model is sure of "
+                                  "and wrong about.",
+          "errors headline: " + ErrorsHeadline(m, v));
+    m.predictions = m.ground_truth;
+    Check(ErrorsHeadline(m, BuildView(m, nullptr)) == "None of the 7 test rows is wrong.", "no mistakes");
+    Check(WithArticle("7") == "a 7" && WithArticle("8") == "an 8" && WithArticle("11") == "an 11" &&
+              WithArticle("18") == "an 18" && WithArticle("110") == "a 110" && WithArticle("Anxiety") == "an Anxiety" &&
+              WithArticle("cat") == "a cat" && WithArticle("one") == "a one" && WithArticle("unit") == "a unit",
+          "a / an before a class name");
+}
+
 int main() {
+    CheckErrors();
     CheckExportModel();
     CheckOpenModel();
     CheckOverview();

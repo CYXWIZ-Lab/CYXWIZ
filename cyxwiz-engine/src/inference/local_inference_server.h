@@ -3,6 +3,7 @@
 
 #include <optional>
 #include "core/metric_learning_inference_outputs.h"
+#include "core/model_decision.h"
 #include "bert_encoder_inference_contract.h"
 #include "language_model_inference_contract.h"
 
@@ -153,6 +154,9 @@ private:
     std::vector<std::string> sequence_tag_vocabulary_;
     // Pair Score Output settings saved with the model (TOFIX140 A5).
     std::optional<PairScoreDefaults> pair_score_defaults_;
+    // The package's kept threshold / calibration (TOFIX129 D11): /v1/predict
+    // adds probabilities and the predicted class with it.
+    std::optional<ModelDecision> decision_;
 
     std::string model_path_;
     int port_ = 0;

@@ -7,6 +7,7 @@
 #include "test_executor.h"
 #include "training_batcher_setup.h"
 #include "training_executor.h"
+#include "cyxwiz/portable_random.h"
 
 #include <cyxwiz/model_evaluation.h>
 
@@ -195,7 +196,7 @@ CrossValidationOutcome RunCrossValidation(const TrainingConfiguration& config, c
                 if (j != k) training.insert(training.end(), fold_rows[static_cast<size_t>(j)].begin(), fold_rows[static_cast<size_t>(j)].end());
             if (share < 1.0) {
                 std::mt19937 rng(settings.seed + static_cast<uint32_t>(k) * 1009u + static_cast<uint32_t>(std::lround(share * 1000.0)));
-                std::shuffle(training.begin(), training.end(), rng);
+                cyxwiz::portable::Shuffle(training.begin(), training.end(), rng);
                 training.resize(std::max<size_t>(1, static_cast<size_t>(std::lround(share * static_cast<double>(training.size())))));
             }
             std::sort(training.begin(), training.end());
@@ -238,6 +239,16 @@ CrossValidationOutcome RunCrossValidation(const TrainingConfiguration& config, c
                     executor.Stop();
                 }
             };
+            // Cancel also ends a wait for another training run's GPU (no batch runs meanwhile)
+            // and the tab says why it waits
+            executor.SetGpuWaitHooks({[&](const std::string& reason) {
+                                          progress.waiting = reason;
+                                          if (callbacks.on_progress) callbacks.on_progress(progress);
+                                      },
+                                      [&]() {
+                                          if (callbacks.should_cancel && callbacks.should_cancel()) cancelled = true;
+                                          return cancelled;
+                                      }});
             const EpochCallback on_epoch = [&](int epoch, float, float, float, float, float) {
                 progress.epoch = epoch + 1;
                 if (callbacks.on_progress) callbacks.on_progress(progress);

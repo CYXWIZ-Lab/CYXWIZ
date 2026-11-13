@@ -130,7 +130,8 @@ and q up to 1 (not 3) above 200,000 rows. On MetroPT-3 (1.5 million rows at
 10 seconds, a typed period of 8,640) the parts take about 25 seconds and a
 Holt-Winters forecast with its held-out check about two minutes. The tabs
 run in the background with **Stop**, and the status bar says "Reading the
-series" or "Forecasting".
+series" or "Forecasting". Stop ends the fit itself within a pass (a
+smoothing run, a Kalman pass, an STL pass, an ADF lag), not after it.
 
 ## The nodes
 

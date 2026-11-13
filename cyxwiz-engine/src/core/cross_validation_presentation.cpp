@@ -231,6 +231,7 @@ LearningCurveView BuildLearningCurveView(const CrossValidationOutcome& o, CurveS
 std::string ProgressLine(const CrossValidationProgress& p, double elapsed) {
     std::string line = "Fold " + std::to_string(p.fold) + " of " + std::to_string(p.folds);
     if (p.share < 1.0 - 1e-9) line += " (training rows " + Fixed(p.share * 100.0, 0) + "%)";
+    if (!p.waiting.empty()) return line + " \xC2\xB7 " + p.waiting;  // no epoch or time left until it starts
     if (p.epochs > 0) line += " \xC2\xB7 epoch " + std::to_string(std::max(p.epoch, 0)) + " of " + std::to_string(p.epochs);
     // Time left from the share of the work done (runs x epochs).
     const double done = (static_cast<double>(p.run - 1) + (p.epochs > 0 ? static_cast<double>(p.epoch) / p.epochs : 0.0)) /

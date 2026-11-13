@@ -276,31 +276,6 @@ void CheckRuntimeOwnerContract(
     CheckRuntimeModeOwnerCompatibility(support, context);
 }
 
-std::vector<std::string> ParseCatalogEnumValues(
-    const std::string& parameter_type) {
-    std::vector<std::string> values;
-    if (parameter_type.rfind("enum:", 0) != 0) {
-        return values;
-    }
-
-    const std::string raw_values = parameter_type.substr(5);
-    std::size_t start = 0;
-    while (start <= raw_values.size()) {
-        const std::size_t end = raw_values.find(',', start);
-        const std::string value = raw_values.substr(
-            start,
-            end == std::string::npos ? std::string::npos : end - start);
-        if (!value.empty()) {
-            values.push_back(value);
-        }
-        if (end == std::string::npos) {
-            break;
-        }
-        start = end + 1;
-    }
-    return values;
-}
-
 bool IsSupportedPropertiesParameterType(const std::string& type) {
     static const std::set<std::string> supported = {
         "bool",
@@ -2090,6 +2065,7 @@ void CheckSignalProcessingFamilyContract(
         gui::NodeType::FFTNode,
         gui::NodeType::FilterDesigner,
         gui::NodeType::Convolution1D,
+        gui::NodeType::WaveletTransform,
     };
     for (const auto type : types) {
         const auto* meta = metadata.GetMetadata(type);
@@ -2137,19 +2113,23 @@ void CheckSignalProcessingFamilyContract(
     const auto* filter = metadata.GetMetadata(gui::NodeType::FilterDesigner);
     const auto* convolution =
         metadata.GetMetadata(gui::NodeType::Convolution1D);
-    Check(fft->parameters.size() == 2 &&
-              ParameterMatches(fft, "sample_rate", "float", "1.0"),
-          "FFT metadata should expose only its operator parameters");
-    Check(filter->parameters.size() == 6 &&
+    Check(fft->parameters.size() == 5 &&
+              ParameterMatches(fft, "sample_rate", "float", "1.0") &&
+              ParameterMatches(fft, "window", "dropdown", "hann") && HasEnumValue(fft, "window", "boxcar") &&
+              ParameterMatches(fft, "remove_mean", "bool", "true") && ParameterMatches(fft, "remove_trend", "bool", "false"),
+          "FFT metadata should expose its operator parameters");
+    Check(filter->parameters.size() == 7 &&
               ParameterMatches(filter, "filter_type", "dropdown", "lowpass") &&
               HasEnumValue(filter, "filter_type", "highpass") &&
               HasEnumValue(filter, "filter_type", "bandpass") &&
               HasEnumValue(filter, "filter_type", "bandstop") &&
-              ParameterMatches(filter, "cutoff", "float", "0.5") &&
+              ParameterMatches(filter, "cutoff", "float", "0.1") &&
               ParameterMatches(filter, "cutoff_high", "float", "0") &&
               ParameterMatches(filter, "sample_rate", "float", "1.0") &&
-              ParameterMatches(filter, "order", "int", "4"),
-          "FilterDesigner metadata should match its operator defaults/options");
+              ParameterMatches(filter, "taps", "int", "31") &&
+              ParameterMatches(filter, "window", "dropdown", "hamming") &&
+              !HasParameter(filter, "order"),
+          "FilterDesigner metadata should match its operator defaults/options (taps mean taps, a cutoff below Nyquist)");
     Check(convolution->parameters.size() == 2 &&
               FindParameter(convolution, "kernel") != nullptr &&
               FindParameter(convolution, "kernel")->required &&
@@ -2158,11 +2138,20 @@ void CheckSignalProcessingFamilyContract(
               !HasParameter(convolution, "mode"),
           "Convolution1D should not advertise its ignored legacy mode");
 
+    // IFFT and Wavelet Transform are real now (TOFIX129 D7): operator-backed,
+    // one Dataset in and out, their settings the operators' own.
     const auto* ifft = metadata.GetMetadata(gui::NodeType::IFFTNode);
     const auto* wavelet = metadata.GetMetadata(gui::NodeType::WaveletTransform);
-    Check(ifft != nullptr && ifft->IsTemplate() &&
-              wavelet != nullptr && wavelet->IsTemplate(),
-          "IFFT and Wavelet should remain explicitly blocked outside this family");
+    Check(ifft != nullptr && ifft->status == cyxwiz::NodeImplementationStatus::Implemented &&
+              ifft->inputs.size() == 1 && ifft->outputs.size() == 1 && ParameterMatches(ifft, "samples", "int", "0") &&
+              cyxwiz::PipelineOperatorFactory::Instance().Create(gui::NodeType::IFFTNode) != nullptr,
+          "IFFT is implemented: one table in, one out, an operator");
+    Check(wavelet != nullptr && wavelet->status == cyxwiz::NodeImplementationStatus::Implemented &&
+              wavelet->inputs.size() == 1 && wavelet->outputs.size() == 1 && wavelet->parameters.size() == 5 &&
+              ParameterMatches(wavelet, "wavelet", "dropdown", "db4") && HasEnumValue(wavelet, "wavelet", "coif5") &&
+              ParameterMatches(wavelet, "level", "int", "3") && ParameterMatches(wavelet, "denoise", "dropdown", "off") &&
+              ParameterMatches(wavelet, "threshold", "float", "0"),
+          "Wavelet Transform is implemented with PyWavelets' names, a level, denoise and threshold");
 }
 
 void CheckTextVectorizerSentimentFamilyContract(
@@ -2269,11 +2258,11 @@ void CheckTextVectorizerSentimentFamilyContract(
               ParameterMatches(count, "binary", "bool", "false"),
           "CountVectorizer metadata should match its materializer fields");
     Check(HasOutputType(sentiment, "Sentiment", gui::PinType::Dataset) &&
-              sentiment->parameters.size() == 3 &&
-              HasParameter(sentiment, "label_col") &&
-              ParameterMatches(sentiment, "method", "enum", "vader") &&
+              sentiment->parameters.size() == 1 &&
+              HasParameter(sentiment, "text_col") &&
+              !HasParameter(sentiment, "method") &&
               !HasParameter(sentiment, "model"),
-          "SentimentAnalyzer should expose its lexicon table contract without a fake model");
+          "SentimentAnalyzer is VADER only: text_col, no method, no fake model");
 }
 
 void CheckTabularTransformFamilyContract(
@@ -2516,7 +2505,11 @@ void CheckPcaContract(cyxwiz::NodeMetadataRegistry& metadata) {
               HasOutputType(pca, "Transformed", gui::PinType::Dataset) &&
               !HasOutputType(pca, "Components", gui::PinType::Dataset),
           "PCA should expose only the table its operator materializes");
-    Check(pca->parameters.size() == 6 &&
+    Check(pca->parameters.size() == 10 &&
+              ParameterMatches(pca, "operation_mode", "enum", "fit_transform") &&
+              ParameterMatches(pca, "save_state", "bool", "false") &&
+              ParameterMatches(pca, "state_path", "file", "") &&
+              ParameterMatches(pca, "state_overwrite", "bool", "false") &&
               ParameterMatches(pca, "keep_columns", "bool", "false") &&
               ParameterMatches(pca, "feature_cols", "string", "") &&
               ParameterMatches(pca, "label_col", "string", "") &&
@@ -2524,7 +2517,7 @@ void CheckPcaContract(cyxwiz::NodeMetadataRegistry& metadata) {
               ParameterMatches(pca, "center", "bool", "true") &&
               ParameterMatches(pca, "scale", "bool", "false") &&
               !HasParameter(pca, "whiten"),
-          "PCA metadata should match every consumed operator field without whitening");
+          "PCA metadata should match every consumed operator field (fitted state too) without whitening");
 
     const auto support =
         cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::PCANode);
@@ -2613,7 +2606,7 @@ void CheckClassicalRegressionFamilyContract(
               ParameterMatches(polynomial, "degree", "int", "2") &&
               FindParameter(polynomial, "degree")->validation == "1-6" &&
               FindParameter(polynomial, "degree")->group == "Fit Options",
-          "PolynomialRegression metadata should match its 1-6 degree contract (TOFIX129 D3)");
+          "PolynomialRegression metadata should match its 1-6 degree contract");
 
     const auto* predictor =
         metadata.GetMetadata(gui::NodeType::RegressionModelPredictor);
@@ -3121,14 +3114,15 @@ void CheckPreprocessingScalerEncoderFamilyContract(
               FindParameter(target, "target_col")->required &&
               ParameterMatches(target, "smoothing", "float", "1.0"),
           "TargetEncoder should require its categorical and numeric target columns");
-    Check(outlier != nullptr && outlier->parameters.size() == 4 &&
+    Check(outlier != nullptr && outlier->parameters.size() == 5 &&
               ParameterMatches(outlier, "columns", "string", "all") &&
               ParameterMatches(outlier, "label_col", "string", "") &&
               ParameterMatches(outlier, "method", "dropdown", "iqr") &&
-              HasEnumValue(outlier, "method", "zscore") &&
+              HasEnumValue(outlier, "method", "zscore") && HasEnumValue(outlier, "method", "modified_z") &&
               ParameterMatches(outlier, "threshold", "float", "1.5") &&
-              !HasParameter(outlier, "action"),
-          "OutlierDetector metadata should match its flag-only operator contract");
+              ParameterMatches(outlier, "action", "dropdown", "flag") &&
+              HasEnumValue(outlier, "action", "clip") && HasEnumValue(outlier, "action", "remove"),
+          "OutlierDetector metadata should match its flag / clip / remove operator contract");
 
     const auto configure_defaults = [](const cyxwiz::NodeMetadata* meta,
                                        bool expected) {
@@ -3324,7 +3318,7 @@ void CheckTensorFanInFamilyContract(
               HasOutputType(batch_matmul, "Output", gui::PinType::Tensor) &&
               batch_matmul->parameters.empty(),
           "TensorBatchMatMul should expose its implemented two-input graph "
-          "contract (TOFIX140 Group C)");
+          "contract");
 
     const auto* compare = metadata.GetMetadata(gui::NodeType::TensorCompare);
     Check(compare != nullptr && HasInput(compare, "A", true) &&
@@ -5105,17 +5099,6 @@ int main() {
               "SQLQuery metadata reports the implemented SQL step");
     }
     Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
-              gui::NodeType::HDF5Dataset)) == "HDF5Dataset",
-          "fail-closed runtime enum lookup for HDF5Dataset is stable");
-    Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::HDF5Dataset).mode ==
-              cyxwiz::PipelineRuntimeSupportMode::FailClosed,
-          "HDF5Dataset enum support should resolve to fail-closed");
-    const auto* hdf5_meta = metadata.GetMetadata(gui::NodeType::HDF5Dataset);
-    if (hdf5_meta != nullptr) {
-        Check(hdf5_meta->status == cyxwiz::NodeImplementationStatus::Template,
-              "HDF5Dataset metadata should be blocked until HDF5 loading is real");
-    }
-    Check(std::string(cyxwiz::ResolvePipelineRuntimeLegacyTypeName(
               gui::NodeType::RESTAPISource)) == "RESTAPISource",
           "fail-closed runtime enum lookup for RESTAPISource is stable");
     Check(cyxwiz::ResolvePipelineRuntimeSupport(gui::NodeType::RESTAPISource).mode ==
@@ -5214,8 +5197,6 @@ int main() {
         gui::NodeType::QualityAnalyzer,
         gui::NodeType::TableSplitter,
         gui::NodeType::ExportExcel,
-        gui::NodeType::IFFTNode,
-        gui::NodeType::WaveletTransform,
         gui::NodeType::NamedEntityRecognizer,
         gui::NodeType::ImageFolderDataset,
         gui::NodeType::AugmentationPreset,
@@ -5247,8 +5228,6 @@ int main() {
         gui::NodeType::FeatureImportanceNode,
         gui::NodeType::ExportExcel,
         gui::NodeType::TableSplitter,
-        gui::NodeType::IFFTNode,
-        gui::NodeType::WaveletTransform,
         gui::NodeType::NamedEntityRecognizer,
         gui::NodeType::TSVFile,
         gui::NodeType::TXTFile,
@@ -6062,6 +6041,8 @@ int main() {
     }
     Check(metadata.GetMetadata(gui::NodeType::TensorReshape) == nullptr,
           "retired Tensor Reshape (the Reshape node replaced it) is not registered");
+    Check(metadata.GetMetadata(gui::NodeType::HDF5Dataset) == nullptr,
+          "retired HDF5 Reader (Data Input replaced it) is not registered");
     Check(metadata.GetMetadata(gui::NodeType::Bidirectional) == nullptr,
           "retired Bidirectional (the recurrent layers' bidirectional setting replaced it) is not registered");
     Check(metadata.GetMetadata(gui::NodeType::SelfAttention) == nullptr,
@@ -6070,6 +6051,11 @@ int main() {
               metadata.GetMetadata(gui::NodeType::SiameseBranch) == nullptr,
           "retired Shared Encoder / Siamese Branch (metric-learning losses run the model once over the "
           "stacked batch) are not registered");
+    for (const auto retired : {gui::NodeType::GymEnvironment, gui::NodeType::ReplayBufferNode,
+                               gui::NodeType::PolicyNetwork, gui::NodeType::ValueNetwork, gui::NodeType::RLTraining}) {
+        Check(metadata.GetMetadata(retired) == nullptr,
+              "retired RL sketch nodes (the PPO graph replaced them) are not registered: " + TypeId(retired));
+    }
 
     const auto* standard_scaler_meta =
         metadata.GetMetadata(gui::NodeType::StandardScaler);

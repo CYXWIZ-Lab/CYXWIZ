@@ -6,6 +6,8 @@
 #include "metric_learning_graph_contract.h"
 #include "metric_learning_batch.h"
 #include "training_parameter_contract.h"
+#include "learning_rate_range_test.h"
+#include "model_decision.h"
 #include "training_scheduler_controller.h"
 #include "training_generation_preview_settings.h"
 #include <core/regression_target_transform.h>
@@ -29,6 +31,8 @@ namespace cyxwiz {
 /**
  * Represents a compiled layer ready for execution
  */
+struct RLTrainingConfiguration;  // rl_graph_compile.h
+
 struct CompiledLayer {
     gui::NodeType type = gui::NodeType::Dense;
     int node_id = -1;
@@ -416,6 +420,9 @@ struct TrainingConfiguration {
     // The compiler leaves this empty until a node group is deliberately
     // exposed. Focused backend tests may populate it directly.
     std::vector<int> graph_op_node_ids;
+    // Each graph op's output sample shapes by node id (one per output pin),
+    // from the compiler's shape walk; the Model window's Summary lists them.
+    std::map<int, std::vector<std::vector<size_t>>> graph_op_output_shapes;
     // Layers with several inputs (Cross Attention): the graph runtime runs
     // them, so the model is built as a graph even without graph ops.
     std::vector<int> multi_input_layer_node_ids;
@@ -443,6 +450,11 @@ struct TrainingConfiguration {
     std::string dataset_name;           // Name of dataset in DataRegistry
     int data_source_node_id = -1;       // Selected DataInput/DatasetInput node
     ResolvedDatasetPartitions dataset_roles;  // Typed partition resolution
+    // Columns the Data Input's column roles keep out of the features (TOFIX129
+    // D7a G1): the ID, Group, Weight and Ignore columns set in Explore >
+    // Profile and written into the node as `column_roles` (dataset_contract.h
+    // IsFeatureRole). The batchers skip them by name; the label is never among them.
+    std::vector<std::string> excluded_feature_columns;
     // A step only the pipeline run applies (SQL, Text Clean ...) is on the
     // Training Dataset path: training trains on that run's result.
     bool training_data_needs_pipeline_run = false;
@@ -575,6 +587,13 @@ struct TrainingConfiguration {
     // attaches it unless a scheduler is configured on the executor directly.
     std::optional<TrainingSchedulerSpec> scheduler;
     int scheduler_node_id = -1;
+    // A learning rate range test instead of a training (the Model window,
+    // TOFIX129 D11): the rate rises every optimizer step, no validation, no
+    // checkpoints, and the trained model in use is kept.
+    LearningRateRangeSettings learning_rate_range;
+    // The trained model's threshold and calibration, kept from Results >
+    // Test (TOFIX129 D11): Test applies it; checkpoints and packages carry it.
+    ModelDecision decision;
     // Regularization node between the loss and the optimizer (TOFIX140 A4):
     // penalty = l1 x sum(|w|) + l2 x sum(w^2) over every trainable parameter.
     float regularization_l1 = 0.0f;
@@ -611,6 +630,10 @@ struct TrainingConfiguration {
     bool pair_score_output = false;
     std::string pair_score_mode = "distance";
     double pair_score_threshold = 0.5;
+
+    // A reinforcement learning graph (Environment, Policy Head, Value Head,
+    // PPO; TOFIX195 S4.3): set instead of the supervised fields above.
+    std::shared_ptr<const RLTrainingConfiguration> rl;
 
     // Validation
     bool is_valid = false;
@@ -775,6 +798,10 @@ public:
     static std::optional<PreprocessingDomain> GetPreprocessingNodeDomain(gui::NodeType type);
 
 private:
+    // An RL graph: Environment -> layers -> Policy Head / Value Head -> PPO (rl_graph_compile.cpp)
+    TrainingConfiguration CompileReinforcementLearning(const std::vector<gui::MLNode>& nodes,
+                                                       const std::vector<gui::NodeLink>& links);
+
     // Topological sort for execution order
     std::vector<int> TopologicalSort(
         const std::vector<gui::MLNode>& nodes,

@@ -82,6 +82,18 @@ public:
     BackendPackStateResult DeactivateOptionalPack(
         std::string backend);
     BackendPackStateResult Rollback();
+    // Plugin packs: active-plugins.json only. active-runtime.json, its
+    // generation and rollback stay untouched, so route evidence stays valid.
+    // Activation requires the installed folder with its plugin.json and
+    // records the active base; entries of an earlier base are dropped.
+    // The caller has checked the pack against the active base (its signed
+    // companion_base_id): the installer and the lifecycle service do before
+    // they install it; this publishes the state only.
+    BackendPackStateResult ActivatePluginPack(
+        std::string plugin_id,
+        std::string pack_id);
+    BackendPackStateResult DeactivatePluginPack(
+        std::string plugin_id);
 
     BackendPackStateProgress GetProgress() const;
 
@@ -96,6 +108,10 @@ private:
         std::string backend,
         std::string pack_id,
         const CandidateBuilder& build_candidate);
+    BackendPackStateResult MutatePlugins(
+        std::string operation,
+        std::string plugin_id,
+        std::string pack_id);
     void SetProgress(BackendPackStateProgress progress);
     std::filesystem::path RollbackPath(
         const ActiveRuntimeState& state) const;

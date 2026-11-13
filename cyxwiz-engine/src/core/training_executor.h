@@ -2,6 +2,7 @@
 
 #include "executable_model.h"
 #include "graph_compiler.h"
+#include "training_health.h"
 #include "metric_learning_metrics.h"
 #include "dataset_batcher.h"  // Includes ArrowDatasetBatcher + IBatcher
 #include "parquet_arrow_batcher.h"
@@ -49,6 +50,12 @@ struct TrainingMetrics {
     int optimizer_step_count = 0;
     int scheduler_step_count = 0;
     double learning_rate = 0.0;
+    // A learning rate range test (config.learning_rate_range): every step's
+    // rate, loss and smoothed loss so far, and why it stopped once it has.
+    std::vector<LearningRateRangePoint> range_points;
+    std::string range_stop_reason;
+    // Weights, gradients and dead units once an epoch (the Model window's Health).
+    TrainingHealth health;
     float grad_norm = 0.0f;  // global gradient norm before clipping (grad_clip_norm > 0)
     size_t train_sample_count = 0;
     size_t val_sample_count = 0;
@@ -117,6 +124,7 @@ struct TrainingMetrics {
     bool is_paused = false;
     bool is_complete = false;
     std::string status_message;
+    std::string waiting_for_gpu;  // why, while the run waits for another run's GPU (else empty)
     std::string terminal_status;
     std::string terminal_reason;
 
@@ -250,6 +258,16 @@ public:
     // True once Stop was asked for; long setup work (a batcher factory
     // preparing images) checks it to stop early.
     bool StopRequested() const { return stop_requested_.load(); }
+    // While Train waits for another training run to release the GPU:
+    // on_change is told why when the wait starts and "" when it ends;
+    // should_cancel is asked every 200 ms, true ends the run as Stop does
+    // (for a caller that otherwise cancels from its batch callback). Set
+    // before Train.
+    struct GpuWaitHooks {
+        std::function<void(const std::string& reason)> on_change;
+        std::function<bool()> should_cancel;
+    };
+    void SetGpuWaitHooks(GpuWaitHooks hooks) { gpu_wait_hooks_ = std::move(hooks); }
     // Stop, first writing a resume checkpoint at the batch it stops on where
     // the loop supports mid-epoch resume (sequence batches); the other loops
     // keep their epoch-end checkpoint. Needs EnableResumeCheckpoints. Used
@@ -387,6 +405,7 @@ private:
     // Thread safety
     std::atomic<bool> is_training_{false};
     std::atomic<bool> stop_requested_{false};
+    GpuWaitHooks gpu_wait_hooks_;
     std::atomic<bool> checkpoint_on_stop_{false};
     std::atomic<bool> is_paused_{false};
 
@@ -416,6 +435,11 @@ private:
     std::optional<TrainingEpochProgress> pending_epoch_resume_;
     // Generation previews (TOFIX159): bound for the duration of Train.
     std::unique_ptr<TrainingGenerationPreview> generation_preview_;
+    // The range test of a learning_rate_range run; the loss of the batch
+    // just computed, which it records after the optimizer step.
+    std::unique_ptr<LearningRateRangeTest> range_test_;
+    std::unique_ptr<TrainingHealthRecorder> health_;
+    double range_batch_loss_ = 0.0;
     std::filesystem::path generation_preview_dir_;
     std::string generation_preview_run_id_;
     CheckpointManager* generation_preview_checkpoints_ = nullptr;

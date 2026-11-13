@@ -189,6 +189,18 @@ BackendPackInstallResult BackendPackInstaller::StageRepair(
         InstallTarget::OptionalPack);
 }
 
+BackendPackInstallResult BackendPackInstaller::InstallOrUpdatePlugin(
+    const VerifiedBackendPackPayload& payload,
+    std::uint64_t disk_budget_bytes) {
+    return Apply(payload, disk_budget_bytes, false, true, InstallTarget::PluginPack);
+}
+
+BackendPackInstallResult BackendPackInstaller::RepairPlugin(
+    const VerifiedBackendPackPayload& payload,
+    std::uint64_t disk_budget_bytes) {
+    return Apply(payload, disk_budget_bytes, true, true, InstallTarget::PluginPack);
+}
+
 BackendPackInstallResult BackendPackInstaller::RepairBase(
     const VerifiedBackendPackPayload& payload, std::uint64_t disk_budget_bytes) {
     return Apply(payload, disk_budget_bytes, true, true, InstallTarget::BaseRepair);
@@ -222,6 +234,12 @@ BackendPackInstallResult BackendPackInstaller::AdoptVerifiedPrivateExtraction(
                 payload, disk_budget_bytes, false, false,
                 InstallTarget::BaseUpdate,
                 PayloadStagingMode::AdoptVerifiedPrivateExtraction);
+        case PrivateExtractionAction::InstallPluginPack:
+            return Apply(payload, disk_budget_bytes, false, false, InstallTarget::PluginPack,
+                         PayloadStagingMode::AdoptVerifiedPrivateExtraction);
+        case PrivateExtractionAction::RepairPluginPack:
+            return Apply(payload, disk_budget_bytes, true, false, InstallTarget::PluginPack,
+                         PayloadStagingMode::AdoptVerifiedPrivateExtraction);
     }
     return Finish(
         BackendPackInstallStatus::InvalidRequest,
@@ -235,7 +253,8 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     bool activate,
     InstallTarget target,
     PayloadStagingMode staging_mode) {
-    const bool base = target != InstallTarget::OptionalPack;
+    const bool plugin = target == InstallTarget::PluginPack;
+    const bool base = target != InstallTarget::OptionalPack && !plugin;
     const bool base_repair = target == InstallTarget::BaseRepair;
     if (base_repair && !execution_active_)
         return {BackendPackInstallStatus::InvalidRequest,
@@ -260,11 +279,15 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     progress.message = "Validating verified pack payload metadata";
     SetProgress(progress);
 
-    if (!IsIdentifier(payload.runtime_set_id) ||
-        (base ? (!payload.companion_base_id.empty() ||
-                 payload.backend != "cpu")
-              : (!IsIdentifier(payload.companion_base_id) ||
-                 !IsOptionalBackend(payload.backend))) ||
+    const bool identity_valid = plugin
+        // A plugin pack has no ArrayFire runtime set or backend.
+        ? IsIdentifier(payload.plugin_id) && payload.runtime_set_id.empty() &&
+              payload.backend.empty() && IsIdentifier(payload.companion_base_id)
+        : payload.plugin_id.empty() && IsIdentifier(payload.runtime_set_id) &&
+              (base ? (payload.companion_base_id.empty() && payload.backend == "cpu")
+                    : (IsIdentifier(payload.companion_base_id) &&
+                       IsOptionalBackend(payload.backend)));
+    if (!identity_valid ||
         !IsIdentifier(payload.pack_id) || payload.components.empty() ||
         payload.source_directory.empty()) {
         return Finish(
@@ -297,6 +320,14 @@ BackendPackInstallResult BackendPackInstaller::Apply(
                             active.runtime_set_id != payload.runtime_set_id))
             return Finish(BackendPackInstallStatus::InvalidRequest,
                           "CPU repair requires the exact active base identity");
+    } else if (plugin) {
+        if (!LoadActiveRuntimeState(
+                runtime_root_ / "active-runtime.json", active, error) ||
+            active.base_pack_id != payload.companion_base_id) {
+            return Finish(
+                BackendPackInstallStatus::InvalidRequest,
+                error.empty() ? "Plugin pack requires a different active base" : error);
+        }
     } else if (!LoadActiveRuntimeState(
                    runtime_root_ / "active-runtime.json", active, error) ||
                active.runtime_set_id != payload.runtime_set_id ||
@@ -397,7 +428,9 @@ BackendPackInstallResult BackendPackInstaller::Apply(
             "Pack installation interrupted after validation");
     }
 
-    const auto destination = base
+    const auto destination = plugin
+        ? PluginPackDirectory(runtime_root_, payload.plugin_id, payload.pack_id)
+        : base
         ? runtime_root_ / "base" / payload.pack_id
         : runtime_root_ / "packs" / payload.backend / payload.pack_id;
     const bool destination_exists =
@@ -616,7 +649,36 @@ BackendPackInstallResult BackendPackInstaller::Apply(
         progress.message = "Publishing the complete versioned pack directory";
         SetProgress(progress);
         std::filesystem::path quarantined;
-        if (replace_existing) {
+        if (replace_existing && plugin) {
+            // A corrupt plugin pack is deactivated first; it has no rollback state.
+            ActivePluginsState plugins;
+            if (!LoadActivePluginsState(
+                    runtime_root_ / kActivePluginsFileName, plugins, error)) {
+                std::filesystem::remove_all(staging_root, filesystem_error);
+                return Finish(BackendPackInstallStatus::IntegrityFailure, error);
+            }
+            const bool is_active = std::any_of(
+                plugins.plugins.begin(), plugins.plugins.end(),
+                [&](const ActivePluginPackState& value) {
+                    return value.plugin_id == payload.plugin_id &&
+                           value.pack_id == payload.pack_id;
+                });
+            if (is_active) {
+                progress.stage = BackendPackInstallStage::Deactivating;
+                progress.message = "Deactivating the corrupt plugin pack before repair";
+                SetProgress(progress);
+                BackendPackStateService state_service(runtime_root_, execution_active_);
+                const auto deactivation = state_service.DeactivatePluginPack(payload.plugin_id);
+                if (deactivation.status != BackendPackStateStatus::Completed) {
+                    std::filesystem::remove_all(staging_root, filesystem_error);
+                    return Finish(
+                        BackendPackInstallStatus::FilesystemFailure,
+                        "Cannot deactivate the corrupt plugin pack before repair: " +
+                            deactivation.message);
+                }
+            }
+        }
+        if (replace_existing && !plugin) {
             const auto active_pack = std::find_if(
                 active.packs.begin(), active.packs.end(),
                 [&](const ActivePackState& pack) {
@@ -697,6 +759,8 @@ BackendPackInstallResult BackendPackInstaller::Apply(
                         (filesystem_error ? filesystem_error.message() :
                                             error));
             }
+        }
+        if (replace_existing) {
             quarantined = staging_root;
             quarantined += "-previous";
             std::filesystem::rename(
@@ -808,8 +872,9 @@ BackendPackInstallResult BackendPackInstaller::Apply(
     progress.message = "Activating the complete installed pack";
     SetProgress(progress);
     BackendPackStateService state_service(runtime_root_, execution_active_);
-    auto activation = state_service.ActivateOptionalPack(
-        payload.backend, payload.pack_id);
+    auto activation = plugin
+        ? state_service.ActivatePluginPack(payload.plugin_id, payload.pack_id)
+        : state_service.ActivateOptionalPack(payload.backend, payload.pack_id);
     if (activation.status != BackendPackStateStatus::Completed) {
         return Finish(
             BackendPackInstallStatus::InstalledUnqualified,

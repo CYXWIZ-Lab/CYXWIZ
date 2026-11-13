@@ -4,6 +4,7 @@
 #include "../preprocessing/statistics_calculator.h"
 #include "../preprocessing/normalization_transform.h"
 #include "../preprocessing/scaling_transform.h"
+#include "cyxwiz/portable_random.h"
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstring>
@@ -283,7 +284,7 @@ void DatasetBatcher::NormalizeData(std::vector<float>& data) {
 }
 
 void DatasetBatcher::ShuffleIndices() {
-    std::shuffle(indices_.begin(), indices_.end(), rng_);
+    cyxwiz::portable::Shuffle(indices_.begin(), indices_.end(), rng_);
 }
 
 // Preprocessing pipeline methods

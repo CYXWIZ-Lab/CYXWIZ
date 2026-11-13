@@ -34,7 +34,13 @@ void RecordPluginLoaded(PluginStartupList& list, const std::string& id, const st
 void RecordPluginRemoved(PluginStartupList& list, const std::string& id);
 void SetPluginLoadAtStartup(PluginStartupList& list, const std::string& id, bool on);
 bool PluginLoadsAtStartup(const PluginStartupList& list, const std::string& id);
-std::vector<PluginStartupEntry> PluginsToLoadAtStartup(const PluginStartupList& list);
+// The plugins to load when the Engine starts. `pack_plugins` are the plugin
+// packs active in the installed runtime (id and their current folder): a listed
+// one loads from that folder, whatever folder was recorded (a pack update moves
+// it); an installed pack not listed yet loads too, since installing it was the
+// user's choice. A plugin the user set not to load stays off.
+std::vector<PluginStartupEntry> PluginsToLoadAtStartup(
+    const PluginStartupList& list, const std::vector<PluginStartupEntry>& pack_plugins = {});
 
 // What a loaded plugin adds to the Engine.
 struct PluginContribution {

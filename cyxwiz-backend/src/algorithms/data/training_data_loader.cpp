@@ -1,4 +1,5 @@
 #include "cyxwiz/dataloader.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -137,7 +138,7 @@ void TrainingDataLoader::SetNormalization(float mean, float std) {
 }
 
 void TrainingDataLoader::ShuffleIndices() {
-    std::shuffle(indices_.begin(), indices_.end(), rng_);
+    cyxwiz::portable::Shuffle(indices_.begin(), indices_.end(), rng_);
 }
 
 Tensor TrainingDataLoader::VectorToTensor(const std::vector<float>& data,

@@ -5,11 +5,14 @@
 #include "engine_plugin_context.h"
 #include "security/permission_dialog.h"
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <mutex>
 #include <set>
 #include <filesystem>
+#include <functional>
 #include <string>
 
 namespace cyxwiz::plugin {
@@ -38,7 +41,14 @@ public:
     void SetSearchPaths(const std::vector<std::filesystem::path>& paths);
     const std::vector<std::filesystem::path>& GetSearchPaths() const { return search_paths_; }
 
-    // Discover all plugin directories in search paths
+    // Plugin packs active in the installed runtime: exact plugin folders (id,
+    // folder), listed by discovery and loaded at startup from where they are.
+    void SetPackPlugins(std::vector<std::pair<std::string, std::filesystem::path>> plugins);
+    const std::vector<std::pair<std::string, std::filesystem::path>>& GetPackPlugins() const {
+        return pack_plugins_;
+    }
+
+    // Discover all plugin directories in search paths and the active plugin packs
     std::vector<std::filesystem::path> DiscoverPlugins() const;
 
     // ===== Loading =====
@@ -75,6 +85,11 @@ public:
 
     // Disable a running plugin
     void DisablePlugin(const std::string& plugin_id);
+
+    // Called on the UI thread before a plugin is shut down or unloaded, outside
+    // the manager's locks: whatever runs the plugin's code (a graph simulation
+    // run) stops there first.
+    void SetPluginStoppingHandler(std::function<void(const std::string& plugin_id)> handler);
 
     // ===== Querying =====
 
@@ -132,6 +147,8 @@ private:
     struct ExtensionLease;
     std::unordered_map<std::string, std::shared_ptr<ExtensionLease>> extension_leases_;
 
+    std::function<void(const std::string& plugin_id)> plugin_stopping_handler_;
+
     // Plugin storage: id -> LoadedPlugin
     std::unordered_map<std::string, std::unique_ptr<LoadedPlugin>> plugins_;
 
@@ -140,6 +157,7 @@ private:
 
     // Search paths for plugin directories
     std::vector<std::filesystem::path> search_paths_;
+    std::vector<std::pair<std::string, std::filesystem::path>> pack_plugins_;
 
     // Thread safety
     mutable std::recursive_mutex mutex_;

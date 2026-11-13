@@ -1,6 +1,8 @@
 #include "groups_explore.h"
+#include "tsne_learning_rate.h"
 
 #include "explore_read.h"
+#include "cyxwiz/portable_random.h"
 
 #include <cyxwiz/dimensionality_reduction.h>
 
@@ -310,7 +312,7 @@ ProjectionAnswer RunProjection(const std::string& table, const ProjectionRequest
     std::iota(keep.begin(), keep.end(), size_t{0});
     if (req.method != ProjectionMethod::PCA && req.max_rows > 0 && a.used > req.max_rows) {
         std::mt19937 rng(Seed(req.seed));
-        std::shuffle(keep.begin(), keep.end(), rng);
+        cyxwiz::portable::Shuffle(keep.begin(), keep.end(), rng);
         keep.resize(static_cast<size_t>(req.max_rows));
         std::sort(keep.begin(), keep.end());
         a.sampled = true;
@@ -340,7 +342,7 @@ ProjectionAnswer RunProjection(const std::string& table, const ProjectionRequest
             struct Stopped {};
             tSNEResult r;
             try {
-                r = DimensionalityReduction::ComputetSNE(data, 2, req.perplexity, req.learning_rate, req.iterations,
+                r = DimensionalityReduction::ComputetSNE(data, 2, req.perplexity, TsneLearningRate(req.learning_rate, data.size()), req.iterations,
                                                          [&](int iteration, double kl) {
                                                              if (hooks.progress) {
                                                                  char text[64];

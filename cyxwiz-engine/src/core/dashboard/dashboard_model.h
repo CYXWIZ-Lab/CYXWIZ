@@ -97,7 +97,7 @@ struct FilterPredicate {
     std::vector<std::string> values;     // In: the values (as text)
     double lo = 0, hi = 0;               // Range: lo <= field <= hi
     std::string source_widget;           // the widget that set it (its own query ignores it)
-    std::string bucket;                  // "year": the field's year (a date widget's range); "words": its word count
+    std::string bucket{};                // "year": the field's year (a date widget's range); "words": its word count
     std::string Text() const;            // "album_type = single", "age 20 to 40"
 };
 

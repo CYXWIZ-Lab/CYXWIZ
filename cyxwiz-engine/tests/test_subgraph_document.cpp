@@ -90,6 +90,16 @@ int main(int argc, char** argv) {
             Check(original["nodes"].size() == 3, "collapsed root contains wrapper and external nodes");
             Check(original["subgraphs"][0]["nodes"][0]["pos_x"] == 123, "internal position preserved");
             Check(original["subgraphs"][0]["nodes"][0]["parameters"]["text"] == "preserved", "parameters preserved");
+            {
+                // A node set back by undo reads back as -159.99998 for -160: saved to
+                // a hundredth of a grid unit, it is the same graph.
+                json noisy;
+                WriteEditorGraphContent(noisy, f.nodes, f.links, {f.group}, {{1, {-159.99998f, 12.344999f}}});
+                bool rounded = false;
+                for (const auto& node : noisy["nodes"])
+                    if (node["id"] == 1) rounded = node["pos_x"] == -160.0 && node["pos_y"] == 12.34;
+                Check(rounded, "positions are saved to a hundredth of a grid unit");
+            }
             ReadFresh(original);
             f.group.expanded = true;
             f.nodes.push_back(f.first); f.nodes.push_back(f.second); f.links.push_back(f.internal);

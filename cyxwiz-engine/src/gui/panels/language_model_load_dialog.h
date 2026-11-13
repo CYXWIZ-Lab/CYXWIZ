@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../core/active_model_use.h"
 #include "../../core/language_model_loader.h"
 
 #include <atomic>
@@ -35,6 +36,7 @@ private:
         std::string error;
         std::shared_ptr<LoadedLanguageModel> result;
         uint64_t task_id = 0;
+        std::shared_ptr<ActiveModelUse> use;  // This session's model: its check runs it.
     };
 
     void RenderSources();

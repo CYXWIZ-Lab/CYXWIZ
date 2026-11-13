@@ -60,11 +60,12 @@ MjcfModelInfo ParseMjcfModel(const mjModel* m) {
     }
 
     // Dimensions
-    info.nq = m->nq;
-    info.nv = m->nv;
-    info.nu = m->nu;
-    info.nsensor = m->nsensor;
-    info.nbody = m->nbody;
+    // MuJoCo sizes are mjtSize (64-bit); a model's counts fit an int.
+    info.nq = static_cast<int>(m->nq);
+    info.nv = static_cast<int>(m->nv);
+    info.nu = static_cast<int>(m->nu);
+    info.nsensor = static_cast<int>(m->nsensor);
+    info.nbody = static_cast<int>(m->nbody);
     info.timestep = m->opt.timestep;
 
     // Actuators

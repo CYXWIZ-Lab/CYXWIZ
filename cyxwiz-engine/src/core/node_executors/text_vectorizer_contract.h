@@ -1,12 +1,16 @@
 #pragma once
 
+#include <cyxwiz/text_processing.h>
+
+#include <algorithm>
 #include <charconv>
-#include <limits>
+#include <cmath>
+#include <cstdint>
 #include <map>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <vector>
 
 namespace cyxwiz::text_vectorizer_contract {
@@ -105,54 +109,85 @@ inline bool ParseNGramRange(
     return true;
 }
 
-inline std::string JoinNGram(const std::vector<std::string>& tokens,
-                             size_t start,
-                             size_t width) {
-    std::string output;
-    for (size_t offset = 0; offset < width; ++offset) {
-        if (offset > 0) {
-            output += ' ';
-        }
-        output += tokens[start + offset];
-    }
-    return output;
+// scikit-learn's idf of a term in `df` of `rows` texts: ln(n / df) + 1, or
+// smoothed ln((1 + n) / (1 + df)) + 1.
+inline double Idf(double rows, double df, bool smooth) {
+    return smooth ? std::log((rows + 1.0) / (df + 1.0)) + 1.0
+                  : std::log(rows / df) + 1.0;
 }
 
-inline std::vector<std::string> BuildNGramFeatures(
-    const std::vector<std::string>& tokens,
-    int ngram_min,
-    int ngram_max) {
-    std::vector<std::string> features;
-    if (tokens.empty() || ngram_min < 1 || ngram_max < ngram_min) {
-        return features;
-    }
+// The terms of a column (TextProcessing::Terms), each kept once as an id (in
+// the order first read), and each row as its (id, count) pairs, ids
+// ascending, in flat arrays: the memory grows with the terms read, not with a
+// table of strings per row.
+struct CountedTerms {
+    std::vector<std::string> terms;      // by id
+    std::vector<int64_t> doc_freq;       // the counted rows each term is in
+    std::vector<int64_t> corpus_count;   // its count over those rows
+    std::vector<int64_t> starts{0};      // row r's pairs: [starts[r], starts[r + 1])
+    std::vector<int32_t> ids, counts;
+};
 
-    size_t total = 0;
-    for (int n = ngram_min; n <= ngram_max; ++n) {
-        const size_t width = static_cast<size_t>(n);
-        if (tokens.size() < width) {
-            continue;
+// Counts every text; `counted(r)` says whether row r adds to doc_freq and
+// corpus_count (the fit rows). `keep_going(rows_done)` is asked every 1,024
+// rows and at the end; false stops the count, which then returns false.
+template <class Counted, class KeepGoing>
+bool CountTerms(const std::vector<std::string>& texts, bool english_stop_words,
+                int ngram_min, int ngram_max, Counted counted,
+                KeepGoing keep_going, CountedTerms& out) {
+    out = {};
+    out.starts.reserve(texts.size() + 1);
+    std::unordered_map<std::string, int32_t> id_of;
+    std::vector<int32_t> row;
+    for (size_t r = 0; r < texts.size(); ++r) {
+        if ((r & 1023) == 0 && !keep_going(r)) return false;
+        row.clear();
+        for (std::string& term : TextProcessing::Terms(
+                 texts[r], english_stop_words, ngram_min, ngram_max)) {
+            const auto [it, added] = id_of.try_emplace(
+                std::move(term), static_cast<int32_t>(out.doc_freq.size()));
+            if (added) {
+                out.doc_freq.push_back(0);
+                out.corpus_count.push_back(0);
+            }
+            row.push_back(it->second);
         }
-        const size_t count = tokens.size() - width + 1;
-        if (total > std::numeric_limits<size_t>::max() - count) {
-            throw std::length_error("text n-gram feature count overflow");
+        std::sort(row.begin(), row.end());
+        const bool adds = counted(r);
+        for (size_t k = 0; k < row.size(); ++k) {
+            const size_t id = static_cast<size_t>(row[k]);
+            if (adds) ++out.corpus_count[id];
+            if (k > 0 && row[k] == row[k - 1]) {
+                ++out.counts.back();
+                continue;
+            }
+            out.ids.push_back(row[k]);
+            out.counts.push_back(1);
+            if (adds) ++out.doc_freq[id];
         }
-        total += count;
+        out.starts.push_back(static_cast<int64_t>(out.ids.size()));
     }
-    features.reserve(total);
+    out.terms.resize(out.doc_freq.size());
+    for (auto it = id_of.begin(); it != id_of.end();) {
+        auto node = id_of.extract(it++);
+        out.terms[static_cast<size_t>(node.mapped())] = std::move(node.key());
+    }
+    return keep_going(texts.size());
+}
 
-    for (int n = ngram_min; n <= ngram_max; ++n) {
-        const size_t width = static_cast<size_t>(n);
-        if (tokens.size() < width) {
-            continue;
-        }
-        for (size_t start = 0; start + width <= tokens.size(); ++start) {
-            features.push_back(width == 1
-                ? tokens[start]
-                : JoinNGram(tokens, start, width));
-        }
+// Each id's column among `kept` (the terms kept, in column order), or -1.
+inline std::vector<int32_t> ColumnsOf(const CountedTerms& counted,
+                                      const std::vector<std::string>& kept) {
+    std::unordered_map<std::string_view, int32_t> column;
+    column.reserve(kept.size());
+    for (size_t j = 0; j < kept.size(); ++j)
+        column.emplace(kept[j], static_cast<int32_t>(j));
+    std::vector<int32_t> out(counted.terms.size(), -1);
+    for (size_t id = 0; id < counted.terms.size(); ++id) {
+        const auto it = column.find(counted.terms[id]);
+        if (it != column.end()) out[id] = it->second;
     }
-    return features;
+    return out;
 }
 
 }  // namespace cyxwiz::text_vectorizer_contract

@@ -1,316 +1,435 @@
 #include "mj_env_browser_panel.h"
 #include "mj_menagerie_downloader.h"
+#include "mj_ui_helpers.h"
+
+#include "plugin/plugin_context.h"
+#include "plugin/plugin_ui.h"
 
 #include <imgui.h>
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <filesystem>
-#include <cstdlib>
 
 namespace cyxwiz::plugin::mujoco {
+namespace {
 
-void MjEnvBrowserPanel::Render(MjEnvLibrary& library,
-                                const MjEnvManager& env,
-                                bool* visible) {
+constexpr const char* kViewportPanelId = "mujoco_viewport";
+constexpr const char* kSources[] = {"All", "Built-in", "Menagerie", "Imported"};
+constexpr int kSourceCount = 4;
+constexpr float kCardMinWidth = 280.0f;
+
+std::string Lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+std::string WithThousands(int value) {
+    std::string digits = std::to_string(value);
+    for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3) digits.insert(static_cast<size_t>(i), ",");
+    return digits;
+}
+
+// "Built-in · Classic Control", "Menagerie · not downloaded", "Imported from URL"
+std::string SourceLine(const EnvInfo& info) {
+    switch (info.source) {
+        case EnvSource::Menagerie:
+            return info.requires_download ? "Menagerie \xC2\xB7 not downloaded" : "Menagerie \xC2\xB7 downloaded";
+        case EnvSource::Imported:
+            return "Imported from URL";
+        default:
+            return "Built-in \xC2\xB7 " + info.category;
+    }
+}
+
+// "1 action · 4 observations · 1,000 steps" (the episode length)
+std::string Facts(const EnvInfo& info) {
+    if (info.act_dim == 0 && info.obs_dim == 0) return "Actions and observations known after loading";
+    std::string facts = std::to_string(info.act_dim) + (info.act_dim == 1 ? " action" : " actions") +
+                        " \xC2\xB7 " + std::to_string(info.obs_dim) + " observations";
+    if (info.source == EnvSource::Builtin) facts += " \xC2\xB7 " + WithThousands(info.max_steps) + " steps";
+    return facts;
+}
+
+// `text` wrapped to `width` and cut to `lines` lines at the cursor; the whole
+// text shows on hover when it was cut.
+void ClippedText(const char* text, float width, int lines, ImU32 colour) {
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float height = ImGui::GetTextLineHeight() * static_cast<float>(lines);
+    const ImVec4 clip(pos.x, pos.y, pos.x + width, pos.y + height);
+    ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), pos, colour, text, nullptr, width,
+                                        &clip);
+    ImGui::Dummy(ImVec2(width, height));
+    if (ImGui::IsItemHovered() && ImGui::CalcTextSize(text, nullptr, false, width).y > height + 1.0f)
+        ImGui::SetTooltip("%s", text);
+}
+
+}  // namespace
+
+void MjEnvBrowserPanel::Render(MjEnvLibrary& library, const MjEnvManager& env, bool* visible) {
     if (!visible || !*visible) return;
+
+    ApplyFinishedDownloads(library);
 
     // Process deferred load BEFORE any ImGui rendering.
     // LoadEnvironment switches GL contexts which corrupts ImGui's GL state mid-frame.
     if (!pending_load_path_.empty()) {
         std::string path = std::move(pending_load_path_);
-        std::string id = std::move(pending_load_id_);
         pending_load_path_.clear();
-        pending_load_id_.clear();
-        if (load_callback_ && load_callback_(path)) {
-            loaded_env_id_ = id;
+        if (load_callback_ && load_callback_(path, pending_load_info_)) {
+            loaded_env_id_ = pending_load_info_.id;
         }
     }
 
-    ImGui::SetNextWindowSize(ImVec2(580, 520), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(1000, 700), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Environment Library", visible)) {
         ImGui::End();
         return;
     }
-
-    RenderUrlImport(library);
-    ImGui::Spacing();
-    RenderSearchBar();
-    RenderCategoryTabs(library);
-    ImGui::Separator();
-
-    // Determine filter text (lowercase)
-    std::string filter = search_buf_;
-    std::transform(filter.begin(), filter.end(), filter.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-    // Environment cards
-    float panel_width = ImGui::GetContentRegionAvail().x;
-    float card_width = 240.0f;
-    int cols = std::max(1, static_cast<int>(panel_width / card_width));
-
-    int col = 0;
-    for (const auto& info : library.GetAll()) {
-        // Category filter
-        if (!selected_category_.empty() && info.category != selected_category_)
-            continue;
-
-        // Text search filter
-        if (!filter.empty()) {
-            std::string name_lower = info.name;
-            std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            std::string desc_lower = info.description;
-            std::transform(desc_lower.begin(), desc_lower.end(), desc_lower.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            if (name_lower.find(filter) == std::string::npos &&
-                desc_lower.find(filter) == std::string::npos)
-                continue;
-        }
-
-        if (col > 0) ImGui::SameLine();
-
-        bool is_loaded = (env.IsLoaded() && loaded_env_id_ == info.id);
-        RenderEnvCard(info, library, is_loaded);
-
-        col++;
-        if (col >= cols) col = 0;
+    // The Engine's widgets: always there in an Engine with plugin API 1.4
+    if (!ctx_ || !ctx_->GetUi()) {
+        ImGui::End();
+        return;
     }
+
+    RenderTopRow();
+    if (import_open_) RenderUrlImport();
+
+    std::vector<const EnvInfo*> by_source;
+    for (const auto& info : library.GetAll())
+        if (MatchesSource(info)) by_source.push_back(&info);
+    // A category the chosen source does not have falls back to All
+    if (!selected_category_.empty() &&
+        std::none_of(by_source.begin(), by_source.end(),
+                     [&](const EnvInfo* e) { return e->category == selected_category_; }))
+        selected_category_.clear();
+    std::vector<const EnvInfo*> shown;
+    for (const EnvInfo* info : by_source)
+        if ((selected_category_.empty() || info->category == selected_category_) && MatchesSearch(*info))
+            shown.push_back(info);
+
+    const float footer_h = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    const float body_h = std::max(0.0f, ImGui::GetContentRegionAvail().y - footer_h);
+    ImGui::BeginChild("##categories", ImVec2(200.0f, body_h));
+    RenderCategories(by_source);
+    ImGui::EndChild();
+    ImGui::SameLine();
+    ImGui::BeginChild("##cards", ImVec2(0.0f, body_h));
+    RenderCards(library, env, shown);
+    ImGui::EndChild();
+    RenderFooter(library);
 
     ImGui::End();
 }
 
-void MjEnvBrowserPanel::RenderSearchBar() {
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 4.0f);
-    ImGui::InputTextWithHint("##env_search", "Search environments...", search_buf_, sizeof(search_buf_));
-}
-
-void MjEnvBrowserPanel::RenderCategoryTabs(const MjEnvLibrary& library) {
-    // "All" tab
-    bool all_selected = selected_category_.empty();
-    if (all_selected) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+void MjEnvBrowserPanel::ApplyFinishedDownloads(MjEnvLibrary& library) {
+    std::vector<FinishedDownload> done;
+    {
+        std::lock_guard lock(finished_mutex_);
+        done.swap(finished_);
     }
-    if (ImGui::SmallButton("All")) {
-        selected_category_.clear();
-    }
-    if (all_selected) ImGui::PopStyleColor();
-
-    for (const auto& cat : library.GetCategories()) {
-        ImGui::SameLine();
-        bool sel = (selected_category_ == cat);
-        if (sel) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        }
-        if (ImGui::SmallButton(cat.c_str())) {
-            selected_category_ = (selected_category_ == cat) ? "" : cat;
-        }
-        if (sel) ImGui::PopStyleColor();
-    }
-}
-
-void MjEnvBrowserPanel::RenderEnvCard(const EnvInfo& info,
-                                       MjEnvLibrary& library,
-                                       bool is_loaded) {
-    ImGui::PushID(info.id.c_str());
-
-    float card_w = 230.0f;
-    ImVec2 card_start = ImGui::GetCursorScreenPos();
-
-    // Card background
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImVec2 card_end(card_start.x + card_w, card_start.y + 140.0f);
-    ImU32 bg_col = is_loaded ? IM_COL32(40, 80, 60, 255) : IM_COL32(45, 45, 50, 255);
-    dl->AddRectFilled(card_start, card_end, bg_col, 6.0f);
-    dl->AddRect(card_start, card_end, IM_COL32(80, 80, 90, 255), 6.0f);
-
-    // Content inside card
-    ImGui::BeginGroup();
-    ImGui::SetCursorScreenPos(ImVec2(card_start.x + 10, card_start.y + 8));
-
-    // Name
-    ImGui::TextColored(ImVec4(0.9f, 0.9f, 1.0f, 1.0f), "%s", info.name.c_str());
-
-    // Source badge + category
-    ImGui::SameLine(card_w - 110);
-    if (info.source == EnvSource::Menagerie) {
-        if (info.requires_download) {
-            ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "[Cloud]");
+    for (const auto& d : done) {
+        if (d.url_import) {
+            url_importing_ = false;
+            if (!d.ok) {
+                url_import_error_ = d.error.empty() ? "The download failed." : d.error;
+            } else if (library.AddImportedModel(d.dir, d.id, "Imported from " + d.url)) {
+                url_import_status_ = "Imported " + d.id + ". It is listed under Imported.";
+            } else {
+                url_import_error_ = "No .xml model file was found at that address.";
+            }
         } else {
-            ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "[Downloaded]");
-        }
-    } else {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[Builtin]");
-    }
-
-    // Description (truncated)
-    ImGui::SetCursorScreenPos(ImVec2(card_start.x + 10, card_start.y + 30));
-    ImGui::PushTextWrapPos(card_start.x + card_w - 10);
-    ImGui::TextDisabled("%s", info.description.c_str());
-    ImGui::PopTextWrapPos();
-
-    // Metadata row
-    ImGui::SetCursorScreenPos(ImVec2(card_start.x + 10, card_start.y + 80));
-    ImGui::Text("Act: %d", info.act_dim);
-    ImGui::SameLine();
-    ImGui::Text("Obs: %d", info.obs_dim);
-    if (info.source == EnvSource::Menagerie) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", info.category.c_str());
-    } else {
-        ImGui::SameLine();
-        ImGui::Text("Steps: %d", info.max_steps);
-    }
-
-    // Action button area
-    ImGui::SetCursorScreenPos(ImVec2(card_start.x + 10, card_start.y + 108));
-
-    bool is_downloading = (downloader_ && downloader_->IsDownloading() && downloading_env_id_ == info.id);
-
-    if (is_loaded) {
-        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "Loaded");
-    } else if (is_downloading) {
-        // Progress bar
-        float progress = downloader_->GetProgress();
-        ImGui::SetNextItemWidth(card_w - 20);
-        ImGui::ProgressBar(progress, ImVec2(card_w - 20, 20),
-                           downloader_->GetStatusText().c_str());
-    } else if (info.source == EnvSource::Menagerie && info.requires_download) {
-        // Download button
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.35f, 0.6f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.45f, 0.75f, 1.0f));
-        if (ImGui::Button("Download", ImVec2(card_w - 20, 22))) {
-            if (downloader_ && !downloader_->IsDownloading()) {
-                downloading_env_id_ = info.id;
-                std::string dest = library.GetMenagerieModelDir(info);
-                downloader_->DownloadModelAsync(info.repo_path, dest,
-                    [this, id = info.id, &library](bool success, const std::string&) {
-                        if (success) {
-                            library.MarkDownloaded(id);
-                        }
-                        downloading_env_id_.clear();
-                    });
+            if (downloading_env_id_ == d.id) downloading_env_id_.clear();
+            if (d.ok) {
+                library.MarkDownloaded(d.id);
+                download_errors_.erase(d.id);
+            } else {
+                download_errors_[d.id] = d.error.empty() ? "The download failed." : d.error;
             }
         }
-        ImGui::PopStyleColor(2);
+    }
+}
+
+bool MjEnvBrowserPanel::MatchesSource(const EnvInfo& info) const {
+    switch (source_) {
+        case 1: return info.source == EnvSource::Builtin;
+        case 2: return info.source == EnvSource::Menagerie;
+        case 3: return info.source == EnvSource::Imported;
+        default: return true;
+    }
+}
+
+bool MjEnvBrowserPanel::MatchesSearch(const EnvInfo& info) const {
+    if (search_buf_[0] == '\0') return true;
+    const std::string query = Lower(search_buf_);
+    return Lower(info.name).find(query) != std::string::npos ||
+           Lower(info.description).find(query) != std::string::npos;
+}
+
+// =============================================================================
+// Search, source and Import from URL
+// =============================================================================
+
+void MjEnvBrowserPanel::RenderTopRow() {
+    PluginUi* ui = ctx_->GetUi();
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const char* import_label = "Import from URL...";
+    const float source_w = ui->SegmentedControlWidth(kSources, kSourceCount);
+    const float import_w = ui->ButtonWidth(import_label, UiButtonSize::Regular);
+    const float search_w = std::max(160.0f, ImGui::GetContentRegionAvail().x - source_w - import_w - 2.0f * spacing);
+
+    // One row, its items centred on the tallest (the button)
+    const float row_y = ImGui::GetCursorPosY();
+    const float field_y = row_y + std::max(0.0f, (ui->ButtonHeight(UiButtonSize::Regular) - ImGui::GetFrameHeight()) * 0.5f);
+    ImGui::SetCursorPosY(field_y);
+    ui->SearchField("##env_search", search_buf_, sizeof(search_buf_), "Search by name or description", search_w);
+    SameLineIfFits(source_w);
+    ImGui::SetCursorPosY(field_y);
+    int source = source_;
+    if (ui->SegmentedControl("##env_source", kSources, kSourceCount, &source)) {
+        source_ = source;
+        selected_category_.clear();
+    }
+    SameLineIfFits(import_w);
+    ImGui::SetCursorPosY(row_y);
+    if (ui->SecondaryButton(import_label)) import_open_ = !import_open_;
+    ImGui::Spacing();
+}
+
+void MjEnvBrowserPanel::RenderUrlImport() {
+    PluginUi* ui = ctx_->GetUi();
+    const UiColors colors = ui->Colors();
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const bool busy = !downloader_ || downloader_->IsDownloading();
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(ToImVec4(colors.text_dim), "Model URL");
+    ImGui::SameLine();
+    const float buttons_w =
+        ui->ButtonWidth("Import", UiButtonSize::Regular) + ui->ButtonWidth("Cancel", UiButtonSize::Regular) + 2.0f * spacing;
+    ImGui::SetNextItemWidth(std::max(200.0f, ImGui::GetContentRegionAvail().x - buttons_w - spacing));
+    ImGui::InputTextWithHint("##url", "A GitHub folder (github.com/<owner>/<repo>/tree/<branch>/<folder>) or an .xml file",
+                             url_buf_, sizeof(url_buf_));
+    SameLineIfFits(buttons_w);
+    const bool has_url = url_buf_[0] != '\0';
+    if (ui->PrimaryButton("Import", has_url && !busy, busy ? "Another download is running" : "Paste a model's address first")) {
+        const std::string url = url_buf_;
+        // The model's name: the URL's last part, without .xml
+        std::string name = "imported_model";
+        const auto last_slash = url.find_last_of('/');
+        if (last_slash != std::string::npos && last_slash + 1 < url.size()) {
+            std::string tail = url.substr(last_slash + 1);
+            const auto dot = tail.rfind('.');
+            name = dot != std::string::npos ? tail.substr(0, dot) : tail;
+        }
+        const std::string dest = (std::filesystem::path(MjEnvLibrary::GetImportedRoot()) / name).string();
+        url_importing_ = true;
+        url_import_status_.clear();
+        url_import_error_.clear();
+        downloader_->DownloadFromUrlAsync(url, dest, [this, name, dest, url](bool ok, const std::string& error) {
+            std::lock_guard lock(finished_mutex_);
+            finished_.push_back({true, name, dest, url, ok, error});
+        });
+    }
+    ImGui::SameLine();
+    if (ui->SecondaryButton("Cancel")) {
+        import_open_ = false;
+        url_import_status_.clear();
+        url_import_error_.clear();
+    }
+
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(ToImVec4(colors.text_dim),
+                       "An MJCF .xml file or a GitHub folder. Files are saved in %s and listed under Imported.",
+                       (std::filesystem::path(MjEnvLibrary::GetImportedRoot()) / "<name>").string().c_str());
+    if (url_importing_ && downloader_) {
+        ImGui::ProgressBar(downloader_->GetProgress(), ImVec2(420.0f, 6.0f), "");
+        ImGui::TextColored(ToImVec4(colors.text_dim), "%s", downloader_->GetStatusText().c_str());
+    }
+    if (!url_import_status_.empty()) ImGui::TextColored(ToImVec4(colors.success), "%s", url_import_status_.c_str());
+    if (!url_import_error_.empty()) ImGui::TextColored(ToImVec4(colors.caution), "%s", url_import_error_.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+}
+
+// =============================================================================
+// Categories
+// =============================================================================
+
+void MjEnvBrowserPanel::RenderCategories(const std::vector<const EnvInfo*>& by_source) {
+    const UiColors colors = ctx_->GetUi()->Colors();
+    // The chosen category on the raised surface, as the mockup draws it
+    ImGui::PushStyleColor(ImGuiCol_Header, ToImVec4(colors.bg_raised));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ToImVec4(colors.bg_raised));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ToImVec4(colors.bg_raised));
+    auto row = [&](const std::string& category, size_t count) {
+        const bool selected = selected_category_ == category;
+        ImGui::PushID(category.c_str());
+        if (ImGui::Selectable(category.empty() ? "All" : category.c_str(), selected)) selected_category_ = category;
+        char text[16];
+        std::snprintf(text, sizeof(text), "%zu", count);
+        const float width = ImGui::CalcTextSize(text).x;
+        ImGui::GetWindowDrawList()->AddText(ImVec2(ImGui::GetItemRectMax().x - width - 6.0f, ImGui::GetItemRectMin().y),
+                                            ToU32(colors.text_dim), text);
+        ImGui::PopID();
+    };
+    row("", by_source.size());
+    // Categories in library order, with their counts under the chosen source
+    std::vector<std::pair<std::string, size_t>> categories;
+    for (const EnvInfo* info : by_source) {
+        auto it = std::find_if(categories.begin(), categories.end(),
+                               [&](const auto& c) { return c.first == info->category; });
+        if (it == categories.end()) categories.emplace_back(info->category, 1);
+        else ++it->second;
+    }
+    for (const auto& [category, count] : categories) row(category, count);
+    ImGui::PopStyleColor(3);
+}
+
+// =============================================================================
+// Cards
+// =============================================================================
+
+void MjEnvBrowserPanel::RenderCards(MjEnvLibrary& library, const MjEnvManager& env,
+                                    const std::vector<const EnvInfo*>& shown) {
+    PluginUi* ui = ctx_->GetUi();
+    const UiColors colors = ui->Colors();
+
+    if (shown.empty()) {
+        if (search_buf_[0] != '\0') {
+            const std::string title = std::string("No environments match \"") + search_buf_ + "\"";
+            ui->EmptyState(title.c_str(), "Search looks in names and descriptions.");
+            const float width = ui->ButtonWidth("Clear search", UiButtonSize::Regular);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - width) * 0.5f));
+            if (ui->LinkButton("Clear search")) search_buf_[0] = '\0';
+        } else if (source_ == 3) {
+            ui->EmptyState("Nothing imported yet", "Bring in a model of your own with Import from URL...");
+        } else {
+            ui->EmptyState("No environments here");
+        }
+        return;
+    }
+
+    ImGui::TextColored(ToImVec4(colors.text_bright), "%s",
+                       selected_category_.empty() ? "All" : selected_category_.c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(ToImVec4(colors.text_dim), "%zu %s", shown.size(),
+                       shown.size() == 1 ? "environment" : "environments");
+
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const int columns = std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) / (kCardMinWidth + spacing)));
+    const float card_h = ImGui::GetTextLineHeightWithSpacing() * 5.0f + ui->ButtonHeight(UiButtonSize::Regular) +
+                         ImGui::GetStyle().WindowPadding.y * 2.0f + 6.0f;
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(6.0f, 6.0f));
+    if (ImGui::BeginTable("##env_grid", columns, ImGuiTableFlags_SizingStretchSame)) {
+        for (const EnvInfo* info : shown) {
+            ImGui::TableNextColumn();
+            RenderCard(library, *info, env.IsLoaded() && loaded_env_id_ == info->id, card_h);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopStyleVar();
+}
+
+void MjEnvBrowserPanel::RenderCard(MjEnvLibrary& library, const EnvInfo& info, bool is_loaded, float height) {
+    PluginUi* ui = ctx_->GetUi();
+    const UiColors colors = ui->Colors();
+    const bool downloading = downloader_ && downloader_->IsDownloading() && downloading_env_id_ == info.id;
+    const auto error = download_errors_.find(info.id);
+    const bool failed = error != download_errors_.end() && !downloading;
+
+    ImGui::PushID(info.id.c_str());
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ToImVec4(is_loaded ? colors.bg_raised : colors.bg_panel));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+    ImGui::BeginChild("##card", ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    const float width = ImGui::GetContentRegionAvail().x;
+    ImGui::TextColored(ToImVec4(colors.text_bright), "%s", info.name.c_str());
+    ImGui::TextColored(ToImVec4(colors.text_dim), "%s", SourceLine(info).c_str());
+    ClippedText(info.description.c_str(), width, 2, ToU32(colors.text));
+    if (failed) ClippedText(error->second.c_str(), width, 1, ToU32(colors.caution));
+    else ClippedText(Facts(info).c_str(), width, 1, ToU32(colors.text_dim));
+    if (!failed && info.source == EnvSource::Builtin && ImGui::IsItemHovered())
+        ImGui::SetTooltip("Actions the model takes, observations it gives, and the steps an episode lasts");
+
+    // The action row sits at the card's bottom; text beside a button is centred on it
+    const float line_h = ImGui::GetTextLineHeight();
+    const float button_h = ui->ButtonHeight(UiButtonSize::Regular);
+    const float row_h = downloading ? 6.0f + ImGui::GetStyle().ItemSpacing.y + line_h : button_h;
+    const float row_y = std::max(ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y - row_h);
+    ImGui::SetCursorPosY(row_y);
+    const float right = ImGui::GetCursorPosX() + width;
+    auto text_beside = [&](const UiColor& colour, const char* text) {
+        ImGui::SetCursorPosY(row_y + (button_h - line_h) * 0.5f);
+        ImGui::TextColored(ToImVec4(colour), "%s", text);
+        ImGui::SameLine();
+    };
+    auto right_button_x = [&](float w) {
+        ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX(), right - w), row_y));
+    };
+
+    if (is_loaded) {
+        text_beside(colors.success, "Loaded");
+        right_button_x(ui->ButtonWidth("Open viewport", UiButtonSize::Regular));
+        if (ui->LinkButton("Open viewport")) ctx_->ShowPanel(kViewportPanelId);
+    } else if (downloading) {
+        ImGui::ProgressBar(downloader_->GetProgress(), ImVec2(-1.0f, 6.0f), "");
+        ImGui::TextColored(ToImVec4(colors.text_dim), "%s", downloader_->GetStatusText().c_str());
+    } else if (info.source == EnvSource::Menagerie && info.requires_download) {
+        const char* label = failed ? "Try again" : "Download";
+        if (!failed) text_beside(colors.text_dim, "Downloads from GitHub");
+        right_button_x(ui->ButtonWidth(label, UiButtonSize::Regular));
+        const bool busy = !downloader_ || downloader_->IsDownloading();
+        if (ui->SecondaryButton(label, !busy, "Another download is running")) {
+            downloading_env_id_ = info.id;
+            download_errors_.erase(info.id);
+            const std::string id = info.id;
+            const std::string dest = library.GetMenagerieModelDir(info);
+            downloader_->DownloadModelAsync(info.repo_path, dest, [this, id, dest](bool ok, const std::string& err) {
+                std::lock_guard lock(finished_mutex_);
+                finished_.push_back({false, id, dest, std::string(), ok, err});
+            });
+        }
     } else {
-        // Load button (builtin or already downloaded)
-        if (ImGui::Button("Load", ImVec2(card_w - 20, 22))) {
+        right_button_x(ui->ButtonWidth("Load", UiButtonSize::Regular));
+        const std::string blocked = load_blocker_ ? load_blocker_() : std::string();
+        if (ui->SecondaryButton("Load", blocked.empty(), blocked.c_str())) {
             pending_load_path_ = library.GetAssetPath(info);
-            pending_load_id_ = info.id;
+            pending_load_info_ = info;
         }
     }
 
-    ImGui::EndGroup();
-
-    // Advance cursor past card
-    ImGui::SetCursorScreenPos(ImVec2(card_start.x, card_end.y + 6));
-    ImGui::Dummy(ImVec2(card_w, 0));
-
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
     ImGui::PopID();
 }
 
-void MjEnvBrowserPanel::RenderUrlImport(MjEnvLibrary& library) {
-    // Collapsible section for URL import
-    if (!ImGui::CollapsingHeader("Import from URL")) return;
+// =============================================================================
+// Footer
+// =============================================================================
 
-    ImGui::Indent(8.0f);
-
-    float avail = ImGui::GetContentRegionAvail().x - 16.0f;
-    float btn_w = 80.0f;
-
-    ImGui::SetNextItemWidth(avail - btn_w - 8.0f);
-    ImGui::InputTextWithHint("##url_input", "Paste MJCF URL or GitHub directory URL...",
-                              url_buf_, sizeof(url_buf_));
-
-    ImGui::SameLine();
-
-    bool is_downloading = (downloader_ && downloader_->IsDownloading() && url_importing_);
-
-    if (is_downloading) {
-        ImGui::BeginDisabled();
-        ImGui::Button("Importing...", ImVec2(btn_w, 0));
-        ImGui::EndDisabled();
-    } else {
-        if (ImGui::Button("Import", ImVec2(btn_w, 0))) {
-            std::string url = url_buf_;
-            if (!url.empty() && downloader_) {
-                url_importing_ = true;
-                url_import_status_.clear();
-                url_import_error_.clear();
-
-                // Determine destination: ~/.cyxwiz/imported/<model_name>/
-                std::string model_name = "imported_model";
-                // Try to extract a name from the URL
-                auto last_slash = url.rfind('/');
-                if (last_slash != std::string::npos && last_slash + 1 < url.size()) {
-                    std::string tail = url.substr(last_slash + 1);
-                    // Remove .xml extension if present
-                    auto dot = tail.rfind('.');
-                    if (dot != std::string::npos)
-                        model_name = tail.substr(0, dot);
-                    else
-                        model_name = tail;
-                }
-
-                // Build dest dir
-                std::string home;
-#ifdef _WIN32
-                const char* userprofile = std::getenv("USERPROFILE");
-                if (userprofile) home = userprofile;
-#else
-                const char* h = std::getenv("HOME");
-                if (h) home = h;
-#endif
-                namespace fs = std::filesystem;
-                std::string dest_dir = (fs::path(home) / ".cyxwiz" / "imported" / model_name).string();
-
-                downloader_->DownloadFromUrlAsync(url, dest_dir,
-                    [this, model_name, dest_dir, &library](bool success, const std::string& err) {
-                        url_importing_ = false;
-                        if (success) {
-                            url_import_status_ = "Downloaded to " + dest_dir;
-                            // Find the .xml file and add as custom environment
-                            namespace fs = std::filesystem;
-                            for (const auto& entry : fs::recursive_directory_iterator(dest_dir)) {
-                                if (entry.path().extension() == ".xml") {
-                                    EnvInfo info;
-                                    info.id = "imported_" + model_name;
-                                    info.name = model_name;
-                                    info.filename = entry.path().filename().string();
-                                    info.description = "Imported from URL";
-                                    info.category = "Imported";
-                                    info.source = EnvSource::Builtin; // Local file, no download needed
-                                    info.obs_dim = 0;
-                                    info.act_dim = 0;
-                                    info.max_steps = 1000;
-                                    info.custom_asset_path = entry.path().string();
-                                    library.AddEnv(std::move(info));
-                                    break;
-                                }
-                            }
-                        } else {
-                            url_import_error_ = err.empty() ? "Download failed" : err;
-                        }
-                    });
-            }
-        }
+void MjEnvBrowserPanel::RenderFooter(const MjEnvLibrary& library) {
+    const UiColors colors = ctx_->GetUi()->Colors();
+    int builtin = 0, menagerie = 0, imported = 0;
+    for (const auto& info : library.GetAll()) {
+        if (info.source == EnvSource::Menagerie) ++menagerie;
+        else if (info.source == EnvSource::Imported) ++imported;
+        else ++builtin;
     }
-
-    // Progress bar during download
-    if (is_downloading) {
-        float progress = downloader_->GetProgress();
-        ImGui::ProgressBar(progress, ImVec2(avail, 18),
-                           downloader_->GetStatusText().c_str());
-    }
-
-    // Status/error messages
-    if (!url_import_status_.empty()) {
-        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "%s", url_import_status_.c_str());
-    }
-    if (!url_import_error_.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", url_import_error_.c_str());
-    }
-
-    ImGui::Unindent(8.0f);
+    char summary[160];
+    if (imported > 0)
+        std::snprintf(summary, sizeof(summary), "%d environments: %d built in, %d from MuJoCo Menagerie, %d imported",
+                      builtin + menagerie + imported, builtin, menagerie, imported);
+    else
+        std::snprintf(summary, sizeof(summary), "%d environments: %d built in, %d from MuJoCo Menagerie",
+                      builtin + menagerie, builtin, menagerie);
+    ImGui::TextColored(ToImVec4(colors.text_dim), "%s", summary);
+    const std::string folder = "Menagerie models are saved in " + MjEnvLibrary::GetMenagerieRoot();
+    SameLineIfFits(ImGui::CalcTextSize(folder.c_str()).x + 16.0f);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 16.0f);
+    ImGui::TextColored(ToImVec4(colors.text_dim), "%s", folder.c_str());
 }
 
 } // namespace cyxwiz::plugin::mujoco

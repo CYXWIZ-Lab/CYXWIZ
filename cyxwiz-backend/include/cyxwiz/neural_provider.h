@@ -43,6 +43,20 @@ enum class NeuralOp {
     // NeuralOpRequest conv fields.
     Conv2dForward,
     Conv2dBackward,
+    // A whole small multilayer perceptron (Dense + activation chain) in one
+    // launch forward and two backward (TOFIX206 3.2); contract with the
+    // NeuralOpRequest mlp fields.
+    MlpForward,
+    MlpBackward,
+    // One Adam step over many tensors, after an optional global-norm clip
+    // across all of their gradients (TOFIX206 3.2 C); contract with the
+    // NeuralOpRequest adam fields.
+    AdamStep,
+    // PPO's per-step sampling, its minibatch loss and GAE, one launch each
+    // (TOFIX206 3.2 B); contract with the NeuralOpRequest ppo fields.
+    PpoSample,
+    PpoLoss,
+    PpoGae,
 };
 
 CYXWIZ_API const char* NeuralOpName(NeuralOp op);
@@ -57,6 +71,7 @@ enum class NeuralActivation {
     SquaredRelu,
     Tanh,
     Sigmoid,
+    LeakyRelu,  // negative slope in NeuralOpRequest::mlp_negative_slope
 };
 
 enum class NeuralFfnType {
@@ -176,6 +191,81 @@ struct NeuralOpRequest {
     size_t conv_stride = 1;
     size_t conv_padding = 0;
     bool conv_bias = false;
+    // Small multilayer perceptron (device-resident), TOFIX206 3.2. batch =
+    // rows; layer l (0-based) maps mlp_widths[l] -> mlp_widths[l + 1], adds
+    // its bias, then applies mlp_activations[l] (None for a plain Dense).
+    // Weights as the Linear layer keeps them, [out, in]; every array is the
+    // semantic array (first dimension fastest).
+    //   MlpForward   inputs  X [rows, w0], W_1 [w1, w0], b_1 [w1], ... W_L, b_L
+    //                outputs Y [rows, wL]; when `training`, also Z [rows,
+    //                w1 + ... + wL]: every layer's pre-activation, in order
+    //   MlpBackward  inputs  X, W_1 ... W_L, Z, dY [rows, wL]
+    //                outputs dW_1, db_1, ... dW_L, db_L, each summed over the
+    //                rows (as the Linear layer's gradients)
+    static constexpr size_t kMaxMlpLayers = 8;
+    size_t mlp_layers = 0;
+    size_t mlp_widths[kMaxMlpLayers + 1] = {};
+    NeuralActivation mlp_activations[kMaxMlpLayers] = {};
+    float mlp_negative_slope = 0.01f;  // LeakyRelu
+    float mlp_elu_alpha = 1.0f;        // Elu
+    // Two networks over the same X per launch (mlp_networks = 2; PPO's policy
+    // and value networks): the second network's chain in mlp2_*, its input
+    // width mlp2_widths[0] = mlp_widths[0]. Buffers, the first network's
+    // before the second's:
+    //   MlpForward   inputs  X, W_1, b_1 ... of the first, W_1, b_1 ... of the second
+    //                outputs Y_1, Y_2; when `training`, also Z_1, Z_2
+    //   MlpBackward  inputs  X, W_1 ... Z_1, dY_1 of the first, W_1 ... Z_2, dY_2 of the second
+    //                outputs dW_1, db_1 ... of the first, then of the second
+    size_t mlp_networks = 1;
+    size_t mlp2_layers = 0;
+    size_t mlp2_widths[kMaxMlpLayers + 1] = {};
+    NeuralActivation mlp2_activations[kMaxMlpLayers] = {};
+    float mlp2_negative_slope = 0.01f;
+    float mlp2_elu_alpha = 1.0f;
+    // Adam over adam_tensors tensors (device-resident), TOFIX206 3.2 C.
+    //   inputs  for each tensor t: param_t, grad_t, m_t, v_t (any shape, the
+    //           four of a tensor the same size)
+    //   outputs for each tensor t: param'_t, m'_t, v'_t
+    // With adam_max_norm > 0 the gradients are first scaled by
+    // min(1, max_norm / (||all gradients||_2 + 1e-6)); then m' = b1 m + (1 -
+    // b1) g, v' = b2 v + (1 - b2) g^2, param' = param - lr (m' / bc1) /
+    // (sqrt(v' / bc2) + eps), bc1 / bc2 the bias corrections of the step.
+    static constexpr size_t kMaxAdamTensors = 32;
+    size_t adam_tensors = 0;
+    float adam_learning_rate = 0.0f;
+    float adam_beta1 = 0.9f;
+    float adam_beta2 = 0.999f;
+    float adam_epsilon = 1e-8f;
+    float adam_bias_correction1 = 1.0f;
+    float adam_bias_correction2 = 1.0f;
+    float adam_max_norm = 0.0f;  // <= 0: no clip
+    // PPO (device-resident), TOFIX206 3.2 B. batch = rows; ppo_width = K
+    // logits per row (categorical) or A actions per row (Gaussian). Arrays
+    // are semantic (first dimension fastest); [rows] may also be [rows, 1].
+    //   PpoSample  inputs  head [rows, W], value [rows][, log_std [W]]
+    //              outputs one [rows * (2 + A)] array: the values, the
+    //              log-probabilities, then the actions row by row (A = 1,
+    //              an index, for a categorical policy). Draws come from a
+    //              counter-based hash of ppo_seed and the element.
+    //   PpoLoss    inputs  head [rows, W], value, actions ([rows] indices or
+    //              [rows, W]), old_log_prob, advantages, returns,
+    //              old_values [rows][, log_std [W]]
+    //              outputs grad_head [rows, W], grad_value [rows], log_prob
+    //              [rows], statistics [6] (as PpoLossResult)[, grad_log_std [W]]
+    //   PpoGae     inputs  rewards, values, dones [ppo_steps, copies],
+    //              last_values [copies]; batch = copies
+    //              outputs advantages, returns [ppo_steps, copies]
+    bool ppo_discrete = true;
+    size_t ppo_width = 0;
+    size_t ppo_steps = 0;
+    uint64_t ppo_seed = 0;
+    float ppo_clip_range = 0.2f;
+    float ppo_clip_range_vf = 0.0f;
+    float ppo_ent_coef = 0.0f;
+    float ppo_vf_coef = 0.5f;
+    bool ppo_normalize_advantage = true;
+    float ppo_gamma = 0.99f;
+    float ppo_gae_lambda = 0.95f;
 };
 
 // Host-side CyxWiz-owned buffers, explicit copies at the boundary (v1).
@@ -285,15 +375,22 @@ CYXWIZ_API NeuralOpStatus ExecuteNeuralOpOnDevice(
 
 // Test-only: makes the registry answer as if no providers were registered
 // (List() empty, FindSupporting() null), so AF-vs-native oracle tests and
-// legacy placement-policy tests keep measuring what they measure. Never
-// set in production code.
+// legacy placement-policy tests keep measuring what they measure; a call
+// through a provider found before (ExecuteNeuralOpOnDevice) fails, as a
+// provider failing mid-run does. Never set in production code.
 CYXWIZ_API void SetNeuralProvidersDisabledForTesting(bool disabled);
+CYXWIZ_API bool NeuralProvidersDisabledForTesting();
 
 // The run-time interface of a provider module (cyxwiz-nvidia-provider,
 // TOFIX178 1.0(c)): it exports cyxwiz_<name>_abi() returning this number and
 // cyxwiz_<name>_register(NeuralProviderRegistry*). A module with another
 // number is not loaded. Raise it when the provider interface changes.
-#define CYXWIZ_NEURAL_PROVIDER_MODULE_ABI 1
+// 2: the small-MLP, Adam and PPO ops (MlpForward/Backward, AdamStep,
+// PpoSample/Loss/Gae), their request fields and NeuralActivation::LeakyRelu
+// (TOFIX206 3.2).
+// 3: one or two networks per MLP launch (mlp_networks, mlp2_*: the request's
+// later fields moved).
+#define CYXWIZ_NEURAL_PROVIDER_MODULE_ABI 3
 
 #ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
 // Test-only: synchronizes the device and reports free/total device memory

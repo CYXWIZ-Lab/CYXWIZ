@@ -4,6 +4,7 @@
 // state and with which chord. This file only builds the state snapshot,
 // draws the model and maps action ids to the handlers the rest of the Engine
 // already registers on ToolbarPanel.
+#include "../../core/engine_config.h"
 #include "toolbar.h"
 
 #include "../appearance_settings.h"
@@ -11,6 +12,7 @@
 #include "../icons.h"
 #include "../theme.h"
 #include "../ui_platform.h"
+#include "../ui_tokens.h"
 #include "../tutorial/tutorial_system.h"
 #include "../../auth/auth_client.h"
 #include "../../core/file_dialogs.h"
@@ -19,13 +21,16 @@
 #include "../../plugin/plugin_manager.h"
 #include "../../plugin/plugin_session.h"
 #include "../../plugin/registries/plugin_panel_registry.h"
+#include "../../plugin/registries/plugin_command_registry.h"
 #include "../separate_windows.h"
 #include "../python_bundle_ui.h"
 
+#include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -81,14 +86,15 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"deploy.connect", ICON_FA_PLUG}, {"deploy.deploy", ICON_FA_CLOUD_ARROW_UP}, {"deploy.serving", ICON_FA_SERVER},
         {"deploy.convert", ICON_FA_RIGHT_LEFT}, {"deploy.quantize", ICON_FA_COMPRESS},
         {"deploy.marketplace", ICON_FA_TAG},
-        {"sim.run", ICON_FA_PLAY}, {"sim.pause", ICON_FA_PAUSE}, {"sim.stop", ICON_FA_STOP},
-        {"sim.step", ICON_FA_FORWARD_STEP}, {"sim.viewport", ICON_FA_DESKTOP}, {"sim.env_library", ICON_FA_MICROCHIP},
-        {"sim.load_mjcf", ICON_FA_FILE_IMPORT},
         {"apps.plugin_manager", ICON_FA_PLUG},
         {"apps.plugin", ICON_FA_PLUG},
         {"help.tutorials", ICON_FA_LIGHTBULB}, {"help.shortcuts", ICON_FA_KEYBOARD},
         {"help.documentation", ICON_FA_BOOK}, {"help.api_reference", ICON_FA_CODE}, {"help.report_issue", ICON_FA_BUG},
         {"help.check_updates", ICON_FA_DOWNLOAD}, {"help.about", ICON_FA_CIRCLE_INFO},
+        {"help.whats_new", ICON_FA_GIFT}, {"help.known_issues", ICON_FA_TRIANGLE_EXCLAMATION},
+        {"help.open_logs", ICON_FA_FILE_LINES}, {"view.fullscreen", ICON_FA_EXPAND},
+        {"file.show_project_folder", ICON_FA_FOLDER_OPEN}, {"file.copy_project_path", ICON_FA_COPY},
+        {"account.servers", ICON_FA_SERVER},
         {"account.settings", ICON_FA_USER}, {"account.wallet", ICON_FA_WALLET},
         {"account.sign_out", ICON_FA_RIGHT_FROM_BRACKET}, {"account.sign_in", ICON_FA_RIGHT_TO_BRACKET}};
     auto it = icons.find(id);
@@ -96,6 +102,81 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
 }
 
 namespace {
+
+// Help > Documentation, API Reference, What's New: the guides online (only
+// KNOWN_ISSUES.md ships beside the Engine).
+constexpr const char* kDocsUrl = "https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/docs/usage/README.md";
+constexpr const char* kApiUrl = "https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/docs/extending/python-api-reference.md";
+constexpr const char* kReleaseNotesUrl = "https://github.com/CYXWIZ-Lab/CYXWIZ/blob/HEAD/docs/RELEASE_NOTES.md";
+
+// KNOWN_ISSUES.md beside the Engine (a release), or up its folders (a
+// development build); empty when there is none. Looked up once.
+const std::string& KnownIssuesPath() {
+    static const std::string path = [] {
+        std::error_code ec;
+        std::filesystem::path dir = core::ExecutableDirectory();
+        for (int up = 0; up < 5 && !dir.empty(); ++up) {
+            const auto candidate = dir / "KNOWN_ISSUES.md";
+            if (std::filesystem::is_regular_file(candidate, ec)) return candidate.string();
+            if (dir.parent_path() == dir) break;
+            dir = dir.parent_path();
+        }
+        return std::string();
+    }();
+    return path;
+}
+
+// View > Full Screen: the main window without its frame over the whole
+// monitor it is on (not exclusive full screen, which minimises itself when a
+// panel's own window takes the focus). F11 again puts it back as it was.
+struct WindowedPlacement {
+    bool fullscreen = false;
+    bool maximized = false;
+    int x = 100, y = 100, width = 1280, height = 720;
+};
+WindowedPlacement& Placement() {
+    static WindowedPlacement placement;
+    return placement;
+}
+GLFWwindow* MainGlfwWindow() { return static_cast<GLFWwindow*>(ImGui::GetMainViewport()->PlatformHandle); }
+bool IsFullscreen() { return Placement().fullscreen; }
+void ToggleFullscreen() {
+    GLFWwindow* window = MainGlfwWindow();
+    if (!window) return;
+    WindowedPlacement& p = Placement();
+    if (p.fullscreen) {
+        glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_TRUE);
+        glfwSetWindowMonitor(window, nullptr, p.x, p.y, p.width, p.height, GLFW_DONT_CARE);
+        if (p.maximized) glfwMaximizeWindow(window);
+        p.fullscreen = false;
+        spdlog::info("Full screen off");
+        return;
+    }
+    p.maximized = glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == GLFW_TRUE;
+    if (p.maximized) glfwRestoreWindow(window);
+    glfwGetWindowPos(window, &p.x, &p.y);
+    glfwGetWindowSize(window, &p.width, &p.height);
+    // The monitor under the window's centre.
+    int count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    GLFWmonitor* target = glfwGetPrimaryMonitor();
+    const int cx = p.x + p.width / 2, cy = p.y + p.height / 2;
+    for (int i = 0; i < count; ++i) {
+        int mx = 0, my = 0;
+        glfwGetMonitorPos(monitors[i], &mx, &my);
+        const GLFWvidmode* mode = glfwGetVideoMode(monitors[i]);
+        if (mode && cx >= mx && cx < mx + mode->width && cy >= my && cy < my + mode->height) target = monitors[i];
+    }
+    const GLFWvidmode* mode = target ? glfwGetVideoMode(target) : nullptr;
+    if (!mode) return;
+    int mx = 0, my = 0;
+    glfwGetMonitorPos(target, &mx, &my);
+    glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_FALSE);
+    glfwSetWindowPos(window, mx, my);
+    glfwSetWindowSize(window, mode->width, mode->height);
+    p.fullscreen = true;
+    spdlog::info("Full screen on ({} x {})", mode->width, mode->height);
+}
 
 
 void ShowSidebarPanel(const std::string& name, bool toggle) {
@@ -122,18 +203,26 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
         in.training = s.training;
         in.script_open = s.script_open;
         in.script_running = s.script_running;
+        in.simulation_graph = s.simulation_graph;
+        in.simulation_graph_name = s.simulation_graph_name;
+        in.simulation_commands = s.simulation_commands;
     }
     auto& pm = ProjectManager::Instance();
     in.has_project = pm.HasActiveProject();
     in.signed_in = is_logged_in_;
-    in.user_display_name = logged_in_user_;
+    if (is_logged_in_) {
+        const auth::UserInfo user = auth::AuthClient::Instance().GetUserInfo();
+        in.user_name = user.name;
+        in.user_username = user.username;
+        in.user_email = user.email.empty() ? logged_in_user_ : user.email;
+        in.user_role = user.role;
+    }
+    in.fullscreen = IsFullscreen();
+    in.known_issues_found = !KnownIssuesPath().empty();
 #ifdef CYXWIZ_HAS_ONNX_EXPORT
     in.onnx_export_available = true;
 #endif
     auto& panel_reg = plugin::PluginPanelRegistry::Instance();
-    in.mujoco_loaded = panel_reg.HasPanel("mujoco_viewport");
-    in.mujoco_viewport_visible = in.mujoco_loaded && panel_reg.IsPanelVisible("mujoco_viewport");
-    in.mujoco_env_visible = in.mujoco_loaded && panel_reg.IsPanelVisible("mujoco_env_browser");
     in.auto_save = auto_save_enabled_;
     in.focused_window = ::gui::FocusedWindowName();
     in.focused_window_may_leave = ::gui::WindowMayLeave(in.focused_window.c_str());
@@ -148,6 +237,7 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
     for (const auto& p : gui::GetDockStyle().GetPanels()) {
         if (!p.visible_ptr) continue;  // actions such as the Command Palette
         in.panels.push_back({p.name, p.group.empty() ? "Other" : p.group, *p.visible_ptr, p.shortcut});
+        if (p.name == "Simulation Monitor") in.simulation_monitor_visible = *p.visible_ptr;
     }
 
     for (const auto& rp : pm.GetRecentProjects()) in.recent_projects.push_back({rp.path, rp.name, false, ""});
@@ -177,6 +267,13 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
         for (const auto& [category, panels] : by_category)
             for (const auto& p : panels)
                 in.plugin_panels.push_back({p.panel_id, p.title, panel_reg.IsPanelVisible(p.panel_id), category});
+    }
+    for (const auto& c : plugin::PluginCommandRegistry::Instance().Snapshot()) {
+        // The key is "<plugin id>:<command id>"
+        const auto* owner = plugin::PluginManager::Instance().GetLoadedPlugin(c.key.substr(0, c.key.rfind(':')));
+        in.plugin_commands.push_back({c.key, c.info.menu, c.info.group, c.info.label, c.info.hint, c.state.enabled,
+                                      c.state.disabled_reason, c.info.checkable, c.state.checked,
+                                      owner ? owner->manifest.name : std::string(), c.info.replaced_by_graph_run});
     }
     for (const auto* p : plugin::PluginManager::Instance().GetAllPlugins()) {
         if (!p) continue;
@@ -255,25 +352,113 @@ void ToolbarPanel::RenderMenuBar() {
     }
     ImGui::PopStyleVar();
 
-    // Right side: project name, then the account menu.
+    // Right side (TOFIX129 A3b): the project chip, then the account in the
+    // top-right corner, flush with the window's right edge.
+    const ui::Tokens& t = ui::CurrentTokens();
     auto& pm = ProjectManager::Instance();
     const std::string project = pm.HasActiveProject() ? pm.GetProjectName() : "";
-    const std::string account_label = is_logged_in_ ? std::string(ICON_FA_USER) : std::string("Sign in");
-    const float right_width = ImGui::CalcTextSize(account_label.c_str()).x +
-                              (project.empty() ? 0.0f : ImGui::CalcTextSize(project.c_str()).x + 40.0f) + 40.0f;
-    const float x = ImGui::GetWindowContentRegionMax().x - right_width;
-    if (x > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(x);
+    const menu::AccountChip& chip = model.account_chip;
+    const float pad = 10.0f, gap = 6.0f;
+    const float bar_top = ImGui::GetWindowPos().y;
+    const float bar_h = ImGui::GetWindowHeight();
+    const float avatar = std::round(ImGui::GetFontSize() * 1.25f);
+    const float badge_pad = 5.0f;
+    const char* chevron = ICON_FA_CHEVRON_DOWN;
+    const float chevron_w = ImGui::CalcTextSize(chevron).x;
+    const std::string sign_in = std::string(ICON_FA_USER) + "  Sign in";
+    const float account_w =
+        is_logged_in_
+            ? pad + avatar + gap + ImGui::CalcTextSize(chip.short_name.c_str()).x +
+                  (chip.plan.empty() ? 0.0f : gap + ImGui::CalcTextSize(chip.plan.c_str()).x + 2.0f * badge_pad) + gap +
+                  chevron_w + pad
+            : 2.0f * pad + ImGui::CalcTextSize(sign_in.c_str()).x;
+    const std::string project_text = std::string(ICON_FA_FOLDER) + "  " + project;
+    const float project_w = project.empty() ? 0.0f : 2.0f * pad + ImGui::CalcTextSize(project_text.c_str()).x + gap + chevron_w;
+    const float right_edge = ImGui::GetWindowPos().x + ImGui::GetWindowWidth();
+    float x = std::max(right_edge - account_w - project_w, ImGui::GetCursorScreenPos().x + 12.0f);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const auto text_y = [&](float text_h) { return bar_top + (bar_h - text_h) * 0.5f; };
+    // A chip: the whole bar's height, the menu hover colour while hovered or open.
+    const auto chip_button = [&](const char* id, const char* popup, float width, ImVec2& min, ImVec2& max) {
+        min = ImVec2(x, bar_top);
+        max = ImVec2(x + width, bar_top + bar_h);
+        ImGui::SetCursorScreenPos(min);
+        const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, bar_h));
+        if (ImGui::IsItemHovered() || ImGui::IsPopupOpen(popup))
+            draw->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+        x += width;
+        return clicked;
+    };
+    const auto badge = [&](const ImVec2& at, const std::string& label) {
+        const ImVec2 size = ImGui::CalcTextSize(label.c_str());
+        draw->AddRectFilled(ImVec2(at.x, at.y - 1.0f), ImVec2(at.x + size.x + 2.0f * badge_pad, at.y + size.y + 1.0f),
+                            ImGui::GetColorU32(ui::WithAlpha(t.accent_text, 0.18f)), 3.0f);
+        draw->AddText(ImVec2(at.x + badge_pad, at.y), ImGui::GetColorU32(t.accent_text), label.c_str());
+        return size.x + 2.0f * badge_pad;
+    };
+    const auto avatar_circle = [&](const ImVec2& centre, float diameter) {
+        draw->AddCircleFilled(centre, diameter * 0.5f, ImGui::GetColorU32(t.accent), 24);
+        const ImVec2 size = ImGui::CalcTextSize(chip.initials.c_str());
+        draw->AddText(ImVec2(centre.x - size.x * 0.5f, centre.y - size.y * 0.5f), ImGui::GetColorU32(ui::ReadableOn(t, t.accent)),
+                      chip.initials.c_str());
+    };
+
     if (!project.empty()) {
-        ImGui::TextDisabled("%s %s", ICON_FA_FOLDER, project.c_str());
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", pm.GetProjectFilePath().c_str());
+        ImVec2 min, max;
+        if (chip_button("##project_chip", "##project_menu", project_w, min, max)) ImGui::OpenPopup("##project_menu");
+        if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##project_menu"))
+            ImGui::SetTooltip("%s", pm.GetProjectFilePath().c_str());
+        const float ty = text_y(ImGui::GetTextLineHeight());
+        draw->AddText(ImVec2(min.x + pad, ty), ImGui::GetColorU32(t.text_dim), project_text.c_str());
+        draw->AddText(ImVec2(max.x - pad - chevron_w, ty), ImGui::GetColorU32(t.text_faint), chevron);
+        ImGui::SetNextWindowPos(ImVec2(max.x, max.y), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+        if (ImGui::BeginPopup("##project_menu")) {
+            RenderMenuItems(model.project.items);
+            ImGui::EndPopup();
+        }
     }
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
-    if (ImGui::BeginMenu(account_label.c_str())) {
-        RenderMenuItems(model.account.items);
-        ImGui::EndMenu();
+    {
+        ImVec2 min, max;
+        if (chip_button("##account_chip", "##account_menu", account_w, min, max)) ImGui::OpenPopup("##account_menu");
+        if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##account_menu"))
+            ImGui::SetTooltip("%s", is_logged_in_ ? chip.email.c_str() : "Sign in to CyxWiz");
+        const float ty = text_y(ImGui::GetTextLineHeight());
+        if (is_logged_in_) {
+            float cx = min.x + pad;
+            avatar_circle(ImVec2(cx + avatar * 0.5f, bar_top + bar_h * 0.5f), avatar);
+            cx += avatar + gap;
+            draw->AddText(ImVec2(cx, ty), ImGui::GetColorU32(t.text), chip.short_name.c_str());
+            cx += ImGui::CalcTextSize(chip.short_name.c_str()).x + gap;
+            if (!chip.plan.empty()) cx += badge(ImVec2(cx, ty), chip.plan) + gap;
+            draw->AddText(ImVec2(cx, ty), ImGui::GetColorU32(t.text_faint), chevron);
+        } else {
+            draw->AddText(ImVec2(min.x + pad, ty), ImGui::GetColorU32(t.text), sign_in.c_str());
+        }
+        ImGui::SetNextWindowPos(ImVec2(max.x, max.y), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+        if (ImGui::BeginPopup("##account_menu")) {
+            if (is_logged_in_) {
+                // Who you are: initials, name and plan, email.
+                const float big = std::round(avatar * 1.6f);
+                const ImVec2 at = ImGui::GetCursorScreenPos();
+                draw = ImGui::GetWindowDrawList();
+                avatar_circle(ImVec2(at.x + big * 0.5f, at.y + big * 0.5f), big);
+                ImGui::Dummy(ImVec2(big, big));
+                ImGui::SameLine(0.0f, 10.0f);
+                ImGui::BeginGroup();
+                ImGui::TextColored(t.text_bright, "%s", chip.full_name.c_str());
+                if (!chip.plan.empty()) {
+                    ImGui::SameLine(0.0f, gap);
+                    const float w = badge(ImGui::GetCursorScreenPos(), chip.plan);
+                    ImGui::Dummy(ImVec2(w, ImGui::GetTextLineHeight()));
+                }
+                ImGui::TextColored(t.text_dim, "%s", chip.email.c_str());
+                ImGui::EndGroup();
+                ImGui::Separator();
+            }
+            RenderMenuItems(model.account.items);
+            ImGui::EndPopup();
+        }
     }
-    if (ImGui::IsItemHovered() && is_logged_in_) ImGui::SetTooltip("%s", logged_in_user_.c_str());
-    ImGui::PopStyleVar();
     ImGui::EndMainMenuBar();
 }
 
@@ -486,15 +671,13 @@ void ToolbarPanel::BuildActionHandlers() {
     call("data.feature_scaling", open_feature_scaling_callback_);
 
     // Tools
-    call("tools.model_summary", open_model_summary_callback_);
-    call("tools.flops", open_model_summary_callback_);
-    call("tools.architecture_diagram", open_architecture_diagram_callback_);
-    call("tools.lr_finder", open_lr_finder_callback_);
-    call("tools.gradcam", open_gradcam_callback_);
-    call("tools.saliency", open_gradcam_callback_);
-    call("tools.nas", open_nas_callback_);
-    call("tools.architecture_suggestions", open_nas_callback_);
-    call("tools.dnn_inference", open_dnn_inference_callback_);
+    for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.model_summary", "summary"},
+                                  {"tools.flops", "summary"}, {"tools.lr_finder", "learning_rate"},
+                                  {"tools.gradcam", "explain"}, {"tools.saliency", "explain"},
+                                  {"tools.model_health", "health"}, {"tools.projector", "projector"}})
+        h[id] = [this, tab = std::string(tab)](const std::string&) {
+            if (open_model_callback_) open_model_callback_(tab);
+        };
     call("tools.cross_validation", open_cross_validation_callback_);
     call("tools.confusion_matrix", open_confusion_matrix_callback_);
     call("tools.roc_auc", open_roc_auc_callback_);
@@ -511,22 +694,22 @@ void ToolbarPanel::BuildActionHandlers() {
     call("tools.hypothesis_test", open_hypothesis_test_callback_);
     call("tools.regression", open_regression_callback_);
     call("tools.distribution_fitter", open_distribution_fitter_callback_);
-    call("tools.matrix_calculator", open_matrix_calculator_callback_);
-    call("tools.eigen", open_eigen_decomp_callback_);
-    call("tools.svd", open_svd_callback_);
-    call("tools.qr", open_qr_callback_);
-    call("tools.cholesky", open_cholesky_callback_);
+    for (const auto& [id, operation] : {std::pair<const char*, const char*>{"tools.matrix_calculator", "multiply"},
+                                        {"tools.eigen", "eigen"}, {"tools.svd", "svd"}, {"tools.qr", "qr"}, {"tools.cholesky", "cholesky"}})
+        h[id] = [this, operation = std::string(operation)](const std::string&) {
+            if (open_linear_algebra_callback_) open_linear_algebra_callback_(operation);
+        };
     call("tools.fft", open_fft_callback_);
     call("tools.spectrogram", open_spectrogram_callback_);
     call("tools.filter_designer", open_filter_designer_callback_);
     call("tools.convolution", open_convolution_callback_);
     call("tools.wavelet", open_wavelet_callback_);
-    call("tools.gradient_descent", open_gradient_descent_callback_);
-    call("tools.convexity", open_convexity_callback_);
-    call("tools.lp", open_lp_callback_);
-    call("tools.qp", open_qp_callback_);
-    call("tools.differentiation", open_differentiation_callback_);
-    call("tools.integration", open_integration_callback_);
+    for (const auto& [id, operation] : {std::pair<const char*, const char*>{"tools.gradient_descent", "optimizers"},
+                                        {"tools.convexity", "curvature"}, {"tools.lp", "linear"}, {"tools.qp", "quadratic"},
+                                        {"tools.differentiation", "derivative"}, {"tools.integration", "integral"}})
+        h[id] = [this, operation = std::string(operation)](const std::string&) {
+            if (open_optimization_callback_) open_optimization_callback_(operation);
+        };
     call("tools.decomposition", open_decomposition_callback_);
     call("tools.acf_pacf", open_acf_pacf_callback_);
     call("tools.stationarity", open_stationarity_callback_);
@@ -538,29 +721,39 @@ void ToolbarPanel::BuildActionHandlers() {
     call("tools.embeddings", open_embeddings_callback_);
     call("tools.sentiment", open_sentiment_callback_);
     call("tools.language_model", open_language_model_generation_callback_);
-    call("tools.calculator", open_calculator_callback_);
-    call("tools.unit_converter", open_unit_converter_callback_);
-    call("tools.random_generator", open_random_generator_callback_);
-    call("tools.hash_generator", open_hash_generator_callback_);
-    call("tools.json_viewer", open_json_viewer_callback_);
-    call("tools.regex_tester", open_regex_tester_callback_);
+    for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.calculator", "calculator"},
+                                  {"tools.unit_converter", "units"}, {"tools.random_generator", "random"},
+                                  {"tools.hash_generator", "hash"}, {"tools.json_viewer", "json"},
+                                  {"tools.regex_tester", "regex"}})
+        h[id] = [this, tab = std::string(tab)](const std::string&) {
+            if (open_utilities_callback_) open_utilities_callback_(tab);
+        };
     call("tools.profiler", open_profiler_callback_);
-    call("tools.memory_panel", open_memory_panel_callback_);
-    call("tools.system_monitor", open_memory_monitor_callback_);
+    for (const auto& [id, tab] : {std::pair<const char*, const char*>{"tools.monitor_system", "system"},
+                                  {"tools.monitor_memory", "memory"}, {"tools.monitor_loaded_data", "loaded_data"},
+                                  {"tools.monitor_frames", "frames"}})
+        h[id] = [this, tab = std::string(tab)](const std::string&) {
+            if (open_monitor_callback_) open_monitor_callback_(tab);
+        };
     call("tools.clear_cache", clear_cache_callback_);
     call("tools.gc", run_gc_callback_);
     h["tools.idle_log"] = [this](const std::string&) {
         if (!idle_log_ptr_) return;
         *idle_log_ptr_ = !*idle_log_ptr_;
-        spdlog::info("Idle mode logging {}", *idle_log_ptr_ ? "ENABLED" : "DISABLED");
+        spdlog::info("Frame-rate changes are {} logged", *idle_log_ptr_ ? "now" : "no longer");
+        SaveDiagnostics();
     };
     h["tools.frame_overlay"] = [this](const std::string&) {
-        if (frame_overlay_ptr_) *frame_overlay_ptr_ = !*frame_overlay_ptr_;
+        if (!frame_overlay_ptr_) return;
+        *frame_overlay_ptr_ = !*frame_overlay_ptr_;
+        SaveDiagnostics();
     };
     h["tools.verbose_python"] = [this](const std::string&) {
         if (!verbose_python_log_ptr_) return;
-        *verbose_python_log_ptr_ = !*verbose_python_log_ptr_;
-        spdlog::info("Verbose Python logging {}", *verbose_python_log_ptr_ ? "ENABLED" : "DISABLED");
+        const bool on = !verbose_python_log_ptr_->load();
+        verbose_python_log_ptr_->store(on);
+        spdlog::info("Python commands are {} logged", on ? "now" : "no longer");
+        SaveDiagnostics();
     };
 
     // Script
@@ -575,12 +768,18 @@ void ToolbarPanel::BuildActionHandlers() {
     call("deploy.convert_bin_to_dir", convert_binary_to_dir_callback_);
     call("deploy.convert_dir_to_bin", convert_dir_to_binary_callback_);
 
-    // Simulation
-    h["sim.viewport"] = [](const std::string&) {
-        plugin::PluginPanelRegistry::Instance().TogglePanelVisible("mujoco_viewport");
-    };
-    h["sim.env_library"] = [](const std::string&) {
-        plugin::PluginPanelRegistry::Instance().TogglePanelVisible("mujoco_env_browser");
+    // Simulation: the open graph's run, then the Monitor window
+    for (const char* id : {"simulation.run", "simulation.pause", "simulation.step", "simulation.stop",
+                           "simulation.clear"}) {
+        h[id] = [this, id](const std::string&) {
+            if (simulation_command_callback_) simulation_command_callback_(id);
+        };
+    }
+    h["simulation.monitor"] = [](const std::string&) { ShowSidebarPanel("Simulation Monitor", true); };
+
+    // Commands plugins add to the menus (Simulation and others)
+    h["plugin.command"] = [](const std::string& key) {
+        if (!plugin::PluginCommandRegistry::Instance().Run(key)) spdlog::warn("Menu: plugin command {} did not run", key);
     };
 
     // Apps
@@ -600,12 +799,38 @@ void ToolbarPanel::BuildActionHandlers() {
     h["help.browse_tutorials"] = [](const std::string&) { TutorialSystem::Instance().OpenTutorialBrowser(); };
     h["help.shortcuts"] = [this](const std::string&) { OpenPreferences("Shortcuts"); };
     h["help.report_issue"] = [](const std::string&) { ui::OpenUrl("https://github.com/CYXWIZ-Lab/CYXWIZ/issues"); };
+    h["help.documentation"] = [](const std::string&) { ui::OpenUrl(kDocsUrl); };
+    h["help.api_reference"] = [](const std::string&) { ui::OpenUrl(kApiUrl); };
+    h["help.whats_new"] = [](const std::string&) { ui::OpenUrl(kReleaseNotesUrl); };
+    h["help.known_issues"] = [](const std::string&) {
+        const std::string& path = KnownIssuesPath();
+        if (path.empty()) return;
+        // No program opens .md files on some machines: then show the file.
+        if (!ui::OpenUrl(path)) ui::ShowInFileManager(path);
+    };
+    h["help.open_logs"] = [](const std::string&) {
+        const auto log = core::ExecutableDirectory() / "engine_log.txt";
+        std::error_code ec;
+        ui::ShowInFileManager(std::filesystem::exists(log, ec) ? log.string() : log.parent_path().string());
+    };
+    h["view.fullscreen"] = [](const std::string&) { ToggleFullscreen(); };
+    h["file.show_project_folder"] = [](const std::string&) {
+        auto& projects = ProjectManager::Instance();
+        if (projects.HasActiveProject()) ui::ShowInFileManager(projects.GetProjectRoot());
+    };
+    h["file.copy_project_path"] = [](const std::string&) {
+        auto& projects = ProjectManager::Instance();
+        if (!projects.HasActiveProject()) return;
+        ImGui::SetClipboardText(projects.GetProjectFilePath().c_str());
+        spdlog::info("Copied the project's path: {}", projects.GetProjectFilePath());
+    };
     h["help.about"] = [this](const std::string&) { about_dialog_.Open(); };
 
     // Account
     h["account.settings"] = [this](const std::string&) { show_account_settings_dialog_ = true; };
     h["account.sign_in"] = [this](const std::string&) { show_account_settings_dialog_ = true; };
     h["account.wallet"] = [](const std::string&) { ShowSidebarPanel("Wallet", false); };
+    h["account.servers"] = [this](const std::string&) { OpenPreferences("Servers"); };
     h["account.sign_out"] = [this](const std::string&) {
         auth::AuthClient::Instance().Logout();
         is_logged_in_ = false;
@@ -613,6 +838,23 @@ void ToolbarPanel::BuildActionHandlers() {
         spdlog::info("User signed out");
         if (on_logout_callback_) on_logout_callback_();
     };
+}
+
+void ToolbarPanel::ApplySavedDiagnostics() {
+    const core::MonitorConfig saved = core::EngineConfig::Instance().GetMonitor();
+    if (idle_log_ptr_) *idle_log_ptr_ = saved.log_frame_rate;
+    if (verbose_python_log_ptr_) *verbose_python_log_ptr_ = saved.log_python_commands;
+    if (frame_overlay_ptr_) *frame_overlay_ptr_ = saved.frame_overlay;
+}
+
+void ToolbarPanel::SaveDiagnostics() {
+    auto& config = core::EngineConfig::Instance();
+    core::MonitorConfig saved = config.GetMonitor();
+    if (idle_log_ptr_) saved.log_frame_rate = *idle_log_ptr_;
+    if (verbose_python_log_ptr_) saved.log_python_commands = *verbose_python_log_ptr_;
+    if (frame_overlay_ptr_) saved.frame_overlay = *frame_overlay_ptr_;
+    config.SetMonitor(saved);
+    if (!config.Save()) spdlog::warn("The diagnostics switches could not be saved to the Engine settings");
 }
 
 }  // namespace cyxwiz

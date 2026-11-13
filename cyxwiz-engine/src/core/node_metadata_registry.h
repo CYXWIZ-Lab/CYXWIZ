@@ -197,7 +197,6 @@ private:
     void InitializeLinearAlgebraNodes();
     void InitializeTimeSeriesAnalysisNodes();
     void InitializeStatisticsNodes();
-    void InitializeInterpretationNodes();
     void InitializeOptimizationNodes();
     void InitializeAdditionalTextNodes();
     void InitializeVisualizationNodes();  // BarChart / Histogram / LinePlot / ...

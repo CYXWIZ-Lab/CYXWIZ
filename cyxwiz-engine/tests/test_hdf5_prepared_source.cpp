@@ -171,7 +171,7 @@ void TestPreparedSource() {
           "serialize canonical HDF5 settings: " + error);
     const auto copied_parameters = parameters;
     const auto restored = cyxwiz::ReadHdf5InputSettings(copied_parameters);
-    Check(restored.ok && !restored.migrated_legacy, "read copied canonical settings: " + restored.error);
+    Check(restored.ok, "read copied canonical settings: " + restored.error);
     Check(restored.settings.selection.data_path == request.settings.selection.data_path &&
               restored.settings.selection.label_path == request.settings.selection.label_path &&
               restored.settings.numeric_policy == request.settings.numeric_policy &&

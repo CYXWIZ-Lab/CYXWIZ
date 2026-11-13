@@ -78,6 +78,17 @@ int main() {
     const guided::Generated t = guided::GenerateSql(ev::KeepRowsWithValue("sex", {"N/A", "-"}), context);
     Check(t.ok && t.sql.find("NOT IN ('N/A', '-')") != std::string::npos, "and is not one of the missing texts: " + t.sql);
 
-    std::cout << "explore presentation: counts, advice tiers, rule line, rows SQL, Keep rows step. OK\n";
+    // Step and branch words (TOFIX129 D7a): a step feeds training, a branch does not.
+    Check(ev::StepTip("K-Means", "a cluster_id column") ==
+              "Puts the K-Means node after the data in use, as a step on the way to training: the rest of the graph and training get a cluster_id column.",
+          "step tip: " + ev::StepTip("K-Means", "a cluster_id column"));
+    Check(ev::StepTip("Differencing", "").find("training read its result.") != std::string::npos, "step tip without a gift");
+    Check(ev::BranchTip("Hypothesis Test") ==
+              "Adds the Hypothesis Test node as a branch reading the data in use: it shows and keeps the result with the graph; training does not read it.",
+          "branch tip: " + ev::BranchTip("Hypothesis Test"));
+    Check(std::string(ev::StepAddedNote()) == "Training reads its result." && std::string(ev::BranchAddedNote()) == "Training does not read a branch.",
+          "added notes");
+
+    std::cout << "explore presentation: counts, advice tiers, rule line, rows SQL, Keep rows step, step and branch words. OK\n";
     return 0;
 }

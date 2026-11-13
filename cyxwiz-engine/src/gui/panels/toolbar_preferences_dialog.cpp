@@ -3,9 +3,11 @@
 #include "toolbar.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
+#include "../ui_widgets.h"
 #include "../../core/compute_runtime_config.h"
 #include "../../core/compute_runtime_paths.h"
 #include "../../core/engine_config.h"
+#include "../../core/utilities_presentation.h"
 #include "../../core/data_budget.h"
 #include "../../core/async_task_manager.h"
 #include "../../core/execution_device_preferences.h"
@@ -14,7 +16,11 @@
 #include "../../core/training_manager.h"
 #include "../../core/training_trace_collector.h"
 #include "../../core/window_manager.h"
+#include "../../core/rl_playback_presentation.h"
+#include "../../core/rl/policy_stress_test.h"
+#include "../../plugin/registries/plugin_preferences_registry.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 
 #include <algorithm>
 #include <cstring>
@@ -22,6 +28,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <cyxwiz/cyxwiz.h>
 #include <imgui.h>
@@ -30,6 +37,30 @@
 namespace cyxwiz {
 namespace {
 
+// The Preferences tabs a plugin section can name (IPreferencesProvider); any
+// other title puts the section in General.
+const std::vector<std::string> kPluginPreferenceTabs = {"General", "Editor", "Files", "Python", "Simulation"};
+
+// The plugins' sections at the end of a tab (plugin API 1.4): the heading,
+// its hint, then what the plugin draws.
+void RenderPluginPreferences(const char* tab) {
+    auto& registry = plugin::PluginPreferencesRegistry::Instance();
+    for (const auto& entry : registry.SectionsFor(tab, kPluginPreferenceTabs, "General")) {
+        ImGui::PushID(entry.key.c_str());
+        ImGui::Spacing();
+        ImGui::Spacing();
+        ImGui::TextUnformatted(entry.section.title.c_str());
+        if (!entry.section.hint.empty()) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", entry.section.hint.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::Spacing();
+        registry.Render(entry.key);
+        ImGui::PopID();
+    }
+}
+
 const char* ArrayFireBackendDisplayName(DeviceType type) {
     switch (type) {
         case DeviceType::CPU: return "ArrayFire CPU";
@@ -37,27 +68,6 @@ const char* ArrayFireBackendDisplayName(DeviceType type) {
         case DeviceType::OPENCL: return "OpenCL";
         case DeviceType::ONEAPI: return "oneAPI";
         default: return "Unsupported";
-    }
-}
-
-const char* ArrayFireBackendIcon(DeviceType type) {
-    switch (type) {
-        case DeviceType::CUDA: return ICON_FA_BOLT;
-        case DeviceType::OPENCL: return ICON_FA_DESKTOP;
-        case DeviceType::CPU:
-        case DeviceType::ONEAPI:
-        default: return ICON_FA_MICROCHIP;
-    }
-}
-
-ImVec4 ArrayFireBackendColor(DeviceType type) {
-    const ui::Tokens& t = ui::CurrentTokens();
-    switch (type) {
-        case DeviceType::CPU: return t.series[0];
-        case DeviceType::CUDA: return t.series[1];
-        case DeviceType::OPENCL: return t.series[2];
-        case DeviceType::ONEAPI: return t.series[3];
-        default: return t.text_dim;
     }
 }
 
@@ -177,6 +187,140 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::PopTextWrapPos();
                     }
 
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Tools > Utilities");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    {
+                        // The Utilities window's defaults (TOFIX129 D12), saved at
+                        // once; the window also has "Save as my default".
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        cyxwiz::core::UtilitiesConfig u = engine_config.GetUtilities();
+                        bool changed = false;
+                        const auto combo = [&changed](const char* label, std::string& value,
+                                                      const std::vector<std::pair<std::string, std::string>>& items) {
+                            std::string shown = value;
+                            for (const auto& [id, text] : items)
+                                if (id == value) shown = text;
+                            ImGui::SetNextItemWidth(180.0f);
+                            if (ImGui::BeginCombo(label, shown.c_str())) {
+                                for (const auto& [id, text] : items) {
+                                    if (ImGui::Selectable(text.c_str(), id == value)) {
+                                        value = id;
+                                        changed = true;
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+                        };
+                        std::vector<std::pair<std::string, std::string>> tabs;
+                        for (const auto tab : cyxwiz::utilities_view::kTabs)
+                            tabs.push_back({cyxwiz::utilities_view::TabId(tab), cyxwiz::utilities_view::TabLabel(tab)});
+                        combo("Opens on##util_tab", u.tab, tabs);
+                        ImGui::Text("Digits shown:");
+                        ImGui::SameLine();
+                        changed |= ui::NumberField("##util_digits", &u.digits, 1, 17, 1, 40.0f, "Significant digits (1 to 17)");
+                        changed |= ImGui::Checkbox("Calculator in degrees##util_degrees", &u.degrees);
+                        std::vector<std::pair<std::string, std::string>> categories;
+                        for (const auto& c : cyxwiz::Utilities::GetUnitCategories())
+                            categories.push_back({c, cyxwiz::utilities_view::CategoryLabel(c)});
+                        combo("Unit category##util_units", u.unit_category, categories);
+                        combo("Hash algorithm##util_hash", u.hash_algorithm,
+                              {{"md5", "MD5"}, {"sha1", "SHA-1"}, {"sha256", "SHA-256"}, {"sha512", "SHA-512"}});
+                        ImGui::Text("JSON indent:");
+                        ImGui::SameLine();
+                        changed |= ui::NumberField("##util_indent", &u.json_indent, 0, 8, 1, 36.0f);
+                        changed |= ImGui::Checkbox("Regex: ignore case##util_icase", &u.regex_ignore_case);
+                        changed |= ImGui::Checkbox("Regex: multiline##util_multiline", &u.regex_multiline);
+                        if (changed) {
+                            engine_config.SetUtilities(u);
+                            engine_config.Save();
+                        }
+                        ImGui::TextDisabled("Used when the Engine starts.");
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Tools > Monitoring and Diagnostics");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    {
+                        // The Monitor window's defaults (TOFIX129 D13), saved at
+                        // once; the window also has "Save as my default".
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        cyxwiz::core::MonitorConfig m = engine_config.GetMonitor();
+                        bool changed = false;
+                        ImGui::Text("Sample every:");
+                        ImGui::SameLine();
+                        ui::NumberFieldOptions interval;
+                        interval.min = 0.25;
+                        interval.max = 60.0;
+                        interval.step = 1.0;
+                        interval.format = "%.2g";
+                        interval.width = 56.0f;
+                        interval.hint = "Seconds between the Monitor window's readings";
+                        changed |= ui::NumberField("##monitor_interval", &m.interval_seconds, interval);
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("s");
+                        const std::pair<double, const char*> keeps[] = {{300.0, "5 min"}, {900.0, "15 min"}, {3600.0, "1 hour"}};
+                        const char* keep_shown = "15 min";
+                        for (const auto& [seconds, text] : keeps)
+                            if (m.keep_seconds == seconds) keep_shown = text;
+                        ImGui::SetNextItemWidth(160.0f);
+                        if (ImGui::BeginCombo("Keep readings for##monitor_keep", keep_shown)) {
+                            for (const auto& [seconds, text] : keeps)
+                                if (ImGui::Selectable(text, m.keep_seconds == seconds)) {
+                                    m.keep_seconds = seconds;
+                                    changed = true;
+                                }
+                            ImGui::EndCombo();
+                        }
+                        const std::pair<const char*, const char*> tabs[] = {
+                            {"system", "System"}, {"memory", "Memory"}, {"loaded_data", "Loaded data"}, {"frames", "Frames"}};
+                        const char* tab_shown = "System";
+                        for (const auto& [id, text] : tabs)
+                            if (m.tab == id) tab_shown = text;
+                        ImGui::SetNextItemWidth(160.0f);
+                        if (ImGui::BeginCombo("Monitor opens on##monitor_tab", tab_shown)) {
+                            for (const auto& [id, text] : tabs)
+                                if (ImGui::Selectable(text, m.tab == id)) {
+                                    m.tab = id;
+                                    changed = true;
+                                }
+                            ImGui::EndCombo();
+                        }
+                        if (changed) {
+                            engine_config.SetMonitor(m);
+                            engine_config.Save();
+                        }
+                        ImGui::TextDisabled("Used when the Engine starts.");
+
+                        // The Tools > Diagnostics switches: on at once, and kept.
+                        ImGui::Spacing();
+                        bool switched = false;
+                        if (idle_log_ptr_) {
+                            switched |= ImGui::Checkbox("Log frame-rate changes##diag_pace", idle_log_ptr_);
+                            ui::Tooltip("One log line when the Engine slows or speeds its frames:\n"
+                                        "idle (10 a second), not in front (30 a second), minimised.");
+                        }
+                        if (verbose_python_log_ptr_) {
+                            bool verbose = verbose_python_log_ptr_->load();
+                            if (ImGui::Checkbox("Log every Python command##diag_python", &verbose)) {
+                                verbose_python_log_ptr_->store(verbose);
+                                switched = true;
+                            }
+                            ui::Tooltip("Each command the Engine sends to Python, with how long it took.");
+                        }
+                        if (frame_overlay_ptr_) {
+                            switched |= ImGui::Checkbox("Frame time overlay##diag_overlay", frame_overlay_ptr_);
+                            ui::Tooltip("The whole frame time and the Engine's own interface-building time,\n"
+                                        "at the top right of the window. More in Tools > Monitoring > Frames.");
+                        }
+                        if (switched) SaveDiagnostics();
+                    }
+
+                    RenderPluginPreferences("General");
                     ImGui::EndTabItem();
                 }
 
@@ -253,6 +397,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::TextDisabled("Line numbers are always shown. Current line is highlighted.");
                     ImGui::TextDisabled("These settings will be saved with your project.");
 
+                    RenderPluginPreferences("Editor");
                     ImGui::EndTabItem();
                 }
 
@@ -302,6 +447,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     ImGui::Checkbox("Trim trailing whitespace on save", &files_trim_trailing_whitespace_);
                     ImGui::Checkbox("Insert final newline on save", &files_insert_final_newline_);
 
+                    RenderPluginPreferences("Files");
                     ImGui::EndTabItem();
                 }
 
@@ -380,6 +526,139 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::EndPopup();
                     }
 
+                    RenderPluginPreferences("Python");
+                    ImGui::EndTabItem();
+                }
+
+                // ========== Simulation Tab (graph runs) ==========
+                if (ImGui::BeginTabItem(ICON_FA_WAVE_SQUARE " Simulation")) {
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Defaults for graph runs (Run Sim). They apply to the next run.");
+                    ImGui::Spacing();
+                    // Engine-wide, applied and saved at once
+                    auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                    if (ImGui::BeginTable("##simulation_prefs", 2, ImGuiTableFlags_SizingStretchProp)) {
+                        ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+                        ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Tick rate");
+                        ImGui::TableNextColumn();
+                        int rate_hz = engine_config.SimulationRateHz();
+                        if (ui::NumberField("##simulation_rate", &rate_hz,
+                                            cyxwiz::core::EngineConfig::kMinSimulationRateHz,
+                                            cyxwiz::core::EngineConfig::kMaxSimulationRateHz, 10, 70.0f,
+                                            "Ticks a second of a graph run")) {
+                            engine_config.SetSimulationRateHz(rate_hz);
+                            engine_config.Save();
+                        }
+                        ImGui::PushTextWrapPos(0.0f);  // under the field, wrapped: no clipping when narrow
+                        ImGui::TextDisabled("ticks a second (1 to 1000; 60 by default)");
+                        ImGui::PopTextWrapPos();
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Simulation Monitor");
+                        ImGui::TableNextColumn();
+                        bool open_monitor = engine_config.OpenSimulationMonitorOnRun();
+                        if (ImGui::Checkbox("Open it when a run starts (on by default)", &open_monitor)) {
+                            engine_config.SetOpenSimulationMonitorOnRun(open_monitor);
+                            engine_config.Save();
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::Spacing();
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("If you close the Monitor during a run it stays closed until the next Run. "
+                                        "A Scope's window size and scale are set on the Scope node, in Properties.");
+                    ImGui::PopTextWrapPos();
+
+                    // Playing a trained RL policy (TOFIX195 S5): the Policy Playback panel starts from these
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::TextUnformatted("Policy playback");
+                    ImGui::TextDisabled("How the Policy Playback panel starts. Changing it in the panel does not change these.");
+                    ImGui::Spacing();
+                    if (ImGui::BeginTable("##policy_playback_prefs", 2, ImGuiTableFlags_SizingStretchProp)) {
+                        ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+                        ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+                        const auto& kActions = cyxwiz::rl_playback::kActionChoices;
+                        const auto& kSpeeds = cyxwiz::rl_playback::kSpeedChoices;
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Actions");
+                        ImGui::TableNextColumn();
+                        int actions = engine_config.PolicyPlaybackBestActions() ? 0 : 1;
+                        if (ui::SegmentedControl("##pref_playback_actions", kActions, 2, &actions)) {
+                            engine_config.SetPolicyPlaybackBestActions(actions == 0);
+                            engine_config.Save();
+                        }
+                        // Under the choice, wrapped: it does not clip in a narrow dialog
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("%s", cyxwiz::rl_playback::kActionChoicesHint);
+                        ImGui::PopTextWrapPos();
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Speed");
+                        ImGui::TableNextColumn();
+                        int speed = engine_config.PolicyPlaybackSpeed();
+                        if (ui::SegmentedControl("##pref_playback_speed", kSpeeds, 3, &speed)) {
+                            engine_config.SetPolicyPlaybackSpeed(speed);
+                            engine_config.Save();
+                        }
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("After training");
+                        ImGui::TableNextColumn();
+                        bool play_after = engine_config.PlayPolicyAfterTraining();
+                        if (ImGui::Checkbox("Play the policy when a PPO run finishes (off by default)", &play_after)) {
+                            engine_config.SetPlayPolicyAfterTraining(play_after);
+                            engine_config.Save();
+                        }
+                        // The Stress test tab: its disturbance, levels and episodes
+                        auto stress = engine_config.PolicyStressTestDefaults();
+                        bool stress_changed = false;
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Stress test");
+                        ImGui::TableNextColumn();
+                        stress_changed |= ui::SegmentedControl("##pref_stress_kind", cyxwiz::rl::StressKindNames(),
+                                                               cyxwiz::rl::kStressKindCount, &stress.kind);
+                        stress_changed |= ui::NumberField("##pref_stress_levels", &stress.levels, 2, 21, 1, 60.0f,
+                                                          "Difficulty 0 to 1 in this many levels");
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("levels,");
+                        ImGui::SameLine();
+                        stress_changed |= ui::NumberField("##pref_stress_episodes", &stress.episodes, 1, 100, 1, 60.0f);
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("episodes a level");
+                        if (stress_changed) {
+                            engine_config.SetPolicyStressTestDefaults(stress);
+                            engine_config.Save();
+                        }
+                        // Watching a PPO run while it trains (the RL Training Dashboard)
+                        int watch_mode = engine_config.WatchTrainingMode();
+                        int watch_every = engine_config.WatchTrainingEvery();
+                        bool watch_changed = false;
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Watch training");
+                        ImGui::TableNextColumn();
+                        watch_changed |= ui::SegmentedControl("##pref_watch_training",
+                                                              cyxwiz::rl_playback::kWatchChoices,
+                                                              cyxwiz::rl_playback::kWatchChoiceCount, &watch_mode);
+                        ImGui::TextDisabled("every");
+                        ImGui::SameLine();
+                        watch_changed |= ui::NumberField("##pref_watch_every", &watch_every, 1, 1000, 1, 60.0f,
+                                                         "Updates between two copies of the networks");
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("updates (the live preview takes the networks)");
+                        if (watch_changed) {
+                            engine_config.SetWatchTraining(watch_mode, watch_every);
+                            engine_config.Save();
+                        }
+                        ImGui::EndTable();
+                    }
+                    RenderPluginPreferences("Simulation");
                     ImGui::EndTabItem();
                 }
 
@@ -401,8 +680,10 @@ void ToolbarPanel::RenderPreferencesDialog() {
 
                     bool backend_manager_verify_requested = false;
 
+                    // Supervised training, or a PPO run: both hold the run's device
                     const bool training_active =
-                        cyxwiz::TrainingManager::Instance().IsTrainingActive();
+                        cyxwiz::TrainingManager::Instance().IsTrainingActive() ||
+                        cyxwiz::HasActiveExecutionDeviceContext();
                     const auto active_run_trace =
                         cyxwiz::TrainingTraceCollector::LatestTrace();
                     const bool has_run_bound_device =
@@ -633,7 +914,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     if (training_active) {
                         ImGui::TextColored(
                             t.warning,
-                            "%s Training is active; device changes are disabled until the run finishes.",
+                            "%s The device is in use (a training run or a playing policy); device changes are disabled until it ends.",
                             ICON_FA_TRIANGLE_EXCLAMATION);
                     } else {
                         ImGui::TextDisabled(

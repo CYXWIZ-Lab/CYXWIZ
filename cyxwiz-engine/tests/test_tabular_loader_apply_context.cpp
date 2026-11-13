@@ -60,7 +60,7 @@ int main() {
         const auto resolved = cyxwiz::loaders::ResolveTabularFileType(
             " auto ", std::string("/datasets/table.") + extension);
         Check(resolved == "hdf5" && cyxwiz::loaders::IsUnsupportedTabularFileType(resolved),
-              "Auto HDF5 must resolve and fail closed before generic loading");
+              "Auto HDF5 must resolve and stay out of the generic table loader");
     }
     Check(cyxwiz::loaders::ResolveTabularFileType("auto", "/datasets/table.zip") == "zip_text",
           "Auto ZIP should require the document selection contract");
@@ -76,18 +76,23 @@ int main() {
     Check(cyxwiz::data_input::DetectFormat("/d/model.onnx") == nullptr,
           "A model file is not a dataset format");
     const auto* hdf5 = cyxwiz::data_input::FindFormat("hdf5");
-    Check(hdf5 && !hdf5->executable &&
+    Check(hdf5 && hdf5->executable &&
               !cyxwiz::data_input::BuildAvailable(*hdf5, false) &&
               cyxwiz::data_input::BuildAvailable(*hdf5, true),
-          "HighFive availability must not enable the incomplete Data Input adapter");
-    Check(hdf5->preview == cyxwiz::data_input::SourcePreview::Hdf5Inspection &&
-              !hdf5->executable,
-          "HDF5 source inspection must remain separate from production loading");
+          "HDF5 has a Data Input adapter, available only where HighFive is built in");
+    Check(cyxwiz::data_input::IsExecutable("hdf5") == cyxwiz::data_input::kHdf5BuildAvailable,
+          "Data Input runs HDF5 exactly when the build has HDF5 support");
+    Check(hdf5->preview == cyxwiz::data_input::SourcePreview::Hdf5Inspection,
+          "HDF5 keeps its hierarchy inspector as the preview");
+    Check(!cyxwiz::loaders::IsSupportedTabularFileType("hdf5") &&
+              cyxwiz::loaders::UnsupportedTabularFileTypeMessage("hdf5").find(
+                  cyxwiz::data_input::kHdf5BuildAvailable ? "HDF5 source settings" : "not compiled") != std::string::npos,
+          "HDF5 loads through its own source, never the generic table loader");
     Check(std::string(cyxwiz::data_input::UnsupportedReason("h5", false)).find("not compiled") != std::string::npos,
           "A build without HDF5 must report its missing dependency");
-    Check(cyxwiz::data_input::ExtensionFilter().find("h5") == std::string::npos &&
-              cyxwiz::data_input::ExtensionFilter().find("hdf") == std::string::npos,
-          "The production file filter must not advertise HDF5");
+    Check((cyxwiz::data_input::ExtensionFilter().find("h5") != std::string::npos) ==
+              cyxwiz::data_input::kHdf5BuildAvailable,
+          "The file filter offers HDF5 exactly when this build can load it");
 
     cyxwiz::loaders::ApplyContext context;
     context.dataset_name = "validation_test";

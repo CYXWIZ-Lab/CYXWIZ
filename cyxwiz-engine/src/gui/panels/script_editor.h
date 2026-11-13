@@ -57,8 +57,9 @@ public:
     void SaveFileAs();
     void CloseFile(int tab_index);
 
-    // Load generated code (from Node Editor)
-    void LoadGeneratedCode(const std::string& code, const std::string& framework_name);
+    // Generated code from CyxWiz Studio's Code menu, in the tab named
+    // file_name ("mnist_mlp_pytorch.py"); a second Generate replaces that tab's text.
+    void LoadGeneratedCode(const std::string& code, const std::string& file_name);
 
     // Execution
     void RunScript();
@@ -329,8 +330,8 @@ private:
 
     // Section execution helpers
     struct Section {
-        int start_line;
-        int end_line;
+        int start_line = 0;
+        int end_line = 0;
         std::string code;
     };
     std::vector<Section> ParseSections(const std::string& text);

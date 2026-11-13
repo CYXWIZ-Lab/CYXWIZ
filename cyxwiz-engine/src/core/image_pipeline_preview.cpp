@@ -98,6 +98,12 @@ std::string DrawText(const image::ImageOp& op, const image::ImageOpDraws& d) {
 
 }  // namespace
 
+uint32_t PreviewSeedOf(const std::string& path) {
+    uint32_t hash = 2166136261u;
+    for (const unsigned char c : path) hash = (hash ^ c) * 16777619u;
+    return hash;
+}
+
 std::string ImageStepsKey(const PreparedImageSpec& spec, const image::ImageAugmentation& augmentation,
                           const std::vector<CvImageStep>& cv_steps) {
     std::string key = std::to_string(spec.width) + "x" + std::to_string(spec.height) + ModeName(spec.mode);

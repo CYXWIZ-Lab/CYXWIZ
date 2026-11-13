@@ -12,6 +12,7 @@
 #include "../core/node_executors/word_embeddings_operator.h"
 #include "../core/project_manager.h"
 #include "../core/word_embeddings_presentation.h"
+#include "cyxwiz/portable_random.h"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -97,8 +98,8 @@ bool WriteEmbeddingMatrix(const fs::path& path, int rows, int cols, int padding_
     }
     std::mt19937 rng(42);
     const float limit = std::sqrt(6.0f / static_cast<float>(rows + cols));
-    std::normal_distribution<float> normal(0.0f, 1.0f);
-    std::uniform_real_distribution<float> uniform(-limit, limit);
+    const auto normal = [mean = 0.0f, sd = 1.0f](auto& r) { return static_cast<float>(cyxwiz::portable::Normal(r, mean, sd)); };
+    const auto uniform = [low = -limit, high = limit](auto& r) { return cyxwiz::portable::UniformFloat(r, low, high); };
     out << "# cyxwiz_embedding rows=" << rows << " dim=" << cols << "\n";
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {

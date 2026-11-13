@@ -31,6 +31,8 @@ void SetNeuralProvidersDisabledForTesting(bool disabled) {
     g_neural_providers_disabled_for_testing.store(disabled);
 }
 
+bool NeuralProvidersDisabledForTesting() { return g_neural_providers_disabled_for_testing.load(); }
+
 // The NVIDIA provider is a module of its own (cyxwiz-nvidia-provider,
 // TOFIX178 1.0(c)), loaded at first use: installed with the CUDA GPU pack,
 // or next to the backend in a build. Absent, NVIDIA devices use the
@@ -160,6 +162,12 @@ const char* NeuralOpName(NeuralOp op) {
     case NeuralOp::DeviceProbe: return "device_probe";
     case NeuralOp::Conv2dForward: return "conv2d_forward";
     case NeuralOp::Conv2dBackward: return "conv2d_backward";
+    case NeuralOp::MlpForward: return "mlp_forward";
+    case NeuralOp::MlpBackward: return "mlp_backward";
+    case NeuralOp::AdamStep: return "adam_step";
+    case NeuralOp::PpoSample: return "ppo_sample";
+    case NeuralOp::PpoLoss: return "ppo_loss";
+    case NeuralOp::PpoGae: return "ppo_gae";
     }
     return "unknown_neural_op";
 }

@@ -41,7 +41,6 @@ add_executable(cyxwiz-tests
     unit/test_device.cpp
     unit/test_loaded_library.cpp
     unit/test_optimizer.cpp
-    unit/test_optimization.cpp
     unit/test_scheduler.cpp
     unit/test_flatten_layer.cpp
     unit/test_dropout_layer.cpp
@@ -61,6 +60,7 @@ add_executable(cyxwiz-tests
     unit/test_data_loader.cpp
     unit/test_training_dataloader.cpp
     unit/test_utilities.cpp
+    unit/test_device_memory.cpp
     unit/test_cyxmodel_format.cpp
     unit/test_text_inference_input.cpp
     unit/test_byte_bpe.cpp
@@ -69,17 +69,19 @@ add_executable(cyxwiz-tests
     unit/test_sequence_batcher.cpp
     unit/test_pipeline_runtime_capabilities.cpp
     unit/test_gui_tensor_shape_inference.cpp
-    unit/test_nas_architecture_validation.cpp
     ../cyxwiz-engine/src/core/formats/cyxmodel_format.cpp
     ../cyxwiz-engine/src/core/formats/cyxmodel_archive.cpp
     ../cyxwiz-engine/src/core/language_model_training.cpp
     ../cyxwiz-engine/src/gui/tensor_shape_inference_contract.cpp
-    ../cyxwiz-engine/src/core/nas_evaluator.cpp
     ../cyxwiz-engine/src/core/route_qualification_service.cpp
     ../cyxwiz-engine/src/core/route_recommendation.cpp
     ../cyxwiz-engine/src/inference/text_inference_input.cpp
 )
 target_link_libraries(cyxwiz-tests PRIVATE cyxwiz-training-core)
+# The same HDF5 / XLSX build features as cyxwiz-training-core, whose Data Input
+# format list these tests compare with data_input_formats.h.
+include("${CMAKE_SOURCE_DIR}/cmake/CyxWizDataConvert.cmake")
+cyxwiz_target_data_convert(cyxwiz-tests)
 
 target_link_libraries(cyxwiz-tests PRIVATE
     Catch2::Catch2

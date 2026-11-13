@@ -1,6 +1,7 @@
 ﻿#include <cyxwiz/sequential.h>
 #include "../arrayfire_backend_utils.h"
 #include "../arrayfire_host_values.h"
+#include "../device_random.h"
 #include <arrayfire.h>
 #include <cmath>
 #include <random>
@@ -568,7 +569,7 @@ LearnedPositionalEmbeddingModule::LearnedPositionalEmbeddingModule(size_t d_mode
     }
     const std::vector<size_t> shape{max_sequence_length_, d_model_};
     try {
-        af::array w = af::randn(af::dim4(static_cast<dim_t>(max_sequence_length_), static_cast<dim_t>(d_model_))) * 0.02f;
+        af::array w = cyxwiz::DeviceNormal(af::dim4(static_cast<dim_t>(max_sequence_length_), static_cast<dim_t>(d_model_)), f32) * 0.02f;
         w.eval();
         weight_ = Tensor::FromSemanticArray(w, shape);
         grad_weight_ = Tensor::Zeros(shape);

@@ -2,86 +2,94 @@
 // Part of the CyxWiz plugin SDK (see cmake/sdk/NOTICE).
 #pragma once
 
+// Linear and convex quadratic programs (HiGHS, the solver scipy uses) and
+// the training optimizers' paths on a typed formula (TOFIX129 D10). The
+// calculus of a formula is in calculus.h, the formula in expression.h.
+
 #include "api_export.h"
-#include <vector>
-#include <string>
+#include "expression.h"
+#include "optimizers/optimizer_base.h"
+
 #include <functional>
+#include <limits>
+#include <string>
+#include <vector>
 
 namespace cyxwiz {
 
 // ============================================================================
-// Result Structures
+// Programs and optimizer paths (TOFIX129 D10)
 // ============================================================================
 
-struct CYXWIZ_API GradientDescentResult {
-    std::vector<double> solution;              // Final x values
-    std::vector<double> objective_history;     // f(x) at each iteration
-    std::vector<std::vector<double>> path;     // x trajectory
+enum class ConstraintSense { LessEqual, GreaterEqual, Equal };
+
+// One row: coefficients . x  (<=, >= or =)  rhs.
+struct CYXWIZ_API LinearConstraint {
+    std::string name;
+    std::vector<double> coefficients;
+    ConstraintSense sense = ConstraintSense::LessEqual;
+    double rhs = 0.0;
+};
+
+// lower <= x <= upper; +-infinity for no limit.
+struct CYXWIZ_API VariableBound {
+    double lower = 0.0;
+    double upper = std::numeric_limits<double>::infinity();
+};
+
+// maximize or minimize objective . x subject to the rows and the bounds
+// (empty bounds: every x >= 0).
+struct CYXWIZ_API LinearProgram {
+    bool maximize = false;
+    std::vector<double> objective;
+    std::vector<LinearConstraint> constraints;
+    std::vector<VariableBound> bounds;
+};
+
+// minimize 0.5 x' Q x + c' x subject to the rows and the bounds (empty
+// bounds: every x free). Q must be symmetric positive semidefinite.
+struct CYXWIZ_API QuadraticProgram {
+    std::vector<std::vector<double>> Q;
+    std::vector<double> c;
+    std::vector<LinearConstraint> constraints;
+    std::vector<VariableBound> bounds;
+};
+
+enum class ProgramStatus { Optimal, Infeasible, Unbounded, NotConvex, Failed };
+
+struct CYXWIZ_API ProgramResult {
+    bool success = false;                   // Optimal
+    std::string error_message;              // why not, in words
+    ProgramStatus status = ProgramStatus::Failed;
+    double objective = 0.0;
+    std::vector<double> x;
+    // Per row: room left (|rhs - row value|; 0 for a met equality), whether
+    // it holds with no room, and its shadow price: how much the best
+    // objective changes when rhs grows by 1.
+    std::vector<double> slack;
+    std::vector<bool> binding;
+    std::vector<double> shadow_prices;
     int iterations = 0;
-    double final_objective = 0.0;
-    double gradient_norm = 0.0;
-    bool converged = false;
-    bool success = false;
-    std::string error_message;
 };
 
-struct CYXWIZ_API ConvexityResult {
-    bool is_convex = false;
-    bool is_strictly_convex = false;
-    bool is_concave = false;
-    bool is_strictly_concave = false;
-    std::vector<double> eigenvalues;           // Hessian eigenvalues
-    std::vector<std::vector<double>> hessian;  // Computed Hessian matrix
-    double min_eigenvalue = 0.0;
-    double max_eigenvalue = 0.0;
-    std::string analysis;                      // Text description
-    bool success = false;
-    std::string error_message;
+// The update rules training uses (cyxwiz::Optimizer), on a formula's
+// variables as parameters.
+struct CYXWIZ_API OptimizerSetting {
+    OptimizerType type = OptimizerType::Adam;
+    double learning_rate = 0.001;
+    double momentum = 0.0;                  // SGD and RMSprop
 };
 
-struct CYXWIZ_API LPResult {
-    std::vector<double> solution;              // Optimal x
-    double objective_value = 0.0;
-    std::vector<double> dual_variables;        // Shadow prices
-    std::vector<bool> active_constraints;
-    int iterations = 0;
-    std::string status;                        // "Optimal", "Unbounded", "Infeasible"
+struct CYXWIZ_API OptimizerPath {
     bool success = false;
     std::string error_message;
-};
-
-struct CYXWIZ_API QPResult {
-    std::vector<double> solution;
-    double objective_value = 0.0;
-    std::vector<double> dual_variables;
-    std::vector<double> lagrange_multipliers;
-    int iterations = 0;
-    std::string status;                        // "Optimal", "Unbounded", "Infeasible"
-    bool success = false;
-    std::string error_message;
-};
-
-struct CYXWIZ_API DerivativeResult {
-    double value = 0.0;                        // f'(x) or partial derivative
-    std::vector<double> gradient;              // For multivariate functions
-    std::vector<std::vector<double>> hessian;  // Second derivatives
-    double forward_estimate = 0.0;             // Forward difference result
-    double backward_estimate = 0.0;            // Backward difference result
-    double central_estimate = 0.0;             // Central difference result
-    double approximation_error = 0.0;          // Estimated error
-    bool success = false;
-    std::string error_message;
-};
-
-struct CYXWIZ_API IntegralResult {
-    double value = 0.0;
-    double absolute_error = 0.0;
-    int function_evaluations = 0;
-    std::string method_used;
-    std::vector<double> x_points;              // Evaluation points (for visualization)
-    std::vector<double> y_points;              // Function values at points
-    bool success = false;
-    std::string error_message;
+    std::vector<std::vector<double>> points;    // the start, then one per step
+    std::vector<double> values;                 // f at each point
+    std::vector<double> gradient_norms;         // |grad f| at each point
+    bool converged = false;                     // |grad f| fell below the tolerance
+    bool diverged = false;                      // left the finite numbers
+    int diverged_at = 0;                        // the step that did
+    bool stopped = false;                       // the stop query said so
 };
 
 // ============================================================================
@@ -90,242 +98,34 @@ struct CYXWIZ_API IntegralResult {
 
 class CYXWIZ_API Optimization {
 public:
-    // ==================== Gradient Descent Variants ====================
+    // ==================== Programs (HiGHS) ====================
 
-    // Basic gradient descent
-    static GradientDescentResult GradientDescent(
-        std::function<double(const std::vector<double>&)> objective,
-        std::function<std::vector<double>(const std::vector<double>&)> gradient,
-        const std::vector<double>& x0,
-        double learning_rate = 0.01,
-        int max_iterations = 1000,
-        double tolerance = 1e-6
-    );
+    // Any number of variables and rows. Infeasible and unbounded problems
+    // come back with that status and the reason in words.
+    static ProgramResult SolveLinearProgram(const LinearProgram& problem);
 
-    // Gradient descent with momentum
-    static GradientDescentResult MomentumGD(
-        std::function<double(const std::vector<double>&)> objective,
-        std::function<std::vector<double>(const std::vector<double>&)> gradient,
-        const std::vector<double>& x0,
-        double learning_rate = 0.01,
-        double momentum = 0.9,
-        int max_iterations = 1000,
-        double tolerance = 1e-6
-    );
+    // Refuses a Q that is not positive semidefinite (NotConvex, naming its
+    // most negative eigenvalue).
+    static ProgramResult SolveQuadraticProgram(const QuadraticProgram& problem);
 
-    // Adam optimizer
-    static GradientDescentResult Adam(
-        std::function<double(const std::vector<double>&)> objective,
-        std::function<std::vector<double>(const std::vector<double>&)> gradient,
-        const std::vector<double>& x0,
-        double learning_rate = 0.001,
-        double beta1 = 0.9,
-        double beta2 = 0.999,
-        double epsilon = 1e-8,
-        int max_iterations = 1000,
-        double tolerance = 1e-6
-    );
+    // The least risky mix of assets (Markowitz): minimize 0.5 w' C w with the
+    // weights summing to 1, earning at least `target_return` (NaN: no target,
+    // the minimum-variance mix), and with `long_only` no weight below 0.
+    // `means` and `covariance` are per period, as the returns are.
+    static QuadraticProgram PortfolioProgram(const std::vector<double>& means,
+                                             const std::vector<std::vector<double>>& covariance,
+                                             double target_return, bool long_only);
 
-    // RMSprop optimizer
-    static GradientDescentResult RMSprop(
-        std::function<double(const std::vector<double>&)> objective,
-        std::function<std::vector<double>(const std::vector<double>&)> gradient,
-        const std::vector<double>& x0,
-        double learning_rate = 0.01,
-        double decay_rate = 0.99,
-        double epsilon = 1e-8,
-        int max_iterations = 1000,
-        double tolerance = 1e-6
-    );
+    // ==================== Optimizer paths ====================
 
-    // ==================== Convexity Analysis ====================
-
-    // Analyze convexity at a point using numerical Hessian
-    static ConvexityResult AnalyzeConvexity(
-        std::function<double(const std::vector<double>&)> func,
-        const std::vector<double>& point,
-        double delta = 1e-5
-    );
-
-    // Compute numerical Hessian matrix
-    static std::vector<std::vector<double>> ComputeHessian(
-        std::function<double(const std::vector<double>&)> func,
-        const std::vector<double>& point,
-        double delta = 1e-5
-    );
-
-    // ==================== Linear Programming ====================
-
-    // Solve linear programming problem:
-    // minimize/maximize c'x subject to Ax <= b, x >= 0
-    static LPResult SolveLP(
-        const std::vector<double>& c,                        // Objective coefficients
-        const std::vector<std::vector<double>>& A,           // Constraint matrix
-        const std::vector<double>& b,                        // RHS values
-        const std::vector<std::string>& constraint_types,    // "<=", ">=", "="
-        bool maximize = false                                // true = maximize, false = minimize
-    );
-
-    // Solve LP with variable bounds
-    static LPResult SolveLPWithBounds(
-        const std::vector<double>& c,
-        const std::vector<std::vector<double>>& A,
-        const std::vector<double>& b,
-        const std::vector<std::string>& constraint_types,
-        const std::vector<double>& lower_bounds,
-        const std::vector<double>& upper_bounds,
-        bool maximize = false
-    );
-
-    // ==================== Quadratic Programming ====================
-
-    // Solve quadratic programming problem:
-    // minimize 0.5 * x'Qx + c'x subject to Ax <= b
-    static QPResult SolveQP(
-        const std::vector<std::vector<double>>& Q,           // Quadratic term (symmetric)
-        const std::vector<double>& c,                        // Linear term
-        const std::vector<std::vector<double>>& A,           // Constraint matrix
-        const std::vector<double>& b                         // RHS values
-    );
-
-    // Solve unconstrained QP (closed-form solution if Q is positive definite)
-    static QPResult SolveUnconstrainedQP(
-        const std::vector<std::vector<double>>& Q,
-        const std::vector<double>& c
-    );
-
-    // ==================== Numerical Differentiation ====================
-
-    // Single variable derivative
-    static DerivativeResult NumericalDerivative(
-        std::function<double(double)> func,
-        double x,
-        double h = 1e-5,
-        const std::string& method = "central"  // "forward", "backward", "central"
-    );
-
-    // Gradient of multivariate function
-    static DerivativeResult NumericalGradient(
-        std::function<double(const std::vector<double>&)> func,
-        const std::vector<double>& x,
-        double h = 1e-5
-    );
-
-    // Second derivative (single variable)
-    static DerivativeResult SecondDerivative(
-        std::function<double(double)> func,
-        double x,
-        double h = 1e-5
-    );
-
-    // Compare all differentiation methods
-    static DerivativeResult CompareDerivativeMethods(
-        std::function<double(double)> func,
-        double x,
-        double h = 1e-5
-    );
-
-    // ==================== Numerical Integration ====================
-
-    // Basic integration methods
-    static IntegralResult Integrate(
-        std::function<double(double)> func,
-        double a, double b,
-        const std::string& method = "simpson",  // "trapezoid", "simpson", "midpoint"
-        int n = 100
-    );
-
-    // Composite trapezoidal rule
-    static IntegralResult TrapezoidalRule(
-        std::function<double(double)> func,
-        double a, double b,
-        int n = 100
-    );
-
-    // Composite Simpson's rule
-    static IntegralResult SimpsonsRule(
-        std::function<double(double)> func,
-        double a, double b,
-        int n = 100  // Must be even
-    );
-
-    // Romberg integration (higher accuracy)
-    static IntegralResult RombergIntegration(
-        std::function<double(double)> func,
-        double a, double b,
-        int max_iterations = 10,
-        double tolerance = 1e-10
-    );
-
-    // Adaptive integration (adjusts subdivisions based on error)
-    static IntegralResult AdaptiveIntegrate(
-        std::function<double(double)> func,
-        double a, double b,
-        double tolerance = 1e-6,
-        int max_depth = 50
-    );
-
-    // Gaussian quadrature
-    static IntegralResult GaussianQuadrature(
-        std::function<double(double)> func,
-        double a, double b,
-        int n = 5  // Number of quadrature points (1-10)
-    );
-
-    // Compare all integration methods
-    static std::vector<IntegralResult> CompareIntegrationMethods(
-        std::function<double(double)> func,
-        double a, double b,
-        int n = 100
-    );
-
-    // ==================== Test Functions (Built-in Presets) ====================
-
-    // Rosenbrock function: f(x,y) = (1-x)^2 + 100(y-x^2)^2
-    static double Rosenbrock(const std::vector<double>& x);
-    static std::vector<double> RosenbrockGradient(const std::vector<double>& x);
-
-    // Sphere function: f(x) = sum(x_i^2)
-    static double Sphere(const std::vector<double>& x);
-    static std::vector<double> SphereGradient(const std::vector<double>& x);
-
-    // Rastrigin function: f(x) = 10n + sum(x_i^2 - 10*cos(2*pi*x_i))
-    static double Rastrigin(const std::vector<double>& x);
-    static std::vector<double> RastriginGradient(const std::vector<double>& x);
-
-    // Beale function: for benchmarking
-    static double Beale(const std::vector<double>& x);
-    static std::vector<double> BealeGradient(const std::vector<double>& x);
-
-    // Booth function: f(x,y) = (x + 2y - 7)^2 + (2x + y - 5)^2
-    static double Booth(const std::vector<double>& x);
-    static std::vector<double> BoothGradient(const std::vector<double>& x);
-
-    // Himmelblau function: f(x,y) = (x^2 + y - 11)^2 + (x + y^2 - 7)^2
-    static double Himmelblau(const std::vector<double>& x);
-    static std::vector<double> HimmelblauGradient(const std::vector<double>& x);
-
-    // ==================== Utility Functions ====================
-
-    // Compute norm of vector
-    static double VectorNorm(const std::vector<double>& v);
-
-    // Generate contour data for 2D visualization
-    static std::vector<std::vector<double>> GenerateContourData(
-        std::function<double(const std::vector<double>&)> func,
-        double x_min, double x_max,
-        double y_min, double y_max,
-        int resolution = 50
-    );
-
-    // Generate mesh grid
-    static void MeshGrid(
-        double x_min, double x_max,
-        double y_min, double y_max,
-        int nx, int ny,
-        std::vector<std::vector<double>>& X,
-        std::vector<std::vector<double>>& Y
-    );
+    // `steps` updates of f's variables from `start` by the training
+    // optimizer `setting` names, the gradient exact from the formula. Ends
+    // early when |grad f| < tolerance, when a value stops being finite
+    // (diverged), or when `stop` returns true.
+    static OptimizerPath FollowOptimizer(const Expression& f, const std::vector<double>& start,
+                                         const OptimizerSetting& setting, int steps,
+                                         double tolerance = 1e-8,
+                                         const std::function<bool()>& stop = {});
 };
 
 } // namespace cyxwiz

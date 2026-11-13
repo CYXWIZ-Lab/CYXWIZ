@@ -13,6 +13,7 @@
 
 #include "cyxwiz/time_series.h"
 #include "series_device.h"
+#include "cyxwiz/portable_random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -49,6 +50,7 @@ struct Run {
 
 // The recursions of statsmodels' _predict: y[i - 1] updates the state i, the fit at i is state i's forecast.
 Run Smooth(const std::vector<double>& y, const Spec& spec, const Params& p, int h) {
+    series_detail::ThrowIfStopped();
     const int n = static_cast<int>(y.size()), m = std::max(spec.m, 1);
     const double alpha = p.alpha, beta = spec.trend ? p.beta : 0.0, gamma = spec.season != Season::None ? p.gamma : 0.0;
     const double phi = spec.damped ? p.phi : 1.0;
@@ -404,128 +406,131 @@ const char* SeasonName(Season s) { return s == Season::Additive ? "additive" : s
 
 ForecastResult Forecast(const std::vector<double>& y, const Spec& spec, int horizon, double alpha, double beta, double gamma, double phi,
                         double level, const char* name) {
-    ForecastResult r;
-    r.method = name;
-    r.horizon = horizon;
-    r.level = level;
-    const size_t need = spec.season != Season::None ? std::max<size_t>(2 * static_cast<size_t>(spec.m), 10) : 3;
-    if (const std::string refusal = series_detail::SeriesRefusal(y, need, name); !refusal.empty()) {
-        r.error_message = refusal;
-        return r;
-    }
-    if (horizon < 0) {
-        r.error_message = "The horizon cannot be negative";
-        return r;
-    }
-    if (!(level > 0.0 && level < 1.0)) {
-        r.error_message = "The interval level must be between 0 and 1";
-        return r;
-    }
-    if (spec.season == Season::Multiplicative)
-        for (const double v : y)
-            if (v <= 0.0) {
-                r.error_message = "A multiplicative season needs values above 0";
-                return r;
-            }
-    for (const double v : {alpha, beta, gamma})
-        if (v > 1.0) {
-            r.error_message = "Smoothing parameters are between 0 and 1 (negative: estimated)";
+    return series_detail::UnlessStopped<ForecastResult>([&]() -> ForecastResult {
+        ForecastResult r;
+        r.method = name;
+        r.horizon = horizon;
+        r.level = level;
+        const size_t need = spec.season != Season::None ? std::max<size_t>(2 * static_cast<size_t>(spec.m), 10) : 3;
+        if (const std::string refusal = series_detail::SeriesRefusal(y, need, name); !refusal.empty()) {
+            r.error_message = refusal;
             return r;
         }
-    const Params p = Fit(y, spec, alpha, beta, gamma, phi);
-    const Run run = Smooth(y, spec, p, horizon);
-    const int n = static_cast<int>(y.size()), m = spec.m;
-    r.fitted_values.assign(run.fitted.begin(), run.fitted.begin() + n);
-    r.forecast.assign(run.fitted.begin() + n, run.fitted.end());
-    r.residuals.resize(static_cast<size_t>(n));
-    double abs_sum = 0.0, ape_sum = 0.0;
-    int ape_count = 0;
-    for (int t = 0; t < n; ++t) {
-        const double e = y[static_cast<size_t>(t)] - r.fitted_values[static_cast<size_t>(t)];
-        r.residuals[static_cast<size_t>(t)] = e;
-        abs_sum += std::fabs(e);
-        if (std::fabs(y[static_cast<size_t>(t)]) > 1e-12) {
-            ape_sum += std::fabs(e / y[static_cast<size_t>(t)]);
-            ++ape_count;
+        if (horizon < 0) {
+            r.error_message = "The horizon cannot be negative";
+            return r;
         }
-    }
-    r.sse = run.sse;
-    r.mse = run.sse / n;
-    r.rmse = std::sqrt(r.mse);
-    r.mae = abs_sum / n;
-    r.mape = ape_count > 0 ? 100.0 * ape_sum / ape_count : NAN;
-    const int k = m * (spec.season != Season::None) + 2 * spec.trend + 2 + (spec.damped ? 1 : 0);
-    r.n_params = k;
-    r.aic = n * std::log(run.sse / n) + 2.0 * k;
-    r.bic = n * std::log(run.sse / n) + k * std::log(static_cast<double>(n));
-    r.parameters["alpha"] = p.alpha;
-    if (spec.trend) r.parameters["beta"] = p.beta;
-    if (spec.season != Season::None) r.parameters["gamma"] = p.gamma;
-    if (spec.damped) r.parameters["phi"] = p.phi;
-    r.parameters["initial_level"] = p.l0;
-    if (spec.trend) r.parameters["initial_trend"] = p.b0;
-    for (int i = 0; i < m; ++i) r.parameters["initial_seasons." + std::to_string(i)] = p.s0[static_cast<size_t>(i)];
-    r.parameters["sigma2"] = r.mse;
-
-    // The prediction interval. Additive error, additive or no season: the ETS
-    // variance sigma^2 (1 + sum_{j<h} c_j^2) with c_j = alpha + beta phi_j + gamma 1[j mod m = 0];
-    // a multiplicative season: simulated paths of the same recursion.
-    const double z = series_detail::NormalPpf(1.0 - (1.0 - level) / 2.0);
-    const double sigma2 = r.mse;
-    r.lower_bound.resize(static_cast<size_t>(horizon));
-    r.upper_bound.resize(static_cast<size_t>(horizon));
-    if (spec.season != Season::Multiplicative) {
-        double sum = 0.0, phi_sum = 0.0, phi_power = 1.0;
-        for (int h = 1; h <= horizon; ++h) {
-            const double var = sigma2 * (1.0 + sum);
-            const double half = z * std::sqrt(var);
-            r.lower_bound[static_cast<size_t>(h - 1)] = r.forecast[static_cast<size_t>(h - 1)] - half;
-            r.upper_bound[static_cast<size_t>(h - 1)] = r.forecast[static_cast<size_t>(h - 1)] + half;
-            // c_h for the next step
-            phi_power *= spec.damped ? p.phi : 1.0;
-            phi_sum += phi_power;
-            double c = p.alpha;
-            if (spec.trend) c += p.beta * phi_sum;
-            if (spec.season == Season::Additive && m > 0 && h % m == 0) c += p.gamma;
-            sum += c * c;
+        if (!(level > 0.0 && level < 1.0)) {
+            r.error_message = "The interval level must be between 0 and 1";
+            return r;
         }
-    } else if (horizon > 0) {
-        const int paths = 5000;
-        std::mt19937_64 rng(20261030);
-        std::normal_distribution<double> noise(0.0, std::sqrt(sigma2));
-        std::vector<std::vector<double>> samples(static_cast<size_t>(horizon), std::vector<double>(paths));
-        const double phi_v = spec.damped ? p.phi : 1.0;
-        for (int path = 0; path < paths; ++path) {
-            double l = run.level.back(), b = spec.trend ? run.trend.back() : 0.0;
-            std::vector<double> s(run.season.end() - m, run.season.end());
-            for (int h = 0; h < horizon; ++h) {
-                const double base = l + phi_v * b;
-                const double seasonal = s[static_cast<size_t>(h % m)];
-                const double value = base * seasonal + noise(rng);
-                samples[static_cast<size_t>(h)][static_cast<size_t>(path)] = value;
-                const double e = value - base * seasonal;
-                const double new_l = base + p.alpha * e / seasonal;
-                if (spec.trend) b = phi_v * b + p.beta * e / seasonal;
-                s[static_cast<size_t>(h % m)] = seasonal + p.gamma * e / base;
-                l = new_l;
+        if (spec.season == Season::Multiplicative)
+            for (const double v : y)
+                if (v <= 0.0) {
+                    r.error_message = "A multiplicative season needs values above 0";
+                    return r;
+                }
+        for (const double v : {alpha, beta, gamma})
+            if (v > 1.0) {
+                r.error_message = "Smoothing parameters are between 0 and 1 (negative: estimated)";
+                return r;
+            }
+        const Params p = Fit(y, spec, alpha, beta, gamma, phi);
+        const Run run = Smooth(y, spec, p, horizon);
+        const int n = static_cast<int>(y.size()), m = spec.m;
+        r.fitted_values.assign(run.fitted.begin(), run.fitted.begin() + n);
+        r.forecast.assign(run.fitted.begin() + n, run.fitted.end());
+        r.residuals.resize(static_cast<size_t>(n));
+        double abs_sum = 0.0, ape_sum = 0.0;
+        int ape_count = 0;
+        for (int t = 0; t < n; ++t) {
+            const double e = y[static_cast<size_t>(t)] - r.fitted_values[static_cast<size_t>(t)];
+            r.residuals[static_cast<size_t>(t)] = e;
+            abs_sum += std::fabs(e);
+            if (std::fabs(y[static_cast<size_t>(t)]) > 1e-12) {
+                ape_sum += std::fabs(e / y[static_cast<size_t>(t)]);
+                ++ape_count;
             }
         }
-        for (int h = 0; h < horizon; ++h) {
-            auto& v = samples[static_cast<size_t>(h)];
-            std::sort(v.begin(), v.end());
-            const double lo = (1.0 - level) / 2.0, hi = 1.0 - lo;
-            r.lower_bound[static_cast<size_t>(h)] = v[static_cast<size_t>(lo * (paths - 1))];
-            r.upper_bound[static_cast<size_t>(h)] = v[static_cast<size_t>(hi * (paths - 1))];
+        r.sse = run.sse;
+        r.mse = run.sse / n;
+        r.rmse = std::sqrt(r.mse);
+        r.mae = abs_sum / n;
+        r.mape = ape_count > 0 ? 100.0 * ape_sum / ape_count : NAN;
+        const int k = m * (spec.season != Season::None) + 2 * spec.trend + 2 + (spec.damped ? 1 : 0);
+        r.n_params = k;
+        r.aic = n * std::log(run.sse / n) + 2.0 * k;
+        r.bic = n * std::log(run.sse / n) + k * std::log(static_cast<double>(n));
+        r.parameters["alpha"] = p.alpha;
+        if (spec.trend) r.parameters["beta"] = p.beta;
+        if (spec.season != Season::None) r.parameters["gamma"] = p.gamma;
+        if (spec.damped) r.parameters["phi"] = p.phi;
+        r.parameters["initial_level"] = p.l0;
+        if (spec.trend) r.parameters["initial_trend"] = p.b0;
+        for (int i = 0; i < m; ++i) r.parameters["initial_seasons." + std::to_string(i)] = p.s0[static_cast<size_t>(i)];
+        r.parameters["sigma2"] = r.mse;
+
+        // The prediction interval. Additive error, additive or no season: the ETS
+        // variance sigma^2 (1 + sum_{j<h} c_j^2) with c_j = alpha + beta phi_j + gamma 1[j mod m = 0];
+        // a multiplicative season: simulated paths of the same recursion.
+        const double z = series_detail::NormalPpf(1.0 - (1.0 - level) / 2.0);
+        const double sigma2 = r.mse;
+        r.lower_bound.resize(static_cast<size_t>(horizon));
+        r.upper_bound.resize(static_cast<size_t>(horizon));
+        if (spec.season != Season::Multiplicative) {
+            double sum = 0.0, phi_sum = 0.0, phi_power = 1.0;
+            for (int h = 1; h <= horizon; ++h) {
+                const double var = sigma2 * (1.0 + sum);
+                const double half = z * std::sqrt(var);
+                r.lower_bound[static_cast<size_t>(h - 1)] = r.forecast[static_cast<size_t>(h - 1)] - half;
+                r.upper_bound[static_cast<size_t>(h - 1)] = r.forecast[static_cast<size_t>(h - 1)] + half;
+                // c_h for the next step
+                phi_power *= spec.damped ? p.phi : 1.0;
+                phi_sum += phi_power;
+                double c = p.alpha;
+                if (spec.trend) c += p.beta * phi_sum;
+                if (spec.season == Season::Additive && m > 0 && h % m == 0) c += p.gamma;
+                sum += c * c;
+            }
+        } else if (horizon > 0) {
+            const int paths = 5000;
+            std::mt19937_64 rng(20261030);
+            const auto noise = [mean = 0.0, sd = std::sqrt(sigma2)](auto& r) { return cyxwiz::portable::Normal(r, mean, sd); };
+            std::vector<std::vector<double>> samples(static_cast<size_t>(horizon), std::vector<double>(paths));
+            const double phi_v = spec.damped ? p.phi : 1.0;
+            for (int path = 0; path < paths; ++path) {
+                if ((path & 63) == 0) series_detail::ThrowIfStopped();
+                double l = run.level.back(), b = spec.trend ? run.trend.back() : 0.0;
+                std::vector<double> s(run.season.end() - m, run.season.end());
+                for (int h = 0; h < horizon; ++h) {
+                    const double base = l + phi_v * b;
+                    const double seasonal = s[static_cast<size_t>(h % m)];
+                    const double value = base * seasonal + noise(rng);
+                    samples[static_cast<size_t>(h)][static_cast<size_t>(path)] = value;
+                    const double e = value - base * seasonal;
+                    const double new_l = base + p.alpha * e / seasonal;
+                    if (spec.trend) b = phi_v * b + p.beta * e / seasonal;
+                    s[static_cast<size_t>(h % m)] = seasonal + p.gamma * e / base;
+                    l = new_l;
+                }
+            }
+            for (int h = 0; h < horizon; ++h) {
+                auto& v = samples[static_cast<size_t>(h)];
+                std::sort(v.begin(), v.end());
+                const double lo = (1.0 - level) / 2.0, hi = 1.0 - lo;
+                r.lower_bound[static_cast<size_t>(h)] = v[static_cast<size_t>(lo * (paths - 1))];
+                r.upper_bound[static_cast<size_t>(h)] = v[static_cast<size_t>(hi * (paths - 1))];
+            }
         }
-    }
-    char summary[256];
-    std::snprintf(summary, sizeof(summary), "%s: alpha %.3f%s%s%s, season %s, SSE %.4g, AIC %.1f", name, p.alpha,
-                  spec.trend ? (", beta " + std::to_string(p.beta).substr(0, 5)).c_str() : "",
-                  spec.season != Season::None ? (", gamma " + std::to_string(p.gamma).substr(0, 5)).c_str() : "",
-                  spec.damped ? (", phi " + std::to_string(p.phi).substr(0, 5)).c_str() : "", SeasonName(spec.season), run.sse, r.aic);
-    r.model_summary = summary;
-    r.success = true;
-    return r;
+        char summary[256];
+        std::snprintf(summary, sizeof(summary), "%s: alpha %.3f%s%s%s, season %s, SSE %.4g, AIC %.1f", name, p.alpha,
+                      spec.trend ? (", beta " + std::to_string(p.beta).substr(0, 5)).c_str() : "",
+                      spec.season != Season::None ? (", gamma " + std::to_string(p.gamma).substr(0, 5)).c_str() : "",
+                      spec.damped ? (", phi " + std::to_string(p.phi).substr(0, 5)).c_str() : "", SeasonName(spec.season), run.sse, r.aic);
+        r.model_summary = summary;
+        r.success = true;
+        return r;
+    });
 }
 
 }  // namespace

@@ -12,12 +12,8 @@
 
 #include <arrayfire.h>
 
-#ifdef _WIN32
-#define NOMINMAX
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
+#include "cyxwiz/device_memory.h"
+#include "dynamic_library.h"
 
 namespace cyxwiz::detail {
 namespace {
@@ -48,44 +44,6 @@ std::string PciFingerprint(const DeviceInfo& info) {
         << std::setw(2) << info.pci_device << '.'
         << info.pci_function;
     return LowerAscii(out.str());
-}
-
-class DynamicLibrary {
-public:
-#ifdef _WIN32
-    explicit DynamicLibrary(const wchar_t* name) : handle_(LoadLibraryW(name)) {}
-
-    ~DynamicLibrary() {
-        if (handle_ != nullptr) FreeLibrary(handle_);
-    }
-
-    void* Find(const char* symbol) const {
-        return handle_ != nullptr
-            ? reinterpret_cast<void*>(GetProcAddress(handle_, symbol))
-            : nullptr;
-    }
-
-private:
-    HMODULE handle_ = nullptr;
-#else
-    explicit DynamicLibrary(const char* name) : handle_(dlopen(name, RTLD_LAZY | RTLD_LOCAL)) {}
-
-    ~DynamicLibrary() {
-        if (handle_ != nullptr) dlclose(handle_);
-    }
-
-    void* Find(const char* symbol) const {
-        return handle_ != nullptr ? dlsym(handle_, symbol) : nullptr;
-    }
-
-private:
-    void* handle_ = nullptr;
-#endif
-};
-
-template <typename Function>
-Function FindFunction(const DynamicLibrary& library, const char* symbol) {
-    return reinterpret_cast<Function>(library.Find(symbol));
 }
 
 #ifdef CYXWIZ_ENABLE_OPENCL
@@ -455,6 +413,20 @@ void EnrichSelectedDeviceIdentity(DeviceInfo& info) {
 #endif
     } catch (const std::exception&) {
         // Optional identity telemetry remains explicitly unknown.
+    }
+    // What the device has free right now, for every program (a reading at
+    // listing time; ReadDeviceMemoryFree gives a fresh one). The card is named
+    // by its hardware id, so its CUDA and its OpenCL listing both carry it. A
+    // CUDA device without an id may be the machine's only card; any other
+    // device without an id is not guessed.
+    const bool cuda_without_id = info.type == DeviceType::CUDA && !info.hardware_uuid_known;
+    const bool nvidia = info.type == DeviceType::CUDA || (info.hardware_vendor_id_known && info.hardware_vendor_id == 0x10de);
+    if (nvidia && (info.hardware_uuid_known || cuda_without_id)) {
+        const DeviceMemoryFree free_memory = ReadDeviceMemoryFree(cuda_without_id ? std::string() : info.hardware_uuid);
+        if (free_memory.known) {
+            info.memory_available = static_cast<size_t>(free_memory.free_bytes);
+            info.memory_available_known = true;
+        }
     }
     FinalizeDeviceIdentity(info);
 }

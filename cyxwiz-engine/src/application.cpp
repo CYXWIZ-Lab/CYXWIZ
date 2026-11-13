@@ -1,4 +1,12 @@
+// gRPC (network/grpc_client.h) brings winsock2.h; ArrayFire's af/timing.h,
+// reached first through the device headers, brings windows.h, whose full
+// form includes the old winsock.h. The lean form leaves winsock.h out.
+#if defined(_WIN32) && !defined(WIN32_LEAN_AND_MEAN)
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #include "application.h"
+#include "core/frame_pace.h"
 #include "gui/appearance_settings.h"
 #include "gui/main_window.h"
 #include "gui/node_editor.h"
@@ -23,6 +31,7 @@
 #include "core/dataset_catalog.h"
 #include "core/project_manager.h"
 #include "core/training_manager.h"
+#include "plugin/engine_plugin_context.h"
 #include "core/engine_config.h"
 #include "core/python_detector.h"
 #include "core/texture_manager.h"
@@ -661,45 +670,44 @@ void CyxWizApp::HandleInput() {
 
     bool has_activity = mouse_moved || mouse_clicked || mouse_scrolled || key_pressed;
 
-    // Check if training is active (need full frame rate)
-    bool training_active = cyxwiz::TrainingManager::Instance().IsTrainingActive();
+    // Training, and a plugin with something moving (a running simulation),
+    // need the full frame rate without input.
+    const bool keep_full_rate = cyxwiz::TrainingManager::Instance().IsTrainingActive() ||
+                                cyxwiz::plugin::EnginePluginContext::FullFrameRateRequested();
 
-    if (has_activity || training_active) {
+    if (has_activity || keep_full_rate) {
         last_activity_time_ = current_time;
         is_idle_ = false;
     } else if (current_time - last_activity_time_ > IDLE_TIMEOUT) {
         is_idle_ = true;
     }
 
-    // Track state transitions for debugging
-    static bool was_idle = false;
-
     const bool focused = glfwGetWindowAttrib(window_, GLFW_FOCUSED) != 0;
+    const bool minimised = glfwGetWindowAttrib(window_, GLFW_ICONIFIED) != 0;
 
-    if (is_idle_ && !training_active) {
-        // Use wait with timeout for reduced CPU/GPU usage when idle
-        glfwWaitEventsTimeout(IDLE_FRAME_TIME);
+    // One decision for the frame (core/frame_pace.h). Every change is noted
+    // for Monitor > Frames and, when the switch is on, logged: idle, not in
+    // front and minimised alike.
+    const cyxwiz::FramePace pace = cyxwiz::PaceOf(minimised, is_idle_, keep_full_rate, focused);
+    if (pace != cyxwiz::CurrentFramePace()) {
+        cyxwiz::CurrentFramePaceSlot().store(pace, std::memory_order_relaxed);
+        if (log_idle_transitions_) spdlog::info("Frame rate: {}", cyxwiz::PaceText(pace));
+    }
 
-        if (!was_idle) {
-            if (log_idle_transitions_) {
-                spdlog::info("Entering IDLE mode (reduced GPU usage)");
-            }
-            was_idle = true;
-        }
-    } else if (!focused) {
-        // Another window has focus: 30 frames a second is plenty for a
-        // training chart in the background (TOFIX129 step 0.7).
-        glfwWaitEventsTimeout(UNFOCUSED_FRAME_TIME);
-        was_idle = false;
-    } else {
-        glfwPollEvents();
-
-        if (was_idle) {
-            if (log_idle_transitions_) {
-                spdlog::info("Exiting IDLE mode (full frame rate)");
-            }
-            was_idle = false;
-        }
+    switch (pace) {
+        case cyxwiz::FramePace::Idle:
+            // Use wait with timeout for reduced CPU/GPU usage when idle
+            glfwWaitEventsTimeout(IDLE_FRAME_TIME);
+            break;
+        case cyxwiz::FramePace::NotInFront:
+            // Another window has focus: 30 frames a second is plenty for a
+            // training chart in the background (TOFIX129 step 0.7).
+            glfwWaitEventsTimeout(UNFOCUSED_FRAME_TIME);
+            break;
+        case cyxwiz::FramePace::Minimised:  // the run loop waits and skips the frame
+        case cyxwiz::FramePace::Full:
+            glfwPollEvents();
+            break;
     }
 }
 
@@ -813,7 +821,7 @@ void CyxWizApp::Render() {
                 spdlog::debug("Project selected from start page");
                 startup_project_path_ = start_page_->GetSelectedProjectPath();
                 startup_project_from_command_line_ = false;
-                startup_graph_path_.clear();
+                if (!startup_graph_from_command_line_) startup_graph_path_.clear();  // as below
                 project_selected_ = true;
                 start_page_.reset();
 
@@ -828,7 +836,8 @@ void CyxWizApp::Render() {
             } else if (result == cyxwiz::StartPage::Result::ContinueWithout) {
                 spdlog::info("User chose to continue without project");
                 startup_project_path_ = "";  // No project
-                startup_graph_path_.clear();
+                // A graph named on the command line still opens (cyxwiz-engine graph.cyxgraph)
+                if (!startup_graph_from_command_line_) startup_graph_path_.clear();
                 project_selected_ = true;    // But allow main window to open
                 start_page_.reset();
 
@@ -1066,17 +1075,20 @@ void CyxWizApp::RebuildFontAtlas() {
 }
 
 void CyxWizApp::LoadFonts(ImGuiIO& io) {
-    // Font configuration for crisp rendering (high quality)
+    // Glyphs are pixel-snapped and every line of text starts on a whole pixel,
+    // so oversampling buys nothing: at 3 x 2 the atlas was 4096 x 8192 (128 MB
+    // on the GPU), at 1 x 1 it is 2048 x 4096 with the same text (owner
+    // decision 2026-11-12, compared side by side). High-DPI screens raise
+    // RasterizerDensity instead.
     ImFontConfig font_config;
-    const bool needs_manual_oversampling = font_rasterizer_density_ <= 1.0f;
-    font_config.OversampleH = needs_manual_oversampling ? 3 : 1;
-    font_config.OversampleV = needs_manual_oversampling ? 2 : 1;
+    font_config.OversampleH = 1;
+    font_config.OversampleV = 1;
     font_config.PixelSnapH = true;
     font_config.RasterizerDensity = font_rasterizer_density_;
-    // The text the Engine writes: Latin, then punctuation (… – — ‘ ’ “ ”),
-    // arrows (→) and maths signs (≤ ≥ ≈ −). ImGui's default stops at Latin-1,
-    // which drew those as "?".
-    static const ImWchar text_ranges[] = {0x0020, 0x017F, 0x2000, 0x206F, 0x2190, 0x21FF, 0x2200, 0x22FF, 0};
+    // The text the Engine writes: Latin, Greek (σ λ), then punctuation (… – — ‘ ’ “ ”),
+    // superscripts (⁻¹), arrows (→) and maths signs (≤ ≥ ≈ − ∞). ImGui's default stops
+    // at Latin-1, which drew those as "?".
+    static const ImWchar text_ranges[] = {0x0020, 0x017F, 0x0370, 0x03FF, 0x2000, 0x209F, 0x2190, 0x21FF, 0x2200, 0x22FF, 0};
     font_config.GlyphRanges = text_ranges;
 
     // Try multiple font paths (running from different directories)
@@ -1188,21 +1200,27 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     // Icon font glyph ranges (FontAwesome 6)
     static const ImWchar icon_ranges[] = { 0xe000, 0xf8ff, 0 };
 
-    // Tabler Icons glyph ranges (0xea00 - 0xf9ff)
-    static const ImWchar tabler_icon_ranges[] = { 0xea00, 0xf9ff, 0 };
+    // The other packs serve only the canvas's node icons (the Studio's icon
+    // pack choice): the atlas keeps the few dozen glyphs those use, not each
+    // pack's whole range (thousands of icons none of the Engine draws). The
+    // ranges must live until the atlas is built.
+    static const std::vector<ImWchar> tabler_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Tabler);
+    static const std::vector<ImWchar> remix_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Remix);
+    static const std::vector<ImWchar> lucide_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Lucide);
+    static const std::vector<ImWchar> iconoir_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Iconoir);
+    static const std::vector<ImWchar> phosphor_ranges = gui::NodeIconGlyphRanges(gui::IconPack::Phosphor);
+    const ImWchar* tabler_icon_ranges = tabler_ranges.data();
+    const ImWchar* remix_icon_ranges = remix_ranges.data();
+    const ImWchar* lucide_icon_ranges = lucide_ranges.data();
+    const ImWchar* iconoir_icon_ranges = iconoir_ranges.data();
+    const ImWchar* phosphor_icon_ranges = phosphor_ranges.data();
 
-    // Additional icon pack glyph ranges (all use Private Use Area)
-    static const ImWchar remix_icon_ranges[] = { 0xea01, 0xf2ff, 0 };
-    static const ImWchar lucide_icon_ranges[] = { 0xe900, 0xefff, 0 };
-    static const ImWchar iconoir_icon_ranges[] = { 0xe900, 0xefff, 0 };
-    static const ImWchar phosphor_icon_ranges[] = { 0xe000, 0xf8ff, 0 };
-
-    // Icon font config (for merging) - high quality
+    // Icon font config (for merging), pixel-snapped like the text
     ImFontConfig icon_config;
     icon_config.MergeMode = true;
     icon_config.PixelSnapH = true;
-    icon_config.OversampleH = needs_manual_oversampling ? 3 : 1;
-    icon_config.OversampleV = needs_manual_oversampling ? 2 : 1;
+    icon_config.OversampleH = 1;
+    icon_config.OversampleV = 1;
     icon_config.RasterizerDensity = font_rasterizer_density_;
     icon_config.GlyphMinAdvanceX = base_font_size;  // Make icons monospaced
 
@@ -1351,6 +1369,8 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     spdlog::debug("Building font atlas...");
     spdlog::default_logger()->flush();  // Force flush before potential crash
     io.Fonts->Build();
-    spdlog::debug("Font atlas built successfully at {:.2f}x rasterizer density",
-                 font_rasterizer_density_);
+    spdlog::debug("Font atlas built: {} x {} px ({:.1f} MB as RGBA), {} fonts, {:.2f}x rasterizer density",
+                  io.Fonts->TexWidth, io.Fonts->TexHeight,
+                  static_cast<double>(io.Fonts->TexWidth) * io.Fonts->TexHeight * 4.0 / (1024.0 * 1024.0),
+                  io.Fonts->Fonts.Size, font_rasterizer_density_);
 }

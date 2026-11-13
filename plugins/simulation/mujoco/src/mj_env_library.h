@@ -8,6 +8,7 @@ namespace cyxwiz::plugin::mujoco {
 enum class EnvSource {
     Builtin,     // Shipped with plugin (simple XMLs in assets/)
     Menagerie,   // From MuJoCo Menagerie (may need download)
+    Imported,    // Imported from a URL into ~/.cyxwiz/imported/<name>
 };
 
 struct EnvInfo {
@@ -27,7 +28,7 @@ struct EnvInfo {
     std::string scene_file;     // File to load within model dir (e.g. "scene.xml")
     bool requires_download = false;
 
-    // URL import: absolute path to downloaded asset
+    // Imported model: absolute path to its MJCF file
     std::string custom_asset_path;
 };
 
@@ -36,10 +37,8 @@ public:
     MjEnvLibrary() { PopulateBuiltins(); PopulateMenagerie(); }
 
     void SetAssetsDir(const std::string& dir) { assets_dir_ = dir; }
-    void SetMenagerieDir(const std::string& dir) { menagerie_dir_ = dir; }
 
     const std::vector<EnvInfo>& GetAll() const { return envs_; }
-    const EnvInfo* FindById(const std::string& id) const;
     std::string GetAssetPath(const EnvInfo& info) const;
 
     // Check if a Menagerie model's files exist locally
@@ -51,14 +50,20 @@ public:
     // Get the local directory for a Menagerie model
     std::string GetMenagerieModelDir(const EnvInfo& info) const;
 
-    // Unique categories present in the library
-    std::vector<std::string> GetCategories() const;
+    // Where downloaded and imported models are kept:
+    // ~/.cyxwiz/menagerie and ~/.cyxwiz/imported
+    static std::string GetMenagerieRoot();
+    static std::string GetImportedRoot();
 
     // Scan menagerie dir for previously downloaded models
     void ScanDownloadedModels();
 
-    // Add a custom environment (e.g. from URL import)
-    void AddEnv(EnvInfo info);
+    // A model imported into `dir`: its scene.xml, else its first .xml, becomes
+    // an environment of source Imported named `name`. False when the folder
+    // holds no .xml. Already listed: true, nothing added.
+    bool AddImportedModel(const std::string& dir, const std::string& name, const std::string& description);
+    // Models imported in earlier sessions (each folder of the imported root)
+    void ScanImportedModels();
 
 private:
     void PopulateBuiltins();
@@ -71,7 +76,6 @@ private:
 
     std::vector<EnvInfo> envs_;
     std::string assets_dir_;
-    std::string menagerie_dir_;  // ~/.cyxwiz/menagerie/ or custom path
 };
 
 } // namespace cyxwiz::plugin::mujoco

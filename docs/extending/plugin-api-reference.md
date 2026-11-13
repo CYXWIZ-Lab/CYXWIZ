@@ -5,7 +5,7 @@ today. For a walk-through read the [quickstart](plugin-quickstart.md) and the
 [developer guide](plugin-developer-guide.md); for the rules a trainable
 module must keep, the [node contract](node-contract.md).
 
-> Checked against plugin API 1.3.0 and pycyxwiz 0.2.0.
+> Checked against plugin API 1.4.0 and pycyxwiz 0.2.0.
 > The CyxWiz SDK is version 0.2.
 
 ## 1. Headers
@@ -20,10 +20,15 @@ SDK installs, with the types it declares, is listed in
 |---|---|
 | `plugin/plugin_types.h` | `IPlugin`, `PluginManifest`, versions, permissions, capabilities, states, `CYXWIZ_PLUGIN_ENTRY` |
 | `plugin/plugin_context.h` | `PluginContext`, `AssistantContextSnapshot` |
+| `plugin/plugin_ui.h` | `PluginUi`, `UiColors`, `UiColor`, `UiButtonSize` (the Engine's widgets for panels, API 1.4) |
 | `plugin/plugin_fingerprint.h` | `CurrentBuildFingerprint()` (used by `CYXWIZ_PLUGIN_ENTRY`) |
 | `plugin/interfaces/i_tensor_node_provider.h` | `ITensorNodeProvider`, `TensorNodeInfo` (trainable nodes) |
 | `plugin/interfaces/i_node_provider.h` | `INodeProvider`, `PluginNodeTypeInfo` (signal nodes) |
 | `plugin/interfaces/i_panel_provider.h` | `IPanelProvider`, `PluginPanelInfo` |
+| `plugin/interfaces/i_command_provider.h` | `ICommandProvider`, `PluginCommandInfo`, `PluginCommandState` (menu commands, API 1.4) |
+| `plugin/interfaces/i_preferences_provider.h` | `IPreferencesProvider`, `PluginPreferencesSection` (settings in Preferences, API 1.4) |
+| `plugin/interfaces/i_simulation_provider.h` | `ISimulationProvider`, `PluginSimulationNodeInfo`, `PluginSimulationGraphNode`, `PluginSimulationBeginResult` (graph simulation runs, API 1.4) |
+| `plugin/interfaces/i_environment_provider.h` | `IEnvironmentProvider`, `IEnvironmentBatch`, `PluginEnvironmentInfo`, `PluginEnvironmentSetting`, `PluginSettingKind`, `PluginSettingOption`, `PluginEnvironmentStat`, `PluginEnvironmentStepBuffers`, `PluginEnvironmentCreateResult` (environments for reinforcement learning, API 1.4) |
 | `plugin/interfaces/i_training_hook.h` | `ITrainingHook`, `TrainingContext` |
 | `plugin/interfaces/arrow_c_stream.h` | `ArrowSchema`, `ArrowArray`, `ArrowArrayStream` (the Arrow C data and C stream interfaces) |
 | `plugin/interfaces/i_data_provider.h` | `IDataProvider`, `PluginDataLoaderInfo` |
@@ -75,7 +80,7 @@ the library. Unknown fields, capabilities and permissions are ignored.
 | `id` | string | Required. `a-z`, `0-9`, `.`, `-`, `_`; a plugin whose id has other characters loads, but all its nodes are refused. Part of every node's saved type id (`<id>:<TypeName>`), so do not change it once graphs use it. A plugin whose id is already loaded is not loaded again: **Refresh** skips it, **Install...** says it is already loaded |
 | `name` | string | Shown in the Plugin Manager (default: `id`) |
 | `version` | `"major.minor.patch"` | Your plugin's version (default `0.0.0`). Permission answers are stored per version |
-| `api_version` | `"major.minor.patch"` | The plugin API you built against (default `1.0.0`). Loads when the major equals the Engine's and the minor is not higher (1.3 today) |
+| `api_version` | `"major.minor.patch"` | The plugin API you built against (default `1.0.0`). Loads when the major equals the Engine's and the minor is not higher (1.4 today) |
 | `description`, `author`, `license`, `homepage`, `repository` | string | Stored; the Plugin Manager card shows `description` and `author` |
 | `capabilities` | array of strings | What the plugin says it provides (table below). Informational: the Engine finds interfaces through `QueryInterface` whatever this says |
 | `permissions` | array of strings | What it may do (table below) |
@@ -96,8 +101,8 @@ the library. Unknown fields, capabilities and permissions are ignored.
 
 | Permission | Granted | Checked by |
 |---|---|---|
-| `Training` | Without asking | `ITensorNodeProvider` (trainable nodes), `ITrainingHook`, `RegisterTrainingHook` |
-| `UIModify` | Without asking | `INodeProvider`, `IPanelProvider`, `RegisterNodeProvider`, `RegisterPanelProvider` |
+| `Training` | Without asking | `ITensorNodeProvider` (trainable nodes), `IEnvironmentProvider`, `ITrainingHook`, `RegisterTrainingHook` |
+| `UIModify` | Without asking | `INodeProvider`, `IPanelProvider`, `ICommandProvider`, `IPreferencesProvider`, `ISimulationProvider`, `RegisterNodeProvider`, `RegisterPanelProvider` |
 | `DataRegistry` | Without asking | `IDataProvider`, `IAnalyticsProvider`, `RegisterDataProvider`, `RegisterAnalyticsProvider` |
 | `GPU` | Without asking | Nothing |
 | `FileSystem`, `Network`, `SystemCommands`, `Python` | The user is asked to allow or deny each before the plugin starts; the answer is stored per plugin id and version (`%APPDATA%\cyxwiz\plugin_permissions.json`, `~/.cyxwiz/plugin_permissions.json`), so a new version asks again. A denied permission does not stop the plugin | Nothing in the Engine today |
@@ -150,7 +155,13 @@ only until `OnUnload` returns.
 | `bool RegisterDataProvider(IDataProvider*)` | Needs `DataRegistry` |
 | `bool RegisterTrainingHook(ITrainingHook*)` | Needs `Training` |
 | `bool RegisterAnalyticsProvider(IAnalyticsProvider*)` | Needs `DataRegistry` |
-| `AssistantContextSnapshot GetAssistantContextSnapshot() const` | What the user is looking at (workspace, graph, selection); for the assistant plugin |
+| `AssistantContextSnapshot GetAssistantContextSnapshot() const` | What the user is looking at (workspace, graph, selection); for the assistant plugin. The Engine fills it in when the user sends an assistant command, just before your `RunAssistantCommand`, so read it there |
+| `PluginUi* GetUi()` | The Engine's buttons, fields and theme colours for your panels (API 1.4, section 9). Null only in hosts without windows (`cyxwiz-plugin-check`) |
+| `bool ShowPanel(const std::string& panel_id)` | Opens one of your own panels and brings it to the front, for a button in one panel that leads to another (API 1.4). `false` when you have no panel with that id |
+| `void RequestFullFrameRate()` | Keeps the Engine drawing at full frame rate for the next second (API 1.4). Without mouse or key input the Engine draws 10 frames a second, so call it every frame while something in your panel moves, such as a running simulation. Stop calling it and the Engine goes back to the idle rate |
+| `std::filesystem::path GetProjectDir() const` | The open project's folder (API 1.4), which holds `exports/`, `models/` and the rest; empty when no project is open. Save what the user makes there, such as pictures and recordings in `exports/` |
+| `std::string GetSetting(const std::string& key, const std::string& fallback = {}) const` | One of the user's settings for your plugin (API 1.4), kept by the Engine between sessions with its own settings; `fallback` when the key was never set. Values are text: read numbers and switches back from the text you wrote |
+| `void SetSetting(const std::string& key, const std::string& value)` | Saves one setting at once (API 1.4). `cyxwiz-plugin-check` and other hosts without a settings store keep them for the session only |
 
 Each `Register*` returns `false` when the permission is missing (section 3)
 and logs why. Use either `QueryInterface` (section 6) or `Register*` for an
@@ -166,6 +177,10 @@ return, inside the crash guard. Unloading removes all of it.
 | `"ITensorNodeProvider"` | `ITensorNodeProvider` | Lists, compiles and trains your nodes (section 7) |
 | `"INodeProvider"` | `INodeProvider` | Lists your signal nodes; calls `EvaluateNode` in live graph execution, and `GenerateCode` in code export, where the text is written as a comment (a simulation node is not part of a trained model) |
 | `"IPanelProvider"` | `IPanelProvider` | Adds your panels to the menus and draws them every frame they are open |
+| `"ICommandProvider"` | `ICommandProvider` | Adds your commands to the menu they name and to the Command Palette (plugin API 1.4, section 9) |
+| `"IPreferencesProvider"` | `IPreferencesProvider` | Draws your settings at the end of the Preferences tab they name (plugin API 1.4, section 9) |
+| `"ISimulationProvider"` | `ISimulationProvider` | Names your nodes that run in a graph simulation and starts and ends each run (plugin API 1.4, section 9) |
+| `"IEnvironmentProvider"` | `IEnvironmentProvider` | Lists your environments; creates copies of one for reinforcement learning, resets and steps them (plugin API 1.4, section 9) |
 | `"ITrainingHook"` | `ITrainingHook` | Calls it at training start and end, each epoch's and each training batch's start and end, and asks `ShouldStopEarly` (section 8) |
 | `"IDataProvider"` | `IDataProvider` | Registers the dataset formats (plugin API 1.3 or newer): Data Input lists and opens them |
 | `"IAnalyticsProvider"` | `IAnalyticsProvider` | Registers the analytics (plugin API 1.3 or newer); Data Studio's Explore > Plugins tab runs them |
@@ -308,6 +323,205 @@ A panel draws with ImGui inside the Engine's ImGui context
 exactly the ImGui version and configuration the Engine uses. The SDK has no
 ImGui: panels can only be built inside the CyxWiz source tree.
 
+#### Drawing with the Engine's widgets: `PluginUi` (API 1.4)
+
+Plain ImGui calls in a panel follow the theme's ImGui colours, but not the
+Engine's button styles, its brand colour or its status colours. Get those
+from `PluginContext::GetUi()` (keep the context pointer from `OnLoad`; call
+the kit only inside `RenderPanel`, on the UI thread). Declare
+`"api_version": "1.4.0"` or newer to use it.
+
+| Member | Draws |
+|---|---|
+| `UiColors Colors() const` | The theme's colours: `text`, `text_dim`, `text_bright`, `bg_window`, `bg_panel`, `bg_raised`, `bg_input`, `accent`, `accent_text`, `success`, `warning`, `caution`, `error`, `pending`, `running`. Read them every frame: the user can switch themes |
+| `bool PrimaryButton(label, enabled, disabled_reason, size, width)` | The filled brand button: one per area, for its main action |
+| `bool SecondaryButton(...)`, `bool LinkButton(label, enabled)`, `bool DangerButton(...)` | Supporting actions, navigation, removal. A disabled button stays visible and shows `disabled_reason` on hover |
+| `float ButtonWidth(label, size) const`, `float ButtonHeight(size) const` | To right-align buttons or centre a row |
+| `bool SegmentedControl(id, labels, count, &selected)`, `float SegmentedControlWidth(...)` | One of several options side by side |
+| `bool StatusPill(id, text, dot)`, `float StatusPillWidth(text)` | A state with a coloured dot (Running, Paused) |
+| `bool NumberField(id, &value, min, max, step, format, width, hint)` | A typed number with - / + buttons when `step` > 0. CyxWiz uses no sliders or drag fields: a typed value is exact |
+| `bool SearchField(id, buffer, size, hint, width)` | A search box with its icon |
+| `void EmptyState(title, hint)` | The centred message of an empty panel; put its actions after it |
+| `std::string OpenFileDialog(title, filter_name, extensions)` | The system's open-file dialog; empty when cancelled |
+
+<!-- not compiled: a sketch; the full panel is plugins/simulation/mujoco/src/mj_viewport_panel.cpp -->
+```cpp
+void MyPlugin::RenderPanel(const std::string& panel_id, bool* visible) {
+    if (!ImGui::Begin("My Panel", visible)) { ImGui::End(); return; }
+    PluginUi* ui = ctx_->GetUi();
+    if (ui->PrimaryButton("Run", can_run, "Load a model first")) Run();
+    ImGui::SameLine();
+    if (ui->SecondaryButton("Open library")) ctx_->ShowPanel("my_library_panel");
+    ImGui::End();
+}
+```
+
+The MuJoCo plugin (`plugins/simulation/mujoco`, `mj_viewport_panel.cpp`)
+draws its whole viewport this way.
+
+### `ICommandProvider` (menu commands, API 1.4)
+
+A plugin adds actions to the Engine's menus: the MuJoCo plugin fills the
+**Simulation** menu this way (Run Simulation, Pause, Stop, Step Once, Load
+MJCF Model...). Needs `UIModify`.
+
+| Member | Contract |
+|---|---|
+| `std::vector<PluginCommandInfo> GetCommands()` | Asked once when the plugin starts. Each: `command_id` (unique in your plugin), `menu` (a top menu by its title, such as `"Simulation"` or `"Tools"`; a title the Engine has no menu for puts the command in **Apps** under that title), `group` (a separator between groups), `label` (end it with `...` when it opens a dialog), `hint` (one sentence for the status bar and the Command Palette), `checkable`, `replaced_by_graph_run` (your own run control, such as Run or Stop of your viewport: hidden while the open graph is a simulation graph, whose run commands take its place) |
+| `PluginCommandState GetCommandState(const std::string& command_id)` | Asked every frame a menu or the palette shows the command, so keep it cheap: `enabled`, `disabled_reason` (shown on hover and in the status bar; say what to do), `checked` |
+| `void RunCommand(const std::string& command_id)` | The user chose it. Runs on the UI thread, between frames: open a panel with `PluginContext::ShowPanel` to show the result |
+
+The **Simulation** menu starts with the open graph's run (Run Sim or
+Resume, Pause, Step Once, Stop, Clear Traces) when the graph has simulation
+nodes. Then come the commands that name the menu, under each plugin's name,
+leaving out those marked `replaced_by_graph_run` while such a graph is open.
+Then **Simulation Monitor** and the panels whose `category` is
+`"Simulation"`, as show/hide entries. Without a simulation plugin it says
+so. Everything is called on the UI thread; a
+command that throws is logged and the Engine goes on.
+
+<!-- not compiled: a sketch; the full provider is plugins/simulation/mujoco/src/mujoco_plugin.cpp -->
+```cpp
+std::vector<PluginCommandInfo> GetCommands() override {
+    return {{"run", "Simulation", "run", "Run Simulation", "Runs the loaded model.", false}};
+}
+PluginCommandState GetCommandState(const std::string& id) override {
+    if (!model_loaded_) return {false, "Load a model first.", false};
+    return {};
+}
+void RunCommand(const std::string& id) override {
+    if (id == "run") StartRun();
+    ctx_->ShowPanel("my_viewport");
+}
+```
+
+### `IPreferencesProvider` (settings in Preferences, API 1.4)
+
+A plugin's own defaults belong in the Engine's **Preferences** dialog, next
+to the Engine's: the MuJoCo plugin puts the Viewport's (the camera a policy
+playback starts with, the live numbers, the Record defaults, the Stress
+panel's choices and the Scene options) at the end of
+**Preferences > Simulation** this way. Needs `UIModify`.
+
+| Member | Contract |
+|---|---|
+| `std::vector<PluginPreferencesSection> GetPreferenceSections()` | Asked once when the plugin starts. Each: `section_id` (unique in your plugin), `tab` (`"General"`, `"Editor"`, `"Files"`, `"Python"` or `"Simulation"`; any other title puts the section in General), `title` (its heading, such as your panel's name), `hint` (one muted sentence under the heading, or empty) |
+| `void RenderPreferences(const std::string& section_id)` | Draws the section's settings below its heading with ImGui and `GetUi()` (typed number fields, segmented controls, checkboxes; no sliders). Called every frame the tab is open, on the UI thread: keep it cheap. Save a change at once with `PluginContext::SetSetting`, and read the setting where your panel starts |
+
+A section that throws is logged and the dialog goes on. The Engine's own
+convention: Preferences hold how a panel starts, and a change made in the
+panel lasts for the session only (offer a "Keep these as the default" item
+when a panel's own choices should become the default).
+
+<!-- not compiled: a sketch; the full provider is plugins/simulation/mujoco/src/mujoco_plugin.cpp -->
+```cpp
+std::vector<PluginPreferencesSection> GetPreferenceSections() override {
+    return {{"viewer", "Simulation", "My Viewer", "How the viewer starts."}};
+}
+void RenderPreferences(const std::string& id) override {
+    bool grid = ctx_->GetSetting("viewer.grid", "on") == "on";
+    if (ImGui::Checkbox("Show the grid", &grid)) ctx_->SetSetting("viewer.grid", grid ? "on" : "off");
+}
+```
+
+### `ISimulationProvider` (graph simulation runs, API 1.4)
+
+A plugin node runs in a graph simulation (**Run Sim** on the canvas) only
+when its plugin names it here; without this interface its nodes are not
+offered for a simulation run, even with `EvaluateNode`. The MuJoCo plugin
+uses it so that a run with a **MuJoCo Plant** holds the physics and shows the
+**MuJoCo Viewport**. Needs `UIModify`.
+
+| Member | Contract |
+|---|---|
+| `std::vector<PluginSimulationNodeInfo> GetSimulationNodes()` | Asked once when the plugin starts. Each: `node_type` (one of your `INodeProvider` node types), `panel_id` (one of your panels the Engine shows when a run with this node starts, or empty) |
+| `PluginSimulationBeginResult BeginGraphRun(const std::vector<PluginSimulationGraphNode>& nodes)` | The user runs a graph holding your nodes; `nodes` are yours, each with `node_id`, `node_type` and its `parameters`. Check them and take what the run needs (the right to step a model, which nothing else may hold meanwhile). Return `{false, reason}` to refuse: the run does not start, the toolbar shows the reason, and `EndGraphRun` is not called. Say what to do in the reason |
+| `void EndGraphRun()` | The run ended (Stop, a failed tick, the graph closed, your plugin stopping) and its worker has finished: release what `BeginGraphRun` took |
+
+Both are called on the UI thread, before the first tick and after the last
+one; between them `EvaluateNode` is called from the run's worker thread. A
+graph with a plugin node that no loaded plugin runs in a simulation does not
+start, and the reason names the node. Disabling or unloading your plugin
+stops a run that uses it before `OnShutdown`.
+
+<!-- not compiled: a sketch; the full provider is plugins/simulation/mujoco/src/mujoco_plugin.cpp -->
+```cpp
+std::vector<PluginSimulationNodeInfo> GetSimulationNodes() override {
+    return {{"Plant", "my_viewport"}};
+}
+PluginSimulationBeginResult BeginGraphRun(const std::vector<PluginSimulationGraphNode>& nodes) override {
+    if (viewport_running_) return {false, "The viewport is running the model. Stop it, then run the graph."};
+    graph_owns_model_ = true;
+    return {};
+}
+void EndGraphRun() override { graph_owns_model_ = false; }
+```
+
+### `IEnvironmentProvider` (environments for reinforcement learning, API 1.4)
+
+An environment the Engine can train a policy in. The Engine is the learner:
+it asks for many copies of one environment, sends one action per copy and
+reads back what each copy observed and earned; your plugin only simulates.
+The MuJoCo plugin offers its tasks this way. Needs `Training`.
+
+| Member | Contract |
+|---|---|
+| `std::vector<PluginEnvironmentInfo> GetEnvironments()` | Asked once when the plugin starts. Each: `id` (unique in your plugin), `name`, `description`, `category`, `observation_size`, the action space (continuous: `action_size` with `action_low` / `action_high` per value; discrete: `discrete_actions`, `action_size` 1 and `action_count` choices), `max_episode_steps` (0 = no limit), `step_seconds` (simulated time of one step), `view_panel_id` (your panel that shows a copy, see `ShowCopy`; empty: none) and `settings` (below). An environment that observes nothing, takes no action, has bounds that do not match its action size, or one discrete choice, is not added (the log says why) |
+| `bool DescribeEnvironment(const std::string& id, const std::map<std::string, std::string>& settings, PluginEnvironmentInfo& info, std::string& error)` | Optional (default: the environment as `GetEnvironments` lists it). The environment as these settings make it, when what it observes follows them (the MuJoCo plugin's Look ahead adds 10 values). The Engine asks while it draws the Environment node and before it creates copies, so answer from what you already know (no file loading). False with `error` for settings you cannot use |
+| `PluginEnvironmentCreateResult CreateEnvironments(const std::string& id, const std::map<std::string, std::string>& settings, int count)` | `count` copies of environment `id`. Settings you are not given keep their defaults; a value you cannot use is an error (`{nullptr, "why and what to do"}`), never a silent default. The batch must report the count and sizes `DescribeEnvironment` gives for these settings, or the Engine releases it and refuses it |
+
+A `PluginEnvironmentSetting` is one setting on the Environment node: `key`,
+`label`, `default_value` and `description`, and how the Engine draws it.
+Every value travels as text.
+
+| Field | Meaning |
+|---|---|
+| `kind` | `Number` (default): a typed number field, kept within `min` .. `max` when `min < max`, with `unit` after the value ("m/s", "%"). `Flag`: a checkbox, "1" or "0". `Choice`: one of `options` as a segmented control, its `value`. `Choices`: any of `options` as chips, their values joined by "," (empty: none) |
+| `options` | For `Choice` and `Choices`: `{value, label}` pairs, in the order shown |
+| `section` | Settings with the same section are drawn together under it as a heading, after the main ones (empty) |
+
+The `IEnvironmentBatch` you return:
+
+| Member | Contract |
+|---|---|
+| `int Count()`, `int ObservationSize()`, `int ActionSize()` | What the batch holds |
+| `bool Reset(uint64_t seed, float* observations)` | Starts every copy and writes `[count x observation_size]`. Copy `i`'s randomness comes from `(seed, i)` alone, so one seed gives the same runs on any number of threads |
+| `bool Step(const float* actions, const PluginEnvironmentStepBuffers& out)` | `actions` is `[count x action_size]` (discrete: the choice's index as a float). Advance every copy one step and write `observations`, `rewards`, `terminated` (a terminal state) and `truncated` (the step limit). A copy whose episode ends starts its next episode in the same call: its row of `final_observations` gets the observation it ended on, and its row of `observations` the first one of the next episode. Rows of copies that did not end are left alone in `final_observations`. Return false with `LastError()` when a step fails |
+| `std::string LastError()` | Why the last `Reset` or `Step` failed |
+| `std::vector<PluginEnvironmentStat> Stats()` | Optional (default: none). Numbers about the copies so far, `{label, value, note}` ("Difficulty", "0.35", "curriculum, rising"); the RL Training Dashboard shows them as cards beside the return, read once per update between steps |
+| `void LabelShownCopy(const PluginShownCopyLabel& label)` | Optional (default: ignored; API 1.4). How your view names the copy `ShowCopy` shows, each part optional: `subtitle` (the line under the task's name, "Preview of update 1,580"), `status` ("Training preview") and `rows` put first in your live numbers (`{"Networks of", "update 1,580"}`). `watch_only`: the copy is a training's own, so your view must not change it (drop the user's pushes, throws and ground changes for it). `ShowCopy` starts it empty (your view's own words). The Engine labels its training preview and a training copy shown while it trains |
+| `bool ShowCopy(int copy)` | Optional (default: false, no picture). Name the panel that shows it in `PluginEnvironmentInfo::view_panel_id`; the Engine opens that panel when it plays a policy. Show copy `copy` in your own view as later `Reset`s and `Step`s move it, until `ShowCopy(-1)` or `Release`; the Engine calls it to play a trained policy. Return false for a copy out of range. The batch must still not use your plugin object: share a small state object with your view instead (the MuJoCo plugin publishes the copy's `mj_getState` into a slot its viewport reads) |
+| `void Release()` | Free the batch in your own module (`delete this`) |
+
+Every buffer is flat, row-major, one row per copy, so the Engine moves all
+copies' data in one piece per step. A batch stands alone: it must not use
+your plugin object, because it may outlive your `OnShutdown` (the Engine keeps
+your library loaded until the last batch is released). One thread at a time
+calls a batch; step the copies on your own threads if you like. Every call
+is crash-isolated: a crash comes back as an error instead of ending the Engine.
+`cyxwiz-plugin-check` creates two copies of each environment, resets them and
+steps them 20 times with the middle of each action range.
+
+<!-- not compiled: a sketch; the full provider is plugins/simulation/mujoco -->
+```cpp
+std::vector<PluginEnvironmentInfo> GetEnvironments() override {
+    PluginEnvironmentInfo pendulum;
+    pendulum.id = "Pendulum-v0";
+    pendulum.name = "Pendulum";
+    pendulum.observation_size = 3;
+    pendulum.action_size = 1;
+    pendulum.action_low = {-2.0f};
+    pendulum.action_high = {2.0f};
+    pendulum.max_episode_steps = 200;
+    return {pendulum};
+}
+PluginEnvironmentCreateResult CreateEnvironments(const std::string& id,
+                                                 const std::map<std::string, std::string>& settings,
+                                                 int count) override {
+    return {new PendulumBatch(count), {}};  // PendulumBatch : IEnvironmentBatch
+}
+```
+
 ### `IDataProvider`, `IAnalyticsProvider`
 
 A dataset format and a dataset analytic. Data crosses in both directions as
@@ -385,7 +599,7 @@ returned, then frees its library. Data already read stays readable.
 | `CyxWiz::Backend` | The backend's import library alone |
 | `cyxwiz_plugin_folder(<target> [FOLDER <dir>])` | Puts the library in `<dir>/bin` for every configuration and copies `plugin.json` from the current source folder to `<dir>` (default `<build>/<target>`). With MSVC every configuration uses the release C++ runtime (`MultiThreadedDLL`), so Debug builds load. Needs policy CMP0091, which `cmake_minimum_required(VERSION 3.15)` or later turns on |
 | `CyxWizSDK_VERSION` | The SDK version (0.2.0) |
-| `CyxWizSDK_PLUGIN_API_VERSION` | The plugin API version (1.3) |
+| `CyxWizSDK_PLUGIN_API_VERSION` | The plugin API version (1.4) |
 | `CyxWizSDK_TEMPLATE_DIR` | The template plugin's folder |
 
 <!-- excerpt: cmake/sdk/CyxWizPluginHelpers.cmake -->

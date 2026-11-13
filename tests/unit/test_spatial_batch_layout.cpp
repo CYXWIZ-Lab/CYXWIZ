@@ -42,7 +42,7 @@ TEST_CASE("Spatial sample shape excludes the runtime batch axis",
                   std::invalid_argument);
 }
 
-TEST_CASE("Spatial ingress takes image batches [N,H,W,C] like rows (TOFIX140 A1b)",
+TEST_CASE("Spatial ingress takes image batches [N,H,W,C] like rows",
           "[spatial_layout][geometry]") {
   // The image batcher's [N,H,W,C] batch and the same values as [N,H*W*C]
   // rows give the same [H,W,C,N] tensor.

@@ -198,4 +198,18 @@ guided::GuidedStep KeepRowsWithValue(const std::string& column, const std::vecto
     return step;
 }
 
+std::string StepTip(const std::string& node, const std::string& gives) {
+    std::string tip = "Puts the " + node + " node after the data in use, as a step on the way to training: ";
+    tip += gives.empty() ? "the rest of the graph and training read its result." : "the rest of the graph and training get " + gives + ".";
+    return tip;
+}
+
+std::string BranchTip(const std::string& node) {
+    return "Adds the " + node + " node as a branch reading the data in use: it shows and keeps the result with the graph; "
+           "training does not read it.";
+}
+
+const char* StepAddedNote() { return "Training reads its result."; }
+const char* BranchAddedNote() { return "Training does not read a branch."; }
+
 }  // namespace cyxwiz::explore_view

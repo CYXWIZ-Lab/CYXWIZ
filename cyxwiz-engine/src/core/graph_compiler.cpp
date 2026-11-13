@@ -1,4 +1,5 @@
 #include "graph_compiler.h"
+#include "rl_graph_compile.h"
 #include <tuple>
 #include "normalize_statistics.h"
 #include "sample_split.h"
@@ -29,6 +30,7 @@
 #include "graph_compiler_dataset_hooks.h"
 #include "../gui/node_import_guardrails.h"
 #include <spdlog/spdlog.h>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -660,9 +662,21 @@ void ValidateSparseFeatureTrainingContract(
     for (int node_id : sorted_ids) {
         if (training_path_ids.count(node_id) == 0) continue;
         const auto* node = FindNodeById(nodes, node_id);
-        if (node && RequestsSparseFeatureOutput(*node)) {
-            sparse_vectorizers.push_back(node);
+        if (!node || !RequestsSparseFeatureOutput(*node)) continue;
+        // A Truncated SVD after it reads the sparse features and gives dense
+        // columns (TOFIX129 D9): training then reads a table, not sparse batches.
+        // Only when it reads the vectorizer's output itself, and every training
+        // consumer of that output is one: anything between, or beside it, gets
+        // the sparse columns.
+        bool densified = false, other = false;
+        for (const auto& link : links) {
+            if (link.from_node != node->id || training_path_ids.count(link.to_node) == 0) continue;
+            const auto* next = FindNodeById(nodes, link.to_node);
+            if (next && next->type == gui::NodeType::TruncatedSVD) densified = true;
+            else other = true;
         }
+        densified = densified && !other;
+        if (!densified) sparse_vectorizers.push_back(node);
     }
     if (sparse_vectorizers.empty()) return;
 
@@ -1671,62 +1685,6 @@ bool LooksLikeImportedFineTuningSketch(const gui::MLNode& node,
         "unfreeze_last_n",
         "frozen_layers",
         "trainable_layers"
-    };
-
-    for (const char* key : design_keys) {
-        if (HasParam(params, key)) {
-            matched_key = key;
-            return true;
-        }
-    }
-
-    return false;
-}
-
-bool LooksLikeRLTrainingSketch(const gui::MLNode& node,
-                               std::string& matched_key) {
-    if (node.type == gui::NodeType::GymEnvironment ||
-        node.type == gui::NodeType::ReplayBufferNode ||
-        node.type == gui::NodeType::PolicyNetwork ||
-        node.type == gui::NodeType::ValueNetwork ||
-        node.type == gui::NodeType::RLTraining) {
-        matched_key = "RL node";
-        return true;
-    }
-
-    const auto& params = node.parameters;
-    const char* enabled_keys[] = {
-        "rl_training",
-        "reinforcement_learning",
-        "policy_gradient",
-        "actor_critic",
-        "replay_buffer",
-        "target_network",
-        "rollout_buffer"
-    };
-
-    for (const char* key : enabled_keys) {
-        if (ParamIsEnabled(params, key)) {
-            matched_key = key;
-            return true;
-        }
-    }
-
-    const char* design_keys[] = {
-        "env_name",
-        "environment",
-        "reward_column",
-        "action_column",
-        "state_column",
-        "next_state_column",
-        "done_column",
-        "rollout_steps",
-        "episode_length",
-        "rl_gamma",
-        "gae_lambda",
-        "policy_loss",
-        "value_loss",
-        "entropy_bonus"
     };
 
     for (const char* key : design_keys) {
@@ -3089,7 +3047,19 @@ void ValidateSingleDatasetSourceForSelectedLoss(
         return;
     }
 
-    const auto loss_ancestors = CollectAncestorNodeIds(selected_loss->id, links);
+    // A table into a step's parameter pin (Linear Projection's Matrix, Linear
+    // Solve's b; TOFIX129 D9) is that step's parameters, not training rows:
+    // the source behind it is not a second dataset source.
+    std::vector<gui::NodeLink> row_links;
+    for (const auto& link : links) {
+        const gui::MLNode* target = FindNodeById(nodes, link.to_node);
+        const char* parameter_pin = !target ? nullptr
+            : target->type == gui::NodeType::LinearProjection ? "Matrix"
+            : target->type == gui::NodeType::LinearSolve ? "b" : nullptr;
+        const auto* pin = parameter_pin ? FindInputPinByName(*target, parameter_pin) : nullptr;
+        if (!(pin && link.to_pin == pin->id)) row_links.push_back(link);
+    }
+    const auto loss_ancestors = CollectAncestorNodeIds(selected_loss->id, row_links);
     std::vector<const gui::MLNode*> selected_sources;
     for (const auto& node : nodes) {
         if (!IsDatasetSourceType(node.type) ||
@@ -3336,11 +3306,6 @@ bool ResolveReshapeTargetShape(const std::map<std::string, std::string>& params,
         error = "Reshape/View requires a non-empty shape parameter";
         return false;
     }
-    if (input_shape.empty()) {
-        error = "Reshape/View requires a known input shape";
-        return false;
-    }
-
     std::string shape_str = it->second;
     shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), '['), shape_str.end());
     shape_str.erase(std::remove(shape_str.begin(), shape_str.end(), ']'), shape_str.end());
@@ -3389,6 +3354,18 @@ bool ResolveReshapeTargetShape(const std::map<std::string, std::string>& params,
             return false;
         }
         known_product = next;
+    }
+
+    // Before the data is loaded the input is unknown: a full target shape is
+    // still the output (the element count is checked once the data comes);
+    // a -1 needs the input.
+    if (input_shape.empty()) {
+        if (infer_index >= 0) {
+            error = "Reshape/View with a -1 dimension needs a known input shape (load the data)";
+            return false;
+        }
+        target_shape.assign(dims.begin(), dims.end());
+        return true;
     }
 
     size_t input_elements = 0;
@@ -4026,22 +4003,6 @@ void ValidateTrainingPathImplementationStatus(
             continue;
         }
 
-        std::string rl_key;
-        if (LooksLikeRLTrainingSketch(node, rl_key)) {
-            std::ostringstream msg;
-            msg << "Node '" << node.name
-                << "' sketches reinforcement-learning training via '"
-                << rl_key
-                << "', but Studio training is currently a supervised "
-                   "single-batch executor. This path needs an environment "
-                   "stepping loop, rollout/replay buffer schema, policy/value "
-                   "loss contracts, target-network handling, and episodic "
-                   "metrics before it can compile truthfully.";
-            AddIssue(config, IssueLevel::Error, msg.str(), node.id,
-                     node.name, errors::Compiler::UnsupportedTrainingNode);
-            continue;
-        }
-
         std::string detection_key;
         if (LooksLikeDetectionSegmentationTrainingSketch(node, detection_key)) {
             std::ostringstream msg;
@@ -4446,6 +4407,10 @@ TrainingConfiguration GraphCompiler::Compile(
         stage_ms.emplace_back(name, std::chrono::duration<double, std::milli>(now-stage_start).count());
         stage_start = now;
     };
+    // A reinforcement learning graph compiles on its own (TOFIX195 S4.3)
+    if (std::any_of(nodes.begin(), nodes.end(), [](const gui::MLNode& n) { return IsRLGraphNode(n.type); }))
+        return CompileReinforcementLearning(nodes, links);
+
     TrainingConfiguration config;
     timing("configuration");
 
@@ -4812,6 +4777,39 @@ TrainingConfiguration GraphCompiler::Compile(
             : std::string{};
         config.dataset_roles.train.label_column = resolved_label_col;
 
+        // The Data Input's column roles (TOFIX129 D7a G1, written by Explore >
+        // Profile as `column_roles`: {"column": "id" | "group" | "weight" |
+        // "ignore" | ...}): ID, Group, Weight and Ignore keep their column out
+        // of the features (dataset_contract.h IsFeatureRole). The label stays
+        // whatever its role says.
+        config.excluded_feature_columns.clear();
+        if (const auto roles = dataset_node->parameters.find("column_roles");
+            roles != dataset_node->parameters.end() && !roles->second.empty()) {
+            const auto parsed = nlohmann::json::parse(roles->second, nullptr, false);
+            if (parsed.is_object()) {
+                std::vector<std::string> kept_out;
+                for (const auto& [column, role] : parsed.items()) {
+                    if (!role.is_string() || column == resolved_label_col) continue;
+                    const std::string id = role.get<std::string>();
+                    if (id != "id" && id != "group" && id != "weight" && id != "ignore") continue;
+                    config.excluded_feature_columns.push_back(column);
+                    kept_out.push_back(column + " (" + id + ")");
+                }
+                if (!kept_out.empty()) {
+                    std::string list;
+                    for (const auto& item : kept_out) list += (list.empty() ? "" : ", ") + item;
+                    AddIssue(config, IssueLevel::Info,
+                             "Column roles keep " + std::to_string(kept_out.size()) + " column(s) out of the features: " + list,
+                             dataset_node->id, dataset_node->name, errors::Compiler::ColumnRolesKeepOut);
+                }
+            } else {
+                AddIssue(config, IssueLevel::Warning,
+                         "'" + dataset_node->name + "' has column roles that could not be read (column_roles is not a JSON object); "
+                         "every numeric column is a feature",
+                         dataset_node->id, dataset_node->name, errors::Compiler::InvalidParameter);
+            }
+        }
+
         if (!config.target.IsGeneratedByGraph()) {
             if (!resolved_label_col.empty()) {
                 config.target.origin = TargetOrigin::DatasetColumn;
@@ -4955,12 +4953,13 @@ TrainingConfiguration GraphCompiler::Compile(
         if (tabular_schema && config.input_shape.empty() &&
             resolved_label_index >= 0) {
             const size_t feature_count = CountNumericBatchFeatureColumns(
-                tabular_schema, resolved_label_index);
+                tabular_schema, resolved_label_index, {}, config.excluded_feature_columns);
             if (feature_count == 0) {
                 AddIssue(config, IssueLevel::Error,
                          "Registered dataset '" + config.dataset_name +
                              "' has no numeric feature columns after excluding "
-                             "label column '" + resolved_label_col + "'",
+                             "label column '" + resolved_label_col + "'" +
+                             (config.excluded_feature_columns.empty() ? "" : " and the columns its roles keep out"),
                          dataset_node->id, dataset_node->name,
                          errors::Data::ColumnTypeMismatch);
             } else {
@@ -5454,6 +5453,7 @@ TrainingConfiguration GraphCompiler::Compile(
                 pin_shapes[node->outputs[0].id] = first;
                 pin_shapes[node->outputs[1].id] = second;
             }
+            config.graph_op_output_shapes[node->id] = {first, second};
             continue;
         }
 
@@ -5542,6 +5542,7 @@ TrainingConfiguration GraphCompiler::Compile(
                              errors::Compiler::TensorShapeMismatch);
                 }
                 record_outputs(*node, merged);
+                config.graph_op_output_shapes[node->id] = {merged};
             }
             continue;
         }
@@ -6520,6 +6521,49 @@ TrainingConfiguration GraphCompiler::Compile(
                      errors::Compiler::TensorShapeMismatch);
         }
     }
+    // A layer stack that opens with a Reshape / View of the rows to [H, W, C]
+    // before a convolution or pooling reads each row as an image (a CSV of
+    // pixel columns: MNIST's 784 as 28 x 28 x 1). Rows are already in
+    // height, width, channel order, so the Reshape is the data's shape.
+    const bool layer_stack = config.graph_op_node_ids.empty() && config.multi_input_layer_node_ids.empty();
+    if (!config.HasErrors() && layer_stack && config.layers.size() >= 2) {
+        const CompiledLayer first = config.layers.front();
+        const gui::NodeType next = config.layers[1].type;
+        const auto elements = [](const std::vector<size_t>& shape) {
+            size_t n = shape.empty() ? 0 : 1;
+            for (size_t d : shape) n *= d;
+            return n;
+        };
+        // Before the data is loaded the rows' width is unknown; the data's
+        // compile checks it.
+        const bool rows_fit = first.input_shape.empty() ||
+                              (first.input_shape.size() == 1 && elements(first.input_shape) == elements(first.output_shape));
+        if ((first.type == gui::NodeType::Reshape || first.type == gui::NodeType::View) && rows_fit && first.output_shape.size() == 3 &&
+            (spatial::IsSpatialLayer(next) || spatial::IsGlobalPoolLayer(next))) {
+            config.input_shape = first.output_shape;
+            config.input_size = elements(first.output_shape);
+            config.layers.erase(config.layers.begin());
+            AddIssue(config, IssueLevel::Info,
+                     first.name + " reads each row of " + std::to_string(elements(first.output_shape)) + " values as a [" +
+                         ShapeListText(first.output_shape) + "] image (height, width, channel order)",
+                     first.node_id, first.name);
+        }
+    }
+    // A layer stack runs convolutions only in its opening image section: one
+    // further in (after a Dense, a Flatten) is refused here, not at Train.
+    if (!config.HasErrors() && layer_stack && !UsesSpatialSequentialInput(config)) {
+        for (const auto& layer : config.layers) {
+            const bool image_layer = layer.type == gui::NodeType::Conv2D || layer.type == gui::NodeType::DepthwiseConv2D ||
+                                     layer.type == gui::NodeType::ConvTranspose2D || layer.type == gui::NodeType::MaxPool2D ||
+                                     layer.type == gui::NodeType::AvgPool2D;
+            if (!image_layer) continue;
+            AddIssue(config, IssueLevel::Error,
+                     layer.name + " needs image-shaped rows from the start of the model: read an image dataset, or "
+                     "put a Reshape to [H, W, C] first (784 pixel columns: 28,28,1)",
+                     layer.node_id, layer.name, errors::Compiler::TensorShapeMismatch);
+            break;
+        }
+    }
     if (!config.HasErrors()) {
         // A global pool only ends a spatial ([H,W,C]) or sequence ([L,C]) section.
         for (size_t i = 0; i < config.layers.size(); ++i) {
@@ -6876,8 +6920,6 @@ bool GraphCompiler::IsModelLayer(gui::NodeType type) const {
         case gui::NodeType::ConvTranspose2D:
         case gui::NodeType::Upsample:
         case gui::NodeType::PixelShuffle:
-        case gui::NodeType::PolicyNetwork:
-        case gui::NodeType::ValueNetwork:
         case gui::NodeType::Embedding:
         case gui::NodeType::TransformerEncoder:
         case gui::NodeType::PositionalEncoding:

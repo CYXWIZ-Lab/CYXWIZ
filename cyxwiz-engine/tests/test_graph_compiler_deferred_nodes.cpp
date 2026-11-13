@@ -177,15 +177,15 @@ const cyxwiz::BackendPlacementEntry* FindPlacement(
     return nullptr;
 }
 
-// A step before the Data Split that learns from every row (PCA here, behind
+// A step before the Data Split that learns from every row (K-Means here, behind
 // another step) is warned with CW-C-0206 (TOFIX178 S0-g5). Its own function:
 // main's frame is near the stack limit.
 void CheckEveryRowStepWarned(const gui::MLNode& source, const gui::MLNode& run_step,
                              const std::vector<gui::MLNode>& split_to_model) {
     auto every_row = Node(
         68,
-        gui::NodeType::PCANode,
-        "Reduce",
+        gui::NodeType::KMeansCluster,
+        "Group",
         {Pin(6801, gui::PinType::Dataset, "Data", true)},
         {Pin(6802, gui::PinType::Dataset, "Reduced", false)});
     std::vector<gui::MLNode> nodes = {source, run_step, every_row};
@@ -204,8 +204,8 @@ void CheckEveryRowStepWarned(const gui::MLNode& source, const gui::MLNode& run_s
     for (const auto& issue : config.issues)
         warned |= issue.level == cyxwiz::IssueLevel::Warning && issue.node_id == every_row.id &&
                   issue.error_code == std::string(cyxwiz::errors::Compiler::LearnsFromEveryRow) &&
-                  issue.message.find("'Reduce' learns from every row before the Data Split") != std::string::npos;
-    Check(warned, "PCA behind another step before the Data Split is warned (CW-C-0206)");
+                  issue.message.find("'Group' learns from every row before the Data Split") != std::string::npos;
+    Check(warned, "K-Means behind another step before the Data Split is warned (CW-C-0206)");
 }
 
 // A label the steps make (a SQL / Rename before the Split): not in the
@@ -557,6 +557,46 @@ int main() {
                            "must be the final preprocessing output"),
           "sparse output must reject downstream Arrow materializers at compile time");
 
+    // Truncated SVD reads the sparse features and gives dense columns
+    // (TOFIX129 D9): the path after it is a table, not a sparse batch.
+    auto lsa = Node(11,
+                    gui::NodeType::TruncatedSVD,
+                    "LSA",
+                    {Pin(1101, gui::PinType::Dataset, "Data", true)},
+                    {Pin(1102, gui::PinType::Dataset, "Transformed", false)});
+    lsa.parameters = {{"n_components", "4"}};
+    auto lsa_nodes = std::vector<gui::MLNode>{data, sparse_count, lsa, dense, loss, optimizer};
+    auto lsa_links = std::vector<gui::NodeLink>{
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 11, 1101),
+        Link(3, 11, 1102, 2, 201),
+        Link(4, 2, 202, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+    const auto lsa_config = compiler.Compile(lsa_nodes, lsa_links, true);
+    Check(!HasIssueText(lsa_config, "must be the final preprocessing output"),
+          "Truncated SVD after a sparse vectorizer is not a downstream Arrow step on sparse features");
+    // Only when it reads the vectorizer itself: a step between gets the sparse columns.
+    auto scaler = Node(12,
+                       gui::NodeType::StandardScaler,
+                       "Scale",
+                       {Pin(1201, gui::PinType::Dataset, "Data", true)},
+                       {Pin(1202, gui::PinType::Dataset, "Scaled", false)});
+    auto between_nodes = std::vector<gui::MLNode>{data, sparse_count, scaler, lsa, dense, loss, optimizer};
+    auto between_links = std::vector<gui::NodeLink>{
+        Link(1, 1, 101, 8, 801),
+        Link(2, 8, 802, 12, 1201),
+        Link(7, 12, 1202, 11, 1101),
+        Link(3, 11, 1102, 2, 201),
+        Link(4, 2, 202, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+    const auto between_config = compiler.Compile(between_nodes, between_links, true);
+    Check(HasIssueText(between_config, "must be the final preprocessing output"),
+          "a step between a sparse vectorizer and Truncated SVD still reads sparse features");
+
     auto sparse_sequence_data = data;
     sparse_sequence_data.parameters["token_column"] = "tokens";
     auto sparse_sequence_nodes = sparse_nodes;
@@ -902,14 +942,8 @@ int main() {
         Check(HasIssueCode(config,
                            cyxwiz::errors::Compiler::UnsupportedTrainingNode),
               "unsupported sequential layer should expose unsupported-node code");
-        if (unsupported_case.node_type == gui::NodeType::PolicyNetwork ||
-            unsupported_case.node_type == gui::NodeType::ValueNetwork) {
-            Check(HasIssueText(config, "reinforcement-learning training"),
-                  "RL layer should report missing RL training contract");
-        } else {
-            Check(HasIssueText(config, unsupported_case.reason),
-                  "unsupported layer should report backend gap");
-        }
+        Check(HasIssueText(config, unsupported_case.reason),
+              "unsupported layer should report backend gap");
     }
 
     auto recurrent = Node(
@@ -1008,7 +1042,7 @@ int main() {
               "standalone MultiHeadAttention placement should name the node type");
         Check(mha_placement->status ==
                   cyxwiz::BackendPlacementStatus::Gpu,
-              "MultiHeadAttention runs on ArrayFire only (TOFIX140)");
+              "MultiHeadAttention runs on ArrayFire only");
         Check(mha_placement->reason_code ==
                   cyxwiz::BackendPlacementReason::ArrayFireTensorOpCapable,
               "standalone MultiHeadAttention placement should use the ArrayFire tensor reason");
@@ -1359,7 +1393,7 @@ int main() {
     Check(config.is_valid,
           "decoder-only TransformerDecoder path should compile under current engine support");
     Check(config.SummarizeBackendPlacements().cpu == 0,
-          "decoder-only TransformerDecoder path runs on ArrayFire only (TOFIX140): no CPU placement");
+          "decoder-only TransformerDecoder path runs on ArrayFire only: no CPU placement");
     Check(config.SummarizeBackendPlacements().unknown == 0,
           "decoder-only TransformerDecoder path should not carry unknown backend placement");
 
@@ -1481,72 +1515,6 @@ int main() {
           "fine-tune sketch should report the matched parameter");
     Check(HasIssueText(config, "freeze/unfreeze ownership"),
           "fine-tune sketch should report missing freeze contract");
-
-    auto policy = Node(30,
-                       gui::NodeType::PolicyNetwork,
-                       "Policy Sketch",
-                       {Pin(3001, gui::PinType::Tensor, "Observation", true)},
-                       {Pin(3002, gui::PinType::Tensor, "Action", false)});
-    policy.parameters["hidden_sizes"] = "8";
-
-    nodes = {data, policy, loss, optimizer};
-    links = {
-        Link(1, 1, 101, 30, 3001),
-        Link(2, 30, 3002, 4, 401),
-        Link(3, 1, 102, 4, 402),
-        Link(4, 4, 403, 5, 501),
-    };
-
-    config = compiler.Compile(nodes, links, true);
-    Check(!config.is_valid,
-          "selected RL policy training path should be invalid");
-    Check(HasIssueText(config, "reinforcement-learning training"),
-          "RL policy path should report missing RL training contract");
-    Check(HasIssueText(config, "environment stepping loop"),
-          "RL policy path should report missing environment loop");
-
-    auto policy_side_output = Node(31,
-                                   gui::NodeType::Output,
-                                   "Policy Side Output",
-                                   {Pin(3101, gui::PinType::Tensor, "Input", true)},
-                                   {});
-
-    nodes = {data, dense, loss, optimizer, policy, policy_side_output};
-    links = {
-        Link(1, 1, 101, 2, 201),
-        Link(2, 2, 202, 4, 401),
-        Link(3, 1, 102, 4, 402),
-        Link(4, 4, 403, 5, 501),
-        Link(5, 1, 101, 30, 3001),
-        Link(6, 30, 3002, 31, 3101),
-    };
-
-    config = compiler.Compile(nodes, links, true);
-    Check(config.is_valid,
-          "side RL policy outside selected training path should not block compile");
-    Check(!HasIssueText(config, "Policy Sketch"),
-          "side RL policy should not be reported");
-
-    auto rl_dense = dense;
-    rl_dense.name = "RL Dense Sketch";
-    rl_dense.parameters["rl_training"] = "true";
-    rl_dense.parameters["reward_column"] = "reward";
-
-    nodes = {data, rl_dense, loss, optimizer};
-    links = {
-        Link(1, 1, 101, 2, 201),
-        Link(2, 2, 202, 4, 401),
-        Link(3, 1, 102, 4, 402),
-        Link(4, 4, 403, 5, 501),
-    };
-
-    config = compiler.Compile(nodes, links, true);
-    Check(!config.is_valid,
-          "selected RL objective sketch should be invalid");
-    Check(HasIssueText(config, "rl_training"),
-          "RL sketch should report the matched parameter");
-    Check(HasIssueText(config, "policy/value loss contracts"),
-          "RL sketch should report missing policy/value loss contract");
 
     auto detector = Node(32,
                          gui::NodeType::DNNDetect,
@@ -2518,6 +2486,26 @@ int main() {
           "multi-input graph should report single dataset-source training contract");
     Check(HasIssueText(config, "typed named-batch contract"),
           "multi-input graph should point to missing named-batch contract");
+
+    // A second Data Input into a Linear Projection's Matrix pin is that
+    // step's parameters, not training rows (TOFIX129 D9): no second source.
+    auto projection = Node(70,
+                           gui::NodeType::LinearProjection,
+                           "Project",
+                           {Pin(7001, gui::PinType::Dataset, "Data", true), Pin(7002, gui::PinType::Dataset, "Matrix", true)},
+                           {Pin(7003, gui::PinType::Dataset, "Transformed", false)});
+    nodes = {data, second_data, projection, dense, loss, optimizer};
+    links = {
+        Link(1, 1, 101, 70, 7001),
+        Link(2, 23, 2301, 70, 7002),
+        Link(3, 70, 7003, 2, 201),
+        Link(4, 2, 202, 4, 401),
+        Link(5, 1, 102, 4, 402),
+        Link(6, 4, 403, 5, 501),
+    };
+    config = compiler.Compile(nodes, links, true);
+    Check(!HasIssueText(config, "exactly one dataset source"),
+          "a Data Input into Linear Projection's Matrix pin is not a second dataset source");
 
     auto role_train = Node(
         60,

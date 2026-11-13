@@ -203,7 +203,7 @@ TEST_CASE("ByteBPE v2 package retains leading-space policy and rejects config mi
     cyxwiz::TextTokenizerPackage package;
     std::string error;
     const std::string prefix = R"({"effective":{"tokenizer_type":"3","lowercase":"false","max_length":"32")";
-    for (const std::string config : {prefix + "}}", prefix + R"(,"bpe_piece_policy":"leading_space_v2"}})"}) {
+    for (const std::string& config : {prefix + "}}", prefix + R"(,"bpe_piece_policy":"leading_space_v2"}})"}) {
         REQUIRE(cyxwiz::LoadTextTokenizerPackage(config, saved.str(), package, error));
         REQUIRE(package.tokenizer->GetVocabulary().GetBPEPiecePolicy() == cyxwiz::ByteBPEPiecePolicy::LeadingSpaceV2);
         const auto ids = cyxwiz::EncodeTextTokenIdsForGeneration(*package.tokenizer, " word");
@@ -230,7 +230,7 @@ TEST_CASE("Character BPE package follows artifact units and rejects config misma
     cyxwiz::TextTokenizerPackage package;
     std::string error;
     const std::string prefix=R"({"effective":{"tokenizer_type":"3","lowercase":"false","max_length":"32")";
-    for (const auto config : {prefix+"}}",prefix+R"(,"bpe_initial_unit":"unicode_character"}})"}) {
+    for (const auto& config : {prefix+"}}",prefix+R"(,"bpe_initial_unit":"unicode_character"}})"}) {
         REQUIRE(cyxwiz::LoadTextTokenizerPackage(config,saved.str(),package,error));
         REQUIRE(package.tokenizer->GetVocabulary().GetBPEInitialUnit()==cyxwiz::BPEInitialUnit::UnicodeCharacter);
         const auto ids=cyxwiz::EncodeTextTokenIdsForGeneration(*package.tokenizer," caf\xc3\xa9");

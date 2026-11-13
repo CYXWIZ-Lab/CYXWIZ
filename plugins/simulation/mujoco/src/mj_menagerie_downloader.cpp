@@ -17,6 +17,15 @@ static const char* kGitHubRawHost = "raw.githubusercontent.com";
 static const char* kMenagerieRepo = "google-deepmind/mujoco_menagerie";
 static const char* kBranch = "main";
 
+// What went wrong with a request, in words for the user
+static std::string HttpFailure(const httplib::Result& res, const std::string& host) {
+    if (!res) return "Could not reach " + host + ". Check the address and the internet connection.";
+    if (res->status == 403 || res->status == 429)
+        return host + " refused the request (rate limit). Try again in a few minutes.";
+    if (res->status == 404) return "Nothing was found at that address.";
+    return host + " answered HTTP " + std::to_string(res->status) + ".";
+}
+
 MjMenagerieDownloader::~MjMenagerieDownloader() {
     CancelDownload();
 }
@@ -59,6 +68,8 @@ std::vector<MjMenagerieDownloader::FileEntry> MjMenagerieDownloader::ListGitHubD
     if (!res || res->status != 200) {
         spdlog::error("MenagerieDownloader: GitHub API request failed for '{}' (status: {})",
                       api_path, res ? res->status : 0);
+        std::lock_guard lock(status_mutex_);
+        error_ = HttpFailure(res, kGitHubApiHost);
         return entries;
     }
 
@@ -163,7 +174,8 @@ bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const st
 
     if (files_to_download.empty()) {
         std::lock_guard lock(status_mutex_);
-        error_ = "No files found for model '" + repo_path + "'";
+        // A failed listing already said why
+        if (error_.empty()) error_ = "No files found for model '" + repo_path + "'";
         downloading_ = false;
         return false;
     }
@@ -345,7 +357,7 @@ bool MjMenagerieDownloader::DownloadFromUrl(const std::string& url, const std::s
                 auto res = cli.Get(api_url, headers);
                 if (!res || res->status != 200) {
                     std::lock_guard lock(status_mutex_);
-                    error_ = "GitHub API failed (status: " + std::to_string(res ? res->status : 0) + ")";
+                    error_ = HttpFailure(res, kGitHubApiHost);
                     downloading_ = false;
                     return false;
                 }
@@ -463,7 +475,7 @@ bool MjMenagerieDownloader::DownloadFromUrl(const std::string& url, const std::s
 
     if (!res || (res->status != 200 && res->status != 301 && res->status != 302)) {
         std::lock_guard lock(status_mutex_);
-        error_ = "Download failed (status: " + std::to_string(res ? res->status : 0) + ")";
+        error_ = HttpFailure(res, host);
         downloading_ = false;
         return false;
     }

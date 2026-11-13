@@ -54,7 +54,7 @@ enum class NodeCategory {
 
     // Specialized
     DNN,              // Pre-trained models, detection, pose
-    RL,               // Gym, ReplayBuffer, Policy, Value
+    RL,               // Environment, Policy Head, Value Head, PPO
     BigData,          // Spark, Dask, Ray, Kafka (Coming Soon)
 
     // Workflow & UI
@@ -292,12 +292,15 @@ enum class NodeType {
     MFCC,               // Extract MFCC features
     AudioAugmentation,  // Time stretch, pitch shift, noise
 
-    // ===== RL Nodes =====
-    GymEnvironment,     // OpenAI Gym environment connector
-    ReplayBufferNode,   // Experience replay buffer
-    PolicyNetwork,      // Actor network for RL
-    ValueNetwork,       // Critic network for RL
-    RLTraining,         // RL training loop controller
+    // ===== Retired RL nodes (TOFIX195 S4.3) =====
+    // Environment, Policy Head, Value Head and PPO (appended below) replaced
+    // them: the slots stay so later ids do not move; a saved graph with one
+    // fails to load.
+    GymEnvironment,
+    ReplayBufferNode,
+    PolicyNetwork,
+    ValueNetwork,
+    RLTraining,
 
     // ===== Smart I/O Nodes (Unified - replaces individual format nodes) =====
     DataInput,          // Universal data input with smart dialog (auto-detects format)
@@ -308,7 +311,8 @@ enum class NodeType {
     // ===== Legacy Data Source Nodes (kept for compatibility) =====
     CSVFile,            // Load CSV file into Arrow table
     SQLQuery,           // Execute SQL query, return Arrow table
-    HDF5Dataset,        // Load HDF5 dataset into Arrow
+    HDF5Dataset,        // Retired (Data Input loads HDF5): the slot stays so later ids
+                        // do not move; a saved graph with one fails to load.
     ParquetFile,        // Load Parquet file into Arrow
     JSONFile,           // Load JSON file into Arrow
     ExcelFile,          // Load Excel file into Arrow
@@ -462,12 +466,17 @@ enum class NodeType {
     DataProfiler,       // Comprehensive data profiling
 
 
-    // ===== Linear Algebra Nodes (Phase 5 - Tool-to-Node Migration) =====
-    SVDNode,            // Singular Value Decomposition
-    QRDecomposition,    // QR matrix decomposition
-    CholeskyDecomposition, // Cholesky factorization
-    EigenDecomposition, // Eigenvalue/eigenvector decomposition
-    MatrixCalculator,   // General matrix operations
+    // ===== Retired linear algebra templates (TOFIX129 D9) =====
+    // Never implemented (no executor); Tools > Linear Algebra factors and
+    // solves matrices, and the Truncated SVD, Whitening, Linear Solve and
+    // Linear Projection steps (appended below) bring linear algebra into a
+    // graph. The slots stay so the numeric ids of the types after them do
+    // not move; nothing registers or creates these.
+    SVDNode,
+    QRDecomposition,
+    CholeskyDecomposition,
+    EigenDecomposition,
+    MatrixCalculator,
 
     // ===== Time Series Analysis Nodes (Phase 5) =====
     TimeSeriesDecomposition, // Trend/Seasonal/Residual decomposition
@@ -482,21 +491,34 @@ enum class NodeType {
     HypothesisTest,     // t-test, ANOVA, Chi-Square
     DistributionFitter, // Fit probability distributions
 
-    // ===== Deep Learning Interpretation Nodes (Phase 5) =====
-    GradCAMNode,        // Grad-CAM visualization
-    SaliencyMapNode,    // Gradient saliency maps
+    // ===== Retired interpretation templates (TOFIX129 D11) =====
+    // Never implemented (no executor); the Model window's Explain tab shows
+    // Grad-CAM, saliency and Integrated Gradients of the trained model. The
+    // slots stay so the numeric ids of the types after them do not move;
+    // nothing registers or creates these.
+    GradCAMNode,
+    SaliencyMapNode,
 
-    // ===== Optimization Nodes (Phase 5) =====
-    GradientDescentViz, // Visualize optimization paths
-    ConvexityAnalyzer,  // Analyze function convexity
-    LPSolver,           // Linear programming solver
-    QPSolver,           // Quadratic programming solver
-    NumericalDifferentiation, // Numerical derivatives
-    NumericalIntegration,     // Numerical integration
+    // ===== Retired optimization templates (TOFIX129 D10) =====
+    // Never implemented (no executor); Tools > Optimization and Calculus
+    // minimizes, integrates and differentiates typed formulas and solves
+    // programs, and the Portfolio Weights step (appended below) brings a
+    // program into a graph. The slots stay so the numeric ids of the types
+    // after them do not move; nothing registers or creates these.
+    GradientDescentViz,
+    ConvexityAnalyzer,
+    LPSolver,
+    QPSolver,
+    NumericalDifferentiation,
+    NumericalIntegration,
 
-    // ===== Additional Text Processing (Phase 5) =====
-    WordFrequencyNode,  // Word frequency analysis
-    TokenizerNode,      // Text tokenization
+    // ===== Retired text templates (TOFIX129 D8) =====
+    // Never implemented (no executor, not addable); Data Studio's Explore >
+    // Text counts words and the TextTokenizer tokenizes. The slots stay so
+    // the numeric ids of the types after them do not move; nothing
+    // registers or creates these.
+    WordFrequencyNode,
+    TokenizerNode,
 
     // ===== Retired plot node types (TOFIX134 P2) =====
     // Replaced by the single Plot node (appended below): its window picks the
@@ -625,6 +647,22 @@ enum class NodeType {
     GaussianNoise,      // N(mean, sigma) added to every pixel
     RandomGrayscale,    // gray in the same channels, at random
 
+    // ===== Appended linear algebra steps (TOFIX129 D9) =====
+    // Fitted on the Train rows, on the device (linear_algebra_operators.h).
+    TruncatedSVD,       // the k strongest directions of the uncentred columns (LSA)
+    Whitening,          // PCA or ZCA whitening: decorrelated, unit variance
+    LinearSolve,        // A x = b from table columns (b from a second table or the same)
+    LinearProjection,   // every row times a matrix from a second table
+
+    // ===== Appended optimization step (TOFIX129 D10) =====
+    PortfolioWeights,   // the least risky mix of assets from a returns table (a convex QP)
+
+    // ===== Appended reinforcement learning (TOFIX195 S4.3) =====
+    RLEnvironment,      // N copies of an environment from the environment registry
+    PolicyHead,         // Ends the policy layers: output layer sized from the environment, action distribution
+    ValueHead,          // Ends the value layers: one output, the expected return
+    PPO,                // Proximal Policy Optimization over an environment, a policy and a value network
+
     // Special sentinel value
     Unknown
 };
@@ -636,7 +674,8 @@ enum class PinType {
     Parameters,  // Model parameters
     Loss,        // Loss value
     Optimizer,   // Optimizer state
-    Dataset      // Dataset handle reference
+    Dataset,     // Dataset handle reference
+    Environment  // Environment copies (RL Environment -> PPO)
     // Note: Shape is metadata (node parameter), not a data flow type
 };
 
@@ -658,7 +697,7 @@ struct NodePin {
     // know "Labels here is the y in (X, y) ground truth, sourced
     // from the DataInput's label_column setting" without having to
     // read the source.
-    std::string description;
+    std::string description{};
 
     // Variadic pin support - enables multiple connections to a single pin
     bool is_variadic = false;        // True for pins accepting multiple connections

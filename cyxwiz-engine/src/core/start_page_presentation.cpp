@@ -29,11 +29,6 @@ bool Local(std::time_t t, std::tm& out) {
 #endif
 }
 
-long DayNumber(const std::tm& tm) {
-    // Days since a fixed origin, good enough to compare calendar days.
-    return static_cast<long>(tm.tm_year) * 400 + tm.tm_yday;
-}
-
 const char* kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 const char* kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 

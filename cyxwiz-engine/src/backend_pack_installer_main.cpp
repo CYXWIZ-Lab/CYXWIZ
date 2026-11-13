@@ -53,6 +53,8 @@ struct Options {
     std::uint64_t parent_process_id = 0;
     bool base = false;
     bool base_update = false;
+    // A plugin pack: signed delivery without route qualification.
+    bool plugin = false;
     bool remove_pack = false;
     bool repair = false;
     bool defer_route_verification = false;
@@ -171,6 +173,7 @@ bool ParseOptions(
     bool saw_pack_id = false;
     bool saw_base_pack_id = false;
     bool saw_base_update_pack_id = false;
+    bool saw_plugin_pack_id = false;
     bool saw_remove_pack_id = false;
     bool saw_deactivate_backend = false;
     bool saw_all_users = false;
@@ -200,6 +203,20 @@ bool ParseOptions(
                 output.pack_id.push_back(static_cast<char>(character));
             }
             saw_pack_id = true;
+        } else if (argument == L"--plugin-pack-id" &&
+                   !saw_plugin_pack_id && index + 1 < argc) {
+            const std::wstring value(argv[++index]);
+            if (!IsIdentifier(value)) {
+                error = "--plugin-pack-id must be a safe ASCII identifier";
+                return false;
+            }
+            output.pack_id.clear();
+            output.pack_id.reserve(value.size());
+            for (const wchar_t character : value) {
+                output.pack_id.push_back(static_cast<char>(character));
+            }
+            output.plugin = true;
+            saw_plugin_pack_id = true;
         } else if (argument == L"--base-pack-id" &&
                    !saw_base_pack_id && index + 1 < argc) {
             const std::wstring value(argv[++index]);
@@ -309,6 +326,7 @@ bool ParseOptions(
         static_cast<int>(saw_pack_id) +
                 static_cast<int>(saw_base_pack_id) +
                 static_cast<int>(saw_base_update_pack_id) +
+                static_cast<int>(saw_plugin_pack_id) +
                 static_cast<int>(saw_remove_pack_id) +
                 static_cast<int>(saw_deactivate_backend) != 1 ||
         ((saw_base_pack_id || saw_base_update_pack_id) && output.repair) ||
@@ -333,6 +351,7 @@ bool ParseOptions(
     bool saw_pack_id = false;
     bool saw_base_pack_id = false;
     bool saw_base_update_pack_id = false;
+    bool saw_plugin_pack_id = false;
     bool saw_remove_pack_id = false;
     bool saw_deactivate_backend = false;
     bool saw_all_users = false;
@@ -357,6 +376,15 @@ bool ParseOptions(
                 return false;
             }
             saw_pack_id = true;
+        } else if (argument == "--plugin-pack-id" &&
+                   !saw_plugin_pack_id && index + 1 < argc) {
+            output.pack_id = argv[++index];
+            if (!IsIdentifier(output.pack_id)) {
+                error = "--plugin-pack-id must be a safe ASCII identifier";
+                return false;
+            }
+            output.plugin = true;
+            saw_plugin_pack_id = true;
         } else if (argument == "--base-pack-id" &&
                    !saw_base_pack_id && index + 1 < argc) {
             output.pack_id = argv[++index];
@@ -433,6 +461,7 @@ bool ParseOptions(
         static_cast<int>(saw_pack_id) +
                 static_cast<int>(saw_base_pack_id) +
                 static_cast<int>(saw_base_update_pack_id) +
+                static_cast<int>(saw_plugin_pack_id) +
                 static_cast<int>(saw_remove_pack_id) +
                 static_cast<int>(saw_deactivate_backend) != 1 ||
         ((saw_base_pack_id || saw_base_update_pack_id) && output.repair) ||
@@ -536,6 +565,36 @@ int main(int argc, char** argv) {
             ? 0 : 1;
     }
     if (options.remove_pack) {
+        // A pack ID active in active-plugins.json is a plugin pack.
+        std::string remove_plugin_id;
+        cyxwiz::runtime::ActivePluginsState plugins;
+        if (!cyxwiz::runtime::LoadActivePluginsState(
+                options.runtime_root / cyxwiz::runtime::kActivePluginsFileName, plugins, error)) {
+            const auto message = "Cannot load the active plugin packs for removal: " + error;
+            publish_progress("failed", message);
+            std::cerr << message << '\n';
+            return 1;
+        }
+        for (const auto& plugin : plugins.plugins)
+            if (plugin.pack_id == options.pack_id) remove_plugin_id = plugin.plugin_id;
+        // An installed plugin pack that is not active (another base became
+        // active since, or it was deactivated): found by its folder,
+        // runtime/plugins/<plugin-id>/<pack-id>/plugin.json
+        const bool plain_id = !options.pack_id.empty() &&
+            options.pack_id.find_first_of("/\\:") == std::string::npos && options.pack_id != "." &&
+            options.pack_id != "..";
+        if (remove_plugin_id.empty() && plain_id) {
+            std::error_code scan_error;
+            for (const auto& entry :
+                 std::filesystem::directory_iterator(options.runtime_root / "plugins", scan_error)) {
+                std::error_code entry_error;
+                if (entry.is_directory(entry_error) &&
+                    std::filesystem::is_regular_file(entry.path() / options.pack_id / "plugin.json", entry_error)) {
+                    remove_plugin_id = entry.path().filename().string();
+                    break;
+                }
+            }
+        }
         cyxwiz::runtime::ActiveRuntimeState active;
         if (!cyxwiz::runtime::LoadActiveRuntimeState(
                 options.runtime_root / "active-runtime.json", active,
@@ -550,7 +609,7 @@ int main(int argc, char** argv) {
         const auto selected = std::find_if(
             active.packs.begin(), active.packs.end(),
             [&](const auto& pack) { return pack.pack_id == options.pack_id; });
-        if (selected == active.packs.end()) {
+        if (selected == active.packs.end() && remove_plugin_id.empty()) {
             const auto message =
                 "The selected optional component is not installed and active";
             publish_progress("failed", message);
@@ -582,8 +641,9 @@ int main(int argc, char** argv) {
                     }
                 });
         }
-        const auto result = remover.Remove(
-            selected->backend, options.pack_id);
+        const auto result = remove_plugin_id.empty()
+            ? remover.Remove(selected->backend, options.pack_id)
+            : remover.RemovePlugin(remove_plugin_id, options.pack_id);
         cancellation_monitor.Stop();
         if (!options.progress_token.empty()) {
             cyxwiz::installer::ClearInstallerCancellation(
@@ -650,7 +710,7 @@ int main(int argc, char** argv) {
     auto helper_cancel_requested =
         std::make_shared<std::atomic<bool>>(false);
     cyxwiz::runtime::BackendPackQualificationHook qualification_hook;
-    if (!options.defer_route_verification) {
+    if (!options.defer_route_verification && !options.plugin) {
         qualification_service =
             std::make_shared<cyxwiz::RouteQualificationService>();
         cyxwiz::BackendPackQualificationAdapterOptions qualification_options;
@@ -763,7 +823,9 @@ int main(int argc, char** argv) {
         request.acquisition_retry.maximum_attempts = 3;
         request.acquisition_retry.backoff = std::chrono::seconds(1);
     }
-    const auto result = options.base_update
+    const auto result = options.plugin
+        ? lifecycle.DeliverPlugin(request)
+        : options.base_update
         ? lifecycle.DeliverBaseUpdate(request)
         : (options.base ? lifecycle.DeliverBase(request)
                         : lifecycle.Deliver(request));

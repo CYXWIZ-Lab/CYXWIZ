@@ -194,7 +194,7 @@ void ReconcileRuntimeTabularFeatureWidth(
     if (label_index < 0) return;
 
     const size_t feature_count = cyxwiz::CountNumericBatchFeatureColumns(
-        schema, label_index);
+        schema, label_index, {}, config.excluded_feature_columns);
     if (feature_count == 0 || config.input_size == feature_count) return;
 
     spdlog::warn(

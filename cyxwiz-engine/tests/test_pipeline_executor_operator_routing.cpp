@@ -9,6 +9,7 @@
 #include "core/pipeline_execution_task.h"
 #include "core/async_task_manager.h"
 #include "core/csv_ingestion_options.h"
+#include "core/data_input_formats.h"
 #include "core/pipeline_runtime_capabilities.h"
 #include "core/project_data_path.h"
 #include "core/preparation_recipe.h"
@@ -299,6 +300,8 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "FileInput",
         "FillMissing",
         "FilterDesigner",
+        "IFFTNode",
+        "WaveletTransform",
         "FilterRows",
         "GMMCluster",
         "GradientBoostingClassifier",
@@ -309,6 +312,10 @@ const std::set<std::string>& BadSchemaRoutingCoverageNodeNames() {
         "KMeansCluster",
         "KNNClassifier",
         "TSNENode",
+        "TruncatedSVD",
+        "Whitening",
+        "LinearSolve",
+        "PortfolioWeights",
         "UMAPNode",
         "LabelEncoder",
         "LinearRegressionNode",
@@ -2808,15 +2815,19 @@ void CheckDataInputFormats() {
                 Check(!executor.ExecutePipeline(pipeline({
                     {"source_type", "file"}, {key, format},
                     {"file_path", std::string("not-opened.") + extension}}).dump()),
-                    "Explicit and Auto HDF5 must fail preflight");
+                    "Explicit and Auto HDF5 of a missing file must fail");
                 const auto error = executor.GetLastError();
-                Check(error.find("not supported") != std::string::npos &&
-                          (error.find("HDF5") != std::string::npos || error.find("hdf5") != std::string::npos),
-                      "HDF5 must fail with a format reason before file I/O: " + error);
+                // With HighFive the HDF5 reader runs and names the source it
+                // could not open; without it the format is refused up front.
+                const bool reason = cyxwiz::data_input::kHdf5BuildAvailable
+                    ? error.find("DataInput HDF5") != std::string::npos
+                    : error.find("not supported") != std::string::npos;
+                Check(reason && (error.find("HDF5") != std::string::npos || error.find("hdf5") != std::string::npos),
+                      "HDF5 must fail with an HDF5 reason: " + error);
             }
         }
     }
-    std::cout << "Data Input formats passed (2 CSV configurations, 12 HDF5 rejections)\n";
+    std::cout << "Data Input formats passed (2 CSV configurations, 12 HDF5 failures)\n";
 }
 
 int main(int argc, char** argv) {
@@ -3145,8 +3156,8 @@ int main(int argc, char** argv) {
     {
         std::ofstream csv(json_payload_csv_path);
         csv << "payload\n";
-        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Ada\"\"}}\"\n";
-        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Grace\"\"}}\"\n";
+        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Ada\"\",\"\"langs\"\":[\"\"C\"\",\"\"Lisp\"\"]}}\"\n";
+        csv << "\"{\"\"user\"\":{\"\"name\"\":\"\"Grace\"\",\"\"langs\"\":[\"\"COBOL\"\"]}}\"\n";
     }
     {
         std::ofstream csv(decision_tree_csv_path);
@@ -3934,20 +3945,6 @@ int main(int argc, char** argv) {
           "the older source-shaped SQLQuery rejection is specific: " +
               sql_query_executor.GetLastError());
 
-    const std::string hdf5_json =
-        R"({"nodes":[)"
-        R"({"id":430,"type":"HDF5Dataset","name":"HDF5","parameters":{)"
-        R"("file_path":"ignored.h5"}})"
-        R"(],"links":[]})";
-
-    cyxwiz::PipelineExecutor hdf5_executor;
-    Check(!hdf5_executor.ExecutePipeline(hdf5_json),
-          "HDF5Dataset should fail closed until HDF5 loading is real");
-    Check(hdf5_executor.GetLastError().find(
-              "HDF5 loading is not implemented") != std::string::npos,
-          "HDF5Dataset fail-closed error should be specific: " +
-              hdf5_executor.GetLastError());
-
     const std::string rest_api_json =
         R"({"nodes":[)"
         R"({"id":431,"type":"RESTAPISource","name":"REST","parameters":{)"
@@ -4062,8 +4059,6 @@ int main(int argc, char** argv) {
         {"QualityAnalyzer", false},
         {"TableSplitter", false},
         {"ExportExcel", false},
-        {"IFFTNode", false},
-        {"WaveletTransform", false},
         {"NamedEntityRecognizer", false},
         {"ImageFolderDataset", true},
         {"AugmentationPreset", false},
@@ -4312,7 +4307,7 @@ int main(int argc, char** argv) {
     const std::string bad_data_input_type_json =
         R"({"nodes":[)"
         R"({"id":196,"type":"DataInput","name":"BadType","parameters":{)"
-        R"("source_type":"file","file_path":"ignored.h5","type":"hdf5"}})"
+        R"("source_type":"file","file_path":"ignored.arff","type":"arff"}})"
         R"(],"links":[]})";
 
     cyxwiz::PipelineExecutor bad_data_input_type_executor;
@@ -4320,7 +4315,7 @@ int main(int argc, char** argv) {
               bad_data_input_type_json),
           "DataInput unsupported file type should fail validation");
     Check(bad_data_input_type_executor.GetLastError().find(
-              "DataInput type 'hdf5' is not supported") !=
+              "DataInput type 'arff' is not supported") !=
               std::string::npos,
           "DataInput unsupported file type error should be specific: " +
               bad_data_input_type_executor.GetLastError());
@@ -5521,22 +5516,24 @@ int main(int argc, char** argv) {
           "OrdinalEncoder columns validation should be specific: " +
               bad_ordinal_column_type_executor.GetLastError());
 
-    const std::string uppercase_sentiment_method_json =
+    const std::string sentiment_columns_json =
         R"({"nodes":[)"
         R"({"id":352,"type":"DataInput","name":"Input","parameters":{)"
         R"("source_type":"file","file_path":")" + JsonEscapePath(string_csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":353,"type":"SentimentAnalyzer","name":"Sentiment","parameters":{)"
-        R"("text_col":"phrase","method":" SIMPLE "}})"
+        R"("text_col":"phrase"}})"
         R"(],"links":[{"start_node":352,"end_node":353}]})";
 
-    cyxwiz::PipelineExecutor uppercase_sentiment_method_executor;
-    Check(uppercase_sentiment_method_executor.ExecutePipeline(
-              uppercase_sentiment_method_json),
-          "SentimentAnalyzer uppercase method should execute after normalization: " +
-              uppercase_sentiment_method_executor.GetLastError());
-    check_operator_field("ds_operator_SentimentAnalyzer_353", "sentiment_label",
-                         "SentimentAnalyzer uppercase method");
+    cyxwiz::PipelineExecutor sentiment_columns_executor;
+    Check(sentiment_columns_executor.ExecutePipeline(sentiment_columns_json),
+          "SentimentAnalyzer should score with VADER: " + sentiment_columns_executor.GetLastError());
+    check_operator_field("ds_operator_SentimentAnalyzer_353", "phrase_compound",
+                         "SentimentAnalyzer adds the VADER compound beside the columns");
+    check_operator_field("ds_operator_SentimentAnalyzer_353", "phrase_sentiment",
+                         "SentimentAnalyzer adds the sentiment label");
+    check_operator_field("ds_operator_SentimentAnalyzer_353", "phrase",
+                         "SentimentAnalyzer keeps the input's columns");
 
     const std::string bad_tokenizer_text_type_json =
         R"({"nodes":[)"
@@ -5601,7 +5598,7 @@ int main(int argc, char** argv) {
         R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
         R"(","type":"csv","has_header":"true"}},)"
         R"({"id":398,"type":"SentimentAnalyzer","name":"BadSentimentText","parameters":{)"
-        R"("text_col":"x","method":"simple"}})"
+        R"("text_col":"x"}})"
         R"(],"links":[{"start_node":397,"end_node":398}]})";
 
     cyxwiz::PipelineExecutor bad_sentiment_text_type_executor;
@@ -5943,6 +5940,64 @@ int main(int argc, char** argv) {
               uppercase_filter_type_executor.GetLastError());
     check_operator_field("ds_operator_FilterDesigner_355", "signal",
                          "FilterDesigner uppercase filter_type");
+    check_operator_field("ds_operator_FilterDesigner_355", "signal_filtered",
+                         "FilterDesigner adds the filtered column beside the signal");
+
+    // The signal nodes' column contracts (TOFIX129 D7): a one-sided spectrum
+    // table, a filtered column beside the input's, the wavelet parts, and
+    // the FFT table back to the 32 samples.
+    const auto rows_of = [&registry](const std::string& dataset_id) {
+        auto output = registry.GetArrowDataset(dataset_id);
+        return output && output->GetArrowTable() ? output->GetArrowTable()->num_rows() : int64_t{-1};
+    };
+    const std::string signal_input_json =
+        R"({"id":360,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(ts_analysis_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)";
+    const std::string fft_chain_json =
+        R"({"nodes":[)" + signal_input_json +
+        R"({"id":361,"type":"FFTNode","name":"Spectrum","parameters":{"signal_col":"signal","sample_rate":"10"}},)"
+        R"({"id":362,"type":"IFFTNode","name":"Back","parameters":{"samples":"32"}})"
+        R"(],"links":[{"start_node":360,"end_node":361},{"start_node":361,"end_node":362}]})";
+    cyxwiz::PipelineExecutor fft_chain_executor;
+    Check(fft_chain_executor.ExecutePipeline(fft_chain_json),
+          "FFT then IFFT should execute: " + fft_chain_executor.GetLastError());
+    for (const char* column : {"frequency", "period", "amplitude", "phase", "power_density", "real", "imag"})
+        check_operator_field("ds_operator_FFTNode_361", column, "FFT spectrum table");
+    Check(rows_of("ds_operator_FFTNode_361") == 17, "FFT: 32 samples give 17 one-sided bins");
+    check_operator_field("ds_operator_IFFTNode_362", "signal", "IFFT signal table");
+    Check(rows_of("ds_operator_IFFTNode_362") == 32, "IFFT: the 32 samples come back");
+
+    const std::string convolution_json =
+        R"({"nodes":[)" + signal_input_json +
+        R"({"id":363,"type":"Convolution1D","name":"Smooth","parameters":{"signal_col":"signal","kernel":"0.25,0.5,0.25"}})"
+        R"(],"links":[{"start_node":360,"end_node":363}]})";
+    cyxwiz::PipelineExecutor convolution_executor;
+    Check(convolution_executor.ExecutePipeline(convolution_json),
+          "Convolution1D should execute: " + convolution_executor.GetLastError());
+    check_operator_field("ds_operator_Convolution1D_363", "signal", "Convolution1D keeps the signal");
+    check_operator_field("ds_operator_Convolution1D_363", "signal_filtered", "Convolution1D adds the filtered column");
+    Check(rows_of("ds_operator_Convolution1D_363") == 32, "Convolution1D keeps the rows");
+
+    const std::string wavelet_json =
+        R"({"nodes":[)" + signal_input_json +
+        R"({"id":364,"type":"WaveletTransform","name":"Parts","parameters":{"signal_col":"signal","wavelet":"db2","level":"2","denoise":"soft"}})"
+        R"(],"links":[{"start_node":360,"end_node":364}]})";
+    cyxwiz::PipelineExecutor wavelet_executor;
+    Check(wavelet_executor.ExecutePipeline(wavelet_json),
+          "WaveletTransform should execute: " + wavelet_executor.GetLastError());
+    for (const char* column : {"signal", "signal_A2", "signal_D2", "signal_D1", "signal_denoised"})
+        check_operator_field("ds_operator_WaveletTransform_364", column, "WaveletTransform parts");
+    Check(rows_of("ds_operator_WaveletTransform_364") == 32, "WaveletTransform keeps the rows");
+
+    const std::string default_filter_json =
+        R"({"nodes":[)" + signal_input_json +
+        R"({"id":365,"type":"FilterDesigner","name":"Defaults","parameters":{"signal_col":"signal"}})"
+        R"(],"links":[{"start_node":360,"end_node":365}]})";
+    cyxwiz::PipelineExecutor default_filter_executor;
+    Check(default_filter_executor.ExecutePipeline(default_filter_json),
+          "FilterDesigner runs with its defaults (cutoff 0.1 at fs 1, 31 taps): " + default_filter_executor.GetLastError());
+    check_operator_field("ds_operator_FilterDesigner_365", "signal_filtered", "FilterDesigner defaults");
 
     const std::string uppercase_decomposition_choices_json =
         R"({"nodes":[)"
@@ -7798,9 +7853,28 @@ int main(int argc, char** argv) {
           "UnitConverter output dataset is registered");
     auto converted_units_table = converted_units->GetArrowTable();
     Check(converted_units_table != nullptr, "UnitConverter output table exists");
-    Check(std::fabs(ReadNumericValue(converted_units_table, "x", 0) -
-                    3.28084) < 0.001,
-          "UnitConverter should convert meters to feet");
+    Check(std::fabs(ReadNumericValue(converted_units_table, "x", 0) - 1.0 / 0.3048) < 1e-12,
+          "UnitConverter should convert meters to feet exactly (1 ft = 0.3048 m)");
+
+    // Temperatures go through Celsius with the defining constants, as the
+    // Utilities window: x = 1 degC is 33.8 degF.
+    const std::string temperature_json =
+        R"({"nodes":[)"
+        R"({"id":643,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":644,"type":"UnitConverter","name":"Convert","parameters":{)"
+        R"("category":"temperature","from_unit":"celsius","to_unit":"fahrenheit"}})"
+        R"(],"links":[{"start_node":643,"end_node":644}]})";
+    cyxwiz::PipelineExecutor temperature_executor;
+    Check(temperature_executor.ExecutePipeline(temperature_json),
+          "UnitConverter should convert temperatures: " + temperature_executor.GetLastError());
+    auto converted_temperature = registry.GetArrowDataset("ds_unitconverter_644");
+    Check(converted_temperature != nullptr && converted_temperature->GetArrowTable() != nullptr,
+          "UnitConverter temperature output table exists");
+    if (converted_temperature != nullptr && converted_temperature->GetArrowTable() != nullptr)
+        Check(std::fabs(ReadNumericValue(converted_temperature->GetArrowTable(), "x", 0) - 33.8) < 1e-12,
+              "UnitConverter should convert 1 degC to 33.8 degF");
 
     const std::string calculator_json =
         R"({"nodes":[)"
@@ -7845,6 +7919,16 @@ int main(int argc, char** argv) {
           "JSONPathExtractor should extract first row value");
     Check(ReadStringValue(json_path_table, "value", 1) == "Grace",
           "JSONPathExtractor should extract second row value");
+
+    // Array items by [n], as Tools > Utilities > JSON; a row without one is empty.
+    std::string json_index_json = json_path_json;
+    json_index_json.replace(json_index_json.find("$.user.name"), 11, "user.langs[1]");
+    cyxwiz::PipelineExecutor json_index_executor;
+    Check(json_index_executor.ExecutePipeline(json_index_json),
+          "JSONPathExtractor should read an array item: " + json_index_executor.GetLastError());
+    auto json_index_table = registry.GetArrowDataset("ds_jsonpath_652")->GetArrowTable();
+    Check(ReadStringValue(json_index_table, "value", 0) == "Lisp", "JSONPathExtractor reads user.langs[1]");
+    Check(json_index_table->column(0)->null_count() == 1, "a row without langs[1] gives an empty cell");
 
     const std::string regex_tester_json =
         R"({"nodes":[)"
@@ -8931,6 +9015,32 @@ int main(int argc, char** argv) {
           "TextClean legacy alias output table exists");
     Check(ReadStringValue(text_clean_alias_table, "phrase_cleaned", 0) == "tea cup",
           "TextClean legacy alias should write cleaned output column");
+
+    // Special characters go; letters of every script stay (TOFIX129 D8).
+    const fs::path script_csv_path = fs::temp_directory_path() / "cyxwiz_pipeline_executor_scripts.csv";
+    {
+        std::ofstream script_csv(script_csv_path, std::ios::binary);
+        script_csv << "phrase\n\"Caf\xC3\xA9 \xC3\x9C" "ber, \xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82! 42%\"\n";
+    }
+    const std::string text_clean_scripts_json =
+        R"({"nodes":[)"
+        R"({"id":254,"type":"DataInput","name":"Input","parameters":{)"
+        R"("source_type":"file","file_path":")" + JsonEscapePath(script_csv_path.string()) +
+        R"(","type":"csv","has_header":"true"}},)"
+        R"({"id":255,"type":"TextCleanNode","name":"CleanScripts","parameters":{)"
+        R"("text_column":"phrase","lowercase":"true","remove_special_chars":"true"}})"
+        R"(],"links":[{"start_node":254,"end_node":255}]})";
+    cyxwiz::PipelineExecutor text_clean_scripts_executor;
+    Check(text_clean_scripts_executor.ExecutePipeline(text_clean_scripts_json),
+          "TextCleanNode on accented and Cyrillic text: " + text_clean_scripts_executor.GetLastError());
+    auto text_clean_scripts = registry.GetArrowDataset("ds_textclean_255");
+    Check(text_clean_scripts != nullptr && text_clean_scripts->GetArrowTable() != nullptr,
+          "TextCleanNode scripts output is registered");
+    Check(ReadStringValue(text_clean_scripts->GetArrowTable(), "phrase_cleaned", 0) ==
+              "caf\xC3\xA9 \xC3\xBC" "ber \xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82 42",
+          "TextCleanNode keeps letters of every script: " +
+              ReadStringValue(text_clean_scripts->GetArrowTable(), "phrase_cleaned", 0));
+    fs::remove(script_csv_path);
 
     const std::string text_clean_stopwords_json =
         R"({"nodes":[)"

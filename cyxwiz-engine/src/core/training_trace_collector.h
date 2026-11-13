@@ -2,6 +2,8 @@
 
 #include "crash_run_recorder.h"
 #include "training_randomness.h"
+#include <atomic>
+#include <chrono>
 #include <algorithm>
 #include <cstdint>
 #include <deque>
@@ -39,6 +41,9 @@ struct TrainingTraceEvent {
     float validation_loss = 0.0f;
     float validation_accuracy = 0.0f;
     float duration_ms = 0.0f;
+    // Milliseconds from the run's start to this event's end, for the Runtime
+    // Timeline's time axis. -1: a run recorded before events carried it.
+    double run_ms = -1.0;
     uint64_t cpu_allocated_bytes = 0;
     uint64_t cpu_peak_bytes = 0;
     uint64_t af_allocated_bytes = 0;
@@ -324,6 +329,10 @@ private:
     void MaybePersistLocked(bool force);
     void WriteLocked() const;
     static std::string NowLocal();
+    // Milliseconds since StartRun (an atomic start: events are stamped from
+    // several threads, some outside the lock).
+    double RunMsLocked() const;
+    std::atomic<long long> run_started_ns_{0};
     static std::string ThreadIdString();
 
     mutable std::mutex mutex_;

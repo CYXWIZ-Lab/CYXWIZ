@@ -1,4 +1,5 @@
 #include "plugin_panel_registry.h"
+#include <imgui.h>
 #include <spdlog/spdlog.h>
 
 namespace cyxwiz::plugin {
@@ -81,18 +82,23 @@ void PluginPanelRegistry::RenderAllVisible() {
         std::string id;
         IPanelProvider* provider;
         bool visible;
+        bool focus;
     };
     std::vector<RenderItem> to_render;
     {
         std::lock_guard lock(mutex_);
         for (auto& [id, entry] : panels_) {
-            if (entry.visible && entry.provider)
-                to_render.push_back({id, entry.provider, entry.visible});
+            if (entry.visible && entry.provider) {
+                to_render.push_back({id, entry.provider, entry.visible, entry.focus_pending});
+                entry.focus_pending = false;
+            }
         }
     }
 
     for (auto& item : to_render) {
         bool vis = item.visible;
+        // The panel's first window is the one ShowPanel asked to bring forward
+        if (item.focus) ImGui::SetNextWindowFocus();
         try {
             item.provider->RenderPanel(item.id, &vis);
         } catch (const std::exception& e) {
@@ -120,6 +126,15 @@ void PluginPanelRegistry::SetPanelVisible(const std::string& panel_id, bool visi
     auto it = panels_.find(panel_id);
     if (it != panels_.end())
         it->second.visible = visible;
+}
+
+bool PluginPanelRegistry::ShowPanel(const std::string& plugin_id, const std::string& panel_id) {
+    std::lock_guard lock(mutex_);
+    auto it = panels_.find(panel_id);
+    if (it == panels_.end() || it->second.plugin_id != plugin_id) return false;
+    it->second.visible = true;
+    it->second.focus_pending = true;
+    return true;
 }
 
 void PluginPanelRegistry::TogglePanelVisible(const std::string& panel_id) {

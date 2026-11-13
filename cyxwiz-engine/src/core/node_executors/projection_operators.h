@@ -10,7 +10,7 @@
 // Params (both): feature_cols (comma-separated; empty = every numeric column
 // but label_col), label_col, standardise (true), keep_columns (true),
 // n_components (2 or 3).
-// t-SNE: perplexity (30), learning_rate (200), iterations (1000).
+// t-SNE: perplexity (30), learning_rate (0: auto, scikit-learn's rows / 48, at least 50), iterations (1000).
 // UMAP: n_neighbors (15), min_dist (0.1).
 
 #include "pipeline_operator.h"
@@ -52,7 +52,7 @@ private:
     std::string Prefix() const override { return "tsne_"; }
 
     int perplexity_ = 30;
-    double learning_rate_ = 200.0;
+    double learning_rate_ = 0.0;  // 0: auto (TsneLearningRate)
     int iterations_ = 1000;
 };
 

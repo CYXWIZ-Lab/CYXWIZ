@@ -77,10 +77,30 @@ struct CYXWIZ_API StandardizeOptions {
     bool with_std = true;   // divide by the population std (a zero std divides by 1)
 };
 
-// Rows flagged as outliers in one column (FindOutliers).
+// The bounds an outlier rule learned from a column (OutlierBoundsOf): a value
+// below `lo` or above `hi` is an outlier. `spread` false when the rule found
+// no spread to measure against (every value the same, Q1 = Q3, MAD = 0): then
+// nothing is an outlier and lo / hi are not set.
+struct CYXWIZ_API OutlierBounds {
+    double lo = 0.0, hi = 0.0;
+    bool spread = false;
+    bool success = false;
+    std::string error_message;
+};
+
+// Values clamped into an outlier rule's bounds (ClipTo).
+struct CYXWIZ_API ClippedValues {
+    std::vector<double> values;
+    size_t clipped = 0;  // how many values moved
+    bool success = false;
+    std::string error_message;
+};
+
+// Rows flagged as outliers in one column (FindOutliers, FlagOutside).
 struct CYXWIZ_API OutlierFlags {
     std::vector<unsigned char> is_outlier;  // one flag per value
     size_t count = 0;
+    OutlierBounds bounds;                   // the bounds the flags came from
     bool success = false;
     std::string error_message;
 };
@@ -132,8 +152,16 @@ public:
     // ========== Outliers ==========
     // "iqr": outside [q1 - t * IQR, q3 + t * IQR] (linear quartiles); "zscore":
     // |x - mean| / std > t (population std, scipy.stats.zscore; none when the std
-    // is 0).
+    // is 0); "modified_z": |x - median| / (MAD / 0.6745) > t (Iglewicz-Hoaglin,
+    // MAD = median |x - median|; none when the MAD is 0).
     static OutlierFlags FindOutliers(const std::vector<double>& data, const std::string& method, double threshold);
+    // The rule's bounds learned from `data` alone (a step learns them from the
+    // Train rows, then flags, clips or drops every row with FlagOutside / ClipTo).
+    static OutlierBounds OutlierBoundsOf(const std::vector<double>& data, const std::string& method, double threshold);
+    // One flag per value: below `bounds.lo` or above `bounds.hi` (none without spread).
+    static OutlierFlags FlagOutside(const std::vector<double>& data, const OutlierBounds& bounds);
+    // Each value clamped into [lo, hi] (unchanged without spread).
+    static ClippedValues ClipTo(const std::vector<double>& data, const OutlierBounds& bounds);
 
     // ========== Log Transforms ==========
     // base "natural", "log10" or "log2"; log1p takes log(1 + x)

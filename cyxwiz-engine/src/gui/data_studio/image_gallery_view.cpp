@@ -159,7 +159,7 @@ void ImageGalleryView::UpdatePipeline(const ig::Row& row) {
     pipeline_key_ = key;
     auto result = std::make_shared<ImagePipelinePreview>();
     const std::string path = row.path;
-    const uint32_t seed = static_cast<uint32_t>(std::hash<std::string>{}(path));
+    const uint32_t seed = PreviewSeedOf(path);
     std::weak_ptr<int> alive = alive_;
     pipeline_task_ = AsyncTaskManager::Instance().RunAsync(
         "What the model sees: " + row.file,

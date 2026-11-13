@@ -1,4 +1,5 @@
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/data_input_formats.h"
 #include "../src/core/data_preview_service.h"
 #include "../src/core/data_registry.h"
 #include "../src/core/parquet_backed_dataset.h"
@@ -164,9 +165,12 @@ void TestPreviewSourceContract() {
         for (int selected_type : {0, type}) {
             const auto rejected = gui::data_input::LoadDelimitedPreview(
                 "not-opened." + extension, true, ',', selected_type);
-            // JSON Lines loads (TOFIX143) and previews once applied, like Parquet.
-            const auto* expected_reason = (type == 5 || type == 6)
-                ? "loading is not supported" : "Apply this source first";
+            // JSON Lines (TOFIX143) and HDF5 (TOFIX189) load and preview once
+            // applied, like Parquet.
+            const bool loads = type != 5 &&
+                (type != 6 || cyxwiz::data_input::kHdf5BuildAvailable);
+            const auto* expected_reason = loads
+                ? "Apply this source first" : "loading is not supported";
             Check(rejected.error.find(expected_reason) != std::string::npos &&
                       rejected.columns.empty() && rejected.rows.empty(),
                   extension + " (type " + std::to_string(selected_type) +
@@ -180,8 +184,9 @@ void TestPreviewSourceContract() {
             {"has_header", "true"}, {"delimiter", ","},
             {"decimal_point", "."}, {"missing_value_tokens", ""},
             {"skip_rows", "0"}, {"max_rows", "0"}};
-        Check(!MatchesAppliedTabularPreview(applied, source),
-              "Matching saved HDF5 settings must not advertise registered preview support");
+        Check(MatchesAppliedTabularPreview(applied, source) ==
+                  cyxwiz::data_input::kHdf5BuildAvailable,
+              "Matching saved HDF5 settings reuse the registered preview when the build loads HDF5");
     }
 }
 

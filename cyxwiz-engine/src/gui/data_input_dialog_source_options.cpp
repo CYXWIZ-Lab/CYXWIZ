@@ -17,6 +17,7 @@
 #include <imgui_stdlib.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <set>
@@ -134,7 +135,7 @@ void DataInputDialog::RenderFileSource() {
     const auto& t = cyxwiz::ui::CurrentTokens();
     if (source_buf_[0] == '\0' && (file_path_[0] || folder_path_[0])) {
         const bool folder = data_input::UsesFolderPath(file_category_, text_layout_) && folder_path_[0];
-        std::strncpy(source_buf_, folder ? folder_path_ : file_path_, sizeof(source_buf_) - 1);
+        std::snprintf(source_buf_, sizeof(source_buf_), "%s", folder ? folder_path_ : file_path_);
         if (folder && folder_scan_path_ != folder_path_) RescanFolder();
     }
 

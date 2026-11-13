@@ -2,8 +2,25 @@
 
 CyxWiz provides dense TF-IDF and count-vectorizer nodes for classic NLP
 workflows. Their numerical contract follows scikit-learn for raw counts, IDF,
-binary presence, vocabulary capping, and optional row normalization on the
-supported tokenization subset.
+binary presence, vocabulary capping, and optional row normalization.
+Data Studio's Explore > Text > Terms weighs the terms with the same code and
+adds this node with its settings ([text](text.md#terms)).
+
+## Words and terms
+
+A row's terms are counted the way Data Studio's Text tab counts them
+(`TextProcessing::Terms`, also `pycyxwiz.text.terms`):
+
+1. **Words**: runs of letters and digits of any script, lower-cased, two or
+   more long; an apostrophe between two runs is kept ("don't"), and a
+   typographic apostrophe reads as one. Python:
+   `re.finditer(r"[^\W_]+(?:'[^\W_]+)*", text)`, lower-cased. This is
+   scikit-learn's analyzer with that tokenizer: its default `token_pattern`
+   (`\b\w\w+\b`) splits "don't" into "don" and keeps the underscore.
+2. **Stop words** (`stop_words=english`): scikit-learn's `ENGLISH_STOP_WORDS`
+   (318) and their contractions (54), left out before the n-grams.
+3. **N-grams** (`ngram_range`): the word n-grams, shortest first, joined by a
+   space.
 
 ## TFIDFVectorizer
 
@@ -83,7 +100,8 @@ Examples:
 Malformed, zero, negative, reversed, or unsupported ranges fail before
 materialization. The current maximum n-gram width is three.
 
-English stop words are removed before n-grams are generated. For sentiment
+English stop words are removed before n-grams are generated, so with
+`stop_words=english` a pair never spans a removed word. For sentiment
 classification, prefer:
 
 ```text
@@ -91,8 +109,9 @@ ngram_range=1,2
 stop_words=none
 ```
 
-The engine's English stop-word list includes negation words such as `not` and
-`no`; keeping them allows phrase features such as `not good` and `no hope`.
+The English stop-word list (scikit-learn's) includes negation words such as
+`not`, `no` and `nor`; keeping them allows phrase features such as `not good`
+and `no hope`.
 
 ## TextTokenizer
 

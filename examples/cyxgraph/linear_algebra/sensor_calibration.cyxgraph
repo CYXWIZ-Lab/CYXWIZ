@@ -1,0 +1,91 @@
+{
+  "version": "2.1",
+  "data_boundary_version": 2,
+  "data_validator_contract_version": 2,
+  "evaluation_table_contract_version": 2,
+  "classical_tree_table_contract_version": 2,
+  "framework": 0,
+  "execution_mode": 1,
+  "workflow_description": "Sensor calibration: Linear Solve finds the meter's weights from two tables; PCA maps the sensors onto their two widest directions.",
+  "groups": [],
+  "annotations": [],
+  "nodes": [
+    {
+      "id": 1,
+      "type": 157,
+      "name": "Sensors",
+      "pos_x": 0,
+      "pos_y": 0,
+      "parameters": {
+        "source_type": "file",
+        "file_path": "sensors.csv",
+        "file_type": "csv",
+        "file_category": "tabular",
+        "has_header": "true"
+      }
+    },
+    {
+      "id": 2,
+      "type": 157,
+      "name": "Meter",
+      "pos_x": 0,
+      "pos_y": 300,
+      "parameters": {
+        "source_type": "file",
+        "file_path": "meter.csv",
+        "file_type": "csv",
+        "file_category": "tabular",
+        "has_header": "true"
+      }
+    },
+    {
+      "id": 3,
+      "type": 369,
+      "name": "Calibration weights",
+      "pos_x": 320,
+      "pos_y": 150,
+      "parameters": {
+        "a_cols": "s1,s2,s3",
+        "b_cols": "meter",
+        "method": "least_squares"
+      }
+    },
+    {
+      "id": 4,
+      "type": 217,
+      "name": "PCA (2 components)",
+      "pos_x": 320,
+      "pos_y": -150,
+      "parameters": {
+        "feature_cols": "s1,s2,s3",
+        "n_components": "2",
+        "center": "true",
+        "scale": "false",
+        "keep_columns": "false"
+      }
+    }
+  ],
+  "links": [
+    {
+      "id": 1,
+      "from_node": 1,
+      "to_node": 3,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    },
+    {
+      "id": 2,
+      "from_node": 2,
+      "to_node": 3,
+      "from_pin_index": 0,
+      "to_pin_index": 1
+    },
+    {
+      "id": 3,
+      "from_node": 1,
+      "to_node": 4,
+      "from_pin_index": 0,
+      "to_pin_index": 0
+    }
+  ]
+}

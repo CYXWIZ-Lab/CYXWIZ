@@ -7,6 +7,7 @@
 #include <string>
 #include <map>
 #include <cmath>
+#include <functional>
 #include <random>
 
 namespace cyxwiz {
@@ -150,6 +151,18 @@ struct CYXWIZ_API ForecastResult {
     int horizon = 0;                              // Forecast horizon
     bool success = false;
     std::string error_message;
+};
+
+// While one lives, the fits of this thread (smoothing, ARIMA, STL, the ADF
+// test) ask `stop` between their passes; when it says true they end with
+// success false and error_message "Cancelled.". Scopes nest: the innermost
+// is asked.
+class CYXWIZ_API TimeSeriesStop {
+public:
+    explicit TimeSeriesStop(std::function<bool()> stop);
+    ~TimeSeriesStop();
+    TimeSeriesStop(const TimeSeriesStop&) = delete;
+    TimeSeriesStop& operator=(const TimeSeriesStop&) = delete;
 };
 
 // ============================================================================

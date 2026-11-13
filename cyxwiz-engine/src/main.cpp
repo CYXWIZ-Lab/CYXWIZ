@@ -1,9 +1,14 @@
 #include "application.h"
 #include "engine_runtime_ownership.h"
+#include "runtime_layout.h"
 #include "backend_pack_platform.h"
 #include "plugin/plugin_manager.h"
 #include "plugin/plugin_data_formats.h"
 #include "plugin/plugin_session.h"
+#include "plugin/engine_plugin_context.h"
+#include "core/engine_config.h"
+#include "core/project_manager.h"
+#include "gui/plugin_ui_kit.h"
 #include <cyxwiz/cyxwiz.h>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -463,10 +468,48 @@ int main(int argc, char** argv) {
             if (!user_dir.empty()) search_paths.push_back(user_dir);
             pm.SetSearchPaths(search_paths);
             spdlog::debug("Plugin system: {} search paths configured", search_paths.size());
+            // An installed Engine also loads the plugin packs active in its
+            // runtime (runtime/active-plugins.json), from their exact folders.
+            if (const auto runtime_root = EnvironmentRuntimeRoot(); !runtime_root.empty()) {
+                cyxwiz::runtime::ActiveRuntimeState active;
+                std::vector<cyxwiz::runtime::ActivePluginPack> packs;
+                std::vector<std::string> skipped;
+                std::string error;
+                if (cyxwiz::runtime::LoadActiveRuntimeState(runtime_root / "active-runtime.json",
+                                                            active, error) &&
+                    cyxwiz::runtime::ResolveActivePluginPacks(runtime_root, active.base_pack_id,
+                                                              packs, skipped, error)) {
+                    std::vector<std::pair<std::string, std::filesystem::path>> pack_plugins;
+                    for (auto& pack : packs) pack_plugins.emplace_back(pack.plugin_id, pack.directory);
+                    pm.SetPackPlugins(std::move(pack_plugins));
+                    for (const auto& reason : skipped)
+                        spdlog::warn("Plugin pack not loaded: {}", reason);
+                } else {
+                    spdlog::warn("Installed plugin packs were not read: {}", error);
+                }
+            }
             // Plugins loaded in an earlier session and set to load at startup
             // (TOFIX125 step 2.9); others load from the Plugin Manager.
             // Plugin dataset formats reach Data Input through the core's hook (TOFIX181).
             cyxwiz::plugin::InstallPluginDataFormats();
+            // Plugin panels draw the Engine's widgets (plugin API 1.4).
+            cyxwiz::plugin::EnginePluginContext::SetUi(&cyxwiz::ui::PluginUiKit());
+            // The open project's folder and the plugins' saved settings (plugin API 1.4)
+            cyxwiz::plugin::EnginePluginContext::SetHostServices({
+                [] {
+                    auto& projects = cyxwiz::ProjectManager::Instance();
+                    return projects.HasActiveProject() ? std::filesystem::path(projects.GetProjectRoot())
+                                                       : std::filesystem::path{};
+                },
+                [](const std::string& plugin_id, const std::string& key, std::string& value) {
+                    return cyxwiz::core::EngineConfig::Instance().PluginSetting(plugin_id, key, value);
+                },
+                [](const std::string& plugin_id, const std::string& key, const std::string& value) {
+                    auto& config = cyxwiz::core::EngineConfig::Instance();
+                    config.SetPluginSetting(plugin_id, key, value);
+                    config.Save();
+                },
+            });
             cyxwiz::plugin::LoadStartupPlugins(pm);
         }
 

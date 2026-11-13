@@ -24,7 +24,6 @@ enum class DatasetType {
     HuggingFace,
     Kaggle,
     Custom,
-    HDF5,               // HDF5 data files (.h5, .hdf5)
     Streaming,
     Audio,
     TimeSeries,

@@ -24,8 +24,17 @@ public:
     bool IsRunning() const { return mad_.Running() || counts_.Running() || rows_.Running() || bins_.Running(); }
 
     std::function<void(const std::string& sql)> on_open_query;
+    // Adds an Outlier Detector step after the dataset's node with this
+    // column, rule and factor, and `action` "flag", "clip" or "remove"
+    // (TOFIX129 D7a G2); returns what happened (or why not). Null, or
+    // `step_blocker` non-empty: the buttons are disabled with the reason.
+    std::function<std::string(const std::string& column, explore::OutlierRule rule, double factor, const char* action)> on_add_step;
+    std::function<std::string()> step_blocker;
 
 private:
+    void RenderStepButtons(const ExploreContext& context, const explore::OutlierBounds& bounds, size_t outliers);
+    std::string message_;
+    bool message_error_ = false;
     bool RenderControls(const DatasetProfile& profile);
     void RenderDistribution(const ExploreContext& context, const ProfiledColumn& column, const explore::OutlierBounds* bounds);
     void RenderRows(const ExploreContext& context, const ProfiledColumn& column, const explore::OutlierBounds& bounds, size_t total);

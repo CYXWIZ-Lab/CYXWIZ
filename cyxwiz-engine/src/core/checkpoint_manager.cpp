@@ -373,6 +373,31 @@ std::string CheckpointManager::GenerateCheckpointName(const TrainingMetrics& met
     return ss.str();
 }
 
+std::string WriteCheckpointDecision(const fs::path& checkpoint, const std::string& decision_json) {
+    try {
+        const fs::path dir = fs::is_directory(checkpoint) ? checkpoint : checkpoint.parent_path();
+        const fs::path path = dir / "metadata.json";
+        json j;
+        {
+            std::ifstream in(path);
+            if (!in.is_open()) return "the checkpoint has no readable metadata.json (" + path.string() + ")";
+            in >> j;
+        }
+        if (decision_json.empty()) j.erase("decision");
+        else j["decision"] = json::parse(decision_json);
+        const fs::path temporary = dir / "metadata.json.tmp";
+        {
+            std::ofstream out(temporary);
+            out << j.dump(2);
+            if (!out.good()) return "could not write " + temporary.string();
+        }
+        fs::rename(temporary, path);
+        return "";
+    } catch (const std::exception& error) {
+        return error.what();
+    }
+}
+
 bool CheckpointManager::SaveMetadata(const fs::path& dir, const CheckpointMetadata& metadata) {
     try {
         json j;
@@ -395,6 +420,7 @@ bool CheckpointManager::SaveMetadata(const fs::path& dir, const CheckpointMetada
         if (!metadata.tokenizer_sha256.empty()) j["tokenizer_sha256"] = metadata.tokenizer_sha256;
         if (metadata.context > 0) j["context"] = metadata.context;
         if (!metadata.initialized_from.empty()) j["initialized_from"] = metadata.initialized_from;
+        if (!metadata.decision_json.empty()) j["decision"] = json::parse(metadata.decision_json);
         if (metadata.split.known)
             j["data_split"] = {{"train", metadata.split.train},
                                {"val", metadata.split.val},
@@ -464,6 +490,7 @@ std::optional<CheckpointMetadata> CheckpointManager::LoadMetadata(const fs::path
         metadata.tokenizer_sha256 = j.value("tokenizer_sha256", "");
         metadata.context = j.value("context", 0);
         metadata.initialized_from = j.value("initialized_from", "");
+        if (j.contains("decision") && j["decision"].is_object()) metadata.decision_json = j["decision"].dump();
         if (j.contains("data_split") && j["data_split"].is_object()) {
             const auto& s = j["data_split"];
             metadata.split.known = true;

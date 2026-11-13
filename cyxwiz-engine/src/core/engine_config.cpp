@@ -3,6 +3,7 @@
 #include "core/cloud_gateway_address.h"
 #include "common/server_address.h"
 
+#include <cmath>
 #include <fstream>
 #include <algorithm>
 #include <cctype>
@@ -117,6 +118,14 @@ std::filesystem::path GetExecutableDir() {
     std::filesystem::path exe_path(count > 0 ? std::string(path, count) : ".");
     return exe_path.parent_path();
 #endif
+}
+
+// The Stress test's defaults within the panel's ranges
+PolicyStressDefaults ClampStressDefaults(PolicyStressDefaults d) {
+    d.kind = std::clamp(d.kind, 0, 4);  // the five disturbances of rl::StressKind
+    d.levels = std::clamp(d.levels, 2, 21);
+    d.episodes = std::clamp(d.episodes, 1, 100);
+    return d;
 }
 
 }  // namespace
@@ -419,9 +428,82 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             appearance_ = loaded;
         }
 
+        if (config.contains("utilities") && config["utilities"].is_object()) try {
+            const auto& u = config["utilities"];
+            UtilitiesConfig loaded;
+            loaded.tab = u.value("tab", loaded.tab);
+            loaded.digits = std::clamp(u.value("digits", loaded.digits), 1, 17);
+            loaded.degrees = u.value("degrees", loaded.degrees);
+            loaded.unit_category = u.value("unit_category", loaded.unit_category);
+            loaded.hash_algorithm = u.value("hash_algorithm", loaded.hash_algorithm);
+            loaded.json_indent = std::clamp(u.value("json_indent", loaded.json_indent), 0, 8);
+            loaded.regex_ignore_case = u.value("regex_ignore_case", loaded.regex_ignore_case);
+            loaded.regex_multiline = u.value("regex_multiline", loaded.regex_multiline);
+            utilities_ = loaded;
+        } catch (const std::exception& e) {
+            // A hand-edited value of the wrong type: the shipped defaults, and
+            // the rest of the file still loads.
+            spdlog::warn("Engine settings: the utilities defaults could not be read ({}); using the shipped ones", e.what());
+        }
+
+        if (config.contains("monitor") && config["monitor"].is_object()) try {
+            const auto& m = config["monitor"];
+            MonitorConfig loaded;
+            loaded.tab = m.value("tab", loaded.tab);
+            loaded.interval_seconds = std::clamp(m.value("interval_seconds", loaded.interval_seconds), 0.25, 60.0);
+            // One of the three lengths the window offers; another value takes the nearest.
+            const double keep = m.value("keep_seconds", loaded.keep_seconds);
+            loaded.keep_seconds = 300.0;
+            for (const double offered : {900.0, 3600.0})
+                if (std::fabs(offered - keep) < std::fabs(loaded.keep_seconds - keep)) loaded.keep_seconds = offered;
+            loaded.log_frame_rate = m.value("log_frame_rate", loaded.log_frame_rate);
+            loaded.log_python_commands = m.value("log_python_commands", loaded.log_python_commands);
+            loaded.frame_overlay = m.value("frame_overlay", loaded.frame_overlay);
+            monitor_ = loaded;
+        } catch (const std::exception& e) {
+            spdlog::warn("Engine settings: the monitor defaults could not be read ({}); using the shipped ones", e.what());
+        }
+
         data_budget_bytes_ = 0;
         if (config.contains("data") && config["data"].is_object())
             data_budget_bytes_ = config["data"].value("budget_bytes", uint64_t{0});
+
+        simulation_rate_hz_ = kDefaultSimulationRateHz;
+        open_simulation_monitor_on_run_ = true;
+        if (config.contains("simulation") && config["simulation"].is_object()) {
+            const auto& simulation = config["simulation"];
+            simulation_rate_hz_ = std::clamp(simulation.value("rate_hz", kDefaultSimulationRateHz),
+                                             kMinSimulationRateHz, kMaxSimulationRateHz);
+            open_simulation_monitor_on_run_ = simulation.value("open_monitor_on_run", true);
+        }
+
+        plugin_settings_.clear();
+        if (config.contains("plugin_settings") && config["plugin_settings"].is_object()) {
+            for (const auto& [plugin_id, values] : config["plugin_settings"].items()) {
+                if (!values.is_object()) continue;
+                for (const auto& [key, value] : values.items())
+                    if (value.is_string()) plugin_settings_[plugin_id][key] = value.get<std::string>();
+            }
+        }
+
+        policy_playback_best_ = true;
+        policy_playback_speed_ = 0;
+        play_policy_after_training_ = false;
+        policy_stress_defaults_ = {};
+        watch_training_mode_ = 0;
+        watch_training_every_ = 20;
+        if (config.contains("policy_playback") && config["policy_playback"].is_object()) {
+            const auto& playback = config["policy_playback"];
+            policy_playback_best_ = playback.value("best_actions", true);
+            policy_playback_speed_ = std::clamp(playback.value("speed", 0), 0, 2);
+            play_policy_after_training_ = playback.value("play_after_training", false);
+            const PolicyStressDefaults d;
+            policy_stress_defaults_ = ClampStressDefaults({playback.value("stress_kind", d.kind),
+                                                           playback.value("stress_levels", d.levels),
+                                                           playback.value("stress_episodes", d.episodes)});
+            watch_training_mode_ = std::clamp(playback.value("watch_training", 0), 0, 2);
+            watch_training_every_ = std::clamp(playback.value("watch_every_updates", 20), 1, 1000);
+        }
 
         runtime_log_saved_filters_.clear();
         if (config.contains("observability") &&
@@ -548,6 +630,17 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
                 {"name", filter.name}, {"expression", filter.expression}});
         }
         config["data"] = {{"budget_bytes", data_budget_bytes_}};
+        config["simulation"] = {{"rate_hz", simulation_rate_hz_},
+                                {"open_monitor_on_run", open_simulation_monitor_on_run_}};
+        if (!plugin_settings_.empty()) config["plugin_settings"] = plugin_settings_;
+        config["policy_playback"] = {{"best_actions", policy_playback_best_},
+                                     {"speed", policy_playback_speed_},
+                                     {"play_after_training", play_policy_after_training_},
+                                     {"stress_kind", policy_stress_defaults_.kind},
+                                     {"stress_levels", policy_stress_defaults_.levels},
+                                     {"stress_episodes", policy_stress_defaults_.episodes},
+                                     {"watch_training", watch_training_mode_},
+                                     {"watch_every_updates", watch_training_every_}};
         config["observability"] = {
             {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
@@ -560,6 +653,24 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"code_font_scale", appearance_.code_font_scale},
             {"sidebar_left", appearance_.sidebar_left},
             {"custom_theme_file", appearance_.custom_theme_file}
+        };
+        config["utilities"] = {
+            {"tab", utilities_.tab},
+            {"digits", utilities_.digits},
+            {"degrees", utilities_.degrees},
+            {"unit_category", utilities_.unit_category},
+            {"hash_algorithm", utilities_.hash_algorithm},
+            {"json_indent", utilities_.json_indent},
+            {"regex_ignore_case", utilities_.regex_ignore_case},
+            {"regex_multiline", utilities_.regex_multiline}
+        };
+        config["monitor"] = {
+            {"tab", monitor_.tab},
+            {"interval_seconds", monitor_.interval_seconds},
+            {"keep_seconds", monitor_.keep_seconds},
+            {"log_frame_rate", monitor_.log_frame_rate},
+            {"log_python_commands", monitor_.log_python_commands},
+            {"frame_overlay", monitor_.frame_overlay}
         };
 
         // Recent projects
@@ -899,6 +1010,32 @@ void EngineConfig::SetAppearance(const AppearanceConfig& appearance) {
     }
 }
 
+UtilitiesConfig EngineConfig::GetUtilities() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return utilities_;
+}
+
+void EngineConfig::SetUtilities(const UtilitiesConfig& utilities) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(utilities_ == utilities)) {
+        utilities_ = utilities;
+        modified_ = true;
+    }
+}
+
+MonitorConfig EngineConfig::GetMonitor() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return monitor_;
+}
+
+void EngineConfig::SetMonitor(const MonitorConfig& monitor) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!(monitor_ == monitor)) {
+        monitor_ = monitor;
+        modified_ = true;
+    }
+}
+
 bool EngineConfig::RecordDebugLogs() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return record_debug_logs_;
@@ -921,6 +1058,128 @@ void EngineConfig::SetDataBudgetBytes(uint64_t bytes) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (data_budget_bytes_ != bytes) {
         data_budget_bytes_ = bytes;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::SimulationRateHz() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return simulation_rate_hz_;
+}
+
+void EngineConfig::SetSimulationRateHz(int hz) {
+    hz = std::clamp(hz, kMinSimulationRateHz, kMaxSimulationRateHz);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (simulation_rate_hz_ != hz) {
+        simulation_rate_hz_ = hz;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::OpenSimulationMonitorOnRun() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return open_simulation_monitor_on_run_;
+}
+
+void EngineConfig::SetOpenSimulationMonitorOnRun(bool open) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (open_simulation_monitor_on_run_ != open) {
+        open_simulation_monitor_on_run_ = open;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::PluginSetting(const std::string& plugin_id, const std::string& key, std::string& value) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto plugin = plugin_settings_.find(plugin_id);
+    if (plugin == plugin_settings_.end()) return false;
+    const auto it = plugin->second.find(key);
+    if (it == plugin->second.end()) return false;
+    value = it->second;
+    return true;
+}
+
+void EngineConfig::SetPluginSetting(const std::string& plugin_id, const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& stored = plugin_settings_[plugin_id][key];
+    if (stored != value) {
+        stored = value;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::PolicyPlaybackBestActions() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return policy_playback_best_;
+}
+
+void EngineConfig::SetPolicyPlaybackBestActions(bool best) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (policy_playback_best_ != best) {
+        policy_playback_best_ = best;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::PolicyPlaybackSpeed() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return policy_playback_speed_;
+}
+
+void EngineConfig::SetPolicyPlaybackSpeed(int speed) {
+    speed = std::clamp(speed, 0, 2);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (policy_playback_speed_ != speed) {
+        policy_playback_speed_ = speed;
+        modified_ = true;
+    }
+}
+
+PolicyStressDefaults EngineConfig::PolicyStressTestDefaults() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return policy_stress_defaults_;
+}
+
+void EngineConfig::SetPolicyStressTestDefaults(PolicyStressDefaults defaults) {
+    defaults = ClampStressDefaults(defaults);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (defaults.kind != policy_stress_defaults_.kind || defaults.levels != policy_stress_defaults_.levels ||
+        defaults.episodes != policy_stress_defaults_.episodes) {
+        policy_stress_defaults_ = defaults;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::WatchTrainingMode() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return watch_training_mode_;
+}
+
+int EngineConfig::WatchTrainingEvery() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return watch_training_every_;
+}
+
+void EngineConfig::SetWatchTraining(int mode, int every_updates) {
+    mode = std::clamp(mode, 0, 2);
+    every_updates = std::clamp(every_updates, 1, 1000);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (mode != watch_training_mode_ || every_updates != watch_training_every_) {
+        watch_training_mode_ = mode;
+        watch_training_every_ = every_updates;
+        modified_ = true;
+    }
+}
+
+bool EngineConfig::PlayPolicyAfterTraining() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return play_policy_after_training_;
+}
+
+void EngineConfig::SetPlayPolicyAfterTraining(bool play) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (play_policy_after_training_ != play) {
+        play_policy_after_training_ = play;
         modified_ = true;
     }
 }

@@ -154,7 +154,7 @@ int main() {
               "relative path resolved against the root: " + resolved);
     }
 
-    std::cout << "plans CyxCloud inputs apart from shipped ones (TOFIX164)\n";
+    std::cout << "plans CyxCloud inputs apart from shipped ones\n";
     {
         auto cloud_graph = [&](const std::string& file_name, const std::string& dataset_id) {
             nlohmann::json g = GraphWithTestInput(root);

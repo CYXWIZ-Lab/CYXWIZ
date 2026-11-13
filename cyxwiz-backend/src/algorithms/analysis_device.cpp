@@ -7,6 +7,7 @@
 #endif
 
 #include "analysis_device.h"
+#include "device_random.h"
 
 #include <algorithm>
 #include <random>
@@ -108,7 +109,7 @@ af::array SquaredDistances(const af::array& rows, const af::array& centers) {
 
 af::randomEngine SeededEngine(unsigned int seed) {
     const unsigned long long value = seed != 0 ? seed : std::random_device{}();
-    return af::randomEngine(AF_RANDOM_ENGINE_DEFAULT, value);
+    return cyxwiz::DeviceRandomEngine(value);
 }
 
 af::array KMeansPlusPlus(const af::array& data, int k, af::randomEngine& engine) {

@@ -30,8 +30,8 @@ finds them.
 
 1. Add **Word Embeddings** (Nodes > Text) and connect the table with the text
    to its **Text** pin.
-2. Double-click it (or **Open Dialog** in Properties). The dialog has four
-   tabs: **Source**, **Vocabulary**, **Nearest words**, **Outputs**.
+2. Double-click it (or **Open Dialog** in Properties). The dialog has five
+   tabs: **Source**, **Vocabulary**, **Nearest words**, **Map**, **Outputs**.
 3. Choose the source:
    - **Pretrained file**: choose the vector file. The dialog reads it at once
      (in Task View) and shows its format, size and read time, e.g.
@@ -77,7 +77,9 @@ finds them.
    in the training words · from 26 pieces" (the model of this session's run,
    else the model saved with the vectors, or the pretrained `.bin` read again
    for that word).
-6. **Outputs**: where the vectors are saved, and **Row vectors** for the Rows
+6. **Map**: the vectors' words in 3D, the word looked up and its nearest
+   words marked ([Map](#map)).
+7. **Outputs**: where the vectors are saved, and **Row vectors** for the Rows
    pin.
 
 Words are split as the Text Tokenizer's Word mode splits them: lowercased,
@@ -85,6 +87,19 @@ runs of letters and digits of any script, read by character ("café",
 "naïve" and Cyrillic words stay whole); punctuation such as a curly
 apostrophe, and emoji, end a word. A vocabulary file built before 2026-10-16
 can hold single-byte tokens (the pieces of such characters); rebuild it.
+
+## Map
+
+The **Map** tab places the vectors' words in 3D so that words used in the same
+places sit together, on the vectors the Nearest words tab uses: this session's
+trained vectors (else the saved ones), or the pretrained file's. Until there
+are some it says "Train the vectors (Source tab) to map them here." (or
+"Choose a vector file (Source tab) to map it here."). The tab shows a turning
+preview; **Open the word map** opens the map in a window of its own with every
+control: a word to look up and its neighbours ringed and joined, t-SNE, UMAP
+or PCA, clusters named by their commonest words, a 3D or flat view, labels
+clear of each other and Export PNG. It is the word map of Data Studio's
+Explore > Text > Embeddings ([text](text.md#the-word-map)).
 
 ## Trained once, reused after
 
@@ -196,7 +211,8 @@ their `.vec` file.
 gensim's names and defaults (`Word2Vec`): vector size 100, window 5,
 minimum count 5, negative samples 5, epochs 5, down-sampling 1e-3, learning
 rate 0.025 falling to 0.0001, plus **Batch** (examples per device step,
-2048) and **Seed** (the same seed repeats a run on one device).
+2048) and **Seed** (the same seed draws the same samples and starting
+vectors on every device; see [Seeds and reproducibility](seeds_and_reproducibility.md)).
 
 Training runs in batches on the device. One step applies the summed gradient
 of its batch's examples, with gensim's update rules (in CBOW every context word

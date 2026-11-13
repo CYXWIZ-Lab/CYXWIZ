@@ -157,10 +157,25 @@ int main() {
             Check(batches > 1, "prefetched: several batches");
         }
     }
+    // Column roles keep columns out of the features (TOFIX129 D7a G1): with
+    // `b` an ID and `d` ignored, a batch is 2 wide; the label and an unknown
+    // name change nothing.
+    {
+        auto kept = std::make_unique<cyxwiz::ArrowDatasetBatcher>(dataset, "label", 64, false, 0.7f, true, "", 0, 0,
+                                                                  cyxwiz::BatcherPhase::Train, 0.0f, 77u);
+        kept->SetDeviceResidentFeatures(false);
+        kept->ExcludeFeatureColumns({"b", "d", "label", "nope"});
+        kept->Reset();
+        const cyxwiz::Batch batch = kept->GetNextBatch();
+        const auto& shape = batch.data.Shape();
+        Check(shape.size() == 2 && shape[1] == 2, "excluded columns leave a 2-wide feature batch (got " +
+                                                      std::to_string(shape.size() > 1 ? shape[1] : 0) + ")");
+    }
     if (failures) {
         std::cerr << failures << " check(s) failed\n";
         return 1;
     }
-    std::cout << "resident features give the host batches exactly: train, validation, balanced, prefetched, 2 epochs each\n";
+    std::cout << "resident features give the host batches exactly: train, validation, balanced, prefetched, 2 epochs each; "
+                 "roles keep columns out\n";
     return 0;
 }

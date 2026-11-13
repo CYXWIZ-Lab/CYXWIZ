@@ -1,11 +1,15 @@
+#include "../../core/runtime_timeline_layout.h"
 #include "studio_debugger_panel.h"
 #include "studio_debugger_colors.h"
 #include "../ui_buttons.h"
+#include "../ui_tokens.h"
 #include "../../core/debug_training_graph_diff.h"
 #include "../../core/training_manager.h"
 #include "../../core/node_metadata_registry.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <iomanip>
 #include <map>
@@ -35,10 +39,6 @@ ImVec4 RecommendationColor(DebugRecommendationSeverity severity) {
             return DebuggerInfo();
     }
     return DebuggerText();
-}
-
-ImVec4 TraceStatusColor(const std::string& status) {
-    return DebuggerTraceStatusColor(status);
 }
 
 const char* ClassifyTrainingWarning(const std::string& text) {
@@ -2043,8 +2043,13 @@ void StudioDebuggerPanel::RenderRunHistory() {
 
 void StudioDebuggerPanel::RenderLastRun() {
     if (!session_.last_run.available) {
-        if (auto last_run = CrashRunRecorder::LoadLastRun()) {
-            session_.last_run = *last_run;
+        // A read from disk: at most every two seconds, not every frame.
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_run_lookup_ >= std::chrono::seconds(2)) {
+            last_run_lookup_ = now;
+            if (auto last_run = CrashRunRecorder::LoadLastRun()) {
+                session_.last_run = *last_run;
+            }
         }
     }
 
@@ -2416,7 +2421,6 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
 
     if (ImGui::BeginTable("StudioDebuggerMaterializationStages",
                           7,
-                          ImGuiTableFlags_BordersInnerV |
                           ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable |
                           ImGuiTableFlags_SizingStretchProp)) {
@@ -2507,8 +2511,65 @@ void StudioDebuggerPanel::RenderMaterializationTrace(
 
 void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trace) {
     ImGui::Spacing();
+    // A new run starts on its whole span.
+    if (trace.run_id != timeline_zoom_run_) {
+        timeline_zoom_.reset();
+        timeline_zoom_run_ = trace.run_id;
+    }
+
+    std::map<std::string, std::vector<const TrainingTraceEvent*>> lanes;
+    for (const auto& event : trace.recent_events)
+        lanes[event.thread_id.empty() ? "(unknown)" : event.thread_id].push_back(&event);
+
+    const float label_w = 92.0f;
+    const float row_h = 34.0f;
+    const float axis_h = 18.0f;
+    // Every event the trace keeps, per thread, on one time axis for all
+    // threads (core/runtime_timeline_layout.h): a bar starts when its event
+    // started and is as wide as it lasted. Bars that would overlap at the
+    // drawn scale merge into a cluster with its count; zooming in splits them.
+    std::vector<std::vector<TimelineEvent>> shown;
+    std::vector<std::string> thread_ids;
+    for (const auto& [thread_id, events] : lanes) {
+        thread_ids.push_back(thread_id);
+        std::vector<TimelineEvent> lane;
+        for (const auto* event : events) lane.push_back({event->run_ms, static_cast<double>(event->duration_ms)});
+        shown.push_back(std::move(lane));
+    }
+    const float area_w = std::max(240.0f, ImGui::GetContentRegionAvail().x - label_w - 16.0f);
+    const TimelineLayout layout = LayoutTimeline(shown, area_w, 3.0f, timeline_zoom_ ? &*timeline_zoom_ : nullptr);
+    const auto clusters = ClusterTimeline(layout);
+    const double span = layout.end_ms - layout.start_ms;
+
+    // The title line: the span shown, and the way back while zoomed in.
+    ImGui::AlignTextToFramePadding();
     ImGui::Text("Runtime Timeline");
-    ImGui::BeginChild("StudioDebuggerRuntimeTimeline", ImVec2(0, 220), false,
+    if (layout.timed) {
+        ImGui::SameLine();
+        const double run_span = layout.run_end_ms - layout.run_start_ms;
+        if (layout.zoomed) {
+            ImGui::TextColored(DebuggerMuted(), "%s - %s of %s - %s", TimelineAxisText(layout.start_ms, span).c_str(),
+                               TimelineAxisText(layout.end_ms, span).c_str(),
+                               TimelineAxisText(layout.run_start_ms, run_span).c_str(),
+                               TimelineAxisText(layout.run_end_ms, run_span).c_str());
+            ImGui::SameLine();
+            if (ui::SecondaryButton("Whole run##timeline_whole")) timeline_zoom_.reset();
+        } else {
+            ImGui::TextColored(DebuggerMuted(), "%s - %s into the run", TimelineAxisText(layout.start_ms, span).c_str(),
+                               TimelineAxisText(layout.end_ms, span).c_str());
+            if (!trace.recent_events.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("Drag across the lanes to zoom in");
+            }
+        }
+    }
+    // As tall as its lanes (up to 220 px, then it scrolls), so the legend sits under them.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const bool scrolls_sideways = label_w + layout.width + 8.0f > ImGui::GetContentRegionAvail().x;
+    const float content_h = (layout.timed ? axis_h : ImGui::GetTextLineHeightWithSpacing()) +
+                            static_cast<float>(std::max<size_t>(1, lanes.size())) * row_h + 4.0f +
+                            (scrolls_sideways ? style.ScrollbarSize : 0.0f) + style.WindowPadding.y * 2.0f;
+    ImGui::BeginChild("StudioDebuggerRuntimeTimeline", ImVec2(0, std::min(220.0f, content_h)), false,
                       ImGuiWindowFlags_HorizontalScrollbar);
 
     if (trace.recent_events.empty()) {
@@ -2516,119 +2577,254 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
         ImGui::EndChild();
         return;
     }
-
-    std::map<std::string, std::vector<const TrainingTraceEvent*>> lanes;
-    float max_duration = 1.0f;
-    for (const auto& event : trace.recent_events) {
-        lanes[event.thread_id.empty() ? "(unknown)" : event.thread_id].push_back(&event);
-        max_duration = std::max(max_duration, event.duration_ms);
-    }
+    if (!layout.timed)
+        ImGui::TextDisabled("This run was recorded without event times: events are in order, wider for longer, not on a time axis.");
 
     const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const float label_w = 92.0f;
-    const float row_h = 34.0f;
-    const float gap = 4.0f;
-    const float min_bar_w = 7.0f;
-    const float max_bar_w = 165.0f;
-    const int max_events_per_lane = 42;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const TrainingTraceEvent* selected_event = nullptr;
     std::string selected_thread_id;
-
-    int lane_index = 0;
-    for (const auto& [thread_id, events] : lanes) {
-        const float y = origin.y + lane_index * row_h;
-        draw->AddText(ImVec2(origin.x, y + 8.0f),
-                      DebuggerU32(DebuggerMuted()),
-                      thread_id.c_str());
-        draw->AddLine(ImVec2(origin.x + label_w, y + row_h - 5.0f),
-                      ImVec2(origin.x + label_w + 1200.0f, y + row_h - 5.0f),
-                      DebuggerU32(DebuggerBorder()));
-
-        const int start = std::max(0, static_cast<int>(events.size()) - max_events_per_lane);
-        float x = origin.x + label_w;
-        for (int i = start; i < static_cast<int>(events.size()); ++i) {
-            const auto& event = *events[i];
-            // Identity from the event itself, not its position: the recent
-            // window slides while training runs.
-            const std::string event_key = thread_id + "|" + event.timestamp + "|" +
-                event.stage + "|" + std::to_string(event.epoch) + "|" +
-                std::to_string(event.batch);
-            if (event_key == selected_runtime_event_key_) {
-                selected_event = &event;
-                selected_thread_id = thread_id;
-            }
-            const float normalized = std::max(0.0f, event.duration_ms) / max_duration;
-            const float bar_w = event.duration_ms > 0.0f
-                ? std::max(min_bar_w, min_bar_w + normalized * max_bar_w)
-                : min_bar_w;
-            const ImVec2 min = ImVec2(x, y + 7.0f);
-            const ImVec2 max = ImVec2(x + bar_w, y + 25.0f);
-            ImU32 color = DebuggerU32(DebuggerInfo(), 0.9f);
-            if (event.status != "ok") {
-                color = event.status == "warning"
-                    ? DebuggerU32(DebuggerWarning(), 0.95f)
-                    : DebuggerU32(DebuggerDanger(), 0.95f);
-            } else if (event.stage.find("Backward") != std::string::npos) {
-                color = DebuggerU32(DebuggerAccentText(), 0.9f);
-            } else if (event.stage.find("Forward") != std::string::npos) {
-                color = DebuggerU32(DebuggerSuccess(), 0.9f);
-            } else if (event.stage.find("Batch") != std::string::npos) {
-                color = DebuggerU32(DebuggerInfo(), 0.9f);
-            }
-            draw->AddRectFilled(min, max, color, 3.0f);
-            draw->AddRect(min, max,
-                          event_key == selected_runtime_event_key_
-                              ? DebuggerU32(DebuggerBright(), 0.96f)
-                              : DebuggerU32(DebuggerPanelBg(), 0.86f),
-                          3.0f,
-                          0,
-                          event_key == selected_runtime_event_key_ ? 2.0f : 1.0f);
-
-            ImGui::SetCursorScreenPos(min);
-            ImGui::InvisibleButton(
-                ("##runtime_event_" + thread_id + "_" + std::to_string(i)).c_str(),
-                ImVec2(bar_w, 18.0f));
-            if (ImGui::IsItemClicked()) {
-                selected_runtime_event_key_ = event_key;
-                selected_event = &event;
-                selected_thread_id = thread_id;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::Text("%s", event.stage.c_str());
-                ImGui::Text("Thread: %s", thread_id.c_str());
-                ImGui::Text("Epoch %d batch %d/%d", event.epoch, event.batch, event.total_batches);
-                ImGui::Text("Duration: %.2f ms", event.duration_ms);
-                ImGui::Text("Status: %s", event.status.c_str());
-                if (event.pin_memory_requested ||
-                    !event.transfer_mode.empty()) {
-                    ImGui::Text("Transfer: mode=%s reason=%s backend=%s batch=%d",
-                                event.transfer_mode.empty()
-                                    ? "unknown"
-                                    : event.transfer_mode.c_str(),
-                                event.transfer_reason.empty()
-                                    ? "unknown"
-                                    : event.transfer_reason.c_str(),
-                                event.transfer_backend.empty()
-                                    ? "unknown"
-                                    : event.transfer_backend.c_str(),
-                                event.transfer_batch_size);
-                }
-                if (!event.message.empty()) {
-                    ImGui::Separator();
-                    ImGui::TextWrapped("%s", event.message.c_str());
-                }
-                ImGui::EndTooltip();
-            }
-            x += bar_w + gap;
+    const float lanes_top = origin.y + (layout.timed ? axis_h : 0.0f);
+    const float lanes_h = static_cast<float>(lanes.size()) * row_h;
+    if (layout.timed) {
+        // The axis: time into the run, as precise as the span needs; five
+        // marks, or three or two when the labels (longer when zoomed in to
+        // milliseconds) would not fit between them.
+        float widest = 0.0f;
+        for (int k = 0; k <= 4; ++k)
+            widest = std::max(widest, ImGui::CalcTextSize(TimelineAxisText(layout.start_ms + span * k / 4.0, span).c_str()).x);
+        int marks = 4;
+        while (marks > 1 && (area_w - 3.0f) / static_cast<float>(marks) < widest + 12.0f) marks /= 2;
+        for (int k = 0; k <= marks; ++k) {
+            const float x = origin.x + label_w + (area_w - 3.0f) * static_cast<float>(k) / static_cast<float>(marks);  // less the narrowest bar
+            const std::string text = TimelineAxisText(layout.start_ms + span * k / marks, span);
+            const float text_w = ImGui::CalcTextSize(text.c_str()).x;
+            draw->AddText(ImVec2(k == marks ? x - text_w : (k == 0 ? x : x - text_w * 0.5f), origin.y),
+                          DebuggerU32(DebuggerMuted()), text.c_str());
+            draw->AddLine(ImVec2(x, lanes_top), ImVec2(x, lanes_top + lanes_h), DebuggerU32(DebuggerBorder(), 0.5f));
         }
-        ++lane_index;
     }
 
-    ImGui::Dummy(ImVec2(label_w + 1300.0f,
-                        std::max(1, lane_index) * row_h + 8.0f));
+    // One area takes the mouse over the axis and the lanes: drag to zoom into
+    // a time range, click a bar to select it or a cluster to zoom into it,
+    // double-click for the whole run.
+    const float area_top = origin.y;
+    ImGui::SetCursorScreenPos(ImVec2(origin.x + label_w, area_top));
+    ImGui::InvisibleButton("##runtime_timeline_area", ImVec2(std::max(layout.width, 1.0f), (lanes_top - area_top) + lanes_h));
+    const bool area_hovered = ImGui::IsItemHovered();
+    const float mouse_x = ImGui::GetIO().MousePos.x - (origin.x + label_w);
+    const float mouse_y = ImGui::GetIO().MousePos.y;
+    if (ImGui::IsItemActivated()) timeline_drag_x0_ = mouse_x;
+    const bool dragging = layout.timed && ImGui::IsItemActive() &&
+                          std::fabs(ImGui::GetMouseDragDelta(ImGuiMouseButton_Left).x) > 4.0f;
+
+    // The bar or cluster under the pointer.
+    int hovered_lane = -1;
+    int hovered_cluster = -1;
+    if (area_hovered && mouse_y >= lanes_top && mouse_y < lanes_top + lanes_h) {
+        hovered_lane = static_cast<int>((mouse_y - lanes_top) / row_h);
+        const float y = lanes_top + hovered_lane * row_h;
+        if (mouse_y >= y + 7.0f && mouse_y <= y + 25.0f) {
+            // The bars on top first; a span (drawn under them, along the
+            // lane's bottom) where no bar is.
+            const auto& lane_clusters = clusters[static_cast<size_t>(hovered_lane)];
+            for (size_t c = 0; c < lane_clusters.size(); ++c)
+                if (!lane_clusters[c].span && mouse_x >= lane_clusters[c].x0 - 1.0f && mouse_x <= lane_clusters[c].x1 + 1.0f)
+                    hovered_cluster = static_cast<int>(c);
+            if (hovered_cluster < 0 && mouse_y >= y + 19.0f)
+                for (size_t c = 0; c < lane_clusters.size(); ++c)
+                    if (lane_clusters[c].span && mouse_x >= lane_clusters[c].x0 && mouse_x <= lane_clusters[c].x1)
+                        hovered_cluster = static_cast<int>(c);
+        }
+    }
+
+    const auto event_key = [](const std::string& thread_id, const TrainingTraceEvent& event) {
+        // Identity from the event itself, not its position: the recent
+        // window slides while training runs.
+        return thread_id + "|" + event.timestamp + "|" + event.stage + "|" + std::to_string(event.epoch) + "|" +
+               std::to_string(event.batch);
+    };
+    // A failed event is drawn red and a warning amber (the Debugger's status
+    // words); any other status (ok, device_resident, early_stopped ...) in its
+    // stage's colour.
+    const auto bar_color = [](const TrainingTraceEvent& event) {
+        const DebuggerTone tone = TraceStatusTone(event.status);
+        if (tone == DebuggerTone::Danger) return DebuggerU32(DebuggerDanger(), 0.95f);
+        if (tone == DebuggerTone::Warning) return DebuggerU32(DebuggerWarning(), 0.95f);
+        if (event.stage.find("Backward") != std::string::npos) return DebuggerU32(DebuggerAccentText(), 0.9f);
+        if (event.stage.find("Forward") != std::string::npos) return DebuggerU32(DebuggerSuccess(), 0.9f);
+        if (event.stage.find("Validation") != std::string::npos) return DebuggerU32(ui::CurrentTokens().series[5], 0.9f);
+        return DebuggerU32(DebuggerInfo(), 0.9f);
+    };
+
+    for (size_t l = 0; l < thread_ids.size(); ++l) {
+        const std::string& thread_id = thread_ids[l];
+        const auto& events = lanes[thread_id];
+        const float y = lanes_top + static_cast<float>(l) * row_h;
+        draw->AddText(ImVec2(origin.x, y + 8.0f), DebuggerU32(DebuggerMuted()), thread_id.c_str());
+        for (const auto* event : events)
+            if (event_key(thread_id, *event) == selected_runtime_event_key_) {
+                selected_event = event;
+                selected_thread_id = thread_id;
+            }
+        for (const auto& cluster : clusters[l]) {
+            // A span (a long event other bars of the thread fall inside) is a
+            // thinner band along the lane's bottom, under them.
+            const ImVec2 min = ImVec2(origin.x + label_w + cluster.x0, y + (cluster.span ? 19.0f : 7.0f));
+            const ImVec2 max = ImVec2(origin.x + label_w + cluster.x1, y + 25.0f);
+            if (cluster.events.size() == 1) {
+                const auto& event = *events[cluster.events[0]];
+                const bool selected = event_key(thread_id, event) == selected_runtime_event_key_;
+                draw->AddRectFilled(min, max, bar_color(event), 3.0f);
+                draw->AddRect(min, max, selected ? DebuggerU32(DebuggerBright(), 0.96f) : DebuggerU32(DebuggerPanelBg(), 0.86f), 3.0f,
+                              0, selected ? 2.0f : 1.0f);
+            } else {
+                draw->AddRectFilled(min, max, DebuggerU32(DebuggerMuted(), 0.75f), 3.0f);
+                draw->AddRect(min, max, DebuggerU32(DebuggerPanelBg(), 0.86f), 3.0f);
+                char count[32];
+                std::snprintf(count, sizeof(count), "\xc3\x97%zu", cluster.events.size());  // "x18"
+                const ImVec2 size = ImGui::CalcTextSize(count);
+                if (size.x + 6.0f <= max.x - min.x)
+                    draw->AddText(ImVec2((min.x + max.x - size.x) * 0.5f, y + 16.0f - size.y * 0.5f), DebuggerU32(DebuggerBright()), count);
+            }
+        }
+    }
+
+    // The selection being dragged.
+    if (dragging) {
+        const float a = std::clamp(std::min(timeline_drag_x0_, mouse_x), 0.0f, layout.width);
+        const float b = std::clamp(std::max(timeline_drag_x0_, mouse_x), 0.0f, layout.width);
+        const ImVec2 min(origin.x + label_w + a, lanes_top - 2.0f);
+        const ImVec2 max(origin.x + label_w + b, lanes_top + lanes_h);
+        draw->AddRectFilled(min, max, DebuggerU32(DebuggerAccentText(), 0.14f));
+        draw->AddRect(min, max, DebuggerU32(DebuggerAccentText(), 0.6f));
+    }
+
+    const auto time_at = [&](float x) {
+        const float w = std::max(1.0f, layout.width - 3.0f);
+        return layout.start_ms + span * std::clamp(static_cast<double>(x) / w, 0.0, 1.0);
+    };
+    if (layout.timed && ImGui::IsItemDeactivated()) {
+        if (std::fabs(mouse_x - timeline_drag_x0_) > 4.0f) {
+            const double t0 = time_at(std::min(timeline_drag_x0_, mouse_x));
+            const double t1 = time_at(std::max(timeline_drag_x0_, mouse_x));
+            if (t1 - t0 >= 0.05) timeline_zoom_ = TimelineWindow{t0, t1};
+        }
+    }
+    if (!dragging && ImGui::IsItemDeactivated() && std::fabs(mouse_x - timeline_drag_x0_) <= 4.0f && hovered_cluster >= 0) {
+        const auto& cluster = clusters[static_cast<size_t>(hovered_lane)][static_cast<size_t>(hovered_cluster)];
+        const auto& events = lanes[thread_ids[static_cast<size_t>(hovered_lane)]];
+        if (cluster.events.size() == 1 || !layout.timed) {
+            const auto& event = *events[cluster.events[0]];
+            selected_runtime_event_key_ = event_key(thread_ids[static_cast<size_t>(hovered_lane)], event);
+            selected_event = &event;
+            selected_thread_id = thread_ids[static_cast<size_t>(hovered_lane)];
+        } else {
+            double t0 = 1e300, t1 = -1e300;
+            for (size_t i : cluster.events) {
+                t0 = std::min(t0, events[i]->run_ms - events[i]->duration_ms);
+                t1 = std::max(t1, events[i]->run_ms);
+            }
+            const double pad = std::max(0.05, (t1 - t0) * 0.08);
+            timeline_zoom_ = TimelineWindow{t0 - pad, t1 + pad};
+        }
+    }
+    if (area_hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) timeline_zoom_.reset();
+
+    // What is under the pointer.
+    if (!dragging && hovered_cluster >= 0) {
+        const auto& cluster = clusters[static_cast<size_t>(hovered_lane)][static_cast<size_t>(hovered_cluster)];
+        const std::string& thread_id = thread_ids[static_cast<size_t>(hovered_lane)];
+        const auto& events = lanes[thread_id];
+        ImGui::BeginTooltip();
+        if (cluster.events.size() == 1) {
+            const auto& event = *events[cluster.events[0]];
+            ImGui::Text("%s", event.stage.c_str());
+            ImGui::Text("Thread: %s", thread_id.c_str());
+            ImGui::Text("Epoch %d batch %d/%d", event.epoch, event.batch, event.total_batches);
+            ImGui::Text("Duration: %.2f ms", event.duration_ms);
+            if (event.run_ms >= 0.0)
+                ImGui::Text("Ended %s into the run", TimelineTimeText(event.run_ms).c_str());
+            ImGui::Text("Status: %s", event.status.c_str());
+            if (event.pin_memory_requested || !event.transfer_mode.empty()) {
+                ImGui::Text("Transfer: mode=%s reason=%s backend=%s batch=%d",
+                            event.transfer_mode.empty() ? "unknown" : event.transfer_mode.c_str(),
+                            event.transfer_reason.empty() ? "unknown" : event.transfer_reason.c_str(),
+                            event.transfer_backend.empty() ? "unknown" : event.transfer_backend.c_str(),
+                            event.transfer_batch_size);
+            }
+            if (!event.message.empty()) {
+                ImGui::Separator();
+                ImGui::TextWrapped("%s", event.message.c_str());
+            }
+        } else {
+            // A cluster: what is inside it, by stage.
+            struct StageSum { int count = 0; double total_ms = 0.0, longest_ms = 0.0; };
+            std::map<std::string, StageSum> by_stage;
+            double t0 = 1e300, t1 = -1e300;
+            for (size_t i : cluster.events) {
+                const auto& event = *events[i];
+                auto& sum = by_stage[event.stage];
+                ++sum.count;
+                sum.total_ms += event.duration_ms;
+                sum.longest_ms = std::max(sum.longest_ms, static_cast<double>(event.duration_ms));
+                t0 = std::min(t0, event.run_ms - event.duration_ms);
+                t1 = std::max(t1, event.run_ms);
+            }
+            ImGui::Text("%zu events, thread %s", cluster.events.size(), thread_id.c_str());
+            if (layout.timed) {
+                const double cluster_span = std::max(0.001, t1 - t0);
+                ImGui::TextColored(DebuggerMuted(), "%s - %s into the run", TimelineAxisText(t0, cluster_span).c_str(),
+                                   TimelineAxisText(t1, cluster_span).c_str());
+            }
+            if (ImGui::BeginTable("##timeline_cluster", 3, ImGuiTableFlags_SizingFixedFit)) {
+                for (const auto& [stage, sum] : by_stage) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(stage.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::Text("\xc3\x97%d", sum.count);
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(DebuggerMuted(), "%.2f ms in all, longest %.2f ms", sum.total_ms, sum.longest_ms);
+                }
+                ImGui::EndTable();
+            }
+            if (layout.timed) ImGui::TextColored(DebuggerMuted(), "Click to zoom into these.");
+        }
+        ImGui::EndTooltip();
+    }
+
+    ImGui::SetCursorScreenPos(origin);
+    ImGui::Dummy(ImVec2(label_w + layout.width + 8.0f,
+                        (layout.timed ? axis_h : 0.0f) + std::max<size_t>(1, lanes.size()) * row_h + 4.0f));
+
     ImGui::EndChild();
+
+    // What the colours mean, wrapping to the panel's width.
+    bool first_item = true;
+    const auto legend = [&first_item](const ImVec4& color, const char* label) {
+        const float side = ImGui::GetFontSize() * 0.7f;
+        const float need = side + 4.0f + ImGui::CalcTextSize(label).x;
+        if (!first_item) {
+            ImGui::SameLine(0.0f, 14.0f);
+            if (ImGui::GetContentRegionAvail().x < need) ImGui::NewLine();
+        }
+        first_item = false;
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const float lift = (ImGui::GetTextLineHeight() - side) * 0.5f;
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(at.x, at.y + lift), ImVec2(at.x + side, at.y + lift + side),
+                                                  DebuggerU32(color, 0.9f), 2.0f);
+        ImGui::Dummy(ImVec2(side + 4.0f, ImGui::GetTextLineHeight()));
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::TextColored(DebuggerMuted(), "%s", label);
+    };
+    legend(DebuggerSuccess(), "Forward");
+    legend(DebuggerAccentText(), "Backward");
+    legend(DebuggerInfo(), "Batch and data");
+    legend(ui::CurrentTokens().series[5], "Validation");
+    legend(DebuggerWarning(), "Warning");
+    legend(DebuggerDanger(), "Failed");
+    legend(DebuggerWithAlpha(DebuggerMuted(), 0.75f), "Cluster (count)");
 
     ImGui::Spacing();
     ImGui::Text("Selected Runtime Event");
@@ -2669,7 +2865,7 @@ void StudioDebuggerPanel::RenderRuntimeTimeline(const TrainingTraceSummary& trac
     ImGui::Text("Loss %.4f  Accuracy %.2f%%",
                 selected_event->loss,
                 selected_event->accuracy * 100.0f);
-    ImGui::Text("Memory CPU %s peak %s  AF alloc %s locked %s",
+    ImGui::Text("Host tensors %s (peak this run %s)  Device held %s, in use %s",
                 FormatBytesCompact(selected_event->cpu_allocated_bytes).c_str(),
                 FormatBytesCompact(selected_event->cpu_peak_bytes).c_str(),
                 FormatBytesCompact(selected_event->af_allocated_bytes).c_str(),
@@ -2703,7 +2899,7 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
 
     if (!latest) {
         ImGui::TextDisabled("No memory snapshots captured yet.");
-        ImGui::TextDisabled("Restart the rebuilt engine and begin a new training run to attach memory to trace events.");
+        ImGui::TextDisabled("Memory is recorded with a training run's events: start a run to see it.");
         ImGui::EndChild();
         return;
     }
@@ -2797,14 +2993,15 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
     ImGui::SameLine();
     ImGui::TextDisabled("scale max %s", FormatBytesCompact(max_bytes).c_str());
     ImGui::TextDisabled(
-        "These counters exclude process RSS, framework heaps, mapped files, and "
-        "driver allocations. Use System Monitor for whole-process memory. Rising "
-        "tensor allocation with flat device use can still indicate host-side copies.");
+        "These counters are the host tensors and the device buffers only: not the whole "
+        "process, framework heaps, mapped files or driver allocations. Tools > Monitoring > "
+        "Memory shows the whole process. Rising host tensors with flat device use can "
+        "still indicate host-side copies.");
 
     const float full_w = std::max(120.0f, ImGui::GetContentRegionAvail().x - 140.0f);
     auto draw_bar = [&](const char* label, uint64_t bytes, ImU32 color) {
-        ImGui::Text("%-10s", label);
-        ImGui::SameLine(95.0f);
+        ImGui::Text("%-13s", label);
+        ImGui::SameLine(125.0f);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const float ratio = max_bytes > 0
             ? std::min(1.0f, static_cast<float>(static_cast<double>(bytes) / static_cast<double>(max_bytes)))
@@ -2812,16 +3009,17 @@ void StudioDebuggerPanel::RenderMemoryTrace(const TrainingTraceSummary& trace) {
         ImDrawList* draw = ImGui::GetWindowDrawList();
         draw->AddRectFilled(p, ImVec2(p.x + full_w, p.y + 14.0f), DebuggerU32(DebuggerInputBg()), 3.0f);
         draw->AddRectFilled(p, ImVec2(p.x + full_w * ratio, p.y + 14.0f), color, 3.0f);
-        draw->AddRect(p, ImVec2(p.x + full_w, p.y + 14.0f), DebuggerU32(DebuggerBorder()), 3.0f);
         ImGui::Dummy(ImVec2(full_w, 16.0f));
         ImGui::SameLine();
         ImGui::TextDisabled("%s", FormatBytesCompact(bytes).c_str());
     };
 
-    draw_bar("CPU now", latest->cpu_allocated_bytes, DebuggerU32(DebuggerSuccess(), 0.9f));
-    draw_bar("CPU peak", latest->cpu_peak_bytes, DebuggerU32(DebuggerWarning(), 0.9f));
-    draw_bar("AF alloc", latest->af_allocated_bytes, DebuggerU32(DebuggerInfo(), 0.9f));
-    draw_bar("AF locked", latest->af_locked_bytes, DebuggerU32(DebuggerAccentText(), 0.9f));
+    // Host tensors are what the tensor allocator holds in main memory (not the
+    // whole process); the peak is this run's.
+    draw_bar("Host tensors", latest->cpu_allocated_bytes, DebuggerU32(DebuggerSuccess(), 0.9f));
+    draw_bar("Peak this run", latest->cpu_peak_bytes, DebuggerU32(DebuggerWarning(), 0.9f));
+    draw_bar("Device held", latest->af_allocated_bytes, DebuggerU32(DebuggerInfo(), 0.9f));
+    draw_bar("Device in use", latest->af_locked_bytes, DebuggerU32(DebuggerAccentText(), 0.9f));
 
     ImGui::Separator();
     ImGui::TextDisabled("ArrayFire buffers: alloc %llu  locked %llu",
@@ -3732,7 +3930,6 @@ void StudioDebuggerPanel::RenderBackendDecisionAudit() {
     }
 
     if (ImGui::BeginTable("StudioDebuggerBackendDecisionAuditTable", 7,
-                          ImGuiTableFlags_BordersInnerV |
                           ImGuiTableFlags_RowBg |
                           ImGuiTableFlags_Resizable |
                           ImGuiTableFlags_ScrollY |
@@ -3896,7 +4093,7 @@ void StudioDebuggerPanel::RenderLayerTimingBreakdown(const TrainingTraceSummary&
         return a.duration_ms > b.duration_ms;
     });
 
-    ImGui::Columns(6, "StudioDebuggerLayerTimingColumns", true);
+    ImGui::Columns(6, "StudioDebuggerLayerTimingColumns", false);
     ImGui::Text("Stage"); ImGui::NextColumn();
     ImGui::Text("Layer"); ImGui::NextColumn();
     ImGui::Text("Name"); ImGui::NextColumn();

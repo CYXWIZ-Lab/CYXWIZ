@@ -6,16 +6,26 @@
 // properties_rows so it carries its truth chip and the shared look.
 #include "properties_node_editors.h"
 #include "node_editor.h"
+#include "../core/rl_graph_presentation.h"
+#include "../plugin/builtin/classic_control_environments.h"
+#include "../plugin/plugin_manager.h"
+#include "../plugin/registries/plugin_environment_registry.h"
+#include "icons.h"
 #include "properties_rows.h"
+#include "simulation_scope_plot.h"
 #include "ui_buttons.h"
+#include "ui_widgets.h"
 #include "ui_tokens.h"
 #include <imgui.h>
-#include <implot.h>
+#include <spdlog/spdlog.h>
 #include <algorithm>
+#include <chrono>
+#include <map>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -144,7 +154,7 @@ void Formula(const char* what, const char* formula) {
 void RenderSignalScope(MLNode& node, RenderNodePropertiesContext& context) {
     const auto& t = cyxwiz::ui::CurrentTokens();
     int win = std::clamp(ParseIntOr(ParamOr(node, "window_size"), 500), 10, 100000);
-    bool auto_scale = ParamOr(node, "auto_scale") == "true";
+    bool auto_scale = ParamOr(node, "auto_scale", "true") == "true";  // the node's default is on
     {
         properties_rows::Rows rows("##scope");
         if (rows.ok) {
@@ -152,6 +162,9 @@ void RenderSignalScope(MLNode& node, RenderNodePropertiesContext& context) {
             if (ImGui::InputInt("##scope_win", &win)) {
                 win = std::clamp(win, 10, 100000);
                 node.parameters["window_size"] = std::to_string(win);
+                if (context.node_editor)
+                    context.node_editor->GetSimulationSession().SetNodeParameter(node.id, "window_size",
+                                                                                 node.parameters["window_size"]);
             }
             properties_rows::Status("window_size");
             properties_rows::Label("Auto scale");
@@ -160,61 +173,315 @@ void RenderSignalScope(MLNode& node, RenderNodePropertiesContext& context) {
         }
     }
 
-    // Real-time signal plot
-    auto& buf = context.scope_buffers[node.id];
-    buf.max_samples = win;
+    // The run's history of this Scope, collected by the simulation session
+    // whether or not this panel is drawn.
+    std::vector<float> t_arr;
+    std::vector<float> v_arr;
+    if (context.node_editor) context.node_editor->GetSimulationSession().CopyScope(node.id, t_arr, v_arr);
+    if (t_arr.empty()) Note("Connect one scalar signal and run the simulation to view data.");
 
-    float live_value = 0.0f;
-    const bool has_live_value =
-        context.node_editor &&
-        context.node_editor->IsGraphSimulationRunning() &&
-        node.inputs.size() == 1 &&
-        context.node_editor->TryGetSimulationScalar(node.inputs[0].id, live_value);
-    if (has_live_value) {
-        const float sample_time = context.node_editor->GetSimulationTime();
-        if (buf.times.empty() || sample_time > buf.times.back()) buf.Push(sample_time, live_value);
-    } else if (buf.times.empty()) {
-        Note("Connect one scalar signal and run the simulation to view data.");
+    DrawScopeTrace("##scope_plot", "Signal", t_arr, v_arr, ImVec2(-1, 200), auto_scale, t.series[0]);
+    if (cyxwiz::ui::SecondaryButton("Clear") && context.node_editor)
+        context.node_editor->GetSimulationSession().ClearScope(node.id);
+    ImGui::SameLine();
+    ImGui::TextColored(t.text_dim, "Samples: %d", static_cast<int>(t_arr.size()));
+}
+
+// ========== Reinforcement learning (TOFIX195 S4.3) ==========
+
+std::vector<cyxwiz::rl_graph::ListedEnvironment> ListedEnvironments() {
+    std::vector<cyxwiz::rl_graph::ListedEnvironment> out;
+    auto& plugins = cyxwiz::plugin::PluginManager::Instance();
+    for (const auto& e : cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Environments()) {
+        std::string provider = "CyxWiz (built in)";
+        if (e.plugin_id != cyxwiz::plugin::kBuiltinEnvironmentProviderId) {
+            const auto* loaded = plugins.GetLoadedPlugin(e.plugin_id);
+            provider = loaded && !loaded->manifest.name.empty() ? loaded->manifest.name : e.plugin_id;
+        }
+        out.push_back({e.key, provider, e.info});
     }
+    return out;
+}
 
-    if (!buf.times.empty()) {
-        // Copy deque to contiguous arrays for ImPlot
-        std::vector<float> t_arr(buf.times.begin(), buf.times.end());
-        std::vector<float> v_arr(buf.values.begin(), buf.values.end());
-        if (ImPlot::BeginPlot("##scope_plot", ImVec2(-1, 200), ImPlotFlags_NoTitle)) {
-            ImPlotAxisFlags x_flags = ImPlotAxisFlags_NoLabel;
-            ImPlotAxisFlags y_flags = auto_scale ? (ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_NoLabel) : ImPlotAxisFlags_NoLabel;
-            ImPlot::SetupAxes("Time (s)", "Value", x_flags, y_flags);
-            // Auto-scroll X axis to follow latest data
-            const float t_max = t_arr.back();
-            float t_window = t_arr.size() > 1 ? t_arr.back() - t_arr.front() : 2.0f;
-            if (t_window < 2.0f) t_window = 2.0f;
-            ImPlot::SetupAxisLimits(ImAxis_X1, t_max - t_window, t_max, ImGuiCond_Always);
-            ImPlot::PushStyleColor(ImPlotCol_Line, t.series[0]);
-            ImPlot::PlotLine("Signal", t_arr.data(), v_arr.data(), static_cast<int>(t_arr.size()));
-            ImPlot::PopStyleColor();
-            ImPlot::EndPlot();
+// The environment as a node's settings make it (the plugin's DescribeEnvironment),
+// asked again when the settings change or every 2 s, not every frame
+bool DescribedEnvironment(const std::string& key, const std::map<std::string, std::string>& settings,
+                          cyxwiz::plugin::PluginEnvironmentRegistry::Environment& out, std::string& error) {
+    struct Cached {
+        std::string key;
+        std::map<std::string, std::string> settings;
+        std::chrono::steady_clock::time_point at;
+        bool ok = false;
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment environment;
+        std::string error;
+    };
+    static std::vector<Cached> cache;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = cache.begin(); it != cache.end(); ++it) {
+        if (it->key != key || it->settings != settings) continue;
+        if (now - it->at < std::chrono::seconds(2)) {
+            out = it->environment;
+            error = it->error;
+            return it->ok;
+        }
+        cache.erase(it);
+        break;
+    }
+    Cached entry{key, settings, now};
+    entry.ok = cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Describe(key, settings, entry.environment, entry.error);
+    if (cache.size() >= 16) cache.erase(cache.begin());
+    cache.push_back(entry);
+    out = entry.environment;
+    error = entry.error;
+    return entry.ok;
+}
+
+void FactRows(const std::vector<cyxwiz::rl_graph::Fact>& facts) {
+    for (const auto& f : facts) properties_rows::ReadOnly(f.label.c_str(), f.value, "");
+}
+
+// One plugin setting of an Environment node (stored as setting.<key>), drawn
+// by its kind: a typed number, a checkbox, a segmented choice or chips
+bool RenderEnvironmentSetting(MLNode& node, const cyxwiz::plugin::PluginEnvironmentSetting& s) {
+    using cyxwiz::plugin::PluginSettingKind;
+    const std::string key = cyxwiz::rl_graph::kSettingPrefix + s.key;
+    const std::string value = ParamOr(node, key.c_str(), s.default_value.c_str());
+    bool edited = false;
+    properties_rows::Label(s.label.c_str(), false, s.description.c_str());
+    ImGui::PushID(key.c_str());
+    switch (s.kind) {
+        case PluginSettingKind::Flag: {
+            bool on = value == "1";
+            if (ImGui::Checkbox("##v", &on)) {
+                node.parameters[key] = on ? "1" : "0";
+                edited = true;
+            }
+            break;
+        }
+        case PluginSettingKind::Choice: {
+            std::vector<const char*> labels;
+            int selected = -1;
+            for (size_t i = 0; i < s.options.size(); ++i) {
+                labels.push_back(s.options[i].label.c_str());
+                if (s.options[i].value == value) selected = static_cast<int>(i);
+            }
+            if (!labels.empty() &&
+                cyxwiz::ui::SegmentedControl("##v", labels.data(), static_cast<int>(labels.size()), &selected) &&
+                selected >= 0) {
+                node.parameters[key] = s.options[static_cast<size_t>(selected)].value;
+                edited = true;
+            }
+            break;
+        }
+        case PluginSettingKind::Choices: {
+            // Chips that wrap at the cell's edge; the value is the chosen ones joined by ","
+            std::set<std::string> chosen;
+            for (size_t start = 0; start <= value.size();) {
+                const size_t comma = value.find(',', start);
+                const std::string part = value.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                if (!part.empty()) chosen.insert(part);
+                if (comma == std::string::npos) break;
+                start = comma + 1;
+            }
+            const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+            for (size_t i = 0; i < s.options.size(); ++i) {
+                const auto& option = s.options[i];
+                if (i > 0) {
+                    ImGui::SameLine();
+                    if (ImGui::GetCursorScreenPos().x + cyxwiz::ui::FilterChipWidth(option.label.c_str(), "") > right)
+                        ImGui::NewLine();
+                }
+                ImGui::PushID(static_cast<int>(i));
+                const bool on = chosen.count(option.value) > 0;
+                if (cyxwiz::ui::FilterChip("##chip", option.label.c_str(), "", on)) {
+                    if (on) chosen.erase(option.value);
+                    else chosen.insert(option.value);
+                    std::string joined;
+                    for (const auto& o : s.options)  // the plugin's order
+                        if (chosen.count(o.value)) joined += (joined.empty() ? "" : ",") + o.value;
+                    node.parameters[key] = joined;
+                    edited = true;
+                }
+                ImGui::PopID();
+            }
+            break;
+        }
+        case PluginSettingKind::Number: {
+            char* end = nullptr;
+            double v = std::strtod(value.c_str(), &end);
+            if (value.empty() || !end || *end != '\0') {  // not a number: typed as text
+                char buf[256] = {};
+                std::strncpy(buf, value.c_str(), sizeof(buf) - 1);
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                if (ImGui::InputText("##v", buf, sizeof(buf))) {
+                    node.parameters[key] = buf;
+                    edited = true;
+                }
+                break;
+            }
+            // A typed number (owner rule: no drag or slider inputs); the unit after it
+            std::string unit;
+            for (const char c : s.unit) unit += c == '%' ? std::string("%%") : std::string(1, c);
+            const std::string format = unit.empty() ? "%.6g" : "%.6g " + unit;
+            cyxwiz::ui::NumberFieldOptions options;
+            if (s.min < s.max) {
+                options.min = s.min;
+                options.max = s.max;
+            }
+            options.step = std::floor(v) == v ? 1.0 : 0.0;
+            options.format = format.c_str();
+            options.width = 96.0f;
+            if (cyxwiz::ui::NumberField("##v", &v, options)) {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%.6g", v);
+                node.parameters[key] = buf;
+                edited = true;
+            }
+            break;
         }
     }
-    if (cyxwiz::ui::SecondaryButton("Clear")) buf.Clear();
-    ImGui::SameLine();
-    ImGui::TextColored(t.text_dim, "Samples: %d", static_cast<int>(buf.times.size()));
+    ImGui::PopID();
+    properties_rows::Status(key.c_str());
+    return edited;
+}
+
+// Environment: the environment list, its facts, the copies and the plugin's
+// own settings (stored as setting.<key>)
+bool RenderEnvironment(MLNode& node) {
+    using cyxwiz::rl_graph::kSettingPrefix;
+    bool edited = false;
+    const std::string current = ParamOr(node, "environment", "cyxwiz.builtin:CartPole-v1");
+    const auto listed = ListedEnvironments();
+    const auto choices = cyxwiz::rl_graph::EnvironmentChoices(listed, current);
+    properties_rows::Rows rows("##rl_env");
+    if (!rows.ok) return false;
+    properties_rows::Label("Environment", true);
+    std::string shown = current;
+    for (const auto& c : choices)
+        if (c.key == current) shown = c.label;
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (ImGui::BeginCombo("##environment", shown.c_str())) {
+        for (const auto& c : choices) {
+            if (ImGui::Selectable(c.label.c_str(), c.key == current) && c.key != current) {
+                node.parameters["environment"] = c.key;
+                for (auto it = node.parameters.begin(); it != node.parameters.end();)
+                    it = it->first.rfind(kSettingPrefix, 0) == 0 ? node.parameters.erase(it) : std::next(it);
+                edited = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    properties_rows::Status("environment");
+
+    const cyxwiz::rl_graph::ListedEnvironment* env = nullptr;
+    for (const auto& e : listed)
+        if (e.key == ParamOr(node, "environment", current.c_str())) env = &e;
+    int copies = std::clamp(ParseIntOr(ParamOr(node, "copies", "8"), 8), 1, 1024);
+    properties_rows::Label("Copies", true, "Copies stepped side by side; one rollout is copies x steps per copy");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (ImGui::InputInt("##copies", &copies)) {
+        node.parameters["copies"] = std::to_string(std::clamp(copies, 1, 1024));
+        edited = true;
+    }
+    properties_rows::Status("copies");
+    if (!env) {
+        properties_rows::Note("No loaded plugin offers this environment: load its plugin in Plugin Manager.");
+        return edited;
+    }
+    {
+        // As the node's settings make it: an extra observation changes what it observes
+        cyxwiz::plugin::PluginEnvironmentRegistry::Environment described;
+        std::string reason;
+        const bool ok =
+            DescribedEnvironment(env->key, cyxwiz::rl_graph::StoredSettings(node.parameters), described, reason);
+        FactRows(cyxwiz::rl_graph::EnvironmentFacts(ok ? described.info : env->info));
+        if (!ok && !reason.empty()) properties_rows::Note(reason.c_str());
+    }
+    // The main settings first, then each section under its heading, in the plugin's order
+    std::vector<std::string> sections{""};
+    for (const auto& s : env->info.settings)
+        if (std::find(sections.begin(), sections.end(), s.section) == sections.end()) sections.push_back(s.section);
+    for (const auto& section : sections) {
+        properties_rows::Section(section.c_str());
+        for (const auto& s : env->info.settings)
+            if (s.section == section && RenderEnvironmentSetting(node, s)) edited = true;
+    }
+    return edited;
 }
 
 }  // namespace
 
-void ScopeBuffer::Push(float t, float v) {
-    times.push_back(t);
-    values.push_back(v);
-    while (static_cast<int>(times.size()) > max_samples) {
-        times.pop_front();
-        values.pop_front();
+void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
+    if (!context.node_editor) return;
+    auto& editor = *context.node_editor;
+    const auto& nodes = editor.GetNodes();
+    const auto& links = editor.GetLinks();
+    const MLNode* env_node = cyxwiz::rl_graph::UpstreamEnvironment(nodes, links, node.id);
+    cyxwiz::plugin::PluginEnvironmentRegistry::Environment env;
+    std::string describe_error;
+    const bool known = env_node && cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(
+                                       ParamOr(*env_node, "environment"), env);
+    // As its Environment's settings make it (the observation it feeds the networks)
+    if (known)
+        DescribedEnvironment(env.key, cyxwiz::rl_graph::StoredSettings(env_node->parameters), env, describe_error);
+    properties_rows::Rows rows("##rl_facts");
+    if (!rows.ok) return;
+    if (node.type == NodeType::ValueHead) {
+        FactRows(cyxwiz::rl_graph::ValueHeadFacts(cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id)));
+        return;
     }
-}
+    if (!known) {
+        properties_rows::Note(env_node ? "Its Environment is not offered by a loaded plugin."
+                                       : "Connect it from an Environment's Observation through layers to see what "
+                                         "it adds.");
+        return;
+    }
+    if (node.type == NodeType::PolicyHead) {
+        FactRows(cyxwiz::rl_graph::PolicyHeadFacts(env.info, cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id)));
+        return;
+    }
+    // PPO: its trained policy (TOFIX195 S5): play, save, load
+    const cyxwiz::ui::Tokens& tokens = cyxwiz::ui::CurrentTokens();
+    properties_rows::Label("Trained policy", false, "The policy of the last run, or one loaded from a .cyxmodel");
+    properties_rows::Value(editor.RLPolicyLine(), editor.HasRLPolicy() ? tokens.text : tokens.text_dim);
+    properties_rows::Status("");
+    properties_rows::Label("");
+    std::string why;
+    const char* load = "Load policy...";
+    if (editor.HasRLPolicy()) {
+        if (cyxwiz::ui::PrimaryButton(ICON_FA_PLAY " Play", true, nullptr, cyxwiz::ui::ButtonSize::Small)) {
+            if (!editor.PlayRLPolicy(why)) spdlog::error("Play policy: {}", why);
+        }
+        ImGui::SameLine();
+        if (cyxwiz::ui::SecondaryButton("Save...")) editor.SaveRLPolicy(why);
+        // Load goes under them when the cell is narrow
+        // (the cursor is at the start of the next line: its x plus the room is the cell's right edge)
+        const float load_w = cyxwiz::ui::ButtonWidth(load, cyxwiz::ui::ButtonSize::Small);
+        const float cell_right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+        if (cell_right - (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x) >= load_w) ImGui::SameLine();
+    }
+    if (cyxwiz::ui::SecondaryButton(load)) editor.ChooseRLPolicyForGraph(why);
+    properties_rows::Status("");
+    if (!editor.RLPolicyMessage().empty()) properties_rows::Note(editor.RLPolicyMessage().c_str());
 
-void ScopeBuffer::Clear() {
-    times.clear();
-    values.clear();
+    // PPO: the tuned settings for its environment
+    const auto preset = cyxwiz::rl_graph::TunedPpoSettings(env.info.id);
+    if (!preset) return;
+    properties_rows::Label("Tuned for", false, "Load tuned settings for this environment");
+    if (cyxwiz::ui::SecondaryButton(env.info.id.c_str())) {
+        for (const auto& [k, v] : preset->ppo) node.parameters[k] = v;
+        if (MLNode* e = editor.GetNodeForConfiguration(env_node->id))
+            for (const auto& [k, v] : preset->environment) e->parameters[k] = v;
+        for (const auto& l : links) {
+            if (l.to_node != node.id) continue;
+            MLNode* head = editor.GetNodeForConfiguration(l.from_node);
+            if (head && head->type == NodeType::PolicyHead)
+                for (const auto& [k, v] : preset->policy_head) head->parameters[k] = v;
+        }
+        if (context.invalidate_shapes) context.invalidate_shapes();
+    }
+    cyxwiz::ui::Tooltip((preset->source + (preset->layers_note.empty() ? "" : ". " + preset->layers_note)).c_str());
+    properties_rows::Status("");
 }
 
 void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
@@ -223,7 +490,7 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             if (!context.node_editor) return;
             const auto value = node.parameters.find(key);
             if (value != node.parameters.end()) {
-                context.node_editor->SetSimulationNodeParameter(
+                context.node_editor->GetSimulationSession().SetNodeParameter(
                     node.id, key, value->second);
             }
         };
@@ -392,6 +659,14 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
 
         case NodeType::PluginCustom:
             RenderPluginCustomNodeProperties(node, context);
+            break;
+
+        case NodeType::RLEnvironment:
+            edited |= RenderEnvironment(node);
+            break;
+
+        case NodeType::ValueHead:
+            RenderRlNodeFacts(node, context);
             break;
 
         default: {

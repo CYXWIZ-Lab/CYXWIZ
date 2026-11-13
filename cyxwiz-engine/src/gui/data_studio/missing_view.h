@@ -30,6 +30,9 @@ public:
     // (or why not). Null, or `drop_blocker` non-empty: the button is disabled.
     std::function<std::string(const std::string& column, const std::vector<std::string>& texts)> on_drop_rows;
     std::function<std::string()> drop_blocker;
+    // Adds a Fill Missing Values step on the column (TOFIX129 D7a G2):
+    // `strategy` mean / median / mode / constant, `value` for constant.
+    std::function<std::string(const std::string& column, const std::string& strategy, const std::string& value)> on_fill;
 
 private:
     void RenderColumns(const ExploreContext& context, float height);
@@ -38,6 +41,8 @@ private:
 
     std::shared_ptr<const DatasetProfile> seen_;  // the profile the answers are for
     std::string column_;
+    int fill_strategy_ = 0;       // index into the strategies offered for the column's kind
+    char fill_value_[64] = "";    // the constant to fill with
     size_t offset_ = 0;
     int sort_ = 1;          // 0 column name, 1 missing count
     bool descending_ = true;

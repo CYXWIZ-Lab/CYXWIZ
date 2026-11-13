@@ -200,6 +200,11 @@ void QueryEditor::RenderResult() {
     if (ui::LinkButton("Save as Dataset")) ImGui::OpenPopup("Save query result");
     if (ImGui::BeginPopupModal("Save query result", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Save the whole result as a new dataset");
+        // Honest about where it goes (TOFIX129 D7a): a table for looking, not a node.
+        ImGui::PushTextWrapPos(360.0f);
+        ImGui::TextColored(t.text_dim, "Kept for Explore and dashboards only. Training reads the graph's steps, not saved tables: "
+                                       "use Turn into step for that.");
+        ImGui::PopTextWrapPos();
         ImGui::SetNextItemWidth(320);
         ImGui::InputText("##save_name", save_name_, sizeof(save_name_));
         if (ui::PrimaryButton("Save", save_name_[0] != '\0', "Give it a name", ui::ButtonSize::Small)) {
