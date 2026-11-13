@@ -43,7 +43,11 @@ into your user folder:
 
 The node's **Model** row shows the name (*Robotiq 2F-85 · Menagerie 370c439*)
 and where it is: *copy in this project*, *shared download*, *built in*, or *not
-in the project: other PCs will not find it* (with **Copy into the project**).
+in the project: other PCs will not find it*. For such a file, load it in the
+MuJoCo Viewport and use Inspect > Model > **Copy into the project** (its folder is
+copied to `mujoco/models/<folder>/`), then pick the copy with **Change...**.
+The node checks its model on this PC when the graph opens: a status saved on
+another PC is never trusted.
 **Change...** picks another file; it is saved by its name and version too.
 
 Open the project on another PC (or another account) that does not have that
@@ -57,7 +61,9 @@ finds it by itself a moment later (its pins come back).
 
 **Copy into the project** on a downloaded robot's card (or Inspect > Model in
 the Viewport) copies the robot's folder, with its meshes and textures, to
-`<project>/mujoco/models/<robot>/`, after a confirmation that gives its size.
+`<project>/mujoco/models/<robot>/`, after a confirmation that gives its size. A project that has a copy of the robot
+already keeps it: nothing is replaced (remove that folder to copy another
+version). Copies stop at 2 GB.
 Use it to:
 
 - share a project as one folder (or zip) that works offline;
@@ -86,3 +92,5 @@ Keyframes saved in Inspect are kept in the project
 (`mujoco/keyframes/<model file name>-<id>.json`), keyed by the model's name and
 version, so another PC finds them for the same model, and two robots whose
 files share a name (Menagerie's `scene.xml`) keep their own.
+Keyframes saved before models were named this way (an older file per model
+path) are not read; save them again.

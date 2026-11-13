@@ -52,8 +52,15 @@ public:
     void SetReloadModel(ReloadModelFn fn) { reload_model_ = std::move(fn); }
     // The open model as a reference (the same on every PC), and where it is
     // (TOFIX219); Copy into the project of a shared download
-    void SetModelRefFn(std::function<MjModelRef(const std::string& path)> fn) { model_ref_ = std::move(fn); }
-    void SetCopyModel(std::function<void(const MjModelRef& ref)> fn) { copy_model_ = std::move(fn); }
+    struct ModelPlace {
+        MjModelRef ref;
+        bool shared = false;  // a Menagerie robot's shared download (not the project's copy)
+    };
+    void SetModelPlaceFn(std::function<ModelPlace(const std::string& path)> fn) { model_place_ = std::move(fn); }
+    // Copy into the project of the open model (the Environment Library confirms it)
+    void SetCopyModel(std::function<void(const MjModelRef& ref, const std::string& path)> fn) {
+        copy_model_ = std::move(fn);
+    }
     // The steps the plugin keeps for the timeline and plots (guarded by the
     // physics lock)
     void SetHistory(MjHistory* history) { history_ = history; }
@@ -238,8 +245,10 @@ private:
     PluginContext* ctx_ = nullptr;
     OpenModelFn open_model_;
     ReloadModelFn reload_model_;
-    std::function<MjModelRef(const std::string&)> model_ref_;
-    std::function<void(const MjModelRef&)> copy_model_;
+    std::function<ModelPlace(const std::string&)> model_place_;
+    std::function<void(const MjModelRef&, const std::string&)> copy_model_;
+    ModelPlace place_;        // of place_path_ (asked once a model file: it reads the disk)
+    std::string place_path_;
     // Inspect
     InspectOptions inspect_;
     int selected_body_ = -1;              // double-clicked; -1: none

@@ -8,7 +8,6 @@
 #include "../core/file_dialogs.h"
 #include "../core/extension_node_registry.h"
 #include "../core/extension_node_presentation.h"
-#include "../core/project_manager.h"
 #include "../plugin/registries/plugin_panel_registry.h"
 #include "file_browser_launch.h"
 #include "python_bundle_ui.h"
@@ -128,7 +127,7 @@ void ModelInfo(const MLNode& node) {
         if (!key.starts_with("_meta_")) continue;
         // The model's reference, name and where it is show above (the Model row)
         const std::string name = key.substr(6);
-        if (name == "model_ref" || name == "model_title" || name == "model_status" || name == "model_note" ||
+        if (name == "canonical_trigger" || name == "model_title" || name == "model_status" || name == "model_note" ||
             name == "loaded_path")
             continue;
         rows.emplace_back(name, value);
@@ -145,26 +144,27 @@ void RenderMuJoCoPlant(MLNode& node, RenderNodePropertiesContext& context) {
         if (node.has_dynamic_pins && context.node_editor) context.node_editor->ResolveDynamicPins(node.id);
         context.invalidate_shapes();
     };
-    std::string mjcf_path = ParamOr(node, "mjcf_path");
     // The plugin names the model the same way on every machine (TOFIX219): a
-    // picked file is saved by that reference
-    const std::string model_ref = ParamOr(node, "_meta_model_ref");
-    if (!mjcf_path.empty() && !model_ref.empty() && model_ref != mjcf_path) {
-        node.parameters["mjcf_path"] = mjcf_path = model_ref;
-        resolve_pins();
-    }
-    const std::string status = ParamOr(node, "_meta_model_status");
-    // A model not on this PC is looked for again every 2 s (a download may bring
-    // it); a node opened from a file is resolved the first time it is shown
-    if (status == "missing" || (status.empty() && !mjcf_path.empty())) {
+    // picked file is saved by that name. A node is checked on this machine the
+    // first time it is shown after its graph opens (its status in the file is
+    // another machine's: resolved_config is not saved), and every 2 s while its
+    // model is missing (a download may bring it). Checks are not undo steps.
+    std::string status = ParamOr(node, "_meta_model_status");
+    const bool has_model = !ParamOr(node, "mjcf_path").empty() || !ParamOr(node, "_meta_loaded_path").empty();
+    if (has_model && node.has_dynamic_pins && context.node_editor &&
+        (node.resolved_config.empty() || status == "missing")) {
         static std::map<int, double> last_check;
         double& last = last_check[node.id];
+        // a node never checked starts at 0: it is checked now, then at most every 2 s
         if (ImGui::GetTime() - last > 2.0) {
             last = ImGui::GetTime();
             node.resolved_config.clear();
-            resolve_pins();
+            context.node_editor->ResolveDynamicPins(node.id, false);
+            context.invalidate_shapes();
+            status = ParamOr(node, "_meta_model_status");
         }
     }
+    std::string mjcf_path = ParamOr(node, "mjcf_path");
     {
         properties_rows::Rows rows("##mujoco");
         if (!rows.ok) return;
@@ -202,26 +202,13 @@ void RenderMuJoCoPlant(MLNode& node, RenderNodePropertiesContext& context) {
         } else if (status == "not portable") {
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(t.text_dim, "%s", note.c_str());
+            ImGui::TextColored(t.text_dim,
+                               "To take it with the project: load it in the MuJoCo Viewport, then Inspect > Model > "
+                               "Copy into the project, and pick the copy here with Change....");
             ImGui::PopTextWrapPos();
-            const std::string project = cyxwiz::ProjectManager::Instance().GetProjectRoot();
-            const bool outside = mjcf_path.find(':') == std::string::npos || (mjcf_path.size() > 1 && mjcf_path[1] == ':');
-            if (outside && !project.empty() && cyxwiz::ui::LinkButton("Copy into the project")) {
-                // The model's folder (its meshes and textures) into the project's models
-                namespace fs = std::filesystem;
-                const fs::path file(mjcf_path);
-                const fs::path folder = file.parent_path();
-                const fs::path to = fs::path(project) / "mujoco" / "models" / folder.filename();
-                std::error_code ec;
-                fs::create_directories(to, ec);
-                if (!ec) fs::copy(folder, to, fs::copy_options::recursive | fs::copy_options::skip_existing, ec);
-                if (ec) {
-                    spdlog::error("MuJoCo Plant: copying {} into the project failed: {}", folder.string(), ec.message());
-                } else {
-                    node.parameters["mjcf_path"] = mjcf_path =
-                        "project:" + (fs::path("mujoco") / "models" / folder.filename() / file.filename()).generic_string();
-                    spdlog::info("MuJoCo Plant: copied {} into the project", folder.string());
-                    resolve_pins();
-                }
+            if (cyxwiz::ui::LinkButton("Open the MuJoCo Viewport")) {
+                if (const auto descriptor = cyxwiz::ExtensionNodeRegistry::Instance().Find(node.extension_type_id))
+                    cyxwiz::plugin::PluginPanelRegistry::Instance().ShowPanel(descriptor->provider_id, "mujoco_viewport");
             }
         } else if (!note.empty()) {
             properties_rows::Note(note.c_str());

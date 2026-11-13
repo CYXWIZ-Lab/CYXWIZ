@@ -8,9 +8,11 @@
 #include "mj_env_library.h"
 #include "mj_env_manager.h"
 
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -39,9 +41,11 @@ public:
     void SetLoadBlocker(std::function<std::string()> fn) { load_blocker_ = std::move(fn); }
     // A model loaded from elsewhere (a file the viewport opened): no card is Loaded
     void ClearLoaded() { loaded_env_id_.clear(); }
-    // Copy into the project asked for from elsewhere (Inspect): the robot's card
-    // asks to confirm when the Library next draws
-    void RequestCopy(const std::string& robot_id) { copy_confirm_id_ = robot_id; }
+    // Copy into the project asked for from elsewhere (Inspect): the Library asks
+    // to confirm when it next draws. A Menagerie robot at `commit` (its shared
+    // download), or the folder of a model file outside the project.
+    void RequestCopy(MjEnvLibrary& library, const std::string& robot_id, const std::string& commit);
+    void RequestCopyFile(MjEnvLibrary& library, const std::string& model_file);
 
     void Render(MjEnvLibrary& library, const MjEnvManager& env, bool* visible);
 
@@ -65,9 +69,20 @@ private:
     void RenderCards(MjEnvLibrary& library, const MjEnvManager& env, const std::vector<const EnvInfo*>& shown);
     void RenderCard(MjEnvLibrary& library, const EnvInfo& info, bool is_loaded, float height);
     void RenderFooter(const MjEnvLibrary& library);
-    // Copy into the project: the confirmation, then a copy on its own thread
+    // Copy into the project: what to copy where, confirmed, then copied on its own thread
+    struct CopyRequest {
+        std::string id;           // the card (a robot), or empty (a file's folder)
+        std::string name;         // "Robotiq 2F-85", "arm"
+        std::filesystem::path from, to;
+        MjModelManifest manifest; // written last in the copy
+        uint64_t bytes = 0;       // its files (counted when asked)
+        std::string refused;      // why it cannot be copied (shown instead of Copy)
+        std::string after;        // what the copy means, for the confirmation
+        bool load_after = false;  // Load asked for it (Preferences: copy when used)
+    };
+    CopyRequest RobotCopy(MjEnvLibrary& library, const EnvInfo& info, const std::string& commit) const;
     void RenderCopyConfirm(MjEnvLibrary& library);
-    void StartCopy(MjEnvLibrary& library, const EnvInfo& info, bool load_after);
+    void StartCopy(CopyRequest request);
     void StartDownload(MjEnvLibrary& library, const EnvInfo& info, const std::string& commit);
     bool MatchesSource(const EnvInfo& info) const;
     bool MatchesSearch(const EnvInfo& info) const;
@@ -97,8 +112,9 @@ private:
     std::string url_import_error_;
 
     // Copy into the project
-    std::string copy_confirm_id_;   // the card whose copy waits for Copy / Cancel
-    std::string copying_env_id_;    // the card being copied
+    std::optional<CopyRequest> copy_confirm_;  // waits for Copy / Cancel
+    bool copying_ = false;
+    std::string copying_env_id_;    // the card being copied (empty: a file's folder)
     bool load_after_copy_ = false;  // Load asked for it (Preferences: copy when used)
     std::string copy_status_;       // the last copy's outcome
     bool copy_failed_ = false;

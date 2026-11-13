@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <ctime>
 #include <fstream>
 #include <sstream>
 #include <system_error>
@@ -145,11 +147,94 @@ bool WriteModelManifest(const fs::path& folder, const MjModelManifest& m, std::s
 }
 
 fs::path MenagerieFolder(const fs::path& root, const std::string& robot, const std::string& commit) {
-    if (commit.empty()) return root / robot;  // downloaded before versions were kept
+    if (commit.empty() || !ValidCommit(commit)) return root / robot;  // downloaded before versions were kept
     return root / (robot + "@" + commit.substr(0, std::min<size_t>(12, commit.size())));
 }
 
 fs::path ProjectModelsFolder(const fs::path& project) { return project / "mujoco" / "models"; }
+
+bool ValidCommit(const std::string& commit) {
+    return commit.size() >= 7 && commit.size() <= 40 &&
+           commit.find_first_not_of("0123456789abcdef") == std::string::npos;
+}
+
+std::string NowText() {
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char text[32];
+    std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M", &local);
+    return text;
+}
+
+std::string SafeFolderName(const std::string& text) {
+    std::string name;
+    for (const unsigned char c : text)
+        name += std::isalnum(c) || c == '_' || c == '-' || c == '.' ? static_cast<char>(c) : '_';
+    while (!name.empty() && name.front() == '.') name.erase(name.begin());
+    return name.empty() ? std::string("model") : name;
+}
+
+fs::path UniqueFolder(const fs::path& parent, const std::string& name) {
+    std::error_code ec;
+    fs::path candidate = parent / name;
+    for (int i = 2; fs::exists(candidate, ec); ++i) candidate = parent / (name + "_" + std::to_string(i));
+    return candidate;
+}
+
+bool CopyModelFolder(const fs::path& from, const fs::path& to, MjModelManifest manifest, uint64_t max_bytes,
+                     uint64_t& bytes, std::string& error) {
+    std::error_code ec;
+    bytes = 0;
+    if (from.empty() || from == from.root_path() || !from.has_relative_path() || !fs::is_directory(from, ec)) {
+        error = "Only a model's own folder is copied, not " + from.string() + ".";
+        return false;
+    }
+    if (fs::exists(to, ec)) {
+        error = to.string() + " exists already: nothing was replaced.";
+        return false;
+    }
+    int files = 0;
+    for (fs::recursive_directory_iterator it(from, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec) || it->path().filename() == kModelManifestName) continue;
+        bytes += it->file_size(ec);
+        ++files;
+        if (bytes > max_bytes) {
+            error = "The folder " + from.string() + " holds more than " + std::to_string(max_bytes / 1000000) +
+                    " MB: copy the model's own folder.";
+            return false;
+        }
+    }
+    const fs::path temp = to.parent_path() / (to.filename().string() + ".copying");
+    fs::remove_all(temp, ec);  // a copy that stopped before: never named as a model
+    fs::create_directories(temp, ec);
+    for (fs::recursive_directory_iterator it(from, ec), end; !ec && it != end; it.increment(ec)) {
+        const fs::path rel = it->path().lexically_relative(from);
+        if (it->is_directory(ec)) {
+            fs::create_directories(temp / rel, ec);
+        } else if (it->path().filename() != kModelManifestName) {
+            fs::create_directories((temp / rel).parent_path(), ec);
+            if (!ec) fs::copy_file(it->path(), temp / rel, fs::copy_options::overwrite_existing, ec);
+        }
+    }
+    if (ec) {
+        error = "The copy failed: " + ec.message();
+        return false;
+    }
+    fs::rename(temp, to, ec);
+    if (ec) {
+        error = "The copy could not be put in place: " + ec.message();
+        return false;
+    }
+    manifest.bytes = bytes;
+    manifest.files = files;
+    manifest.date = NowText();
+    return WriteModelManifest(to, manifest, error);
+}
 
 std::string ShortCommit(const std::string& commit) {
     return commit.empty() ? std::string("version unknown") : commit.substr(0, std::min<size_t>(7, commit.size()));
@@ -169,8 +254,12 @@ MjResolvedModel ResolveModelRef(const MjModelRef& ref, const MjModelRoots& roots
             return r;
         }
         case MjRefKind::Menagerie: {
-            if (!SafeRelative(ref.robot) || !SafeRelative(ref.file)) {
+            if (!SafeRelative(ref.robot) || !SafeRelative(ref.file) || ref.robot.find('/') != std::string::npos) {
                 r.why = "The model reference is not valid.";
+                return r;
+            }
+            if (!ref.commit.empty() && !ValidCommit(ref.commit)) {
+                r.why = "\"" + ref.commit + "\" is not a Menagerie version (a commit id).";
                 return r;
             }
             // The project's copy of that robot first
@@ -273,6 +362,8 @@ MjModelRef RefForFile(const fs::path& file, const MjModelRoots& roots) {
     ref.path = file.string();
     return ref;
 }
+
+bool InFolder(const fs::path& file, const fs::path& dir) { return Below(file, dir).has_value(); }
 
 std::string DescribeWhere(const MjResolvedModel& resolved) {
     switch (resolved.where) {

@@ -27,15 +27,14 @@ public:
     // Download a robot's folder from the Menagerie repository at one commit
     // (TOFIX219): `commit` empty takes the branch's current head. The files go
     // to <root>/<repo_path>@<commit12>, and its manifest is written last (a
-    // folder without one is an unfinished download). LastCommit() names the
-    // commit downloaded.
+    // folder without one is an unfinished download). A version that is not a
+    // commit id is refused.
     bool DownloadModel(const std::string& repo_path, const std::string& root, const std::string& commit);
 
     // Async wrapper — runs download in background thread
     using DoneCallback = std::function<void(bool success, const std::string& error)>;
     void DownloadModelAsync(const std::string& repo_path, const std::string& root, const std::string& commit,
                             DoneCallback done_cb = {});
-    std::string LastCommit() const;
 
     // Download from arbitrary URL (single MJCF file or GitHub repo directory).
     // Supports: raw file URLs, GitHub blob/tree URLs, raw.githubusercontent.com URLs.
@@ -73,7 +72,6 @@ private:
     mutable std::mutex status_mutex_;
     std::string error_;
     std::string status_text_;
-    std::string last_commit_;
 
     std::thread download_thread_;
 };

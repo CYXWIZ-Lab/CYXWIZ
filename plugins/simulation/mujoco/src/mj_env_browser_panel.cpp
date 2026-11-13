@@ -55,8 +55,9 @@ std::string SourceLine(const EnvInfo& info, const MjEnvLibrary& library) {
                    (info.date.empty() ? "" : " (" + info.date.substr(0, 10) + ")");
         }
         case EnvSource::Project: {
-            const auto rel = RefForFile(info.custom_asset_path, library.Roots());
-            return "In this project" + dot + (rel.kind == MjRefKind::Project ? rel.file : info.filename);
+            const auto rel =
+                std::filesystem::path(info.custom_asset_path).lexically_relative(library.Roots().project).generic_string();
+            return "In this project" + dot + (rel.empty() ? info.filename : rel);
         }
         case EnvSource::Imported:
             return "Imported from URL, outside any project";
@@ -65,11 +66,18 @@ std::string SourceLine(const EnvInfo& info, const MjEnvLibrary& library) {
     }
 }
 
-std::string Now() {
-    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    char date[32];
-    std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M", std::localtime(&now));
-    return date;
+// Copies are capped: a model with its meshes is far below this
+constexpr uint64_t kMaxCopyBytes = 2000000000ull;
+
+// A folder's files, counted up to the cap (a folder over it is not counted on)
+uint64_t FolderBytes(const std::filesystem::path& folder) {
+    std::error_code ec;
+    uint64_t bytes = 0;
+    for (std::filesystem::recursive_directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->is_regular_file(ec)) bytes += it->file_size(ec);
+        if (bytes > kMaxCopyBytes) break;
+    }
+    return bytes;
 }
 
 // "1 action · 4 observations · 1,000 steps" (the episode length)
@@ -175,11 +183,12 @@ void MjEnvBrowserPanel::ApplyFinishedDownloads(MjEnvLibrary& library) {
     for (const auto& d : done) {
         if (d.copy) {
             if (copy_thread_.joinable()) copy_thread_.join();
+            copying_ = false;
             copying_env_id_.clear();
             copy_failed_ = !d.ok;
             copy_status_ = d.error;  // the outcome in words, either way
             library.Rescan();
-            if (d.ok && load_after_copy_) {
+            if (d.ok && load_after_copy_ && !d.id.empty()) {
                 for (const auto& info : library.GetAll()) {
                     if (info.id != d.id) continue;
                     pending_load_path_ = library.GetAssetPath(info);
@@ -196,7 +205,7 @@ void MjEnvBrowserPanel::ApplyFinishedDownloads(MjEnvLibrary& library) {
                 MjModelManifest manifest;
                 manifest.source = "url";
                 manifest.url = d.url;
-                manifest.date = Now();
+                manifest.date = NowText();
                 std::string manifest_error;
                 WriteModelManifest(d.dir, manifest, manifest_error);
                 const bool in_project = !library.Roots().project.empty();
@@ -298,9 +307,11 @@ void MjEnvBrowserPanel::RenderUrlImport() {
             name = dot != std::string::npos ? tail.substr(0, dot) : tail;
         }
         const std::string project = ctx_->GetProjectDir().string();
+        name = SafeFolderName(name);
         const std::string dest =
-            (project.empty() ? std::filesystem::path(MjEnvLibrary::GetImportedRoot()) / name
-                             : ProjectModelsFolder(project) / name)
+            UniqueFolder(project.empty() ? std::filesystem::path(MjEnvLibrary::GetImportedRoot())
+                                         : ProjectModelsFolder(project),
+                         name)
                 .string();
         url_importing_ = true;
         url_import_status_.clear();
@@ -471,9 +482,9 @@ void MjEnvBrowserPanel::RenderCard(MjEnvLibrary& library, const EnvInfo& info, b
     const bool project_open = !library.Roots().project.empty();
     if (is_loaded) {
         text_beside(colors.success, "Loaded");
-        if (info.source == EnvSource::Menagerie && info.where == MjModelWhere::SharedDownload && project_open &&
-            copying_env_id_.empty() && ui->LinkButton("Copy into the project"))
-            copy_confirm_id_ = info.id;
+        if (info.source == EnvSource::Menagerie && info.where == MjModelWhere::SharedDownload && !info.commit.empty() &&
+            project_open && !copying_ && ui->LinkButton("Copy into the project"))
+            copy_confirm_ = RobotCopy(library, info, info.commit);
         right_button_x(ui->ButtonWidth("Open viewport", UiButtonSize::Regular));
         if (ui->LinkButton("Open viewport")) ctx_->ShowPanel(kViewportPanelId);
     } else if (downloading) {
@@ -501,8 +512,8 @@ void MjEnvBrowserPanel::RenderCard(MjEnvLibrary& library, const EnvInfo& info, b
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Downloaded before versions were kept: download the latest version again so "
                                       "the project can name it and other PCs get the same files.");
-            } else if (project_open && copying_env_id_.empty() && ui->LinkButton("Copy into the project")) {
-                copy_confirm_id_ = info.id;
+            } else if (project_open && !copying_ && ui->LinkButton("Copy into the project")) {
+                copy_confirm_ = RobotCopy(library, info, info.commit);
             }
             ImGui::SameLine();
         }
@@ -513,8 +524,10 @@ void MjEnvBrowserPanel::RenderCard(MjEnvLibrary& library, const EnvInfo& info, b
             const bool copy_first = info.source == EnvSource::Menagerie &&
                                     info.where == MjModelWhere::SharedDownload && !info.commit.empty() &&
                                     project_open && LoadViewportDefaults(*ctx_).copy_models_into_project;
-            if (copy_first && copying_env_id_.empty()) {
-                StartCopy(library, info, true);
+            CopyRequest copy = copy_first && !copying_ ? RobotCopy(library, info, info.commit) : CopyRequest{};
+            if (copy_first && !copying_ && copy.refused.empty()) {
+                copy.load_after = true;
+                StartCopy(std::move(copy));
             } else {
                 pending_load_path_ = library.GetAssetPath(info);
                 pending_load_info_ = info;
@@ -571,80 +584,112 @@ void MjEnvBrowserPanel::StartDownload(MjEnvLibrary& library, const EnvInfo& info
     });
 }
 
-void MjEnvBrowserPanel::StartCopy(MjEnvLibrary& library, const EnvInfo& info, bool load_after) {
+MjEnvBrowserPanel::CopyRequest MjEnvBrowserPanel::RobotCopy(MjEnvLibrary& library, const EnvInfo& info,
+                                                         const std::string& commit) const {
+    CopyRequest r;
+    r.id = info.id;
+    r.name = info.name;
+    r.from = MenagerieFolder(library.Roots().menagerie, info.repo_path, commit);
+    r.to = ProjectModelsFolder(library.Roots().project) / info.repo_path;
+    r.manifest.robot = info.repo_path;
+    r.manifest.commit = commit;
+    r.bytes = FolderBytes(r.from);
+    std::error_code ec;
+    if (commit.empty()) {
+        r.refused = "Its version is unknown: Download again (pinned) first, so other PCs get the same files.";
+    } else if (!ReadModelManifest(r.from)) {
+        r.refused = "Version " + ShortCommit(commit) + " is not downloaded on this PC.";
+    } else if (std::filesystem::exists(r.to, ec)) {
+        const auto existing = ReadModelManifest(r.to);
+        r.refused = "The project has a copy of " + info.name + " already (" +
+                    (existing ? "version " + ShortCommit(existing->commit) : std::string("version unknown")) +
+                    "). Nothing is replaced: remove that folder first to copy another version.";
+    }
+    r.after = "This project's MuJoCo Plant nodes keep naming " + info.name + " version " + ShortCommit(commit) +
+              " and use the copy from now on; another PC without the copy downloads the same version. The shared "
+              "download stays for other projects. Edit the copy freely: no other project sees it.";
+    return r;
+}
+
+void MjEnvBrowserPanel::RequestCopy(MjEnvLibrary& library, const std::string& robot_id, const std::string& commit) {
+    for (const auto& e : library.GetAll())
+        if (e.id == robot_id) copy_confirm_ = RobotCopy(library, e, commit);
+}
+
+void MjEnvBrowserPanel::RequestCopyFile(MjEnvLibrary& library, const std::string& model_file) {
     namespace fs = std::filesystem;
-    const fs::path file = library.GetAssetPath(info);
-    const fs::path from = MenagerieFolder(library.Roots().menagerie, info.repo_path, info.commit);
-    const fs::path to = ProjectModelsFolder(library.Roots().project) / info.repo_path;
-    if (file.empty() || copy_thread_.joinable()) return;
-    copying_env_id_ = info.id;
-    load_after_copy_ = load_after;
+    CopyRequest r;
+    const fs::path file(model_file);
+    r.from = file.parent_path();
+    r.name = file.stem().string();
+    r.manifest.source = "file";
+    r.manifest.url = file.string();
+    r.to = UniqueFolder(ProjectModelsFolder(library.Roots().project), SafeFolderName(r.from.filename().string()));
+    if (r.from.empty() || r.from == r.from.root_path() || !r.from.has_relative_path()) {
+        r.refused = "The model file sits in the root of a drive: put it in a folder of its own first.";
+    } else {
+        r.bytes = FolderBytes(r.from);
+        if (r.bytes > kMaxCopyBytes)
+            r.refused = "Its folder holds more than " + Megabytes(kMaxCopyBytes) +
+                        ": put the model in a folder of its own first.";
+    }
+    r.after = "Copies the folder the model file is in. Then pick the copy with Change... on the MuJoCo Plant node "
+              "(it is listed under In this project): it travels with the project.";
+    copy_confirm_ = std::move(r);
+}
+
+void MjEnvBrowserPanel::StartCopy(CopyRequest request) {
+    if (copy_thread_.joinable() || copying_) return;
+    copying_ = true;
+    copying_env_id_ = request.id;
+    load_after_copy_ = request.load_after;
     copy_status_.clear();
-    const std::string id = info.id, name = info.name, robot = info.repo_path, commit = info.commit;
-    copy_thread_ = std::thread([this, from, to, id, name, robot, commit]() {
-        std::error_code ec;
-        fs::create_directories(to, ec);
-        if (!ec) fs::copy(from, to, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
-        MjModelManifest manifest;
-        manifest.robot = robot;
-        manifest.commit = commit;
-        manifest.date = Now();
-        std::error_code walk;
-        for (fs::recursive_directory_iterator it(to, walk), end; !walk && it != end; it.increment(walk)) {
-            if (!it->is_regular_file(walk) || it->path().filename() == kModelManifestName) continue;
-            manifest.bytes += it->file_size(walk);
-            ++manifest.files;
-        }
+    copy_thread_ = std::thread([this, request]() {
+        uint64_t bytes = 0;
         std::string error;
-        const bool ok = !ec && WriteModelManifest(to, manifest, error);
-        const std::string outcome = ok ? "Copied " + name + " into the project (" + Megabytes(manifest.bytes) +
-                                             "); its nodes use the copy from now on."
-                                       : "The copy of " + name + " failed: " + (ec ? ec.message() : error);
+        const bool ok = CopyModelFolder(request.from, request.to, request.manifest, kMaxCopyBytes, bytes, error);
+        const std::string outcome =
+            ok ? "Copied " + request.name + " into the project (" + Megabytes(bytes) + ", " +
+                     request.to.filename().string() + ")."
+               : "The copy of " + request.name + " failed: " + error;
         std::lock_guard lock(finished_mutex_);
-        finished_.push_back({false, true, id, to.string(), std::string(), ok, outcome});
+        finished_.push_back({false, true, request.id, request.to.string(), std::string(), ok, outcome});
     });
 }
 
 void MjEnvBrowserPanel::RenderCopyConfirm(MjEnvLibrary& library) {
-    if (copy_confirm_id_.empty()) return;
-    const EnvInfo* info = nullptr;
-    for (const auto& e : library.GetAll())
-        if (e.id == copy_confirm_id_) info = &e;
-    if (!info) {
-        copy_confirm_id_.clear();
-        return;
-    }
+    if (!copy_confirm_) return;
+    const CopyRequest& r = *copy_confirm_;
     PluginUi* ui = ctx_->GetUi();
     const UiColors colors = ui->Colors();
-    const std::string title = "Copy " + info->name + " into the project?###copy_into_project";
+    const std::string title = "Copy " + r.name + " into the project?###copy_into_project";
     if (!ImGui::IsPopupOpen(title.c_str())) ImGui::OpenPopup(title.c_str());
     ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
     if (!ImGui::BeginPopupModal(title.c_str(), nullptr, ImGuiWindowFlags_NoResize)) return;
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::Text("Copies the model with its meshes and textures (%s) to", Megabytes(info->bytes).c_str());
-    ImGui::TextColored(ToImVec4(colors.text_bright), "%s",
-                       (ProjectModelsFolder(library.Roots().project) / info->repo_path).string().c_str());
-    ImGui::TextColored(ToImVec4(colors.text_dim),
-                       "This project's MuJoCo Plant nodes keep naming %s version %s and use the copy from now on; "
-                       "another PC without the copy downloads the same version. The shared download stays for "
-                       "other projects. Edit the copy freely: no other project sees it.",
-                       info->name.c_str(), ShortCommit(info->commit).c_str());
+    ImGui::Text("Copies the model with its meshes and textures (%s) to", Megabytes(r.bytes).c_str());
+    ImGui::TextColored(ToImVec4(colors.text_bright), "%s", r.to.string().c_str());
+    ImGui::TextColored(ToImVec4(colors.text_dim), "%s", r.after.c_str());
+    if (!r.refused.empty()) ImGui::TextColored(ToImVec4(colors.caution), "%s", r.refused.c_str());
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     const float buttons = ui->ButtonWidth("Cancel", UiButtonSize::Regular) + ui->ButtonWidth("Copy", UiButtonSize::Regular) + spacing;
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - buttons));
-    if (ui->SecondaryButton("Cancel")) {
-        copy_confirm_id_.clear();
-        ImGui::CloseCurrentPopup();
-    }
+    bool close = false;
+    if (ui->SecondaryButton("Cancel")) close = true;
     ImGui::SameLine();
-    if (ui->PrimaryButton("Copy", copying_env_id_.empty(), "Another copy is running")) {
-        StartCopy(library, *info, false);
-        copy_confirm_id_.clear();
+    const char* why = !r.refused.empty() ? r.refused.c_str() : "Another copy is running";
+    if (ui->PrimaryButton("Copy", r.refused.empty() && !copying_, why)) {
+        StartCopy(r);
+        close = true;
+    }
+    if (close) {
+        copy_confirm_.reset();
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
+    (void)library;
 }
 
 } // namespace cyxwiz::plugin::mujoco

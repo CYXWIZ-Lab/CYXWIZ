@@ -6,8 +6,6 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
-#include <chrono>
-#include <ctime>
 #include <filesystem>
 #include <fstream>
 
@@ -49,11 +47,6 @@ std::string MjMenagerieDownloader::GetError() const {
 std::string MjMenagerieDownloader::GetStatusText() const {
     std::lock_guard lock(status_mutex_);
     return status_text_;
-}
-
-std::string MjMenagerieDownloader::LastCommit() const {
-    std::lock_guard lock(status_mutex_);
-    return last_commit_;
 }
 
 std::string MjMenagerieDownloader::HeadCommit() {
@@ -160,12 +153,15 @@ bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const st
     {
         std::lock_guard lock(status_mutex_);
         error_.clear();
-        last_commit_.clear();
         status_text_ = wanted_commit.empty() ? "Finding the latest version..." : "Listing files...";
     }
     // One commit for every file: the one asked for, else the branch's head now
     const std::string commit = wanted_commit.empty() ? HeadCommit() : wanted_commit;
-    if (commit.empty()) {
+    if (!commit.empty() && !ValidCommit(commit)) {
+        std::lock_guard lock(status_mutex_);
+        error_ = "\"" + commit + "\" is not a Menagerie version (a commit id).";
+    }
+    if (commit.empty() || !ValidCommit(commit) || repo_path.find_first_of("/\\.") != std::string::npos) {
         downloading_ = false;
         return false;
     }
@@ -263,10 +259,7 @@ bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const st
         MjModelManifest manifest;
         manifest.robot = repo_path;
         manifest.commit = commit;
-        const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-        char date[32];
-        std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M", std::localtime(&now));
-        manifest.date = date;
+        manifest.date = NowText();
         manifest.files = downloaded;
         std::error_code ec;
         for (fs::recursive_directory_iterator it(dest_dir, ec), end; !ec && it != end; it.increment(ec))
@@ -276,9 +269,6 @@ bool MjMenagerieDownloader::DownloadModel(const std::string& repo_path, const st
             std::lock_guard lock(status_mutex_);
             error_ = manifest_error;
             success = false;
-        } else {
-            std::lock_guard lock(status_mutex_);
-            last_commit_ = commit;
         }
     }
     downloading_ = false;

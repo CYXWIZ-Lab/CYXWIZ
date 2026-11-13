@@ -231,9 +231,13 @@ void MjViewportPanel::RenderInspectPanel(MjEnvManager& env, MjRenderer& renderer
     section("Keyframes");
     const std::filesystem::path project = ctx_->GetProjectDir();
     const std::string model_path = env.ModelPath();
-    MjModelRef model_ref;
-    model_ref.path = model_path;
-    if (model_ref_) model_ref = model_ref_(model_path);
+    if (place_path_ != model_path) {
+        place_path_ = model_path;
+        place_ = {};
+        place_.ref.path = model_path;
+        if (model_place_) place_ = model_place_(model_path);
+    }
+    const MjModelRef& model_ref = place_.ref;
     if (keyframes_model_ != model_path) {
         keyframes_model_ = model_path;
         keyframes_ = project.empty() ? std::vector<MjKeyframe>{} : LoadKeyframes(KeyframesFile(project, model_ref));
@@ -405,13 +409,7 @@ void MjViewportPanel::RenderInspectPanel(MjEnvManager& env, MjRenderer& renderer
 
     // The model: where it is (the same name on every PC), read again, copied into the project
     section("Model");
-    // A Menagerie robot outside the project's models folder: the shared download
-    bool shared = model_ref.kind == MjRefKind::Menagerie;
-    if (shared && !project.empty()) {
-        const auto inside = std::filesystem::path(model_path).lexically_normal().lexically_relative(
-            (ProjectModelsFolder(project) / model_ref.robot).lexically_normal());
-        shared = inside.empty() || *inside.begin() == "..";
-    }
+    const bool shared = place_.shared;
     std::string where;
     switch (model_ref.kind) {
         case MjRefKind::Builtin: where = "Built in \xC2\xB7 " + model_ref.file; break;
@@ -431,19 +429,23 @@ void MjViewportPanel::RenderInspectPanel(MjEnvManager& env, MjRenderer& renderer
         if (reload_model_(error)) Notify("Reloaded " + std::filesystem::path(model_path).filename().string());
         else Notify("Reload: " + error, true);
     }
-    // A copy promises other PCs the same version: only a download whose version is known
+    // A copy promises other PCs the same version: only a download whose version is known.
+    // A file outside the project: its folder is copied (it then travels with the project).
     const bool pinned = !model_ref.commit.empty();
-    if (shared && copy_model_ && !ctx_->GetProjectDir().empty()) {
+    const bool outside = model_ref.kind == MjRefKind::Path;
+    if ((shared || outside) && copy_model_ && !project.empty()) {
         ImGui::SameLine();
-        if (ui->SecondaryButton("Copy into the project", pinned,
+        if (ui->SecondaryButton("Copy into the project", outside || pinned,
                                 "Its version is unknown (downloaded before versions were kept): Download again (pinned) "
                                 "in the Environment Library first.",
                                 UiButtonSize::Small))
-            copy_model_(model_ref);
+            copy_model_(model_ref, model_path);
     }
-    hint(shared ? "This is a shared download used by every project: copy it into the project before editing its "
-                  "file. Reload keeps the camera and the scene; the state starts over."
-                : "Reload keeps the camera and the scene; the state starts over.");
+    hint(shared    ? "This is a shared download used by every project: copy it into the project before editing its "
+                     "file. Reload keeps the camera and the scene; the state starts over."
+         : outside ? "Other PCs will not find this file: copy its folder into the project. Reload keeps the camera "
+                     "and the scene; the state starts over."
+                   : "Reload keeps the camera and the scene; the state starts over.");
 }
 
 }  // namespace cyxwiz::plugin::mujoco

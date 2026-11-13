@@ -866,6 +866,30 @@ void CheckModelRef(const std::filesystem::path& dir) {
     Check(r.where == MjModelWhere::Elsewhere && !r.portable, "a file elsewhere is found, not portable");
     Check(ResolveModelRef(*ParseModelRef("menagerie:../../x/scene.xml@1"), roots).where == MjModelWhere::Missing,
           "a reference that climbs out of its folder is refused");
+    r = ResolveModelRef(*ParseModelRef("menagerie:franka_emika_panda/scene.xml@/../../../x"), roots);
+    Check(r.where == MjModelWhere::Missing && r.why.find("not a Menagerie version") != std::string::npos,
+          "a version that is not a commit id is refused: " + r.why);
+    Check(ResolveModelRef(*ParseModelRef("menagerie:franka_emika_panda/scene.xml@main"), roots).where ==
+              MjModelWhere::Missing,
+          "a branch name is not a version");
+    Check(ValidCommit(sha) && ValidCommit("2f1a9c3") && !ValidCommit("main") && !ValidCommit("2F1A9C3"),
+          "commit ids: 7 to 40 lowercase hex");
+    Check(SafeFolderName("..\\evil/arm.xml") == "_evil_arm.xml" && SafeFolderName("..") == "model",
+          "a folder name from a URL keeps no separators or leading dots: " + SafeFolderName("..\\evil/arm.xml"));
+
+    // Copying a model's folder: never the drive, never over a folder, finished only with its manifest
+    uint64_t bytes = 0;
+    Check(!CopyModelFolder(fs::path(dir).root_path(), dir / "x", {}, 1000000, bytes, error),
+          "a drive's root is never copied: " + error);
+    const fs::path dest = dir / "proj2" / "mujoco" / "models" / "franka_emika_panda";
+    Check(CopyModelFolder(shared, dest, m, 1000000, bytes, error) && ReadModelManifest(dest) && fs::exists(dest / "scene.xml") &&
+              !fs::exists(dest.parent_path() / "franka_emika_panda.copying"),
+          "a folder is copied with its manifest written last: " + error);
+    Check(!CopyModelFolder(shared, dest, m, 1000000, bytes, error) && error.find("exists already") != std::string::npos,
+          "an existing copy is never replaced: " + error);
+    Check(!CopyModelFolder(shared, dir / "proj2" / "too_big", m, 2, bytes, error), "a folder over the limit is refused");
+    Check(UniqueFolder(dest.parent_path(), "franka_emika_panda").filename() == "franka_emika_panda_2",
+          "a folder name in use gets a number");
 
     // The reference a picked file gets
     Check(RefForFile(shared / "scene.xml", roots) == *franka, "a shared download's file -> its Menagerie reference");

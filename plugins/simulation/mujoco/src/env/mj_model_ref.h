@@ -69,6 +69,23 @@ std::filesystem::path MenagerieFolder(const std::filesystem::path& root, const s
 std::filesystem::path ProjectModelsFolder(const std::filesystem::path& project);
 // A commit as shown ("2f1a9c3"); empty: "version unknown"
 std::string ShortCommit(const std::string& commit);
+// A Menagerie version is a git commit: 7 to 40 lowercase hex digits (a
+// branch name such as "main" moves, so it is not a version)
+bool ValidCommit(const std::string& commit);
+// Now, local time, "2026-11-13 15:40" (thread safe)
+std::string NowText();
+// A folder name made from free text (a URL's last part): letters, digits,
+// "_", "-" and "." only, never "." or ".." or empty ("model")
+std::string SafeFolderName(const std::string& text);
+// `name` under `parent`, or name_2, name_3 ... when that folder exists
+std::filesystem::path UniqueFolder(const std::filesystem::path& parent, const std::string& name);
+
+// Copies a model's folder into `to` (which must not exist) without its
+// manifest, through a temporary sibling renamed at the end, then writes
+// `manifest` there: a copy that stops half way never looks finished. Refuses
+// a drive's root and more than `max_bytes`. False with the reason.
+bool CopyModelFolder(const std::filesystem::path& from, const std::filesystem::path& to, MjModelManifest manifest,
+                     uint64_t max_bytes, uint64_t& bytes, std::string& error);
 
 enum class MjModelWhere { ProjectCopy, InProject, SharedDownload, Builtin, Elsewhere, Missing };
 struct MjResolvedModel {
@@ -83,6 +100,9 @@ MjResolvedModel ResolveModelRef(const MjModelRef& ref, const MjModelRoots& roots
 // download or the project's copy, by its manifest) -> menagerie:; another file
 // in the project -> project:; the plugin's assets -> builtin:; else its path
 MjModelRef RefForFile(const std::filesystem::path& file, const MjModelRoots& roots);
+
+// `file` is inside `dir` (as the OS compares paths: case-insensitive on Windows)
+bool InFolder(const std::filesystem::path& file, const std::filesystem::path& dir);
 
 // One line about where the model is: "copy in this project", "shared download",
 // "built in", "not in the project: other PCs will not find it", or the missing reason

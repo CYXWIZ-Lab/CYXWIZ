@@ -197,13 +197,23 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
     viewport_panel_.SetHistory(&history_);
     viewport_panel_.SetSimExecutor(&sim_executor_);
     viewport_panel_.SetReloadModel([this](std::string& error) { return ReloadModel(error); });
-    viewport_panel_.SetModelRefFn([this](const std::string& path) { return RefForFile(path, ModelRoots()); });
-    viewport_panel_.SetCopyModel([this](const MjModelRef& ref) {
-        for (const auto& e : env_library_.GetAll()) {
-            if (e.source != EnvSource::Menagerie || e.repo_path != ref.robot) continue;
-            browser_panel_.RequestCopy(e.id);
-            if (ctx_) ctx_->ShowPanel("mujoco_env_browser");
+    viewport_panel_.SetModelPlaceFn([this](const std::string& path) {
+        const MjModelRoots roots = ModelRoots();
+        MjViewportPanel::ModelPlace place;
+        place.ref = RefForFile(path, roots);
+        place.shared = place.ref.kind == MjRefKind::Menagerie && InFolder(path, roots.menagerie);
+        return place;
+    });
+    viewport_panel_.SetCopyModel([this](const MjModelRef& ref, const std::string& path) {
+        ModelRoots();  // the library knows the open project
+        if (ref.kind == MjRefKind::Path) {
+            browser_panel_.RequestCopyFile(env_library_, path);
+        } else {
+            for (const auto& e : env_library_.GetAll())
+                if (e.source == EnvSource::Menagerie && e.repo_path == ref.robot)
+                    browser_panel_.RequestCopy(env_library_, e.id, ref.commit);
         }
+        if (ctx_) ctx_->ShowPanel("mujoco_env_browser");
     });
 
     // NOTE: Renderer is NOT initialized here. It will be lazily initialized
@@ -776,7 +786,8 @@ PluginSimulationBeginResult MuJoCoPlugin::BeginGraphRun(const std::vector<Plugin
             const std::string file = file_of(node_model, why);
             if (file.empty())
                 return refuse("The MuJoCo Plant's model is not on this PC. " + why +
-                              " Download it from the Environment Library.");
+                              (node_model.rfind("menagerie:", 0) == 0 ? " Download it from the Environment Library."
+                                                                      : " Pick its file with Change... on the node."));
             if (!SameModelFile(file, loaded_mjcf_path_))
                 return refuse("The MuJoCo Plant's model '" + file + "' is not the model loaded in the viewport ('" +
                               loaded_mjcf_path_ + "'). Load it from the Environment Library.");
@@ -1018,6 +1029,15 @@ PluginNodeEvalResult MuJoCoPlugin::EvaluateNode(const PluginNodeEvalContext& ctx
 MjModelRoots MuJoCoPlugin::ModelRoots() {
     MjModelRoots roots = env_library_.Roots();
     if (ctx_) roots.project = ctx_->GetProjectDir();
+    if (roots.project != needed_project_) {  // another project: its own needs
+        needed_project_ = roots.project;
+        needed_refs_.clear();
+        env_library_.SetNeeded({});
+        if (env_library_.Roots().project != roots.project) {
+            env_library_.SetProjectDir(roots.project.string());
+            env_library_.Rescan();
+        }
+    }
     return roots;
 }
 
@@ -1069,7 +1089,9 @@ DynamicPinResult MuJoCoPlugin::ResolveDynamicPins(
     NoteNeeded(saved, resolved.file.empty());
 
     DynamicPinResult result;
-    result.metadata["model_ref"] = FormatModelRef(saved);
+    // The value the node saves for its model (a picked path becomes its portable
+    // reference): the Engine writes it back into mjcf_path
+    if (own) result.metadata["canonical_trigger"] = FormatModelRef(saved);
     result.metadata["model_title"] = ModelTitle(saved, resolved);
     result.metadata["model_status"] = resolved.file.empty() ? "missing" : resolved.portable ? "portable" : "not portable";
     result.metadata["model_note"] = DescribeWhere(resolved);

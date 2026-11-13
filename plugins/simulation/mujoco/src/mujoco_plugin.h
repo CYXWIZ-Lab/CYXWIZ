@@ -169,6 +169,7 @@ private:
     std::string ModelTitle(const MjModelRef& ref, const MjResolvedModel& resolved) const;
     void NoteNeeded(const MjModelRef& ref, bool missing);
     std::vector<MjModelRef> needed_refs_;
+    std::filesystem::path needed_project_;  // the project needed_refs_ belong to
     bool playback_ = false;
     // What the viewport showed before playback, given back when it ends
     std::string restore_path_;

@@ -521,7 +521,9 @@ public:
 
     // Dynamic pins: rebuild a node's pins from plugin-provided data.
     // Called when a trigger parameter changes on a supports_dynamic_pins node.
-    void ResolveDynamicPins(int node_id);
+    // record_undo false: an automatic check (a graph just opened, a model
+    // looked for again), not an edit the user can undo
+    void ResolveDynamicPins(int node_id, bool record_undo = true);
 
     // Pattern insertion - add multiple nodes and links from a pattern template
     void InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);

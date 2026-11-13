@@ -183,7 +183,7 @@ bool NodeEditor::IsGraphValid() const {
     return cyxwiz::HasTrainingGraphStructure(nodes_, cyxwiz::ExtensionTrainingRole);
 }
 
-void NodeEditor::ResolveDynamicPins(int node_id) {
+void NodeEditor::ResolveDynamicPins(int node_id, bool record_undo) {
     // Find the node
     MLNode* node = nullptr;
     for (auto& n : nodes_) {
@@ -207,16 +207,25 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
     auto result = cyxwiz::ExtensionNodeRegistry::Instance().ResolveDynamicPins(
         node->extension_type_id, node->parameters);
 
+    // The plugin's own value for the trigger (a path becomes a portable name)
+    const auto adopt_canonical = [&]() {
+        const auto it = result.metadata.find("canonical_trigger");
+        if (trigger.empty() || it == result.metadata.end() || it->second.empty() || it->second == trigger_value) return;
+        node->parameters[trigger] = trigger_value = it->second;
+    };
+
     if (result.pins.empty()) {
         // No pins (a model not on this PC): the node keeps its pins and links, and
         // the plugin's words say why; it is asked again next time
         for (const auto& [k, v] : result.metadata) node->parameters["_meta_" + k] = v;
+        adopt_canonical();
         if (result.metadata.empty())
             spdlog::warn("ResolveDynamicPins: plugin returned empty pins for {}", node->extension_type_id);
         return;
     }
 
-    SaveUndoState();
+    if (record_undo) SaveUndoState();
+    adopt_canonical();
 
     // Save existing connections by pin name so we can restore matching ones
     struct SavedLink {
