@@ -159,6 +159,39 @@ model, it shows and changes nothing.
   keeping the camera and the scene; the state starts over. A file that does not
   build any more leaves the model as it was and says why.
 
+## Timeline: look back at what happened
+
+The strip under the scene keeps the steps of what the Viewport shows: the
+last 30 seconds of simulated time of the Viewport's own run, or the whole
+episode a policy is playing (a new episode starts it again).
+
+- **Drag along it** (or click), or press **Step back** and **Step**, to show
+  an earlier step: the scene goes back to that exact state (the joints,
+  velocities, contacts and controls). The Viewport's own run pauses; the scene
+  says **A step back** with the shown episode and step, and the numbers under
+  it are that step's (its episode, step and the reward summed so far).
+- **Back to live** (shown only while a step back is) puts the newest step
+  back and runs again if the run was running.
+- **Run**, **Resume** or **Step** from a step back goes on from the shown
+  step: the kept steps after it are dropped, so you can try again from just
+  before a fall, for example after a kick from the Stress panel.
+- While a policy plays, a step back holds the scene on that step; the policy
+  plays on, and **Back to live** shows it again.
+- The red marks on the track are the Stress panel's **fell** and **flipped
+  over** events, at the step they happened.
+
+**Plots** (beside the step buttons) draws the last 10 seconds of the kept
+steps under the timeline, all on one scale (the line under the plot says the
+range); a line marks the shown step. Pick what it draws:
+
+| Choice | The line |
+| --- | --- |
+| **Reward** | The reward of each step |
+| **Selected joint** | The position of the first joint of the body selected with a double-click (named after the joint once one is selected) |
+| **Root speed** | The speed of the robot's root body (m/s) |
+| **Controls** | Every actuator's control |
+| **Sensors** | The model's first 8 sensor values (shown only for a model with sensors) |
+
 ## Preferences > Simulation > MuJoCo Viewport
 
 | Setting | Default |
@@ -168,6 +201,7 @@ model, it shows and changes nothing.
 | **Record video** | GIF, until the episode ends |
 | **Scene options** | MuJoCo's; **Use MuJoCo's** resets options kept from the View menu |
 | **Inspect panel** | Closed; typed controls not held |
+| **Plots** | Not shown under the scene; Reward and the selected joint picked |
 | **Stress panel** | Closed; a sudden 1.5 m/s kick; a 0.2 m 2 kg ball at 6 m/s from 3 m ahead, no tumble; no random kicks (every 3 s when on) or throws (every 1.5 s, size × 0.5-2, mass × 0.5-3); Rough 0.40 seed 7 offered |
 
 Changing a choice in the Viewport does not change these, except **View >
@@ -184,8 +218,9 @@ policy** whenever you want to watch it: no training run is needed. See
 ## Limits
 
 - The Viewport shows one copy of a training run's environments (the first).
-- A timeline to scrub a played episode, live plots and a second policy as a
-  ghost are being built.
+- A second policy shown as a ghost beside the first is being built.
+- The timeline keeps at most 100,000 steps of the Viewport's own run and
+  20,000 of a played episode.
 - Training with pushes and rough ground, and the stress test that compares
   two saved policies by difficulty, are in the
   [RL walkthrough](rl_walkthrough.md) (Robustness, and Stress test).
