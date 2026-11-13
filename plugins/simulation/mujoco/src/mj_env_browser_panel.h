@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace cyxwiz::plugin {
@@ -29,6 +30,7 @@ using EnvLoadCallback = std::function<bool(const std::string& mjcf_path, const E
 
 class MjEnvBrowserPanel {
 public:
+    ~MjEnvBrowserPanel();
     void SetContext(PluginContext* ctx) { ctx_ = ctx; }
     void SetLoadCallback(EnvLoadCallback cb) { load_callback_ = std::move(cb); }
     void SetDownloader(MjMenagerieDownloader* dl) { downloader_ = dl; }
@@ -45,6 +47,7 @@ private:
     // library on the UI thread at the start of the next frame.
     struct FinishedDownload {
         bool url_import = false;
+        bool copy = false;  // a Copy into the project that finished
         std::string id;    // Menagerie model id, or the imported model's name
         std::string dir;   // where the files went
         std::string url;
@@ -59,6 +62,10 @@ private:
     void RenderCards(MjEnvLibrary& library, const MjEnvManager& env, const std::vector<const EnvInfo*>& shown);
     void RenderCard(MjEnvLibrary& library, const EnvInfo& info, bool is_loaded, float height);
     void RenderFooter(const MjEnvLibrary& library);
+    // Copy into the project: the confirmation, then a copy on its own thread
+    void RenderCopyConfirm(MjEnvLibrary& library);
+    void StartCopy(MjEnvLibrary& library, const EnvInfo& info, bool load_after);
+    void StartDownload(MjEnvLibrary& library, const EnvInfo& info, const std::string& commit);
     bool MatchesSource(const EnvInfo& info) const;
     bool MatchesSearch(const EnvInfo& info) const;
 
@@ -68,7 +75,7 @@ private:
     MjMenagerieDownloader* downloader_ = nullptr;
 
     char search_buf_[128] = {};
-    int source_ = 0;                 // All, Built-in, Menagerie, Imported
+    int source_ = 0;                 // All, Built-in, Menagerie, In this project, Imported
     std::string selected_category_;  // Empty = "All"
     std::string loaded_env_id_;
     std::string pending_load_path_;  // Deferred load — processed next frame
@@ -85,6 +92,15 @@ private:
     bool url_importing_ = false;
     std::string url_import_status_;
     std::string url_import_error_;
+
+    // Copy into the project
+    std::string copy_confirm_id_;   // the card whose copy waits for Copy / Cancel
+    std::string copying_env_id_;    // the card being copied
+    bool load_after_copy_ = false;  // Load asked for it (Preferences: copy when used)
+    std::string copy_status_;       // the last copy's outcome
+    bool copy_failed_ = false;
+    std::thread copy_thread_;
+    std::string last_project_;      // the project the library was scanned for
 };
 
 } // namespace cyxwiz::plugin::mujoco

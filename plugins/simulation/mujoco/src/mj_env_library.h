@@ -1,5 +1,8 @@
 #pragma once
 
+#include "env/mj_model_ref.h"
+
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -8,7 +11,8 @@ namespace cyxwiz::plugin::mujoco {
 enum class EnvSource {
     Builtin,     // Shipped with plugin (simple XMLs in assets/)
     Menagerie,   // From MuJoCo Menagerie (may need download)
-    Imported,    // Imported from a URL into ~/.cyxwiz/imported/<name>
+    Imported,    // Imported from a URL into ~/.cyxwiz/imported/<name> (no project was open)
+    Project,     // A model of the open project's own (mujoco/models/<name>/), not a Menagerie copy
 };
 
 struct EnvInfo {
@@ -30,40 +34,57 @@ struct EnvInfo {
 
     // Imported model: absolute path to its MJCF file
     std::string custom_asset_path;
+
+    // Where this PC has it (TOFIX219), found by Rescan. Menagerie: the project's
+    // copy, else the newest shared download, else Missing; commit empty with a
+    // shared download: downloaded before versions were kept
+    MjModelWhere where = MjModelWhere::Missing;
+    std::string commit;
+    std::string date;        // when it was downloaded or copied
+    uint64_t bytes = 0;      // its folder's files
+    std::string needed_commit;  // a version the project names that this PC lacks
 };
 
 class MjEnvLibrary {
 public:
-    MjEnvLibrary() { PopulateBuiltins(); PopulateMenagerie(); }
+    MjEnvLibrary() {
+        PopulateBuiltins();
+        PopulateMenagerie();
+        roots_.menagerie = GetMenagerieRoot();
+    }
 
-    void SetAssetsDir(const std::string& dir) { assets_dir_ = dir; }
+    void SetAssetsDir(const std::string& dir) {
+        assets_dir_ = dir;
+        roots_.builtin = dir;
+    }
+    // Where shared downloads are (default ~/.cyxwiz/menagerie; tests point it elsewhere)
+    void SetMenagerieRoot(const std::string& dir) { roots_.menagerie = dir; }
+    // The open project (empty: none); Rescan reads it
+    void SetProjectDir(const std::string& dir) { roots_.project = dir; }
+    const MjModelRoots& Roots() const { return roots_; }
+    // Where each model is on this PC: the project's copies and own models,
+    // shared downloads and their versions, models imported before
+    void Rescan();
+    // References the project's graphs name (MuJoCo Plant nodes): a robot whose
+    // version is missing here shows it on its card
+    void SetNeeded(std::vector<MjModelRef> needed);
+    // The reference a node saves for the model: the same on every machine
+    // where it can be (a model imported outside a project: its path)
+    MjModelRef RefFor(const EnvInfo& info) const;
 
     const std::vector<EnvInfo>& GetAll() const { return envs_; }
     std::string GetAssetPath(const EnvInfo& info) const;
-
-    // Check if a Menagerie model's files exist locally
-    bool IsModelAvailable(const EnvInfo& info) const;
-
-    // Mark a model as downloaded (clears requires_download)
-    void MarkDownloaded(const std::string& id);
-
-    // Get the local directory for a Menagerie model
-    std::string GetMenagerieModelDir(const EnvInfo& info) const;
 
     // Where downloaded and imported models are kept:
     // ~/.cyxwiz/menagerie and ~/.cyxwiz/imported
     static std::string GetMenagerieRoot();
     static std::string GetImportedRoot();
 
-    // Scan menagerie dir for previously downloaded models
-    void ScanDownloadedModels();
-
-    // A model imported into `dir`: its scene.xml, else its first .xml, becomes
-    // an environment of source Imported named `name`. False when the folder
-    // holds no .xml. Already listed: true, nothing added.
-    bool AddImportedModel(const std::string& dir, const std::string& name, const std::string& description);
-    // Models imported in earlier sessions (each folder of the imported root)
-    void ScanImportedModels();
+    // A model in `dir`: its scene.xml, else its first .xml, becomes an
+    // environment of `source` (Imported or Project) named `name`. False when
+    // the folder holds no .xml. Already listed: true, nothing added.
+    bool AddImportedModel(const std::string& dir, const std::string& name, const std::string& description,
+                          EnvSource source = EnvSource::Imported);
 
 private:
     void PopulateBuiltins();
@@ -76,6 +97,8 @@ private:
 
     std::vector<EnvInfo> envs_;
     std::string assets_dir_;
+    MjModelRoots roots_;
+    std::vector<MjModelRef> needed_;
 };
 
 } // namespace cyxwiz::plugin::mujoco

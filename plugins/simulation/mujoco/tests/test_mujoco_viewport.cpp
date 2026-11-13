@@ -11,6 +11,7 @@
 #include "env/mj_history.h"
 #include "env/mj_ghost.h"
 #include "env/mj_model_ref.h"
+#include "mj_env_library.h"
 #include "mj_env_manager.h"
 #include "mj_viewport_settings.h"
 
@@ -824,6 +825,8 @@ void CheckModelRef(const std::filesystem::path& dir) {
     const fs::path shared = MenagerieFolder(roots.menagerie, "franka_emika_panda", sha);
     Check(shared.filename() == "franka_emika_panda@2f1a9c3b7d40", "a download's folder names its commit");
     touch(shared / "scene.xml");
+    Check(ResolveModelRef(*franka, roots).where == MjModelWhere::Missing,
+          "a pinned folder without its manifest (a download that stopped) is not found");
     MjModelManifest m;
     m.robot = "franka_emika_panda";
     m.commit = sha;
@@ -876,6 +879,97 @@ void CheckModelRef(const std::filesystem::path& dir) {
     Check(RefForFile(dir / "elsewhere" / "arm.xml", roots).kind == MjRefKind::Path, "any other file -> its path");
 }
 
+// The Library finds each robot where this PC has it: the project's copy, the
+// newest pinned shared download, or one downloaded before versions were
+// kept; the project's own models; the versions the project needs
+void CheckLibraryRescan(const std::filesystem::path& dir) {
+    namespace fs = std::filesystem;
+    const auto touch = [](const fs::path& p) {
+        fs::create_directories(p.parent_path());
+        std::ofstream(p) << "<mujoco/>";
+    };
+    const fs::path menagerie = dir / "lib" / "menagerie";
+    const fs::path project = dir / "lib" / "proj";
+    const std::string old_sha = "1111111111111111111111111111111111111111";
+    const std::string new_sha = "2f1a9c3b7d40e1f2a3b4c5d6e7f8091a2b3c4d5e";
+    std::string error;
+    const auto download = [&](const std::string& robot, const std::string& sha, const std::string& date) {
+        const fs::path folder = MenagerieFolder(menagerie, robot, sha);
+        touch(folder / "scene.xml");
+        MjModelManifest m;
+        m.robot = robot;
+        m.commit = sha;
+        m.date = date;
+        m.bytes = 1000;
+        WriteModelManifest(folder, m, error);
+    };
+    download("franka_emika_panda", old_sha, "2026-10-01 10:00");
+    download("franka_emika_panda", new_sha, "2026-11-13 15:40");
+    touch(menagerie / "google_robot" / "scene.xml");  // downloaded before versions were kept
+
+    MjEnvLibrary library;
+    library.SetAssetsDir(CYXWIZ_MUJOCO_ASSETS_DIR);
+    library.SetMenagerieRoot(menagerie.string());
+    library.Rescan();
+    const auto find = [&](const std::string& id) -> const EnvInfo* {
+        for (const auto& e : library.GetAll())
+            if (e.id == id) return &e;
+        return nullptr;
+    };
+    const EnvInfo* franka = find("franka_emika_panda");
+    Check(franka && franka->where == MjModelWhere::SharedDownload && franka->commit == new_sha && !franka->requires_download,
+          "a robot downloaded twice shows its newest version");
+    Check(franka && library.GetAssetPath(*franka) == (MenagerieFolder(menagerie, "franka_emika_panda", new_sha) / "scene.xml").string(),
+          "and loads that version");
+    Check(franka && FormatModelRef(library.RefFor(*franka)) == "menagerie:franka_emika_panda/scene.xml@" + new_sha,
+          "its reference names that version");
+    const EnvInfo* google = find("google_robot");
+    Check(google && google->where == MjModelWhere::SharedDownload && google->commit.empty(),
+          "a robot downloaded before versions were kept is found, version unknown");
+    const EnvInfo* g1 = find("unitree_g1");
+    Check(g1 && g1->where == MjModelWhere::Missing && g1->requires_download, "a robot not downloaded needs a download");
+    const EnvInfo* cheetah = find("half_cheetah");
+    Check(cheetah && FormatModelRef(library.RefFor(*cheetah)) == "builtin:half_cheetah.xml", "a built-in model's reference");
+
+    // A project: its copy of Franka comes first; its own model is listed
+    const fs::path copy = ProjectModelsFolder(project) / "franka_emika_panda";
+    touch(copy / "scene.xml");
+    MjModelManifest copied;
+    copied.robot = "franka_emika_panda";
+    copied.commit = new_sha;
+    copied.date = "2026-11-13 16:00";
+    WriteModelManifest(copy, copied, error);
+    touch(ProjectModelsFolder(project) / "my_arm" / "arm.xml");
+    MjModelManifest url;
+    url.source = "url";
+    url.url = "https://example.org/arm.xml";
+    WriteModelManifest(ProjectModelsFolder(project) / "my_arm", url, error);
+    library.SetProjectDir(project.string());
+    library.Rescan();
+    franka = find("franka_emika_panda");
+    Check(franka && franka->where == MjModelWhere::ProjectCopy && library.GetAssetPath(*franka) == (copy / "scene.xml").string(),
+          "the project's copy comes first");
+    const EnvInfo* arm = find("project_my_arm");
+    Check(arm && arm->source == EnvSource::Project && arm->description == "Imported from https://example.org/arm.xml" &&
+              FormatModelRef(library.RefFor(*arm)) == "project:mujoco/models/my_arm/arm.xml",
+          "the project's own model is listed with a project reference");
+    Check(!find("project_franka_emika_panda"), "a Menagerie copy shows on its robot's card, not as its own");
+
+    // The versions the project names
+    library.SetNeeded({*ParseModelRef("menagerie:unitree_g1/scene.xml@a7c22e1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                       *ParseModelRef("menagerie:franka_emika_panda/scene.xml@" + new_sha)});
+    g1 = find("unitree_g1");
+    franka = find("franka_emika_panda");
+    Check(g1 && g1->needed_commit == "a7c22e1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "a needed version this PC lacks marks its robot");
+    Check(franka && franka->needed_commit.empty(), "a needed version this PC has marks nothing");
+
+    // Another project: the first one's models go
+    library.SetProjectDir((dir / "lib" / "other").string());
+    library.Rescan();
+    Check(!find("project_my_arm") && find("franka_emika_panda")->where == MjModelWhere::SharedDownload,
+          "another project: the first one's models and copies are not listed");
+}
+
 }  // namespace
 
 int main() {
@@ -896,6 +990,7 @@ int main() {
     CheckHistory();
     CheckGhost();
     CheckModelRef(dir);
+    CheckLibraryRescan(dir);
     std::filesystem::remove_all(dir, ec);
     if (failures == 0) std::printf("test_mujoco_viewport: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

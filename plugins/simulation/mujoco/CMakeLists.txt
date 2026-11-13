@@ -129,6 +129,7 @@ add_executable(test_mujoco_viewport
     src/env/mj_ghost.cpp
     src/env/mj_model_ref.cpp
     src/mj_env_manager.cpp
+    src/mj_env_library.cpp
 )
 target_include_directories(test_mujoco_viewport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${Stb_INCLUDE_DIR})
 target_link_libraries(test_mujoco_viewport PRIVATE cyxwiz-plugin-sdk mujoco::mujoco nlohmann_json::nlohmann_json

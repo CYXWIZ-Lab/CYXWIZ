@@ -24,16 +24,18 @@ public:
     MjMenagerieDownloader(const MjMenagerieDownloader&) = delete;
     MjMenagerieDownloader& operator=(const MjMenagerieDownloader&) = delete;
 
-    // Download a model directory from Menagerie GitHub repo.
-    // repo_path: directory name in menagerie repo (e.g. "franka_emika_panda")
-    // dest_dir:  local directory to save files (e.g. ~/.cyxwiz/menagerie/franka_emika_panda)
-    // Returns true on success.
-    bool DownloadModel(const std::string& repo_path, const std::string& dest_dir);
+    // Download a robot's folder from the Menagerie repository at one commit
+    // (TOFIX219): `commit` empty takes the branch's current head. The files go
+    // to <root>/<repo_path>@<commit12>, and its manifest is written last (a
+    // folder without one is an unfinished download). LastCommit() names the
+    // commit downloaded.
+    bool DownloadModel(const std::string& repo_path, const std::string& root, const std::string& commit);
 
     // Async wrapper — runs download in background thread
     using DoneCallback = std::function<void(bool success, const std::string& error)>;
-    void DownloadModelAsync(const std::string& repo_path, const std::string& dest_dir,
+    void DownloadModelAsync(const std::string& repo_path, const std::string& root, const std::string& commit,
                             DoneCallback done_cb = {});
+    std::string LastCommit() const;
 
     // Download from arbitrary URL (single MJCF file or GitHub repo directory).
     // Supports: raw file URLs, GitHub blob/tree URLs, raw.githubusercontent.com URLs.
@@ -60,7 +62,9 @@ private:
         std::string download_url;
         bool is_dir = false;
     };
-    std::vector<FileEntry> ListGitHubDir(const std::string& api_path);
+    std::vector<FileEntry> ListGitHubDir(const std::string& api_path, const std::string& ref);
+    // The branch's current commit (empty, with error_ set, when GitHub does not answer)
+    std::string HeadCommit();
 
     std::atomic<bool> downloading_{false};
     std::atomic<bool> cancel_requested_{false};
@@ -69,6 +73,7 @@ private:
     mutable std::mutex status_mutex_;
     std::string error_;
     std::string status_text_;
+    std::string last_commit_;
 
     std::thread download_thread_;
 };

@@ -68,9 +68,9 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
     assets_dir_ = (ctx.GetPluginDir() / "assets").string();
     env_library_.SetAssetsDir(assets_dir_);
 
-    // Scan for previously downloaded Menagerie models and earlier imports
-    env_library_.ScanDownloadedModels();
-    env_library_.ScanImportedModels();
+    // Where each model is: shared downloads and their versions, earlier imports
+    // (the open project's own models are read when the Library first draws)
+    env_library_.Rescan();
 
     // Wire browser panel load callback and downloader; the viewport shows the
     // loaded model's name and where it comes from.
@@ -78,6 +78,8 @@ bool MuJoCoPlugin::OnLoad(PluginContext& ctx) {
         if (!LoadEnvironment(path)) return false;
         if (info.source == EnvSource::Imported) {
             viewport_panel_.SetModelLabel(info.name, "Imported from URL");
+        } else if (info.source == EnvSource::Project) {
+            viewport_panel_.SetModelLabel(info.name, "In this project");
         } else {
             const char* source = info.source == EnvSource::Menagerie ? "Menagerie" : "Built-in";
             viewport_panel_.SetModelLabel(info.name, std::string(source) + " \xC2\xB7 " + info.category);

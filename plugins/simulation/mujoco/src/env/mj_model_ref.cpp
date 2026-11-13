@@ -185,8 +185,10 @@ MjResolvedModel ResolveModelRef(const MjModelRef& ref, const MjModelRoots& roots
                 }
             }
             if (!roots.menagerie.empty()) {
-                const fs::path shared = MenagerieFolder(roots.menagerie, ref.robot, ref.commit) / ref.file;
-                if (IsFile(shared)) {
+                const fs::path folder = MenagerieFolder(roots.menagerie, ref.robot, ref.commit);
+                const fs::path shared = folder / ref.file;
+                // A pinned folder counts once its manifest is written (a download that stopped has none)
+                if (IsFile(shared) && (ref.commit.empty() || ReadModelManifest(folder))) {
                     r.file = shared;
                     r.where = MjModelWhere::SharedDownload;
                     r.portable = !ref.commit.empty();
