@@ -177,7 +177,9 @@ MjResolvedModel ResolveModelRef(const MjModelRef& ref, const MjModelRoots& roots
             if (!roots.project.empty()) {
                 const fs::path copy = ProjectModelsFolder(roots.project) / ref.robot;
                 const auto manifest = ReadModelManifest(copy);
-                if (manifest && manifest->robot == ref.robot && IsFile(copy / ref.file)) {
+                // Only the version named: a copy of another version does not stand in for it
+                if (manifest && manifest->robot == ref.robot && (ref.commit.empty() || manifest->commit == ref.commit) &&
+                    IsFile(copy / ref.file)) {
                     r.file = copy / ref.file;
                     r.where = MjModelWhere::ProjectCopy;
                     r.portable = true;

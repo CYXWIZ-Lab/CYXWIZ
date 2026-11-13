@@ -203,16 +203,20 @@ void NodeEditor::ResolveDynamicPins(int node_id) {
     bool already_resolved = !node->resolved_config.empty();
     if (trigger_value == node->resolved_config && already_resolved) return;  // No change
 
-    SaveUndoState();
-
     // Call plugin to resolve new pins
     auto result = cyxwiz::ExtensionNodeRegistry::Instance().ResolveDynamicPins(
         node->extension_type_id, node->parameters);
 
     if (result.pins.empty()) {
-        spdlog::warn("ResolveDynamicPins: plugin returned empty pins for {}", node->extension_type_id);
+        // No pins (a model not on this PC): the node keeps its pins and links, and
+        // the plugin's words say why; it is asked again next time
+        for (const auto& [k, v] : result.metadata) node->parameters["_meta_" + k] = v;
+        if (result.metadata.empty())
+            spdlog::warn("ResolveDynamicPins: plugin returned empty pins for {}", node->extension_type_id);
         return;
     }
+
+    SaveUndoState();
 
     // Save existing connections by pin name so we can restore matching ones
     struct SavedLink {

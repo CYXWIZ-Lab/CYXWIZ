@@ -8,6 +8,8 @@
 #include "../core/file_dialogs.h"
 #include "../core/extension_node_registry.h"
 #include "../core/extension_node_presentation.h"
+#include "../core/project_manager.h"
+#include "../plugin/registries/plugin_panel_registry.h"
 #include "file_browser_launch.h"
 #include "python_bundle_ui.h"
 #include "icons.h"
@@ -19,6 +21,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <string>
 
@@ -122,7 +125,13 @@ void PinTable(const char* id, const std::vector<NodePin>& pins, const char* type
 void ModelInfo(const MLNode& node) {
     std::vector<std::pair<std::string, std::string>> rows;
     for (const auto& [key, value] : node.parameters) {
-        if (key.starts_with("_meta_")) rows.emplace_back(key.substr(6), value);
+        if (!key.starts_with("_meta_")) continue;
+        // The model's reference, name and where it is show above (the Model row)
+        const std::string name = key.substr(6);
+        if (name == "model_ref" || name == "model_title" || name == "model_status" || name == "model_note" ||
+            name == "loaded_path")
+            continue;
+        rows.emplace_back(name, value);
     }
     if (rows.empty()) return;
     ImGui::Spacing();
@@ -137,22 +146,41 @@ void RenderMuJoCoPlant(MLNode& node, RenderNodePropertiesContext& context) {
         context.invalidate_shapes();
     };
     std::string mjcf_path = ParamOr(node, "mjcf_path");
+    // The plugin names the model the same way on every machine (TOFIX219): a
+    // picked file is saved by that reference
+    const std::string model_ref = ParamOr(node, "_meta_model_ref");
+    if (!mjcf_path.empty() && !model_ref.empty() && model_ref != mjcf_path) {
+        node.parameters["mjcf_path"] = mjcf_path = model_ref;
+        resolve_pins();
+    }
+    const std::string status = ParamOr(node, "_meta_model_status");
+    // A model not on this PC is looked for again every 2 s (a download may bring
+    // it); a node opened from a file is resolved the first time it is shown
+    if (status == "missing" || (status.empty() && !mjcf_path.empty())) {
+        static std::map<int, double> last_check;
+        double& last = last_check[node.id];
+        if (ImGui::GetTime() - last > 2.0) {
+            last = ImGui::GetTime();
+            node.resolved_config.clear();
+            resolve_pins();
+        }
+    }
     {
         properties_rows::Rows rows("##mujoco");
         if (!rows.ok) return;
-        // MJCF file with Browse
-        properties_rows::Label("MJCF model");
-        char path_buf[512];
-        std::strncpy(path_buf, mjcf_path.c_str(), sizeof(path_buf) - 1);
-        path_buf[sizeof(path_buf) - 1] = '\0';
-        const float browse = cyxwiz::ui::ButtonWidth("Browse", cyxwiz::ui::ButtonSize::Small);
-        ImGui::SetNextItemWidth(std::max(40.0f, ImGui::GetContentRegionAvail().x - browse - t.space_sm));
-        if (ImGui::InputText("##mjcf_path", path_buf, sizeof(path_buf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-            node.parameters["mjcf_path"] = mjcf_path = path_buf;
-            resolve_pins();
-        }
+        // The model by name, Change... to pick another file
+        properties_rows::Label("Model");
+        const std::string title = ParamOr(node, "_meta_model_title");
+        std::string shown = !title.empty() ? title : !mjcf_path.empty() ? mjcf_path : std::string("No model set.");
+        char shown_buf[512];
+        std::strncpy(shown_buf, shown.c_str(), sizeof(shown_buf) - 1);
+        shown_buf[sizeof(shown_buf) - 1] = '\0';
+        const float change = cyxwiz::ui::ButtonWidth("Change...", cyxwiz::ui::ButtonSize::Small);
+        ImGui::SetNextItemWidth(std::max(40.0f, ImGui::GetContentRegionAvail().x - change - t.space_sm));
+        ImGui::InputText("##mjcf_model", shown_buf, sizeof(shown_buf), ImGuiInputTextFlags_ReadOnly);
+        if (ImGui::IsItemHovered() && !mjcf_path.empty()) ImGui::SetTooltip("%s", mjcf_path.c_str());
         ImGui::SameLine(0.0f, t.space_sm);
-        if (cyxwiz::ui::SecondaryButton("Browse")) {
+        if (cyxwiz::ui::SecondaryButton("Change...")) {
             if (auto selected = cyxwiz::FileDialogs::OpenFile(
                     "Select MJCF Model", {{"MJCF Files", "xml"}, {"All Files", "*"}},
                     mjcf_path.empty() ? nullptr : mjcf_path.c_str())) {
@@ -161,9 +189,42 @@ void RenderMuJoCoPlant(MLNode& node, RenderNodePropertiesContext& context) {
             }
         }
         properties_rows::Status("mjcf_path");
-        const std::string loaded = ParamOr(node, "_meta_loaded_path");
-        if (!loaded.empty()) {
-            properties_rows::Note(("Loaded from the Environment Library: " + loaded).c_str());
+        const std::string note = ParamOr(node, "_meta_model_note");
+        if (status == "missing") {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.caution, "%s The graph cannot run until it is.", note.c_str());
+            ImGui::PopTextWrapPos();
+            if (mjcf_path.rfind("menagerie:", 0) == 0 && cyxwiz::ui::PrimaryButton("Download it")) {
+                // The Environment Library (the node's own plugin) offers the version this graph names
+                if (const auto descriptor = cyxwiz::ExtensionNodeRegistry::Instance().Find(node.extension_type_id))
+                    cyxwiz::plugin::PluginPanelRegistry::Instance().ShowPanel(descriptor->provider_id, "mujoco_env_browser");
+            }
+        } else if (status == "not portable") {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(t.text_dim, "%s", note.c_str());
+            ImGui::PopTextWrapPos();
+            const std::string project = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+            const bool outside = mjcf_path.find(':') == std::string::npos || (mjcf_path.size() > 1 && mjcf_path[1] == ':');
+            if (outside && !project.empty() && cyxwiz::ui::LinkButton("Copy into the project")) {
+                // The model's folder (its meshes and textures) into the project's models
+                namespace fs = std::filesystem;
+                const fs::path file(mjcf_path);
+                const fs::path folder = file.parent_path();
+                const fs::path to = fs::path(project) / "mujoco" / "models" / folder.filename();
+                std::error_code ec;
+                fs::create_directories(to, ec);
+                if (!ec) fs::copy(folder, to, fs::copy_options::recursive | fs::copy_options::skip_existing, ec);
+                if (ec) {
+                    spdlog::error("MuJoCo Plant: copying {} into the project failed: {}", folder.string(), ec.message());
+                } else {
+                    node.parameters["mjcf_path"] = mjcf_path =
+                        "project:" + (fs::path("mujoco") / "models" / folder.filename() / file.filename()).generic_string();
+                    spdlog::info("MuJoCo Plant: copied {} into the project", folder.string());
+                    resolve_pins();
+                }
+            }
+        } else if (!note.empty()) {
+            properties_rows::Note(note.c_str());
         } else if (mjcf_path.empty()) {
             properties_rows::Note("No model set.");
         }

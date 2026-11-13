@@ -847,6 +847,8 @@ void CheckModelRef(const std::filesystem::path& dir) {
     r = ResolveModelRef(*franka, roots);
     Check(r.where == MjModelWhere::ProjectCopy && r.portable && r.file == copy / "scene.xml",
           "the project's copy of the robot comes first");
+    Check(ResolveModelRef(*other_commit, roots).where == MjModelWhere::Missing,
+          "the project's copy of another version does not stand in for the version named");
     // A robot downloaded before versions were kept
     touch(roots.menagerie / "google_robot" / "scene.xml");
     r = ResolveModelRef(*ParseModelRef("menagerie:google_robot/scene.xml"), roots);
