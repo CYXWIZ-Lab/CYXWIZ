@@ -2,6 +2,8 @@
 
 // A driver library opened at run time (CUDA, OpenCL, NVML). The portable
 // backend must not import these, so a machine without them still loads it.
+// ArrayFire's own backend libraries, already loaded by its unified loader,
+// are reached through FindLoadedSymbol (loaded_library.h) instead.
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -19,13 +21,11 @@ public:
 #ifdef _WIN32
     // A driver library is opened from the Windows system folder only: a
     // file of the same name beside a project or on PATH is never loaded.
-    explicit DynamicLibrary(const wchar_t* name, bool already_loaded = false)
-        : handle_(already_loaded ? GetModuleHandleW(name)
-                                 : LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)),
-          owns_(!already_loaded && handle_ != nullptr) {}
+    explicit DynamicLibrary(const wchar_t* name)
+        : handle_(LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)) {}
 
     ~DynamicLibrary() {
-        if (owns_) FreeLibrary(handle_);
+        if (handle_ != nullptr) FreeLibrary(handle_);
     }
 
     void* Find(const char* symbol) const {
@@ -36,12 +36,8 @@ public:
 
 private:
     HMODULE handle_ = nullptr;
-    bool owns_ = false;
 #else
-    explicit DynamicLibrary(const char* name, bool already_loaded = false)
-        : handle_(dlopen(name,
-                         RTLD_LAZY |
-                             (already_loaded ? RTLD_NOLOAD : RTLD_LOCAL))) {}
+    explicit DynamicLibrary(const char* name) : handle_(dlopen(name, RTLD_LAZY | RTLD_LOCAL)) {}
 
     ~DynamicLibrary() {
         if (handle_ != nullptr) dlclose(handle_);
