@@ -653,8 +653,11 @@ if(CYXWIZ_BUILD_TESTS)
         src/security/docker_manager.cpp
     )
 
+    # api_key_manager.cpp draws through the header-only cyxwiz/portable_random.h;
+    # this test does not link cyxwiz-backend, so it names the headers itself.
     target_include_directories(test_security PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/cyxwiz-backend/include
     )
 
     # cpp-httplib is header-only: every file that includes it must agree on TLS

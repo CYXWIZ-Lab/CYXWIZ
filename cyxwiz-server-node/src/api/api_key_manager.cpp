@@ -40,7 +40,10 @@ std::string APIKeyManager::GenerateRandomString(size_t length) {
         // Fallback to std::random_device if OpenSSL fails
         std::random_device rd;
         std::mt19937 gen(rd());
-        const auto dist = [low = 0, high = sizeof(charset) - 2](auto& r) { return cyxwiz::portable::UniformInt<size_t>(r, low, high); };
+        // The last index, computed outside the capture: MSVC rejects sizeof of
+        // a local array in a lambda init-capture (C2070).
+        constexpr size_t last_index = sizeof(charset) - 2;
+        const auto dist = [](auto& r) { return cyxwiz::portable::UniformInt<size_t>(r, 0, last_index); };
         for (size_t i = 0; i < length; ++i) {
             result[i] = charset[dist(gen)];
         }
