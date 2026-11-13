@@ -38,6 +38,13 @@ save the state-dict again.
 Float16 and float64 tensors are converted to float32. Integer tensors (such as
 BatchNorm's `num_batches_tracked` counter) are not weights and are left out.
 
+## Example
+
+`examples/cyxgraph/cats_dogs_resnet18_finetune.cyxgraph` is torchvision's
+ResNet-18 with every node named as torchvision names the layer. Started from
+`resnet18-f37072fd.pth` with the backbone frozen, three epochs on cats vs dogs
+gave 86.29 % test accuracy; its README has the steps and the numbers.
+
 ## How layers are matched
 
 A layer takes the entries whose name is its **node's name** followed by the

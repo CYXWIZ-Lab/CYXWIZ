@@ -164,6 +164,11 @@ private Data Studio tickets (`tofix*/track*`).
   freezes or unfreezes the selection, every layer loaded from the weights
   file, all but the head, or all but the last N layers. **Preferences >
   Training** sets what a new BatchNorm does with its statistics when frozen.
+- **ResNet-18 fine-tuning example.** `cats_dogs_resnet18_finetune.cyxgraph`
+  is torchvision's ResNet-18 node for node, started from the published
+  ImageNet weights with the backbone frozen (86.29 % test accuracy on cats vs
+  dogs after three epochs). Checked against PyTorch: with those weights the
+  graph's outputs equal torchvision's.
 - **Start training from a published weights file.** Data Loader >
   Checkpoints > **Start from** is now one choice: random weights, a
   checkpoint of an earlier run, or **a weights file** (a PyTorch state-dict
