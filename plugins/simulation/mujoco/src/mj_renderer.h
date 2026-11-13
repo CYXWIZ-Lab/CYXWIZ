@@ -52,7 +52,13 @@ public:
     // Render one frame. Call from main thread.
     // Returns the Core Profile texture ID suitable for ImGui::Image().
     // Returns 0 if rendering is disabled or not initialized.
-    unsigned int RenderFrame(const mjModel* model, const mjData* data);
+    // ghost: a second state of the same model drawn see-through beside it
+    // (a second policy, TOFIX212 P3d); null: none
+    unsigned int RenderFrame(const mjModel* model, const mjData* data, const mjData* ghost = nullptr);
+    // The colour the ghost is tinted with (the theme's accent)
+    void SetGhostTint(const float rgba[4]) {
+        for (int i = 0; i < 4; ++i) ghost_rgba_[i] = rgba[i];
+    }
 
     // Camera controls (called from ImGui mouse input). Orbit and zoom move
     // the free and the following camera; pan moves the free camera only (a
@@ -155,6 +161,7 @@ private:
     mjvPerturb pert_{};  // the Ctrl+drag pull, drawn with the scene while held
     int selected_ = -1;  // Select
     float marker_rgba_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float ghost_rgba_[4] = {0.5f, 0.5f, 1.0f, 1.0f};  // SetGhostTint
 
     // Hidden GLFW window for compatibility context
     GLFWwindow* compat_window_ = nullptr;

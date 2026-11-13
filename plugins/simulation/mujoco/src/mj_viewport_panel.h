@@ -17,6 +17,7 @@
 #include "mj_recorder.h"
 #include "env/mj_inspect.h"
 #include "env/mj_history.h"
+#include "env/mj_ghost.h"
 #include "mj_viewport_settings.h"
 
 #include <atomic>
@@ -99,6 +100,22 @@ public:
         bool watch_only = false;  // a training's own copy: the Stress panel is off
     };
     void SetPlaybackNumbers(PlaybackNumbers numbers) { numbers_ = std::move(numbers); }
+    // A second policy drawn see-through beside the played one
+    // (ShowCopyAsGhost): its numbers, and why the scene does not draw it
+    struct GhostNumbers {
+        bool active = false;
+        std::string name;
+        int episode = 1;
+        int step = 0;
+        double episode_return = 0.0;
+        bool has_last_return = false;
+        double last_return = 0.0;
+        std::string not_drawn;  // empty: drawn
+    };
+    // Each frame of a playback; state: newly published (null: unchanged),
+    // put on model m unless a step back is shown
+    void SetGhost(const mjModel* m, GhostNumbers numbers, const std::vector<mjtNum>* state);
+    const MjGhost& Ghost() const { return ghost_; }  // the timeline keeps its state
     // The played copy's status word: the Engine's, or "Policy playback"
     const char* PlaybackStatus() const { return numbers_.status.empty() ? "Policy playback" : numbers_.status.c_str(); }
     // The renderer (re)started for a model: apply the saved scene options and
@@ -234,6 +251,8 @@ private:
     bool playback_ = false;
     std::string playback_label_;
     PlaybackNumbers numbers_;
+    GhostNumbers ghost_numbers_;  // SetGhost
+    MjGhost ghost_;
 
     // Saved choices (Preferences > Simulation), read when a model or a
     // playback starts

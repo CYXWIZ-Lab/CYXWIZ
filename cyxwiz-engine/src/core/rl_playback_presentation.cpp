@@ -30,6 +30,25 @@ std::string PolicySource(const std::string& file_name, int64_t steps) {
     return (file_name.empty() ? std::string("this session's run") : file_name) + " (" + Thousands(steps) + " steps)";
 }
 
+std::string PolicyName(const std::string& file_name) {
+    if (file_name.empty()) return "this session's run";
+    const size_t slash = file_name.find_last_of("/\\");
+    std::string name = slash == std::string::npos ? file_name : file_name.substr(slash + 1);
+    const size_t dot = name.rfind('.');
+    if (dot != std::string::npos && dot > 0) name.resize(dot);
+    return name;
+}
+
+std::string GhostLine(bool playing, int episode, int step, double episode_return, const std::vector<double>& returns,
+                      const std::string& note) {
+    if (!playing) return note;
+    std::string line = "Ghost \xC2\xB7 episode " + std::to_string(episode) + " \xC2\xB7 step " + std::to_string(step) +
+                       " \xC2\xB7 return " + Number(episode_return, "%.1f");
+    if (!returns.empty()) line += " \xC2\xB7 last " + Number(returns.back(), "%.1f");
+    if (!note.empty()) line += ". " + note;
+    return line;
+}
+
 std::string PolicyLine(bool has_policy, const std::string& file_name, int64_t steps, float mean_return) {
     if (!has_policy) return "None yet: Train, or load a saved policy";
     std::string line = file_name.empty() ? "From this session's run" : "From " + file_name;

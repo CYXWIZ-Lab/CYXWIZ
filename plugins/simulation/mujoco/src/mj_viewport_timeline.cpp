@@ -53,13 +53,18 @@ void MjViewportPanel::ShowHistoryEntry(MjEnvManager& env, size_t index) {
     std::lock_guard phys_lock(env.GetPhysicsMutex());
     if (index >= history_->Size()) return;
     scrub_index_ = static_cast<long long>(index);
-    MjHistory::Apply(env.GetModel(), env.GetMutableData(), history_->At(index));
+    const MjHistoryEntry& entry = history_->At(index);
+    MjHistory::Apply(env.GetModel(), env.GetMutableData(), entry);
+    if (!entry.ghost_state.empty()) ghost_.Apply(env.GetModel(), entry.ghost_state);
 }
 
 void MjViewportPanel::BackToLive(MjEnvManager& env) {
     if (history_) {
         std::lock_guard phys_lock(env.GetPhysicsMutex());
-        if (!history_->Empty()) MjHistory::Apply(env.GetModel(), env.GetMutableData(), history_->Newest());
+        if (!history_->Empty()) {
+            MjHistory::Apply(env.GetModel(), env.GetMutableData(), history_->Newest());
+            if (!history_->Newest().ghost_state.empty()) ghost_.Apply(env.GetModel(), history_->Newest().ghost_state);
+        }
     }
     scrub_index_ = -1;
     if (resume_after_scrub_ && sim_executor_) sim_executor_->Resume();

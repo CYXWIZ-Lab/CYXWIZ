@@ -384,6 +384,22 @@ void MjViewportPanel::RenderInspectPanel(MjEnvManager& env, MjRenderer& renderer
                            differs.empty() ? "as in the file" : ("changed: " + differs).c_str());
     }
 
+    // A second policy beside the played one (Policy Playback starts it: a
+    // plugin cannot open the Engine's panels)
+    section("Compare");
+    if (playback_ && ghost_numbers_.active) {
+        ImGui::TextColored(ToImVec4(colors.text_dim), "Ghost");
+        ImGui::SameLine();
+        ImGui::TextColored(ToImVec4(colors.accent_text), "%s", ghost_numbers_.name.c_str());
+        hint(ghost_numbers_.not_drawn.empty()
+                 ? "Plays beside the policy on the same ground and seed, drawn see-through."
+                 : "Not drawn: " + ghost_numbers_.not_drawn);
+        hint("Choose another or remove it in Policy Playback (Compare with).");
+    } else {
+        hint("A second saved policy can play beside a played one as a see-through ghost: Policy Playback, "
+             "Compare with, then Show as a ghost.");
+    }
+
     // The model file read again
     section("Model");
     if (ui->SecondaryButton("Reload the model file", can && reload_model_, blocked.c_str(), UiButtonSize::Small)) {

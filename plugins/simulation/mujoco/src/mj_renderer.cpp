@@ -147,7 +147,7 @@ void MjRenderer::Shutdown() {
 // Rendering
 // =============================================================================
 
-unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data) {
+unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data, const mjData* ghost) {
     if (!initialized_ || !enabled_ || !model || !data) {
         return 0;
     }
@@ -201,6 +201,22 @@ unsigned int MjRenderer::RenderFrame(const mjModel* model, const mjData* data) {
         update();
     } else {
         update();
+    }
+    // The ghost: its moving bodies only (no labels, frames or contact marks),
+    // half tinted and see-through. It is the UI thread's own data: no lock.
+    if (ghost) {
+        constexpr float kGhostAlpha = 0.35f;
+        mjvOption ghost_opt = opt;
+        ghost_opt.label = mjLABEL_NONE;
+        ghost_opt.frame = mjFRAME_NONE;
+        for (int f = 0; f < mjNVISFLAG; ++f) ghost_opt.flags[f] = 0;
+        const int first = scn_.ngeom;
+        mjv_addGeoms(model, const_cast<mjData*>(ghost), &ghost_opt, nullptr, mjCAT_DYNAMIC, &scn_);
+        for (int i = first; i < scn_.ngeom; ++i) {
+            mjvGeom& g = scn_.geoms[i];
+            for (int k = 0; k < 3; ++k) g.rgba[k] = 0.5f * g.rgba[k] + 0.5f * ghost_rgba_[k];
+            g.rgba[3] = kGhostAlpha;
+        }
     }
     // A small sphere at the selected body's centre of mass
     if (selected && marker_rgba_[3] > 0.0f && scn_.ngeom < scn_.maxgeom) {

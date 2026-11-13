@@ -761,6 +761,54 @@ void CheckShowCopy() {
     if (plain) plain->Release();
 }
 
+// ShowCopyAsGhost: a second batch publishes its copy into the view slot's
+// ghost part beside the shown copy, with its own episode numbers; Release or
+// ShowCopyAsGhost(-1) frees it; no view, no ghost.
+void CheckGhostCopy() {
+    const MjTaskSpec& spec = *FindMjTask("InvertedPendulum-v5");
+    std::string error;
+    auto view = std::make_shared<MjViewSlot>();
+    IEnvironmentBatch* played = MjEnvBatch::Create(spec, ModelPath(spec), {}, 1, view, error);
+    IEnvironmentBatch* ghost = MjEnvBatch::Create(spec, ModelPath(spec), {}, 1, view, error);
+    Check(played && ghost, "two batches with one view: " + error);
+    if (!played || !ghost) return;
+    Check(played->ShowCopy(0) && !ghost->ShowCopyAsGhost(1, "b") && ghost->ShowCopyAsGhost(0, "robust"),
+          "copy 1 of 1 is refused; copy 0 is the ghost");
+    Check(view->owner == played && view->ghost.owner == ghost && view->ghost.name == "robust" &&
+              view->ghost.model_path == ModelPath(spec),
+          "the view shows one batch's copy and the other's as the ghost, named");
+    std::vector<float> obs(4), ghost_obs(4), final_obs(4), rewards(1), ghost_rewards(1);
+    std::vector<uint8_t> terminated(1), truncated(1);
+    played->Reset(5, obs.data());
+    ghost->Reset(5, ghost_obs.data());
+    Check(!view->ghost.state.empty() && view->ghost.state == view->state,
+          "on the same seed the ghost starts where the played copy starts");
+    const PluginEnvironmentStepBuffers out{obs.data(), rewards.data(), terminated.data(), truncated.data(),
+                                           final_obs.data()};
+    const PluginEnvironmentStepBuffers ghost_out{ghost_obs.data(), ghost_rewards.data(), terminated.data(),
+                                                 truncated.data(), final_obs.data()};
+    const std::vector<float> push(1, 0.8f), still(1, 0.0f);
+    const uint64_t shown_version = view->version;
+    for (int s = 0; s < 4; ++s) {
+        played->Step(push.data(), out);
+        ghost->Step(still.data(), ghost_out);
+    }
+    Check(view->ghost.step == 4 && view->step == 4 && view->version == shown_version + 4,
+          "both publish every step, each into its own part");
+    Check(view->ghost.state != view->state, "other actions, another state");
+    Check(view->ghost.episode_return > 3.0, "the ghost counts its own return: " +
+                                                std::to_string(view->ghost.episode_return));
+    Check(ghost->ShowCopyAsGhost(-1, {}) && view->ghost.owner == nullptr && view->owner == played,
+          "ShowCopyAsGhost(-1) removes the ghost, the shown copy stays");
+    ghost->ShowCopyAsGhost(0, "robust");
+    ghost->Release();
+    Check(view->ghost.owner == nullptr, "releasing the ghost's batch frees it");
+    played->Release();
+    IEnvironmentBatch* plain = MjEnvBatch::Create(spec, ModelPath(spec), {}, 1, nullptr, error);
+    Check(plain && !plain->ShowCopyAsGhost(0, "x"), "a batch without a view draws no ghost");
+    if (plain) plain->Release();
+}
+
 // The shown copy's live numbers (the Viewport's overlay during playback):
 // episode, step, the episode's return so far, the last action, and the
 // return of the episode before once one ends.
@@ -810,6 +858,7 @@ int main(int argc, char** argv) {
     CheckAutoreset();
     CheckDeterminism();
     CheckShowCopy();
+    CheckGhostCopy();
     CheckLiveNumbers();
     CheckScenes();
     CheckStressRequests();

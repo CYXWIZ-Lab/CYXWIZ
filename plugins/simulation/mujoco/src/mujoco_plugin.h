@@ -160,6 +160,7 @@ private:
     void SyncPlayback();
     std::shared_ptr<MjViewSlot> view_slot_ = std::make_shared<MjViewSlot>();
     uint64_t shown_version_ = 0;
+    uint64_t ghost_version_ = 0;  // the ghost's state last taken from the view slot
     bool playback_ = false;
     // What the viewport showed before playback, given back when it ends
     std::string restore_path_;

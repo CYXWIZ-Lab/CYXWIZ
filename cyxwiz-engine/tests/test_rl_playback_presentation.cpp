@@ -129,11 +129,30 @@ void CheckWatch() {
           "episodes, the last return and the networks that played it");
 }
 
+// A ghost beside the played policy (TOFIX212 P3d)
+void CheckGhost() {
+    Check(PolicyName("half_cheetah_robust.cyxmodel") == "half_cheetah_robust", "a file's stem names the policy");
+    Check(PolicyName("D:/runs/walk.v2.cyxmodel") == "walk.v2", "folders and the last extension go");
+    Check(PolicyName("") == "this session's run", "a session's policy");
+    Check(GhostLine(true, 2, 412, 1203.44, {}, "") ==
+              "Ghost \xC2\xB7 episode 2 \xC2\xB7 step 412 \xC2\xB7 return 1203.4",
+          "the ghost's episode, step and return: " + GhostLine(true, 2, 412, 1203.44, {}, ""));
+    Check(GhostLine(true, 3, 5, 4.0, {900.0, 2415.66}, "The view does not draw a ghost; its numbers are here.") ==
+              "Ghost \xC2\xB7 episode 3 \xC2\xB7 step 5 \xC2\xB7 return 4.0 \xC2\xB7 last 2415.7. The view does not "
+              "draw a ghost; its numbers are here.",
+          "the last finished return, then the note");
+    Check(GhostLine(false, 0, 0, 0.0, {}, "The ghost plays another environment.") ==
+              "The ghost plays another environment.",
+          "not playing: why");
+    Check(GhostLine(false, 0, 0, 0.0, {}, "").empty(), "no ghost: nothing");
+}
+
 int main() {
     CheckCartPole();
     CheckMuJoCo();
     CheckLines();
     CheckWatch();
+    CheckGhost();
     if (failures == 0) std::printf("test_rl_playback_presentation: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -9,6 +9,7 @@
 #include "env/mj_inspect.h"
 #include "env/mj_physics.h"
 #include "env/mj_history.h"
+#include "env/mj_ghost.h"
 #include "mj_env_manager.h"
 #include "mj_viewport_settings.h"
 
@@ -737,6 +738,40 @@ void CheckHistory() {
     Check(DecodeTimeline(R"({"signals": 4096})") == TimelineOptions{}, "unknown signals keep the defaults");
 }
 
+// The ghost (TOFIX212 P3d): a second state put on the shown model, its bodies
+// where the source's are; a state of another model is refused; Clear and
+// another model leave nothing to draw
+void CheckGhost() {
+    const std::string path = std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/half_cheetah.xml";
+    mjModel* m = mj_loadXML(path.c_str(), nullptr, nullptr, 0);
+    if (!m) return;
+    mjData* d = mj_makeData(m);
+    d->qpos[0] = 1.5;  // ahead of the start
+    d->qpos[3] = -0.3;
+    for (int i = 0; i < 20; ++i) mj_step(m, d);
+    mj_forward(m, d);  // the bodies where the stepped state puts them (mj_step leaves the last ones)
+    std::vector<mjtNum> state(static_cast<size_t>(mj_stateSize(m, mjSTATE_FULLPHYSICS)));
+    mj_getState(m, d, state.data(), mjSTATE_FULLPHYSICS);
+    MjGhost ghost;
+    Check(ghost.Data(m) == nullptr, "nothing applied: nothing to draw");
+    Check(ghost.Apply(m, state) && ghost.Data(m) != nullptr && ghost.State() == state, "a state is put on the model");
+    bool same = ghost.Data(m) != nullptr;
+    for (int i = 0; same && i < 3 * m->nbody; ++i) same = ghost.Data(m)->xpos[i] == d->xpos[i];
+    Check(same, "its bodies are where the source's are");
+    std::vector<mjtNum> wrong = state;
+    wrong.pop_back();
+    Check(!ghost.Apply(m, wrong) && ghost.State() == state, "a state of another model is refused, the last stays");
+    mjModel* other = mj_loadXML((std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/hopper.xml").c_str(), nullptr, nullptr, 0);
+    if (other) {
+        Check(ghost.Data(other) == nullptr, "on another model there is nothing to draw");
+        mj_deleteModel(other);
+    }
+    ghost.Clear();
+    Check(ghost.Data(m) == nullptr && ghost.State().empty(), "Clear leaves nothing to draw");
+    mj_deleteData(d);
+    mj_deleteModel(m);
+}
+
 }  // namespace
 
 int main() {
@@ -755,6 +790,7 @@ int main() {
     CheckInspect(dir);
     CheckPhysics();
     CheckHistory();
+    CheckGhost();
     std::filesystem::remove_all(dir, ec);
     if (failures == 0) std::printf("test_mujoco_viewport: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

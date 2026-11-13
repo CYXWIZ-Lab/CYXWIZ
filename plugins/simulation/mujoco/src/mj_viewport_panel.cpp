@@ -413,7 +413,13 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
         renderer.SetResolution(pending_w_, pending_h_);
     }
 
-    const unsigned int tex_id = renderer.RenderFrame(env.GetModel(), env.GetData());
+    {
+        const UiColor tint = ctx_->GetUi()->Colors().accent;
+        const float rgba[4] = {tint.r, tint.g, tint.b, tint.a};
+        renderer.SetGhostTint(rgba);
+    }
+    const mjData* ghost = playback_ && ghost_numbers_.active ? ghost_.Data(env.GetModel()) : nullptr;
+    const unsigned int tex_id = renderer.RenderFrame(env.GetModel(), env.GetData(), ghost);
     if (tex_id != 0) RecordFrame(env, renderer);
 
     // The scene takes the mouse: dragging orbits or pans the camera instead of
@@ -558,60 +564,121 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
     if (stress_.panel_open) RenderThrowDial(p1.x, p0.y);
 }
 
+void MjViewportPanel::SetGhost(const mjModel* m, GhostNumbers numbers, const std::vector<mjtNum>* state) {
+    ghost_numbers_ = std::move(numbers);
+    if (!ghost_numbers_.active || !ghost_numbers_.not_drawn.empty()) {
+        ghost_.Clear();
+        return;
+    }
+    if (state && !Scrubbing() && !ghost_.Apply(m, *state)) {
+        ghost_.Clear();
+        ghost_numbers_.not_drawn = "its state does not fit this model.";
+    }
+}
+
 // The played episode's numbers at the top left of the scene
 void MjViewportPanel::RenderLiveNumbers(float scene_left, float scene_top, const MjGround& ground) {
+    // A step back on the timeline shows its own episode, step, return and
+    // action (and the ghost's); live otherwise
+    PlaybackNumbers shown = numbers_;
+    GhostNumbers ghost_shown = ghost_numbers_;
+    if (Scrubbing() && history_ && current_env_) {
+        std::lock_guard phys_lock(current_env_->GetPhysicsMutex());
+        if (static_cast<size_t>(scrub_index_) < history_->Size()) {
+            const MjHistoryEntry& e = history_->At(static_cast<size_t>(scrub_index_));
+            shown.episode = e.episode;
+            shown.step = e.step;
+            shown.episode_return = e.episode_return;
+            shown.action.clear();
+            for (const double c : e.controls) shown.action.push_back(static_cast<float>(c));
+            if (!e.ghost_state.empty()) {
+                ghost_shown.episode = e.ghost_episode;
+                ghost_shown.step = e.ghost_step;
+                ghost_shown.episode_return = e.ghost_return;
+            }
+        }
+    }
+    const PlaybackNumbers& numbers = shown;
     const UiColors colors = ctx_->GetUi()->Colors();
     struct Row {
         std::string label;
         std::string value;
+        std::string ghost;  // the ghost's, when one plays beside
     };
     std::vector<Row> rows;
     char buf[64];
-    for (const auto& [label, value] : numbers_.rows) rows.push_back({label, value});  // the Engine's first
-    rows.push_back({"Episode", std::to_string(numbers_.episode)});
-    if (numbers_.max_steps > 0) std::snprintf(buf, sizeof(buf), "%d / %d", numbers_.step, numbers_.max_steps);
-    else std::snprintf(buf, sizeof(buf), "%d", numbers_.step);
+    for (const auto& [label, value] : numbers.rows) rows.push_back({label, value, {}});  // the Engine's first
+    rows.push_back({"Episode", std::to_string(numbers.episode)});
+    if (numbers.max_steps > 0) std::snprintf(buf, sizeof(buf), "%d / %d", numbers.step, numbers.max_steps);
+    else std::snprintf(buf, sizeof(buf), "%d", numbers.step);
     rows.push_back({"Step", buf});
-    std::snprintf(buf, sizeof(buf), "%.1f", numbers_.episode_return);
+    std::snprintf(buf, sizeof(buf), "%.1f", numbers.episode_return);
     rows.push_back({"Return", buf});
-    if (numbers_.has_last_return) {
-        std::snprintf(buf, sizeof(buf), "%.1f", numbers_.last_return);
+    if (numbers.has_last_return) {
+        std::snprintf(buf, sizeof(buf), "%.1f", numbers.last_return);
         rows.push_back({"Last episode", buf});
     }
-    if (!numbers_.action.empty()) {
+    if (!numbers.action.empty()) {
         constexpr size_t kShown = 8;
         std::string action;
-        for (size_t i = 0; i < std::min(kShown, numbers_.action.size()); ++i) {
-            std::snprintf(buf, sizeof(buf), "%s%.2f", i ? "  " : "", numbers_.action[i]);
+        for (size_t i = 0; i < std::min(kShown, numbers.action.size()); ++i) {
+            std::snprintf(buf, sizeof(buf), "%s%.2f", i ? "  " : "", numbers.action[i]);
             action += buf;
         }
-        if (numbers_.action.size() > kShown)
-            action += "  ... (" + std::to_string(numbers_.action.size()) + " values)";
+        if (numbers.action.size() > kShown)
+            action += "  ... (" + std::to_string(numbers.action.size()) + " values)";
         rows.push_back({"Action", action});
     }
     if (ground.kind != MjGroundKind::Flat) {
         std::snprintf(buf, sizeof(buf), "%s \xC2\xB7 difficulty %.2f", GroundName(ground.kind), ground.difficulty);
-        rows.push_back({"Ground", buf});
+        rows.push_back({"Ground", buf, {}});
+    }
+    const bool ghost = ghost_shown.active;
+    if (ghost) {  // the ghost's numbers beside the played ones
+        const GhostNumbers& g = ghost_shown;
+        for (auto& row : rows) {
+            if (row.label == "Policy") row.ghost = g.name;
+            else if (row.label == "Episode") row.ghost = std::to_string(g.episode);
+            else if (row.label == "Step") {
+                if (numbers.max_steps > 0) std::snprintf(buf, sizeof(buf), "%d / %d", g.step, numbers.max_steps);
+                else std::snprintf(buf, sizeof(buf), "%d", g.step);
+                row.ghost = buf;
+            } else if (row.label == "Return") {
+                std::snprintf(buf, sizeof(buf), "%.1f", g.episode_return);
+                row.ghost = buf;
+            } else if (row.label == "Last episode" && g.has_last_return) {
+                std::snprintf(buf, sizeof(buf), "%.1f", g.last_return);
+                row.ghost = buf;
+            }
+        }
+        rows.insert(rows.begin(), Row{"", "Played", "Ghost"});
     }
 
     const float pad = 8.0f;
     const float margin = 12.0f;
     const float gap = 14.0f;
     const float line_h = ImGui::GetTextLineHeightWithSpacing();
-    float label_w = 0.0f, value_w = 0.0f;
+    float label_w = 0.0f, value_w = 0.0f, ghost_w = 0.0f;
     for (const auto& row : rows) {
         label_w = std::max(label_w, ImGui::CalcTextSize(row.label.c_str()).x);
         value_w = std::max(value_w, ImGui::CalcTextSize(row.value.c_str()).x);
+        ghost_w = std::max(ghost_w, ImGui::CalcTextSize(row.ghost.c_str()).x);
     }
+    const float ghost_col = ghost ? gap + ghost_w : 0.0f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 box0(scene_left + margin, scene_top + margin);
-    const ImVec2 box1(box0.x + pad * 2 + label_w + gap + value_w,
+    const ImVec2 box1(box0.x + pad * 2 + label_w + gap + value_w + ghost_col,
                       box0.y + pad * 2 + line_h * static_cast<float>(rows.size()) - ImGui::GetStyle().ItemSpacing.y);
     dl->AddRectFilled(box0, box1, ToU32(colors.bg_window, 0.85f), 6.0f);
     float y = box0.y + pad;
     for (const auto& row : rows) {
         dl->AddText(ImVec2(box0.x + pad, y), ToU32(colors.text_dim), row.label.c_str());
-        dl->AddText(ImVec2(box0.x + pad + label_w + gap, y), ToU32(colors.text), row.value.c_str());
+        const bool header = ghost && &row == &rows.front();
+        dl->AddText(ImVec2(box0.x + pad + label_w + gap, y), ToU32(header ? colors.text_dim : colors.text),
+                    row.value.c_str());
+        if (ghost && !row.ghost.empty())
+            dl->AddText(ImVec2(box0.x + pad + label_w + gap + value_w + gap, y),
+                        ToU32(header ? colors.text_dim : colors.accent_text), row.ghost.c_str());
         y += line_h;
     }
 }

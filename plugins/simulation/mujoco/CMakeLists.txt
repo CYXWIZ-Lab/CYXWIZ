@@ -40,6 +40,7 @@ add_library(mujoco_plugin SHARED
     src/env/mj_inspect.cpp
     src/env/mj_physics.cpp
     src/env/mj_history.cpp
+    src/env/mj_ghost.cpp
 )
 
 target_include_directories(mujoco_plugin PRIVATE
@@ -124,6 +125,7 @@ add_executable(test_mujoco_viewport
     src/env/mj_inspect.cpp
     src/env/mj_physics.cpp
     src/env/mj_history.cpp
+    src/env/mj_ghost.cpp
     src/mj_env_manager.cpp
 )
 target_include_directories(test_mujoco_viewport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${Stb_INCLUDE_DIR})

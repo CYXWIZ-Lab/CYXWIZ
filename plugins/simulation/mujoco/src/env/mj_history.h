@@ -26,6 +26,10 @@ struct MjHistoryEntry {
     std::vector<mjtNum> state;     // kHistoryState
     std::vector<double> controls;  // d->ctrl
     std::vector<double> sensors;   // the first kHistorySensors values of d->sensordata
+    std::vector<mjtNum> ghost_state;  // a ghost's beside it (mjSTATE_FULLPHYSICS); empty: none
+    int ghost_episode = 0;            // ... and its numbers then
+    int ghost_step = 0;
+    double ghost_return = 0.0;
 };
 
 class MjHistory {

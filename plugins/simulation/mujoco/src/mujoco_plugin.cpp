@@ -235,9 +235,29 @@ void MuJoCoPlugin::SyncPlayback() {
     MjScene scene;
     std::string stress_message;
     std::string subtitle;  // under the title: "Policy playback", or the Engine's words
+    MjViewportPanel::GhostNumbers ghost;  // a second policy beside it
+    std::string ghost_path;
+    MjScene ghost_scene;
+    std::vector<mjtNum> ghost_state;  // newly published
     {
         std::lock_guard<std::mutex> lock(view_slot_->mutex);
         active = view_slot_->owner != nullptr;
+        const MjGhostView& g = view_slot_->ghost;
+        ghost.active = active && g.owner != nullptr;
+        if (ghost.active) {
+            ghost.name = g.name;
+            ghost.episode = g.episode;
+            ghost.step = g.step;
+            ghost.episode_return = g.episode_return;
+            ghost.has_last_return = g.has_last_return;
+            ghost.last_return = g.last_return;
+            ghost_path = g.model_path;
+            ghost_scene = g.scene;
+            if (g.version != ghost_version_) {
+                ghost_version_ = g.version;
+                ghost_state = g.state;
+            }
+        }
         if (active) {
             scene = view_slot_->scene;
             stress_message = std::move(view_slot_->stress_message);
@@ -301,6 +321,15 @@ void MuJoCoPlugin::SyncPlayback() {
         const double shown_return = numbers.episode_return;
         const std::vector<float> shown_action = numbers.action;
         viewport_panel_.SetPlaybackNumbers(std::move(numbers));
+        // The ghost is drawn only on the same model file and scene
+        if (ghost.active && ghost_path != loaded_mjcf_path_) ghost.not_drawn = "it plays another model file.";
+        else if (ghost.active && ghost_scene != env_manager_.Scene())
+            ghost.not_drawn = "it plays on another ground or with other objects.";
+        const int ghost_episode = ghost.episode;
+        const int ghost_step = ghost.step;
+        const double ghost_return = ghost.episode_return;
+        viewport_panel_.SetGhost(env_manager_.GetModel(), std::move(ghost),
+                                 ghost_state.empty() ? nullptr : &ghost_state);
         if (!state.empty() && !viewport_panel_.Scrubbing()) {  // a step back shown: the live one waits
             std::lock_guard phys_lock(env_manager_.GetPhysicsMutex());
             const mjModel* m = env_manager_.GetModel();
@@ -320,6 +349,10 @@ void MuJoCoPlugin::SyncPlayback() {
                                                           shown_return - history_return_,
                                                           RobotRootBody(m, env_manager_.Robot()));
                 entry.episode_return = shown_return;
+                entry.ghost_state = viewport_panel_.Ghost().State();
+                entry.ghost_episode = ghost_episode;
+                entry.ghost_step = ghost_step;
+                entry.ghost_return = ghost_return;
                 history_.Add(std::move(entry));
                 history_return_ = shown_return;
             }
@@ -333,6 +366,7 @@ void MuJoCoPlugin::SyncPlayback() {
             history_.SetLimit(30.0, 100000);
         }
         viewport_panel_.SetPlayback(false);
+        viewport_panel_.SetGhost(nullptr, {}, nullptr);
         // The model open before comes back with its own words (also when it was the played one)
         const bool back = !restore_path_.empty() &&
                           (restore_path_ == loaded_mjcf_path_ || LoadEnvironment(restore_path_));

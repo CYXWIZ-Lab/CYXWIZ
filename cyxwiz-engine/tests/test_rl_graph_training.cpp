@@ -19,6 +19,7 @@
 #include "../src/core/graph_compiler.h"
 #include "../src/core/training_trace_collector.h"
 #include <cyxwiz/neural_provider.h>
+#include "../src/core/rl/policy_playback.h"
 #include "../src/core/rl/policy_stress_test.h"
 #include "../src/core/rl/rl_training_run.h"
 #include "../src/core/rl/training_watch.h"
@@ -154,6 +155,68 @@ void CheckSaveAndLoad(cyxwiz::rl::TrainedPolicy& trained, const std::string& fil
     std::filesystem::remove(path);
 }
 
+// A ghost beside the played policy (TOFIX212 P3d): the same policy on the
+// same seed plays the same episode step for step; removing it leaves the
+// policy playing. in_view: the environment's view draws it (MuJoCo).
+void CheckGhostPlayback(const std::shared_ptr<cyxwiz::rl::TrainedPolicy>& policy, bool in_view) {
+    using cyxwiz::rl::PolicyPlayback;
+    PolicyPlayback playback;
+    playback.SetGhost(policy, "ghost", "played");
+    std::string error;
+    Check(playback.Start(policy, cyxwiz::rl::PlaybackSpeed::Fastest, true, error),
+          "a playback with a ghost starts: " + error);
+    for (int i = 0; i < 3000; ++i) {  // into the second episode: the finished returns compare too
+        const auto s = playback.Get();
+        if (s.state == PolicyPlayback::State::Failed || (s.episode >= 2 && s.step >= 10)) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    playback.Pause();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));  // the step under way ends
+    auto s = playback.Get();
+    Check(s.state == PolicyPlayback::State::Paused && s.ghost && s.ghost_in_view == in_view,
+          "the ghost plays beside the policy" + std::string(in_view ? ", drawn in the view: " : ": ") + s.ghost_note +
+              s.message);
+    Check(s.ghost_episode == s.episode && s.ghost_step == s.step && s.ghost_return == s.episode_return &&
+              s.ghost_returns == s.returns,
+          "the same policy on the same seed plays the same steps: step " + std::to_string(s.step) + " / " +
+              std::to_string(s.ghost_step) + ", return " + std::to_string(s.episode_return) + " / " +
+              std::to_string(s.ghost_return));
+    playback.NewEpisode();
+    playback.Resume();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    playback.Pause();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    s = playback.Get();
+    Check(s.ghost_episode == s.episode && s.ghost_step == s.step, "New episode starts both together");
+    playback.RemoveGhost();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Check(!playback.Get().ghost, "Remove the ghost stops it, also while paused");
+    playback.Resume();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Check(playback.Get().state == PolicyPlayback::State::Playing, "the policy plays on");
+    playback.Stop();
+}
+
+// The ghost's settings: the played copy's, except those that change what
+// the ghost observes
+void CheckGhostSettings() {
+    using cyxwiz::rl::GhostSettings;
+    const auto size = [](const std::map<std::string, std::string>& settings) {
+        const auto it = settings.find("look_ahead");
+        return 17 + (it != settings.end() && it->second == "1" ? 5 : 0);
+    };
+    std::string error;
+    const auto mixed = GhostSettings({{"ground", "rough"}, {"look_ahead", "0"}},
+                                     {{"ground", "flat"}, {"look_ahead", "1"}}, 22, size, error);
+    Check(mixed && mixed->at("ground") == "rough" && mixed->at("look_ahead") == "1",
+          "the played ground, the ghost's own observation: " + error);
+    const auto same = GhostSettings({{"ground", "rough"}}, {{"ground", "flat"}}, 17, size, error);
+    Check(same && same->at("ground") == "rough", "the same observation: the played settings whole");
+    Check(!GhostSettings({{"ground", "rough"}}, {{"ground", "flat"}}, 30, size, error) &&
+              error == "The ghost observes 30 values; this environment gives 17.",
+          "no mix fits: why: " + error);
+}
+
 void CheckCartPole() {
     rl_graph_test::Ids id{};
     auto g = rl_graph_test::Pattern(id);
@@ -221,6 +284,7 @@ void CheckCartPole() {
     Check(balanced, "its best actions balance CartPole (475 or more in each of 3 episodes)");
     for (const double r : returns) std::printf("  played: return %.0f\n", r);
     CheckSaveAndLoad(*trained, "cyxwiz_rl_cartpole_policy_test.cyxmodel");
+    CheckGhostPlayback(trained, false);  // the built-in CartPole has no view: numbers only
 
     // A graph whose layers differ from the saved weights is refused with what differs
     const std::string kept = trained->graph_json;
@@ -395,6 +459,7 @@ void CheckContinuous(const std::filesystem::path& plugin) {
             Check(bounded, "sampled actions stay within the bounds");
             CheckSaveAndLoad(*trained, "cyxwiz_rl_pendulum_policy_test.cyxmodel");
             CheckStressRun(trained);
+            CheckGhostPlayback(trained, true);
         }
         auto longer = std::make_shared<cyxwiz::RLTrainingConfiguration>(*config);
         longer->ppo.total_timesteps = 2560;  // long enough to watch a few updates
@@ -567,6 +632,7 @@ int main(int argc, char** argv) {
     // Routes certified as the installer's qualification would certify them
     cyxwiz::test::InstallQualifiedRouteSnapshot();
     CheckStressTestConditions();
+    CheckGhostSettings();
     CheckWatchLeavesTrainingAlone(gui::NodeType::Tanh);
     // Dropout draws its masks from the default random engine while it trains
     CheckWatchLeavesTrainingAlone(gui::NodeType::Dropout);

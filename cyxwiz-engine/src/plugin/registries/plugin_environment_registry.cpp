@@ -122,6 +122,19 @@ void EnvironmentBatch::LabelShownCopy(const PluginShownCopyLabel& label) {
     security::SafeExecute(plugin_id_, "LabelEnvironmentCopy", [&label, batch]() { batch->LabelShownCopy(label); });
 }
 
+bool EnvironmentBatch::ShowCopyAsGhost(int copy, const std::string& name, std::string& error) {
+    bool shown = false;
+    auto* batch = batch_;
+    const auto result = security::SafeExecute(plugin_id_, "ShowEnvironmentGhost", [&shown, batch, copy, &name]() {
+        shown = batch->ShowCopyAsGhost(copy, name);
+    });
+    if (!result.success) {
+        error = "The plugin " + plugin_id_ + " failed to show " + info_.name + " as a ghost: " + result.error_message;
+        return false;
+    }
+    return shown;
+}
+
 PluginEnvironmentRegistry::PluginEnvironmentRegistry() {
     auto& builtin = ClassicControlEnvironments();
     for (const auto& info : builtin.GetEnvironments()) Register(kBuiltinEnvironmentProviderId, info, &builtin, nullptr);

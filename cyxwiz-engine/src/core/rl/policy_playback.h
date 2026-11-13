@@ -5,7 +5,10 @@
 // pace (real time), four times faster, or as fast as it goes. The copy is
 // shown in the plugin's own view when it has one (IEnvironmentBatch::
 // ShowCopy, the MuJoCo Viewport); otherwise the Engine draws what it can
-// from the copy's observation. Engine side: it links the plugin host.
+// from the copy's observation. A second policy can play beside it as a
+// ghost (TOFIX212 P3d): its own copy, stepped in the same loop on the same
+// seed, drawn see-through by a view that can. Engine side: it links the
+// plugin host.
 
 #include "trained_policy.h"
 
@@ -24,6 +27,16 @@ namespace cyxwiz::rl {
 
 enum class PlaybackSpeed { RealTime = 0, Times4 = 1, Fastest = 2 };
 
+// The settings a ghost plays with: the played copy's (the same ground and
+// disturbances), except those that change what the ghost observes (an
+// extra observation such as Look ahead), which keep the ghost's own values.
+// observation_size(settings): what the environment gives with them (-1: not
+// valid). Nullopt with the reason when no mix gives the ghost's size.
+std::optional<std::map<std::string, std::string>> GhostSettings(
+    const std::map<std::string, std::string>& played, const std::map<std::string, std::string>& ghost_own,
+    int ghost_observation_size, const std::function<int(const std::map<std::string, std::string>&)>& observation_size,
+    std::string& error);
+
 class PolicyPlayback {
 public:
     enum class State { Idle, Playing, Paused, Stopped, Failed };
@@ -39,6 +52,14 @@ public:
         std::vector<float> action;      // the last action given
         std::vector<float> observation; // the copy's last observation, raw
         bool shown_in_view = false;     // the plugin's own view shows the copy
+        // The ghost (SetGhost): playing, drawn in the view, why not, its episode
+        bool ghost = false;
+        bool ghost_in_view = false;
+        std::string ghost_note;         // why it does not play or is not drawn
+        int ghost_episode = 0;
+        int ghost_step = 0;
+        double ghost_return = 0.0;      // its episode so far
+        std::vector<double> ghost_returns;  // its finished episodes, oldest first (the last 50)
     };
 
     PolicyPlayback() = default;
@@ -60,6 +81,12 @@ public:
     // SetConditions.
     using EpisodeStart = std::function<std::optional<plugin::PluginShownCopyLabel>(TrainedPolicy& policy)>;
     void SetEpisodeStart(EpisodeStart hook);
+    // The next Start also plays `ghost` (the same environment) beside the
+    // policy, on the same seed, named `ghost_name` in the view; the played
+    // copy is then named `played_name`. For the next Start only.
+    void SetGhost(std::shared_ptr<TrainedPolicy> ghost, std::string ghost_name, std::string played_name);
+    // Stops the ghost while the policy plays on
+    void RemoveGhost() { remove_ghost_ = true; }
     void Pause();
     void Resume();
     void NewEpisode();
@@ -82,6 +109,13 @@ private:
     bool has_conditions_ = false;  // for this Start (SetConditions)
     EpisodeStart episode_start_;   // for this Start (SetEpisodeStart)
     EpisodeStart pending_episode_start_;
+    std::shared_ptr<TrainedPolicy> ghost_;  // for this Start (SetGhost)
+    std::string ghost_name_;
+    std::string played_name_;
+    std::shared_ptr<TrainedPolicy> pending_ghost_;
+    std::string pending_ghost_name_;
+    std::string pending_played_name_;
+    std::atomic<bool> remove_ghost_{false};
     std::map<std::string, std::string> settings_;
     uint64_t first_seed_ = 0;
     bool pending_conditions_ = false;  // for the next Start
