@@ -8439,3 +8439,12 @@ cyxwiz_enable_pch(test_cnn_image_training_smoke)
 cyxwiz_enable_pch(test_prepared_data_cache)
 cyxwiz_enable_pch(test_engine_node_parity)
 cyxwiz_enable_pch(test_trial_runner)
+
+# Tests write their run records (training traces, crash envelopes, Studio
+# Debugger runs) under the build tree, never into the user's own debug-run
+# folder (CYXWIZ_DEBUG_RUN_ROOT, core/debug_run_paths.h).
+get_property(_cyxwiz_engine_tests DIRECTORY PROPERTY TESTS)
+if(_cyxwiz_engine_tests)
+    set_property(TEST ${_cyxwiz_engine_tests} APPEND PROPERTY ENVIRONMENT
+        "CYXWIZ_DEBUG_RUN_ROOT=${CMAKE_BINARY_DIR}/test_debug_runs")
+endif()
