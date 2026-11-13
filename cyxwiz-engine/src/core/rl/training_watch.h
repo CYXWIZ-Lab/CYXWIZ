@@ -53,7 +53,7 @@ private:
     // Written by the preview's thread at an episode's start
     std::atomic<int> update_{0};
     std::atomic<long long> steps_{0};
-    std::atomic<int> started_{0};          // episodes started by the preview
+    std::atomic<int> started_{0};          // episodes started by the preview (0: none yet)
     std::atomic<int> finished_update_{0};  // the networks' update of the last finished episode
 };
 

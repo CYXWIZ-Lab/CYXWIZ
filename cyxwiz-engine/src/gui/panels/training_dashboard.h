@@ -65,7 +65,7 @@ public:
             std::string unavailable;  // why there is nothing to watch in (no view); empty: there is
             std::string view_label;   // "Show the MuJoCo Viewport"
             std::string preview_of;   // "update 1,580 (810,240 steps)"
-            std::string episodes;     // "3 played · last return 1,912.4"
+            std::string episodes;     // "3 played · last return 1912.4 (update 1,560)"
             std::string message;      // why the preview stopped
         };
         std::function<void(int watch, int every_updates)> watch;
@@ -81,6 +81,8 @@ public:
     void SetPpoComputePath(std::string path) { device_compute_path_ = std::move(path); }
     void SetPpoNote(std::string note) { device_note_ = std::move(note); }
     void AddPpoUpdate(const rl::PpoUpdateMetrics& m);
+    // Watch progress set from outside (a policy playback took the view: 0, off)
+    void SetWatch(int watch) { watch_ = watch; }
     void EndPpoRun(const std::string& outcome, bool failed);
 
 private:

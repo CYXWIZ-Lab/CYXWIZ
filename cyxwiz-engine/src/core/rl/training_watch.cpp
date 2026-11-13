@@ -18,8 +18,12 @@ void TrainingWatch::Update(RLTrainingRun* run, RLTrainingRun::Watch watch, int e
     if (previewed_ && policy != previewed_) Stop();  // switched off, the run ended, or a new run's networks
     if (!policy || previewed_) return;
 
-    update_ = 0;
-    steps_ = 0;
+    // A preview started again (after Off) plays the networks the policy holds
+    int holds_update = 0;
+    long long holds_steps = 0;
+    run->PreviewHolds(holds_update, holds_steps);
+    update_ = holds_update;
+    steps_ = holds_steps;
     started_ = 0;
     finished_update_ = 0;
     // On the preview's thread, before each episode: the newest networks, and
@@ -27,13 +31,15 @@ void TrainingWatch::Update(RLTrainingRun* run, RLTrainingRun::Watch watch, int e
     playback_.SetEpisodeStart([this, run](TrainedPolicy& played) -> std::optional<plugin::PluginShownCopyLabel> {
         int update = update_.load();
         long long steps = steps_.load();
-        if (started_.load() > 0) finished_update_ = update;  // the episode that just ended played these
+        const bool first = started_.load() == 0;
+        if (!first) finished_update_ = update;  // the episode that just ended played these
         ++started_;
         if (run->RefreshPreview(played, update, steps)) {
             update_ = update;
             steps_ = steps;
             return rl_playback::PreviewLabel(update);
         }
+        if (first && update > 0) return rl_playback::PreviewLabel(update);  // the networks it holds
         return std::nullopt;
     });
     std::string error;
@@ -64,7 +70,7 @@ TrainingWatch::Status TrainingWatch::Get() const {
                                   snap.state == PolicyPlayback::State::Paused);
     s.networks_update = update_.load();
     s.networks_steps = steps_.load();
-    s.episodes = std::max(0, started_.load() - 1);
+    s.episodes = std::max(0, snap.episode - 1);  // the playback's own count: it records the return with it
     if (s.episodes > 0 && !snap.returns.empty()) {
         s.has_last_return = true;
         s.last_return = snap.returns.back();

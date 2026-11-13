@@ -132,7 +132,9 @@ bool MjEnvBatch::ShowCopy(int copy) {
 void MjEnvBatch::LabelShownCopy(const PluginShownCopyLabel& label) {
     if (!view_) return;
     std::lock_guard<std::mutex> lock(view_->mutex);
-    if (view_->owner == this) view_->label = label;
+    if (view_->owner != this) return;
+    view_->label = label;
+    if (label.watch_only) view_->requests.clear();  // none reach a training's own copy
 }
 
 std::vector<PluginEnvironmentStat> MjEnvBatch::Stats() const {

@@ -61,10 +61,11 @@ episode's limit), **Return** (the rewards so far in this episode), **Last
 episode** (the return of the episode before, once one has ended) and
 **Action** (the last action, up to eight values). While a run trains, the
 RL Training Dashboard's **Watch progress** shows a live preview here: the
-title line and the status say **Preview of update 1,580** and **Training
-preview**, and the first row says **Networks of** that update. **Raw
-training copy** shows copy 0 of the training as it learns (**Training copy
-0**). See the [RL walkthrough](rl_walkthrough.md) (While it trains).
+line under the task's name and the status say **Preview of update 1,580**
+and **Training preview**, and the first row says **Networks of** that
+update. **Raw training copy** shows copy 0 of the training as it learns
+(**Training copy 0**); the Stress panel is off for it (a disturbance would
+change what training learns). See the [RL walkthrough](rl_walkthrough.md) (While it trains).
 
 ## Record
 

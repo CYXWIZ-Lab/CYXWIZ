@@ -65,6 +65,9 @@ struct PluginShownCopyLabel {
     std::string subtitle;
     std::string status;
     std::vector<std::pair<std::string, std::string>> rows;
+    // The copy is a training's own: the view must not change it (no pushes,
+    // throws or ground changes from the view), or training would learn them
+    bool watch_only = false;
 };
 
 struct PluginEnvironmentInfo {

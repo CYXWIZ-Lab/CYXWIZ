@@ -736,6 +736,12 @@ void CheckShowCopy() {
           "the label reaches the view");
     Check(batch->ShowCopy(1) && view->label.subtitle.empty() && view->label.rows.empty(),
           "showing a copy again starts with the view's own words");
+    // A training's own copy is watch only: a waiting disturbance is dropped
+    view->requests.push_back(MjStressRequest{});
+    PluginShownCopyLabel training{"Training copy 1", "Training", {}, true};
+    batch->LabelShownCopy(training);
+    Check(view->label.watch_only && view->requests.empty(), "a watch-only copy takes no disturbance");
+    batch->ShowCopy(1);
     batch->LabelShownCopy(label);
 
     IEnvironmentBatch* other = MjEnvBatch::Create(spec, ModelPath(spec), {}, 1, view, error);

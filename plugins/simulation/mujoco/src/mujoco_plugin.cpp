@@ -238,6 +238,7 @@ void MuJoCoPlugin::SyncPlayback() {
             numbers.last_return = view_slot_->last_return;
             numbers.action = view_slot_->action;
             numbers.status = view_slot_->label.status;
+            numbers.watch_only = view_slot_->label.watch_only;
             // What the view says once it ends: "From the last training preview"
             shown_as_ = numbers.status.empty() ? std::string("policy playback") : numbers.status;
             for (auto& ch : shown_as_) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -255,6 +256,7 @@ void MuJoCoPlugin::SyncPlayback() {
         if (!playback_) {
             playback_ = true;
             restore_path_ = loaded_mjcf_path_;
+            restore_scene_ = env_manager_.Scene();
             restore_title_ = viewport_panel_.ModelTitle();
             restore_subtitle_ = viewport_panel_.ModelSubtitle();
         }
@@ -288,8 +290,11 @@ void MuJoCoPlugin::SyncPlayback() {
         // The model open before comes back with its own words (also when it was the played one)
         const bool back = !restore_path_.empty() &&
                           (restore_path_ == loaded_mjcf_path_ || LoadEnvironment(restore_path_));
-        if (back)
+        if (back) {
             viewport_panel_.SetModelLabel(restore_title_, restore_subtitle_);
+            // and its own scene: the played copy's ground or thrown objects go
+            if (env_manager_.IsLoaded() && env_manager_.Scene() != restore_scene_) MirrorPlaybackScene(restore_scene_);
+        }
         else if (restore_path_.empty())  // nothing before it: the played model stays
             viewport_panel_.SetModelLabel(viewport_panel_.ModelTitle(), "From the last " + shown_as_);
     }
@@ -342,7 +347,7 @@ void MuJoCoPlugin::ForwardStressRequests() {
     if (playback_) {  // the played copy applies them at its next step
         if (requests.empty()) return;
         std::lock_guard<std::mutex> lock(view_slot_->mutex);
-        if (view_slot_->owner)
+        if (view_slot_->owner && !view_slot_->label.watch_only)  // a training's own copy takes none
             view_slot_->requests.insert(view_slot_->requests.end(), requests.begin(), requests.end());
         return;
     }

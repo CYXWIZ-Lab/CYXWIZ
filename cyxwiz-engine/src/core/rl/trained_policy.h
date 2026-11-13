@@ -70,6 +70,18 @@ private:
 bool BuildRLNetworks(const RLTrainingConfiguration& config, std::unique_ptr<IExecutableModel>& policy,
                      std::unique_ptr<IExecutableModel>& value, std::string& error);
 
+// The policy network alone, made the same way (a training preview's own
+// copy, which plays and never trains). Null with the reason.
+std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error);
+
+// The policy network alone, made the same way (a training preview's own
+// copy, which plays and never trains). Null with the reason.
+std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error);
+
+// The policy network alone, made the same way (a training preview's own
+// copy, which plays and never trains). Null with the reason.
+std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error);
+
 // What a trained run leaves (PpoTrainer::TakeTrained), with its graph and updates.
 std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
                                                  PpoTrainedState state, std::vector<PpoUpdateMetrics> updates);

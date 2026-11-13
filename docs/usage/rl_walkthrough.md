@@ -132,19 +132,23 @@ view, such as the MuJoCo tasks) shows how the policy moves while it trains:
   with the best actions, on the run's own ground and settings. Each new
   episode plays the newest networks. The Viewport says **Preview of update
   1,580** and **Training preview**; the dashboard's card says which update
-  and steps the networks are from, how many episodes they played and the last
-  return. The preview has its own copy of the networks and of the
-  environment: training is not slowed or changed (a little GPU time at each
-  copy).
+  and steps the networks are from, how many episodes the preview played, and
+  the last return with the update that played it. The preview has its own
+  copy of the networks and of the environment: training is not slowed or
+  changed (a little GPU time at each copy), and the Stress panel can disturb
+  the preview's copy.
 - **Raw training copy** shows copy 0 of the training itself, as it learns:
   at training pace (much faster than real time) and with the exploring,
-  sampled actions. The Viewport says **Training copy 0**.
-- **Off** shows nothing. **Show the MuJoCo Viewport** opens the view.
-  Preferences > Simulation > Policy playback keeps the default (**Watch
-  training**: Off, every 20 updates).
+  sampled actions. The Viewport says **Training copy 0**. It is watch only:
+  the Stress panel is off for it, since a push or a new ground would change
+  what training learns.
+- **Off** shows nothing.
 
-The preview stops when the run ends; **Play policy** then plays the trained
-policy.
+**Show the MuJoCo Viewport** opens the view. Preferences > Simulation >
+Policy playback keeps the default (**Watch training**: Off, every 20
+updates). Playing a policy (Policy Playback) takes the view: Watch progress
+goes Off. The preview stops when the run ends; **Play policy** then plays the
+trained policy.
 
 ## After training: watch, save, reopen
 

@@ -194,6 +194,13 @@ NodeEditor::NodeEditor()
     // Initialize shape inference engine
 
     rl_playback_ = std::make_unique<cyxwiz::PolicyPlaybackPanel>();  // shown by Play or View > Panels
+    // A played policy takes the plugin's view: a training run's Watch progress goes off
+    rl_playback_->SetOnPlay([this]() {
+        if (rl_watch_mode_ == 0) return;
+        rl_watch_mode_ = 0;
+        if (rl_dashboard_) rl_dashboard_->SetWatch(0);
+        spdlog::info("Watch progress off: a policy playback shows its copy in the view");
+    });
 
     // The canvas starts empty (owner 2026-10-02); ready-made graphs are
     // under Examples in the Nodes panel.
@@ -4229,23 +4236,19 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     // Watch progress (TOFIX212 P5): PollRLTraining applies the choice every frame
     if (!rl_watch_) rl_watch_ = std::make_unique<cyxwiz::rl::TrainingWatch>();
     const std::string environment_key = c.environment_key;
-    controls.watch = [this](int watch, int every_updates) {
-        rl_watch_mode_ = watch;
+    const std::string view_title = cyxwiz::PolicyPlaybackPanel::ViewTitle(environment_key);
+    controls.watch = [this, has_view = !view_title.empty()](int watch, int every_updates) {
+        rl_watch_mode_ = has_view ? watch : 0;
         rl_watch_every_ = every_updates;
     };
     controls.watch_now = [this]() { rl_watch_->TakeNow(); };
-    controls.watch_view = [this, environment_key]() {
+    controls.watch_view = [this, view_title]() {
         cyxwiz::TrainingDashboardPanel::PpoRunControls::WatchView view;
-        cyxwiz::plugin::PluginEnvironmentRegistry::Environment env;
-        if (!cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(environment_key, env) ||
-            env.info.view_panel_id.empty()) {
+        if (view_title.empty()) {
             view.unavailable = "This environment has no view to watch it in.";
             return view;
         }
-        std::string title = "the plugin's view";
-        for (const auto& panel : cyxwiz::plugin::PluginPanelRegistry::Instance().GetAllPanels())
-            if (panel.panel_id == env.info.view_panel_id) title = "the " + panel.title;
-        view.view_label = "Show " + title;
+        view.view_label = "Show the " + view_title;
         const auto s = rl_watch_->Get();
         view.preview_of = cyxwiz::rl_playback::PreviewOf(s.networks_update, s.networks_steps);
         view.episodes =
@@ -4253,15 +4256,10 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
         view.message = s.message;
         return view;
     };
-    controls.show_view = [environment_key]() {
-        cyxwiz::plugin::PluginEnvironmentRegistry::Environment env;
-        if (cyxwiz::plugin::PluginEnvironmentRegistry::Instance().Find(environment_key, env) &&
-            !env.info.view_panel_id.empty())
-            cyxwiz::plugin::PluginPanelRegistry::Instance().ShowPanel(env.plugin_id, env.info.view_panel_id);
-    };
+    controls.show_view = [environment_key]() { cyxwiz::PolicyPlaybackPanel::ShowView(environment_key); };
     {
         const auto& prefs = cyxwiz::core::EngineConfig::Instance();
-        rl_watch_mode_ = prefs.WatchTrainingMode();
+        rl_watch_mode_ = view_title.empty() ? 0 : prefs.WatchTrainingMode();
         rl_watch_every_ = prefs.WatchTrainingEvery();
     }
     rl_dashboard_->BeginPpoRun(std::move(info), std::move(controls));

@@ -105,7 +105,7 @@ plugin::PluginShownCopyLabel PreviewLabel(int update) {
 }
 
 plugin::PluginShownCopyLabel TrainingCopyLabel(int copy) {
-    return {"Training copy " + std::to_string(copy), "Training", {}};
+    return {"Training copy " + std::to_string(copy), "Training", {}, true};  // watch only: training learns from it
 }
 
 std::string PreviewOf(int update, int64_t steps) {

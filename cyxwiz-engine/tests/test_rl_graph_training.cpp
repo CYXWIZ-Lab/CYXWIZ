@@ -249,9 +249,9 @@ void CheckCartPole() {
 // Watching a run (TOFIX212 P5): with the preview on, the run copies its
 // networks for the preview, the last copy is the trained networks, and the
 // run learns exactly what it learns unwatched (same seed, same updates)
-void CheckWatchLeavesTrainingAlone() {
+void CheckWatchLeavesTrainingAlone(gui::NodeType activation) {
     rl_graph_test::Ids id{};
-    auto g = rl_graph_test::Pattern(id);
+    auto g = rl_graph_test::Pattern(id, 64, activation);
     g.At(id.ppo).parameters["n_steps"] = "64";
     g.At(id.ppo).parameters["total_timesteps"] = "1024";
     const auto config = Compile(g);
@@ -567,7 +567,9 @@ int main(int argc, char** argv) {
     // Routes certified as the installer's qualification would certify them
     cyxwiz::test::InstallQualifiedRouteSnapshot();
     CheckStressTestConditions();
-    CheckWatchLeavesTrainingAlone();
+    CheckWatchLeavesTrainingAlone(gui::NodeType::Tanh);
+    // Dropout draws its masks from the default random engine while it trains
+    CheckWatchLeavesTrainingAlone(gui::NodeType::Dropout);
     CheckDevice();
     CheckStopAndFailure();
     CheckCartPole();

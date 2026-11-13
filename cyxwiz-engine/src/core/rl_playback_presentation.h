@@ -78,7 +78,8 @@ inline constexpr const char* kWatchHint =
 // How the plugin's view names the preview: "Preview of update 1,580", the
 // status "Training preview", a first row "Networks of: update 1,580"
 plugin::PluginShownCopyLabel PreviewLabel(int update);
-// ... and a training copy shown as it trains: "Training copy 0", "Training"
+// ... and a training copy shown as it trains: "Training copy 0", "Training",
+// watch only (the view cannot disturb what training learns)
 plugin::PluginShownCopyLabel TrainingCopyLabel(int copy);
 // The dashboard's preview card: "update 1,580 (810,240 steps)", or "waiting
 // for the next update" before the first networks

@@ -38,6 +38,8 @@ bool RLTrainingRun::Start(std::shared_ptr<const RLTrainingConfiguration> config,
         device_ = {};
         preview_.reset();
         preview_next_.reset();
+        preview_holds_update_ = 0;
+        preview_holds_steps_ = 0;
     }
     config_ = std::move(config);
     graph_json_ = std::move(graph_json);
@@ -103,12 +105,20 @@ std::shared_ptr<TrainedPolicy> RLTrainingRun::PreviewPolicy() const {
     return preview_;
 }
 
+void RLTrainingRun::PreviewHolds(int& update, long long& steps) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    update = preview_holds_update_;
+    steps = preview_holds_steps_;
+}
+
 bool RLTrainingRun::RefreshPreview(TrainedPolicy& policy, int& update, long long& steps) {
     std::unique_ptr<PreviewNetworks> next;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!preview_next_ || preview_next_->update <= update) return false;
         next = std::move(preview_next_);
+        preview_holds_update_ = next->update;
+        preview_holds_steps_ = next->steps;
     }
     const std::lock_guard<std::mutex> in_use(policy.in_use);
     const PolicyDeviceScope on_its_device(policy);  // the copies live on the run's device
@@ -122,7 +132,7 @@ bool RLTrainingRun::RefreshPreview(TrainedPolicy& policy, int& update, long long
 }
 
 void RLTrainingRun::CopyForPreview(PpoTrainer& trainer, const RLTrainingConfiguration& c, int update,
-                                   long long steps) {
+                                   long long steps, std::unique_ptr<IExecutableModel>& network) {
     auto next = std::make_unique<PreviewNetworks>();
     std::string error;
     if (!trainer.CopyPolicy(next->copy, error)) {
@@ -133,19 +143,11 @@ void RLTrainingRun::CopyForPreview(PpoTrainer& trainer, const RLTrainingConfigur
     next->steps = steps;
     std::shared_ptr<TrainedPolicy> made;
     if (!PreviewPolicy()) {
-        // Its own networks, on this run's device. Training draws nothing more
-        // from the default random engine once its networks are built (its
-        // sampling and minibatch order have their own), so building these here
-        // does not change what training does.
-        std::unique_ptr<IExecutableModel> policy, value;
-        if (!BuildRLNetworks(c, policy, value, error)) {
-            spdlog::warn("PPO preview: {}", error);
-            return;
-        }
+        if (!network) return;  // it did not build (Run logged why)
+        // Its own policy network on this run's device (no value network: it only plays)
         made = std::make_shared<TrainedPolicy>();
         made->config = c;
-        made->policy = std::move(policy);
-        made->value = std::move(value);
+        made->policy = std::move(network);
         made->log_std = next->copy.log_std;
         made->normalizer = std::make_unique<VecNormalize>(*next->copy.normalizer);
         if (const auto* active = cyxwiz::Device::GetCurrentDevice()) {
@@ -234,6 +236,12 @@ void RLTrainingRun::Run() {
                                                                  error));
         if (!batch) return fail(error);
 
+        // The preview's own policy network (P5), made before the run seeds its
+        // random engine and made for every run: what training draws from that
+        // engine (Dropout masks) is then the same whether anyone watches or not
+        std::unique_ptr<IExecutableModel> preview_network = BuildRLPolicyNetwork(c, error);
+        if (!preview_network) spdlog::warn("PPO preview: {}", error);
+        error.clear();
         // The weights from the run's seed, as the supervised trainer seeds its model
         SeedCurrentArrayFireRandomEngine(c.ppo.seed);
         std::unique_ptr<IExecutableModel> policy, value;
@@ -259,7 +267,8 @@ void RLTrainingRun::Run() {
         int last_watch = static_cast<int>(Watch::Off);
         bool raw_shown = false;
         const bool ok = trainer.Train(
-            [this, &history, &traced_path, &batch, &trainer, &c, &last_watch, &raw_shown](const PpoUpdateMetrics& update) {
+            [this, &history, &traced_path, &batch, &trainer, &c, &last_watch, &raw_shown,
+             &preview_network](const PpoUpdateMetrics& update) {
                 PpoUpdateMetrics m = update;
                 m.environment_stats = batch->Stats();  // between rollouts: the batch is not stepping
                 // Watching (P5), between rollouts too
@@ -279,7 +288,7 @@ void RLTrainingRun::Run() {
                 const bool due = take_now_.exchange(false) || (preview && last_watch != watch) ||
                                  (preview && update.update % std::max(1, watch_every_.load()) == 0);
                 last_watch = watch;
-                if (preview && due) CopyForPreview(trainer, c, update.update, update.timesteps);
+                if (preview && due) CopyForPreview(trainer, c, update.update, update.timesteps, preview_network);
                 if (m.compute_path != traced_path) {
                     // Falling back from the fused kernels mid-run is worth a look (a warning)
                     const bool fell_back = !traced_path.empty();

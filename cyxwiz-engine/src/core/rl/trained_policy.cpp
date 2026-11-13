@@ -233,9 +233,13 @@ bool SetWeights(IExecutableModel& model, const std::string& prefix,
 
 }  // namespace
 
+std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error) {
+    return Network(config.policy_layers, config.observation_size, config.policy_outputs, 0.01f, "policy", error);
+}
+
 bool BuildRLNetworks(const RLTrainingConfiguration& config, std::unique_ptr<IExecutableModel>& policy,
                      std::unique_ptr<IExecutableModel>& value, std::string& error) {
-    policy = Network(config.policy_layers, config.observation_size, config.policy_outputs, 0.01f, "policy", error);
+    policy = BuildRLPolicyNetwork(config, error);
     if (!policy) return false;
     value = Network(config.value_layers, config.observation_size, 1, 1.0f, "value", error);
     return value != nullptr;

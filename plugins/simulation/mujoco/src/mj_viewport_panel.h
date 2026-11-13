@@ -85,6 +85,7 @@ public:
         // preview"; empty: "Policy playback") and rows put first in the live numbers
         std::string status;
         std::vector<std::pair<std::string, std::string>> rows;
+        bool watch_only = false;  // a training's own copy: the Stress panel is off
     };
     void SetPlaybackNumbers(PlaybackNumbers numbers) { numbers_ = std::move(numbers); }
     // The played copy's status word: the Engine's, or "Policy playback"
