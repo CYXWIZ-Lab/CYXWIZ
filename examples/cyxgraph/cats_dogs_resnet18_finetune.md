@@ -59,15 +59,32 @@ says: `started from resnet18-f37072fd.pth (PyTorch state-dict): 40 of 41
 layers take weights from the file; 1 starts fresh: fc`.
 
 That is three epochs of one linear layer on 64 x 64 images, which is far
-smaller than the 224 x 224 the weights were trained on. For comparison,
+smaller than the 224 x 224 the weights were trained on.
+
+## Second stage: train every layer
+
+1. **Nodes > Freeze > Unfreeze All** (click the canvas first).
+2. Data Loader > Checkpoints: **Start from** > **A checkpoint of an earlier
+   run**, and type the first run's `best` folder
+   (`checkpoints/<run>/train-<id>/best`).
+3. Set AdamW's learning rate to 0.0001 and **Train**.
+
+The same PC, three more epochs, every layer training (11,177,025 weights),
+about 220 s per epoch. The run log says `initialized model weights from
+.../best (source epoch 3, val_loss 0.32057858)`.
+
+| Epoch | Train loss | Train acc | Val loss | Val acc |
+| --- | --- | --- | --- | --- |
+| 1 | 0.354 | 84.31 % | 0.258 | 89.07 % |
+| 2 | 0.226 | 90.45 % | 0.220 | 90.79 % |
+| 3 | 0.182 | 92.48 % | 0.213 | 91.00 % |
+
+**Test accuracy 92.60 %** (loss 0.176). For comparison,
 `cats_dogs_resnet_scratch.cyxgraph` trains a smaller network from random
-weights for 20 epochs and reaches 92.64 %.
+weights for 20 epochs and reaches 92.64 %; here six epochs in all reach the
+same.
 
 ## Try
-
-- **Second stage.** Turn the backbone back on: **Nodes > Freeze > Unfreeze
-  all**, set **Start from** to **A checkpoint of an earlier run** (this run's
-  `best` folder), lower AdamW's learning rate to 0.0001, and train again.
 - **Larger images.** Resize 128 and Center Crop 112 bring the images closer to
   what the weights expect; preparing them takes longer.
 - **Freeze less.** **Nodes > Freeze > Freeze all but the last N layers...**

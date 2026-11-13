@@ -152,6 +152,10 @@ private Data Studio tickets (`tofix*/track*`).
   Swish), the gate (Sigmoid, Hardsigmoid) and bias. Properties lists the
   six steps inside the node with their outputs and weights ("Inside this
   layer").
+- **Nodes menu commands work from the menu bar.** Group Selected, Duplicate,
+  Delete Selected and Freeze in the Nodes menu were always greyed when the
+  menu was opened, because the open menu took the focus from the canvas; the
+  canvas now keeps it while a menu is open.
 - **Frozen layers.** Every layer node with weights (Dense, the convolutions,
   the normalisations, Squeeze-Excitation, recurrent and attention layers) has
   a **Frozen** setting: the layer keeps its weights while the rest trains.
@@ -172,7 +176,8 @@ private Data Studio tickets (`tofix*/track*`).
 - **ResNet-18 fine-tuning example.** `cats_dogs_resnet18_finetune.cyxgraph`
   is torchvision's ResNet-18 node for node, started from the published
   ImageNet weights with the backbone frozen (86.29 % test accuracy on cats vs
-  dogs after three epochs). Checked against PyTorch: with those weights the
+  dogs after three epochs; 92.60 % after three more with every layer
+  training). Checked against PyTorch: with those weights the
   graph's outputs equal torchvision's.
 - **Start training from a published weights file.** Data Loader >
   Checkpoints > **Start from** is now one choice: random weights, a
