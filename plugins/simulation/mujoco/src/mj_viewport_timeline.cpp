@@ -113,7 +113,9 @@ void MjViewportPanel::RenderTimeline(MjEnvManager& env) {
         }
     }
 
-    // The row: the name and what is kept, the step buttons, Back to live, the plots
+    // The row: the name and what is kept, the step buttons, Back to live, the
+    // plots. Its own ID scope: the control row has a Step button too.
+    ImGui::PushID("timeline");
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(ToImVec4(colors.text_dim), "Timeline");
     ImGui::SameLine();
@@ -169,6 +171,7 @@ void MjViewportPanel::RenderTimeline(MjEnvManager& env) {
         std::snprintf(line, sizeof(line), "%zu steps kept \xC2\xB7 live. Drag along it, or Step back, to look back.",
                       count);
     ImGui::TextColored(ToImVec4(colors.text_dim), "%s", line);
+    ImGui::PopID();
 }
 
 void MjViewportPanel::RenderPlots(MjEnvManager& env) {
