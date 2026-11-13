@@ -626,16 +626,17 @@ void CheckInspect(const std::filesystem::path& dir) {
     other.state.pop_back();
     Check(!ApplyKeyframe(m, d, other, error) && error.find("another version") != std::string::npos,
           "a keyframe of another version of the model is refused: " + error);
-    const auto file = KeyframesFile(dir, path);
+    const auto file = KeyframesFile(dir, *ParseModelRef("builtin:half_cheetah.xml"));
     Check(file.parent_path() == dir / "mujoco" / "keyframes" && file.stem().string().rfind("half_cheetah-", 0) == 0 &&
               file.extension() == ".json",
           "saved in the project, named after the model file: " + file.filename().string());
-    Check(KeyframesFile(dir, path) == file, "the same model file, the same keyframes");
-    Check(KeyframesFile(dir, "D:/robots/a/scene.xml") != KeyframesFile(dir, "D:/robots/b/scene.xml"),
+    Check(KeyframesFile(dir, *ParseModelRef("builtin:half_cheetah.xml")) == file, "the same model, the same keyframes");
+    Check(KeyframesFile(dir, *ParseModelRef("menagerie:a/scene.xml@1")) !=
+              KeyframesFile(dir, *ParseModelRef("menagerie:b/scene.xml@1")),
           "two models with one file name keep their own keyframes (Menagerie's scene.xml)");
-    Check(KeyframesFile(dir, (dir / "models" / "arm.xml").string()) ==
-              KeyframesFile(dir, (dir / "models" / "." / "arm.xml").string()),
-          "a model inside the project is keyed by its path there");
+    Check(KeyframesFile(dir, *ParseModelRef("menagerie:a/scene.xml@1")) !=
+              KeyframesFile(dir, *ParseModelRef("menagerie:a/scene.xml@2")),
+          "another version of a robot keeps its own keyframes");
     Check(SaveKeyframes(file, {crouch}, path, error), "saved: " + error);
     const auto loaded = LoadKeyframes(file);
     Check(loaded.size() == 1 && loaded[0].name == "crouch" && loaded[0].saved == "12:04" && loaded[0].state == crouch.state,

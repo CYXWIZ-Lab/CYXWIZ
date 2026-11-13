@@ -39,6 +39,9 @@ public:
     void SetLoadBlocker(std::function<std::string()> fn) { load_blocker_ = std::move(fn); }
     // A model loaded from elsewhere (a file the viewport opened): no card is Loaded
     void ClearLoaded() { loaded_env_id_.clear(); }
+    // Copy into the project asked for from elsewhere (Inspect): the robot's card
+    // asks to confirm when the Library next draws
+    void RequestCopy(const std::string& robot_id) { copy_confirm_id_ = robot_id; }
 
     void Render(MjEnvLibrary& library, const MjEnvManager& env, bool* visible);
 

@@ -50,6 +50,10 @@ public:
     void SetContext(PluginContext* ctx) { ctx_ = ctx; }
     void SetOpenModel(OpenModelFn fn) { open_model_ = std::move(fn); }
     void SetReloadModel(ReloadModelFn fn) { reload_model_ = std::move(fn); }
+    // The open model as a reference (the same on every PC), and where it is
+    // (TOFIX219); Copy into the project of a shared download
+    void SetModelRefFn(std::function<MjModelRef(const std::string& path)> fn) { model_ref_ = std::move(fn); }
+    void SetCopyModel(std::function<void(const MjModelRef& ref)> fn) { copy_model_ = std::move(fn); }
     // The steps the plugin keeps for the timeline and plots (guarded by the
     // physics lock)
     void SetHistory(MjHistory* history) { history_ = history; }
@@ -234,6 +238,8 @@ private:
     PluginContext* ctx_ = nullptr;
     OpenModelFn open_model_;
     ReloadModelFn reload_model_;
+    std::function<MjModelRef(const std::string&)> model_ref_;
+    std::function<void(const MjModelRef&)> copy_model_;
     // Inspect
     InspectOptions inspect_;
     int selected_body_ = -1;              // double-clicked; -1: none

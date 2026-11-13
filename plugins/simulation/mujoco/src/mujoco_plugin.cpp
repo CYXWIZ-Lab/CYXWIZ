@@ -197,6 +197,14 @@ bool MuJoCoPlugin::LoadEnvironment(const std::string& mjcf_path) {
     viewport_panel_.SetHistory(&history_);
     viewport_panel_.SetSimExecutor(&sim_executor_);
     viewport_panel_.SetReloadModel([this](std::string& error) { return ReloadModel(error); });
+    viewport_panel_.SetModelRefFn([this](const std::string& path) { return RefForFile(path, ModelRoots()); });
+    viewport_panel_.SetCopyModel([this](const MjModelRef& ref) {
+        for (const auto& e : env_library_.GetAll()) {
+            if (e.source != EnvSource::Menagerie || e.repo_path != ref.robot) continue;
+            browser_panel_.RequestCopy(e.id);
+            if (ctx_) ctx_->ShowPanel("mujoco_env_browser");
+        }
+    });
 
     // NOTE: Renderer is NOT initialized here. It will be lazily initialized
     // by the viewport panel on first render, using the engine's GL context
