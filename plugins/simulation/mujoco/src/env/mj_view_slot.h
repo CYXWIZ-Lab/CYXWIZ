@@ -7,6 +7,7 @@
 // through shared_ptr, so a batch that outlives the plugin still holds it.
 
 #include "mj_stress.h"
+#include "plugin/interfaces/i_environment_provider.h"
 
 #include <mujoco/mujoco.h>
 
@@ -42,6 +43,9 @@ struct MjViewSlot {
     std::vector<MjStressRequest> requests;
     MjScene scene;
     std::string stress_message;
+    // How the Engine names the shown copy (LabelShownCopy: a training preview,
+    // a training copy); empty: "Policy playback"
+    PluginShownCopyLabel label;
     uint64_t version = 0;         // grows with every published state
 };
 

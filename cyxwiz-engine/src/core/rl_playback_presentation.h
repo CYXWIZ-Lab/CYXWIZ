@@ -4,6 +4,8 @@
 // Properties say about a trained policy and its playback (TOFIX195 S5.3).
 // Pure data in and out (no ImGui).
 
+#include "../plugin/interfaces/i_environment_provider.h"
+
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -64,5 +66,26 @@ std::string PolicyLine(bool has_policy, const std::string& file_name, int64_t st
 // The action in words: CartPole's "push left" / "push right", another
 // discrete choice "choice 2", continuous "[-0.083, 0.512]"
 std::string ActionText(const std::string& environment_id, bool discrete, const std::vector<float>& action);
+
+// Watching a PPO run while it trains (TOFIX212 P5): the dashboard's choice
+// (the RLTrainingRun::Watch order) and Preferences > Simulation's default
+inline constexpr const char* kWatchChoices[] = {"Off", "Live preview", "Raw training copy"};
+inline constexpr int kWatchChoiceCount = 3;
+inline constexpr const char* kWatchHint =
+    "The preview plays a copy of the networks on its own copy of the environment, so training is not slowed or "
+    "changed (a little GPU time each update it is taken). Raw training copy shows copy 0 of the training as it "
+    "learns: at training pace, with the exploring (sampled) actions.";
+// How the plugin's view names the preview: "Preview of update 1,580", the
+// status "Training preview", a first row "Networks of: update 1,580"
+plugin::PluginShownCopyLabel PreviewLabel(int update);
+// ... and a training copy shown as it trains: "Training copy 0", "Training",
+// watch only (the view cannot disturb what training learns)
+plugin::PluginShownCopyLabel TrainingCopyLabel(int copy);
+// The dashboard's preview card: "update 1,580 (810,240 steps)", or "waiting
+// for the next update" before the first networks
+std::string PreviewOf(int update, int64_t steps);
+// "3 played · last return 1912.4 (update 1,560)", "none played yet": every
+// episode the preview finished, and the networks that played the last one
+std::string PreviewEpisodes(int episodes, bool has_last_return, double last_return, int last_return_update);
 
 }  // namespace cyxwiz::rl_playback

@@ -288,7 +288,7 @@ void MjViewportPanel::RenderControls(MjEnvManager& env, MjRenderer& renderer) {
     }
     const char* status = recording  ? recording_status
                          : graph    ? "Driven by the graph run"
-                         : playback ? "Policy playback"
+                         : playback ? PlaybackStatus()
                          : running  ? "Running"
                          : paused   ? "Paused"
                                     : "Stopped";
@@ -457,7 +457,7 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
             parts.push_back({buf, ToU32(colors.success)});
         }
     } else if (playback_) {  // the Engine's playback moves the scene, at its own pace
-        parts.push_back({"Policy playback", ToU32(colors.accent_text)});
+        parts.push_back({PlaybackStatus(), ToU32(colors.accent_text)});
     } else {
         parts.push_back({active ? "Paused" : "Stopped", ToU32(colors.text_dim)});
     }
@@ -511,11 +511,12 @@ void MjViewportPanel::RenderScene(MjEnvManager& env, MjRenderer& renderer) {
 void MjViewportPanel::RenderLiveNumbers(float scene_left, float scene_top, const MjGround& ground) {
     const UiColors colors = ctx_->GetUi()->Colors();
     struct Row {
-        const char* label;
+        std::string label;
         std::string value;
     };
     std::vector<Row> rows;
     char buf[64];
+    for (const auto& [label, value] : numbers_.rows) rows.push_back({label, value});  // the Engine's first
     rows.push_back({"Episode", std::to_string(numbers_.episode)});
     if (numbers_.max_steps > 0) std::snprintf(buf, sizeof(buf), "%d / %d", numbers_.step, numbers_.max_steps);
     else std::snprintf(buf, sizeof(buf), "%d", numbers_.step);
@@ -548,7 +549,7 @@ void MjViewportPanel::RenderLiveNumbers(float scene_left, float scene_top, const
     const float line_h = ImGui::GetTextLineHeightWithSpacing();
     float label_w = 0.0f, value_w = 0.0f;
     for (const auto& row : rows) {
-        label_w = std::max(label_w, ImGui::CalcTextSize(row.label).x);
+        label_w = std::max(label_w, ImGui::CalcTextSize(row.label.c_str()).x);
         value_w = std::max(value_w, ImGui::CalcTextSize(row.value.c_str()).x);
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -558,7 +559,7 @@ void MjViewportPanel::RenderLiveNumbers(float scene_left, float scene_top, const
     dl->AddRectFilled(box0, box1, ToU32(colors.bg_window, 0.85f), 6.0f);
     float y = box0.y + pad;
     for (const auto& row : rows) {
-        dl->AddText(ImVec2(box0.x + pad, y), ToU32(colors.text_dim), row.label);
+        dl->AddText(ImVec2(box0.x + pad, y), ToU32(colors.text_dim), row.label.c_str());
         dl->AddText(ImVec2(box0.x + pad + label_w + gap, y), ToU32(colors.text), row.value.c_str());
         y += line_h;
     }
@@ -571,7 +572,7 @@ void MjViewportPanel::RenderLiveNumbers(float scene_left, float scene_top, const
 void MjViewportPanel::RenderEpisodeStrip(MjEnvManager& env) {
     const UiColors colors = ctx_->GetUi()->Colors();
     if (playback_) {  // the Engine's Policy Playback panel has the episode's numbers
-        ImGui::TextColored(ToImVec4(colors.text_dim), "Policy playback");
+        ImGui::TextColored(ToImVec4(colors.text_dim), "%s", PlaybackStatus());
         ImGui::SameLine();
         ImGui::TextColored(ToImVec4(colors.text), "%s", playback_label_.c_str());
         return;

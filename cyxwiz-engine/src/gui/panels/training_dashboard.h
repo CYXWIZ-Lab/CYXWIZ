@@ -57,6 +57,21 @@ public:
         std::function<bool()> has_policy;
         std::function<void()> play;
         std::function<void()> save;
+        // Watching the run while it trains (TOFIX212 P5): the choice and the
+        // interval, applied every frame (0 off, 1 live preview, 2 raw training
+        // copy); the next update's networks now; what the preview plays; the
+        // plugin's view
+        struct WatchView {
+            std::string unavailable;  // why there is nothing to watch in (no view); empty: there is
+            std::string view_label;   // "Show the MuJoCo Viewport"
+            std::string preview_of;   // "update 1,580 (810,240 steps)"
+            std::string episodes;     // "3 played · last return 1912.4 (update 1,560)"
+            std::string message;      // why the preview stopped
+        };
+        std::function<void(int watch, int every_updates)> watch;
+        std::function<void()> watch_now;
+        std::function<WatchView()> watch_view;
+        std::function<void()> show_view;
     };
     void BeginPpoRun(PpoRunInfo info, PpoRunControls controls);
     // The device the run trains on, once its preflight is done
@@ -66,6 +81,8 @@ public:
     void SetPpoComputePath(std::string path) { device_compute_path_ = std::move(path); }
     void SetPpoNote(std::string note) { device_note_ = std::move(note); }
     void AddPpoUpdate(const rl::PpoUpdateMetrics& m);
+    // Watch progress set from outside (a policy playback took the view: 0, off)
+    void SetWatch(int watch) { watch_ = watch; }
     void EndPpoRun(const std::string& outcome, bool failed);
 
 private:
@@ -79,6 +96,7 @@ private:
 
     void RenderRunHeader();
     void RenderKpis();
+    void RenderWatch();  // Watch progress (a PPO run)
     void RenderMetric(const std::string& name, float height);
     void Push(const std::string& name, double value, double steps);
 
@@ -98,6 +116,9 @@ private:
     std::string device_note_;
     std::string device_compute_path_;
     std::optional<rl::PpoUpdateMetrics> last_update_;
+    // Watch progress: from Preferences > Simulation at each run's start
+    int watch_ = 0;
+    int watch_every_ = 20;
     std::string outcome_;
     bool failed_ = false;
 };

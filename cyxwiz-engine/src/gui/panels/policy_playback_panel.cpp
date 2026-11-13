@@ -50,6 +50,7 @@ bool PolicyPlaybackPanel::Play(std::shared_ptr<rl::TrainedPolicy> policy, std::s
     if (!playback_.Start(std::move(policy), static_cast<rl::PlaybackSpeed>(config.PolicyPlaybackSpeed()),
                          config.PolicyPlaybackBestActions(), error))
         return false;
+    if (on_play_) on_play_();
     file_name_ = std::move(file_name);
     view_opened_ = false;
     visible_ = true;
@@ -76,23 +77,27 @@ void PolicyPlaybackPanel::LookUpViewTitle(const std::string& environment_key) {
     // Kept once found; an environment without one (yet: its plugin may load later) is asked again
     if (environment_key == view_title_key_ && !view_title_.empty()) return;
     view_title_key_ = environment_key;
-    view_title_.clear();
+    view_title_ = ViewTitle(environment_key);
+}
+
+std::string PolicyPlaybackPanel::ViewTitle(const std::string& environment_key) {
     plugin::PluginEnvironmentRegistry::Environment env;
     if (!plugin::PluginEnvironmentRegistry::Instance().Find(environment_key, env) || env.info.view_panel_id.empty())
-        return;
+        return {};
     // The view's own title, from the plugin that registered it
     for (const auto& panel : plugin::PluginPanelRegistry::Instance().GetAllPanels())
-        if (panel.panel_id == env.info.view_panel_id) view_title_ = panel.title;
+        if (panel.panel_id == env.info.view_panel_id) return panel.title;
+    return {};
+}
+
+void PolicyPlaybackPanel::ShowView(const std::string& environment_key) {
+    plugin::PluginEnvironmentRegistry::Environment env;
+    if (plugin::PluginEnvironmentRegistry::Instance().Find(environment_key, env) && !env.info.view_panel_id.empty())
+        plugin::PluginPanelRegistry::Instance().ShowPanel(env.plugin_id, env.info.view_panel_id);
 }
 
 void PolicyPlaybackPanel::ShowPluginView() {
-    const auto policy = playback_.Policy();
-    if (!policy) return;
-    plugin::PluginEnvironmentRegistry::Environment env;
-    if (!plugin::PluginEnvironmentRegistry::Instance().Find(policy->config.environment_key, env) ||
-        env.info.view_panel_id.empty())
-        return;
-    plugin::PluginPanelRegistry::Instance().ShowPanel(env.plugin_id, env.info.view_panel_id);
+    if (const auto policy = playback_.Policy()) ShowView(policy->config.environment_key);
 }
 
 void PolicyPlaybackPanel::RenderCartPole(const rl::PolicyPlayback::Snapshot& s, float width, float height) {
@@ -223,6 +228,8 @@ void PolicyPlaybackPanel::RenderPlay(const std::shared_ptr<rl::TrainedPolicy>& p
             start_error_.clear();
             if (!playback_.Start(policy, playback_.Speed(), playback_.Best(), start_error_))
                 spdlog::error("Policy playback: {}", start_error_);
+            else if (on_play_)
+                on_play_();
             view_opened_ = false;
         }
     }
@@ -304,6 +311,8 @@ void PolicyPlaybackPanel::WatchLevel(const std::shared_ptr<rl::TrainedPolicy>& p
         rl::StressSeed(spec, level));
     start_error_.clear();
     if (!playback_.Start(policy, playback_.Speed(), true, start_error_)) spdlog::error("Policy playback: {}", start_error_);
+    else if (on_play_)
+        on_play_();
     view_opened_ = false;
     select_play_ = true;  // the Play tab, which opens the plugin's view
     for (const auto& [name, tested] : tested_)

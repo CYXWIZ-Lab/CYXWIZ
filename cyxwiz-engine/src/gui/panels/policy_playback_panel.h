@@ -33,6 +33,13 @@ public:
     void SetVisible(bool visible) { visible_ = visible; }
     bool* VisiblePtr() { return &visible_; }  // View > Panels and the sidebar
 
+    // The plugin view that shows an environment's copies: its title (empty:
+    // none, or its plugin is not loaded), and opening it
+    static std::string ViewTitle(const std::string& environment_key);
+    static void ShowView(const std::string& environment_key);
+    // Called after every playback this panel starts (it takes the plugin's view)
+    void SetOnPlay(std::function<void()> on_play) { on_play_ = std::move(on_play); }
+
 private:
     void RenderPlay(const std::shared_ptr<rl::TrainedPolicy>& policy);
     // The Stress test tab (TOFIX212 P4 board 6): N episodes at each difficulty
@@ -42,6 +49,7 @@ private:
     void RenderCartPole(const rl::PolicyPlayback::Snapshot& s, float width, float height);
     void ShowPluginView();
 
+    std::function<void()> on_play_;  // SetOnPlay
     rl::PolicyPlayback playback_;
     std::string file_name_;
     bool visible_ = false;

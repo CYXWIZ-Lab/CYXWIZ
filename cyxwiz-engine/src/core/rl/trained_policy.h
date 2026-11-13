@@ -19,7 +19,9 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cyxwiz::rl {
@@ -45,11 +47,40 @@ struct TrainedPolicy {
     mutable std::mutex in_use;
 };
 
+// ArrayFire arrays belong to the backend that made them: work on a policy's
+// networks happens on its device, whatever this thread was on; the thread's
+// device comes back after (and nothing changes when it already matches).
+// Throws when the device does not start.
+class PolicyDeviceScope {
+public:
+    explicit PolicyDeviceScope(const TrainedPolicy& p);
+    PolicyDeviceScope(DeviceType type, int id);
+    ~PolicyDeviceScope();
+    PolicyDeviceScope(const PolicyDeviceScope&) = delete;
+    PolicyDeviceScope& operator=(const PolicyDeviceScope&) = delete;
+
+private:
+    std::optional<std::pair<DeviceType, int>> previous_;
+    bool switched_ = false;
+};
+
 // The two networks of a compiled RL graph: its layers plus each head's output
 // layer, initialised as Stable-Baselines3 does (from the current ArrayFire
 // random engine). Null with the reason when a network cannot be built.
 bool BuildRLNetworks(const RLTrainingConfiguration& config, std::unique_ptr<IExecutableModel>& policy,
                      std::unique_ptr<IExecutableModel>& value, std::string& error);
+
+// The policy network alone, made the same way (a training preview's own
+// copy, which plays and never trains). Null with the reason.
+std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error);
+
+// The policy network alone, made the same way (a training preview's own
+// copy, which plays and never trains). Null with the reason.
+std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error);
+
+// The policy network alone, made the same way (a training preview's own
+// copy, which plays and never trains). Null with the reason.
+std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error);
 
 // What a trained run leaves (PpoTrainer::TakeTrained), with its graph and updates.
 std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,

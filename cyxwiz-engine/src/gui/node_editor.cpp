@@ -33,6 +33,7 @@
 #include "../core/pipeline_runtime_capabilities.h"
 #include "panels/training_dashboard.h"
 #include "../core/rl/rl_training_run.h"
+#include "../core/rl/training_watch.h"
 #include "../core/rl/trained_policy.h"
 #include "../core/rl_device_presentation.h"
 #include "../core/rl_playback_presentation.h"
@@ -193,6 +194,13 @@ NodeEditor::NodeEditor()
     // Initialize shape inference engine
 
     rl_playback_ = std::make_unique<cyxwiz::PolicyPlaybackPanel>();  // shown by Play or View > Panels
+    // A played policy takes the plugin's view: a training run's Watch progress goes off
+    rl_playback_->SetOnPlay([this]() {
+        if (rl_watch_mode_ == 0) return;
+        rl_watch_mode_ = 0;
+        if (rl_dashboard_) rl_dashboard_->SetWatch(0);
+        spdlog::info("Watch progress off: a policy playback shows its copy in the view");
+    });
 
     // The canvas starts empty (owner 2026-10-02); ready-made graphs are
     // under Examples in the Nodes panel.
@@ -207,6 +215,8 @@ NodeEditor::NodeEditor()
         const auto owned = [&plugin_id](const std::string& environment_key) {
             return environment_key.rfind(plugin_id + ":", 0) == 0;
         };
+        // The run's preview first (it plays the run's networks in its own copy)
+        if (rl_watch_ && owned(rl_watch_->EnvironmentKey())) rl_watch_->Stop();
         if (rl_run_ && rl_run_->Active() && rl_run_->Config() && owned(rl_run_->Config()->environment_key)) {
             spdlog::info("PPO stopped: its environment's plugin {} is stopping", plugin_id);
             rl_run_->StopAndWait();
@@ -4222,6 +4232,35 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
         std::string why;
         if (!SaveRLPolicy(why) && !why.empty()) spdlog::error("Save policy: {}", why);
     };
+    // Watch progress (TOFIX212 P5): PollRLTraining applies the choice every frame
+    if (!rl_watch_) rl_watch_ = std::make_unique<cyxwiz::rl::TrainingWatch>();
+    const std::string environment_key = c.environment_key;
+    const std::string view_title = cyxwiz::PolicyPlaybackPanel::ViewTitle(environment_key);
+    controls.watch = [this, has_view = !view_title.empty()](int watch, int every_updates) {
+        rl_watch_mode_ = has_view ? watch : 0;
+        rl_watch_every_ = every_updates;
+    };
+    controls.watch_now = [this]() { rl_watch_->TakeNow(); };
+    controls.watch_view = [this, view_title]() {
+        cyxwiz::TrainingDashboardPanel::PpoRunControls::WatchView view;
+        if (view_title.empty()) {
+            view.unavailable = "This environment has no view to watch it in.";
+            return view;
+        }
+        view.view_label = "Show the " + view_title;
+        const auto s = rl_watch_->Get();
+        view.preview_of = cyxwiz::rl_playback::PreviewOf(s.networks_update, s.networks_steps);
+        view.episodes =
+            cyxwiz::rl_playback::PreviewEpisodes(s.episodes, s.has_last_return, s.last_return, s.last_return_update);
+        view.message = s.message;
+        return view;
+    };
+    controls.show_view = [environment_key]() { cyxwiz::PolicyPlaybackPanel::ShowView(environment_key); };
+    {
+        const auto& prefs = cyxwiz::core::EngineConfig::Instance();
+        rl_watch_mode_ = view_title.empty() ? 0 : prefs.WatchTrainingMode();
+        rl_watch_every_ = prefs.WatchTrainingEvery();
+    }
     rl_dashboard_->BeginPpoRun(std::move(info), std::move(controls));
     spdlog::info("Train: PPO on {} x {} started", c.environment.id, c.copies);
     return true;
@@ -4289,6 +4328,9 @@ void NodeEditor::PollRLTraining() {
         rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
                      cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" + rl_device_suffix_;
     }
+    // Watch progress: the preview starts once the run has copied its networks, and stops with the run
+    if (rl_watch_)
+        rl_watch_->Update(rl_run_.get(), static_cast<cyxwiz::rl::RLTrainingRun::Watch>(rl_watch_mode_), rl_watch_every_);
     if (rl_run_->Active()) cyxwiz::plugin::EnginePluginContext::KeepFullFrameRate();  // the dashboard moves
     if (rl_run_reported_ || rl_run_->Active()) return;
     const auto state = rl_run_->GetState();

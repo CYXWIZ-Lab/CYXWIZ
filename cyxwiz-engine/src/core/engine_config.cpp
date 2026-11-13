@@ -484,6 +484,8 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         policy_playback_speed_ = 0;
         play_policy_after_training_ = false;
         policy_stress_defaults_ = {};
+        watch_training_mode_ = 0;
+        watch_training_every_ = 20;
         if (config.contains("policy_playback") && config["policy_playback"].is_object()) {
             const auto& playback = config["policy_playback"];
             policy_playback_best_ = playback.value("best_actions", true);
@@ -493,6 +495,8 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             policy_stress_defaults_ = ClampStressDefaults({playback.value("stress_kind", d.kind),
                                                            playback.value("stress_levels", d.levels),
                                                            playback.value("stress_episodes", d.episodes)});
+            watch_training_mode_ = std::clamp(playback.value("watch_training", 0), 0, 2);
+            watch_training_every_ = std::clamp(playback.value("watch_every_updates", 20), 1, 1000);
         }
 
         runtime_log_saved_filters_.clear();
@@ -620,7 +624,9 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
                                      {"play_after_training", play_policy_after_training_},
                                      {"stress_kind", policy_stress_defaults_.kind},
                                      {"stress_levels", policy_stress_defaults_.levels},
-                                     {"stress_episodes", policy_stress_defaults_.episodes}};
+                                     {"stress_episodes", policy_stress_defaults_.episodes},
+                                     {"watch_training", watch_training_mode_},
+                                     {"watch_every_updates", watch_training_every_}};
         config["observability"] = {
             {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
@@ -1112,6 +1118,27 @@ void EngineConfig::SetPolicyStressTestDefaults(PolicyStressDefaults defaults) {
     if (defaults.kind != policy_stress_defaults_.kind || defaults.levels != policy_stress_defaults_.levels ||
         defaults.episodes != policy_stress_defaults_.episodes) {
         policy_stress_defaults_ = defaults;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::WatchTrainingMode() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return watch_training_mode_;
+}
+
+int EngineConfig::WatchTrainingEvery() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return watch_training_every_;
+}
+
+void EngineConfig::SetWatchTraining(int mode, int every_updates) {
+    mode = std::clamp(mode, 0, 2);
+    every_updates = std::clamp(every_updates, 1, 1000);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (mode != watch_training_mode_ || every_updates != watch_training_every_) {
+        watch_training_mode_ = mode;
+        watch_training_every_ = every_updates;
         modified_ = true;
     }
 }

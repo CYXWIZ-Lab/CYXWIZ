@@ -41,6 +41,9 @@ void MjViewportPanel::ResetStress() {
 
 std::string MjViewportPanel::StressBlocked(MjEnvManager& env) const {
     if (graph_sim_active_) return kGraphReason;
+    if (playback_ && numbers_.watch_only)
+        return "This is the training's own copy: a disturbance would change what it learns. Watch the live "
+               "preview to disturb a copy of the policy.";
     if (!env.IsLoaded()) return "Open a model first.";
     return {};
 }

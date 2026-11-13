@@ -81,8 +81,15 @@ public:
         double last_return = 0.0;
         bool last_ended_by_task = false;  // the episode before ended by the task's end (a fall)
         std::vector<float> action;
+        // The Engine's words for the copy (LabelShownCopy): the status ("Training
+        // preview"; empty: "Policy playback") and rows put first in the live numbers
+        std::string status;
+        std::vector<std::pair<std::string, std::string>> rows;
+        bool watch_only = false;  // a training's own copy: the Stress panel is off
     };
     void SetPlaybackNumbers(PlaybackNumbers numbers) { numbers_ = std::move(numbers); }
+    // The played copy's status word: the Engine's, or "Policy playback"
+    const char* PlaybackStatus() const { return numbers_.status.empty() ? "Policy playback" : numbers_.status.c_str(); }
     // The renderer (re)started for a model: apply the saved scene options and
     // the camera to start with
     void OnRendererReady() {

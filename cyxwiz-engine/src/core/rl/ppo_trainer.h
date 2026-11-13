@@ -103,6 +103,15 @@ struct PpoTrainedState {
     std::map<std::string, OptimizerState> optimizers;
 };
 
+// The policy as it is between two updates (a training preview, TOFIX212 P5):
+// its parameters, the log standard deviations and the observation statistics,
+// copied so the trainer goes on changing its own.
+struct PpoPolicyCopy {
+    std::map<std::string, Tensor> parameters;
+    Tensor log_std;                            // empty for a discrete policy
+    std::unique_ptr<VecNormalize> normalizer;
+};
+
 class PpoTrainer {
 public:
     // policy: observations [B, obs] -> means [B, A] (continuous) or logits [B, K] (discrete);
@@ -122,6 +131,9 @@ public:
     // Moves out what Train left (once, after Train). False with the reason
     // when Train never started or an optimizer's state cannot be exported.
     bool TakeTrained(PpoTrainedState& out, std::string& error);
+    // A copy of the policy now. Call between updates (from on_update), on the
+    // thread that trains. False before Train set the networks up.
+    bool CopyPolicy(PpoPolicyCopy& out, std::string& error);
 
 private:
     bool CheckSetup(std::string& error) const;

@@ -59,6 +59,25 @@ public:
     // The policy of the last finished or stopped run (null otherwise)
     std::shared_ptr<TrainedPolicy> Trained() const;
 
+    // Watching the run while it trains (TOFIX212 P5), applied by the worker
+    // between updates. Preview: the policy is copied every `every_updates`
+    // updates (and at the first update after Preview is chosen) for a preview
+    // to play beside training; training is not changed. RawCopy: the plugin's
+    // view follows copy 0 of the training itself. UI thread.
+    enum class Watch { Off = 0, Preview = 1, RawCopy = 2 };
+    void SetWatch(Watch watch, int every_updates);
+    void TakeNetworksNow();  // copy at the next update, whatever the interval
+    // The preview's own policy on the run's device, made at the first copy
+    // (null before, and after the next Start)
+    std::shared_ptr<TrainedPolicy> PreviewPolicy() const;
+    // At a preview episode's start (the preview's thread): the newest copy
+    // into `policy` when it is newer than `update`; then update and steps say
+    // which networks it plays.
+    bool RefreshPreview(TrainedPolicy& policy, int& update, long long& steps);
+    // The update and steps of the networks the preview policy holds now (0:
+    // none put in yet): a preview started again plays them until the next copy
+    void PreviewHolds(int& update, long long& steps) const;
+
     // The device the run trains on: the user's route from Preferences >
     // Devices under the next-run policy, as supervised training resolves it
     // (run_execution_device). Not valid before the run's preflight.
@@ -66,6 +85,12 @@ public:
 
 private:
     void Run();
+    // The policy now, for the preview (the worker, between updates). The
+    // first copy makes the preview policy from `network` (built before the
+    // run seeded its random engine); each copy then waits for the preview's
+    // next episode (RefreshPreview).
+    void CopyForPreview(PpoTrainer& trainer, const RLTrainingConfiguration& c, int update, long long steps,
+                        std::unique_ptr<IExecutableModel>& network);
 
     std::shared_ptr<const RLTrainingConfiguration> config_;
     std::string graph_json_;
@@ -80,6 +105,21 @@ private:
     PpoTrainer* trainer_ = nullptr;  // while Run trains
     std::shared_ptr<TrainedPolicy> trained_;
     ExecutionDeviceContext device_;
+
+    // Watching (P5): the UI's choice, read by the worker
+    std::atomic<int> watch_{0};
+    std::atomic<int> watch_every_{20};
+    std::atomic<bool> take_now_{false};
+    // Guarded by mutex_: the preview's policy and the newest copy waiting for it
+    struct PreviewNetworks {
+        PpoPolicyCopy copy;
+        int update = 0;
+        long long steps = 0;
+    };
+    std::shared_ptr<TrainedPolicy> preview_;
+    std::unique_ptr<PreviewNetworks> preview_next_;
+    int preview_holds_update_ = 0;  // the networks preview_ holds (RefreshPreview)
+    long long preview_holds_steps_ = 0;
 };
 
 }  // namespace cyxwiz::rl

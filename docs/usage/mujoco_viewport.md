@@ -17,7 +17,7 @@ loaded (**Plugin Manager**, MuJoCo Simulation).
 | **Speed** | Times real time, typed (0.25 to 8); **As fast as possible** steps without waiting |
 | **Camera: ...** | The camera the scene is seen through (below) |
 | **Record** | A screenshot or a recording (below); **Stop recording** while one runs |
-| Status | Running, Paused, Stopped, Policy playback, Driven by the graph run, or Recording with its length and frames |
+| Status | Running, Paused, Stopped, Policy playback (or the Engine's word for it: Training preview, Training), Driven by the graph run, or Recording with its length and frames |
 | **View** | What the scene shows (below) |
 | **Stress** / **Hide Stress** | The Stress panel beside the scene: kick the robot, throw objects at it, change the ground (below) |
 
@@ -59,8 +59,13 @@ While a policy plays, the top left of the scene shows the played episode:
 **Episode** (counted from the start of the playback), **Step** (of the
 episode's limit), **Return** (the rewards so far in this episode), **Last
 episode** (the return of the episode before, once one has ended) and
-**Action** (the last action, up to eight values). The same copy is shown
-while training when the RL Training Dashboard shows a MuJoCo task.
+**Action** (the last action, up to eight values). While a run trains, the
+RL Training Dashboard's **Watch progress** shows a live preview here: the
+line under the task's name and the status say **Preview of update 1,580**
+and **Training preview**, and the first row says **Networks of** that
+update. **Raw training copy** shows copy 0 of the training as it learns
+(**Training copy 0**); the Stress panel is off for it (a disturbance would
+change what training learns). See the [RL walkthrough](rl_walkthrough.md) (While it trains).
 
 ## Record
 

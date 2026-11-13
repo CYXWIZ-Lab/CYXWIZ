@@ -99,4 +99,27 @@ View Build(const Inputs& in) {
     return v;
 }
 
+plugin::PluginShownCopyLabel PreviewLabel(int update) {
+    const std::string of = "update " + Thousands(update);
+    return {"Preview of " + of, "Training preview", {{"Networks of", of}}};
+}
+
+plugin::PluginShownCopyLabel TrainingCopyLabel(int copy) {
+    return {"Training copy " + std::to_string(copy), "Training", {}, true};  // watch only: training learns from it
+}
+
+std::string PreviewOf(int update, int64_t steps) {
+    if (update <= 0) return "waiting for the next update";
+    return "update " + Thousands(update) + " (" + Thousands(steps) + " steps)";
+}
+
+std::string PreviewEpisodes(int episodes, bool has_last_return, double last_return, int last_return_update) {
+    std::string text = episodes > 0 ? Thousands(episodes) + " played" : std::string("none played yet");
+    if (has_last_return) {
+        text += " \xC2\xB7 last return " + Number(last_return, "%.1f");
+        if (last_return_update > 0) text += " (update " + Thousands(last_return_update) + ")";
+    }
+    return text;
+}
+
 }  // namespace cyxwiz::rl_playback

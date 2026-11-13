@@ -122,10 +122,19 @@ bool MjEnvBatch::ShowCopy(int copy) {
     view_->requests.clear();
     view_->scene = scenes_[static_cast<size_t>(copy)];
     view_->stress_message.clear();
+    view_->label = {};  // the view's own words until the Engine labels the copy
     ++view_->version;
     shown_copy_ = copy;
     stress_.scene = scenes_[static_cast<size_t>(copy)];
     return true;
+}
+
+void MjEnvBatch::LabelShownCopy(const PluginShownCopyLabel& label) {
+    if (!view_) return;
+    std::lock_guard<std::mutex> lock(view_->mutex);
+    if (view_->owner != this) return;
+    view_->label = label;
+    if (label.watch_only) view_->requests.clear();  // none reach a training's own copy
 }
 
 std::vector<PluginEnvironmentStat> MjEnvBatch::Stats() const {

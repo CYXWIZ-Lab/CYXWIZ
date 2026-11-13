@@ -728,8 +728,26 @@ void CheckShowCopy() {
     for (int s = 0; s < 5; ++s) batch->Step(actions.data(), out);
     Check(view->version == after_reset + 5 && view->state != before, "every Step publishes the moved state");
 
+    // The Engine's label for the shown copy (a training preview)
+    PluginShownCopyLabel label{"Preview of update 12", "Training preview", {{"Networks of", "update 12"}}};
+    batch->LabelShownCopy(label);
+    Check(view->label.subtitle == "Preview of update 12" && view->label.status == "Training preview" &&
+              view->label.rows.size() == 1 && view->label.rows[0].first == "Networks of",
+          "the label reaches the view");
+    Check(batch->ShowCopy(1) && view->label.subtitle.empty() && view->label.rows.empty(),
+          "showing a copy again starts with the view's own words");
+    // A training's own copy is watch only: a waiting disturbance is dropped
+    view->requests.push_back(MjStressRequest{});
+    PluginShownCopyLabel training{"Training copy 1", "Training", {}, true};
+    batch->LabelShownCopy(training);
+    Check(view->label.watch_only && view->requests.empty(), "a watch-only copy takes no disturbance");
+    batch->ShowCopy(1);
+    batch->LabelShownCopy(label);
+
     IEnvironmentBatch* other = MjEnvBatch::Create(spec, ModelPath(spec), {}, 1, view, error);
     Check(other && other->ShowCopy(0) && view->owner == other, "another batch takes the view");
+    batch->LabelShownCopy(label);
+    Check(view->label.subtitle.empty(), "a batch that does not show the copy cannot label it");
     const uint64_t taken = view->version;
     batch->Step(actions.data(), out);
     Check(view->version == taken && view->owner == other, "the first batch no longer publishes");

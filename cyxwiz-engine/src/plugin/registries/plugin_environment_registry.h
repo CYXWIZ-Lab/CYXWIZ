@@ -40,6 +40,8 @@ public:
     bool ShowCopy(int copy, std::string& error);
     // The batch's own numbers for the dashboard (none when it has none or fails)
     std::vector<PluginEnvironmentStat> Stats() const;
+    // How the view names the shown copy (a plugin without it ignores it)
+    void LabelShownCopy(const PluginShownCopyLabel& label);
 
 private:
     friend class PluginEnvironmentRegistry;
