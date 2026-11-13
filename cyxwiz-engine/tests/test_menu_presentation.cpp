@@ -26,7 +26,8 @@ MenuInputs SampleInputs() {
     MenuInputs in;
     in.has_project = true;
     in.signed_in = true;
-    in.user_display_name = "Owner";
+    in.user_name = "Owner";
+    in.user_email = "owner@example.com";
     in.script_open = true;
     in.panels = {{"CyxWiz Studio", "Workspace", true, ""}, {"Properties", "Workspace", true, ""},
                  {"Patterns", "Workspace", false, ""}, {"Table Viewer", "Data", false, ""},
@@ -125,7 +126,7 @@ int main() {
         "train.load_checkpoint", "data.import", "data.create_custom", "deploy.connect", "deploy.deploy",
         "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin", "deploy.marketplace",
         "help.browse_tutorials", "help.shortcuts", "help.report_issue", "help.check_updates", "help.about",
-        "account.settings"};
+        "account.settings", "account.servers"};
     for (const auto& id : dialog_openers) Check(dialog_labels.count(id) == 1, "dialog opener has ...: " + id);
     for (const auto& id : dialog_labels) Check(dialog_openers.count(id) == 1, "... only on dialog openers: " + id);
 
@@ -183,9 +184,8 @@ int main() {
     std::set<std::string> planned;
     WalkModel(model, [&](const MenuItem& item, int, const std::string&) { if (item.planned) planned.insert(item.id); });
     const std::set<std::string> expected_planned = {
-        "view.fullscreen", "export.gguf", "deploy.quantize_int8", "deploy.quantize_int4", "deploy.quantize_fp16",
-        "deploy.marketplace", "help.documentation",
-        "help.api_reference", "help.check_updates", "data.augment"};
+        "export.gguf", "deploy.quantize_int8", "deploy.quantize_int4", "deploy.quantize_fp16",
+        "deploy.marketplace", "help.check_updates", "data.augment"};
     Check(planned == expected_planned, "planned set");
 
     // Rule: every printed shortcut comes from the table, and within one
@@ -446,6 +446,50 @@ int main() {
     // The Model window replaced Architecture Diagram, NAS and DNN Inference (TOFIX129 D11).
     for (const char* gone : {"tools.architecture_diagram", "tools.nas", "tools.architecture_suggestions", "tools.dnn_inference"})
         Check(Find(model, gone) == nullptr, std::string("removed from the menu: ") + gone);
+
+    // The account chip at the top-right corner (TOFIX129 A3b).
+    {
+        const AccountChip a = AccountChipFor("Sample User", "sample", "sample@example.com", "pro");
+        Check(a.initials == "SU" && a.short_name == "Sample User" && a.plan == "Pro" && a.email == "sample@example.com",
+              "a name gives initials, the whole short name and the plan");
+        const AccountChip b = AccountChipFor("Maximilian Alexander Thorne", "", "m@example.com", "user");
+        Check(b.initials == "MA" && b.short_name == "Maximilian" && b.full_name == "Maximilian Alexander Thorne" &&
+                  b.plan.empty(),
+              "a long name shows its first word; the free plan has no badge");
+        const AccountChip c = AccountChipFor("", "code_wizard", "x@example.com", "admin");
+        Check(c.full_name == "code_wizard" && c.initials == "CW" && c.plan == "Admin", "no name: the user name");
+        const AccountChip d = AccountChipFor(" ", "", "jo@example.com", "");
+        Check(d.full_name == "jo" && d.initials == "JO", "no name or user name: the email's local part");
+        MenuInputs signed_in = in;
+        signed_in.signed_in = true;
+        signed_in.user_name = "Sample User";
+        signed_in.user_email = "sample@example.com";
+        signed_in.user_role = "pro";
+        const MenuModel with_user = BuildMenuModel(signed_in);
+        Check(with_user.account_chip.initials == "SU" && Find(with_user, "account.servers") != nullptr,
+              "signed in: the chip and Servers... in the account menu");
+        MenuInputs with_project = in;
+        with_project.has_project = true;
+        const MenuModel project_model = BuildMenuModel(with_project);
+        Check(project_model.project.items.size() == 4 && project_model.project.items[0].id == "file.show_project_folder" &&
+                  project_model.project.items[1].id == "file.copy_project_path",
+              "the project chip's menu: Show in Explorer, Copy Path, Close Project");
+        MenuInputs no_project = in;
+        no_project.has_project = false;
+        const MenuModel bare = BuildMenuModel(no_project);
+        const MenuItem* show = Find(bare, "file.show_project_folder");
+        Check(bare.project.items.empty() && show && !show->enabled, "no project: no chip menu, File > Show Project Folder greyed");
+        MenuInputs fs = in;
+        fs.fullscreen = true;
+        const MenuModel fs_model = BuildMenuModel(fs);  // Find points into the model: keep it alive
+        const MenuItem* full = Find(fs_model, "view.fullscreen");
+        Check(full && full->enabled && full->checkable && full->checked && full->shortcut == "F11", "Full Screen is a real toggle on F11");
+        const MenuItem* known = Find(bare, "help.known_issues");
+        Check(known && !known->enabled && !known->disabled_reason.empty(), "Known Issues greyed with its reason when the file is missing");
+        Check(Find(bare, "help.documentation")->shortcut == "F1" && Find(bare, "help.open_logs") != nullptr &&
+                  Find(bare, "help.whats_new") != nullptr,
+              "Help: Documentation (F1), What's New, Open Logs Folder");
+    }
 
     std::cout << "menu presentation: " << palette.size() << " palette entries, " << table.size()
               << " shortcut entries, " << planned.size() << " planned items. OK\n";
