@@ -101,6 +101,12 @@ public:
     virtual std::string OpenFileDialog(const std::string& title, const std::string& filter_name,
                                        const std::string& extensions) = 0;
 
+    // A pill that turns a choice on or off (API 1.4): accent text when on,
+    // dimmed when off. Flips *on and returns true when clicked. `id` keeps
+    // the widget's identity. Declared last, so the earlier order stays.
+    virtual bool ToggleChip(const char* id, const char* label, bool* on) = 0;
+    virtual float ToggleChipWidth(const char* label) const = 0;
+
 protected:
     PluginUi() = default;
     PluginUi(const PluginUi&) = delete;

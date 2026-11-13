@@ -7,6 +7,8 @@
 #include "mj_recorder.h"
 #include "env/mj_stress.h"
 #include "env/mj_inspect.h"
+#include "env/mj_physics.h"
+#include "mj_env_manager.h"
 #include "mj_viewport_settings.h"
 
 #include "plugin/plugin_context.h"
@@ -641,6 +643,42 @@ void CheckInspect(const std::filesystem::path& dir) {
     mj_deleteModel(m);
 }
 
+// Physics (P3a): switches, what differs from the file, and the options kept
+// across a scene change and a reload, cleared by another file
+void CheckPhysics() {
+    const std::string path = std::string(CYXWIZ_MUJOCO_ASSETS_DIR) + "/half_cheetah.xml";
+    MjEnvManager env;
+    Check(env.LoadModel(path), "HalfCheetah loads");
+    if (!env.IsLoaded()) return;
+    const mjOption file = *env.FileOption();
+    Check(PhysicsChanges(*env.Option(), file).empty(), "a fresh model has the file's physics");
+    mjOption option = file;
+    option.integrator = mjINT_IMPLICITFAST;
+    option.gravity[2] = -3.7;
+    const auto& contacts = PhysicsSwitches()[0];
+    Check(SwitchOn(option, contacts), "contacts are on in the file");
+    SetSwitch(option, contacts, false);
+    Check(!SwitchOn(option, contacts) && (option.disableflags & mjDSBL_CONTACT), "off sets the disable bit");
+    const auto& energy = PhysicsSwitches().back();
+    SetSwitch(option, energy, true);
+    Check(SwitchOn(option, energy) && (option.enableflags & mjENBL_ENERGY), "energy is an enable bit");
+    Check(PhysicsChanges(option, file) == "integrator, gravity, contacts, energy",
+          "the differences in words: " + PhysicsChanges(option, file));
+    env.SetOption(option);
+    std::string error;
+    MjScene rough;
+    rough.ground = MjGround{MjGroundKind::Rough, 0.4, 7};
+    Check(env.ChangeScene(rough, error) && env.Option()->integrator == mjINT_IMPLICITFAST &&
+              env.Option()->gravity[2] == -3.7,
+          "a scene change keeps the options: " + error);
+    Check(env.Reload(error) && env.Option()->integrator == mjINT_IMPLICITFAST, "Reload keeps them: " + error);
+    env.ClearOption();
+    Check(PhysicsChanges(*env.Option(), file).empty(), "Back to the file's values");
+    env.SetOption(option);
+    Check(env.LoadModel(path) && PhysicsChanges(*env.Option(), *env.FileOption()).empty(),
+          "opening a model file starts with its own physics");
+}
+
 }  // namespace
 
 int main() {
@@ -657,6 +695,7 @@ int main() {
     CheckStressLog();
     CheckStressSettings();
     CheckInspect(dir);
+    CheckPhysics();
     std::filesystem::remove_all(dir, ec);
     if (failures == 0) std::printf("test_mujoco_viewport: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

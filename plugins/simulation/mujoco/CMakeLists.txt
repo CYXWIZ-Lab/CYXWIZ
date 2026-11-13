@@ -37,6 +37,7 @@ add_library(mujoco_plugin SHARED
     src/env/mj_stress.cpp
     src/env/mj_robustness.cpp
     src/env/mj_inspect.cpp
+    src/env/mj_physics.cpp
 )
 
 target_include_directories(mujoco_plugin PRIVATE
@@ -119,9 +120,12 @@ add_executable(test_mujoco_viewport
     src/env/mj_scene.cpp
     src/env/mj_stress.cpp
     src/env/mj_inspect.cpp
+    src/env/mj_physics.cpp
+    src/mj_env_manager.cpp
 )
 target_include_directories(test_mujoco_viewport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${Stb_INCLUDE_DIR})
-target_link_libraries(test_mujoco_viewport PRIVATE cyxwiz-plugin-sdk mujoco::mujoco nlohmann_json::nlohmann_json)
+target_link_libraries(test_mujoco_viewport PRIVATE cyxwiz-plugin-sdk mujoco::mujoco nlohmann_json::nlohmann_json
+    spdlog::spdlog)
 target_compile_definitions(test_mujoco_viewport PRIVATE CYXWIZ_MUJOCO_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
 add_custom_command(TARGET test_mujoco_viewport POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CYXWIZ_MUJOCO_RUNTIME}" "$<TARGET_FILE_DIR:test_mujoco_viewport>/"

@@ -8,6 +8,7 @@
 #include "mj_simulation_executor.h"
 #include "mj_ui_helpers.h"
 #include "env/mj_inspect.h"
+#include "env/mj_physics.h"
 
 #include "plugin/plugin_context.h"
 #include "plugin/plugin_ui.h"
@@ -300,6 +301,88 @@ void MjViewportPanel::RenderInspectPanel(MjEnvManager& env, MjRenderer& renderer
     }
     hint(project.empty() ? "No project is open: keyframes are kept until the Engine closes."
                          : "Saved with the project (mujoco/keyframes).");
+
+    // Physics: the Viewport's own run; a played copy's are its environment's
+    section("Physics");
+    mjOption option{};
+    mjOption file{};
+    bool has_option = false;
+    int frame_skip = 1;
+    {
+        std::lock_guard phys_lock(env.GetPhysicsMutex());
+        if (const mjOption* now = env.Option(); now && env.FileOption()) {
+            option = *now;
+            file = *env.FileOption();
+            has_option = true;
+        }
+        frame_skip = env.GetFrameSkip();
+    }
+    if (has_option) {
+        bool changed = false;
+        constexpr float kLabel = 84.0f;
+        auto label = [&](const char* text) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(ToImVec4(colors.text_dim), "%s", text);
+            ImGui::SameLine(kLabel);
+        };
+        ImGui::BeginDisabled(!can);
+        label("Timestep");
+        changed |= ui->NumberField("##timestep", &option.timestep, 0.0001, 0.1, 0.001, "%.4f s", 80.0f,
+                                   "The physics step (an environment step is this times its frame skip)");
+        ImGui::SameLine();
+        ImGui::TextColored(ToImVec4(colors.text_dim), "frame skip %d", frame_skip);
+        label("Integrator");
+        int integrator = std::clamp(option.integrator, 0, 3);
+        if (ui->SegmentedControl("##integrator", kIntegratorNames, 4, &integrator)) {
+            option.integrator = integrator;
+            changed = true;
+        }
+        label("Solver");
+        int solver = std::clamp(option.solver, 0, 2);
+        if (ui->SegmentedControl("##solver", kSolverNames, 3, &solver)) {
+            option.solver = solver;
+            changed = true;
+        }
+        ImGui::SameLine();
+        double iterations = option.iterations;
+        if (ui->NumberField("##iterations", &iterations, 1.0, 1000.0, 10.0, "%.0f", 48.0f, "Solver iterations")) {
+            option.iterations = static_cast<int>(iterations);
+            changed = true;
+        }
+        label("Gravity");
+        static const char* kAxes[3] = {"##gx", "##gy", "##gz"};
+        for (int i = 0; i < 3; ++i) {
+            if (i) ImGui::SameLine();
+            changed |= ui->NumberField(kAxes[i], &option.gravity[i], -100.0, 100.0, 0.0, "%.2f", 52.0f,
+                                       "m/s\xC2\xB2 along x, y, z");
+        }
+        float row = 0.0f;
+        const float avail = ImGui::GetContentRegionAvail().x;
+        for (const auto& s : PhysicsSwitches()) {
+            const float w = ui->ToggleChipWidth(s.label);
+            if (row > 0.0f && row + spacing + w <= avail) ImGui::SameLine();
+            else row = 0.0f;
+            bool on = SwitchOn(option, s);
+            if (ui->ToggleChip(s.label, s.label, &on)) {
+                SetSwitch(option, s, on);
+                changed = true;
+            }
+            row += (row > 0.0f ? spacing : 0.0f) + w;
+        }
+        ImGui::EndDisabled();
+        if (changed && can) {
+            std::lock_guard phys_lock(env.GetPhysicsMutex());
+            env.SetOption(option);
+        }
+        const std::string differs = PhysicsChanges(option, file);
+        if (ui->LinkButton("Back to the model file's values", can && !differs.empty())) {
+            std::lock_guard phys_lock(env.GetPhysicsMutex());
+            env.ClearOption();
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(ToImVec4(colors.text_dim), "%s",
+                           differs.empty() ? "as in the file" : ("changed: " + differs).c_str());
+    }
 
     // The model file read again
     section("Model");
