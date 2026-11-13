@@ -1063,6 +1063,7 @@ void CyxWizApp::RebuildFontAtlas() {
     io.FontDefault = nullptr;
     cyxwiz::gui::ClearEditorMonoFonts();
     cyxwiz::ui::ClearFonts();
+    gui::ClearNodeIconFonts();
     font_regular_ = nullptr;
     font_medium_ = nullptr;
     font_bold_ = nullptr;
@@ -1325,7 +1326,6 @@ void CyxWizApp::LoadFonts(ImGuiIO& io) {
     pack_config.MergeMode = false;
     for (size_t i = 0; i < extra_packs.size(); ++i) {
         const gui::IconPack pack = extra_packs[i];
-        gui::RegisterNodeIconFont(pack, nullptr);
         const std::string file = font_base_path + gui::NodeIconFontFile(pack);
         if (!std::filesystem::exists(file)) continue;
         if (pack_ranges[i].empty()) pack_ranges[i] = gui::NodeIconGlyphRanges(pack);

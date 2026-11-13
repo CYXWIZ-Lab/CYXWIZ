@@ -34,6 +34,8 @@ ImFont* NodeIconFont(IconPack pack) {
     return index < kIconPackCount ? g_node_icon_fonts[index] : nullptr;
 }
 
+void ClearNodeIconFonts() { g_node_icon_fonts.fill(nullptr); }
+
 const char* NodeIconFontFile(IconPack pack) {
     switch (pack) {
         case IconPack::Tabler: return FONT_ICON_FILE_NAME_TI;

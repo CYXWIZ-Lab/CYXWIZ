@@ -87,6 +87,8 @@ std::vector<ImWchar> NodeIconGlyphRanges(IconPack pack);
 // font did not load give nullptr: draw with the current font.
 void RegisterNodeIconFont(IconPack pack, ImFont* font);
 ImFont* NodeIconFont(IconPack pack);
+// Forget every pack font (the font atlas is about to be cleared).
+void ClearNodeIconFonts();
 // The font file of an extra pack in resources/fonts ("" for Font Awesome, which
 // is merged into the interface fonts).
 const char* NodeIconFontFile(IconPack pack);
