@@ -778,6 +778,11 @@ void CyxWizApp::Render() {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+    // The keyboard cursor (the outline Alt, Tab or an arrow key turns on) hides
+    // on any mouse click: ImGui hides it on a left click only, so a menu opened
+    // by right-click after Alt showed its first item outlined.
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
+        ImGui::SetNavCursorVisible(false);
     // Every chart draws in the Engine's ImPlot context. A panel that swapped
     // it (the Data Studio Visualizer once made its own and left it current)
     // is put right here, once per frame, and named in the log once.
