@@ -43,6 +43,7 @@ enum class ThemePreset {
     CyxOSTuiMatrix,  // The Matrix digital rain aesthetic
     CyxOSTuiAmber,   // Amber CRT P3 phosphor terminal
     CyxWizLaunch,    // UX.md launch/dashboard theme
+    CyxWizCream,     // warm light: cream window, ivory popups (owner 2026-11-14)
 
     COUNT
 };
@@ -127,6 +128,7 @@ private:
     // Theme application methods
     void ApplyCyxWizDark();
     void ApplyCyxWizLight();
+    void ApplyCyxWizCream();
     void ApplyCyxWizLaunch();
     void ApplyVSCodeDark();
     void ApplyUnrealEngine();

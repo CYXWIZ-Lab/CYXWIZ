@@ -335,6 +335,77 @@ void Theme::ApplyCyxWizLight() {
     config_.frame_border_size = 0.0f;
 }
 
+// Warm light theme (owner 2026-11-14: "also add white cream, what we have is
+// just light"): a cream window, a deeper cream for fields and bars, ivory
+// popups, warm brown text and borders, the CyxWiz purple accent. Surfaces,
+// buttons and the accent-following colours are derived after it
+// (HarmonizeSurfaces, ApplyEngineColours).
+void Theme::ApplyCyxWizCream() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    ImVec4 cream         = ImVec4(0.969f, 0.953f, 0.918f, 1.00f);  // #F7F3EA
+    ImVec4 cream_deep    = ImVec4(0.937f, 0.910f, 0.855f, 1.00f);  // #EFE8DA
+    ImVec4 cream_deeper  = ImVec4(0.902f, 0.867f, 0.796f, 1.00f);  // #E6DDCB
+    ImVec4 ivory         = ImVec4(1.000f, 0.992f, 0.973f, 1.00f);  // #FFFDF8
+    ImVec4 border        = ImVec4(0.851f, 0.812f, 0.741f, 1.00f);  // #D9CFBD
+    ImVec4 text          = ImVec4(0.169f, 0.149f, 0.125f, 1.00f);  // #2B2620
+    ImVec4 text_dim      = ImVec4(0.478f, 0.435f, 0.376f, 1.00f);  // #7A6F60
+    ImVec4 accent        = ImVec4(0.357f, 0.239f, 0.961f, 1.00f);  // CyxWiz purple
+    accent_color_ = accent;  // the preset's one accent
+
+    colors[ImGuiCol_Text]                   = text;
+    colors[ImGuiCol_TextDisabled]           = text_dim;
+    colors[ImGuiCol_WindowBg]               = cream;
+    colors[ImGuiCol_ChildBg]                = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_PopupBg]                = ivory;
+    colors[ImGuiCol_Border]                 = border;
+    colors[ImGuiCol_BorderShadow]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_FrameBg]                = ivory;
+    colors[ImGuiCol_FrameBgHovered]         = cream_deep;
+    colors[ImGuiCol_FrameBgActive]          = cream_deeper;
+    colors[ImGuiCol_TitleBg]                = cream_deep;
+    colors[ImGuiCol_TitleBgActive]          = cream_deep;
+    colors[ImGuiCol_TitleBgCollapsed]       = ImVec4(cream_deep.x, cream_deep.y, cream_deep.z, 0.75f);
+    colors[ImGuiCol_MenuBarBg]              = cream_deep;
+    colors[ImGuiCol_ScrollbarBg]            = cream;
+    colors[ImGuiCol_ScrollbarGrab]          = cream_deeper;
+    colors[ImGuiCol_ScrollbarGrabHovered]   = border;
+    colors[ImGuiCol_ScrollbarGrabActive]    = text_dim;
+    colors[ImGuiCol_Header]                 = ImVec4(accent.x, accent.y, accent.z, 0.16f);
+    colors[ImGuiCol_Separator]              = border;
+    colors[ImGuiCol_SeparatorHovered]       = accent;
+    colors[ImGuiCol_SeparatorActive]        = accent;
+    colors[ImGuiCol_ResizeGrip]             = ImVec4(accent.x, accent.y, accent.z, 0.20f);
+    colors[ImGuiCol_Tab]                    = cream_deep;
+    colors[ImGuiCol_TabHovered]             = cream_deeper;
+    colors[ImGuiCol_TabActive]              = cream;
+    colors[ImGuiCol_TabUnfocused]           = cream_deep;
+    colors[ImGuiCol_TabUnfocusedActive]     = cream;
+    colors[ImGuiCol_DockingEmptyBg]         = cream;
+    colors[ImGuiCol_PlotLines]              = accent;
+    colors[ImGuiCol_PlotLinesHovered]       = accent;
+    colors[ImGuiCol_PlotHistogram]          = ImVec4(0.06f, 0.47f, 0.26f, 1.00f);
+    colors[ImGuiCol_PlotHistogramHovered]   = ImVec4(0.08f, 0.55f, 0.31f, 1.00f);
+    colors[ImGuiCol_TableHeaderBg]          = cream_deep;
+    colors[ImGuiCol_TableBorderStrong]      = border;
+    colors[ImGuiCol_TableBorderLight]       = ImVec4(border.x, border.y, border.z, 0.60f);
+    colors[ImGuiCol_TableRowBg]             = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt]          = ImVec4(0.43f, 0.33f, 0.20f, 0.035f);
+    colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(0.17f, 0.15f, 0.13f, 0.70f);
+    colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.17f, 0.15f, 0.13f, 0.20f);
+    colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.17f, 0.15f, 0.13f, 0.35f);
+
+    config_.window_rounding = 6.0f;
+    config_.frame_rounding = 4.0f;
+    config_.popup_rounding = 6.0f;
+    config_.scrollbar_rounding = 6.0f;
+    config_.grab_rounding = 4.0f;
+    config_.tab_rounding = 4.0f;
+    config_.window_border_size = 1.0f;
+    config_.frame_border_size = 0.0f;
+}
+
 // ============================================================================
 // VS Code Dark Theme - Inspired by Visual Studio Code
 // ============================================================================

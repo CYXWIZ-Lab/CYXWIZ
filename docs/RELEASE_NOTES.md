@@ -350,6 +350,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **CyxWiz Cream theme.** A warm light theme beside CyxWiz Light: a cream
+  window, ivory fields and menus, warm brown text, the CyxWiz purple accent
+  (View > Theme or Preferences > Appearance; the Theme Editor changes any
+  of it).
 - **Squeeze-Excitation node.** Scales each channel of a feature map by a
   learned gate (mean over the map, Dense - ReLU - Dense - Sigmoid), as
   torchvision's SqueezeExcitation. Settings: the hidden width (channels /

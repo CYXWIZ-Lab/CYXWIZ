@@ -100,7 +100,8 @@ void Theme::ApplyImNodesStyle() {
             break;
         }
 
-        case ThemePreset::CyxWizLight: {
+        case ThemePreset::CyxWizLight:
+        case ThemePreset::CyxWizCream: {
             // Light theme
             ImVec4 node_bg = ImVec4(0.96f, 0.96f, 0.98f, 1.0f);
             ImVec4 node_bg_hover = ImVec4(0.94f, 0.94f, 0.96f, 1.0f);

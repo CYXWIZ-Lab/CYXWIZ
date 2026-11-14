@@ -56,7 +56,8 @@ void Theme::ApplyDockStyle() {
             break;
         }
 
-        case ThemePreset::CyxWizLight: {
+        case ThemePreset::CyxWizLight:
+        case ThemePreset::CyxWizCream: {
             // Light theme variant
             dock_style.ApplyPreset(DockStylePreset::Unity);
 
