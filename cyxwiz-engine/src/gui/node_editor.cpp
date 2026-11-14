@@ -1151,6 +1151,27 @@ void NodeEditor::RenderMinimap() {
     // Calculate minimap position (always use fixed corner position)
     ImVec2 minimap_pos = getCornerPos(minimap_position_);
 
+    // A node under the minimap shows through it (TOFIX129 A4-6, owner
+    // 2026-11-14): the minimap fades to a third while one is beneath it and
+    // the mouse is not on it (on a short canvas it hid Dense 2 and its name).
+    bool fade = false;
+    {
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const bool hovered = mouse.x >= minimap_pos.x && mouse.x <= minimap_pos.x + minimap_size_.x &&
+                             mouse.y >= minimap_pos.y && mouse.y <= minimap_pos.y + minimap_size_.y;
+        const ImVec2 panning = ImNodes::EditorContextGetPanning();
+        for (const auto& [id, at] : cached_node_positions_) {
+            if (hovered) break;
+            const ImVec2 lo(canvas_origin_.x + at.x * zoom_ + panning.x, canvas_origin_.y + at.y * zoom_ + panning.y - 22.0f * zoom_);
+            const ImVec2 hi(lo.x + 140.0f * zoom_, lo.y + 132.0f * zoom_);  // the box, its name above, its pins
+            if (lo.x < minimap_pos.x + minimap_size_.x && hi.x > minimap_pos.x &&
+                lo.y < minimap_pos.y + minimap_size_.y && hi.y > minimap_pos.y) {
+                fade = true;
+                break;
+            }
+        }
+    }
+
     // The minimap: an overlay on the canvas, with the Studio window
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
@@ -1562,6 +1583,13 @@ void NodeEditor::RenderMinimap() {
             ImVec2(icon_pos.x + 2.0f, icon_pos.y + 3.0f),
             arrow_color
         );
+    }
+    if (fade) {
+        // Every colour the minimap drew, at a third of its opacity.
+        for (ImDrawVert& v : ImGui::GetWindowDrawList()->VtxBuffer) {
+            const ImU32 alpha = ((v.col >> IM_COL32_A_SHIFT) & 0xFF) / 3;
+            v.col = (v.col & ~IM_COL32_A_MASK) | (alpha << IM_COL32_A_SHIFT);
+        }
     }
     }  // End the minimap overlay
     ::gui::EndCanvasOverlay();
