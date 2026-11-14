@@ -2487,15 +2487,11 @@ MainWindow::MainWindow()
     // Set up asset browser double-click callback to open files in script editor
     asset_browser_->SetOnAssetDoubleClick([this](const cyxwiz::AssetBrowserPanel::AssetItem& item) {
         if (!item.is_directory && script_editor_) {
-            std::string ext = std::filesystem::path(item.absolute_path).extension().string();
-            for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-
             // Python sources and notebooks (.py, .pyw, .cyx, .ipynb) and other
-            // text files open in the Script Editor.
-            if (cyxwiz::scriptfile::IsPythonSource(item.absolute_path) || ext == ".txt" ||
-                ext == ".json" || ext == ".md" || ext == ".csv" || ext == ".tsv" ||
-                ext == ".yaml" || ext == ".yml" || ext == ".toml" ||
-                ext == ".ini" || ext == ".cfg" || ext == ".conf") {
+            // text files open in the Script Editor (the Asset Browser offers
+            // Open / Open as text by the same rule).
+            if (cyxwiz::scriptfile::IsPythonSource(item.absolute_path) ||
+                cyxwiz::assets::OpensInScriptEditor(item.absolute_path)) {
                 script_editor_->SetVisible(true);  // a closed Script Editor opens
                 script_editor_->OpenFile(item.absolute_path);
                 spdlog::info("Opened file in script editor: {}", item.name);

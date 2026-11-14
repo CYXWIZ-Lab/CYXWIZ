@@ -42,8 +42,9 @@ holds (one in a narrow panel), with the name on up to two lines. A small dot
 at a card's top left marks a node that runs only in part (amber) or is
 blocked (red); hover the card for the reason.
 
-A node added from any of the three, or a note, goes to a free spot near the
-middle of the view, and the view moves to show it when it is outside.
+A node added from the Nodes panel or the canvas search, or a note, goes to a
+free spot near the middle of the view, and the view moves to show it when it
+is outside. A node added from the right-click menu goes where you clicked.
 
 The Nodes panel's filter (**All**, **Pipeline**, **Training**, **UI-only**,
 **Blocked**, **Favourites**) narrows the cards; with a filter other than

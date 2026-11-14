@@ -3,6 +3,7 @@
 #include "core/compute_device_presentation.h"
 #include "core/installer_pack_presentation.h"
 #include "gui/icons.h"
+#include "gui/ui_buttons.h"
 
 #include <imgui.h>
 
@@ -840,9 +841,11 @@ void RenderSummary(InstallerViewState &state,
   }
   if (show_launch) {
     ImGui::BeginDisabled(operation_running);
-    if (ImGui::Button(
+    // The main actions use the accent (the theme's Button fill is a step off
+    // the window now, the look of Cancel).
+    if (cyxwiz::ui::PrimaryButton(
             state.engine_launched ? "Launch CyxWiz again" : "Launch CyxWiz",
-            ImVec2(-1.0f, 38.0f))) {
+            true, nullptr, cyxwiz::ui::ButtonSize::Regular, -1.0f)) {
       action.kind = InstallerViewActionKind::LaunchEngine;
     }
     ImGui::EndDisabled();
@@ -868,7 +871,7 @@ void RenderSummary(InstallerViewState &state,
                                    : plan.update_base
                                    ? ICON_FA_DOWNLOAD " Review & update"
                                    : ICON_FA_DOWNLOAD " Review & install";
-    if (ImGui::Button(review_label, ImVec2(-1.0f, 38.0f))) {
+    if (cyxwiz::ui::PrimaryButton(review_label, true, nullptr, cyxwiz::ui::ButtonSize::Regular, -1.0f)) {
       state.pending_plan = plan;
       state.review_requested = true;
     }
@@ -989,7 +992,7 @@ void RenderReviewPopup(InstallerViewState &state,
   ImGui::Checkbox("Launch CyxWiz when installation completes",
                   &state.launch_after_install);
   ImGui::BeginDisabled(operation_running);
-  if (ImGui::Button("Apply changes", ImVec2(170.0f, 36.0f))) {
+  if (cyxwiz::ui::PrimaryButton("Apply changes", true, nullptr, cyxwiz::ui::ButtonSize::Regular, 170.0f)) {
     action.kind = InstallerViewActionKind::ApplyPlan;
     action.plan = state.pending_plan;
     action.launch_after_install = state.launch_after_install;

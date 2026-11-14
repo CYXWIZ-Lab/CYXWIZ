@@ -192,13 +192,13 @@ void NodeEditor::DeleteSelected() {
     spdlog::info("Deleted {} selected nodes", num_selected);
 }
 
-ImVec2 NodeEditor::FindEmptyPosition() {
+ImVec2 NodeEditor::FindEmptyPosition(ImVec2 size) {
     // The free spot nearest the middle of the view (owner 2026-11-14: a node
     // added from the menu, the Asset Browser or the Nodes panel, and a new
     // note, landed on the view centre over whatever was there). Nodes, nodes
     // still waiting for their place, and notes count as taken.
-    constexpr float kWidth = 140.0f;   // icon box, its labels, its pins (grid units)
-    constexpr float kHeight = 110.0f;
+    const float kWidth = size.x;  // what is placed (grid units)
+    const float kHeight = size.y;
     constexpr float kGap = 30.0f;
     const ImVec2 view_centre = canvas_size_.x > 0.0f && canvas_size_.y > 0.0f
         ? GridAt(ImVec2(canvas_origin_.x + canvas_size_.x * 0.5f, canvas_origin_.y + canvas_size_.y * 0.5f))
@@ -213,11 +213,11 @@ ImVec2 NodeEditor::FindEmptyPosition() {
         const auto waiting = pending_positions_.find(node.id);
         if (at == cached_node_positions_.end() && waiting == pending_positions_.end()) continue;
         const ImVec2 pos = waiting != pending_positions_.end() ? waiting->second : at->second;
-        taken.push_back({pos.x, pos.y, pos.x + kWidth, pos.y + kHeight});
+        taken.push_back({pos.x, pos.y, pos.x + kNodeFootprint.x, pos.y + kNodeFootprint.y});
     }
     for (const auto& note : annotations_)
         taken.push_back({note.position.x, note.position.y, note.position.x + note.size.x, note.position.y + note.size.y});
-    const auto free_at = [&taken](const ImVec2& p) {
+    const auto free_at = [&taken, kWidth, kHeight](const ImVec2& p) {
         for (const Rect& r : taken)
             if (p.x < r.x1 + kGap && p.x + kWidth + kGap > r.x0 && p.y < r.y1 + kGap && p.y + kHeight + kGap > r.y0)
                 return false;

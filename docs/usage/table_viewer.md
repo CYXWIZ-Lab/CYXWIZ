@@ -14,8 +14,9 @@ four.
 - **The Asset Browser**: double-click a table file (or right-click it,
   **Open in Table Viewer**). A file a Data Input loaded opens as that
   dataset; any other opens its first 200,000 rows, read from the file in a
-  task (the Task viewer and the viewer show progress and Cancel), and
-  nothing is registered. Files over 1 GB are refused with a note; a Data
+  task (the Task viewer and the viewer show it; Cancel takes effect once
+  the file is read, before its rows are converted), and nothing is
+  registered. Files over 1 GB are refused with a note; a Data
   Input reads them from disk.
 - **Open in Table Viewer** in Data Studio's Query tab, the SQL Workbench and
   an SQL step's Properties (input, output preview, checks). An output larger

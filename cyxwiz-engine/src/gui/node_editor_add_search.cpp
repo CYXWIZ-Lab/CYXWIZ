@@ -457,12 +457,9 @@ void NodeEditor::ShowNodeAddSearch() {
                 selected->support_blocked) {
                 // Don't add unavailable nodes; the dropdown shows the reason.
             } else {
-                // Set position for new node (center of visible canvas)
-                ImVec2 editor_pan = ImNodes::EditorContextGetPanning();
-                context_menu_pos_ = ImVec2(
-                    canvas_size.x / 2 - editor_pan.x,
-                    canvas_size.y / 2 - editor_pan.y
-                );
+                // The free spot nearest the middle of the view, as from the
+                // Nodes panel (the view centre ignored the zoom and other nodes).
+                context_menu_pos_ = kPlaceInFreeSpot;
 
                 // For plugin nodes, pass qualified name so CreateNode can look up the registry
                 if (selected->type == NodeType::PluginCustom && !selected->extension_type_id.empty())
@@ -541,12 +538,8 @@ void NodeEditor::ShowNodeAddSearch() {
                 bool can_add = !is_template && !is_blocked;
                 ImGui::InvisibleButton(("node_result_" + std::to_string(i)).c_str(), item_size);
                 if (ImGui::IsItemClicked() && can_add) {
-                    // Add the clicked node.
-                    ImVec2 editor_pan = ImNodes::EditorContextGetPanning();
-                    context_menu_pos_ = ImVec2(
-                        canvas_size.x / 2 - editor_pan.x,
-                        canvas_size.y / 2 - editor_pan.y
-                    );
+                    // Add the clicked node, in the free spot nearest the middle.
+                    context_menu_pos_ = kPlaceInFreeSpot;
 
                     if (node->type == NodeType::PluginCustom &&
                         !node->extension_type_id.empty())

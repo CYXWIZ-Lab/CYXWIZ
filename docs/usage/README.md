@@ -13,6 +13,7 @@ To write your own nodes in Python or C++, see
 | [The menu bar](menu_bar.md) | File to Help, the project and your account at the top right |
 | [The CyxWiz Studio bar](studio_toolbar.md) | The bar at the top of the canvas |
 | [Windows of their own](windows.md) | Moving the big windows out of the main window |
+| [Theme Editor](theme_editor.md) | Every colour the Engine draws, the accent, and saving your own theme |
 | [Asset Browser](asset_browser.md) | The project's folders and files, previews, new files |
 | [Properties](properties.md) | The Properties panel for the selected node |
 | [Console and logs](console_logs.md) | Logs, the Python REPL and commands |

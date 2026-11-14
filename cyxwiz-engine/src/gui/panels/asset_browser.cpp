@@ -913,8 +913,10 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
             if (OpensInTableViewer(item) && ImGui::MenuItem(ICON_FA_TABLE " Open in Table Viewer")) {
                 on_open_in_table_viewer_(item.absolute_path);
             }
-            // A data file's text is its second way to open.
-            if (ImGui::MenuItem(IsDatasetFile(item) ? ICON_FA_FILE_LINES " Open as text" : ICON_FA_FOLDER_OPEN " Open")) {
+            // A data file's text is its second way to open; a file the Script
+            // Editor cannot show (Parquet, images, ...) has no Open.
+            if (assets::OpensInScriptEditor(item.absolute_path) &&
+                ImGui::MenuItem(IsDatasetFile(item) ? ICON_FA_FILE_LINES " Open as text" : ICON_FA_FOLDER_OPEN " Open")) {
                 if (on_double_click_) {
                     on_double_click_(item);
                 }
@@ -2078,7 +2080,7 @@ void AssetBrowserPanel::RenderPreviewActions(const AssetItem& item) {
     }
     if (kind == assets::FileKind::Python) {
         if (secondary("Open in Script Editor") && on_double_click_) on_double_click_(item);
-    } else if ((kind == assets::FileKind::Table || assets::PeeksAsText(kind)) && on_double_click_) {
+    } else if (assets::OpensInScriptEditor(item.absolute_path) && on_double_click_) {
         row.Next(ImGui::CalcTextSize("Open as text").x);
         if (ui::LinkButton("Open as text")) on_double_click_(item);
     }

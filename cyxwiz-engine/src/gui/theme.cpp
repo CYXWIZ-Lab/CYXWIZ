@@ -204,8 +204,6 @@ void Theme::ApplyEngineColours() {
     c[ImGuiCol_HeaderActive] = alpha(0.45f);
     c[ImGuiCol_TextSelectedBg] = alpha(0.35f);
     c[ImGuiCol_NavHighlight] = a;
-    c[ImGuiCol_ResizeGripHovered] = alpha(0.60f);
-    c[ImGuiCol_ResizeGripActive] = a;
     c[ImGuiCol_DragDropTarget] = a;
     c[ImGuiCol_DockingPreview] = alpha(0.60f);
     ImNodesStyle& nodes = ImNodes::GetStyle();
@@ -215,10 +213,10 @@ void Theme::ApplyEngineColours() {
     nodes.Colors[ImNodesCol_TitleBar] = ImGui::ColorConvertFloat4ToU32(a);
     nodes.Colors[ImNodesCol_TitleBarHovered] = ImGui::ColorConvertFloat4ToU32(cyxwiz::ui::Mix(a, ImVec4(1, 1, 1, 1), 0.10f));
     nodes.Colors[ImNodesCol_TitleBarSelected] = ImGui::ColorConvertFloat4ToU32(cyxwiz::ui::Mix(a, ImVec4(1, 1, 1, 1), 0.20f));
-    DockStyle& dock = GetDockStyle();
-    DockTabStyle tabs = dock.GetStyle();
-    tabs.active_indicator_color = a;
-    dock.SetStyle(tabs);  // writes the ImGui tab colours
+    // The dock's tab indicator only: DockStyle::SetStyle would write its
+    // cached tab colours back over the theme's (a Theme Editor tab edit
+    // snapped back at the next Engine colour change, and on every load).
+    GetDockStyle().GetStyle().active_indicator_color = a;
     c[ImGuiCol_TabSelectedOverline] = a;
     c[ImGuiCol_TabDimmedSelectedOverline] = alpha(0.50f);
     cyxwiz::ui::SetEngineColours(engine_);
@@ -254,6 +252,14 @@ void Theme::HarmonizeSurfaces() {
     // Lines (window border, separators) in the surface tone.
     c[ImGuiCol_Border] = toward_text(0.10f);
     c[ImGuiCol_Separator] = toward_text(0.10f);
+    // Splitters and resize grips are sliding bars: the surface tone, a little
+    // stronger on hover and drag, never the accent (owner rule 2026-10-01; the
+    // presets coloured them, so Unreal's grip was blue at rest, orange on hover).
+    c[ImGuiCol_SeparatorHovered] = toward_text(0.22f);
+    c[ImGuiCol_SeparatorActive] = toward_text(0.30f);
+    c[ImGuiCol_ResizeGrip] = toward_text(0.10f);
+    c[ImGuiCol_ResizeGripHovered] = toward_text(0.22f);
+    c[ImGuiCol_ResizeGripActive] = toward_text(0.30f);
 
     // Owner 2026-10-21 ("the whole engine" is the window tone; only inputs
     // are darker - compare the Properties panel): menus, popups, tooltips

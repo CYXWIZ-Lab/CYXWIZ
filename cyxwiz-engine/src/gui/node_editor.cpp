@@ -142,9 +142,9 @@ NodeEditor::NodePinState NodeEditor::GetNodePinState(int node_id) const {
 void NodeEditor::AddAnnotation() {
     // In the free spot nearest the middle of the view, clear of nodes and
     // other notes (it was always at 400, 300, over whatever was there).
-    const ImVec2 at = FindEmptyPosition();
+    const ImVec2 at = FindEmptyPosition(kNoteSize);
     AddAnnotationAt(at);
-    RevealIfOffScreen(at, ImVec2(200.0f, 100.0f));
+    RevealIfOffScreen(at, kNoteSize);
 }
 
 ImU32 DefaultAnnotationColour() {
@@ -161,7 +161,7 @@ void NodeEditor::AddAnnotationAt(const ImVec2& position) {
     annotation.title = "Note";
     annotation.content = "Enter description here...";
     annotation.position = position;
-    annotation.size = ImVec2(200.0f, 100.0f);
+    annotation.size = kNoteSize;
     annotation.color = DefaultAnnotationColour();
     annotation.is_minimized = false;
     annotations_.push_back(annotation);
@@ -514,18 +514,17 @@ void NodeEditor::Render() {
 
         // Handle right-click context menu (skip if mouse is over minimap)
         bool right_click_detected = false;
+        int right_clicked_note = -1;  // a note under the pointer; a node over it wins (after EndNodeEditor)
         if (ImNodes::IsEditorHovered() && !mouse_in_minimap_bounds && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            if (hovered_note_id_ >= 0) {
-                // A note has its own menu (it opened Add Node before).
-                note_menu_id_ = hovered_note_id_;
-                selected_annotation_id_ = hovered_note_id_;
-                open_note_menu_ = true;
-            } else {
-                // Where a node added from the menu goes: the grid point clicked.
-                context_menu_pos_ = GridAt(mouse_pos);
-                right_click_detected = true;
-            }
+            // Where a node added from the menu goes: the grid point clicked.
+            context_menu_pos_ = GridAt(mouse_pos);
+            right_click_detected = true;
+            right_clicked_note = hovered_note_id_;
         }
+        // A click on the canvas away from a note deselects the note (Delete
+        // then removed a note clicked long before).
+        if (ImNodes::IsEditorHovered() && hovered_note_id_ < 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            selected_annotation_id_ = -1;
 
         // Cache node positions while still inside BeginNodeEditor/EndNodeEditor scope
         // This is needed because GetNodeGridSpacePos only works inside this scope
@@ -665,6 +664,11 @@ void NodeEditor::Render() {
                 // Right-click on node - show node-specific menu
                 right_clicked_node_id_ = hovered_node_id;
                 ImGui::OpenPopup("SingleNodeContextMenu");
+            } else if (right_clicked_note >= 0) {
+                // A note has its own menu (it opened Add Node before).
+                note_menu_id_ = right_clicked_note;
+                selected_annotation_id_ = right_clicked_note;
+                open_note_menu_ = true;
             } else {
                 // Right-click on canvas - show add node menu
                 ImGui::OpenPopup("NodeContextMenu");
@@ -956,10 +960,15 @@ void NodeEditor::Render() {
             if (const MLNode* node = info_id > 0 ? FindNodeById(info_id) : nullptr; node && node_selected_callback_) {
                 node_selected_callback_(node);
                 info_shown_id_ = info_id;
+                info_shown_type_ = node->type;
+                info_shown_extension_ = node->extension_type_id;
             }
         }
-        // A deselect keeps the node in the Info panel; a removed node leaves it.
-        if (info_shown_id_ > 0 && !FindNodeById(info_shown_id_)) {
+        // A deselect keeps the node in the Info panel; a removed node leaves
+        // it (a node of another type under the same id is another node).
+        const MLNode* shown = info_shown_id_ > 0 ? FindNodeById(info_shown_id_) : nullptr;
+        if (info_shown_id_ > 0 &&
+            (!shown || shown->type != info_shown_type_ || shown->extension_type_id != info_shown_extension_)) {
             info_shown_id_ = -1;
             if (node_selected_callback_) node_selected_callback_(nullptr);
         }
@@ -3443,6 +3452,7 @@ void NodeEditor::RenderAnnotations() {
 
         // Handle minimize button click
         if (mouse_on_min_btn && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            SaveUndoState();  // one Undo step, like the note's other edits
             annotation.is_minimized = !annotation.is_minimized;
         }
         // Handle double-click to edit (not on minimize button)
@@ -3608,8 +3618,10 @@ void NodeEditor::RenderNoteMenu() {
         editing_annotation_ = true;
         editing_annotation_id_ = note->id;
     }
-    if (ImGui::MenuItem(note->is_minimized ? ICON_FA_MAXIMIZE " Expand" : ICON_FA_MINUS " Minimise"))
+    if (ImGui::MenuItem(note->is_minimized ? ICON_FA_MAXIMIZE " Expand" : ICON_FA_MINUS " Minimise")) {
+        SaveUndoState();
         note->is_minimized = !note->is_minimized;
+    }
     ImGui::Separator();
     if (ImGui::MenuItem(ICON_FA_TRASH " Delete", "Del")) DeleteNote(note->id);
     ImGui::EndPopup();

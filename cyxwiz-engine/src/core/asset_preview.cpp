@@ -374,6 +374,11 @@ bool PeeksAsText(FileKind kind) {
     return kind == FileKind::Config || kind == FileKind::Python || kind == FileKind::Text;
 }
 
+bool OpensInScriptEditor(const std::string& path) {
+    const FileKind kind = KindOfPath(path, false);
+    return kind == FileKind::Table || kind == FileKind::Notebook || PeeksAsText(kind);
+}
+
 FilePeek PeekFile(const std::string& path, const PeekLimits& limits) {
     const std::string ext = Extension(path);
     if (ext == ".csv") return PeekDelimited(path, ',', limits);

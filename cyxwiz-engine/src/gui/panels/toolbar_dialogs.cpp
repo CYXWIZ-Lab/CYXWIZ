@@ -6,6 +6,7 @@
 #include "../../core/engine_config.h"
 #include "../../core/project_manager.h"
 #include "../ui_tokens.h"
+#include "../ui_buttons.h"
 
 #include <algorithm>
 #include <chrono>
@@ -61,18 +62,14 @@ void ToolbarPanel::RenderProjectDialogs() {
             float start_x = (ImGui::GetWindowWidth() - total_width) * 0.5f;
             ImGui::SetCursorPosX(start_x);
 
-            ImGui::PushStyleColor(ImGuiCol_Button, t.accent);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.accent_hover);
-            ImGui::PushStyleColor(ImGuiCol_Text, t.on_accent);  // reads on any theme's accent
-            if (ImGui::Button(ICON_FA_RIGHT_TO_BRACKET " Login", ImVec2(button_width, 0))) {
+            if (ui::PrimaryButton(ICON_FA_RIGHT_TO_BRACKET " Login", true, nullptr, ui::ButtonSize::Regular, button_width)) {
                 show_login_required_popup_ = false;
                 show_account_settings_dialog_ = true;  // Open login dialog
             }
-            ImGui::PopStyleColor(3);
 
             ImGui::SameLine();
 
-            if (ImGui::Button("Cancel", ImVec2(button_width, 0))) {
+            if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular, button_width)) {
                 show_login_required_popup_ = false;
             }
 

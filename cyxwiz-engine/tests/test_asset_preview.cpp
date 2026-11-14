@@ -58,6 +58,14 @@ int main(int argc, char** argv) {
     Check(KindOfPath("a/humanoid.png", false) == FileKind::Image, "png is an image");
     Check(KindOfPath("a/datasets", true) == FileKind::Folder, "directory is a folder");
     Check(KindOfPath("a/LICENSE", false) == FileKind::Other, "no extension is other");
+    // What the Script Editor opens (the Asset Browser's Open / Open as text).
+    Check(OpensInScriptEditor("a/helix.csv") && OpensInScriptEditor("a/p5_api.py") &&
+              OpensInScriptEditor("a/eda.ipynb") && OpensInScriptEditor("a/notes.md") &&
+              OpensInScriptEditor("a/python_env.json"),
+          "text, Python, notebooks, config and CSV open in the Script Editor");
+    Check(!OpensInScriptEditor("a/b.parquet") && !OpensInScriptEditor("a/humanoid.png") &&
+              !OpensInScriptEditor("a/m.safetensors") && !OpensInScriptEditor("a/x.npy"),
+          "Parquet, images, models and NumPy files do not");
     Check(TypeLabel("a/helix.csv", false) == "CSV" && TypeLabel("a/x", false) == "File" &&
               TypeLabel("a/d", true) == "Folder", "type labels");
 

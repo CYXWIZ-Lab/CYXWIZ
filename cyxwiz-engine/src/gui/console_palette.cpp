@@ -85,7 +85,7 @@ const ConsolePalette &CurrentConsolePalette() {
         p.continuation = ImVec4(0.29f, 0.33f, 0.41f, 1.0f);
     }
     p.error_card = ImVec4(p.error.x, p.error.y, p.error.z, light ? 0.08f : 0.07f);
-    p.selection = ImVec4(p.accent.x, p.accent.y, p.accent.z, light ? 0.14f : 0.12f);
+    p.selection = tokens.selection;  // one selection strength in the Engine
     p.hover = light ? ImVec4(0, 0, 0, 0.035f) : ImVec4(1, 1, 1, 0.025f);
     palette = p;
     return palette;

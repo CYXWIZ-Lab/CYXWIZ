@@ -1046,8 +1046,11 @@ private:
     std::vector<int> NodesInsideFrame(const CanvasFrame& frame) const;
     void DuplicateSelection();
 
-    // Helper for finding empty position
-    ImVec2 FindEmptyPosition();
+    // The free spot nearest the middle of the view for something of `size`
+    // (grid units); the default is a node's box with its labels and pins.
+    static constexpr ImVec2 kNodeFootprint{140.0f, 110.0f};
+    static constexpr ImVec2 kNoteSize{200.0f, 100.0f};
+    ImVec2 FindEmptyPosition(ImVec2 size = kNodeFootprint);
 
     // Keyboard shortcuts
     void HandleKeyboardShortcuts();
@@ -1253,6 +1256,8 @@ private:
     NodeSelectedCallback node_selected_callback_;
     int info_node_id_ = -1;   // the selection last seen
     int info_shown_id_ = -1;  // the node last sent to node_selected_callback_
+    NodeType info_shown_type_ = NodeType::Dense;  // and its type: a loaded graph reuses ids
+    std::string info_shown_extension_;
 
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.

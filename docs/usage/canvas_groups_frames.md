@@ -91,7 +91,8 @@ node family's), with **Save**, **Cancel** and **Delete**.
 **Right-click a note** for **Edit...**, **Minimise** / **Expand** and
 **Delete**. A selected note (click it) is deleted with the **Delete** key.
 
-Adding, moving, editing and deleting a note are each one Undo (Ctrl+Z) step.
+Adding, moving, minimising, editing and deleting a note are each one Undo
+(Ctrl+Z) step.
 
 ## Copy, cut and paste nodes
 

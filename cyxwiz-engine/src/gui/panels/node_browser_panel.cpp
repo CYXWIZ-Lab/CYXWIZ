@@ -251,9 +251,14 @@ void NodeBrowserPanel::Render() {
                 std::stable_sort(results.begin(), results.end(),
                                  [&](const cyxwiz::NodeMetadata* a, const cyxwiz::NodeMetadata* b) { return rank(a) < rank(b); });
             }
+            // The generic extension entry: plugin nodes are listed below.
+            results.erase(std::remove_if(results.begin(), results.end(),
+                                         [](const cyxwiz::NodeMetadata* m) {
+                                             return m->type == cyxwiz::NodeType::PluginCustom;
+                                         }),
+                          results.end());
             // Nodes named by the query first; nodes that only mention it (a
-            // keyword or the description: "dropout" found Dashboard first) come
-            // after, under a line.
+            // keyword or the description) come after, under a "Related" line.
             const auto lower = [](std::string text) {
                 std::transform(text.begin(), text.end(), text.begin(),
                                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -272,11 +277,6 @@ void NodeBrowserPanel::Render() {
             };
             std::stable_sort(results.begin(), results.end(),
                              [&](const cyxwiz::NodeMetadata* a, const cyxwiz::NodeMetadata* b) { return strength(a) > strength(b); });
-            results.erase(std::remove_if(results.begin(), results.end(),
-                                         [](const cyxwiz::NodeMetadata* m) {
-                                             return m->type == cyxwiz::NodeType::PluginCustom;
-                                         }),
-                          results.end());
             std::vector<cyxwiz::ExtensionPaletteEntry> extension_results;
             if (support_filter_mode_ == SupportFilterMode::All) {
                 for (auto& entry : cyxwiz::BuildExtensionPalette(

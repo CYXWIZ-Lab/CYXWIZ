@@ -22,15 +22,17 @@ private Data Studio tickets (`tofix*/track*`).
   The panel's search lists nodes named by the words first, and nodes that
   only mention them under **Related**.
 - **New nodes and notes go to a free spot.** A node added from the Nodes
-  panel, search or the right-click menu, a Data Input from the Asset
-  Browser and a new note no longer land on top of the nodes at the centre
-  of the view; the view moves to show them when they are outside it. The
-  minimap fades while a node is under it.
+  panel or the canvas search, a Data Input from the Asset Browser and a new
+  note no longer land on top of the nodes at the centre of the view; the
+  view moves to show them when they are outside it (the right-click menu
+  still adds where you clicked). The minimap fades while a node is under
+  it.
 - **Notes can be edited, deleted and undone.** Right-click a note for
   Edit, Minimise and Delete; the Delete key removes a selected note; the
   note dialog has a title, text, a colour and Save / Cancel / Delete
   (its buttons fell below the window, so a note could not be deleted);
-  adding, moving, editing and deleting a note are each one Undo step.
+  adding, moving, minimising, editing and deleting a note are each one
+  Undo step.
 - **The Console shows a terminal's output.** In the default layout the
   Console is taller (the Viewport is a tab beside it instead of a strip
   below), the Python REPL's empty input is two lines, and the REPL and
@@ -47,8 +49,9 @@ private Data Studio tickets (`tofix*/track*`).
   typed numbers instead of sliders.
 - **Colours follow the chosen theme.** Train, OK, Publish and every
   primary button, selection, check marks, links, the selected tab's line
-  and the canvas box selector use the theme's one accent: purple in the
-  CyxWiz themes, orange in Unreal Engine, each preset its own (before,
+  and the canvas box selector use the theme's one accent: purple in
+  CyxWiz Dark and Cream, blue in CyxWiz Light, orange in Unreal Engine,
+  each preset its own (before,
   the purple was fixed on every theme while Unreal marked choices in
   orange). Text on the accent picks black or white to stay readable.
   Secondary buttons (Save, Edit, Cancel ...) are the theme's Button fill,

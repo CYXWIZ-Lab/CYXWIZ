@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 
@@ -483,8 +484,10 @@ bool ColourField(const char* id, ImVec4* colour, bool with_alpha) {
     if (ImGui::IsItemDeactivatedAfterEdit()) {
         const char* digits = hex[0] == '#' ? hex + 1 : hex;
         const size_t n = std::strlen(digits);
-        unsigned int value = 0;
-        if ((n == 6 || (with_alpha && n == 8)) && std::sscanf(digits, "%x", &value) == 1) {
+        // Every character a hex digit ("12ZZZZ" read as #000012 before).
+        const bool all_hex = std::all_of(digits, digits + n, [](char ch) { return std::isxdigit(static_cast<unsigned char>(ch)) != 0; });
+        if ((n == 6 || (with_alpha && n == 8)) && all_hex) {
+            unsigned int value = static_cast<unsigned int>(std::strtoul(digits, nullptr, 16));
             if (n == 6) value = (value << 8) | static_cast<unsigned int>(rgba[3]);
             *colour = ImVec4(static_cast<float>((value >> 24) & 0xFF) / 255.0f, static_cast<float>((value >> 16) & 0xFF) / 255.0f,
                              static_cast<float>((value >> 8) & 0xFF) / 255.0f, static_cast<float>(value & 0xFF) / 255.0f);

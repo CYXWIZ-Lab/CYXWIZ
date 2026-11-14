@@ -157,19 +157,13 @@ void ToolbarPanel::RenderAccountDialogs() {
 
                 // Sign In button
                 ImGui::SetCursorPosX(start_x);
-                ImGui::PushStyleColor(ImGuiCol_Button, t.accent);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.accent_hover);
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, t.accent_active);
-                ImGui::PushStyleColor(ImGuiCol_Text, t.on_accent);  // reads on any theme's accent
-
                 bool can_login = strlen(login_identifier_) > 0 && strlen(login_password_) > 0 && !is_logging_in_;
 
                 if (is_logging_in_) {
                     // Show loading state
-                    ImGui::BeginDisabled();
-                    ImGui::Button("Signing in...", ImVec2(input_width, 38));
-                    ImGui::EndDisabled();
-                } else if ((ImGui::Button("Sign In", ImVec2(input_width, 38)) || enter_pressed) && can_login) {
+                    ui::PrimaryButton("Signing in...", false, nullptr, ui::ButtonSize::Regular, input_width);
+                } else if ((ui::PrimaryButton("Sign In", true, nullptr, ui::ButtonSize::Regular, input_width) || enter_pressed) &&
+                           can_login) {
                     // Validate input
                     std::string identifier = login_identifier_;
                     std::string password = login_password_;
@@ -195,7 +189,6 @@ void ToolbarPanel::RenderAccountDialogs() {
                         }
                     }
                 }
-                ImGui::PopStyleColor(4);
 
                 ImGui::Spacing();
                 ImGui::Spacing();
