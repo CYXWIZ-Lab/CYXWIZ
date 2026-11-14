@@ -1660,114 +1660,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
             ImGui::SetCursorPosX((ImGui::GetWindowWidth() - total_width) * 0.5f);
 
             if (ui::PrimaryButton("OK", true, nullptr, ui::ButtonSize::Regular, button_width)) {
-                bool selection_committed = true;
-                if (device_selection_dirty_) {
-                    if (selected_device_index_ < 0 ||
-                        selected_device_index_ >=
-                            static_cast<int>(cached_devices_.size())) {
-                        selection_committed = false;
-                        device_selection_error_ =
-                            "stage=inventory reason=Selected candidate is unavailable";
-                    } else {
-                        const auto& selected =
-                            cached_devices_[selected_device_index_];
-                        const auto type = static_cast<cyxwiz::DeviceType>(
-                            selected.type);
-                        if (compute_device_changed_callback_) {
-                            selection_committed =
-                                compute_device_changed_callback_(
-                                    type,
-                                    selected.device_id,
-                                    selected.physical_fingerprint_known
-                                        ? selected.physical_fingerprint
-                                        : std::string{},
-                                    device_selection_error_);
-                        } else {
-                            const auto result =
-                                cyxwiz::CommitExecutionDeviceSelection(
-                                    {type,
-                                     selected.device_id,
-                                     selected.physical_fingerprint_known
-                                         ? selected.physical_fingerprint
-                                         : std::string{}});
-                            selection_committed = result.committed;
-                            if (!selection_committed) {
-                                device_selection_error_ =
-                                    "stage=" +
-                                    std::string(
-                                        cyxwiz::DeviceSelectionTransactionStageName(
-                                            result.stage)) +
-                                    " reason=" + result.message;
-                            }
-                        }
-                    }
-                }
-                if (selection_committed) {
-                    if (save_project_settings_callback_) {
-                        save_project_settings_callback_();
-                    }
-                    device_selection_dirty_ = false;
-                    device_selection_recommendation_indices_.clear();
-                    devices_initialized_ = false;
-                    show_preferences_dialog_ = false;
-                    spdlog::info("Preferences saved");
-                } else {
-                    device_selection_recommendation_indices_.clear();
-                    if (selected_device_index_ >= 0 &&
-                        selected_device_index_ <
-                            static_cast<int>(cached_devices_.size())) {
-                        std::vector<cyxwiz::DeviceInfo> inventory;
-                        inventory.reserve(cached_devices_.size());
-                        for (const auto& cached : cached_devices_) {
-                            cyxwiz::DeviceInfo info;
-                            info.type = static_cast<cyxwiz::DeviceType>(
-                                cached.type);
-                            info.device_id = cached.device_id;
-                            info.name = cached.name;
-                            info.kind = static_cast<cyxwiz::DeviceKind>(
-                                cached.kind);
-                            info.identity_confidence = static_cast<
-                                cyxwiz::DeviceIdentityConfidence>(
-                                cached.identity_confidence);
-                            info.provider = cached.provider;
-                            info.driver_version = cached.driver_version;
-                            info.physical_fingerprint =
-                                cached.physical_fingerprint;
-                            info.hardware_vendor_id =
-                                cached.hardware_vendor_id;
-                            info.provider_known = cached.provider_known;
-                            info.driver_version_known =
-                                cached.driver_version_known;
-                            info.physical_fingerprint_known =
-                                cached.physical_fingerprint_known;
-                            info.hardware_vendor_id_known =
-                                cached.hardware_vendor_id_known;
-                            inventory.push_back(std::move(info));
-                        }
-                        const auto recommendations =
-                            cyxwiz::RecommendExecutionRoutes(
-                                inventory[static_cast<size_t>(
-                                    selected_device_index_)],
-                                inventory,
-                                cyxwiz::GetRouteQualificationSnapshot());
-                        for (const auto& recommendation :
-                             recommendations.recommendations) {
-                            for (size_t index = 0;
-                                 index < cached_devices_.size(); ++index) {
-                                if (cached_devices_[index].type ==
-                                        static_cast<int>(
-                                            recommendation.route.type) &&
-                                    cached_devices_[index].device_id ==
-                                        recommendation.route.device_id) {
-                                    device_selection_recommendation_indices_
-                                        .push_back(static_cast<int>(index));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    show_device_selection_error_ = true;
-                }
+                CommitPreferences();
             }
             ImGui::SameLine();
             if (ui::SecondaryButton("Cancel", true, nullptr, ui::ButtonSize::Regular, button_width)) {
@@ -1851,6 +1744,122 @@ void ToolbarPanel::RenderPreferencesDialog() {
             device_selection_recommendation_indices_.clear();
         }
     }
+}
+
+
+// OK: commits what Preferences does not apply at once (a compute device
+// switch), saves and closes. False when the commit failed: the dialog stays
+// open with the reason. The Theme Editor link closes Preferences this way too.
+bool ToolbarPanel::CommitPreferences() {
+    bool selection_committed = true;
+    if (device_selection_dirty_) {
+        if (selected_device_index_ < 0 ||
+            selected_device_index_ >=
+                static_cast<int>(cached_devices_.size())) {
+            selection_committed = false;
+            device_selection_error_ =
+                "stage=inventory reason=Selected candidate is unavailable";
+        } else {
+            const auto& selected =
+                cached_devices_[selected_device_index_];
+            const auto type = static_cast<cyxwiz::DeviceType>(
+                selected.type);
+            if (compute_device_changed_callback_) {
+                selection_committed =
+                    compute_device_changed_callback_(
+                        type,
+                        selected.device_id,
+                        selected.physical_fingerprint_known
+                            ? selected.physical_fingerprint
+                            : std::string{},
+                        device_selection_error_);
+            } else {
+                const auto result =
+                    cyxwiz::CommitExecutionDeviceSelection(
+                        {type,
+                         selected.device_id,
+                         selected.physical_fingerprint_known
+                             ? selected.physical_fingerprint
+                             : std::string{}});
+                selection_committed = result.committed;
+                if (!selection_committed) {
+                    device_selection_error_ =
+                        "stage=" +
+                        std::string(
+                            cyxwiz::DeviceSelectionTransactionStageName(
+                                result.stage)) +
+                        " reason=" + result.message;
+                }
+            }
+        }
+    }
+    if (selection_committed) {
+        if (save_project_settings_callback_) {
+            save_project_settings_callback_();
+        }
+        device_selection_dirty_ = false;
+        device_selection_recommendation_indices_.clear();
+        devices_initialized_ = false;
+        show_preferences_dialog_ = false;
+        spdlog::info("Preferences saved");
+    } else {
+        device_selection_recommendation_indices_.clear();
+        if (selected_device_index_ >= 0 &&
+            selected_device_index_ <
+                static_cast<int>(cached_devices_.size())) {
+            std::vector<cyxwiz::DeviceInfo> inventory;
+            inventory.reserve(cached_devices_.size());
+            for (const auto& cached : cached_devices_) {
+                cyxwiz::DeviceInfo info;
+                info.type = static_cast<cyxwiz::DeviceType>(
+                    cached.type);
+                info.device_id = cached.device_id;
+                info.name = cached.name;
+                info.kind = static_cast<cyxwiz::DeviceKind>(
+                    cached.kind);
+                info.identity_confidence = static_cast<
+                    cyxwiz::DeviceIdentityConfidence>(
+                    cached.identity_confidence);
+                info.provider = cached.provider;
+                info.driver_version = cached.driver_version;
+                info.physical_fingerprint =
+                    cached.physical_fingerprint;
+                info.hardware_vendor_id =
+                    cached.hardware_vendor_id;
+                info.provider_known = cached.provider_known;
+                info.driver_version_known =
+                    cached.driver_version_known;
+                info.physical_fingerprint_known =
+                    cached.physical_fingerprint_known;
+                info.hardware_vendor_id_known =
+                    cached.hardware_vendor_id_known;
+                inventory.push_back(std::move(info));
+            }
+            const auto recommendations =
+                cyxwiz::RecommendExecutionRoutes(
+                    inventory[static_cast<size_t>(
+                        selected_device_index_)],
+                    inventory,
+                    cyxwiz::GetRouteQualificationSnapshot());
+            for (const auto& recommendation :
+                 recommendations.recommendations) {
+                for (size_t index = 0;
+                     index < cached_devices_.size(); ++index) {
+                    if (cached_devices_[index].type ==
+                            static_cast<int>(
+                                recommendation.route.type) &&
+                        cached_devices_[index].device_id ==
+                            recommendation.route.device_id) {
+                        device_selection_recommendation_indices_
+                            .push_back(static_cast<int>(index));
+                        break;
+                    }
+                }
+            }
+        }
+        show_device_selection_error_ = true;
+    }
+    return selection_committed;
 }
 
 } // namespace cyxwiz

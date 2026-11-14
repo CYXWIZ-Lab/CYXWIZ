@@ -1877,6 +1877,8 @@ MainWindow::MainWindow()
     toolbar_->SetOpenThemeEditorCallback([this]() {
         if (theme_editor_) {
             theme_editor_->Show();
+            // In front also when it was already open behind another window.
+            ::gui::BringToFront(theme_editor_->GetName());
             spdlog::info("Opened Theme Editor panel");
         }
     });

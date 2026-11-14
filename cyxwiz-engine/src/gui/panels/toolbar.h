@@ -344,6 +344,7 @@ private:
     void RenderSearchDialogs();
     void RenderAccountDialogs();
     void RenderPreferencesDialog();
+    bool CommitPreferences();  // OK: commit, save, close (false: stays open with the reason)
     // Preferences > Storage (TOFIX160 P7, toolbar_preferences_storage.cpp):
     // the prepared-data caches, measured off the UI thread, with Clear.
     void RenderStorageTab();

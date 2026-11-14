@@ -273,7 +273,7 @@ void ThemeEditorPanel::RenderPresetSelector() {
     if (!custom.empty()) {
         ImGui::TextDisabled("Custom theme in use: %s", custom.c_str());
     } else {
-        ImGui::TextDisabled("Browse all themes in Edit > Preferences > Appearance.");
+        ImGui::TextDisabled("Browse all themes in File > Preferences > Appearance.");
     }
 
     // Edits apply live but are only kept once saved.
