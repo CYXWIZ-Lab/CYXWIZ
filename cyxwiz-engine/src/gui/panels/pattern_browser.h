@@ -22,7 +22,7 @@ public:
     ~PatternBrowserPanel() override = default;
 
     void Render() override;
-    const char* GetIcon() const override { return "\xef\x86\xb3"; }  // cubes icon
+    const char* GetIcon() const override { return ICON_FA_CUBES; }
 
     // Set callback for pattern insertion
     using InsertPatternCallback = std::function<void(
