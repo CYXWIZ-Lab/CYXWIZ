@@ -160,6 +160,7 @@ void ToolbarPanel::RenderAccountDialogs() {
                 ImGui::PushStyleColor(ImGuiCol_Button, t.accent);
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.accent_hover);
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, t.accent_active);
+                ImGui::PushStyleColor(ImGuiCol_Text, t.on_accent);  // reads on any theme's accent
 
                 bool can_login = strlen(login_identifier_) > 0 && strlen(login_password_) > 0 && !is_logging_in_;
 
@@ -194,7 +195,7 @@ void ToolbarPanel::RenderAccountDialogs() {
                         }
                     }
                 }
-                ImGui::PopStyleColor(3);
+                ImGui::PopStyleColor(4);
 
                 ImGui::Spacing();
                 ImGui::Spacing();

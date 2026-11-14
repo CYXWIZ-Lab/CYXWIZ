@@ -42,6 +42,7 @@ struct Tokens {
     ImVec4 accent_hover;
     ImVec4 accent_active;
     ImVec4 accent_text;   // links, badges, accent text on this background
+    ImVec4 on_accent;     // text on an accent fill (a primary button, the avatar)
 
     // Status
     ImVec4 success;
@@ -97,6 +98,30 @@ struct Tokens {
 const Tokens& CurrentTokens();
 // The same derivation for any style (tests, previews).
 Tokens BuildTokens(const ImGuiStyle& style);
+
+// The theme's colours that ImGui's style has no slot for (TOFIX129 A4): the
+// accent, the node families, the data types (pins, links, plot series) and the
+// status words. The Engine's theme registers its set (preset, then a custom
+// theme or Theme Editor edits); without one (the installer) the defaults
+// for the window's lightness apply.
+struct EngineColours {
+    ImVec4 accent;
+    ImVec4 node[Tokens::kNodeHueCount];
+    ImVec4 data[Tokens::kSeriesCount];
+    ImVec4 success, warning, caution, error, critical, info, pending, running;
+};
+// The shipped set: the CyxWiz purple accent, the node families, and the data
+// and status colours made for a light or a dark window.
+EngineColours DefaultEngineColours(bool light);
+void SetEngineColours(const EngineColours& colours);
+void ClearEngineColours();
+// The registered set, or the defaults for this lightness.
+EngineColours EffectiveEngineColours(bool light);
+// Button, hovered and pressed fills for a window colour: a step off the
+// window toward black on a light window, white on a dark one (owner rule
+// 2026-10-01, no outlines: a button is a fill). The Engine's theme and the
+// installer's set ImGui's Button colours from it; styled buttons read those.
+void ButtonFills(const ImVec4& window, ImVec4* fill, ImVec4* hover, ImVec4* active);
 
 // Colour helpers shared by every screen.
 ImVec4 Mix(const ImVec4& a, const ImVec4& b, float t);

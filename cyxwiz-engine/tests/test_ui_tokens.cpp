@@ -54,13 +54,16 @@ int main() {
     Check(Near(dark.error, 1.00f, 0.48f, 0.45f), "dark not supported (error)");
     Check(Near(dark.warning, 0.90f, 0.75f, 0.29f), "dark needs driver update (warning)");
     Check(Near(dark.running, 0.70f, 0.65f, 1.00f), "dark verifying (running)");
-    Check(Near(dark.accent_text, 0.702f, 0.651f, 1.0f), "dark badge (accent text)");
-    Check(Near(dark.accent, 0.357f, 0.239f, 0.961f), "brand purple");
+    // No theme registered (the installer): the default accent, CyxWiz purple;
+    // its badge tint is the accent toward white.
+    Check(Near(dark.accent, 0.357f, 0.239f, 0.961f), "default accent: CyxWiz purple");
+    const ImVec4 tint = Mix(dark.accent, ImVec4(1, 1, 1, 1), 0.45f);
+    Check(Near(dark.accent_text, tint.x, tint.y, tint.z), "dark badge (accent text) is the accent toward white");
 
     // CyxWiz Light window background: every status colour must read.
     const Tokens light = BuildTokens(StyleWithWindow(0.96f, 0.96f, 0.97f));
     Check(light.light, "near-white window is light");
-    Check(Near(light.accent, 0.357f, 0.239f, 0.961f), "brand purple is the same on light");
+    Check(Near(light.accent, 0.357f, 0.239f, 0.961f), "default accent on a light window");
     const ImVec4 window(0.96f, 0.96f, 0.97f, 1.0f);
     const struct { const char* name; ImVec4 colour; } light_colours[] = {
         {"success", light.success}, {"warning", light.warning}, {"caution", light.caution},
@@ -148,6 +151,35 @@ int main() {
     }
     Check(Near(StatusStyleFor(Status::Failed, dark).colour, 0.96f, 0.63f, 0.29f), "Failed uses caution orange");
     Check(Near(StatusStyleFor(Status::NotSupported, dark).colour, 1.0f, 0.48f, 0.45f), "Not supported uses error red");
+
+    // TOFIX129 A4: the theme registers its colours; the tokens follow them.
+    {
+        EngineColours unreal = DefaultEngineColours(false);
+        unreal.accent = ImVec4(1.00f, 0.60f, 0.00f, 1.0f);  // Unreal Engine orange
+        unreal.node[static_cast<int>(NodeHue::Layers)] = ImVec4(0.10f, 0.20f, 0.30f, 1.0f);
+        unreal.data[1] = ImVec4(0.30f, 0.80f, 0.90f, 1.0f);
+        unreal.success = ImVec4(0.20f, 0.90f, 0.40f, 1.0f);
+        SetEngineColours(unreal);
+        const ImVec4 unreal_window(0.12f, 0.12f, 0.12f, 1.0f);
+        const Tokens t = BuildTokens(StyleWithWindow(unreal_window.x, unreal_window.y, unreal_window.z));
+        Check(Near(t.accent, 1.00f, 0.60f, 0.00f), "registered accent reaches the tokens");
+        Check(Near(NodeColour(t, NodeHue::Layers), 0.10f, 0.20f, 0.30f), "registered node family reaches the tokens");
+        Check(Near(t.series[1], 0.30f, 0.80f, 0.90f), "registered data type reaches the tokens");
+        Check(Near(t.success, 0.20f, 0.90f, 0.40f), "registered status word reaches the tokens");
+        Check(Contrast(t.on_accent, t.accent) >= 4.5f, "text on the orange accent reads (>= 4.5)");
+        Check(Contrast(t.accent_text, unreal_window) >= 4.5f, "orange accent text reads on the Unreal grey window");
+        ClearEngineColours();
+        Check(Near(BuildTokens(StyleWithWindow(unreal_window.x, unreal_window.y, unreal_window.z)).accent, 0.357f, 0.239f, 0.961f),
+              "cleared: the default accent again");
+    }
+    Check(Contrast(dark.on_accent, dark.accent) >= 4.5f, "text on the purple accent reads (>= 4.5)");
+    // Button fills: a step off the window, stronger on hover and press.
+    for (const ImVec4& w : {ImVec4(0.059f, 0.075f, 0.098f, 1.0f), ImVec4(0.96f, 0.96f, 0.97f, 1.0f)}) {
+        ImVec4 fill, hover, active;
+        ButtonFills(w, &fill, &hover, &active);
+        const float c1 = Contrast(fill, w), c2 = Contrast(hover, w), c3 = Contrast(active, w);
+        Check(c1 > 1.05f && c1 < c2 && c2 < c3, "button fills step away from the window");
+    }
 
     // Spacing and rounding scale.
     Check(dark.space_xs < dark.space_sm && dark.space_sm < dark.space_md && dark.space_md < dark.space_lg &&

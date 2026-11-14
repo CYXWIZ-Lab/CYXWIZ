@@ -7,6 +7,15 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Colours follow the chosen theme.** Train, OK, Publish and every
+  primary button, selection, check marks, links, the selected tab's line
+  and the canvas box selector use the theme's one accent: purple in the
+  CyxWiz themes, orange in Unreal Engine, each preset its own (before,
+  the purple was fixed on every theme while Unreal marked choices in
+  orange). Text on the accent picks black or white to stay readable.
+  Secondary buttons (Save, Edit, Cancel ...) are the theme's Button fill,
+  a step off the window, in every theme. A saved custom theme keeps the
+  accent, the node colours, the data-type colours and the status colours.
 - **Safetensors import reads each tensor's type.** Importing a
   `.safetensors` model took every tensor for float32. Float16 and float64
   tensors are now converted, integer tensors are skipped with a warning, and a

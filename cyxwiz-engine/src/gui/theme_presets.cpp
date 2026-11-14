@@ -24,6 +24,7 @@ void Theme::ApplyCyxWizDark() {
     const ImVec4 text          = ImVec4(0.839f, 0.859f, 0.902f, 1.00f);  // #D6DBE6
     const ImVec4 text_dim      = ImVec4(0.545f, 0.580f, 0.655f, 1.00f);  // #8B94A7
     const ImVec4 accent        = ImVec4(0.357f, 0.239f, 0.961f, 1.00f);  // #5B3DF5
+    accent_color_ = accent;  // the preset's one accent
     const ImVec4 accent_hover  = ImVec4(0.439f, 0.333f, 0.980f, 1.00f);
     const ImVec4 accent_light  = ImVec4(0.702f, 0.651f, 1.000f, 1.00f);  // #B3A6FF
     const ImVec4 success       = ImVec4(0.240f, 0.840f, 0.550f, 1.00f);  // #3DD68C
@@ -149,6 +150,7 @@ void Theme::ApplyCyxWizLaunch() {
     ImVec4 text          = ImVec4(0.91f, 0.96f, 1.00f, 1.00f);
     ImVec4 text_dim      = ImVec4(0.55f, 0.66f, 0.78f, 1.00f);
     ImVec4 accent        = ImVec4(0.02f, 0.36f, 0.92f, 1.00f);
+    accent_color_ = accent;  // the preset's one accent
     ImVec4 accent_hover  = ImVec4(0.06f, 0.50f, 1.00f, 1.00f);
     ImVec4 accent_active = ImVec4(0.01f, 0.26f, 0.74f, 1.00f);
     ImVec4 cyan          = ImVec4(0.20f, 0.78f, 1.00f, 1.00f);
@@ -227,7 +229,6 @@ void Theme::ApplyCyxWizLaunch() {
     colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.24f);
     colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.00f, 0.01f, 0.03f, 0.68f);
 
-    accent_color_ = accent_hover;
 
     config_.window_rounding = 12.0f;
     config_.frame_rounding = 8.0f;
@@ -264,6 +265,7 @@ void Theme::ApplyCyxWizLight() {
     ImVec4 text          = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
     ImVec4 text_dim      = ImVec4(0.45f, 0.45f, 0.48f, 1.00f);
     ImVec4 accent        = ImVec4(0.20f, 0.50f, 0.80f, 1.00f);
+    accent_color_ = accent;  // the preset's one accent
     ImVec4 accent_hover  = ImVec4(0.25f, 0.55f, 0.85f, 1.00f);
     ImVec4 accent_active = ImVec4(0.15f, 0.40f, 0.70f, 1.00f);
 
@@ -348,6 +350,7 @@ void Theme::ApplyVSCodeDark() {
     ImVec4 text          = ImVec4(0.847f, 0.847f, 0.847f, 1.00f);  // #d8d8d8
     ImVec4 text_dim      = ImVec4(0.502f, 0.502f, 0.502f, 1.00f);  // #808080
     ImVec4 accent        = ImVec4(0.075f, 0.463f, 0.788f, 1.00f);  // #1377c9 (VS Code blue)
+    accent_color_ = accent;  // the preset's one accent
     ImVec4 accent_hover  = ImVec4(0.110f, 0.529f, 0.882f, 1.00f);
     ImVec4 accent_active = ImVec4(0.059f, 0.392f, 0.694f, 1.00f);
 
@@ -435,6 +438,7 @@ void Theme::ApplyUnrealEngine() {
     ImVec4 accent_hover  = ImVec4(0.20f, 0.65f, 1.00f, 1.00f);
     ImVec4 accent_active = ImVec4(0.10f, 0.50f, 0.85f, 1.00f);
     ImVec4 highlight     = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);  // Orange highlight
+    accent_color_ = highlight;  // the preset's one accent: Unreal orange (owner 2026-11-14)
 
     colors[ImGuiCol_Text]                   = text;
     colors[ImGuiCol_TextDisabled]           = text_dim;
@@ -516,6 +520,7 @@ void Theme::ApplyModernDark() {
     ImVec4 text          = ImVec4(0.95f, 0.95f, 0.97f, 1.00f);
     ImVec4 text_dim      = ImVec4(0.55f, 0.55f, 0.58f, 1.00f);
     ImVec4 accent        = ImVec4(0.40f, 0.55f, 0.80f, 1.00f);  // Soft blue
+    accent_color_ = accent;  // the preset's one accent
     ImVec4 accent_hover  = ImVec4(0.50f, 0.65f, 0.90f, 1.00f);
     ImVec4 accent_active = ImVec4(0.30f, 0.45f, 0.70f, 1.00f);
 
@@ -597,6 +602,7 @@ void Theme::ApplyHighContrast() {
     ImVec4 text          = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
     ImVec4 text_dim      = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);
     ImVec4 accent        = ImVec4(0.00f, 0.80f, 1.00f, 1.00f);  // Cyan
+    accent_color_ = accent;  // the preset's one accent
     ImVec4 accent_hover  = ImVec4(0.20f, 0.90f, 1.00f, 1.00f);
     ImVec4 accent_active = ImVec4(0.00f, 0.60f, 0.80f, 1.00f);
     ImVec4 yellow        = ImVec4(1.00f, 1.00f, 0.00f, 1.00f);
@@ -671,6 +677,7 @@ void Theme::ApplyHighContrast() {
 // Dracula Theme - Vibrant purple/pink theme
 // ============================================================================
 void Theme::ApplyDracula() {
+    accent_color_ = ImVec4(0.74f, 0.58f, 0.98f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
@@ -798,6 +805,7 @@ void Theme::ApplyDracula() {
 // One Dark Pro Theme - VSCode's most popular theme (Blue/Cyan)
 // ============================================================================
 void Theme::ApplyOneDarkPro() {
+    accent_color_ = ImVec4(0.38f, 0.69f, 0.94f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
@@ -924,6 +932,7 @@ void Theme::ApplyOneDarkPro() {
 // Nord Theme - Cool pastels inspired by arctic colors
 // ============================================================================
 void Theme::ApplyNord() {
+    accent_color_ = ImVec4(0.53f, 0.75f, 0.82f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
@@ -1052,6 +1061,7 @@ void Theme::ApplyNord() {
 // Catppuccin Mocha Theme - Pastel rainbow cozy theme
 // ============================================================================
 void Theme::ApplyCatppuccinMocha() {
+    accent_color_ = ImVec4(0.80f, 0.65f, 0.97f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
@@ -1189,6 +1199,7 @@ void Theme::ApplyCatppuccinMocha() {
 // Clean, minimal design with subtle transparency and SF-style aesthetics
 // ============================================================================
 void Theme::ApplyCyxOSAqua() {
+    accent_color_ = ImVec4(0.00f, 0.48f, 1.00f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
@@ -1322,6 +1333,7 @@ void Theme::ApplyCyxOSAqua() {
 // Mica-style effects, subtle transparency, modern Microsoft aesthetics
 // ============================================================================
 void Theme::ApplyCyxOSFluent() {
+    accent_color_ = ImVec4(0.00f, 0.47f, 0.83f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
@@ -1455,6 +1467,7 @@ void Theme::ApplyCyxOSFluent() {
 // Syntax highlighting colors, optimized for long coding sessions
 // ============================================================================
 void Theme::ApplyCyxOSCoder() {
+    accent_color_ = ImVec4(0.54f, 0.71f, 0.98f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
@@ -1591,6 +1604,7 @@ void Theme::ApplyCyxOSCoder() {
 // Clean, productivity-focused design for business applications
 // ============================================================================
 void Theme::ApplyCyxOSOffice() {
+    accent_color_ = ImVec4(0.15f, 0.39f, 0.92f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
@@ -1724,6 +1738,7 @@ void Theme::ApplyCyxOSOffice() {
 // IBM 3278 inspired, classic green on black terminal
 // ============================================================================
 void Theme::ApplyCyxOSTuiClassic() {
+    accent_color_ = ImVec4(0.20f, 1.00f, 0.20f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
@@ -1852,6 +1867,7 @@ void Theme::ApplyCyxOSTuiClassic() {
 // Neo's terminal, digital rain aesthetic
 // ============================================================================
 void Theme::ApplyCyxOSTuiMatrix() {
+    accent_color_ = ImVec4(0.00f, 1.00f, 0.25f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
@@ -1980,6 +1996,7 @@ void Theme::ApplyCyxOSTuiMatrix() {
 // Warm retro terminal with amber glow
 // ============================================================================
 void Theme::ApplyCyxOSTuiAmber() {
+    accent_color_ = ImVec4(1.00f, 0.69f, 0.00f, 1.00f);  // the preset's one accent
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 

@@ -261,10 +261,10 @@ void ThemeEditorPanel::RenderPresetSelector() {
         ImGui::EndCombo();
     }
     ImGui::SameLine();
-    ImVec4 accent = theme.GetAccentColor();
-    if (ImGui::ColorEdit4("##AccentColor", &accent.x,
+    cyxwiz::ui::EngineColours engine = theme.GetEngineColours();
+    if (ImGui::ColorEdit4("##AccentColor", &engine.accent.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
-        theme.SetAccentColor(accent);
+        theme.SetEngineColours(engine);  // the accent only: no preset re-applied, other edits kept
         has_unsaved_changes_ = true;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Accent colour");

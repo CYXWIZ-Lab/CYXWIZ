@@ -63,11 +63,12 @@ void ToolbarPanel::RenderProjectDialogs() {
 
             ImGui::PushStyleColor(ImGuiCol_Button, t.accent);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.accent_hover);
+            ImGui::PushStyleColor(ImGuiCol_Text, t.on_accent);  // reads on any theme's accent
             if (ImGui::Button(ICON_FA_RIGHT_TO_BRACKET " Login", ImVec2(button_width, 0))) {
                 show_login_required_popup_ = false;
                 show_account_settings_dialog_ = true;  // Open login dialog
             }
-            ImGui::PopStyleColor(2);
+            ImGui::PopStyleColor(3);
 
             ImGui::SameLine();
 

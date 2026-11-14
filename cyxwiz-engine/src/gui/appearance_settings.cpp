@@ -10,6 +10,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <iterator>
+#include <utility>
 #include <cctype>
 #include <fstream>
 #include <spdlog/spdlog.h>
@@ -164,6 +166,48 @@ bool ReadColor(const json& item, int count, int* id, ImVec4* color) {
     return true;
 }
 
+json Rgb(const ImVec4& c) { return json::array({c.x, c.y, c.z}); }
+
+bool ReadRgb(const json& j, ImVec4* out) {
+    if (!j.is_array() || j.size() != 3) return false;
+    for (const auto& v : j)
+        if (!v.is_number()) return false;
+    *out = ImVec4(j[0].get<float>(), j[1].get<float>(), j[2].get<float>(), 1.0f);
+    return true;
+}
+
+// The theme's own colours (TOFIX129 A4): accent, node families, data types,
+// status words. Kept with a custom theme so it looks the same when reloaded.
+json EngineColoursJson(const cyxwiz::ui::EngineColours& e) {
+    json j;
+    j["accent"] = Rgb(e.accent);
+    j["node"] = json::array();
+    for (const auto& c : e.node) j["node"].push_back(Rgb(c));
+    j["data"] = json::array();
+    for (const auto& c : e.data) j["data"].push_back(Rgb(c));
+    j["status"] = {{"success", Rgb(e.success)}, {"warning", Rgb(e.warning)}, {"caution", Rgb(e.caution)},
+                   {"error", Rgb(e.error)}, {"critical", Rgb(e.critical)}, {"info", Rgb(e.info)},
+                   {"pending", Rgb(e.pending)}, {"running", Rgb(e.running)}};
+    return j;
+}
+
+// Over `e`: every colour the file names; the others stay as they are.
+void ReadEngineColours(const json& j, cyxwiz::ui::EngineColours* e) {
+    if (j.contains("accent")) ReadRgb(j["accent"], &e->accent);
+    if (j.contains("node") && j["node"].is_array())
+        for (size_t i = 0; i < j["node"].size() && i < std::size(e->node); ++i) ReadRgb(j["node"][i], &e->node[i]);
+    if (j.contains("data") && j["data"].is_array())
+        for (size_t i = 0; i < j["data"].size() && i < std::size(e->data); ++i) ReadRgb(j["data"][i], &e->data[i]);
+    if (j.contains("status") && j["status"].is_object()) {
+        const auto& st = j["status"];
+        const std::pair<const char*, ImVec4*> fields[] = {
+            {"success", &e->success}, {"warning", &e->warning}, {"caution", &e->caution}, {"error", &e->error},
+            {"critical", &e->critical}, {"info", &e->info}, {"pending", &e->pending}, {"running", &e->running}};
+        for (const auto& [key, out] : fields)
+            if (st.contains(key)) ReadRgb(st[key], out);
+    }
+}
+
 }  // namespace
 
 bool ApplyThemeFile(const std::filesystem::path& path, std::string* error) {
@@ -221,6 +265,11 @@ bool ApplyThemeFile(const std::filesystem::path& path, std::string* error) {
             if (ReadColor(item, ImNodesCol_COUNT, &id, &color))
                 nodes.Colors[id] = ImGui::ColorConvertFloat4ToU32(color);
         }
+    }
+    if (j.contains("engine_colors") && j["engine_colors"].is_object()) {
+        cyxwiz::ui::EngineColours engine = GetTheme().GetEngineColours();
+        ReadEngineColours(j["engine_colors"], &engine);
+        GetTheme().SetEngineColours(engine);
     }
     return true;
 }
@@ -283,6 +332,7 @@ bool SaveCustomTheme(const std::string& name, std::filesystem::path* saved_path,
     const auto& nodes = ImNodes::GetStyle();
     for (int i = 0; i < ImNodesCol_COUNT; ++i)
         j["imnodes_colors"].push_back(ColorJson(ImGui::ColorConvertU32ToFloat4(nodes.Colors[i]), i));
+    j["engine_colors"] = EngineColoursJson(GetTheme().GetEngineColours());
 
     std::ofstream file(path);
     if (!file.is_open()) {

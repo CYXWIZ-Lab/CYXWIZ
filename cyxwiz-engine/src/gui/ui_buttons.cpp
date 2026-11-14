@@ -10,7 +10,7 @@ namespace cyxwiz::ui {
 namespace {
 
 // Colours come from the shared tokens (ui_tokens.h): one light/dark
-// decision, one brand purple, theme-derived neutrals. Refreshed at the
+// decision, the theme's accent and Button fills, theme-derived neutrals. Refreshed at the
 // start of every button call.
 ImVec4 kPrimary, kPrimaryHover, kPrimaryActive;
 ImVec4 kSecondary, kSecondaryHover, kSecondaryActive, kText, kLink, kLinkHover;
@@ -22,11 +22,13 @@ void RefreshColors() {
     kPrimary = t.accent;
     kPrimaryHover = t.accent_hover;
     kPrimaryActive = t.accent_active;
-    // No outlines on buttons (owner rule 2026-10-01): a secondary button is a
-    // fill one step off the window, stronger on hover.
-    kSecondary = Mix(t.bg_window, ink, t.light ? 0.06f : 0.07f);
-    kSecondaryHover = Mix(t.bg_window, ink, t.light ? 0.11f : 0.13f);
-    kSecondaryActive = Mix(t.bg_window, ink, t.light ? 0.16f : 0.18f);
+    // No outlines on buttons (owner rule 2026-10-01): a secondary button is the
+    // theme's Button fill (a step off the window, ButtonFills; the Theme
+    // Editor's Buttons rows change it), stronger on hover.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    kSecondary = WithAlpha(style.Colors[ImGuiCol_Button], 1.0f);
+    kSecondaryHover = WithAlpha(style.Colors[ImGuiCol_ButtonHovered], 1.0f);
+    kSecondaryActive = WithAlpha(style.Colors[ImGuiCol_ButtonActive], 1.0f);
     kText = t.text_bright;
     kLink = t.accent_text;
     kLinkHover = t.light ? t.accent : Mix(t.accent_text, ink, 0.35f);
@@ -74,7 +76,7 @@ bool PrimaryButton(const char* label, bool enabled, const char* disabled_reason,
                    ButtonSize size, float width) {
     RefreshColors();
     return Styled(label, enabled, disabled_reason, size, kPrimary, kPrimaryHover,
-                  kPrimaryActive, ImVec4(1.0f, 1.0f, 1.0f, 1.0f), width);
+                  kPrimaryActive, CurrentTokens().on_accent, width);
 }
 
 bool SecondaryButton(const char* label, bool enabled, const char* disabled_reason,

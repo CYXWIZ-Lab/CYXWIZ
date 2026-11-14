@@ -1,3 +1,6 @@
+#include "ui_tokens.h"
+#include "../core/appearance_options.h"
+#include <array>
 #include "theme.h"
 #include "dock_style.h"
 #include <imgui.h>
@@ -99,29 +102,31 @@ const char* Theme::GetPresetGroup(ThemePreset preset) {
 }
 
 Theme::PresetSwatch Theme::GetPresetSwatch(ThemePreset preset) {
-    // Colours taken from each preset's definition (theme_presets.cpp).
-    const auto c = [](float r, float g, float b) { return ImVec4(r, g, b, 1.0f); };
-    switch (preset) {
-        case ThemePreset::CyxWizDark:      return {c(0.059f, 0.075f, 0.098f), c(0.067f, 0.086f, 0.118f), c(0.357f, 0.239f, 0.961f)};
-        case ThemePreset::CyxWizLight:     return {c(0.96f, 0.96f, 0.97f), c(0.88f, 0.88f, 0.90f), c(0.20f, 0.50f, 0.80f)};
-        case ThemePreset::CyxWizLaunch:    return {c(0.04f, 0.07f, 0.13f), c(0.06f, 0.10f, 0.17f), c(0.02f, 0.36f, 0.92f)};
-        case ThemePreset::VSCodeDark:      return {c(0.118f, 0.118f, 0.118f), c(0.153f, 0.153f, 0.153f), c(0.075f, 0.463f, 0.788f)};
-        case ThemePreset::UnrealEngine:    return {c(0.12f, 0.12f, 0.12f), c(0.16f, 0.16f, 0.16f), c(0.13f, 0.59f, 0.95f)};
-        case ThemePreset::ModernDark:      return {c(0.10f, 0.10f, 0.12f), c(0.14f, 0.14f, 0.16f), c(0.40f, 0.55f, 0.80f)};
-        case ThemePreset::HighContrast:    return {c(0.00f, 0.00f, 0.00f), c(0.10f, 0.10f, 0.10f), c(0.00f, 0.80f, 1.00f)};
-        case ThemePreset::Dracula:         return {c(0.16f, 0.16f, 0.21f), c(0.22f, 0.22f, 0.28f), c(0.74f, 0.58f, 0.98f)};
-        case ThemePreset::OneDarkPro:      return {c(0.16f, 0.17f, 0.20f), c(0.21f, 0.22f, 0.26f), c(0.38f, 0.69f, 0.94f)};
-        case ThemePreset::Nord:            return {c(0.18f, 0.20f, 0.25f), c(0.26f, 0.30f, 0.37f), c(0.53f, 0.75f, 0.82f)};
-        case ThemePreset::CatppuccinMocha: return {c(0.12f, 0.12f, 0.18f), c(0.19f, 0.20f, 0.27f), c(0.80f, 0.65f, 0.97f)};
-        case ThemePreset::CyxOSAqua:       return {c(0.11f, 0.11f, 0.12f), c(0.18f, 0.18f, 0.18f), c(0.00f, 0.48f, 1.00f)};
-        case ThemePreset::CyxOSFluent:     return {c(0.13f, 0.13f, 0.13f), c(0.18f, 0.18f, 0.18f), c(0.00f, 0.47f, 0.83f)};
-        case ThemePreset::CyxOSCoder:      return {c(0.12f, 0.12f, 0.18f), c(0.20f, 0.20f, 0.26f), c(0.54f, 0.71f, 0.98f)};
-        case ThemePreset::CyxOSOffice:     return {c(0.12f, 0.16f, 0.22f), c(0.22f, 0.25f, 0.32f), c(0.15f, 0.39f, 0.92f)};
-        case ThemePreset::CyxOSTuiClassic: return {c(0.04f, 0.04f, 0.04f), c(0.05f, 0.05f, 0.05f), c(0.20f, 1.00f, 0.20f)};
-        case ThemePreset::CyxOSTuiMatrix:  return {c(0.00f, 0.00f, 0.00f), c(0.00f, 0.07f, 0.00f), c(0.00f, 1.00f, 0.25f)};
-        case ThemePreset::CyxOSTuiAmber:   return {c(0.05f, 0.04f, 0.02f), c(0.10f, 0.07f, 0.04f), c(1.00f, 0.69f, 0.00f)};
-        default:                           return {c(0.059f, 0.075f, 0.098f), c(0.067f, 0.086f, 0.118f), c(0.357f, 0.239f, 0.961f)};
+    // Read from the presets themselves (no second copy of their colours):
+    // each preset runs once on scratch styles, everything restored after.
+    static std::array<PresetSwatch, static_cast<size_t>(ThemePreset::COUNT)> swatches{};
+    static bool built = false;
+    if (!built) {
+        built = true;
+        Theme& theme = GetTheme();
+        const ImGuiStyle saved_style = ImGui::GetStyle();
+        const ImNodesStyle saved_nodes = ImNodes::GetStyle();
+        const ThemePreset saved_preset = theme.current_preset_;
+        const ThemeConfig saved_config = theme.config_;
+        const ImVec4 saved_accent = theme.accent_color_;
+        for (size_t i = 0; i < swatches.size(); ++i) {
+            theme.RunPresetFunction(static_cast<ThemePreset>(i));
+            const ImVec4* c = ImGui::GetStyle().Colors;
+            swatches[i] = {c[ImGuiCol_WindowBg], c[ImGuiCol_FrameBg], theme.accent_color_};
+        }
+        ImGui::GetStyle() = saved_style;
+        ImNodes::GetStyle() = saved_nodes;
+        theme.current_preset_ = saved_preset;
+        theme.config_ = saved_config;
+        theme.accent_color_ = saved_accent;
     }
+    const auto i = static_cast<size_t>(preset);
+    return i < swatches.size() ? swatches[i] : swatches[0];
 }
 
 void Theme::ApplyPreset(ThemePreset preset) {
@@ -131,6 +136,21 @@ void Theme::ApplyPreset(ThemePreset preset) {
     config_ = ThemeConfig{};
     ImGui::GetStyle().TabBarOverlineSize = 2.0f;
 
+    RunPresetFunction(preset);
+
+    ApplyStyleConfig();
+    ApplyImNodesStyle();  // Apply matching node editor styling
+    ApplyDockStyle();     // Apply matching dock tab styling
+    HarmonizeSurfaces();  // the dock style set its own tab colours
+    // The rest of the theme's own colours: the preset's accent and the
+    // shipped families / data / status colours for its lightness.
+    const ImVec4 bg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+    engine_ = cyxwiz::ui::DefaultEngineColours(cyxwiz::appearance::IsLightBackground(bg.x, bg.y, bg.z));
+    engine_.accent = accent_color_;
+    ApplyEngineColours();  // last
+}
+
+void Theme::RunPresetFunction(ThemePreset preset) {
     switch (preset) {
         // CyxWiz branded
         case ThemePreset::CyxWizDark:      ApplyCyxWizDark(); break;
@@ -157,11 +177,43 @@ void Theme::ApplyPreset(ThemePreset preset) {
         case ThemePreset::CyxOSTuiAmber:   ApplyCyxOSTuiAmber(); break;
         default:                           ApplyCyxWizDark(); break;
     }
+}
 
-    ApplyStyleConfig();
-    ApplyImNodesStyle();  // Apply matching node editor styling
-    ApplyDockStyle();     // Apply matching dock tab styling
-    HarmonizeSurfaces();  // last: the dock style set its own tab colours
+void Theme::SetEngineColours(const cyxwiz::ui::EngineColours& colours) {
+    engine_ = colours;
+    ApplyEngineColours();
+}
+
+// Owner 2026-11-14: one colour system. What marks a choice or the focus
+// (check marks, slider grabs, hovered and pressed headers, text selection,
+// the keyboard cursor, drag targets, the selected tab's line, the canvas
+// box selector) is the accent; presets gave some of them a second colour
+// (Unreal Engine: orange check marks and headers with a blue accent).
+void Theme::ApplyEngineColours() {
+    ImVec4* c = ImGui::GetStyle().Colors;
+    const ImVec4 a(engine_.accent.x, engine_.accent.y, engine_.accent.z, 1.0f);
+    const auto alpha = [&a](float w) { return ImVec4(a.x, a.y, a.z, w); };
+    c[ImGuiCol_CheckMark] = a;
+    c[ImGuiCol_SliderGrab] = a;
+    c[ImGuiCol_SliderGrabActive] = cyxwiz::ui::Mix(a, ImVec4(1, 1, 1, 1), 0.15f);
+    c[ImGuiCol_HeaderHovered] = alpha(0.30f);
+    c[ImGuiCol_HeaderActive] = alpha(0.45f);
+    c[ImGuiCol_TextSelectedBg] = alpha(0.35f);
+    c[ImGuiCol_NavHighlight] = a;
+    c[ImGuiCol_ResizeGripHovered] = alpha(0.60f);
+    c[ImGuiCol_ResizeGripActive] = a;
+    c[ImGuiCol_DragDropTarget] = a;
+    c[ImGuiCol_DockingPreview] = alpha(0.60f);
+    ImNodesStyle& nodes = ImNodes::GetStyle();
+    nodes.Colors[ImNodesCol_BoxSelector] = ImGui::ColorConvertFloat4ToU32(alpha(0.25f));
+    nodes.Colors[ImNodesCol_BoxSelectorOutline] = ImGui::ColorConvertFloat4ToU32(a);
+    DockStyle& dock = GetDockStyle();
+    DockTabStyle tabs = dock.GetStyle();
+    tabs.active_indicator_color = a;
+    dock.SetStyle(tabs);  // writes the ImGui tab colours
+    c[ImGuiCol_TabSelectedOverline] = a;
+    c[ImGuiCol_TabDimmedSelectedOverline] = alpha(0.50f);
+    cyxwiz::ui::SetEngineColours(engine_);
 }
 
 // Owner 2026-10-02: every surface follows the window background. Presets
@@ -202,6 +254,11 @@ void Theme::HarmonizeSurfaces() {
     // are a step lighter than the window, never the preset's near-black
     // (Unreal Engine: 20 on a 41 window, darker than its inputs).
     c[ImGuiCol_PopupBg] = toward_text(0.035f);
+
+    // Buttons a step off the window, in every preset (several filled every
+    // button with their accent, so Save looked like Train). Styled buttons
+    // read these; the primary button is the accent.
+    cyxwiz::ui::ButtonFills(bg, &c[ImGuiCol_Button], &c[ImGuiCol_ButtonHovered], &c[ImGuiCol_ButtonActive]);
 
     // The node canvas and its minimap: the window colour with grid lines a
     // step toward the text (presets gave the canvas its own near-black).
@@ -277,12 +334,6 @@ void Theme::ApplyStyleConfig() {
     style.ScrollbarSize = config_.scrollbar_size;
     style.GrabMinSize = config_.grab_min_size;
     style.IndentSpacing = config_.indent_spacing;
-}
-
-void Theme::SetAccentColor(const ImVec4& color) {
-    accent_color_ = color;
-    // Re-apply current preset with new accent
-    ApplyPreset(current_preset_);
 }
 
 bool Theme::RenderThemeSelector() {

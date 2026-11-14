@@ -1,3 +1,4 @@
+#include "../gui/ui_tokens.h"
 #include "installer_theme.h"
 
 #include "gui/icons.h"
@@ -99,9 +100,10 @@ void ApplyInstallerTheme(float scale) {
   colors[ImGuiCol_CheckMark] = accent;
   colors[ImGuiCol_SliderGrab] = accent;
   colors[ImGuiCol_SliderGrabActive] = Rgb(145, 116, 252);
-  colors[ImGuiCol_Button] = accent;
-  colors[ImGuiCol_ButtonHovered] = Rgb(143, 113, 252);
-  colors[ImGuiCol_ButtonActive] = Rgb(102, 72, 218);
+  // Buttons a step off the canvas, as in the Engine (the primary button is
+  // the accent, cyxwiz::ui::PrimaryButton).
+  cyxwiz::ui::ButtonFills(canvas, &colors[ImGuiCol_Button], &colors[ImGuiCol_ButtonHovered],
+                         &colors[ImGuiCol_ButtonActive]);
   colors[ImGuiCol_Header] = Rgb(53, 42, 91);
   colors[ImGuiCol_HeaderHovered] = Rgb(74, 56, 128);
   colors[ImGuiCol_HeaderActive] = Rgb(91, 67, 159);
