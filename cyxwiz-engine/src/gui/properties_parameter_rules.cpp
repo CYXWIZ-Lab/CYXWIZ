@@ -128,6 +128,12 @@ bool ShouldHideGenericParameter(
         return it == node.parameters.end() || it->second != "true";
     }
 
+    if (type == NodeType::SAC && param.name == "target_entropy") {
+        // The typed target entropy: only when the mode asks for one (auto is shown as a fact)
+        const auto it = node.parameters.find("target_entropy_mode");
+        return it == node.parameters.end() || it->second != "typed";
+    }
+
     if (type == NodeType::SqueezeExcitation) {
         // Reduction or the typed width: the row the chosen mode reads.
         const auto it = node.parameters.find("width_mode");

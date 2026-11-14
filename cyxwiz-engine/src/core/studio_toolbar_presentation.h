@@ -69,7 +69,8 @@ struct TrainInputs {
     bool train_available = false;  // a training launcher is wired
     bool graph_valid = false;      // the canvas has a dataset, layers and a loss
     bool require_debug = false;    // EngineConfig require_debug_before_train
-    bool rl_graph = false;         // an RL graph: PPO trains it, Local Debug does not apply
+    bool rl_graph = false;         // an RL graph: its learner trains it, Local Debug does not apply
+    std::string rl_learner;        // the RL graph's learner node ("PPO", "SAC"); empty: not known yet
     // What keeps the graph busy before a run can start ("a Data Input is
     // loading its data"); empty when nothing does.
     std::string busy;

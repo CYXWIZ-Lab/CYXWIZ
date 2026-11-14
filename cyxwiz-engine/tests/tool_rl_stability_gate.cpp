@@ -107,7 +107,7 @@ int main(int argc, char** argv) {
     g.At(id.env).parameters["environment"] =
         (mujoco ? std::string("com.cyxwiz.simulation.mujoco:") : std::string("cyxwiz.builtin:")) + task;
     for (const auto& [k, v] : preset->environment) g.At(id.env).parameters[k] = v;
-    for (const auto& [k, v] : preset->ppo) g.At(id.ppo).parameters[k] = v;
+    for (const auto& [k, v] : preset->learner) g.At(id.ppo).parameters[k] = v;
     for (const auto& [k, v] : preset->policy_head) g.At(id.phead).parameters[k] = v;
     g.At(id.ppo).parameters["seed"] = seed;
     if (!cheetah) {  // the budgets of the SB3 reference

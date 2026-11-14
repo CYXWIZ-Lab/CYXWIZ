@@ -221,7 +221,7 @@ void CheckCartPole() {
     rl_graph_test::Ids id{};
     auto g = rl_graph_test::Pattern(id);
     const auto preset = cyxwiz::rl_graph::TunedPpoSettings("CartPole-v1");
-    for (const auto& [k, v] : preset->ppo) g.At(id.ppo).parameters[k] = v;
+    for (const auto& [k, v] : preset->learner) g.At(id.ppo).parameters[k] = v;
     for (const auto& [k, v] : preset->environment) g.At(id.env).parameters[k] = v;
     g.At(id.ppo).parameters["total_timesteps"] = "200000";
     const auto config = Compile(g);

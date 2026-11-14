@@ -1,12 +1,14 @@
 #pragma once
 
-// A compiled reinforcement learning graph (TOFIX195 S4.3): Environment ->
-// ordinary layers -> Policy Head / Value Head -> PPO. GraphCompiler fills it
-// (rl_graph_compile.cpp); the PPO run builds the two networks from it.
+// A compiled reinforcement learning graph (TOFIX195 S4.3, SAC TOFIX216):
+// Environment -> ordinary layers -> Policy Head / Value Head -> PPO, or
+// Policy Head / Q Head -> SAC. GraphCompiler fills it (rl_graph_compile.cpp);
+// the run builds the networks from it.
 
 #include "graph_compiler.h"
 #include <cyxwiz/device.h>
 #include "rl/ppo_trainer.h"
+#include "rl/sac_config.h"
 #include "../plugin/interfaces/i_environment_provider.h"
 
 #include <functional>
@@ -16,7 +18,12 @@
 
 namespace cyxwiz {
 
+// The learner node of an RL graph
+enum class RLAlgorithm { PPO, SAC };
+
 struct RLTrainingConfiguration {
+    RLAlgorithm algorithm = RLAlgorithm::PPO;
+
     // Environment
     std::string environment_key;  // "<provider>:<id>"
     std::map<std::string, std::string> environment_settings;
@@ -26,16 +33,22 @@ struct RLTrainingConfiguration {
     // The hidden layers of each network, in order from the observation
     // (the heads' output layers are added when the networks are built)
     std::vector<CompiledLayer> policy_layers;
-    std::vector<CompiledLayer> value_layers;
+    std::vector<CompiledLayer> value_layers;  // PPO
+    // SAC: the Q branch's layers, from the observation (the action joins the
+    // first layer's input); the trainer builds the twin Q networks and their
+    // targets from it
+    std::vector<CompiledLayer> q_layers;
     size_t observation_size = 0;
     size_t policy_outputs = 0;  // logits (discrete) or means (continuous)
 
     rl::PpoConfig ppo;
+    rl::SacConfig sac;
 
     int environment_node_id = -1;
     int policy_head_node_id = -1;
     int value_head_node_id = -1;
-    int ppo_node_id = -1;
+    int q_head_node_id = -1;
+    int learner_node_id = -1;  // the PPO or SAC node
 };
 
 // How the compiler finds an environment by key, as the Environment node's

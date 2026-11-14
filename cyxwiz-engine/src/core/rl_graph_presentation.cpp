@@ -1,6 +1,7 @@
 #include "rl_graph_presentation.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace cyxwiz::rl_graph {
@@ -53,8 +54,13 @@ std::vector<Fact> EnvironmentFacts(const plugin::PluginEnvironmentInfo& info) {
     return facts;
 }
 
-std::vector<Fact> PolicyHeadFacts(const plugin::PluginEnvironmentInfo& info, size_t features) {
+std::vector<Fact> PolicyHeadFacts(const plugin::PluginEnvironmentInfo& info, size_t features, bool sac) {
     const std::string from = features > 0 ? std::to_string(features) + " -> " : std::string();
+    if (sac && !info.discrete_actions)  // SB3 SAC's actor: mean and log std layers, log std clipped to [-20, 2]
+        return {{"Distribution", "Gaussian squashed by tanh, " + Plural(info.action_size, "action", "actions")},
+                {"Output layers", from + Plural(info.action_size, "mean", "means") + " and " + from +
+                                      Plural(info.action_size, "log std", "log stds") + " (added)"},
+                {"Log std", "from the state, clipped to [-20, 2]"}};
     if (info.discrete_actions)
         return {{"Distribution", "Categorical, " + Plural(info.action_count, "choice", "choices")},
                 {"Output layer", from + Plural(info.action_count, "logit", "logits") + " (added)"},
@@ -67,6 +73,26 @@ std::vector<Fact> PolicyHeadFacts(const plugin::PluginEnvironmentInfo& info, siz
 std::vector<Fact> ValueHeadFacts(size_t features) {
     return {{"Output layer", (features > 0 ? std::to_string(features) + " -> " : std::string()) + "1 (added)"},
             {"Output init gain", "1"}};
+}
+
+std::vector<Fact> QHeadFacts(size_t features, size_t actions) {
+    std::vector<Fact> facts;
+    facts.push_back({"Output layer", (features > 0 ? std::to_string(features) + " -> " : std::string()) + "1 (added)"});
+    facts.push_back({"Action", actions > 0 ? "joins the first Q layer's input (" + std::to_string(actions) +
+                                                 (actions == 1 ? " value)" : " values)")
+                                           : std::string("joins the first Q layer's input")});
+    facts.push_back({"Networks", "2 Q networks and a target copy of each (built by SAC)"});
+    return facts;
+}
+
+std::string ReplayMemoryText(uint64_t bytes) {
+    const double mb = static_cast<double>(bytes) / 1e6;  // decimal, as device memory is sold
+    if (mb >= 1000.0) return "about " + Number(std::round(mb / 100.0) / 10.0) + " GB";
+    return "about " + Number(std::max(1.0, std::round(mb))) + " MB";
+}
+
+std::string AutoTargetEntropyText(size_t actions) {
+    return "-" + std::to_string(actions) + " (minus the " + Plural(static_cast<int>(actions), "action", "actions") + ")";
 }
 
 std::map<std::string, std::string> StoredSettings(const std::map<std::string, std::string>& parameters) {
@@ -130,13 +156,13 @@ size_t UpstreamUnits(const std::vector<gui::MLNode>& nodes, const std::vector<gu
     return 0;
 }
 
-std::optional<PpoPreset> TunedPpoSettings(const std::string& environment_id) {
-    PpoPreset p;
+std::optional<TunedPreset> TunedPpoSettings(const std::string& environment_id) {
+    TunedPreset p;
     if (environment_id == "CartPole-v1") {
         // RL Zoo ppo.yml CartPole-v1 (its linear learning-rate and clip schedules as constants)
         p.source = "RL Zoo (rl-baselines3-zoo) PPO settings for CartPole-v1";
         p.environment = {{"copies", "8"}};
-        p.ppo = {{"total_timesteps", "100000"}, {"n_steps", "32"},        {"batch_size", "256"},
+        p.learner = {{"total_timesteps", "100000"}, {"n_steps", "32"},        {"batch_size", "256"},
                  {"n_epochs", "20"},           {"learning_rate", "0.001"}, {"gamma", "0.98"},
                  {"gae_lambda", "0.8"},        {"clip_range", "0.2"},     {"ent_coef", "0"},
                  {"vf_coef", "0.5"},           {"max_grad_norm", "0.5"},  {"stop_at_return", "true"},
@@ -148,7 +174,7 @@ std::optional<PpoPreset> TunedPpoSettings(const std::string& environment_id) {
     if (environment_id == "InvertedPendulum-v5") {
         p.source = "the Engine's tested InvertedPendulum settings (Stable-Baselines3 defaults otherwise)";
         p.environment = {{"copies", "4"}};
-        p.ppo = {{"total_timesteps", "300000"}, {"n_steps", "512"},        {"batch_size", "64"},
+        p.learner = {{"total_timesteps", "300000"}, {"n_steps", "512"},        {"batch_size", "64"},
                  {"n_epochs", "10"},           {"learning_rate", "0.0003"}, {"gamma", "0.999"},
                  {"gae_lambda", "0.9"},        {"clip_range", "0.2"},      {"ent_coef", "0"},
                  {"vf_coef", "0.5"},           {"max_grad_norm", "0.5"},   {"stop_at_return", "true"},
@@ -161,7 +187,7 @@ std::optional<PpoPreset> TunedPpoSettings(const std::string& environment_id) {
         // RL Zoo ppo.yml HalfCheetah-v4: normalize: true, n_envs 1, policy log_std_init -2
         p.source = "RL Zoo (rl-baselines3-zoo) PPO settings for HalfCheetah";
         p.environment = {{"copies", "1"}};
-        p.ppo = {{"total_timesteps", "1000000"}, {"n_steps", "512"},           {"batch_size", "64"},
+        p.learner = {{"total_timesteps", "1000000"}, {"n_steps", "512"},           {"batch_size", "64"},
                  {"n_epochs", "20"},            {"learning_rate", "2.0633e-05"}, {"gamma", "0.98"},
                  {"gae_lambda", "0.92"},        {"clip_range", "0.1"},          {"ent_coef", "0.000401762"},
                  {"vf_coef", "0.58096"},        {"max_grad_norm", "0.8"},       {"stop_at_return", "false"},
@@ -169,6 +195,24 @@ std::optional<PpoPreset> TunedPpoSettings(const std::string& environment_id) {
                  {"normalize_rewards", "true"}};
         p.policy_head = {{"log_std_init", "-2"}};
         p.layers_note = "RL Zoo trains it with two layers of 256 and ReLU; the preset does not change your layers.";
+        return p;
+    }
+    return std::nullopt;
+}
+
+std::optional<TunedPreset> TunedSacSettings(const std::string& environment_id) {
+    TunedPreset p;
+    if (environment_id == "HalfCheetah-v5") {
+        // RL Zoo sac.yml HalfCheetah-v4: n_timesteps 1e6, learning_starts 10000, SB3 defaults otherwise
+        p.source = "RL Zoo (rl-baselines3-zoo) SAC settings for HalfCheetah";
+        p.environment = {{"copies", "1"}};
+        p.learner = {{"total_timesteps", "1000000"}, {"buffer_size", "1000000"}, {"learning_starts", "10000"},
+                     {"batch_size", "256"},          {"learning_rate", "0.0003"}, {"gamma", "0.99"},
+                     {"tau", "0.005"},               {"train_freq", "1"},         {"gradient_steps", "1"},
+                     {"target_update_interval", "1"}, {"ent_coef_mode", "learned"}, {"ent_coef", "1.0"},
+                     {"target_entropy_mode", "auto"}, {"stop_at_return", "false"}, {"normalize_observations", "false"}};
+        p.layers_note = "RL Zoo trains it with SAC's default two layers of 256 and ReLU in the policy and the Q "
+                        "networks; the preset does not change your layers.";
         return p;
     }
     return std::nullopt;

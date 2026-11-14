@@ -6,6 +6,7 @@
 // properties_rows so it carries its truth chip and the shared look.
 #include "properties_node_editors.h"
 #include "node_editor.h"
+#include "../core/rl/sac_config.h"
 #include "../core/rl_graph_presentation.h"
 #include "../plugin/builtin/classic_control_environments.h"
 #include "../plugin/plugin_manager.h"
@@ -430,6 +431,11 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
         FactRows(cyxwiz::rl_graph::ValueHeadFacts(cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id)));
         return;
     }
+    if (node.type == NodeType::QHead) {
+        const size_t actions = known && !env.info.discrete_actions ? static_cast<size_t>(env.info.action_size) : 0;
+        FactRows(cyxwiz::rl_graph::QHeadFacts(cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id), actions));
+        return;
+    }
     if (!known) {
         properties_rows::Note(env_node ? "Its Environment is not offered by a loaded plugin."
                                        : "Connect it from an Environment's Observation through layers to see what "
@@ -437,39 +443,71 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
         return;
     }
     if (node.type == NodeType::PolicyHead) {
-        FactRows(cyxwiz::rl_graph::PolicyHeadFacts(env.info, cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id)));
+        // A SAC graph's head when it feeds a SAC node
+        const bool for_sac = std::any_of(links.begin(), links.end(), [&](const NodeLink& l) {
+            if (l.from_node != node.id) return false;
+            return std::any_of(nodes.begin(), nodes.end(),
+                               [&](const MLNode& n) { return n.id == l.to_node && n.type == NodeType::SAC; });
+        });
+        FactRows(cyxwiz::rl_graph::PolicyHeadFacts(env.info, cyxwiz::rl_graph::UpstreamUnits(nodes, links, node.id),
+                                                   for_sac));
         return;
     }
-    // PPO: its trained policy (TOFIX195 S5): play, save, load
-    const cyxwiz::ui::Tokens& tokens = cyxwiz::ui::CurrentTokens();
-    properties_rows::Label("Trained policy", false, "The policy of the last run, or one loaded from a .cyxmodel");
-    properties_rows::Value(editor.RLPolicyLine(), editor.HasRLPolicy() ? tokens.text : tokens.text_dim);
-    properties_rows::Status("");
-    properties_rows::Label("");
-    std::string why;
-    const char* load = "Load policy...";
-    if (editor.HasRLPolicy()) {
-        if (cyxwiz::ui::PrimaryButton(ICON_FA_PLAY " Play", true, nullptr, cyxwiz::ui::ButtonSize::Small)) {
-            if (!editor.PlayRLPolicy(why)) spdlog::error("Play policy: {}", why);
+    const bool sac = node.type == NodeType::SAC;
+    if (sac) {
+        // SAC: what its replay buffer takes on the training device (TOFIX216)
+        long long buffer = 0;
+        try {
+            buffer = std::stoll(ParamOr(node, "buffer_size", "1000000"));
+        } catch (...) {
+            buffer = 0;
         }
-        ImGui::SameLine();
-        if (cyxwiz::ui::SecondaryButton("Save...")) editor.SaveRLPolicy(why);
-        // Load goes under them when the cell is narrow
-        // (the cursor is at the start of the next line: its x plus the room is the cell's right edge)
-        const float load_w = cyxwiz::ui::ButtonWidth(load, cyxwiz::ui::ButtonSize::Small);
-        const float cell_right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
-        if (cell_right - (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x) >= load_w) ImGui::SameLine();
+        if (buffer > 0 && !env.info.discrete_actions) {
+            const uint64_t bytes =
+                cyxwiz::rl::ReplayBytes(buffer, static_cast<size_t>(std::max(env.info.observation_size, 0)),
+                                        static_cast<size_t>(std::max(env.info.action_size, 0)));
+            FactRows({{"Replay buffer", cyxwiz::rl_graph::ReplayMemoryText(bytes) + " on the training device"}});
+        }
+        if (!env.info.discrete_actions && ParamOr(node, "target_entropy_mode", "auto") != "typed")
+            FactRows({{"Target entropy", cyxwiz::rl_graph::AutoTargetEntropyText(
+                                             static_cast<size_t>(std::max(env.info.action_size, 0)))}});
+        if (env.info.discrete_actions)
+            properties_rows::Note("SAC learns continuous actions; this environment has a choice of actions: train it "
+                                  "with PPO.");
     }
-    if (cyxwiz::ui::SecondaryButton(load)) editor.ChooseRLPolicyForGraph(why);
-    properties_rows::Status("");
-    if (!editor.RLPolicyMessage().empty()) properties_rows::Note(editor.RLPolicyMessage().c_str());
+    // PPO: its trained policy (TOFIX195 S5): play, save, load (SAC's comes with its trainer)
+    const cyxwiz::ui::Tokens& tokens = cyxwiz::ui::CurrentTokens();
+    if (!sac) {
+        properties_rows::Label("Trained policy", false, "The policy of the last run, or one loaded from a .cyxmodel");
+        properties_rows::Value(editor.RLPolicyLine(), editor.HasRLPolicy() ? tokens.text : tokens.text_dim);
+        properties_rows::Status("");
+        properties_rows::Label("");
+        std::string why;
+        const char* load = "Load policy...";
+        if (editor.HasRLPolicy()) {
+            if (cyxwiz::ui::PrimaryButton(ICON_FA_PLAY " Play", true, nullptr, cyxwiz::ui::ButtonSize::Small)) {
+                if (!editor.PlayRLPolicy(why)) spdlog::error("Play policy: {}", why);
+            }
+            ImGui::SameLine();
+            if (cyxwiz::ui::SecondaryButton("Save...")) editor.SaveRLPolicy(why);
+            // Load goes under them when the cell is narrow
+            // (the cursor is at the start of the next line: its x plus the room is the cell's right edge)
+            const float load_w = cyxwiz::ui::ButtonWidth(load, cyxwiz::ui::ButtonSize::Small);
+            const float cell_right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+            if (cell_right - (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x) >= load_w) ImGui::SameLine();
+        }
+        if (cyxwiz::ui::SecondaryButton(load)) editor.ChooseRLPolicyForGraph(why);
+        properties_rows::Status("");
+        if (!editor.RLPolicyMessage().empty()) properties_rows::Note(editor.RLPolicyMessage().c_str());
+    }
 
-    // PPO: the tuned settings for its environment
-    const auto preset = cyxwiz::rl_graph::TunedPpoSettings(env.info.id);
+    // The tuned settings for its environment
+    const auto preset =
+        sac ? cyxwiz::rl_graph::TunedSacSettings(env.info.id) : cyxwiz::rl_graph::TunedPpoSettings(env.info.id);
     if (!preset) return;
     properties_rows::Label("Tuned for", false, "Load tuned settings for this environment");
     if (cyxwiz::ui::SecondaryButton(env.info.id.c_str())) {
-        for (const auto& [k, v] : preset->ppo) node.parameters[k] = v;
+        for (const auto& [k, v] : preset->learner) node.parameters[k] = v;
         if (MLNode* e = editor.GetNodeForConfiguration(env_node->id))
             for (const auto& [k, v] : preset->environment) e->parameters[k] = v;
         for (const auto& l : links) {
@@ -666,6 +704,7 @@ void RenderNodeProperties(MLNode& node, RenderNodePropertiesContext context) {
             break;
 
         case NodeType::ValueHead:
+        case NodeType::QHead:
             RenderRlNodeFacts(node, context);
             break;
 

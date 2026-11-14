@@ -110,6 +110,17 @@ Truth TruthFrom(const gui::properties_truth::PropertyTruth& property) {
     return t;
 }
 
+// A setting another node of the graph makes moot: a Policy Head's starting log
+// std when it feeds SAC, whose log std comes from the state (TOFIX216)
+bool MootInGraph(const Inputs& in, const gui::MLNode& node, const ParameterDefinition& param) {
+    if (node.type != gui::NodeType::PolicyHead || param.name != "log_std_init" || !in.nodes || !in.links) return false;
+    return std::any_of(in.links->begin(), in.links->end(), [&](const gui::NodeLink& l) {
+        return l.from_node == node.id && std::any_of(in.nodes->begin(), in.nodes->end(), [&](const gui::MLNode& n) {
+                   return n.id == l.to_node && n.type == gui::NodeType::SAC;
+               });
+    });
+}
+
 }  // namespace
 
 const char* ChipKindName(ChipKind kind) {
@@ -254,7 +265,7 @@ View Build(const Inputs& in) {
             return v.groups.back();
         };
         for (const auto& param : in.metadata->parameters) {
-            if (gui::properties_rules::ShouldHideGenericParameter(node, param)) continue;
+            if (gui::properties_rules::ShouldHideGenericParameter(node, param) || MootInGraph(in, node, param)) continue;
             Setting row;
             row.param = &param;
             row.key = param.name;
@@ -275,7 +286,9 @@ View Build(const Inputs& in) {
             if (a.advanced != b.advanced) return !a.advanced;
             return a.name.empty() && !b.name.empty();
         });
-        if (v.groups.empty()) v.settings_note = "Configure this node from its dialog.";
+        // Every setting hidden: the dialog has them, when the node has one (a
+        // Policy Head under SAC keeps none and has none)
+        if (v.groups.empty() && in.has_dialog) v.settings_note = "Configure this node from its dialog.";
     }
 
     // The steps inside a composite layer, sized from the node's compiled input.

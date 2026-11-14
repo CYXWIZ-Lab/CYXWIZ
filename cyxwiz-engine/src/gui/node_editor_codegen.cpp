@@ -299,9 +299,103 @@ std::string NetArch(const std::vector<cyxwiz::CompiledLayer>& layers, std::strin
     return "[" + widths + "]";
 }
 
+// The environment lines both learners' scripts share: the plugin that offers
+// it, the copies and the normalisation
+std::string RLEnvironmentCode(const cyxwiz::RLTrainingConfiguration& rl, uint64_t seed, bool norm_obs,
+                              bool norm_reward, float gamma) {
+    const size_t colon = rl.environment_key.find(':');
+    const std::string provider = colon == std::string::npos ? "" : rl.environment_key.substr(0, colon);
+    std::string plugin_dir;
+    if (const auto* loaded = cyxwiz::plugin::PluginManager::Instance().GetLoadedPlugin(provider))
+        plugin_dir = loaded->plugin_dir.string();
+    std::string settings;
+    for (const auto& [k, v] : rl.environment_settings) settings += ", " + k + "=" + PyString(v);
+
+    std::string code;
+    if (!provider.empty() && provider != "cyxwiz.builtin") {
+        code += plugin_dir.empty() ? "# Load the plugin that offers it: rl.load_plugin(<its folder>)\n"
+                                   : "rl.load_plugin(r" + PyString(plugin_dir) + ")\n";
+    }
+    code += "env = make_vec_env(lambda: rl.Env(" + PyString(rl.environment.id) + settings + "), n_envs=" +
+            std::to_string(rl.copies) + ", seed=" + std::to_string(seed) + ")\n";
+    if (norm_obs || norm_reward)
+        code += std::string("env = VecNormalize(env, norm_obs=") + (norm_obs ? "True" : "False") +
+                ", norm_reward=" + (norm_reward ? "True" : "False") + ", gamma=" + PyNumber(gamma) + ")\n";
+    return code + "\n";
+}
+
+// model.learn, stopping at the target return when one is set, then the saves
+std::string RLLearnCode(const char* prefix, const std::string& environment, int64_t total_timesteps,
+                        float target_return, bool normalized) {
+    std::string code;
+    if (!std::isnan(target_return)) {
+        code += "\nclass StopAtReturn(BaseCallback):\n";
+        code += "    \"\"\"Stop once the last 100 episodes average the target.\"\"\"\n\n";
+        code += "    def _on_step(self):\n";
+        code += "        buffer = self.model.ep_info_buffer\n";
+        code += "        return not (len(buffer) >= 100 and sum(e[\"r\"] for e in buffer) / len(buffer) >= " +
+                PyNumber(target_return) + ")\n\n\n";
+        code += "model.learn(total_timesteps=" + std::to_string(total_timesteps) + ", callback=StopAtReturn())\n";
+    } else {
+        code += "model.learn(total_timesteps=" + std::to_string(total_timesteps) + ")\n";
+    }
+    code += "model.save(" + PyString(std::string(prefix) + "_" + environment) + ")\n";
+    if (normalized)
+        code += "env.save(" + PyString(std::string(prefix) + "_" + environment + "_vecnormalize.pkl") + ")\n";
+    return code;
+}
+
+// Stable-Baselines3's SAC on the graph's environment, layers and settings
+std::string SacCode(const cyxwiz::RLTrainingConfiguration& rl) {
+    const auto& c = rl.sac;
+    std::vector<std::string> notes;
+    std::string policy_act, q_act;
+    const std::string pi = NetArch(rl.policy_layers, policy_act, notes);
+    const std::string qf = NetArch(rl.q_layers, q_act, notes);
+    if (!q_act.empty() && !policy_act.empty() && q_act != policy_act)
+        notes.push_back("the Q layers' " + q_act + " becomes " + policy_act + " (MlpPolicy has one activation)");
+    const std::string activation = policy_act.empty() ? (q_act.empty() ? "nn.Identity" : q_act) : policy_act;
+
+    std::string code;
+    code += "# SAC on " + rl.environment.id + " x " + std::to_string(rl.copies) + ", from the CyxWiz graph.\n";
+    code += "# Stable-Baselines3 on the Engine's own environments (pycyxwiz.rl): the same physics,\n";
+    code += "# layers and settings as the graph's SAC node.\n";
+    code += "# Needs numpy, gymnasium, torch and stable_baselines3 (the Engine's python-embed has them).\n\n";
+    code += "import torch.nn as nn\n";
+    code += "from stable_baselines3 import SAC\n";
+    code += "from stable_baselines3.common.callbacks import BaseCallback\n";
+    code += "from stable_baselines3.common.env_util import make_vec_env\n";
+    if (c.normalize_observations) code += "from stable_baselines3.common.vec_env import VecNormalize\n";
+    code += "from pycyxwiz import rl\n\n";
+    code += RLEnvironmentCode(rl, c.seed, c.normalize_observations, false, c.gamma);
+    for (const auto& n : notes) code += "# " + n + "\n";
+    // SB3: "auto" learns the weight from 1.0, "auto_<x>" from x; a number keeps it fixed
+    const std::string ent_coef = !c.ent_coef_auto      ? PyNumber(c.ent_coef)
+                                 : c.ent_coef == 1.0f ? std::string("\"auto\"")
+                                                      : "\"auto_" + PyNumber(c.ent_coef) + "\"";
+    code += "model = SAC(\n";
+    code += "    \"MlpPolicy\",\n    env,\n";
+    code += "    buffer_size=" + std::to_string(c.buffer_size) + ",\n";
+    code += "    learning_starts=" + std::to_string(c.learning_starts) + ",\n";
+    code += "    batch_size=" + std::to_string(c.batch_size) + ",\n";
+    code += "    learning_rate=" + PyNumber(c.learning_rate) + ",\n";
+    code += "    gamma=" + PyNumber(c.gamma) + ",\n";
+    code += "    tau=" + PyNumber(c.tau) + ",\n";
+    code += "    train_freq=" + std::to_string(c.train_freq) + ",\n";
+    code += "    gradient_steps=" + std::to_string(c.gradient_steps) + ",\n";
+    code += "    target_update_interval=" + std::to_string(c.target_update_interval) + ",\n";
+    code += "    ent_coef=" + ent_coef + ",\n";
+    code += "    target_entropy=" + (c.target_entropy_auto ? std::string("\"auto\"") : PyNumber(c.target_entropy)) +
+            ",\n";
+    code += "    policy_kwargs=dict(net_arch=dict(pi=" + pi + ", qf=" + qf + "), activation_fn=" + activation + "),\n";
+    code += "    seed=" + std::to_string(c.seed) + ",\n";
+    code += "    device=\"cpu\",\n    verbose=1,\n)\n\n";
+    return code + RLLearnCode("sac", rl.environment.id, c.total_timesteps, c.target_return, c.normalize_observations);
+}
+
 }  // namespace
 
-// Stable-Baselines3's PPO on the graph's environment (through pycyxwiz.rl,
+// Stable-Baselines3's PPO (or SAC) on the graph's environment (through pycyxwiz.rl,
 // the Engine's own physics), layers and settings: the code of the run Train
 // starts in the Engine.
 std::string NodeEditor::GenerateRLCode(const std::vector<int>& /*sorted_ids*/) const {
@@ -315,6 +409,7 @@ std::string NodeEditor::GenerateRLCode(const std::vector<int>& /*sorted_ids*/) c
         return code;
     }
     const auto& rl = *config.rl;
+    if (rl.algorithm == cyxwiz::RLAlgorithm::SAC) return SacCode(rl);
     const auto& c = rl.ppo;
     std::vector<std::string> notes;
     std::string policy_act, value_act;
@@ -323,15 +418,6 @@ std::string NodeEditor::GenerateRLCode(const std::vector<int>& /*sorted_ids*/) c
     if (!value_act.empty() && !policy_act.empty() && value_act != policy_act)
         notes.push_back("the value layers' " + value_act + " becomes " + policy_act + " (MlpPolicy has one activation)");
     const std::string activation = policy_act.empty() ? (value_act.empty() ? "nn.Identity" : value_act) : policy_act;
-
-    const size_t colon = rl.environment_key.find(':');
-    const std::string provider = colon == std::string::npos ? "" : rl.environment_key.substr(0, colon);
-    std::string plugin_dir;
-    if (const auto* loaded = cyxwiz::plugin::PluginManager::Instance().GetLoadedPlugin(provider))
-        plugin_dir = loaded->plugin_dir.string();
-
-    std::string settings;
-    for (const auto& [k, v] : rl.environment_settings) settings += ", " + k + "=" + PyString(v);
 
     std::string code;
     code += "# PPO on " + rl.environment.id + " x " + std::to_string(rl.copies) + ", from the CyxWiz graph.\n";
@@ -345,16 +431,7 @@ std::string NodeEditor::GenerateRLCode(const std::vector<int>& /*sorted_ids*/) c
     if (c.normalize_observations || c.normalize_rewards)
         code += "from stable_baselines3.common.vec_env import VecNormalize\n";
     code += "from pycyxwiz import rl\n\n";
-    if (!provider.empty() && provider != "cyxwiz.builtin") {
-        code += plugin_dir.empty() ? "# Load the plugin that offers it: rl.load_plugin(<its folder>)\n"
-                                   : "rl.load_plugin(r" + PyString(plugin_dir) + ")\n";
-    }
-    code += "env = make_vec_env(lambda: rl.Env(" + PyString(rl.environment.id) + settings + "), n_envs=" +
-            std::to_string(rl.copies) + ", seed=" + std::to_string(c.seed) + ")\n";
-    if (c.normalize_observations || c.normalize_rewards)
-        code += std::string("env = VecNormalize(env, norm_obs=") + (c.normalize_observations ? "True" : "False") +
-                ", norm_reward=" + (c.normalize_rewards ? "True" : "False") + ", gamma=" + PyNumber(c.gamma) + ")\n";
-    code += "\n";
+    code += RLEnvironmentCode(rl, c.seed, c.normalize_observations, c.normalize_rewards, c.gamma);
     for (const auto& n : notes) code += "# " + n + "\n";
     code += "model = PPO(\n";
     code += "    \"MlpPolicy\",\n    env,\n";
@@ -374,21 +451,8 @@ std::string NodeEditor::GenerateRLCode(const std::vector<int>& /*sorted_ids*/) c
             (rl.environment.discrete_actions ? std::string() : ", log_std_init=" + PyNumber(c.log_std_init)) + "),\n";
     code += "    seed=" + std::to_string(c.seed) + ",\n";
     code += "    device=\"cpu\",\n    verbose=1,\n)\n\n";
-    if (!std::isnan(c.target_return)) {
-        code += "\nclass StopAtReturn(BaseCallback):\n";
-        code += "    \"\"\"Stop once the last 100 episodes average the target.\"\"\"\n\n";
-        code += "    def _on_step(self):\n";
-        code += "        buffer = self.model.ep_info_buffer\n";
-        code += "        return not (len(buffer) >= 100 and sum(e[\"r\"] for e in buffer) / len(buffer) >= " +
-                PyNumber(c.target_return) + ")\n\n\n";
-        code += "model.learn(total_timesteps=" + std::to_string(c.total_timesteps) + ", callback=StopAtReturn())\n";
-    } else {
-        code += "model.learn(total_timesteps=" + std::to_string(c.total_timesteps) + ")\n";
-    }
-    code += "model.save(" + PyString("ppo_" + rl.environment.id) + ")\n";
-    if (c.normalize_observations || c.normalize_rewards)
-        code += "env.save(" + PyString("ppo_" + rl.environment.id + "_vecnormalize.pkl") + ")\n";
-    return code;
+    return code + RLLearnCode("ppo", rl.environment.id, c.total_timesteps, c.target_return,
+                              c.normalize_observations || c.normalize_rewards);
 }
 
 std::optional<std::string>
@@ -870,6 +934,8 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
             case NodeType::PolicyHead:
             case NodeType::ValueHead:
             case NodeType::PPO:
+            case NodeType::QHead:
+            case NodeType::SAC:
                 break;
 
             default:

@@ -111,9 +111,15 @@ int main() {
     Check(TrainState(t).enabled && TrainState(t).tooltip == "Train (F5)", "a current pass: plain tooltip");
     TrainInputs rl;
     rl.train_available = rl.graph_valid = rl.rl_graph = true;
+    rl.rl_learner = "PPO";
     train = TrainState(rl);
     Check(train.enabled && !Has(train.tooltip, "Local Debug") && Has(train.tooltip, "PPO trains the policy"),
           "an RL graph's Train tooltip says PPO trains it: " + train.tooltip);
+    rl.rl_learner = "SAC";
+    Check(Has(TrainState(rl).tooltip, "SAC trains the policy"), "a SAC graph's tooltip names SAC");
+    rl.rl_learner.clear();
+    Check(Has(TrainState(rl).tooltip, "The learner node trains the policy"),
+          "a graph without its learner yet names none");
 
     // The run's line, full and shortened.
     Check(TrainingRunText(3, 10, false, false, false) == "Epoch 3 / 10" &&

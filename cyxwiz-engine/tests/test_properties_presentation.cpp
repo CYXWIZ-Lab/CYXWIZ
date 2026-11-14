@@ -346,6 +346,27 @@ int main() {
         Check(named.graph_name == "a7_props" && named.status.empty(), "empty: file stem, no status for an empty graph");
     }
 
+    // ---- Policy Head: its log std at start is PPO's; under SAC it is hidden,
+    //      and with nothing left no dialog is promised (TOFIX216) ------------
+    {
+        NodeMetadata head_meta(gui::NodeType::PolicyHead, gui::NodeCategory::RL, "Policy Head", "P");
+        head_meta.parameters = {Param("log_std_init", "float", "0.0", "Log std at start", "Gaussian")};
+        std::vector<gui::MLNode> nodes{MakeNode(6, gui::NodeType::PolicyHead, "Policy Head"),
+                                       MakeNode(7, gui::NodeType::PPO, "PPO")};
+        std::vector<gui::NodeLink> links{{1, 6, 0, 7, 0}};
+        Inputs in;
+        in.node = &nodes[0];
+        in.metadata = &head_meta;
+        in.nodes = &nodes;
+        in.links = &links;
+        View v = Build(in);
+        Check(FindRow(v, "log_std_init") != nullptr, "a Policy Head feeding PPO offers its log std at start");
+        nodes[1].type = gui::NodeType::SAC;
+        v = Build(in);
+        Check(FindRow(v, "log_std_init") == nullptr && v.groups.empty() && v.settings_note.empty(),
+              "under SAC the log std at start is hidden and no dialog is promised: " + v.settings_note);
+    }
+
     // ---- Cache key --------------------------------------------------------------
     {
         Key a{4, 10, 2, 0, 1};

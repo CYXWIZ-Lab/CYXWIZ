@@ -99,6 +99,7 @@ bool MlpChain(const std::vector<CompiledLayer>& layers, size_t inputs, size_t ou
 
 bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType platform, int device_id) {
     if (platform == DeviceType::CPU) return false;
+    if (config.algorithm != RLAlgorithm::PPO) return false;  // SAC's networks are not predicted yet
     for (const auto* layers : {&config.policy_layers, &config.value_layers}) {
         NeuralOpRequest r;
         r.op = NeuralOp::MlpForward;
@@ -121,7 +122,8 @@ bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType pla
 
 bool IsRLGraphNode(gui::NodeType type) {
     return type == gui::NodeType::RLEnvironment || type == gui::NodeType::PolicyHead ||
-           type == gui::NodeType::ValueHead || type == gui::NodeType::PPO;
+           type == gui::NodeType::ValueHead || type == gui::NodeType::PPO || type == gui::NodeType::QHead ||
+           type == gui::NodeType::SAC;
 }
 
 TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vector<gui::MLNode>& nodes,
@@ -143,10 +145,10 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
         issue(IssueLevel::Error, message, node, code);
     };
 
-    // ---- One PPO, and nothing of a supervised graph
-    std::vector<const gui::MLNode*> ppos;
+    // ---- One learner (PPO or SAC), and nothing of a supervised graph
+    std::vector<const gui::MLNode*> learners;
     for (const auto& n : nodes) {
-        if (n.type == gui::NodeType::PPO) ppos.push_back(&n);
+        if (n.type == gui::NodeType::PPO || n.type == gui::NodeType::SAC) learners.push_back(&n);
         else if (n.type == gui::NodeType::DataInput || n.type == gui::NodeType::DatasetInput ||
                  std::any_of(n.outputs.begin(), n.outputs.end(), [](const gui::NodePin& pin) {
                      return pin.type == gui::PinType::Loss || pin.type == gui::PinType::Optimizer;
@@ -155,35 +157,42 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
                            "environment, not both",
                   &n, errors::Compiler::UnsupportedTrainingNode);
     }
-    if (ppos.size() != 1) {
-        error(ppos.empty() ? "A reinforcement learning graph needs a PPO node: connect its Policy, Environment and "
-                             "Value"
-                           : "A graph trains one policy: keep one PPO node",
-              ppos.empty() ? nullptr : ppos[1], errors::Compiler::MissingTrainingPathNode);
+    if (learners.size() != 1) {
+        error(learners.empty() ? "A reinforcement learning graph needs a learner: a PPO node (connect its Policy, "
+                                 "Environment and Value) or a SAC node (Policy, Environment and Q)"
+                               : "A graph trains one policy: keep one PPO or SAC node",
+              learners.empty() ? nullptr : learners[1], errors::Compiler::MissingTrainingPathNode);
     }
-    const gui::MLNode* ppo = ppos.empty() ? nullptr : ppos[0];
+    const gui::MLNode* learner = learners.empty() ? nullptr : learners[0];
+    const bool sac = learner && learner->type == gui::NodeType::SAC;
+    rl->algorithm = sac ? RLAlgorithm::SAC : RLAlgorithm::PPO;
+    const std::string learner_name = sac ? "SAC" : "PPO";
 
-    // ---- PPO's three inputs
+    // ---- The learner's three inputs: Policy, Environment, then Value (PPO) or Q (SAC)
     const gui::MLNode* env = nullptr;
     const gui::MLNode* policy_head = nullptr;
     const gui::MLNode* value_head = nullptr;
-    if (ppo) {
+    const gui::MLNode* q_head = nullptr;
+    if (learner) {
         const auto from = [&](size_t input, gui::NodeType want, const char* what) -> const gui::MLNode* {
-            const gui::NodeLink* l = LinkInto(links, *ppo, input);
+            const gui::NodeLink* l = LinkInto(links, *learner, input);
             const gui::MLNode* n = l ? FindNodeById(l->from_node, nodes) : nullptr;
             if (!n || n->type != want) {
-                error(std::string("Connect ") + what + " to PPO's " + ppo->inputs[input].name, ppo,
-                      errors::Compiler::MissingTrainingPathNode);
+                error(std::string("Connect ") + what + " to " + learner_name + "'s " +
+                          (input < learner->inputs.size() ? learner->inputs[input].name : std::string("inputs")),
+                      learner, errors::Compiler::MissingTrainingPathNode);
                 return nullptr;
             }
             return n;
         };
         policy_head = from(0, gui::NodeType::PolicyHead, "a Policy Head");
         env = from(1, gui::NodeType::RLEnvironment, "an Environment's Environment pin");
-        value_head = from(2, gui::NodeType::ValueHead, "a Value Head");
-        const gui::NodeLink* env_link = LinkInto(links, *ppo, 1);
+        if (sac) q_head = from(2, gui::NodeType::QHead, "a Q Head");
+        else value_head = from(2, gui::NodeType::ValueHead, "a Value Head");
+        const gui::NodeLink* env_link = LinkInto(links, *learner, 1);
         if (env && env_link && env->outputs.size() > 1 && env_link->from_pin != env->outputs[1].id) {
-            error("PPO's Environment takes the Environment's Environment pin, not its Observation", ppo);
+            error(learner_name + "'s Environment takes the Environment's Environment pin, not its Observation",
+                  learner);
             env = nullptr;
         }
     }
@@ -215,6 +224,11 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
                       : id + " comes from the plugin " + provider + ", which is not loaded: load it in Plugin Manager",
                   env, errors::Compiler::MissingTrainingPathNode);
             env = nullptr;
+        } else if (sac && rl->environment.discrete_actions) {
+            error("SAC learns continuous actions, and " + rl->environment.id +
+                      " has a choice of actions: train it with PPO",
+                  learner, errors::Compiler::UnsupportedTrainingNode);
+            env = nullptr;
         } else {
             rl->observation_size = static_cast<size_t>(rl->environment.observation_size);
             rl->policy_outputs = static_cast<size_t>(rl->environment.discrete_actions ? rl->environment.action_count
@@ -239,7 +253,9 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
             }
             if (prev->type == gui::NodeType::RLEnvironment) {
                 if (prev->id != env->id) {
-                    error(head->name + " is reached from another Environment than the one PPO trains in", head);
+                    error(head->name + " is reached from another Environment than the one " + learner_name +
+                              " trains in",
+                          head);
                     return;
                 }
                 if (prev->outputs.empty() || l->from_pin != prev->outputs[0].id) {
@@ -251,8 +267,8 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
             const bool allowed = prev->type == gui::NodeType::Dense || prev->type == gui::NodeType::LayerNorm ||
                                  prev->type == gui::NodeType::Dropout || IsActivation(prev->type);
             if (!allowed) {
-                error(prev->name + " cannot be in a policy or value network yet: use Dense, activations, Layer Norm "
-                                   "or Dropout",
+                error(prev->name + " cannot be in a policy, value or Q network yet: use Dense, activations, Layer "
+                                   "Norm or Dropout",
                       prev, errors::Compiler::UnsupportedTrainingNode);
                 return;
             }
@@ -269,27 +285,71 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
     };
     if (policy_head) rl->policy_head_node_id = policy_head->id;
     if (value_head) rl->value_head_node_id = value_head->id;
+    if (q_head) rl->q_head_node_id = q_head->id;
     chain(policy_head, rl->policy_layers);
     chain(value_head, rl->value_layers);
+    chain(q_head, rl->q_layers);
+    if (q_head && !rl->q_layers.empty() && rl->q_layers.front().type != gui::NodeType::Dense)
+        error("Start the Q layers with a Dense: the action joins the observation at its input", q_head);
 
-    // ---- PPO's settings
-    if (ppo) {
-        rl->ppo_node_id = ppo->id;
+    // ---- The learner's settings
+    const auto number = [&](const char* key, const char* fallback, double& out) {
+        const std::string text = Param(*learner, key, fallback);
+        char* end = nullptr;
+        out = std::strtod(text.c_str(), &end);
+        if (!end || *end != '\0' || !std::isfinite(out)) {
+            error(learner_name + "'s '" + std::string(key) + "' is not a number: " + text, learner,
+                  errors::Compiler::InvalidParameter);
+            return false;
+        }
+        return true;
+    };
+    // Counts clamped before the cast (a typed 1e30 is not undefined behaviour);
+    // CheckSetup refuses what is still out of range
+    const auto count = [](double x, double most) { return std::clamp(x, -1.0, most); };
+    double v = 0.0;
+    if (learner) rl->learner_node_id = learner->id;
+    if (learner && sac) {
+        auto& c = rl->sac;
+        if (number("total_timesteps", "1000000", v)) c.total_timesteps = static_cast<int64_t>(count(v, 1e15));
+        if (number("buffer_size", "1000000", v)) c.buffer_size = static_cast<int64_t>(count(v, 1e15));
+        if (number("learning_starts", "100", v)) c.learning_starts = static_cast<int64_t>(count(v, 1e15));
+        if (number("batch_size", "256", v)) c.batch_size = static_cast<int>(count(v, 1e9));
+        if (number("learning_rate", "0.0003", v)) c.learning_rate = static_cast<float>(v);
+        if (number("gamma", "0.99", v)) c.gamma = static_cast<float>(v);
+        if (number("tau", "0.005", v)) c.tau = static_cast<float>(v);
+        if (number("train_freq", "1", v)) c.train_freq = static_cast<int>(count(v, 1e9));
+        if (number("gradient_steps", "1", v)) c.gradient_steps = static_cast<int>(count(v, 1e9));
+        if (number("target_update_interval", "1", v)) c.target_update_interval = static_cast<int>(count(v, 1e9));
+        if (number("ent_coef", "1.0", v)) c.ent_coef = static_cast<float>(v);
+        if (number("seed", "1", v)) c.seed = static_cast<uint64_t>(std::max(v, 0.0));
+        c.ent_coef_auto = Param(*learner, "ent_coef_mode", "learned") != "fixed";
+        c.target_entropy_auto = Param(*learner, "target_entropy_mode", "auto") != "typed";
+        if (!c.target_entropy_auto && number("target_entropy", "-1", v)) c.target_entropy = static_cast<float>(v);
+        if (c.target_entropy_auto) c.target_entropy = -static_cast<float>(rl->policy_outputs);
+        c.normalize_observations = Param(*learner, "normalize_observations", "false") == "true";
+        if (Param(*learner, "stop_at_return", "false") == "true" && number("target_return", "4000", v))
+            c.target_return = static_cast<float>(v);
+        if (c.total_timesteps < 1 || c.buffer_size < 1 || c.learning_starts < 0 || c.batch_size < 1 ||
+            c.train_freq < 1 || c.gradient_steps < 1 || c.target_update_interval < 1)
+            error("Total steps, buffer size, batch size, train every, gradient steps and target every must each be "
+                  "at least 1, and the random steps first at least 0",
+                  learner, errors::Compiler::InvalidParameter);
+        if (!(c.learning_rate > 0.0f))
+            error("The learning rate must be above 0", learner, errors::Compiler::InvalidParameter);
+        if (!(c.gamma > 0.0f && c.gamma <= 1.0f) || !(c.tau > 0.0f && c.tau <= 1.0f))
+            error("The discount and the target update must each be in (0, 1]", learner,
+                  errors::Compiler::InvalidParameter);
+        if (!(c.ent_coef > 0.0f))
+            error("The entropy weight must be above 0", learner, errors::Compiler::InvalidParameter);
+        if (c.batch_size >= 1 && c.buffer_size >= 1 && c.batch_size > c.buffer_size)
+            error("Batch size " + std::to_string(c.batch_size) + " is larger than the replay buffer (" +
+                      std::to_string(c.buffer_size) + " steps). Lower it, or raise Buffer size",
+                  learner, errors::Compiler::InvalidParameter);
+    }
+    if (learner && !sac) {
+        const gui::MLNode* ppo = learner;
         auto& c = rl->ppo;
-        const auto number = [&](const char* key, const char* fallback, double& out) {
-            const std::string text = Param(*ppo, key, fallback);
-            char* end = nullptr;
-            out = std::strtod(text.c_str(), &end);
-            if (!end || *end != '\0' || !std::isfinite(out)) {
-                error("PPO's '" + std::string(key) + "' is not a number: " + text, ppo, errors::Compiler::InvalidParameter);
-                return false;
-            }
-            return true;
-        };
-        double v = 0.0;
-        // Counts clamped before the cast (a typed 1e30 is not undefined behaviour);
-        // CheckSetup refuses what is still out of range
-        const auto count = [](double x, double most) { return std::clamp(x, -1.0, most); };
         if (number("total_timesteps", "100000", v)) c.total_timesteps = static_cast<int64_t>(count(v, 1e15));
         if (number("n_steps", "2048", v)) c.n_steps = static_cast<int>(count(v, 1e9));
         if (number("batch_size", "64", v)) c.batch_size = static_cast<int>(count(v, 1e9));
@@ -336,8 +396,8 @@ TrainingConfiguration GraphCompiler::CompileReinforcementLearning(const std::vec
     for (const auto& n : nodes) {
         if (!IsRLGraphNode(n.type)) continue;
         if (n.id != rl->environment_node_id && n.id != rl->policy_head_node_id && n.id != rl->value_head_node_id &&
-            n.id != rl->ppo_node_id)
-            issue(IssueLevel::Warning, n.name + " is not connected to the PPO that trains", &n,
+            n.id != rl->q_head_node_id && n.id != rl->learner_node_id)
+            issue(IssueLevel::Warning, n.name + " is not connected to the " + learner_name + " that trains", &n,
                   errors::Compiler::InvalidConnectivity);
     }
 

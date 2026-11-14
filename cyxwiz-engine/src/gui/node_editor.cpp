@@ -2264,7 +2264,8 @@ void NodeEditor::RenderNodes() {
                 }
                 break;
             }
-            case NodeType::PPO: {
+            case NodeType::PPO:
+            case NodeType::SAC: {  // TOFIX216
                 const auto steps = node.parameters.find("total_timesteps");
                 if (steps != node.parameters.end()) ImGui::TextColored(t.accent_text, "%s steps", steps->second.c_str());
                 break;
@@ -4232,6 +4233,10 @@ void NodeEditor::RunSimulationCommand(cyxwiz::simulation::Command command) {
 bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfiguration> config, std::string& error) {
     if (!config) {
         error = "The graph is not a compiled RL graph.";
+        return false;
+    }
+    if (config->algorithm != cyxwiz::RLAlgorithm::PPO) {  // TOFIX216 S4 adds SAC's trainer
+        error = "SAC compiles, but the Engine cannot train it yet; train this environment with PPO for now";
         return false;
     }
     if (!rl_run_) rl_run_ = std::make_unique<cyxwiz::rl::RLTrainingRun>();

@@ -4028,8 +4028,11 @@ void MainWindow::StartTrainingFromGraph(const std::vector<MLNode>& nodes, const 
                 return;
             }
             std::string error;
-            if (!node_editor_ || !node_editor_->StartRLTraining(compile_result_rl_, error))
-                spdlog::error("Train: {}", error.empty() ? "the node editor is not available" : error);
+            if (!node_editor_ || !node_editor_->StartRLTraining(compile_result_rl_, error)) {
+                if (error.empty()) error = "the node editor is not available";
+                spdlog::error("Train: {}", error);
+                ShowCompileReport(cyxwiz::compile_report::Mode::TrainBlocked, error);
+            }
             return;
         }
 
@@ -5695,7 +5698,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
         // Launch readiness (data columns, device qualification, row limits):
         // reported by Compile, and therefore also before Train starts.
         // An RL graph on a GPU route with small networks: advice, never a switch (TOFIX206)
-        if (config.is_valid && config.rl) {
+        if (config.is_valid && config.rl && config.rl->algorithm == cyxwiz::RLAlgorithm::PPO) {
             const auto route = cyxwiz::PreviewRequestedRouteTrainingReadiness();
             const std::string advice = route.route_available
                 ? cyxwiz::rl_device::CompileAdvice(
@@ -5706,7 +5709,7 @@ void MainWindow::BuildCompileResult(const std::vector<MLNode>& nodes,
             if (!advice.empty()) {
                 cyxwiz::ValidationIssue issue;
                 issue.level = cyxwiz::IssueLevel::Info;
-                issue.node_id = config.rl->ppo_node_id;
+                issue.node_id = config.rl->learner_node_id;
                 issue.node_name = "PPO";
                 issue.message = advice;
                 compile_result_issues_.push_back(std::move(issue));

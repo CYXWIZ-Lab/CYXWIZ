@@ -4672,13 +4672,15 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         "N copies of an environment to train in",
         "Picks an environment from the ones the Engine and the loaded plugins offer (CartPole-v1 is built in; "
         "the MuJoCo Simulation plugin adds InvertedPendulum-v5 and HalfCheetah-v5) and steps several copies "
-        "side by side. Its observation feeds the policy and value layers; its Environment pin goes to PPO. "
+        "side by side. Its observation feeds the policy and value (or Q) layers; its Environment pin goes to the "
+        "learner, PPO or SAC. "
         "The environment's own settings come from its plugin.",
         "Environment -> Dense -> Tanh -> Dense -> Tanh -> Policy Head -> PPO",
         {},
         {{"Observation", PinType::Tensor, true,
           "What each copy observes, [copies, observation size]: connect it to the first policy and value layers."},
-         {"Environment", PinType::Environment, true, "The copies themselves: connect it to PPO's Environment."}},
+         {"Environment", PinType::Environment, true,
+          "The copies themselves: connect it to the Environment of PPO or SAC."}},
         {{"environment", "string", "cyxwiz.builtin:CartPole-v1",
           "The environment, as <provider>:<id> (the built-in ones are cyxwiz.builtin)", {}, "",
           "Environment", "Environment", true},
@@ -4691,11 +4693,12 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         "Ends the policy layers: the output layer and the action distribution",
         "Adds the output layer sized from the environment: one logit per choice (categorical) for discrete "
         "actions, one mean per action (Gaussian, with one learned log standard deviation per action) for "
-        "continuous ones. Its weights start orthogonal with gain 0.01, as Stable-Baselines3 does. Do not put "
-        "a Softmax before it.",
+        "continuous ones. Its weights start orthogonal with gain 0.01, as Stable-Baselines3 does. Under SAC it "
+        "is a Gaussian squashed by tanh: a mean and a log standard deviation per action, both from the state "
+        "(Log std at start is PPO's only). Do not put a Softmax before it.",
         "Environment -> Dense -> Tanh -> Dense -> Tanh -> Policy Head -> PPO",
         {{"Features", PinType::Tensor, true, "The last policy layer's output (reached from the Environment's Observation)."}},
-        {{"Policy", PinType::Tensor, true, "The policy: connect it to PPO's Policy."}},
+        {{"Policy", PinType::Tensor, true, "The policy: connect it to the Policy of PPO or SAC."}},
         {{"log_std_init", "float", "0.0",
           "Starting log standard deviation of every action (continuous actions only)", {}, "",
           "Log std at start", "Gaussian"}},
@@ -4759,6 +4762,77 @@ void NodeMetadataRegistry::InitializeRLNodes() {
           "Rewards scaled by the running deviation of the return, as VecNormalize (norm_reward)", {}, "", "Rewards",
           "Normalise"}},
         NodeImplementationStatus::Implemented, 0});
+
+    // TOFIX216: a SAC graph is Environment -> ordinary layers -> Policy Head /
+    // Q Head -> SAC. Template until the Engine's SAC trainer runs it.
+    RegisterNode({NodeType::QHead, NodeCategory::RL, "Q Head", ICON_FA_SCALE_BALANCED,
+        {"q", "critic", "head", "rl", "sac", "td3", "twin"}, 0, false,
+        "Ends the Q layers: one output, the value of an action in a state",
+        "Adds a one-output layer that estimates the return of taking an action in a state. The action joins the "
+        "first Q layer's input (observation and action side by side), and SAC builds two Q networks of this "
+        "shape plus a slowly following target copy of each, as Stable-Baselines3's SAC does.",
+        "Environment -> Dense -> ReLU -> Dense -> ReLU -> Q Head -> SAC",
+        {{"Features", PinType::Tensor, true, "The last Q layer's output (reached from the Environment's Observation)."}},
+        {{"Q", PinType::Tensor, true, "The Q estimate: connect it to SAC's Q."}},
+        {},
+        NodeImplementationStatus::Template, 0});
+
+    ParameterDefinition ent_coef_mode{"ent_coef_mode", "enum", "learned",
+        "Learned: the entropy weight is tuned toward the target entropy (ent_coef=\"auto\"); Fixed: it stays at "
+        "Weight", {"learned", "fixed"}, "", "Entropy weight", "Exploration (entropy)"};
+    ent_coef_mode.enum_labels = {"Learned", "Fixed"};
+    ParameterDefinition target_entropy_mode{"target_entropy_mode", "enum", "auto",
+        "Minus the actions (target_entropy=\"auto\"), or a number you type", {"auto", "typed"}, "",
+        "Target entropy", "Exploration (entropy)"};
+    target_entropy_mode.enum_labels = {"Minus the actions", "Typed"};
+    RegisterNode({NodeType::SAC, NodeCategory::RL, "SAC", ICON_FA_ARROWS_ROTATE,
+        {"sac", "soft", "actor", "critic", "off-policy", "replay", "reinforcement", "rl", "training"}, 0, false,
+        "Soft Actor-Critic: trains the policy and twin Q networks from a replay buffer",
+        "Stable-Baselines3's SAC for continuous actions: keeps the last steps in a replay buffer on the training "
+        "device, and after the random steps first updates the twin Q networks, the policy (a tanh-squashed "
+        "Gaussian) and the entropy weight from minibatches drawn from it, with Polyak-averaged target Q networks. "
+        "The defaults are SB3's; Tuned for loads RL Zoo's values for the environment.",
+        "Environment -> ... -> Policy Head / Q Head -> SAC",
+        {{"Policy", PinType::Tensor, true, "From the Policy Head."},
+         {"Environment", PinType::Environment, true, "From the Environment's Environment pin."},
+         {"Q", PinType::Tensor, true, "From the Q Head."}},
+        {{"Trained policy", PinType::Parameters, true, "The trained policy and Q networks."}},
+        {{"total_timesteps", "int", "1000000", "Environment steps to train for, over all copies (total_timesteps)", {},
+          "1-1000000000", "Total steps", "Run", true},
+         {"stop_at_return", "bool", "false", "Stop early once the last 100 episodes average the target", {}, "",
+          "Stop at a mean return", "Run"},
+         {"target_return", "float", "4000", "Mean return of the last 100 episodes that stops the run", {}, "",
+          "Target return", "Run"},
+         {"seed", "int", "1", "Seeds the copies, the network weights, the actions and the minibatches (seed)", {},
+          "0-2147483647", "Seed", "Run"},
+         {"buffer_size", "int", "1000000", "Steps the replay buffer keeps on the training device (buffer_size)", {},
+          "1-100000000", "Buffer size", "Replay buffer", true},
+         {"learning_starts", "int", "100", "Steps of uniform random actions before learning starts (learning_starts)",
+          {}, "0-1000000000", "Random steps first", "Replay buffer", true},
+         {"batch_size", "int", "256", "Steps in one minibatch drawn from the buffer (batch_size)", {}, "1-1000000",
+          "Batch size", "Updates", true},
+         {"learning_rate", "float", "0.0003",
+          "Adam's learning rate for the policy, the Q networks and the entropy weight (learning_rate)", {}, "",
+          "Learning rate", "Updates", true},
+         {"gamma", "float", "0.99", "Discount of future rewards (gamma)", {}, "0-1", "Discount", "Updates"},
+         {"tau", "float", "0.005", "How far the target Q networks move toward the Q networks each time (tau)", {},
+          "0-1", "Target update", "Updates"},
+         {"train_freq", "int", "1", "Environment steps between updates (train_freq)", {}, "1-1000000", "Train every",
+          "Updates"},
+         {"gradient_steps", "int", "1", "Gradient steps each time it trains (gradient_steps)", {}, "1-1000000",
+          "Gradient steps", "Updates"},
+         {"target_update_interval", "int", "1", "Gradient steps between target updates (target_update_interval)", {},
+          "1-1000000", "Target every", "Updates"},
+         ent_coef_mode,
+         {"ent_coef", "float", "1.0", "The entropy weight's start when learned, else its fixed value (ent_coef)", {},
+          "", "Weight", "Exploration (entropy)"},
+         target_entropy_mode,
+         {"target_entropy", "float", "-1", "The entropy the learned weight aims for, when typed (target_entropy)", {},
+          "", "Target", "Exploration (entropy)"},
+         {"normalize_observations", "bool", "false",
+          "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
+          "Normalise"}},
+        NodeImplementationStatus::Template, 0});
 }
 
 // =============================================================================

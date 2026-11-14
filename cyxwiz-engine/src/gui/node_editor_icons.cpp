@@ -300,8 +300,10 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
                 return ICON_TI_FOCUS_2;
             case NodeType::PolicyHead:
             case NodeType::ValueHead:
+            case NodeType::QHead:
                 return ICON_TI_BRAIN;
             case NodeType::PPO:
+            case NodeType::SAC:
                 return ICON_TI_SCAN;
 
             // Smart I/O Nodes
@@ -518,6 +520,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::DNNModelLoad:
             case NodeType::PolicyHead:
             case NodeType::ValueHead:
+            case NodeType::QHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -740,6 +743,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
             case NodeType::PPO:
+            case NodeType::SAC:
                 return ICON_RI_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -883,6 +887,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::DNNModelLoad:
             case NodeType::PolicyHead:
             case NodeType::ValueHead:
+            case NodeType::QHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -1098,6 +1103,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
             case NodeType::PPO:
+            case NodeType::SAC:
                 return ICON_LU_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -1209,6 +1215,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::DNNModelLoad:
             case NodeType::PolicyHead:
             case NodeType::ValueHead:
+            case NodeType::QHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -1424,6 +1431,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
             case NodeType::PPO:
+            case NodeType::SAC:
                 return ICON_IO_SEARCH;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -1535,6 +1543,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::DNNModelLoad:
             case NodeType::PolicyHead:
             case NodeType::ValueHead:
+            case NodeType::QHead:
             case NodeType::PretrainedYOLO:
             case NodeType::PretrainedMobileNet:
             case NodeType::PretrainedOpenPose:
@@ -1750,6 +1759,7 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             case NodeType::DNNDetect:
             case NodeType::DNNFaceDetect:
             case NodeType::PPO:
+            case NodeType::SAC:
                 return ICON_PH_MAGNIFYING_GLASS;
             case NodeType::DNNClassify:
             case NodeType::LabelEncoder:
@@ -2083,8 +2093,10 @@ const char* NodeIconFor(IconPack pack, NodeType type) {
             return ICON_FA_BULLSEYE;
         case NodeType::PolicyHead:
         case NodeType::ValueHead:
+        case NodeType::QHead:
             return ICON_FA_BRAIN;
         case NodeType::PPO:
+        case NodeType::SAC:
             return ICON_FA_CROSSHAIRS;
 
         // Smart I/O Nodes

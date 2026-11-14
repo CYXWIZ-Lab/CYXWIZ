@@ -5,7 +5,10 @@
 // reached, a minibatch larger than the rollout, a Softmax before the Policy
 // Head, data nodes mixed in, the wrong Environment pin, a layer the networks
 // cannot use). Also the Properties presentation (facts, heads, presets) and
-// the SB3 reference lookup of the RL Training Dashboard.
+// the SB3 reference lookup of the RL Training Dashboard. SAC (TOFIX216): the
+// same shape with a Q Head, its settings, its refusals (a choice of actions,
+// a batch larger than the buffer, a Q branch not starting with a Dense, two
+// learners) and its presentation (Q Head facts, replay memory, the preset).
 
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_node_factory.h"
@@ -102,7 +105,7 @@ void CheckValid() {
     Check(rl.ppo.n_steps == 2048 && rl.ppo.batch_size == 64 && rl.ppo.n_epochs == 10 && rl.ppo.gamma == 0.99f &&
               rl.ppo.loss.clip_range == 0.2f && !rl.ppo.normalize_observations && std::isnan(rl.ppo.target_return),
           "PPO's defaults are Stable-Baselines3's");
-    Check(rl.ppo_node_id == id.ppo && rl.policy_head_node_id == id.phead && rl.value_head_node_id == id.vhead &&
+    Check(rl.learner_node_id == id.ppo && rl.policy_head_node_id == id.phead && rl.value_head_node_id == id.vhead &&
               rl.environment_node_id == id.env,
           "the node ids are kept");
 
@@ -110,7 +113,7 @@ void CheckValid() {
     const auto preset = cyxwiz::rl_graph::TunedPpoSettings("CartPole-v1");
     Check(preset.has_value(), "CartPole-v1 has tuned settings");
     if (!preset) return;
-    for (const auto& [k, v] : preset->ppo) g.At(id.ppo).parameters[k] = v;
+    for (const auto& [k, v] : preset->learner) g.At(id.ppo).parameters[k] = v;
     for (const auto& [k, v] : preset->environment) g.At(id.env).parameters[k] = v;
     g.At(id.env).parameters[std::string(cyxwiz::rl_graph::kSettingPrefix) + "max_episode_steps"] = "300";
     const auto tuned = Compile(g);
@@ -182,7 +185,7 @@ void CheckErrors() {
         g.Link(id.v1, conv);
         g.Link(conv, id.va1);
         const auto config = Compile(g);
-        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "cannot be in a policy or value network"),
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "cannot be in a policy, value or Q network"),
               "a Conv2D in the value network is refused:" + Issues(config));
     }
     {
@@ -234,7 +237,7 @@ void CheckPresentation() {
     Check(UpstreamUnits(g.nodes, g.links, id.phead) == 64 && UpstreamUnits(g.nodes, g.links, id.vhead) == 64,
           "the heads see 64 features");
     Check(TunedPpoSettings("HalfCheetah-v5").has_value() &&
-              TunedPpoSettings("HalfCheetah-v5")->ppo.at("normalize_observations") == "true" &&
+              TunedPpoSettings("HalfCheetah-v5")->learner.at("normalize_observations") == "true" &&
               TunedPpoSettings("HalfCheetah-v5")->policy_head.at("log_std_init") == "-2" &&
               TunedPpoSettings("InvertedPendulum-v5").has_value() && !TunedPpoSettings("Nope-v0").has_value(),
           "tuned settings for the three gate tasks only");
@@ -290,11 +293,145 @@ void CheckReference() {
           "a run normalising only the observations has none");
 }
 
+void CheckSac() {
+    using namespace cyxwiz::rl_graph;
+    const std::string pendulum_key = "test.continuous:InvertedPendulum-v5";
+    Ids id{};
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::SAC);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        g.At(id.env).parameters["copies"] = "1";
+        Check(cyxwiz::HasTrainingGraphStructure(g.nodes), "the toolbar lets Train start a SAC graph");
+        const auto config = Compile(g);
+        Check(config.is_valid && config.rl, "the SAC pattern compiles:" + Issues(config));
+        if (!config.rl) return;
+        const auto& rl = *config.rl;
+        const std::vector<NodeType> mlp = {NodeType::Dense, NodeType::ReLU, NodeType::Dense, NodeType::ReLU};
+        std::vector<NodeType> q;
+        for (const auto& l : rl.q_layers) q.push_back(l.type);
+        Check(rl.algorithm == cyxwiz::RLAlgorithm::SAC && q == mlp && rl.value_layers.empty() &&
+                  rl.policy_layers.size() == 4 && rl.policy_outputs == 1,
+              "SAC: a policy chain, a Q chain, no value chain, 1 action");
+        Check(rl.learner_node_id == id.ppo && rl.q_head_node_id == id.vhead && rl.value_head_node_id == -1,
+              "the SAC and Q Head ids are kept");
+        const auto& c = rl.sac;
+        Check(c.total_timesteps == 1000000 && c.buffer_size == 1000000 && c.learning_starts == 100 &&
+                  c.batch_size == 256 && c.learning_rate == 3e-4f && c.gamma == 0.99f && c.tau == 0.005f &&
+                  c.train_freq == 1 && c.gradient_steps == 1 && c.target_update_interval == 1 && c.ent_coef_auto &&
+                  c.ent_coef == 1.0f && c.target_entropy_auto && c.target_entropy == -1.0f &&
+                  !c.normalize_observations && std::isnan(c.target_return),
+              "SAC's defaults are Stable-Baselines3's, the target entropy minus the actions");
+        Check(!cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CUDA, 0), "no fused prediction for SAC");
+
+        g.At(id.ppo).parameters["ent_coef_mode"] = "fixed";
+        g.At(id.ppo).parameters["ent_coef"] = "0.2";
+        g.At(id.ppo).parameters["target_entropy_mode"] = "typed";
+        g.At(id.ppo).parameters["target_entropy"] = "-3";
+        g.At(id.ppo).parameters["stop_at_return"] = "true";
+        g.At(id.ppo).parameters["target_return"] = "950";
+        const auto fixed = Compile(g);
+        Check(fixed.rl && !fixed.rl->sac.ent_coef_auto && fixed.rl->sac.ent_coef == 0.2f &&
+                  !fixed.rl->sac.target_entropy_auto && fixed.rl->sac.target_entropy == -3.0f &&
+                  fixed.rl->sac.target_return == 950.0f,
+              "a fixed entropy weight, a typed target entropy and a target return are read");
+    }
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::SAC);  // CartPole: a choice of actions
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "SAC learns continuous actions"),
+              "SAC on a choice of actions is refused:" + Issues(config));
+    }
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::SAC);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        g.Unlink(id.vhead, id.ppo);
+        g.Unlink(id.va2, id.vhead);
+        const int value = g.Add(NodeType::ValueHead, "Value Head");
+        g.Link(id.va2, value);
+        g.Link(value, id.ppo, 0, 2);
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "Connect a Q Head to SAC's Q"),
+              "a Value Head into SAC's Q is refused:" + Issues(config));
+    }
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::SAC);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        g.At(id.ppo).parameters["buffer_size"] = "100";
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error,
+                                           "Batch size 256 is larger than the replay buffer (100 steps)"),
+              "a batch larger than the buffer is refused:" + Issues(config));
+    }
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::SAC);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        g.Unlink(id.env, id.v1);
+        const int norm = g.Add(NodeType::LayerNorm, "Layer Norm");
+        g.Link(id.env, norm);
+        g.Link(norm, id.v1);
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "Start the Q layers with a Dense"),
+              "a Q branch not starting with a Dense is refused:" + Issues(config));
+    }
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::SAC);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        g.At(id.ppo).parameters["tau"] = "0";
+        g.At(id.ppo).parameters["learning_starts"] = "-5";
+        const auto config = Compile(g);
+        Check(!config.is_valid &&
+                  HasIssue(config, cyxwiz::IssueLevel::Error,
+                           "The discount and the target update must each be in (0, 1]") &&
+                  HasIssue(config, cyxwiz::IssueLevel::Error, "the random steps first at least 0"),
+              "a target update of 0 and negative random steps are refused:" + Issues(config));
+    }
+    {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::SAC);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        g.Add(NodeType::PPO, "PPO");
+        const auto config = Compile(g);
+        Check(!config.is_valid && HasIssue(config, cyxwiz::IssueLevel::Error, "keep one PPO or SAC node"),
+              "two learners are refused:" + Issues(config));
+    }
+
+    // Presentation
+    const auto q = QHeadFacts(256, 6);
+    Check(q.size() == 3 && q[0].value == "256 -> 1 (added)" && q[1].value.find("6 values") != std::string::npos,
+          "the Q Head adds 256 -> 1 and takes the 6 actions at the first Q layer");
+    const auto squashed = PolicyHeadFacts(Pendulum(), 256, true);
+    Check(squashed.size() == 3 && squashed[0].value == "Gaussian squashed by tanh, 1 action" &&
+              squashed[1].value == "256 -> 1 mean and 256 -> 1 log std (added)",
+          "a SAC Policy Head adds a mean and a log std per action");
+    Check(ReplayMemoryText(cyxwiz::rl::ReplayBytes(1000000, 17, 6)) == "about 168 MB" &&
+              ReplayMemoryText(cyxwiz::rl::ReplayBytes(10000000, 17, 6)) == "about 1.7 GB" &&
+              cyxwiz::rl::ReplayBytes(0, 17, 6) == 0,
+          "HalfCheetah's replay buffer of 1M steps is about 168 MB");
+    Check(AutoTargetEntropyText(6) == "-6 (minus the 6 actions)" &&
+              AutoTargetEntropyText(1) == "-1 (minus the 1 action)",
+          "the automatic target entropy reads as minus the actions");
+    const auto preset = TunedSacSettings("HalfCheetah-v5");
+    Check(preset && preset->learner.at("learning_starts") == "10000" && preset->environment.at("copies") == "1" &&
+              !TunedSacSettings("InvertedPendulum-v5") && !TunedSacSettings("CartPole-v1"),
+          "SAC is tuned for HalfCheetah only (RL Zoo)");
+    if (preset) {
+        Graph g = Pattern(id, 256, NodeType::ReLU, NodeType::SAC);
+        g.At(id.env).parameters["environment"] = pendulum_key;
+        for (const auto& [k, v] : preset->learner) g.At(id.ppo).parameters[k] = v;
+        const auto config = Compile(g);
+        Check(config.rl && config.rl->sac.learning_starts == 10000 && config.rl->sac.buffer_size == 1000000,
+              "the HalfCheetah preset's values compile:" + Issues(config));
+    }
+}
+
 }  // namespace
 
 int main() {
     cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>&,
                                       cyxwiz::plugin::PluginEnvironmentInfo& info, std::string&) {
+        if (key == "test.continuous:InvertedPendulum-v5") {
+            info = Pendulum();
+            return true;
+        }
         if (key != "cyxwiz.builtin:CartPole-v1") return false;
         info = CartPole();
         return true;
@@ -303,6 +440,7 @@ int main() {
     CheckErrors();
     CheckPresentation();
     CheckReference();
+    CheckSac();
     if (failures == 0) std::printf("test_rl_graph_compile: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

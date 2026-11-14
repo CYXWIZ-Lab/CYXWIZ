@@ -190,31 +190,45 @@ CompiledNodeCard BuildCompiledNodeCard(const std::vector<gui::MLNode>& nodes,
         };
         const int policy_index = in_chain(rl.policy_layers);
         const int value_index = in_chain(rl.value_layers);
+        const int q_index = in_chain(rl.q_layers);
+        const bool sac = rl.algorithm == RLAlgorithm::SAC;
+        const std::string learner = sac ? "SAC" : "PPO";
         const std::string inputs_text = std::to_string(rl.observation_size) + " observation values";
         if (node_id == rl.environment_node_id) {
-            card.role = "The environment PPO trains in: " + rl.environment.id + " x " + std::to_string(rl.copies);
+            card.role = "The environment " + learner + " trains in: " + rl.environment.id + " x " +
+                        std::to_string(rl.copies);
         } else if (node_id == rl.policy_head_node_id) {
             card.role = "Ends the policy network: " + std::to_string(rl.policy_outputs) +
-                        (rl.environment.discrete_actions ? " logits" : " action means");
+                        (rl.environment.discrete_actions ? " logits"
+                         : sac                           ? " action means and log standard deviations, tanh-squashed"
+                                                         : " action means");
         } else if (node_id == rl.value_head_node_id) {
             card.role = "Ends the value network: 1 value";
-        } else if (node_id == rl.ppo_node_id) {
-            card.role = "Trains both networks";
+        } else if (node_id == rl.q_head_node_id) {
+            card.role = "Ends the Q network: 1 value of an action (twin networks and their targets built from it)";
+        } else if (node_id == rl.learner_node_id) {
+            card.role = sac ? "Trains the policy and the twin Q networks from a replay buffer" : "Trains both networks";
         } else if (policy_index >= 0) {
             card.role = "Layer " + std::to_string(policy_index + 1) + " of " + std::to_string(rl.policy_layers.size()) +
                         " of the policy network";
         } else if (value_index >= 0) {
             card.role = "Layer " + std::to_string(value_index + 1) + " of " + std::to_string(rl.value_layers.size()) +
                         " of the value network";
+        } else if (q_index >= 0) {
+            card.role = "Layer " + std::to_string(q_index + 1) + " of " + std::to_string(rl.q_layers.size()) +
+                        " of the Q network";
         } else {
             card.role = "Not part of the RL training";
         }
-        card.status_note = "Compiled for PPO on " + rl.environment.id + " x " + std::to_string(rl.copies) +
+        card.status_note = "Compiled for " + learner + " on " + rl.environment.id + " x " + std::to_string(rl.copies) +
                            "; the networks are built when Train starts.";
-        card.no_shapes_text = "Each network takes the " + inputs_text + " of a copy; the policy gives " +
-                              std::to_string(rl.policy_outputs) +
-                              (rl.environment.discrete_actions ? " logits" : " action means") +
-                              ", the value network 1 value.";
+        card.no_shapes_text =
+            sac ? "The policy takes the " + inputs_text + " of a copy and gives " + std::to_string(rl.policy_outputs) +
+                      " actions; each Q network takes them with the " + std::to_string(rl.policy_outputs) +
+                      " action values and gives 1 value."
+                : "Each network takes the " + inputs_text + " of a copy; the policy gives " +
+                      std::to_string(rl.policy_outputs) +
+                      (rl.environment.discrete_actions ? " logits" : " action means") + ", the value network 1 value.";
         return card;
     }
 
