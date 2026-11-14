@@ -247,9 +247,31 @@ void NodeBrowserPanel::Render() {
                 results.erase(std::remove_if(results.begin(), results.end(),
                                              [&](const cyxwiz::NodeMetadata* m) { return rank(m) == 3; }),
                               results.end());
+                // The registry's order (exact name, name start, use) within each place.
                 std::stable_sort(results.begin(), results.end(),
                                  [&](const cyxwiz::NodeMetadata* a, const cyxwiz::NodeMetadata* b) { return rank(a) < rank(b); });
             }
+            // Nodes named by the query first; nodes that only mention it (a
+            // keyword or the description: "dropout" found Dashboard first) come
+            // after, under a line.
+            const auto lower = [](std::string text) {
+                std::transform(text.begin(), text.end(), text.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                return text;
+            };
+            const std::string query = lower(search_query_);
+            const auto named = std::stable_partition(results.begin(), results.end(), [&](const cyxwiz::NodeMetadata* m) {
+                return lower(m->name).find(query) != std::string::npos;
+            });
+            std::vector<const cyxwiz::NodeMetadata*> related(named, results.end());
+            results.erase(named, results.end());
+            // The whole name, then the name's start, before the place order.
+            const auto strength = [&](const cyxwiz::NodeMetadata* m) {
+                const std::string name = lower(m->name);
+                return name == query ? 2 : name.rfind(query, 0) == 0 ? 1 : 0;
+            };
+            std::stable_sort(results.begin(), results.end(),
+                             [&](const cyxwiz::NodeMetadata* a, const cyxwiz::NodeMetadata* b) { return strength(a) > strength(b); });
             results.erase(std::remove_if(results.begin(), results.end(),
                                          [](const cyxwiz::NodeMetadata* m) {
                                              return m->type == cyxwiz::NodeType::PluginCustom;
@@ -264,11 +286,16 @@ void NodeBrowserPanel::Render() {
                     }
                 }
             }
-            if (results.empty() && extension_results.empty()) {
+            if (results.empty() && extension_results.empty() && related.empty()) {
                 ImGui::TextDisabled("No nodes found matching '%s'", search_query_.c_str());
             } else {
                 RenderNodeGrid(results);
                 RenderExtensionGrid(extension_results);
+                if (!related.empty()) {
+                    if (!results.empty() || !extension_results.empty()) ImGui::Spacing();
+                    SectionTitle("Related");
+                    RenderNodeGrid(related);
+                }
             }
         } else if (showing_all_in_category_ &&
                    current_category_ == cyxwiz::NodeCategory::Plugin) {
