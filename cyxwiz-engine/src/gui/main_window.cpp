@@ -756,11 +756,13 @@ MainWindow::MainWindow()
     }
     // A node clicked on the canvas is kept in the Info panel too.
     if (node_editor_ && node_info_panel_) {
-        node_editor_->SetNodeSelectedCallback([this](const gui::MLNode& node) {
-            if (node.type == gui::NodeType::PluginCustom && !node.extension_type_id.empty())
-                node_info_panel_->SetSelectedExtension(node.extension_type_id);
+        node_editor_->SetNodeSelectedCallback([this](const gui::MLNode* node) {
+            if (!node)
+                node_info_panel_->CanvasNodeRemoved();
+            else if (node->type == gui::NodeType::PluginCustom && !node->extension_type_id.empty())
+                node_info_panel_->ShowCanvasExtension(node->extension_type_id);
             else
-                node_info_panel_->SetSelectedNode(node.type);
+                node_info_panel_->ShowCanvasNode(node->type);
         });
     }
     cloud_dataset_manager_panel_ = std::make_unique<gui::CloudDatasetManagerPanel>();

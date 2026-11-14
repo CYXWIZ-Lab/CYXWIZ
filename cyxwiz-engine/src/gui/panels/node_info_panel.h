@@ -53,6 +53,15 @@ public:
     void PreviewExtension(const std::string& type_id);
 
     /**
+     * A node selected on the canvas: shown like a click in the Nodes panel,
+     * and cleared by CanvasNodeRemoved when that node is gone (deleted,
+     * undone). A click in the Nodes panel since then is kept.
+     */
+    void ShowCanvasNode(NodeType type);
+    void ShowCanvasExtension(const std::string& type_id);
+    void CanvasNodeRemoved();
+
+    /**
      * Clear the current selection (show placeholder)
      */
     void ClearSelection();
@@ -103,6 +112,7 @@ private:
     std::optional<ExtensionView> preview_extension_;
     int preview_extension_frame_ = -10;
     const ExtensionInfoFacts* facts_ = nullptr;  // this frame's, when an extension node is shown
+    bool from_canvas_ = false;  // the pinned node is a canvas node's
 };
 
 } // namespace cyxwiz

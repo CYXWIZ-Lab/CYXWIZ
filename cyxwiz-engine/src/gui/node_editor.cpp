@@ -953,8 +953,15 @@ void NodeEditor::Render() {
         const int info_id = frame_selected_subgraph_id_ >= 0 ? frame_selected_subgraph_id_ : selected_node_id_;
         if (info_id != info_node_id_) {
             info_node_id_ = info_id;
-            if (const MLNode* node = info_id > 0 ? FindNodeById(info_id) : nullptr; node && node_selected_callback_)
-                node_selected_callback_(*node);
+            if (const MLNode* node = info_id > 0 ? FindNodeById(info_id) : nullptr; node && node_selected_callback_) {
+                node_selected_callback_(node);
+                info_shown_id_ = info_id;
+            }
+        }
+        // A deselect keeps the node in the Info panel; a removed node leaves it.
+        if (info_shown_id_ > 0 && !FindNodeById(info_shown_id_)) {
+            info_shown_id_ = -1;
+            if (node_selected_callback_) node_selected_callback_(nullptr);
         }
     }
     ImGui::End();

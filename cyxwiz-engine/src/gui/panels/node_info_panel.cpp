@@ -161,6 +161,7 @@ const char* NodeInfoPanel::GetIcon() const {
 }
 
 void NodeInfoPanel::SetSelectedNode(NodeType type) {
+    from_canvas_ = false;
     pinned_extension_.reset();
     selected_type_ = type;
     pinned_metadata_ = type != NodeType::Unknown
@@ -189,9 +190,24 @@ std::optional<NodeInfoPanel::ExtensionView> NodeInfoPanel::BuildExtensionView(co
 }
 
 void NodeInfoPanel::SetSelectedExtension(const std::string& type_id) {
+    from_canvas_ = false;
     pinned_extension_ = BuildExtensionView(type_id);
     selected_type_ = NodeType::Unknown;
     pinned_metadata_ = nullptr;
+}
+
+void NodeInfoPanel::ShowCanvasNode(NodeType type) {
+    SetSelectedNode(type);
+    from_canvas_ = true;
+}
+
+void NodeInfoPanel::ShowCanvasExtension(const std::string& type_id) {
+    SetSelectedExtension(type_id);
+    from_canvas_ = true;
+}
+
+void NodeInfoPanel::CanvasNodeRemoved() {
+    if (from_canvas_) ClearSelection();
 }
 
 void NodeInfoPanel::PreviewExtension(const std::string& type_id) {
@@ -231,6 +247,7 @@ void NodeInfoPanel::PreviewNode(NodeType type) {
 }
 
 void NodeInfoPanel::ClearSelection() {
+    from_canvas_ = false;
     pinned_extension_.reset();
     selected_type_ = NodeType::Unknown;
     pinned_metadata_ = nullptr;

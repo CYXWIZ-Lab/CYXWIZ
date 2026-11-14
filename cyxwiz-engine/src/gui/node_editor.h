@@ -439,8 +439,9 @@ public:
     using ExplainNodeCallback = std::function<void(int)>;
     void SetExplainNodeCallback(ExplainNodeCallback callback) { explain_node_callback_ = std::move(callback); }
 
-    // A node newly selected on the canvas (the Info panel shows it).
-    using NodeSelectedCallback = std::function<void(const MLNode&)>;
+    // A node newly selected on the canvas (the Info panel shows it), or
+    // nullptr when the node last sent is gone (deleted, undone, another graph).
+    using NodeSelectedCallback = std::function<void(const MLNode*)>;
     void SetNodeSelectedCallback(NodeSelectedCallback callback) { node_selected_callback_ = std::move(callback); }
 
     // The table node `node_id` holds from the canvas runs when it and every step
@@ -1250,7 +1251,8 @@ private:
     // Explain selected node in Studio Debugger.
     ExplainNodeCallback explain_node_callback_;
     NodeSelectedCallback node_selected_callback_;
-    int info_node_id_ = -1;  // the node last sent to node_selected_callback_
+    int info_node_id_ = -1;   // the selection last seen
+    int info_shown_id_ = -1;  // the node last sent to node_selected_callback_
 
     // Deferred focus request so sidebar actions never touch ImNodes outside
     // the live editor render scope.
