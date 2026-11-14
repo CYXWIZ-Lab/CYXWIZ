@@ -426,8 +426,9 @@ void PythonReplSession::RenderContent() {
       mono ? mono->FontSize : ImGui::GetTextLineHeight();
   const ImGuiStyle &style = ImGui::GetStyle();
   const std::string current(input_buffer_.data());
+  // Two lines when empty (the output keeps the room), growing to eight.
   const int lines = std::clamp(
-      1 + static_cast<int>(std::count(current.begin(), current.end(), '\n')), 3, 8);
+      1 + static_cast<int>(std::count(current.begin(), current.end(), '\n')), 2, 8);
   const float pad_y = 10.0f;
   const float avail = ImGui::GetContentRegionAvail().y;
   const float min_input = mono_line * 2.0f + pad_y * 2.0f;
@@ -1027,10 +1028,6 @@ void PythonReplSession::RenderInput() {
     SetInputText("");
     focus_input_ = true;
   }
-
-  // Border last, so it sits over the widget. Neutral only (owner, 2026-09-27:
-  // no focus highlight on the input).
-  dl->AddRect(box_min, box_max, ImGui::GetColorU32(kBorder), 8.0f);
 
   // Hints row.
   // Hints wrap onto more rows in a narrow panel instead of running off it.

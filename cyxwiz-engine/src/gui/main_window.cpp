@@ -3344,7 +3344,6 @@ void MainWindow::BuildInitialDockLayout() {
     ImGuiID dock_id_bottom = 0;
     ImGuiID dock_id_bottom_left = 0;
     ImGuiID dock_id_bottom_right = 0;
-    ImGuiID dock_id_bottom_bottom = 0;
 
     // Split left side for Asset Browser (15% width)
     dock_id_left = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Left, 0.15f, nullptr, &dock_id_center);
@@ -3352,8 +3351,14 @@ void MainWindow::BuildInitialDockLayout() {
     // Split right side for Properties (20% width)
     dock_id_right = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Right, 0.25f, nullptr, &dock_id_center);
 
-    // Split bottom for Console area (25% height of remaining)
-    dock_id_bottom = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Down, 0.30f, nullptr, &dock_id_center);
+    // Split bottom for the Console area: 42 % of the height and at least
+    // 390 px, so a terminal shows some eight lines of output above its input
+    // box. The pixels matter: the layout is built at the window's first size
+    // (720 px tall before a maximize) and a later maximize goes to the
+    // central node only. The menu, toolbar and status bars take some 40 px.
+    const float layout_height = std::max(1.0f, ImGui::GetMainViewport()->Size.y - 40.0f);
+    const float bottom_ratio = std::clamp(390.0f / layout_height, 0.42f, 0.6f);
+    dock_id_bottom = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Down, bottom_ratio, nullptr, &dock_id_center);
 
     // Split center horizontally: CyxWiz Studio (left) and Data Studio (right) side by side
     dock_id_center_right = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Right, 0.5f, nullptr, &dock_id_center_left);
@@ -3361,8 +3366,6 @@ void MainWindow::BuildInitialDockLayout() {
     // Split bottom section horizontally: left (Console) and right (Inspector)
     dock_id_bottom_right = ImGui::DockBuilderSplitNode(dock_id_bottom, ImGuiDir_Right, 0.25f, nullptr, &dock_id_bottom_left);
 
-    // Split bottom-left further for Profiler/Viewport
-    dock_id_bottom_bottom = ImGui::DockBuilderSplitNode(dock_id_bottom_left, ImGuiDir_Down, 0.40f, nullptr, &dock_id_bottom_left);
 
     // Dock windows to their designated areas
     // Window names must EXACTLY match the names in ImGui::Begin() calls in each panel
@@ -3373,7 +3376,9 @@ void MainWindow::BuildInitialDockLayout() {
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("Training Dashboard", dock_id_bottom_right);
-    ImGui::DockBuilderDockWindow("Viewport", dock_id_bottom_bottom);
+    // A tab beside the Console (a split below it left the terminals too
+    // short to show their output; TOFIX129 A4).
+    ImGui::DockBuilderDockWindow("Viewport", dock_id_bottom_left);
 
     // Every other sidebar panel gets a home too, as a tab beside the panel
     // it belongs with, instead of opening as a small floating window

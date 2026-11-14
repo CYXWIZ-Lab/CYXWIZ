@@ -840,8 +840,6 @@ void Console::RenderCommandInput(bool request_focus) {
   const bool has_text = input_buf_[0] != '\0';
   const bool run_clicked = ui::PrimaryButton(run_label, has_text, "Type a command first.",
                                              ui::ButtonSize::Small);
-  // Neutral border only (owner, 2026-09-27: no focus highlight on the prompt).
-  dl->AddRect(box_min, box_max, ImGui::GetColorU32(kBorder), 8.0f);
 
   if ((submitted && !command_accepted_) || run_clicked) {
     if (input_buf_[0]) {
