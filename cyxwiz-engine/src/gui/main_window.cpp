@@ -2507,6 +2507,19 @@ MainWindow::MainWindow()
         if (node_editor_) node_editor_->AddDataInputFromAsset(path);
     });
 
+    // A data file opens in the Table Viewer: the loaded dataset when a Data
+    // Input loaded it, else the file's first rows (nothing registered).
+    asset_browser_->SetOnOpenInTableViewer([this](const std::string& path) {
+        if (!table_viewer_) return;
+        constexpr int64_t kMaxRows = 200000;
+        if (auto name = cyxwiz::DataRegistry::Instance().FindTabularDatasetBySourcePath(path))
+            table_viewer_->OpenDataset(*name, kMaxRows);
+        else
+            table_viewer_->OpenFile(path, kMaxRows);
+        table_viewer_->SetVisible(true);
+        ::gui::BringToFront(table_viewer_->GetName());
+    });
+
     // A loaded dataset opens in Data Studio's Query tab (TOFIX140).
     asset_browser_->SetOnOpenInDataStudio([this](const std::string& dataset) {
         if (!data_studio_panel_) return;

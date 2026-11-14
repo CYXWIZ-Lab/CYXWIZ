@@ -6,6 +6,8 @@
 #include "../../core/data_registry.h"
 #include "../../core/dataset_catalog.h"
 #include "../../core/dataset_table_slice.h"
+#include "../../core/data_convert_formats.h"
+#include "../../core/data_convert_service.h"
 #include "../ui_widgets.h"
 #include "../ui_fonts.h"
 #include "../editor_fonts.h"
@@ -22,6 +24,7 @@
 #include <limits>
 #include <numeric>
 #include <algorithm>
+#include <filesystem>
 #include <map>
 #include <cmath>
 #include <sstream>
@@ -521,6 +524,47 @@ void TableViewerPanel::OpenArrow(std::shared_ptr<arrow::Table> table, const std:
     });
 }
 
+bool TableViewerPanel::OpensFile(const std::string& path) {
+    const auto format = data_convert::Resolve("auto", std::filesystem::path(path).extension().string());
+    // A plain text file is one column of lines: the Script Editor shows it better.
+    return format != data_convert::Format::Text &&
+           data_convert::Available(format, data_convert::Direction::Input, data_convert::kBuildFeatures);
+}
+
+void TableViewerPanel::OpenFile(const std::string& path, int64_t max_rows) {
+    const std::string name = std::filesystem::path(path).filename().string();
+    std::error_code ec;
+    const uintmax_t bytes = std::filesystem::file_size(path, ec);
+    if (!ec && bytes > kOpenFileLimit) {
+        status_note_ = "Could not open " + name + ": it is " + std::to_string(bytes / (1024 * 1024)) +
+                       " MB, more than the Table Viewer reads from a file (1 GB). A Data Input reads it from disk; "
+                       "then open the loaded dataset here.";
+        status_note_error_ = true;
+        visible_ = true;
+        return;
+    }
+    StartOpen(name, "", [path, name, max_rows](const SliceProgress& progress) {
+        DatasetSlice slice;
+        if (!progress(0.05f, "Reading the file")) {
+            slice.stopped = true;
+            return slice;
+        }
+        DataConvertOptions options;
+        options.input_path = path;
+        options.auto_detect_delimiter = true;
+        std::string error;
+        const auto table = DataConvertService::LoadTable(options, error);
+        if (!table) {
+            slice.error = error.empty() ? "The file could not be read." : error;
+            return slice;
+        }
+        return DatasetSliceFromArrow(table, name, max_rows, table->num_rows(),
+                                     [&progress](float done, const std::string& message) {
+                                         return progress(0.5f + done * 0.5f, message);
+                                     });
+    });
+}
+
 void TableViewerPanel::StartOpen(const std::string& name, const std::string& dataset,
                                  std::function<DatasetSlice(const SliceProgress&)> read) {
     struct Result {
@@ -612,6 +656,7 @@ void TableViewerPanel::RenderEmptyState() {
                            "Tables come here from:");
     ImGui::PopStyleColor();
     for (const char* route : {"a loaded dataset - its first rows, with the button below",
+                              "the Asset Browser - double-click a data file (CSV, Parquet, ...)",
                               "Data Studio - open a query's result",
                               "the Variable Explorer - View data on a Python value",
                               "a notebook or script that shows a table"}) {
@@ -621,6 +666,13 @@ void TableViewerPanel::RenderEmptyState() {
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
     if (ui::PrimaryButton(ICON_FA_DATABASE " Open a loaded dataset...")) open_dataset_popup_requested_ = true;
+    if (!status_note_.empty()) {
+        // No tab yet, so no status bar: what the last open said goes here.
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(std::min(ImGui::GetContentRegionMax().x, ImGui::GetCursorPosX() + 560.0f));
+        ImGui::TextColored(status_note_error_ ? t.error : t.text_dim, "%s", status_note_.c_str());
+        ImGui::PopTextWrapPos();
+    }
     RenderOpenDatasetPopup();
 }
 

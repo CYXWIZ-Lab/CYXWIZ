@@ -59,6 +59,14 @@ public:
     // output, a query result) in a tab named `name`, converted in a task the
     // same way.
     void OpenArrow(std::shared_ptr<arrow::Table> table, const std::string& name, int64_t max_rows = -1);
+    // A data file (CSV, TSV, Parquet, JSON Lines, Feather, ... : what Data
+    // Convert reads) that no Data Input loaded: read in a task, its first
+    // `max_rows` rows in a tab named after the file. Nothing is registered.
+    // A file over kOpenFileLimit is refused with a note (the whole file is
+    // read; a Data Input reads a large one from disk).
+    void OpenFile(const std::string& path, int64_t max_rows);
+    static bool OpensFile(const std::string& path);  // a format OpenFile reads
+    static constexpr uintmax_t kOpenFileLimit = 1024ull * 1024ull * 1024ull;
 
     // Data Viewer (TOFIX133 P5, board 10): a tab fed from a Python value. A
     // second open of the same value replaces its tab; "Read again", a slice
