@@ -314,7 +314,7 @@ std::string RLEnvironmentCode(const cyxwiz::RLTrainingConfiguration& rl, uint64_
     std::string code;
     if (!provider.empty() && provider != "cyxwiz.builtin") {
         code += plugin_dir.empty() ? "# Load the plugin that offers it: rl.load_plugin(<its folder>)\n"
-                                   : "rl.load_plugin(r" + PyString(plugin_dir) + ")\n";
+                                   : "rl.load_plugin(" + PyString(plugin_dir) + ")\n";  // escaped, so not raw
     }
     code += "env = make_vec_env(lambda: rl.Env(" + PyString(rl.environment.id) + settings + "), n_envs=" +
             std::to_string(rl.copies) + ", seed=" + std::to_string(seed) + ")\n";
@@ -363,7 +363,7 @@ std::string SacCode(const cyxwiz::RLTrainingConfiguration& rl) {
     code += "# Needs numpy, gymnasium, torch and stable_baselines3 (the Engine's python-embed has them).\n\n";
     code += "import torch.nn as nn\n";
     code += "from stable_baselines3 import SAC\n";
-    code += "from stable_baselines3.common.callbacks import BaseCallback\n";
+    if (!std::isnan(c.target_return)) code += "from stable_baselines3.common.callbacks import BaseCallback\n";
     code += "from stable_baselines3.common.env_util import make_vec_env\n";
     if (c.normalize_observations) code += "from stable_baselines3.common.vec_env import VecNormalize\n";
     code += "from pycyxwiz import rl\n\n";
@@ -426,7 +426,7 @@ std::string NodeEditor::GenerateRLCode(const std::vector<int>& /*sorted_ids*/) c
     code += "# Needs numpy, gymnasium, torch and stable_baselines3 (the Engine's python-embed has them).\n\n";
     code += "import torch.nn as nn\n";
     code += "from stable_baselines3 import PPO\n";
-    code += "from stable_baselines3.common.callbacks import BaseCallback\n";
+    if (!std::isnan(c.target_return)) code += "from stable_baselines3.common.callbacks import BaseCallback\n";
     code += "from stable_baselines3.common.env_util import make_vec_env\n";
     if (c.normalize_observations || c.normalize_rewards)
         code += "from stable_baselines3.common.vec_env import VecNormalize\n";

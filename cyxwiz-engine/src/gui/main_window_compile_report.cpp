@@ -12,6 +12,7 @@
 #include "ui_tokens.h"
 #include "ui_widgets.h"
 #include "../core/live_graph_compile.h"
+#include "../core/rl_graph_compile.h"
 #include "data_studio/data_studio_panel.h"
 #include "panels/studio_debugger_panel.h"
 #include "panels/training_plot_panel.h"
@@ -124,9 +125,12 @@ void MainWindow::RenderCompileResultPopup() {
     gui::NodeType add_type = gui::NodeType::Resize;
     bool open_data_studio = false, train = false, run_debug = false, open_debugger = false;
     // The next step's state (TOFIX178 UI-1): the Compile and Train-blocked
-    // reports show the last Local Debug run against the graph now.
-    const bool show_debug = compile_report_mode_ == report::Mode::Compile ||
-                            compile_report_mode_ == report::Mode::TrainBlocked;
+    // reports show the last Local Debug run against the graph now. Not for an
+    // RL graph: Local Debug runs a data batch, which an RL graph has none of.
+    const bool rl_graph = node_editor_ && std::any_of(node_editor_->GetNodes().begin(), node_editor_->GetNodes().end(),
+                                                      [](const gui::MLNode& n) { return cyxwiz::IsRLGraphNode(n.type); });
+    const bool show_debug = !rl_graph && (compile_report_mode_ == report::Mode::Compile ||
+                                          compile_report_mode_ == report::Mode::TrainBlocked);
     if (ImGui::BeginPopupModal(window.c_str(), nullptr)) {
         const auto& t = cyxwiz::ui::CurrentTokens();
         // Verdict, subtitle, counts.
