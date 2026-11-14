@@ -436,6 +436,21 @@ generator with torch 2.10 (the Engine's python-embed has it). The same test
 checks OrthogonalWeights (torch.nn.init.orthogonal_'s contract: W W^T or
 W^T W is gain^2 I, one seed one matrix), which the PPO networks start from.
 
+SAC (cyxwiz/rl/sac.h; TOFIX216 S2) writes its gradients by hand too: the
+pieces of Stable-Baselines3 2.7's SAC.train between the networks.
+`sac_pytorch_parity` (test_computation_truth_sac.cpp, fixture from
+generate_sac_fixtures.py, which feeds fixed noise to SB3's own
+SquashedDiagGaussianDistribution and copies SAC.train's losses) matches the
+squashed actions, log pi and the gradients to the actor's mean and log std
+(through the [-20, 2] clamp, near tanh saturation, each upstream gradient
+alone and both together), the critics' target, the critic, actor and
+entropy-weight losses and their gradients (ties in the minimum go to the
+first critic, as torch.min over a dimension does), polyak_update, and the
+seeded noise and random actions. One trap the fixture avoids on purpose: at
+the low clamp (std 2e-9) torch's float32 gradient to the mean cancels two
+terms of about noise / std and keeps only rounding, so that element's noise
+is 0. Passed on CPU, CUDA and OpenCL (2026-11-14).
+
 Gradient clipping by the global norm has three implementations: the host
 clip (ClipGradientsByGlobalNorm, the optimizer nodes' Gradient clip norm),
 the device clip (ClipGradientsByGlobalNormOnDevice, PPO's per-tensor path)
