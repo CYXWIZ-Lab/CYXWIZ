@@ -21,8 +21,9 @@ int ExpandedOwner(int id, const std::vector<SubgraphData>& subgraphs) {
     }
     return -1;
 }
-// Frame colours come from the theme's ImNodes style (Theme::ApplyImNodesStyle),
-// so this file needs no token tables and its test links ImGui and ImNodes only.
+// Frame colours come from the theme's ImNodes title bar colours (the accent,
+// Theme::ApplyEngineColours), so this file needs no token tables and its test
+// links ImGui and ImNodes only.
 ImU32 NodeStyleColour(ImNodesCol colour, float alpha) {
     ImVec4 value = ImGui::ColorConvertU32ToFloat4(ImNodes::GetStyle().Colors[colour]);
     value.w = alpha;

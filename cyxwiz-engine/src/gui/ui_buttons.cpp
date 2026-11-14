@@ -201,11 +201,12 @@ bool FilterChip(const char* id, const char* label, const char* count, bool chose
     const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
     const bool hovered = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec4 fill = chosen ? ui::WithAlpha(t.accent, 0.35f) : (hovered ? kSecondaryHover : ui::WithAlpha(t.text, 0.05f));
+    // Chosen: the one selection look (selection wash, accent text tint).
+    const ImVec4 fill = chosen ? t.selection : (hovered ? kSecondaryHover : ui::WithAlpha(t.text, 0.05f));
     dl->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height), ImGui::GetColorU32(fill), height * 0.5f);
     const float text_y = pos.y + (height - ImGui::GetTextLineHeight()) * 0.5f;
     const char* label_end = ImGui::FindRenderedTextEnd(label);
-    dl->AddText(ImVec2(pos.x + 10.0f, text_y), ImGui::GetColorU32(chosen ? t.text_bright : t.text), label, label_end);
+    dl->AddText(ImVec2(pos.x + 10.0f, text_y), ImGui::GetColorU32(chosen ? t.accent_text : t.text), label, label_end);
     dl->AddText(ImVec2(pos.x + 10.0f + ImGui::CalcTextSize(label, nullptr, true).x + 5.0f, text_y),
                 ImGui::GetColorU32(t.text_dim), count);
     if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);

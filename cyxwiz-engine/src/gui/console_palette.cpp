@@ -46,7 +46,7 @@ const ConsolePalette &CurrentConsolePalette() {
     p.faint = Mix(muted, window, 0.30f);
     p.bright = Mix(text, ink, 0.45f);
     p.panel = Opaque(style.Colors[ImGuiCol_PopupBg]);
-    p.input = Mix(window, light ? ImVec4(1, 1, 1, 1) : ImVec4(0, 0, 0, 1), light ? 0.6f : 0.28f);
+    p.input = Opaque(style.Colors[ImGuiCol_FrameBg]);  // the theme's one field colour (ui::FieldFills)
     p.bar = Mix(window, ink, 0.03f);
     p.border = Mix(window, ink, light ? 0.18f : 0.16f);
     p.inner_border = Mix(window, ink, light ? 0.10f : 0.07f);
@@ -79,7 +79,6 @@ const ConsolePalette &CurrentConsolePalette() {
         p.faint = ImVec4(0.42f, 0.45f, 0.54f, 1.0f);
         p.bright = ImVec4(0.95f, 0.96f, 0.97f, 1.0f);
         p.panel = ImVec4(0.067f, 0.086f, 0.118f, 1.0f);
-        p.input = ImVec4(0.043f, 0.055f, 0.075f, 1.0f);
         p.bar = ImVec4(0.051f, 0.067f, 0.094f, 1.0f);
         p.border = ImVec4(0.141f, 0.196f, 0.322f, 1.0f);
         p.inner_border = ImVec4(0.10f, 0.13f, 0.19f, 1.0f);

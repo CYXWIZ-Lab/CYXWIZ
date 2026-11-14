@@ -87,9 +87,9 @@ void ApplyInstallerTheme(float scale) {
   colors[ImGuiCol_PopupBg] = Rgb(13, 27, 46);
   colors[ImGuiCol_Border] = Rgb(43, 66, 95);
   colors[ImGuiCol_BorderShadow] = Rgb(0, 0, 0, 0);
-  colors[ImGuiCol_FrameBg] = Rgb(16, 35, 58);
-  colors[ImGuiCol_FrameBgHovered] = Rgb(24, 50, 81);
-  colors[ImGuiCol_FrameBgActive] = Rgb(29, 60, 96);
+  // Fields: the Engine's one field colour for this canvas.
+  cyxwiz::ui::FieldFills(canvas, &colors[ImGuiCol_FrameBg], &colors[ImGuiCol_FrameBgHovered],
+                        &colors[ImGuiCol_FrameBgActive]);
   colors[ImGuiCol_TitleBg] = Rgb(7, 15, 29);
   colors[ImGuiCol_TitleBgActive] = Rgb(7, 15, 29);
   colors[ImGuiCol_MenuBarBg] = Rgb(9, 20, 36);

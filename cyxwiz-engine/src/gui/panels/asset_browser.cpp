@@ -809,9 +809,9 @@ void AssetBrowserPanel::RenderAssetNode(AssetItem& item, int depth) {
     // a 50 % orange, so the clicked file glowed and the selection vanished.
     {
         const ui::Tokens& tokens = ui::CurrentTokens();
-        ImGui::PushStyleColor(ImGuiCol_Header, ui::WithAlpha(tokens.accent, 0.28f));
+        ImGui::PushStyleColor(ImGuiCol_Header, tokens.selection);
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, tokens.hover);
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::WithAlpha(tokens.accent, 0.36f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::WithAlpha(tokens.selection, tokens.selection.w + 0.08f));
     }
     bool node_open = ImGui::TreeNodeEx(item.absolute_path.c_str(), flags, "%s", "");
     ImGui::PopStyleColor(3);

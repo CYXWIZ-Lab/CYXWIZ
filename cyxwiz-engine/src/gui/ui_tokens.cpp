@@ -162,6 +162,20 @@ void ButtonFills(const ImVec4& window, ImVec4* fill, ImVec4* hover, ImVec4* acti
     *active = Mix(solid, ink, light ? 0.16f : 0.18f);
 }
 
+void FieldFills(const ImVec4& window, ImVec4* fill, ImVec4* hover, ImVec4* active) {
+    const bool light = appearance::IsLightBackground(window.x, window.y, window.z);
+    const ImVec4 solid = WithAlpha(window, 1.0f);
+    if (light) {
+        *fill = Mix(solid, ImVec4(1, 1, 1, 1), 0.50f);
+        *hover = Mix(*fill, ImVec4(0, 0, 0, 1), 0.03f);
+        *active = Mix(*fill, ImVec4(0, 0, 0, 1), 0.06f);
+    } else {
+        *fill = Mix(solid, ImVec4(0, 0, 0, 1), 0.28f);
+        *hover = Mix(solid, ImVec4(0, 0, 0, 1), 0.20f);
+        *active = Mix(solid, ImVec4(0, 0, 0, 1), 0.36f);
+    }
+}
+
 Tokens BuildTokens(const ImGuiStyle& style) {
     Tokens t;
     t.bg_window = WithAlpha(style.Colors[ImGuiCol_WindowBg], 1.0f);
@@ -189,7 +203,9 @@ Tokens BuildTokens(const ImGuiStyle& style) {
     t.accent_hover = Mix(t.accent, ImVec4(1, 1, 1, 1), 0.15f);
     t.accent_active = Mix(t.accent, ImVec4(0, 0, 0, 1), 0.15f);
     t.accent_text = t.light ? Mix(t.accent, ImVec4(0, 0, 0, 1), 0.20f) : Mix(t.accent, ImVec4(1, 1, 1, 1), 0.45f);
-    t.selection = WithAlpha(t.accent, t.light ? 0.14f : 0.12f);
+    // One selection strength for every list, tree and chip (owner 2026-11-14:
+    // the Asset Browser, the debugger rail and lists each had their own).
+    t.selection = WithAlpha(t.accent, t.light ? 0.16f : 0.20f);
 
     t.success = ec.success;
     t.warning = ec.warning;

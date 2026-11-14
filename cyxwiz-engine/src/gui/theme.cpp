@@ -211,6 +211,10 @@ void Theme::ApplyEngineColours() {
     ImNodesStyle& nodes = ImNodes::GetStyle();
     nodes.Colors[ImNodesCol_BoxSelector] = ImGui::ColorConvertFloat4ToU32(alpha(0.25f));
     nodes.Colors[ImNodesCol_BoxSelectorOutline] = ImGui::ColorConvertFloat4ToU32(a);
+    // Subgraph frames (subgraph_presentation.cpp) read the title bar colours.
+    nodes.Colors[ImNodesCol_TitleBar] = ImGui::ColorConvertFloat4ToU32(a);
+    nodes.Colors[ImNodesCol_TitleBarHovered] = ImGui::ColorConvertFloat4ToU32(cyxwiz::ui::Mix(a, ImVec4(1, 1, 1, 1), 0.10f));
+    nodes.Colors[ImNodesCol_TitleBarSelected] = ImGui::ColorConvertFloat4ToU32(cyxwiz::ui::Mix(a, ImVec4(1, 1, 1, 1), 0.20f));
     DockStyle& dock = GetDockStyle();
     DockTabStyle tabs = dock.GetStyle();
     tabs.active_indicator_color = a;
@@ -263,6 +267,9 @@ void Theme::HarmonizeSurfaces() {
     // button with their accent, so Save looked like Train). Styled buttons
     // read these; the primary button is the accent.
     cyxwiz::ui::ButtonFills(bg, &c[ImGuiCol_Button], &c[ImGuiCol_ButtonHovered], &c[ImGuiCol_ButtonActive]);
+    // One field colour everywhere (owner 2026-11-14): ImGui's fields and every
+    // screen that reads Tokens::bg_input.
+    cyxwiz::ui::FieldFills(bg, &c[ImGuiCol_FrameBg], &c[ImGuiCol_FrameBgHovered], &c[ImGuiCol_FrameBgActive]);
 
     // The node canvas and its minimap: the window colour with grid lines a
     // step toward the text (presets gave the canvas its own near-black).

@@ -336,21 +336,22 @@ void Theme::ApplyCyxWizLight() {
 }
 
 // Warm light theme (owner 2026-11-14: "also add white cream, what we have is
-// just light"): a cream window, a deeper cream for fields and bars, ivory
-// popups, warm brown text and borders, the CyxWiz purple accent. Surfaces,
+// just light"; then "make dimmer like night mode"): a dim sepia cream window,
+// deeper cream bars and tabs, warm brown text and borders, the CyxWiz purple
+// accent. Surfaces,
 // buttons and the accent-following colours are derived after it
 // (HarmonizeSurfaces, ApplyEngineColours).
 void Theme::ApplyCyxWizCream() {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
-    ImVec4 cream         = ImVec4(0.969f, 0.953f, 0.918f, 1.00f);  // #F7F3EA
-    ImVec4 cream_deep    = ImVec4(0.937f, 0.910f, 0.855f, 1.00f);  // #EFE8DA
-    ImVec4 cream_deeper  = ImVec4(0.902f, 0.867f, 0.796f, 1.00f);  // #E6DDCB
-    ImVec4 ivory         = ImVec4(1.000f, 0.992f, 0.973f, 1.00f);  // #FFFDF8
-    ImVec4 border        = ImVec4(0.851f, 0.812f, 0.741f, 1.00f);  // #D9CFBD
-    ImVec4 text          = ImVec4(0.169f, 0.149f, 0.125f, 1.00f);  // #2B2620
-    ImVec4 text_dim      = ImVec4(0.478f, 0.435f, 0.376f, 1.00f);  // #7A6F60
+    ImVec4 cream         = ImVec4(0.902f, 0.863f, 0.784f, 1.00f);  // #E6DCC8
+    ImVec4 cream_deep    = ImVec4(0.867f, 0.824f, 0.737f, 1.00f);  // #DDD2BC
+    ImVec4 cream_deeper  = ImVec4(0.824f, 0.776f, 0.682f, 1.00f);  // #D2C6AE
+    ImVec4 ivory         = ImVec4(0.929f, 0.898f, 0.835f, 1.00f);  // #EDE5D5
+    ImVec4 border        = ImVec4(0.788f, 0.733f, 0.635f, 1.00f);  // #C9BBA2
+    ImVec4 text          = ImVec4(0.180f, 0.153f, 0.122f, 1.00f);  // #2E271F
+    ImVec4 text_dim      = ImVec4(0.431f, 0.384f, 0.322f, 1.00f);  // #6E6252
     ImVec4 accent        = ImVec4(0.357f, 0.239f, 0.961f, 1.00f);  // CyxWiz purple
     accent_color_ = accent;  // the preset's one accent
 
