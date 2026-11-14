@@ -199,10 +199,17 @@ private:
     // Layout constants
     static constexpr float PANEL_MIN_WIDTH = 280.0f;
     static constexpr float NODE_CARD_WIDTH = 85.0f;
-    static constexpr float NODE_CARD_HEIGHT = 75.0f;
+    static constexpr float NODE_CARD_HEIGHT = 90.0f;  // icon, then a name on up to two lines
     static constexpr float NODE_ICON_SIZE = 40.0f;
     static constexpr float GRID_SPACING = 8.0f;
-    static constexpr int GRID_COLUMNS = 3;
+    // As many columns as cards of at least kMinCardWidth fit (a fixed 3 with a
+    // 70 px minimum ran a third column past a narrow panel's edge).
+    static constexpr float kMinCardWidth = 84.0f;
+    static int ColumnsFor(float width) {
+        const int n = static_cast<int>((width + GRID_SPACING) / (kMinCardWidth + GRID_SPACING));
+        return n < 1 ? 1 : n;
+    }
+    int grid_columns_ = 3;  // for the width the grid was last laid out at
     static constexpr int VISIBLE_ROWS_COLLAPSED = 3;  // Show 3 rows (9 nodes) when collapsed
 };
 

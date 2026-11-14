@@ -13,6 +13,9 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <cctype>
+#include <string>
+#include <vector>
 #include <map>
 #include <cmath>
 
@@ -346,7 +349,7 @@ void NodeBrowserPanel::RenderSearchBar() {
         focus_search_next_frame_ = false;
     }
 
-    if (ImGui::InputTextWithHint("##NodeSearch", ICON_FA_SEARCH " Search all nodes (press /)",
+    if (ImGui::InputTextWithHint("##NodeSearch", ICON_FA_SEARCH " Search nodes (/)",
                                   search_buf, sizeof(search_buf))) {
         search_query_ = search_buf;
         // Clear category view when searching
@@ -416,8 +419,8 @@ void NodeBrowserPanel::RenderStudioSection() {
 
     // Calculate card dimensions (same as node cards)
     float available_width = ImGui::GetContentRegionAvail().x;
-    float card_width = (available_width - (GRID_COLUMNS - 1) * GRID_SPACING) / GRID_COLUMNS;
-    card_width = std::max(card_width, 70.0f);
+    grid_columns_ = ColumnsFor(available_width);
+    float card_width = (available_width - (grid_columns_ - 1) * GRID_SPACING) / grid_columns_;
 
     // === Note Card ===
     {
@@ -492,7 +495,7 @@ void NodeBrowserPanel::RenderStudioSection() {
         ImGui::PopID();
     }
 
-    ImGui::SameLine(0, GRID_SPACING);
+    if (grid_columns_ > 1) ImGui::SameLine(0, GRID_SPACING);  // one column: the cards stack
 
     // === Group Card ===
     {
@@ -859,14 +862,15 @@ void NodeBrowserPanel::RenderCategorySection(cyxwiz::NodeCategory category) {
     std::string cat_name = cyxwiz::GetCategoryDisplayName(category);
     SectionTitle(cat_name.c_str());
 
-    // Determine how many nodes to show
-    int max_visible = category_show_all_[category] ? -1 : (GRID_COLUMNS * VISIBLE_ROWS_COLLAPSED);
+    // Determine how many nodes to show (rows of the columns this width fits)
+    const int collapsed_count = ColumnsFor(ImGui::GetContentRegionAvail().x) * VISIBLE_ROWS_COLLAPSED;
+    int max_visible = category_show_all_[category] ? -1 : collapsed_count;
 
     // Render nodes in grid
     RenderNodeGrid(nodes, max_visible);
 
     // "Show all" button if there are more nodes
-    if (!category_show_all_[category] && (int)nodes.size() > (GRID_COLUMNS * VISIBLE_ROWS_COLLAPSED)) {
+    if (!category_show_all_[category] && (int)nodes.size() > collapsed_count) {
         float button_x = ImGui::GetContentRegionAvail().x - 60;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + button_x);
 
@@ -966,13 +970,13 @@ void NodeBrowserPanel::RenderNodeGrid(const std::vector<const cyxwiz::NodeMetada
     if (nodes.empty()) return;
 
     float available_width = ImGui::GetContentRegionAvail().x;
-    float card_width = (available_width - (GRID_COLUMNS - 1) * GRID_SPACING) / GRID_COLUMNS;
-    card_width = std::max(card_width, 70.0f);  // Minimum width
+    grid_columns_ = ColumnsFor(available_width);
+    float card_width = (available_width - (grid_columns_ - 1) * GRID_SPACING) / grid_columns_;
 
     int visible_count = (max_visible > 0) ? std::min((int)nodes.size(), max_visible) : (int)nodes.size();
 
     for (int i = 0; i < visible_count; ++i) {
-        if (i % GRID_COLUMNS != 0) {
+        if (i % grid_columns_ != 0) {
             ImGui::SameLine(0, GRID_SPACING);
         }
 
@@ -998,10 +1002,10 @@ void NodeBrowserPanel::RenderExtensionGrid(const std::vector<cyxwiz::ExtensionPa
     }
 
     float available_width = ImGui::GetContentRegionAvail().x;
-    float card_width = (available_width - (GRID_COLUMNS - 1) * GRID_SPACING) / GRID_COLUMNS;
-    card_width = std::max(card_width, 70.0f);
+    grid_columns_ = ColumnsFor(available_width);
+    float card_width = (available_width - (grid_columns_ - 1) * GRID_SPACING) / grid_columns_;
     for (size_t i = 0; i < metadata.size(); ++i) {
-        if (i % GRID_COLUMNS != 0) {
+        if (i % grid_columns_ != 0) {
             ImGui::SameLine(0, GRID_SPACING);
         }
         RenderNodeCard(&metadata[i], card_width, shown[i]);
@@ -1070,7 +1074,7 @@ void NodeBrowserPanel::RenderExtensionSection(bool show_all) {
 
     // One grid per plugin category ("RL / Simulation", ...).
     size_t shown = 0;
-    const size_t limit = show_all ? entries.size() : static_cast<size_t>(GRID_COLUMNS * VISIBLE_ROWS_COLLAPSED);
+    const size_t limit = show_all ? entries.size() : static_cast<size_t>(ColumnsFor(ImGui::GetContentRegionAvail().x) * VISIBLE_ROWS_COLLAPSED);
     for (size_t i = 0; i < entries.size() && shown < limit;) {
         const std::string& group = entries[i].group;
         std::vector<cyxwiz::ExtensionPaletteEntry> group_entries;
@@ -1089,6 +1093,67 @@ void NodeBrowserPanel::RenderExtensionSection(bool show_all) {
     ImGui::Spacing();
     ImGui::Spacing();
 }
+
+namespace {
+
+// Up to two centred lines of `name` within `width`. A word wider than the
+// card breaks after a hyphen or before a capital ("Squeeze-" "Excitation",
+// "Instance" "Norm"); what is left past two lines ends in "...".
+void DrawCardName(ImDrawList* dl, const std::string& name, float x, float width, float y, ImU32 colour) {
+    const float max_width = width - 6.0f;
+    const auto fits = [&](size_t begin, size_t end) {
+        return ImGui::CalcTextSize(name.c_str() + begin, name.c_str() + end).x <= max_width;
+    };
+    struct Range {
+        size_t begin, end;
+    };
+    std::vector<Range> pieces;  // words, and the parts of a word too wide for a line
+    for (size_t at = 0; at < name.size();) {
+        const size_t space = name.find(' ', at);
+        const size_t end = space == std::string::npos ? name.size() : space;
+        size_t begin = at;
+        while (begin < end && !fits(begin, end)) {
+            size_t cut = end - 1;
+            while (cut > begin + 1 && !fits(begin, cut)) --cut;
+            for (size_t i = cut; i > begin + 2; --i) {
+                const char c = name[i - 1];
+                if (c == '-' || std::isupper(static_cast<unsigned char>(name[i])) != 0) {
+                    cut = i;
+                    break;
+                }
+            }
+            pieces.push_back({begin, cut});
+            begin = cut;
+        }
+        if (begin < end) pieces.push_back({begin, end});
+        at = end + 1;
+    }
+    std::vector<Range> lines;
+    for (const Range& piece : pieces) {
+        if (!lines.empty() && fits(lines.back().begin, piece.end)) {
+            lines.back().end = piece.end;
+        } else {
+            lines.push_back(piece);
+        }
+    }
+    if (lines.size() > 2) {
+        lines.resize(2);
+        lines[1].end = name.size();
+    }
+    const float line_height = ImGui::GetTextLineHeight();
+    for (size_t i = 0; i < lines.size(); ++i) {
+        std::string text = name.substr(lines[i].begin, lines[i].end - lines[i].begin);
+        if (!fits(lines[i].begin, lines[i].end)) {
+            const auto fits_text = [max_width](const std::string& s) { return ImGui::CalcTextSize(s.c_str()).x <= max_width; };
+            while (text.size() > 1 && !fits_text(text + "...")) text.pop_back();
+            text += "...";
+        }
+        const float w = ImGui::CalcTextSize(text.c_str()).x;
+        dl->AddText(ImVec2(x + (width - w) * 0.5f, y + line_height * static_cast<float>(i)), colour, text.c_str());
+    }
+}
+
+}  // namespace
 
 void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, float card_width,
                                       const cyxwiz::ExtensionPaletteEntry* extension) {
@@ -1234,25 +1299,11 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
     // Draw node icon with color
     RenderNodeIcon(metadata, icon_pos, icon_size, extension);
 
-    if (const auto* support_state = FindSupportState(metadata)) {
-        const std::string state_label = SupportStateLabel(support_state->value);
-        const float badge_padding = 3.0f;
-        const ImVec2 badge_text_size = ImGui::CalcTextSize(state_label.c_str());
-        const float badge_width = badge_text_size.x + badge_padding * 2.0f;
-        const float badge_height = badge_text_size.y + badge_padding;
-        const float badge_x = cursor_start.x + 2.0f;
-        const float badge_y = cursor_start.y + 2.0f;
-
-        const ImVec4 badge_fill = SupportStateBadgeColor(support_state->value);
-        draw_list->AddRectFilled(
-            ImVec2(badge_x, badge_y),
-            ImVec2(badge_x + badge_width, badge_y + badge_height),
-            ui::ToU32(badge_fill),
-            3.0f);
-        draw_list->AddText(
-            ImVec2(badge_x + badge_padding, badge_y + badge_padding * 0.5f),
-            ui::ToU32(ui::ReadableOn(t, badge_fill)),
-            state_label.c_str());
+    // Support: only the exceptions are marked (a "Real" chip sat over every
+    // icon), as a dot in the state's colour; the word is in the tooltip.
+    if (const auto* support_state = FindSupportState(metadata); support_state && support_state->value != "real") {
+        draw_list->AddCircleFilled(ImVec2(cursor_start.x + 7.0f, cursor_start.y + 7.0f), 4.0f,
+                                   ui::ToU32(SupportStateBadgeColor(support_state->value)));
     }
 
     // Draw port indicators
@@ -1265,21 +1316,11 @@ void NodeBrowserPanel::RenderNodeCard(const cyxwiz::NodeMetadata* metadata, floa
         draw_list->AddText(nullptr, star_size, star_min, ui::ToU32(star_colour), ICON_FA_STAR);
     }
 
-    // Draw node name (centered, below icon)
-    std::string display_name = metadata->name;
-    if (display_name.length() > 12) {
-        display_name = display_name.substr(0, 10) + "...";
-    }
-
-    ImVec2 text_size = ImGui::CalcTextSize(display_name.c_str());
-    float text_x = cursor_start.x + (card_width - text_size.x) * 0.5f;
-    float text_y = icon_y + NODE_ICON_SIZE + 4;
-
+    // The name below the icon, on up to two lines that fit the card (it was
+    // cut after 10 characters: "Deploy to ...", "Export Par...").
     // Dim text for nodes that cannot currently be added.
-    ImU32 text_color = !can_add_to_graph ?
-        ui::ToU32(t.text_faint) : ui::ToU32(t.text);
-
-    draw_list->AddText(ImVec2(text_x, text_y), text_color, display_name.c_str());
+    const ImU32 text_color = !can_add_to_graph ? ui::ToU32(t.text_faint) : ui::ToU32(t.text);
+    DrawCardName(draw_list, metadata->name, cursor_start.x, card_width, icon_y + NODE_ICON_SIZE + 4, text_color);
 
     // Draw "Coming Soon" badge for template nodes
     if (metadata->IsTemplate()) {
