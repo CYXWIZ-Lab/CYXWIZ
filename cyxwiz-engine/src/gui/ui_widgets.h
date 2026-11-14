@@ -123,6 +123,12 @@ bool NumberField(const char* id, double* value, const NumberFieldOptions& option
 bool NumberField(const char* id, float* value, const NumberFieldOptions& options = {});
 bool NumberField(const char* id, int* value, int min, int max, int step = 0, float width = 60.0f, const char* hint = nullptr);
 
+// A colour the user types: a swatch (a click opens a picker), a hex field
+// (#RRGGBB, or #RRGGBBAA with alpha) applied on Enter or when left, and R, G,
+// B (and A) as typed 0 .. 255 numbers with - / + steps (owner rule
+// 2026-10-21, no drag fields). True when the colour changed.
+bool ColourField(const char* id, ImVec4* colour, bool with_alpha = false);
+
 // Centred empty state: icon (may be empty), title, muted hint.
 void EmptyState(const char* icon, const char* title, const char* hint = nullptr);
 // A tinted line across the area with a dot in `tone` and wrapped text: a

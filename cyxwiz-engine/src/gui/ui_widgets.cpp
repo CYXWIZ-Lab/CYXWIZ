@@ -458,6 +458,52 @@ bool NumberField(const char* id, int* value, int min, int max, int step, float w
     return true;
 }
 
+bool ColourField(const char* id, ImVec4* colour, bool with_alpha) {
+    ImGui::PushID(id);
+    bool changed = false;
+    const float h = ImGui::GetFrameHeight();
+    if (ImGui::ColorButton("##swatch", *colour, ImGuiColorEditFlags_AlphaPreviewHalf, ImVec2(h, h)))
+        ImGui::OpenPopup("##picker");
+    if (ImGui::BeginPopup("##picker")) {
+        const ImGuiColorEditFlags flags = ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoSidePreview |
+                                          (with_alpha ? ImGuiColorEditFlags_AlphaBar : ImGuiColorEditFlags_NoAlpha);
+        changed |= ImGui::ColorPicker4("##picker_body", &colour->x, flags);
+        ImGui::EndPopup();
+    }
+    const auto to_byte = [](float v) { return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+    int rgba[4] = {to_byte(colour->x), to_byte(colour->y), to_byte(colour->z), to_byte(colour->w)};
+    ImGui::SameLine();
+    char hex[16];
+    if (with_alpha)
+        std::snprintf(hex, sizeof(hex), "#%02X%02X%02X%02X", rgba[0], rgba[1], rgba[2], rgba[3]);
+    else
+        std::snprintf(hex, sizeof(hex), "#%02X%02X%02X", rgba[0], rgba[1], rgba[2]);
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("#WWWWWWWW").x + ImGui::GetStyle().FramePadding.x * 2.0f);
+    ImGui::InputText("##hex", hex, sizeof(hex), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_AutoSelectAll);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        const char* digits = hex[0] == '#' ? hex + 1 : hex;
+        const size_t n = std::strlen(digits);
+        unsigned int value = 0;
+        if ((n == 6 || (with_alpha && n == 8)) && std::sscanf(digits, "%x", &value) == 1) {
+            if (n == 6) value = (value << 8) | static_cast<unsigned int>(rgba[3]);
+            *colour = ImVec4(static_cast<float>((value >> 24) & 0xFF) / 255.0f, static_cast<float>((value >> 16) & 0xFF) / 255.0f,
+                             static_cast<float>((value >> 8) & 0xFF) / 255.0f, static_cast<float>(value & 0xFF) / 255.0f);
+            changed = true;
+        }
+    }
+    const char* names[4] = {"##r", "##g", "##b", "##a"};
+    const char* hints[4] = {"Red", "Green", "Blue", "Alpha (opacity)"};
+    for (int i = 0; i < (with_alpha ? 4 : 3); ++i) {
+        ImGui::SameLine();
+        if (NumberField(names[i], &rgba[i], 0, 255, 1, 38.0f, hints[i])) {
+            (&colour->x)[i] = static_cast<float>(rgba[i]) / 255.0f;
+            changed = true;
+        }
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 void EmptyState(const char* icon, const char* title, const char* hint) {
     const Tokens& t = CurrentTokens();
     const ImVec2 avail = ImGui::GetContentRegionAvail();

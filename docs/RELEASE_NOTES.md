@@ -7,6 +7,14 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **The Theme Editor shows every colour the Engine draws, and every row
+  changes the screen.** Engine colours: the accent, the 24 node families,
+  the data types (pins, links, plot series) and the status words, with a
+  warning when one is hard to read on the window. Surfaces: window, text,
+  fields, buttons, bars, tabs, tables. Canvas: the grid (the old Node Editor
+  tab had 19 rows of which 14 changed nothing). Colours are typed: a hex
+  field and R, G, B with - / + steps (no drag fields); the Shape tab uses
+  typed numbers instead of sliders.
 - **Colours follow the chosen theme.** Train, OK, Publish and every
   primary button, selection, check marks, links, the selected tab's line
   and the canvas box selector use the theme's one accent: purple in the

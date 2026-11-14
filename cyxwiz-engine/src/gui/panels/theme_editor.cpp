@@ -1,246 +1,165 @@
-#include "../ui_buttons.h"
-#include "../appearance_settings.h"
 #include "theme_editor.h"
+
+#include "../appearance_settings.h"
 #include "../icons.h"
+#include "../ui_buttons.h"
+#include "../ui_tokens.h"
+#include "../ui_widgets.h"
+#include "../../core/appearance_options.h"
 #include "../../core/file_dialogs.h"
+
 #include <imgui.h>
 #include <imnodes.h>
-#include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
-#include <fstream>
-#include <filesystem>
+
 #include <algorithm>
+#include <array>
+#include <cfloat>
+#include <cctype>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <string>
 
 namespace gui {
 
-using json = nlohmann::json;
 namespace fs = std::filesystem;
 
-// ImGui color groups for organization
-const std::vector<ThemeEditorPanel::ColorGroupDef> ThemeEditorPanel::kImGuiColorGroups = {
-    {"Text", {
-        {ImGuiCol_Text, "Text"},
-        {ImGuiCol_TextDisabled, "Text Disabled"},
-        {ImGuiCol_TextSelectedBg, "Text Selected Bg"}
-    }},
-    {"Window", {
-        {ImGuiCol_WindowBg, "Window Bg"},
-        {ImGuiCol_ChildBg, "Child Bg"},
-        {ImGuiCol_PopupBg, "Popup Bg"},
-        {ImGuiCol_Border, "Border"},
-        {ImGuiCol_BorderShadow, "Border Shadow"}
-    }},
-    {"Frame", {
-        {ImGuiCol_FrameBg, "Frame Bg"},
-        {ImGuiCol_FrameBgHovered, "Frame Bg Hovered"},
-        {ImGuiCol_FrameBgActive, "Frame Bg Active"}
-    }},
-    {"Title Bar", {
-        {ImGuiCol_TitleBg, "Title Bg"},
-        {ImGuiCol_TitleBgActive, "Title Bg Active"},
-        {ImGuiCol_TitleBgCollapsed, "Title Bg Collapsed"},
-        {ImGuiCol_MenuBarBg, "Menu Bar Bg"}
-    }},
-    {"Scrollbar", {
-        {ImGuiCol_ScrollbarBg, "Scrollbar Bg"},
-        {ImGuiCol_ScrollbarGrab, "Scrollbar Grab"},
-        {ImGuiCol_ScrollbarGrabHovered, "Scrollbar Grab Hovered"},
-        {ImGuiCol_ScrollbarGrabActive, "Scrollbar Grab Active"}
-    }},
-    {"Buttons", {
-        {ImGuiCol_Button, "Button"},
-        {ImGuiCol_ButtonHovered, "Button Hovered"},
-        {ImGuiCol_ButtonActive, "Button Active"},
-        {ImGuiCol_CheckMark, "Check Mark"}
-    }},
-    {"Slider/Drag", {
-        {ImGuiCol_SliderGrab, "Slider Grab"},
-        {ImGuiCol_SliderGrabActive, "Slider Grab Active"}
-    }},
-    {"Header", {
-        {ImGuiCol_Header, "Header"},
-        {ImGuiCol_HeaderHovered, "Header Hovered"},
-        {ImGuiCol_HeaderActive, "Header Active"}
-    }},
-    {"Separator", {
-        {ImGuiCol_Separator, "Separator"},
-        {ImGuiCol_SeparatorHovered, "Separator Hovered"},
-        {ImGuiCol_SeparatorActive, "Separator Active"}
-    }},
-    {"Resize Grip", {
-        {ImGuiCol_ResizeGrip, "Resize Grip"},
-        {ImGuiCol_ResizeGripHovered, "Resize Grip Hovered"},
-        {ImGuiCol_ResizeGripActive, "Resize Grip Active"}
-    }},
-    {"Tab", {
-        {ImGuiCol_Tab, "Tab"},
-        {ImGuiCol_TabHovered, "Tab Hovered"},
-        {ImGuiCol_TabSelected, "Tab Selected"},
-        {ImGuiCol_TabSelectedOverline, "Tab Selected Overline"},
-        {ImGuiCol_TabDimmed, "Tab Dimmed"},
-        {ImGuiCol_TabDimmedSelected, "Tab Dimmed Selected"},
-        {ImGuiCol_TabDimmedSelectedOverline, "Tab Dimmed Selected Overline"}
-    }},
-    {"Docking", {
-        {ImGuiCol_DockingPreview, "Docking Preview"},
-        {ImGuiCol_DockingEmptyBg, "Docking Empty Bg"}
-    }},
-    {"Plot", {
-        {ImGuiCol_PlotLines, "Plot Lines"},
-        {ImGuiCol_PlotLinesHovered, "Plot Lines Hovered"},
-        {ImGuiCol_PlotHistogram, "Plot Histogram"},
-        {ImGuiCol_PlotHistogramHovered, "Plot Histogram Hovered"}
-    }},
-    {"Table", {
-        {ImGuiCol_TableHeaderBg, "Table Header Bg"},
-        {ImGuiCol_TableBorderStrong, "Table Border Strong"},
-        {ImGuiCol_TableBorderLight, "Table Border Light"},
-        {ImGuiCol_TableRowBg, "Table Row Bg"},
-        {ImGuiCol_TableRowBgAlt, "Table Row Bg Alt"}
-    }},
-    {"Navigation", {
-        {ImGuiCol_NavHighlight, "Nav Highlight"},
-        {ImGuiCol_NavWindowingHighlight, "Nav Windowing Highlight"},
-        {ImGuiCol_NavWindowingDimBg, "Nav Windowing Dim Bg"}
-    }},
-    {"Modal", {
-        {ImGuiCol_ModalWindowDimBg, "Modal Window Dim Bg"}
-    }}
+// The surfaces the theme draws with. Check marks, slider grabs, the selection
+// washes, the keyboard cursor, drag targets, the docking preview and the
+// selected tab's line follow the accent (Theme::ApplyEngineColours): no rows.
+const std::vector<ThemeEditorPanel::ColourGroup> ThemeEditorPanel::kSurfaceGroups = {
+    {"Text", {{ImGuiCol_Text, "Text"}, {ImGuiCol_TextDisabled, "Dim text"}}},
+    {"Window", {{ImGuiCol_WindowBg, "Window"},
+                {ImGuiCol_PopupBg, "Menus and popups"},
+                {ImGuiCol_Border, "Window border"},
+                {ImGuiCol_Separator, "Separator"}}},
+    {"Fields", {{ImGuiCol_FrameBg, "Field"}, {ImGuiCol_FrameBgHovered, "Field hovered"},
+                {ImGuiCol_FrameBgActive, "Field in use"}}},
+    {"Buttons", {{ImGuiCol_Button, "Button"}, {ImGuiCol_ButtonHovered, "Button hovered"},
+                 {ImGuiCol_ButtonActive, "Button pressed"}}},
+    {"Bars", {{ImGuiCol_TitleBg, "Title bar"}, {ImGuiCol_TitleBgActive, "Title bar (focused)"},
+              {ImGuiCol_MenuBarBg, "Menu bar"}}},
+    {"Tabs", {{ImGuiCol_Tab, "Tab"}, {ImGuiCol_TabHovered, "Tab hovered"}, {ImGuiCol_TabSelected, "Tab selected"},
+              {ImGuiCol_TabDimmed, "Tab (unfocused window)"},
+              {ImGuiCol_TabDimmedSelected, "Tab selected (unfocused window)"}}},
+    {"Lists", {{ImGuiCol_Header, "Selected row (plain lists)"}}},
+    {"Scrollbars", {{ImGuiCol_ScrollbarGrab, "Scrollbar"}, {ImGuiCol_ScrollbarGrabHovered, "Scrollbar hovered"},
+                    {ImGuiCol_ScrollbarGrabActive, "Scrollbar dragged"}}},
+    {"Tables", {{ImGuiCol_TableHeaderBg, "Header"}, {ImGuiCol_TableBorderStrong, "Outer line"},
+                {ImGuiCol_TableBorderLight, "Inner line"}, {ImGuiCol_TableRowBgAlt, "Alternate row"}}},
+    {"Simple plots", {{ImGuiCol_PlotLines, "Line"}, {ImGuiCol_PlotLinesHovered, "Line hovered"},
+                      {ImGuiCol_PlotHistogram, "Bar"}, {ImGuiCol_PlotHistogramHovered, "Bar hovered"}}},
+    {"Dialogs", {{ImGuiCol_ModalWindowDimBg, "Dim behind a dialog"}}},
 };
 
-// ImNodes color definitions
-const std::vector<ThemeEditorPanel::ImNodesColorDef> ThemeEditorPanel::kImNodesColors = {
-    {ImNodesCol_NodeBackground, "Node Background"},
-    {ImNodesCol_NodeBackgroundHovered, "Node Background Hovered"},
-    {ImNodesCol_NodeBackgroundSelected, "Node Background Selected"},
-    {ImNodesCol_NodeOutline, "Node Outline"},
-    {ImNodesCol_TitleBar, "Title Bar"},
-    {ImNodesCol_TitleBarHovered, "Title Bar Hovered"},
-    {ImNodesCol_TitleBarSelected, "Title Bar Selected"},
-    {ImNodesCol_Link, "Link"},
-    {ImNodesCol_LinkHovered, "Link Hovered"},
-    {ImNodesCol_LinkSelected, "Link Selected"},
-    {ImNodesCol_Pin, "Pin"},
-    {ImNodesCol_PinHovered, "Pin Hovered"},
-    {ImNodesCol_BoxSelector, "Box Selector"},
-    {ImNodesCol_BoxSelectorOutline, "Box Selector Outline"},
-    {ImNodesCol_GridBackground, "Grid Background"},
-    {ImNodesCol_GridLine, "Grid Line"},
-    {ImNodesCol_GridLinePrimary, "Grid Line Primary"},
-    {ImNodesCol_MiniMapBackground, "MiniMap Background"},
-    {ImNodesCol_MiniMapBackgroundHovered, "MiniMap Background Hovered"},
-    {ImNodesCol_MiniMapOutline, "MiniMap Outline"},
-    {ImNodesCol_MiniMapOutlineHovered, "MiniMap Outline Hovered"},
-    {ImNodesCol_MiniMapNodeBackground, "MiniMap Node Background"},
-    {ImNodesCol_MiniMapNodeBackgroundHovered, "MiniMap Node Background Hovered"},
-    {ImNodesCol_MiniMapNodeBackgroundSelected, "MiniMap Node Background Selected"},
-    {ImNodesCol_MiniMapNodeOutline, "MiniMap Node Outline"},
-    {ImNodesCol_MiniMapLink, "MiniMap Link"},
-    {ImNodesCol_MiniMapLinkSelected, "MiniMap Link Selected"},
-    {ImNodesCol_MiniMapCanvas, "MiniMap Canvas"},
-    {ImNodesCol_MiniMapCanvasOutline, "MiniMap Canvas Outline"}
-};
+namespace {
 
-ThemeEditorPanel::ThemeEditorPanel()
-    : Panel("Theme Editor", false)  // Hidden by default
-{
-    memset(theme_name_buffer_, 0, sizeof(theme_name_buffer_));
-    memset(color_filter_, 0, sizeof(color_filter_));
+// Node family names, in cyxwiz::ui::NodeHue order.
+constexpr const char* kFamilyNames[] = {
+    "Data sources", "Data transform", "Analytics", "Layers", "Activation", "Pooling", "Normalization", "Attention",
+    "Recurrent", "Shape ops", "Merge ops", "Upsampling", "Training", "Regularization", "Preprocessing",
+    "Data pipeline", "Text processing", "Time series", "Audio", "DNN", "RL", "Signal", "Plugin", "Neutral"};
+static_assert(std::size(kFamilyNames) == cyxwiz::ui::Tokens::kNodeHueCount, "a name for every node family");
 
-    // Initialize collapsed state for all groups
-    for (const auto& group : kImGuiColorGroups) {
-        group_collapsed_[group.name] = true;  // Start collapsed
+// Data types (pins and links) in Tokens::series order (PinTypeColour).
+constexpr const char* kDataTypeNames[] = {"Optimizer", "Tensor", "Parameters", "Labels", "Loss", "Dataset"};
+static_assert(std::size(kDataTypeNames) == cyxwiz::ui::Tokens::kSeriesCount, "a name for every data type");
+
+float Contrast(const ImVec4& a, const ImVec4& b) {
+    const float la = cyxwiz::appearance::Luminance(a.x, a.y, a.z);
+    const float lb = cyxwiz::appearance::Luminance(b.x, b.y, b.z);
+    return (std::max(la, lb) + 0.05f) / (std::min(la, lb) + 0.05f);
+}
+
+bool MatchesFilter(const char* text, const std::string& filter) {
+    if (filter.empty()) return true;
+    std::string lower(text);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return lower.find(filter) != std::string::npos;
+}
+
+// The label column fits this table's longest label (one width for every
+// table cut the field's last numbers off in a narrow window).
+template <typename Labels>
+float LabelWidth(const Labels& labels) {
+    float width = 0.0f;
+    for (const char* label : labels) width = std::max(width, ImGui::CalcTextSize(label).x);
+    return width + 16.0f;
+}
+
+bool BeginColourTable(const char* id, float label_width) {
+    if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) return false;
+    ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, label_width);
+    ImGui::TableSetupColumn("field", ImGuiTableColumnFlags_WidthStretch);
+    return true;
+}
+
+}  // namespace
+
+ThemeEditorPanel::ThemeEditorPanel() : Panel("Theme Editor", false) {}
+
+bool ThemeEditorPanel::ColourRow(const char* label, ImVec4* colour, bool with_alpha, const char* note,
+                                 const ImVec4* note_colour) {
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::TableNextColumn();
+    const bool changed = cyxwiz::ui::ColourField(label, colour, with_alpha);
+    if (note && note[0]) {
+        const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+        ImGui::PushStyleColor(ImGuiCol_Text, note_colour ? *note_colour : t.text_dim);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(note);
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
     }
+    if (changed) MarkChanged();
+    return changed;
 }
 
 void ThemeEditorPanel::Render() {
     if (!visible_) return;
-
-    ImGui::SetNextWindowSize(ImVec2(560, 640), ImGuiCond_FirstUseEver);
-
-    if (ImGui::Begin("Theme Editor", &visible_, ImGuiWindowFlags_MenuBar)) {
-        if (ImGui::BeginMenuBar()) {
-            if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem(ICON_FA_FLOPPY_DISK " Save as custom theme...")) {
-                    show_save_dialog_ = true;
-                }
-                if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN " Load theme file...")) {
-                    LoadThemeFromFileDialog();
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem(ICON_FA_ROTATE_LEFT " Discard changes", nullptr, false,
-                                    has_unsaved_changes_)) {
-                    ReapplySavedTheme();
-                    has_unsaved_changes_ = false;
-                }
-                ImGui::EndMenu();
-            }
-            ImGui::EndMenuBar();
-        }
-
+    ImGui::SetNextWindowSize(ImVec2(720, 680), ImGuiCond_FirstUseEver);
+    // Wide enough for a whole colour row (swatch, hex, R G B with - / +) beside
+    // its label: nothing cut at the right edge.
+    ImGui::SetNextWindowSizeConstraints(ImVec2(700.0f, 320.0f), ImVec2(FLT_MAX, FLT_MAX));
+    if (ImGui::Begin("Theme Editor", &visible_)) {
         RenderPresetSelector();
-        ImGui::Separator();
-
+        ImGui::Spacing();
         if (ImGui::BeginTabBar("ThemeEditorTabs")) {
-            if (ImGui::BeginTabItem("Colors")) {
-                current_tab_ = 0;
-                RenderImGuiColorsTab();
+            if (ImGui::BeginTabItem("Engine colours")) {
+                RenderEngineColoursTab();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Node Editor")) {
-                current_tab_ = 1;
-                RenderImNodesColorsTab();
+            if (ImGui::BeginTabItem("Surfaces")) {
+                RenderSurfacesTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Canvas")) {
+                RenderCanvasTab();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Shape")) {
-                current_tab_ = 2;
-                RenderStyleTab();
+                RenderShapeTab();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Saved themes")) {
-                current_tab_ = 3;
-                RenderSaveLoadTab();
+                RenderSavedThemesTab();
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
         }
     }
     ImGui::End();
-
-    if (show_save_dialog_) {
-        ImGui::OpenPopup("Save Theme");
-        show_save_dialog_ = false;
-    }
-    if (ImGui::BeginPopupModal("Save Theme", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Save the current colours and shape as a custom theme.");
-        ImGui::TextDisabled("Stored in %s", CustomThemesDirectory().string().c_str());
-        ImGui::SetNextItemWidth(320.0f);
-        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-        const bool enter = ImGui::InputTextWithHint("##theme_name", "Theme name",
-                                                    theme_name_buffer_, sizeof(theme_name_buffer_),
-                                                    ImGuiInputTextFlags_EnterReturnsTrue);
-        if (!status_message_.empty() && status_error_) {
-            ImGui::TextColored(ImVec4(1.0f, 0.48f, 0.45f, 1.0f), "%s", status_message_.c_str());
-        }
-        ImGui::Spacing();
-        const bool has_name = theme_name_buffer_[0] != '\0';
-        if (cyxwiz::ui::PrimaryButton("Save", has_name, "Type a name first.",
-                                      cyxwiz::ui::ButtonSize::Regular) ||
-            (enter && has_name)) {
-            if (SaveTheme(theme_name_buffer_)) ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (cyxwiz::ui::SecondaryButton("Cancel", true, nullptr, cyxwiz::ui::ButtonSize::Regular)) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
+    RenderSaveDialog();
 }
 
 void ThemeEditorPanel::RenderPresetSelector() {
     auto& theme = GetTheme();
-    auto presets = Theme::GetAvailablePresets();
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
 
     // Base theme: the preset the edits start from. Picking one applies it
     // Engine-wide (the Appearance page shows every theme as cards).
@@ -249,7 +168,7 @@ void ThemeEditorPanel::RenderPresetSelector() {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(220.0f);
     if (ImGui::BeginCombo("##PresetCombo", Theme::GetPresetName(theme.GetCurrentPreset()))) {
-        for (const auto& preset : presets) {
+        for (const auto& preset : Theme::GetAvailablePresets()) {
             const bool is_selected = (preset == theme.GetCurrentPreset());
             if (ImGui::Selectable(Theme::GetPresetName(preset), is_selected)) {
                 SetThemePreset(preset);  // applies and saves Engine-wide
@@ -260,29 +179,15 @@ void ThemeEditorPanel::RenderPresetSelector() {
         }
         ImGui::EndCombo();
     }
-    ImGui::SameLine();
-    cyxwiz::ui::EngineColours engine = theme.GetEngineColours();
-    if (ImGui::ColorEdit4("##AccentColor", &engine.accent.x,
-                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
-        theme.SetEngineColours(engine);  // the accent only: no preset re-applied, other edits kept
-        has_unsaved_changes_ = true;
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Accent colour");
-
     const std::string custom = ActiveCustomThemeName();
-    if (!custom.empty()) {
-        ImGui::TextDisabled("Custom theme in use: %s", custom.c_str());
-    } else {
-        ImGui::TextDisabled("Browse all themes in File > Preferences > Appearance.");
-    }
+    ImGui::TextDisabled("%s", custom.empty() ? "Browse all themes in File > Preferences > Appearance."
+                                             : ("Custom theme in use: " + custom).c_str());
 
     // Edits apply live but are only kept once saved.
     if (has_unsaved_changes_) {
-        ImGui::TextColored(ImVec4(0.89f, 0.70f, 0.25f, 1.0f),
-                           ICON_FA_CIRCLE_EXCLAMATION " Unsaved changes: save them to keep them "
-                                                      "after a restart.");
-        if (cyxwiz::ui::PrimaryButton(ICON_FA_FLOPPY_DISK " Save as custom theme...", true,
-                                      nullptr, cyxwiz::ui::ButtonSize::Small)) {
+        ImGui::TextColored(t.warning, ICON_FA_CIRCLE_EXCLAMATION " Unsaved changes: save them to keep them after a restart.");
+        if (cyxwiz::ui::PrimaryButton(ICON_FA_FLOPPY_DISK " Save as custom theme...", true, nullptr,
+                                      cyxwiz::ui::ButtonSize::Small)) {
             if (!custom.empty() && theme_name_buffer_[0] == '\0') {
                 std::strncpy(theme_name_buffer_, custom.c_str(), sizeof(theme_name_buffer_) - 1);
                 theme_name_buffer_[sizeof(theme_name_buffer_) - 1] = '\0';
@@ -296,220 +201,206 @@ void ThemeEditorPanel::RenderPresetSelector() {
             has_unsaved_changes_ = false;
         }
     } else if (!status_message_.empty()) {
-        ImGui::TextColored(status_error_ ? ImVec4(1.0f, 0.48f, 0.45f, 1.0f)
-                                         : ImVec4(0.24f, 0.84f, 0.55f, 1.0f),
-                           "%s", status_message_.c_str());
+        ImGui::TextColored(status_error_ ? t.error : t.success, "%s", status_message_.c_str());
     }
 }
 
-void ThemeEditorPanel::RenderImGuiColorsTab() {
-    // Filter input
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##ColorFilter", ICON_FA_MAGNIFYING_GLASS " Filter colors...", color_filter_, sizeof(color_filter_));
+void ThemeEditorPanel::RenderEngineColoursTab() {
+    auto& theme = GetTheme();
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    cyxwiz::ui::EngineColours e = theme.GetEngineColours();
+    bool changed = false;
+    ImGui::BeginChild("EngineColours", ImVec2(0, 0));
 
-    ImGui::BeginChild("ImGuiColorList", ImVec2(0, 0), true);
-
-    ImGuiStyle& style = ImGui::GetStyle();
-    std::string filter_lower;
-    for (char c : std::string(color_filter_)) {
-        filter_lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    cyxwiz::ui::SettingsSection("Accent");
+    if (BeginColourTable("##accent", LabelWidth(std::array<const char*, 1>{"Accent"}))) {
+        changed |= ColourRow("Accent", &e.accent, false,
+                             "Train, OK and every primary button, selection, check marks, links, the selected "
+                             "tab's line, group frames on the canvas.");
+        ImGui::EndTable();
     }
 
-    for (const auto& group : kImGuiColorGroups) {
-        // Filter check for entire group
-        bool group_has_match = filter_lower.empty();
-        if (!group_has_match) {
-            for (const auto& [color_id, name] : group.colors) {
-                std::string name_lower;
-                for (char c : std::string(name)) {
-                    name_lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                }
-                if (name_lower.find(filter_lower) != std::string::npos) {
-                    group_has_match = true;
-                    break;
-                }
+    cyxwiz::ui::SettingsSection("Node families");
+    ImGui::TextDisabled("The fill of each kind of node on the canvas.");
+    if (BeginColourTable("##families", LabelWidth(kFamilyNames))) {
+        for (int i = 0; i < cyxwiz::ui::Tokens::kNodeHueCount; ++i) changed |= ColourRow(kFamilyNames[i], &e.node[i]);
+        ImGui::EndTable();
+    }
+
+    cyxwiz::ui::SettingsSection("Data types");
+    ImGui::TextDisabled("Pins and links by what flows through them; also the colours of plot series, in this order.");
+    if (BeginColourTable("##data", LabelWidth(kDataTypeNames))) {
+        for (int i = 0; i < cyxwiz::ui::Tokens::kSeriesCount; ++i) changed |= ColourRow(kDataTypeNames[i], &e.data[i]);
+        ImGui::EndTable();
+    }
+
+    cyxwiz::ui::SettingsSection("Status words");
+    ImGui::TextDisabled("Ready, warnings, errors, running ... wherever a state is shown.");
+    if (BeginColourTable("##status", LabelWidth(std::array<const char*, 8>{"Success", "Warning", "Failed", "Error",
+                                                                          "Critical", "Info", "Not yet", "Running"}))) {
+        const std::pair<const char*, ImVec4*> status[] = {
+            {"Success", &e.success}, {"Warning", &e.warning}, {"Failed", &e.caution}, {"Error", &e.error},
+            {"Critical", &e.critical}, {"Info", &e.info}, {"Not yet", &e.pending}, {"Running", &e.running}};
+        for (const auto& [name, colour] : status) {
+            const float ratio = Contrast(*colour, t.bg_window);
+            char note[96] = "";
+            if (ratio < 4.5f)
+                std::snprintf(note, sizeof(note), "Hard to read on this window: %.1f:1 (4.5:1 or more reads well).", ratio);
+            changed |= ColourRow(name, colour, false, note, &t.warning);
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::Spacing();
+    if (cyxwiz::ui::LinkButton("Reset the Engine colours to the base theme's")) {
+        const ImVec4 bg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+        e = cyxwiz::ui::DefaultEngineColours(cyxwiz::appearance::IsLightBackground(bg.x, bg.y, bg.z));
+        e.accent = Theme::GetPresetSwatch(theme.GetCurrentPreset()).accent;
+        changed = true;
+        MarkChanged();
+    }
+    ImGui::EndChild();
+    if (changed) theme.SetEngineColours(e);
+}
+
+void ThemeEditorPanel::RenderSurfacesTab() {
+    cyxwiz::ui::SearchField("##surface_filter", surface_filter_, sizeof(surface_filter_), "Filter colours", -1.0f);
+    std::string filter(surface_filter_);
+    std::transform(filter.begin(), filter.end(), filter.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    ImGui::BeginChild("Surfaces", ImVec2(0, 0));
+    ImGuiStyle& style = ImGui::GetStyle();
+    for (const auto& group : kSurfaceGroups) {
+        bool any = false;
+        for (const auto& [id, name] : group.colours) any |= MatchesFilter(name, filter) || MatchesFilter(group.name, filter);
+        if (!any) continue;
+        cyxwiz::ui::SettingsSection(group.name);
+        ImGui::PushID(group.name);
+        std::vector<const char*> labels;
+        for (const auto& [id, name] : group.colours) labels.push_back(name);
+        if (BeginColourTable("##group", LabelWidth(labels))) {
+            for (const auto& [id, name] : group.colours) {
+                if (!MatchesFilter(name, filter) && !MatchesFilter(group.name, filter)) continue;
+                ImVec4 colour = style.Colors[id];
+                if (ColourRow(name, &colour, colour.w < 1.0f || id == ImGuiCol_ModalWindowDimBg ||
+                                                 id == ImGuiCol_TableRowBgAlt))
+                    style.Colors[id] = colour;
             }
+            ImGui::EndTable();
         }
-
-        if (!group_has_match) continue;
-
-        // Get collapsed state
-        bool& collapsed = group_collapsed_[group.name];
-
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen;
-        if (filter_lower.empty() && collapsed) {
-            flags = 0;
-        }
-
-        if (ImGui::CollapsingHeader(group.name, flags)) {
-            collapsed = false;
-            ImGui::Indent();
-
-            for (const auto& [color_id, name] : group.colors) {
-                // Filter individual colors
-                if (!filter_lower.empty()) {
-                    std::string name_lower;
-                    for (char c : std::string(name)) {
-                        name_lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                    }
-                    if (name_lower.find(filter_lower) == std::string::npos) {
-                        continue;
-                    }
-                }
-
-                ImVec4 color = style.Colors[color_id];
-                if (ImGui::ColorEdit4(name, &color.x, ImGuiColorEditFlags_AlphaPreviewHalf)) {
-                    style.Colors[color_id] = color;
-                    has_unsaved_changes_ = true;
-                }
-            }
-
-            ImGui::Unindent();
-        } else {
-            collapsed = true;
-        }
+        ImGui::PopID();
     }
-
+    ImGui::Spacing();
+    ImGui::TextDisabled("Check marks, selection, the keyboard cursor and the selected tab's line follow the accent "
+                        "(Engine colours).");
     ImGui::EndChild();
 }
 
-void ThemeEditorPanel::RenderImNodesColorsTab() {
-    ImGui::BeginChild("ImNodesColorList", ImVec2(0, 0), true);
-
-    ImGui::Text("Node Editor Colors");
-    ImGui::Separator();
-
-    for (const auto& [color_id, name] : kImNodesColors) {
-        ImU32 color_u32 = ImNodes::GetStyle().Colors[color_id];
-        ImVec4 color = ImGui::ColorConvertU32ToFloat4(color_u32);
-
-        if (ImGui::ColorEdit4(name, &color.x, ImGuiColorEditFlags_AlphaPreviewHalf)) {
-            ImNodes::GetStyle().Colors[color_id] = ImGui::ColorConvertFloat4ToU32(color);
-            has_unsaved_changes_ = true;
+void ThemeEditorPanel::RenderCanvasTab() {
+    ImGui::BeginChild("Canvas", ImVec2(0, 0));
+    cyxwiz::ui::SettingsSection("Grid");
+    auto& nodes = ImNodes::GetStyle();
+    if (BeginColourTable("##grid", LabelWidth(std::array<const char*, 3>{"Background", "Line", "Major line"}))) {
+        const std::pair<int, const char*> rows[] = {{ImNodesCol_GridBackground, "Background"},
+                                                    {ImNodesCol_GridLine, "Line"},
+                                                    {ImNodesCol_GridLinePrimary, "Major line"}};
+        for (const auto& [id, name] : rows) {
+            ImVec4 colour = ImGui::ColorConvertU32ToFloat4(nodes.Colors[id]);
+            if (ColourRow(name, &colour)) nodes.Colors[id] = ImGui::ColorConvertFloat4ToU32(colour);
         }
+        ImGui::EndTable();
     }
-
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Nodes are filled by their family, pins and links by their data type (Engine colours); "
+                        "the selection box and group frames use the accent.");
+    ImGui::PopTextWrapPos();
     ImGui::EndChild();
 }
 
-void ThemeEditorPanel::RenderStyleTab() {
-    ImGui::BeginChild("StyleContent", ImVec2(0, 0), true);
+void ThemeEditorPanel::RenderShapeTab() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImGui::BeginChild("Shape", ImVec2(0, 0));
+    const auto row = [this](const char* label, float* value, double max, double step) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::TableNextColumn();
+        cyxwiz::ui::NumberFieldOptions o;
+        o.min = 0.0;
+        o.max = max;
+        o.step = step;
+        o.format = "%.1f";
+        o.width = 56.0f;
+        o.hint = "Pixels";
+        if (cyxwiz::ui::NumberField(label, value, o)) MarkChanged();
+    };
+    const auto pair_row = [this](const char* label, ImVec2* value, double max) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::TableNextColumn();
+        cyxwiz::ui::NumberFieldOptions o;
+        o.min = 0.0;
+        o.max = max;
+        o.step = 1.0;
+        o.format = "%.0f";
+        o.width = 44.0f;
+        ImGui::PushID(label);
+        o.hint = "Across (pixels)";
+        if (cyxwiz::ui::NumberField("##x", &value->x, o)) MarkChanged();
+        ImGui::SameLine();
+        o.hint = "Down (pixels)";
+        if (cyxwiz::ui::NumberField("##y", &value->y, o)) MarkChanged();
+        ImGui::PopID();
+    };
+    const auto table = [](const char* id) {
+        if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) return false;
+        ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("Item inner spacing").x + 16.0f);
+        ImGui::TableSetupColumn("field", ImGuiTableColumnFlags_WidthStretch);
+        return true;
+    };
 
-    RenderRoundingSection();
-    ImGui::Separator();
-    RenderBorderSection();
-    ImGui::Separator();
-    RenderPaddingSection();
-    ImGui::Separator();
-    RenderSizeSection();
-
+    cyxwiz::ui::SettingsSection("Rounding");
+    if (table("##rounding")) {
+        row("Windows", &style.WindowRounding, 16.0, 1.0);
+        row("Fields and buttons", &style.FrameRounding, 16.0, 1.0);
+        row("Menus and popups", &style.PopupRounding, 16.0, 1.0);
+        row("Scrollbars", &style.ScrollbarRounding, 16.0, 1.0);
+        row("Grabs", &style.GrabRounding, 16.0, 1.0);
+        row("Tabs", &style.TabRounding, 16.0, 1.0);
+        ImGui::EndTable();
+    }
+    cyxwiz::ui::SettingsSection("Lines");
+    ImGui::TextDisabled("Fields and buttons have no outline (a fill marks them); windows keep a line.");
+    if (table("##borders")) {
+        row("Window border", &style.WindowBorderSize, 3.0, 0.5);
+        row("Popup border", &style.PopupBorderSize, 3.0, 0.5);
+        ImGui::EndTable();
+    }
+    cyxwiz::ui::SettingsSection("Padding and spacing");
+    if (table("##padding")) {
+        pair_row("Window padding", &style.WindowPadding, 24.0);
+        pair_row("Field padding", &style.FramePadding, 24.0);
+        pair_row("Item spacing", &style.ItemSpacing, 24.0);
+        pair_row("Item inner spacing", &style.ItemInnerSpacing, 24.0);
+        pair_row("Table cell padding", &style.CellPadding, 24.0);
+        ImGui::EndTable();
+    }
+    cyxwiz::ui::SettingsSection("Sizes");
+    if (table("##sizes")) {
+        row("Scrollbar width", &style.ScrollbarSize, 24.0, 1.0);
+        row("Smallest grab", &style.GrabMinSize, 24.0, 1.0);
+        row("Indent", &style.IndentSpacing, 32.0, 1.0);
+        ImGui::EndTable();
+    }
     ImGui::EndChild();
 }
 
-void ThemeEditorPanel::RenderRoundingSection() {
-    ImGuiStyle& style = ImGui::GetStyle();
-
-    if (ImGui::CollapsingHeader("Rounding", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Indent();
-
-        if (ImGui::SliderFloat("Window Rounding", &style.WindowRounding, 0.0f, 12.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Frame Rounding", &style.FrameRounding, 0.0f, 12.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Popup Rounding", &style.PopupRounding, 0.0f, 12.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Scrollbar Rounding", &style.ScrollbarRounding, 0.0f, 12.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Grab Rounding", &style.GrabRounding, 0.0f, 12.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Tab Rounding", &style.TabRounding, 0.0f, 12.0f)) {
-            has_unsaved_changes_ = true;
-        }
-
-        ImGui::Unindent();
-    }
-}
-
-void ThemeEditorPanel::RenderBorderSection() {
-    ImGuiStyle& style = ImGui::GetStyle();
-
-    if (ImGui::CollapsingHeader("Borders", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Indent();
-
-        if (ImGui::SliderFloat("Window Border", &style.WindowBorderSize, 0.0f, 3.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Frame Border", &style.FrameBorderSize, 0.0f, 3.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Popup Border", &style.PopupBorderSize, 0.0f, 3.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Child Border", &style.ChildBorderSize, 0.0f, 3.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Tab Border", &style.TabBorderSize, 0.0f, 3.0f)) {
-            has_unsaved_changes_ = true;
-        }
-
-        ImGui::Unindent();
-    }
-}
-
-void ThemeEditorPanel::RenderPaddingSection() {
-    ImGuiStyle& style = ImGui::GetStyle();
-
-    if (ImGui::CollapsingHeader("Padding & Spacing", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Indent();
-
-        if (ImGui::SliderFloat2("Window Padding", &style.WindowPadding.x, 0.0f, 20.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat2("Frame Padding", &style.FramePadding.x, 0.0f, 20.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat2("Item Spacing", &style.ItemSpacing.x, 0.0f, 20.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat2("Item Inner Spacing", &style.ItemInnerSpacing.x, 0.0f, 20.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat2("Cell Padding", &style.CellPadding.x, 0.0f, 20.0f)) {
-            has_unsaved_changes_ = true;
-        }
-
-        ImGui::Unindent();
-    }
-}
-
-void ThemeEditorPanel::RenderSizeSection() {
-    ImGuiStyle& style = ImGui::GetStyle();
-
-    if (ImGui::CollapsingHeader("Sizes", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Indent();
-
-        if (ImGui::SliderFloat("Scrollbar Size", &style.ScrollbarSize, 8.0f, 24.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Grab Min Size", &style.GrabMinSize, 8.0f, 20.0f)) {
-            has_unsaved_changes_ = true;
-        }
-        if (ImGui::SliderFloat("Indent Spacing", &style.IndentSpacing, 0.0f, 30.0f)) {
-            has_unsaved_changes_ = true;
-        }
-
-        ImGui::Unindent();
-    }
-}
-
-void ThemeEditorPanel::RenderSaveLoadTab() {
-    ImGui::BeginChild("SaveLoadContent", ImVec2(0, 0), false);
-
+void ThemeEditorPanel::RenderSavedThemesTab() {
+    ImGui::BeginChild("SavedThemes", ImVec2(0, 0));
     ImGui::TextUnformatted("Your custom themes");
     ImGui::TextDisabled("%s", CustomThemesDirectory().string().c_str());
     ImGui::Spacing();
@@ -518,8 +409,7 @@ void ThemeEditorPanel::RenderSaveLoadTab() {
     const std::string active = ActiveCustomThemeName();
     if (themes.empty()) {
         ImGui::TextDisabled("No custom themes yet. Change colours or shape, then save.");
-    } else if (ImGui::BeginTable("##custom_themes", 2, ImGuiTableFlags_SizingStretchProp |
-                                                           ImGuiTableFlags_RowBg)) {
+    } else if (ImGui::BeginTable("##custom_themes", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("action", ImGuiTableColumnFlags_WidthFixed,
                                 cyxwiz::ui::ButtonWidth("Apply", cyxwiz::ui::ButtonSize::Small));
@@ -528,11 +418,10 @@ void ThemeEditorPanel::RenderSaveLoadTab() {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::AlignTextToFramePadding();
-            if (name == active) {
+            if (name == active)
                 ImGui::Text(ICON_FA_CIRCLE_CHECK " %s", name.c_str());
-            } else {
+            else
                 ImGui::TextUnformatted(name.c_str());
-            }
             ImGui::TableNextColumn();
             ImGui::PushID(name.c_str());
             if (name == active) {
@@ -559,19 +448,41 @@ void ThemeEditorPanel::RenderSaveLoadTab() {
         show_save_dialog_ = true;
     }
     ImGui::SameLine();
-    if (cyxwiz::ui::SecondaryButton(ICON_FA_FOLDER_OPEN " Load theme file...")) {
-        LoadThemeFromFileDialog();
-    }
+    if (cyxwiz::ui::SecondaryButton(ICON_FA_FOLDER_OPEN " Load theme file...")) LoadThemeFromFileDialog();
 
     ImGui::Spacing();
-    ImGui::Separator();
     ImGui::TextDisabled("Edits apply live. A saved or loaded theme is re-applied at startup;");
     ImGui::TextDisabled("choosing a base theme replaces it.");
     ImGui::EndChild();
 }
 
+void ThemeEditorPanel::RenderSaveDialog() {
+    if (show_save_dialog_) {
+        ImGui::OpenPopup("Save Theme");
+        show_save_dialog_ = false;
+    }
+    if (!ImGui::BeginPopupModal("Save Theme", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    ImGui::TextUnformatted("Save the current colours and shape as a custom theme.");
+    ImGui::TextDisabled("Stored in %s", CustomThemesDirectory().string().c_str());
+    ImGui::SetNextItemWidth(320.0f);
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    const bool enter = ImGui::InputTextWithHint("##theme_name", "Theme name", theme_name_buffer_,
+                                                sizeof(theme_name_buffer_), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (!status_message_.empty() && status_error_) ImGui::TextColored(t.error, "%s", status_message_.c_str());
+    ImGui::Spacing();
+    const bool has_name = theme_name_buffer_[0] != '\0';
+    if (cyxwiz::ui::PrimaryButton("Save", has_name, "Type a name first.", cyxwiz::ui::ButtonSize::Regular) ||
+        (enter && has_name)) {
+        if (SaveTheme(theme_name_buffer_)) ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (cyxwiz::ui::SecondaryButton("Cancel", true, nullptr, cyxwiz::ui::ButtonSize::Regular)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
 bool ThemeEditorPanel::SaveTheme(const std::string& name) {
-    std::filesystem::path saved;
+    fs::path saved;
     std::string error;
     if (!SaveCustomTheme(name, &saved, &error)) {
         status_message_ = error;
@@ -592,7 +503,7 @@ bool ThemeEditorPanel::LoadTheme(const std::string& path) {
         return false;
     }
     has_unsaved_changes_ = false;
-    status_message_ = "Loaded " + std::filesystem::path(path).stem().string();
+    status_message_ = "Loaded " + fs::path(path).stem().string();
     status_error_ = false;
     return true;
 }
@@ -602,43 +513,4 @@ void ThemeEditorPanel::LoadThemeFromFileDialog() {
     if (const auto result = cyxwiz::FileDialogs::OpenTheme(dir.c_str())) LoadTheme(*result);
 }
 
-bool ThemeEditorPanel::ExportTheme(const std::string& path) {
-    return SaveTheme(fs::path(path).stem().string());
-}
-
-void ThemeEditorPanel::BackupCurrentStyle() {
-    backup_style_ = ImGui::GetStyle();
-    has_backup_ = true;
-}
-
-void ThemeEditorPanel::RestoreBackupStyle() {
-    if (has_backup_) {
-        ImGui::GetStyle() = backup_style_;
-        has_unsaved_changes_ = false;
-    }
-}
-
-bool ThemeEditorPanel::StyleDiffersFromBackup() const {
-    if (!has_backup_) return true;
-
-    const ImGuiStyle& current = ImGui::GetStyle();
-    // Compare a few key values
-    return (current.WindowRounding != backup_style_.WindowRounding ||
-            current.FrameRounding != backup_style_.FrameRounding ||
-            current.Colors[ImGuiCol_WindowBg].x != backup_style_.Colors[ImGuiCol_WindowBg].x);
-}
-
-void ThemeEditorPanel::RenderColorGroup(const char* group_name, const std::vector<std::pair<ImGuiCol_, const char*>>& colors) {
-    (void)group_name;
-    (void)colors;
-    // Implemented in RenderImGuiColorsTab
-}
-
-void ThemeEditorPanel::RenderImNodesColorGroup(const char* group_name, const std::vector<std::pair<int, const char*>>& colors) {
-    (void)group_name;
-    (void)colors;
-    // Implemented in RenderImNodesColorsTab
-}
-
-
-} // namespace gui
+}  // namespace gui
