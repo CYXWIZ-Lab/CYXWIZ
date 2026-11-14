@@ -4,6 +4,15 @@ The big windows can leave the Engine's main window and become windows of
 their own on the desktop: on a second monitor, next to the Engine, or over
 it. They come back with one command.
 
+## The default layout
+
+View > Layout > Reset to Default (and the first launch) puts the Asset
+Browser and Nodes on the left; CyxWiz Studio and the Script Editor beside
+Data Studio in the middle; Properties and Info on the right; the Console
+below, with the Viewport as a tab beside it. The Console takes 42 % of the
+height and at least about 390 px, so a terminal shows some eight lines of
+output above its input box.
+
 ## Which windows
 
 Dashboard, Plot, the plot view's own window, Plot Output, Data Studio, Script

@@ -78,6 +78,21 @@ Tools) onto the canvas.
 A node inside a frame keeps its own clicks: click it to select it, and
 right-click it for its own menu.
 
+## Notes
+
+**Add a note.** Drag the **Note** card (Nodes panel, Studio Tools) onto the
+canvas, or double-click it (the note goes to a free spot near the middle of
+the view). A single click on the card only says how.
+
+**Edit a note.** Double-click it, or right-click it and choose **Edit...**:
+the dialog has its **Title**, **Text** and **Colour** (the note colour or a
+node family's), with **Save**, **Cancel** and **Delete**.
+
+**Right-click a note** for **Edit...**, **Minimise** / **Expand** and
+**Delete**. A selected note (click it) is deleted with the **Delete** key.
+
+Adding, moving, editing and deleting a note are each one Undo (Ctrl+Z) step.
+
 ## Copy, cut and paste nodes
 
 - **Ctrl+C**, **Ctrl+X** and **Ctrl+V** copy, cut and paste the selected

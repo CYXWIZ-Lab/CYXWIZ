@@ -11,6 +11,12 @@ four.
 - **Open dataset** (or **Open a loaded dataset...** when nothing is open):
   the first rows of a dataset a Data Input loaded (10,000 by default); the
   dataset itself stays where its Data Input put it.
+- **The Asset Browser**: double-click a table file (or right-click it,
+  **Open in Table Viewer**). A file a Data Input loaded opens as that
+  dataset; any other opens its first 200,000 rows, read from the file in a
+  task (the Task viewer and the viewer show progress and Cancel), and
+  nothing is registered. Files over 1 GB are refused with a note; a Data
+  Input reads them from disk.
 - **Open in Table Viewer** in Data Studio's Query tab, the SQL Workbench and
   an SQL step's Properties (input, output preview, checks). An output larger
   than 200,000 rows opens its first 200,000 and says so in the tab name.

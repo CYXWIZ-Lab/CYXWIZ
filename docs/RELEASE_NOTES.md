@@ -7,6 +7,36 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **A data file opens in the Table Viewer.** Double-click a CSV (or TSV,
+  Parquet, JSON Lines, Feather, ...) in the Asset Browser to look at its
+  first rows in the Table Viewer, read in a task; nothing is loaded into
+  the graph. A file a Data Input loaded opens as that dataset. Before, a
+  double-click added a Data Input node; that is now **Create Data Input**
+  in the file's menu and preview. The menu's **Open** for data files is
+  **Open as text**.
+- **The Nodes panel fits its column.** Cards take as many columns as the
+  panel holds and names use two lines ("Depthwise Conv2D", "Instance
+  Norm") instead of being cut after ten letters; a narrow panel no longer
+  cuts a third column at its edge. The "Real" chip over every icon is
+  gone: a small dot marks only the nodes that run in part or are blocked.
+  The panel's search lists nodes named by the words first, and nodes that
+  only mention them under **Related**.
+- **New nodes and notes go to a free spot.** A node added from the Nodes
+  panel, search or the right-click menu, a Data Input from the Asset
+  Browser and a new note no longer land on top of the nodes at the centre
+  of the view; the view moves to show them when they are outside it. The
+  minimap fades while a node is under it.
+- **Notes can be edited, deleted and undone.** Right-click a note for
+  Edit, Minimise and Delete; the Delete key removes a selected note; the
+  note dialog has a title, text, a colour and Save / Cancel / Delete
+  (its buttons fell below the window, so a note could not be deleted);
+  adding, moving, editing and deleting a note are each one Undo step.
+- **The Console shows a terminal's output.** In the default layout the
+  Console is taller (the Viewport is a tab beside it instead of a strip
+  below), the Python REPL's empty input is two lines, and the REPL and
+  Commands inputs have no outline.
+- **The Info panel follows Undo.** It kept showing a node that Undo or
+  Delete had removed from the canvas.
 - **The Theme Editor shows every colour the Engine draws, and every row
   changes the screen.** Engine colours: the accent, the 24 node families,
   the data types (pins, links, plot series) and the status words, with a

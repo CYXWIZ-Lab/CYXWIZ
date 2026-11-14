@@ -32,6 +32,19 @@ Three places add a node to the graph, and they list nodes the same way:
 Search lists what runs first (best match first), then up to five table steps,
 marked *Advanced operation - Rows* and so on.
 
+The Nodes panel's search (press **/** in the panel) lists the nodes whose
+name holds the words first (the whole name, then the start of a name, then
+the rest), and under a **Related** line the nodes that only mention them in
+a keyword or their description.
+
+The Nodes panel lays its cards out in as many columns as the panel's width
+holds (one in a narrow panel), with the name on up to two lines. A small dot
+at a card's top left marks a node that runs only in part (amber) or is
+blocked (red); hover the card for the reason.
+
+A node added from any of the three, or a note, goes to a free spot near the
+middle of the view, and the view moves to show it when it is outside.
+
 The Nodes panel's filter (**All**, **Pipeline**, **Training**, **UI-only**,
 **Blocked**, **Favourites**) narrows the cards; with a filter other than
 *All*, each group lists every node that passes it, in its own group.
@@ -57,7 +70,8 @@ many it shows (8 by default, up to 20) and clears it.
 
 - **The Info panel** shows a node's description, support and ports. Hover a
   card in the Nodes panel to preview it; click a card, or click a node on the
-  canvas, to keep it there.
+  canvas, to keep it there. A canvas node that is removed (Delete, Undo)
+  leaves the Info panel.
 - **Pins**: hover the small circle just outside a node's box (inputs on the
   left, outputs on the right) for the pin's name, what it carries, how many
   links it has and what it is for.

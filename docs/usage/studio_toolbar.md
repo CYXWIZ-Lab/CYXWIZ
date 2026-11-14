@@ -54,7 +54,8 @@ Script Editor they save the script); see Preferences > Shortcuts.
 - **View · 100%** (the zoom on the button): **Zoom** with **-** and **+**
   (greyed at 25% and 200%, with the reason on hover; the view keeps its
   centre), **Zoom to 100%**, **Fit all nodes** (F), **Minimap** (M) and
-  **Find in the graph** (Ctrl+F).
+  **Find in the graph** (Ctrl+F). The minimap fades while a node is under
+  it (unless the pointer is on it), so the node stays readable.
 
 ## The mode, the framework and Code
 
