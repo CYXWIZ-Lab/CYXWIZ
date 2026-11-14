@@ -904,15 +904,29 @@ void Properties::RenderMetadataRow(MLNode& node, const cyxwiz::properties_view::
             return param.enum_labels.size() == param.enum_values.size() ? param.enum_labels[i].c_str()
                                                                          : param.enum_values[i].c_str();
         };
-        ImGui::SetNextItemWidth(editor_width);
-        if (ImGui::BeginCombo("##value", shown(static_cast<size_t>(current)))) {
-            for (size_t i = 0; i < param.enum_values.size(); ++i) {
-                if (ImGui::Selectable(shown(i), static_cast<int>(i) == current)) {
-                    value = param.enum_values[i];
-                    changed = true;
-                }
+        // Two choices side by side as a toggle when both words fit the row
+        // (owner 2026-11-14); more, or too long, stay a dropdown.
+        const char* pair[2] = {nullptr, nullptr};
+        if (param.enum_values.size() == 2) {
+            pair[0] = shown(0);
+            pair[1] = shown(1);
+        }
+        if (pair[0] && cyxwiz::ui::SegmentedControlWidth(pair, 2) <= editor_width) {
+            if (cyxwiz::ui::SegmentedControl("##value", pair, 2, &current)) {
+                value = param.enum_values[static_cast<size_t>(current)];
+                changed = true;
             }
-            ImGui::EndCombo();
+        } else {
+            ImGui::SetNextItemWidth(editor_width);
+            if (ImGui::BeginCombo("##value", shown(static_cast<size_t>(current)))) {
+                for (size_t i = 0; i < param.enum_values.size(); ++i) {
+                    if (ImGui::Selectable(shown(i), static_cast<int>(i) == current)) {
+                        value = param.enum_values[i];
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
         }
     } else if (param.type == "column") {
         // A column of the data reaching the node (TOFIX178 S0-e); empty keeps
