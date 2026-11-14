@@ -181,66 +181,63 @@ void NodeEditor::DeleteSelected() {
 }
 
 ImVec2 NodeEditor::FindEmptyPosition() {
-    // Find a position that doesn't overlap with existing nodes
-    // Start at a reasonable default position and search for empty space
+    // The free spot nearest the middle of the view (owner 2026-11-14: a node
+    // added from the menu, the Asset Browser or the Nodes panel, and a new
+    // note, landed on the view centre over whatever was there). Nodes, nodes
+    // still waiting for their place, and notes count as taken.
+    constexpr float kWidth = 140.0f;   // icon box, its labels, its pins (grid units)
+    constexpr float kHeight = 110.0f;
+    constexpr float kGap = 30.0f;
+    const ImVec2 view_centre = canvas_size_.x > 0.0f && canvas_size_.y > 0.0f
+        ? GridAt(ImVec2(canvas_origin_.x + canvas_size_.x * 0.5f, canvas_origin_.y + canvas_size_.y * 0.5f))
+        : ImVec2(400.0f - ImNodes::EditorContextGetPanning().x, 300.0f - ImNodes::EditorContextGetPanning().y);
+    const ImVec2 preferred(view_centre.x - kWidth * 0.5f, view_centre.y - kHeight * 0.5f);
 
-    const float NODE_WIDTH = 200.0f;
-    const float NODE_HEIGHT = 120.0f;
-    const float SPACING = 50.0f;
-
-    // Get current view panning to place node in visible area
-    ImVec2 panning = ImNodes::EditorContextGetPanning();
-
-    // Start position - relative to current view
-    float start_x = -panning.x + 100.0f;
-    float start_y = -panning.y + 100.0f;
-
-    // If no nodes exist, return a simple position
-    if (nodes_.empty()) {
-        return ImVec2(start_x, start_y);
-    }
-
-    // Collect all existing node positions
-    std::vector<ImVec2> node_positions;
+    struct Rect { float x0, y0, x1, y1; };
+    std::vector<Rect> taken;
     for (const auto& node : nodes_) {
         if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
-        auto it = cached_node_positions_.find(node.id);
-        ImVec2 pos = (it != cached_node_positions_.end()) ? it->second : ImVec2(0,0);
-        node_positions.push_back(pos);
+        const auto at = cached_node_positions_.find(node.id);
+        const auto waiting = pending_positions_.find(node.id);
+        if (at == cached_node_positions_.end() && waiting == pending_positions_.end()) continue;
+        const ImVec2 pos = waiting != pending_positions_.end() ? waiting->second : at->second;
+        taken.push_back({pos.x, pos.y, pos.x + kWidth, pos.y + kHeight});
     }
+    for (const auto& note : annotations_)
+        taken.push_back({note.position.x, note.position.y, note.position.x + note.size.x, note.position.y + note.size.y});
+    const auto free_at = [&taken](const ImVec2& p) {
+        for (const Rect& r : taken)
+            if (p.x < r.x1 + kGap && p.x + kWidth + kGap > r.x0 && p.y < r.y1 + kGap && p.y + kHeight + kGap > r.y0)
+                return false;
+        return true;
+    };
+    if (free_at(preferred)) return preferred;
 
-    // Search for empty position using grid search
-    for (int row = 0; row < 20; ++row) {
-        for (int col = 0; col < 20; ++col) {
-            float test_x = start_x + col * (NODE_WIDTH + SPACING);
-            float test_y = start_y + row * (NODE_HEIGHT + SPACING);
-
-            bool overlaps = false;
-            for (const auto& pos : node_positions) {
-                // Check if rectangles overlap
-                if (test_x < pos.x + NODE_WIDTH + SPACING &&
-                    test_x + NODE_WIDTH + SPACING > pos.x &&
-                    test_y < pos.y + NODE_HEIGHT + SPACING &&
-                    test_y + NODE_HEIGHT + SPACING > pos.y) {
-                    overlaps = true;
-                    break;
+    // Rings of candidate spots around the preferred one, nearest first.
+    const float step_x = kWidth + kGap, step_y = kHeight + kGap;
+    for (int ring = 1; ring <= 40; ++ring) {
+        bool found = false;
+        ImVec2 best;
+        float best_distance = 0.0f;
+        for (int dy = -ring; dy <= ring; ++dy) {
+            for (int dx = -ring; dx <= ring; ++dx) {
+                if (std::abs(dx) != ring && std::abs(dy) != ring) continue;  // the ring only
+                const ImVec2 p(preferred.x + static_cast<float>(dx) * step_x, preferred.y + static_cast<float>(dy) * step_y);
+                if (!free_at(p)) continue;
+                const float distance = (p.x - preferred.x) * (p.x - preferred.x) + (p.y - preferred.y) * (p.y - preferred.y);
+                if (!found || distance < best_distance) {
+                    found = true;
+                    best = p;
+                    best_distance = distance;
                 }
             }
-
-            if (!overlaps) {
-                return ImVec2(test_x, test_y);
-            }
         }
+        if (found) return best;
     }
-
-    // Fallback: place below the lowest node
-    float max_y = 0.0f;
-    for (const auto& pos : node_positions) {
-        if (pos.y > max_y) {
-            max_y = pos.y;
-        }
-    }
-    return ImVec2(start_x, max_y + NODE_HEIGHT + SPACING);
+    // A canvas full in every direction: below everything.
+    float bottom = preferred.y;
+    for (const Rect& r : taken) bottom = std::max(bottom, r.y1);
+    return ImVec2(preferred.x, bottom + kGap);
 }
 
 void NodeEditor::CopySelection() {
@@ -548,6 +545,15 @@ void NodeEditor::CenterViewOn(ImVec2 grid_point) {
     // screen = grid * zoom + panning (relative to the canvas origin)
     ImNodes::EditorContextResetPanning(ImVec2(canvas_size_.x * 0.5f - grid_point.x * zoom_,
                                               canvas_size_.y * 0.5f - grid_point.y * zoom_));
+}
+
+void NodeEditor::RevealIfOffScreen(ImVec2 grid_min, ImVec2 size) {
+    if (canvas_size_.x <= 0.0f || canvas_size_.y <= 0.0f) return;
+    const ImVec2 view_min = GridAt(canvas_origin_);
+    const ImVec2 view_max = GridAt(ImVec2(canvas_origin_.x + canvas_size_.x, canvas_origin_.y + canvas_size_.y));
+    const bool inside = grid_min.x >= view_min.x && grid_min.y >= view_min.y &&
+                        grid_min.x + size.x <= view_max.x && grid_min.y + size.y <= view_max.y;
+    if (!inside) CenterViewOn(ImVec2(grid_min.x + size.x * 0.5f, grid_min.y + size.y * 0.5f));
 }
 
 void NodeEditor::FrameNodes(const std::vector<int>& node_ids) {

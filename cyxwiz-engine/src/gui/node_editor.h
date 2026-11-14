@@ -1052,6 +1052,9 @@ private:
     // Pans (and for FrameNodes zooms, at most to 100%) so grid-space points
     // sit in the middle of the canvas at the current zoom.
     void CenterViewOn(ImVec2 grid_point);
+    // Centres the view on a box (grid space) that is not fully on screen: a node
+    // or note placed in a free spot off the visible area stays in sight.
+    void RevealIfOffScreen(ImVec2 grid_min, ImVec2 size);
     void FrameNodes(const std::vector<int>& node_ids);
 
     // Search functionality
@@ -1196,6 +1199,9 @@ private:
     std::function<void()> open_debugger_callback_;
 
     // Deferred node addition (to avoid modifying nodes_ while ImNodes is rendering)
+    // A queued node's position meaning "the free spot nearest the middle of
+    // the view", found when it is created (FindEmptyPosition).
+    static constexpr ImVec2 kPlaceInFreeSpot{-99999.0f, -99999.0f};
     struct PendingNode {
         PendingNode(
             NodeType type_value,

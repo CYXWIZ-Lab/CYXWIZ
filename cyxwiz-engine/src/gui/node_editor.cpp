@@ -139,9 +139,11 @@ NodeEditor::NodePinState NodeEditor::GetNodePinState(int node_id) const {
 }
 
 void NodeEditor::AddAnnotation() {
-    // Add annotation at center of visible area
-    ImVec2 center_pos = ImVec2(400.0f, 300.0f);  // Default position
-    AddAnnotationAt(center_pos);
+    // In the free spot nearest the middle of the view, clear of nodes and
+    // other notes (it was always at 400, 300, over whatever was there).
+    const ImVec2 at = FindEmptyPosition();
+    AddAnnotationAt(at);
+    RevealIfOffScreen(at, ImVec2(200.0f, 100.0f));
 }
 
 ImU32 DefaultAnnotationColour() {
@@ -763,15 +765,17 @@ void NodeEditor::Render() {
 
             nodes_.push_back(node);
 
-            // Check for sentinel value indicating auto-position should be used
             ImVec2 position = pending.position;
-            if (position.x < -90000.0f && position.y < -90000.0f) {
-                // Use FindEmptyPosition now that we're after EndNodeEditor
+            if (position.x == kPlaceInFreeSpot.x && position.y == kPlaceInFreeSpot.y) {
+                // Now, after EndNodeEditor, with the nodes queued before it placed.
                 position = FindEmptyPosition();
+                RevealIfOffScreen(position, ImVec2(140.0f, 110.0f));
             }
 
-            // Set node position
+            // Set node position; known at once, so the next node queued this
+            // frame finds it taken (FindEmptyPosition).
             ImNodes::SetNodeGridSpacePos(node.id, position);
+            cached_node_positions_[node.id] = position;
 
             // Select the newly created node so it's highlighted
             ImNodes::ClearNodeSelection();
@@ -3998,19 +4002,14 @@ void NodeEditor::AddNodeFromMenu(NodeType type, const std::string& name) {
         return;
     }
 
-    // Get center of the visible area for node placement
-    ImVec2 panning = ImNodes::EditorContextGetPanning();
-    ImVec2 visible_center(-panning.x + 400, -panning.y + 300);
-    
-    // Queue the node for addition (deferred to avoid modifying nodes_ during rendering)
-    pending_nodes_.emplace_back(type, name, visible_center);
-    
-    spdlog::info("Menu: Adding {} node at center of view", name);
+    // Queued (deferred to avoid modifying nodes_ during rendering); placed in
+    // the free spot nearest the middle of the view when it is created.
+    pending_nodes_.emplace_back(type, name, kPlaceInFreeSpot);
+    spdlog::info("Menu: adding {} node", name);
 }
 
 void NodeEditor::AddDataInputFromAsset(const std::string& path) {
-    ImVec2 panning = ImNodes::EditorContextGetPanning();
-    PendingNode pending{NodeType::DataInput, "Data Input", ImVec2(-panning.x + 400, -panning.y + 300)};
+    PendingNode pending{NodeType::DataInput, "Data Input", kPlaceInFreeSpot};
     pending.initial_parameters["file_path"] = path;
     pending.initial_parameters["source_type"] = "file";
     pending.initial_parameters["configured"] = "false";
@@ -4021,8 +4020,7 @@ void NodeEditor::AddDataInputFromAsset(const std::string& path) {
 void NodeEditor::AddDataInputFromCloud(const std::string& dataset_id, const std::string& dataset_name,
                                        const std::string& file_id, const std::string& file_name,
                                        uint64_t size_bytes) {
-    ImVec2 panning = ImNodes::EditorContextGetPanning();
-    PendingNode pending{NodeType::DataInput, file_name, ImVec2(-panning.x + 400, -panning.y + 300)};
+    PendingNode pending{NodeType::DataInput, file_name, kPlaceInFreeSpot};
     pending.initial_parameters["source_type"] = "cloud";
     pending.initial_parameters["cloud_dataset_id"] = dataset_id;
     pending.initial_parameters["cloud_dataset_name"] = dataset_name;
@@ -4041,7 +4039,7 @@ void NodeEditor::AddDataInputFromCloud(const std::string& dataset_id, const std:
 void NodeEditor::AddKeptTest(const std::string& path, const std::string& name) {
     // Below the graph, at its left edge, clear of its nodes and links (an
     // empty graph: where FindEmptyPosition puts a node).
-    ImVec2 position(-99999.0f, -99999.0f);
+    ImVec2 position = kPlaceInFreeSpot;
     if (!cached_node_positions_.empty()) {
         float left = FLT_MAX, bottom = -FLT_MAX;
         for (const auto& [id, at] : cached_node_positions_) {
@@ -4063,8 +4061,7 @@ void NodeEditor::AddKeptTest(const std::string& path, const std::string& name) {
 }
 
 void NodeEditor::AddDataInputAndConfigure() {
-    ImVec2 panning = ImNodes::EditorContextGetPanning();
-    PendingNode pending{NodeType::DataInput, "Data Input", ImVec2(-panning.x + 400, -panning.y + 300)};
+    PendingNode pending{NodeType::DataInput, "Data Input", kPlaceInFreeSpot};
     pending.open_configuration = true;
     pending_nodes_.push_back(std::move(pending));
     Show();
