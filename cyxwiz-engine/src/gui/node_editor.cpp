@@ -58,6 +58,7 @@
 #include <imnodes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cstdio>
 #include <cfloat>
 #include <memory>
 #include <chrono>
@@ -154,6 +155,7 @@ ImU32 DefaultAnnotationColour() {
 }
 
 void NodeEditor::AddAnnotationAt(const ImVec2& position) {
+    SaveUndoState();  // adding a note is undoable (owner walk 2026-11-14)
     CanvasAnnotation annotation;
     annotation.id = next_annotation_id_++;
     annotation.title = "Note";
@@ -513,9 +515,16 @@ void NodeEditor::Render() {
         // Handle right-click context menu (skip if mouse is over minimap)
         bool right_click_detected = false;
         if (ImNodes::IsEditorHovered() && !mouse_in_minimap_bounds && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            // Where a node added from the menu goes: the grid point clicked.
-            context_menu_pos_ = GridAt(mouse_pos);
-            right_click_detected = true;
+            if (hovered_note_id_ >= 0) {
+                // A note has its own menu (it opened Add Node before).
+                note_menu_id_ = hovered_note_id_;
+                selected_annotation_id_ = hovered_note_id_;
+                open_note_menu_ = true;
+            } else {
+                // Where a node added from the menu goes: the grid point clicked.
+                context_menu_pos_ = GridAt(mouse_pos);
+                right_click_detected = true;
+            }
         }
 
         // Cache node positions while still inside BeginNodeEditor/EndNodeEditor scope
@@ -2922,6 +2931,10 @@ void NodeEditor::HandleInteractions() {
     // field (or a field on a node) edits that text, not the graph.
     const bool canvas_has_keys = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
                                  !ImGui::GetIO().WantTextInput;
+    if (num_selected_nodes == 0 && selected_annotation_id_ >= 0 && canvas_has_keys &&
+        ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+        DeleteNote(selected_annotation_id_);  // a selected note (Delete did nothing)
+    }
     if (num_selected_nodes > 0 && canvas_has_keys && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
         SaveUndoState();  // Save state before deleting nodes
 
@@ -3378,6 +3391,7 @@ NodeGroup* NodeEditor::FindGroupContainingNode(int node_id) {
 }
 
 void NodeEditor::RenderAnnotations() {
+    hovered_note_id_ = -1;
     if (annotations_.empty()) return;
     const ui::Tokens& t = ui::CurrentTokens();
 
@@ -3411,6 +3425,7 @@ void NodeEditor::RenderAnnotations() {
 
         bool is_hovered = ImGui::IsItemHovered();
         bool is_active = ImGui::IsItemActive();
+        if (is_hovered) hovered_note_id_ = annotation.id;
         bool mouse_in_title = is_hovered && (mouse_pos.y >= p_min.y && mouse_pos.y <= p_min.y + title_height);
 
         // Minimize button bounds (right side of title bar)
@@ -3427,13 +3442,14 @@ void NodeEditor::RenderAnnotations() {
         else if (is_hovered && !mouse_on_min_btn && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             editing_annotation_ = true;
             editing_annotation_id_ = annotation.id;
-            ImGui::OpenPopup("EditAnnotationPopup");
         }
         // Handle click to select and drag
         else if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             selected_annotation_id_ = annotation.id;
             if (mouse_in_title && !mouse_on_min_btn) {
                 dragging_annotation_id_ = annotation.id;
+                note_press_snapshot_ = CaptureSnapshot();
+                note_press_position_ = annotation.position;
                 annotation_drag_offset_ = ImVec2(mouse_pos.x - screen_pos.x, mouse_pos.y - screen_pos.y);
             }
         }
@@ -3451,6 +3467,10 @@ void NodeEditor::RenderAnnotations() {
 
         if (dragging_annotation_id_ == annotation.id && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
             dragging_annotation_id_ = -1;
+            if (note_press_snapshot_ && (annotation.position.x != note_press_position_.x ||
+                                         annotation.position.y != note_press_position_.y))
+                PushUndoSnapshot(std::move(*note_press_snapshot_));
+            note_press_snapshot_.reset();
         }
 
         // Colors
@@ -3541,109 +3561,132 @@ void NodeEditor::RenderAnnotations() {
         }
     }
 
-    // Render edit popup
+    RenderNoteMenu();
     RenderAnnotationEditPopup();
 }
 
 
 
 
+void NodeEditor::DeleteNote(int note_id) {
+    const auto at = std::find_if(annotations_.begin(), annotations_.end(),
+                                 [note_id](const CanvasAnnotation& a) { return a.id == note_id; });
+    if (at == annotations_.end()) return;
+    SaveUndoState();
+    annotations_.erase(at);
+    if (selected_annotation_id_ == note_id) selected_annotation_id_ = -1;
+    if (editing_annotation_id_ == note_id) {
+        editing_annotation_ = false;
+        editing_annotation_id_ = -1;
+    }
+}
+
+void NodeEditor::RenderNoteMenu() {
+    if (open_note_menu_) {
+        ImGui::OpenPopup("##note_menu");
+        open_note_menu_ = false;
+    }
+    if (!ImGui::BeginPopup("##note_menu")) return;
+    CanvasAnnotation* note = nullptr;
+    for (auto& a : annotations_)
+        if (a.id == note_menu_id_) note = &a;
+    if (!note) {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+    ImGui::TextDisabled("%s", note->title.empty() ? "Note" : note->title.c_str());
+    ImGui::Separator();
+    if (ImGui::MenuItem(ICON_FA_PEN " Edit...")) {
+        editing_annotation_ = true;
+        editing_annotation_id_ = note->id;
+    }
+    if (ImGui::MenuItem(note->is_minimized ? ICON_FA_MAXIMIZE " Expand" : ICON_FA_MINUS " Minimise"))
+        note->is_minimized = !note->is_minimized;
+    ImGui::Separator();
+    if (ImGui::MenuItem(ICON_FA_TRASH " Delete", "Del")) DeleteNote(note->id);
+    ImGui::EndPopup();
+}
+
+// The note dialog (owner walk 2026-11-14: it was titled "EditAnnotationPopup",
+// used default buttons and its Save / Cancel / Delete fell below the window,
+// so a note could not be deleted). The window fits its content; colours are
+// the theme's node families, softened toward the panel.
 void NodeEditor::RenderAnnotationEditPopup() {
     if (!editing_annotation_) return;
-
-    // Find the annotation being edited
     CanvasAnnotation* ann = nullptr;
-    for (auto& a : annotations_) {
-        if (a.id == editing_annotation_id_) {
-            ann = &a;
-            break;
-        }
-    }
-
+    for (auto& a : annotations_)
+        if (a.id == editing_annotation_id_) ann = &a;
     if (!ann) {
         editing_annotation_ = false;
         editing_annotation_id_ = -1;
         return;
     }
-
-    ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
-    if (ImGui::BeginPopupModal("EditAnnotationPopup", &editing_annotation_, ImGuiWindowFlags_NoResize)) {
-        ImGui::Text("Edit Annotation");
-        ImGui::Separator();
-
-        // Title input
-        ImGui::Text("Title:");
-        static char title_buf[256];
+    const ui::Tokens& t = ui::CurrentTokens();
+    static char title_buf[256];
+    static char content_buf[4096];
+    static ImU32 colour = 0;
+    constexpr const char* kId = "Note###EditNote";
+    if (!ImGui::IsPopupOpen(kId)) ImGui::OpenPopup(kId);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(440.0f, 0.0f), ImVec2(640.0f, FLT_MAX));
+    // The dialog's own padding: the canvas pushes none for its overlays.
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(t.space_xl, t.space_lg));
+    const bool open = ImGui::BeginPopupModal(kId, &editing_annotation_, ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::PopStyleVar();
+    if (open) {
         if (ImGui::IsWindowAppearing()) {
-            strncpy(title_buf, ann->title.c_str(), sizeof(title_buf) - 1);
-            title_buf[sizeof(title_buf) - 1] = '\0';
+            std::snprintf(title_buf, sizeof(title_buf), "%s", ann->title.c_str());
+            std::snprintf(content_buf, sizeof(content_buf), "%s", ann->content.c_str());
+            colour = ann->color;
+            ImGui::SetKeyboardFocusHere();
         }
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputText("##ann_title", title_buf, sizeof(title_buf));
-
-        ImGui::Spacing();
-
-        // Content input
-        ImGui::Text("Content:");
-        static char content_buf[2048];
-        if (ImGui::IsWindowAppearing()) {
-            strncpy(content_buf, ann->content.c_str(), sizeof(content_buf) - 1);
-            content_buf[sizeof(content_buf) - 1] = '\0';
+        ui::FieldLabel("Title");
+        ImGui::InputText("##note_title", title_buf, sizeof(title_buf));
+        ui::FieldLabel("Text");
+        ImGui::InputTextMultiline("##note_text", content_buf, sizeof(content_buf), ImVec2(-FLT_MIN, 150.0f),
+                                  ImGuiInputTextFlags_AllowTabInput);
+        ui::FieldLabel("Colour");
+        std::vector<ImU32> swatches{DefaultAnnotationColour()};
+        for (int i = 0; i < 12; ++i) swatches.push_back(ui::ToU32(ui::Mix(t.bg_panel, t.node[i], 0.45f)));
+        const float swatch = ImGui::GetFrameHeight();
+        for (size_t i = 0; i < swatches.size(); ++i) {
+            if (i > 0) ImGui::SameLine(0.0f, 6.0f);
+            ImGui::PushID(static_cast<int>(i));
+            const ImVec4 value = ImGui::ColorConvertU32ToFloat4(swatches[i]);
+            if (ImGui::ColorButton("##swatch", value, ImGuiColorEditFlags_NoTooltip, ImVec2(swatch, swatch)))
+                colour = swatches[i];
+            if (colour == swatches[i]) {
+                ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                                                    ui::ToU32(t.accent_text), 3.0f, 0, 2.0f);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", i == 0 ? "Note (default)" : "A node family's colour");
+            ImGui::PopID();
         }
-        ImGui::InputTextMultiline("##ann_content", content_buf, sizeof(content_buf),
-            ImVec2(-1, 150), ImGuiInputTextFlags_AllowTabInput);
-
         ImGui::Spacing();
-
-        // Color picker
-        ImGui::Text("Color:");
-        static ImVec4 color;
-        if (ImGui::IsWindowAppearing()) {
-            color = ImGui::ColorConvertU32ToFloat4(ann->color);
+        ImGui::Spacing();
+        bool close = false;
+        if (ui::DangerButton(ICON_FA_TRASH " Delete")) {
+            DeleteNote(ann->id);  // undoable
+            close = true;
         }
-        ImGui::ColorEdit4("##ann_color", &color.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
-
-        ImGui::Spacing();
-        ImGui::Separator();
-
-        // Buttons
-        if (ImGui::Button("Save", ImVec2(120, 0))) {
+        const float right = ui::ButtonWidth("Cancel", ui::ButtonSize::Regular) + ui::ButtonWidth("Save", ui::ButtonSize::Regular) + ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SameLine(ImGui::GetContentRegionMax().x - right);
+        if (!close && ui::SecondaryButton("Cancel")) close = true;
+        ImGui::SameLine();
+        if (!close && ui::PrimaryButton("Save")) {
+            SaveUndoState();  // an edit is undoable
             ann->title = title_buf;
             ann->content = content_buf;
-            ann->color = ImGui::ColorConvertFloat4ToU32(color);
+            ann->color = colour;
+            close = true;
+        }
+        if (close) {
             editing_annotation_ = false;
-            editing_annotation_id_ = -1;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            editing_annotation_ = false;
-            editing_annotation_id_ = -1;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 130);
-        ImGui::PushStyleColor(ImGuiCol_Button, ui::CurrentTokens().error);
-        if (ImGui::Button("Delete", ImVec2(120, 0))) {
-            // Remove annotation
-            annotations_.erase(
-                std::remove_if(annotations_.begin(), annotations_.end(),
-                    [this](const CanvasAnnotation& a) { return a.id == editing_annotation_id_; }),
-                annotations_.end()
-            );
-            editing_annotation_ = false;
-            editing_annotation_id_ = -1;
-            selected_annotation_id_ = -1;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::PopStyleColor();
-
         ImGui::EndPopup();
-    } else {
-        // Popup was closed
-        editing_annotation_ = false;
-        editing_annotation_id_ = -1;
     }
+    if (!editing_annotation_) editing_annotation_id_ = -1;
 }
 
 void NodeEditor::RenderGroups() {

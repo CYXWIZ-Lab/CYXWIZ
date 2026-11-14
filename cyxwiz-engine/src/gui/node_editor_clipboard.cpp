@@ -22,6 +22,8 @@ GraphSnapshot NodeEditor::CaptureSnapshot() const {
     snapshot.next_node_id = next_node_id_;
     snapshot.next_pin_id = next_pin_id_;
     snapshot.next_link_id = next_link_id_;
+    snapshot.annotations = annotations_;
+    snapshot.next_annotation_id = next_annotation_id_;
     return snapshot;
 }
 
@@ -72,6 +74,11 @@ void NodeEditor::Undo() {
     next_node_id_ = previous.next_node_id;
     next_pin_id_ = previous.next_pin_id;
     next_link_id_ = previous.next_link_id;
+    annotations_ = previous.annotations;
+    next_annotation_id_ = previous.next_annotation_id;
+    selected_annotation_id_ = -1;
+    dragging_annotation_id_ = -1;
+    editing_annotation_ = false;
 
     // Rebuild pin lookup after restoring state
     RebuildPinLookup();
@@ -117,6 +124,11 @@ void NodeEditor::Redo() {
     next_node_id_ = next.next_node_id;
     next_pin_id_ = next.next_pin_id;
     next_link_id_ = next.next_link_id;
+    annotations_ = next.annotations;
+    next_annotation_id_ = next.next_annotation_id;
+    selected_annotation_id_ = -1;
+    dragging_annotation_id_ = -1;
+    editing_annotation_ = false;
 
     // Rebuild pin lookup after restoring state
     RebuildPinLookup();

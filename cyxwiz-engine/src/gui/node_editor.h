@@ -103,15 +103,6 @@ struct DataBoundaryMigrationResult {
 };
 
 // Graph snapshot for undo/redo
-struct GraphSnapshot {
-    std::vector<SubgraphData> subgraphs;
-    std::map<int, ImVec2> positions;
-    std::vector<MLNode> nodes;
-    std::vector<NodeLink> links;
-    int next_node_id;
-    int next_pin_id;
-    int next_link_id;
-};
 
 // Supported code generation frameworks
 enum class CodeFramework {
@@ -225,6 +216,18 @@ struct CanvasAnnotation {
         , size(200, 100)
         , color(0)  // set by the creator: DefaultAnnotationColour() or the saved colour
         , is_minimized(false) {}
+};
+
+struct GraphSnapshot {
+    std::vector<SubgraphData> subgraphs;
+    std::map<int, ImVec2> positions;
+    std::vector<MLNode> nodes;
+    std::vector<NodeLink> links;
+    int next_node_id;
+    int next_pin_id;
+    int next_link_id;
+    std::vector<CanvasAnnotation> annotations;  // notes undo with the graph
+    int next_annotation_id = 1;
 };
 
 // Canvas Frame - visual organization box (drag from Node Browser)
@@ -1098,6 +1101,8 @@ private:
     // Annotation rendering and interaction
     void RenderAnnotations();
     void RenderAnnotationEditPopup();
+    void RenderNoteMenu();          // right-click on a note: Edit, Minimise, Delete
+    void DeleteNote(int note_id);   // undoable
     void HandleAnnotationInteraction();
     void ShowAnnotationContextMenu(int annotation_id);
     void ShowAnnotationEditPopup();
@@ -1439,6 +1444,13 @@ private:
     std::vector<CanvasAnnotation> annotations_;
     int next_annotation_id_ = 1;
     int selected_annotation_id_ = -1;
+    int hovered_note_id_ = -1;   // the note under the mouse this frame (RenderAnnotations)
+    int note_menu_id_ = -1;      // the note a right-click opened the note menu on
+    bool open_note_menu_ = false;
+    // A note's move is one undo step: the graph as it was when the title
+    // was pressed, pushed on release if the note moved.
+    std::optional<GraphSnapshot> note_press_snapshot_;
+    ImVec2 note_press_position_{0.0f, 0.0f};
     int dragging_annotation_id_ = -1;
     ImVec2 annotation_drag_offset_ = ImVec2(0, 0);
     bool editing_annotation_ = false;
