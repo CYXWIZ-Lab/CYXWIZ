@@ -917,6 +917,10 @@ private:
     void RenderEmptyCanvas();
     std::function<void()> open_nodes_panel_callback_;
     std::vector<StarterGraph> starter_graphs_;  // found once, on the first empty canvas
+    // An example picked on the empty canvas, opened at the start of the next
+    // frame: opening it while the canvas draws put nodes ImNodes had not seen
+    // in front of the minimap, which crashed the Engine.
+    std::string pending_example_path_;
     bool starter_graphs_found_ = false;
     void InsertFlatten();
     // Save and Save As from the Studio on an empty canvas say why nothing was written.
