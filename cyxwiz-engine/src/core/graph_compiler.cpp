@@ -92,8 +92,7 @@ void AddIssue(TrainingConfiguration& config, IssueLevel level,
 }
 
 bool IsDatasetSourceType(gui::NodeType type) {
-    return type == gui::NodeType::DataInput ||
-           type == gui::NodeType::DatasetInput;
+    return type == gui::NodeType::DataInput;
 }
 
 std::string DatasetNameFromNode(const gui::MLNode& node) {
@@ -1282,8 +1281,7 @@ bool LooksLikeSequenceBatchContract(const gui::MLNode& node,
         return true;
     }
 
-    if (node.type == gui::NodeType::DataInput ||
-        node.type == gui::NodeType::DatasetInput) {
+    if (node.type == gui::NodeType::DataInput) {
         const char* category_keys[] = {
             "file_category",
             "dataset_category",
@@ -1359,8 +1357,7 @@ void ExtractSequenceBatchContractFromNode(const gui::MLNode& node,
                                           SequenceBatchConfig& sequence) {
     const auto& params = node.parameters;
 
-    if (node.type == gui::NodeType::DataInput ||
-        node.type == gui::NodeType::DatasetInput) {
+    if (node.type == gui::NodeType::DataInput) {
         auto copy_param = [&params](const char* from, std::string& to) {
             auto it = params.find(from);
             if (it != params.end() && !it->second.empty()) {
@@ -4430,7 +4427,7 @@ TrainingConfiguration GraphCompiler::Compile(
     // Collect all structural errors at once (the old ValidateGraph stopped
     // at the first one). is_valid is determined at the end of Compile by
     // checking whether config.issues contains any Error-level entries.
-    const gui::MLNode* dataset_node = FindDatasetInputNode(nodes, links);
+    const gui::MLNode* dataset_node = FindDataInputNode(nodes, links);
     timing("dataset_topology");
     const std::unordered_set<int> dataset_reachable =
         dataset_node
@@ -4473,7 +4470,7 @@ TrainingConfiguration GraphCompiler::Compile(
     } else {
         if (!dataset_node) {
             AddIssue(config, IssueLevel::Error,
-                     "Graph must have a DataInput or DatasetInput node",
+                     "Graph must have a DataInput node",
                      -1,
                      "",
                      errors::Compiler::MissingTrainingPathNode);
@@ -4538,10 +4535,9 @@ TrainingConfiguration GraphCompiler::Compile(
     timing("structural_validation");
     // Extract dataset configuration
     if (dataset_node) {
-        // dataset_name parameter is what DataInputDialog::Apply writes when
-        // a dataset is loaded. The legacy "dataset" key was used by the
-        // older DatasetInput dialog and is now obsolete — fall back to it
-        // only if dataset_name is empty, so older project files still load.
+        // dataset_name is what DataInputDialog::Apply writes when a dataset
+        // is loaded; the older "dataset" key is still read (Properties shows
+        // it as an alias).
         config.dataset_name = DatasetNameFromNode(*dataset_node);
         config.dataset_roles.train = DatasetSourceFromNode(
             *dataset_node, /*externally_supplied=*/true);
@@ -6621,8 +6617,8 @@ bool GraphCompiler::ValidateGraph(
     }
 
     // Check for dataset input
-    if (!FindDatasetInputNode(nodes, links)) {
-        error = "Graph must have a DatasetInput node";
+    if (!FindDataInputNode(nodes, links)) {
+        error = "Graph must have a DataInput node";
         return false;
     }
 
@@ -6736,7 +6732,7 @@ std::vector<int> GraphCompiler::GetInputNodes(
     return inputs;
 }
 
-const gui::MLNode* GraphCompiler::FindDatasetInputNode(
+const gui::MLNode* GraphCompiler::FindDataInputNode(
     const std::vector<gui::MLNode>& nodes,
     const std::vector<gui::NodeLink>& links) const {
     // Modern graphs assign the Training role exclusively through the named

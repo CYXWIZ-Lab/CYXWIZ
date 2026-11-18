@@ -928,6 +928,20 @@ int main(int, char** argv) {
         Check(!config.is_valid, "Concatenate on a dim outside the rows is refused");
     }
 
+    // Dataset Input is retired (Data Input replaced it): a saved graph with one
+    // fails to load with a message naming Data Input.
+    {
+        const json saved = {
+            {"nodes", json::array({{{"id", 1}, {"type", static_cast<int>(gui::NodeType::DatasetInput)},
+                                    {"name", "Old data"}, {"parameters", json::object()}}})},
+            {"links", json::array()}};
+        cyxwiz::GraphDocument graph;
+        std::string error;
+        Check(!cyxwiz::ParseGraphDocument(saved.dump(), graph, error) &&
+                  error.find("Data Input node replaced") != std::string::npos,
+              "a saved Dataset Input node is refused with a message naming Data Input: " + error);
+    }
+
     // Tensor Reshape is retired (Reshape replaced it): a saved graph with one
     // fails to load with a message naming Reshape.
     {

@@ -1470,11 +1470,6 @@ void NodeMetadataRegistry::InitializeDataSourceNodes() {
          {"method", "enum", "GET", "HTTP method", {"GET", "POST"}, ""}},
         NodeImplementationStatus::Template, 0, "Blocked"});
 
-    RegisterNode({NodeType::DatasetInput, NodeCategory::DataSources, "Dataset Input", ICON_FA_DATABASE,
-        {"dataset", "input", "load"}, 0, false, "Load from Data Registry", "", "",
-        {}, {{"Data", PinType::Tensor, true, "Samples"}, {"Labels", PinType::Labels, true, "Labels"}},
-        {{"dataset_name", "string", "", "Dataset name", {}, ""}},
-        NodeImplementationStatus::Implemented, 0});
 
     RegisterNode({NodeType::TSVFile, NodeCategory::DataSources, "TSV Reader", ICON_FA_FILE_LINES,
         {"tsv", "tab", "separated", "import", "load"}, 0, false,

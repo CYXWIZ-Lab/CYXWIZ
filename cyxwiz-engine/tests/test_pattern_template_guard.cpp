@@ -531,8 +531,10 @@ int main() {
           NodeType::TransformerDecoder, NodeType::LayerNorm, NodeType::TimeDistributed,
           NodeType::Output, NodeType::CrossEntropyLoss, NodeType::Adam}),
           "transformer language-model graphs must enable the training entry point");
-    Check(training_graph({NodeType::DatasetInput, NodeType::Dense, NodeType::MSELoss}),
-          "legacy dataset input and dense training must remain eligible");
+    Check(training_graph({NodeType::DataInput, NodeType::Dense, NodeType::MSELoss}),
+          "a data input, a dense layer and a loss enable training");
+    Check(!training_graph({NodeType::DatasetInput, NodeType::Dense, NodeType::MSELoss}),
+          "the retired Dataset Input is no data source");
     Check(!training_graph({NodeType::DataInput, NodeType::DataSplit, NodeType::DataLoader}),
           "data-only pipelines must not enable training");
     Check(!training_graph({NodeType::DataInput, NodeType::CrossEntropyLoss}),

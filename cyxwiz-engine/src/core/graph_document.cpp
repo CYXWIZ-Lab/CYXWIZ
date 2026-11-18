@@ -331,6 +331,12 @@ bool BuildGraphDocument(const nlohmann::json& document, const nlohmann::json& co
                         "a Plot node (its window picks the plot type)";
                 return false;
             }
+            if (node_type == NodeType::DatasetInput) {
+                error = "node '" + node_json.value("name", std::string("<unnamed>")) +
+                        "' is a Dataset Input node, which the Data Input node replaced: remove it from the file or "
+                        "rebuild the graph with a Data Input node (double-click it, pick the data, Apply)";
+                return false;
+            }
             if (node_type == NodeType::TensorReshape) {
                 error = "node '" + node_json.value("name", std::string("<unnamed>")) +
                         "' is a Tensor Reshape node, which the Reshape node replaced: remove it from the file or "

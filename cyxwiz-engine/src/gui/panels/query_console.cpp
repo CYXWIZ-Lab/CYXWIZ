@@ -94,8 +94,8 @@ const std::vector<QueryConsolePanel::ExampleQuery> QueryConsolePanel::example_qu
     },
     {
         "Find input to output path",
-        "MATCH (a:DatasetInput)-[*]->(b:Output) RETURN a.name, b.name",
-        "Find paths from DatasetInput to Output nodes"
+        "MATCH (a:DataInput)-[*]->(b:Output) RETURN a.name, b.name",
+        "Find paths from DataInput to Output nodes"
     },
     {
         "Find residual connections",

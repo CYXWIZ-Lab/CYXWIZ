@@ -3136,7 +3136,7 @@ bool PipelineExecutor::ExecutePipeline(const std::string& pipeline_json) {
 
     source_node_ids_.clear();
     for (const auto& node : nodes)
-        if (node.type == "DataInput" || node.type == "DatasetInput" || node.type == "FileInput") source_node_ids_.insert(node.id);
+        if (node.type == "DataInput" || node.type == "FileInput") source_node_ids_.insert(node.id);
 
     if (!ResolveAutomaticPreprocessingStatePaths(nodes)) {
         ReportError(Error().empty()

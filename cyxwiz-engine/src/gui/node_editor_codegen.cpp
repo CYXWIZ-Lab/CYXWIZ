@@ -660,9 +660,8 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip DatasetInput and Output nodes in __init__ (they don't have layers)
-        if (node->type == NodeType::DatasetInput ||
-            node->type == NodeType::Output ||
+        // Skip Output nodes in __init__ (they don't have layers)
+        if (node->type == NodeType::Output ||
             node->type == NodeType::SequenceTagOutput) {
             continue;
         }
@@ -740,9 +739,6 @@ std::string NodeEditor::GeneratePyTorchCode(const std::vector<int>& sorted_ids) 
         }
 
         switch (node->type) {
-            case NodeType::DatasetInput:
-                code += "        # Dataset input layer (x is already the input)\n";
-                break;
 
             case NodeType::Dense:
             case NodeType::PReLU:
@@ -1156,9 +1152,8 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip DatasetInput and Output nodes in __init__
-        if (node->type == NodeType::DatasetInput ||
-            node->type == NodeType::Output ||
+        // Skip Output nodes in __init__
+        if (node->type == NodeType::Output ||
             node->type == NodeType::SequenceTagOutput) {
             continue;
         }
@@ -1194,9 +1189,6 @@ std::string NodeEditor::GenerateTensorFlowCode(const std::vector<int>& sorted_id
         }
 
         switch (node->type) {
-            case NodeType::DatasetInput:
-                code += "        # Dataset input layer (x is already the input)\n";
-                break;
 
             case NodeType::Dense:
             case NodeType::PReLU:
@@ -1304,10 +1296,6 @@ std::string NodeEditor::GenerateKerasCode(const std::vector<int>& sorted_ids) {
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip DatasetInput node
-        if (node->type == NodeType::DatasetInput) {
-            continue;
-        }
         if (node->type == NodeType::PluginCustom) {
             simulation_comments += cyxwiz::SimulationNodeCodeComment(*node, "keras", "");
             continue;
@@ -1398,9 +1386,8 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
         const MLNode* node = FindNodeById(node_id);
         if (!node) continue;
 
-        // Skip DatasetInput and Output nodes in __init__
-        if (node->type == NodeType::DatasetInput ||
-            node->type == NodeType::Output ||
+        // Skip Output nodes in __init__
+        if (node->type == NodeType::Output ||
             node->type == NodeType::SequenceTagOutput) {
             continue;
         }
@@ -1509,10 +1496,6 @@ std::string NodeEditor::GeneratePyCyxWizCode(const std::vector<int>& sorted_ids)
         }
 
         switch (node->type) {
-            case NodeType::DatasetInput:
-                code += "        " + out + " = x\n";
-                record_output(out);
-                break;
 
             case NodeType::Dense:
             case NodeType::PReLU:

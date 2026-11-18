@@ -137,35 +137,6 @@ MLNode CreateGraphNode(NodeType type,
 
         // ========== Data Pipeline Nodes ==========
 
-        case NodeType::DatasetInput: {
-            // DatasetInput node - loads from DataRegistry
-            // No input pins (this is a source node)
-
-            // Output: Data tensor
-            NodePin data_pin;
-            data_pin.id = next_pin_id_++;
-            data_pin.type = PinType::Tensor;
-            data_pin.name = "Data";
-            data_pin.is_input = false;
-            node.outputs.push_back(data_pin);
-
-            // Output: Labels tensor
-            NodePin labels_pin;
-            labels_pin.id = next_pin_id_++;
-            labels_pin.type = PinType::Labels;
-            labels_pin.name = "Labels";
-            labels_pin.is_input = false;
-            node.outputs.push_back(labels_pin);
-
-            // Note: Shape is metadata (displayed in properties panel), not a data flow output.
-            // In ML frameworks, shape is intrinsic to tensors (accessed via tensor.shape).
-
-            // Parameters
-            node.parameters["dataset_name"] = "";  // Name in DataRegistry
-            node.parameters["split"] = "train";    // train, val, test
-            break;
-        }
-
         case NodeType::DataLoader: {
             PopulateStaticNodeContractFromMetadata(node, next_pin_id_);
             break;

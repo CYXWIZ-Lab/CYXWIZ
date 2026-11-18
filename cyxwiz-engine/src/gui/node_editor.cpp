@@ -2067,19 +2067,6 @@ void NodeEditor::RenderNodes() {
             }
 
             // Data Pipeline Nodes
-            case NodeType::DatasetInput: {
-                auto it = node.parameters.find("dataset_name");
-                if (it != node.parameters.end() && !it->second.empty()) {
-                    ImGui::TextColored(t.accent_text, "Dataset: %s", it->second.c_str());
-                } else {
-                    ImGui::TextColored(t.text_faint, "Dataset: <select>");
-                }
-                auto split_it = node.parameters.find("split");
-                if (split_it != node.parameters.end()) {
-                    ImGui::TextColored(t.accent_text, "Split: %s", split_it->second.c_str());
-                }
-                break;
-            }
             case NodeType::DataLoader: {
                 auto it = node.parameters.find("batch_size");
                 if (it != node.parameters.end()) {
@@ -4470,65 +4457,6 @@ bool NodeEditor::ChooseRLPolicyForGraph(std::string& error) {
     return true;
 }
 
-// ============================================================================
-// Phase 5 Week 7 - Data Studio Integration
-// ============================================================================
-
-void NodeEditor::SetDatasetFromDataStudio(const std::string& dataset_name) {
-    spdlog::info("[Node Editor] Receiving dataset from Data Studio: '{}'", dataset_name);
-
-    // Find or create DatasetInput node
-    MLNode* dataset_input = nullptr;
-    for (auto& node : nodes_) {
-        if (node.type == NodeType::DatasetInput) {
-            dataset_input = &node;
-            spdlog::info("[Node Editor] Found existing DatasetInput node (ID: {})", node.id);
-            break;
-        }
-    }
-
-    if (!dataset_input) {
-        // Create new DatasetInput node at center
-        spdlog::info("[Node Editor] Creating new DatasetInput node");
-
-        // Find center of visible area
-        ImVec2 center_pos = FindEmptyPosition();
-
-        // Create the node
-        MLNode new_node = CreateNode(NodeType::DatasetInput, "Dataset from Data Studio");
-        new_node.parameters["dataset_name"] = dataset_name;
-        new_node.parameters["split"] = "train";
-
-        nodes_.push_back(new_node);
-        dataset_input = &nodes_.back();
-
-        // Rebuild pin lookup after adding node
-        RebuildPinLookup();
-
-        // Set position for next frame
-        pending_positions_[dataset_input->id] = center_pos;
-        pending_positions_frames_ = 3;  // Apply for 3 frames to ensure ImNodes registers it
-    } else {
-        // Update existing DatasetInput node
-        dataset_input->parameters["dataset_name"] = dataset_name;
-        dataset_input->name = "Dataset: " + dataset_name;
-    }
-
-    // Save undo state
-    SaveUndoState();
-
-    // Frame the DatasetInput node (zoom to it)
-    selected_node_ids_.clear();
-    selected_node_ids_.push_back(dataset_input->id);
-
-    // Frame selected will be called on next Render()
-    // We set a flag to defer this until we're in the ImNodes context
-    // For now, just select the node - user can press 'F' to frame it
-
-    spdlog::info("[Node Editor] Dataset '{}' successfully set in DatasetInput node (ID: {})",
-                 dataset_name, dataset_input->id);
-}
-
 // Unified Canvas Phase 4.2: Execute data pipeline using DuckDB/Arrow
 bool NodeEditor::ExecuteDataPipeline() {
     spdlog::info("Executing data transformation pipeline...");
@@ -4571,7 +4499,7 @@ std::vector<std::string> NodeEditor::InputColumns(int node_id) const {
         if (link.to_node == node_id && link.to_pin == node->inputs.front().id) feeder = FindNodeById(link.from_node);
     if (!feeder) return {};
     std::string dataset;
-    if (feeder->type == NodeType::DataInput || feeder->type == NodeType::DatasetInput) {
+    if (feeder->type == NodeType::DataInput) {
         const auto name = feeder->parameters.find("dataset_name");
         if (name != feeder->parameters.end()) dataset = name->second;
     } else if (const auto result = LastRunResult(feeder->id)) {

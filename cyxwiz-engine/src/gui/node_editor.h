@@ -543,8 +543,6 @@ public:
     void SetNodeExecutionError(int node_id, const std::string& error);
     void ClearExecutionStates();
 
-    // Update DatasetInput node name based on loaded dataset
-    void UpdateDatasetNodeName(const std::string& dataset_name);
 
     // Dynamic pins: rebuild a node's pins from plugin-provided data.
     // Called when a trigger parameter changes on a supports_dynamic_pins node.
@@ -594,15 +592,6 @@ public:
     void Show() { show_window_ = true; }
     // Show and bring the CyxWiz Studio tab to the front (gui::BringToFront).
     void Raise();
-
-    // ===== Data Studio Integration (Phase 5 Week 7) =====
-
-    /**
-     * Set dataset from Data Studio deployment
-     * Finds or creates a DatasetInput node and populates it with the dataset
-     * Automatically frames the node after creation
-     */
-    void SetDatasetFromDataStudio(const std::string& dataset_name);
 
     // ===== Skip/Residual Connection Helpers =====
 

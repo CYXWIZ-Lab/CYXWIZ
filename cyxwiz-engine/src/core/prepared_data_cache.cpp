@@ -133,7 +133,7 @@ PreparedDataKey ComputePreparedDataKey(const std::vector<gui::MLNode>& nodes,
         const gui::MLNode* node = FindNode(nodes, id);
         if (!node) return refuse("a step before the Data Split is missing");
         input.nodes.push_back(*node);
-        if (node->type == gui::NodeType::DataInput || node->type == gui::NodeType::DatasetInput) {
+        if (node->type == gui::NodeType::DataInput) {
             if (source) return refuse("more than one Data Input feeds the Data Split");
             source = node;
             continue;

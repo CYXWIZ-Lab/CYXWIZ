@@ -77,11 +77,10 @@ std::string BuildTransformerEncoderGraphJson() {
 
     graph["nodes"].push_back({
         {"id", 1},
-        {"type", static_cast<int>(gui::NodeType::DatasetInput)},
+        {"type", static_cast<int>(gui::NodeType::DataInput)},
         {"name", "Input"},
         {"parameters", {
             {"dataset_name", "transformer_encoder_roundtrip_dataset"},
-            {"dataset", "transformer_encoder_roundtrip_dataset"},
             {"shape", "[4]"}
         }}
     });
@@ -151,11 +150,10 @@ std::string BuildBertSequenceClassifierGraphJson() {
 
     graph["nodes"].push_back({
         {"id", 1},
-        {"type", static_cast<int>(gui::NodeType::DatasetInput)},
+        {"type", static_cast<int>(gui::NodeType::DataInput)},
         {"name", "BERT Tokens"},
         {"parameters", {
             {"dataset_name", "bert_sequence_roundtrip_dataset"},
-            {"dataset", "bert_sequence_roundtrip_dataset"},
             {"shape", "[4]"},
             {"model_family", "bert_encoder"},
             {"token_column", "token_ids"},
@@ -245,11 +243,10 @@ std::string BuildBertTokenClassifierGraphJson() {
 
     graph["nodes"].push_back({
         {"id", 1},
-        {"type", static_cast<int>(gui::NodeType::DatasetInput)},
+        {"type", static_cast<int>(gui::NodeType::DataInput)},
         {"name", "BERT Tokens"},
         {"parameters", {
             {"dataset_name", "bert_token_roundtrip_dataset"},
-            {"dataset", "bert_token_roundtrip_dataset"},
             {"shape", "[4]"},
             {"model_family", "bert_encoder"},
             {"token_column", "token_ids"},
