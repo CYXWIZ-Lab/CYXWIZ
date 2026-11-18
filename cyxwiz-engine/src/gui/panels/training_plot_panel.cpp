@@ -2,7 +2,6 @@
 #include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
 #include "../../core/training_dashboard_presentation.h"
-#include "training_dashboard_look.h"
 #include "../separate_windows.h"
 // Test builds that draw the dashboard without the training system define
 // CYXWIZ_DASHBOARD_WITHOUT_TRAINING (no TrainingManager, task manager or crash recorder).
@@ -49,8 +48,6 @@
 #endif
 
 namespace cyxwiz {
-
-using namespace dash;
 
 namespace {
 
@@ -423,6 +420,16 @@ void LineWithTail(const std::string& text, const ImVec4& colour, const std::stri
     ImGui::PopTextWrapPos();
 }
 
+// A chip that turns a choice on and off (the Charts row, Rebuild on next
+// run): ui::ToggleChip in the accent text colour. True when clicked.
+bool ChipToggle(const char* label, bool* on) {
+    const bool clicked = ui::ToggleChip(label, label, "", *on, ui::ToU32(ui::CurrentTokens().accent_text));
+    if (clicked) *on = !*on;
+    return clicked;
+}
+
+float ChipToggleWidth(const char* label) { return ui::ToggleChipWidth(label, ""); }
+
 // "Epoch window [ 10 ] - +": a label and a typed whole-number field with
 // steps (B4-6: no sliders), its range on hover.
 void EpochsField(const char* label, const char* id, int* value, int min, int max, const char* hint) {
@@ -659,9 +666,10 @@ void TrainingPlotPanel::RenderWindow() {
 }
 
 void TrainingPlotPanel::RenderEmptyState() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     ImGui::Spacing();
-    if (BeginDashCard("##dash_empty", c)) {
+    ui::BeginCard("##dash_empty");
+    {
         const auto centered = [](const char* text, const ImVec4& color) {
             const float width = ImGui::GetContentRegionAvail().x;
             const float text_width = ImGui::CalcTextSize(text).x;
@@ -679,23 +687,23 @@ void TrainingPlotPanel::RenderEmptyState() {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
                                  std::max(0.0f, (width - extent.x) * 0.5f));
             ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(),
-                                                ImGui::GetColorU32(c.faint), icon);
+                                                ImGui::GetColorU32(c.text_faint), icon);
             ImGui::Dummy(extent);
         }
         ImGui::Spacing();
         centered("No training data yet", c.text);
         // Only canvas training reports here; the script hint named a file
         // that does not exist and scripts cannot feed this panel.
-        centered("Press Train on the canvas to see real-time metrics", c.muted);
+        centered("Press Train on the canvas to see real-time metrics", c.text_dim);
         ImGui::Spacing();
-        centered("Loss and accuracy charts will appear here", c.faint);
+        centered("Loss and accuracy charts will appear here", c.text_faint);
         ImGui::Dummy(ImVec2(0.0f, 48.0f));
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderKpiCards() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     namespace td = training_dashboard;
     const std::vector<td::Card> cards = td::BuildCards(facts_);
     if (cards.empty()) return;
@@ -708,7 +716,7 @@ void TrainingPlotPanel::RenderKpiCards() {
         case td::Tone::Plain: return c.text;
         case td::Tone::Faint: break;
         }
-        return c.muted;
+        return c.text_dim;
     };
     const ImVec4 dots[] = {train_loss_.color, val_loss_.color, train_accuracy_.color, val_accuracy_.color};
 
@@ -724,8 +732,8 @@ void TrainingPlotPanel::RenderKpiCards() {
             const ImVec4 dot = card.series >= 0 && card.series < 4 ? dots[card.series] : c.info;
             std::string change = card.change;
             if (card.direction != 0) change = std::string(card.direction < 0 ? ICON_FA_CARET_DOWN : ICON_FA_CARET_UP) + " " + change;
-            DashKpiCard(card.id.c_str(), card.label.c_str(), dot, card.value.c_str(), card.tooltip.c_str(), change.c_str(),
-                        tone(card.change_tone), card.line2.c_str(), tone(card.line2_tone), c,
+            ui::KpiCard(card.id.c_str(), card.label.c_str(), dot, card.value.c_str(), card.tooltip.c_str(), change.c_str(),
+                        tone(card.change_tone), card.line2.c_str(), tone(card.line2_tone),
                         card.line3.empty() ? nullptr : card.line3.c_str(), tone(card.line3_tone));
         }
         ImGui::EndTable();
@@ -1416,17 +1424,17 @@ void TrainingPlotPanel::SetMaterializationClearResult(
 }
 
 void TrainingPlotPanel::RenderLossPlot(float plot_height) {
-    const DashColors c = CurrentDashColors();
     ImGui::Spacing();
-    if (BeginDashCard("##dash_loss_card", c)) {
-        DashCardTitle("Loss", log_loss_scale_ ? "training and validation, log axis" : "training and validation", c);
+    ui::BeginCard("##dash_loss_card");
+    {
+        ui::CardTitle("Loss", log_loss_scale_ ? "training and validation, log axis" : "training and validation");
         // Open this chart in its own dockable window.
         ImGui::SameLine();
         const char* pop_label = ICON_FA_WINDOW_RESTORE "##pop_loss";
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x -
                                           ImGui::CalcTextSize(ICON_FA_WINDOW_RESTORE).x - 12.0f));
-        if (DashIconButton(pop_label, loss_window_open_, c)) {
+        if (ui::GhostButton(pop_label, true, nullptr, loss_window_open_)) {
             loss_window_open_ = !loss_window_open_;
         }
         if (ImGui::IsItemHovered()) {
@@ -1435,7 +1443,7 @@ void TrainingPlotPanel::RenderLossPlot(float plot_height) {
         }
         DrawLossPlot(ImVec2(-1, plot_height), false);
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit, bool in_window) {
@@ -1444,17 +1452,17 @@ void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit, bool in_windo
 
 
 void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
-    const DashColors c = CurrentDashColors();
     ImGui::Spacing();
-    if (BeginDashCard("##dash_accuracy_card", c)) {
-        DashCardTitle("Accuracy", "training and validation, percent", c);
+    ui::BeginCard("##dash_accuracy_card");
+    {
+        ui::CardTitle("Accuracy", "training and validation, percent");
         // Open this chart in its own dockable window.
         ImGui::SameLine();
         const char* pop_label = ICON_FA_WINDOW_RESTORE "##pop_accuracy";
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x -
                                           ImGui::CalcTextSize(ICON_FA_WINDOW_RESTORE).x - 12.0f));
-        if (DashIconButton(pop_label, accuracy_window_open_, c)) {
+        if (ui::GhostButton(pop_label, true, nullptr, accuracy_window_open_)) {
             accuracy_window_open_ = !accuracy_window_open_;
         }
         if (ImGui::IsItemHovered()) {
@@ -1463,7 +1471,7 @@ void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
         }
         DrawAccuracyPlot(ImVec2(-1, plot_height), false);
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_window) {
@@ -1476,17 +1484,17 @@ void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
     const char* y_label = nullptr;
     ClassifyCustomMetrics(custom_metrics_, &plot_title, &y_label);
     (void)y_label;
-    const DashColors c = CurrentDashColors();
     ImGui::Spacing();
-    if (BeginDashCard("##dash_custom_card", c)) {
-        DashCardTitle(plot_title, "per epoch", c);
+    ui::BeginCard("##dash_custom_card");
+    {
+        ui::CardTitle(plot_title, "per epoch");
         // Open this chart in its own dockable window.
         ImGui::SameLine();
         const char* pop_label = ICON_FA_WINDOW_RESTORE "##pop_custom";
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x -
                                           ImGui::CalcTextSize(ICON_FA_WINDOW_RESTORE).x - 12.0f));
-        if (DashIconButton(pop_label, custom_window_open_, c)) {
+        if (ui::GhostButton(pop_label, true, nullptr, custom_window_open_)) {
             custom_window_open_ = !custom_window_open_;
         }
         if (ImGui::IsItemHovered()) {
@@ -1495,7 +1503,7 @@ void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
         }
         DrawCustomMetricsPlot(ImVec2(-1, plot_height), false);
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window) {
@@ -1642,7 +1650,7 @@ void TrainingPlotPanel::DrawChart(int chart, const ImVec2& size, bool fit, bool 
 
 
 void TrainingPlotPanel::RenderChartWindows() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     const auto chart_window = [&](const char* title, bool* open, int kind) {
         if (!*open) {
             return;
@@ -1651,7 +1659,7 @@ void TrainingPlotPanel::RenderChartWindows() {
         if (ImGui::Begin(title, open)) {
             // Toolbar: fit, the shared view options, help.
             bool fit = false;
-            if (DashButton(ICON_FA_EXPAND " Fit", DashButtonKind::Secondary, c)) {
+            if (ui::SecondaryButton(ICON_FA_EXPAND " Fit")) {
                 fit = true;
             }
             if (ImGui::IsItemHovered()) {
@@ -1687,7 +1695,7 @@ void TrainingPlotPanel::RenderChartWindows() {
                 }
             }
             ImGui::SameLine(0.0f, 14.0f);
-            ImGui::TextColored(c.muted, ICON_FA_CIRCLE_INFO);
+            ImGui::TextColored(c.text_dim, ICON_FA_CIRCLE_INFO);
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
                 ImGui::Text("Plot Controls:");
@@ -1707,7 +1715,7 @@ void TrainingPlotPanel::RenderChartWindows() {
                           : (kind == 1 ? !train_accuracy_.values.empty() : !custom_metrics_.empty());
             if (!has_series) {
                 ImGui::Spacing();
-                ImGui::TextColored(c.muted, "%s",
+                ImGui::TextColored(c.text_dim, "%s",
                                    kind == 0 ? "No loss data yet. Start training to see the curve."
                                    : kind == 1 ? "No accuracy data yet. Start training to see the curve."
                                                : "No custom metrics yet.");
@@ -1728,16 +1736,18 @@ void TrainingPlotPanel::RenderChartWindows() {
 }
 
 void TrainingPlotPanel::RenderControls() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     ImGui::Spacing();
 
-    // Which charts to show.
+    // Which charts to show; the parts wrap in a narrow dashboard.
+    ui::FlowRow row;
+    row.Next(ImGui::CalcTextSize("Charts").x);
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(c.muted, "Charts");
-    ImGui::SameLine(0.0f, 10.0f);
-    DashChip("Loss", &show_loss_plot_, c);
-    ImGui::SameLine();
-    DashChip("Accuracy", &show_accuracy_plot_, c);
+    ImGui::TextColored(c.text_dim, "Charts");
+    row.Next(ChipToggleWidth("Loss"));
+    ChipToggle("Loss", &show_loss_plot_);
+    row.Next(ChipToggleWidth("Accuracy"));
+    ChipToggle("Accuracy", &show_accuracy_plot_);
     if (!custom_metrics_.empty()) {
         bool has_sequence_metrics = false;
         bool has_non_sequence_metrics = false;
@@ -1752,11 +1762,11 @@ void TrainingPlotPanel::RenderControls() {
             }
         }
 
-        ImGui::SameLine();
         const char* label = has_sequence_metrics && !has_non_sequence_metrics
             ? "Sequence metrics"
             : "Custom metrics";
-        DashChip(label, &show_custom_metrics_, c);
+        row.Next(ChipToggleWidth(label));
+        ChipToggle(label, &show_custom_metrics_);
     }
 
     // Active view options, so a changed view is never a surprise.
@@ -1776,24 +1786,22 @@ void TrainingPlotPanel::RenderControls() {
                       " epochs";
     }
     if (!view_state.empty()) {
-        ImGui::SameLine(0.0f, 12.0f);
+        row.Next(ImGui::CalcTextSize(view_state.c_str()).x);
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(c.faint, "%s", view_state.c_str());
+        ImGui::TextColored(c.text_faint, "%s", view_state.c_str());
     }
 
-    // View menu and plot help on the right.
+    // View menu and plot help on the right (on the next line when they do not fit).
     const char* view_label = ICON_FA_SLIDERS " View";
     const float help_width = ImGui::CalcTextSize(ICON_FA_CIRCLE_INFO).x;
-    const float needed = DashButtonWidth(view_label) + ImGui::GetStyle().ItemSpacing.x + help_width;
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
-                                  ImGui::GetWindowContentRegionMax().x - needed));
-    if (DashButton(view_label, DashButtonKind::Secondary, c)) {
+    const float needed = ui::ButtonWidth(view_label, ui::ButtonSize::Small) + ImGui::GetStyle().ItemSpacing.x + help_width;
+    ui::SameLineRight(needed);
+    if (ui::SecondaryButton(view_label)) {
         ImGui::OpenPopup("##dash_view");
     }
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(c.muted, ICON_FA_CIRCLE_INFO);
+    ImGui::TextColored(c.text_dim, ICON_FA_CIRCLE_INFO);
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::Text("Plot Controls:");
@@ -1809,7 +1817,7 @@ void TrainingPlotPanel::RenderControls() {
     }
 
     if (ImGui::BeginPopup("##dash_view")) {
-        ImGui::TextColored(c.muted, "Axes");
+        ImGui::TextColored(c.text_dim, "Axes");
         ImGui::Checkbox("Auto scale", &auto_scale_);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("When enabled, axes adapt to the live training data.\nDisable to manually zoom/pan.");
@@ -1827,7 +1835,7 @@ void TrainingPlotPanel::RenderControls() {
                 "smaller later losses. Metric values are unchanged.");
         }
         ImGui::Spacing();
-        ImGui::TextColored(c.muted, "Curves");
+        ImGui::TextColored(c.text_dim, "Curves");
         ImGui::Checkbox("Smooth curves", &show_smoothed_curves_);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Display-only moving average overlay. Raw curves are unchanged.");
@@ -1836,7 +1844,7 @@ void TrainingPlotPanel::RenderControls() {
             EpochsField("Smooth window", "##view_smooth", &smoothing_window_, 2, 50, "Points in the moving average");
         }
         ImGui::Spacing();
-        ImGui::TextColored(c.muted, "Open in a window");
+        ImGui::TextColored(c.text_dim, "Open in a window");
         ImGui::MenuItem(ICON_FA_WINDOW_RESTORE " Loss chart", nullptr, &loss_window_open_);
         ImGui::MenuItem(ICON_FA_WINDOW_RESTORE " Accuracy chart", nullptr, &accuracy_window_open_);
         if (!custom_metrics_.empty()) {
@@ -1848,7 +1856,7 @@ void TrainingPlotPanel::RenderControls() {
 }
 
 void TrainingPlotPanel::RenderCurveSummary() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     namespace td = training_dashboard;
     const td::Insights insights = td::BuildInsights(facts_);
     const auto tone = [&](td::Tone t) {
@@ -1856,29 +1864,26 @@ void TrainingPlotPanel::RenderCurveSummary() {
         case td::Tone::Good: return c.success;
         case td::Tone::Bad: return c.caution;
         case td::Tone::Error: return c.error;
-        case td::Tone::Faint: return c.muted;  // as on the cards
+        case td::Tone::Faint: return c.text_dim;  // as on the cards
         case td::Tone::Plain: break;
         }
         return c.text;
     };
 
     ImGui::Spacing();
-    if (!BeginDashCard("##dash_insights", c)) {
-        EndDashCard();
-        return;
-    }
+    ui::BeginCard("##dash_insights");
     // The title, then the suggestion on the same line when it fits.
-    DashCardTitle("How the run is going", "", c);
+    ui::CardTitle("How the run is going", "");
     if (!insights.rows.empty()) {
         const float pill_width = ImGui::CalcTextSize(insights.suggestion.c_str()).x + 30.0f;
         ImGui::SameLine();
         if (ImGui::GetContentRegionAvail().x < pill_width) ImGui::NewLine();
-        DashPill(insights.suggestion.c_str(), tone(insights.suggestion_tone));
+        ui::Chip(insights.suggestion.c_str(), tone(insights.suggestion_tone));
     }
     ImGui::Spacing();
     if (insights.rows.empty()) {
-        ImGui::TextColored(c.faint, "The first epoch is running.");
-        EndDashCard();
+        ImGui::TextColored(c.text_faint, "The first epoch is running.");
+        ui::EndCard();
         return;
     }
     // Labels as wide as the widest; the values wrap in the rest.
@@ -1890,7 +1895,7 @@ void TrainingPlotPanel::RenderCurveSummary() {
         for (const auto& row : insights.rows) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextColored(c.muted, "%s", row.label.c_str());
+            ImGui::TextColored(c.text_dim, "%s", row.label.c_str());
             ImGui::TableNextColumn();
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(tone(row.tone), "%s", row.value.c_str());
@@ -1898,7 +1903,7 @@ void TrainingPlotPanel::RenderCurveSummary() {
         }
         ImGui::EndTable();
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderSequenceMetricsSummary() {
@@ -1932,16 +1937,13 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
         return;
     }
 
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     ImGui::Spacing();
-    if (!BeginDashCard("##dash_sequence", c)) {
-        EndDashCard();
-        return;
-    }
-    DashCardTitle("Sequence Metrics", "latest values", c);
+    ui::BeginCard("##dash_sequence");
+    ui::CardTitle("Sequence Metrics", "latest values");
     ImGui::Spacing();
 
-    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, ui::WithAlpha(c.border, 0.6f));
     ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImVec4(0, 0, 0, 0));
     if (ImGui::BeginTable("##sequence_metrics", 3,
                           ImGuiTableFlags_SizingStretchProp |
@@ -1949,7 +1951,7 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
         ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 1.3f);
         ImGui::TableSetupColumn("Train", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Val", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Text, c.muted);
+        ImGui::PushStyleColor(ImGuiCol_Text, c.text_dim);
         ImGui::TableHeadersRow();
         ImGui::PopStyleColor();
 
@@ -1958,7 +1960,7 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
             if (has_value) {
                 ImGui::Text("%.2f%%", value);
             } else {
-                ImGui::TextColored(c.faint, "no data");
+                ImGui::TextColored(c.text_faint, "no data");
             }
         };
 
@@ -1978,7 +1980,7 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
         ImGui::EndTable();
     }
     ImGui::PopStyleColor(2);
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderActiveTaskSummary() {
@@ -1995,7 +1997,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
     if (materialization_events_.empty() && materialization_notice_.empty()) {
         return;
     }
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     const auto now = std::chrono::steady_clock::now();
     const bool has_actions = static_cast<bool>(materialization_action_callback_);
     if (has_actions && materialization_cache_entries_ < 0 &&
@@ -2033,33 +2035,30 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         state_color = c.warning;
     } else if (!complete) {
         state = "Stopped";
-        state_color = c.muted;
+        state_color = c.text_dim;
     }
 
     ImGui::Spacing();
-    if (!BeginDashCard("##dash_dataprep", c)) {
-        EndDashCard();
-        return;
-    }
+    ui::BeginCard("##dash_dataprep");
 
     // Header: title, state, actions.
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(c.text, "Data preparation");
     ImGui::SameLine(0.0f, 10.0f);
-    DashPill(state, state_color);
+    ui::Chip(state, state_color);
     if (has_actions) {
         const char* rebuild_label = materialization_rebuild_pending_
             ? ICON_FA_ARROWS_ROTATE " Rebuild on next run###dash_rebuild"
             : "Rebuild on next run###dash_rebuild";
         const char* actions_label = "Actions " ICON_FA_CHEVRON_DOWN "###dash_prep_actions";
-        const float width = DashButtonWidth("Rebuild on next run") + 26.0f +
-                            DashButtonWidth("Actions ") + 16.0f +
+        const float width = ui::ButtonWidth("Rebuild on next run", ui::ButtonSize::Small) + 26.0f +
+                            ui::ButtonWidth("Actions ", ui::ButtonSize::Small) + 16.0f +
                             ImGui::GetStyle().ItemSpacing.x;
         ImGui::SameLine();
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x - width));
         bool pending = materialization_rebuild_pending_;
-        if (DashChip(rebuild_label, &pending, c)) {
+        if (ChipToggle(rebuild_label, &pending)) {
             materialization_rebuild_pending_ = pending;
             materialization_action_callback_(pending ? "rebuild" : "cancel_rebuild");
         }
@@ -2069,7 +2068,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                                   : "The next Train rebuilds the prepared data instead of reusing it.");
         }
         ImGui::SameLine();
-        if (DashButton(actions_label, DashButtonKind::Secondary, c)) {
+        if (ui::SecondaryButton(actions_label)) {
             ImGui::OpenPopup("##dash_prep_actions_menu");
         }
         if (ImGui::BeginPopup("##dash_prep_actions_menu")) {
@@ -2128,12 +2127,12 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                        std::to_string(materialization_cache_column_count_) + " columns";
         }
         if (!summary.empty()) {
-            ImGui::TextColored(c.muted, "%s", summary.c_str());
+            ImGui::TextColored(c.text_dim, "%s", summary.c_str());
         }
     }
     if (latest && !preparing && !latest->message.empty()) {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(c.muted, "%s", latest->message.c_str());
+        ImGui::TextColored(c.text_dim, "%s", latest->message.c_str());
         ImGui::PopTextWrapPos();
     }
     if (!materialization_rebuild_reason_.empty()) {
@@ -2148,7 +2147,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         ImGui::PopTextWrapPos();
     }
     if (preparing && latest) {
-        DashProgress(latest->progress, c.accent, c);
+        ui::ProgressLine(latest->progress, c.accent);
         ImGui::PushTextWrapPos(0.0f);
         ImGui::Text("%s", latest->message.c_str());
         ImGui::PopTextWrapPos();
@@ -2157,7 +2156,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
     // Steps.
     if (!materialization_events_.empty()) {
         ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, ui::WithAlpha(c.border, 0.6f));
         if (ImGui::BeginTable("##dash_prep_steps", 3,
                               ImGuiTableFlags_SizingStretchProp |
                                   ImGuiTableFlags_BordersInnerH)) {
@@ -2217,7 +2216,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                 }
                 if (!detail.empty()) {
                     ImGui::PushTextWrapPos(0.0f);
-                    ImGui::TextColored(c.faint, "%s", detail.c_str());
+                    ImGui::TextColored(c.text_faint, "%s", detail.c_str());
                     ImGui::PopTextWrapPos();
                 }
                 ImGui::TableNextColumn();
@@ -2227,12 +2226,12 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                 const double seconds =
                     std::chrono::duration<double>(end_time - event.started_at).count();
                 if (running && event.progress > 0.0f && event.progress < 1.0f) {
-                    ImGui::TextColored(c.faint, "%.0f%%", event.progress * 100.0f);
+                    ImGui::TextColored(c.text_faint, "%.0f%%", event.progress * 100.0f);
                 } else if (seconds >= 0.05) {
-                    ImGui::TextColored(c.faint, "%s",
+                    ImGui::TextColored(c.text_faint, "%s",
                                        FormatTrainingDuration(seconds).c_str());
                 } else {
-                    ImGui::TextColored(c.faint, "%s", running ? "..." : "<0.1s");
+                    ImGui::TextColored(c.text_faint, "%s", running ? "..." : "<0.1s");
                 }
                 ImGui::PopID();
             }
@@ -2244,7 +2243,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
     // Cache usage.
     ImGui::Spacing();
     if (materialization_cache_entries_ >= 0) {
-        ImGui::TextColored(c.muted, "Prepared-data cache");
+        ImGui::TextColored(c.text_dim, "Prepared-data cache");
         ImGui::SameLine();
         std::string usage = std::to_string(materialization_cache_entries_) + " dataset" +
                             (materialization_cache_entries_ == 1 ? "" : "s") + " \xC2\xB7 " +
@@ -2255,18 +2254,18 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         ImGui::TextUnformatted(usage.c_str());
         if (materialization_pruned_entries_ > 0) {
             ImGui::SameLine();
-            ImGui::TextColored(c.faint, "(removed %d older, %s)",
+            ImGui::TextColored(c.text_faint, "(removed %d older, %s)",
                                materialization_pruned_entries_,
                                FormatTraceBytes(materialization_pruned_bytes_).c_str());
         }
     }
     if (!materialization_clear_message_.empty()) {
-        ImGui::TextColored(c.faint, "%s", materialization_clear_message_.c_str());
+        ImGui::TextColored(c.text_faint, "%s", materialization_clear_message_.c_str());
     }
     if (!PreparationRows().empty()) {
-        ImGui::TextColored(c.faint, "The file, cache key and memory figures are under Run details.");
+        ImGui::TextColored(c.text_faint, "The file, cache key and memory figures are under Run details.");
     }
-    EndDashCard();
+    ui::EndCard();
 
     // Clear confirmation.
     if (materialization_clear_confirm_) {
@@ -2278,7 +2277,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushTextWrapPos(430.0f);
         if (materialization_cache_entries_ >= 0) {
-            ImGui::TextColored(c.muted,
+            ImGui::TextColored(c.text_dim,
                                "Removes %d prepared dataset%s (%s) from this project's cache "
                                "folder. They are rebuilt the next time a graph needs them. "
                                "Your datasets and graphs are not touched.",
@@ -2286,22 +2285,22 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                                materialization_cache_entries_ == 1 ? "" : "s",
                                FormatTraceBytes(materialization_cache_bytes_).c_str());
         } else {
-            ImGui::TextColored(c.muted,
+            ImGui::TextColored(c.text_dim,
                                "Removes every prepared dataset from this project's cache "
                                "folder. They are rebuilt the next time a graph needs them. "
                                "Your datasets and graphs are not touched.");
         }
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
-        const float buttons = DashButtonWidth("Cancel") + DashButtonWidth("Clear cache") +
+        const float buttons = ui::ButtonWidth("Cancel", ui::ButtonSize::Small) + ui::ButtonWidth("Clear cache", ui::ButtonSize::Small) +
                               ImGui::GetStyle().ItemSpacing.x;
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x - buttons));
-        if (DashButton("Cancel", DashButtonKind::Secondary, c)) {
+        if (ui::SecondaryButton("Cancel")) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (DashButton("Clear cache", DashButtonKind::Danger, c)) {
+        if (ui::DangerButton("Clear cache")) {
             materialization_clear_message_ = "Clearing prepared-data cache...";
             if (materialization_action_callback_) {
                 materialization_action_callback_("clear");
@@ -2365,27 +2364,24 @@ std::vector<training_dashboard::DetailRow> TrainingPlotPanel::PreparationRows() 
 
 void TrainingPlotPanel::RenderRunComparisonTable() {
     namespace td = training_dashboard;
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     const td::RunsTable runs = td::BuildRunsTable(run_comparison_records_, active_checkpoint_loaded_);
     const auto tone = [&c](td::Tone t) {
         switch (t) {
         case td::Tone::Good: return c.success;
         case td::Tone::Bad: return c.caution;
         case td::Tone::Error: return c.error;
-        case td::Tone::Faint: return c.faint;
+        case td::Tone::Faint: return c.text_faint;
         case td::Tone::Plain: break;
         }
         return c.text;
     };
 
     ImGui::Spacing();
-    if (!BeginDashCard("##dash_runs", c)) {
-        EndDashCard();
-        return;
-    }
+    ui::BeginCard("##dash_runs");
     // The title, then the card's actions at the right (they wrap when narrow).
     ImGui::AlignTextToFramePadding();
-    DashCardTitle("Runs", "this session, best test accuracy first", c);
+    ui::CardTitle("Runs", "this session, best test accuracy first");
     ui::Tooltip("Ranked by test accuracy, then validation accuracy and loss, then time.");
     const bool has_runs = !runs.rows.empty();
     const char* columns_label = runs_all_columns_ ? "Key columns###runs_columns" : "All columns###runs_columns";
@@ -2434,7 +2430,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
     }
 
     if (!has_runs) {
-        ImGui::TextColored(c.faint, "%s", runs.empty.c_str());
+        ImGui::TextColored(c.text_faint, "%s", runs.empty.c_str());
     } else {
         // Its own height: up to five rows, then the rows scroll inside; the
         // Run column and the header stay while it scrolls sideways.
@@ -2443,9 +2439,9 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         const float row_height = ImGui::GetTextLineHeight() + style.CellPadding.y * 2.0f;
         const float height = row_height * static_cast<float>(1 + std::min<size_t>(runs.rows.size(), 5)) +
                              style.ScrollbarSize + style.CellPadding.y * 2.0f;
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, c.window);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, c.bg_window);
         // ImGui draws a line under the frozen header row whatever the flags.
-        ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, c.window);
+        ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, c.bg_window);
         // Room between the columns; each is as wide as its longest value.
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(10.0f, style.CellPadding.y));
         if (ImGui::BeginTable("##dash_runs_table", static_cast<int>(shown_columns),
@@ -2455,7 +2451,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
             ImGui::TableSetupScrollFreeze(1, 1);
             for (size_t i = 0; i < shown_columns; ++i) ImGui::TableSetupColumn(runs.columns[i].c_str());
             // ImGui's header row, so each column is as wide as its name.
-            ImGui::PushStyleColor(ImGuiCol_Text, c.muted);
+            ImGui::PushStyleColor(ImGuiCol_Text, c.text_dim);
             ImGui::TableHeadersRow();
             ImGui::PopStyleColor();
             for (size_t r = 0; r < runs.rows.size(); ++r) {
@@ -2473,12 +2469,12 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::PopStyleColor(2);
         const std::string& note = runs_all_columns_ ? runs.all_note : runs.key_note;
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(c.faint, "%s", note.c_str());
+        ImGui::TextColored(c.text_faint, "%s", note.c_str());
         ImGui::PopTextWrapPos();
     }
     if (!runs.loaded_note.empty()) {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(c.faint, "%s", runs.loaded_note.c_str());
+        ImGui::TextColored(c.text_faint, "%s", runs.loaded_note.c_str());
         ImGui::PopTextWrapPos();
     }
     if (export_note_at_ == ExportNoteAt::Runs && !export_note_.empty()) {
@@ -2486,7 +2482,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         ImGui::TextColored(export_failed_ ? c.error : c.success, "%s", export_note_.c_str());
         ImGui::PopTextWrapPos();
     }
-    EndDashCard();
+    ui::EndCard();
 }
 
 training_dashboard::HeaderFacts TrainingPlotPanel::HeaderFactsNow() const {
@@ -2527,7 +2523,7 @@ training_dashboard::HeaderFacts TrainingPlotPanel::HeaderFactsNow() const {
 
 void TrainingPlotPanel::RenderTrainingStatus() {
     namespace td = training_dashboard;
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     td::HeaderFacts facts = HeaderFactsNow();
     std::vector<td::DetailRow> where_rows;
     std::vector<std::string> warnings;
@@ -2566,7 +2562,7 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     }
 #endif
 
-    ImVec4 state_colour = c.muted;
+    ImVec4 state_colour = c.text_dim;
     switch (header.state) {
     case td::RunState::WaitingForGpu:
     case td::RunState::Stopped: state_colour = c.caution; break;
@@ -2585,7 +2581,7 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         case td::Tone::Good: return c.success;
         case td::Tone::Bad: return c.caution;
         case td::Tone::Error: return c.error;
-        case td::Tone::Faint: return c.muted;
+        case td::Tone::Faint: return c.text_dim;
         case td::Tone::Plain: break;
         }
         return c.text;
@@ -2597,10 +2593,7 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         ImGui::PopTextWrapPos();
     };
 
-    if (!BeginDashCard("##dash_header", c)) {
-        EndDashCard();
-        return;
-    }
+    ui::BeginCard("##dash_header");
 
     // Row 1: the state, then the run's actions at the right; each part
     // moves to the next line when the slot is narrow (B4-2).
@@ -2680,25 +2673,25 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         const bool ended = header.state == td::RunState::Completed || header.state == td::RunState::EarlyStopped ||
                            header.state == td::RunState::Stopped || header.state == td::RunState::Failed;
         const ImVec4 bar = header.state == td::RunState::Preparing ? c.info : (ended ? state_colour : c.accent);
-        DashProgress(static_cast<float>(header.progress), bar, c);
+        ui::ProgressLine(static_cast<float>(header.progress), bar);
         ui::Tooltip(header.progress_tooltip.c_str());
     }
-    wrapped(c.muted, header.progress_text);
+    wrapped(c.text_dim, header.progress_text);
 
     // Where it ran, on what data, and the trace's warnings.
-    wrapped(c.muted, header.where);
+    wrapped(c.text_dim, header.where);
     ui::Tooltip(header.where_tooltip.c_str());
-    wrapped(c.muted, header.data);
+    wrapped(c.text_dim, header.data);
     for (const std::string& warning : warnings) {
         wrapped(c.caution, std::string(ICON_FA_TRIANGLE_EXCLAMATION " ") + warning);
     }
 
     // While it trains: the latest batches. After: how it ended, the active
     // model and the held-out test.
-    LineWithTail(header.now, c.text, header.now_detail, c.muted);
+    LineWithTail(header.now, c.text, header.now_detail, c.text_dim);
     wrapped(tone(header.outcome_tone), header.outcome);
-    LineWithTail(header.active_model, c.text, header.active_model_detail, c.muted);
-    LineWithTail(header.test, c.text, header.test_detail, c.muted);
+    LineWithTail(header.active_model, c.text, header.active_model_detail, c.text_dim);
+    LineWithTail(header.test, c.text, header.test_detail, c.text_dim);
 
     // Run details: the codes, paths and figures behind the lines above.
     const std::vector<td::DetailRow> preparation_rows = PreparationRows();
@@ -2720,7 +2713,7 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         run_details_open_ = ImGui::TreeNodeEx("Run details##dash_run_details",
                                               ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanLabelWidth);
         ImGui::SameLine();
-        wrapped(c.faint, what);
+        wrapped(c.text_faint, what);
         if (run_details_open_) {
             struct Group {
                 const char* title;
@@ -2745,20 +2738,17 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         }
     }
 
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::RenderStatistics() {
-    const DashColors c = CurrentDashColors();
+    const ui::Tokens& c = ui::CurrentTokens();
     ImGui::Spacing();
-    if (!BeginDashCard("##dash_stats", c)) {
-        EndDashCard();
-        return;
-    }
-    DashCardTitle("Statistics", "mean of the last 10 points; min and max of the run", c);
+    ui::BeginCard("##dash_stats");
+    ui::CardTitle("Statistics", "mean of the last 10 points; min and max of the run");
     ImGui::Spacing();
 
-    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
+    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, ui::WithAlpha(c.border, 0.6f));
     ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImVec4(0, 0, 0, 0));
     if (ImGui::BeginTable("##dash_stats_table", 4,
                           ImGuiTableFlags_SizingStretchProp |
@@ -2767,7 +2757,7 @@ void TrainingPlotPanel::RenderStatistics() {
         ImGui::TableSetupColumn("Mean", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Min", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Max", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Text, c.muted);
+        ImGui::PushStyleColor(ImGuiCol_Text, c.text_dim);
         ImGui::TableHeadersRow();
         ImGui::PopStyleColor();
 
@@ -2797,7 +2787,7 @@ void TrainingPlotPanel::RenderStatistics() {
         ImGui::EndTable();
     }
     ImGui::PopStyleColor(2);
-    EndDashCard();
+    ui::EndCard();
 }
 
 void TrainingPlotPanel::TrimDataIfNeeded(MetricSeries& series) {

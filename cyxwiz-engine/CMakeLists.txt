@@ -642,7 +642,6 @@ set(ENGINE_SOURCES
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
-    src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
     src/core/series_decimation.cpp
@@ -4213,7 +4212,6 @@ add_executable(test_graph_training_sequence_preflight
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
-    src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
     src/gui/separate_windows.cpp
@@ -4361,7 +4359,6 @@ add_executable(test_text_gui_training_launch
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
-    src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
     src/gui/separate_windows.cpp
@@ -5943,7 +5940,6 @@ add_executable(test_training_manager_session
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
-    src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
     src/core/word_embeddings_presentation.cpp
@@ -8989,7 +8985,6 @@ set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
-    src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
     src/gui/separate_windows.cpp

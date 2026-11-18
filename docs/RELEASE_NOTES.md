@@ -16,6 +16,12 @@ private Data Studio tickets (`tofix*/track*`).
 - **Dock back showed nothing** when the window had been alone in its place
   (its place left with it): it docked into the dock space's root and was not
   drawn. It comes back as a tab in the middle of the main window.
+- **The Training Dashboard uses the Engine's own buttons, chips and cards.**
+  Its cards, pills, toggles, progress bars and run tabs were copies with
+  their own sizes and colours; they are the shared ones now (the figure
+  card and the run tab joined them), so the dashboard follows the theme
+  like the rest of the Engine. In a narrow dashboard the Charts row wraps,
+  so View is no longer pushed past the edge by "smoothed (5)".
 - **The Training Dashboard scrolls with the mouse wheel over its charts.**
   A wheel over a chart zoomed it, so a narrow dashboard could not be
   scrolled past its charts; the wheel now scrolls and Ctrl + wheel zooms (a

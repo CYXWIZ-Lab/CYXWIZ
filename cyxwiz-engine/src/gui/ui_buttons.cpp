@@ -409,4 +409,31 @@ float ButtonHeight(ButtonSize size) {
     return ImGui::GetTextLineHeight() + Padding(size).y * 2.0f;
 }
 
+bool RunTab(const char* id, const char* label, const char* sub, const ImVec4& dot, bool active) {
+    const Tokens& t = CurrentTokens();
+    const ImVec2 pad(10.0f, 5.0f);
+    const float dot_space = 14.0f;
+    const ImVec2 label_size = ImGui::CalcTextSize(label);
+    const bool has_sub = sub && sub[0];
+    const ImVec2 sub_size = has_sub ? ImGui::CalcTextSize(sub) : ImVec2(0.0f, 0.0f);
+    const float gap = has_sub ? t.space_md : 0.0f;
+    const ImVec2 size(pad.x * 2.0f + dot_space + label_size.x + gap + sub_size.x, label_size.y + pad.y * 2.0f);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool pressed = ImGui::InvisibleButton(id, size);
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec4 fill = active ? t.bg_raised : WithAlpha(t.text, hovered ? 0.07f : 0.04f);
+    draw->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), ImGui::GetColorU32(fill), t.rounding_button);
+    if (active) {
+        draw->AddRectFilled(ImVec2(pos.x + 6.0f, pos.y + size.y - 2.0f), ImVec2(pos.x + size.x - 6.0f, pos.y + size.y),
+                            ImGui::GetColorU32(t.accent), 1.0f);
+    }
+    draw->AddCircleFilled(ImVec2(pos.x + pad.x + 4.0f, pos.y + size.y * 0.5f), 4.0f, ImGui::GetColorU32(dot));
+    const float x = pos.x + pad.x + dot_space;
+    draw->AddText(ImVec2(x, pos.y + pad.y), ImGui::GetColorU32(active ? t.text : t.text_dim), label);
+    if (has_sub) draw->AddText(ImVec2(x + label_size.x + gap, pos.y + pad.y), ImGui::GetColorU32(t.text_faint), sub);
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return pressed;
+}
+
 }  // namespace cyxwiz::ui

@@ -62,6 +62,19 @@ void StatusLegend(std::initializer_list<Status> statuses);
 void Chip(const char* text, const ImVec4& colour);
 float ChipWidth(const char* text);
 
+// A card's title and a muted subtitle on one line; a pill or buttons may
+// follow on the same line (CardHeader draws a line under itself).
+void CardTitle(const char* title, const char* subtitle = nullptr);
+// A thin rounded bar: `fraction` of the width in `colour` over the raised
+// surface. `width` <= 0 fills the line.
+void ProgressLine(float fraction, const ImVec4& colour, float width = -1.0f, float height = 6.0f);
+// A figure card (the Training Dashboard's): a dot and the label, the value
+// large (`tooltip` on hover), then up to three lines that wrap in a narrow
+// card; null or empty lines are left out.
+void KpiCard(const char* id, const char* label, const ImVec4& dot, const char* value, const char* tooltip,
+             const char* line1, const ImVec4& line1_colour, const char* line2, const ImVec4& line2_colour,
+             const char* line3 = nullptr, const ImVec4& line3_colour = ImVec4(0, 0, 0, 0));
+
 // Text wrapped at the right edge of the area, also inside a word that is
 // wider than the line (a path, a cache key): there it breaks after a \ or /
 // when it can, else between characters. ImGui's wrap leaves such a word

@@ -100,6 +100,58 @@ void CardHeader(const char* title, const char* subtitle, const StatusStyle* stat
     ImGui::Spacing();
 }
 
+void CardTitle(const char* title, const char* subtitle) {
+    const Tokens& t = CurrentTokens();
+    ImGui::TextColored(t.text, "%s", title);
+    if (subtitle && subtitle[0]) {
+        ImGui::SameLine(0.0f, t.space_md);
+        ImGui::TextColored(t.text_dim, "%s", subtitle);
+    }
+}
+
+void ProgressLine(float fraction, const ImVec4& colour, float width, float height) {
+    const Tokens& t = CurrentTokens();
+    fraction = std::clamp(fraction, 0.0f, 1.0f);
+    if (width <= 0.0f) width = ImGui::GetContentRegionAvail().x;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float line = ImGui::GetTextLineHeight();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float y = pos.y + (line - height) * 0.5f;
+    draw->AddRectFilled(ImVec2(pos.x, y), ImVec2(pos.x + width, y + height), ImGui::GetColorU32(t.bg_raised),
+                        height * 0.5f);
+    if (fraction > 0.0f) {
+        draw->AddRectFilled(ImVec2(pos.x, y), ImVec2(pos.x + std::max(height, width * fraction), y + height),
+                            ImGui::GetColorU32(colour), height * 0.5f);
+    }
+    ImGui::Dummy(ImVec2(width, line));
+}
+
+void KpiCard(const char* id, const char* label, const ImVec4& dot, const char* value, const char* tooltip,
+             const char* line1, const ImVec4& line1_colour, const char* line2, const ImVec4& line2_colour,
+             const char* line3, const ImVec4& line3_colour) {
+    const Tokens& t = CurrentTokens();
+    BeginCard(id);
+    const float line = ImGui::GetTextLineHeight();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(at.x + 4.0f, at.y + line * 0.5f), 4.0f, ImGui::GetColorU32(dot));
+    ImGui::Dummy(ImVec2(8.0f, line));
+    ImGui::SameLine(0.0f, t.space_sm);
+    ImGui::TextColored(t.text_dim, "%s", label);
+    // The value in the bold face at 1.45 times the text size.
+    ImFont* font = GetFont(Font::Bold) ? GetFont(Font::Bold) : ImGui::GetFont();
+    const float size = ImGui::GetFontSize() * 1.45f;
+    const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, value);
+    ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(), ImGui::GetColorU32(t.text), value);
+    ImGui::Dummy(extent);
+    if (tooltip && tooltip[0]) Tooltip(tooltip);
+    ImGui::PushTextWrapPos(0.0f);
+    if (line1 && line1[0]) ImGui::TextColored(line1_colour, "%s", line1);
+    if (line2 && line2[0]) ImGui::TextColored(line2_colour, "%s", line2);
+    if (line3 && line3[0]) ImGui::TextColored(line3_colour, "%s", line3);
+    ImGui::PopTextWrapPos();
+    EndCard();
+}
+
 // ---------------------------------------------------------------------------
 // Key/value details
 
