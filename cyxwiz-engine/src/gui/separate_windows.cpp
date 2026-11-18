@@ -23,6 +23,11 @@ namespace gui {
 namespace {
 
 const ImGuiID kMayLeaveClass = ImHashStr("cyxwiz.window.may_leave");
+// The windows the Engine places itself (sidebar, status bar) and overlays
+// that go with their owner: they never leave, whatever the setting.
+const ImGuiID kStaysClass = ImHashStr("cyxwiz.window.stays");
+
+bool g_every = false;  // Preferences: every movable window may leave
 
 ImGuiID g_main_dockspace = 0;
 ImGuiID g_focused = 0;                               // the window that had the focus last (not a popup)
@@ -34,7 +39,19 @@ struct FrontRequest { std::string name; int frames = 0; };
 FrontRequest g_front;                                // the latest BringToFront (empty name: none)
 constexpr int kFrontFrames = 30;                     // a window that does not come forward by then is let go
 
-bool MayLeave(const ImGuiWindow* w) { return w->WindowClass.ClassId == kMayLeaveClass; }
+// A window the setting lets leave: a movable top-level window that asked
+// nothing (no class): not a popup, menu, tooltip, child, dock host or bar.
+bool EveryEligible(const ImGuiWindow* w) {
+    constexpr ImGuiWindowFlags kNever = ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildMenu |
+                                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_DockNodeHost;
+    // A docked window is flagged a child of its dock host: it is a panel all the same.
+    const bool child = (w->Flags & ImGuiWindowFlags_ChildWindow) && !w->DockIsActive;
+    return w->WindowClass.ClassId == 0 && !child && !(w->Flags & kNever);
+}
+
+bool MayLeave(const ImGuiWindow* w) {
+    return w->WindowClass.ClassId == kMayLeaveClass || (g_every && EveryEligible(w));
+}
 
 // A dock node (or tree) may leave when every window in it may.
 bool NodeMayLeave(const ImGuiDockNode* node) {
@@ -88,6 +105,27 @@ void RunFront(ImGuiContext& g) {
         pio.Platform_SetWindowFocus(viewport);
 }
 
+// A leaf of the main dock space's tree (not a floating node of its own).
+bool InMainDockSpace(ImGuiDockNode* node) {
+    return node && g_main_dockspace && node->IsLeafNode() && ImGui::DockNodeGetRootNode(node)->ID == g_main_dockspace;
+}
+
+ImGuiDockNode* FirstShownLeaf(ImGuiDockNode* node) {
+    if (!node) return nullptr;
+    if (node->IsLeafNode()) return node->IsVisible && node->Size.x > 0.0f && node->Size.y > 0.0f ? node : nullptr;
+    if (ImGuiDockNode* found = FirstShownLeaf(node->ChildNodes[0])) return found;
+    return FirstShownLeaf(node->ChildNodes[1]);
+}
+
+// Where a window goes back to when its own place is gone.
+ImGuiID VisibleSlot() {
+    if (!g_main_dockspace) return 0;
+    ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(g_main_dockspace);
+    if (central && central->IsVisible && central->Size.x > 0.0f && central->Size.y > 0.0f) return central->ID;
+    if (ImGuiDockNode* leaf = FirstShownLeaf(ImGui::DockBuilderGetNode(g_main_dockspace))) return leaf->ID;
+    return g_main_dockspace;
+}
+
 // Start of the frame: the commands asked for during the last one, while no
 // window is between Begin and End.
 void RunPending(ImGuiContext* ctx, ImGuiContextHook*) {
@@ -108,10 +146,16 @@ void RunPending(ImGuiContext* ctx, ImGuiContextHook*) {
             spdlog::info("Window '{}' moves to a window of its own", w->Name);
         } else {
             g_leaving.erase(w->ID);
+            // Its last place when that is still a leaf of the main dock space;
+            // else the central area when it shows, else the first slot that
+            // shows. A window alone in its place takes that place out with it
+            // (the place becomes its floating node), and the dock space's root
+            // is a split node: docked there, the window was not shown.
             ImGuiID target = 0;
-            if (auto it = g_home.find(w->ID); it != g_home.end() && ImGui::DockContextFindNodeByID(&g, it->second))
-                target = it->second;
-            if (!target) target = g_main_dockspace;
+            if (auto it = g_home.find(w->ID); it != g_home.end())
+                if (ImGuiDockNode* home = ImGui::DockContextFindNodeByID(&g, it->second); InMainDockSpace(home))
+                    target = home->ID;
+            if (!target) target = VisibleSlot();
             if (!target) {
                 spdlog::warn("Window '{}': no dock space to return to", w->Name);
                 continue;
@@ -147,6 +191,16 @@ void KeepInside(ImGuiContext* ctx, ImGuiContextHook*) {
         if (!w->WasActive) continue;
         if (w->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildMenu))
             continue;
+        if (EveryEligible(w)) {
+            // What NextWindowMayLeave asks of a big window, kept on the window
+            // here (these never call it): once outside, its own window until it
+            // is docked again, with the tab strip under the OS title bar.
+            const bool outside = g_every && (!InMainWindow(w) || g_leaving.count(w->ID));
+            if (g_every && !InMainWindow(w)) g_leaving.erase(w->ID);
+            if (outside) w->WindowClass.ViewportFlagsOverrideSet |= ImGuiViewportFlags_NoAutoMerge;
+            else w->WindowClass.ViewportFlagsOverrideSet &= ~ImGuiViewportFlags_NoAutoMerge;
+            w->WindowClass.DockingAlwaysTabBar = outside;
+        }
         if (MayLeave(w)) {
             if (w->DockId && InMainWindow(w) && (w->DockIsActive || w->DockNode)) g_home[w->ID] = w->DockId;
             continue;
@@ -240,9 +294,24 @@ void NextWindowMayLeave(const char* name) {
     ImGui::SetNextWindowClass(&cls);
 }
 
-void NextWindowStaysInMain() { ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID); }
+namespace {
+void NextWindowStays() {
+    ImGuiWindowClass cls;
+    cls.ClassId = kStaysClass;
+    cls.DockingAllowUnclassed = true;
+    ImGui::SetNextWindowClass(&cls);
+}
+}  // namespace
 
-void NextWindowFollowsCurrent() { ImGui::SetNextWindowViewport(ImGui::GetWindowViewport()->ID); }
+void NextWindowStaysInMain() {
+    NextWindowStays();
+    ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+}
+
+void NextWindowFollowsCurrent() {
+    NextWindowStays();
+    ImGui::SetNextWindowViewport(ImGui::GetWindowViewport()->ID);
+}
 
 namespace {
 std::vector<ImVec2> g_overlay_cursors;  // the owners' cursors, one per open overlay
@@ -308,6 +377,43 @@ void TabMenu(const char* name, bool* open) {
         ImGui::Separator();
         if (ImGui::MenuItem("Close")) *open = false;
     }
+    ImGui::EndPopup();
+}
+
+void SetEveryWindowMayLeave(bool every) {
+    if (g_every == every) return;
+    g_every = every;
+    if (!every && GImGui) {
+        // Off: the windows only the setting let out come back to their place.
+        for (ImGuiWindow* w : GImGui->Windows)
+            if (EveryEligible(w) && w->WasActive && !InMainWindow(w)) g_pending.push_back({w->ID, false});
+    }
+    spdlog::info("{} may have a window of its own", every ? "Every window" : "Only the big windows");
+}
+
+bool EveryWindowMayLeave() { return g_every; }
+
+void WindowMenus() {
+    static std::string target;  // the window the menu is for
+    ImGuiContext& g = *GImGui;
+    if (g_every && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+        for (ImGuiWindow* w : g.Windows) {
+            if (!w->WasActive || !EveryEligible(w)) continue;
+            // Its tab when docked, its title bar when floating.
+            ImRect rect;
+            if (w->DockIsActive) rect = w->DC.DockTabItemRect;
+            else if (!(w->Flags & ImGuiWindowFlags_NoTitleBar)) rect = w->TitleBarRect();
+            if (rect.GetWidth() <= 0.0f || !ImGui::IsMouseHoveringRect(rect.Min, rect.Max, false)) continue;
+            if (!g.HoveredWindow || g.HoveredWindow->RootWindowDockTree != w->RootWindowDockTree) continue;
+            target = w->Name;
+            ImGui::OpenPopup("##window_home_any");
+            break;
+        }
+    }
+    if (!ImGui::BeginPopup("##window_home_any")) return;
+    const bool outside = WindowIsOutside(target.c_str());
+    if (ImGui::MenuItem("Move to its own window", nullptr, false, !outside)) MoveWindowOut(target.c_str());
+    if (ImGui::MenuItem("Dock back into the main window", nullptr, false, outside)) MoveWindowBack(target.c_str());
     ImGui::EndPopup();
 }
 

@@ -442,6 +442,7 @@ bool CyxWizApp::Initialize() {
     spdlog::set_level(cyxwiz::core::EngineConfig::Instance().RecordDebugLogs() ? spdlog::level::debug
                                                                               : spdlog::level::info);
     cyxwiz::SetDataBudgetBytes(cyxwiz::core::EngineConfig::Instance().DataBudgetBytes());
+    gui::SetEveryWindowMayLeave(cyxwiz::core::EngineConfig::Instance().EveryWindowMayLeave());
 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window_, true);

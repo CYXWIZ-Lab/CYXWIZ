@@ -627,6 +627,10 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             watch_training_every_ = std::clamp(playback.value("watch_every_updates", 20), 1, 1000);
         }
 
+        every_window_may_leave_ = false;
+        if (config.contains("windows") && config["windows"].is_object())
+            every_window_may_leave_ = config["windows"].value("every_window_may_leave", false);
+
         runtime_log_saved_filters_.clear();
         if (config.contains("observability") &&
             config["observability"].is_object()) {
@@ -763,6 +767,7 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
                                      {"stress_episodes", policy_stress_defaults_.episodes},
                                      {"watch_training", watch_training_mode_},
                                      {"watch_every_updates", watch_training_every_}};
+        config["windows"] = {{"every_window_may_leave", every_window_may_leave_}};
         config["observability"] = {
             {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
@@ -1297,6 +1302,19 @@ void EngineConfig::SetMonitor(const MonitorConfig& monitor) {
 bool EngineConfig::RecordDebugLogs() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return record_debug_logs_;
+}
+
+bool EngineConfig::EveryWindowMayLeave() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return every_window_may_leave_;
+}
+
+void EngineConfig::SetEveryWindowMayLeave(bool every) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (every_window_may_leave_ != every) {
+        every_window_may_leave_ = every;
+        modified_ = true;
+    }
 }
 
 void EngineConfig::SetRecordDebugLogs(bool record) {

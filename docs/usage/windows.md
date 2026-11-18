@@ -19,9 +19,17 @@ Dashboard, Plot, the plot view's own window, Plot Output, Data Studio, Script
 Editor (and the notebooks in it), Training, Console, Table Viewer (Data
 Viewer), Variable Explorer and the CyxWiz Studio canvas.
 
-Everything else stays in the main window: Properties, Asset Browser, Node
-Browser, the tool panels, dialogs, the sidebar, the status bar. Dragging one
-of them past the edge stops at the edge, as before.
+Everything else stays in the main window: Properties, Asset Browser, Nodes,
+the tool panels, dialogs, the sidebar, the status bar. Dragging one of them
+past the edge stops at the edge, as before.
+
+**Any window, if you want.** File > Preferences > General > Windows: **Any
+window can have a window of its own** lets every panel leave the main window
+the same way (Properties, Asset Browser, Nodes, Info, the tool panels, ...).
+It applies at once and is saved with your Engine settings. The sidebar, the
+status bar, menus, popups and the canvas's overlays (minimap, search box)
+always stay. Turning it off again brings the panels it let out back inside;
+the big windows stay where they are.
 
 ## Moving a window out
 
@@ -44,8 +52,11 @@ window: only docking brings it back.
 ## Bringing it back
 
 - Right-click its tab or title bar: **Dock back into the main window**. It
-  returns to the dock node it left; when that node is gone, to the main
-  dock space.
+  returns to the place it left when that place is still there; a window that
+  was alone in its place takes the place out with it, so it comes back as a
+  tab in the middle of the main window (beside CyxWiz Studio), from where it
+  can be dragged anywhere. (It used to dock into the dock space's root and
+  not show.)
 - Or drag its tab into the main window's dock space.
 - Or **View > Window > Dock back into the main window**.
 - **View > Layout > Reset to Default** brings every window back inside.

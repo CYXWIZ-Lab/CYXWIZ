@@ -3107,6 +3107,9 @@ void MainWindow::Render() {
     FrameMetrics::Instance().Render();
     FrameMetrics::Instance().EndFrame();
     RenderStatusBar();
+    // Any panel's tab menu (Move to its own window / Dock back) while
+    // Preferences let every window leave (TOFIX129 A8b).
+    ::gui::WindowMenus();
 }
 
 // Helper function to draw active tab indicator on a dock node

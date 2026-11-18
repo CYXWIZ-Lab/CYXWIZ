@@ -324,6 +324,12 @@ public:
     // default; Preferences > General turns it off (Info and above only).
     bool RecordDebugLogs() const;
     void SetRecordDebugLogs(bool record);
+    // Every window may have a window of its own on the desktop (owner
+    // 2026-11-18, TOFIX129 A8b). Off: only the big windows (Training
+    // Dashboard, Data Studio, Script Editor, Console, ...) may leave the main
+    // window. Preferences > General.
+    bool EveryWindowMayLeave() const;
+    void SetEveryWindowMayLeave(bool every);
 
     // ===== Data =====
 
@@ -455,6 +461,7 @@ private:
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;
+    bool every_window_may_leave_ = false;
     uint64_t data_budget_bytes_ = 0;
     int simulation_rate_hz_ = kDefaultSimulationRateHz;
     bool policy_playback_best_ = true;

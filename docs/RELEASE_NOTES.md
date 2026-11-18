@@ -7,6 +7,20 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Any window can have a window of its own.** File > Preferences >
+  General > Windows: with **Any window can have a window of its own** on,
+  every panel (Properties, Nodes, Info, the tool panels, ...) can leave the
+  main window as the big windows do: drag its tab out, or right-click its tab:
+  **Move to its own window** / **Dock back into the main window**. Off by
+  default; the sidebar, status bar, menus and canvas overlays always stay.
+- **Dock back showed nothing** when the window had been alone in its place
+  (its place left with it): it docked into the dock space's root and was not
+  drawn. It comes back as a tab in the middle of the main window.
+- **The Training Dashboard's cards show the finished epoch.** They showed the
+  last batch window (0.2322 while epoch 10 ended at 0.2223), and the
+  validation card's gap was measured against it. While an epoch runs, "this
+  epoch so far" is a second figure. "How the run is going" says what the
+  curves did in plain words; a short run's time keeps a tenth of a second.
 - **The Nodes panel, redone.** The node groups fold, with their counts,
   and the panel remembers which are open (no more three rows and a "Show
   all" page). A grid or list switch (the list is one row per node; File >

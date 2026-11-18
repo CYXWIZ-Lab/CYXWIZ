@@ -1,6 +1,7 @@
 // Toolbar preferences modal rendering.
 
 #include "toolbar.h"
+#include "../separate_windows.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
 #include "../ui_widgets.h"
@@ -158,6 +159,28 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         }
                         ImGui::TextDisabled("Shown in the Console under Debug and written to engine_log.txt. "
                                             "Off: Info, warnings and errors only.");
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::Text("Windows");
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    {
+                        // Engine-wide, applied and saved at once (TOFIX129 A8b).
+                        auto& engine_config = cyxwiz::core::EngineConfig::Instance();
+                        bool every = engine_config.EveryWindowMayLeave();
+                        if (ImGui::Checkbox("Any window can have a window of its own", &every)) {
+                            engine_config.SetEveryWindowMayLeave(every);
+                            engine_config.Save();
+                            ::gui::SetEveryWindowMayLeave(every);
+                        }
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("On: drag any panel's tab out of the Engine, or right-click its tab: Move to "
+                                            "its own window (View > Window does it for the focused window). Off: only "
+                                            "the big windows can (Training Dashboard, Data Studio, Script Editor, Console, "
+                                            "Table Viewer, plots). The sidebar, status bar and menus always stay.");
+                        ImGui::PopTextWrapPos();
                     }
 
                     ImGui::Spacing();

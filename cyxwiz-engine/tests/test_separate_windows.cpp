@@ -7,6 +7,7 @@
 #include <imgui_internal.h>
 
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <string>
 
@@ -24,6 +25,9 @@ constexpr const char* kProperties = "Properties";
 constexpr ImGuiID kDockSpace = 0x5EED;
 
 bool g_dashboard_open = true;
+std::function<void()> g_before_dockspace;  // dock builder calls, inside the next frame
+bool g_draw_bar = false;  // a window the Engine places itself (sidebar, status bar)
+constexpr const char* kBar = "Bar";
 
 // The pretend platform.
 struct FakeWindow { ImVec2 pos, size; };
@@ -56,6 +60,10 @@ void InstallFakePlatform() {
 // leave, a window that may not; the positions apply before Begin.
 void Frame(const ImVec2* dashboard_pos = nullptr, const ImVec2* properties_pos = nullptr) {
     ImGui::NewFrame();
+    if (g_before_dockspace) {
+        g_before_dockspace();
+        g_before_dockspace = nullptr;
+    }
     const ImGuiViewport* main = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(main->Pos);
     ImGui::SetNextWindowSize(main->Size);
@@ -78,6 +86,14 @@ void Frame(const ImVec2* dashboard_pos = nullptr, const ImVec2* properties_pos =
     ImGui::Begin(kProperties);
     ImGui::Text("fields");
     ImGui::End();
+
+    if (g_draw_bar) {
+        gui::NextWindowStaysInMain();
+        ImGui::SetNextWindowSize(ImVec2(120, 60), ImGuiCond_Once);
+        ImGui::Begin(kBar);
+        ImGui::End();
+    }
+    gui::WindowMenus();
     ImGui::EndFrame();
     ImGui::UpdatePlatformWindows();
 }
@@ -168,6 +184,71 @@ int main() {
     ImGui::FocusWindow(Window(kDashboard));
     Frame();
     Check(gui::FocusedWindowName() == kDashboard, "focused window is the dashboard: " + gui::FocusedWindowName());
+
+    // Every window may leave (Preferences > General, A8b). On: the
+    // properties window gets a window of its own and keeps it over the main
+    // window; a window the Engine places itself still stays; off again: held
+    // inside as before.
+    gui::SetEveryWindowMayLeave(true);
+    g_draw_bar = true;
+    for (int i = 0; i < 2; ++i) Frame();
+    Check(gui::WindowMayLeave(kProperties), "every window: properties may leave");
+    Check(!gui::WindowMayLeave(kBar), "a window the Engine places never leaves");
+    for (int i = 0; i < 3; ++i) {
+        ImGui::SetWindowPos(Window(kProperties), beyond, ImGuiCond_Always);
+        ImGui::SetWindowPos(Window(kBar), beyond, ImGuiCond_Always);
+        Frame();
+    }
+    Check(Window(kProperties)->Viewport != ImGui::GetMainViewport(), "properties in a window of its own");
+    Check(gui::WindowIsOutside(kProperties), "properties reports outside");
+    Check(Window(kBar)->Viewport == ImGui::GetMainViewport(), "the bar stays in the main window");
+    for (int i = 0; i < 3; ++i) {
+        ImGui::SetWindowPos(Window(kProperties), inside, ImGuiCond_Always);
+        Frame();
+    }
+    Check(Window(kProperties)->Viewport != ImGui::GetMainViewport(), "it does not fall back in over the main window");
+    gui::MoveWindowBack(kProperties);
+    for (int i = 0; i < 4; ++i) Frame();
+    Check(Window(kProperties)->Viewport == ImGui::GetMainViewport() && Window(kProperties)->DockNode,
+          "Dock back works for it too");
+    gui::MoveWindowOut(kProperties);
+    for (int i = 0; i < 4; ++i) Frame();
+    Check(gui::WindowIsOutside(kProperties), "and Move to its own window");
+    // Dock back when its place closed as it left: a split dock space, the
+    // window alone on one side. It came back into the split root, where it
+    // was not shown; it goes to the central area, shown.
+    gui::MoveWindowBack(kProperties);
+    for (int i = 0; i < 3; ++i) Frame();
+    ImGuiID left = 0, right = 0;
+    g_before_dockspace = [&]() {
+        ImGui::DockBuilderRemoveNode(kDockSpace);
+        ImGui::DockBuilderAddNode(kDockSpace, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(kDockSpace, ImGui::GetMainViewport()->Size);
+        ImGui::DockBuilderSplitNode(kDockSpace, ImGuiDir_Left, 0.5f, &left, &right);
+        ImGui::DockBuilderDockWindow(kDashboard, left);
+        ImGui::DockBuilderDockWindow(kProperties, right);
+        ImGui::DockBuilderFinish(kDockSpace);
+    };
+    for (int i = 0; i < 4; ++i) Frame();
+    Check(Window(kProperties)->DockNode && Window(kProperties)->DockNode->ID == right, "properties alone on the right");
+    gui::MoveWindowOut(kProperties);
+    for (int i = 0; i < 4; ++i) Frame();
+    Check(gui::WindowIsOutside(kProperties), "out of the split dock space");
+    gui::MoveWindowBack(kProperties);
+    for (int i = 0; i < 4; ++i) Frame();
+    {
+        const ImGuiWindow* w = Window(kProperties);
+        Check(w->Viewport == ImGui::GetMainViewport() && w->DockNode && w->DockNode->IsLeafNode() && w->DockNode->IsVisible,
+              "docked back where it shows (a leaf node of the main dock space)");
+    }
+    g_before_dockspace = []() { ImGui::DockBuilderRemoveNode(kDockSpace); };  // the plain dock space again below
+    for (int i = 0; i < 3; ++i) Frame();
+
+    gui::SetEveryWindowMayLeave(false);
+    for (int i = 0; i < 3; ++i) Frame();
+    Check(!gui::WindowMayLeave(kProperties), "off: properties may not leave");
+    Check(Window(kProperties)->Viewport == ImGui::GetMainViewport(), "off: held inside the main window again");
+    g_draw_bar = false;
 
     // Bring to front: both windows as tabs of one dock node; the latest
     // request wins and its tab shows, whichever window draws later.
