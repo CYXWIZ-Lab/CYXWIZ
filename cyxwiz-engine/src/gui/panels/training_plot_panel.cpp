@@ -423,6 +423,15 @@ void LineWithTail(const std::string& text, const ImVec4& colour, const std::stri
     ImGui::PopTextWrapPos();
 }
 
+// "Epoch window [ 10 ] - +": a label and a typed whole-number field with
+// steps (B4-6: no sliders), its range on hover.
+void EpochsField(const char* label, const char* id, int* value, int min, int max, const char* hint) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine();
+    ui::NumberField(id, value, min, max, 1, 44.0f, hint);
+}
+
 } // namespace
 
 namespace {
@@ -1601,6 +1610,8 @@ void TrainingPlotPanel::DrawChart(int chart, const ImVec2& size, bool fit, bool 
     o.tool_fit = false;
     o.tool_log = false;
     o.own_window_button = false;
+    // In the dashboard the wheel scrolls it; a chart window zooms with it.
+    o.zoom_with_ctrl = !in_window;
     // Auto scale and Follow current epoch, as before: the epoch window and
     // the value range of what is visible.
     if (chart == 0 && auto_scale_ && !d.train_loss.line.epochs.empty()) {
@@ -1637,7 +1648,9 @@ void TrainingPlotPanel::DrawChart(int chart, const ImVec2& size, bool fit, bool 
         // Not following: all epochs so far, set once (as before the port);
         // with Auto scale the value range follows the data, like the loss
         // chart (it used to stay at the first fit, so the curve left the top).
-        const double max_epoch = std::max(1.0, d.train_accuracy.line.epochs.back()) + 1.0;
+        // The planned epochs, as the loss chart (it took the epochs so far,
+        // set once: 0..2 while epoch 1 ran, for the rest of the run).
+        const double max_epoch = CalculateEpochWindow(d.train_accuracy.line).second;
         o.x_range = {true, 0.0, max_epoch, true};
         const ValueRange range = CalculateVisibleRange(d.train_accuracy.line, d.val_accuracy.line, 0.0, max_epoch);
         double padding = (range.max - range.min) * 0.1;
@@ -1677,8 +1690,8 @@ void TrainingPlotPanel::RenderChartWindows() {
             }
             if (follow_current_epoch_) {
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(120.0f);
-                ImGui::SliderInt("Epoch window", &visible_epoch_window_, 3, 50);
+                EpochsField("Epoch window", "##win_epochs", &visible_epoch_window_, 3, 50,
+                            "Epochs shown while following live training");
             }
             if (kind == 0) {
                 ImGui::SameLine();
@@ -1689,8 +1702,8 @@ void TrainingPlotPanel::RenderChartWindows() {
                 ImGui::Checkbox("Smooth", &show_smoothed_curves_);
                 if (show_smoothed_curves_) {
                     ImGui::SameLine();
-                    ImGui::SetNextItemWidth(100.0f);
-                    ImGui::SliderInt("Smooth window", &smoothing_window_, 2, 50);
+                    EpochsField("Smooth window", "##win_smooth", &smoothing_window_, 2, 50,
+                                "Points in the moving average");
                 }
             }
             ImGui::SameLine(0.0f, 14.0f);
@@ -1804,12 +1817,12 @@ void TrainingPlotPanel::RenderControls() {
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::Text("Plot Controls:");
-        ImGui::BulletText("Scroll wheel: Zoom both axes");
-        ImGui::BulletText("Scroll on axis: Zoom that axis only");
+        ImGui::BulletText("Wheel: scrolls the dashboard");
+        ImGui::BulletText("Ctrl + wheel: zoom both axes (on an axis: that axis only)");
         ImGui::BulletText("Drag: Pan view");
         ImGui::BulletText("Right-drag: Zoom to a box");
         ImGui::BulletText("Right-click: Chart menu (axes, legend, fit)");
-        ImGui::BulletText("Chart window button: open the chart in its own window");
+        ImGui::BulletText("Chart window button: open the chart in its own window (the wheel zooms there)");
         ImGui::BulletText("Double-click: Fit data");
         ImGui::BulletText("Disable Auto Scale or Follow Current for manual control");
         ImGui::EndTooltip();
@@ -1825,11 +1838,8 @@ void TrainingPlotPanel::RenderControls() {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Keep the epoch axis scrolled to the latest batch/epoch.");
         }
-        ImGui::SetNextItemWidth(160.0f);
-        ImGui::SliderInt("Epoch window", &visible_epoch_window_, 3, 50);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Number of epochs visible while following live training.");
-        }
+        EpochsField("Epoch window", "##view_epochs", &visible_epoch_window_, 3, 50,
+                    "Epochs shown while following live training");
         ImGui::Checkbox("Log loss axis", &log_loss_scale_);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
@@ -1843,8 +1853,7 @@ void TrainingPlotPanel::RenderControls() {
             ImGui::SetTooltip("Display-only moving average overlay. Raw curves are unchanged.");
         }
         if (show_smoothed_curves_) {
-            ImGui::SetNextItemWidth(160.0f);
-            ImGui::SliderInt("Smooth window", &smoothing_window_, 2, 50);
+            EpochsField("Smooth window", "##view_smooth", &smoothing_window_, 2, 50, "Points in the moving average");
         }
         ImGui::Spacing();
         ImGui::TextColored(c.muted, "Open in a window");

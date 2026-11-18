@@ -9,6 +9,7 @@
 #include "../ui_tokens.h"
 #include "../separate_windows.h"
 
+#include <imgui_internal.h>  // the window a plot scrolls
 #include <implot.h>
 
 #include <algorithm>
@@ -442,12 +443,31 @@ void PlotView::DrawToolbar(const Options& o) {
     }
 }
 
+// ImPlot keeps the mouse wheel while a plot is hovered, zooming or not.
+// Without Ctrl it scrolls the window the plot sits in, as ImGui would: the
+// first window up the stack that scrolls, by ImGui's own step.
+static void ScrollHostWithWheel() {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.MouseWheel == 0.0f || io.KeyCtrl) return;
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const auto scrolls = [](const ImGuiWindow* w) {
+        return w->ScrollMax.y > 0.0f && !(w->Flags & ImGuiWindowFlags_NoScrollWithMouse);
+    };
+    while (window && !scrolls(window) && (window->Flags & ImGuiWindowFlags_ChildWindow) && window->ParentWindow) {
+        window = window->ParentWindow;
+    }
+    if (!window || !scrolls(window)) return;
+    const float step = ImTrunc(ImMin(5.0f * window->FontRefSize, window->InnerRect.GetHeight() * 0.67f));
+    ImGui::SetScrollY(window, window->Scroll.y - io.MouseWheel * step);
+}
+
 void PlotView::Draw(ImVec2 size, const Options& o) {
     FinishCaptures();
     export_name_ = o.export_name;
     colour_offset_ = o.colour_offset;
     x_range_ = o.x_range;
     y_range_ = o.y_range;
+    zoom_with_ctrl_ = o.zoom_with_ctrl;
     ImGui::PushID(id_.c_str());
     if (o.toolbar) DrawToolbar(o);
     if (o.show_title && has_data_) {
@@ -684,6 +704,19 @@ void PlotView::DrawPlot(ImVec2 size) {
         kind != Kind::Parallel && !IsGridKind(kind) && !IsUnitKind(kind) && !IsPixelKind(kind) && kind != Kind::MapPoints)
         ImPlot::SetNextAxesToFit();
 
+    // Ctrl + wheel zooms when the screen scrolls with the wheel. ImPlot
+    // ignores all input while its override key is held (Ctrl by default),
+    // so that moves to Alt for this plot.
+    struct InputMapScope {
+        ImPlotInputMap saved = ImPlot::GetInputMap();
+        explicit InputMapScope(bool ctrl_zoom) {
+            if (!ctrl_zoom) return;
+            ImPlot::GetInputMap().ZoomMod = ImGuiMod_Ctrl;
+            ImPlot::GetInputMap().OverrideMod = ImGuiMod_Alt;
+        }
+        ~InputMapScope() { ImPlot::GetInputMap() = saved; }
+    } input_map(zoom_with_ctrl_);
+
     const std::string plot_id = "##plot";
     if (!ImPlot::BeginPlot(plot_id.c_str(), plot_size, flags)) return;
 
@@ -725,8 +758,20 @@ void PlotView::DrawPlot(ImVec2 size) {
     // Curves that rise to the top right keep their legend out of the way.
     ImPlot::SetupLegend(kind == Kind::Roc || kind == Kind::Calibration || kind == Kind::Importance ? ImPlotLocation_SouthEast
                                                                                                   : ImPlotLocation_NorthEast);
-    if (x_range_.on) ImPlot::SetupAxisLimits(ImAxis_X1, x_range_.lo, x_range_.hi, x_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
-    if (y_range_.on) ImPlot::SetupAxisLimits(ImAxis_Y1, y_range_.lo, y_range_.hi, y_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
+    // A once-range applies when it changes: ImPlotCond_Once kept the first
+    // frame's range for the plot's life (the Training Dashboard's Accuracy
+    // chart stayed at 0..2 epochs, the range while epoch 1 ran).
+    const auto apply = [](ImAxis axis, const Options::Range& r, double& lo, double& hi) {
+        if (!r.on) return;
+        if (r.once && r.lo == lo && r.hi == hi) return;
+        ImPlot::SetupAxisLimits(axis, r.lo, r.hi, ImPlotCond_Always);
+        if (r.once) {
+            lo = r.lo;
+            hi = r.hi;
+        }
+    };
+    apply(ImAxis_X1, x_range_, once_x_lo_, once_x_hi_);
+    apply(ImAxis_Y1, y_range_, once_y_lo_, once_y_hi_);
     // Log Y over counts: fit to the positive counts (the bars' base of 0
     // would pull a log axis down to 1e-300 and fill the plot).
     if (log_y_ && fit_ && !y_range_.on && (kind == Kind::Histogram || kind == Kind::Bar)) {
@@ -1499,7 +1544,10 @@ void PlotView::DrawPlot(ImVec2 size) {
         DetectClick();
     const ImPlotRect lim = ImPlot::GetPlotLimits();
     range_ = AxisRange{lim.X.Min, lim.X.Max, lim.Y.Min, lim.Y.Max, log_y_};
+    const bool pass_wheel = zoom_with_ctrl_ && (ImPlot::IsPlotHovered() || ImPlot::IsAxisHovered(ImAxis_X1) ||
+                                                ImPlot::IsAxisHovered(ImAxis_Y1));
     ImPlot::EndPlot();
+    if (pass_wheel) ScrollHostWithWheel();
     frame_min_ = ImGui::GetItemRectMin();
     frame_max_ = ImGui::GetItemRectMax();
 

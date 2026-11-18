@@ -16,6 +16,17 @@ private Data Studio tickets (`tofix*/track*`).
 - **Dock back showed nothing** when the window had been alone in its place
   (its place left with it): it docked into the dock space's root and was not
   drawn. It comes back as a tab in the middle of the main window.
+- **The Training Dashboard scrolls with the mouse wheel over its charts.**
+  A wheel over a chart zoomed it, so a narrow dashboard could not be
+  scrolled past its charts; the wheel now scrolls and Ctrl + wheel zooms (a
+  chart in its own window still zooms with the wheel). The Epoch window and
+  Smooth window are typed numbers with - and + instead of sliders, in the
+  View menu and the chart windows.
+- **The Training Dashboard's Accuracy chart shows every epoch.** Its epoch
+  axis was set once from the first points drawn, so it stayed at 0..2 for
+  the rest of a run; it now covers the planned epochs, as the Loss chart.
+  A plot whose range is set once (the user may pan) takes a new range again
+  when it changes, for example a new run with more epochs.
 - **The Training Dashboard's Runs table shows the key columns.** Run (when
   it ended and the dataset), Result, best validation loss and accuracy, test
   accuracy, epochs ("7 of 10" when it ended early), time and the device it

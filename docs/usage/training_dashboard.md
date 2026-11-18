@@ -77,6 +77,23 @@ batches as a second figure. The validation loss card says how far it is from
 the training loss at the same epoch. The last card is the time left while the
 run trains (with the samples per second) and the total time once it is done.
 
+## The charts
+
+**Loss** and **Accuracy** (and **Metrics** for a run that reports others)
+show every recorded point: inside each epoch and at its end. The epoch axis
+covers the planned epochs from the start of the run.
+
+- Over the dashboard the mouse wheel scrolls it, charts included; hold
+  **Ctrl** and turn the wheel to zoom a chart (over an axis: that axis only).
+  Drag pans, right-drag zooms to a box, double-click fits.
+- **View** holds Auto scale, Follow current epoch with the **Epoch window**
+  (the epochs shown while following, 3 to 50), Log loss axis, Smooth curves
+  with the **Smooth window** (the points in the moving average, 2 to 50),
+  and each chart in a window of its own. The two windows are typed numbers
+  with - and + steps; a value outside the range is brought into it.
+- In a chart's own window the wheel zooms, and the same options sit in its
+  toolbar.
+
 ## Runs
 
 **Runs** lists the training runs that ended in this session, the best held-out
