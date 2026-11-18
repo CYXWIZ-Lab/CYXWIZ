@@ -248,6 +248,54 @@ void CheckLabelMadeBySteps(const gui::MLNode& source,
           "without a pipeline-run step a missing label is reported as before");
 }
 
+// A series with only its date and its value (the airline starter: Month,
+// Passengers): the Time Series Window builds the features from the value, so
+// the tabular "no numeric feature columns" check must not refuse it; the same
+// source straight into a model, with no window, still is. Its own function:
+// main's frame is near the stack limit.
+void CheckWindowedSeriesWithoutFeatureColumns(std::vector<gui::MLNode> forecast_nodes,
+                                              const std::vector<gui::NodeLink>& forecast_links) {
+    arrow::StringBuilder month_builder;
+    arrow::FloatBuilder passengers_builder;
+    for (int row = 0; row < 48; ++row) {
+        (void)month_builder.Append("19" + std::to_string(49 + row / 12) + "-" + std::to_string(1 + row % 12));
+        (void)passengers_builder.Append(static_cast<float>(100 + row));
+    }
+    std::shared_ptr<arrow::Array> month, passengers;
+    Check(month_builder.Finish(&month).ok() && passengers_builder.Finish(&passengers).ok(), "month series builds");
+    cyxwiz::DataRegistry::Instance().RegisterArrowTable(
+        arrow::Table::Make(arrow::schema({arrow::field("Month", arrow::utf8()), arrow::field("Passengers", arrow::float32())}),
+                           {month, passengers}),
+        "compiler_month_series");
+    forecast_nodes[0].parameters["dataset_name"] = "compiler_month_series";
+    forecast_nodes[0].parameters["label_column"] = "Passengers";
+    forecast_nodes[1].parameters["value_col"] = "Passengers";
+    cyxwiz::GraphCompiler compiler;
+    auto config = compiler.Compile(forecast_nodes, forecast_links, true);
+    Check(!HasIssueText(config, "has no numeric feature columns"),
+          "a windowed date + value series is not refused for lacking feature columns");
+    Check(config.is_time_series && config.input_shape == std::vector<size_t>{2},
+          "the window's input width is the model's input width");
+
+    // No window: Data Input -> Loader (the window's links bypassed).
+    std::vector<gui::MLNode> plain;
+    for (const auto& node : forecast_nodes)
+        if (node.type != gui::NodeType::TimeSeriesWindow) plain.push_back(node);
+    std::vector<gui::NodeLink> plain_links;
+    for (const auto& link : forecast_links) {
+        if (link.from_node == forecast_nodes[1].id) continue;
+        auto copy = link;
+        if (copy.to_node == forecast_nodes[1].id) {
+            copy.to_node = forecast_nodes[2].id;
+            copy.to_pin = forecast_nodes[2].inputs.at(0).id;
+        }
+        plain_links.push_back(copy);
+    }
+    config = compiler.Compile(plain, plain_links, true);
+    Check(HasIssueText(config, "has no numeric feature columns"),
+          "the same source without a window is still refused for lacking feature columns");
+}
+
 } // namespace
 
 int main() {
@@ -2360,6 +2408,7 @@ int main() {
     Check(!HasIssueCode(config,
                         cyxwiz::errors::Data::RequiredLabelColumnMissing),
           "generated forecast targets should suppress raw-label errors");
+    CheckWindowedSeriesWithoutFeatureColumns(nodes, links);
 
     auto target_scaler = Node(
         36,

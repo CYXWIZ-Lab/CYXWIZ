@@ -5268,6 +5268,13 @@ TrainingConfiguration GraphCompiler::Compile(
                 // (time_series_window_operator.h): torch [N, C, L].
                 config.sequence_input_shape = {static_cast<size_t>(input_width),
                                                static_cast<size_t>(num_features)};
+            } else {
+                // The tabular width check is skipped for a windowed series, so
+                // a width that gives no features is reported here.
+                AddIssue(config, IssueLevel::Error,
+                         "Time Series Window '" + node.name + "' gives the model no inputs (input width " +
+                             std::to_string(input_width) + "); set an input width of at least 1",
+                         node.id, node.name, errors::Compiler::InvalidParameter);
             }
             CYXWIZ_BUILDER_INFO("GraphCompiler: TimeSeriesWindow found - regression mode, "
                          "input_size={} (input_width={} x num_features={}), "
