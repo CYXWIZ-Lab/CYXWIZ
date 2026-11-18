@@ -57,6 +57,10 @@ torchvision's:
 | MobileNetV2 | `mobilenet_v2-b0353104.pth` | 105 |
 | MobileNetV3 small | `mobilenet_v3_small-047dcff4.pth` | 79 |
 
+The same three networks are in the Patterns panel as full graphs (ResNet-18,
+MobileNetV2, MobileNetV3 Small), named for these files; see
+[Patterns](patterns.md#starting-from-torchvisions-weights).
+
 Their graphs are written by `scripts/examples/torch_to_cyxgraph.py`, which
 turns a PyTorch network into canvas nodes named as PyTorch names its modules,
 so the network's weight file fills the graph by name. It handles convolutions

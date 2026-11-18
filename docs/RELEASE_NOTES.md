@@ -355,6 +355,12 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **ResNet-18, MobileNetV2 and MobileNetV3 Small patterns.** Full graphs of
+  torchvision's networks, every layer named as torchvision names it, so
+  torchvision's ImageNet weight files fill them through **Start from > A
+  weights file**. **num_classes** sets the head (other than 1000, it starts
+  fresh) and **freeze_backbone** trains only the head. See
+  [Patterns](usage/patterns.md#starting-from-torchvisions-weights).
 - **Squeeze-Excitation node.** Scales each channel of a feature map by a
   learned gate (mean over the map, Dense - ReLU - Dense - Sigmoid), as
   torchvision's SqueezeExcitation. Settings: the hidden width (channels /

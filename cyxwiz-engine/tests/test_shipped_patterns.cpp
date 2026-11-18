@@ -5,7 +5,10 @@
 //   since no data is loaded here), and the small ones train a few steps;
 // - a block compiles inside a small graph (data -> block -> Flatten -> Dense
 //   -> loss -> optimizer);
-// - a pattern that cannot be used yet refuses to insert and says why.
+// - a pattern that cannot be used yet refuses to insert and says why;
+// - a network written from torchvision (ResNet-18, the MobileNets) keeps every
+//   layer that holds weights named as torchvision names it, so the published
+//   weight file fills it, and compiles with its backbone frozen too.
 // Every template link must land on a real pin: the library skips a link to a
 // missing pin with only a log line, so a stale pattern would insert broken.
 // (TOFIX178 4b: before this no test inserted or compiled a shipped pattern.)
@@ -92,11 +95,12 @@ struct Inserted {
     int next_link_id = 1;
 };
 
-Inserted Insert(PatternLibrary& library, const Pattern& pattern) {
+Inserted Insert(PatternLibrary& library, const Pattern& pattern,
+                const std::map<std::string, std::string>& parameters = {}) {
     Inserted inserted;
     int next_node_id = 1;
     inserted.ok = library.InstantiatePatternWithCreator(
-        pattern.id, {}, inserted.nodes, inserted.links, next_node_id, inserted.next_link_id, ImVec2(0, 0),
+        pattern.id, parameters, inserted.nodes, inserted.links, next_node_id, inserted.next_link_id, ImVec2(0, 0),
         [&inserted](gui::NodeType type, const std::string& name) {
             int scratch_id = 0;
             return gui::CreateGraphNode(type, name, scratch_id, inserted.next_pin_id);
@@ -173,6 +177,12 @@ void WrapBlock(Inserted& g, const std::string& sample_shape) {
     Link(g, loader, PinOf(loader, false, PinType::Labels), loss, PinOf(loss, true, PinType::Labels));
     Link(g, loss, PinOf(loss, false, PinType::Loss), adam, &adam.inputs.front());
     Link(g, adam, &adam.outputs.front(), output, &output.inputs.front());
+}
+
+bool HoldsWeights(gui::NodeType type) {
+    return type == gui::NodeType::Conv2D || type == gui::NodeType::DepthwiseConv2D ||
+           type == gui::NodeType::BatchNorm || type == gui::NodeType::Dense ||
+           type == gui::NodeType::SqueezeExcitation;
 }
 
 std::optional<cyxwiz::TrainingConfiguration> Compile(const std::string& name, const Inserted& g) {
@@ -257,6 +267,44 @@ void TrainBriefly(const Pattern& pattern, cyxwiz::TrainingConfiguration config, 
     if (last.is_complete) std::cout << "  " << name << ": trained one epoch, loss " << last.train_loss << "\n";
 }
 
+// Every layer that holds weights keeps its torchvision name (the weight file
+// matches by node name); the head takes num_classes, the rest take
+// freeze_backbone, and the frozen graph compiles.
+void CheckPublishedNames(PatternLibrary& library, const Pattern& pattern, size_t weighted,
+                         const std::string& head, const std::string& shape) {
+    const std::string& id = pattern.id;
+    std::set<std::string> template_names;
+    for (const auto& node : pattern.template_data.nodes) template_names.insert(node.name);
+    Inserted g = Insert(library, pattern, {{"num_classes", "7"}, {"freeze_backbone", "true"}});
+    Check(g.ok, id + ": inserts with num_classes 7 and the backbone frozen");
+    size_t count = 0;
+    bool head_found = false;
+    for (const auto& node : g.nodes) {
+        if (!HoldsWeights(node.type)) continue;
+        ++count;
+        Check(template_names.count(node.name) && node.name.find(' ') == std::string::npos,
+              id + ": '" + node.name + "' keeps its torchvision name");
+        const auto frozen = node.parameters.find("frozen");
+        if (node.name == head) {
+            head_found = true;
+            Check(node.parameters.count("units") && node.parameters.at("units") == "7",
+                  id + ": the head takes num_classes");
+            Check(frozen == node.parameters.end() || frozen->second == "false",
+                  id + ": the head is never frozen (frozen = '" +
+                      (frozen == node.parameters.end() ? std::string("unset") : frozen->second) + "')");
+        } else {
+            Check(frozen != node.parameters.end() && frozen->second == "true",
+                  id + ": '" + node.name + "' takes freeze_backbone");
+        }
+    }
+    Check(head_found, id + ": the head is '" + head + "'");
+    Check(count == weighted, id + ": " + std::to_string(count) + " layers with weights, torchvision has " +
+                                 std::to_string(weighted));
+    if (gui::MLNode* data = FindType(g.nodes, gui::NodeType::DataInput)) data->parameters["shape"] = shape;
+    if (Compile(id + " (frozen)", g))
+        std::cout << "  " << id << ": " << count << " layers named as torchvision's; frozen backbone compiles\n";
+}
+
 }  // namespace
 
 int main() {
@@ -295,11 +343,16 @@ int main() {
         Check(library.LoadPatternFromFile(entry.path().string()), entry.path().filename().string() + ": loads");
         ids.push_back(entry.path().stem().string());
     }
-    Check(ids.size() >= 28, "every shipped pattern is read (" + std::to_string(ids.size()) + ")");
+    Check(ids.size() >= 31, "every shipped pattern is read (" + std::to_string(ids.size()) + ")");
 
     // Small enough to train here: {classes, vocabulary (0: numbers)}.
     const std::map<std::string, std::pair<int, int>> train = {
         {"mlp_basic", {10, 0}}, {"cnn_basic", {10, 0}}, {"lenet5", {10, 0}}, {"rnn_basic", {2, 200}}};
+
+    // Written by scripts/examples/torch_to_cyxgraph.py: {layers with weights, the head}, as
+    // docs/usage/pretrained_weights.md lists them.
+    const std::map<std::string, std::pair<size_t, std::string>> published = {
+        {"resnet18", {41, "fc"}}, {"mobilenet_v2", {105, "classifier.1"}}, {"mobilenet_v3_small", {79, "classifier.3"}}};
 
     int graphs = 0, blocks = 0, not_ready = 0;
     for (const auto& id : ids) {
@@ -342,6 +395,8 @@ int main() {
         std::cout << "  " << id << ": graph compiles (" << config->layers.size() << " layers)\n";
         if (const auto it = train.find(id); it != train.end())
             TrainBriefly(*pattern, *config, it->second.first, it->second.second);
+        if (const auto it = published.find(id); it != published.end())
+            CheckPublishedNames(library, *pattern, it->second.first, it->second.second, shape);
     }
     std::cout << graphs << " graphs, " << blocks << " blocks, " << not_ready << " not ready\n";
     if (failures > 0) {

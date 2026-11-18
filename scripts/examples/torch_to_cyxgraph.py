@@ -10,8 +10,9 @@ becomes an Add node. Every node that holds weights is named after its module (co
 features.3.block.1), so the network's state-dict fills the graph by name. Anything else is refused with
 the module's name, so a graph never differs silently from the network.
 
-As a script it writes the examples:
+As a script it writes the example and three full-graph patterns:
   examples/cyxgraph/cats_dogs_resnet18_finetune.cyxgraph   torchvision's ResNet-18, frozen, one-logit head
+  cyxwiz-engine/resources/patterns/resnet18.cyxgraph, mobilenet_v2.cyxgraph, mobilenet_v3_small.cyxgraph
 The test graphs are written by tests/computation_truth/reference/generate_pretrained_network_fixtures.py,
 which uses convert() and network_graph() from here.
 
@@ -336,11 +337,142 @@ def finetune_example(model: nn.Module, weights_file: str) -> Graph:
     return graph
 
 
+PATTERNS = ROOT / "cyxwiz-engine" / "resources" / "patterns"
+WEIGHTS_URL = "https://download.pytorch.org/models/"
+
+
+def pattern_json(document: dict[str, Any]) -> str:
+    """Two-space JSON with one template node or link per line (as the shipped patterns are written)."""
+    template = document.pop("template")
+    head = json.dumps(document, indent=2)[:-2]
+    head = re.sub(r'\[\s*("(?:[^"\\]|\\.)*"(?:,\s*"(?:[^"\\]|\\.)*")*)\s*\]',
+                  lambda m: "[" + re.sub(r',\s*', ', ', m.group(1)) + "]", head)
+
+    def rows(items: list[dict[str, Any]]) -> str:
+        return ",\n".join("      " + json.dumps(item) for item in items)
+
+    return (head + ',\n  "template": {\n    "nodes": [\n' + rows(template["nodes"]) +
+            '\n    ],\n    "links": [\n' + rows(template["links"]) + '\n    ]\n  }\n}\n')
+
+
+def network_pattern(model: nn.Module, pattern_id: str, name: str, weights_file: str, about: str,
+                    tags: list[str]) -> dict[str, Any]:
+    """A full-graph pattern: an image folder -> Resize 256, Center Crop 224, ImageNet Normalize -> the network,
+    every layer named as PyTorch names its module -> Cross entropy -> Adam -> Output. `num_classes` sets the head;
+    `freeze_backbone` freezes every other layer that holds weights."""
+    nodes, links = convert(model)
+    head = max(n["index"] for n in nodes if n["type"] == "Dense")
+    head_name = next(n["name"] for n in nodes if n["index"] == head)
+    weighted = sum(1 for n in nodes if n["type"] in HOLDS_WEIGHTS)
+    out_nodes: list[dict[str, Any]] = []
+    out_links: list[dict[str, Any]] = []
+
+    def node(node_id: str, kind: str, label: str, x: float, y: float, params: dict[str, str] | None = None) -> str:
+        if kind not in TYPES:
+            raise Refused(f"{label}: {kind} is not an Engine node type")
+        entry: dict[str, Any] = {"id": node_id, "type": kind, "name": label, "pos": [x, y]}
+        if params:
+            entry["params"] = params
+        out_nodes.append(entry)
+        return node_id
+
+    def link(source: str, target: str, from_pin: int = 0, to_pin: int = 0) -> None:
+        entry: dict[str, Any] = {"from": source, "to": target}
+        if from_pin or to_pin:
+            entry.update({"from_pin": from_pin, "to_pin": to_pin})
+        out_links.append(entry)
+
+    line = [("data_input", "DataInput", "Data Input", {"source_type": "folder", "file_category": "image",
+                                                       "image_layout": "1"}),
+            ("data_split", "DataSplit", "Data Split", {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1",
+                                                       "seed": "42", "stratified": "true"}),
+            ("data_loader", "DataLoader", "DataLoader", {"batch_size": "64", "epochs": "10", "shuffle": "true",
+                                                         "seed": "42", "validation_freq": "1"}),
+            ("resize", "Resize", "Resize 256", {"width": "256", "height": "256", "mode": "exact"}),
+            ("center_crop", "CenterCrop", "Center Crop 224", {"width": "224", "height": "224"}),
+            ("normalize", "Normalize", "Normalize (ImageNet)", {"statistics": "imagenet"})]
+    for i, (node_id, kind, label, params) in enumerate(line):
+        node(node_id, kind, label, i * STEP_X, 260.0, params)
+    for a, b in zip(line, line[1:]):
+        link(a[0], b[0])
+
+    ids = {0: "normalize"}
+    row, x, current = -1, 0, None
+    for n in nodes:
+        group = n["group"] if "." in n["name"] else ""  # top-level layers (a stem, a head) share a row
+        if group != current:
+            current, row, x = group, row + 1, 0
+        params = dict(n["settings"])
+        if n["index"] == head:
+            params["units"] = "$num_classes"
+        elif n["type"] in HOLDS_WEIGHTS:
+            params["frozen"] = "$freeze_backbone"
+        ids[n["index"]] = node(re.sub(r"\W", "_", n["name"]), n["type"], n["name"],
+                               160.0 + x * STEP_X, 460.0 + row * 200.0, params)
+        x += 1
+    for source, target, pin in links:
+        link(ids[source], ids[target], to_pin=pin)
+
+    y = 460.0 + (row + 1) * 200.0
+    node("loss", "CrossEntropyLoss", "CrossEntropy", 160.0, y)
+    node("optimizer", "Adam", "Adam", 160.0 + STEP_X, y, {"learning_rate": "0.001", "beta1": "0.9",
+                                                         "beta2": "0.999", "epsilon": "1e-8"})
+    node("output", "Output", "Output", 160.0 + 2 * STEP_X, y, {"num_classes": "$num_classes"})
+    link(ids[nodes[-1]["index"]], "loss")
+    link("data_loader", "loss", from_pin=1, to_pin=1)
+    link("loss", "optimizer")
+    link("optimizer", "output")
+    if len({n["id"] for n in out_nodes}) != len(out_nodes):
+        raise Refused(f"{pattern_id}: two nodes have the same id")
+
+    description = (
+        f"{about} Expects an image folder with one subfolder per class (resized to 256, centre 224 x 224, "
+        f"ImageNet statistics). Every layer is named as torchvision names it ({weighted} layers with weights), so "
+        f"torchvision's ImageNet weights fill it: download {weights_file} ({WEIGHTS_URL}{weights_file}), "
+        f"double-click DataLoader, Checkpoints tab, Start from: A weights file. With num_classes other than 1000 the "
+        f"last layer ({head_name}) starts fresh; turn on freeze_backbone to train only it. Double-click Data Input, "
+        f"point it at your data and click Apply, then Train.")
+    return {
+        "id": pattern_id, "name": name, "kind": "graph", "description": description,
+        "sample_shape": "[224, 224, 3]", "category": "CNN", "tags": tags,
+        "parameters": [
+            {"name": "num_classes", "type": "int", "default_value": "1000",
+             "description": "Number of output classes (1000 keeps the ImageNet head)",
+             "min_value": "2", "max_value": "10000"},
+            {"name": "freeze_backbone", "type": "bool", "default_value": "false",
+             "description": f"Freeze every layer with weights except the head ({head_name})"}],
+        "template": {"nodes": out_nodes, "links": out_links}}
+
+
+def write_pattern(document: dict[str, Any]) -> None:
+    path = PATTERNS / f"{document['id']}.cyxgraph"
+    nodes, links = len(document["template"]["nodes"]), len(document["template"]["links"])
+    path.write_text(pattern_json(document), encoding="utf-8")
+    print(f"wrote {path.relative_to(ROOT)}: {nodes} nodes, {links} links")
+
+
 def main() -> None:
     import torchvision
     finetune_example(torchvision.models.resnet18(), "weights/resnet18-f37072fd.pth").write(
         ROOT / "examples" / "cyxgraph" / "cats_dogs_resnet18_finetune.cyxgraph",
         "Cats vs dogs by fine-tuning ResNet-18 from torchvision's ImageNet weights: the backbone frozen, a new head")
+    write_pattern(network_pattern(
+        torchvision.models.resnet18(), "resnet18", "ResNet-18", "resnet18-f37072fd.pth",
+        "ResNet-18 (He et al. 2015) exactly as torchvision builds it: a 7 x 7 stem, four stages of two residual "
+        "blocks (64 to 512 channels), Global Avg Pool, a Dense head.",
+        ["resnet", "resnet18", "residual", "pretrained", "imagenet", "torchvision"]))
+    write_pattern(network_pattern(
+        torchvision.models.mobilenet_v2(), "mobilenet_v2", "MobileNetV2", "mobilenet_v2-b0353104.pth",
+        "MobileNetV2 (Sandler et al. 2018) exactly as torchvision builds it: inverted residual blocks (1 x 1 "
+        "expansion, 3 x 3 depthwise, 1 x 1 projection, ReLU6), Global Avg Pool, Dropout, a Dense head.",
+        ["mobilenet", "mobilenetv2", "efficient", "mobile", "depthwise", "pretrained", "imagenet", "torchvision"]))
+    write_pattern(network_pattern(
+        torchvision.models.mobilenet_v3_small(), "mobilenet_v3_small", "MobileNetV3 Small",
+        "mobilenet_v3_small-047dcff4.pth",
+        "MobileNetV3 small (Howard et al. 2019) exactly as torchvision builds it: inverted residual blocks with "
+        "Squeeze-Excitation and Hardswish, Global Avg Pool, a Dense / Hardswish / Dropout / Dense classifier.",
+        ["mobilenet", "mobilenetv3", "efficient", "mobile", "depthwise", "squeeze-excitation", "pretrained",
+         "imagenet", "torchvision"]))
 
 
 if __name__ == "__main__":
