@@ -51,7 +51,6 @@ bool DashChip(const char* label, bool* value, const DashColors& c);
 // Bold UI font for metric values (falls back to the current font).
 ImFont* DashValueFont();
 void DashBigValue(const char* text, const ImVec4& color);
-std::string FormatEpochValue(double epoch);
 // Small borderless icon button, tinted with the accent while active.
 bool DashIconButton(const char* id_label, bool active, const DashColors& c);
 // KPI card: a dot and label, the big value (with a hover tooltip) and two

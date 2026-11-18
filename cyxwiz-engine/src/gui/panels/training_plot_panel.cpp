@@ -437,6 +437,8 @@ void TrainingPlotPanel::Render() {
         }
     }
 
+    // What the cards and the insights read, once a frame (data_mutex_ is held).
+    facts_ = DashboardFacts();
     // Metric cards: latest values, change and timing.
     RenderKpiCards();
     if (health_notice_) {
@@ -572,8 +574,7 @@ void TrainingPlotPanel::RenderEmptyState() {
 void TrainingPlotPanel::RenderKpiCards() {
     const DashColors c = CurrentDashColors();
     namespace td = training_dashboard;
-    const td::RunFacts facts = DashboardFacts();
-    const std::vector<td::Card> cards = td::BuildCards(facts);
+    const std::vector<td::Card> cards = td::BuildCards(facts_);
     if (cards.empty()) return;
 
     const auto tone = [&](td::Tone t) {
@@ -616,10 +617,16 @@ training_dashboard::RunFacts TrainingPlotPanel::DashboardFacts() const {
         out.y = s.values;
         return out;
     };
+    const auto latest = [](const MetricSeries& s) -> std::optional<td::Point> {
+        if (s.epochs.empty() || s.values.empty()) return std::nullopt;
+        const size_t n = std::min(s.epochs.size(), s.values.size());
+        return td::Point{s.epochs[n - 1], s.values[n - 1]};
+    };
     td::RunFacts f;
     f.training = is_training_;
-    f.train_loss_points = series(train_loss_);
-    f.train_accuracy_points = series(train_accuracy_);
+    // The batch curves can hold 100,000 points: only their last point is read.
+    f.latest_loss_point = latest(train_loss_);
+    f.latest_accuracy_point = latest(train_accuracy_);
     f.train_loss_epochs = series(train_loss_epochs_);
     f.train_accuracy_epochs = series(train_accuracy_epochs_);
     f.val_loss = series(val_loss_);
@@ -633,7 +640,7 @@ training_dashboard::RunFacts TrainingPlotPanel::DashboardFacts() const {
     f.batches_per_second = eta_estimator_.BatchesPerSecond();
     f.samples_per_second = samples_per_second_;
     f.avg_epoch_seconds = avg_epoch_time_;
-    f.last_epoch_seconds = last_epoch_time_;
+    if (eta_estimator_.HasMeasuredEpochOverhead()) f.epoch_end_seconds = eta_estimator_.MeanEpochOverheadSeconds();
     f.total_seconds = total_training_time_;
     return f;
 }
@@ -1685,12 +1692,12 @@ void TrainingPlotPanel::RenderControls() {
 void TrainingPlotPanel::RenderCurveSummary() {
     const DashColors c = CurrentDashColors();
     namespace td = training_dashboard;
-    const td::Insights insights = td::BuildInsights(DashboardFacts());
+    const td::Insights insights = td::BuildInsights(facts_);
     const auto tone = [&](td::Tone t) {
         switch (t) {
         case td::Tone::Good: return c.success;
         case td::Tone::Bad: return c.caution;
-        case td::Tone::Faint: return c.faint;
+        case td::Tone::Faint: return c.muted;  // as on the cards
         case td::Tone::Plain: break;
         }
         return c.text;

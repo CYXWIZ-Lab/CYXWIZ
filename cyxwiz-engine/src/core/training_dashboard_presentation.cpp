@@ -63,9 +63,10 @@ std::string Best(const Series& s, bool lower_is_better, const char* format) {
 }
 
 // A training card (loss or accuracy): the finished epoch's value; while the
-// next epoch runs, the batch window as a second figure.
-void TrainingCard(std::vector<Card>& cards, const RunFacts& facts, const Series& epochs, const Series& points,
-                  const char* id, const char* name, int series, bool lower_is_better, bool percent) {
+// next epoch runs, the latest batches as a second figure.
+void TrainingCard(std::vector<Card>& cards, const RunFacts& facts, const Series& epochs,
+                  const std::optional<Point>& latest, const char* id, const char* name, int series,
+                  bool lower_is_better, bool percent) {
     const char* format = percent ? "%.2f%%" : "%.4f";
     Card card;
     card.id = id;
@@ -79,15 +80,15 @@ void TrainingCard(std::vector<Card>& cards, const RunFacts& facts, const Series&
                        ": " + Format(percent ? "%.4f%%" : "%.6f", value);
         Change(epochs, lower_is_better, percent, card);
         card.line2 = Best(epochs, lower_is_better, format);
-        if (facts.training && !points.Empty() && points.x[points.Size() - 1] > epoch + 1e-9)
-            card.line3 = "this epoch so far " + Format(format, points.y[points.Size() - 1]);
-    } else if (!points.Empty()) {
-        const double x = points.x[points.Size() - 1];
-        card.label = std::string(name) + " \xC2\xB7 epoch " + std::to_string(static_cast<int>(std::ceil(x - 1e-9))) +
-                     " so far";
-        card.value = Format(format, points.y[points.Size() - 1]);
-        card.tooltip = "Since the last point in this epoch; the card shows the whole epoch's value once it ends.";
-        card.change = "the first epoch is running";
+        if (facts.training && latest && latest->x > epoch + 1e-9)
+            card.line3 = "latest batches " + Format(format, latest->y);
+    } else if (latest) {
+        const std::string epoch = std::to_string(static_cast<int>(std::ceil(latest->x - 1e-9)));
+        card.label = std::string(name) + " \xC2\xB7 " + (facts.training ? "epoch " + epoch + ", latest batches"
+                                                                        : "stopped in epoch " + epoch);
+        card.value = Format(format, latest->y);
+        card.tooltip = "The mean of the latest batches; the card shows the whole epoch's value once an epoch ends.";
+        card.change = facts.training ? "the first epoch is running" : "no epoch finished";
         card.change_tone = Tone::Faint;
     } else {
         return;
@@ -124,16 +125,19 @@ double Roughness(const Series& s, size_t window) {
     return total / static_cast<double>(n - start);
 }
 
-// "fell every epoch (2.21 to 0.22)", "falling (...)", "flat", "rising".
+// A loss with three significant digits (2.21, 0.222, 0.00123).
+std::string Loss3(double value) { return Format(std::abs(value) >= 1.0 ? "%.2f" : "%.3g", value); }
+
+// "fell every epoch (2.21 to 0.222)", "falling (...)", "flat", "rising".
 std::string Trend(const Series& epochs, bool training, bool lower_is_better) {
     const size_t n = epochs.Size();
     if (n == 0) return {};
-    const char* format = lower_is_better ? "%.2f" : "%.2f%%";
-    if (n == 1) return "epoch " + EpochText(epochs.x[0]) + ": " + Format(format, epochs.y[0]);
+    const auto value = [&](double v) { return lower_is_better ? Loss3(v) : Format("%.2f%%", v); };
+    if (n == 1) return "epoch " + EpochText(epochs.x[0]) + ": " + value(epochs.y[0]);
     bool every = true;
     for (size_t i = 1; i < n; ++i)
         every = every && (lower_is_better ? epochs.y[i] < epochs.y[i - 1] : epochs.y[i] > epochs.y[i - 1]);
-    const std::string range = " (" + Format(format, epochs.y[0]) + " to " + Format(format, epochs.y[n - 1]) + ")";
+    const std::string range = " (" + value(epochs.y[0]) + " to " + value(epochs.y[n - 1]) + ")";
     if (every) return std::string(lower_is_better ? (training ? "falling every epoch" : "fell every epoch")
                                                   : (training ? "rising every epoch" : "rose every epoch")) + range;
     const double slope = Slope(epochs, 5);
@@ -153,15 +157,15 @@ std::string Thousands(double value) {
 }
 
 std::string PerEpoch(double seconds) {
-    if (seconds < 1.0) return Format("%.2f s", seconds);
-    if (seconds < 10.0) return Format("%.1f s", seconds);
+    if (seconds < 1.0) return Format("%.2fs", seconds);
+    if (seconds < 10.0) return Format("%.1fs", seconds);
     return FormatTrainingDuration(seconds);
 }
 
 std::vector<Card> BuildCards(const RunFacts& facts) {
     std::vector<Card> cards;
-    TrainingCard(cards, facts, facts.train_loss_epochs, facts.train_loss_points, "##kpi_loss", "Loss", 0, true, false);
-    TrainingCard(cards, facts, facts.train_accuracy_epochs, facts.train_accuracy_points, "##kpi_acc", "Accuracy", 2,
+    TrainingCard(cards, facts, facts.train_loss_epochs, facts.latest_loss_point, "##kpi_loss", "Loss", 0, true, false);
+    TrainingCard(cards, facts, facts.train_accuracy_epochs, facts.latest_accuracy_point, "##kpi_acc", "Accuracy", 2,
                  false, true);
 
     if (!facts.val_loss.Empty()) {
@@ -202,8 +206,12 @@ std::vector<Card> BuildCards(const RunFacts& facts) {
         card.id = "##kpi_time";
         card.label = "Time left";
         card.value = facts.remaining_seconds ? FormatTrainingDuration(*facts.remaining_seconds) : "Estimating...";
-        card.tooltip = "The batches left in every epoch at the recent speed (the last 2 minutes), plus the time each "
-                       "epoch's end takes (validation, previews, checkpoint). It follows the speed as it changes.";
+        card.tooltip = "The batches left in every epoch at the recent speed (the last 2 minutes), plus " +
+                       (facts.epoch_end_seconds ? "about " + FormatTrainingDuration(*facts.epoch_end_seconds)
+                                                : std::string("the time")) +
+                       " at each epoch's end (validation, previews, checkpoint" +
+                       (facts.epoch_end_seconds ? "" : "; measured after the first epoch") +
+                       "). It follows the speed as it changes.";
         if (facts.batches_per_second > 0.0) card.tooltip += "\n" + Format("%.2f batches per second", facts.batches_per_second);
         const int epochs_left = std::max(0, facts.total_epochs - facts.current_epoch);
         const int batches_left = facts.total_batches > 0 ? std::max(0, facts.total_batches - facts.current_batch) : 0;
@@ -216,7 +224,7 @@ std::vector<Card> BuildCards(const RunFacts& facts) {
                 card.line2 = Plural(batches_left, "batch", "batches") + " to go";
         }
         if (facts.samples_per_second > 0.0) {
-            card.line3 = Thousands(facts.samples_per_second) + " rows/s";
+            card.line3 = Thousands(facts.samples_per_second) + " samples/s";
         } else if (facts.batches_per_second > 0.0) {
             card.line3 = Format("%.2f batches/s", facts.batches_per_second);
         } else {
@@ -282,6 +290,8 @@ Insights BuildInsights(const RunFacts& facts) {
     const bool has_validation = !val.Empty() || !facts.val_accuracy.Empty();
     const bool val_worse = Slope(val, 5) > 0.0 || Slope(facts.val_accuracy, 5) < 0.0;
     const bool val_improving_last = val.Size() >= 2 && val.y[val.Size() - 1] < val.y[val.Size() - 2];
+    const bool train_improving_last =
+        train.Size() >= 2 && train.y[train.Size() - 1] < train.y[train.Size() - 2];
     std::string short_word, sentence;
     if (has_validation && rising_since >= 0.0 && Roughness(val, 5) > 0.02) {
         short_word = "consider stopping early";
@@ -293,7 +303,7 @@ Insights BuildInsights(const RunFacts& facts) {
         out.suggestion_tone = Tone::Bad;
     } else if (facts.training) {
         short_word = "keep going";
-        sentence = has_validation ? "keep going: both are still improving" : "keep going";
+        sentence = val_improving_last && train_improving_last ? "keep going: both are still improving" : "keep going";
     } else if (val_improving_last) {
         short_word = "train longer";
         sentence = "train longer: validation was still improving at the last epoch";

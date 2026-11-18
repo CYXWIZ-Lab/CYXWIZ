@@ -36,23 +36,24 @@ const double kBatchAcc[10][2] = {{7.03, 19.61}, {48.44, 58.28}, {71.09, 71.17}, 
 // The run after `done` finished epochs; `batch_into_next` > 0: that far into the next epoch.
 td::RunFacts Run(int done, int batch_into_next) {
     td::RunFacts f;
+    td::Series loss_points, acc_points;
     for (int e = 0; e < 10; ++e) {
         const int epoch = e + 1;
         for (int k = 0; k < 2; ++k) {
             const int batch = k == 0 ? 1 : 10;
             if (epoch > done && !(epoch == done + 1 && batch <= batch_into_next)) continue;
             const double x = e + batch / 12.0;
-            f.train_loss_points.x.push_back(x);
-            f.train_loss_points.y.push_back(kBatchLoss[e][k]);
-            f.train_accuracy_points.x.push_back(x);
-            f.train_accuracy_points.y.push_back(kBatchAcc[e][k]);
+            loss_points.x.push_back(x);
+            loss_points.y.push_back(kBatchLoss[e][k]);
+            acc_points.x.push_back(x);
+            acc_points.y.push_back(kBatchAcc[e][k]);
         }
         if (epoch > done) continue;
         // The epoch's end is a point too, then the whole-epoch values.
-        f.train_loss_points.x.push_back(epoch);
-        f.train_loss_points.y.push_back(kTrainLoss[e]);
-        f.train_accuracy_points.x.push_back(epoch);
-        f.train_accuracy_points.y.push_back(kTrainAcc[e]);
+        loss_points.x.push_back(epoch);
+        loss_points.y.push_back(kTrainLoss[e]);
+        acc_points.x.push_back(epoch);
+        acc_points.y.push_back(kTrainAcc[e]);
         f.train_loss_epochs.x.push_back(epoch);
         f.train_loss_epochs.y.push_back(kTrainLoss[e]);
         f.train_accuracy_epochs.x.push_back(epoch);
@@ -62,6 +63,8 @@ td::RunFacts Run(int done, int batch_into_next) {
         f.val_accuracy.x.push_back(epoch);
         f.val_accuracy.y.push_back(kValAcc[e]);
     }
+    if (!loss_points.Empty()) f.latest_loss_point = td::Point{loss_points.x.back(), loss_points.y.back()};
+    if (!acc_points.Empty()) f.latest_accuracy_point = td::Point{acc_points.x.back(), acc_points.y.back()};
     f.total_epochs = 10;
     f.total_batches = 12;
     return f;
@@ -79,8 +82,7 @@ int main() {
     // Completed: the epoch-10 values, not the last batch window.
     td::RunFacts done = Run(10, 0);
     // The run's last batch window (0.2322 on the old card) after the epoch end.
-    done.train_loss_points.x.push_back(10.0);
-    done.train_loss_points.y.push_back(0.2322);
+    done.latest_loss_point = td::Point{10.0, 0.2322};
     done.training = false;
     done.last_executed_epoch = 10;
     done.total_seconds = 2.17;
@@ -104,7 +106,7 @@ int main() {
               vacc->line2 == "best 92.61% at epoch 10",
           "validation accuracy");
     const td::Card* time = Find(cards, "##kpi_time");
-    Check(time && time->label == "Total time" && time->value == "2.2s" && time->line2 == "10 of 10 epochs, 0.22 s each",
+    Check(time && time->label == "Total time" && time->value == "2.2s" && time->line2 == "10 of 10 epochs, 0.22s each",
           "total time keeps a tenth: " + (time ? time->value + " / " + time->line2 : ""));
     Check(cards.size() == 5, "five cards");
 
@@ -118,14 +120,14 @@ int main() {
     cards = td::BuildCards(running);
     loss = Find(cards, "##kpi_loss");
     Check(loss && loss->value == "0.7337" && loss->label == "Loss \xC2\xB7 epoch 5", "running: epoch 5's loss");
-    Check(loss && loss->line3 == "this epoch so far 0.5287", "running: the batch window as a second line");
+    Check(loss && loss->line3 == "latest batches 0.5287", "running: the latest batches as a second line");
     acc = Find(cards, "##kpi_acc");
-    Check(acc && acc->line3 == "this epoch so far 90.70%" && acc->change == "3.28 points since epoch 4", "running accuracy");
+    Check(acc && acc->line3 == "latest batches 90.70%" && acc->change == "3.28 points since epoch 4", "running accuracy");
     val = Find(cards, "##kpi_val_loss");
     Check(val && val->line2 == "0.1090 below the training loss", "running: validation below training");
     time = Find(cards, "##kpi_time");
     Check(time && time->label == "Time left" && time->value == "0.9s" && time->line2 == "4 epochs and 2 batches to go" &&
-              time->line3 == "23,145 rows/s",
+              time->line3 == "23,145 samples/s",
           "time left: " + (time ? time->value + " / " + time->line2 + " / " + time->line3 : ""));
 
     // The first epoch, before it ends.
@@ -133,18 +135,23 @@ int main() {
     first.training = true;
     cards = td::BuildCards(first);
     loss = Find(cards, "##kpi_loss");
-    Check(loss && loss->label == "Loss \xC2\xB7 epoch 1 so far" && loss->value == "2.2329", "the first epoch so far");
+    Check(loss && loss->label == "Loss \xC2\xB7 epoch 1, latest batches" && loss->value == "2.2329", "the first epoch");
+    first.training = false;  // stopped before the first epoch ended
+    cards = td::BuildCards(first);
+    loss = Find(cards, "##kpi_loss");
+    Check(loss && loss->label == "Loss \xC2\xB7 stopped in epoch 1" && loss->change == "no epoch finished",
+          "a run stopped in epoch 1 does not say it is running");
     Check(!Find(cards, "##kpi_val_loss"), "no validation card before the first epoch ends");
 
     // How the run is going.
     td::Insights ins = td::BuildInsights(done);
     Check(ins.suggestion == "Suggested: train longer", "finished, still improving: train longer");
-    Check(ins.rows.size() == 4 && ins.rows[0].value == "fell every epoch (2.21 to 0.22)", "training loss in words");
+    Check(ins.rows.size() == 4 && ins.rows[0].value == "fell every epoch (2.21 to 0.222)", "training loss in words");
     Check(ins.rows.size() == 4 && ins.rows[1].value.find("0.0331 above the training loss: a small gap") != std::string::npos,
           "validation loss with the gap");
     Check(ins.rows.size() == 4 && ins.rows[2].value == "epoch 10: loss 0.2554, accuracy 92.61%", "best validation");
     ins = td::BuildInsights(running);
-    Check(ins.suggestion == "Suggested: keep going" && ins.rows[0].value == "falling every epoch (2.21 to 0.73)",
+    Check(ins.suggestion == "Suggested: keep going" && ins.rows[0].value == "falling every epoch (2.21 to 0.734)",
           "running: keep going");
     // A rising validation loss after its best epoch.
     td::RunFacts over = Run(10, 0);
@@ -157,7 +164,7 @@ int main() {
 
     Check(td::Thousands(23145) == "23,145" && td::Thousands(999) == "999" && td::Thousands(1234567) == "1,234,567",
           "thousands");
-    Check(td::PerEpoch(0.217) == "0.22 s" && td::PerEpoch(3.4) == "3.4 s" && td::PerEpoch(75) == "1m 15s", "per epoch");
+    Check(td::PerEpoch(0.217) == "0.22s" && td::PerEpoch(3.4) == "3.4s" && td::PerEpoch(75) == "1m 15s", "per epoch");
 
     if (g_failures) {
         std::printf("%d training dashboard checks failed\n", g_failures);

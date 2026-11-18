@@ -18,8 +18,8 @@ private Data Studio tickets (`tofix*/track*`).
   drawn. It comes back as a tab in the middle of the main window.
 - **The Training Dashboard's cards show the finished epoch.** They showed the
   last batch window (0.2322 while epoch 10 ended at 0.2223), and the
-  validation card's gap was measured against it. While an epoch runs, "this
-  epoch so far" is a second figure. "How the run is going" says what the
+  validation card's gap was measured against it. While an epoch runs, the
+  latest batches are a second figure. "How the run is going" says what the
   curves did in plain words; a short run's time keeps a tenth of a second.
 - **The Nodes panel, redone.** The node groups fold, with their counts,
   and the panel remembers which are open (no more three rows and a "Show

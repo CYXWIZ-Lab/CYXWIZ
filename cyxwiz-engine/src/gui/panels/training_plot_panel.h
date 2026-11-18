@@ -451,8 +451,10 @@ private:
     void RenderAccuracyPlot(float plot_height);
     void RenderCustomMetricsPlot(float plot_height);
     void RenderKpiCards();
-    // What the cards and the insights read (core/training_dashboard_presentation).
+    // What the cards and the insights read (core/training_dashboard_presentation),
+    // built once a frame into facts_.
     training_dashboard::RunFacts DashboardFacts() const;
+    training_dashboard::RunFacts facts_;
     void DrawLossPlot(const ImVec2& size, bool fit, bool in_window = false);
     void DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_window = false);
     void DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window = false);

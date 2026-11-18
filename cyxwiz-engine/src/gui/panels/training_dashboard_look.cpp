@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <cfloat>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -181,16 +180,6 @@ void DashBigValue(const char* text, const ImVec4& color) {
     ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(),
                                         ImGui::GetColorU32(color), text);
     ImGui::Dummy(extent);
-}
-
-std::string FormatEpochValue(double epoch) {
-    char buffer[32];
-    if (std::abs(epoch - std::round(epoch)) < 1e-6) {
-        std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(std::round(epoch)));
-    } else {
-        std::snprintf(buffer, sizeof(buffer), "%.2f", epoch);
-    }
-    return buffer;
 }
 
 // Small borderless icon button, tinted with the accent while active.
