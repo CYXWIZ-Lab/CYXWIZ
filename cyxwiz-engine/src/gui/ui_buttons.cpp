@@ -16,6 +16,16 @@ ImVec4 kPrimary, kPrimaryHover, kPrimaryActive;
 ImVec4 kSecondary, kSecondaryHover, kSecondaryActive, kText, kLink, kLinkHover;
 ImVec4 kDanger, kDangerHover, kChipBg, kChipText, kChipTextHover;
 
+// The surface a button sits on: a child window's own opaque fill (a card on
+// bg_panel or bg_raised), else the window's. A fill one step off the window
+// is the card's own tone on a lighter card, and the button disappears.
+ImVec4 Surface(const Tokens& t) {
+    const ImGuiWindow* window = ImGui::GetCurrentWindowRead();
+    const ImVec4 child = ImGui::GetStyleColorVec4(ImGuiCol_ChildBg);
+    if (window && (window->Flags & ImGuiWindowFlags_ChildWindow) && child.w > 0.99f) return child;
+    return t.bg_window;
+}
+
 void RefreshColors() {
     const Tokens& t = CurrentTokens();
     const ImVec4 ink = t.light ? ImVec4(0, 0, 0, 1) : ImVec4(1, 1, 1, 1);
@@ -23,10 +33,11 @@ void RefreshColors() {
     kPrimaryHover = t.accent_hover;
     kPrimaryActive = t.accent_active;
     // No outlines on buttons (owner rule 2026-10-01): a secondary button is a
-    // fill one step off the window, stronger on hover.
-    kSecondary = Mix(t.bg_window, ink, t.light ? 0.06f : 0.07f);
-    kSecondaryHover = Mix(t.bg_window, ink, t.light ? 0.11f : 0.13f);
-    kSecondaryActive = Mix(t.bg_window, ink, t.light ? 0.16f : 0.18f);
+    // fill one step off the surface it sits on, stronger on hover.
+    const ImVec4 surface = Surface(t);
+    kSecondary = Mix(surface, ink, t.light ? 0.06f : 0.07f);
+    kSecondaryHover = Mix(surface, ink, t.light ? 0.11f : 0.13f);
+    kSecondaryActive = Mix(surface, ink, t.light ? 0.16f : 0.18f);
     kText = t.text_bright;
     kLink = t.accent_text;
     kLinkHover = t.light ? t.accent : Mix(t.accent_text, ink, 0.35f);

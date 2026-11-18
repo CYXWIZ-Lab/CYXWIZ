@@ -476,6 +476,16 @@ void MjEnvBrowserPanel::RenderCard(MjEnvLibrary& library, const EnvInfo& info, b
     auto right_button_x = [&](float w) {
         ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX(), right - w), row_y));
     };
+    // A hint beside a right-hand button only when both fit: on a narrow card the
+    // hint would push the button past the card's edge, so it goes to the button's
+    // tooltip instead (shown when hint_hidden)
+    auto hint_beside = [&](const char* hint, const char* button) {
+        const float need = ImGui::CalcTextSize(hint).x + ImGui::GetStyle().ItemSpacing.x +
+                           ui->ButtonWidth(button, UiButtonSize::Regular);
+        if (need > width) return false;
+        text_beside(colors.text_dim, hint);
+        return true;
+    };
 
     const bool busy = !downloader_ || downloader_->IsDownloading();
     const bool copying = copying_env_id_ == info.id;
@@ -494,15 +504,19 @@ void MjEnvBrowserPanel::RenderCard(MjEnvLibrary& library, const EnvInfo& info, b
         text_beside(colors.text_dim, "Copying into the project...");
     } else if (needed) {
         // The version the project names, downloaded exactly
-        text_beside(colors.text_dim, "Downloads that version from GitHub");
+        const char* hint = "Downloads that version from GitHub";
+        const bool shown = hint_beside(hint, "Download it");
         right_button_x(ui->ButtonWidth("Download it", UiButtonSize::Regular));
         if (ui->PrimaryButton("Download it", !busy, "Another download is running"))
             StartDownload(library, info, info.needed_commit);
+        if (!shown && !busy && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", hint);
     } else if (info.source == EnvSource::Menagerie && info.requires_download) {
         const char* label = failed ? "Try again" : "Download";
-        if (!failed) text_beside(colors.text_dim, "Downloads the latest version from GitHub");
+        const char* hint = "Downloads the latest version from GitHub";
+        const bool shown = !failed && hint_beside(hint, label);
         right_button_x(ui->ButtonWidth(label, UiButtonSize::Regular));
         if (ui->SecondaryButton(label, !busy, "Another download is running")) StartDownload(library, info, {});
+        if (!shown && !busy && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", hint);
     } else {
         // A shared download: copy it into the project, or pin one downloaded before versions were kept
         if (info.source == EnvSource::Menagerie && info.where == MjModelWhere::SharedDownload) {
