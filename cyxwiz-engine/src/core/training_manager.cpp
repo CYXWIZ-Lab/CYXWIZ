@@ -142,7 +142,7 @@ bool TrainingManager::StartTrainingCommon(
             "TrainingSetup",
             "Training manager attached to existing preparation trace");
     }
-    trace_run_id_ = TrainingTraceCollector::Instance().Snapshot().run_id;
+    trace_run_id_.clear();  // taken at the first batch, once the executor has named its trace
     TrainingTraceCollector::Instance().RecordTaskProgress(
         0,
         task_name,
@@ -820,6 +820,9 @@ void TrainingManager::TrainingThreadFunc(
                         const TrainingMetrics split = exec->GetMetrics();
                         panel->SetRunData(exec->GetConfig().dataset_name, split.train_sample_count,
                                           split.val_sample_count, split.test_sample_count);
+                        // The executor renames the trace it continues (ContinueRun);
+                        // from here on its id is this run's.
+                        trace_run_id_ = TrainingTraceCollector::Instance().Snapshot().run_id;
                     }
 
                     // Progressive curve: x = (epoch - 1) + batch / total_batches
