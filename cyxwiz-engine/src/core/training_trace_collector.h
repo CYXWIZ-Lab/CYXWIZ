@@ -236,6 +236,9 @@ public:
     // Rebind an active preparation trace to the runtime's canonical run ID
     // without discarding already-recorded materialization evidence.
     bool ContinueRun(const std::string& run_id);
+    // When the current trace started (steady clock); ContinueRun keeps it,
+    // StartRun sets it, so it names one run across a rename.
+    long long RunStartedNs() const { return run_started_ns_.load(std::memory_order_relaxed); }
     void RecordStage(TrainingTraceStage stage,
                      int epoch,
                      int batch,

@@ -9,7 +9,6 @@
 #include "../ui_tokens.h"
 #include "../separate_windows.h"
 
-#include <imgui_internal.h>  // the window a plot scrolls
 #include <implot.h>
 
 #include <algorithm>
@@ -443,24 +442,6 @@ void PlotView::DrawToolbar(const Options& o) {
     }
 }
 
-// ImPlot keeps the mouse wheel while a plot is hovered, zooming or not.
-// Without Ctrl it scrolls the window the plot sits in, as ImGui would: the
-// first window up the stack that scrolls, by ImGui's own step.
-static void ScrollHostWithWheel() {
-    const ImGuiIO& io = ImGui::GetIO();
-    if (io.MouseWheel == 0.0f || io.KeyCtrl) return;
-    ImGuiWindow* window = ImGui::GetCurrentWindow();
-    const auto scrolls = [](const ImGuiWindow* w) {
-        return w->ScrollMax.y > 0.0f && !(w->Flags & ImGuiWindowFlags_NoScrollWithMouse);
-    };
-    while (window && !scrolls(window) && (window->Flags & ImGuiWindowFlags_ChildWindow) && window->ParentWindow) {
-        window = window->ParentWindow;
-    }
-    if (!window || !scrolls(window)) return;
-    const float step = ImTrunc(ImMin(5.0f * window->FontRefSize, window->InnerRect.GetHeight() * 0.67f));
-    ImGui::SetScrollY(window, window->Scroll.y - io.MouseWheel * step);
-}
-
 void PlotView::Draw(ImVec2 size, const Options& o) {
     FinishCaptures();
     export_name_ = o.export_name;
@@ -693,6 +674,10 @@ void PlotView::DrawPlot(ImVec2 size) {
 
     // No mouse-position text: the hover card shows the values.
     ImPlotFlags flags = ImPlotFlags_NoTitle | ImPlotFlags_NoMenus | ImPlotFlags_NoMouseText;
+    // In a scrolling screen the plot draws in that window, not in a child of
+    // its own: ImGui then scrolls the window with the wheel (a plot's child
+    // took the wheel and locked onto it), and Ctrl + wheel zooms the plot.
+    if (zoom_with_ctrl_) flags |= ImPlotFlags_NoChild;
     if (!legend_) flags |= ImPlotFlags_NoLegend;
     if (kind == Kind::Pie) flags |= ImPlotFlags_Equal | ImPlotFlags_NoMouseText;
     if (kind == Kind::MapPoints || kind == Kind::MapRegions) flags |= ImPlotFlags_Equal;
@@ -705,14 +690,15 @@ void PlotView::DrawPlot(ImVec2 size) {
         ImPlot::SetNextAxesToFit();
 
     // Ctrl + wheel zooms when the screen scrolls with the wheel. ImPlot
-    // ignores all input while its override key is held (Ctrl by default),
-    // so that moves to Alt for this plot.
+    // ignores all input while its override key is held (Ctrl by default), so
+    // that moves to a key ImPlot does not use otherwise (Alt is its x-only
+    // box zoom).
     struct InputMapScope {
         ImPlotInputMap saved = ImPlot::GetInputMap();
         explicit InputMapScope(bool ctrl_zoom) {
             if (!ctrl_zoom) return;
             ImPlot::GetInputMap().ZoomMod = ImGuiMod_Ctrl;
-            ImPlot::GetInputMap().OverrideMod = ImGuiMod_Alt;
+            ImPlot::GetInputMap().OverrideMod = ImGuiMod_Super;
         }
         ~InputMapScope() { ImPlot::GetInputMap() = saved; }
     } input_map(zoom_with_ctrl_);
@@ -1544,10 +1530,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         DetectClick();
     const ImPlotRect lim = ImPlot::GetPlotLimits();
     range_ = AxisRange{lim.X.Min, lim.X.Max, lim.Y.Min, lim.Y.Max, log_y_};
-    const bool pass_wheel = zoom_with_ctrl_ && (ImPlot::IsPlotHovered() || ImPlot::IsAxisHovered(ImAxis_X1) ||
-                                                ImPlot::IsAxisHovered(ImAxis_Y1));
     ImPlot::EndPlot();
-    if (pass_wheel) ScrollHostWithWheel();
     frame_min_ = ImGui::GetItemRectMin();
     frame_max_ = ImGui::GetItemRectMax();
 

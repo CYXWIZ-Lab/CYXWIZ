@@ -85,6 +85,8 @@ covers the planned epochs from the start of the run.
 
 - Over the dashboard the mouse wheel scrolls it, charts included; hold
   **Ctrl** and turn the wheel to zoom a chart (over an axis: that axis only).
+  With **Auto scale** on the value axis follows the data, so Ctrl + wheel
+  zooms the epochs; turn Auto scale off to zoom the values too.
   Drag pans, right-drag zooms to a box, double-click fits.
 - **View** holds Auto scale, Follow current epoch with the **Epoch window**
   (the epochs shown while following, 3 to 50), Log loss axis, Smooth curves

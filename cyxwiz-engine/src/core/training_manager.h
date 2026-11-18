@@ -269,10 +269,11 @@ private:
     std::atomic<bool> is_training_{false};
     std::atomic<bool> stop_requested_{false};
     std::atomic<uint64_t> current_task_id_{0};
-    // This run's execution trace (its id taken at the first batch, on the
-    // training thread): the Runs table takes the device from it only while it
-    // is still this run's.
-    std::string trace_run_id_;
+    // This run's execution trace, by its start (taken when the run starts and
+    // again at its first batch; the executor renames the trace but keeps its
+    // start): the Runs table takes the device from it only while it is still
+    // this run's, also for a run that ends before its first batch.
+    long long trace_started_ns_ = 0;
 
     mutable std::mutex mutex_;
     std::unique_ptr<TrainingExecutor> current_executor_;

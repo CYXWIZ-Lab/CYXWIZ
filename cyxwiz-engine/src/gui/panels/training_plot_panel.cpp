@@ -669,7 +669,6 @@ void TrainingPlotPanel::RenderWindow() {
 
 void TrainingPlotPanel::RenderEmptyState() {
     const ui::Tokens& c = ui::CurrentTokens();
-    ImGui::Spacing();
     ui::BeginCard("##dash_empty");
     {
         const auto centered = [](const char* text, const ImVec4& color) {
@@ -1413,7 +1412,6 @@ void TrainingPlotPanel::SetMaterializationClearResult(
 }
 
 void TrainingPlotPanel::RenderLossPlot(float plot_height) {
-    ImGui::Spacing();
     ui::BeginCard("##dash_loss_card");
     {
         ui::CardTitle("Loss", log_loss_scale_ ? "training and validation, log axis" : "training and validation");
@@ -1441,7 +1439,6 @@ void TrainingPlotPanel::DrawLossPlot(const ImVec2& size, bool fit, bool in_windo
 
 
 void TrainingPlotPanel::RenderAccuracyPlot(float plot_height) {
-    ImGui::Spacing();
     ui::BeginCard("##dash_accuracy_card");
     {
         ui::CardTitle("Accuracy", "training and validation, percent");
@@ -1471,7 +1468,6 @@ void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_w
 void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
     const char* plot_title = nullptr;
     ClassifyCustomMetrics(custom_metrics_, &plot_title, nullptr);
-    ImGui::Spacing();
     ui::BeginCard("##dash_custom_card");
     {
         ui::CardTitle(plot_title, "per epoch");
@@ -1793,7 +1789,7 @@ void TrainingPlotPanel::RenderControls() {
         ImGui::BeginTooltip();
         ImGui::Text("Plot Controls:");
         ImGui::BulletText("Wheel: scrolls the dashboard");
-        ImGui::BulletText("Ctrl + wheel: zoom both axes (on an axis: that axis only)");
+        ImGui::BulletText("Ctrl + wheel: zoom (on an axis: that axis only); the value axis with Auto scale off");
         ImGui::BulletText("Drag: Pan view");
         ImGui::BulletText("Right-drag: Zoom to a box");
         ImGui::BulletText("Right-click: Chart menu (axes, legend, fit)");
@@ -1857,7 +1853,6 @@ void TrainingPlotPanel::RenderCurveSummary() {
         return c.text;
     };
 
-    ImGui::Spacing();
     ui::BeginCard("##dash_insights");
     // The title, then the suggestion on the same line when it fits.
     ui::CardTitle("How the run is going", "");
@@ -1925,7 +1920,6 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
     }
 
     const ui::Tokens& c = ui::CurrentTokens();
-    ImGui::Spacing();
     ui::BeginCard("##dash_sequence");
     ui::CardTitle("Sequence Metrics", "latest values");
     ImGui::Spacing();
@@ -2025,7 +2019,6 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         state_color = c.text_dim;
     }
 
-    ImGui::Spacing();
     ui::BeginCard("##dash_dataprep");
 
     // Header: title, state, actions.
@@ -2038,9 +2031,8 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
             ? ICON_FA_ARROWS_ROTATE " Rebuild on next run###dash_rebuild"
             : "Rebuild on next run###dash_rebuild";
         const char* actions_label = "Actions " ICON_FA_CHEVRON_DOWN "###dash_prep_actions";
-        const float width = ui::ButtonWidth("Rebuild on next run", ui::ButtonSize::Small) + 26.0f +
-                            ui::ButtonWidth("Actions ", ui::ButtonSize::Small) + 16.0f +
-                            ImGui::GetStyle().ItemSpacing.x;
+        const float width = ChipToggleWidth(rebuild_label) +
+                            ui::ButtonWidth(actions_label, ui::ButtonSize::Small) + ImGui::GetStyle().ItemSpacing.x;
         ImGui::SameLine();
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                       ImGui::GetWindowContentRegionMax().x - width));
@@ -2364,7 +2356,6 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         return c.text;
     };
 
-    ImGui::Spacing();
     ui::BeginCard("##dash_runs");
     // The title, then the card's actions at the right (they wrap when narrow).
     ImGui::AlignTextToFramePadding();
@@ -2730,7 +2721,6 @@ void TrainingPlotPanel::RenderTrainingStatus() {
 
 void TrainingPlotPanel::RenderStatistics() {
     const ui::Tokens& c = ui::CurrentTokens();
-    ImGui::Spacing();
     ui::BeginCard("##dash_stats");
     ui::CardTitle("Statistics", "mean of the last 10 points; min and max of the run");
     ImGui::Spacing();

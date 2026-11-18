@@ -64,7 +64,8 @@ public:
         Range x_range, y_range;
         // A plot inside a scrolling screen: the mouse wheel scrolls the
         // screen and Ctrl + wheel zooms (a plain wheel zoom caught every
-        // scroll that passed over the plot).
+        // scroll that passed over the plot). The plot then draws without a
+        // child window of its own.
         bool zoom_with_ctrl = false;
         // Toolbar items a screen already has its own controls for.
         bool tool_fit = true;

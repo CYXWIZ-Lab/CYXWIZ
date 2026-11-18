@@ -302,7 +302,6 @@ void TrainingPlotPanel::RenderWordVectorCards(const WordVectorRunView& view) {
 
 void TrainingPlotPanel::RenderWordVectorChart(const WordVectorRun& run, const WordVectorRunView& view) {
     const ui::Tokens& c = ui::CurrentTokens();
-    ImGui::Spacing();
     ui::BeginCard("##wv_chart");
     {
         ui::CardTitle(view.chart_title.c_str(), "hover a point for its value");
@@ -341,6 +340,7 @@ void TrainingPlotPanel::RenderWordVectorChart(const WordVectorRun& run, const Wo
             }
             plot::PlotView::Options o;
             o.export_name = "word_vector_run_" + std::to_string(run.number) + "_" + view.figure_name;
+            o.zoom_with_ctrl = true;  // the wheel scrolls the dashboard
             // Every planned epoch on the axis, so the curve fills in as it runs.
             o.x_range = {true, 0.5, std::max<double>(run.epochs, static_cast<double>(run.figures.size())) + 0.5,
                          true};
@@ -447,7 +447,6 @@ void TrainingPlotPanel::RenderWordVectorQuickCheck(const WordVectorRun& run) {
 void TrainingPlotPanel::RenderWordVectorRunsTable() {
     const ui::Tokens& c = ui::CurrentTokens();
     const auto& runs = word_vector_runs_.Runs();
-    ImGui::Spacing();
     ui::BeginCard("##wv_runs");
     {
         ui::CardTitle("Word vector runs", "this session");

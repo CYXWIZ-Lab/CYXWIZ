@@ -142,7 +142,7 @@ bool TrainingManager::StartTrainingCommon(
             "TrainingSetup",
             "Training manager attached to existing preparation trace");
     }
-    trace_run_id_.clear();  // taken at the first batch, once the executor has named its trace
+    trace_started_ns_ = TrainingTraceCollector::Instance().RunStartedNs();
     TrainingTraceCollector::Instance().RecordTaskProgress(
         0,
         task_name,
@@ -820,9 +820,8 @@ void TrainingManager::TrainingThreadFunc(
                         const TrainingMetrics split = exec->GetMetrics();
                         panel->SetRunData(exec->GetConfig().dataset_name, split.train_sample_count,
                                           split.val_sample_count, split.test_sample_count);
-                        // The executor renames the trace it continues (ContinueRun);
-                        // from here on its id is this run's.
-                        trace_run_id_ = TrainingTraceCollector::Instance().Snapshot().run_id;
+                        // The executor may have started a trace of its own.
+                        trace_started_ns_ = TrainingTraceCollector::Instance().RunStartedNs();
                     }
 
                     // Progressive curve: x = (epoch - 1) + batch / total_batches
@@ -967,7 +966,7 @@ void TrainingManager::TrainingThreadFunc(
             record.finished_at = hhmm;
             // Another run (an RL run) may have started its own trace since.
             const auto trace = TrainingTraceCollector::Instance().Snapshot();
-            if (!trace_run_id_.empty() && trace.run_id == trace_run_id_) {
+            if (trace_started_ns_ != 0 && TrainingTraceCollector::Instance().RunStartedNs() == trace_started_ns_) {
                 record.device_backend = trace.effective_backend;
                 record.device_name = trace.effective_device_name;
                 record.device_fallback = trace.selection_fallback_applied;

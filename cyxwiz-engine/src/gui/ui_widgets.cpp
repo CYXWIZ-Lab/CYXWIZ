@@ -63,8 +63,12 @@ void BeginCard(const char* id) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, t.card_padding);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, t.bg_panel);
     ImGui::PushStyleColor(ImGuiCol_Border, t.border);
+    // A card grows with its content and never scrolls: while it grows (a
+    // fold opened, rows added) it neither flashes a scrollbar nor takes the
+    // wheel from the window it sits in.
     ImGui::BeginChild("##card", ImVec2(0.0f, 0.0f),
-                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 }
 
 void EndCard() {
