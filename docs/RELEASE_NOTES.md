@@ -25,6 +25,11 @@ private Data Studio tickets (`tofix*/track*`).
   feature columns"); the window builds the features from the value itself.
 - **Starring a node in the Nodes panel** no longer gives its two cards
   (Favourites and its group) the same ID.
+- **Fields follow the theme.** Text fields, search boxes and drop-downs in a
+  dark theme were near black (the window mixed 28 % toward black), a colour
+  no theme has. They are now a step lighter than the window, in the theme's
+  own tone and quieter than a button; light themes keep their near-white
+  fields. The theme picker's swatches show the field colour you get.
 
 - **A data file opens in the Table Viewer.** Double-click a CSV (or TSV,
   Parquet, JSON Lines, Feather, ...) in the Asset Browser to look at its

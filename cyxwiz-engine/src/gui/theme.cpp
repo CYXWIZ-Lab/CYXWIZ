@@ -120,7 +120,11 @@ Theme::PresetSwatch Theme::GetPresetSwatch(ThemePreset preset) {
         for (size_t i = 0; i < swatches.size(); ++i) {
             theme.RunPresetFunction(static_cast<ThemePreset>(i));
             const ImVec4* c = ImGui::GetStyle().Colors;
-            swatches[i] = {c[ImGuiCol_WindowBg], c[ImGuiCol_FrameBg], theme.accent_color_};
+            // The field colour the theme gives, not the preset's own
+            // (HarmonizeSurfaces replaces it in every preset).
+            ImVec4 field, unused_hover, unused_active;
+            cyxwiz::ui::FieldFills(c[ImGuiCol_WindowBg], &field, &unused_hover, &unused_active);
+            swatches[i] = {c[ImGuiCol_WindowBg], field, theme.accent_color_};
         }
         ImGui::GetStyle() = saved_style;
         ImNodes::GetStyle() = saved_nodes;
@@ -261,8 +265,7 @@ void Theme::HarmonizeSurfaces() {
     c[ImGuiCol_ResizeGripHovered] = toward_text(0.22f);
     c[ImGuiCol_ResizeGripActive] = toward_text(0.30f);
 
-    // Owner 2026-10-21 ("the whole engine" is the window tone; only inputs
-    // are darker - compare the Properties panel): menus, popups, tooltips
+    // Owner 2026-10-21 ("the whole engine" is the window tone): menus, popups, tooltips
     // and every area drawn in the panel token (Tokens::bg_panel: SQL
     // Workbench panels, notebook toolbars, plot legends, completion lists)
     // are a step lighter than the window, never the preset's near-black

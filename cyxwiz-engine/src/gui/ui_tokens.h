@@ -124,9 +124,11 @@ EngineColours EffectiveEngineColours(bool light);
 void ButtonFills(const ImVec4& window, ImVec4* fill, ImVec4* hover, ImVec4* active);
 // Text field, hovered and focused fills for a window colour: the one field
 // colour of the whole Engine (owner 2026-11-14: fields differed from screen to
-// screen). Darker than a dark window (the approved Console look), lighter
-// than a light one. The theme sets ImGui's FrameBg colours from it; screens
-// read Tokens::bg_input (= FrameBg).
+// screen). A step off the window in the theme's own family (owner
+// 2026-11-18: the near-black field "doesn't follow the theme"): toward the
+// text on a dark window, quieter than a button; near white on a light one.
+// The theme sets ImGui's FrameBg colours from it; screens read
+// Tokens::bg_input (= FrameBg).
 void FieldFills(const ImVec4& window, ImVec4* fill, ImVec4* hover, ImVec4* active);
 
 // Colour helpers shared by every screen.

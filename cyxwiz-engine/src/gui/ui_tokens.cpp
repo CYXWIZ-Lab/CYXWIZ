@@ -170,9 +170,12 @@ void FieldFills(const ImVec4& window, ImVec4* fill, ImVec4* hover, ImVec4* activ
         *hover = Mix(*fill, ImVec4(0, 0, 0, 1), 0.03f);
         *active = Mix(*fill, ImVec4(0, 0, 0, 1), 0.06f);
     } else {
-        *fill = Mix(solid, ImVec4(0, 0, 0, 1), 0.28f);
-        *hover = Mix(solid, ImVec4(0, 0, 0, 1), 0.20f);
-        *active = Mix(solid, ImVec4(0, 0, 0, 1), 0.36f);
+        // Every other surface of a dark theme is a step toward the text
+        // (popups, buttons, borders); a field was the one mixed 28 % toward
+        // black, a near-black well no theme has. Below a button (7 %).
+        *fill = Mix(solid, ImVec4(1, 1, 1, 1), 0.045f);
+        *hover = Mix(solid, ImVec4(1, 1, 1, 1), 0.075f);
+        *active = Mix(solid, ImVec4(1, 1, 1, 1), 0.06f);
     }
 }
 
