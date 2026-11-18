@@ -44,9 +44,9 @@ std::vector<Group> BuildGroups(const std::vector<CategoryNodes>& by_category, Fi
 // A search's results: the nodes the query names (whole name, then the
 // name's start, then anywhere in it), then the ones that only mention it in
 // a keyword or the description. `found` is the registry's match list, best
-// first. The generic plugin entry is dropped (plugin nodes are listed on
-// their own); with All, deprecated nodes are dropped and what runs comes
-// before table steps and what can't run yet.
+// first. The generic plugin entry and deprecated nodes are dropped (plugin
+// nodes are listed on their own; a deprecated node is not offered); with
+// All, what runs comes before table steps and what can't run yet.
 struct SearchResult {
     std::vector<const NodeMetadata*> named;
     std::vector<const NodeMetadata*> related;
@@ -66,7 +66,7 @@ Mark CardMark(const NodeMetadata& metadata);
 enum class Tone { Good, Partial, Blocked, Neutral };
 struct PortLine {
     std::string name;
-    std::string kind;  // "tensor", "labels", "data", ...
+    std::string kind;  // gui::PinTypeName: "Tensor", "Labels", "Dataset", ...
 };
 struct Tooltip {
     std::string title;

@@ -179,6 +179,16 @@ int main() {
         ButtonFills(w, &fill, &hover, &active);
         const float c1 = Contrast(fill, w), c2 = Contrast(hover, w), c3 = Contrast(active, w);
         Check(c1 > 1.05f && c1 < c2 && c2 < c3, "button fills step away from the window");
+        // Fields: a quieter step off the window in its own family (a dark
+        // one toward the text, never darker: owner 2026-11-18), below a button.
+        ImVec4 field, field_hover, field_active;
+        FieldFills(w, &field, &field_hover, &field_active);
+        const float f1 = Contrast(field, w);
+        Check(f1 > 1.02f && f1 < c1, "a field is a smaller step off the window than a button");
+        if (w.x < 0.5f) {
+            Check(field.x > w.x && field.y > w.y && field.z > w.z, "a dark window's field is lighter, not a near-black well");
+            Check(Contrast(field_hover, w) > f1, "hovered field a step further");
+        }
     }
 
     // Spacing and rounding scale.

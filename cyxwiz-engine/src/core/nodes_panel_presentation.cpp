@@ -69,23 +69,10 @@ std::string Lower(std::string text) {
     return text;
 }
 
-std::string PinKind(gui::PinType type) {
-    switch (type) {
-    case gui::PinType::Tensor: return "tensor";
-    case gui::PinType::Labels: return "labels";
-    case gui::PinType::Parameters: return "parameters";
-    case gui::PinType::Loss: return "loss";
-    case gui::PinType::Optimizer: return "optimizer";
-    case gui::PinType::Dataset: return "data";
-    case gui::PinType::Environment: return "environment";
-    }
-    return "data";
-}
-
 std::vector<PortLine> Ports(const std::vector<PortDefinition>& ports) {
     std::vector<PortLine> out;
     out.reserve(ports.size());
-    for (const auto& port : ports) out.push_back({port.name, PinKind(port.type)});
+    for (const auto& port : ports) out.push_back({port.name, gui::PinTypeName(port.type)});
     return out;
 }
 
@@ -227,7 +214,12 @@ Tooltip BuildTooltip(const NodeMetadata& metadata) {
     }
     const bool training = TrainsModel(metadata) || FindAxis(metadata, "Training Role") != nullptr;
     const bool data_step = DataStep(metadata);
-    if (CardMark(metadata) == Mark::Partial) {
+    if (CardMark(metadata) == Mark::Partial && ViewOrPanel(metadata)) {
+        // A view (Dashboard, Plot): its support reason is written for
+        // developers ("no graph runtime ... owner is registered").
+        out.runs = "Runs in part: a view you open from the node, not in training or as a data step";
+        out.tone = Tone::Partial;
+    } else if (CardMark(metadata) == Mark::Partial) {
         const auto* state = FindAxis(metadata, "Support State");
         out.runs = "Runs in part" + (state && !state->reason.empty() ? ": " + state->reason : std::string());
         out.tone = Tone::Partial;

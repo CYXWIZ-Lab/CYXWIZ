@@ -447,7 +447,7 @@ void NodeInfoPanel::RenderPorts() {
             ImGui::Text("%s", port.name.c_str());
 
             ImGui::SameLine();
-            ImGui::TextDisabled("(%s)", GetPinTypeName(port.type));
+            ImGui::TextDisabled("(%s)", ::gui::PinTypeName(port.type));
 
             if (!port.required) {
                 ImGui::SameLine();
@@ -482,7 +482,7 @@ void NodeInfoPanel::RenderPorts() {
             ImGui::Text("%s", port.name.c_str());
 
             ImGui::SameLine();
-            ImGui::TextDisabled("(%s)", GetPinTypeName(port.type));
+            ImGui::TextDisabled("(%s)", ::gui::PinTypeName(port.type));
 
             if (!port.description.empty()) {
                 ImGui::Indent(16.0f);
@@ -572,19 +572,6 @@ void NodeInfoPanel::RenderPlaceholder() {
 ImU32 NodeInfoPanel::GetPinTypeColor(PinType type) const {
     // The shared pin data-type colour (theme series colours)
     return ui::ToU32(gui::PinTypeColour(type));
-}
-
-const char* NodeInfoPanel::GetPinTypeName(PinType type) const {
-    switch (type) {
-        case PinType::Tensor:      return "Tensor";
-        case PinType::Labels:      return "Labels";
-        case PinType::Parameters:  return "Parameters";
-        case PinType::Loss:        return "Loss";
-        case PinType::Optimizer:   return "Optimizer";
-        case PinType::Dataset:     return "Dataset";
-        case PinType::Environment: return "Environment";
-        default:                   return "Unknown";
-    }
 }
 
 } // namespace cyxwiz

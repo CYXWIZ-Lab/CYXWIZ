@@ -52,7 +52,7 @@ int main() {
         Check(tip.runs == "Runs in training" && tip.tone == np::Tone::Good, "a loss runs in training: " + tip.runs);
         Check(!Contains(tip.runs, "Fail") && !Contains(tip.runs, "nsupported"), "no support-axis words");
         Check(!tip.inputs.empty() && !tip.outputs.empty(), "pins listed");
-        Check(tip.outputs[0].kind == "loss", "the output's kind: " + tip.outputs[0].kind);
+        Check(tip.outputs[0].kind == "Loss", "the output's kind: " + tip.outputs[0].kind);
         Check(np::Matches(*focal, np::Filter::TrainsModel), "a loss is under Trains a model");
         for (auto type : {NodeType::Adam, NodeType::MSELoss, NodeType::Dense})
             Check(np::Matches(*registry.GetMetadata(type), np::Filter::TrainsModel),
@@ -65,9 +65,19 @@ int main() {
     if (const auto* input = registry.GetMetadata(NodeType::DataInput)) {
         const np::Tooltip tip = np::BuildTooltip(*input);
         Check(tip.tone == np::Tone::Good && Contains(tip.runs, "Runs"), "Data Input runs: " + tip.runs);
-        Check(!tip.outputs.empty() && tip.outputs[0].kind == "data", "Data Input outputs data");
+        Check(!tip.outputs.empty() && tip.outputs[0].kind == "Dataset", "Data Input outputs data");
     } else {
         Check(false, "Data Input is registered");
+    }
+
+    // A view that runs in part: plain words, not the developer reason.
+    if (const auto* dashboard = registry.GetMetadata(NodeType::Dashboard)) {
+        const np::Tooltip tip = np::BuildTooltip(*dashboard);
+        Check(!Contains(tip.runs, "registered") && !Contains(tip.runs, "workflow surface"),
+              "a view's tooltip in plain words: " + tip.runs);
+        Check(np::CardMark(*dashboard) != np::Mark::Partial || tip.tone == np::Tone::Partial, "amber with its dot");
+    } else {
+        Check(false, "Dashboard is registered");
     }
 
     // A node that can't run yet: the reason, not addable, under the filter.

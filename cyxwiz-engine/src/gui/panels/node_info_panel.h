@@ -88,7 +88,6 @@ private:
 
     // Get color for pin type
     ImU32 GetPinTypeColor(PinType type) const;
-    const char* GetPinTypeName(PinType type) const;
 
     // Pinned node (clicked) and the node being displayed this frame.
     NodeType selected_type_ = NodeType::Unknown;

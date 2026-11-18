@@ -80,9 +80,6 @@ namespace gui {
 
 namespace ui = cyxwiz::ui;
 
-// Forward declaration (used in Render before definition)
-static std::string GetPinTypeName(PinType type);
-
 void NodeEditor::SetWorkflowDescription(const std::string& desc) {
     strncpy(workflow_description_, desc.c_str(), sizeof(workflow_description_) - 1);
     workflow_description_[sizeof(workflow_description_) - 1] = '\0';
@@ -581,7 +578,7 @@ void NodeEditor::Render() {
                             hovered_is_input ? "Input" : "Output");
                 ImGui::Separator();
                 ImGui::Text("Pin: %s", hovered_pin->name.c_str());
-                ImGui::Text("Type: %s", GetPinTypeName(hovered_pin->type).c_str());
+                ImGui::Text("Type: %s", PinTypeName(hovered_pin->type));
                 int connections = GetConnectionCount(hovered_pin->id);
                 if (connections > 0) {
                     ImGui::Text("Connections: %d", connections);
@@ -1640,16 +1637,6 @@ void NodeEditor::RenderMinimap() {
 }
 
 // Unified Canvas Phase 6: Helper function to get pin type name as string
-static std::string GetPinTypeName(PinType type) {
-    if (type == PinType::Tensor) return "Tensor";
-    if (type == PinType::Labels) return "Labels";
-    if (type == PinType::Parameters) return "Parameters";
-    if (type == PinType::Loss) return "Loss";
-    if (type == PinType::Optimizer) return "Optimizer";
-    if (type == PinType::Dataset) return "Dataset";
-    return "Unknown";
-}
-
 void NodeEditor::RebuildPinLookup() {
     pin_lookup_.clear();
     for (auto& node : nodes_) {

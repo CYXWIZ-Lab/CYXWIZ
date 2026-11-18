@@ -321,7 +321,7 @@ CreateNodeView BuildCreateNodeView(const CreateNodeInputs& in) {
             break;
         case CreateNodeStage::Written:
             view.lead = "Created " + in.written_folder;
-            view.note = "The bundle is approved for you (you wrote it). Its nodes appear in the Node Browser within "
+            view.note = "The bundle is approved for you (you wrote it). Its nodes appear in the Nodes panel within "
                         "2 seconds.";
             view.primary_label = "Close";
             view.primary_enabled = true;

@@ -106,7 +106,7 @@ within 2 seconds, without a restart.
    **Refresh**.
 2. The card lists what the plugin adds; **Load when the Engine starts** is
    ticked. **Unload** removes it from the list.
-3. **Apps > Loaded plugins > <plugin>** opens the Node Browser on its nodes.
+3. **Apps > Loaded plugins > <plugin>** opens the Nodes panel on its nodes.
 
 To build your own plugin against the SDK in the CPU base (`sdk/`, Apache
 License 2.0), start with `sdk/template/README.md` and

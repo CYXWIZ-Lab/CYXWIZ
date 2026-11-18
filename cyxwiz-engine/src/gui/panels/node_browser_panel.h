@@ -71,7 +71,8 @@ private:
     void RenderAdvancedGroup();
     void RenderCantRunGroup();
     void RenderExamplesGroup();
-    void RenderSearchResults();
+    void RenderSearchResults(const cyxwiz::nodes_panel::SearchResult& found,
+                             const std::vector<cyxwiz::ExtensionPaletteEntry>& extension_results);
     // A folding header: open is remembered under `name` (forced open while a
     // filter narrows the list).
     bool FoldHeader(const std::string& name, size_t count, const ImVec4& swatch, const char* note = nullptr);
@@ -87,7 +88,8 @@ private:
                  bool star_hovered, const cyxwiz::ExtensionPaletteEntry* extension);
     void DrawIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 min, float size,
                   const cyxwiz::ExtensionPaletteEntry* extension);
-    void RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata);
+    // `footer` replaces the model's (a chip adds on a click, not a double-click).
+    void RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata, const char* footer = nullptr);
 
     void SyncUserNodes();
     void LoadPanelSettings();
@@ -102,6 +104,8 @@ private:
     bool focus_window_next_frame_ = false;
     cyxwiz::nodes_panel::Filter filter_ = cyxwiz::nodes_panel::Filter::All;
     std::string provider_filter_;  // the Plugins group shows only this provider
+    bool scroll_to_plugins_ = false;  // Apps > a plugin: bring the Plugins group into view
+    int examples_count_ = -1;         // the pattern library's size, counted once
 
     // Saved with the Engine settings (EngineConfig nodes_panel).
     bool settings_loaded_ = false;

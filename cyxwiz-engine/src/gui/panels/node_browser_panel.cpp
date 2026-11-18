@@ -188,13 +188,15 @@ void NodeBrowserPanel::Render() {
 
         const bool searching = search_[0] != '\0';
         std::vector<np::Group> groups;
+        np::SearchResult found;
+        std::vector<cyxwiz::ExtensionPaletteEntry> extension_results;
         size_t count = 0;
         if (searching) {
-            const auto found = np::OrderSearch(registry.Search(search_, true), search_, filter_);
-            count = found.named.size() + found.related.size();
+            found = np::OrderSearch(registry.Search(search_, true), search_, filter_);
             if (filter_ == np::Filter::All)
-                for (const auto& entry : cyxwiz::BuildExtensionPalette(cyxwiz::ExtensionNodeRegistry::Instance().All()))
-                    count += cyxwiz::ExtensionPaletteEntryMatches(entry, search_) ? 1 : 0;
+                for (auto& entry : cyxwiz::BuildExtensionPalette(cyxwiz::ExtensionNodeRegistry::Instance().All()))
+                    if (cyxwiz::ExtensionPaletteEntryMatches(entry, search_)) extension_results.push_back(std::move(entry));
+            count = found.named.size() + found.related.size() + extension_results.size();
         } else {
             std::vector<np::CategoryNodes> by_category;
             for (auto category : registry.GetCategories())
@@ -207,7 +209,7 @@ void NodeBrowserPanel::Render() {
 
         ImGui::BeginChild("NodeGrid", ImVec2(0, 0), ImGuiChildFlags_None);
         if (searching) {
-            RenderSearchResults();
+            RenderSearchResults(found, extension_results);
         } else {
             if (filter_ == np::Filter::All) {
                 RenderStudioTools();
@@ -244,6 +246,8 @@ void NodeBrowserPanel::RenderSearchRow() {
     }
     ui::SearchField("##NodeSearch", search_, sizeof(search_), "Search nodes (/)",
                     ImGui::GetContentRegionAvail().x - clear_width, ImGuiInputTextFlags_EscapeClearsAll);
+    // Esc in the field clears all of it, as Esc on the panel does.
+    if (ImGui::IsItemDeactivated() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ClearSearch();
     if (ImGui::IsItemHovered() && !has_text)
         ui::Tooltip("Search by name, keyword or description. / focuses the search while the panel has focus; "
                     "Esc clears it.");
@@ -295,8 +299,9 @@ void NodeBrowserPanel::ShowPluginNodes(const std::string& provider_id) {
     ClearSearch();
     filter_ = np::Filter::All;
     LoadPanelSettings();
-    if (open_groups_.insert(kPlugins).second) SaveOpenGroups();
+    open_groups_.insert(kPlugins);  // for this session; a fold click saves the open groups
     provider_filter_ = provider_id;
+    scroll_to_plugins_ = true;
     visible_ = true;
     focus_window_next_frame_ = true;
 }
@@ -392,14 +397,17 @@ void NodeBrowserPanel::RenderNodeChip(const cyxwiz::NodeMetadata* metadata) {
         ImGui::Text("%s %s", metadata->icon.c_str(), metadata->name.c_str());
         ImGui::EndDragDropSource();
     } else if (ImGui::IsItemHovered()) {
-        RenderNodeTooltip(metadata);
+        RenderNodeTooltip(metadata, can_add ? "Click to add; drag onto the canvas; right-click for more"
+                                            : "Right-click for more");
     }
     if (ImGui::BeginPopupContextItem("##chip_menu")) {
         ImGui::TextDisabled("%s %s", metadata->icon.c_str(), metadata->name.c_str());
         ImGui::Separator();
         if (can_add && ImGui::MenuItem(ICON_FA_PLUS " Add to Canvas", "Click")) AddNode(metadata);
-        if (can_add && ImGui::MenuItem(metadata->is_favorite ? ICON_FA_STAR " Remove from Favourites"
-                                                             : ICON_FA_STAR " Add to Favourites"))
+        // A favourite that can no longer be added can still be taken off.
+        if ((can_add || metadata->is_favorite) &&
+            ImGui::MenuItem(metadata->is_favorite ? ICON_FA_STAR " Remove from Favourites"
+                                                  : ICON_FA_STAR " Add to Favourites"))
             registry.ToggleFavorite(metadata->type);
         if (ImGui::MenuItem(ICON_FA_CIRCLE_INFO " Show details")) {
             pinned_extension_id_.clear();
@@ -518,6 +526,10 @@ void NodeBrowserPanel::RenderPluginsGroup() {
                                      }),
                       entries.end());
     }
+    if (scroll_to_plugins_) {
+        ImGui::SetScrollHereY(0.0f);
+        scroll_to_plugins_ = false;
+    }
     if (!FoldHeader(kPlugins, entries.size(), t.text_faint)) return;
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(t.text_dim, "%s", cyxwiz::ExtensionPaletteSummary(entries, provider_names).c_str());
@@ -593,9 +605,13 @@ void NodeBrowserPanel::RenderExamplesGroup() {
     auto& library = patterns::PatternLibrary::Instance();
     if (!library.IsInitialized()) library.Initialize();
     const auto categories = library.GetAvailableCategories();
-    size_t count = 0;
-    for (auto category : categories) count += library.GetByCategory(category).size();
-    if (count == 0 || !FoldHeader(kExamples, count, t.text_faint, "small graphs to start from")) return;
+    if (examples_count_ < 0) {  // GetByCategory copies the patterns: count once, not every frame
+        examples_count_ = 0;
+        for (auto category : categories) examples_count_ += static_cast<int>(library.GetByCategory(category).size());
+    }
+    if (examples_count_ == 0 ||
+        !FoldHeader(kExamples, static_cast<size_t>(examples_count_), t.text_faint, "small graphs to start from"))
+        return;
     for (auto category : categories) {
         const std::string label =
             std::string(patterns::GetPatternCategoryIcon(category)) + " " + patterns::PatternCategoryToString(category);
@@ -621,13 +637,8 @@ void NodeBrowserPanel::RenderExamplesGroup() {
     ImGui::Spacing();
 }
 
-void NodeBrowserPanel::RenderSearchResults() {
-    auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
-    const auto found = np::OrderSearch(registry.Search(search_, true), search_, filter_);
-    std::vector<cyxwiz::ExtensionPaletteEntry> extension_results;
-    if (filter_ == np::Filter::All)
-        for (auto& entry : cyxwiz::BuildExtensionPalette(cyxwiz::ExtensionNodeRegistry::Instance().All()))
-            if (cyxwiz::ExtensionPaletteEntryMatches(entry, search_)) extension_results.push_back(std::move(entry));
+void NodeBrowserPanel::RenderSearchResults(const np::SearchResult& found,
+                                           const std::vector<cyxwiz::ExtensionPaletteEntry>& extension_results) {
     if (found.named.empty() && found.related.empty() && extension_results.empty()) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("No node is named or about '%s'.", search_);
@@ -740,7 +751,9 @@ void NodeBrowserPanel::RenderNodeItem(const cyxwiz::NodeMetadata* metadata, floa
 
     // The favourite star (favourites are kept per NodeType; extension nodes
     // share one): top right of a card, the end of a row.
-    const bool has_star = !extension && can_add;
+    // A favourite keeps its star when it can no longer be added, so it can
+    // be taken off.
+    const bool has_star = !extension && (can_add || metadata->is_favorite);
     const float star_size = ImGui::GetFontSize();
     const ImVec2 star_min = list_view_ ? ImVec2(min.x + width - star_size - 6.0f, min.y + (height - star_size) * 0.5f)
                                        : ImVec2(min.x + width - star_size - 4.0f, min.y + 3.0f);
@@ -767,14 +780,14 @@ void NodeBrowserPanel::RenderNodeItem(const cyxwiz::NodeMetadata* metadata, floa
         ImGui::Separator();
         if (can_add) {
             if (ImGui::MenuItem(ICON_FA_PLUS " Add to Canvas", "Double-click")) AddNode(metadata, extension);
-            if (has_star && ImGui::MenuItem((std::string(ICON_FA_STAR " ") + favourite_label).c_str()))
-                registry.ToggleFavorite(metadata->type);
         } else {
             const np::Tooltip tip = np::BuildTooltip(*metadata);
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
             ImGui::TextColored(ToneColour(tip.tone), "%s", tip.runs.c_str());
             ImGui::PopTextWrapPos();
         }
+        if (has_star && ImGui::MenuItem((std::string(ICON_FA_STAR " ") + favourite_label).c_str()))
+            registry.ToggleFavorite(metadata->type);
         ImGui::Separator();
         if (ImGui::MenuItem(ICON_FA_CIRCLE_INFO " Show details")) select();
         if (ImGui::MenuItem(ICON_FA_COPY " Copy Node Name")) ImGui::SetClipboardText(metadata->name.c_str());
@@ -894,7 +907,7 @@ void NodeBrowserPanel::DrawIcon(const cyxwiz::NodeMetadata* metadata, ImVec2 min
                 ui::ToU32(ui::ReadableOn(t, ImGui::ColorConvertU32ToFloat4(fill))), metadata->icon.c_str());
 }
 
-void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
+void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata, const char* footer) {
     const ui::Tokens& t = ui::CurrentTokens();
     const np::Tooltip tip = np::BuildTooltip(*metadata);
     ImGui::BeginTooltip();
@@ -914,7 +927,7 @@ void NodeBrowserPanel::RenderNodeTooltip(const cyxwiz::NodeMetadata* metadata) {
     row("Out", PortList(tip.outputs), t.text);
     row("Runs", tip.runs, ToneColour(tip.tone));
     ImGui::Spacing();
-    ImGui::TextColored(t.text_dim, "%s", tip.footer.c_str());
+    ImGui::TextColored(t.text_dim, "%s", footer ? footer : tip.footer.c_str());
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }

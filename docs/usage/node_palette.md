@@ -45,9 +45,10 @@ From the top:
   **Trains a model** (layers, activations, losses, optimizers), **Data
   steps** (loading, preparing, exporting), **Views and panels** (dashboards,
   plots), **Can't run yet** (previews and blocked nodes, with why) and
-  **Favourites**. Beside it, the number of nodes listed ("250 nodes"; "19
-  found" while searching). With a filter other than *All* every group that
-  has a node is shown open.
+  **Favourites**. Beside it, the number of nodes in the groups ("250
+  nodes"; the folds at the end are not counted) or found ("19 found" while
+  searching). With a filter other than *All* every group that has a node is
+  shown open.
 - **Grid or list**: cards with their icons (as many columns as the panel's
   width holds, the name on up to two lines), or one row per node, denser in
   a narrow panel. **File > Preferences > Nodes panel** sets the view a
@@ -68,7 +69,8 @@ From the top:
 Hover a node for what it does, its inputs and outputs (with what each
 carries) and one line on where it runs ("Runs in training", "Runs as a data
 step", "Can't run yet: why"); click it for every detail in the Info panel.
-A small dot marks a node that runs only in part (amber) or is blocked (red).
+A small dot marks a node that runs only in part (amber), is blocked (red) or
+whose support is not settled yet (grey).
 Right-click a node for Add to Canvas, Favourites, Show details and Copy Node
 Name.
 
