@@ -541,9 +541,12 @@ void NodeEditor::Render() {
         // Cache node positions while still inside BeginNodeEditor/EndNodeEditor scope
         // This is needed because GetNodeGridSpacePos only works inside this scope
         cached_node_positions_.clear();
+        placed_this_frame_.clear();
         for (const auto& node : nodes_) {
-            if (!detail::IsExpandedSubgraph(node.id, subgraphs_))
+            if (!detail::IsExpandedSubgraph(node.id, subgraphs_)) {
                 cached_node_positions_[node.id] = ImNodes::GetNodeGridSpacePos(node.id);
+                placed_this_frame_.insert(node.id);
+            }
         }
 
         ImNodes::EndNodeEditor();
@@ -1306,9 +1309,8 @@ void NodeEditor::RenderMinimap() {
         // Only nodes ImNodes placed this frame: a node it has not seen (added
         // or loaded while the canvas drew) has no position yet, and asking
         // ImNodes for one read outside its node pool.
-        const auto placed = cached_node_positions_.find(node.id);
-        if (placed == cached_node_positions_.end()) continue;
-        ImVec2 node_pos = placed->second;
+        if (!placed_this_frame_.count(node.id)) continue;
+        ImVec2 node_pos = cached_node_positions_.at(node.id);
         ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
 
         min_x = std::min(min_x, node_pos.x);
@@ -1366,7 +1368,7 @@ void NodeEditor::RenderMinimap() {
 
         for (const auto& node : nodes_) {
             // Check output pins for source
-            if (!cached_node_positions_.count(node.id)) continue;  // not placed yet
+            if (!placed_this_frame_.count(node.id)) continue;  // not placed yet
             for (const auto& pin : node.outputs) {
                 if (pin.id == link.from_pin) {
                     from_node = &node;
@@ -1403,9 +1405,8 @@ void NodeEditor::RenderMinimap() {
     // Draw nodes
     for (const auto& node : nodes_) {
         if (detail::IsExpandedSubgraph(node.id, subgraphs_)) continue;
-        const auto placed = cached_node_positions_.find(node.id);
-        if (placed == cached_node_positions_.end()) continue;  // not placed yet
-        ImVec2 node_pos = placed->second;
+        if (!placed_this_frame_.count(node.id)) continue;  // not placed yet
+        ImVec2 node_pos = cached_node_positions_.at(node.id);
         ImVec2 node_dims = ImNodes::GetNodeDimensions(node.id);
 
         ImVec2 mm_pos = gridToMinimap(node_pos);

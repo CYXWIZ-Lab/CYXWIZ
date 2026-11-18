@@ -7,6 +7,7 @@
 #include <map>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include "../core/rl_device_presentation.h"
 #include <memory>
 #include <optional>
@@ -1381,6 +1382,10 @@ private:
     // Cached node positions (updated each frame inside BeginNodeEditor/EndNodeEditor scope)
     // Used by FindEmptyPosition() which may be called outside the editor scope
     std::map<int, ImVec2> cached_node_positions_;
+    // The nodes ImNodes drew this frame (filled with the cache inside the
+    // editor scope; Undo / Redo also write the cache, for nodes ImNodes has
+    // not seen yet). The minimap asks ImNodes only about these.
+    std::unordered_set<int> placed_this_frame_;
 
     // Auto-insert Flatten dialog state
     bool show_auto_insert_flatten_dialog_ = false;
