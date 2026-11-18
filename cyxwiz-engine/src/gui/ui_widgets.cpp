@@ -119,9 +119,7 @@ void KeyValueTable(const char* id, const std::vector<KeyValue>& rows, int pairs_
         ImGui::TableNextColumn();
         ImGui::TextColored(t.text_dim, "%s", shown[i]->key.c_str());
         ImGui::TableNextColumn();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(shown[i]->value.c_str());
-        ImGui::PopTextWrapPos();
+        TextWrapAnywhere(shown[i]->value, ImGui::GetStyleColorVec4(ImGuiCol_Text));  // a path or key breaks inside the cell
         if (copy_on_click) {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -189,9 +187,7 @@ void FactsTable(const char* id, const std::vector<KeyValue>& rows) {
         ImGui::TableNextColumn();
         ImGui::TextColored(t.text_dim, "%s", row.key.c_str());
         ImGui::TableNextColumn();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(row.value.c_str());
-        ImGui::PopTextWrapPos();
+        TextWrapAnywhere(row.value, ImGui::GetStyleColorVec4(ImGuiCol_Text));
     }
     ImGui::EndTable();
 }
