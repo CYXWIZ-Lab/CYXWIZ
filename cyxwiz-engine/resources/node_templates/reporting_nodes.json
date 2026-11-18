@@ -27,8 +27,7 @@
       "implementation_notes": "Use libharu or PDFium",
       "target_phase": "Phase 3",
       "dependencies": ["libharu"],
-      "effort_estimate": "High",
-      "user_votes": 0
+      "effort_estimate": "High"
     },
     {
       "type": "HTMLReportWriter",
@@ -54,8 +53,7 @@
       "implementation_notes": "Use template engine, embed Plotly.js",
       "target_phase": "Phase 2",
       "dependencies": [],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "EmailSender",
@@ -84,8 +82,7 @@
       "implementation_notes": "Use libcurl with SMTP",
       "target_phase": "Phase 3",
       "dependencies": ["libcurl"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "DashboardCreator",
@@ -110,8 +107,7 @@
       "implementation_notes": "Generate static HTML with Plotly/Chart.js",
       "target_phase": "Phase 4",
       "dependencies": [],
-      "effort_estimate": "High",
-      "user_votes": 0
+      "effort_estimate": "High"
     }
   ]
 }
