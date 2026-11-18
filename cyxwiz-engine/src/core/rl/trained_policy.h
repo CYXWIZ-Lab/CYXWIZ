@@ -10,6 +10,7 @@
 
 #include "../rl_graph_compile.h"
 #include "ppo_trainer.h"
+#include "sac_trainer.h"
 
 #include <cyxwiz/device.h>
 
@@ -74,13 +75,12 @@ bool BuildRLNetworks(const RLTrainingConfiguration& config, std::unique_ptr<IExe
 // copy, which plays and never trains). Null with the reason.
 std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error);
 
-// The policy network alone, made the same way (a training preview's own
-// copy, which plays and never trains). Null with the reason.
-std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error);
-
-// The policy network alone, made the same way (a training preview's own
-// copy, which plays and never trains). Null with the reason.
-std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error);
+// SAC's networks for a compiled SAC graph (TOFIX216): the actor (the policy
+// layers plus an output layer of 2 x actions, mean then log std), two critics
+// (the Q layers on [observation | action] plus a one-value output) and their
+// targets, initialised as PyTorch's nn.Linear (SB3's SAC keeps that) from the
+// current ArrayFire random engine. False with the reason.
+bool BuildSacNetworks(const RLTrainingConfiguration& config, SacNetworks& networks, std::string& error);
 
 // What a trained run leaves (PpoTrainer::TakeTrained), with its graph and updates.
 std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,

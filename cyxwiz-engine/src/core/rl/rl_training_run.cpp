@@ -247,7 +247,7 @@ void RLTrainingRun::Run() {
         std::unique_ptr<IExecutableModel> policy, value;
         if (!BuildRLNetworks(c, policy, value, error)) return fail(error);
 
-        PpoEnvironment env;
+        TrainingEnvironment env;
         env.info = batch->Info();
         env.count = batch->Count();
         env.reset = [batch](uint64_t seed, float* obs, std::string& e) { return batch->Reset(seed, obs, e); };

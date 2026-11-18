@@ -18,6 +18,8 @@ set(CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES
     ${_cyxwiz_engine_src}/core/optimizer_step.cpp
     ${_cyxwiz_engine_src}/core/rl/ppo_trainer.cpp
     ${_cyxwiz_engine_src}/core/rl/vec_normalize.cpp
+    ${_cyxwiz_engine_src}/core/rl/replay_buffer.cpp
+    ${_cyxwiz_engine_src}/core/rl/sac_trainer.cpp
     ${_cyxwiz_engine_src}/core/rl/ppo_reference.cpp
     ${_cyxwiz_engine_src}/core/rl_graph_presentation.cpp
     ${_cyxwiz_engine_src}/core/rl_graph_compile.cpp

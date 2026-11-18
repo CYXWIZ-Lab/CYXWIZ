@@ -87,7 +87,7 @@ void InitializeLikeStableBaselines3(IExecutableModel& model, float output_gain) 
     model.SetParameters(params);
 }
 
-PpoTrainer::PpoTrainer(PpoEnvironment environment, std::unique_ptr<IExecutableModel> policy,
+PpoTrainer::PpoTrainer(TrainingEnvironment environment, std::unique_ptr<IExecutableModel> policy,
                        std::unique_ptr<IExecutableModel> value, PpoConfig config)
     : environment_(std::move(environment)), policy_(std::move(policy)), value_(std::move(value)),
       config_(std::move(config)) {

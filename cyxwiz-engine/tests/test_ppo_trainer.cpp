@@ -63,8 +63,8 @@ std::unique_ptr<IExecutableModel> Mlp(size_t in, size_t out, float output_gain) 
 }
 
 // The registry's batch as the trainer's environment
-rl::PpoEnvironment Adapt(std::shared_ptr<EnvironmentBatch> batch) {
-    rl::PpoEnvironment env;
+rl::TrainingEnvironment Adapt(std::shared_ptr<EnvironmentBatch> batch) {
+    rl::TrainingEnvironment env;
     env.info = batch->Info();
     env.count = batch->Count();
     env.reset = [batch](uint64_t seed, float* obs, std::string& error) { return batch->Reset(seed, obs, error); };

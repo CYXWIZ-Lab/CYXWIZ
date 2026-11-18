@@ -29,6 +29,7 @@ struct SacConfig {
     bool normalize_observations = false;
     // The mean return of the last 100 episodes that stops the run; NaN: none
     float target_return = std::numeric_limits<float>::quiet_NaN();
+    int64_t report_every = 1000;     // environment steps between the dashboard's reports (not an SB3 setting)
 };
 
 // Bytes the replay buffer holds on the device: per transition the observation

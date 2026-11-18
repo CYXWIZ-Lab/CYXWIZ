@@ -451,6 +451,18 @@ the low clamp (std 2e-9) torch's float32 gradient to the mean cancels two
 terms of about noise / std and keeps only rounding, so that element's noise
 is 0. Passed on CPU, CUDA and OpenCL (2026-11-14).
 
+The whole SAC gradient step (core/rl/sac_trainer SacLearner, TOFIX216 S3) is
+checked against a real Stable-Baselines3 SAC: generate_sac_step_fixture.py
+builds a tiny SAC (3 observations, 2 actions, one hidden layer of 8),
+pins its replay buffer's sample and torch's Normal.rsample to recorded batches
+and noise, runs SAC.train(gradient_steps=3) and keeps the weights before and
+after, the target weights, log alpha and the logged losses
+(fixtures/sac_step_sb3.json). test_sac_trainer replays the same three steps
+and ends with SB3's weights to 2e-6 (Adam moves a weight about 3e-4 a step,
+so a wrong gradient sign, size or order shows), which checks SB3's order: the
+entropy weight first, the critics, the actor against the updated critics,
+then Polyak.
+
 Gradient clipping by the global norm has three implementations: the host
 clip (ClipGradientsByGlobalNorm, the optimizer nodes' Gradient clip norm),
 the device clip (ClipGradientsByGlobalNormOnDevice, PPO's per-tensor path)

@@ -25,9 +25,9 @@ using json = nlohmann::json;
 
 constexpr int kPolicySchema = 1;
 
-// The graph's layers plus the head's output layer
-std::unique_ptr<IExecutableModel> Network(const std::vector<CompiledLayer>& hidden, size_t inputs, size_t outputs,
-                                          float output_gain, const char* what, std::string& error) {
+// The graph's layers plus the head's output layer, not initialised
+std::unique_ptr<IExecutableModel> Layers(const std::vector<CompiledLayer>& hidden, size_t inputs, size_t outputs,
+                                         const char* what, std::string& error) {
     std::vector<CompiledLayer> layers = hidden;
     CompiledLayer head;
     head.type = gui::NodeType::Dense;
@@ -40,8 +40,15 @@ std::unique_ptr<IExecutableModel> Network(const std::vector<CompiledLayer>& hidd
         error = std::string("The ") + what + " network could not be built: " + built.error_message;
         return nullptr;
     }
-    InitializeLikeStableBaselines3(*built.model, output_gain);
     return std::move(built.model);
+}
+
+// PPO's: initialised as SB3's MlpPolicy (orthogonal, output_gain on the output layer)
+std::unique_ptr<IExecutableModel> Network(const std::vector<CompiledLayer>& hidden, size_t inputs, size_t outputs,
+                                          float output_gain, const char* what, std::string& error) {
+    auto model = Layers(hidden, inputs, outputs, what, error);
+    if (model) InitializeLikeStableBaselines3(*model, output_gain);
+    return model;
 }
 
 bool ToDType(DataType type, TensorDType& out) {
@@ -235,6 +242,27 @@ bool SetWeights(IExecutableModel& model, const std::string& prefix,
 
 std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfiguration& config, std::string& error) {
     return Network(config.policy_layers, config.observation_size, config.policy_outputs, 0.01f, "policy", error);
+}
+
+bool BuildSacNetworks(const RLTrainingConfiguration& config, SacNetworks& networks, std::string& error) {
+    const size_t actions = config.policy_outputs;
+    const size_t q_inputs = config.observation_size + actions;
+    const auto torch_like = [&](const std::vector<CompiledLayer>& hidden, size_t inputs, size_t outputs,
+                                const char* what) {
+        auto model = Layers(hidden, inputs, outputs, what, error);
+        if (model) InitializeLikeTorchLinear(*model);
+        return model;
+    };
+    networks.actor = torch_like(config.policy_layers, config.observation_size, 2 * actions, "actor");
+    if (!networks.actor) return false;
+    networks.q1 = torch_like(config.q_layers, q_inputs, 1, "first Q");
+    if (!networks.q1) return false;
+    networks.q2 = torch_like(config.q_layers, q_inputs, 1, "second Q");
+    if (!networks.q2) return false;
+    // The targets start as copies of the critics (SacLearner copies the weights)
+    networks.q1_target = Layers(config.q_layers, q_inputs, 1, "first target Q", error);
+    networks.q2_target = networks.q1_target ? Layers(config.q_layers, q_inputs, 1, "second target Q", error) : nullptr;
+    return networks.q1_target && networks.q2_target;
 }
 
 bool BuildRLNetworks(const RLTrainingConfiguration& config, std::unique_ptr<IExecutableModel>& policy,

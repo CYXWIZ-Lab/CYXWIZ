@@ -9,6 +9,7 @@
 
 #include "../executable_model.h"
 #include "../../plugin/interfaces/i_environment_provider.h"
+#include "training_environment.h"
 #include "vec_normalize.h"
 
 #include <cyxwiz/fused_mlp.h>
@@ -26,16 +27,6 @@
 
 namespace cyxwiz {
 namespace rl {
-
-// What the trainer needs from N copies of an environment. The host adapts
-// its batch (the plugin registry's EnvironmentBatch) into this, so this
-// library does not depend on the plugin host.
-struct PpoEnvironment {
-    plugin::PluginEnvironmentInfo info;
-    int count = 0;
-    std::function<bool(uint64_t seed, float* observations, std::string& error)> reset;
-    std::function<bool(const float* actions, const plugin::PluginEnvironmentStepBuffers& out, std::string& error)> step;
-};
 
 // Stable-Baselines3 PPO's defaults.
 struct PpoConfig {
@@ -116,7 +107,7 @@ class PpoTrainer {
 public:
     // policy: observations [B, obs] -> means [B, A] (continuous) or logits [B, K] (discrete);
     // value: observations [B, obs] -> [B, 1].
-    PpoTrainer(PpoEnvironment environment, std::unique_ptr<IExecutableModel> policy,
+    PpoTrainer(TrainingEnvironment environment, std::unique_ptr<IExecutableModel> policy,
                std::unique_ptr<IExecutableModel> value, PpoConfig config);
     ~PpoTrainer();
 
@@ -138,7 +129,7 @@ public:
 private:
     bool CheckSetup(std::string& error) const;
 
-    PpoEnvironment environment_;
+    TrainingEnvironment environment_;
     std::unique_ptr<IExecutableModel> policy_;
     std::unique_ptr<IExecutableModel> value_;
     PpoConfig config_;
