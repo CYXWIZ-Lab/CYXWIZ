@@ -4466,12 +4466,16 @@ bool NodeEditor::LoadRLPolicy(const std::string& path, std::string& error) {
         rl_policy_message_ = error;
         return false;
     }
-    rl_policy_ = std::shared_ptr<cyxwiz::rl::TrainedPolicy>(std::move(loaded));
+    KeepLoadedRLPolicy(std::move(loaded), path);
+    return true;
+}
+
+void NodeEditor::KeepLoadedRLPolicy(std::unique_ptr<cyxwiz::rl::TrainedPolicy> policy, const std::string& path) {
+    rl_policy_ = std::shared_ptr<cyxwiz::rl::TrainedPolicy>(std::move(policy));
     rl_policy_file_ = std::filesystem::path(path).filename().string();
     rl_policy_message_ = "Loaded " + rl_policy_file_;
     spdlog::info("Loaded the {} policy {} ({})", rl_policy_->IsSac() ? "SAC" : "PPO", path,
                  rl_policy_->config.environment.id);
-    return true;
 }
 
 bool NodeEditor::ChooseRLPolicyForGraph(std::string& error) {
@@ -4496,9 +4500,7 @@ bool NodeEditor::ChooseRLPolicyForGraph(std::string& error) {
         rl_policy_message_ = error;
         return false;
     }
-    rl_policy_ = std::shared_ptr<cyxwiz::rl::TrainedPolicy>(std::move(loaded));
-    rl_policy_file_ = std::filesystem::path(*path).filename().string();
-    rl_policy_message_ = "Loaded " + rl_policy_file_;
+    KeepLoadedRLPolicy(std::move(loaded), *path);
     return true;
 }
 

@@ -1614,8 +1614,12 @@ public:
     // Loads a saved policy to play (Open Model File).
     bool LoadRLPolicy(const std::string& path, std::string& error);
     // A file dialog, then the policy, which must fit the open graph
-    // (the PPO node's Load policy...).
+    // (the learner node's Load policy...).
     bool ChooseRLPolicyForGraph(std::string& error);
+
+private:
+    // Keeps a loaded policy as the one to play and save, and says so
+    void KeepLoadedRLPolicy(std::unique_ptr<cyxwiz::rl::TrainedPolicy> policy, const std::string& path);
 };
 
 } // namespace gui
