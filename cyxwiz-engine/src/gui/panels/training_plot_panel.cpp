@@ -73,7 +73,8 @@ constexpr float kTrainingPlotMaxHeight = 480.0f;
 // Loss and accuracy go side by side from this content width.
 constexpr float kTrainingPlotSideBySideWidth = 860.0f;
 
-// Title and y-axis label of the custom metrics chart from the metric names.
+// Title and y-axis label (when asked) of the custom metrics chart from the
+// metric names.
 template <typename Series>
 void ClassifyCustomMetrics(const std::vector<Series>& metrics,
                            const char** plot_title,
@@ -98,6 +99,7 @@ void ClassifyCustomMetrics(const std::vector<Series>& metrics,
         has_sequence_metrics && !has_non_sequence_metrics
             ? "Sequence Metrics"
             : (has_regression_metrics ? "Regression Metrics" : "Custom Metrics");
+    if (!y_label) return;
     *y_label =
         has_sequence_metrics && !has_non_sequence_metrics
             ? "Score (%)"
@@ -886,11 +888,6 @@ void TrainingPlotPanel::AddRunComparisonRecord(
         SortTrainingRunComparisonsByBestMetric(run_comparison_records_);
 }
 
-void TrainingPlotPanel::ClearRunComparisonRecords() {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    run_comparison_records_.clear();
-}
-
 void TrainingPlotPanel::Clear() {
     std::lock_guard<std::mutex> lock(data_mutex_);
     ClearLocked();
@@ -1135,14 +1132,6 @@ void TrainingPlotPanel::SetBatchComposition(int samples_per_batch, int batches_p
 void TrainingPlotPanel::SetMetricReportingCadence(int batch_interval) {
     std::lock_guard<std::mutex> lock(data_mutex_);
     metric_reporting_interval_ = std::max(0, batch_interval);
-}
-
-void TrainingPlotPanel::ResetPlots() {
-    Clear();
-}
-
-void TrainingPlotPanel::SetMaxPoints(size_t max_points) {
-    max_points_ = max_points;
 }
 
 std::string TrainingPlotPanel::MetricsCsvLocked() const {
@@ -1481,9 +1470,7 @@ void TrainingPlotPanel::DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_w
 
 void TrainingPlotPanel::RenderCustomMetricsPlot(float plot_height) {
     const char* plot_title = nullptr;
-    const char* y_label = nullptr;
-    ClassifyCustomMetrics(custom_metrics_, &plot_title, &y_label);
-    (void)y_label;
+    ClassifyCustomMetrics(custom_metrics_, &plot_title, nullptr);
     ImGui::Spacing();
     ui::BeginCard("##dash_custom_card");
     {
@@ -2872,12 +2859,6 @@ TrainingPlotPanel::ValueRange TrainingPlotPanel::CalculateVisibleRange(
     return range;
 }
 
-std::vector<double> TrainingPlotPanel::CalculateMovingAverage(
-    const std::vector<double>& values,
-    int window) const {
-    return series::MovingAverage(values, window);
-}
-
 namespace {
 // Enough for a full-screen chart; min/max per bucket keeps spikes.
 constexpr size_t kDrawnPoints = 4000;
@@ -2919,21 +2900,6 @@ const TrainingPlotPanel::DrawnCache& TrainingPlotPanel::Drawn() {
     drawn_.smoothing = smoothing_window_;
     drawn_.smoothed = show_smoothed_curves_;
     return drawn_;
-}
-
-bool TrainingPlotPanel::HasData() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    ++sampled_read_events_;
-    if (sampled_read_events_ == 1 || sampled_read_events_ % 60 == 0) {
-        RecordPanelEvent("TrainingPlotPanel.ReadHasData",
-                         "points=" + std::to_string(train_loss_.values.size()));
-    }
-    return !train_loss_.values.empty();
-}
-
-bool TrainingPlotPanel::IsTraining() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    return is_training_;
 }
 
 TrainingStatusSnapshot TrainingPlotPanel::GetStatusSnapshot() const {
@@ -3006,41 +2972,6 @@ double TrainingPlotPanel::CalculateMin(const std::vector<double>& values) const 
 double TrainingPlotPanel::CalculateMax(const std::vector<double>& values) const {
     if (values.empty()) return 0.0;
     return *std::max_element(values.begin(), values.end());
-}
-
-int TrainingPlotPanel::GetCurrentEpoch() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (train_loss_.epochs.empty()) return 0;
-    return static_cast<int>(train_loss_.epochs.back());
-}
-
-double TrainingPlotPanel::GetCurrentTrainLoss() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (train_loss_.values.empty()) return 0.0;
-    return train_loss_.values.back();
-}
-
-double TrainingPlotPanel::GetCurrentValLoss() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (val_loss_.values.empty()) return -1.0;
-    return val_loss_.values.back();
-}
-
-double TrainingPlotPanel::GetCurrentTrainAccuracy() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (train_accuracy_.values.empty()) return -1.0;
-    return train_accuracy_.values.back();
-}
-
-double TrainingPlotPanel::GetCurrentValAccuracy() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (val_accuracy_.values.empty()) return -1.0;
-    return val_accuracy_.values.back();
-}
-
-size_t TrainingPlotPanel::GetDataPointCount() const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    return train_loss_.values.size();
 }
 
 } // namespace cyxwiz

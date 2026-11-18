@@ -80,8 +80,6 @@ public:
 
     // Control
     void Clear();
-    void ResetPlots();
-    void SetMaxPoints(size_t max_points);
 
     // Word-vector runs (TOFIX152): word2vec and GloVe training of a Word
     // Embeddings node, from its figures. They have their own view behind the
@@ -115,10 +113,8 @@ public:
     void SetWordVectorHooks(WordVectorHooks hooks) { word_vector_hooks_ = std::move(hooks); }
 
     // Configuration
-    void ShowLossPlot(bool show) { show_loss_plot_ = show; }
     void ShowAccuracyPlot(bool show) { show_accuracy_plot_ = show; }
     void ShowCustomMetrics(bool show) { show_custom_metrics_ = show; }
-    void SetAutoScale(bool auto_scale) { auto_scale_ = auto_scale; }
 
     // Training state updates (thread-safe) - call from TrainingManager
     void SetTrainingState(bool is_training, int current_epoch, int total_epochs,
@@ -212,17 +208,8 @@ public:
     // validation and test rows (known once the first batch runs).
     void SetRunData(const std::string& dataset, size_t train_rows, size_t validation_rows, size_t test_rows);
     void AddRunComparisonRecord(const TrainingRunComparisonRecord& record);
-    void ClearRunComparisonRecords();
 
     // Getters for live metrics (thread-safe)
-    bool HasData() const;
-    bool IsTraining() const;
-    int GetCurrentEpoch() const;
-    double GetCurrentTrainLoss() const;
-    double GetCurrentValLoss() const;
-    double GetCurrentTrainAccuracy() const;
-    double GetCurrentValAccuracy() const;
-    size_t GetDataPointCount() const;
     TrainingStatusSnapshot GetStatusSnapshot() const;
 
 private:
@@ -421,7 +408,6 @@ private:
     };
     std::map<int, QuickCheck> quick_checks_;
     std::string word_vector_export_message_;
-    mutable size_t sampled_read_events_ = 0;
 
     // Thread safety
     mutable std::mutex data_mutex_;
@@ -517,9 +503,6 @@ private:
                                      const MetricSeries& secondary,
                                      double min_epoch,
                                      double max_epoch) const;
-    std::vector<double> CalculateMovingAverage(
-        const std::vector<double>& values,
-        int window) const;
     void TrimDataIfNeeded(MetricSeries& series);
     void RecordPanelEvent(const std::string& action,
                           const std::string& detail = "") const;
@@ -527,9 +510,5 @@ private:
     double CalculateMin(const std::vector<double>& values) const;
     double CalculateMax(const std::vector<double>& values) const;
 };
-
-// Global accessor functions for Python integration
-void set_training_plot_panel(cyxwiz::TrainingPlotPanel* panel);
-cyxwiz::TrainingPlotPanel* get_training_plot_panel();
 
 } // namespace cyxwiz

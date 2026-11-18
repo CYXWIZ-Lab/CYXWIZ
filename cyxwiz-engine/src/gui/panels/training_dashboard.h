@@ -5,9 +5,7 @@
 // theme colours. Two sources: a script (pycyxwiz.rl_update_metric, one value
 // per report) and the Engine's own PPO run (TOFIX195 S4.3, R9: one row per
 // update by environment step, progress, speed, Pause / Stop, and the
-// Stable-Baselines3 reference of the same settings). UI thread only, except
-// SetRLTrainingState (a script's completion callback may call it from the
-// script worker).
+// Stable-Baselines3 reference of the same settings). UI thread only.
 
 #include "../panel.h"
 #include "../plot/plot_view.h"
@@ -32,11 +30,7 @@ public:
 
     void Render() override;
 
-    void RegisterCustomPlot(const std::string& name, const std::string& display_name);
     void UpdateCustomMetric(const std::string& name, float value);
-
-    void SetTrainingState(bool is_training);
-    void SetRLTrainingState(bool is_rl_training);
     void ResetRLMetrics();
 
     // The Engine's PPO run
@@ -86,6 +80,7 @@ public:
     void EndPpoRun(const std::string& outcome, bool failed);
 
 private:
+    void RegisterCustomPlot(const std::string& name, const std::string& display_name);
     struct Metric {
         std::string display_name;
         std::vector<double> history;  // one value per report

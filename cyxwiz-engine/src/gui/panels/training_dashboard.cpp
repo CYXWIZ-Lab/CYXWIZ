@@ -121,10 +121,6 @@ void TrainingDashboardPanel::UpdateCustomMetric(const std::string& name, float v
     Push(name, static_cast<double>(value), std::nan(""));
 }
 
-void TrainingDashboardPanel::SetTrainingState(bool is_training) { training_ = is_training; }
-
-void TrainingDashboardPanel::SetRLTrainingState(bool is_rl_training) { training_ = is_rl_training; }
-
 void TrainingDashboardPanel::ResetRLMetrics() {
     for (auto& [name, m] : metrics_) {
         m.history.clear();
