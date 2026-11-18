@@ -1,7 +1,7 @@
 {
   "id": "airline_passengers_dense",
   "name": "Airline Passengers — Dense Forecaster",
-  "description": "Phase 4 v1 time-series smoke test. Loads the classic Box-Jenkins airline passengers CSV (144 monthly totals, 1949-1960), windows it (input_width=12 months of history -> 1 month forecast), chronologically splits 80/10/10, and trains a small Dense/ReLU regression model with MSE + Adam. Success bar is 'val MSE drops over 50 epochs', not SOTA. Point Data Input at examples/datasets/airline_passengers.csv and click Compile (F7) then Train (F5).",
+  "description": "Forecasts next month's airline passengers from the past 12 months (the Box-Jenkins series, 144 monthly totals, 1949-1960): windows it 12 -> 1, splits chronologically 80/10/10 and trains a small dense network with MSE. The data is examples/datasets/airline_passengers.csv: press Train.",
   "category": "Time Series",
   "tags": ["timeseries", "forecasting", "regression", "airline", "box-jenkins", "phase4"],
   "parameters": [
@@ -44,6 +44,8 @@
         "name": "Airline Passengers CSV",
         "pos": [0, 260],
         "params": {
+          "source_type": "file",
+          "file_path": "examples/datasets/airline_passengers.csv",
           "file_category": "timeseries",
           "file_type": "csv",
           "has_header": "true",

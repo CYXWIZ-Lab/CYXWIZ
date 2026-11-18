@@ -7,6 +7,24 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **The five starter examples train right after they open.** Binary and
+  multiclass image, text, audio and time-series starters (start page, and
+  **Open an example graph** on an empty canvas) each read a small sample now
+  shipped in `examples/datasets` (60 photos of cats and dogs, 1,797 8x8
+  handwritten digits, 3,000 review sentences, 400 spoken digits, the airline
+  passengers series): press Train, offline. Before, four had no data and the
+  text one pointed at a file on one PC. The text starter is now a
+  positive / negative review classifier; the audio starter classifies spoken
+  digits and has a BatchNorm after Flatten (without it, it barely learned).
+- **Opening an example graph from the empty canvas crashed the Engine.** It
+  opens now (it was loaded while the canvas drew, and the minimap read nodes
+  the canvas had not placed yet).
+- **A windowed time series compiles.** A Data Input with only a date and the
+  value column, feeding a Time Series Window, was refused ("no numeric
+  feature columns"); the window builds the features from the value itself.
+- **Starring a node in the Nodes panel** no longer gives its two cards
+  (Favourites and its group) the same ID.
+
 - **A data file opens in the Table Viewer.** Double-click a CSV (or TSV,
   Parquet, JSON Lines, Feather, ...) in the Asset Browser to look at its
   first rows in the Table Viewer, read in a task; nothing is loaded into
