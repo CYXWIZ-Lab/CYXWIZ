@@ -11,6 +11,8 @@
 // (TOFIX178 4b: before this no test inserted or compiled a shipped pattern.)
 
 #include "../src/core/arrow_dataset.h"
+#include "../src/core/execution_device_context.h"
+#include "../src/core/execution_device_preferences.h"
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_compiler_dataset_hooks.h"
 #include "../src/core/graph_node_factory.h"
@@ -20,8 +22,11 @@
 #include "../src/gui/patterns/pattern_library.h"
 #include "route_qualification_test_fixture.h"
 
+#include <cyxwiz/device.h>
+
 #include <arrow/api.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -216,6 +221,21 @@ std::shared_ptr<cyxwiz::ArrowDataset> SyntheticRows(const std::string& name, siz
     return std::make_shared<cyxwiz::ArrowDataset>(arrow::Table::Make(arrow::schema(fields), columns), name);
 }
 
+// The brief trainings run on ArrayFire CPU: they check the pattern, not the
+// device, and a GPU run would wait while another process trains on the card.
+void SelectArrayFireCpu() {
+    const auto devices = cyxwiz::Device::GetAvailableDevices();
+    const auto cpu = std::find_if(devices.begin(), devices.end(), [](const cyxwiz::DeviceInfo& device) {
+        return device.type == cyxwiz::DeviceType::CPU;
+    });
+    Check(cpu != devices.end(), "an ArrayFire CPU route is found");
+    if (cpu == devices.end()) return;
+    cyxwiz::ClearPendingExecutionDeviceSelection();
+    cyxwiz::SetPendingExecutionDeviceSelection(cyxwiz::DeviceType::CPU, cpu->device_id);
+    cyxwiz::ClearNextRunExecutionPolicy();
+    cyxwiz::SetNextRunExecutionPolicy(cyxwiz::ExecutionPolicy::Strict);
+}
+
 void TrainBriefly(const Pattern& pattern, cyxwiz::TrainingConfiguration config, int classes, int vocabulary) {
     const std::string name = pattern.id;
     config.dataset_name = "pattern_" + name;
@@ -226,6 +246,7 @@ void TrainBriefly(const Pattern& pattern, cyxwiz::TrainingConfiguration config, 
     config.num_workers = 0;
     config.log_interval = 0;
     const auto dataset = SyntheticRows(config.dataset_name, config.input_size, classes, vocabulary);
+    SelectArrayFireCpu();
     cyxwiz::TrainingExecutor executor(config, dataset, "label");
     cyxwiz::TrainingMetrics last;
     executor.Train(config.epochs, config.batch_size, nullptr, nullptr,
