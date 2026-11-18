@@ -1,4 +1,5 @@
 #include "cyxql_executor.h"
+#include "../node_type_import_registry.h"
 #include <algorithm>
 #include <numeric>
 #include <cmath>
@@ -977,182 +978,12 @@ ResultValue Executor::evaluateUnaryExpr(const ASTNodePtr& expr, const BindingCon
 }
 
 std::string Executor::nodeTypeToString(gui::NodeType type) const {
-    // Map NodeType enum to string names
-    static const std::map<gui::NodeType, std::string> typeNames = {
-        {gui::NodeType::Dense, "Dense"},
-        {gui::NodeType::Conv1D, "Conv1D"},
-        {gui::NodeType::Conv2D, "Conv2D"},
-        {gui::NodeType::Conv3D, "Conv3D"},
-        {gui::NodeType::DepthwiseConv2D, "DepthwiseConv2D"},
-        {gui::NodeType::MaxPool2D, "MaxPool2D"},
-        {gui::NodeType::AvgPool2D, "AvgPool2D"},
-        {gui::NodeType::GlobalMaxPool, "GlobalMaxPool"},
-        {gui::NodeType::GlobalAvgPool, "GlobalAvgPool"},
-        {gui::NodeType::AdaptiveAvgPool, "AdaptiveAvgPool"},
-        {gui::NodeType::BatchNorm, "BatchNorm"},
-        {gui::NodeType::LayerNorm, "LayerNorm"},
-        {gui::NodeType::GroupNorm, "GroupNorm"},
-        {gui::NodeType::InstanceNorm, "InstanceNorm"},
-        {gui::NodeType::SqueezeExcitation, "SqueezeExcitation"},
-        {gui::NodeType::Dropout, "Dropout"},
-        {gui::NodeType::Flatten, "Flatten"},
-        {gui::NodeType::RNN, "RNN"},
-        {gui::NodeType::LSTM, "LSTM"},
-        {gui::NodeType::GRU, "GRU"},
-        {gui::NodeType::TimeDistributed, "TimeDistributed"},
-        {gui::NodeType::Embedding, "Embedding"},
-        {gui::NodeType::MultiHeadAttention, "MultiHeadAttention"},
-        {gui::NodeType::CrossAttention, "CrossAttention"},
-        {gui::NodeType::LinearAttention, "LinearAttention"},
-        {gui::NodeType::TransformerEncoder, "TransformerEncoder"},
-        {gui::NodeType::TransformerDecoder, "TransformerDecoder"},
-        {gui::NodeType::PositionalEncoding, "PositionalEncoding"},
-        {gui::NodeType::ReLU, "ReLU"},
-        {gui::NodeType::LeakyReLU, "LeakyReLU"},
-        {gui::NodeType::PReLU, "PReLU"},
-        {gui::NodeType::ELU, "ELU"},
-        {gui::NodeType::SELU, "SELU"},
-        {gui::NodeType::GELU, "GELU"},
-        {gui::NodeType::Swish, "Swish"},
-        {gui::NodeType::Mish, "Mish"},
-        {gui::NodeType::Hardswish, "Hardswish"},
-        {gui::NodeType::Hardsigmoid, "Hardsigmoid"},
-        {gui::NodeType::ReLU6, "ReLU6"},
-        {gui::NodeType::Sigmoid, "Sigmoid"},
-        {gui::NodeType::Tanh, "Tanh"},
-        {gui::NodeType::Softmax, "Softmax"},
-        {gui::NodeType::Reshape, "Reshape"},
-        {gui::NodeType::Permute, "Permute"},
-        {gui::NodeType::Squeeze, "Squeeze"},
-        {gui::NodeType::Unsqueeze, "Unsqueeze"},
-        {gui::NodeType::View, "View"},
-        {gui::NodeType::Split, "Split"},
-        {gui::NodeType::Concatenate, "Concatenate"},
-        {gui::NodeType::Add, "Add"},
-        {gui::NodeType::Multiply, "Multiply"},
-        {gui::NodeType::Average, "Average"},
-        {gui::NodeType::TensorSum, "TensorSum"},
-        {gui::NodeType::TensorMean, "TensorMean"},
-        {gui::NodeType::TensorMax, "TensorMax"},
-        {gui::NodeType::TensorMin, "TensorMin"},
-        {gui::NodeType::TensorProd, "TensorProd"},
-        {gui::NodeType::TensorVar, "TensorVar"},
-        {gui::NodeType::TensorStd, "TensorStd"},
-        {gui::NodeType::TensorBroadcastTo, "TensorBroadcastTo"},
-        {gui::NodeType::TensorExpand, "TensorExpand"},
-        {gui::NodeType::TensorIndexSelect, "TensorIndexSelect"},
-        {gui::NodeType::TensorPow, "TensorPow"},
-        {gui::NodeType::TensorSqrt, "TensorSqrt"},
-        {gui::NodeType::TensorExp, "TensorExp"},
-        {gui::NodeType::TensorLog, "TensorLog"},
-        {gui::NodeType::TensorAbs, "TensorAbs"},
-        {gui::NodeType::TensorSign, "TensorSign"},
-        {gui::NodeType::TensorClip, "TensorClip"},
-        {gui::NodeType::TensorDot, "TensorDot"},
-        {gui::NodeType::TensorBatchMatMul, "TensorBatchMatMul"},
-        {gui::NodeType::TensorCompare, "TensorCompare"},
-        {gui::NodeType::TensorLogicalMask, "TensorLogicalMask"},
-        {gui::NodeType::Output, "Output"},
-        {gui::NodeType::SequenceTagOutput, "SequenceTagOutput"},
-        {gui::NodeType::PairDatasetBuilder, "PairDatasetBuilder"},
-        {gui::NodeType::TripletDatasetBuilder, "TripletDatasetBuilder"},
-        {gui::NodeType::ContrastiveLoss, "ContrastiveLoss"},
-        {gui::NodeType::CosineEmbeddingLoss, "CosineEmbeddingLoss"},
-        {gui::NodeType::TripletLoss, "TripletLoss"},
-        {gui::NodeType::PairMetrics, "PairMetrics"},
-        {gui::NodeType::RetrievalMetrics, "RetrievalMetrics"},
-        {gui::NodeType::EmbeddingOutput, "EmbeddingOutput"},
-        {gui::NodeType::PairScoreOutput, "PairScoreOutput"},
-        {gui::NodeType::MSELoss, "MSELoss"},
-        {gui::NodeType::CrossEntropyLoss, "CrossEntropyLoss"},
-        {gui::NodeType::BCELoss, "BCELoss"},
-        {gui::NodeType::BCEWithLogits, "BCEWithLogits"},
-        {gui::NodeType::L1Loss, "L1Loss"},
-        {gui::NodeType::SmoothL1Loss, "SmoothL1Loss"},
-        {gui::NodeType::HuberLoss, "HuberLoss"},
-        {gui::NodeType::NLLLoss, "NLLLoss"},
-        {gui::NodeType::SoftDiceLoss, "SoftDiceLoss"},
-        {gui::NodeType::TverskyLoss, "TverskyLoss"},
-        {gui::NodeType::JaccardLoss, "JaccardLoss"},
-        {gui::NodeType::ClassificationMetricsNode, "ClassificationMetricsNode"},
-        {gui::NodeType::TestEvaluationNode, "TestEvaluationNode"},
-        {gui::NodeType::SGD, "SGD"},
-        {gui::NodeType::Adam, "Adam"},
-        {gui::NodeType::AdamW, "AdamW"},
-        {gui::NodeType::RMSprop, "RMSprop"},
-        {gui::NodeType::Adagrad, "Adagrad"},
-        {gui::NodeType::NAdam, "NAdam"},
-        {gui::NodeType::StepLR, "StepLR"},
-        {gui::NodeType::CosineAnnealing, "CosineAnnealing"},
-        {gui::NodeType::ReduceOnPlateau, "ReduceOnPlateau"},
-        {gui::NodeType::ExponentialLR, "ExponentialLR"},
-        {gui::NodeType::WarmupScheduler, "WarmupScheduler"},
-        {gui::NodeType::L1Regularization, "L1Regularization"},
-        {gui::NodeType::L2Regularization, "L2Regularization"},
-        {gui::NodeType::ElasticNet, "ElasticNet"},
-        {gui::NodeType::Lambda, "Lambda"},
-        {gui::NodeType::Identity, "Identity"},
-        {gui::NodeType::Constant, "Constant"},
-        {gui::NodeType::Parameter, "Parameter"},
-        {gui::NodeType::DatasetInput, "DatasetInput"},
-        {gui::NodeType::DataLoader, "DataLoader"},
-        {gui::NodeType::DataSplit, "DataSplit"},
-        {gui::NodeType::Normalize, "Normalize"},
-        {gui::NodeType::OneHotEncode, "OneHotEncode"},
-        {gui::NodeType::TimeSeriesWindow, "TimeSeriesWindow"},
-        {gui::NodeType::TimeSeriesFeatures, "TimeSeriesFeatures"},
-        {gui::NodeType::TimeSeriesSplit, "TimeSeriesSplit"},
-        {gui::NodeType::TimeSeriesCSV, "TimeSeriesCSV"},
-        {gui::NodeType::LogTransform, "LogTransform"},
-        {gui::NodeType::Differencing, "Differencing"},
-        {gui::NodeType::TimeSeriesDecomposition, "TimeSeriesDecomposition"},
-        {gui::NodeType::ACFNode, "ACFNode"},
-        {gui::NodeType::PACFNode, "PACFNode"},
-        {gui::NodeType::StationarityTest, "StationarityTest"},
-        {gui::NodeType::SeasonalityDetector, "SeasonalityDetector"},
-        {gui::NodeType::ARIMAForecaster, "ARIMAForecaster"},
-        {gui::NodeType::ExponentialSmoothing, "ExponentialSmoothing"},
-    };
-
-    auto it = typeNames.find(type);
-    return it != typeNames.end() ? it->second : "Unknown";
-}
-
-gui::NodeType Executor::stringToNodeType(const std::string& str) const {
-    static const std::map<std::string, gui::NodeType> nameToType = {
-        {"Dense", gui::NodeType::Dense},
-        {"Conv2D", gui::NodeType::Conv2D},
-        {"MaxPool2D", gui::NodeType::MaxPool2D},
-        {"BatchNorm", gui::NodeType::BatchNorm},
-        {"Dropout", gui::NodeType::Dropout},
-        {"ReLU", gui::NodeType::ReLU},
-        {"LSTM", gui::NodeType::LSTM},
-        {"GRU", gui::NodeType::GRU},
-        {"MultiHeadAttention", gui::NodeType::MultiHeadAttention},
-        {"DatasetInput", gui::NodeType::DatasetInput},
-        {"Output", gui::NodeType::Output},
-        {"SequenceTagOutput", gui::NodeType::SequenceTagOutput},
-        {"PairDatasetBuilder", gui::NodeType::PairDatasetBuilder},
-        {"TripletDatasetBuilder", gui::NodeType::TripletDatasetBuilder},
-        {"ContrastiveLoss", gui::NodeType::ContrastiveLoss},
-        {"CosineEmbeddingLoss", gui::NodeType::CosineEmbeddingLoss},
-        {"TripletLoss", gui::NodeType::TripletLoss},
-        {"PairMetrics", gui::NodeType::PairMetrics},
-        {"RetrievalMetrics", gui::NodeType::RetrievalMetrics},
-        {"EmbeddingOutput", gui::NodeType::EmbeddingOutput},
-        {"PairScoreOutput", gui::NodeType::PairScoreOutput},
-        {"TimeSeriesDecomposition", gui::NodeType::TimeSeriesDecomposition},
-        {"ACFNode", gui::NodeType::ACFNode},
-        {"PACFNode", gui::NodeType::PACFNode},
-        {"StationarityTest", gui::NodeType::StationarityTest},
-        {"SeasonalityDetector", gui::NodeType::SeasonalityDetector},
-        {"ARIMAForecaster", gui::NodeType::ARIMAForecaster},
-        {"ExponentialSmoothing", gui::NodeType::ExponentialSmoothing},
-        // Add more as needed
-    };
-
-    auto it = nameToType.find(str);
-    return it != nameToType.end() ? it->second : gui::NodeType::Dense;
+    // The names a .cyxgraph file uses (the node-type import registry), so a query label
+    // matches every node type the Engine has without a second list to keep in step.
+    for (const auto& entry : gui::GetNodeTypeImportNames()) {
+        if (entry.node_type == type) return std::string(entry.name);
+    }
+    return "Unknown";
 }
 
 std::string Executor::linkTypeToString(gui::LinkType type) const {
@@ -1166,17 +997,6 @@ std::string Executor::linkTypeToString(gui::LinkType type) const {
         case gui::LinkType::LossFlow: return "LossFlow";
         default: return "Unknown";
     }
-}
-
-gui::LinkType Executor::stringToLinkType(const std::string& str) const {
-    if (str == "TensorFlow") return gui::LinkType::TensorFlow;
-    if (str == "ResidualSkip") return gui::LinkType::ResidualSkip;
-    if (str == "DenseSkip") return gui::LinkType::DenseSkip;
-    if (str == "AttentionFlow") return gui::LinkType::AttentionFlow;
-    if (str == "GradientFlow") return gui::LinkType::GradientFlow;
-    if (str == "ParameterFlow") return gui::LinkType::ParameterFlow;
-    if (str == "LossFlow") return gui::LinkType::LossFlow;
-    return gui::LinkType::TensorFlow;
 }
 
 const gui::MLNode* Executor::findNodeById(int id) const {
