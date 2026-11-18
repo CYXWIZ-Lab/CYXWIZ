@@ -93,6 +93,7 @@ To write your own nodes in Python or C++, see
 
 | Page | What it covers |
 | --- | --- |
+| [The Training Dashboard](training_dashboard.md) | The run's state, where it ran and on what data, how it ended, the active model and held-out test, Run details, the cards |
 | [Testing a trained model](testing.md) | Running a test on the test split; Results > Test: errors, threshold, calibration, a decision kept with the model |
 | [Seeds and reproducibility](seeds_and_reproducibility.md) | What each seed draws; the same draws on every operating system and device |
 | [The Model window](model_tools.md) | Tools > Model: summary (parameters, multiply-adds, memory), learning-rate range test, Grad-CAM / saliency / Integrated Gradients, training health, projector |

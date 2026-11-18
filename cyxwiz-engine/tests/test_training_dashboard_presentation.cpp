@@ -5,6 +5,7 @@
 #include "core/training_dashboard_presentation.h"
 #include "core/training_progress_estimate.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -161,6 +162,169 @@ int main() {
     for (const auto& r : ins.rows) rising |= r.label == "Rising" && r.value == "validation loss has risen since epoch 6";
     Check(rising, "a validation rise is named with its epoch");
     Check(ins.suggestion_tone == td::Tone::Bad, "and the suggestion warns");
+
+    // The header (B4-4): the finished run in plain words, the codes under Run details.
+    td::HeaderFacts h;
+    h.terminal_status = "completed";
+    h.terminal_reason = "completed_all_epochs";
+    h.route = td::Route{"arrayfire_cpu", "arrayfire_cpu", 0, "", "compatibility", false};
+    h.dataset = "digits_8x8";
+    h.train_rows = 1433;
+    h.validation_rows = 176;
+    h.test_rows = 188;
+    h.samples_per_batch = 128;
+    h.metric_interval = 10;
+    h.active_model_provenance = "restored_best_checkpoint";
+    h.checkpoint_path = "D:\\tmp\\gui129\\nbproj\\checkpoints\\train-1794985565683\\best";
+    h.checkpoint_epoch = 10;
+    h.checkpoint_step = 12;
+    h.has_checkpoint_validation = true;
+    h.checkpoint_val_loss = 0.2554;
+    h.checkpoint_val_accuracy = 0.9261;
+    h.has_test = true;
+    h.test_loss = 0.2220;
+    h.test_accuracy = 0.9415;
+    td::Header head = td::BuildHeader(done, h);
+    Check(head.state == td::RunState::Completed && head.pill == "Completed", "completed");
+    Check(head.status == "All 10 epochs in 2.2s", "status: " + head.status);
+    Check(head.show_progress && head.progress == 1.0, "a full bar");
+    Check(head.where == "Ran on the CPU (ArrayFire CPU) \xC2\xB7 compatibility policy", "where: " + head.where);
+    Check(head.data == "digits_8x8 \xC2\xB7 1,433 training, 176 validation, 188 test rows \xC2\xB7 batches of 128",
+          "data: " + head.data);
+    Check(head.outcome == "Finished: every epoch ran." && head.outcome_tone == td::Tone::Good, "outcome");
+    Check(head.active_model == "Active model: the best validation checkpoint, epoch 10" &&
+              head.active_model_detail == "(validation loss 0.2554, accuracy 92.61%)",
+          "active model: " + head.active_model + " " + head.active_model_detail);
+    Check(head.test == "Held-out test: accuracy 94.15%, loss 0.2220" &&
+              head.test_detail == "(188 rows the model never saw)",
+          "held-out test: " + head.test);
+    Check(head.now.empty(), "no latest batches after the run");
+    const auto row = [](const td::Header& hd, const std::string& key) {
+        for (const auto& r : hd.run_rows)
+            if (r.key == key) return r.value;
+        return std::string();
+    };
+    Check(row(head, "Stop code") == "completed_all_epochs", "the stop code under Run details");
+    Check(row(head, "Checkpoint") == "epoch 10, step 12", "checkpoint epoch and step");
+    Check(row(head, "Path") == h.checkpoint_path, "checkpoint path");
+    Check(row(head, "Batches") == "128 samples each \xC2\xB7 metrics every 10 batches", "batches: " + row(head, "Batches"));
+    Check(row(head, "Last batch loss").empty(), "no last batch loss after the run");
+
+    // Training: epoch 6, batch 10 of 12.
+    td::HeaderFacts live = h;
+    live.terminal_status.clear();
+    live.terminal_reason.clear();
+    live.active_model_provenance.clear();
+    live.checkpoint_path.clear();
+    live.checkpoint_epoch = 0;
+    live.checkpoint_step = 0;
+    live.has_test = false;
+    live.last_batch_loss = 0.5198f;
+    live.tasks = {{"Training Model (Arrow)", 0.55f, ""}, {"Reading digits_8x8", 1.0f, "done"},
+                  {"Cache", 0.1f, "writing"}, {"Fourth", 0.0f, ""}};
+    running.batches_per_second = 204.3;
+    head = td::BuildHeader(running, live);
+    Check(head.pill == "Training" && head.status == "Epoch 6 of 10 \xC2\xB7 batch 10 of 12", "training status: " + head.status);
+    Check(head.where == "Runs on the CPU (ArrayFire CPU) \xC2\xB7 compatibility policy", "runs on: " + head.where);
+    Check(head.now == "Latest batches: loss 0.5287 \xC2\xB7 accuracy 90.70%" &&
+              head.now_detail == "(batch 10 of 12, 204 batches/s)",
+          "latest batches: " + head.now + " " + head.now_detail);
+    Check(std::abs(head.progress - (5.0 + 10.0 / 12.0) / 10.0) < 1e-9, "progress counts the running epoch's batches");
+    Check(head.outcome.empty() && head.active_model.empty() && head.test.empty(), "no outcome while training");
+    Check(row(head, "Last batch loss") == "0.5198", "last batch loss while training");
+    int task_rows = 0;
+    for (const auto& r : head.run_rows) task_rows += r.key == "Engine task";
+    Check(task_rows == 3 && row(head, "Engine tasks") == "and 1 more" &&
+              row(head, "Engine task") == "Training Model (Arrow) \xC2\xB7 55% \xC2\xB7 running",
+          "three engine tasks and the rest counted");
+    live.paused = true;
+    Check(td::BuildHeader(running, live).pill == "Paused", "paused");
+    live.paused = false;
+    live.waiting_for_gpu = "Another run holds the GPU (Cats vs dogs)";
+    head = td::BuildHeader(running, live);
+    Check(head.state == td::RunState::WaitingForGpu && head.status == "Starts when the other run ends" &&
+              head.where.empty(),
+          "waiting for the GPU: no route yet");
+
+    // Early stopped: 7 of 10 epochs, the eighth running when it stopped.
+    td::RunFacts early = Run(7, 0);
+    early.total_seconds = 1.52;
+    early.last_executed_epoch = 7;
+    early.current_epoch = 8;
+    td::HeaderFacts e = h;
+    e.terminal_status = "early_stopped";
+    e.terminal_reason = "validation_loss_plateau_patience_3";
+    head = td::BuildHeader(early, e);
+    Check(head.pill == "Early stopped" && head.status == "7 of 10 epochs in 1.5s, stopped during epoch 8",
+          "early stop status: " + head.status);
+    Check(head.outcome == "Stopped early: the validation loss did not improve for 3 epochs." &&
+              head.outcome_tone == td::Tone::Bad,
+          "early stop outcome: " + head.outcome);
+    Check(std::abs(head.progress - 0.7) < 1e-9, "the bar shows the finished epochs");
+    e.terminal_status = "cancelled";
+    e.terminal_reason = "user_cancelled";
+    head = td::BuildHeader(early, e);
+    Check(head.pill == "Stopped" && head.outcome == "Stopped: you stopped the run before its last epoch.", "stopped by the user");
+    e.terminal_status = "failed";
+    e.terminal_reason = "Out of memory while building batch 3";
+    head = td::BuildHeader(early, e);
+    Check(head.pill == "Failed" && head.outcome == "Failed: Out of memory while building batch 3" &&
+              head.outcome_tone == td::Tone::Error && row(head, "Stop code") == "failed",
+          "a failure's sentence on the surface, its status as the code");
+
+    // A regression run: no accuracy anywhere.
+    td::HeaderFacts reg = h;
+    reg.classification = false;
+    reg.test_mae = 0.3125;
+    head = td::BuildHeader(done, reg);
+    Check(head.test == "Held-out test: loss 0.2220, mean absolute error 0.3125" &&
+              head.active_model_detail == "(validation loss 0.2554)",
+          "regression: " + head.test + " " + head.active_model_detail);
+    // The final state of the run, not a checkpoint.
+    reg.active_model_provenance = "run_final_state";
+    reg.checkpoint_path.clear();
+    reg.checkpoint_epoch = 0;
+    head = td::BuildHeader(done, reg);
+    Check(head.active_model == "Active model: the final state of the run, epoch 10" && head.active_model_detail.empty(),
+          "final state: " + head.active_model);
+
+    // A GPU that failed its check: the run fell back to the CPU.
+    td::HeaderFacts fb = h;
+    fb.route = td::Route{"arrayfire_cuda", "arrayfire_cpu", 0, "", "compatibility", true};
+    head = td::BuildHeader(done, fb);
+    Check(head.where == "Ran on the CPU (ArrayFire CPU) (the chosen CUDA device failed its check) \xC2\xB7 compatibility policy",
+          "fallback: " + head.where);
+    fb.route = td::Route{"arrayfire_cuda", "arrayfire_cuda", 0, "GeForce GTX 1050 Ti", "strict", false};
+    Check(td::BuildHeader(done, fb).where == "Ran on CUDA (GeForce GTX 1050 Ti) \xC2\xB7 strict policy", "a GPU run");
+
+    // Nothing yet; a checkpoint loaded for testing.
+    td::RunFacts none;
+    td::HeaderFacts idle;
+    head = td::BuildHeader(none, idle);
+    Check(head.pill == "Idle" && head.status == "No training run yet" && !head.show_progress, "idle");
+    idle.checkpoint_loaded = true;
+    idle.checkpoint_epoch = 4;
+    idle.checkpoint_path = "best";
+    idle.has_checkpoint_validation = true;
+    idle.checkpoint_val_loss = 0.5;
+    idle.checkpoint_val_accuracy = 0.8;
+    head = td::BuildHeader(none, idle);
+    Check(head.pill == "Model loaded" && head.active_model == "Active model: a checkpoint loaded for testing, epoch 4" &&
+              head.active_model_detail == "(validation loss 0.5000, accuracy 80.00%)",
+          "model loaded: " + head.active_model);
+    td::HeaderFacts prep;
+    prep.preparing = true;
+    prep.preparation_progress = 0.4;
+    head = td::BuildHeader(none, prep);
+    Check(head.pill == "Preparing" && head.show_progress && head.progress == 0.4 &&
+              head.progress_text == "Preparing training...",
+          "preparing");
+    prep.preparing = false;
+    prep.preparation_failed = true;
+    prep.preparation_error = "The label column 'target' is missing.";
+    head = td::BuildHeader(none, prep);
+    Check(head.pill == "Preparation failed" && head.outcome == prep.preparation_error && head.outcome_tone == td::Tone::Error,
+          "preparation failed");
 
     Check(td::Thousands(23145) == "23,145" && td::Thousands(999) == "999" && td::Thousands(1234567) == "1,234,567",
           "thousands");

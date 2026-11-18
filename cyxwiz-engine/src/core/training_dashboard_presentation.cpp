@@ -1,10 +1,12 @@
 #include "training_dashboard_presentation.h"
 
+#include "rl_device_presentation.h"
 #include "training_progress_estimate.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 namespace cyxwiz::training_dashboard {
 
@@ -314,6 +316,275 @@ Insights BuildInsights(const RunFacts& facts) {
     out.suggestion = "Suggested: " + short_word;
     if (!out.rows.empty()) out.rows.push_back({"Suggested", sentence, out.suggestion_tone});
     return out;
+}
+
+namespace {
+
+constexpr const char* kDot = " \xC2\xB7 ";
+
+RunState StateOf(const RunFacts& run, const HeaderFacts& h) {
+    if (run.training && !h.waiting_for_gpu.empty()) return RunState::WaitingForGpu;
+    if (run.training) return h.paused ? RunState::Paused : RunState::Training;
+    if (h.preparation_failed) return RunState::PreparationFailed;
+    if (h.preparing) return RunState::Preparing;
+    if (run.total_seconds > 0.0) {
+        if (h.terminal_status == "early_stopped") return RunState::EarlyStopped;
+        if (h.terminal_status == "cancelled" || h.terminal_status == "stopped") return RunState::Stopped;
+        if (h.terminal_status == "failed") return RunState::Failed;
+        return RunState::Completed;
+    }
+    if (h.checkpoint_loaded) return RunState::ModelLoaded;
+    return RunState::Idle;
+}
+
+const char* PillWord(RunState state) {
+    switch (state) {
+    case RunState::WaitingForGpu: return "Waiting for the GPU";
+    case RunState::Training: return "Training";
+    case RunState::Paused: return "Paused";
+    case RunState::PreparationFailed: return "Preparation failed";
+    case RunState::Preparing: return "Preparing";
+    case RunState::EarlyStopped: return "Early stopped";
+    case RunState::Stopped: return "Stopped";
+    case RunState::Failed: return "Failed";
+    case RunState::Completed: return "Completed";
+    case RunState::ModelLoaded: return "Model loaded";
+    case RunState::Idle: break;
+    }
+    return "Idle";
+}
+
+bool Running(RunState s) { return s == RunState::Training || s == RunState::Paused || s == RunState::WaitingForGpu; }
+bool Ended(RunState s) {
+    return s == RunState::EarlyStopped || s == RunState::Stopped || s == RunState::Failed || s == RunState::Completed;
+}
+
+// A stop code has no spaces ("completed_all_epochs"); a failure's reason is a sentence.
+bool IsCode(const std::string& text) { return !text.empty() && text.find(' ') == std::string::npos; }
+
+// "validation_loss_plateau_patience_3" -> 3; 0 when it is not that code.
+int PlateauPatience(const std::string& reason) {
+    const std::string prefix = "validation_loss_plateau_patience_";
+    if (reason.rfind(prefix, 0) != 0) return 0;
+    return std::atoi(reason.c_str() + prefix.size());
+}
+
+std::string Outcome(RunState state, const HeaderFacts& h, Tone& tone) {
+    switch (state) {
+    case RunState::Completed:
+        tone = Tone::Good;
+        return "Finished: every epoch ran.";
+    case RunState::EarlyStopped: {
+        tone = Tone::Bad;
+        if (const int patience = PlateauPatience(h.terminal_reason))
+            return "Stopped early: the validation loss did not improve for " + Plural(patience, "epoch.", "epochs.");
+        if (h.terminal_reason == "plugin_requested_early_stop") return "Stopped early: a plugin asked the run to stop.";
+        return "Stopped early.";
+    }
+    case RunState::Stopped:
+        tone = Tone::Bad;
+        return h.terminal_reason == "user_cancelled" ? "Stopped: you stopped the run before its last epoch."
+                                                     : "Stopped before the last epoch.";
+    case RunState::Failed:
+        tone = Tone::Error;
+        return h.terminal_reason.empty() ? "Failed." : "Failed: " + h.terminal_reason;
+    case RunState::PreparationFailed:
+        tone = Tone::Error;
+        return h.preparation_error.empty() ? "Training preparation failed." : h.preparation_error;
+    default:
+        return {};
+    }
+}
+
+std::string Place(const Route& r) {
+    if (r.effective_backend == "arrayfire_cpu") return "the CPU (ArrayFire CPU)";
+    const std::string word = rl_device::BackendWord(r.effective_backend);
+    return r.device_name.empty() ? word : word + " (" + r.device_name + ")";
+}
+
+std::string Rows(const HeaderFacts& h) {
+    std::vector<std::string> parts;
+    if (h.train_rows > 0) parts.push_back(Thousands(static_cast<double>(h.train_rows)) + " training");
+    if (h.validation_rows > 0) parts.push_back(Thousands(static_cast<double>(h.validation_rows)) + " validation");
+    if (h.test_rows > 0) parts.push_back(Thousands(static_cast<double>(h.test_rows)) + " test");
+    if (parts.empty()) return {};
+    std::string text;
+    for (size_t i = 0; i < parts.size(); ++i) text += (i == 0 ? "" : ", ") + parts[i];
+    return text + " rows";
+}
+
+}  // namespace
+
+Header BuildHeader(const RunFacts& run, const HeaderFacts& h) {
+    Header out;
+    out.state = StateOf(run, h);
+    out.pill = PillWord(out.state);
+    const bool running = Running(out.state);
+    const bool ended = Ended(out.state);
+
+    // The status line and the progress bar.
+    switch (out.state) {
+    case RunState::WaitingForGpu:
+        out.status = "Starts when the other run ends";
+        out.status_tooltip = h.waiting_for_gpu + "\nStop cancels the run while it waits.";
+        break;
+    case RunState::Training:
+    case RunState::Paused: {
+        const int epoch = std::max(1, run.current_epoch);
+        out.status = "Epoch " + std::to_string(epoch);
+        if (run.total_epochs > 0) out.status += " of " + std::to_string(run.total_epochs);
+        if (run.total_batches > 0 && run.current_batch > 0)
+            out.status += kDot + std::string("batch ") + std::to_string(run.current_batch) + " of " +
+                          std::to_string(run.total_batches);
+        break;
+    }
+    case RunState::Preparing: out.status = "Getting the data and model ready"; break;
+    case RunState::PreparationFailed: out.status = "The data or the model could not be made ready"; break;
+    case RunState::Idle: out.status = "No training run yet"; break;
+    case RunState::ModelLoaded: break;
+    case RunState::EarlyStopped:
+    case RunState::Stopped:
+    case RunState::Failed:
+    case RunState::Completed: {
+        const std::string time = FormatTrainingDuration(run.total_seconds);
+        if (run.total_epochs <= 0) {
+            out.status = "Ran for " + time;
+        } else if (out.state == RunState::Completed && run.last_executed_epoch >= run.total_epochs) {
+            out.status = "All " + Plural(run.total_epochs, "epoch", "epochs") + " in " + time;
+        } else {
+            out.status = std::to_string(run.last_executed_epoch) + " of " +
+                         Plural(run.total_epochs, "epoch", "epochs") + " in " + time;
+            if (run.current_epoch > run.last_executed_epoch)
+                out.status += ", stopped during epoch " + std::to_string(run.current_epoch);
+        }
+        break;
+    }
+    }
+    if (out.state == RunState::Preparing) {
+        out.show_progress = true;
+        out.progress = std::clamp(h.preparation_progress, 0.0, 1.0);
+        out.progress_text = h.preparation_message.empty() ? "Preparing training..." : h.preparation_message;
+    } else if ((running || ended) && run.total_epochs > 0) {
+        out.show_progress = true;
+        if (running) {
+            out.progress = run.total_batches > 0
+                ? TrainingFractionComplete(run.current_epoch, run.current_batch, run.total_batches, run.total_epochs)
+                : static_cast<double>(run.current_epoch) / run.total_epochs;
+        } else {
+            out.progress = static_cast<double>(run.last_executed_epoch) / run.total_epochs;
+        }
+        out.progress = std::clamp(out.progress, 0.0, 1.0);
+        out.progress_tooltip = Format("%.0f%% of all epochs", out.progress * 100.0);
+    }
+
+    // Where it ran and on what data (not while waiting: the route is not known yet).
+    if ((running && out.state != RunState::WaitingForGpu) || ended) {
+        if (h.route && !h.route->effective_backend.empty()) {
+            const Route& r = *h.route;
+            out.where = std::string(running ? "Runs on " : "Ran on ") + Place(r);
+            if (r.fallback && !r.requested_backend.empty())
+                out.where += " (the chosen " + rl_device::BackendWord(r.requested_backend) + " device failed its check)";
+            if (r.policy == "compatibility" || r.policy == "strict") out.where += kDot + r.policy + " policy";
+            out.where_tooltip = r.effective_backend + " device " + std::to_string(r.effective_device_id) +
+                                (r.device_name.empty() ? "" : kDot + r.device_name);
+            if (!r.requested_backend.empty() && r.requested_backend != r.effective_backend)
+                out.where_tooltip += "\nChosen: " + r.requested_backend;
+        }
+        std::vector<std::string> data;
+        if (!h.dataset.empty()) data.push_back(h.dataset);
+        if (const std::string rows = Rows(h); !rows.empty()) data.push_back(rows);
+        if (h.samples_per_batch > 0) data.push_back("batches of " + Thousands(h.samples_per_batch));
+        for (size_t i = 0; i < data.size(); ++i) out.data += (i == 0 ? "" : kDot) + data[i];
+    }
+
+    // While it trains: the latest batches of the epoch that runs.
+    if (out.state == RunState::Training || out.state == RunState::Paused) {
+        const double finished = run.train_loss_epochs.Empty() ? 0.0 : run.train_loss_epochs.x.back();
+        const auto fresh = [&](const std::optional<Point>& p) { return p && p->x > finished + 1e-9; };
+        if (fresh(run.latest_loss_point)) {
+            out.now = "Latest batches: loss " + Format("%.4f", run.latest_loss_point->y);
+            if (fresh(run.latest_accuracy_point))
+                out.now += kDot + std::string("accuracy ") + Format("%.2f%%", run.latest_accuracy_point->y);
+            if (run.total_batches > 0 && run.current_batch > 0) {
+                out.now_detail = "(batch " + std::to_string(run.current_batch) + " of " +
+                                 std::to_string(run.total_batches);
+                if (run.batches_per_second > 0.0)
+                    out.now_detail += ", " + Format(run.batches_per_second >= 10.0 ? "%.0f" : "%.1f",
+                                                    run.batches_per_second) + " batches/s";
+                out.now_detail += ")";
+            }
+        }
+    }
+
+    out.outcome = Outcome(out.state, h, out.outcome_tone);
+
+    // The active model, once no run trains.
+    if (!running && out.state != RunState::Preparing) {
+        const bool loaded = out.state == RunState::ModelLoaded || h.active_model_provenance == "loaded_checkpoint_for_testing";
+        const bool restored = h.active_model_provenance == "restored_best_checkpoint" ||
+                              (h.active_model_provenance.empty() && h.checkpoint_epoch > 0 && !h.checkpoint_path.empty());
+        const std::string epoch = h.checkpoint_epoch > 0 ? ", epoch " + std::to_string(h.checkpoint_epoch) : "";
+        if (loaded) {
+            out.active_model = "Active model: a checkpoint loaded for testing" + epoch;
+        } else if (restored) {
+            out.active_model = "Active model: the best validation checkpoint" + epoch;
+        } else if (ended && (!h.active_model_provenance.empty() || !h.checkpoint_path.empty())) {
+            out.active_model = "Active model: the final state of the run";
+            if (run.last_executed_epoch > 0) out.active_model += ", epoch " + std::to_string(run.last_executed_epoch);
+        }
+        if ((loaded || restored) && h.checkpoint_epoch > 0 && h.has_checkpoint_validation) {
+            out.active_model_detail = "(validation loss " + Format("%.4f", h.checkpoint_val_loss);
+            if (h.classification) out.active_model_detail += ", accuracy " + Format("%.2f%%", h.checkpoint_val_accuracy * 100.0);
+            out.active_model_detail += ")";
+        }
+    }
+    if (ended && h.has_test) {
+        if (h.classification) {
+            out.test = "Held-out test: accuracy " + Format("%.2f%%", h.test_accuracy * 100.0) + ", loss " +
+                       Format("%.4f", h.test_loss);
+        } else {
+            out.test = "Held-out test: loss " + Format("%.4f", h.test_loss);
+            if (h.test_mae > 0.0) out.test += ", mean absolute error " + Format("%.4g", h.test_mae);
+        }
+        if (h.test_rows > 0) out.test_detail = "(" + Thousands(static_cast<double>(h.test_rows)) + " rows the model never saw)";
+    }
+
+    // Run details > The run.
+    if (ended) {
+        const std::string code = IsCode(h.terminal_reason) ? h.terminal_reason : h.terminal_status;
+        if (!code.empty()) out.run_rows.push_back({"Stop code", code});
+    }
+    if (h.checkpoint_epoch > 0 || h.checkpoint_step > 0) {
+        std::string checkpoint;
+        if (h.checkpoint_epoch > 0) checkpoint = "epoch " + std::to_string(h.checkpoint_epoch);
+        if (h.checkpoint_step > 0) checkpoint += (checkpoint.empty() ? "" : ", ") + std::string("step ") + std::to_string(h.checkpoint_step);
+        out.run_rows.push_back({"Checkpoint", checkpoint});
+    }
+    if (!h.checkpoint_path.empty()) out.run_rows.push_back({"Path", h.checkpoint_path});
+    if ((running || ended) && h.samples_per_batch > 0) {
+        std::string batches = Plural(h.samples_per_batch, "sample", "samples") + " each";
+        if (h.batches_per_update > 1) batches += kDot + std::string("an update every ") + std::to_string(h.batches_per_update) + " batches";
+        batches += kDot + (h.metric_interval > 0 ? "metrics every " + Plural(h.metric_interval, "batch", "batches")
+                                                 : std::string("metrics at the first and last batch"));
+        out.run_rows.push_back({"Batches", batches});
+    }
+    if (running && run.current_batch > 0) out.run_rows.push_back({"Last batch loss", Format("%.4f", h.last_batch_loss)});
+    for (DetailRow& row : TaskRows(h.tasks)) out.run_rows.push_back(std::move(row));
+    return out;
+}
+
+std::vector<DetailRow> TaskRows(const std::vector<EngineTask>& tasks) {
+    std::vector<DetailRow> rows;
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        if (i == 3) {
+            rows.push_back({"Engine tasks", "and " + std::to_string(tasks.size() - 3) + " more"});
+            break;
+        }
+        const EngineTask& t = tasks[i];
+        rows.push_back({"Engine task", t.name + kDot + Format("%.0f%%", t.progress * 100.0) + kDot +
+                                           (t.status.empty() ? std::string("running") : t.status)});
+    }
+    return rows;
 }
 
 }  // namespace cyxwiz::training_dashboard

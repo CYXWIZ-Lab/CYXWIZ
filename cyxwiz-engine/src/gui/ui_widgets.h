@@ -62,6 +62,12 @@ void StatusLegend(std::initializer_list<Status> statuses);
 void Chip(const char* text, const ImVec4& colour);
 float ChipWidth(const char* text);
 
+// Text wrapped at the right edge of the area, also inside a word that is
+// wider than the line (a path, a cache key): there it breaks after a \ or /
+// when it can, else between characters. ImGui's wrap leaves such a word
+// running past the edge. One item (a group), so hover and click see all of it.
+void TextWrapAnywhere(const std::string& text, const ImVec4& colour);
+
 // Shown after the usual delay, also over disabled items, wrapped at 420 px.
 void Tooltip(const char* text);
 // A muted "(?)" that shows `text` on hover.

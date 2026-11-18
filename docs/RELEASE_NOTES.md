@@ -16,6 +16,16 @@ private Data Studio tickets (`tofix*/track*`).
 - **Dock back showed nothing** when the window had been alone in its place
   (its place left with it): it docked into the dock space's root and was not
   drawn. It comes back as a tab in the middle of the main window.
+- **The Training Dashboard's header says where the run ran and how it
+  ended.** "Ran on the CPU (ArrayFire CPU) · compatibility policy"; the
+  dataset with its training, validation and test rows and the batch size;
+  "Finished: every epoch ran." (or why it stopped); the active model with its
+  validation figures; and the held-out test ("accuracy 94.15%, loss 0.2220
+  (188 rows the model never saw)"). The stop code, checkpoint step and path,
+  Execution Truth's rows, the data preparation's file, cache key and memory
+  figures and the engine tasks moved under **Run details** (nothing was
+  dropped). The run's buttons wrap in a narrow dashboard instead of being cut
+  off, and read Pause / Resume, Stop and More. Long paths wrap.
 - **The Training Dashboard's cards show the finished epoch.** They showed the
   last batch window (0.2322 while epoch 10 ended at 0.2223), and the
   validation card's gap was measured against it. While an epoch runs, the

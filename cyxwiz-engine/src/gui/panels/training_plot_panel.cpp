@@ -204,7 +204,7 @@ bool OpenDirectoryInFileBrowser(const std::string& directory) {
 #endif
 }
 
-// The training warnings list is its only user.
+// The header and Run details read the execution trace (training builds only).
 #ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
 const char* ClassifyTrainingWarning(const std::string& text) {
     std::string lower = text;
@@ -250,12 +250,6 @@ bool IsPinMemoryTransferWarning(const std::string& warning) {
     return warning.rfind("DataLoader.PinMemoryTransfer", 0) == 0;
 }
 
-bool HasResidencyVerdict(const TrainingTraceSummary& trace) {
-    return !trace.residency_verdict.empty() &&
-           trace.residency_verdict != "unavailable" &&
-           trace.residency_verdict != "in_progress";
-}
-
 const char* ResidencyVerdictDisplayName(const std::string& verdict) {
     if (verdict == "strict_arrayfire_declared_boundaries") {
         return "Strict ArrayFire residency";
@@ -272,25 +266,6 @@ const char* ResidencyVerdictDisplayName(const std::string& verdict) {
     return verdict.empty() || verdict == "unavailable"
         ? "Not available"
         : verdict.c_str();
-}
-
-ImVec4 ResidencyVerdictColor(const std::string& verdict) {
-    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
-    if (verdict == "strict_arrayfire_declared_boundaries") {
-        return t.success;
-    }
-    if (verdict == "terminal_without_residency_pass") {
-        return t.error;
-    }
-    return t.warning;
-}
-
-void RenderExecutionTruthRow(const char* label, const std::string& value) {
-    ImGui::TableNextRow();
-    ImGui::TableNextColumn();
-    ImGui::TextDisabled("%s", label);
-    ImGui::TableNextColumn();
-    ImGui::TextWrapped("%s", value.empty() ? "Not recorded" : value.c_str());
 }
 
 std::string FormatRouteQualification(
@@ -311,7 +286,141 @@ std::string FormatRouteQualification(
     }
     return value;
 }
+
+// The latest execution trace, read at most every 500 ms: LatestTrace copies
+// the whole trace (events, timings) and may read the saved one from disk; it
+// ran every frame with data_mutex_ held (TOFIX134 P0 item 8). UI thread only.
+const TrainingTraceSummary& LatestTraceCached() {
+    static TrainingTraceSummary cached;
+    static std::chrono::steady_clock::time_point read_at{};
+    const auto now = std::chrono::steady_clock::now();
+    if (now - read_at > std::chrono::milliseconds(500)) {
+        cached = TrainingTraceCollector::LatestTrace();
+        read_at = now;
+    }
+    return cached;
+}
+
+std::optional<training_dashboard::Route> TraceRoute(const TrainingTraceSummary& trace) {
+    if (trace.effective_backend.empty()) return std::nullopt;
+    training_dashboard::Route route;
+    route.requested_backend = trace.requested_backend;
+    route.effective_backend = trace.effective_backend;
+    route.effective_device_id = trace.effective_device_id;
+    route.device_name = trace.effective_device_name;
+    route.policy = trace.execution_policy;
+    route.fallback = trace.selection_fallback_applied;
+    return route;
+}
+
+// Run details > Where it ran: Execution Truth's rows, the placement stages
+// and the latest pin-memory transfer.
+std::vector<training_dashboard::DetailRow> TraceRows(const TrainingTraceSummary& trace) {
+    std::vector<training_dashboard::DetailRow> rows;
+    if (!trace.available && trace.run_id.empty()) return rows;
+    const auto add = [&rows](const char* key, const std::string& value) {
+        rows.push_back({key, value.empty() ? std::string("Not recorded") : value});
+    };
+    const bool has_truth = !trace.requested_backend.empty() || !trace.effective_backend.empty() ||
+                           !trace.placement_fingerprint.empty();
+    if (has_truth || !trace.residency_verdict.empty()) {
+        add("Residency", ResidencyVerdictDisplayName(trace.residency_verdict));
+        if (!trace.residency_verdict.empty() && trace.residency_verdict != "unavailable")
+            add("Verdict code", trace.residency_verdict);
+        add("Requested backend", trace.requested_backend);
+        add("Requested qualification",
+            FormatRouteQualification(trace.requested_qualification_evidence_available, trace.requested_route_qualified,
+                                     trace.requested_qualification_matrix_id, trace.requested_qualification_message));
+        std::string effective = trace.effective_backend;
+        if (!trace.effective_device_name.empty()) effective += " | " + trace.effective_device_name;
+        if (!trace.effective_backend.empty()) effective += " | device " + std::to_string(trace.effective_device_id);
+        add("Effective backend", effective);
+        add("Effective qualification",
+            FormatRouteQualification(trace.effective_qualification_evidence_available, trace.effective_route_qualified,
+                                     trace.effective_qualification_matrix_id, trace.effective_qualification_message));
+        std::string identity = trace.identity_confidence;
+        if (!trace.physical_fingerprint.empty()) identity += (identity.empty() ? "" : " | ") + trace.physical_fingerprint;
+        add("Physical identity", identity);
+        add("Execution preflight", trace.execution_validated
+                                       ? std::string("Validated")
+                                       : (trace.preflight_stage.empty() ? std::string("Not recorded")
+                                                                        : "Not validated | " + trace.preflight_stage));
+        if (trace.selection_fallback_applied) add("Selection fallback", "Applied to ArrayFire CPU");
+        add("Execution policy", RecordedExecutionPolicyDisplayName(trace.execution_policy));
+        std::string placement = trace.placement_fingerprint;
+        if (!placement.empty()) placement += " | " + std::to_string(trace.placement_entry_count) + " entries";
+        add("Placement", placement);
+        add("Host boundaries", std::to_string(trace.declared_output_boundary_count));
+        add("Transfers", std::to_string(trace.transfer_event_count) + " events | " +
+                             FormatTraceBytes(trace.transfer_known_bytes));
+        add("Transfer reasons", trace.transfer_summary.empty() ? "None recorded" : trace.transfer_summary);
+        add("Synchronizations", std::to_string(trace.synchronization_event_count) + " events | " +
+                                    FormatTraceBytes(trace.synchronization_known_bytes));
+        add("Sync reasons", trace.synchronization_summary.empty() ? "None recorded" : trace.synchronization_summary);
+        if (!trace.placement_summary.empty()) add("Placement stages", trace.placement_summary);
+    }
+    if (const TrainingTraceEvent* transfer = FindLatestPinMemoryTransferEvent(trace)) {
+        add("Pin-memory transfer", transfer->status == "warning" ? "with a warning" : "done");
+        add("Transfer mode", transfer->transfer_mode);
+        add("Transfer reason", transfer->transfer_reason);
+        add("Transfer backend", transfer->transfer_backend);
+        add("Transfer batch size", std::to_string(transfer->transfer_batch_size));
+    }
+    return rows;
+}
+
+// The trace's latest warnings (up to 3) as "Class: text", on the surface.
+std::vector<std::string> TraceWarnings(const TrainingTraceSummary& trace) {
+    std::vector<std::string> lines;
+    const bool has_transfer = FindLatestPinMemoryTransferEvent(trace) != nullptr;
+    const int start = std::max(0, static_cast<int>(trace.warnings.size()) - 3);
+    for (int i = start; i < static_cast<int>(trace.warnings.size()); ++i) {
+        const std::string& warning = trace.warnings[static_cast<size_t>(i)];
+        if (has_transfer && IsPinMemoryTransferWarning(warning)) continue;
+        lines.push_back(std::string(ClassifyTrainingWarning(warning)) + ": " + warning);
+    }
+    return lines;
+}
 #endif
+
+// One group of Run details: its title and key / value rows, the key column
+// as wide as its longest key, the values wrapped.
+void DetailGroup(const char* title, const std::vector<training_dashboard::DetailRow>& rows) {
+    if (rows.empty()) return;
+    const cyxwiz::ui::Tokens& t = cyxwiz::ui::CurrentTokens();
+    cyxwiz::ui::SettingsSection(title);
+    float key_width = 0.0f;
+    for (const auto& row : rows) key_width = std::max(key_width, ImGui::CalcTextSize(row.key.c_str()).x);
+    key_width = std::min(key_width, ImGui::GetContentRegionAvail().x * 0.45f);
+    if (!ImGui::BeginTable(title, 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoSavedSettings)) return;
+    ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthFixed, key_width);
+    ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
+    for (const auto& row : rows) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(t.text_dim, "%s", row.key.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::TableNextColumn();
+        cyxwiz::ui::TextWrapAnywhere(row.value, t.text);  // paths and cache keys break too
+    }
+    ImGui::EndTable();
+}
+
+// A line and its muted tail ("(188 rows the model never saw)"): together
+// when they fit, the tail on the next line otherwise; both wrap.
+void LineWithTail(const std::string& text, const ImVec4& colour, const std::string& tail, const ImVec4& tail_colour) {
+    if (text.empty()) return;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(colour, "%s", text.c_str());
+    if (!tail.empty()) {
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float end = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + spacing;
+        if (end + ImGui::CalcTextSize(tail.c_str()).x <= ImGui::GetWindowContentRegionMax().x) ImGui::SameLine();
+        ImGui::TextColored(tail_colour, "%s", tail.c_str());
+    }
+    ImGui::PopTextWrapPos();
+}
 
 } // namespace
 
@@ -409,9 +518,11 @@ void TrainingPlotPanel::Render() {
         }
     }
 
+    // What the header, the cards and the insights read, once a frame
+    // (data_mutex_ is held).
+    facts_ = DashboardFacts();
     // Header: run status, progress and run actions (always visible).
     RenderTrainingStatus();
-    RenderActiveTaskSummary();
 
     // Generations (TOFIX159 A4): the run's samples, beside the metrics.
     if (!generation_folder_.empty()) {
@@ -437,8 +548,6 @@ void TrainingPlotPanel::Render() {
         }
     }
 
-    // What the cards and the insights read, once a frame (data_mutex_ is held).
-    facts_ = DashboardFacts();
     // Metric cards: latest values, change and timing.
     RenderKpiCards();
     if (health_notice_) {
@@ -519,9 +628,8 @@ void TrainingPlotPanel::Render() {
         }
     }
 
-    // Run details below the charts: data preparation and execution truth.
+    // Data preparation below the charts (its details are under Run details).
     RenderMaterializationSummary();
-    RenderTrainingWarningSummary();
 
     if (!has_data) {
         RenderEmptyState();
@@ -814,6 +922,9 @@ void TrainingPlotPanel::ClearLocked() {
     checkpoint_val_loss_ = 0.0f;
     checkpoint_val_accuracy_ = 0.0f;
     active_checkpoint_loaded_ = false;
+    run_dataset_.clear();
+    run_train_rows_ = run_validation_rows_ = run_test_rows_ = 0;
+    has_test_metrics_ = false;
     epoch_times_.clear();
 }
 
@@ -837,6 +948,7 @@ void TrainingPlotPanel::SetTrainingState(bool is_training, int current_epoch, in
         active_model_provenance_.clear();
         has_checkpoint_validation_metrics_ = false;
         active_checkpoint_loaded_ = false;
+        has_test_metrics_ = false;
         total_training_time_ = 0.0f;
     }
     current_epoch_ = current_epoch;
@@ -885,6 +997,7 @@ void TrainingPlotPanel::SetTrainingComplete(float total_time_seconds,
         ? "run_final_state"
         : "restored_best_checkpoint";
     active_checkpoint_loaded_ = false;
+    has_test_metrics_ = false;
 }
 
 void TrainingPlotPanel::SetTrainingComplete(
@@ -914,6 +1027,24 @@ void TrainingPlotPanel::SetTrainingComplete(
     checkpoint_val_loss_ = metrics.val_loss;
     checkpoint_val_accuracy_ = metrics.val_accuracy;
     active_checkpoint_loaded_ = false;
+    if (metrics.train_sample_count > 0) {
+        run_train_rows_ = metrics.train_sample_count;
+        run_validation_rows_ = metrics.val_sample_count;
+        run_test_rows_ = metrics.test_sample_count;
+    }
+    has_test_metrics_ = metrics.has_test_metrics;
+    test_loss_ = metrics.test_loss;
+    test_accuracy_ = metrics.test_accuracy;
+    test_mae_ = metrics.test_mae;
+}
+
+void TrainingPlotPanel::SetRunData(const std::string& dataset, size_t train_rows, size_t validation_rows,
+                                   size_t test_rows) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    run_dataset_ = dataset;
+    run_train_rows_ = train_rows;
+    run_validation_rows_ = validation_rows;
+    run_test_rows_ = test_rows;
 }
 
 void TrainingPlotPanel::SetGenerationPreviewFolder(const std::filesystem::path& folder) {
@@ -1064,6 +1195,9 @@ void TrainingPlotPanel::SetPreparationState(bool is_preparing,
         checkpoint_step_ = 0;
         active_model_provenance_.clear();
         active_checkpoint_loaded_ = false;
+        run_dataset_.clear();
+        run_train_rows_ = run_validation_rows_ = run_test_rows_ = 0;
+        has_test_metrics_ = false;
     } else {
         // Preparation over: a word-vector run it trained that never finished
         // was stopped with it.
@@ -1824,32 +1958,11 @@ void TrainingPlotPanel::RenderSequenceMetricsSummary() {
 
 void TrainingPlotPanel::RenderActiveTaskSummary() {
 #ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
-    auto tasks = AsyncTaskManager::Instance().GetActiveTasks();
-    if (tasks.empty()) {
-        return;
+    std::vector<training_dashboard::EngineTask> tasks;
+    for (const auto& task : AsyncTaskManager::Instance().GetActiveTasks()) {
+        tasks.push_back({task.name, task.progress, task.status_message});
     }
-
-    ImGui::Spacing();
-    ImGui::TextDisabled("Active engine tasks:");
-    int rendered = 0;
-    for (const auto& task : tasks) {
-        if (rendered >= 3) {
-            ImGui::TextDisabled("+ %d more task(s)",
-                                static_cast<int>(tasks.size()) - rendered);
-            break;
-        }
-
-        ImGui::BulletText("%s", task.name.c_str());
-        ImGui::SameLine(220);
-        ImGui::ProgressBar(task.progress, ImVec2(160, 0));
-        ImGui::SameLine();
-        if (!task.status_message.empty()) {
-            ImGui::TextDisabled("%s", task.status_message.c_str());
-        } else {
-            ImGui::TextDisabled("running");
-        }
-        ++rendered;
-    }
+    DetailGroup("Engine tasks", training_dashboard::TaskRows(tasks));
 #endif
 }
 
@@ -2103,7 +2216,7 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
         ImGui::PopStyleColor();
     }
 
-    // Cache usage and the Details disclosure.
+    // Cache usage.
     ImGui::Spacing();
     if (materialization_cache_entries_ >= 0) {
         ImGui::TextColored(c.muted, "Prepared-data cache");
@@ -2121,100 +2234,11 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
                                materialization_pruned_entries_,
                                FormatTraceBytes(materialization_pruned_bytes_).c_str());
         }
-        ImGui::SameLine();
-    }
-    {
-        const char* label = materialization_details_open_ ? "Hide details" : "Details";
-        const float width = ImGui::CalcTextSize(label).x;
-        if (materialization_cache_entries_ < 0) {
-            ImGui::NewLine();
-            ImGui::SameLine();
-        }
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
-                                      ImGui::GetWindowContentRegionMax().x - width));
-        ImGui::TextColored(c.accent_text, "%s", label);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        }
-        if (ImGui::IsItemClicked()) {
-            materialization_details_open_ = !materialization_details_open_;
-        }
     }
     if (!materialization_clear_message_.empty()) {
         ImGui::TextColored(c.faint, "%s", materialization_clear_message_.c_str());
     }
-
-    if (materialization_details_open_) {
-        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
-        if (ImGui::BeginTable("##dash_prep_details", 2,
-                              ImGuiTableFlags_SizingStretchProp |
-                                  ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 170.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            const auto row = [&](const char* label, const std::string& value) {
-                if (value.empty()) return;
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(c.muted, "%s", label);
-                ImGui::TableNextColumn();
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextUnformatted(value.c_str());
-                ImGui::PopTextWrapPos();
-            };
-            if (!status.empty()) {
-                row("Status", std::string(MaterializationStatusDisplayName(status)) +
-                                  " (" + status + ")");
-            }
-            if (latest && !latest->node_name.empty()) row("Node", latest->node_name);
-            row("Output dataset", materialization_output_dataset_);
-            if (materialization_operators_applied_ > 0) {
-                row("Operators applied", std::to_string(materialization_operators_applied_));
-            }
-            row("Cache key", materialization_cache_key_);
-            row("Prepared data file", materialization_cache_artifact_path_);
-            row("Manifest", materialization_cache_manifest_path_);
-            row("Cache folder", materialization_cache_directory_);
-            if (latest) {
-                if (latest->estimated_memory_bytes > 0) {
-                    row("Estimated memory", FormatTraceBytes(latest->estimated_memory_bytes));
-                }
-                if (latest->available_memory_bytes > 0) {
-                    row("Available RAM / safe budget",
-                        FormatTraceBytes(latest->available_memory_bytes) + " / " +
-                            FormatTraceBytes(latest->safe_memory_budget_bytes));
-                }
-                if (latest->process_memory_detected) {
-                    row("Process resident / growth",
-                        FormatTraceBytes(latest->process_resident_memory_bytes) + " / +" +
-                            FormatTraceBytes(latest->process_resident_growth_bytes));
-                    if (latest->process_private_memory_bytes > 0) {
-                        row(latest->process_private_memory_name.empty()
-                                ? "Process private memory"
-                                : ("Process " + latest->process_private_memory_name).c_str(),
-                            FormatTraceBytes(latest->process_private_memory_bytes));
-                    }
-                    row("Memory note",
-                        "Process RAM; ArrayFire device memory is reported separately.");
-                }
-                row("Memory risk", latest->memory_risk_level);
-                if (!latest->status.empty() && latest->status != "running") {
-                    row("Decision status", latest->status);
-                }
-                if (latest->total_items > 0) {
-                    row("Work", std::to_string(latest->processed_items) + " / " +
-                                    std::to_string(latest->total_items));
-                }
-            }
-            row("Rebuild reason", materialization_rebuild_reason_);
-            if (materialization_cache_limit_bytes_ > 0) {
-                row("Cache limit",
-                    FormatTraceBytes(materialization_cache_limit_bytes_) +
-                        "; least recently used prepared data is removed first");
-            }
-            ImGui::EndTable();
-        }
-        ImGui::PopStyleColor();
-    }
+    ImGui::TextColored(c.faint, "The file, cache key and memory figures are under Run details.");
     EndDashCard();
 
     // Clear confirmation.
@@ -2261,211 +2285,55 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
     }
 }
 
-void TrainingPlotPanel::RenderTrainingWarningSummary() {
-#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
-    // LatestTrace copies the whole trace (events, timings) and may read the
-    // saved one from disk; it ran every frame with data_mutex_ held
-    // (TOFIX134 P0 item 8). UI thread only.
-    static TrainingTraceSummary cached_trace;
-    static std::chrono::steady_clock::time_point trace_read_at{};
-    const auto now = std::chrono::steady_clock::now();
-    if (now - trace_read_at > std::chrono::milliseconds(500)) {
-        cached_trace = TrainingTraceCollector::LatestTrace();
-        trace_read_at = now;
+std::vector<training_dashboard::DetailRow> TrainingPlotPanel::PreparationRows() const {
+    std::vector<training_dashboard::DetailRow> rows;
+    if (materialization_events_.empty() && materialization_notice_.empty()) return rows;
+    const MaterializationProgress* latest =
+        materialization_events_.empty() ? nullptr : &materialization_events_.back();
+    const auto row = [&rows](const std::string& key, const std::string& value) {
+        if (!value.empty()) rows.push_back({key, value});
+    };
+    if (!materialization_status_.empty()) {
+        row("Status", std::string(MaterializationStatusDisplayName(materialization_status_)) + " (" +
+                          materialization_status_ + ")");
     }
-    const auto& trace = cached_trace;
-    if (!trace.available && trace.run_id.empty()) {
-        return;
+    if (latest) row("Node", latest->node_name);
+    row("Output dataset", materialization_output_dataset_);
+    if (materialization_operators_applied_ > 0) {
+        row("Operators applied", std::to_string(materialization_operators_applied_));
     }
-
-    const TrainingTraceEvent* transfer = FindLatestPinMemoryTransferEvent(trace);
-    const bool has_execution_truth =
-        !trace.requested_backend.empty() ||
-        !trace.effective_backend.empty() ||
-        !trace.placement_fingerprint.empty();
-    if (!transfer && trace.warnings.empty() &&
-        !HasResidencyVerdict(trace) && !has_execution_truth) {
-        return;
-    }
-
-    ImGui::Spacing();
-    bool truth_open = false;
-    if (has_execution_truth || !trace.residency_verdict.empty() || transfer) {
-        std::string header = "Execution Truth";
-        std::string summary = trace.effective_backend;
-        if (!trace.residency_verdict.empty()) {
-            summary += (summary.empty() ? "" : ", ") + trace.residency_verdict;
+    row("Cache key", materialization_cache_key_);
+    row("Prepared data file", materialization_cache_artifact_path_);
+    row("Manifest", materialization_cache_manifest_path_);
+    row("Cache folder", materialization_cache_directory_);
+    if (latest) {
+        if (latest->estimated_memory_bytes > 0) row("Estimated memory", FormatTraceBytes(latest->estimated_memory_bytes));
+        if (latest->available_memory_bytes > 0) {
+            row("Available RAM / safe budget", FormatTraceBytes(latest->available_memory_bytes) + " / " +
+                                                   FormatTraceBytes(latest->safe_memory_budget_bytes));
         }
-        if (!summary.empty()) {
-            header += "  (" + summary + ")";
+        if (latest->process_memory_detected) {
+            row("Process resident / growth", FormatTraceBytes(latest->process_resident_memory_bytes) + " / +" +
+                                                 FormatTraceBytes(latest->process_resident_growth_bytes));
+            if (latest->process_private_memory_bytes > 0) {
+                row(latest->process_private_memory_name.empty() ? std::string("Process private memory")
+                                                                : "Process " + latest->process_private_memory_name,
+                    FormatTraceBytes(latest->process_private_memory_bytes));
+            }
+            row("Memory note", "Process RAM; ArrayFire device memory is reported separately.");
         }
-        header += "###training_execution_truth_section";
-        truth_open = ImGui::CollapsingHeader(header.c_str());
-    }
-    if (truth_open && (has_execution_truth || !trace.residency_verdict.empty())) {
-        if (ImGui::BeginTable(
-                "##training_execution_truth",
-                2,
-                ImGuiTableFlags_SizingStretchProp |
-                    ImGuiTableFlags_BordersInnerH |
-                    ImGuiTableFlags_RowBg)) {
-            ImGui::TableSetupColumn(
-                "Field", ImGuiTableColumnFlags_WidthFixed, 155.0f);
-            ImGui::TableSetupColumn(
-                "Value", ImGuiTableColumnFlags_WidthStretch);
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextDisabled("Residency");
-            ImGui::TableNextColumn();
-            ImGui::TextColored(
-                ResidencyVerdictColor(trace.residency_verdict),
-                "%s",
-                ResidencyVerdictDisplayName(trace.residency_verdict));
-            if (!trace.residency_verdict.empty() &&
-                trace.residency_verdict != "unavailable") {
-                RenderExecutionTruthRow("Verdict code",
-                                        trace.residency_verdict);
-            }
-
-            RenderExecutionTruthRow("Requested backend",
-                                    trace.requested_backend);
-            RenderExecutionTruthRow(
-                "Requested qualification",
-                FormatRouteQualification(
-                    trace.requested_qualification_evidence_available,
-                    trace.requested_route_qualified,
-                    trace.requested_qualification_matrix_id,
-                    trace.requested_qualification_message));
-
-            std::string effective = trace.effective_backend;
-            if (!trace.effective_device_name.empty()) {
-                effective += " | " + trace.effective_device_name;
-            }
-            if (!trace.effective_backend.empty()) {
-                effective += " | device " +
-                    std::to_string(trace.effective_device_id);
-            }
-            RenderExecutionTruthRow("Effective backend", effective);
-            RenderExecutionTruthRow(
-                "Effective qualification",
-                FormatRouteQualification(
-                    trace.effective_qualification_evidence_available,
-                    trace.effective_route_qualified,
-                    trace.effective_qualification_matrix_id,
-                    trace.effective_qualification_message));
-            std::string identity = trace.identity_confidence;
-            if (!trace.physical_fingerprint.empty()) {
-                if (!identity.empty()) {
-                    identity += " | ";
-                }
-                identity += trace.physical_fingerprint;
-            }
-            RenderExecutionTruthRow("Physical identity", identity);
-            RenderExecutionTruthRow(
-                "Execution preflight",
-                trace.execution_validated
-                    ? "Validated"
-                    : (trace.preflight_stage.empty()
-                           ? "Not recorded"
-                           : "Not validated | " + trace.preflight_stage));
-            if (trace.selection_fallback_applied) {
-                RenderExecutionTruthRow(
-                    "Selection fallback",
-                    "Applied to ArrayFire CPU");
-            }
-            RenderExecutionTruthRow(
-                "Execution policy",
-                RecordedExecutionPolicyDisplayName(trace.execution_policy));
-
-            std::string placement = trace.placement_fingerprint;
-            if (!placement.empty()) {
-                placement += " | " +
-                    std::to_string(trace.placement_entry_count) +
-                    " entries";
-            }
-            RenderExecutionTruthRow("Placement", placement);
-            RenderExecutionTruthRow(
-                "Host boundaries",
-                std::to_string(trace.declared_output_boundary_count));
-            RenderExecutionTruthRow(
-                "Transfers",
-                std::to_string(trace.transfer_event_count) + " events | " +
-                    FormatTraceBytes(trace.transfer_known_bytes));
-            RenderExecutionTruthRow(
-                "Transfer reasons",
-                trace.transfer_summary.empty()
-                    ? "None recorded"
-                    : trace.transfer_summary);
-            RenderExecutionTruthRow(
-                "Synchronizations",
-                std::to_string(trace.synchronization_event_count) +
-                    " events | " +
-                    FormatTraceBytes(trace.synchronization_known_bytes));
-            RenderExecutionTruthRow(
-                "Sync reasons",
-                trace.synchronization_summary.empty()
-                    ? "None recorded"
-                    : trace.synchronization_summary);
-            ImGui::EndTable();
-        }
-
-        if (!trace.placement_summary.empty() &&
-            ImGui::TreeNodeEx(
-                "Placement stages",
-                ImGuiTreeNodeFlags_SpanAvailWidth)) {
-            ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-            ImGui::TextWrapped("%s", trace.placement_summary.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::TreePop();
+        row("Memory risk", latest->memory_risk_level);
+        if (latest->status != "running") row("Decision status", latest->status);
+        if (latest->total_items > 0) {
+            row("Work", std::to_string(latest->processed_items) + " / " + std::to_string(latest->total_items));
         }
     }
-
-    if (truth_open && transfer) {
-        ImGui::SeparatorText("Transfer Detail");
-        const ImVec4 color = transfer->status == "warning"
-            ? cyxwiz::ui::CurrentTokens().warning
-            : cyxwiz::ui::CurrentTokens().success;
-        ImGui::TextColored(color, "Pin-memory transfer");
-        if (ImGui::BeginTable(
-                "##pin_memory_transfer_detail",
-                2,
-                ImGuiTableFlags_SizingStretchProp |
-                    ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn(
-                "Field", ImGuiTableColumnFlags_WidthFixed, 155.0f);
-            ImGui::TableSetupColumn(
-                "Value", ImGuiTableColumnFlags_WidthStretch);
-            RenderExecutionTruthRow("Mode", transfer->transfer_mode);
-            RenderExecutionTruthRow("Reason", transfer->transfer_reason);
-            RenderExecutionTruthRow("Backend", transfer->transfer_backend);
-            RenderExecutionTruthRow(
-                "Batch size",
-                std::to_string(transfer->transfer_batch_size));
-            ImGui::EndTable();
-        }
+    row("Rebuild reason", materialization_rebuild_reason_);
+    if (materialization_cache_limit_bytes_ > 0) {
+        row("Cache limit", FormatTraceBytes(materialization_cache_limit_bytes_) +
+                               "; least recently used prepared data is removed first");
     }
-
-    bool rendered_warning_header = false;
-    if (!trace.warnings.empty()) {
-        const int start =
-            std::max(0, static_cast<int>(trace.warnings.size()) - 3);
-        for (int i = start; i < static_cast<int>(trace.warnings.size()); ++i) {
-            const auto& warning = trace.warnings[i];
-            if (transfer && IsPinMemoryTransferWarning(warning)) {
-                continue;
-            }
-            if (!rendered_warning_header) {
-                ImGui::SeparatorText("Warnings");
-                rendered_warning_header = true;
-            }
-            ImGui::TextColored(cyxwiz::ui::CurrentTokens().warning,
-                               "%s", ClassifyTrainingWarning(warning));
-            ImGui::SameLine(155.0f);
-            ImGui::TextWrapped("%s", warning.c_str());
-        }
-    }
-#endif
+    return rows;
 }
 
 void TrainingPlotPanel::RenderRunComparisonTable() {
@@ -2733,135 +2601,145 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
     }
 }
 
+training_dashboard::HeaderFacts TrainingPlotPanel::HeaderFactsNow() const {
+    training_dashboard::HeaderFacts h;
+    h.preparing = is_preparing_;
+    h.preparation_failed = preparation_failed_;
+    h.preparation_message = preparation_status_message_;
+    h.preparation_error = preparation_error_message_;
+    h.preparation_progress = preparation_progress_;
+    h.terminal_status = terminal_status_;
+    h.terminal_reason = terminal_reason_;
+    h.dataset = run_dataset_;
+    h.train_rows = run_train_rows_;
+    h.validation_rows = run_validation_rows_;
+    h.test_rows = run_test_rows_;
+    h.samples_per_batch = samples_per_batch_;
+    h.batches_per_update = batches_per_update_;
+    h.metric_interval = metric_reporting_interval_;
+    h.last_batch_loss = current_batch_loss_;
+    h.active_model_provenance = active_model_provenance_;
+    h.checkpoint_loaded = active_checkpoint_loaded_;
+    h.checkpoint_path = checkpoint_used_;
+    h.checkpoint_epoch = checkpoint_epoch_;
+    h.checkpoint_step = checkpoint_step_;
+    h.has_checkpoint_validation = has_checkpoint_validation_metrics_;
+    h.checkpoint_val_loss = checkpoint_val_loss_;
+    h.checkpoint_val_accuracy = checkpoint_val_accuracy_;
+    // A regression run reports MAE / RMSE and no accuracy.
+    for (const auto& metric : custom_metrics_) {
+        if (IsRegressionMetricName(metric.name) && !metric.values.empty()) h.classification = false;
+    }
+    h.has_test = has_test_metrics_;
+    h.test_loss = test_loss_;
+    h.test_accuracy = test_accuracy_;
+    h.test_mae = test_mae_;
+    return h;
+}
+
 void TrainingPlotPanel::RenderTrainingStatus() {
+    namespace td = training_dashboard;
     const DashColors c = CurrentDashColors();
+    td::HeaderFacts facts = HeaderFactsNow();
+    std::vector<td::DetailRow> where_rows;
+    std::vector<std::string> warnings;
 #ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     auto& tm = TrainingManager::Instance();
     const bool training_active = tm.IsTrainingActive();
-    const bool training_paused = tm.IsPaused();
-    const std::string waiting_for_gpu = training_active ? tm.WaitingForGpu() : std::string();
+    facts.paused = tm.IsPaused();
+    if (training_active) facts.waiting_for_gpu = tm.WaitingForGpu();
+    const TrainingTraceSummary& trace = LatestTraceCached();
+    facts.route = TraceRoute(trace);
+    where_rows = TraceRows(trace);
+    warnings = TraceWarnings(trace);
+    for (const auto& task : AsyncTaskManager::Instance().GetActiveTasks()) {
+        facts.tasks.push_back({task.name, task.progress, task.status_message});
+    }
 #else
     const bool training_active = false;
-    const bool training_paused = false;
-    const std::string waiting_for_gpu;
 #endif
-    const bool finished = !is_training_ && total_training_time_ > 0;
-    const bool early_stopped = terminal_status_ == "early_stopped";
-    const bool cancelled = terminal_status_ == "cancelled" ||
-                           terminal_status_ == "stopped";
-    const bool failed = terminal_status_ == "failed";
+    const td::Header header = td::BuildHeader(facts_, facts);
 
-    const char* status = "Idle";
-    ImVec4 status_color = c.muted;
-    if (is_training_ && !waiting_for_gpu.empty()) {  // another training run holds the GPU
-        status = "Waiting for the GPU";
-        status_color = c.caution;
-    } else if (is_training_) {
-        status = training_paused ? "Paused" : "Training";
-        status_color = training_paused ? c.warning : c.success;
-    } else if (preparation_failed_) {
-        status = "Preparation failed";
-        status_color = c.error;
-    } else if (is_preparing_) {
-        status = "Preparing";
-        status_color = c.info;
-    } else if (total_training_time_ > 0) {
-        if (early_stopped) {
-            status = "Early stopped";
-            status_color = c.warning;
-        } else if (cancelled) {
-            status = "Cancelled";
-            status_color = c.caution;
-        } else if (failed) {
-            status = "Failed";
-            status_color = c.error;
-        } else {
-            status = "Completed";
-            status_color = c.info;
-        }
-    } else if (active_checkpoint_loaded_) {
-        status = "Model loaded";
-        status_color = c.success;
+    ImVec4 state_colour = c.muted;
+    switch (header.state) {
+    case td::RunState::WaitingForGpu:
+    case td::RunState::Stopped: state_colour = c.caution; break;
+    case td::RunState::Training:
+    case td::RunState::ModelLoaded: state_colour = c.success; break;
+    case td::RunState::Paused:
+    case td::RunState::EarlyStopped: state_colour = c.warning; break;
+    case td::RunState::PreparationFailed:
+    case td::RunState::Failed: state_colour = c.error; break;
+    case td::RunState::Preparing:
+    case td::RunState::Completed: state_colour = c.info; break;
+    case td::RunState::Idle: break;
     }
+    const auto tone = [&](td::Tone t) {
+        switch (t) {
+        case td::Tone::Good: return c.success;
+        case td::Tone::Bad: return c.caution;
+        case td::Tone::Error: return c.error;
+        case td::Tone::Faint: return c.muted;
+        case td::Tone::Plain: break;
+        }
+        return c.text;
+    };
+    const auto wrapped = [](const ImVec4& colour, const std::string& text) {
+        if (text.empty()) return;
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(colour, "%s", text.c_str());
+        ImGui::PopTextWrapPos();
+    };
 
     if (!BeginDashCard("##dash_header", c)) {
         EndDashCard();
         return;
     }
 
-    // Row 1: status, epoch and the run actions on the right.
-    const float row_top = ImGui::GetCursorPosY();
-    ImGui::SetCursorPosY(row_top + 1.0f);
-    DashPill(status, status_color);
-    ImGui::SameLine(0.0f, 12.0f);
-    ImGui::SetCursorPosY(row_top + 4.0f);
-    if (preparation_failed_ || is_preparing_) {
-        ImGui::TextColored(c.muted, "Getting the data and model ready");
-    } else if (is_training_ && !waiting_for_gpu.empty()) {
-        ImGui::TextColored(c.muted, "Starts when the other run ends");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s\nEarly stop cancels the run while it waits.", waiting_for_gpu.c_str());
-    } else if (total_epochs_ > 0) {
-        if (finished) {
-            ImGui::Text("Executed epochs %d / %d", last_executed_epoch_, total_epochs_);
-            if (current_epoch_ > last_executed_epoch_) {
-                ImGui::SameLine(0.0f, 8.0f);
-                ImGui::TextColored(c.muted, "stopped during epoch %d", current_epoch_);
-            }
-        } else {
-            const int display_epoch = std::max(1, current_epoch_);
-            const int remaining_epochs = std::max(0, total_epochs_ - display_epoch);
-            ImGui::Text("Epoch %d / %d", display_epoch, total_epochs_);
-            ImGui::SameLine(0.0f, 8.0f);
-            ImGui::TextColored(c.muted, "%d remaining", remaining_epochs);
-        }
-    } else if (is_training_) {
-        ImGui::Text("Epoch %d / ?", std::max(1, current_epoch_));
-    } else if (!active_checkpoint_loaded_) {
-        ImGui::TextColored(c.muted, "No training run yet");
+    // Row 1: the state, then the run's actions at the right; each part
+    // moves to the next line when the slot is narrow (B4-2).
+    ui::FlowRow row;
+    row.Next(0.0f);
+    ui::Chip(header.pill.c_str(), state_colour);
+    if (!header.status.empty()) {
+        row.Next(ImGui::CalcTextSize(header.status.c_str()).x);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(c.text, "%s", header.status.c_str());
+        ui::Tooltip(header.status_tooltip.c_str());
     }
-
-    const char* pause_label = training_paused ? ICON_FA_PLAY " Continue" : ICON_FA_PAUSE " Pause";
-    const char* stop_label = ICON_FA_STOP " Early stop";
-    const char* actions_label = "Actions " ICON_FA_CHEVRON_DOWN;
+    const char* pause_label = facts.paused ? ICON_FA_PLAY " Resume" : ICON_FA_PAUSE " Pause";
+    const char* stop_label = ICON_FA_STOP " Stop";
+    const char* more_label = "More " ICON_FA_CHEVRON_DOWN;
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    float actions_width = DashButtonWidth(actions_label);
+    float actions_width = ui::ButtonWidth(more_label, ui::ButtonSize::Small);
     if (training_active) {
-        actions_width += DashButtonWidth(pause_label) + DashButtonWidth(stop_label) + spacing * 2.0f;
+        actions_width += ui::ButtonWidth(pause_label, ui::ButtonSize::Small) +
+                         ui::ButtonWidth(stop_label, ui::ButtonSize::Small) + spacing * 2.0f;
     }
-    ImGui::SameLine();
-    const float right_edge = ImGui::GetWindowContentRegionMax().x;
-    ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX(), right_edge - actions_width),
-                               row_top));
+    ui::SameLineRight(actions_width);
+    ui::FlowRow buttons;
 #ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
     if (training_active) {
-        if (DashButton(pause_label, DashButtonKind::Secondary, c)) {
-            if (training_paused) {
+        buttons.Next(ui::ButtonWidth(pause_label, ui::ButtonSize::Small));
+        if (ui::SecondaryButton(pause_label)) {
+            if (facts.paused) {
                 tm.ResumeTraining();
             } else {
                 tm.PauseTraining();
             }
         }
-        ImGui::SameLine();
-        if (DashButton(stop_label, DashButtonKind::Danger, c)) {
-            tm.StopTraining();
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Stops training at the next batch boundary and keeps the current model state.");
-        }
-        ImGui::SameLine();
+        buttons.Next(ui::ButtonWidth(stop_label, ui::ButtonSize::Small));
+        if (ui::DangerButton(stop_label)) tm.StopTraining();
+        ui::Tooltip("Stops training at the next batch boundary and keeps the current model state.");
     }
 #endif
-    if (DashButton(actions_label, DashButtonKind::Secondary, c)) {
-        ImGui::OpenPopup("##dash_actions");
-    }
+    buttons.Next(ui::ButtonWidth(more_label, ui::ButtonSize::Small));
+    if (ui::SecondaryButton(more_label)) ImGui::OpenPopup("##dash_actions");
     if (ImGui::BeginPopup("##dash_actions")) {
         if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export metrics (CSV)")) {
             ExportToCSVLocked("training_metrics.csv");
         }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Writes training_metrics.csv in the working folder.");
-        }
+        ui::Tooltip("Writes training_metrics.csv in the working folder.");
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Text, c.error);
         const bool clear = ImGui::MenuItem(ICON_FA_TRASH " Clear all");
@@ -2869,144 +2747,78 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         if (clear) {
             ClearLocked();
         }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Clears the charts and metrics of this run from the dashboard.");
-        }
+        ui::Tooltip("Clears the charts and metrics of this run from the dashboard.");
         ImGui::EndPopup();
     }
 
     // Row 2: progress.
-    if (preparation_failed_) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(c.error, "%s",
-                           preparation_error_message_.empty()
-                               ? "Training preparation failed."
-                               : preparation_error_message_.c_str());
-        ImGui::PopTextWrapPos();
-    } else if (is_preparing_) {
-        DashProgress(preparation_progress_, c.info, c);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(c.muted, "%s",
-                           preparation_status_message_.empty()
-                               ? "Preparing training..."
-                               : preparation_status_message_.c_str());
-        ImGui::PopTextWrapPos();
-    } else if (total_epochs_ > 0) {
-        // During training, count the finished part of the epoch in progress
-        // (epoch counter moves to the new epoch at its first batch).
-        const float progress = is_training_ && total_batches_ > 0
-            ? static_cast<float>(TrainingFractionComplete(
-                  current_epoch_, current_batch_, total_batches_, total_epochs_))
-            : static_cast<float>(current_epoch_) / std::max(1, total_epochs_);
-        DashProgress(progress, finished ? status_color : c.accent, c);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%.0f%% of all epochs", progress * 100.0f);
-        }
+    if (header.show_progress) {
+        const bool ended = header.state == td::RunState::Completed || header.state == td::RunState::EarlyStopped ||
+                           header.state == td::RunState::Stopped || header.state == td::RunState::Failed;
+        const ImVec4 bar = header.state == td::RunState::Preparing ? c.info : (ended ? state_colour : c.accent);
+        DashProgress(static_cast<float>(header.progress), bar, c);
+        ui::Tooltip(header.progress_tooltip.c_str());
+    }
+    wrapped(c.muted, header.progress_text);
+
+    // Where it ran, on what data, and the trace's warnings.
+    wrapped(c.muted, header.where);
+    ui::Tooltip(header.where_tooltip.c_str());
+    wrapped(c.muted, header.data);
+    for (const std::string& warning : warnings) {
+        wrapped(c.caution, std::string(ICON_FA_TRIANGLE_EXCLAMATION " ") + warning);
     }
 
-    // Why the run ended.
-    if (finished) {
-        ImGui::PushTextWrapPos(0.0f);
-        if (early_stopped) {
-            ImGui::TextColored(c.warning, "Stop reason: early stopping triggered.");
-        } else if (cancelled) {
-            ImGui::TextColored(c.caution, "Stop reason: training was cancelled.");
-        } else if (failed) {
-            ImGui::TextColored(c.error, "Stop reason: training failed.");
-        } else {
-            ImGui::TextColored(c.success, "Stop reason: training reached its terminal epoch.");
-        }
-        if (!terminal_reason_.empty()) {
-            ImGui::TextColored(c.muted, "%s", terminal_reason_.c_str());
-        }
-        ImGui::PopTextWrapPos();
-    }
+    // While it trains: the latest batches. After: how it ended, the active
+    // model and the held-out test.
+    LineWithTail(header.now, c.text, header.now_detail, c.muted);
+    wrapped(tone(header.outcome_tone), header.outcome);
+    LineWithTail(header.active_model, c.text, header.active_model_detail, c.muted);
+    LineWithTail(header.test, c.text, header.test_detail, c.muted);
 
-    // Batch-level progress within the current epoch (live feedback during training)
-    if (is_training_ && total_batches_ > 0) {
-        const float batch_progress = static_cast<float>(current_batch_) /
-                                     std::max(1, total_batches_);
+    // Run details: the codes, paths and figures behind the lines above.
+    const std::vector<td::DetailRow> preparation_rows = PreparationRows();
+    if (!header.run_rows.empty() || !where_rows.empty() || !preparation_rows.empty()) {
+        std::string what;
+        const auto part = [&what](const char* p) {
+            if (what.find(p) == std::string::npos) what += (what.empty() ? "" : ", ") + std::string(p);
+        };
+        for (const auto& r : header.run_rows) {
+            if (r.key == "Stop code") part("stop code");
+            if (r.key == "Checkpoint" || r.key == "Path") part("checkpoint");
+            if (r.key == "Batches" || r.key == "Last batch loss") part("batches");
+            if (r.key.rfind("Engine task", 0) == 0) part("engine tasks");
+        }
+        if (!where_rows.empty()) part("where it ran");
+        if (!preparation_rows.empty()) part("data preparation");
         ImGui::Spacing();
-        ImGui::TextColored(c.muted, "Batch");
+        ImGui::SetNextItemOpen(run_details_open_);
+        run_details_open_ = ImGui::TreeNodeEx("Run details##dash_run_details",
+                                              ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanLabelWidth);
         ImGui::SameLine();
-        ImGui::Text("%d / %d", current_batch_, total_batches_);
-        ImGui::SameLine(0.0f, 12.0f);
-        DashProgress(batch_progress, c.accent, c, 160.0f, 5.0f);
-        ImGui::SameLine(0.0f, 16.0f);
-        ImGui::TextColored(c.muted, "Running loss");
-        ImGui::SameLine();
-        ImGui::Text("%.4f", current_batch_loss_);
-
-        std::string detail;
-        char part[96];
-        if (samples_per_batch_ > 0) {
-            std::snprintf(part, sizeof(part), "%d sample%s each", samples_per_batch_,
-                          samples_per_batch_ == 1 ? "" : "s");
-            detail = part;
-            if (batches_per_update_ > 1) {
-                std::snprintf(part, sizeof(part), "update every %d batches", batches_per_update_);
-                detail += std::string(" \xC2\xB7 ") + part;
-            }
-        }
-        if (metric_reporting_interval_ > 0) {
-            std::snprintf(part, sizeof(part), "metrics every %d batches", metric_reporting_interval_);
-        } else {
-            std::snprintf(part, sizeof(part), "metrics at first/final batch");
-        }
-        detail += (detail.empty() ? "" : " \xC2\xB7 ") + std::string(part);
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(c.faint, "%s", detail.c_str());
-        ImGui::PopTextWrapPos();
-    }
-
-    // The model the Engine holds now (after a run or a loaded checkpoint).
-    if (!is_training_ &&
-        (!active_model_provenance_.empty() || !checkpoint_used_.empty())) {
-        ImGui::Spacing();
-        ImGui::TextColored(c.muted, "Active model");
-        ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
-        if (ImGui::BeginTable("##dash_active_model", 2,
-                              ImGuiTableFlags_SizingStretchProp |
-                                  ImGuiTableFlags_BordersInnerH)) {
-            ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 150.0f);
-            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-            const auto row = [&](const char* label) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(c.muted, "%s", label);
-                ImGui::TableNextColumn();
+        wrapped(c.faint, what);
+        if (run_details_open_) {
+            struct Group {
+                const char* title;
+                const std::vector<td::DetailRow>* rows;
             };
-            const bool restored_checkpoint = checkpoint_epoch_ > 0 &&
-                !checkpoint_used_.empty();
-            row("State");
-            ImGui::TextColored(
-                c.success, "%s",
-                active_checkpoint_loaded_
-                    ? "Checkpoint loaded for testing"
-                    : (restored_checkpoint
-                        ? "Best validation checkpoint restored"
-                        : "Final state from executed run"));
-            if (checkpoint_epoch_ > 0) {
-                row("Checkpoint epoch");
-                ImGui::Text("%d", checkpoint_epoch_);
+            std::vector<Group> groups;
+            if (!header.run_rows.empty()) groups.push_back({"The run", &header.run_rows});
+            if (!where_rows.empty()) groups.push_back({"Where it ran", &where_rows});
+            if (!preparation_rows.empty()) groups.push_back({"Data", &preparation_rows});
+            // Side by side when the window is wide, one under the other otherwise.
+            const int columns = ImGui::GetContentRegionAvail().x >= 900.0f ? static_cast<int>(groups.size()) : 1;
+            if (columns > 1 && ImGui::BeginTable("##dash_run_details_groups", columns,
+                                                 ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
+                for (const Group& g : groups) {
+                    ImGui::TableNextColumn();
+                    DetailGroup(g.title, *g.rows);
+                }
+                ImGui::EndTable();
+            } else {
+                for (const Group& g : groups) DetailGroup(g.title, *g.rows);
             }
-            if (checkpoint_epoch_ > 0 && has_checkpoint_validation_metrics_) {
-                row("Checkpoint validation");
-                ImGui::Text("loss %.4f, accuracy %.2f%%",
-                            checkpoint_val_loss_,
-                            checkpoint_val_accuracy_ * 100.0f);
-            }
-            if (checkpoint_step_ > 0) {
-                row("Checkpoint step");
-                ImGui::Text("%d", checkpoint_step_);
-            }
-            if (!checkpoint_used_.empty()) {
-                row("Path");
-                ImGui::TextWrapped("%s", checkpoint_used_.c_str());
-            }
-            ImGui::EndTable();
         }
-        ImGui::PopStyleColor();
     }
 
     EndDashCard();

@@ -52,7 +52,7 @@ struct RunFacts {
     double total_seconds = 0.0;
 };
 
-enum class Tone { Good, Bad, Plain, Faint };
+enum class Tone { Good, Bad, Error, Plain, Faint };
 
 // One metric card: its name, the value, the change since the epoch before,
 // then up to two more lines.
@@ -84,6 +84,110 @@ struct Insights {
     std::vector<InsightRow> rows;
 };
 Insights BuildInsights(const RunFacts& facts);
+
+// The header card (B4-4): the state, where the run ran and on what data,
+// how it ended and which model is active, in plain words; the codes and
+// paths go under "Run details".
+enum class RunState {
+    Idle,
+    WaitingForGpu,
+    Training,
+    Paused,
+    PreparationFailed,
+    Preparing,
+    EarlyStopped,
+    Stopped,
+    Failed,
+    Completed,
+    ModelLoaded,
+};
+
+// Where the run ran, from its execution trace.
+struct Route {
+    std::string requested_backend;  // "arrayfire_cuda"
+    std::string effective_backend;  // "arrayfire_cpu"
+    int effective_device_id = 0;
+    std::string device_name;
+    std::string policy;  // "compatibility", "strict"
+    bool fallback = false;  // the chosen device failed its check
+};
+
+// An engine task beside the run (reading data, building the cache).
+struct EngineTask {
+    std::string name;
+    float progress = 0.0f;
+    std::string status;
+};
+
+// What the header knows beyond RunFacts.
+struct HeaderFacts {
+    bool paused = false;
+    std::string waiting_for_gpu;  // the run holding the GPU; empty when not waiting
+    bool preparing = false;
+    bool preparation_failed = false;
+    std::string preparation_message;
+    std::string preparation_error;
+    double preparation_progress = 0.0;
+    std::string terminal_status;  // "completed", "early_stopped", "cancelled", "stopped", "failed"
+    std::string terminal_reason;  // "completed_all_epochs", "validation_loss_plateau_patience_3", ...
+    std::optional<Route> route;
+    // The data.
+    std::string dataset;
+    size_t train_rows = 0, validation_rows = 0, test_rows = 0;
+    int samples_per_batch = 0;
+    int batches_per_update = 1;
+    int metric_interval = 0;  // a point every N batches; 0: first and last batch
+    float last_batch_loss = 0.0f;
+    // The active model.
+    std::string active_model_provenance;  // "restored_best_checkpoint", "run_final_state", "loaded_checkpoint_for_testing"
+    bool checkpoint_loaded = false;       // loaded for testing, no run
+    std::string checkpoint_path;
+    int checkpoint_epoch = 0;
+    int checkpoint_step = 0;
+    bool has_checkpoint_validation = false;
+    double checkpoint_val_loss = 0.0;
+    double checkpoint_val_accuracy = 0.0;  // a fraction
+    bool classification = true;           // accuracy means something (not a regression)
+    // The held-out test after the run.
+    bool has_test = false;
+    double test_loss = 0.0;
+    double test_accuracy = 0.0;  // a fraction
+    double test_mae = 0.0;
+    std::vector<EngineTask> tasks;
+};
+
+struct DetailRow {
+    std::string key;
+    std::string value;
+};
+
+struct Header {
+    RunState state = RunState::Idle;
+    std::string pill;          // "Training", "Completed"
+    std::string status;        // "Epoch 6 of 10 · batch 10 of 12", "All 10 epochs in 2.2s"
+    std::string status_tooltip;
+    bool show_progress = false;
+    double progress = 0.0;     // 0..1
+    std::string progress_tooltip;
+    std::string progress_text;  // under the bar while preparing
+    std::string where;          // "Runs on the CPU (ArrayFire CPU) · compatibility policy"
+    std::string where_tooltip;  // the route's codes
+    std::string data;           // "digits_8x8 · 1,433 training, 176 validation, 188 test rows · batches of 128"
+    std::string now;            // while training: "Latest batches: loss 0.5287 · accuracy 90.70%"
+    std::string now_detail;     // "(batch 10 of 12, 204 batches/s)"
+    std::string outcome;        // "Finished: every epoch ran."
+    Tone outcome_tone = Tone::Plain;
+    std::string active_model;   // "Active model: the best validation checkpoint, epoch 10"
+    std::string active_model_detail;  // "(validation loss 0.2554, accuracy 92.61%)"
+    std::string test;           // "Held-out test: accuracy 94.15%, loss 0.2220"
+    std::string test_detail;    // "(188 rows the model never saw)"
+    // Run details > The run: the stop code, checkpoint, batches, engine tasks.
+    std::vector<DetailRow> run_rows;
+};
+Header BuildHeader(const RunFacts& run, const HeaderFacts& facts);
+// The engine tasks as rows: up to three ("Engine task": "name · 55% · status"),
+// then "Engine tasks": "and N more".
+std::vector<DetailRow> TaskRows(const std::vector<EngineTask>& tasks);
 
 // "23,000"
 std::string Thousands(double value);

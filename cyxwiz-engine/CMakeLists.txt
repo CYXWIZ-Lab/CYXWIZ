@@ -4210,6 +4210,7 @@ add_executable(test_graph_training_sequence_preflight
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
@@ -4357,6 +4358,7 @@ add_executable(test_text_gui_training_launch
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
@@ -5938,6 +5940,7 @@ add_executable(test_training_manager_session
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
@@ -8761,7 +8764,8 @@ add_executable(test_training_progress_estimate tests/test_training_progress_esti
 
 # ===== Test: the Training Dashboard's words on a real run (TOFIX129 B4) =====
 add_executable(test_training_dashboard_presentation tests/test_training_dashboard_presentation.cpp
-    src/core/training_dashboard_presentation.cpp)
+    src/core/training_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp)
 target_include_directories(test_training_dashboard_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set_target_properties(test_training_dashboard_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME test_training_dashboard_presentation COMMAND test_training_dashboard_presentation)
@@ -8982,6 +8986,7 @@ set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
     src/core/training_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp

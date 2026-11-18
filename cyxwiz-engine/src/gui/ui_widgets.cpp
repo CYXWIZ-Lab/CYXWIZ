@@ -133,6 +133,51 @@ void KeyValueTable(const char* id, const std::vector<KeyValue>& rows, int pairs_
     ImGui::EndTable();
 }
 
+void TextWrapAnywhere(const std::string& text, const ImVec4& colour) {
+    const float width = std::max(ImGui::GetFontSize(), ImGui::GetContentRegionAvail().x);
+    const char* s = text.c_str();
+    const char* const end = s + text.size();
+    const auto next_char = [end](const char* p) {
+        unsigned int c = 0;
+        const int n = ImTextCharFromUtf8(&c, p, end);
+        return p + std::max(1, n);
+    };
+    ImGui::BeginGroup();
+    ImGui::PushStyleColor(ImGuiCol_Text, colour);
+    do {
+        const char* line_end = static_cast<const char*>(std::memchr(s, '\n', static_cast<size_t>(end - s)));
+        if (!line_end) line_end = end;
+        // The longest part of the line that fits.
+        const char* fit = s;
+        float x = 0.0f;
+        while (fit < line_end) {
+            const char* after = next_char(fit);
+            x += ImGui::CalcTextSize(fit, after).x;
+            if (x > width && fit > s) break;
+            fit = after;
+        }
+        const char* cut = fit;
+        if (fit < line_end) {
+            // Prefer the last space, then the last \ or /, inside what fits.
+            const char* at_space = nullptr;
+            const char* at_slash = nullptr;
+            for (const char* p = s; p < fit; ++p) {
+                if (*p == ' ') at_space = p + 1;
+                if (*p == '\\' || *p == '/') at_slash = p + 1;
+            }
+            if (at_space && at_space > s) cut = at_space;
+            else if (at_slash && at_slash > s) cut = at_slash;
+        }
+        const char* shown_end = cut;
+        while (shown_end > s && shown_end[-1] == ' ' && cut != line_end) --shown_end;
+        ImGui::TextUnformatted(s, shown_end);
+        s = cut;
+        if (s == line_end && s < end) ++s;  // the newline
+    } while (s < end);
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
+}
+
 void FactsTable(const char* id, const std::vector<KeyValue>& rows) {
     const Tokens& t = CurrentTokens();
     if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings)) return;

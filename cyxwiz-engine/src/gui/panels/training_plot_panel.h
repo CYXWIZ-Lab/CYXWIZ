@@ -213,6 +213,9 @@ public:
     // The run's generation_previews folder (TOFIX159 A4); "" for a run without
     // previews. The Generations tab shows it while the run trains and after.
     void SetGenerationPreviewFolder(const std::filesystem::path& folder);
+    // The run's data for the header: the dataset and its training,
+    // validation and test rows (known once the first batch runs).
+    void SetRunData(const std::string& dataset, size_t train_rows, size_t validation_rows, size_t test_rows);
     void AddRunComparisonRecord(const TrainingRunComparisonRecord& record);
     void ClearRunComparisonRecords();
 
@@ -305,7 +308,6 @@ private:
     uint64_t materialization_pruned_bytes_ = 0;
     std::string materialization_clear_message_;
     bool materialization_rebuild_pending_ = false;
-    bool materialization_details_open_ = false;
     bool materialization_cache_refresh_requested_ = false;
     bool materialization_clear_confirm_ = false;
 
@@ -378,6 +380,16 @@ private:
     int checkpoint_step_ = 0;
     std::string active_model_provenance_;
     bool active_checkpoint_loaded_ = false;
+    // The run's data and its held-out test (the header).
+    std::string run_dataset_;
+    size_t run_train_rows_ = 0;
+    size_t run_validation_rows_ = 0;
+    size_t run_test_rows_ = 0;
+    bool has_test_metrics_ = false;
+    float test_loss_ = 0.0f;
+    float test_accuracy_ = 0.0f;
+    float test_mae_ = 0.0f;
+    bool run_details_open_ = false;
     std::vector<float> epoch_times_;  // For averaging
     bool last_render_visible_ = false;
 
@@ -446,7 +458,12 @@ private:
     void DrawChart(int chart, const ImVec2& size, bool fit, bool in_window);
 
     // Helper methods
+    // The header card: state, where it ran, on what data, how it ended, and
+    // the Run details fold (core/training_dashboard_presentation BuildHeader).
     void RenderTrainingStatus();
+    training_dashboard::HeaderFacts HeaderFactsNow() const;
+    // Run details > Data: the preparation's file, cache key, memory figures.
+    std::vector<training_dashboard::DetailRow> PreparationRows() const;
     void RenderLossPlot(float plot_height);
     void RenderAccuracyPlot(float plot_height);
     void RenderCustomMetricsPlot(float plot_height);
@@ -463,9 +480,10 @@ private:
     void RenderControls();
     void RenderCurveSummary();
     void RenderSequenceMetricsSummary();
-    void RenderActiveTaskSummary();
     void RenderMaterializationSummary();
-    void RenderTrainingWarningSummary();
+    // The engine tasks beside a word-vector run (the model run shows them
+    // under Run details).
+    void RenderActiveTaskSummary();
     void RenderRunComparisonTable();
     void RenderStatistics();
     // Word-vector runs (training_word_vector_runs.cpp).
