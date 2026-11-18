@@ -15,38 +15,6 @@
 
 namespace cyxwiz {
 
-enum class TrainingRunPartitionCompatibility {
-    SameManifest,
-    DifferentManifest,
-    Unknown
-};
-
-inline TrainingRunPartitionCompatibility CompareTrainingRunPartitions(
-    const TrainingRunComparisonRecord& reference,
-    const TrainingRunComparisonRecord& candidate) {
-    if (reference.partition_manifest_fingerprint.empty() ||
-        candidate.partition_manifest_fingerprint.empty()) {
-        return TrainingRunPartitionCompatibility::Unknown;
-    }
-    return reference.partition_manifest_fingerprint ==
-               candidate.partition_manifest_fingerprint
-        ? TrainingRunPartitionCompatibility::SameManifest
-        : TrainingRunPartitionCompatibility::DifferentManifest;
-}
-
-inline const char* TrainingRunPartitionCompatibilityLabel(
-    TrainingRunPartitionCompatibility compatibility) {
-    switch (compatibility) {
-        case TrainingRunPartitionCompatibility::SameManifest:
-            return "same";
-        case TrainingRunPartitionCompatibility::DifferentManifest:
-            return "different";
-        case TrainingRunPartitionCompatibility::Unknown:
-            return "unknown";
-    }
-    return "unknown";
-}
-
 inline std::string TrainingRunComparisonDomainName(
     PreprocessingDomain domain) {
     switch (domain) {
@@ -87,7 +55,8 @@ inline std::string TrainingRunComparisonCsvHeader() {
            "best_val_loss,best_val_accuracy,best_val_loss_epoch,"
            "best_val_accuracy_epoch,final_train_loss,"
            "final_train_accuracy,final_test_loss,final_test_accuracy,"
-           "elapsed_seconds";
+           "elapsed_seconds,finished_at,epochs_run,device_backend,"
+           "device_name,device_fallback";
 }
 
 inline std::string EscapeTrainingRunComparisonCsvField(
@@ -170,7 +139,12 @@ inline std::string TrainingRunComparisonToCsvRow(
         << record.final_train_accuracy << ','
         << record.final_test_loss << ','
         << record.final_test_accuracy << ','
-        << record.elapsed_seconds;
+        << record.elapsed_seconds << ','
+        << EscapeTrainingRunComparisonCsvField(record.finished_at) << ','
+        << record.epochs_run << ','
+        << EscapeTrainingRunComparisonCsvField(record.device_backend) << ','
+        << EscapeTrainingRunComparisonCsvField(record.device_name) << ','
+        << (record.device_fallback ? "true" : "false");
     return out.str();
 }
 
@@ -325,6 +299,7 @@ inline TrainingRunComparisonRecord MakeTrainingRunComparisonRecord(
         ? "Unknown"
         : TrainingRunComparisonLayerTypeName(config.layers.front().type);
     record.epochs = config.epochs;
+    record.epochs_run = metrics.last_executed_epoch;
     record.batch_size = config.batch_size;
     record.learning_rate = config.learning_rate;
     record.train_ratio = config.train_ratio;

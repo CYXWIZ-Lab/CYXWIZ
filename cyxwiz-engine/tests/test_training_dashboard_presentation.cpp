@@ -337,6 +337,79 @@ int main() {
     Check(head.pill == "Preparation failed" && head.outcome == prep.preparation_error && head.outcome_tone == td::Tone::Error,
           "preparation failed");
 
+    // The Runs card: the digits run, then a stopped GPU run with no test rows.
+    cyxwiz::TrainingRunComparisonRecord digits;
+    digits.run_id = "training-task-3";
+    digits.run_status = "completed";
+    digits.dataset_name = "digits_8x8";
+    digits.finished_at = "11:06";
+    digits.epochs = 10;
+    digits.epochs_run = 10;
+    digits.elapsed_seconds = 2.2f;
+    digits.has_validation_metrics = true;
+    digits.best_val_loss = 0.2554f;
+    digits.best_val_loss_epoch = 10;
+    digits.best_val_accuracy = 0.9261f;
+    digits.best_val_accuracy_epoch = 10;
+    digits.has_test_metrics = true;
+    digits.final_test_accuracy = 0.9415f;
+    digits.final_test_loss = 0.2220f;
+    digits.test_sample_count = 188;
+    digits.train_sample_count = 1433;
+    digits.val_sample_count = 176;
+    digits.train_ratio = 0.8f;
+    digits.val_ratio = 0.1f;
+    digits.test_ratio = 0.1f;
+    digits.learning_rate = 0.001f;
+    digits.partition_manifest_fingerprint = "a1b2c3d4e5f6";
+    digits.device_backend = "arrayfire_cpu";
+    cyxwiz::TrainingRunComparisonRecord gpu = digits;
+    gpu.run_id = "training-task-4";
+    gpu.run_status = "cancelled";
+    gpu.finished_at = "11:20";
+    gpu.epochs_run = 7;
+    gpu.has_test_metrics = false;
+    gpu.partition_manifest_fingerprint = "ffff0000";
+    gpu.device_backend = "arrayfire_cuda";
+    gpu.device_name = "GeForce GTX 1050 Ti";
+    const td::RunsTable runs = td::BuildRunsTable({digits, gpu}, false);
+    const auto cell = [&runs](size_t row, const std::string& column) -> const td::RunCell& {
+        for (size_t i = 0; i < runs.columns.size(); ++i)
+            if (runs.columns[i] == column) return runs.rows[row][i];
+        static const td::RunCell none{"(no column)", {}, td::Tone::Plain};
+        return none;
+    };
+    Check(runs.columns.size() == 28 && runs.rows.size() == 2 && runs.rows[0].size() == 28 &&
+              runs.columns[td::RunsTable::kKeyColumns - 1] == "Device",
+          "runs table shape");
+    Check(cell(0, "Run").text == "11:06 \xC2\xB7 digits_8x8" && cell(0, "Result").text == "Completed" &&
+              cell(0, "Result").tone == td::Tone::Good && cell(0, "Best val loss").text == "0.2554" &&
+              cell(0, "Best val acc").text == "92.61%" && cell(0, "Test acc").text == "94.15%" &&
+              cell(0, "Test acc").tooltip == "Loss 0.2220 on 188 test rows" && cell(0, "Epochs").text == "10" &&
+              cell(0, "Time").text == "2.2s" && cell(0, "Device").text == "CPU",
+          "runs table digits row: " + cell(0, "Run").text + " / " + cell(0, "Test acc").tooltip);
+    Check(cell(1, "Result").text == "Stopped" && cell(1, "Result").tone == td::Tone::Bad &&
+              cell(1, "Test acc").tone == td::Tone::Faint && cell(1, "Epochs").text == "7 of 10" &&
+              cell(1, "Device").text == "CUDA" &&
+              cell(1, "Device").tooltip == "GeForce GTX 1050 Ti\nBackend: arrayfire_cuda" &&
+              cell(1, "Partition match").text == "different" && cell(0, "Partition match").text == "same",
+          "runs table stopped GPU row: " + cell(1, "Device").tooltip);
+    Check(cell(0, "Rows").text == "1,433 / 176 / 188" && cell(0, "Split").text == "80/10/10%" &&
+              cell(0, "Learning rate").text == "0.001" && cell(0, "Partition").text == "a1b2c3d4",
+          "runs table other columns: " + cell(0, "Split").text);
+    Check(runs.key_note.rfind("8 of 28 columns", 0) == 0 && runs.loaded_note.empty(), "runs table note");
+    cyxwiz::TrainingRunComparisonRecord failed = digits;
+    failed.run_status = "failed";
+    failed.device_backend.clear();
+    const td::RunsTable more = td::BuildRunsTable({failed}, true);
+    Check(more.rows[0][7].text == "\xE2\x80\x94" && more.rows[0][7].tone == td::Tone::Faint &&
+              more.rows[0][1].tone == td::Tone::Error && !more.loaded_note.empty(),
+          "runs table: no device recorded, failed, loaded checkpoint");
+    cyxwiz::TrainingRunComparisonRecord fallback = digits;
+    fallback.device_fallback = true;
+    Check(td::BuildRunsTable({fallback}, false).rows[0][7].text == "CPU (fallback)", "runs table fallback device");
+    Check(td::BuildRunsTable({}, false).rows.empty(), "runs table empty");
+
     Check(td::Thousands(23145) == "23,145" && td::Thousands(999) == "999" && td::Thousands(1234567) == "1,234,567",
           "thousands");
     Check(td::PerEpoch(0.217) == "0.22s" && td::PerEpoch(3.4) == "3.4s" && td::PerEpoch(75) == "1m 15s", "per epoch");

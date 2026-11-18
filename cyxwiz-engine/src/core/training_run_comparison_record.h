@@ -58,6 +58,45 @@ struct TrainingRunComparisonRecord {
     float final_test_loss = 0.0f;
     float final_test_accuracy = 0.0f;
     float elapsed_seconds = 0.0f;
+    // When the run ended, local time ("11:06"), and the epochs that ran.
+    std::string finished_at;
+    int epochs_run = 0;
+    // The device it ran on, from its execution trace.
+    std::string device_backend;  // "arrayfire_cpu"; empty when not recorded
+    std::string device_name;     // "GeForce GTX 1050 Ti"
+    bool device_fallback = false;  // the chosen device failed its check
 };
+
+enum class TrainingRunPartitionCompatibility {
+    SameManifest,
+    DifferentManifest,
+    Unknown
+};
+
+inline TrainingRunPartitionCompatibility CompareTrainingRunPartitions(
+    const TrainingRunComparisonRecord& reference,
+    const TrainingRunComparisonRecord& candidate) {
+    if (reference.partition_manifest_fingerprint.empty() ||
+        candidate.partition_manifest_fingerprint.empty()) {
+        return TrainingRunPartitionCompatibility::Unknown;
+    }
+    return reference.partition_manifest_fingerprint ==
+               candidate.partition_manifest_fingerprint
+        ? TrainingRunPartitionCompatibility::SameManifest
+        : TrainingRunPartitionCompatibility::DifferentManifest;
+}
+
+inline const char* TrainingRunPartitionCompatibilityLabel(
+    TrainingRunPartitionCompatibility compatibility) {
+    switch (compatibility) {
+        case TrainingRunPartitionCompatibility::SameManifest:
+            return "same";
+        case TrainingRunPartitionCompatibility::DifferentManifest:
+            return "different";
+        case TrainingRunPartitionCompatibility::Unknown:
+            return "unknown";
+    }
+    return "unknown";
+}
 
 } // namespace cyxwiz

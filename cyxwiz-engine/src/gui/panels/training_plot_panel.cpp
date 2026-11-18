@@ -469,6 +469,11 @@ TrainingPlotPanel::~TrainingPlotPanel() {
 }
 
 void TrainingPlotPanel::Render() {
+    RenderWindow();
+    RunPendingExport();
+}
+
+void TrainingPlotPanel::RenderWindow() {
     if (!visible_) {
         if (last_render_visible_) {
             RecordPanelEvent("TrainingPlotPanel.Hidden");
@@ -1123,58 +1128,71 @@ void TrainingPlotPanel::SetMaxPoints(size_t max_points) {
     max_points_ = max_points;
 }
 
-void TrainingPlotPanel::ExportToCSV(const std::string& filepath) {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    ExportToCSVLocked(filepath);
-}
-
-void TrainingPlotPanel::ExportToCSVLocked(
-    const std::string& filepath) const {
-    std::ofstream file(filepath);
-    if (!file.is_open()) {
-        return;
-    }
-
-    // Write header
+std::string TrainingPlotPanel::MetricsCsvLocked() const {
+    std::ostringstream file;
     file << "Epoch,TrainLoss,ValLoss,TrainAccuracy,ValAccuracy";
     for (const auto& metric : custom_metrics_) {
         file << "," << metric.name;
     }
     file << "\n";
 
-    // Find max number of rows
-    size_t max_rows = std::max({train_loss_.epochs.size(),
-                                 val_loss_.epochs.size(),
-                                 train_accuracy_.epochs.size(),
-                                 val_accuracy_.epochs.size()});
-
-    // Write data
+    const size_t max_rows = std::max({train_loss_.epochs.size(),
+                                      val_loss_.epochs.size(),
+                                      train_accuracy_.epochs.size(),
+                                      val_accuracy_.epochs.size()});
     for (size_t i = 0; i < max_rows; ++i) {
         file << (i < train_loss_.epochs.size() ? train_loss_.epochs[i] : -1) << ",";
         file << (i < train_loss_.values.size() ? train_loss_.values[i] : 0.0) << ",";
         file << (i < val_loss_.values.size() ? val_loss_.values[i] : 0.0) << ",";
         file << (i < train_accuracy_.values.size() ? train_accuracy_.values[i] : 0.0) << ",";
         file << (i < val_accuracy_.values.size() ? val_accuracy_.values[i] : 0.0);
-
         for (const auto& metric : custom_metrics_) {
             file << "," << (i < metric.values.size() ? metric.values[i] : 0.0);
         }
         file << "\n";
     }
-
-    file.close();
+    return file.str();
 }
 
-void TrainingPlotPanel::ExportPlotImage(const std::string& /*filepath*/) {
-    // TODO: Implement screenshot/export functionality
-    // This would require rendering to a framebuffer and saving as image
-}
+void TrainingPlotPanel::RunPendingExport() {
+    const PendingExport kind = pending_export_;  // UI thread only
+    if (kind == PendingExport::None) return;
+    pending_export_ = PendingExport::None;
+    if (!save_path_callback_) return;
+    const bool metrics = kind == PendingExport::Metrics;
 
-void TrainingPlotPanel::ExportRunComparisonCSV(const std::string& filepath) {
-    std::lock_guard<std::mutex> lock(data_mutex_);
+    // Copy what to write, then ask with the lock released.
+    std::string metrics_csv;
+    std::vector<TrainingRunComparisonRecord> runs;
+    {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        if (metrics) {
+            metrics_csv = MetricsCsvLocked();
+        } else {
+            runs = run_comparison_records_;
+        }
+    }
+    const auto path = metrics ? save_path_callback_("Export metrics", "training_metrics.csv")
+                              : save_path_callback_("Export runs", "training_run_comparison.csv");
+    if (!path) return;  // cancelled
+
     std::string error;
-    if (!WriteTrainingRunComparisonCsv(filepath, run_comparison_records_, &error)) {
-        RecordPanelEvent("TrainingPlotPanel.ExportRunComparisonFailed", error);
+    bool ok = false;
+    if (metrics) {
+        std::ofstream file(*path, std::ios::binary | std::ios::trunc);
+        ok = file && (file << metrics_csv) && file.flush();
+        if (!ok) error = "could not write " + *path;
+    } else {
+        ok = WriteTrainingRunComparisonCsv(*path, runs, &error);
+    }
+    const char* what = metrics ? "metrics" : "runs";
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    export_failed_ = !ok;
+    export_note_ = ok ? std::string("Saved the ") + what + " to " + *path
+                      : std::string("Could not save the ") + what + ": " + error;
+    if (!ok) {
+        RecordPanelEvent(metrics ? "TrainingPlotPanel.ExportMetricsFailed" : "TrainingPlotPanel.ExportRunComparisonFailed",
+                         error);
     }
 }
 
@@ -2344,268 +2362,127 @@ std::vector<training_dashboard::DetailRow> TrainingPlotPanel::PreparationRows() 
 }
 
 void TrainingPlotPanel::RenderRunComparisonTable() {
-    ImGui::Separator();
-    if (!ImGui::CollapsingHeader("Run Comparison",
-                                 ImGuiTreeNodeFlags_DefaultOpen)) {
-        return;
-    }
-
-    if (run_comparison_records_.empty()) {
-        ImGui::TextDisabled(
-            "No completed training runs recorded in this session.");
-        ImGui::TextDisabled(
-            "Completed graph training runs will appear here for comparison.");
-        if (active_checkpoint_loaded_) {
-            ImGui::TextDisabled(
-                "The loaded checkpoint is active for testing, but loading is "
-                "not a new training run and is not inserted here.");
-        }
-        return;
-    }
-
+    namespace td = training_dashboard;
     const DashColors c = CurrentDashColors();
-    if (DashButton("Export Run CSV", DashButtonKind::Secondary, c) && save_path_callback_) {
-        // The Engine's save dialog (project exports folder); it wrote
-        // training_run_comparison.csv into the working directory unasked.
-        const auto path = save_path_callback_("Export Run CSV", "training_run_comparison.csv");
-        if (path) {
-            std::string error;
-            if (WriteTrainingRunComparisonCsv(*path, run_comparison_records_, &error)) {
-                run_export_note_ = "Saved " + *path;
-                run_export_failed_ = false;
-            } else {
-                run_export_note_ = "Could not save the runs: " + error;
-                run_export_failed_ = true;
-                RecordPanelEvent("TrainingPlotPanel.ExportRunComparisonFailed", error);
-            }
+    const td::RunsTable runs = td::BuildRunsTable(run_comparison_records_, active_checkpoint_loaded_);
+    const auto tone = [&c](td::Tone t) {
+        switch (t) {
+        case td::Tone::Good: return c.success;
+        case td::Tone::Bad: return c.caution;
+        case td::Tone::Error: return c.error;
+        case td::Tone::Faint: return c.faint;
+        case td::Tone::Plain: break;
         }
+        return c.text;
+    };
+
+    ImGui::Spacing();
+    if (!BeginDashCard("##dash_runs", c)) {
+        EndDashCard();
+        return;
     }
-    ImGui::SameLine();
-    if (DashButton("Clear Runs", DashButtonKind::Danger, c)) {
+    // The title, then the card's actions at the right (they wrap when narrow).
+    ImGui::AlignTextToFramePadding();
+    DashCardTitle("Runs", "this session, best test accuracy first", c);
+    ui::Tooltip("Ranked by test accuracy, then validation accuracy and loss, then time.");
+    const bool has_runs = !runs.rows.empty();
+    const char* columns_label = runs_all_columns_ ? "Key columns###runs_columns" : "All columns###runs_columns";
+    const char* export_label = "Export " ICON_FA_CHEVRON_DOWN "###runs_export";
+    const char* clear_label = "Clear runs...";
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float actions_width = ui::ButtonWidth(columns_label, ui::ButtonSize::Small) +
+                                ui::ButtonWidth(export_label, ui::ButtonSize::Small) +
+                                ui::ButtonWidth(clear_label, ui::ButtonSize::Small) + spacing * 2.0f;
+    ui::SameLineRight(actions_width);
+    ui::FlowRow buttons;
+    buttons.Next(ui::ButtonWidth(columns_label, ui::ButtonSize::Small));
+    if (ui::SecondaryButton(columns_label, has_runs, "No run has ended in this session yet.")) {
+        runs_all_columns_ = !runs_all_columns_;
+    }
+    buttons.Next(ui::ButtonWidth(export_label, ui::ButtonSize::Small));
+    if (ui::SecondaryButton(export_label)) ImGui::OpenPopup("##runs_export_menu");
+    if (ImGui::BeginPopup("##runs_export_menu")) {
+        if (ImGui::MenuItem("Metrics (CSV)...")) {
+            pending_export_ = PendingExport::Metrics;
+            export_note_at_ = ExportNoteAt::Runs;
+        }
+        ui::Tooltip("The loss, accuracy and metric points of the run on the charts. Asks where to save.");
+        if (ImGui::MenuItem("Runs (CSV)...", nullptr, false, has_runs)) {
+            pending_export_ = PendingExport::Runs;
+            export_note_at_ = ExportNoteAt::Runs;
+        }
+        ui::Tooltip(has_runs ? "Every run in this table, all columns. Asks where to save."
+                             : "No run has ended in this session yet.");
+        ImGui::EndPopup();
+    }
+    buttons.Next(ui::ButtonWidth(clear_label, ui::ButtonSize::Small));
+    if (ui::DangerButton(clear_label, has_runs, "No run has ended in this session yet.")) open_clear_runs_ = true;
+    if (open_clear_runs_) {
+        ImGui::OpenPopup("Clear the runs?");
+        open_clear_runs_ = false;
+    }
+    const std::string clear_message = "This removes " + std::to_string(runs.rows.size()) +
+                                      (runs.rows.size() == 1 ? " run" : " runs") +
+                                      " from the table. Export them first to keep them.";
+    if (ui::ConfirmDialog("Clear the runs?", clear_message.c_str(), "Clear runs", true,
+                          {"The charts and the trained model stay."}) == ui::DialogResult::Primary) {
         run_comparison_records_.clear();
+        runs_all_columns_ = false;
+        if (export_note_at_ == ExportNoteAt::Runs) export_note_.clear();
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled(
-        "Sorted by test accuracy, then validation metrics, then elapsed time.");
-    ImGui::TextDisabled(
-        "Partition Match is relative to the top-ranked run; different manifests "
-        "are not directly comparable.");
-    if (!run_export_note_.empty()) {
-        const auto& tokens = cyxwiz::ui::CurrentTokens();
+
+    if (!has_runs) {
+        ImGui::TextColored(c.faint, "%s", runs.empty.c_str());
+    } else {
+        // Its own height: up to five rows, then the rows scroll inside; the
+        // Run column and the header stay while it scrolls sideways.
+        const size_t shown_columns = runs_all_columns_ ? runs.columns.size() : td::RunsTable::kKeyColumns;
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float row_height = ImGui::GetTextLineHeight() + style.CellPadding.y * 2.0f;
+        const float height = row_height * static_cast<float>(1 + std::min<size_t>(runs.rows.size(), 5)) +
+                             style.ScrollbarSize + style.CellPadding.y * 2.0f;
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, c.window);
+        // Room between the columns; each is as wide as its longest value.
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(10.0f, style.CellPadding.y));
+        if (ImGui::BeginTable("##dash_runs_table", static_cast<int>(shown_columns),
+                              ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
+                                  ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX,
+                              ImVec2(0.0f, height))) {
+            ImGui::TableSetupScrollFreeze(1, 1);
+            for (size_t i = 0; i < shown_columns; ++i) ImGui::TableSetupColumn(runs.columns[i].c_str());
+            // ImGui's header row, so each column is as wide as its name.
+            ImGui::PushStyleColor(ImGuiCol_Text, c.muted);
+            ImGui::TableHeadersRow();
+            ImGui::PopStyleColor();
+            for (size_t r = 0; r < runs.rows.size(); ++r) {
+                ImGui::TableNextRow();
+                for (size_t i = 0; i < shown_columns; ++i) {
+                    const td::RunCell& cell = runs.rows[r][i];
+                    ImGui::TableSetColumnIndex(static_cast<int>(i));
+                    ImGui::TextColored(tone(cell.tone), "%s", cell.text.c_str());
+                    if (!cell.tooltip.empty()) ui::Tooltip(cell.tooltip.c_str());
+                }
+            }
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        const std::string& note = runs_all_columns_ ? runs.all_note : runs.key_note;
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(run_export_failed_ ? tokens.error : tokens.success, "%s", run_export_note_.c_str());
+        ImGui::TextColored(c.faint, "%s", note.c_str());
         ImGui::PopTextWrapPos();
     }
-    if (active_checkpoint_loaded_) {
-        ImGui::TextDisabled(
-            "A checkpoint loaded for testing is shown under Active model state; "
-            "it is not counted as a new run.");
+    if (!runs.loaded_note.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(c.faint, "%s", runs.loaded_note.c_str());
+        ImGui::PopTextWrapPos();
     }
-
-    if (ImGui::BeginTable(
-            "TrainingRunComparisonTable",
-            27,
-            ImGuiTableFlags_Borders |
-                ImGuiTableFlags_RowBg |
-                ImGuiTableFlags_Resizable |
-                ImGuiTableFlags_ScrollX)) {
-        ImGui::TableSetupColumn("Run");
-        ImGui::TableSetupColumn("Status");
-        ImGui::TableSetupColumn("Dataset");
-        ImGui::TableSetupColumn("Domain");
-        ImGui::TableSetupColumn("Seq");
-        ImGui::TableSetupColumn("Split");
-        ImGui::TableSetupColumn("Samples");
-        ImGui::TableSetupColumn("Role Sources");
-        ImGui::TableSetupColumn("Role Origins");
-        ImGui::TableSetupColumn("Role Labels");
-        ImGui::TableSetupColumn("Partition ID");
-        ImGui::TableSetupColumn("Partition Match");
-        ImGui::TableSetupColumn("Role Checks");
-        ImGui::TableSetupColumn("Model");
-        ImGui::TableSetupColumn("Architecture");
-        ImGui::TableSetupColumn("Epochs");
-        ImGui::TableSetupColumn("Batch");
-        ImGui::TableSetupColumn("LR");
-        ImGui::TableSetupColumn("Best Val Loss");
-        ImGui::TableSetupColumn("Best Val Acc");
-        ImGui::TableSetupColumn("Best Epoch");
-        ImGui::TableSetupColumn("Test Loss");
-        ImGui::TableSetupColumn("Test Acc");
-        ImGui::TableSetupColumn("Elapsed");
-        ImGui::TableSetupColumn("Best Ckpt");
-        ImGui::TableSetupColumn("Patience");
-        ImGui::TableSetupColumn("Checkpoint");
-        ImGui::TableHeadersRow();
-
-        const auto& partition_reference = run_comparison_records_.front();
-        for (const auto& record : run_comparison_records_) {
-            ImGui::TableNextRow();
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.run_id.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.run_status.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.dataset_name.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.preprocessing_domain.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.sequence_batch_enabled ? "yes" : "no");
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%.0f/%.0f/%.0f%%",
-                record.train_ratio * 100.0f,
-                record.val_ratio * 100.0f,
-                record.test_ratio * 100.0f);
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%zu/%zu/%zu",
-                record.train_sample_count,
-                record.val_sample_count,
-                record.test_sample_count);
-
-            const std::string role_sources = record.train_source_name + " / " +
-                record.dev_source_name + " / " + record.test_source_name;
-            const std::string role_origins = record.train_origin + " / " +
-                record.dev_origin + " / " + record.test_origin;
-            const std::string role_labels = record.train_label_column + " / " +
-                record.dev_label_column + " / " + record.test_label_column;
-            const std::string partition_display =
-                record.partition_manifest_fingerprint.empty()
-                    ? std::string("-")
-                    : record.partition_manifest_fingerprint.substr(0, 8);
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(role_sources.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(role_origins.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(role_labels.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(partition_display.c_str());
-            if (!record.partition_manifest_fingerprint.empty() &&
-                ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s",
-                                  record.partition_manifest_fingerprint.c_str());
-            }
-
-            const auto partition_compatibility =
-                CompareTrainingRunPartitions(partition_reference, record);
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(
-                TrainingRunPartitionCompatibilityLabel(partition_compatibility));
-            if (partition_compatibility ==
-                    TrainingRunPartitionCompatibility::DifferentManifest &&
-                ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(
-                    "Not directly comparable: this run used a different "
-                    "partition manifest than the top-ranked run.");
-            }
-
-            ImGui::TableNextColumn();
-            const std::string role_checks =
-                "Dev " + record.dev_schema_compatibility + "/" +
-                record.dev_leakage_status + " | Test " +
-                record.test_schema_compatibility + "/" +
-                record.test_leakage_status;
-            ImGui::TextUnformatted(role_checks.c_str());
-            if (ImGui::IsItemHovered() &&
-                (!record.dev_partition_status_reason.empty() ||
-                 !record.test_partition_status_reason.empty())) {
-                ImGui::SetTooltip(
-                    "Dev: %s\nTest: %s",
-                    record.dev_partition_status_reason.empty()
-                        ? "no additional detail"
-                        : record.dev_partition_status_reason.c_str(),
-                    record.test_partition_status_reason.empty()
-                        ? "no additional detail"
-                        : record.test_partition_status_reason.c_str());
-            }
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.model_family.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(record.architecture_summary.c_str());
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", record.epochs);
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%d", record.batch_size);
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%.6f", record.learning_rate);
-
-            ImGui::TableNextColumn();
-            if (record.has_validation_metrics) {
-                ImGui::Text("%.4f", record.best_val_loss);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            if (record.has_validation_metrics) {
-                ImGui::Text("%.2f%%", record.best_val_accuracy * 100.0f);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            if (record.has_validation_metrics) {
-                ImGui::Text("loss %d / acc %d",
-                    record.best_val_loss_epoch,
-                    record.best_val_accuracy_epoch);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            if (record.has_test_metrics) {
-                ImGui::Text("%.4f", record.final_test_loss);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            if (record.has_test_metrics) {
-                ImGui::Text("%.2f%%", record.final_test_accuracy * 100.0f);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            ImGui::Text("%.1fs", record.elapsed_seconds);
-
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(
-                record.save_best_checkpoint ? "yes" : "no");
-
-            ImGui::TableNextColumn();
-            if (record.early_stopping_patience > 0) {
-                ImGui::Text("%d", record.early_stopping_patience);
-            } else {
-                ImGui::TextDisabled("-");
-            }
-
-            ImGui::TableNextColumn();
-            if (!record.checkpoint_used.empty()) {
-                ImGui::TextUnformatted(record.checkpoint_used.c_str());
-            } else {
-                ImGui::TextDisabled("-");
-            }
-        }
-
-        ImGui::EndTable();
+    if (export_note_at_ == ExportNoteAt::Runs && !export_note_.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(export_failed_ ? c.error : c.success, "%s", export_note_.c_str());
+        ImGui::PopTextWrapPos();
     }
+    EndDashCard();
 }
 
 training_dashboard::HeaderFacts TrainingPlotPanel::HeaderFactsNow() const {
@@ -2761,21 +2638,38 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     buttons.Next(ui::ButtonWidth(more_label, ui::ButtonSize::Small));
     if (ui::SecondaryButton(more_label)) ImGui::OpenPopup("##dash_actions");
     if (ImGui::BeginPopup("##dash_actions")) {
-        if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export metrics (CSV)")) {
-            ExportToCSVLocked("training_metrics.csv");
+        if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export metrics (CSV)...")) {
+            pending_export_ = PendingExport::Metrics;
+            export_note_at_ = ExportNoteAt::Header;
         }
-        ui::Tooltip("Writes training_metrics.csv in the working folder.");
+        ui::Tooltip("The loss, accuracy and metric points of this run. Asks where to save.");
+        if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export runs (CSV)...", nullptr, false,
+                            !run_comparison_records_.empty())) {
+            pending_export_ = PendingExport::Runs;
+            export_note_at_ = ExportNoteAt::Header;
+        }
+        ui::Tooltip(run_comparison_records_.empty() ? "No run has ended in this session yet."
+                                                    : "Every run in the Runs table, all columns. Asks where to save.");
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Text, c.error);
-        const bool clear = ImGui::MenuItem(ICON_FA_TRASH " Clear all");
+        if (ImGui::MenuItem(ICON_FA_TRASH " Clear all...")) open_clear_all_ = true;
         ImGui::PopStyleColor();
-        if (clear) {
-            ClearLocked();
-            facts_ = DashboardFacts();  // the cards below draw this frame
-        }
-        ui::Tooltip("Clears the charts and metrics of this run from the dashboard.");
+        ui::Tooltip("Clears this run's charts, cards and metrics from the dashboard. Asks first.");
         ImGui::EndPopup();
     }
+    if (open_clear_all_) {
+        ImGui::OpenPopup("Clear the dashboard?");
+        open_clear_all_ = false;
+    }
+    if (ui::ConfirmDialog("Clear the dashboard?",
+                          "This clears the run's charts, cards and metrics from the dashboard.", "Clear all", true,
+                          {"The Runs table keeps its rows.", "The trained model and its checkpoint stay."}) ==
+        ui::DialogResult::Primary) {
+        ClearLocked();
+        export_note_.clear();
+        facts_ = DashboardFacts();  // the cards below draw this frame
+    }
+    if (export_note_at_ == ExportNoteAt::Header) wrapped(export_failed_ ? c.error : c.success, export_note_);
 
     // Row 2: progress.
     if (header.show_progress) {

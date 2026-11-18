@@ -16,6 +16,20 @@ private Data Studio tickets (`tofix*/track*`).
 - **Dock back showed nothing** when the window had been alone in its place
   (its place left with it): it docked into the dock space's root and was not
   drawn. It comes back as a tab in the middle of the main window.
+- **The Training Dashboard's Runs table shows the key columns.** Run (when
+  it ended and the dataset), Result, best validation loss and accuracy, test
+  accuracy, epochs ("7 of 10" when it ended early), time and the device it
+  ran on (new); **All columns** shows the other 20. It keeps its own height
+  (rows scroll inside), has no outlines, and the Run column stays while it
+  scrolls sideways. **Export** saves the metrics or the runs as CSV;
+  **Clear runs...** asks first. The runs CSV gains the finish time, epochs
+  run and device columns.
+- **The Training Dashboard's exports ask where to save and say where they
+  saved.** More > Export metrics wrote `training_metrics.csv` into the
+  Engine's working folder without a word; it now asks, like Export runs, and
+  the dashboard says where each file went. **Clear all...** asks first and
+  says that the Runs table and the trained model stay. The save dialog no
+  longer holds up a running training while it is open.
 - **The Training Dashboard's header says where the run ran and how it
   ended.** "Ran on the CPU (ArrayFire CPU) · compatibility policy"; the
   dataset with its training, validation and test rows and the batch size;

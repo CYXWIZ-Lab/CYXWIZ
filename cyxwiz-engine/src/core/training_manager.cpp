@@ -7,6 +7,7 @@
 #include "model_builder.h"
 
 #include <cstdint>
+#include <ctime>
 #include "crash_run_recorder.h"
 #include "training_report_window.h"
 #include "training_trace_collector.h"
@@ -940,13 +941,31 @@ void TrainingManager::TrainingThreadFunc(
         const std::string run_status = final_metrics.terminal_status.empty()
             ? (stop_requested_.load() ? "stopped" : "complete")
             : final_metrics.terminal_status;
-        const auto record = MakeTrainingRunComparisonRecord(
+        auto record = MakeTrainingRunComparisonRecord(
             run_id,
             completed_config,
             final_metrics,
             total_training_time,
             final_metrics.checkpoint_used,
             run_status);
+        // The Runs card's time and device: when it ended (local) and where
+        // its trace says it ran.
+        {
+            const std::time_t ended = std::time(nullptr);
+            std::tm local{};
+#ifdef _WIN32
+            localtime_s(&local, &ended);
+#else
+            localtime_r(&ended, &local);
+#endif
+            char hhmm[8] = {};
+            std::strftime(hhmm, sizeof(hhmm), "%H:%M", &local);
+            record.finished_at = hhmm;
+            const auto trace = TrainingTraceCollector::Instance().Snapshot();
+            record.device_backend = trace.effective_backend;
+            record.device_name = trace.effective_device_name;
+            record.device_fallback = trace.selection_fallback_applied;
+        }
         panel->AddRunComparisonRecord(record);
         panel->SetTrainingComplete(total_training_time, final_metrics);
     }

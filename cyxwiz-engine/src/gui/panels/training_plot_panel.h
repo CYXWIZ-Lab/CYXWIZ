@@ -83,11 +83,6 @@ public:
     void ResetPlots();
     void SetMaxPoints(size_t max_points);
 
-    // Export
-    void ExportToCSV(const std::string& filepath);
-    void ExportPlotImage(const std::string& filepath);
-    void ExportRunComparisonCSV(const std::string& filepath);
-
     // Word-vector runs (TOFIX152): word2vec and GloVe training of a Word
     // Embeddings node, from its figures. They have their own view behind the
     // Run switcher and never touch the model run's charts, cards or table.
@@ -287,8 +282,19 @@ private:
     MetricSeries train_accuracy_epochs_;
     std::vector<MetricSeries> custom_metrics_;
     std::vector<TrainingRunComparisonRecord> run_comparison_records_;
-    std::string run_export_note_;  // where Export Run CSV wrote, or why it could not
-    bool run_export_failed_ = false;
+    // The exports (the header's More menu, the Runs card's Export): asked for
+    // while drawing and run after the frame's lock is released, so the save
+    // dialog never holds up the training thread.
+    enum class PendingExport { None, Metrics, Runs };
+    enum class ExportNoteAt { Header, Runs };
+    PendingExport pending_export_ = PendingExport::None;
+    ExportNoteAt export_note_at_ = ExportNoteAt::Header;
+    std::string export_note_;  // where an export saved, or why it could not
+    bool export_failed_ = false;
+    bool runs_all_columns_ = false;
+    // The confirmations, opened outside the menus that ask for them.
+    bool open_clear_all_ = false;
+    bool open_clear_runs_ = false;
     std::vector<MaterializationProgress> materialization_events_;
     std::string materialization_output_dataset_;
     std::string materialization_status_;
@@ -460,6 +466,8 @@ private:
     // Helper methods
     // The header card: state, where it ran, on what data, how it ended, and
     // the Run details fold (core/training_dashboard_presentation BuildHeader).
+    void RenderWindow();      // Render() without the pending export
+    void RunPendingExport();  // asks where to save, writes, says where it saved
     void RenderTrainingStatus();
     training_dashboard::HeaderFacts HeaderFactsNow() const;
     // Run details > Data: the preparation's file, cache key, memory figures.
@@ -502,7 +510,7 @@ private:
     // Render() already owns data_mutex_; these helpers must only be called
     // while that lock is held. Public entry points acquire the lock first.
     void ClearLocked();
-    void ExportToCSVLocked(const std::string& filepath) const;
+    std::string MetricsCsvLocked() const;
     std::pair<double, double> CalculateEpochWindow(const MetricSeries& series) const;
     ValueRange CalculateVisibleRange(const MetricSeries& primary,
                                      const MetricSeries& secondary,

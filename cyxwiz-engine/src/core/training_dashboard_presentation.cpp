@@ -570,6 +570,151 @@ Header BuildHeader(const RunFacts& run, const HeaderFacts& h) {
     return out;
 }
 
+namespace {
+
+RunCell Missing(const char* tooltip = "Not recorded") { return {"\xE2\x80\x94", tooltip, Tone::Faint}; }
+
+RunCell Result(const std::string& status) {
+    if (status == "completed" || status == "complete") return {"Completed", "Status code: " + status, Tone::Good};
+    if (status == "early_stopped") return {"Early stopped", "Status code: " + status, Tone::Bad};
+    if (status == "cancelled" || status == "stopped") return {"Stopped", "Status code: " + status, Tone::Bad};
+    if (status == "failed") return {"Failed", "Status code: " + status, Tone::Error};
+    return {status.empty() ? std::string("Unknown") : status, "Status code: " + status, Tone::Plain};
+}
+
+RunCell Device(const TrainingRunComparisonRecord& r) {
+    if (r.device_backend.empty()) return Missing();
+    RunCell cell;
+    cell.text = rl_device::BackendWord(r.device_backend);
+    if (r.device_fallback) cell.text += " (fallback)";
+    if (!r.device_name.empty()) cell.tooltip = r.device_name + "\n";
+    cell.tooltip += "Backend: " + r.device_backend;
+    if (r.device_fallback) cell.tooltip += "\nThe chosen device failed its check; the run moved here.";
+    return cell;
+}
+
+std::string Triple(const std::string& a, const std::string& b, const std::string& c) {
+    return a + " / " + b + " / " + c;
+}
+
+}  // namespace
+
+RunsTable BuildRunsTable(const std::vector<TrainingRunComparisonRecord>& records, bool checkpoint_loaded) {
+    RunsTable t;
+    t.columns = {"Run", "Result", "Best val loss", "Best val acc", "Test acc", "Epochs", "Time", "Device",
+                 "Run id", "Domain", "Sequence batches", "Split", "Rows", "Role sources", "Role origins",
+                 "Role labels", "Partition", "Partition match", "Role checks", "Model", "Architecture", "Batch",
+                 "Learning rate", "Best epochs", "Test loss", "Best checkpoint", "Patience", "Checkpoint"};
+    t.key_note = std::to_string(RunsTable::kKeyColumns) + " of " + std::to_string(t.columns.size()) +
+                 " columns; All columns shows the rest (partitions, roles, learning rate, checkpoint).";
+    t.all_note = "Partition match compares each run with the top one: runs on different partitions are not "
+                 "directly comparable.";
+    t.empty = "A row appears here when a training run ends.";
+    if (checkpoint_loaded)
+        t.loaded_note = "The checkpoint loaded for testing is the active model, not a new run, so it has no row.";
+
+    for (const TrainingRunComparisonRecord& r : records) {
+        std::vector<RunCell> row;
+        row.reserve(t.columns.size());
+        // Key columns.
+        RunCell run;
+        run.text = r.finished_at.empty() ? r.dataset_name : r.finished_at + kDot + r.dataset_name;
+        if (run.text.empty()) run.text = r.run_id;
+        run.tooltip = "Run " + r.run_id + (r.dataset_name.empty() ? "" : "\nDataset " + r.dataset_name);
+        row.push_back(run);
+        row.push_back(Result(r.run_status));
+        if (r.has_validation_metrics) {
+            row.push_back({Format("%.4f", r.best_val_loss), "At epoch " + std::to_string(r.best_val_loss_epoch)});
+            row.push_back({Format("%.2f%%", r.best_val_accuracy * 100.0),
+                           "At epoch " + std::to_string(r.best_val_accuracy_epoch)});
+        } else {
+            row.push_back(Missing("No validation rows"));
+            row.push_back(Missing("No validation rows"));
+        }
+        if (r.has_test_metrics) {
+            row.push_back({Format("%.2f%%", r.final_test_accuracy * 100.0),
+                           "Loss " + Format("%.4f", r.final_test_loss) +
+                               (r.test_sample_count > 0
+                                    ? " on " + Thousands(static_cast<double>(r.test_sample_count)) + " test rows"
+                                    : std::string())});
+        } else {
+            row.push_back(Missing("No test rows"));
+        }
+        if (r.epochs_run > 0 && r.epochs_run < r.epochs) {
+            row.push_back({std::to_string(r.epochs_run) + " of " + std::to_string(r.epochs),
+                           "Ended after epoch " + std::to_string(r.epochs_run)});
+        } else {
+            row.push_back({std::to_string(r.epochs), {}});
+        }
+        row.push_back({FormatTrainingDuration(r.elapsed_seconds), {}});
+        row.push_back(Device(r));
+
+        // The rest.
+        row.push_back({r.run_id, {}});
+        row.push_back({r.preprocessing_domain, {}});
+        row.push_back({r.sequence_batch_enabled ? "yes" : "no", {}});
+        row.push_back({Format("%.0f", r.train_ratio * 100.0) + "/" + Format("%.0f", r.val_ratio * 100.0) + "/" +
+                           Format("%.0f", r.test_ratio * 100.0) + "%",
+                       "Training / validation / test"});
+        row.push_back({Triple(Thousands(static_cast<double>(r.train_sample_count)),
+                              Thousands(static_cast<double>(r.val_sample_count)),
+                              Thousands(static_cast<double>(r.test_sample_count))),
+                       "Training / validation / test rows"});
+        row.push_back({Triple(r.train_source_name, r.dev_source_name, r.test_source_name), "Training / validation / test"});
+        row.push_back({Triple(r.train_origin, r.dev_origin, r.test_origin), "Training / validation / test"});
+        row.push_back({Triple(r.train_label_column, r.dev_label_column, r.test_label_column),
+                       "Training / validation / test"});
+        if (r.partition_manifest_fingerprint.empty()) {
+            row.push_back(Missing());
+        } else {
+            row.push_back({r.partition_manifest_fingerprint.substr(0, 8), r.partition_manifest_fingerprint});
+        }
+        const auto match = CompareTrainingRunPartitions(records.front(), r);
+        row.push_back({TrainingRunPartitionCompatibilityLabel(match),
+                       match == TrainingRunPartitionCompatibility::DifferentManifest
+                           ? "Not directly comparable: this run used a different partition than the top run."
+                           : std::string()});
+        RunCell checks;
+        checks.text = "Dev " + r.dev_schema_compatibility + "/" + r.dev_leakage_status + kDot + "Test " +
+                      r.test_schema_compatibility + "/" + r.test_leakage_status;
+        if (!r.dev_partition_status_reason.empty() || !r.test_partition_status_reason.empty())
+            checks.tooltip = "Dev: " + (r.dev_partition_status_reason.empty() ? "no further detail"
+                                                                              : r.dev_partition_status_reason) +
+                             "\nTest: " + (r.test_partition_status_reason.empty() ? "no further detail"
+                                                                                  : r.test_partition_status_reason);
+        row.push_back(checks);
+        row.push_back({r.model_family, {}});
+        row.push_back({r.architecture_summary, {}});
+        row.push_back({std::to_string(r.batch_size), {}});
+        row.push_back({Format("%g", r.learning_rate), {}});
+        if (r.has_validation_metrics) {
+            row.push_back({"loss " + std::to_string(r.best_val_loss_epoch) + kDot + "acc " +
+                               std::to_string(r.best_val_accuracy_epoch),
+                           "The epochs of the best validation loss and accuracy"});
+        } else {
+            row.push_back(Missing("No validation rows"));
+        }
+        if (r.has_test_metrics) {
+            row.push_back({Format("%.4f", r.final_test_loss), {}});
+        } else {
+            row.push_back(Missing("No test rows"));
+        }
+        row.push_back({r.save_best_checkpoint ? "yes" : "no", "Keeps the best validation checkpoint"});
+        if (r.early_stopping_patience > 0) {
+            row.push_back({std::to_string(r.early_stopping_patience), "Epochs without improvement before it stops"});
+        } else {
+            row.push_back(Missing("No early stopping"));
+        }
+        if (r.checkpoint_used.empty()) {
+            row.push_back(Missing());
+        } else {
+            row.push_back({r.checkpoint_used, r.checkpoint_used});
+        }
+        t.rows.push_back(std::move(row));
+    }
+    return t;
+}
+
 std::vector<DetailRow> TaskRows(const std::vector<EngineTask>& tasks) {
     std::vector<DetailRow> rows;
     for (size_t i = 0; i < tasks.size(); ++i) {

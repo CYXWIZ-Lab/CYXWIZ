@@ -5,6 +5,8 @@
 // the time words. The panel (gui/panels/training_plot_panel.cpp) draws them;
 // test_training_dashboard_presentation checks them on a real run's numbers.
 
+#include "training_run_comparison_record.h"
+
 #include <optional>
 #include <string>
 #include <vector>
@@ -188,6 +190,25 @@ Header BuildHeader(const RunFacts& run, const HeaderFacts& facts);
 // The engine tasks as rows: up to three ("Engine task": "name · 55% · status"),
 // then "Engine tasks": "and N more".
 std::vector<DetailRow> TaskRows(const std::vector<EngineTask>& tasks);
+
+// The Runs card (B4-5): this session's runs, best test accuracy first. The
+// key columns come first; "All columns" shows the rest.
+struct RunCell {
+    std::string text;
+    std::string tooltip;
+    Tone tone = Tone::Plain;
+};
+struct RunsTable {
+    static constexpr size_t kKeyColumns = 8;
+    std::vector<std::string> columns;         // the key columns, then the rest
+    std::vector<std::vector<RunCell>> rows;   // one cell per column
+    std::string key_note;     // under the key columns: what All columns adds
+    std::string all_note;     // under all columns: the partition match
+    std::string empty;        // no runs yet
+    std::string loaded_note;  // a loaded checkpoint is not a run
+};
+// `records` in the panel's order (best first: SortTrainingRunComparisonsByBestMetric).
+RunsTable BuildRunsTable(const std::vector<TrainingRunComparisonRecord>& records, bool checkpoint_loaded);
 
 // "23,000"
 std::string Thousands(double value);
