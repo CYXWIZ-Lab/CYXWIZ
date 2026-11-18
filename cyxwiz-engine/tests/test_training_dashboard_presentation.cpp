@@ -227,7 +227,7 @@ int main() {
     Check(head.pill == "Training" && head.status == "Epoch 6 of 10 \xC2\xB7 batch 10 of 12", "training status: " + head.status);
     Check(head.where == "Runs on the CPU (ArrayFire CPU) \xC2\xB7 compatibility policy", "runs on: " + head.where);
     Check(head.now == "Latest batches: loss 0.5287 \xC2\xB7 accuracy 90.70%" &&
-              head.now_detail == "(batch 10 of 12, 204 batches/s)",
+              head.now_detail == "(204 batches/s)",
           "latest batches: " + head.now + " " + head.now_detail);
     Check(std::abs(head.progress - (5.0 + 10.0 / 12.0) / 10.0) < 1e-9, "progress counts the running epoch's batches");
     Check(head.outcome.empty() && head.active_model.empty() && head.test.empty(), "no outcome while training");
@@ -312,6 +312,17 @@ int main() {
     Check(head.pill == "Model loaded" && head.active_model == "Active model: a checkpoint loaded for testing, epoch 4" &&
               head.active_model_detail == "(validation loss 0.5000, accuracy 80.00%)",
           "model loaded: " + head.active_model);
+    // A checkpoint loaded after a finished run: its model, not the run's ending or test.
+    td::HeaderFacts loaded = h;
+    loaded.checkpoint_loaded = true;
+    loaded.active_model_provenance = "loaded_checkpoint_for_testing";
+    loaded.checkpoint_epoch = 4;
+    loaded.checkpoint_step = 0;
+    head = td::BuildHeader(done, loaded);
+    Check(head.pill == "Model loaded" && head.outcome.empty() && head.test.empty() &&
+              head.active_model == "Active model: a checkpoint loaded for testing, epoch 4" &&
+              row(head, "Stop code").empty() && row(head, "Checkpoint") == "epoch 4",
+          "a checkpoint loaded after a run: " + head.pill + " / " + head.test);
     td::HeaderFacts prep;
     prep.preparing = true;
     prep.preparation_progress = 0.4;

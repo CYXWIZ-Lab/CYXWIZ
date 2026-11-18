@@ -372,6 +372,7 @@ std::vector<training_dashboard::DetailRow> TraceRows(const TrainingTraceSummary&
 // The trace's latest warnings (up to 3) as "Class: text", on the surface.
 std::vector<std::string> TraceWarnings(const TrainingTraceSummary& trace) {
     std::vector<std::string> lines;
+    if (!trace.available && trace.run_id.empty()) return lines;
     const bool has_transfer = FindLatestPinMemoryTransferEvent(trace) != nullptr;
     const int start = std::max(0, static_cast<int>(trace.warnings.size()) - 3);
     for (int i = start; i < static_cast<int>(trace.warnings.size()); ++i) {
@@ -689,6 +690,7 @@ void TrainingPlotPanel::RenderKpiCards() {
         switch (t) {
         case td::Tone::Good: return c.success;
         case td::Tone::Bad: return c.caution;
+        case td::Tone::Error: return c.error;
         case td::Tone::Plain: return c.text;
         case td::Tone::Faint: break;
         }
@@ -1068,6 +1070,8 @@ void TrainingPlotPanel::SetActiveCheckpointLoaded(
     checkpoint_val_loss_ = validation_loss;
     checkpoint_val_accuracy_ = validation_accuracy;
     has_checkpoint_validation_metrics_ = has_validation_metrics;
+    checkpoint_step_ = 0;
+    has_test_metrics_ = false;  // the test was the run's model, not this one
     active_checkpoint_loaded_ = true;
     active_model_provenance_ = "loaded_checkpoint_for_testing";
 }
@@ -1831,6 +1835,7 @@ void TrainingPlotPanel::RenderCurveSummary() {
         switch (t) {
         case td::Tone::Good: return c.success;
         case td::Tone::Bad: return c.caution;
+        case td::Tone::Error: return c.error;
         case td::Tone::Faint: return c.muted;  // as on the cards
         case td::Tone::Plain: break;
         }
@@ -2238,7 +2243,9 @@ void TrainingPlotPanel::RenderMaterializationSummary() {
     if (!materialization_clear_message_.empty()) {
         ImGui::TextColored(c.faint, "%s", materialization_clear_message_.c_str());
     }
-    ImGui::TextColored(c.faint, "The file, cache key and memory figures are under Run details.");
+    if (!PreparationRows().empty()) {
+        ImGui::TextColored(c.faint, "The file, cache key and memory figures are under Run details.");
+    }
     EndDashCard();
 
     // Clear confirmation.
@@ -2650,8 +2657,6 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     if (training_active) facts.waiting_for_gpu = tm.WaitingForGpu();
     const TrainingTraceSummary& trace = LatestTraceCached();
     facts.route = TraceRoute(trace);
-    where_rows = TraceRows(trace);
-    warnings = TraceWarnings(trace);
     for (const auto& task : AsyncTaskManager::Instance().GetActiveTasks()) {
         facts.tasks.push_back({task.name, task.progress, task.status_message});
     }
@@ -2659,6 +2664,26 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     const bool training_active = false;
 #endif
     const td::Header header = td::BuildHeader(facts_, facts);
+#ifndef CYXWIZ_DASHBOARD_WITHOUT_TRAINING
+    // The trace is the last run's: shown for a run that trains or ended, not
+    // while idle, preparing, waiting or with a loaded checkpoint.
+    switch (header.state) {
+    case td::RunState::Training:
+    case td::RunState::Paused:
+    case td::RunState::EarlyStopped:
+    case td::RunState::Stopped:
+    case td::RunState::Failed:
+    case td::RunState::Completed:
+        where_rows = TraceRows(trace);
+        warnings = TraceWarnings(trace);
+        break;
+    case td::RunState::Idle:
+    case td::RunState::WaitingForGpu:
+    case td::RunState::PreparationFailed:
+    case td::RunState::Preparing:
+    case td::RunState::ModelLoaded: break;
+    }
+#endif
 
     ImVec4 state_colour = c.muted;
     switch (header.state) {
@@ -2746,6 +2771,7 @@ void TrainingPlotPanel::RenderTrainingStatus() {
         ImGui::PopStyleColor();
         if (clear) {
             ClearLocked();
+            facts_ = DashboardFacts();  // the cards below draw this frame
         }
         ui::Tooltip("Clears the charts and metrics of this run from the dashboard.");
         ImGui::EndPopup();

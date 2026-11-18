@@ -327,13 +327,14 @@ RunState StateOf(const RunFacts& run, const HeaderFacts& h) {
     if (run.training) return h.paused ? RunState::Paused : RunState::Training;
     if (h.preparation_failed) return RunState::PreparationFailed;
     if (h.preparing) return RunState::Preparing;
+    // A checkpoint loaded for testing after a run replaces that run's model.
+    if (h.checkpoint_loaded) return RunState::ModelLoaded;
     if (run.total_seconds > 0.0) {
         if (h.terminal_status == "early_stopped") return RunState::EarlyStopped;
         if (h.terminal_status == "cancelled" || h.terminal_status == "stopped") return RunState::Stopped;
         if (h.terminal_status == "failed") return RunState::Failed;
         return RunState::Completed;
     }
-    if (h.checkpoint_loaded) return RunState::ModelLoaded;
     return RunState::Idle;
 }
 
@@ -505,14 +506,10 @@ Header BuildHeader(const RunFacts& run, const HeaderFacts& h) {
             out.now = "Latest batches: loss " + Format("%.4f", run.latest_loss_point->y);
             if (fresh(run.latest_accuracy_point))
                 out.now += kDot + std::string("accuracy ") + Format("%.2f%%", run.latest_accuracy_point->y);
-            if (run.total_batches > 0 && run.current_batch > 0) {
-                out.now_detail = "(batch " + std::to_string(run.current_batch) + " of " +
-                                 std::to_string(run.total_batches);
-                if (run.batches_per_second > 0.0)
-                    out.now_detail += ", " + Format(run.batches_per_second >= 10.0 ? "%.0f" : "%.1f",
-                                                    run.batches_per_second) + " batches/s";
-                out.now_detail += ")";
-            }
+            // The batch is on the status line; the speed here.
+            if (run.batches_per_second > 0.0)
+                out.now_detail = "(" + Format(run.batches_per_second >= 10.0 ? "%.0f" : "%.1f", run.batches_per_second) +
+                                 " batches/s)";
         }
     }
 

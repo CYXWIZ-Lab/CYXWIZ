@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -140,8 +141,12 @@ void TextWrapAnywhere(const std::string& text, const ImVec4& colour) {
         const int n = ImTextCharFromUtf8(&c, p, end);
         return p + std::max(1, n);
     };
+    ImFont* font = ImGui::GetFont();
+    const float font_size = ImGui::GetFontSize();
     ImGui::BeginGroup();
     ImGui::PushStyleColor(ImGuiCol_Text, colour);
+    // The lines of one value as close as ImGui's own wrap puts them.
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
     do {
         const char* line_end = static_cast<const char*>(std::memchr(s, '\n', static_cast<size_t>(end - s)));
         if (!line_end) line_end = end;
@@ -150,7 +155,7 @@ void TextWrapAnywhere(const std::string& text, const ImVec4& colour) {
         float x = 0.0f;
         while (fit < line_end) {
             const char* after = next_char(fit);
-            x += ImGui::CalcTextSize(fit, after).x;
+            x += font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, fit, after).x;  // unrounded advance
             if (x > width && fit > s) break;
             fit = after;
         }
@@ -161,6 +166,9 @@ void TextWrapAnywhere(const std::string& text, const ImVec4& colour) {
             const char* at_slash = nullptr;
             for (const char* p = s; p < fit; ++p) {
                 if (*p == ' ') at_space = p + 1;
+            }
+            if (*fit == ' ') at_space = fit + 1;  // the line ends at the space that overflows
+            for (const char* p = s; p < fit; ++p) {
                 if (*p == '\\' || *p == '/') at_slash = p + 1;
             }
             if (at_space && at_space > s) cut = at_space;
@@ -172,6 +180,7 @@ void TextWrapAnywhere(const std::string& text, const ImVec4& colour) {
         s = cut;
         if (s == line_end && s < end) ++s;  // the newline
     } while (s < end);
+    ImGui::PopStyleVar();
     ImGui::PopStyleColor();
     ImGui::EndGroup();
 }
