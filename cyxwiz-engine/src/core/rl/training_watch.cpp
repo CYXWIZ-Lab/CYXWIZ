@@ -26,20 +26,25 @@ void TrainingWatch::Update(RLTrainingRun* run, RLTrainingRun::Watch watch, int e
     steps_ = holds_steps;
     started_ = 0;
     finished_update_ = 0;
+    finished_steps_ = 0;
     // On the preview's thread, before each episode: the newest networks, and
     // the view says which update they come from
     playback_.SetEpisodeStart([this, run](TrainedPolicy& played) -> std::optional<plugin::PluginShownCopyLabel> {
         int update = update_.load();
         long long steps = steps_.load();
         const bool first = started_.load() == 0;
-        if (!first) finished_update_ = update;  // the episode that just ended played these
+        if (!first) {  // the episode that just ended played these
+            finished_update_ = update;
+            finished_steps_ = steps;
+        }
         ++started_;
+        const bool by_steps = played.IsSac();
         if (run->RefreshPreview(played, update, steps)) {
             update_ = update;
             steps_ = steps;
-            return rl_playback::PreviewLabel(update);
+            return rl_playback::PreviewLabel(update, steps, by_steps);
         }
-        if (first && update > 0) return rl_playback::PreviewLabel(update);  // the networks it holds
+        if (first && update > 0) return rl_playback::PreviewLabel(update, steps, by_steps);  // the networks it holds
         return std::nullopt;
     });
     std::string error;
@@ -57,6 +62,7 @@ void TrainingWatch::Stop() {
     steps_ = 0;
     started_ = 0;
     finished_update_ = 0;
+    finished_steps_ = 0;
 }
 
 std::string TrainingWatch::EnvironmentKey() const {
@@ -68,6 +74,7 @@ TrainingWatch::Status TrainingWatch::Get() const {
     const auto snap = playback_.Get();
     s.previewing = previewed_ && (snap.state == PolicyPlayback::State::Playing ||
                                   snap.state == PolicyPlayback::State::Paused);
+    s.by_steps = previewed_ && previewed_->IsSac();
     s.networks_update = update_.load();
     s.networks_steps = steps_.load();
     s.episodes = std::max(0, snap.episode - 1);  // the playback's own count: it records the return with it
@@ -75,6 +82,7 @@ TrainingWatch::Status TrainingWatch::Get() const {
         s.has_last_return = true;
         s.last_return = snap.returns.back();
         s.last_return_update = finished_update_.load();
+        s.last_return_steps = finished_steps_.load();
     }
     if (snap.state == PolicyPlayback::State::Failed) s.message = snap.message;
     return s;

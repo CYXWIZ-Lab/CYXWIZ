@@ -17,9 +17,12 @@
 #include "ui_buttons.h"
 #include "ui_widgets.h"
 #include "ui_tokens.h"
+#include <cyxwiz/device.h>
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <optional>
+#include <utility>
 #include <chrono>
 #include <map>
 #include <cfloat>
@@ -32,6 +35,31 @@
 
 namespace gui::properties_node_editors {
 namespace {
+
+struct TrainingDeviceMemory {
+    std::string name;
+    uint64_t bytes = 0;  // 0: not known
+};
+
+// The device a run trains on (Preferences > Devices), its name and memory:
+// asked once per choice, since a device query is too slow for every frame
+TrainingDeviceMemory SelectedTrainingDeviceMemory() {
+    static std::optional<std::pair<cyxwiz::DeviceType, int>> asked;
+    static TrainingDeviceMemory known;
+    const auto selected = cyxwiz::Device::GetProcessDevice();
+    if (!selected) return {};
+    const auto key = std::make_pair(selected->type, selected->device_id);
+    if (asked != key) {
+        asked = key;
+        known = {};
+        const cyxwiz::DeviceInfo info = cyxwiz::Device(key.first, key.second).GetInfo();
+        if (info.memory_total_known && info.memory_total > 0) {
+            known.name = info.name;
+            known.bytes = info.memory_total;
+        }
+    }
+    return known;
+}
 
 std::string ParamOr(const MLNode& node,
                     const char* key,
@@ -466,7 +494,10 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
             const uint64_t bytes =
                 cyxwiz::rl::ReplayBytes(buffer, static_cast<size_t>(std::max(env.info.observation_size, 0)),
                                         static_cast<size_t>(std::max(env.info.action_size, 0)));
-            FactRows({{"Replay buffer", cyxwiz::rl_graph::ReplayMemoryText(bytes) + " on the training device"}});
+            const TrainingDeviceMemory device = SelectedTrainingDeviceMemory();
+            const auto fit = cyxwiz::rl_graph::ReplayFitText(bytes, device.name, device.bytes);
+            FactRows({{"Replay buffer", fit.text}});
+            if (!fit.advice.empty()) properties_rows::Note(fit.advice.c_str());
         }
         if (!env.info.discrete_actions && ParamOr(node, "target_entropy_mode", "auto") != "typed")
             FactRows({{"Target entropy", cyxwiz::rl_graph::AutoTargetEntropyText(
@@ -475,9 +506,9 @@ void RenderRlNodeFacts(MLNode& node, RenderNodePropertiesContext context) {
             properties_rows::Note("SAC learns continuous actions; this environment has a choice of actions: train it "
                                   "with PPO.");
     }
-    // PPO: its trained policy (TOFIX195 S5): play, save, load (SAC's comes with its trainer)
+    // Its trained policy (TOFIX195 S5; SAC's since TOFIX216 S4): play, save, load
     const cyxwiz::ui::Tokens& tokens = cyxwiz::ui::CurrentTokens();
-    if (!sac) {
+    {
         properties_rows::Label("Trained policy", false, "The policy of the last run, or one loaded from a .cyxmodel");
         properties_rows::Value(editor.RLPolicyLine(), editor.HasRLPolicy() ? tokens.text : tokens.text_dim);
         properties_rows::Status("");

@@ -115,7 +115,7 @@ std::string TrainingRunText(int epoch, int total_epochs, bool paused, bool waiti
 
 std::string CompactRunText(const std::string& run_line) {
     std::string text = run_line.substr(0, run_line.find(kDot));
-    if (text.rfind("PPO ", 0) == 0) text.erase(0, 4);
+    if (text.rfind("PPO ", 0) == 0 || text.rfind("SAC ", 0) == 0) text.erase(0, 4);
     if (text.rfind("waiting", 0) == 0) return "Waiting";
     if (!text.empty() && text[0] >= 'a' && text[0] <= 'z') text[0] = static_cast<char>(text[0] - 'a' + 'A');
     return text;

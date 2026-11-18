@@ -6,6 +6,8 @@
 #include "../graph_document.h"
 #include "../model_builder.h"
 
+#include <cyxwiz/rl/sac.h>
+
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
@@ -23,7 +25,9 @@ namespace {
 
 using json = nlohmann::json;
 
-constexpr int kPolicySchema = 1;
+// 1: PPO. 2: SAC (an older Engine refuses it as newer); PPO packages stay 1
+constexpr int kPolicySchema = 2;
+constexpr int kPpoPolicySchema = 1;
 
 // The graph's layers plus the head's output layer, not initialised
 std::unique_ptr<IExecutableModel> Layers(const std::vector<CompiledLayer>& hidden, size_t inputs, size_t outputs,
@@ -121,6 +125,52 @@ PpoUpdateMetrics UpdateFromJson(const json& j) {
     m.clip_fraction = number("clip_fraction");
     m.explained_variance = number("explained_variance");
     m.std = number("std");
+    m.steps_per_second = number("steps_per_second");
+    m.reached_target = j.value("reached_target", false);
+    return m;
+}
+
+json SacReportToJson(const SacUpdateMetrics& m) {
+    const auto number = [](float v) { return std::isfinite(v) ? json(v) : json(nullptr); };
+    return {{"report", m.report},
+            {"timesteps", m.timesteps},
+            {"updates", m.updates},
+            {"learning", m.learning},
+            {"episodes", m.episodes},
+            {"mean_episode_return", number(m.mean_episode_return)},
+            {"mean_episode_length", number(m.mean_episode_length)},
+            {"critic_loss", number(m.critic_loss)},
+            {"actor_loss", number(m.actor_loss)},
+            {"ent_coef", number(m.ent_coef)},
+            {"ent_coef_loss", number(m.ent_coef_loss)},
+            {"mean_q", number(m.mean_q)},
+            {"buffer_size", m.buffer_size},
+            {"buffer_capacity", m.buffer_capacity},
+            {"buffer_bytes", m.buffer_bytes},
+            {"steps_per_second", number(m.steps_per_second)},
+            {"reached_target", m.reached_target}};
+}
+
+SacUpdateMetrics SacReportFromJson(const json& j) {
+    const auto number = [&j](const char* key) {
+        return j.contains(key) && j[key].is_number() ? j[key].get<float>() : std::numeric_limits<float>::quiet_NaN();
+    };
+    SacUpdateMetrics m;
+    m.report = j.value("report", 0);
+    m.timesteps = j.value("timesteps", int64_t{0});
+    m.updates = j.value("updates", int64_t{0});
+    m.learning = j.value("learning", false);
+    m.episodes = j.value("episodes", 0);
+    m.mean_episode_return = number("mean_episode_return");
+    m.mean_episode_length = number("mean_episode_length");
+    m.critic_loss = number("critic_loss");
+    m.actor_loss = number("actor_loss");
+    m.ent_coef = number("ent_coef");
+    m.ent_coef_loss = number("ent_coef_loss");
+    m.mean_q = number("mean_q");
+    m.buffer_size = j.value("buffer_size", int64_t{0});
+    m.buffer_capacity = j.value("buffer_capacity", int64_t{0});
+    m.buffer_bytes = j.value("buffer_bytes", uint64_t{0});
     m.steps_per_second = number("steps_per_second");
     m.reached_target = j.value("reached_target", false);
     return m;
@@ -244,16 +294,26 @@ std::unique_ptr<IExecutableModel> BuildRLPolicyNetwork(const RLTrainingConfigura
     return Network(config.policy_layers, config.observation_size, config.policy_outputs, 0.01f, "policy", error);
 }
 
+namespace {
+// SAC's: initialised as PyTorch's nn.Linear (SB3's SAC keeps that)
+std::unique_ptr<IExecutableModel> TorchLike(const std::vector<CompiledLayer>& hidden, size_t inputs, size_t outputs,
+                                            const char* what, std::string& error) {
+    auto model = Layers(hidden, inputs, outputs, what, error);
+    if (model) InitializeLikeTorchLinear(*model);
+    return model;
+}
+}  // namespace
+
+std::unique_ptr<IExecutableModel> BuildSacActorNetwork(const RLTrainingConfiguration& config, std::string& error) {
+    return TorchLike(config.policy_layers, config.observation_size, 2 * config.policy_outputs, "actor", error);
+}
+
 bool BuildSacNetworks(const RLTrainingConfiguration& config, SacNetworks& networks, std::string& error) {
     const size_t actions = config.policy_outputs;
     const size_t q_inputs = config.observation_size + actions;
     const auto torch_like = [&](const std::vector<CompiledLayer>& hidden, size_t inputs, size_t outputs,
-                                const char* what) {
-        auto model = Layers(hidden, inputs, outputs, what, error);
-        if (model) InitializeLikeTorchLinear(*model);
-        return model;
-    };
-    networks.actor = torch_like(config.policy_layers, config.observation_size, 2 * actions, "actor");
+                                const char* what) { return TorchLike(hidden, inputs, outputs, what, error); };
+    networks.actor = BuildSacActorNetwork(config, error);
     if (!networks.actor) return false;
     networks.q1 = torch_like(config.q_layers, q_inputs, 1, "first Q");
     if (!networks.q1) return false;
@@ -291,6 +351,27 @@ std::unique_ptr<TrainedPolicy> MakeTrainedPolicy(const RLTrainingConfiguration& 
     return out;
 }
 
+std::unique_ptr<TrainedPolicy> MakeSacTrainedPolicy(const RLTrainingConfiguration& config, std::string graph_json,
+                                                    SacTrainedState state, std::vector<SacUpdateMetrics> reports) {
+    auto out = std::make_unique<TrainedPolicy>();
+    out->config = config;
+    out->graph_json = std::move(graph_json);
+    out->policy = std::move(state.networks.actor);
+    out->q1 = std::move(state.networks.q1);
+    out->q2 = std::move(state.networks.q2);
+    out->q1_target = std::move(state.networks.q1_target);
+    out->q2_target = std::move(state.networks.q2_target);
+    out->log_ent_coef = state.log_ent_coef;
+    out->normalizer = std::move(state.normalizer);
+    out->optimizers = std::move(state.optimizers);
+    out->sac_reports = std::move(reports);
+    if (!out->sac_reports.empty()) {
+        out->steps = out->sac_reports.back().timesteps;
+        out->mean_return = out->sac_reports.back().mean_episode_return;
+    }
+    return out;
+}
+
 std::vector<float> PolicyActions(TrainedPolicy& p, std::vector<float> observations, size_t rows, bool best,
                                  uint64_t seed) {
     const std::lock_guard<std::mutex> lock(p.in_use);
@@ -298,6 +379,26 @@ std::vector<float> PolicyActions(TrainedPolicy& p, std::vector<float> observatio
     const auto& info = p.config.environment;
     const size_t obs_size = p.config.observation_size;
     if (p.normalizer) p.normalizer->NormalizeObservations(observations.data(), rows);
+    if (p.IsSac()) {  // [-1, 1] from the squashed Gaussian, then the bounds, as SacTrainer steps them
+        const size_t act = static_cast<size_t>(info.action_size);
+        const Tensor input({rows, obs_size}, observations.data());
+        Tensor chosen;
+        if (best) {
+            chosen = SacActorActions(*p.policy, input, act, nullptr);
+        } else {
+            const Tensor noise = SacNoise(rows, act, seed);
+            chosen = SacActorActions(*p.policy, input, act, &noise);
+        }
+        const float* data = chosen.ReadData<float>();
+        std::vector<float> actions(data, data + rows * act);
+        for (size_t i = 0; i < actions.size(); ++i) {
+            const size_t j = i % act;
+            const float scaled =
+                info.action_low[j] + 0.5f * (actions[i] + 1.0f) * (info.action_high[j] - info.action_low[j]);
+            actions[i] = std::clamp(scaled, info.action_low[j], info.action_high[j]);
+        }
+        return actions;
+    }
     p.policy->SetTraining(false);
     const Tensor head = p.policy->Forward(Tensor({rows, obs_size}, observations.data()));
     const size_t outputs = p.config.policy_outputs;
@@ -330,6 +431,10 @@ std::string PolicyMismatch(const TrainedPolicy& p, const RLTrainingConfiguration
     if (p.config.environment_key != graph.environment_key)
         return "This policy plays " + p.config.environment.id + "; this graph's Environment is " +
                graph.environment.id + ".";
+    const auto learner = [](RLAlgorithm a) { return std::string(a == RLAlgorithm::SAC ? "SAC" : "PPO"); };
+    if (p.config.algorithm != graph.algorithm)
+        return "This policy was trained by " + learner(p.config.algorithm) + "; this graph's learner is " +
+               learner(graph.algorithm) + ".";
     const auto widths = [](const std::vector<CompiledLayer>& layers) {
         std::string text;
         for (const auto& l : layers)
@@ -341,20 +446,23 @@ std::string PolicyMismatch(const TrainedPolicy& p, const RLTrainingConfiguration
         for (const auto& l : layers) out.push_back(static_cast<int>(l.type));
         return out;
     };
-    const bool same = widths(p.config.policy_layers) == widths(graph.policy_layers) &&
-                      widths(p.config.value_layers) == widths(graph.value_layers) &&
-                      kinds(p.config.policy_layers) == kinds(graph.policy_layers) &&
-                      kinds(p.config.value_layers) == kinds(graph.value_layers);
+    // The second network: PPO's value layers, SAC's Q layers
+    const bool sac = p.IsSac();
+    const auto& own = sac ? p.config.q_layers : p.config.value_layers;
+    const auto& theirs = sac ? graph.q_layers : graph.value_layers;
+    const bool same = widths(p.config.policy_layers) == widths(graph.policy_layers) && widths(own) == widths(theirs) &&
+                      kinds(p.config.policy_layers) == kinds(graph.policy_layers) && kinds(own) == kinds(theirs);
     if (!same)
-        return "The policy was trained on " + widths(p.config.policy_layers) + " policy and " +
-               widths(p.config.value_layers) + " value layers; this graph has " + widths(graph.policy_layers) +
-               " and " + widths(graph.value_layers) + ".";
+        return "The policy was trained on " + widths(p.config.policy_layers) + " policy and " + widths(own) +
+               (sac ? " Q" : " value") + " layers; this graph has " + widths(graph.policy_layers) + " and " +
+               widths(theirs) + ".";
     return {};
 }
 
 bool SaveTrainedPolicy(const TrainedPolicy& p, const std::filesystem::path& path, std::string& error) {
     error.clear();
-    if (!p.policy || !p.value) {
+    const bool sac = p.IsSac();
+    if (!p.policy || (sac ? !(p.q1 && p.q2 && p.q1_target && p.q2_target) : !p.value)) {
         error = "There is no trained policy to save.";
         return false;
     }
@@ -379,13 +487,30 @@ bool SaveTrainedPolicy(const TrainedPolicy& p, const std::filesystem::path& path
             parameters += static_cast<int64_t>(t.NumElements());
             if (t.Shape().size() == 2) ++layers;
         };
-        for (const auto& [name, t] : p.policy->GetParameters()) add("policy." + name, t);
-        for (const auto& [name, t] : p.value->GetParameters()) add("value." + name, t);
         const auto& info = p.config.environment;
-        if (!info.discrete_actions) add("log_std", p.log_std);
+        json networks;
+        if (sac) {
+            const std::pair<const char*, IExecutableModel*> nets[] = {{"actor", p.policy.get()},
+                                                                            {"q1", p.q1.get()},
+                                                                            {"q2", p.q2.get()},
+                                                                            {"q1_target", p.q1_target.get()},
+                                                                            {"q2_target", p.q2_target.get()}};
+            for (const auto& [role, net] : nets) {
+                for (const auto& [name, t] : net->GetParameters()) add(std::string(role) + "." + name, t);
+                networks[role] = std::string(role) + ".";
+            }
+            add("log_ent_coef", p.log_ent_coef);
+            networks["log_ent_coef"] = "log_ent_coef";
+        } else {
+            for (const auto& [name, t] : p.policy->GetParameters()) add("policy." + name, t);
+            for (const auto& [name, t] : p.value->GetParameters()) add("value." + name, t);
+            if (!info.discrete_actions) add("log_std", p.log_std);
+            networks = {{"policy", "policy."}, {"value", "value."}, {"log_std", info.discrete_actions ? "" : "log_std"}};
+        }
 
         json policy_json = {
-            {"schema_version", kPolicySchema},
+            {"schema_version", sac ? kPolicySchema : kPpoPolicySchema},
+            {"algorithm", sac ? "SAC" : "PPO"},
             {"environment",
              {{"key", p.config.environment_key},
               {"id", info.id},
@@ -397,7 +522,7 @@ bool SaveTrainedPolicy(const TrainedPolicy& p, const std::filesystem::path& path
             {"policy_outputs", p.config.policy_outputs},
             {"steps", p.steps},
             {"mean_return", std::isfinite(p.mean_return) ? json(p.mean_return) : json(nullptr)},
-            {"networks", {{"policy", "policy."}, {"value", "value."}, {"log_std", info.discrete_actions ? "" : "log_std"}}},
+            {"networks", networks},
         };
         if (p.normalizer) {
             const auto& s = p.normalizer->Settings();
@@ -413,21 +538,27 @@ bool SaveTrainedPolicy(const TrainedPolicy& p, const std::filesystem::path& path
                                         {"observation_count", stats.count}};
         }
         json updates = json::array();
-        for (const auto& u : p.updates) updates.push_back(UpdateToJson(u));
-        policy_json["updates"] = updates;
+        if (sac) {
+            for (const auto& r : p.sac_reports) updates.push_back(SacReportToJson(r));
+            policy_json["reports"] = updates;
+        } else {
+            for (const auto& u : p.updates) updates.push_back(UpdateToJson(u));
+            policy_json["updates"] = updates;
+        }
 
         auto optimizer_files = OptimizerFiles(p.optimizers, error);
         if (!error.empty()) return false;
 
         ModelManifest manifest;
         manifest.model_name = path.stem().string();
-        manifest.model_type = "PPO policy";
+        manifest.model_type = sac ? "SAC policy" : "PPO policy";
         manifest.model_family = "rl_policy";
         manifest.num_parameters = static_cast<int>(parameters);
         manifest.num_layers = layers;
         manifest.has_graph = true;
         manifest.has_rl_policy = true;
         manifest.has_optimizer_state = !p.optimizers.empty();
+        manifest.custom_metadata["rl_algorithm"] = sac ? "SAC" : "PPO";
         manifest.custom_metadata["rl_environment"] = info.id;
         manifest.custom_metadata["rl_environment_key"] = p.config.environment_key;
         manifest.custom_metadata["rl_steps"] = std::to_string(p.steps);
@@ -522,11 +653,39 @@ std::unique_ptr<TrainedPolicy> LoadTrainedPolicy(const std::filesystem::path& pa
         out->graph_json = graph_json;
         out->device_type = device_type;
         out->device_id = device_id;
-        if (!BuildRLNetworks(out->config, out->policy, out->value, error)) return nullptr;
-        if (!SetWeights(*out->policy, "policy.", weights, shapes, dtypes, "policy", error) ||
-            !SetWeights(*out->value, "value.", weights, shapes, dtypes, "value", error))
+        const bool saved_sac = pj.value("algorithm", std::string("PPO")) == "SAC";
+        if (saved_sac != out->IsSac()) {
+            error = std::string("The policy was trained by ") + (saved_sac ? "SAC" : "PPO") +
+                    ", but its graph's learner is " + (out->IsSac() ? "SAC" : "PPO") + ".";
             return nullptr;
-        if (!out->config.environment.discrete_actions) {
+        }
+        if (out->IsSac()) {
+            SacNetworks n;
+            if (!BuildSacNetworks(out->config, n, error)) return nullptr;
+            if (!SetWeights(*n.actor, "actor.", weights, shapes, dtypes, "actor", error) ||
+                !SetWeights(*n.q1, "q1.", weights, shapes, dtypes, "first Q", error) ||
+                !SetWeights(*n.q2, "q2.", weights, shapes, dtypes, "second Q", error) ||
+                !SetWeights(*n.q1_target, "q1_target.", weights, shapes, dtypes, "first target Q", error) ||
+                !SetWeights(*n.q2_target, "q2_target.", weights, shapes, dtypes, "second target Q", error))
+                return nullptr;
+            const auto it = weights.find("log_ent_coef");
+            if (it == weights.end()) {
+                error = "The saved SAC policy has no entropy weight.";
+                return nullptr;
+            }
+            out->log_ent_coef = FromBytes(it->second, shapes.at("log_ent_coef"), dtypes.at("log_ent_coef"));
+            out->policy = std::move(n.actor);
+            out->q1 = std::move(n.q1);
+            out->q2 = std::move(n.q2);
+            out->q1_target = std::move(n.q1_target);
+            out->q2_target = std::move(n.q2_target);
+        } else {
+            if (!BuildRLNetworks(out->config, out->policy, out->value, error)) return nullptr;
+            if (!SetWeights(*out->policy, "policy.", weights, shapes, dtypes, "policy", error) ||
+                !SetWeights(*out->value, "value.", weights, shapes, dtypes, "value", error))
+                return nullptr;
+        }
+        if (!out->IsSac() && !out->config.environment.discrete_actions) {
             const auto it = weights.find("log_std");
             if (it == weights.end()) {
                 error = "The saved policy has no log standard deviation.";
@@ -556,6 +715,7 @@ std::unique_ptr<TrainedPolicy> LoadTrainedPolicy(const std::filesystem::path& pa
         }
         if (!OptimizerStates(optimizer_files, out->optimizers, error)) return nullptr;
         for (const auto& u : pj.value("updates", json::array())) out->updates.push_back(UpdateFromJson(u));
+        for (const auto& r : pj.value("reports", json::array())) out->sac_reports.push_back(SacReportFromJson(r));
         out->steps = pj.value("steps", int64_t{0});
         out->mean_return = pj.contains("mean_return") && pj["mean_return"].is_number()
                                ? pj["mean_return"].get<float>()

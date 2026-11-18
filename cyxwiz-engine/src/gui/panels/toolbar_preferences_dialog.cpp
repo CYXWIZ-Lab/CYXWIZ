@@ -622,7 +622,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::TextUnformatted("After training");
                         ImGui::TableNextColumn();
                         bool play_after = engine_config.PlayPolicyAfterTraining();
-                        if (ImGui::Checkbox("Play the policy when a PPO run finishes (off by default)", &play_after)) {
+                        if (ImGui::Checkbox("Play the policy when a run finishes (off by default)", &play_after)) {
                             engine_config.SetPlayPolicyAfterTraining(play_after);
                             engine_config.Save();
                         }
@@ -647,7 +647,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                             engine_config.SetPolicyStressTestDefaults(stress);
                             engine_config.Save();
                         }
-                        // Watching a PPO run while it trains (the RL Training Dashboard)
+                        // Watching a run while it trains (the RL Training Dashboard)
                         int watch_mode = engine_config.WatchTrainingMode();
                         int watch_every = engine_config.WatchTrainingEvery();
                         bool watch_changed = false;
@@ -661,13 +661,30 @@ void ToolbarPanel::RenderPreferencesDialog() {
                         ImGui::TextDisabled("every");
                         ImGui::SameLine();
                         watch_changed |= ui::NumberField("##pref_watch_every", &watch_every, 1, 1000, 1, 60.0f,
-                                                         "Updates between two copies of the networks");
+                                                         "PPO updates, or SAC reports, between two copies of the networks");
                         ImGui::SameLine();
-                        ImGui::TextDisabled("updates (the live preview takes the networks)");
+                        ImGui::TextDisabled("updates, or SAC reports (the live preview takes the networks)");
                         if (watch_changed) {
                             engine_config.SetWatchTraining(watch_mode, watch_every);
                             engine_config.Save();
                         }
+                        // A new SAC node's replay buffer (TOFIX216 S4)
+                        ImGui::TableNextColumn();
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted("Replay buffer size");
+                        ImGui::TableNextColumn();
+                        int replay = engine_config.ReplayBufferSize();
+                        if (ui::NumberField("##pref_replay_buffer", &replay, 1,
+                                            cyxwiz::core::EngineConfig::kMaxReplayBufferSize, 100000, 110.0f,
+                                            "Steps a new SAC node's replay buffer keeps")) {
+                            engine_config.SetReplayBufferSize(replay);
+                            engine_config.Save();
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("steps");
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextDisabled("What a new SAC node starts with (Tuned for sets the task's own).");
+                        ImGui::PopTextWrapPos();
                         ImGui::EndTable();
                     }
                     RenderPluginPreferences("Simulation");

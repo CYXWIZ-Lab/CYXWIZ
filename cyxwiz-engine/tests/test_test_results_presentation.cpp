@@ -553,6 +553,15 @@ void CheckOpenModel() {
     for (const auto& [k, value] : p.rows)
         trained = trained || (k == "Trained" && value == "88,320 environment steps, mean return 475.1");
     Check(trained, "a policy's training is in environment steps, not epochs");
+    // A SAC policy names its learner (TOFIX216 S4)
+    cyxwiz::ProbeResult sac_policy = policy;
+    sac_policy.custom_metadata["rl_algorithm"] = "SAC";
+    sac_policy.custom_metadata["rl_environment"] = "HalfCheetah-v5";
+    const model_open::View s = model_open::BuildView(sac_policy);
+    bool sac_row = false;
+    for (const auto& [k, value] : s.rows) sac_row = sac_row || (k == "Policy" && value == "SAC on HalfCheetah-v5");
+    Check(s.can_play_policy && sac_row && Contains(s.note, "A trained SAC policy"),
+          "a SAC policy is named as SAC's");
     Check(!v.can_play_policy, "a supervised model has no Play policy");
 }
 

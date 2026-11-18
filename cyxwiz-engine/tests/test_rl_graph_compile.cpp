@@ -406,6 +406,22 @@ void CheckSac() {
               ReplayMemoryText(cyxwiz::rl::ReplayBytes(10000000, 17, 6)) == "about 1.7 GB" &&
               cyxwiz::rl::ReplayBytes(0, 17, 6) == 0,
           "HalfCheetah's replay buffer of 1M steps is about 168 MB");
+    {
+        const uint64_t gpu = 4294967296ull;  // a 4 GiB card
+        const auto fits = ReplayFitText(cyxwiz::rl::ReplayBytes(1000000, 17, 6), "NVIDIA GeForce GTX 1050 Ti", gpu);
+        Check(fits.text == "about 168 MB, 4 % of the NVIDIA GeForce GTX 1050 Ti's 4.3 GB" && fits.advice.empty(),
+              "the buffer against the device's memory");
+        const auto tight = ReplayFitText(cyxwiz::rl::ReplayBytes(20000000, 17, 6), "GPU", gpu);
+        Check(tight.text == "about 3.4 GB, 78 % of the GPU's 4.3 GB" && !tight.advice.empty(),
+              "a buffer that leaves the networks little room says so");
+        const auto over = ReplayFitText(cyxwiz::rl::ReplayBytes(30000000, 17, 6), "", gpu);
+        Check(over.text == "about 5 GB, more than the training device's 4.3 GB" &&
+                  over.advice == "The replay buffer does not fit the training device: lower Buffer size.",
+              "a buffer the device cannot hold");
+        Check(ReplayFitText(1000, "x", 0).text == "about 1 MB on the training device" &&
+                  ReplayFitText(1000, "x", 0).advice.empty(),
+              "the device's memory not known");
+    }
     Check(AutoTargetEntropyText(6) == "-6 (minus the 6 actions)" &&
               AutoTargetEntropyText(1) == "-1 (minus the 1 action)",
           "the automatic target entropy reads as minus the actions");

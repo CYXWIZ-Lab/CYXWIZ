@@ -521,7 +521,7 @@ public:
             return MakeTrainingTruth(
                 TrainingTraceCollector::Instance().Snapshot(), true, &metrics);
         }
-        // A run outside the training manager (PPO) writes the trace; another
+        // A run outside the training manager (PPO, SAC) writes the trace; another
         // holder of the device (Run Test) is not a training
         if (rl::RLTrainingRun::AnyActive()) {
             return MakeTrainingTruth(
@@ -540,7 +540,7 @@ public:
             return MakeTrainingTruth(
                 TrainingTraceCollector::Instance().Snapshot(), true, &metrics);
         }
-        if (rl::RLTrainingRun::AnyActive()) {  // a PPO run
+        if (rl::RLTrainingRun::AnyActive()) {  // an RL run
             return MakeTrainingTruth(
                 TrainingTraceCollector::Instance().Snapshot(), true, nullptr);
         }

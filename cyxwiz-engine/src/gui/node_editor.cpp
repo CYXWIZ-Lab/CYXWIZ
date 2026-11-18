@@ -219,7 +219,8 @@ NodeEditor::NodeEditor()
         // The run's preview first (it plays the run's networks in its own copy)
         if (rl_watch_ && owned(rl_watch_->EnvironmentKey())) rl_watch_->Stop();
         if (rl_run_ && rl_run_->Active() && rl_run_->Config() && owned(rl_run_->Config()->environment_key)) {
-            spdlog::info("PPO stopped: its environment's plugin {} is stopping", plugin_id);
+            spdlog::info("{} stopped: its environment's plugin {} is stopping",
+                         rl_run_->Config()->algorithm == cyxwiz::RLAlgorithm::SAC ? "SAC" : "PPO", plugin_id);
             rl_run_->StopAndWait();
         }
         // Its playback and its stress test (each steps its own copies)
@@ -4235,15 +4236,13 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
         error = "The graph is not a compiled RL graph.";
         return false;
     }
-    if (config->algorithm != cyxwiz::RLAlgorithm::PPO) {  // TOFIX216 S4 adds SAC's trainer
-        error = "SAC compiles, but the Engine cannot train it yet; train this environment with PPO for now";
-        return false;
-    }
     if (!rl_run_) rl_run_ = std::make_unique<cyxwiz::rl::RLTrainingRun>();
     const auto& c = *config;
+    const bool sac = c.algorithm == cyxwiz::RLAlgorithm::SAC;
+    const std::string learner = sac ? "SAC" : "PPO";
     if (!rl_run_->Start(config, GetGraphJson(), error)) return false;
     rl_run_reported_ = false;
-    rl_status_ = "PPO starting";
+    rl_status_ = learner + " starting";
     rl_device_suffix_.clear();
     rl_device_tooltip_.clear();
     rl_device_shown_ = false;
@@ -4251,14 +4250,29 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     rl_compute_path_.clear();
 
     if (!rl_dashboard_) rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
-    cyxwiz::TrainingDashboardPanel::PpoRunInfo info;
-    info.title = "PPO on " + c.environment.id + " x " + std::to_string(c.copies);
-    info.total_timesteps = static_cast<long long>(c.ppo.total_timesteps);
-    info.target_return = c.ppo.target_return;
+    cyxwiz::TrainingDashboardPanel::RunInfo info;
+    info.title = learner + " on " + c.environment.id + " x " + std::to_string(c.copies);
     info.continuous = !c.environment.discrete_actions;
-    info.reference = cyxwiz::rl::FindPpoReference(cyxwiz::rl::ReadPpoReferenceFile(), c.environment.id, c.copies, c.ppo);
+    if (sac) {
+        info.sac = true;
+        info.total_timesteps = static_cast<long long>(c.sac.total_timesteps);
+        info.target_return = c.sac.target_return;
+        info.learning_starts = static_cast<long long>(c.sac.learning_starts);
+        info.report_every = static_cast<int>(c.sac.report_every);
+        // gradient_steps every train_freq steps of all the copies
+        info.updates_per_step = static_cast<double>(c.sac.gradient_steps) /
+                                (static_cast<double>(c.sac.train_freq) * static_cast<double>(std::max(1, c.copies)));
+        info.ent_coef_auto = c.sac.ent_coef_auto;
+        info.ent_coef_start = c.sac.ent_coef;
+        info.target_entropy = c.sac.target_entropy;
+    } else {
+        info.total_timesteps = static_cast<long long>(c.ppo.total_timesteps);
+        info.target_return = c.ppo.target_return;
+        info.reference =
+            cyxwiz::rl::FindPpoReference(cyxwiz::rl::ReadPpoReferenceFile(), c.environment.id, c.copies, c.ppo);
+    }
     auto* run = rl_run_.get();
-    cyxwiz::TrainingDashboardPanel::PpoRunControls controls;
+    cyxwiz::TrainingDashboardPanel::RunControls controls;
     controls.pause = [run]() { run->Pause(); };
     controls.resume = [run]() { run->Resume(); };
     controls.stop = [run]() { run->Stop(); };
@@ -4282,17 +4296,17 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
         rl_watch_every_ = every_updates;
     };
     controls.watch_now = [this]() { rl_watch_->TakeNow(); };
-    controls.watch_view = [this, view_title]() {
-        cyxwiz::TrainingDashboardPanel::PpoRunControls::WatchView view;
+    controls.watch_view = [this, view_title, sac]() {
+        cyxwiz::TrainingDashboardPanel::RunControls::WatchView view;
         if (view_title.empty()) {
             view.unavailable = "This environment has no view to watch it in.";
             return view;
         }
         view.view_label = "Show the " + view_title;
         const auto s = rl_watch_->Get();
-        view.preview_of = cyxwiz::rl_playback::PreviewOf(s.networks_update, s.networks_steps);
-        view.episodes =
-            cyxwiz::rl_playback::PreviewEpisodes(s.episodes, s.has_last_return, s.last_return, s.last_return_update);
+        view.preview_of = cyxwiz::rl_playback::PreviewOf(s.networks_update, s.networks_steps, sac);
+        view.episodes = cyxwiz::rl_playback::PreviewEpisodes(s.episodes, s.has_last_return, s.last_return,
+                                                             s.last_return_update, s.last_return_steps, sac);
         view.message = s.message;
         return view;
     };
@@ -4302,8 +4316,8 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
         rl_watch_mode_ = view_title.empty() ? 0 : prefs.WatchTrainingMode();
         rl_watch_every_ = prefs.WatchTrainingEvery();
     }
-    rl_dashboard_->BeginPpoRun(std::move(info), std::move(controls));
-    spdlog::info("Train: PPO on {} x {} started", c.environment.id, c.copies);
+    rl_dashboard_->BeginRun(std::move(info), std::move(controls));
+    spdlog::info("Train: {} on {} x {} started", learner, c.environment.id, c.copies);
     return true;
 }
 
@@ -4316,17 +4330,26 @@ void NodeEditor::StopRLTraining() {
 // The run's updates onto the dashboard, and its end
 void NodeEditor::PollRLTraining() {
     if (!rl_run_ || !rl_dashboard_) return;
+    const auto* config = rl_run_->Config();
+    const bool sac = config && config->algorithm == cyxwiz::RLAlgorithm::SAC;
+    const std::string learner = sac ? "SAC" : "PPO";
+    // The dashboard's note on small networks: the policy's and the second network's (PPO value, SAC Q)
+    const auto note = [&]() {
+        return cyxwiz::rl_device::DashboardNote(rl_run_device_, cyxwiz::HiddenUnits(config->policy_layers),
+                                                cyxwiz::HiddenUnits(sac ? config->q_layers : config->value_layers),
+                                                rl_compute_path_);
+    };
     // Another training run holds the GPU: the run waits and says so (TOFIX206 3.2 E)
     if (!rl_device_shown_) {
         const std::string waiting = rl_run_->Waiting();
         if (!waiting.empty() && rl_device_tooltip_ != waiting) {
-            rl_status_ = "PPO waiting for the GPU";
+            rl_status_ = learner + " waiting for the GPU";
             rl_device_tooltip_ = waiting;
-            rl_dashboard_->SetPpoDevice("Waiting for the GPU", waiting, true, waiting);
+            rl_dashboard_->SetRunDevice("Waiting for the GPU", waiting, true, waiting);
         }
     }
     // The device the run trains on, once its preflight is done (TOFIX206)
-    if (!rl_device_shown_ && rl_run_->Config()) {
+    if (!rl_device_shown_ && config) {
         const auto context = rl_run_->Device();
         if (context.valid) {
             rl_device_shown_ = true;
@@ -4340,34 +4363,37 @@ void NodeEditor::PollRLTraining() {
             device.policy = context.ExecutionPolicyName();
             device.fallback = context.selection_fallback_applied;
             device.error = context.error;
-            const auto& c = *rl_run_->Config();
             const auto chip = cyxwiz::rl_device::DeviceChip(device);
-            rl_dashboard_->SetPpoDevice(chip.text, chip.tooltip, chip.fallback,
-                                        cyxwiz::rl_device::DashboardNote(device, cyxwiz::HiddenUnits(c.policy_layers),
-                                                                         cyxwiz::HiddenUnits(c.value_layers),
-                                                                         rl_compute_path_));
             rl_run_device_ = device;
+            rl_dashboard_->SetRunDevice(chip.text, chip.tooltip, chip.fallback, note());
+            // Where a SAC run's replay buffer lives (ArrayFire's CPU backend: the computer's memory)
+            rl_dashboard_->SetRunMemoryPlace(cyxwiz::rl_device::BackendWord(device.effective_backend) == "CPU"
+                                                 ? "the computer's memory"
+                                                 : "the GPU");
             rl_device_suffix_ = cyxwiz::rl_device::ToolbarSuffix(device);
             rl_device_tooltip_ = chip.tooltip;
-            if (rl_status_ == "PPO starting" || rl_status_ == "PPO waiting for the GPU")
-                rl_status_ = "PPO starting" + rl_device_suffix_;
+            if (rl_status_ == learner + " starting" || rl_status_ == learner + " waiting for the GPU")
+                rl_status_ = learner + " starting" + rl_device_suffix_;
         }
     }
+    // How the run computes, once known (or changed by a fallback): the note follows it
+    const auto follow_path = [&](const std::string& path) {
+        if (path.empty() || path == rl_compute_path_) return;
+        rl_compute_path_ = path;
+        rl_dashboard_->SetRunComputePath(path);
+        if (rl_run_device_.valid && config) rl_dashboard_->SetRunNote(note());
+    };
     for (const auto& m : rl_run_->TakeUpdates()) {
         rl_dashboard_->AddPpoUpdate(m);
-        if (!m.compute_path.empty() && m.compute_path != rl_compute_path_) {
-            // How the run computes, now known (or changed by a fallback): the note follows it
-            rl_compute_path_ = m.compute_path;
-            rl_dashboard_->SetPpoComputePath(m.compute_path);
-            if (rl_run_device_.valid && rl_run_->Config()) {
-                const auto& c = *rl_run_->Config();
-                rl_dashboard_->SetPpoNote(cyxwiz::rl_device::DashboardNote(rl_run_device_, cyxwiz::HiddenUnits(c.policy_layers),
-                                                                           cyxwiz::HiddenUnits(c.value_layers),
-                                                                           rl_compute_path_));
-            }
-        }
+        follow_path(m.compute_path);
         rl_status_ = "PPO update " + std::to_string(m.update) + " \xC2\xB7 " +
                      cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" + rl_device_suffix_;
+    }
+    for (const auto& m : rl_run_->TakeSacReports()) {
+        rl_dashboard_->AddSacReport(m);
+        follow_path(m.compute_path);
+        rl_status_ = "SAC " + cyxwiz::plot::Thousands(static_cast<long long>(m.timesteps)) + " steps" +
+                     rl_device_suffix_;
     }
     // Watch progress: the preview starts once the run has copied its networks, and stops with the run
     if (rl_watch_)
@@ -4379,9 +4405,9 @@ void NodeEditor::PollRLTraining() {
     // no longer says it waits
     if (!rl_device_shown_ && !rl_device_tooltip_.empty()) {
         rl_device_tooltip_.clear();
-        rl_dashboard_->SetPpoDevice("No device", rl_run_->Message(), false, {});
+        rl_dashboard_->SetRunDevice("No device", rl_run_->Message(), false, {});
     }
-    rl_dashboard_->EndPpoRun(rl_run_->Message(), state == cyxwiz::rl::RLTrainingRun::State::Failed);
+    rl_dashboard_->EndRun(rl_run_->Message(), state == cyxwiz::rl::RLTrainingRun::State::Failed);
     rl_run_reported_ = true;
     // The run's policy replaces the one kept (TOFIX195 S5)
     if (auto trained = rl_run_->Trained()) {
@@ -4430,7 +4456,7 @@ bool NodeEditor::SaveRLPolicy(std::string& error) {
         return false;
     }
     rl_policy_message_ = "Saved to " + *path;
-    spdlog::info("Saved the PPO policy to {}", *path);
+    spdlog::info("Saved the {} policy to {}", rl_policy_->IsSac() ? "SAC" : "PPO", *path);
     return true;
 }
 
@@ -4443,7 +4469,8 @@ bool NodeEditor::LoadRLPolicy(const std::string& path, std::string& error) {
     rl_policy_ = std::shared_ptr<cyxwiz::rl::TrainedPolicy>(std::move(loaded));
     rl_policy_file_ = std::filesystem::path(path).filename().string();
     rl_policy_message_ = "Loaded " + rl_policy_file_;
-    spdlog::info("Loaded the PPO policy {} ({})", path, rl_policy_->config.environment.id);
+    spdlog::info("Loaded the {} policy {} ({})", rl_policy_->IsSac() ? "SAC" : "PPO", path,
+                 rl_policy_->config.environment.id);
     return true;
 }
 

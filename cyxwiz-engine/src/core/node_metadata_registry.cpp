@@ -806,11 +806,12 @@ void NodeMetadataRegistry::ApplyRuntimeCapabilityStatus() {
     }
 
     // The RL graph's nodes: compiled by GraphCompiler's RL branch and trained
-    // by the Engine's PPO (TOFIX195 S4.3)
+    // by the Engine's PPO (TOFIX195 S4.3) or SAC (TOFIX216 S4)
     const std::string rl_reason =
-        "GraphCompiler compiles the RL graph and the Engine's PPO (core/rl) trains it on the environment's "
+        "GraphCompiler compiles the RL graph and the Engine's PPO or SAC (core/rl) trains it on the environment's "
         "copies; PipelineExecutor and the supervised trainer do not run it.";
-    for (NodeType node_type : {NodeType::RLEnvironment, NodeType::PolicyHead, NodeType::ValueHead, NodeType::PPO}) {
+    for (NodeType node_type : {NodeType::RLEnvironment, NodeType::PolicyHead, NodeType::ValueHead, NodeType::PPO,
+                               NodeType::QHead, NodeType::SAC}) {
         auto it = metadata_.find(node_type);
         if (it == metadata_.end()) continue;
         apply_workflow_lane_guidance(node_type, "reinforcement_learning", rl_reason.c_str());
@@ -4764,7 +4765,7 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         NodeImplementationStatus::Implemented, 0});
 
     // TOFIX216: a SAC graph is Environment -> ordinary layers -> Policy Head /
-    // Q Head -> SAC. Template until the Engine's SAC trainer runs it.
+    // Q Head -> SAC, trained by the Engine's SAC (core/rl/sac_trainer).
     RegisterNode({NodeType::QHead, NodeCategory::RL, "Q Head", ICON_FA_SCALE_BALANCED,
         {"q", "critic", "head", "rl", "sac", "td3", "twin"}, 0, false,
         "Ends the Q layers: one output, the value of an action in a state",
@@ -4775,7 +4776,7 @@ void NodeMetadataRegistry::InitializeRLNodes() {
         {{"Features", PinType::Tensor, true, "The last Q layer's output (reached from the Environment's Observation)."}},
         {{"Q", PinType::Tensor, true, "The Q estimate: connect it to SAC's Q."}},
         {},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 
     ParameterDefinition ent_coef_mode{"ent_coef_mode", "enum", "learned",
         "Learned: the entropy weight is tuned toward the target entropy (ent_coef=\"auto\"); Fixed: it stays at "
@@ -4832,7 +4833,7 @@ void NodeMetadataRegistry::InitializeRLNodes() {
          {"normalize_observations", "bool", "false",
           "Running mean and variance of the observations, as VecNormalize (norm_obs)", {}, "", "Observations",
           "Normalise"}},
-        NodeImplementationStatus::Template, 0});
+        NodeImplementationStatus::Implemented, 0});
 }
 
 // =============================================================================

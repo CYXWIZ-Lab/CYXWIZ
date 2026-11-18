@@ -1538,7 +1538,7 @@ private:
     int rl_watch_mode_ = 0;
     int rl_watch_every_ = 20;
     bool rl_run_reported_ = true;  // its end is on the dashboard
-    std::string rl_status_ = "PPO starting";  // the toolbar's line while it runs
+    std::string rl_status_ = "PPO starting";  // the toolbar's line while it runs ("SAC ..." for SAC)
     cyxwiz::rl_device::RunDevice rl_run_device_;  // the run's device, once its preflight is done
     std::string rl_compute_path_;                  // how the run computes, as its updates report it
     std::string rl_device_suffix_;   // " · CPU" once the run's device is known

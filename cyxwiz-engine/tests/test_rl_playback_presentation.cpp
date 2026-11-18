@@ -114,7 +114,7 @@ void CheckLines() {
 
 // Watch progress (TOFIX212 P5): the view's label and the dashboard's lines
 void CheckWatch() {
-    const auto preview = PreviewLabel(1580);
+    const auto preview = PreviewLabel(1580, 810240, false);
     Check(preview.subtitle == "Preview of update 1,580" && preview.status == "Training preview" &&
               preview.rows.size() == 1 && preview.rows[0].first == "Networks of" &&
               preview.rows[0].second == "update 1,580",
@@ -122,11 +122,53 @@ void CheckWatch() {
     const auto copy = TrainingCopyLabel(0);
     Check(copy.subtitle == "Training copy 0" && copy.status == "Training" && copy.rows.empty(),
           "the raw training copy's label");
-    Check(PreviewOf(0, 0) == "waiting for the next update", "before the first networks");
-    Check(PreviewOf(1580, 810240) == "update 1,580 (810,240 steps)", "the networks' update and steps");
-    Check(PreviewEpisodes(0, false, 0.0, 0) == "none played yet", "no episodes yet");
-    Check(PreviewEpisodes(3, true, 1912.44, 1560) == "3 played \xC2\xB7 last return 1912.4 (update 1,560)",
+    Check(PreviewOf(0, 0, false) == "waiting for the next update", "before the first networks");
+    Check(PreviewOf(1580, 810240, false) == "update 1,580 (810,240 steps)", "the networks' update and steps");
+    Check(PreviewEpisodes(0, false, 0.0, 0, 0, false) == "none played yet", "no episodes yet");
+    Check(PreviewEpisodes(3, true, 1912.44, 1560, 798720, false) ==
+              "3 played \xC2\xB7 last return 1912.4 (update 1,560)",
           "episodes, the last return and the networks that played it");
+    // A SAC run copies its actor at a report: the networks are named by their step
+    const auto sac = PreviewLabel(212, 212000, true);
+    Check(sac.subtitle == "Preview of step 212,000" && sac.rows.size() == 1 && sac.rows[0].second == "step 212,000",
+          "a SAC preview's label names its step");
+    Check(PreviewOf(0, 0, true) == "waiting for the next report" && PreviewOf(212, 212000, true) == "step 212,000",
+          "a SAC preview's networks");
+    Check(PreviewEpisodes(3, true, 4877.0, 210, 210000, true) ==
+              "3 played \xC2\xB7 last return 4877.0 (step 210,000)",
+          "a SAC preview's last return names the step of its networks");
+}
+
+// A SAC run's dashboard cards (TOFIX216 S4, approved board 2)
+void CheckSacDashboard() {
+    Check(SacProgress(212480, 1000000, 202480, 10000) ==
+              "212,480 of 1,000,000 steps \xC2\xB7 202,480 updates \xC2\xB7 learning started at 10,000 "
+              "(random steps before)",
+          "the progress of a SAC run past its random steps");
+    Check(SacProgress(4000, 1000000, 0, 10000) ==
+              "4,000 of 1,000,000 steps \xC2\xB7 random actions until 10,000",
+          "the progress before learning starts");
+    Check(SacProgress(300, 1000, 1, 0) == "300 of 1,000 steps \xC2\xB7 1 update", "no random steps, one update");
+    const auto buffer = SacReplayBufferCard(212480, 1000000, 168000000, "the GPU");
+    Check(buffer.value == "21 %" && buffer.detail == "212,480 of 1,000,000 \xC2\xB7 36 MB of 168 MB on the GPU",
+          "the replay buffer's fill and memory");
+    Check(SacReplayBufferCard(999999, 1000000, 168000000, "").value == "99 %" &&
+              SacReplayBufferCard(1000000, 1000000, 168000000, "").value == "100 %" &&
+              SacReplayBufferCard(3, 1000000, 168000000, "").value == "<1 %" &&
+              SacReplayBufferCard(0, 0, 0, "").value == "-",
+          "full only when full; a few rows are not 0 %");
+    Check(SacReplayBufferCard(5000000, 5000000, 1680000000, "").detail ==
+              "5,000,000 of 5,000,000 \xC2\xB7 1.7 GB of 1.7 GB on the device",
+          "gigabytes, and the device unnamed");
+    Check(SacEntropyDetail(true, 1.0f, -6.0f) == "learned (started at 1) \xC2\xB7 target -6" &&
+              SacEntropyDetail(false, 0.2f, -6.0f) == "fixed",
+          "the entropy weight, learned or fixed");
+    Check(SacSpeedDetail(1.0) == "steps a second (one update each)" &&
+              SacSpeedDetail(0.25) == "steps a second (0.25 updates each)",
+          "updates per environment step");
+    Check(SacCriticDetail(1000, 10000) == "both Q networks, last 1,000 updates" &&
+              SacCriticDetail(0, 10000) == "learning starts at 10,000",
+          "the critic loss's updates");
 }
 
 // A ghost beside the played policy (TOFIX212 P3d)
@@ -148,6 +190,7 @@ void CheckGhost() {
 }
 
 int main() {
+    CheckSacDashboard();
     CheckCartPole();
     CheckMuJoCo();
     CheckLines();

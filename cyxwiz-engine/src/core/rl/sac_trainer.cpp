@@ -137,13 +137,17 @@ SacLearner::SacLearner(SacNetworks networks, size_t observation_size, size_t act
 
 SacLearner::~SacLearner() = default;
 
-Tensor SacLearner::Act(const Tensor& observations, const Tensor* noise) {
-    networks_.actor->SetTraining(false);
-    const Tensor out = networks_.actor->Forward(observations);
-    const int a = static_cast<int>(action_size_);
+Tensor SacActorActions(IExecutableModel& actor, const Tensor& observations, size_t action_size, const Tensor* noise) {
+    actor.SetTraining(false);
+    const Tensor out = actor.Forward(observations);
+    const int a = static_cast<int>(action_size);
     const Tensor mean = out.Slice(1, 0, a);
     if (!noise) return SacDeterministicAction(mean);
     return SacSquash(mean, out.Slice(1, a, 2 * a), *noise).actions;
+}
+
+Tensor SacLearner::Act(const Tensor& observations, const Tensor* noise) {
+    return SacActorActions(*networks_.actor, observations, action_size_, noise);
 }
 
 SacStepLosses SacLearner::Step(const ReplayBuffer::Batch& batch, const Tensor& noise_pi, const Tensor& noise_next,
@@ -324,6 +328,41 @@ bool SacTrainer::Train(const std::function<void(const SacUpdateMetrics&)>& on_re
         int since_report = 0;
         int64_t vec_steps = 0, last_report = 0;
         auto report_start = std::chrono::steady_clock::now();
+        // The numbers since the last report: the losses averaged over its gradient steps
+        const auto report = [&]() {
+            ++metrics.report;
+            if (since_report > 0) {
+                const float k = static_cast<float>(since_report);
+                metrics.critic_loss = First(critic_sum) / k;
+                metrics.actor_loss = First(actor_sum) / k;
+                metrics.ent_coef = First(alpha_sum) / k;
+                metrics.mean_q = First(q_sum) / k;
+                metrics.ent_coef_loss = config_.ent_coef_auto ? First(alpha_loss_sum) / k : 0.0f;
+            } else {
+                metrics.ent_coef = config_.ent_coef_auto ? std::exp(First(learner_->LogEntCoef())) : config_.ent_coef;
+            }
+            since_report = 0;
+            if (recent.empty()) {
+                metrics.mean_episode_return = metrics.mean_episode_length = std::numeric_limits<float>::quiet_NaN();
+            } else {
+                double r = 0.0, l = 0.0;
+                for (const auto& [ret, len] : recent) {
+                    r += ret;
+                    l += len;
+                }
+                metrics.mean_episode_return = static_cast<float>(r / recent.size());
+                metrics.mean_episode_length = static_cast<float>(l / recent.size());
+            }
+            metrics.buffer_size = buffer.Size();
+            const auto now = std::chrono::steady_clock::now();
+            const double seconds = std::chrono::duration<double>(now - report_start).count();
+            metrics.steps_per_second =
+                seconds > 0.0 ? static_cast<float>(static_cast<double>(metrics.timesteps - last_report) / seconds) : 0.0f;
+            report_start = now;
+            last_report = metrics.timesteps;
+            metrics.reached_target = recent.size() >= 100 && metrics.mean_episode_return >= config_.target_return;
+            if (on_report) on_report(metrics);
+        };
         while (metrics.timesteps < config_.total_timesteps && !stop_) {
             while (paused_ && !stop_) std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if (stop_) break;
@@ -388,41 +427,12 @@ bool SacTrainer::Train(const std::function<void(const SacUpdateMetrics&)>& on_re
 
             // ---- Report
             const bool last = metrics.timesteps >= config_.total_timesteps;
-            if (stop_ || (metrics.timesteps - last_report < config_.report_every && !last)) continue;
-            ++metrics.report;
-            if (since_report > 0) {
-                const float k = static_cast<float>(since_report);
-                metrics.critic_loss = First(critic_sum) / k;
-                metrics.actor_loss = First(actor_sum) / k;
-                metrics.ent_coef = First(alpha_sum) / k;
-                metrics.mean_q = First(q_sum) / k;
-                metrics.ent_coef_loss = config_.ent_coef_auto ? First(alpha_loss_sum) / k : 0.0f;
-            } else {
-                metrics.ent_coef = config_.ent_coef_auto ? std::exp(First(learner_->LogEntCoef())) : config_.ent_coef;
-            }
-            since_report = 0;
-            if (recent.empty()) {
-                metrics.mean_episode_return = metrics.mean_episode_length = std::numeric_limits<float>::quiet_NaN();
-            } else {
-                double r = 0.0, l = 0.0;
-                for (const auto& [ret, len] : recent) {
-                    r += ret;
-                    l += len;
-                }
-                metrics.mean_episode_return = static_cast<float>(r / recent.size());
-                metrics.mean_episode_length = static_cast<float>(l / recent.size());
-            }
-            metrics.buffer_size = buffer.Size();
-            const auto now = std::chrono::steady_clock::now();
-            const double seconds = std::chrono::duration<double>(now - report_start).count();
-            metrics.steps_per_second =
-                seconds > 0.0 ? static_cast<float>(static_cast<double>(metrics.timesteps - last_report) / seconds) : 0.0f;
-            report_start = now;
-            last_report = metrics.timesteps;
-            metrics.reached_target = recent.size() >= 100 && metrics.mean_episode_return >= config_.target_return;
-            if (on_report) on_report(metrics);
+            if (!last && metrics.timesteps - last_report < config_.report_every) continue;
+            report();
             if (metrics.reached_target) break;
         }
+        // A Stop reports where it stopped, so the run's last numbers say so
+        if (stop_ && metrics.timesteps > last_report) report();
     } catch (const std::exception& e) {
         error = std::string("SAC training failed: ") + e.what();
         return false;

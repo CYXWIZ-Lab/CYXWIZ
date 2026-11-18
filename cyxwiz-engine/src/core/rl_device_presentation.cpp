@@ -8,7 +8,7 @@ namespace {
 
 constexpr int kSmallLayerUnits = 256;
 constexpr const char* kDriverReason =
-    "usually train faster on the CPU, and the many small GPU steps of PPO strain some graphics drivers.";
+    "usually train faster on the CPU, and the many small GPU steps of RL training strain some graphics drivers.";
 
 std::string Join(const std::vector<int>& units) {
     std::string text;

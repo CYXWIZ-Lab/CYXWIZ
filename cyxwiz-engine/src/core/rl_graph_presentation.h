@@ -51,6 +51,14 @@ std::vector<Fact> QHeadFacts(size_t features, size_t actions);
 
 // The replay buffer's size on the training device, as "about 168 MB"
 std::string ReplayMemoryText(uint64_t bytes);
+// ... and against the training device's memory (device_bytes 0: not known):
+// "about 168 MB, 4 % of the NVIDIA GeForce GTX 1050 Ti's 4.3 GB"; the advice
+// when it leaves the networks little room or does not fit at all
+struct ReplayFit {
+    std::string text;
+    std::string advice;  // empty: it fits with room to spare
+};
+ReplayFit ReplayFitText(uint64_t bytes, const std::string& device_name, uint64_t device_bytes);
 // SAC's automatic target entropy, as "-6 (minus the 6 actions)"
 std::string AutoTargetEntropyText(size_t actions);
 

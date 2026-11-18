@@ -350,18 +350,24 @@ public:
     // 0 real time (the default), 1 four times faster, 2 as fast as possible
     int PolicyPlaybackSpeed() const;
     void SetPolicyPlaybackSpeed(int speed);
-    // Play the policy when a PPO run finishes. Off by default.
+    // Play the policy when an RL run (PPO, SAC) finishes. Off by default.
     bool PlayPolicyAfterTraining() const;
     void SetPlayPolicyAfterTraining(bool play);
     // The Stress test's disturbance, levels and episodes (clamped to their ranges)
     PolicyStressDefaults PolicyStressTestDefaults() const;
     void SetPolicyStressTestDefaults(PolicyStressDefaults defaults);
-    // Watching a PPO run while it trains (the RL Training Dashboard): 0 off
+    // Watching an RL run while it trains (the RL Training Dashboard): 0 off
     // (the default), 1 live preview, 2 raw training copy; the preview takes the
     // networks every N updates (20 by default, 1 to 1000)
     int WatchTrainingMode() const;
     int WatchTrainingEvery() const;
     void SetWatchTraining(int mode, int every_updates);
+    // The replay buffer a new SAC node starts with, in steps (1,000,000 by
+    // default, 1 to 100,000,000); Tuned for sets a task's own
+    static constexpr int kDefaultReplayBufferSize = 1000000;
+    static constexpr int kMaxReplayBufferSize = 100000000;
+    int ReplayBufferSize() const;
+    void SetReplayBufferSize(int steps);
 
     // ===== Appearance (Engine-wide) =====
 
@@ -456,6 +462,7 @@ private:
     PolicyStressDefaults policy_stress_defaults_;
     int watch_training_mode_ = 0;
     int watch_training_every_ = 20;
+    int replay_buffer_size_ = kDefaultReplayBufferSize;
     bool open_simulation_monitor_on_run_ = true;
     std::map<std::string, std::map<std::string, std::string>> plugin_settings_;
     AppearanceConfig appearance_;

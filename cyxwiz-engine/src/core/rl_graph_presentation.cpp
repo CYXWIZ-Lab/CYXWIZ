@@ -91,6 +91,30 @@ std::string ReplayMemoryText(uint64_t bytes) {
     return "about " + Number(std::max(1.0, std::round(mb))) + " MB";
 }
 
+ReplayFit ReplayFitText(uint64_t bytes, const std::string& device_name, uint64_t device_bytes) {
+    ReplayFit fit;
+    if (device_bytes == 0) {
+        fit.text = ReplayMemoryText(bytes) + " on the training device";
+        return fit;
+    }
+    // The device's size in the same words, without "about"
+    const std::string size = ReplayMemoryText(device_bytes).substr(6);
+    const std::string device = (device_name.empty() ? std::string("the training device") : "the " + device_name) +
+                               "'s " + size;
+    const double share = static_cast<double>(bytes) / static_cast<double>(device_bytes);
+    if (share > 1.0) {
+        fit.text = ReplayMemoryText(bytes) + ", more than " + device;
+        fit.advice = "The replay buffer does not fit the training device: lower Buffer size.";
+        return fit;
+    }
+    char percent[16];
+    std::snprintf(percent, sizeof(percent), "%.0f %%", std::max(1.0, std::round(100.0 * share)));
+    fit.text = ReplayMemoryText(bytes) + ", " + percent + " of " + device;
+    if (share > 0.75)
+        fit.advice = "The networks and their updates need room on the device too: a smaller Buffer size is safer.";
+    return fit;
+}
+
 std::string AutoTargetEntropyText(size_t actions) {
     return "-" + std::to_string(actions) + " (minus the " + Plural(static_cast<int>(actions), "action", "actions") + ")";
 }

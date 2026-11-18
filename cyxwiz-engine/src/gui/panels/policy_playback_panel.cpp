@@ -152,7 +152,8 @@ void PolicyPlaybackPanel::Render() {
     const auto policy = playback_.Policy();
     if (!policy) {
         ImGui::TextColored(t.text_dim, "No policy is playing. Train an RL graph, or load a saved policy: "
-                                       "the PPO node's Properties, the dashboard after a run, or File > Open Model File.");
+                                       "the learner node's (PPO, SAC) Properties, the dashboard after a run, or File > "
+                                       "Open Model File.");
         ImGui::End();
         return;
     }

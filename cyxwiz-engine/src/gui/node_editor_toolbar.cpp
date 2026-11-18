@@ -801,7 +801,7 @@ void NodeEditor::ShowToolbar() {
             if (training_active) training_mgr.StopTraining();
             else StopRLTraining();
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip(training_active ? "Stop training" : "Stop PPO training");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(training_active ? "Stop training" : "Stop RL training");
     } else {
         if (ui::PrimaryButton(ICON_FA_PLAY " Train", train.enabled, train.disabled_reason.c_str(), ui::ButtonSize::Small)) {
             spdlog::info("NodeEditor: Starting training from graph");

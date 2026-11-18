@@ -134,6 +134,9 @@ int main() {
     Check(CompactRunText("PPO update 196" + dot + "50,176 steps" + dot + "CUDA") == "Update 196" &&
               CompactRunText("PPO waiting for the GPU") == "Waiting" && CompactRunText("Epoch 3 / 5") == "Epoch 3 / 5",
           "a PPO line shortened to its state");
+    Check(CompactRunText("SAC 212,000 steps" + dot + "CUDA") == "212,000 steps" &&
+              CompactRunText("SAC waiting for the GPU") == "Waiting" && CompactRunText("SAC starting") == "Starting",
+          "a SAC line shortened to its state");
 
     // The Code menu: the framework on the bar only in Code Gen; elsewhere the
     // menu names it.

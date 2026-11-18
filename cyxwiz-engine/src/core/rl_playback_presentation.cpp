@@ -26,6 +26,59 @@ bool StartsWith(const std::string& s, const char* prefix) { return s.rfind(prefi
 
 }  // namespace
 
+namespace {
+// Decimal, as device memory is sold
+std::string Megabytes(double bytes) {
+    const double mb = bytes / 1e6;
+    if (mb >= 1000.0) return Number(mb / 1000.0, "%.1f") + " GB";
+    return Number(std::max(1.0, std::round(mb)), "%.0f") + " MB";
+}
+}  // namespace
+
+std::string SacProgress(int64_t steps, int64_t total, int64_t updates, int64_t learning_starts) {
+    std::string text = Thousands(steps) + " of " + Thousands(total) + " steps";
+    if (updates > 0) text += " \xC2\xB7 " + Thousands(updates) + (updates == 1 ? " update" : " updates");
+    if (learning_starts > 0)
+        text += steps > learning_starts ? " \xC2\xB7 learning started at " + Thousands(learning_starts) +
+                                              " (random steps before)"
+                                        : " \xC2\xB7 random actions until " + Thousands(learning_starts);
+    return text;
+}
+
+CardText SacReplayBufferCard(int64_t size, int64_t capacity, uint64_t bytes, const std::string& place) {
+    CardText card;
+    if (capacity <= 0) {
+        card.value = "-";
+        return card;
+    }
+    const double fraction = std::clamp(static_cast<double>(size) / static_cast<double>(capacity), 0.0, 1.0);
+    // Full only when full; a few rows are not 0 %
+    const double percent = std::round(100.0 * fraction);
+    card.value = size >= capacity ? "100 %"
+                 : size > 0 && percent < 1.0 ? "<1 %"
+                                             : Number(std::min(99.0, percent), "%.0f") + " %";
+    card.detail = Thousands(size) + " of " + Thousands(capacity) + " \xC2\xB7 " +
+                  Megabytes(fraction * static_cast<double>(bytes)) + " of " + Megabytes(static_cast<double>(bytes)) +
+                  " on " + (place.empty() ? std::string("the device") : place);
+    return card;
+}
+
+std::string SacEntropyDetail(bool learned, float start, float target) {
+    if (!learned) return "fixed";
+    return "learned (started at " + Number(start, "%g") + ") \xC2\xB7 target " + Number(target, "%g");
+}
+
+std::string SacSpeedDetail(double updates_per_step) {
+    if (std::fabs(updates_per_step - 1.0) < 1e-9) return "steps a second (one update each)";
+    return "steps a second (" + Number(updates_per_step, "%.3g") + " updates each)";
+}
+
+std::string SacCriticDetail(int64_t updates_since_report, int64_t learning_starts) {
+    if (updates_since_report <= 0) return "learning starts at " + Thousands(learning_starts);
+    return "both Q networks, last " + Thousands(updates_since_report) +
+           (updates_since_report == 1 ? " update" : " updates");
+}
+
 std::string PolicySource(const std::string& file_name, int64_t steps) {
     return (file_name.empty() ? std::string("this session's run") : file_name) + " (" + Thousands(steps) + " steps)";
 }
@@ -118,8 +171,12 @@ View Build(const Inputs& in) {
     return v;
 }
 
-plugin::PluginShownCopyLabel PreviewLabel(int update) {
-    const std::string of = "update " + Thousands(update);
+std::string NetworksAt(int update, int64_t steps, bool by_steps) {
+    return by_steps ? "step " + Thousands(steps) : "update " + Thousands(update);
+}
+
+plugin::PluginShownCopyLabel PreviewLabel(int update, int64_t steps, bool by_steps) {
+    const std::string of = NetworksAt(update, steps, by_steps);
     return {"Preview of " + of, "Training preview", {{"Networks of", of}}};
 }
 
@@ -127,16 +184,18 @@ plugin::PluginShownCopyLabel TrainingCopyLabel(int copy) {
     return {"Training copy " + std::to_string(copy), "Training", {}, true};  // watch only: training learns from it
 }
 
-std::string PreviewOf(int update, int64_t steps) {
-    if (update <= 0) return "waiting for the next update";
+std::string PreviewOf(int update, int64_t steps, bool by_steps) {
+    if (update <= 0) return by_steps ? "waiting for the next report" : "waiting for the next update";
+    if (by_steps) return NetworksAt(update, steps, true);
     return "update " + Thousands(update) + " (" + Thousands(steps) + " steps)";
 }
 
-std::string PreviewEpisodes(int episodes, bool has_last_return, double last_return, int last_return_update) {
+std::string PreviewEpisodes(int episodes, bool has_last_return, double last_return, int last_return_update,
+                            int64_t last_return_steps, bool by_steps) {
     std::string text = episodes > 0 ? Thousands(episodes) + " played" : std::string("none played yet");
     if (has_last_return) {
         text += " \xC2\xB7 last return " + Number(last_return, "%.1f");
-        if (last_return_update > 0) text += " (update " + Thousands(last_return_update) + ")";
+        if (last_return_update > 0) text += " (" + NetworksAt(last_return_update, last_return_steps, by_steps) + ")";
     }
     return text;
 }

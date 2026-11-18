@@ -86,9 +86,10 @@ TrainButton TrainState(const TrainInputs& in);
 // A supervised run's line on the bar: "Epoch 3 / 10", "Paused at epoch 3 / 10",
 // "Waiting for the GPU" (compact: "Waiting").
 std::string TrainingRunText(int epoch, int total_epochs, bool paused, bool waiting_for_gpu, bool compact);
-// A PPO run's line shortened to its state: its first part without "PPO ",
-// a wait as "Waiting", first letter capitalised ("PPO update 196 - 50,176
-// steps - CUDA" -> "Update 196"; "PPO waiting for the GPU" -> "Waiting").
+// An RL run's line shortened to its state: its first part without "PPO " or
+// "SAC ", a wait as "Waiting", first letter capitalised ("PPO update 196 -
+// 50,176 steps - CUDA" -> "Update 196"; "SAC 212,000 steps - CUDA" ->
+// "212,000 steps"; "PPO waiting for the GPU" -> "Waiting").
 std::string CompactRunText(const std::string& run_line);
 
 // ---- The execution mode, the framework and the Code menu.

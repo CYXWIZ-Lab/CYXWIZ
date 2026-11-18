@@ -607,6 +607,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
         policy_stress_defaults_ = {};
         watch_training_mode_ = 0;
         watch_training_every_ = 20;
+        replay_buffer_size_ = kDefaultReplayBufferSize;
         if (config.contains("policy_playback") && config["policy_playback"].is_object()) {
             const auto& playback = config["policy_playback"];
             policy_playback_best_ = playback.value("best_actions", true);
@@ -618,6 +619,8 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
                                                            playback.value("stress_episodes", d.episodes)});
             watch_training_mode_ = std::clamp(playback.value("watch_training", 0), 0, 2);
             watch_training_every_ = std::clamp(playback.value("watch_every_updates", 20), 1, 1000);
+            replay_buffer_size_ =
+                std::clamp(playback.value("replay_buffer_size", kDefaultReplayBufferSize), 1, kMaxReplayBufferSize);
         }
 
         runtime_log_saved_filters_.clear();
@@ -755,7 +758,8 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
                                      {"stress_levels", policy_stress_defaults_.levels},
                                      {"stress_episodes", policy_stress_defaults_.episodes},
                                      {"watch_training", watch_training_mode_},
-                                     {"watch_every_updates", watch_training_every_}};
+                                     {"watch_every_updates", watch_training_every_},
+                                     {"replay_buffer_size", replay_buffer_size_}};
         config["observability"] = {
             {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
@@ -1415,6 +1419,20 @@ void EngineConfig::SetWatchTraining(int mode, int every_updates) {
     if (mode != watch_training_mode_ || every_updates != watch_training_every_) {
         watch_training_mode_ = mode;
         watch_training_every_ = every_updates;
+        modified_ = true;
+    }
+}
+
+int EngineConfig::ReplayBufferSize() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return replay_buffer_size_;
+}
+
+void EngineConfig::SetReplayBufferSize(int steps) {
+    steps = std::clamp(steps, 1, kMaxReplayBufferSize);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (steps != replay_buffer_size_) {
+        replay_buffer_size_ = steps;
         modified_ = true;
     }
 }

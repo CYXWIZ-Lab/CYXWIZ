@@ -65,7 +65,7 @@ void CheckAdvice() {
           "small = every hidden layer at most 256 units");
     Check(Widths({64, 64}, {64, 64}) == "64-64" && Widths({64, 64}, {128}) == "64-64 and 128", "widths");
     const std::string advice = CompileAdvice("CUDA", {64, 64}, {64, 64}, false);
-    Check(advice == "Small networks (64-64) usually train faster on the CPU, and the many small GPU steps of PPO strain "
+    Check(advice == "Small networks (64-64) usually train faster on the CPU, and the many small GPU steps of RL training strain "
                     "some graphics drivers. Training uses CUDA, as chosen in Preferences > Devices.",
           "Compile advice: " + advice);
     Check(CompileAdvice("CPU", {64, 64}, {64, 64}, false).empty(), "no advice on the CPU");

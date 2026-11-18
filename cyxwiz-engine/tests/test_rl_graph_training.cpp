@@ -7,7 +7,10 @@
 // the run, plays CartPole with its best actions, saves to a .cyxmodel and
 // loads back acting the same; a graph whose layers differ is refused. With a
 // MuJoCo plugin folder as the argument, a short InvertedPendulum run with
-// normalised observations saves and loads the same way (continuous actions).
+// normalised observations saves and loads the same way (continuous actions),
+// and so does a SAC run of the SAC pattern (TOFIX216 S4): its reports, its
+// replay buffer, a live preview of its actor, Stop, its five networks and
+// entropy weight saved and loaded, playback, ghost and Stress test.
 // The device (TOFIX206): every run takes the route chosen the Engine's way
 // (the pending selection + the next-run policy, here the ArrayFire CPU), and
 // reports it; Strict refuses a route that cannot start, Compatibility falls
@@ -17,6 +20,7 @@
 
 #include "../src/core/execution_device_preferences.h"
 #include "../src/core/graph_compiler.h"
+#include "../src/core/formats/cyxmodel_format.h"
 #include "../src/core/training_trace_collector.h"
 #include <cyxwiz/neural_provider.h>
 #include "../src/core/rl/policy_playback.h"
@@ -36,6 +40,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <random>
 #include <string>
@@ -46,6 +51,7 @@ namespace {
 int failures = 0;
 
 void Check(bool ok, const std::string& what);
+void CheckSac(const rl_graph_test::Graph& ppo_graph);
 
 // The route for the next run, chosen as Preferences > Devices chooses it
 void SelectRoute(cyxwiz::DeviceType type, int device_id, cyxwiz::ExecutionPolicy policy) {
@@ -140,8 +146,10 @@ void CheckSaveAndLoad(cyxwiz::rl::TrainedPolicy& trained, const std::string& fil
         Check(cyxwiz::rl::PolicyActions(trained, obs, 32, false, 9) == cyxwiz::rl::PolicyActions(*loaded, obs, 32, false, 9),
               "and the same sampled actions for the same seed");
         Check(loaded->config.environment_key == trained.config.environment_key, "it names the same environment");
-        Check(loaded->updates.size() == trained.updates.size() && loaded->steps == trained.steps,
-              "its PPO updates and steps come back");
+        Check(loaded->updates.size() == trained.updates.size() &&
+                  loaded->sac_reports.size() == trained.sac_reports.size() && loaded->steps == trained.steps &&
+                  loaded->IsSac() == trained.IsSac(),
+              "its learner, its PPO updates or SAC reports, and its steps come back");
         bool same_optimizers = loaded->optimizers.size() == trained.optimizers.size();
         for (const auto& [key, state] : trained.optimizers) {
             const auto it = loaded->optimizers.find(key);
@@ -464,8 +472,154 @@ void CheckContinuous(const std::filesystem::path& plugin) {
         auto longer = std::make_shared<cyxwiz::RLTrainingConfiguration>(*config);
         longer->ppo.total_timesteps = 2560;  // long enough to watch a few updates
         CheckWatchInView(longer);
+        CheckSac(g);
     }
     manager.UnloadPlugin("com.cyxwiz.simulation.mujoco");
+}
+
+std::vector<cyxwiz::rl::SacUpdateMetrics> WaitSac(cyxwiz::rl::RLTrainingRun& run, double seconds) {
+    std::vector<cyxwiz::rl::SacUpdateMetrics> all;
+    const auto start = std::chrono::steady_clock::now();
+    while (run.Active() &&
+           std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() < seconds) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        for (const auto& m : run.TakeSacReports()) all.push_back(m);
+    }
+    for (const auto& m : run.TakeSacReports()) all.push_back(m);
+    return all;
+}
+
+// Two tensors the same: type, shape and every byte (the weights are float64
+// on ArrayFire's CPU backend)
+bool SameTensor(const cyxwiz::Tensor& a, const cyxwiz::Tensor& b) {
+    return a.GetDataType() == b.GetDataType() && a.Shape() == b.Shape() && a.NumBytes() == b.NumBytes() &&
+           std::memcmp(a.ReadData(), b.ReadData(), a.NumBytes()) == 0;
+}
+
+// Every parameter of two networks the same
+bool SameParameters(cyxwiz::IExecutableModel& a, cyxwiz::IExecutableModel& b) {
+    const auto pa = a.GetParameters(), pb = b.GetParameters();
+    if (pa.size() != pb.size()) return false;
+    for (const auto& [name, t] : pa) {
+        const auto it = pb.find(name);
+        if (it == pb.end() || !SameTensor(t, it->second)) return false;
+    }
+    return true;
+}
+
+// The SAC pattern on InvertedPendulum (the MuJoCo plugin loaded), trained the
+// Engine's way (TOFIX216 S4)
+void CheckSac(const rl_graph_test::Graph& ppo_graph) {
+    rl_graph_test::Ids id{};
+    auto g = rl_graph_test::Pattern(id, 64, gui::NodeType::ReLU, gui::NodeType::SAC);
+    g.At(id.env).parameters["environment"] = "com.cyxwiz.simulation.mujoco:InvertedPendulum-v5";
+    g.At(id.env).parameters["copies"] = "1";
+    auto& sac = g.At(id.ppo).parameters;
+    sac["total_timesteps"] = "3000";
+    sac["learning_starts"] = "500";
+    sac["buffer_size"] = "2000";  // smaller than the run: the ring wraps
+    sac["batch_size"] = "64";
+    const auto config = Compile(g);
+    if (!config) return;
+    Check(config->algorithm == cyxwiz::RLAlgorithm::SAC, "the SAC pattern compiles to SAC");
+    auto run_config = std::make_shared<cyxwiz::RLTrainingConfiguration>(*config);
+    run_config->sac.report_every = 500;
+    std::string error;
+    cyxwiz::rl::RLTrainingRun run;
+    SelectCpu();
+    run.SetWatch(cyxwiz::rl::RLTrainingRun::Watch::Preview, 1);
+    Check(run.Start(run_config, rl_graph_test::Json(g), error), "the SAC run starts: " + error);
+    const auto reports = WaitSac(run, 600.0);
+    Check(run.GetState() == cyxwiz::rl::RLTrainingRun::State::Finished, "the SAC run finishes: " + run.Message());
+    Check(run.TakeUpdates().empty(), "a SAC run reports no PPO updates");
+    Check(reports.size() == 6 && reports.back().timesteps == 3000 && reports.back().report == 6,
+          "a report every 500 steps to the end: " + std::to_string(reports.size()));
+    if (!reports.empty()) {
+        const auto& last = reports.back();
+        Check(!reports.front().learning && last.learning && last.updates == 2500,
+              "random steps first, then a gradient step a step: " + std::to_string(last.updates));
+        Check(last.buffer_size == 2000 && last.buffer_capacity == 2000 &&
+                  last.buffer_bytes == cyxwiz::rl::ReplayBytes(2000, 4, 1),
+              "the replay buffer fills to its size");
+        Check(std::isfinite(last.critic_loss) && std::isfinite(last.actor_loss) && last.ent_coef > 0.0f &&
+                  last.ent_coef < 1.0f,
+              "the losses are numbers and the learned entropy weight has fallen");
+        bool falls = false;
+        for (const auto& stat : last.environment_stats) falls = falls || stat.label == "Falls";
+        Check(falls, "the environment's Falls reaches the SAC reports");
+    }
+    const auto preview = run.PreviewPolicy();
+    Check(preview && preview->IsSac() && preview->policy && !preview->q1, "the live preview holds a copy of the actor");
+    const auto trained = run.Trained();
+    Check(trained && trained->IsSac() && trained->policy && trained->q1 && trained->q2 && trained->q1_target &&
+              trained->q2_target && trained->log_ent_coef.NumElements() == 1 && !trained->value,
+          "the run keeps the actor, the twin critics, their targets and log alpha");
+    if (!trained) return;
+    Check(trained->sac_reports.size() == reports.size() && trained->steps == 3000 && trained->optimizers.size() == 4,
+          "with its reports, steps and the four optimizers (actor, q1, q2, entropy)");
+    const auto& info = trained->config.environment;
+    const auto obs = SampleObservations(16, 4);
+    const auto sampled = cyxwiz::rl::PolicyActions(*trained, obs, 16, false, 3);
+    const auto best = cyxwiz::rl::PolicyActions(*trained, obs, 16, true, 0);
+    bool bounded = sampled.size() == 16 && best.size() == 16;
+    for (const float a : sampled) bounded = bounded && a >= info.action_low[0] && a <= info.action_high[0];
+    for (const float a : best) bounded = bounded && a >= info.action_low[0] && a <= info.action_high[0];
+    Check(bounded, "SAC's actions are scaled into the bounds");
+    Check(best == cyxwiz::rl::PolicyActions(*trained, obs, 16, true, 99) && sampled != best,
+          "its best actions are deterministic, its sampled ones are not");
+    CheckSaveAndLoad(*trained, "cyxwiz_rl_sac_policy_test.cyxmodel");
+    {
+        const auto path = std::filesystem::temp_directory_path() / "cyxwiz_rl_sac_networks_test.cyxmodel";
+        Check(cyxwiz::rl::SaveTrainedPolicy(*trained, path, error), "the SAC policy saves: " + error);
+        // The package names its learner (Open Model File reads it)
+        const cyxwiz::ProbeResult probe = cyxwiz::formats::CyxModelFormat().Probe(path.string());
+        const auto algorithm = probe.custom_metadata.find("rl_algorithm");
+        Check(probe.has_rl_policy && algorithm != probe.custom_metadata.end() && algorithm->second == "SAC",
+              "the SAC package names SAC as its learner");
+        auto loaded = cyxwiz::rl::LoadTrainedPolicy(path, error);
+        // Both live on the CPU route the run trained on: read them there, whatever this thread is on
+        const cyxwiz::rl::PolicyDeviceScope on_its_device(*trained);
+        Check(loaded && loaded->IsSac() && SameParameters(*loaded->q1, *trained->q1) &&
+                  SameParameters(*loaded->q2_target, *trained->q2_target) &&
+                  SameTensor(loaded->log_ent_coef, trained->log_ent_coef),
+              "the critics, targets and entropy weight load back as saved: " + error);
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+    std::printf("SAC: saved and loaded; the policy against a PPO graph\n");
+    // A SAC policy does not fit a PPO graph of the same task
+    Check(cyxwiz::rl::PolicyMismatch(*trained, *config).empty(), "the SAC policy fits its own graph");
+    cyxwiz::GraphCompiler compiler;
+    const auto ppo = compiler.Compile(ppo_graph.nodes, ppo_graph.links, true);
+    if (ppo.rl)
+        Check(cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl).find("trained by SAC") != std::string::npos,
+              "a PPO graph refuses the SAC policy: " + cyxwiz::rl::PolicyMismatch(*trained, *ppo.rl));
+    std::printf("SAC: the Stress test\n");
+    CheckStressRun(trained);
+    std::printf("SAC: a ghost beside the policy\n");
+    CheckGhostPlayback(trained, true);
+    std::printf("SAC: Stop\n");
+
+    // Stop: the run says where it stopped, and keeps what it trained
+    auto longer = std::make_shared<cyxwiz::RLTrainingConfiguration>(*run_config);
+    longer->sac.total_timesteps = 1000000;
+    cyxwiz::rl::RLTrainingRun stopped;
+    SelectCpu();
+    Check(stopped.Start(longer, rl_graph_test::Json(g), error), "a long SAC run starts: " + error);
+    std::vector<cyxwiz::rl::SacUpdateMetrics> seen;
+    const auto start = std::chrono::steady_clock::now();
+    while (stopped.Active() && std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() < 300.0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        for (const auto& m : stopped.TakeSacReports()) seen.push_back(m);
+        if (!seen.empty() && seen.back().updates > 0) break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    stopped.Stop();
+    for (const auto& m : WaitSac(stopped, 60.0)) seen.push_back(m);
+    Check(stopped.GetState() == cyxwiz::rl::RLTrainingRun::State::Stopped, "Stop ends the SAC run: " + stopped.Message());
+    const auto kept = stopped.Trained();
+    Check(kept && !seen.empty() && kept->steps == seen.back().timesteps && seen.back().timesteps % 500 != 0,
+          "a stopped SAC run reports where it stopped and keeps its policy");
 }
 
 void CheckStopAndFailure() {
@@ -622,6 +776,8 @@ void CheckStressTestConditions() {
 }
 
 int main(int argc, char** argv) {
+    // Unbuffered: what ran last stays in a redirected log if the run crashes
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     cyxwiz::SetRLEnvironmentLookup([](const std::string& key, const std::map<std::string, std::string>&,
                                       cyxwiz::plugin::PluginEnvironmentInfo& info, std::string&) {
         cyxwiz::plugin::PluginEnvironmentRegistry::Environment e;

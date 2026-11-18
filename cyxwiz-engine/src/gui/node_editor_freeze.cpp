@@ -122,6 +122,9 @@ void NodeEditor::ApplyUserNodeDefaults(MLNode& node) const {
         node.parameters[frozen::kStatistics] =
             defaults.frozen_batchnorm_keeps_statistics ? frozen::kStatisticsKeep : frozen::kStatisticsUpdate;
     }
+    // A new SAC node's replay buffer (Preferences > Simulation; Tuned for sets a task's own)
+    if (node.type == NodeType::SAC)
+        node.parameters["buffer_size"] = std::to_string(cyxwiz::core::EngineConfig::Instance().ReplayBufferSize());
 }
 
 void NodeEditor::RunFreezeCommand(const std::string& command) {

@@ -22,7 +22,7 @@ std::string FormatLine(const ProbeResult& probe) {
 }
 
 std::string Trained(const ProbeResult& probe) {
-    if (probe.has_rl_policy) {  // a PPO policy: environment steps and the last mean return
+    if (probe.has_rl_policy) {  // an RL policy: environment steps and the last mean return
         const auto steps = probe.custom_metadata.find("rl_steps");
         if (steps == probe.custom_metadata.end()) return {};
         std::string text = FormatCompiledCount(std::stoll(steps->second)) + " environment steps";
@@ -110,8 +110,11 @@ View BuildView(const ProbeResult& probe) {
     if (v.can_play_policy) {
         const auto env = probe.custom_metadata.find("rl_environment");
         const std::string environment = env == probe.custom_metadata.end() ? "its environment" : env->second;
-        v.rows.emplace_back("Policy", "PPO on " + environment);
-        v.note = "A trained PPO policy. Play policy loads it and plays " + environment +
+        // The learner the package names; a package from before SAC (policy schema 1) is PPO's
+        const auto algorithm = probe.custom_metadata.find("rl_algorithm");
+        const std::string learner = algorithm == probe.custom_metadata.end() ? "PPO" : algorithm->second;
+        v.rows.emplace_back("Policy", learner + " on " + environment);
+        v.note = "A trained " + learner + " policy. Play policy loads it and plays " + environment +
                  " (the environment must be available: for a MuJoCo task, the MuJoCo plugin loaded). Open its graph "
                  "opens the RL graph it was trained from.";
     } else if (v.can_open_graph) {

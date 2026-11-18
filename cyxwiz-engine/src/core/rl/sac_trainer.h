@@ -43,6 +43,12 @@ struct SacNetworks {
     std::unique_ptr<IExecutableModel> q2_target;
 };
 
+// The actor's actions in [-1, 1] [N, A] for observations [N, obs] (already
+// normalised when the policy was trained so): tanh(mean) when noise is null,
+// else drawn with noise [N, A] as in training. Training, preview and playback
+// all act through it.
+Tensor SacActorActions(IExecutableModel& actor, const Tensor& observations, size_t action_size, const Tensor* noise);
+
 // One gradient step's numbers, on the device ([1] each)
 struct SacStepLosses {
     Tensor critic_loss;
@@ -88,8 +94,8 @@ private:
     std::unique_ptr<Optimizer> ent_coef_optimizer_;
 };
 
-// Reported every report_every environment steps (and at the end), averaged
-// over the gradient steps since the last report.
+// Reported every report_every environment steps (and at the end, or at a
+// Stop), averaged over the gradient steps since the last report.
 struct SacUpdateMetrics {
     int report = 0;
     int64_t timesteps = 0;

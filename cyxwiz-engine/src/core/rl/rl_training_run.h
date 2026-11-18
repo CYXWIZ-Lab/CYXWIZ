@@ -1,24 +1,31 @@
 #pragma once
 
-// One PPO run of a compiled RL graph (TOFIX195 S4.3): on a worker thread it
-// creates the environment copies from the plugin environment registry,
-// builds the policy and value networks from the graph's layers plus the
-// heads' output layers (Stable-Baselines3's initialisation), and trains them
-// with PpoTrainer. The UI thread starts, pauses and stops it and drains its
-// per-update metrics. A finished or stopped run keeps its trained policy
-// (TOFIX195 S5) until the next Start. Engine side: it links the plugin host.
+// One run of a compiled RL graph (TOFIX195 S4.3; SAC since TOFIX216 S4): on a
+// worker thread it creates the environment copies from the plugin environment
+// registry, builds the graph's networks (PPO: policy and value, SB3's
+// initialisation; SAC: the actor, twin critics and their targets, PyTorch's)
+// and trains them with PpoTrainer or SacTrainer. The UI thread starts, pauses
+// and stops it and drains its reports. A finished or stopped run keeps its
+// trained policy (TOFIX195 S5) until the next Start. Engine side: it links the
+// plugin host.
 
 #include "../execution_device_context.h"
 #include "../rl_graph_compile.h"
 #include "ppo_trainer.h"
+#include "sac_trainer.h"
 #include "trained_policy.h"
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+namespace cyxwiz::plugin {
+class EnvironmentBatch;
+}
 
 namespace cyxwiz::rl {
 
@@ -43,7 +50,7 @@ public:
 
     bool Active() const { return state_ == State::Running; }
     // True while any run in this process trains (its worker is between start
-    // and end): what the runtime truth reports as a PPO training
+    // and end): what the runtime truth reports as an RL training
     static bool AnyActive();
     bool Paused() const { return paused_; }
     State GetState() const { return state_; }
@@ -53,17 +60,20 @@ public:
     std::string Waiting() const;
     const RLTrainingConfiguration* Config() const { return config_.get(); }
 
-    // The updates since the last call (UI thread)
+    // A PPO run's updates since the last call (UI thread)
     std::vector<PpoUpdateMetrics> TakeUpdates();
+    // A SAC run's reports since the last call (UI thread)
+    std::vector<SacUpdateMetrics> TakeSacReports();
 
     // The policy of the last finished or stopped run (null otherwise)
     std::shared_ptr<TrainedPolicy> Trained() const;
 
     // Watching the run while it trains (TOFIX212 P5), applied by the worker
-    // between updates. Preview: the policy is copied every `every_updates`
-    // updates (and at the first update after Preview is chosen) for a preview
-    // to play beside training; training is not changed. RawCopy: the plugin's
-    // view follows copy 0 of the training itself. UI thread.
+    // between updates (a SAC run: between reports). Preview: the policy is
+    // copied every `every_updates` updates (reports) (and at the first one
+    // after Preview is chosen) for a preview to play beside training; training
+    // is not changed. RawCopy: the plugin's view follows copy 0 of the
+    // training itself. UI thread.
     enum class Watch { Off = 0, Preview = 1, RawCopy = 2 };
     void SetWatch(Watch watch, int every_updates);
     void TakeNetworksNow();  // copy at the next update, whatever the interval
@@ -84,13 +94,39 @@ public:
     ExecutionDeviceContext Device() const;
 
 private:
+    // A copy of the policy for the preview (PPO's policy or SAC's actor)
+    struct PreviewNetworks {
+        std::map<std::string, Tensor> parameters;
+        Tensor log_std;  // a continuous PPO policy's; empty otherwise
+        std::unique_ptr<VecNormalize> normalizer;
+        int update = 0;
+        long long steps = 0;
+    };
+
     void Run();
+    // The learner's own training, between the shared start (device, trace,
+    // environment) and end. `preview_network`: the preview's own policy
+    // network, built before the run seeded its random engine. False with the
+    // reason; `trained` stays null for a run stopped before it trained (PPO:
+    // its first update; SAC: its first gradient step).
+    bool TrainPpo(const std::shared_ptr<plugin::EnvironmentBatch>& batch, TrainingEnvironment env,
+                  std::unique_ptr<IExecutableModel>& preview_network, std::shared_ptr<TrainedPolicy>& trained,
+                  std::string& error);
+    bool TrainSac(const std::shared_ptr<plugin::EnvironmentBatch>& batch, TrainingEnvironment env,
+                  std::unique_ptr<IExecutableModel>& preview_network, std::shared_ptr<TrainedPolicy>& trained,
+                  std::string& error);
+    // Between two updates (reports), on the worker: the plugin's view follows
+    // copy 0 of the training or not; true when the preview is due a copy
+    bool WatchBetweenUpdates(plugin::EnvironmentBatch& batch, int number, int& last_watch, bool& raw_shown);
+    // The view no longer follows the training (the run's end)
+    static void EndRawWatch(plugin::EnvironmentBatch& batch, bool raw_shown);
     // The policy now, for the preview (the worker, between updates). The
-    // first copy makes the preview policy from `network` (built before the
-    // run seeded its random engine); each copy then waits for the preview's
-    // next episode (RefreshPreview).
-    void CopyForPreview(PpoTrainer& trainer, const RLTrainingConfiguration& c, int update, long long steps,
+    // first copy makes the preview policy from `network`; each copy then
+    // waits for the preview's next episode (RefreshPreview).
+    void CopyForPreview(std::unique_ptr<PreviewNetworks> next, const RLTrainingConfiguration& c,
                         std::unique_ptr<IExecutableModel>& network);
+    // "PPO" or "SAC": the run's logs and trace
+    const char* Learner() const;
 
     std::shared_ptr<const RLTrainingConfiguration> config_;
     std::string graph_json_;
@@ -98,11 +134,13 @@ private:
     std::atomic<State> state_{State::Idle};
     std::atomic<bool> paused_{false};
     std::atomic<bool> stop_requested_{false};
-    mutable std::mutex mutex_;  // guards the members below and trainer_
+    mutable std::mutex mutex_;  // guards the members below and the trainers
     std::vector<PpoUpdateMetrics> updates_;
+    std::vector<SacUpdateMetrics> sac_reports_;
     std::string message_;
     std::string waiting_;  // what to tell the user while it waits for its GPU
-    PpoTrainer* trainer_ = nullptr;  // while Run trains
+    PpoTrainer* trainer_ = nullptr;  // while Run trains PPO
+    SacTrainer* sac_trainer_ = nullptr;  // while Run trains SAC
     std::shared_ptr<TrainedPolicy> trained_;
     ExecutionDeviceContext device_;
 
@@ -111,11 +149,6 @@ private:
     std::atomic<int> watch_every_{20};
     std::atomic<bool> take_now_{false};
     // Guarded by mutex_: the preview's policy and the newest copy waiting for it
-    struct PreviewNetworks {
-        PpoPolicyCopy copy;
-        int update = 0;
-        long long steps = 0;
-    };
     std::shared_ptr<TrainedPolicy> preview_;
     std::unique_ptr<PreviewNetworks> preview_next_;
     int preview_holds_update_ = 0;  // the networks preview_ holds (RefreshPreview)

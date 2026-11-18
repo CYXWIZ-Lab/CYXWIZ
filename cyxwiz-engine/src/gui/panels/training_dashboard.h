@@ -3,15 +3,17 @@
 // RL Training Dashboard (approved board 3, TOFIX134 P1 step 1.7): episode
 // and policy metrics a run reports, drawn with the shared PlotView in the
 // theme colours. Two sources: a script (pycyxwiz.rl_update_metric, one value
-// per report) and the Engine's own PPO run (TOFIX195 S4.3, R9: one row per
-// update by environment step, progress, speed, Pause / Stop, and the
-// Stable-Baselines3 reference of the same settings). UI thread only, except
-// SetRLTrainingState (a script's completion callback may call it from the
-// script worker).
+// per report) and the Engine's own run (TOFIX195 S4.3, R9; SAC since TOFIX216
+// S4): one row per PPO update or SAC report by environment step, progress,
+// speed, Pause / Stop, the learner's own cards (SAC: critic and actor loss,
+// entropy weight, replay buffer) and the Stable-Baselines3 reference of the
+// same settings. UI thread only, except SetRLTrainingState (a script's
+// completion callback may call it from the script worker).
 
 #include "../panel.h"
 #include "../plot/plot_view.h"
 #include "../../core/rl/ppo_reference.h"
+#include "../../core/rl/sac_trainer.h"
 
 #include <imgui.h>
 
@@ -39,15 +41,23 @@ public:
     void SetRLTrainingState(bool is_rl_training);
     void ResetRLMetrics();
 
-    // The Engine's PPO run
-    struct PpoRunInfo {
+    // The Engine's run (PPO or SAC)
+    struct RunInfo {
         std::string title;  // "PPO on CartPole-v1 x 8"
         long long total_timesteps = 0;
         float target_return = 0.0f;  // NaN: no target
         bool continuous = false;
         std::optional<rl::PpoReference> reference;
+        // A SAC run: its own cards and progress
+        bool sac = false;
+        long long learning_starts = 0;  // random actions before
+        int report_every = 0;           // steps between two reports (the watch's unit)
+        double updates_per_step = 1.0;  // gradient steps per environment step
+        bool ent_coef_auto = true;
+        float ent_coef_start = 1.0f;
+        float target_entropy = 0.0f;    // resolved (auto: minus the actions)
     };
-    struct PpoRunControls {
+    struct RunControls {
         std::function<void()> pause;
         std::function<void()> resume;
         std::function<void()> stop;
@@ -73,32 +83,37 @@ public:
         std::function<WatchView()> watch_view;
         std::function<void()> show_view;
     };
-    void BeginPpoRun(PpoRunInfo info, PpoRunControls controls);
+    void BeginRun(RunInfo info, RunControls controls);
     // The device the run trains on, once its preflight is done
     // (core/rl_device_presentation): the chip, its route on hover, a note
-    void SetPpoDevice(std::string chip, std::string tooltip, bool fallback, std::string note);
+    void SetRunDevice(std::string chip, std::string tooltip, bool fallback, std::string note);
+    // Where a SAC run's replay buffer lives: "the GPU", "the CPU's memory"
+    void SetRunMemoryPlace(std::string place) { memory_place_ = std::move(place); }
     // How the run computes (fused kernels or ArrayFire operations), shown with the chip's route
-    void SetPpoComputePath(std::string path) { device_compute_path_ = std::move(path); }
-    void SetPpoNote(std::string note) { device_note_ = std::move(note); }
+    void SetRunComputePath(std::string path) { device_compute_path_ = std::move(path); }
+    void SetRunNote(std::string note) { device_note_ = std::move(note); }
     void AddPpoUpdate(const rl::PpoUpdateMetrics& m);
+    void AddSacReport(const rl::SacUpdateMetrics& m);
     // Watch progress set from outside (a policy playback took the view: 0, off)
     void SetWatch(int watch) { watch_ = watch; }
-    void EndPpoRun(const std::string& outcome, bool failed);
+    void EndRun(const std::string& outcome, bool failed);
 
 private:
     struct Metric {
         std::string display_name;
         std::vector<double> history;  // one value per report
-        std::vector<double> steps;    // the environment step of each value (a PPO run), else empty
+        std::vector<double> steps;    // the environment step of each value (an Engine run), else empty
         bool dirty = true;            // the plot needs new data
         std::unique_ptr<plot::PlotView> view;
     };
 
     void RenderRunHeader();
     void RenderKpis();
-    void RenderWatch();  // Watch progress (a PPO run)
+    void RenderSacKpis();
+    void RenderWatch();  // Watch progress (an Engine run)
     void RenderMetric(const std::string& name, float height);
     void Push(const std::string& name, double value, double steps);
+    long long RunSteps() const;  // the run's environment steps so far
 
     // Long runs keep every value; the plot draws a reduced copy.
     static constexpr size_t kMaxHistory = 200000;
@@ -107,15 +122,18 @@ private:
     std::map<std::string, Metric> metrics_;
     std::vector<std::string> order_;  // registration order (series colours)
 
-    // The Engine's PPO run, when one reports here
-    std::optional<PpoRunInfo> run_;
-    PpoRunControls controls_;
+    // The Engine's run, when one reports here
+    std::optional<RunInfo> run_;
+    RunControls controls_;
     std::string device_chip_;
     std::string device_tooltip_;
     bool device_fallback_ = false;
     std::string device_note_;
     std::string device_compute_path_;
+    std::string memory_place_;
     std::optional<rl::PpoUpdateMetrics> last_update_;
+    std::optional<rl::SacUpdateMetrics> last_sac_;
+    long long sac_report_updates_ = 0;  // gradient steps the last SAC report averaged
     // Watch progress: from Preferences > Simulation at each run's start
     int watch_ = 0;
     int watch_every_ = 20;

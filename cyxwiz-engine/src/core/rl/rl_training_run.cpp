@@ -22,7 +22,7 @@ RLTrainingRun::~RLTrainingRun() {
 bool RLTrainingRun::Start(std::shared_ptr<const RLTrainingConfiguration> config, std::string graph_json,
                           std::string& error) {
     if (Active()) {
-        error = "A PPO run is already training: stop it first.";
+        error = "An RL run is already training: stop it first.";
         return false;
     }
     if (!config) {
@@ -33,6 +33,7 @@ bool RLTrainingRun::Start(std::shared_ptr<const RLTrainingConfiguration> config,
     {
         std::lock_guard<std::mutex> lock(mutex_);
         updates_.clear();
+        sac_reports_.clear();
         message_.clear();
         trained_.reset();
         device_ = {};
@@ -54,6 +55,7 @@ void RLTrainingRun::Stop() {
     stop_requested_ = true;
     std::lock_guard<std::mutex> lock(mutex_);
     if (trainer_) trainer_->Stop();
+    if (sac_trainer_) sac_trainer_->Stop();
 }
 
 void RLTrainingRun::StopAndWait() {
@@ -65,12 +67,14 @@ void RLTrainingRun::Pause() {
     std::lock_guard<std::mutex> lock(mutex_);
     paused_ = true;
     if (trainer_) trainer_->Pause();
+    if (sac_trainer_) sac_trainer_->Pause();
 }
 
 void RLTrainingRun::Resume() {
     std::lock_guard<std::mutex> lock(mutex_);
     paused_ = false;
     if (trainer_) trainer_->Resume();
+    if (sac_trainer_) sac_trainer_->Resume();
 }
 
 std::string RLTrainingRun::Message() const {
@@ -122,34 +126,57 @@ bool RLTrainingRun::RefreshPreview(TrainedPolicy& policy, int& update, long long
     }
     const std::lock_guard<std::mutex> in_use(policy.in_use);
     const PolicyDeviceScope on_its_device(policy);  // the copies live on the run's device
-    policy.policy->SetParameters(next->copy.parameters);
-    policy.log_std = next->copy.log_std;
-    policy.normalizer = std::move(next->copy.normalizer);
+    policy.policy->SetParameters(next->parameters);
+    policy.log_std = next->log_std;
+    policy.normalizer = std::move(next->normalizer);
     policy.steps = next->steps;
     update = next->update;
     steps = next->steps;
     return true;
 }
 
-void RLTrainingRun::CopyForPreview(PpoTrainer& trainer, const RLTrainingConfiguration& c, int update,
-                                   long long steps, std::unique_ptr<IExecutableModel>& network) {
-    auto next = std::make_unique<PreviewNetworks>();
-    std::string error;
-    if (!trainer.CopyPolicy(next->copy, error)) {
-        spdlog::warn("PPO preview: {}", error);
-        return;
+const char* RLTrainingRun::Learner() const {
+    return config_ && config_->algorithm == RLAlgorithm::SAC ? "SAC" : "PPO";
+}
+
+bool RLTrainingRun::WatchBetweenUpdates(plugin::EnvironmentBatch& batch, int number, int& last_watch,
+                                        bool& raw_shown) {
+    const int watch = watch_.load();
+    if (watch != last_watch) {  // the training copy in the plugin's view, or not
+        std::string show_error;
+        if (watch == static_cast<int>(Watch::RawCopy)) {
+            raw_shown = batch.ShowCopy(0, show_error);
+            if (raw_shown) batch.LabelShownCopy(rl_playback::TrainingCopyLabel(0));
+        } else if (raw_shown) {
+            batch.ShowCopy(-1, show_error);
+            raw_shown = false;
+        }
+        if (!show_error.empty()) spdlog::warn("{}: {}", Learner(), show_error);
     }
-    next->update = update;
-    next->steps = steps;
+    const bool preview = watch == static_cast<int>(Watch::Preview);
+    const bool due = take_now_.exchange(false) || (preview && last_watch != watch) ||
+                     (preview && number % std::max(1, watch_every_.load()) == 0);
+    last_watch = watch;
+    return preview && due;
+}
+
+void RLTrainingRun::EndRawWatch(plugin::EnvironmentBatch& batch, bool raw_shown) {
+    if (!raw_shown) return;
+    std::string show_error;
+    batch.ShowCopy(-1, show_error);
+}
+
+void RLTrainingRun::CopyForPreview(std::unique_ptr<PreviewNetworks> next, const RLTrainingConfiguration& c,
+                                   std::unique_ptr<IExecutableModel>& network) {
     std::shared_ptr<TrainedPolicy> made;
     if (!PreviewPolicy()) {
         if (!network) return;  // it did not build (Run logged why)
-        // Its own policy network on this run's device (no value network: it only plays)
+        // Its own policy network on this run's device (nothing else: it only plays)
         made = std::make_shared<TrainedPolicy>();
         made->config = c;
         made->policy = std::move(network);
-        made->log_std = next->copy.log_std;
-        made->normalizer = std::make_unique<VecNormalize>(*next->copy.normalizer);
+        made->log_std = next->log_std;
+        made->normalizer = std::make_unique<VecNormalize>(*next->normalizer);
         if (const auto* active = cyxwiz::Device::GetCurrentDevice()) {
             made->device_type = active->GetType();
             made->device_id = active->GetDeviceId();
@@ -167,11 +194,141 @@ std::vector<PpoUpdateMetrics> RLTrainingRun::TakeUpdates() {
     return out;
 }
 
+std::vector<SacUpdateMetrics> RLTrainingRun::TakeSacReports() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<SacUpdateMetrics> out;
+    out.swap(sac_reports_);
+    return out;
+}
+
 namespace {
 std::atomic<int> active_runs{0};
+
+// How the run computes, in its trace at the start and on each change
+void TraceComputePath(const char* learner, const std::string& path, std::string& traced) {
+    if (path == traced) return;
+    // Falling back from the fused kernels mid-run is worth a look (a warning)
+    const bool fell_back = !traced.empty();
+    TrainingTraceCollector::Instance().RecordRuntimeEvent(std::string(learner) + ".ComputePath", path,
+                                                          fell_back ? "warning" : "ok");
+    traced = path;
+}
 }  // namespace
 
 bool RLTrainingRun::AnyActive() { return active_runs.load() > 0; }
+
+bool RLTrainingRun::TrainPpo(const std::shared_ptr<plugin::EnvironmentBatch>& batch, TrainingEnvironment env,
+                             std::unique_ptr<IExecutableModel>& preview_network,
+                             std::shared_ptr<TrainedPolicy>& trained, std::string& error) {
+    const auto& c = *config_;
+    std::unique_ptr<IExecutableModel> policy, value;
+    if (!BuildRLNetworks(c, policy, value, error)) return false;
+    PpoTrainer trainer(std::move(env), std::move(policy), std::move(value), c.ppo);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        trainer_ = &trainer;
+        if (paused_) trainer.Pause();
+        if (stop_requested_) trainer.Stop();
+    }
+    spdlog::info("PPO: training on {} x {} for {} steps", c.environment.id, c.copies, c.ppo.total_timesteps);
+    std::vector<PpoUpdateMetrics> history;
+    std::string traced_path;
+    int last_watch = static_cast<int>(Watch::Off);
+    bool raw_shown = false;
+    const bool ok = trainer.Train(
+        [&](const PpoUpdateMetrics& update) {
+            PpoUpdateMetrics m = update;
+            m.environment_stats = batch->Stats();  // between rollouts: the batch is not stepping
+            if (WatchBetweenUpdates(*batch, update.update, last_watch, raw_shown)) {
+                auto next = std::make_unique<PreviewNetworks>();
+                PpoPolicyCopy copy;
+                std::string copy_error;
+                if (trainer.CopyPolicy(copy, copy_error)) {
+                    next->parameters = std::move(copy.parameters);
+                    next->log_std = copy.log_std;
+                    next->normalizer = std::move(copy.normalizer);
+                    next->update = update.update;
+                    next->steps = update.timesteps;
+                    CopyForPreview(std::move(next), c, preview_network);
+                } else {
+                    spdlog::warn("PPO preview: {}", copy_error);
+                }
+            }
+            TraceComputePath("PPO", m.compute_path, traced_path);
+            history.push_back(m);
+            std::lock_guard<std::mutex> lock(mutex_);
+            updates_.push_back(m);
+        },
+        error);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        trainer_ = nullptr;
+    }
+    EndRawWatch(*batch, raw_shown);
+    if (!ok) return false;
+    // The policy stays for playback and Save (a run stopped before its first update has none)
+    if (history.empty()) return true;
+    PpoTrainedState state;
+    if (!trainer.TakeTrained(state, error)) return false;
+    trained = MakeTrainedPolicy(c, graph_json_, std::move(state), std::move(history));
+    return true;
+}
+
+bool RLTrainingRun::TrainSac(const std::shared_ptr<plugin::EnvironmentBatch>& batch, TrainingEnvironment env,
+                             std::unique_ptr<IExecutableModel>& preview_network,
+                             std::shared_ptr<TrainedPolicy>& trained, std::string& error) {
+    const auto& c = *config_;
+    SacNetworks networks;
+    if (!BuildSacNetworks(c, networks, error)) return false;
+    SacTrainer trainer(std::move(env), std::move(networks), c.sac);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        sac_trainer_ = &trainer;
+        if (paused_) trainer.Pause();
+        if (stop_requested_) trainer.Stop();
+    }
+    spdlog::info("SAC: training on {} x {} for {} steps", c.environment.id, c.copies, c.sac.total_timesteps);
+    std::vector<SacUpdateMetrics> history;
+    std::string traced_path;
+    int last_watch = static_cast<int>(Watch::Off);
+    bool raw_shown = false;
+    const bool ok = trainer.Train(
+        [&](const SacUpdateMetrics& report) {
+            SacUpdateMetrics m = report;
+            m.environment_stats = batch->Stats();  // between steps: the batch is not stepping
+            if (WatchBetweenUpdates(*batch, report.report, last_watch, raw_shown)) {
+                auto next = std::make_unique<PreviewNetworks>();
+                SacPolicyCopy copy;
+                std::string copy_error;
+                if (trainer.CopyPolicy(copy, copy_error)) {
+                    next->parameters = std::move(copy.parameters);
+                    next->normalizer = std::move(copy.normalizer);
+                    next->update = report.report;
+                    next->steps = report.timesteps;
+                    CopyForPreview(std::move(next), c, preview_network);
+                } else {
+                    spdlog::warn("SAC preview: {}", copy_error);
+                }
+            }
+            TraceComputePath("SAC", m.compute_path, traced_path);
+            history.push_back(m);
+            std::lock_guard<std::mutex> lock(mutex_);
+            sac_reports_.push_back(m);
+        },
+        error);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        sac_trainer_ = nullptr;
+    }
+    EndRawWatch(*batch, raw_shown);
+    if (!ok) return false;
+    // A run stopped before its first gradient step has no policy (a Stop reports where it stopped)
+    if (history.empty() || history.back().updates == 0) return true;
+    SacTrainedState state;
+    if (!trainer.TakeTrained(state, error)) return false;
+    trained = MakeSacTrainedPolicy(c, graph_json_, std::move(state), std::move(history));
+    return true;
+}
 
 void RLTrainingRun::Run() {
     // Counted for the worker's whole life, every return included
@@ -180,9 +337,11 @@ void RLTrainingRun::Run() {
         ~Counted() { --active_runs; }
     } counted;
     const auto& c = *config_;
+    const bool sac = c.algorithm == RLAlgorithm::SAC;
+    const char* learner = Learner();
     bool traced = false;
-    const auto fail = [this, &traced](const std::string& why) {
-        spdlog::error("PPO: {}", why);
+    const auto fail = [this, &traced, learner](const std::string& why) {
+        spdlog::error("{}: {}", learner, why);
         if (traced) TrainingTraceCollector::Instance().FinishRun("failed");
         std::lock_guard<std::mutex> lock(mutex_);
         message_ = why;
@@ -194,7 +353,7 @@ void RLTrainingRun::Run() {
         // Engine knows a training uses it (Preferences > Devices waits)
         ExecutionDeviceContext device;
         try {
-            device = PrepareRunExecutionDevice(ResolveRunExecutionPolicy(false, "PPO"), "PPO");
+            device = PrepareRunExecutionDevice(ResolveRunExecutionPolicy(false, learner), learner);
         } catch (const std::exception& e) {
             return fail(std::string("The training device did not start: ") + e.what());
         }
@@ -216,15 +375,16 @@ void RLTrainingRun::Run() {
             state_ = State::Stopped;
             return;
         }
-        if (!lease.error.empty()) spdlog::warn("PPO: {}; the run goes on without it", lease.error);
+        if (!lease.error.empty()) spdlog::warn("{}: {}; the run goes on without it", learner, lease.error);
         const ScopedActiveExecutionDeviceContext active_device_scope;
         const std::string run_id =
-            "ppo-" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                        std::chrono::system_clock::now().time_since_epoch())
-                                        .count());
+            std::string(sac ? "sac-" : "ppo-") +
+            std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::system_clock::now().time_since_epoch())
+                               .count());
         TrainingTraceCollector::Instance().StartRun(run_id);
         traced = true;
-        RecordRunExecutionDeviceBind(device, run_id, "PPO");
+        RecordRunExecutionDeviceBind(device, run_id, learner);
         {
             std::lock_guard<std::mutex> lock(mutex_);
             device_ = device;
@@ -239,13 +399,12 @@ void RLTrainingRun::Run() {
         // The preview's own policy network (P5), made before the run seeds its
         // random engine and made for every run: what training draws from that
         // engine (Dropout masks) is then the same whether anyone watches or not
-        std::unique_ptr<IExecutableModel> preview_network = BuildRLPolicyNetwork(c, error);
-        if (!preview_network) spdlog::warn("PPO preview: {}", error);
+        std::unique_ptr<IExecutableModel> preview_network =
+            sac ? BuildSacActorNetwork(c, error) : BuildRLPolicyNetwork(c, error);
+        if (!preview_network) spdlog::warn("{} preview: {}", learner, error);
         error.clear();
         // The weights from the run's seed, as the supervised trainer seeds its model
-        SeedCurrentArrayFireRandomEngine(c.ppo.seed);
-        std::unique_ptr<IExecutableModel> policy, value;
-        if (!BuildRLNetworks(c, policy, value, error)) return fail(error);
+        SeedCurrentArrayFireRandomEngine(sac ? c.sac.seed : c.ppo.seed);
 
         TrainingEnvironment env;
         env.info = batch->Info();
@@ -254,69 +413,11 @@ void RLTrainingRun::Run() {
         env.step = [batch](const float* actions, const plugin::PluginEnvironmentStepBuffers& out, std::string& e) {
             return batch->Step(actions, out, e);
         };
-        PpoTrainer trainer(std::move(env), std::move(policy), std::move(value), c.ppo);
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            trainer_ = &trainer;
-            if (paused_) trainer.Pause();
-            if (stop_requested_) trainer.Stop();
-        }
-        spdlog::info("PPO: training on {} x {} for {} steps", c.environment.id, c.copies, c.ppo.total_timesteps);
-        std::vector<PpoUpdateMetrics> history;
-        std::string traced_path;  // how the run computes, in its trace at the start and on each change
-        int last_watch = static_cast<int>(Watch::Off);
-        bool raw_shown = false;
-        const bool ok = trainer.Train(
-            [this, &history, &traced_path, &batch, &trainer, &c, &last_watch, &raw_shown,
-             &preview_network](const PpoUpdateMetrics& update) {
-                PpoUpdateMetrics m = update;
-                m.environment_stats = batch->Stats();  // between rollouts: the batch is not stepping
-                // Watching (P5), between rollouts too
-                const int watch = watch_.load();
-                if (watch != last_watch) {  // the training copy in the plugin's view, or not
-                    std::string show_error;
-                    if (watch == static_cast<int>(Watch::RawCopy)) {
-                        raw_shown = batch->ShowCopy(0, show_error);
-                        if (raw_shown) batch->LabelShownCopy(rl_playback::TrainingCopyLabel(0));
-                    } else if (raw_shown) {
-                        batch->ShowCopy(-1, show_error);
-                        raw_shown = false;
-                    }
-                    if (!show_error.empty()) spdlog::warn("PPO: {}", show_error);
-                }
-                const bool preview = watch == static_cast<int>(Watch::Preview);
-                const bool due = take_now_.exchange(false) || (preview && last_watch != watch) ||
-                                 (preview && update.update % std::max(1, watch_every_.load()) == 0);
-                last_watch = watch;
-                if (preview && due) CopyForPreview(trainer, c, update.update, update.timesteps, preview_network);
-                if (m.compute_path != traced_path) {
-                    // Falling back from the fused kernels mid-run is worth a look (a warning)
-                    const bool fell_back = !traced_path.empty();
-                    TrainingTraceCollector::Instance().RecordRuntimeEvent("PPO.ComputePath", m.compute_path,
-                                                                          fell_back ? "warning" : "ok");
-                    traced_path = m.compute_path;
-                }
-                history.push_back(m);
-                std::lock_guard<std::mutex> lock(mutex_);
-                updates_.push_back(m);
-            },
-            error);
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            trainer_ = nullptr;
-        }
-        if (raw_shown) {  // the view no longer follows the training
-            std::string show_error;
-            batch->ShowCopy(-1, show_error);
-        }
-        if (!ok) return fail(error);
-        // The policy stays for playback and Save (a run stopped before its
-        // first update has none)
         std::shared_ptr<TrainedPolicy> trained;
-        PpoTrainedState state;
-        if (!history.empty()) {
-            if (!trainer.TakeTrained(state, error)) return fail(error);
-            trained = MakeTrainedPolicy(c, graph_json_, std::move(state), std::move(history));
+        const bool ok = sac ? TrainSac(batch, std::move(env), preview_network, trained, error)
+                            : TrainPpo(batch, std::move(env), preview_network, trained, error);
+        if (!ok) return fail(error);
+        if (trained) {
             if (const auto* active = cyxwiz::Device::GetCurrentDevice()) {  // where its networks live
                 trained->device_type = active->GetType();
                 trained->device_id = active->GetDeviceId();
@@ -333,9 +434,9 @@ void RLTrainingRun::Run() {
             message_ = "Finished";
             state_ = State::Finished;
         }
-        spdlog::info("PPO: {}", message_);
+        spdlog::info("{}: {}", learner, message_);
     } catch (const std::exception& e) {
-        fail(std::string("PPO training failed: ") + e.what());
+        fail(std::string(learner) + " training failed: " + e.what());
     }
 }
 
