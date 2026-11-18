@@ -20,6 +20,7 @@
 
 #include "../core/legacy_dataset_batchers.h"
 #include "../core/training_export_metadata.h"
+#include "../core/graph_training_prep.h"
 #include "main_window.h"
 #include "appearance_settings.h"
 #include "panel_memory.h"
@@ -257,54 +258,6 @@ uint64_t HashGraphStructure(const std::vector<MLNode>& nodes,
         HashFnvMix(h, std::string(1, '>'));
     }
     return h;
-}
-
-std::string FindTestingLabelColumn(
-    const std::vector<MLNode>& nodes,
-    const std::string& dataset_name,
-    int data_source_node_id) {
-
-    const MLNode* fallback_data_input = nullptr;
-    for (const auto& node : nodes) {
-        if (node.type != NodeType::DataInput) {
-            continue;
-        }
-
-        if (node.id == data_source_node_id) {
-            auto label_it = node.parameters.find("label_column");
-            if (label_it != node.parameters.end() && !label_it->second.empty()) {
-                return label_it->second;
-            }
-            return {};
-        }
-
-        if (!fallback_data_input) {
-            fallback_data_input = &node;
-        }
-
-        auto dataset_it = node.parameters.find("dataset_name");
-        if (dataset_it == node.parameters.end() || dataset_it->second.empty()) {
-            dataset_it = node.parameters.find("dataset");
-        }
-        if (!dataset_name.empty() &&
-            dataset_it != node.parameters.end() &&
-            dataset_it->second == dataset_name) {
-            auto label_it = node.parameters.find("label_column");
-            if (label_it != node.parameters.end() && !label_it->second.empty()) {
-                return label_it->second;
-            }
-            return {};
-        }
-    }
-
-    if (fallback_data_input) {
-        auto label_it = fallback_data_input->parameters.find("label_column");
-        if (label_it != fallback_data_input->parameters.end() &&
-            !label_it->second.empty()) {
-            return label_it->second;
-        }
-    }
-    return {};
 }
 
 std::string JsonEscape(const std::string& value) {
@@ -5989,7 +5942,7 @@ void MainWindow::StartTestingWithConfig(const std::vector<MLNode>& nodes,
             label_column);
     }
     if (label_column.empty()) {
-        label_column = FindTestingLabelColumn(
+        label_column = cyxwiz::FindGraphLabelColumn(
             nodes, dataset_name, test_source_node_id);
     }
     if (dataset_name.empty()) {
