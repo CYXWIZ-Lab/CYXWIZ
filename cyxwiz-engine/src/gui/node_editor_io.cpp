@@ -740,6 +740,9 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
             graph_json["template"].is_object() &&
             graph_json["template"].contains("nodes")) {
             spdlog::info("Detected pattern template format, converting to graph format");
+            // A template example names its data relative to its own folder
+            // (or a parent, e.g. examples/datasets/...), as a saved graph does.
+            cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
             return LoadPatternAsGraph(graph_json);
         }
 
