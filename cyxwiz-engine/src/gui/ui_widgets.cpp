@@ -22,13 +22,16 @@ namespace {
 
 constexpr float kTooltipWrap = 420.0f;
 
+// The dialogs open over the window that asks (its OS window when it has one
+// of its own); centred on the main window, a dialog asked from a panel in a
+// window of its own opened behind that window while blocking it.
 ImVec2 WorkSize() {
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImGuiViewport* viewport = ImGui::GetWindowViewport();
     return viewport ? viewport->WorkSize : ImVec2(1280.0f, 800.0f);
 }
 
 ImVec2 WorkCenter() {
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImGuiViewport* viewport = ImGui::GetWindowViewport();
     return viewport ? viewport->GetWorkCenter() : ImVec2(640.0f, 400.0f);
 }
 
