@@ -209,7 +209,7 @@ bool DashIconButton(const char* id_label, bool active, const DashColors& c) {
 
 void DashKpiCard(const char* id, const char* label, const ImVec4& dot, const char* value, const char* tooltip,
                  const char* line1, const ImVec4& line1_color, const char* line2, const ImVec4& line2_color,
-                 const DashColors& c) {
+                 const DashColors& c, const char* line3, const ImVec4& line3_color) {
     if (BeginDashCard(id, c)) {
         const float line = ImGui::GetTextLineHeight();
         const ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -222,8 +222,11 @@ void DashKpiCard(const char* id, const char* label, const ImVec4& dot, const cha
         if (tooltip && *tooltip && ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", tooltip);
         }
-        ImGui::TextColored(line1_color, "%s", line1);
-        ImGui::TextColored(line2_color, "%s", line2);
+        ImGui::PushTextWrapPos(0.0f);
+        if (line1 && *line1) ImGui::TextColored(line1_color, "%s", line1);
+        if (line2 && *line2) ImGui::TextColored(line2_color, "%s", line2);
+        if (line3 && *line3) ImGui::TextColored(line3_color, "%s", line3);
+        ImGui::PopTextWrapPos();
     }
     EndDashCard();
 }

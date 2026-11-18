@@ -1,6 +1,7 @@
 #include "../ui_tokens.h"
 #include "../../core/series_decimation.h"
 #include "training_plot_panel.h"
+#include "../../core/training_dashboard_presentation.h"
 #include "training_dashboard_look.h"
 #include "../separate_windows.h"
 // Test builds that draw the dashboard without the training system define
@@ -570,209 +571,71 @@ void TrainingPlotPanel::RenderEmptyState() {
 
 void TrainingPlotPanel::RenderKpiCards() {
     const DashColors c = CurrentDashColors();
+    namespace td = training_dashboard;
+    const td::RunFacts facts = DashboardFacts();
+    const std::vector<td::Card> cards = td::BuildCards(facts);
+    if (cards.empty()) return;
 
-    struct Card {
-        std::string id;
-        std::string label;
-        ImVec4 dot;
-        std::string value;
-        std::string tooltip;
-        std::string sub1;
-        ImVec4 sub1_color;
-        std::string sub2;
-        ImVec4 sub2_color;
+    const auto tone = [&](td::Tone t) {
+        switch (t) {
+        case td::Tone::Good: return c.success;
+        case td::Tone::Bad: return c.caution;
+        case td::Tone::Plain: return c.text;
+        case td::Tone::Faint: break;
+        }
+        return c.muted;
     };
-    std::vector<Card> cards;
+    const ImVec4 dots[] = {train_loss_.color, val_loss_.color, train_accuracy_.color, val_accuracy_.color};
 
-    const auto count_of = [](const MetricSeries& s) {
-        return std::min(s.epochs.size(), s.values.size());
-    };
-    // Change of the latest value against the point about one epoch earlier
-    // (the first point while still in the first epoch).
-    const auto change_text = [&](const MetricSeries& s, bool lower_is_better,
-                                 const char* value_format, std::string& text,
-                                 ImVec4& color) {
-        const size_t n = count_of(s);
-        if (n < 2) {
-            text = "first value";
-            color = c.faint;
-            return;
-        }
-        const double target = s.epochs[n - 1] - 1.0;
-        size_t reference = 0;
-        for (size_t i = n - 1; i-- > 0;) {
-            if (s.epochs[i] <= target + 1e-9) {
-                reference = i;
-                break;
-            }
-        }
-        const double delta = s.values[n - 1] - s.values[reference];
-        if (std::abs(delta) < 1e-12) {
-            text = "no change since epoch " + FormatEpochValue(s.epochs[reference]);
-            color = c.muted;
-            return;
-        }
-        char amount[48];
-        std::snprintf(amount, sizeof(amount), value_format, std::abs(delta));
-        text = std::string(delta < 0.0 ? ICON_FA_CARET_DOWN : ICON_FA_CARET_UP) + " " +
-               amount + " since epoch " + FormatEpochValue(s.epochs[reference]);
-        const bool better = lower_is_better ? delta < 0.0 : delta > 0.0;
-        color = better ? c.success : c.caution;
-    };
-    const auto best_text = [&](const MetricSeries& s, bool lower_is_better,
-                               const char* value_format) {
-        const size_t n = count_of(s);
-        size_t best = 0;
-        for (size_t i = 1; i < n; ++i) {
-            if ((lower_is_better && s.values[i] < s.values[best]) ||
-                (!lower_is_better && s.values[i] > s.values[best])) {
-                best = i;
-            }
-        }
-        char value[48];
-        std::snprintf(value, sizeof(value), value_format, s.values[best]);
-        return std::string("best ") + value + " at epoch " + FormatEpochValue(s.epochs[best]);
-    };
-    // best_of: the series "best" reads (training: whole epochs, never one point).
-    const auto add_metric = [&](const char* id, const char* label, const MetricSeries& s,
-                                bool lower_is_better, const char* value_format,
-                                const char* delta_format, const char* tooltip_format,
-                                const MetricSeries* best_of = nullptr) {
-        if (count_of(s) == 0) {
-            return;
-        }
-        Card card;
-        card.id = id;
-        card.label = label;
-        card.dot = s.color;
-        char value[48];
-        std::snprintf(value, sizeof(value), value_format, s.values.back());
-        card.value = value;
-        char tooltip[96];
-        std::snprintf(tooltip, sizeof(tooltip), tooltip_format, s.values.back());
-        card.tooltip = tooltip;
-        change_text(s, lower_is_better, delta_format, card.sub1, card.sub1_color);
-        const MetricSeries& best_series = best_of && count_of(*best_of) > 0 ? *best_of : s;
-        card.sub2 = best_text(best_series, lower_is_better, value_format);
-        card.sub2_color = c.muted;
-        cards.push_back(std::move(card));
-    };
-
-    add_metric("##kpi_loss", "Loss", train_loss_, true, "%.4f", "%.4f", "Training loss: %.6f",
-               &train_loss_epochs_);
-    add_metric("##kpi_acc", "Accuracy", train_accuracy_, false, "%.2f%%", "%.2f%%",
-               "Training accuracy: %.2f%%", &train_accuracy_epochs_);
-    add_metric("##kpi_val_loss", "Val loss", val_loss_, true, "%.4f", "%.4f",
-               "Validation loss: %.6f");
-    if (!val_loss_.values.empty() && !cards.empty() && cards.back().id == "##kpi_val_loss") {
-        // Validation signal: how far validation loss sits above training loss.
-        const double recent_val_loss = val_loss_.values.back();
-        const double recent_train_loss =
-            train_loss_.values.empty() ? recent_val_loss : train_loss_.values.back();
-        const double gap = recent_val_loss - recent_train_loss;
-        char text[96];
-        if (gap > 0.25) {
-            std::snprintf(text, sizeof(text), "above train loss by %.4f", gap);
-            cards.back().sub2_color = c.caution;
-        } else {
-            std::snprintf(text, sizeof(text), "gap to train loss controlled (%+.4f)", gap);
-            cards.back().sub2_color = c.success;
-        }
-        cards.back().sub2 = text;
-    }
-    add_metric("##kpi_val_acc", "Val accuracy", val_accuracy_, false, "%.2f%%", "%.2f%%",
-               "Validation accuracy: %.2f%%");
-
-    // Timing card.
-    if (is_training_ && (total_batches_ > 0 || avg_epoch_time_ > 0)) {
-        Card card;
-        card.id = "##kpi_time";
-        card.label = "Time remaining";
-        card.dot = c.warning;
-        // Dynamic estimate: remaining batches over all epochs at the rate of the
-        // last two minutes, plus measured epoch-boundary overhead. It follows
-        // speed changes and appears after ~10 s, also in single-epoch runs.
-        const auto remaining = eta_estimator_.RemainingSeconds();
-        if (remaining) {
-            card.value = FormatTrainingDuration(*remaining);
-            card.tooltip =
-                "Remaining batches across all epochs at the recent rate (last 2 minutes),\n"
-                "plus " +
-                (eta_estimator_.HasMeasuredEpochOverhead()
-                     ? FormatTrainingDuration(eta_estimator_.MeanEpochOverheadSeconds())
-                     : std::string("not yet measured")) +
-                " per remaining epoch boundary (validation, previews, checkpoint).\n"
-                "Updates as the training speed changes.";
-        } else {
-            card.value = "Estimating...";
-        }
-        char text[96] = "";
-        std::string speed;
-        if (const double rate = eta_estimator_.BatchesPerSecond(); rate > 0.0) {
-            std::snprintf(text, sizeof(text), "%.2f batches/s", rate);
-            speed = text;
-        }
-        if (samples_per_second_ > 0) {
-            std::snprintf(text, sizeof(text), "%.0f samples/s", samples_per_second_);
-            speed += (speed.empty() ? "" : " \xC2\xB7 ") + std::string(text);
-        }
-        card.sub1 = speed.empty() ? "measuring speed" : speed;
-        card.sub1_color = speed.empty() ? c.faint : c.muted;
-        if (avg_epoch_time_ > 0) {
-            std::snprintf(text, sizeof(text), "last epoch %.1fs \xC2\xB7 avg %.1fs/epoch",
-                          last_epoch_time_, avg_epoch_time_);
-            card.sub2 = text;
-            card.sub2_color = c.muted;
-        } else {
-            card.sub2 = "epoch time after the first epoch";
-            card.sub2_color = c.faint;
-        }
-        cards.push_back(std::move(card));
-    } else if (!is_training_ && total_training_time_ > 0) {
-        Card card;
-        card.id = "##kpi_time";
-        card.label = "Total time";
-        card.dot = c.info;
-        card.value = FormatTrainingDuration(total_training_time_);
-        char text[96];
-        if (total_epochs_ > 0) {
-            std::snprintf(text, sizeof(text), "%d / %d epochs run",
-                          last_executed_epoch_, total_epochs_);
-            card.sub1 = text;
-        } else {
-            card.sub1 = "run finished";
-        }
-        card.sub1_color = c.muted;
-        if (avg_epoch_time_ > 0) {
-            std::snprintf(text, sizeof(text), "avg %.1fs/epoch", avg_epoch_time_);
-            card.sub2 = text;
-        } else {
-            card.sub2 = " ";
-        }
-        card.sub2_color = c.muted;
-        cards.push_back(std::move(card));
-    }
-
-    if (cards.empty()) {
-        return;
-    }
-
-    const float min_card_width = 190.0f;
+    // As many columns as cards of at least 150 px fit (two in the 340 px slot).
+    const float min_card_width = 150.0f;
     const float available = ImGui::GetContentRegionAvail().x;
-    const int columns = std::clamp(static_cast<int>(available / min_card_width), 1,
-                                   static_cast<int>(cards.size()));
+    const int columns = std::clamp(static_cast<int>(available / min_card_width), 1, static_cast<int>(cards.size()));
     ImGui::Spacing();
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4.0f, 4.0f));
-    if (ImGui::BeginTable("##dash_kpis", columns,
-                          ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
+    if (ImGui::BeginTable("##dash_kpis", columns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
         for (const auto& card : cards) {
             ImGui::TableNextColumn();
-            DashKpiCard(card.id.c_str(), card.label.c_str(), card.dot, card.value.c_str(), card.tooltip.c_str(),
-                        card.sub1.c_str(), card.sub1_color, card.sub2.c_str(), card.sub2_color, c);
+            const ImVec4 dot = card.series >= 0 && card.series < 4 ? dots[card.series] : c.info;
+            std::string change = card.change;
+            if (card.direction != 0) change = std::string(card.direction < 0 ? ICON_FA_CARET_DOWN : ICON_FA_CARET_UP) + " " + change;
+            DashKpiCard(card.id.c_str(), card.label.c_str(), dot, card.value.c_str(), card.tooltip.c_str(), change.c_str(),
+                        tone(card.change_tone), card.line2.c_str(), tone(card.line2_tone), c,
+                        card.line3.empty() ? nullptr : card.line3.c_str(), tone(card.line3_tone));
         }
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();
+}
+
+training_dashboard::RunFacts TrainingPlotPanel::DashboardFacts() const {
+    namespace td = training_dashboard;
+    const auto series = [](const MetricSeries& s) {
+        td::Series out;
+        out.x = s.epochs;
+        out.y = s.values;
+        return out;
+    };
+    td::RunFacts f;
+    f.training = is_training_;
+    f.train_loss_points = series(train_loss_);
+    f.train_accuracy_points = series(train_accuracy_);
+    f.train_loss_epochs = series(train_loss_epochs_);
+    f.train_accuracy_epochs = series(train_accuracy_epochs_);
+    f.val_loss = series(val_loss_);
+    f.val_accuracy = series(val_accuracy_);
+    f.current_epoch = current_epoch_;
+    f.total_epochs = total_epochs_;
+    f.last_executed_epoch = last_executed_epoch_;
+    f.current_batch = current_batch_;
+    f.total_batches = total_batches_;
+    f.remaining_seconds = eta_estimator_.RemainingSeconds();
+    f.batches_per_second = eta_estimator_.BatchesPerSecond();
+    f.samples_per_second = samples_per_second_;
+    f.avg_epoch_seconds = avg_epoch_time_;
+    f.last_epoch_seconds = last_epoch_time_;
+    f.total_seconds = total_training_time_;
+    return f;
 }
 
 void TrainingPlotPanel::AddLossPoint(double epoch, double train_loss, double val_loss) {
@@ -1821,210 +1684,54 @@ void TrainingPlotPanel::RenderControls() {
 
 void TrainingPlotPanel::RenderCurveSummary() {
     const DashColors c = CurrentDashColors();
-
-    auto slope_last = [](const MetricSeries& series, size_t window) -> double {
-        const size_t count = std::min(series.epochs.size(), series.values.size());
-        if (count < 2) return 0.0;
-
-        const size_t start = count > window ? count - window : 0;
-        const double dx = series.epochs[count - 1] - series.epochs[start];
-        if (dx <= 0.0) return 0.0;
-        return (series.values[count - 1] - series.values[start]) / dx;
-    };
-
-    auto volatility_last = [](const MetricSeries& series, size_t window) -> double {
-        const size_t count = std::min(series.epochs.size(), series.values.size());
-        if (count < 3) return 0.0;
-
-        const size_t start = count > window ? count - window : 1;
-        double total_delta = 0.0;
-        size_t deltas = 0;
-        for (size_t i = start; i < count; ++i) {
-            total_delta += std::abs(series.values[i] - series.values[i - 1]);
-            ++deltas;
+    namespace td = training_dashboard;
+    const td::Insights insights = td::BuildInsights(DashboardFacts());
+    const auto tone = [&](td::Tone t) {
+        switch (t) {
+        case td::Tone::Good: return c.success;
+        case td::Tone::Bad: return c.caution;
+        case td::Tone::Faint: return c.faint;
+        case td::Tone::Plain: break;
         }
-        return deltas > 0 ? total_delta / static_cast<double>(deltas) : 0.0;
+        return c.text;
     };
-
-    auto best_index = [](const MetricSeries& series, bool lower_is_better) -> int {
-        const size_t count = std::min(series.epochs.size(), series.values.size());
-        if (count == 0) return -1;
-
-        size_t best = 0;
-        for (size_t i = 1; i < count; ++i) {
-            if ((lower_is_better && series.values[i] < series.values[best]) ||
-                (!lower_is_better && series.values[i] > series.values[best])) {
-                best = i;
-            }
-        }
-        return static_cast<int>(best);
-    };
-
-    auto closest_value = [](const MetricSeries& series, double epoch) -> double {
-        const size_t count = std::min(series.epochs.size(), series.values.size());
-        if (count == 0) return 0.0;
-
-        size_t best = 0;
-        double best_distance = std::abs(series.epochs[0] - epoch);
-        for (size_t i = 1; i < count; ++i) {
-            const double distance = std::abs(series.epochs[i] - epoch);
-            if (distance < best_distance) {
-                best = i;
-                best_distance = distance;
-            }
-        }
-        return series.values[best];
-    };
-
-    auto trend_label = [](double slope, bool lower_is_better) -> const char* {
-        const double threshold = lower_is_better ? 0.002 : 0.05;
-        if (std::abs(slope) < threshold) return "flat";
-        const bool improving = lower_is_better ? slope < 0.0 : slope > 0.0;
-        return improving ? "improving" : "worsening";
-    };
-
-    const double train_loss_slope = slope_last(train_loss_, 120);
-    const double val_loss_slope = slope_last(val_loss_, 5);
-    const double train_acc_slope = slope_last(train_accuracy_, 120);
-    const double val_acc_slope = slope_last(val_accuracy_, 5);
-    const double val_loss_volatility = volatility_last(val_loss_, 5);
-
-    const int best_val_loss_idx = best_index(val_loss_, true);
-    const int best_val_acc_idx = best_index(val_accuracy_, false);
-
-    double rough_epoch = -1.0;
-    if (best_val_loss_idx >= 0) {
-        int rising_streak = 0;
-        for (size_t i = static_cast<size_t>(best_val_loss_idx) + 1;
-             i < val_loss_.values.size();
-             ++i) {
-            if (val_loss_.values[i] > val_loss_.values[i - 1]) {
-                ++rising_streak;
-                if (rising_streak >= 2) {
-                    rough_epoch = val_loss_.epochs[i - 1];
-                    break;
-                }
-            } else {
-                rising_streak = 0;
-            }
-        }
-    }
-
-    const bool has_validation = !val_loss_.values.empty() || !val_accuracy_.values.empty();
-    const bool val_loss_worsening = val_loss_slope > 0.0;
-    const bool val_acc_worsening = val_acc_slope < 0.0;
-    const bool gap_large = !val_loss_.values.empty() && !train_loss_.values.empty() &&
-        (val_loss_.values.back() - closest_value(train_loss_, val_loss_.epochs.back())) > 0.25;
-
-    const char* recommendation = "continue";
-    ImVec4 recommendation_color = c.success;
-    if (has_validation && (gap_large || val_loss_worsening || val_acc_worsening || rough_epoch >= 0.0)) {
-        recommendation = "inspect validation";
-        recommendation_color = c.warning;
-    }
-    if (has_validation && rough_epoch >= 0.0 && val_loss_volatility > 0.02) {
-        recommendation = "consider early stop";
-        recommendation_color = c.caution;
-    }
 
     ImGui::Spacing();
     if (!BeginDashCard("##dash_insights", c)) {
         EndDashCard();
         return;
     }
-    DashCardTitle("Insights", "how the curves are behaving", c);
-    {
-        const std::string pill = std::string("Suggested: ") + recommendation;
-        const float pill_width = ImGui::CalcTextSize(pill.c_str()).x + 30.0f;
+    // The title, then the suggestion on the same line when it fits.
+    DashCardTitle("How the run is going", "", c);
+    if (!insights.rows.empty()) {
+        const float pill_width = ImGui::CalcTextSize(insights.suggestion.c_str()).x + 30.0f;
         ImGui::SameLine();
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
-                                      ImGui::GetWindowContentRegionMax().x - pill_width));
-        DashPill(pill.c_str(), recommendation_color);
+        if (ImGui::GetContentRegionAvail().x < pill_width) ImGui::NewLine();
+        DashPill(insights.suggestion.c_str(), tone(insights.suggestion_tone));
     }
     ImGui::Spacing();
-
-    ImGui::PushStyleColor(ImGuiCol_TableBorderLight, WithAlpha(c.border, 0.6f));
-    if (ImGui::BeginTable("##curve_summary", 2,
-                          ImGuiTableFlags_SizingStretchProp |
-                              ImGuiTableFlags_BordersInnerH)) {
-        ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+    if (insights.rows.empty()) {
+        ImGui::TextColored(c.faint, "The first epoch is running.");
+        EndDashCard();
+        return;
+    }
+    // Labels as wide as the widest; the values wrap in the rest.
+    float label_width = 0.0f;
+    for (const auto& row : insights.rows) label_width = std::max(label_width, ImGui::CalcTextSize(row.label.c_str()).x);
+    if (ImGui::BeginTable("##curve_summary", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, label_width + 12.0f);
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-        const auto row = [&](const char* label) {
+        for (const auto& row : insights.rows) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextColored(c.muted, "%s", label);
+            ImGui::TextColored(c.muted, "%s", row.label.c_str());
             ImGui::TableNextColumn();
-        };
-
-        row("Train curve");
-        ImGui::Text("loss %s, accuracy %s",
-            trend_label(train_loss_slope, true),
-            trend_label(train_acc_slope, false));
-
-        row("Validation curve");
-        if (!val_loss_.values.empty() || !val_accuracy_.values.empty()) {
-            ImGui::Text("loss %s, accuracy %s",
-                trend_label(val_loss_slope, true),
-                trend_label(val_acc_slope, false));
-        } else {
-            ImGui::TextColored(c.faint, "waiting for validation points");
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(tone(row.tone), "%s", row.value.c_str());
+            ImGui::PopTextWrapPos();
         }
-
-        row("Best validation");
-        if (best_val_loss_idx >= 0) {
-            ImGui::Text("loss %.4f at epoch %.2f",
-                val_loss_.values[best_val_loss_idx],
-                val_loss_.epochs[best_val_loss_idx]);
-            if (best_val_acc_idx >= 0) {
-                ImGui::Text("accuracy %.2f%% at epoch %.2f",
-                    val_accuracy_.values[best_val_acc_idx],
-                    val_accuracy_.epochs[best_val_acc_idx]);
-            }
-        } else {
-            ImGui::TextColored(c.faint, "no validation data yet");
-        }
-
-        row("Rough point");
-        ImGui::PushTextWrapPos(0.0f);
-        if (rough_epoch >= 0.0) {
-            ImGui::TextColored(c.caution,
-                "validation loss starts rising around epoch %.2f", rough_epoch);
-        } else if (val_loss_.values.size() >= 3) {
-            ImGui::TextColored(c.success, "no sustained validation rise detected");
-        } else {
-            ImGui::TextColored(c.faint, "need more validation points");
-        }
-        ImGui::PopTextWrapPos();
-
-        row("Generalization gap");
-        if (!val_loss_.values.empty() && !train_loss_.values.empty()) {
-            const double epoch = val_loss_.epochs.back();
-            const double train_near_val = closest_value(train_loss_, epoch);
-            const double gap = val_loss_.values.back() - train_near_val;
-            ImGui::Text("val_loss - train_loss = %.4f", gap);
-            ImGui::SameLine(0.0f, 10.0f);
-            if (gap > 0.25) {
-                ImGui::TextColored(c.caution, "possible overfit");
-            } else {
-                ImGui::TextColored(c.success, "controlled");
-            }
-        } else {
-            ImGui::TextColored(c.faint, "waiting for train/validation loss");
-        }
-
-        row("Validation roughness");
-        if (val_loss_.values.size() >= 3) {
-            ImGui::Text("recent avg delta %.4f", val_loss_volatility);
-        } else {
-            ImGui::TextColored(c.faint, "need more validation points");
-        }
-
-        row("Suggested action");
-        ImGui::TextColored(recommendation_color, "%s", recommendation);
-
         ImGui::EndTable();
     }
-    ImGui::PopStyleColor();
     EndDashCard();
 }
 

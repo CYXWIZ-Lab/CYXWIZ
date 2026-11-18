@@ -641,6 +641,7 @@ set(ENGINE_SOURCES
     src/gui/panels/create_node_dialog.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/training_dashboard_presentation.cpp
     src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
@@ -4208,6 +4209,7 @@ add_executable(test_graph_training_sequence_preflight
     tests/test_graph_training_sequence_preflight.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/training_dashboard_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
@@ -4354,6 +4356,7 @@ add_executable(test_text_gui_training_launch
     src/core/prepared_step_run.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/training_dashboard_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
@@ -5934,6 +5937,7 @@ add_executable(test_training_manager_session
     src/core/training_recipe.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/training_dashboard_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp
@@ -8755,6 +8759,13 @@ set_target_properties(test_async_task_lifecycle PROPERTIES RUNTIME_OUTPUT_DIRECT
 
 add_executable(test_training_progress_estimate tests/test_training_progress_estimate.cpp)
 
+# ===== Test: the Training Dashboard's words on a real run (TOFIX129 B4) =====
+add_executable(test_training_dashboard_presentation tests/test_training_dashboard_presentation.cpp
+    src/core/training_dashboard_presentation.cpp)
+target_include_directories(test_training_dashboard_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_training_dashboard_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_training_dashboard_presentation COMMAND test_training_dashboard_presentation)
+
 # ===== Test: cyxwiz-training-core is self-contained (TOFIX118 P2) =====
 add_executable(test_training_core_link tests/test_training_core_link.cpp)
 target_link_libraries(test_training_core_link PRIVATE cyxwiz-training-core)
@@ -8970,6 +8981,7 @@ set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/core/training_recipe.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/training_dashboard_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
     src/gui/panels/training_dashboard_look.cpp

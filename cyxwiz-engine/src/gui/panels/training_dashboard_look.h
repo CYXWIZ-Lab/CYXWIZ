@@ -55,10 +55,11 @@ std::string FormatEpochValue(double epoch);
 // Small borderless icon button, tinted with the accent while active.
 bool DashIconButton(const char* id_label, bool active, const DashColors& c);
 // KPI card: a dot and label, the big value (with a hover tooltip) and two
-// lines below it.
+// or three lines below it; the lines wrap in a narrow card.
 void DashKpiCard(const char* id, const char* label, const ImVec4& dot, const char* value, const char* tooltip,
                  const char* line1, const ImVec4& line1_color, const char* line2, const ImVec4& line2_color,
-                 const DashColors& c);
+                 const DashColors& c,
+                 const char* line3 = nullptr, const ImVec4& line3_color = ImVec4(0, 0, 0, 0));
 // Run tab of the Run switcher: a dot, the label and a faint second part; the
 // shown run is raised with the accent line under it.
 bool DashRunTab(const char* id, const char* label, const char* sub, const ImVec4& dot, bool active,

@@ -6,6 +6,7 @@
 #include "../../core/training_run_comparison_record.h"
 #include "../../core/training_progress_estimate.h"
 #include "../../core/word_vector_runs.h"
+#include "../../core/training_dashboard_presentation.h"
 #include <chrono>
 #include <functional>
 #include <optional>
@@ -450,6 +451,8 @@ private:
     void RenderAccuracyPlot(float plot_height);
     void RenderCustomMetricsPlot(float plot_height);
     void RenderKpiCards();
+    // What the cards and the insights read (core/training_dashboard_presentation).
+    training_dashboard::RunFacts DashboardFacts() const;
     void DrawLossPlot(const ImVec2& size, bool fit, bool in_window = false);
     void DrawAccuracyPlot(const ImVec2& size, bool fit, bool in_window = false);
     void DrawCustomMetricsPlot(const ImVec2& size, bool fit, bool in_window = false);
