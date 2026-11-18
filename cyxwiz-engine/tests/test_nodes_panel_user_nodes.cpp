@@ -81,6 +81,19 @@ int main() {
     registry.SetUserNodes(registry.FavoriteTypes(), {});
     Check(registry.RecentTypes().empty() && registry.FavoriteTypes().size() == 1, "Clear Recent keeps the favourites");
 
+    // Favourites keep the order they were starred in (they were sorted by
+    // node type), through a save and load too.
+    registry.SetUserNodes({}, {});
+    registry.ToggleFavorite(NodeType::ReLU);
+    registry.ToggleFavorite(NodeType::Dense);
+    Check(registry.FavoriteTypes() == std::vector<NodeType>{NodeType::ReLU, NodeType::Dense},
+          "favourites in the order starred");
+    Check(registry.GetFavorites().size() == 2 && registry.GetFavorites()[0]->type == NodeType::ReLU,
+          "the panel reads them in that order");
+    registry.SetUserNodes({NodeType::Dense, NodeType::ReLU, NodeType::Dense}, {});
+    Check(registry.FavoriteTypes() == std::vector<NodeType>{NodeType::Dense, NodeType::ReLU},
+          "a loaded order is kept, repeats dropped");
+
     if (g_failures) {
         std::printf("%d Nodes panel checks failed\n", g_failures);
         return EXIT_FAILURE;

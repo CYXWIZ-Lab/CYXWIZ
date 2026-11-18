@@ -1007,13 +1007,13 @@ void NodeMetadataRegistry::AddToRecent(NodeType type) {
 
 void NodeMetadataRegistry::ToggleFavorite(NodeType type) {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = favorites_.find(type);
+    auto it = std::find(favorites_.begin(), favorites_.end(), type);
     if (it != favorites_.end()) {
         favorites_.erase(it);
         auto meta_it = metadata_.find(type);
         if (meta_it != metadata_.end()) meta_it->second.is_favorite = false;
     } else {
-        favorites_.insert(type);
+        favorites_.push_back(type);
         auto meta_it = metadata_.find(type);
         if (meta_it != metadata_.end()) meta_it->second.is_favorite = true;
     }
@@ -1149,7 +1149,7 @@ void NodeMetadataRegistry::LoadTemplates(const std::string& directory) {
 }
 std::vector<NodeType> NodeMetadataRegistry::FavoriteTypes() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return {favorites_.begin(), favorites_.end()};
+    return favorites_;
 }
 
 std::vector<NodeType> NodeMetadataRegistry::RecentTypes() const {
@@ -1164,7 +1164,8 @@ void NodeMetadataRegistry::SetUserNodes(const std::vector<NodeType>& favorites, 
     for (NodeType type : favorites) {
         auto it = metadata_.find(type);
         if (it == metadata_.end()) continue;  // a type this build does not have
-        favorites_.insert(type);
+        if (std::find(favorites_.begin(), favorites_.end(), type) != favorites_.end()) continue;
+        favorites_.push_back(type);
         it->second.is_favorite = true;
     }
     recent_nodes_.clear();
