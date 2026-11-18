@@ -325,10 +325,15 @@ void TrainingDashboardPanel::RenderRunHeader() {
         running ? (waiting ? t.caution : paused ? t.pending : t.success) : (failed_ ? t.error : t.pending);
     ui::StatusPill("##rl_status", state, colour);
     if (failed_ && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", outcome_.c_str());
-    ImGui::SameLine();
+    // The title and the device chip beside the state while they fit, else on the next line
+    const auto beside = [](float width) {
+        ImGui::SameLine();
+        if (ImGui::GetContentRegionAvail().x < width) ImGui::NewLine();
+    };
+    beside(ImGui::CalcTextSize(run_->title.c_str()).x);
     ImGui::TextColored(t.text_dim, "%s", run_->title.c_str());
     if (!device_chip_.empty()) {  // where it trains; a fallback in the caution tone
-        ImGui::SameLine();
+        beside(ui::StatusPillWidth(device_chip_.c_str()));
         ui::StatusPill("##rl_device", device_chip_.c_str(), device_fallback_ ? t.caution : t.text_dim);
         if (ImGui::IsItemHovered()) {
             if (device_compute_path_.empty()) ImGui::SetTooltip("%s", device_tooltip_.c_str());
@@ -384,14 +389,16 @@ void TrainingDashboardPanel::RenderRunHeader() {
         progress = plot::Thousands(steps) + " of " + plot::Thousands(run_->total_timesteps) + " steps";
         if (update > 0) progress += " \xC2\xB7 update " + std::to_string(update);
     }
+    ImGui::PushTextWrapPos(0.0f);
     ImGui::TextUnformatted(progress.c_str());
     if (!std::isnan(run_->target_return)) {
         const std::string target = "stops at mean return " + Format(run_->target_return, "%g") + " (last 100 episodes)";
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
-                                      ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(target.c_str()).x));
+        const float target_w = ImGui::CalcTextSize(target.c_str()).x;
+        beside(target_w);
+        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - target_w));
         ImGui::TextColored(t.text_dim, "%s", target.c_str());
     }
+    ImGui::PopTextWrapPos();
     const float fraction = run_->total_timesteps > 0
                                ? std::clamp(static_cast<float>(steps) / static_cast<float>(run_->total_timesteps), 0.0f, 1.0f)
                                : 0.0f;
