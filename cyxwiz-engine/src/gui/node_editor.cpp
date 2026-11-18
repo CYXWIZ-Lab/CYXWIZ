@@ -372,8 +372,9 @@ void NodeEditor::Render() {
         pending_example_path_.clear();
         if (LoadGraph(path)) {
             // A copy to work on: Save asks for a name instead of
-            // overwriting the example next to the Engine.
-            DetachFromFile();
+            // overwriting the example next to the Engine, and its data paths
+            // keep working wherever it is saved.
+            DetachFromExample();
             spdlog::info("Opened the example graph {}", path);
         }
     }

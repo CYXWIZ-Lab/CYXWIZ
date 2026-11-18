@@ -10,9 +10,10 @@ private Data Studio tickets (`tofix*/track*`).
 - **The five starter examples train right after they open.** Binary and
   multiclass image, text, audio and time-series starters (start page, and
   **Open an example graph** on an empty canvas) each read a small sample now
-  shipped in `examples/datasets` (60 photos of cats and dogs, 1,797 8x8
-  handwritten digits, 3,000 review sentences, 400 spoken digits, the airline
-  passengers series): press Train, offline. Before, four had no data and the
+  in `examples/datasets` (60 photos of cats and dogs, 1,797 8x8 handwritten
+  digits, 3,000 review sentences, 400 spoken digits, the airline passengers
+  series): press Train, offline. A starter saved with Save As keeps its data.
+  (A source checkout: release packages do not ship the examples yet.) Before, four had no data and the
   text one pointed at a file on one PC. The text starter is now a
   positive / negative review classifier; the audio starter classifies spoken
   digits and has a BatchNorm after Flatten (without it, it barely learned).

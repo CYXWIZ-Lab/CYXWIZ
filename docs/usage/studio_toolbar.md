@@ -193,10 +193,13 @@ buttons: **Search nodes** (the box at the top right of the canvas takes the
 keyboard), **Open the Nodes panel** (drag a node from it onto the canvas)
 and **Open an example graph** (the five task starters of the start page;
 it opens as *Untitled graph*, so Save asks for a name). Each starter reads a
-small sample shipped in `examples/datasets` (photos of cats and dogs, 8x8
-handwritten digits, review sentences, spoken digits, airline passengers), so
-**Train** works at once, offline; the samples and their sources are listed in
-`examples/datasets/README.md`. Point the Data Input at your own data to go
+small sample in `examples/datasets` (photos of cats and dogs, 8x8 handwritten
+digits, review sentences, spoken digits, airline passengers), so **Train**
+works at once, offline; the samples and their sources are listed in
+`examples/datasets/README.md`. The starters and samples are in a source
+checkout; release packages do not ship them yet. A starter's Data Input is
+pointed at the sample it found when it opens, so Save As anywhere keeps the
+data. Point the Data Input at your own data to go
 further.
 
 ## Find in the graph

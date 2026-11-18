@@ -280,10 +280,11 @@ void CyxWizApp::OpenStartupGraphIfRequested() {
 
     if (main_window_->OpenGraphInNodeEditor(startup_graph_path_)) {
         // A starter is a copy to work on: Save asks for a name instead of
-        // overwriting the example next to the Engine. A graph named on the
-        // command line is the user's own file.
+        // overwriting the example next to the Engine, and its data paths keep
+        // working wherever it is saved. A graph named on the command line is
+        // the user's own file.
         if (!startup_graph_from_command_line_) {
-            if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromFile();
+            if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromExample();
         }
         spdlog::info("Opened {} graph: {}", startup_graph_from_command_line_ ? "command-line" : "starter",
                      startup_graph_path_);

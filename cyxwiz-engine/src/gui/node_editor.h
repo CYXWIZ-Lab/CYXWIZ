@@ -578,6 +578,11 @@ public:
     // name (a starter or template opened from the Engine's own files must not
     // be overwritten).
     void DetachFromFile();
+    // An example opened to work on: DetachFromFile, and each Data Input's
+    // relative data path (examples/datasets/..., found from the example's
+    // folder) points at the file it found, so the copy still finds its data
+    // after Save As anywhere (project-relative inside the open project).
+    void DetachFromExample();
     // The generated code for a framework, synchronously and without the
     // script editor (headless export: cyxwiz-engine --export-code; TOFIX112
     // export harness). Empty with a log line when the graph cannot be sorted.
