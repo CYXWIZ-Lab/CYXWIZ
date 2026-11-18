@@ -281,6 +281,7 @@ set(ENGINE_SOURCES
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
     src/core/node_palette.cpp  # TOFIX157 palette curation
+    src/core/nodes_panel_presentation.cpp  # TOFIX129 the Nodes panel's model
     src/core/prepared_data_cache.cpp
     src/core/training_input_preparation.cpp
     src/core/prepared_step_run.cpp
@@ -6248,6 +6249,22 @@ if(WIN32)
 endif()
 set_target_properties(test_nodes_panel_user_nodes PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME test_nodes_panel_user_nodes COMMAND test_nodes_panel_user_nodes)
+
+# ===== Test: the Nodes panel's model (filters, groups, search, tooltip; TOFIX129) =====
+add_executable(test_nodes_panel_presentation
+    tests/test_nodes_panel_presentation.cpp
+    src/core/nodes_panel_presentation.cpp src/core/node_palette.cpp src/core/preparation_recipe.cpp
+    src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
+    src/core/extension_node_registry.cpp
+)
+target_include_directories(test_nodes_panel_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_nodes_panel_presentation PRIVATE cyxwiz-protocol imgui::imgui nlohmann_json::nlohmann_json
+                      spdlog::spdlog fmt::fmt cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_nodes_panel_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_nodes_panel_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_nodes_panel_presentation COMMAND test_nodes_panel_presentation)
 
 # ===== Test: Saved Text Smoke Graph Patterns =====
 add_executable(test_text_smoke_graph_patterns
