@@ -72,8 +72,10 @@ void HelpMarker(const char* text);
 // in a narrow window. Returns true when it stayed on this line.
 bool SameLineRight(float width, float gap = 12.0f);
 
-// Returns true when the text changed. `width` 0 = fill the line.
-bool SearchField(const char* id, char* buffer, size_t size, const char* hint = "Search", float width = 0.0f);
+// Returns true when the text changed. `width` 0 = fill the line; `flags`
+// are ImGui's InputText flags (e.g. Esc clears the text).
+bool SearchField(const char* id, char* buffer, size_t size, const char* hint = "Search", float width = 0.0f,
+                 ImGuiInputTextFlags flags = 0);
 
 // Toolbar items that wrap: call Next(item_width) before drawing each item;
 // the item stays on the current line when it fits, else starts a new one.

@@ -37,13 +37,16 @@ public:
     // Open with specific pattern selected
     void OpenWithPattern(const std::string& pattern_id);
 
+    // Insert a pattern with these parameter values (missing ones take their
+    // defaults): the Insert button, and the Nodes panel's Examples.
+    void InsertPattern(const std::string& pattern_id, const std::map<std::string, std::string>& params);
+
 private:
     void RenderSearchBar();
     void RenderCategoryTabs();
     void RenderPatternList();
     void RenderPatternCard(const ::gui::patterns::Pattern& pattern);
     void RenderParameterInputs(const ::gui::patterns::Pattern& pattern);
-    void InsertPattern(const std::string& pattern_id);
 
     // UI State
     char search_buffer_[256] = "";

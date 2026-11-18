@@ -252,9 +252,4 @@ Tooltip BuildTooltip(const NodeMetadata& metadata) {
     return out;
 }
 
-const std::vector<std::string>& DefaultOpenGroups() {
-    static const std::vector<std::string> groups = {"I/O", "Training"};
-    return groups;
-}
-
 }  // namespace cyxwiz::nodes_panel

@@ -841,6 +841,13 @@ MainWindow::MainWindow()
             node_editor_->InsertPattern(nodes, links);
         }
     });
+    // The Nodes panel's Examples insert as the Pattern Browser does, with
+    // each pattern's default parameters.
+    if (node_browser_panel_) {
+        node_browser_panel_->SetExampleInsertCallback([this](const std::string& pattern_id) {
+            if (pattern_browser_) pattern_browser_->InsertPattern(pattern_id, {});
+        });
+    }
 
     // Set scripting engine for the Script Editor. The Console-owned Python
     // REPL already received the same shared engine above.
@@ -3435,7 +3442,7 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Workspace
     add("CyxWiz Studio", ICON_FA_DIAGRAM_PROJECT, node_editor_, "Workspace");
     add("Properties", ICON_FA_SLIDERS, properties_, "Workspace");
-    add("Node Browser", ICON_FA_CUBES, node_browser_panel_, "Workspace");
+    add("Nodes", ICON_FA_CUBES, node_browser_panel_, "Workspace");
     add("Node Info", ICON_FA_CIRCLE_INFO, node_info_panel_, "Workspace");
     add("Patterns", ICON_FA_LAYER_GROUP, pattern_browser_, "Workspace",
         cyxwiz::menu::ShortcutFor("view.patterns", cyxwiz::menu::Context::Any).c_str());

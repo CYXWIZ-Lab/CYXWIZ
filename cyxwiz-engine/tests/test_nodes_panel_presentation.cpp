@@ -4,6 +4,7 @@
 #include "core/nodes_panel_presentation.h"
 #include "core/node_metadata_registry.h"
 #include "core/node_palette.h"
+#include "core/engine_config.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -97,7 +98,7 @@ int main() {
                   "All groups only what runs: " + m->name);
     }
     Check(io && training, "the default open groups exist");
-    for (const auto& name : np::DefaultOpenGroups()) {
+    for (const auto& name : cyxwiz::core::NodesPanelConfig{}.open_groups) {
         bool found = false;
         for (const auto& g : all) found |= g.name == name;
         Check(found, "default open group " + name + " is a group");

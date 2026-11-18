@@ -265,7 +265,7 @@ void PatternBrowserPanel::RenderPatternCard(const ::gui::patterns::Pattern& patt
         float button_width = ImGui::GetContentRegionAvail().x;
         if (ImGui::Button((std::string(ICON_FA_PLUS) + " Insert Pattern").c_str(),
                           ImVec2(button_width, 0))) {
-            InsertPattern(pattern.id);
+            InsertPattern(pattern.id, param_values_);
         }
 
         if (ImGui::IsItemHovered()) {
@@ -394,7 +394,8 @@ void PatternBrowserPanel::RenderParameterInputs(const ::gui::patterns::Pattern& 
     ImGui::PopItemWidth();
 }
 
-void PatternBrowserPanel::InsertPattern(const std::string& pattern_id) {
+void PatternBrowserPanel::InsertPattern(const std::string& pattern_id,
+                                        const std::map<std::string, std::string>& params) {
     auto& library = ::gui::patterns::PatternLibrary::Instance();
 
     // Prepare output containers
@@ -424,7 +425,7 @@ void PatternBrowserPanel::InsertPattern(const std::string& pattern_id) {
 
         success = library.InstantiatePatternWithCreator(
             pattern_id,
-            param_values_,
+            params,
             nodes,
             links,
             next_node_id,
@@ -437,7 +438,7 @@ void PatternBrowserPanel::InsertPattern(const std::string& pattern_id) {
         int next_pin_id = base_id * 10;
         success = library.InstantiatePattern(
             pattern_id,
-            param_values_,
+            params,
             nodes,
             links,
             next_node_id,

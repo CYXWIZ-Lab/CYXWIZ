@@ -86,7 +86,4 @@ bool CanAdd(const NodeMetadata& metadata);
 // Why a node can't run (the first unsupported fact's reason), or empty.
 std::string CantRunReason(const NodeMetadata& metadata);
 
-// The groups open on a first run (then the panel remembers what you open).
-const std::vector<std::string>& DefaultOpenGroups();
-
 }  // namespace cyxwiz::nodes_panel

@@ -898,7 +898,7 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
             }
         }
         // Every loaded plugin, windows or not: a node-only plugin is found
-        // here too and opens its nodes in the Node Browser.
+        // here too and opens its nodes in the Nodes panel.
         if (!in.loaded_plugins.empty()) {
             if (!in.plugin_panels.empty()) i.push_back(Sep());
             i.push_back(Head("Loaded plugins"));
@@ -906,7 +906,7 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                 Opts opts;
                 opts.argument = p.id;
                 MenuItem item = p.has_nodes
-                    ? Action(f, "apps.plugin", p.name, "Shows the nodes this plugin adds in the Node Browser.", opts)
+                    ? Action(f, "apps.plugin", p.name, "Shows the nodes this plugin adds in the Nodes panel.", opts)
                     : Action(f, "apps.plugin_manager", p.name, "Shows this plugin in the Plugin Manager.", opts);
                 item.detail = p.detail;
                 i.push_back(std::move(item));
@@ -919,7 +919,7 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                 Opts opts;
                 opts.argument = b.id;
                 MenuItem item =
-                    Action(f, "apps.plugin", b.name, "Shows the nodes this Python bundle adds in the Node Browser.", opts);
+                    Action(f, "apps.plugin", b.name, "Shows the nodes this Python bundle adds in the Nodes panel.", opts);
                 item.detail = b.detail;
                 i.push_back(std::move(item));
             }

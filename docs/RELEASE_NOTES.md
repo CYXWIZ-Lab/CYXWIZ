@@ -7,14 +7,29 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **The Nodes panel, redone.** The node groups fold, with their counts,
+  and the panel remembers which are open (no more three rows and a "Show
+  all" page). A grid or list switch (the list is one row per node; File >
+  Preferences > Nodes panel sets the view a session starts in). The filter
+  in plain words: All, Trains a model, Data steps, Views and panels, Can't
+  run yet, Favourites, with the number of nodes listed. Studio Tools in one
+  row (Group is off until nodes are selected); Favourites (in the order you
+  starred them) and Recent as chips; Plugins, Advanced operations, Can't run
+  yet and Examples fold at the end. A node's tooltip says what it does, its
+  pins and what each carries, and where it runs ("Runs in training") instead
+  of the support table that showed red "Fail closed" on a loss that trains.
+  The search has a clear button; **/** and **Esc** work while the panel has
+  focus. The panel is called Nodes in View > Panels too.
+- **The Nodes panel's training filter listed no loss or optimizer.** Its
+  rule wanted a fact those nodes do not carry; *Trains a model* lists them.
 - **The five starter examples train right after they open.** Binary and
   multiclass image, text, audio and time-series starters (start page, and
   **Open an example graph** on an empty canvas) each read a small sample now
   in `examples/datasets` (60 photos of cats and dogs, 1,797 8x8 handwritten
   digits, 3,000 review sentences, 400 spoken digits, the airline passengers
   series): press Train, offline. A starter saved with Save As keeps its data.
-  (A source checkout: release packages do not ship the examples yet.) Before, four had no data and the
-  text one pointed at a file on one PC. The text starter is now a
+  (A source checkout: release packages do not ship the examples yet.)
+  Before, four had no data and the text one pointed at a file on one PC. The text starter is now a
   positive / negative review classifier; the audio starter classifies spoken
   digits and has a BatchNorm after Flatten (without it, it barely learned).
 - **Opening an example graph from the empty canvas crashed the Engine.** It

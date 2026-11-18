@@ -240,13 +240,14 @@ void HelpMarker(const char* text) {
 // ---------------------------------------------------------------------------
 // Search field
 
-bool SearchField(const char* id, char* buffer, size_t size, const char* hint, float width) {
+bool SearchField(const char* id, char* buffer, size_t size, const char* hint, float width,
+                 ImGuiInputTextFlags flags) {
     const Tokens& t = CurrentTokens();
     const std::string hint_text = std::string(ICON_FA_MAGNIFYING_GLASS) + "  " + (hint ? hint : "Search");
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, t.rounding_field);
     ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
     ImGui::SetNextItemWidth(width > 0.0f ? width : -FLT_MIN);
-    const bool changed = ImGui::InputTextWithHint(id, hint_text.c_str(), buffer, size);
+    const bool changed = ImGui::InputTextWithHint(id, hint_text.c_str(), buffer, size, flags);
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
     return changed;

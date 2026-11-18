@@ -40,6 +40,12 @@ struct NodesPanelConfig {
     std::vector<int> recent;  // newest first
     bool show_recent = true;
     int recent_count = 8;     // 1..kNodesPanelMaxRecent
+    // The groups open in the panel (their names), kept as you fold them; a
+    // first run opens these two.
+    std::vector<std::string> open_groups = {"I/O", "Training"};
+    // Preferences > Nodes panel: the view a session starts in (the panel's
+    // grid / list switch changes it for the session).
+    bool list_view = false;
 
     bool operator==(const NodesPanelConfig&) const = default;
 };

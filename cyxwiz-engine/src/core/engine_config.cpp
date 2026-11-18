@@ -516,6 +516,12 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.recent = types("recent");
             loaded.show_recent = panel.value("show_recent", loaded.show_recent);
             loaded.recent_count = std::clamp(panel.value("recent_count", loaded.recent_count), 1, kNodesPanelMaxRecent);
+            if (panel.contains("open_groups") && panel["open_groups"].is_array()) {
+                loaded.open_groups.clear();
+                for (const auto& v : panel["open_groups"])
+                    if (v.is_string()) loaded.open_groups.push_back(v.get<std::string>());
+            }
+            loaded.list_view = panel.value("list_view", loaded.list_view);
             if (loaded.recent.size() > static_cast<size_t>(kNodesPanelMaxRecent)) loaded.recent.resize(kNodesPanelMaxRecent);
             nodes_panel_ = loaded;
         }
@@ -831,7 +837,9 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"favourites", nodes_panel_.favourites},
             {"recent", nodes_panel_.recent},
             {"show_recent", nodes_panel_.show_recent},
-            {"recent_count", nodes_panel_.recent_count}
+            {"recent_count", nodes_panel_.recent_count},
+            {"open_groups", nodes_panel_.open_groups},
+            {"list_view", nodes_panel_.list_view}
         };
 
         config["hyperparam_search"] = {
