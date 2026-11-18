@@ -7,6 +7,17 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Patterns insert and train again.** 26 of the 28 shipped patterns still
+  used the retired Dataset Input node and failed to insert (with only a log
+  line); the others were model pieces with no loss or optimizer, so Train
+  stayed off. The whole models are now full graphs: Data Input, Data Split,
+  DataLoader, the image or text steps, the layers, a loss, an optimizer and
+  Output; point Data Input at your data, Apply, then Train. Conv-BN-ReLU,
+  Residual Block and Multi-Head Attention Block are blocks that start with a
+  Block input node. The GAN, autoencoder, VAE, U-Net and sequence-to-sequence
+  patterns need training the Engine does not have yet: inserting one is
+  refused with the reason. The old "Phase 3 Demo" is now "Skip Connections
+  and Merges". See [Patterns](usage/patterns.md).
 - **An RNN layer reads its nonlinearity in any case.** "Tanh" passed the
   compile check but stopped the model build with "RNNLayer nonlinearity must
   be tanh or relu"; it now means tanh.

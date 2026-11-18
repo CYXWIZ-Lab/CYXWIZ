@@ -189,6 +189,9 @@ bool PatternLibrary::ParsePatternJson(const std::string& json_content, Pattern& 
         // Category
         std::string category_str = j.value("category", "Custom");
         out_pattern.category = StringToPatternCategory(category_str);
+        out_pattern.kind = StringToPatternKind(j.value("kind", "block"));
+        out_pattern.needs = j.value("needs", "");
+        out_pattern.sample_shape = j.value("sample_shape", "");
 
         // Tags
         if (j.contains("tags") && j["tags"].is_array()) {
@@ -400,6 +403,10 @@ bool PatternLibrary::InstantiatePattern(
         spdlog::error("Pattern not found: {}", pattern_id);
         return false;
     }
+    if (!pattern->needs.empty()) {
+        spdlog::error("Pattern '{}' cannot be inserted yet: {}", pattern->name, pattern->needs);
+        return false;
+    }
 
     // Merge default parameters with provided parameters
     std::map<std::string, std::string> merged_params;
@@ -574,6 +581,10 @@ bool PatternLibrary::InstantiatePatternWithCreator(
     const Pattern* pattern = GetPattern(pattern_id);
     if (!pattern) {
         spdlog::error("Pattern not found: {}", pattern_id);
+        return false;
+    }
+    if (!pattern->needs.empty()) {
+        spdlog::error("Pattern '{}' cannot be inserted yet: {}", pattern->name, pattern->needs);
         return false;
     }
 

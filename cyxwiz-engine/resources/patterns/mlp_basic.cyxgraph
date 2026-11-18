@@ -1,7 +1,9 @@
 {
   "id": "mlp_basic",
   "name": "Basic MLP",
-  "description": "Multi-layer perceptron with configurable hidden layers and activation function. Great for classification and regression tasks.",
+  "kind": "graph",
+  "description": "Multi-layer perceptron: two hidden Dense layers with an activation, trained with cross-entropy and Adam. Expects a CSV table: number columns and a label column (classes). Double-click Data Input, point it at your data and click Apply, then Train.",
+  "sample_shape": "[20]",
   "category": "Basic",
   "tags": ["mlp", "dense", "feedforward", "classification", "regression"],
   "parameters": [
@@ -31,23 +33,30 @@
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Dataset Input", "pos": [0, 200]},
-      {"id": "dense1", "type": "Dense", "name": "Hidden Layer 1", "pos": [200, 200], "params": {"units": "$hidden_size"}},
-      {"id": "act1", "type": "$activation", "name": "Activation 1", "pos": [400, 200]},
-      {"id": "dense2", "type": "Dense", "name": "Hidden Layer 2", "pos": [600, 200], "params": {"units": "$hidden_size"}},
-      {"id": "act2", "type": "$activation", "name": "Activation 2", "pos": [800, 200]},
-      {"id": "output_layer", "type": "Dense", "name": "Output Layer", "pos": [1000, 200], "params": {"units": "$output_size"}},
-      {"id": "softmax", "type": "Softmax", "name": "Softmax", "pos": [1200, 200]},
-      {"id": "output", "type": "Output", "name": "Output", "pos": [1400, 200]}
+      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 260], "params": {"source_type": "file", "file_category": "tabular", "file_type": "csv", "has_header": "true", "label_column": "label"}},
+      {"id": "data_split", "type": "DataSplit", "name": "Data Split", "pos": [220, 260], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "true"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [440, 260], "params": {"batch_size": "64", "epochs": "10", "shuffle": "true", "seed": "42", "validation_freq": "1"}},
+      {"id": "dense1", "type": "Dense", "name": "Hidden Layer 1", "pos": [660, 260], "params": {"units": "$hidden_size"}},
+      {"id": "act1", "type": "$activation", "name": "Activation 1", "pos": [860, 260]},
+      {"id": "dense2", "type": "Dense", "name": "Hidden Layer 2", "pos": [1060, 260], "params": {"units": "$hidden_size"}},
+      {"id": "act2", "type": "$activation", "name": "Activation 2", "pos": [1260, 260]},
+      {"id": "output_layer", "type": "Dense", "name": "Output Layer", "pos": [1460, 260], "params": {"units": "$output_size"}},
+      {"id": "loss", "type": "CrossEntropyLoss", "name": "CrossEntropy", "pos": [1680, 320]},
+      {"id": "optimizer", "type": "Adam", "name": "Adam", "pos": [1900, 320], "params": {"learning_rate": "0.001", "beta1": "0.9", "beta2": "0.999", "epsilon": "1e-8"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [2120, 320], "params": {"num_classes": "$output_size"}}
     ],
     "links": [
-      {"from": "input", "to": "dense1"},
+      {"from": "data_input", "to": "data_split", "from_pin": 0, "to_pin": 0},
+      {"from": "data_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "dense1", "from_pin": 0, "to_pin": 0},
       {"from": "dense1", "to": "act1"},
       {"from": "act1", "to": "dense2"},
       {"from": "dense2", "to": "act2"},
       {"from": "act2", "to": "output_layer"},
-      {"from": "output_layer", "to": "softmax"},
-      {"from": "softmax", "to": "output"}
+      {"from": "output_layer", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "optimizer", "to": "output", "from_pin": 0, "to_pin": 0}
     ]
   }
 }

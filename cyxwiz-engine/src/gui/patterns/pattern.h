@@ -40,6 +40,13 @@ enum class PatternCategory {
     Custom          // User-defined patterns
 };
 
+// A whole model (data line to optimizer: point the Data Input at data, then
+// Train) or a block to link into a graph.
+enum class PatternKind {
+    Graph,
+    Block
+};
+
 // Node definition within a pattern template
 struct PatternNode {
     std::string id;             // Internal reference ID
@@ -70,6 +77,9 @@ struct Pattern {
     std::string name;           // Display name
     std::string description;    // Description shown in browser
     PatternCategory category;
+    PatternKind kind = PatternKind::Block;
+    std::string needs;          // Why it cannot be inserted yet; empty when it can
+    std::string sample_shape;   // One sample's shape for the first layer, e.g. "[32, 32, 3]" (may use $params)
     std::vector<PatternParameter> parameters;
     PatternTemplate template_data;  // Parsed template
     std::string template_json;      // Raw JSON template (for saving)
@@ -99,6 +109,10 @@ inline PatternCategory StringToPatternCategory(const std::string& str) {
     if (str == "BuildingBlocks" || str == "Building Blocks")
                                   return PatternCategory::BuildingBlocks;
     return PatternCategory::Custom;
+}
+
+inline PatternKind StringToPatternKind(const std::string& str) {
+    return str == "graph" ? PatternKind::Graph : PatternKind::Block;
 }
 
 inline const char* ParameterTypeToString(ParameterType type) {

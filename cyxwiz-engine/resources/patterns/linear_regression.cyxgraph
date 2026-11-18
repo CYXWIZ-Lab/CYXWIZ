@@ -1,7 +1,9 @@
 {
   "id": "linear_regression",
   "name": "Linear Regression",
-  "description": "Single-layer linear regression with MSE loss and SGD optimizer.",
+  "kind": "graph",
+  "description": "One Dense layer fitted with mean squared error and SGD. Expects a CSV table: number columns and a number label column. Double-click Data Input, point it at your data and click Apply, then Train.",
+  "sample_shape": "[8]",
   "category": "Basic",
   "tags": ["linear", "regression", "mse", "sgd"],
   "parameters": [
@@ -16,22 +18,22 @@
   ],
   "template": {
     "nodes": [
-      {"id": "input", "type": "DatasetInput", "name": "Dataset Input", "pos": [0, 200],
-       "params": {"dataset_name": "", "split": "train"}},
-      {"id": "linear", "type": "Dense", "name": "Linear Output", "pos": [220, 200],
-       "params": {"units": "$output_size"}},
-      {"id": "output", "type": "Output", "name": "Output", "pos": [440, 200],
-       "params": {"num_classes": "$output_size"}},
-      {"id": "loss", "type": "MSELoss", "name": "MSE Loss", "pos": [660, 200]},
-      {"id": "opt", "type": "SGD", "name": "SGD Optimizer", "pos": [880, 200],
-       "params": {"learning_rate": "0.01", "momentum": "0.0"}}
+      {"id": "data_input", "type": "DataInput", "name": "Data Input", "pos": [0, 260], "params": {"source_type": "file", "file_category": "tabular", "file_type": "csv", "has_header": "true", "label_column": "label"}},
+      {"id": "data_split", "type": "DataSplit", "name": "Data Split", "pos": [220, 260], "params": {"train_ratio": "0.8", "val_ratio": "0.1", "test_ratio": "0.1", "seed": "42", "stratified": "false"}},
+      {"id": "data_loader", "type": "DataLoader", "name": "DataLoader", "pos": [440, 260], "params": {"batch_size": "64", "epochs": "10", "shuffle": "true", "seed": "42", "validation_freq": "1"}},
+      {"id": "linear", "type": "Dense", "name": "Linear Output", "pos": [660, 260], "params": {"units": "$output_size"}},
+      {"id": "loss", "type": "MSELoss", "name": "MSE Loss", "pos": [880, 320]},
+      {"id": "optimizer", "type": "SGD", "name": "SGD", "pos": [1100, 320], "params": {"learning_rate": "0.01", "momentum": "0.0"}},
+      {"id": "output", "type": "Output", "name": "Output", "pos": [1320, 320], "params": {"num_classes": "$output_size"}}
     ],
     "links": [
-      {"from": "input", "to": "linear"},
-      {"from": "linear", "to": "output"},
-      {"from": "output", "to": "loss", "to_pin": 0},
-      {"from": "input", "to": "loss", "from_pin": 1, "to_pin": 1},
-      {"from": "loss", "to": "opt"}
+      {"from": "data_input", "to": "data_split", "from_pin": 0, "to_pin": 0},
+      {"from": "data_split", "to": "data_loader", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "linear", "from_pin": 0, "to_pin": 0},
+      {"from": "linear", "to": "loss", "from_pin": 0, "to_pin": 0},
+      {"from": "data_loader", "to": "loss", "from_pin": 1, "to_pin": 1},
+      {"from": "loss", "to": "optimizer", "from_pin": 0, "to_pin": 0},
+      {"from": "optimizer", "to": "output", "from_pin": 0, "to_pin": 0}
     ]
   }
 }
