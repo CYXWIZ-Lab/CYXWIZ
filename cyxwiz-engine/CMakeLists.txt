@@ -5804,6 +5804,23 @@ function(configure_training_executor_harness target_name)
     )
 endfunction()
 
+# ===== Test: shipped patterns insert, compile and train (TOFIX178 4b) =====
+add_executable(test_shipped_patterns
+    tests/test_shipped_patterns.cpp
+    src/gui/patterns/pattern_library.cpp
+    src/gui/node_type_import_registry.cpp
+    src/core/data_registry_core.cpp
+    src/core/data_registry_utils.cpp
+    src/core/dataset_catalog.cpp
+    src/core/dataset_catalog_registry.cpp
+    src/core/formats/cyxmodel_format.cpp
+    src/core/formats/cyxmodel_archive.cpp
+    ${CYXWIZ_TRAINING_EXECUTOR_HARNESS_SOURCES}
+)
+configure_training_executor_harness(test_shipped_patterns)
+target_link_libraries(test_shipped_patterns PRIVATE OpenSSL::Crypto imgui::imgui)
+add_test(NAME shipped_patterns COMMAND test_shipped_patterns)
+
 # Regression: checkpoint weights retain their owner across testing workers.
 add_executable(test_testing_device_handoff
     tests/test_testing_device_handoff.cpp
