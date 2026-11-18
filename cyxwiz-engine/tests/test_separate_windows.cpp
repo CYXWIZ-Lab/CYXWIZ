@@ -285,6 +285,23 @@ int main() {
     Check(gui::WindowIsOutside(kDashboard), "outside again in the next session");
     Check(Window(kDashboard)->DockNode && Window(kDashboard)->DockNode->IsFloatingNode(), "with its tab strip");
 
+    // The same for a window only the setting lets out: outside at the end of
+    // a session, outside at the start of the next (over the main window too).
+    gui::SetEveryWindowMayLeave(true);
+    for (int i = 0; i < 2; ++i) Frame();
+    gui::MoveWindowOut(kProperties);
+    for (int i = 0; i < 4; ++i) Frame();
+    for (int i = 0; i < 3; ++i) Frame(nullptr, &inside);  // over the main window
+    Check(gui::WindowIsOutside(kProperties), "properties outside, over the main window");
+    const std::string ini2 = ImGui::SaveIniSettingsToMemory();
+    Teardown();
+    Setup();
+    gui::SetEveryWindowMayLeave(true);
+    ImGui::LoadIniSettingsFromMemory(ini2.c_str(), ini2.size());
+    for (int i = 0; i < 4; ++i) Frame();
+    Check(gui::WindowIsOutside(kProperties), "properties outside again in the next session");
+    gui::SetEveryWindowMayLeave(false);
+
     Teardown();
     std::cout << "separate windows contract: ok\n";
     return 0;

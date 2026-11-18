@@ -28,6 +28,8 @@ const ImGuiID kMayLeaveClass = ImHashStr("cyxwiz.window.may_leave");
 const ImGuiID kStaysClass = ImHashStr("cyxwiz.window.stays");
 
 bool g_every = false;  // Preferences: every movable window may leave
+std::unordered_set<ImGuiID> g_marked;  // windows this file gave the outside class (cleared when back)
+std::unordered_set<ImGuiID> g_seen;    // windows already looked at this session (their saved place)
 
 ImGuiID g_main_dockspace = 0;
 ImGuiID g_focused = 0;                               // the window that had the focus last (not a popup)
@@ -42,8 +44,10 @@ constexpr int kFrontFrames = 30;                     // a window that does not c
 // A window the setting lets leave: a movable top-level window that asked
 // nothing (no class): not a popup, menu, tooltip, child, dock host or bar.
 bool EveryEligible(const ImGuiWindow* w) {
+    // NoDocking: Dock back could not bring it in again (a preview window).
     constexpr ImGuiWindowFlags kNever = ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildMenu |
-                                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_DockNodeHost;
+                                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_DockNodeHost |
+                                       ImGuiWindowFlags_NoDocking;
     // A docked window is flagged a child of its dock host: it is a panel all the same.
     const bool child = (w->Flags & ImGuiWindowFlags_ChildWindow) && !w->DockIsActive;
     return w->WindowClass.ClassId == 0 && !child && !(w->Flags & kNever);
@@ -131,6 +135,14 @@ ImGuiID VisibleSlot() {
 void RunPending(ImGuiContext* ctx, ImGuiContextHook*) {
     ImGuiContext& g = *ctx;
     RunFront(g);
+    // A window the setting let out, seen for the first time this session:
+    // outside again when the last session left it outside (its saved
+    // viewport). Its first frame put it inside before any hook saw it.
+    for (ImGuiWindow* w : g.Windows) {
+        if (!g_seen.insert(w->ID).second || !g_every || !EveryEligible(w)) continue;
+        const ImGuiWindowSettings* saved = ImGui::FindWindowSettingsByID(w->ID);
+        if (saved && saved->ViewportId != 0 && saved->ViewportId != g.Viewports[0]->ID) g_leaving.insert(w->ID);
+    }
     for (const Pending& p : g_pending) {
         ImGuiWindow* w = ImGui::FindWindowByID(p.window);
         if (!w) continue;
@@ -188,19 +200,24 @@ void KeepInside(ImGuiContext* ctx, ImGuiContextHook*) {
     ImGuiViewportP* main = g.Viewports[0];
     const ImRect main_rect = main->GetMainRect();
     for (ImGuiWindow* w : g.Windows) {
-        if (!w->WasActive) continue;
-        if (w->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildMenu))
-            continue;
         if (EveryEligible(w)) {
             // What NextWindowMayLeave asks of a big window, kept on the window
             // here (these never call it): once outside, its own window until it
             // is docked again, with the tab strip under the OS title bar.
-            const bool outside = g_every && (!InMainWindow(w) || g_leaving.count(w->ID));
-            if (g_every && !InMainWindow(w)) g_leaving.erase(w->ID);
-            if (outside) w->WindowClass.ViewportFlagsOverrideSet |= ImGuiViewportFlags_NoAutoMerge;
-            else w->WindowClass.ViewportFlagsOverrideSet &= ~ImGuiViewportFlags_NoAutoMerge;
-            w->WindowClass.DockingAlwaysTabBar = outside;
+            const bool outside = g_every && ((w->WasActive && !InMainWindow(w)) || g_leaving.count(w->ID));
+            if (w->WasActive && !InMainWindow(w)) g_leaving.erase(w->ID);
+            if (outside) {
+                w->WindowClass.ViewportFlagsOverrideSet |= ImGuiViewportFlags_NoAutoMerge;
+                w->WindowClass.DockingAlwaysTabBar = true;
+                g_marked.insert(w->ID);
+            } else if (g_marked.erase(w->ID)) {
+                w->WindowClass.ViewportFlagsOverrideSet &= ~ImGuiViewportFlags_NoAutoMerge;
+                w->WindowClass.DockingAlwaysTabBar = false;
+            }
         }
+        if (!w->WasActive) continue;
+        if (w->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildMenu))
+            continue;
         if (MayLeave(w)) {
             if (w->DockId && InMainWindow(w) && (w->DockIsActive || w->DockNode)) g_home[w->ID] = w->DockId;
             continue;
@@ -249,6 +266,9 @@ void BringToFront(const std::string& name) {
 }
 
 void InstallSeparateWindows() {
+    g_seen.clear();
+    g_marked.clear();
+    g_leaving.clear();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     io.ConfigViewportsNoDecoration = false;  // a window of its own has the OS title bar and borders
@@ -401,7 +421,10 @@ void WindowMenus() {
             if (!w->WasActive || !EveryEligible(w)) continue;
             // Its tab when docked, its title bar when floating.
             ImRect rect;
-            if (w->DockIsActive) rect = w->DC.DockTabItemRect;
+            if (w->DockIsActive) {
+                if (!w->DockNode || w->DockNode->IsHiddenTabBar() || !w->DockNode->IsVisible) continue;
+                rect = w->DC.DockTabItemRect;
+            }
             else if (!(w->Flags & ImGuiWindowFlags_NoTitleBar)) rect = w->TitleBarRect();
             if (rect.GetWidth() <= 0.0f || !ImGui::IsMouseHoveringRect(rect.Min, rect.Max, false)) continue;
             if (!g.HoveredWindow || g.HoveredWindow->RootWindowDockTree != w->RootWindowDockTree) continue;
