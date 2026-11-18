@@ -954,7 +954,11 @@ void NodeBrowserPanel::RenderFavouritesSection() {
         ImGui::TextDisabled("Click the star on a node, or right-click it, to keep it here.");
         ImGui::PopTextWrapPos();
     } else {
+        // A favourite is also drawn in its own group: its own ID scope, or both
+        // cards (and their star buttons) share one ID.
+        ImGui::PushID("favourites");
         RenderNodeGrid(favourites);
+        ImGui::PopID();
     }
     ImGui::Spacing();
 }
