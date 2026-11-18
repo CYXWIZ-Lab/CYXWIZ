@@ -67,6 +67,32 @@ struct TrainingRunComparisonRecord {
     bool device_fallback = false;  // the chosen device failed its check
 };
 
+// A CSV field: quoted when it holds a comma, a quote or a line break.
+inline std::string EscapeTrainingRunComparisonCsvField(
+    const std::string& value) {
+    bool needs_quotes = false;
+    for (char c : value) {
+        if (c == ',' || c == '"' || c == '\n' || c == '\r') {
+            needs_quotes = true;
+            break;
+        }
+    }
+    if (!needs_quotes) {
+        return value;
+    }
+
+    std::string escaped = "\"";
+    for (char c : value) {
+        if (c == '"') {
+            escaped += "\"\"";
+        } else {
+            escaped += c;
+        }
+    }
+    escaped += '"';
+    return escaped;
+}
+
 enum class TrainingRunPartitionCompatibility {
     SameManifest,
     DifferentManifest,

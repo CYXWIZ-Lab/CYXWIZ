@@ -142,6 +142,7 @@ bool TrainingManager::StartTrainingCommon(
             "TrainingSetup",
             "Training manager attached to existing preparation trace");
     }
+    trace_run_id_ = TrainingTraceCollector::Instance().Snapshot().run_id;
     TrainingTraceCollector::Instance().RecordTaskProgress(
         0,
         task_name,
@@ -961,10 +962,13 @@ void TrainingManager::TrainingThreadFunc(
             char hhmm[8] = {};
             std::strftime(hhmm, sizeof(hhmm), "%H:%M", &local);
             record.finished_at = hhmm;
+            // Another run (an RL run) may have started its own trace since.
             const auto trace = TrainingTraceCollector::Instance().Snapshot();
-            record.device_backend = trace.effective_backend;
-            record.device_name = trace.effective_device_name;
-            record.device_fallback = trace.selection_fallback_applied;
+            if (!trace_run_id_.empty() && trace.run_id == trace_run_id_) {
+                record.device_backend = trace.effective_backend;
+                record.device_name = trace.effective_device_name;
+                record.device_fallback = trace.selection_fallback_applied;
+            }
         }
         panel->AddRunComparisonRecord(record);
         panel->SetTrainingComplete(total_training_time, final_metrics);

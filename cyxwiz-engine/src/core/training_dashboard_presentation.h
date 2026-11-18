@@ -210,6 +210,15 @@ struct RunsTable {
 // `records` in the panel's order (best first: SortTrainingRunComparisonsByBestMetric).
 RunsTable BuildRunsTable(const std::vector<TrainingRunComparisonRecord>& records, bool checkpoint_loaded);
 
+// The metrics CSV: "Epoch", then one column per series; a row for every
+// epoch position where any series has a point (the batch points inside an
+// epoch and the epoch ends), a series without a point there left empty.
+struct CsvColumn {
+    std::string name;
+    Series values;
+};
+std::string MetricsCsv(const std::vector<CsvColumn>& columns);
+
 // "23,000"
 std::string Thousands(double value);
 // "0.22s" for a time per epoch.

@@ -288,7 +288,8 @@ private:
     enum class PendingExport { None, Metrics, Runs };
     enum class ExportNoteAt { Header, Runs };
     PendingExport pending_export_ = PendingExport::None;
-    ExportNoteAt export_note_at_ = ExportNoteAt::Header;
+    ExportNoteAt export_note_at_ = ExportNoteAt::Header;  // where the note shows
+    ExportNoteAt pending_note_at_ = ExportNoteAt::Header;  // the menu that asked
     std::string export_note_;  // where an export saved, or why it could not
     bool export_failed_ = false;
     bool runs_all_columns_ = false;

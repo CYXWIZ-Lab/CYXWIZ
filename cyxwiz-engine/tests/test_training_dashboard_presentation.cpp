@@ -409,6 +409,42 @@ int main() {
     fallback.device_fallback = true;
     Check(td::BuildRunsTable({fallback}, false).rows[0][7].text == "CPU (fallback)", "runs table fallback device");
     Check(td::BuildRunsTable({}, false).rows.empty(), "runs table empty");
+    // Stopped during epoch 1: none of its epochs ran; early stopped; no
+    // validation rows; no dataset name.
+    cyxwiz::TrainingRunComparisonRecord stopped_first = digits;
+    stopped_first.run_status = "cancelled";
+    stopped_first.epochs_run = 0;
+    stopped_first.has_validation_metrics = false;
+    stopped_first.dataset_name.clear();
+    cyxwiz::TrainingRunComparisonRecord early_run = digits;
+    early_run.run_status = "early_stopped";
+    early_run.epochs_run = 6;
+    const td::RunsTable edge = td::BuildRunsTable({stopped_first, early_run}, false);
+    Check(edge.rows[0][5].text == "0 of 10" && edge.rows[0][2].tone == td::Tone::Faint &&
+              edge.rows[0][3].text == "\xE2\x80\x94" && edge.rows[0][0].text == "11:06 \xC2\xB7 training-task-3",
+          "runs table: stopped in epoch 1, no validation, no dataset: " + edge.rows[0][5].text + " / " +
+              edge.rows[0][0].text);
+    Check(edge.rows[1][1].text == "Early stopped" && edge.rows[1][1].tone == td::Tone::Bad &&
+              edge.rows[1][5].text == "6 of 10",
+          "runs table: early stopped");
+    cyxwiz::TrainingRunComparisonRecord unreported = digits;
+    unreported.epochs_run = 0;  // completed, epochs not reported: all ran
+    Check(td::BuildRunsTable({unreported}, false).rows[0][5].text == "10", "runs table: completed without epochs");
+
+    // The metrics CSV: batch points and epoch ends of the digits run's first
+    // two epochs; validation only at the epoch ends, each value on its own row.
+    td::CsvColumn train_loss_column{"TrainLoss", {{0.0833333, 0.833333, 1.0, 1.833333, 2.0}, {2.3896, 2.2154, 2.0632, 1.9009, 1.6912}}};
+    td::CsvColumn val_loss_column{"ValLoss", {{1.0, 2.0}, {2.0328, 1.6772}}};
+    td::CsvColumn epoch_loss{"TrainLossEpoch", {{1.0, 2.0}, {2.21, 1.79}}};
+    td::CsvColumn named{"F1, macro", {{2.0}, {0.5}}};
+    const std::string csv = td::MetricsCsv({train_loss_column, val_loss_column, epoch_loss, named});
+    Check(csv == "Epoch,TrainLoss,ValLoss,TrainLossEpoch,\"F1, macro\"\n"
+                 "0.0833333,2.3896,,,\n"
+                 "0.833333,2.2154,,,\n"
+                 "1,2.0632,2.0328,2.21,\n"
+                 "1.833333,1.9009,,,\n"
+                 "2,1.6912,1.6772,1.79,0.5\n",
+          "metrics CSV rows:\n" + csv);
 
     Check(td::Thousands(23145) == "23,145" && td::Thousands(999) == "999" && td::Thousands(1234567) == "1,234,567",
           "thousands");

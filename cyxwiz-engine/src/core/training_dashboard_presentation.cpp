@@ -618,8 +618,8 @@ RunsTable BuildRunsTable(const std::vector<TrainingRunComparisonRecord>& records
         row.reserve(t.columns.size());
         // Key columns.
         RunCell run;
-        run.text = r.finished_at.empty() ? r.dataset_name : r.finished_at + kDot + r.dataset_name;
-        if (run.text.empty()) run.text = r.run_id;
+        const std::string& what = r.dataset_name.empty() ? r.run_id : r.dataset_name;
+        run.text = r.finished_at.empty() ? what : r.finished_at + kDot + what;
         run.tooltip = "Run " + r.run_id + (r.dataset_name.empty() ? "" : "\nDataset " + r.dataset_name);
         row.push_back(run);
         row.push_back(Result(r.run_status));
@@ -640,9 +640,13 @@ RunsTable BuildRunsTable(const std::vector<TrainingRunComparisonRecord>& records
         } else {
             row.push_back(Missing("No test rows"));
         }
-        if (r.epochs_run > 0 && r.epochs_run < r.epochs) {
+        // A run that ended early, also before its first epoch finished; a
+        // completed run that did not report its epochs ran them all.
+        const bool completed = r.run_status == "completed" || r.run_status == "complete";
+        if (r.epochs_run < r.epochs && !(completed && r.epochs_run == 0)) {
             row.push_back({std::to_string(r.epochs_run) + " of " + std::to_string(r.epochs),
-                           "Ended after epoch " + std::to_string(r.epochs_run)});
+                           r.epochs_run == 0 ? std::string("Ended before its first epoch finished")
+                                             : "Ended after epoch " + std::to_string(r.epochs_run)});
         } else {
             row.push_back({std::to_string(r.epochs), {}});
         }
@@ -713,6 +717,47 @@ RunsTable BuildRunsTable(const std::vector<TrainingRunComparisonRecord>& records
         t.rows.push_back(std::move(row));
     }
     return t;
+}
+
+std::string MetricsCsv(const std::vector<CsvColumn>& columns) {
+    std::vector<double> rows;
+    for (const CsvColumn& column : columns) {
+        for (size_t i = 0; i < column.values.Size(); ++i) rows.push_back(column.values.x[i]);
+    }
+    std::sort(rows.begin(), rows.end());
+    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+    const auto number = [](double value) {
+        char text[32];
+        std::snprintf(text, sizeof(text), "%.8g", value);
+        return std::string(text);
+    };
+    std::string csv = "Epoch";
+    for (const CsvColumn& column : columns) csv += "," + EscapeTrainingRunComparisonCsvField(column.name);
+    csv += "\n";
+    // Each column's points in order of x: one pass per column over the rows.
+    std::vector<size_t> next(columns.size(), 0);
+    std::vector<std::vector<size_t>> order(columns.size());
+    for (size_t c = 0; c < columns.size(); ++c) {
+        order[c].resize(columns[c].values.Size());
+        for (size_t i = 0; i < order[c].size(); ++i) order[c][i] = i;
+        const Series& v = columns[c].values;
+        std::stable_sort(order[c].begin(), order[c].end(), [&v](size_t a, size_t b) { return v.x[a] < v.x[b]; });
+    }
+    for (const double x : rows) {
+        csv += number(x);
+        for (size_t c = 0; c < columns.size(); ++c) {
+            csv += ",";
+            const Series& v = columns[c].values;
+            size_t& k = next[c];
+            while (k < order[c].size() && v.x[order[c][k]] < x) ++k;
+            // The last point at this x, as a map keyed by x kept it.
+            size_t found = order[c].size();
+            while (k < order[c].size() && v.x[order[c][k]] == x) found = order[c][k++];
+            if (found < order[c].size()) csv += number(v.y[found]);
+        }
+        csv += "\n";
+    }
+    return csv;
 }
 
 std::vector<DetailRow> TaskRows(const std::vector<EngineTask>& tasks) {

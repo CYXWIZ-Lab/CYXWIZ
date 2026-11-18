@@ -47,8 +47,8 @@ std::string StartFolder(const char* requested) {
 const char* OrNull(const std::string& folder) { return folder.empty() ? nullptr : folder.c_str(); }
 
 // The Engine window the dialog belongs to: the window the person works in
-// (a panel in a window of its own asks from that window; a menu or popup from
-// the window that opened it), else the UI thread's GLFW window. The dialog
+// (a panel in a window of its own asks from that window; a menu or combo from
+// the window that opened it; a modal from itself), else the UI thread's GLFW window. The dialog
 // opens centred on it and stays in front of it, instead of where Windows last
 // put a dialog (even on a screen no longer attached). Owned by the main window,
 // it opened behind a panel's own window and the Engine looked frozen.
@@ -56,7 +56,7 @@ GLFWwindow* DialogOwner() {
     if (ImGuiContext* context = ImGui::GetCurrentContext()) {
         ImGuiWindow* window = context->NavWindow;
         while (window && (window->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip)) &&
-               window->ParentWindow) {
+               !(window->Flags & ImGuiWindowFlags_Modal) && window->ParentWindow) {
             window = window->ParentWindow;
         }
         if (window && window->Viewport && window->Viewport->PlatformHandle) {

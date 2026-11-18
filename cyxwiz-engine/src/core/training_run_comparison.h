@@ -59,31 +59,6 @@ inline std::string TrainingRunComparisonCsvHeader() {
            "device_name,device_fallback";
 }
 
-inline std::string EscapeTrainingRunComparisonCsvField(
-    const std::string& value) {
-    bool needs_quotes = false;
-    for (char c : value) {
-        if (c == ',' || c == '"' || c == '\n' || c == '\r') {
-            needs_quotes = true;
-            break;
-        }
-    }
-    if (!needs_quotes) {
-        return value;
-    }
-
-    std::string escaped = "\"";
-    for (char c : value) {
-        if (c == '"') {
-            escaped += "\"\"";
-        } else {
-            escaped += c;
-        }
-    }
-    escaped += '"';
-    return escaped;
-}
-
 inline std::string TrainingRunComparisonToCsvRow(
     const TrainingRunComparisonRecord& record) {
     std::ostringstream out;

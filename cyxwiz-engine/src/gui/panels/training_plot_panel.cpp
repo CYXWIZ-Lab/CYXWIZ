@@ -1138,42 +1138,21 @@ void TrainingPlotPanel::SetMaxPoints(size_t max_points) {
 }
 
 std::string TrainingPlotPanel::MetricsCsvLocked() const {
-    // One row per epoch position where any series has a point (the batch
-    // points inside an epoch and the epoch ends); a series with no point there
-    // leaves its cell empty. The series were written side by side by index, so
-    // the validation values (one per epoch) sat on the rows of the first batch
-    // points, and a missing value read 0.
-    std::vector<const MetricSeries*> series = {&train_loss_, &val_loss_, &train_accuracy_, &val_accuracy_};
-    for (const auto& metric : custom_metrics_) series.push_back(&metric);
-    std::vector<std::map<double, double>> by_epoch(series.size());
-    std::vector<double> epochs;
-    for (size_t s = 0; s < series.size(); ++s) {
-        const size_t n = std::min(series[s]->epochs.size(), series[s]->values.size());
-        for (size_t i = 0; i < n; ++i) {
-            by_epoch[s][series[s]->epochs[i]] = series[s]->values[i];
-            epochs.push_back(series[s]->epochs[i]);
-        }
-    }
-    std::sort(epochs.begin(), epochs.end());
-    epochs.erase(std::unique(epochs.begin(), epochs.end()), epochs.end());
-
-    std::ostringstream file;
-    file.precision(8);
-    file << "Epoch,TrainLoss,ValLoss,TrainAccuracy,ValAccuracy";
-    for (const auto& metric : custom_metrics_) {
-        file << "," << EscapeTrainingRunComparisonCsvField(metric.name);
-    }
-    file << "\n";
-    for (const double epoch : epochs) {
-        file << epoch;
-        for (const auto& values : by_epoch) {
-            file << ",";
-            const auto it = values.find(epoch);
-            if (it != values.end()) file << it->second;
-        }
-        file << "\n";
-    }
-    return file.str();
+    // The charts' points (training: the batch windows inside each epoch and
+    // the epoch ends), then the whole-epoch training values the cards show.
+    const auto column = [](const char* name, const MetricSeries& series) {
+        training_dashboard::CsvColumn c;
+        c.name = name;
+        c.values.x = series.epochs;
+        c.values.y = series.values;
+        return c;
+    };
+    std::vector<training_dashboard::CsvColumn> columns = {
+        column("TrainLoss", train_loss_),          column("ValLoss", val_loss_),
+        column("TrainAccuracy", train_accuracy_), column("ValAccuracy", val_accuracy_),
+        column("TrainLossEpoch", train_loss_epochs_), column("TrainAccuracyEpoch", train_accuracy_epochs_)};
+    for (const auto& metric : custom_metrics_) columns.push_back(column(metric.name.c_str(), metric));
+    return training_dashboard::MetricsCsv(columns);
 }
 
 void TrainingPlotPanel::RunPendingExport() {
@@ -1209,6 +1188,7 @@ void TrainingPlotPanel::RunPendingExport() {
     }
     const char* what = metrics ? "metrics" : "runs";
     std::lock_guard<std::mutex> lock(data_mutex_);
+    export_note_at_ = pending_note_at_;
     export_failed_ = !ok;
     export_note_ = ok ? std::string("Saved the ") + what + " to " + *path
                       : std::string("Could not save the ") + what + ": " + error;
@@ -2426,12 +2406,12 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
     if (ImGui::BeginPopup("##runs_export_menu")) {
         if (ImGui::MenuItem("Metrics (CSV)...")) {
             pending_export_ = PendingExport::Metrics;
-            export_note_at_ = ExportNoteAt::Runs;
+            pending_note_at_ = ExportNoteAt::Runs;
         }
         ui::Tooltip("The loss, accuracy and metric points of the run on the charts. Asks where to save.");
         if (ImGui::MenuItem("Runs (CSV)...", nullptr, false, has_runs)) {
             pending_export_ = PendingExport::Runs;
-            export_note_at_ = ExportNoteAt::Runs;
+            pending_note_at_ = ExportNoteAt::Runs;
         }
         ui::Tooltip(has_runs ? "Every run in this table, all columns. Asks where to save."
                              : "No run has ended in this session yet.");
@@ -2464,6 +2444,8 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
         const float height = row_height * static_cast<float>(1 + std::min<size_t>(runs.rows.size(), 5)) +
                              style.ScrollbarSize + style.CellPadding.y * 2.0f;
         ImGui::PushStyleColor(ImGuiCol_ChildBg, c.window);
+        // ImGui draws a line under the frozen header row whatever the flags.
+        ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, c.window);
         // Room between the columns; each is as wide as its longest value.
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(10.0f, style.CellPadding.y));
         if (ImGui::BeginTable("##dash_runs_table", static_cast<int>(shown_columns),
@@ -2488,7 +2470,7 @@ void TrainingPlotPanel::RenderRunComparisonTable() {
             ImGui::EndTable();
         }
         ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
+        ImGui::PopStyleColor(2);
         const std::string& note = runs_all_columns_ ? runs.all_note : runs.key_note;
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(c.faint, "%s", note.c_str());
@@ -2662,13 +2644,13 @@ void TrainingPlotPanel::RenderTrainingStatus() {
     if (ImGui::BeginPopup("##dash_actions")) {
         if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export metrics (CSV)...")) {
             pending_export_ = PendingExport::Metrics;
-            export_note_at_ = ExportNoteAt::Header;
+            pending_note_at_ = ExportNoteAt::Header;
         }
         ui::Tooltip("The loss, accuracy and metric points of this run. Asks where to save.");
         if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export runs (CSV)...", nullptr, false,
                             !run_comparison_records_.empty())) {
             pending_export_ = PendingExport::Runs;
-            export_note_at_ = ExportNoteAt::Header;
+            pending_note_at_ = ExportNoteAt::Header;
         }
         ui::Tooltip(run_comparison_records_.empty() ? "No run has ended in this session yet."
                                                     : "Every run in the Runs table, all columns. Asks where to save.");
