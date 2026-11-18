@@ -6,13 +6,11 @@
   "tags": [
     "text",
     "sentiment",
-    "mental-health",
+    "reviews",
     "nlp",
     "classification",
-    "kaggle",
     "training",
-    "v2",
-    "regularized"
+    "starter"
   ],
   "parameters": [
     {
@@ -27,7 +25,7 @@
       "name": "learning_rate",
       "type": "float",
       "default_value": "0.0002",
-      "description": "Adam learning rate --- lowered from v1's 5e-4 to 2e-4 to stabilize training on the smaller head",
+      "description": "Adam learning rate",
       "min_value": "0.00001",
       "max_value": "0.01"
     },
@@ -35,7 +33,7 @@
       "name": "epochs",
       "type": "int",
       "default_value": "8",
-      "description": "Number of training epochs --- capped at 8 because v1's val_loss minimum was at epoch 4 and rose monotonically afterward",
+      "description": "Number of training epochs",
       "min_value": "1",
       "max_value": "200"
     },
@@ -83,7 +81,7 @@
       "name": "dropout_rate",
       "type": "float",
       "default_value": "0.5",
-      "description": "Regularization strength --- bumped from v1's 0.4 for stronger regularization on the overfitting-prone dense head",
+      "description": "Dropout rate on the dense head",
       "min_value": "0.0",
       "max_value": "0.7"
     }
@@ -103,12 +101,7 @@
           "file_category": "text",
           "file_path": "examples/datasets/review_sentences.csv",
           "text_column": "sentence",
-          "text_label_column": "sentiment",
-          "text_tokenizer_type": "1",
-          "text_max_length": "$max_length",
-          "text_lowercase": "true",
-          "text_min_freq": "2",
-          "text_max_vocab_size": "20000"
+          "text_label_column": "sentiment"
         }
       },
       {

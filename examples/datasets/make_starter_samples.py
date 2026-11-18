@@ -23,6 +23,8 @@ import csv
 import io
 import json
 import os
+import re
+import shutil
 import sys
 import time
 import urllib.error
@@ -103,8 +105,10 @@ def spoken_digits():
                 name = f"{digit}_{speaker}_{take}.wav"
                 path = os.path.join(folder, str(digit), name)
                 if not os.path.exists(path):
-                    with open(path, "wb") as f:
-                        f.write(fetch(base + name))
+                    data = fetch(base + name)  # a failed fetch leaves no file behind
+                    with open(path + ".part", "wb") as f:
+                        f.write(data)
+                    os.replace(path + ".part", path)
                 count += 1
     print("spoken_digits:", count, "clips")
 
@@ -142,6 +146,11 @@ def _strip_tags(text):
     return " ".join("".join(out).split())
 
 
+# Licences these photos may have: CC0, public domain, CC BY or CC BY-SA (any
+# version). Commons hosts no NC / ND files, but the check says so exactly.
+FREE_LICENCE = re.compile(r"^(cc0|public domain|pd(-|$)|cc by(-sa)? \d)", re.IGNORECASE)
+CHANGES = "centre-cropped to a square and resized to 96x96"
+
 # Pictures in those categories that do not show one clear cat or dog at
 # 96x96 (a stone cat, a crowd, a cat and a dog together, a tiny dog far off).
 NOT_CLEAR = ("File:Ganjali Khan Complex", "File:Jakarta Indonesia Merdeka-Square",
@@ -158,11 +167,12 @@ def cats_dogs():
     credits_path = os.path.join(folder, "ATTRIBUTION.csv")
     if os.path.exists(credits_path):
         return
-    free = ("cc0", "cc by", "cc-by", "public domain", "pd")
     credits = []
     for label, categories in (("cat", ["Quality_images_of_cats", "Featured_pictures_of_cats"]),
                               ("dog", ["Quality_images_of_dogs", "Featured_pictures_of_dogs"])):
-        os.makedirs(os.path.join(folder, label), exist_ok=True)
+        # A rebuild starts from an empty folder, so every photo has its credit row.
+        shutil.rmtree(os.path.join(folder, label), ignore_errors=True)
+        os.makedirs(os.path.join(folder, label))
         titles = []
         for category in categories:
             titles += [t for t in commons_files(category, 200) if t not in titles and not t.startswith(NOT_CLEAR)]
@@ -171,7 +181,7 @@ def cats_dogs():
             if kept == 30:
                 break
             thumb, page, author, licence = commons_info(title)
-            if not licence.lower().startswith(free):
+            if not FREE_LICENCE.match(licence.strip()):
                 continue
             image = Image.open(io.BytesIO(fetch(thumb, pause=1.0))).convert("RGB")
             side = min(image.size)
@@ -179,12 +189,12 @@ def cats_dogs():
             image = image.crop((left, top, left + side, top + side)).resize((96, 96), Image.LANCZOS)
             name = f"{label}_{kept:02d}.jpg"
             image.save(os.path.join(folder, label, name), quality=88)
-            credits.append((f"{label}/{name}", title, page, author, licence))
+            credits.append((f"{label}/{name}", title, page, author, licence, CHANGES))
             kept += 1
         print(f"cats_dogs_sample/{label}:", kept, "photos")
     with open(credits_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["file", "commons_title", "source", "author", "licence"])
+        writer.writerow(["file", "commons_title", "source", "author", "licence", "changes"])
         writer.writerows(credits)
 
 
