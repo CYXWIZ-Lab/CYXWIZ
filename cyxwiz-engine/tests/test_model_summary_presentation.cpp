@@ -214,7 +214,8 @@ Graph Recurrent() {
         g.Add(gui::NodeType::LSTM, "LSTM",
               {{"hidden_size", "24"}, {"num_layers", "2"}, {"bidirectional", "true"}, {"return_sequences", "true"}}),
         g.Add(gui::NodeType::GRU, "GRU", {{"hidden_size", "16"}, {"return_sequences", "true"}}),
-        g.Add(gui::NodeType::RNN, "RNN", {{"hidden_size", "12"}, {"return_sequences", "false"}}),
+        // "Tanh" as a pattern spelled it: the compile check and ModelBuilder read it alike.
+        g.Add(gui::NodeType::RNN, "RNN", {{"hidden_size", "12"}, {"return_sequences", "false"}, {"nonlinearity", "Tanh"}}),
         g.Add(gui::NodeType::Dense, "Head", {{"units", "5"}}),
     });
     g.Finish(loader, last);

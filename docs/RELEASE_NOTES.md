@@ -7,6 +7,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **An RNN layer reads its nonlinearity in any case.** "Tanh" passed the
+  compile check but stopped the model build with "RNNLayer nonlinearity must
+  be tanh or relu"; it now means tanh.
 - **Safetensors import reads each tensor's type.** Importing a
   `.safetensors` model took every tensor for float32. Float16 and float64
   tensors are now converted, integer tensors are skipped with a warning, and a

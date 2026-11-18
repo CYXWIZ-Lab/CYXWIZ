@@ -782,7 +782,8 @@ bool BuildSequential(
                 auto act_it = layer_cfg.parameters.find("nonlinearity");
                 if (act_it != layer_cfg.parameters.end() &&
                     !act_it->second.empty()) {
-                    nonlinearity = act_it->second;
+                    // Read as the compile check reads it ("Tanh" is tanh).
+                    nonlinearity = recurrent_configuration_policy_detail::TrimLower(act_it->second);
                 }
                 if (hidden_size < 1) hidden_size = 1;
                 if (num_layers < 1) num_layers = 1;
