@@ -1129,25 +1129,38 @@ void TrainingPlotPanel::SetMaxPoints(size_t max_points) {
 }
 
 std::string TrainingPlotPanel::MetricsCsvLocked() const {
+    // One row per epoch position where any series has a point (the batch
+    // points inside an epoch and the epoch ends); a series with no point there
+    // leaves its cell empty. The series were written side by side by index, so
+    // the validation values (one per epoch) sat on the rows of the first batch
+    // points, and a missing value read 0.
+    std::vector<const MetricSeries*> series = {&train_loss_, &val_loss_, &train_accuracy_, &val_accuracy_};
+    for (const auto& metric : custom_metrics_) series.push_back(&metric);
+    std::vector<std::map<double, double>> by_epoch(series.size());
+    std::vector<double> epochs;
+    for (size_t s = 0; s < series.size(); ++s) {
+        const size_t n = std::min(series[s]->epochs.size(), series[s]->values.size());
+        for (size_t i = 0; i < n; ++i) {
+            by_epoch[s][series[s]->epochs[i]] = series[s]->values[i];
+            epochs.push_back(series[s]->epochs[i]);
+        }
+    }
+    std::sort(epochs.begin(), epochs.end());
+    epochs.erase(std::unique(epochs.begin(), epochs.end()), epochs.end());
+
     std::ostringstream file;
+    file.precision(8);
     file << "Epoch,TrainLoss,ValLoss,TrainAccuracy,ValAccuracy";
     for (const auto& metric : custom_metrics_) {
-        file << "," << metric.name;
+        file << "," << EscapeTrainingRunComparisonCsvField(metric.name);
     }
     file << "\n";
-
-    const size_t max_rows = std::max({train_loss_.epochs.size(),
-                                      val_loss_.epochs.size(),
-                                      train_accuracy_.epochs.size(),
-                                      val_accuracy_.epochs.size()});
-    for (size_t i = 0; i < max_rows; ++i) {
-        file << (i < train_loss_.epochs.size() ? train_loss_.epochs[i] : -1) << ",";
-        file << (i < train_loss_.values.size() ? train_loss_.values[i] : 0.0) << ",";
-        file << (i < val_loss_.values.size() ? val_loss_.values[i] : 0.0) << ",";
-        file << (i < train_accuracy_.values.size() ? train_accuracy_.values[i] : 0.0) << ",";
-        file << (i < val_accuracy_.values.size() ? val_accuracy_.values[i] : 0.0);
-        for (const auto& metric : custom_metrics_) {
-            file << "," << (i < metric.values.size() ? metric.values[i] : 0.0);
+    for (const double epoch : epochs) {
+        file << epoch;
+        for (const auto& values : by_epoch) {
+            file << ",";
+            const auto it = values.find(epoch);
+            if (it != values.end()) file << it->second;
         }
         file << "\n";
     }
