@@ -1055,6 +1055,7 @@ void CustomNodeEditorPanel::LoadFromPattern(const patterns::Pattern& pattern) {
         case patterns::PatternCategory::RNN: current_def_.category = "Layers"; break;
         case patterns::PatternCategory::Transformer: current_def_.category = "Attention"; break;
         case patterns::PatternCategory::Generative: current_def_.category = "Custom"; break;
+        case patterns::PatternCategory::ReinforcementLearning: current_def_.category = "Custom"; break;
         case patterns::PatternCategory::BuildingBlocks: current_def_.category = "Utility"; break;
         default: current_def_.category = "Custom"; break;
     }

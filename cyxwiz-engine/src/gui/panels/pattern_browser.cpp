@@ -16,6 +16,7 @@ static const char* GetCategoryName(::gui::patterns::PatternCategory category) {
         case ::gui::patterns::PatternCategory::RNN:           return "RNN";
         case ::gui::patterns::PatternCategory::Transformer:   return "Transformer";
         case ::gui::patterns::PatternCategory::Generative:    return "Generative";
+        case ::gui::patterns::PatternCategory::ReinforcementLearning: return "Reinforcement learning";
         case ::gui::patterns::PatternCategory::BuildingBlocks: return "Blocks";
         case ::gui::patterns::PatternCategory::Custom:        return "Custom";
         default: return "Unknown";
@@ -84,6 +85,7 @@ void PatternBrowserPanel::RenderCategoryTabs() {
         ::gui::patterns::PatternCategory::RNN,
         ::gui::patterns::PatternCategory::Transformer,
         ::gui::patterns::PatternCategory::Generative,
+        ::gui::patterns::PatternCategory::ReinforcementLearning,
         ::gui::patterns::PatternCategory::BuildingBlocks,
         ::gui::patterns::PatternCategory::Custom
     };

@@ -361,6 +361,8 @@ int main() {
         if (pattern == nullptr) continue;
         const auto defaults = Defaults(*pattern);
         Check(!pattern->description.empty(), id + ": has a description");
+        // Custom is where a category the Engine does not know lands: a shipped pattern names a known one.
+        Check(pattern->category != gui::patterns::PatternCategory::Custom, id + ": its category is a known one");
         std::set<std::string> node_ids;
         for (const auto& node : pattern->template_data.nodes)
             Check(node_ids.insert(node.id).second, id + ": node id '" + node.id + "' is used once");

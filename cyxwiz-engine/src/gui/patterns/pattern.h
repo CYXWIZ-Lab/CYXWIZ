@@ -38,6 +38,7 @@ enum class PatternCategory {
     RNN,            // Recurrent networks (LSTM, GRU)
     Transformer,    // Attention-based architectures
     Generative,     // VAE, autoencoder, GAN
+    ReinforcementLearning, // An environment, a policy and its training (PPO)
     BuildingBlocks, // Residual block, attention block, etc.
     Custom          // User-defined patterns
 };
@@ -96,6 +97,7 @@ inline const char* PatternCategoryToString(PatternCategory category) {
         case PatternCategory::RNN:           return "RNN";
         case PatternCategory::Transformer:   return "Transformer";
         case PatternCategory::Generative:    return "Generative";
+        case PatternCategory::ReinforcementLearning: return "Reinforcement Learning";
         case PatternCategory::BuildingBlocks: return "Building Blocks";
         case PatternCategory::Custom:        return "Custom";
         default:                             return "Unknown";
@@ -108,6 +110,7 @@ inline PatternCategory StringToPatternCategory(const std::string& str) {
     if (str == "RNN")             return PatternCategory::RNN;
     if (str == "Transformer")     return PatternCategory::Transformer;
     if (str == "Generative")      return PatternCategory::Generative;
+    if (str == "Reinforcement Learning") return PatternCategory::ReinforcementLearning;
     if (str == "BuildingBlocks" || str == "Building Blocks")
                                   return PatternCategory::BuildingBlocks;
     return PatternCategory::Custom;
@@ -149,6 +152,7 @@ inline const char* GetPatternCategoryIcon(PatternCategory category) {
         case PatternCategory::RNN:            return ICON_FA_CHART_LINE;
         case PatternCategory::Transformer:    return ICON_FA_BRAIN;
         case PatternCategory::Generative:     return ICON_FA_WAND_MAGIC_SPARKLES;
+        case PatternCategory::ReinforcementLearning: return ICON_FA_ROCKET;
         case PatternCategory::BuildingBlocks: return ICON_FA_CUBES;
         case PatternCategory::Custom:         return ICON_FA_USER;
         default:                              return ICON_FA_CUBE;
