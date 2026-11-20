@@ -220,7 +220,12 @@ Conv2DLayer::Conv2DLayer(int in_channels,
     const int fan_in = static_cast<int>(fan_in_size);
     const af::dim4 weight_dims(
         kernel_size_, kernel_size_, in_channels_, out_channels_);
-    weights_ = AfToTensor(KaimingUniform(fan_in, weight_dims));
+    // An explicit shape: guessing it from the array would drop a trailing 1
+    // (one filter: [k, k, C, 1] became [k, k, C]; TOFIX223 0.14).
+    weights_ = Tensor::FromSemanticArray(
+        KaimingUniform(fan_in, weight_dims),
+        {static_cast<size_t>(kernel_size_), static_cast<size_t>(kernel_size_),
+         static_cast<size_t>(in_channels_), static_cast<size_t>(out_channels_)});
     if (use_bias_) {
         bias_ = AfToTensor(
             af::constant(0.0f, af::dim4(out_channels_)));
