@@ -2207,7 +2207,11 @@ MainWindow::MainWindow()
 
     // Edit > Find / Replace: the Script Editor's inline widget (TOFIX133 P2).
     toolbar_->SetOpenFindCallback([this](bool replace) {
-        if (script_editor_) script_editor_->OpenFind(replace);
+        if (!replace && KeyboardShortcutManager::Instance().GetActiveContext() == KeyboardContext::NodeEditor) {
+            if (node_editor_) node_editor_->RunEditCommand(NodeEditor::EditCommand::Find);
+        } else if (script_editor_) {
+            script_editor_->OpenFind(replace);
+        }
     });
     // Replace in Files: editor state (TOFIX129 G3)
     toolbar_->SetFileHasUnsavedChangesCallback([this](const std::string& path) {
@@ -2217,48 +2221,26 @@ MainWindow::MainWindow()
         if (script_editor_) script_editor_->ReloadOpenFile(path);
     });
 
-    // Set up edit operation callbacks
-    toolbar_->SetUndoCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Undo();
-        }
-    });
-
-    toolbar_->SetRedoCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Redo();
-        }
-    });
-
-    toolbar_->SetCutCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Cut();
-        }
-    });
-
-    toolbar_->SetCopyCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Copy();
-        }
-    });
-
-    toolbar_->SetPasteCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Paste();
-        }
-    });
-
-    toolbar_->SetDeleteCallback([this]() {
-        if (script_editor_) {
-            script_editor_->Delete();
-        }
-    });
-
-    toolbar_->SetSelectAllCallback([this]() {
-        if (script_editor_) {
-            script_editor_->SelectAll();
-        }
-    });
+    // Edit menu: the focused editor, the Studio canvas or the Script Editor
+    // (the menu's "Editing:" line names it).
+    const auto edit = [this](NodeEditor::EditCommand command, void (cyxwiz::ScriptEditorPanel::*script)()) {
+        return [this, command, script]() {
+            if (KeyboardShortcutManager::Instance().GetActiveContext() == KeyboardContext::NodeEditor) {
+                if (node_editor_) node_editor_->RunEditCommand(command);
+            } else if (script_editor_) {
+                (script_editor_.get()->*script)();
+            }
+        };
+    };
+    using Edit = NodeEditor::EditCommand;
+    using Script = cyxwiz::ScriptEditorPanel;
+    toolbar_->SetUndoCallback(edit(Edit::Undo, &Script::Undo));
+    toolbar_->SetRedoCallback(edit(Edit::Redo, &Script::Redo));
+    toolbar_->SetCutCallback(edit(Edit::Cut, &Script::Cut));
+    toolbar_->SetCopyCallback(edit(Edit::Copy, &Script::Copy));
+    toolbar_->SetPasteCallback(edit(Edit::Paste, &Script::Paste));
+    toolbar_->SetDeleteCallback(edit(Edit::Delete, &Script::Delete));
+    toolbar_->SetSelectAllCallback(edit(Edit::SelectAll, &Script::SelectAll));
 
     // Set up comment toggle callbacks
     toolbar_->SetToggleLineCommentCallback([this]() {

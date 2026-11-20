@@ -345,6 +345,9 @@ public:
     const std::vector<MLNode>& GetNodes() const { return nodes_; }
     // Configure a node as a double-click does (Properties "Open Dialog...").
     void OpenNodeConfiguration(int node_id) { ConfigureNode(node_id); }
+    // The Edit menu while the canvas has the focus: what the canvas's own keys do.
+    enum class EditCommand { Undo, Redo, Cut, Copy, Paste, Delete, SelectAll, Find };
+    void RunEditCommand(EditCommand command);
     // "Edit roles in Data Studio" in a Dashboard window (MainWindow opens the Profile tab).
     void SetOpenDataStudioProfileCallback(std::function<void(const std::string&)> cb) { open_data_studio_profile_ = std::move(cb); }
     // Shows a pattern in the Pattern Browser (the link after Save selection as pattern).

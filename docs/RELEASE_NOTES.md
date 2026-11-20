@@ -778,6 +778,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- **Edit > Undo, Redo, Cut, Copy, Paste, Delete, Select All and Find work on
+  the Studio canvas.** The menu said "Editing: Studio canvas" but sent them
+  to the Script Editor, so nothing happened on the canvas; only the keys
+  (Ctrl+Z and the rest) worked there.
 - The node icon pack you choose is kept: View > Node Icon Pack and the new
   Node icons row of Preferences > Appearance set it, the next launch starts
   with it, and Reset appearance goes back to Font Awesome.

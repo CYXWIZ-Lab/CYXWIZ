@@ -171,6 +171,19 @@ void NodeEditor::ClearSelection() {
     spdlog::debug("Cleared selection");
 }
 
+void NodeEditor::RunEditCommand(EditCommand command) {
+    switch (command) {
+        case EditCommand::Undo: Undo(); break;
+        case EditCommand::Redo: Redo(); break;
+        case EditCommand::Cut: CutSelection(); break;
+        case EditCommand::Copy: CopySelection(); break;
+        case EditCommand::Paste: PasteClipboard(); break;
+        case EditCommand::Delete: DeleteSelected(); break;
+        case EditCommand::SelectAll: SelectAll(); break;
+        case EditCommand::Find: OpenFindBar(); break;
+    }
+}
+
 void NodeEditor::DeleteSelected() {
     // Delete selected nodes without copying to clipboard
     const int num_selected = ImNodes::NumSelectedNodes();
