@@ -552,9 +552,15 @@ public:
     // looked for again), not an edit the user can undo
     void ResolveDynamicPins(int node_id, bool record_undo = true);
 
+    // Where an inserted pattern goes: below the graph (a block, or an empty
+    // canvas), to its right, or in place of it (one undo step brings the graph
+    // back; its saved file is untouched until the next Save).
+    enum class PatternPlacement { Below, Beside, Replace };
     // Pattern insertion - add multiple nodes and links from a pattern template
-    // (fresh ids, so a pattern never shares an id with the canvas).
-    void InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links);
+    // (fresh ids, so a pattern never shares an id with the canvas). Returns
+    // why nothing was added (a run or a load is using the graph), or empty.
+    std::string InsertPattern(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
+                              PatternPlacement placement = PatternPlacement::Below);
     // Replace the graph with an edited copy of it (Neural Architecture
     // Search): unchanged nodes keep their id, place and group; new or retyped
     // nodes are built for their type and placed between their neighbours.
@@ -1368,6 +1374,9 @@ private:
     // (positions keyed by the old node id); returns old id -> new id.
     std::map<int, int> AddWithFreshIds(const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links,
                                        const std::map<int, ImVec2>& positions);
+    // Empties the canvas (nodes, links, groups, notes, the data they
+    // registered); the caller has checked CanReplaceGraph and saved undo.
+    void ResetGraphContents();
 
     // Deferred position setting (for nodes created outside render context)
     std::map<int, ImVec2> pending_positions_;  // node_id -> position

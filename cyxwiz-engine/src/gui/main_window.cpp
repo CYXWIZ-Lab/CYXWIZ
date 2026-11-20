@@ -793,9 +793,9 @@ MainWindow::MainWindow()
 
     // Set pattern browser callback to insert patterns into node editor
     pattern_browser_->SetInsertCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-        if (node_editor_) {
-            node_editor_->InsertPattern(nodes, links);
-        }
+        if (!node_editor_) return;
+        if (const auto error = node_editor_->InsertPattern(nodes, links); !error.empty())
+            spdlog::warn("Pattern not inserted: {}", error);
     });
     // The Nodes panel's Examples insert as the Pattern Browser does, with
     // each pattern's default parameters.
