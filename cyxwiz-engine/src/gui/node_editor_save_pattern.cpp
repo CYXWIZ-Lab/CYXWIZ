@@ -73,7 +73,7 @@ void NodeEditor::DrawSavePatternDialog() {
         save_pattern_.open_request = false;
     }
     ui::DialogOptions options;
-    options.size = ImVec2(580.0f, 560.0f);
+    options.size = ImVec2(580.0f, 440.0f);
     if (!ui::BeginDialog(kTitle, options)) return;
     const ui::Tokens& t = ui::CurrentTokens();
     auto& library = patterns::PatternLibrary::Instance();
@@ -170,8 +170,10 @@ void NodeEditor::RenderSavedPatternNotice() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, t.card_padding);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, t.bg_raised);
     ::gui::NextWindowFollowsCurrent();
-    ImGui::SetNextWindowPos(ImVec2(canvas_origin_.x + 12.0f, canvas_origin_.y + canvas_size_.y - 12.0f),
-                            ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    // Above the canvas footer (node and link counts), as the minimap is.
+    ImGui::SetNextWindowPos(
+        ImVec2(canvas_origin_.x + 12.0f, canvas_origin_.y + canvas_size_.y - kCanvasFooterHeight - 8.0f),
+        ImGuiCond_Always, ImVec2(0.0f, 1.0f));
     if (ImGui::Begin("##SavedPatternNotice", nullptr, flags)) {
         ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Text, t.success);
