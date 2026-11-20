@@ -32,6 +32,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <functional>
 #include <fstream>
 #include <iostream>
@@ -526,6 +527,52 @@ FullBatchMetricOracle EvaluateCurrentModelAsOneBatch(
         }
     }
     return oracle;
+}
+
+// A NaN or infinite loss fails the run with the reason, for a classification
+// graph (loss summed on the device, checked where it is read) and a regression
+// graph (loss read every batch); it does not finish "completed" with NaN
+// weights (TOFIX223 0.6). One feature value is NaN.
+void TestNonFiniteLossFailsTheRun(const std::filesystem::path& work_dir) {
+    auto schema = arrow::schema({
+        arrow::field("x0", arrow::float32()),
+        arrow::field("x1", arrow::float32()),
+        arrow::field("label", arrow::float32()),
+    });
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    auto table = arrow::Table::Make(
+        schema,
+        {
+            FinishFloatArray({0.0f, 0.1f, 0.9f, 1.0f, 0.2f, 0.8f}),
+            FinishFloatArray({0.0f, 0.2f, nan, 1.0f, 0.1f, 0.9f}),
+            FinishFloatArray({0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f}),
+        },
+        6);
+    const auto dataset = std::make_shared<cyxwiz::ArrowDataset>(table, "non_finite_loss");
+    for (const bool regression : {false, true}) {
+        auto config = MakeConfig(work_dir / (regression ? "non-finite-regression" : "non-finite-classification"));
+        config.train_ratio = 1.0f;
+        config.val_ratio = 0.0f;
+        config.test_ratio = 0.0f;
+        config.has_data_split = true;
+        config.batch_size = 2;
+        config.log_interval = 0;
+        if (regression) {
+            config.loss_type = gui::NodeType::MSELoss;
+            config.output_size = 1;
+            config.layers.front().units = 1;
+        }
+        cyxwiz::TrainingExecutor executor(config, dataset, "label");
+        std::string error;
+        try {
+            executor.Train(1, config.batch_size, nullptr, nullptr, nullptr);
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+        Check(error.find("loss became NaN") != std::string::npos,
+              std::string(regression ? "regression" : "classification") +
+                  ": a NaN loss fails the run with the reason (got: '" + error + "')");
+    }
 }
 
 void TestUnevenFinalBatchMetricAggregation(
@@ -4849,6 +4896,7 @@ int main(int argc, char** argv) {
     TestSequenceLifecycleCadence(work_dir);
     TestMetricReportingCadenceInvariance(dataset, work_dir);
     TestUnevenFinalBatchMetricAggregation(work_dir);
+    TestNonFiniteLossFailsTheRun(work_dir);
     const auto training_core_fixture = LoadTrainingCoreFixture(
         argc > 0 ? fs::path(argv[0]) : fs::path{});
     TestGradientAccumulationPyTorchParity(

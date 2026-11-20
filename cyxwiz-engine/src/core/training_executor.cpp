@@ -3478,6 +3478,21 @@ void TrainingExecutor::RunTrainingEpochArrow(
             }
         }
 
+        // A NaN or infinite loss fails the run, before the optimizer step, as
+        // the sequence loop does (TOFIX223 0.6). The classification loss is
+        // summed on the device and read on the report interval (always on an
+        // epoch's last batch), so it is checked there: no extra device sync.
+        if (regression_metrics || should_report) {
+            const float checked_loss = regression_metrics ? batch_loss : current_loss;
+            if (!std::isfinite(checked_loss)) {
+                throw std::runtime_error("the training loss became " +
+                                         std::string(std::isnan(checked_loss) ? "NaN" : "infinite") +
+                                         " at epoch " + std::to_string(epoch) + ", batch " +
+                                         std::to_string(batch_num) +
+                                         " (a learning rate too high, or NaN / infinite values in the data)");
+            }
+        }
+
         // Update metrics
         const float current_mae = regression.Mae();
         const float current_rmse = regression.Rmse();
@@ -3659,6 +3674,13 @@ ObjectiveEvaluationMetrics TrainingExecutor::EvaluateArrowBatcher(
                 ? &device_loss_weight_sum
                 : nullptr,
             "TrainingExecutor::ReadValidationLoss");
+    }
+    if (batch_num > 0 && !std::isfinite(final_loss)) {
+        // As the sequence evaluation does: early stopping and the best model
+        // cannot use a NaN or infinite loss (TOFIX223 0.6).
+        throw std::runtime_error("the evaluation loss became " +
+                                 std::string(std::isnan(final_loss) ? "NaN" : "infinite") +
+                                 " (NaN / infinite values in the evaluation data, or a diverged model)");
     }
     float final_acc = total > 0 ? static_cast<float>(correct) / total : 0.0f;
 
