@@ -1461,6 +1461,38 @@ int main(int argc, char** argv) {
               all_external_build.batchers.num_test_samples == 4,
           "Train+Dev+Test typed partitions must preserve every external role in full");
 
+    // A regression graph's supplied Validation (Arrow) and Test (Parquet)
+    // tables read their targets as Train does: the label values themselves,
+    // not one-hot classes (TOFIX223 0.5). The tables' labels are 0, 1, 0, 1;
+    // a one-hot read of width 1 would give 1, 0, 1, 0.
+    {
+        auto regression_config = all_external_config;
+        regression_config.loss_type = gui::NodeType::MSELoss;
+        regression_config.output_size = 1;
+        auto regression_build = cyxwiz::BuildResolvedTabularTrainingBatchers(
+            regression_config, all_external_datasets, /*batch_size=*/4);
+        Check(regression_build.ok(), regression_build.error_message);
+        const auto targets_of = [](cyxwiz::IBatcher* batcher) {
+            std::vector<float> values;
+            if (!batcher) return values;
+            batcher->Reset();
+            while (!batcher->IsEpochComplete()) {
+                const cyxwiz::Batch batch = batcher->GetNextBatch();
+                if (batch.size == 0) break;
+                const float* labels = batch.labels.ReadData<float>();
+                values.insert(values.end(), labels, labels + batch.labels.NumElements());
+            }
+            return values;
+        };
+        const std::vector<float> expected = {0.0f, 1.0f, 0.0f, 1.0f};
+        Check(targets_of(regression_build.batchers.train) == expected,
+              "regression Train role reads the label values as targets");
+        Check(targets_of(regression_build.batchers.val) == expected,
+              "regression supplied Validation role reads the label values, as Train does");
+        Check(targets_of(regression_build.batchers.test) == expected,
+              "regression supplied Test role (Parquet) reads the label values, as Train does");
+    }
+
     auto sparse_config = MakeConfig();
     sparse_config.has_data_split = true;
     sparse_config.train_ratio = 2.0f / 3.0f;

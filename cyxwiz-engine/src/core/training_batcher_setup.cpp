@@ -103,6 +103,37 @@ bool RequiresClassIndexTargets(const TrainingConfiguration& config) {
     return has_weights || config.loss_params.contains("ignore_index");
 }
 
+// The target form and normalization of one role's batcher: the split's train,
+// validation and test batchers and a supplied Validation / Test table all come
+// through here, so every role reads labels the way Train does (TOFIX223 0.5:
+// supplied roles once tested is_time_series instead of the continuous target,
+// so a regression graph's supplied roles got one-hot class labels).
+template <typename BatcherT>
+void ApplyRoleTargetTransform(const TrainingConfiguration& config, const std::string& label_column,
+                              BatcherT& batcher) {
+    const bool continuous_target = UsesContinuousTargetMetrics(config);
+    if (continuous_target) {
+        const size_t target_width =
+            config.target.width > 0
+                ? config.target.width
+                : (config.is_time_series ? config.time_series_target_width
+                                         : std::max<size_t>(1, config.output_size));
+        batcher.SetRegressionTargetWidth(target_width, label_column);
+    }
+    if (config.preprocessing.has_normalization) {
+        batcher.SetNormalization(config.preprocessing.norm_mean, config.preprocessing.norm_std);
+    }
+    if (continuous_target || UsesScalarBinaryTargets(config.loss_type)) {
+        batcher.SetScalarLabelMode(true);
+    } else if (RequiresClassIndexTargets(config)) {
+        batcher.SetClassIndexLabelMode(true);
+    } else if (config.preprocessing.has_onehot) {
+        batcher.SetOneHotEncoding(config.preprocessing.num_classes);
+    } else {
+        batcher.SetOneHotEncoding(config.output_size);
+    }
+}
+
 std::vector<int64_t> TrainRowsFromPartition(
     const std::shared_ptr<arrow::Table>& table,
     const std::string& partition_column) {
@@ -463,50 +494,11 @@ TrainingBatcherSet BuildArrowTrainingBatchers(
     result.arrow_val->ExcludeFeatureColumns(config.excluded_feature_columns);
     result.arrow_test->ExcludeFeatureColumns(config.excluded_feature_columns);
 
-    if (continuous_target) {
-        const size_t target_width =
-            config.target.width > 0
-                ? config.target.width
-                : (config.is_time_series
-                       ? config.time_series_target_width
-                       : std::max<size_t>(1, config.output_size));
-        result.arrow_train->SetRegressionTargetWidth(
-            target_width, effective_label);
-        result.arrow_val->SetRegressionTargetWidth(
-            target_width, effective_label);
-        result.arrow_test->SetRegressionTargetWidth(
-            target_width, effective_label);
-    }
-
     if (config.drop_last) {
         result.arrow_train->SetDropLast(true);
     }
-    if (config.preprocessing.has_normalization) {
-        result.arrow_train->SetNormalization(config.preprocessing.norm_mean,
-                                             config.preprocessing.norm_std);
-        result.arrow_val->SetNormalization(config.preprocessing.norm_mean,
-                                           config.preprocessing.norm_std);
-        result.arrow_test->SetNormalization(config.preprocessing.norm_mean,
-                                            config.preprocessing.norm_std);
-    }
-
-    if (continuous_target || UsesScalarBinaryTargets(config.loss_type)) {
-        result.arrow_train->SetScalarLabelMode(true);
-        result.arrow_val->SetScalarLabelMode(true);
-        result.arrow_test->SetScalarLabelMode(true);
-    } else if (RequiresClassIndexTargets(config)) {
-        result.arrow_train->SetClassIndexLabelMode(true);
-        result.arrow_val->SetClassIndexLabelMode(true);
-        result.arrow_test->SetClassIndexLabelMode(true);
-    } else if (config.preprocessing.has_onehot) {
-        result.arrow_train->SetOneHotEncoding(config.preprocessing.num_classes);
-        result.arrow_val->SetOneHotEncoding(config.preprocessing.num_classes);
-        result.arrow_test->SetOneHotEncoding(config.preprocessing.num_classes);
-    } else {
-        result.arrow_train->SetOneHotEncoding(config.output_size);
-        result.arrow_val->SetOneHotEncoding(config.output_size);
-        result.arrow_test->SetOneHotEncoding(config.output_size);
-    }
+    for (auto* batcher : {result.arrow_train.get(), result.arrow_val.get(), result.arrow_test.get()})
+        ApplyRoleTargetTransform(config, effective_label, *batcher);
 
     // A stratified or time-series split marks each row's partition instead.
     if (partition_col.empty() && HoldoutIsTestOnly(config)) std::swap(result.arrow_val, result.arrow_test);
@@ -626,50 +618,11 @@ TrainingBatcherSet BuildParquetTrainingBatchers(
         result.parquet_train->SetClassBalancing(config.balance_mode, config.balance_target,
                                                 static_cast<uint32_t>(std::max(0, config.balance_seed)));
 
-    if (continuous_target) {
-        const size_t target_width =
-            config.target.width > 0
-                ? config.target.width
-                : (config.is_time_series
-                       ? config.time_series_target_width
-                       : std::max<size_t>(1, config.output_size));
-        result.parquet_train->SetRegressionTargetWidth(
-            target_width, effective_label);
-        result.parquet_val->SetRegressionTargetWidth(
-            target_width, effective_label);
-        result.parquet_test->SetRegressionTargetWidth(
-            target_width, effective_label);
-    }
-
     if (config.drop_last) {
         result.parquet_train->SetDropLast(true);
     }
-    if (config.preprocessing.has_normalization) {
-        result.parquet_train->SetNormalization(config.preprocessing.norm_mean,
-                                               config.preprocessing.norm_std);
-        result.parquet_val->SetNormalization(config.preprocessing.norm_mean,
-                                             config.preprocessing.norm_std);
-        result.parquet_test->SetNormalization(config.preprocessing.norm_mean,
-                                              config.preprocessing.norm_std);
-    }
-
-    if (continuous_target || UsesScalarBinaryTargets(config.loss_type)) {
-        result.parquet_train->SetScalarLabelMode(true);
-        result.parquet_val->SetScalarLabelMode(true);
-        result.parquet_test->SetScalarLabelMode(true);
-    } else if (RequiresClassIndexTargets(config)) {
-        result.parquet_train->SetClassIndexLabelMode(true);
-        result.parquet_val->SetClassIndexLabelMode(true);
-        result.parquet_test->SetClassIndexLabelMode(true);
-    } else if (config.preprocessing.has_onehot) {
-        result.parquet_train->SetOneHotEncoding(config.preprocessing.num_classes);
-        result.parquet_val->SetOneHotEncoding(config.preprocessing.num_classes);
-        result.parquet_test->SetOneHotEncoding(config.preprocessing.num_classes);
-    } else {
-        result.parquet_train->SetOneHotEncoding(config.output_size);
-        result.parquet_val->SetOneHotEncoding(config.output_size);
-        result.parquet_test->SetOneHotEncoding(config.output_size);
-    }
+    for (auto* batcher : {result.parquet_train.get(), result.parquet_val.get(), result.parquet_test.get()})
+        ApplyRoleTargetTransform(config, effective_label, *batcher);
 
     // A stratified split gives every share its rows; a time series has its partitions.
     if (partition_col.empty() && !(config.stratified && !continuous_target) && !UsesSharedSplitRule(config) &&
@@ -842,33 +795,18 @@ ResolvedTabularBatcherBuildResult BuildResolvedTabularTrainingBatchers(
         result.batchers.test = result.batchers.parquet_test.get();
     }
 
-    const auto apply_role_transforms = [&](IBatcher* batcher) {
-        if (!batcher) return;
-        if (config.preprocessing.has_normalization) {
-            batcher->SetNormalization(config.preprocessing.norm_mean,
-                                      config.preprocessing.norm_std);
-        }
-        if (config.is_time_series || UsesScalarBinaryTargets(config.loss_type)) {
-            if (auto* arrow_batcher =
-                    dynamic_cast<ArrowDatasetBatcher*>(batcher)) {
-                arrow_batcher->SetScalarLabelMode(true);
-            } else if (auto* parquet_batcher =
-                           dynamic_cast<ParquetArrowBatcher*>(batcher)) {
-                parquet_batcher->SetScalarLabelMode(true);
-            }
-        } else if (RequiresClassIndexTargets(config)) {
-            batcher->SetClassIndexLabelMode(true);
-        } else if (config.preprocessing.has_onehot) {
-            batcher->SetOneHotEncoding(config.preprocessing.num_classes);
-        } else {
-            batcher->SetOneHotEncoding(config.output_size);
-        }
+    // A supplied table gets the same target form as Train.
+    const auto apply_role_transforms = [&](const std::unique_ptr<ArrowDatasetBatcher>& arrow,
+                                           const std::unique_ptr<ParquetArrowBatcher>& parquet,
+                                           const std::string& label_column) {
+        if (arrow) ApplyRoleTargetTransform(config, label_column, *arrow);
+        else if (parquet) ApplyRoleTargetTransform(config, label_column, *parquet);
     };
-    if (partitions.dev.IsSupplied()) {
-        apply_role_transforms(result.batchers.val);
+    if (partitions.dev.IsSupplied() && result.batchers.val) {
+        apply_role_transforms(result.batchers.arrow_val, result.batchers.parquet_val, partitions.dev.label_column);
     }
-    if (partitions.test.IsSupplied()) {
-        apply_role_transforms(result.batchers.test);
+    if (partitions.test.IsSupplied() && result.batchers.test) {
+        apply_role_transforms(result.batchers.arrow_test, result.batchers.parquet_test, partitions.test.label_column);
     }
 
     result.batchers.num_train_samples = result.batchers.train
