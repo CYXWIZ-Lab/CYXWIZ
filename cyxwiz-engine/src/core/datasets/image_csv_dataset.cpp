@@ -6,6 +6,10 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -134,9 +138,16 @@ void ImageCSVDataset::LoadFromCSV() {
     if (std::getline(file, line)) {
         std::vector<std::string> first_row = ParseCSVLine(line);
 
-        // Check if first line looks like a header
+        // Check if first line looks like a header. A row that names an image
+        // file is data whatever words its cells hold ("image_001.jpg,cat"
+        // has "image" in it; TOFIX223 0.11).
         bool likely_header = false;
+        bool names_an_image = false;
         for (const auto& cell : first_row) {
+            if (image_formats::IsImageExtension(fs::path(cell).extension().string())) names_an_image = true;
+        }
+        for (const auto& cell : first_row) {
+            if (names_an_image) break;
             std::string lower = cell;
             std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
@@ -149,17 +160,12 @@ void ImageCSVDataset::LoadFromCSV() {
                 break;
             }
 
-            // Suffix matches
-            if (lower.length() > 3) {
-                if (lower.substr(lower.length() - 3) == "_id" ||
-                    lower.substr(lower.length() - 5 > 0 ? lower.length() - 5 : 0) == "_name" ||
-                    lower.substr(lower.length() - 5 > 0 ? lower.length() - 5 : 0) == "_path" ||
-                    lower.substr(lower.length() - 5 > 0 ? lower.length() - 5 : 0) == "_file" ||
-                    lower.substr(lower.length() - 6 > 0 ? lower.length() - 6 : 0) == "_class" ||
-                    lower.substr(lower.length() - 6 > 0 ? lower.length() - 6 : 0) == "_label") {
-                    likely_header = true;
-                    break;
-                }
+            // Suffix matches (ends_with: the old size_t arithmetic threw on a
+            // 4- or 5-character cell such as "0001", so the CSV did not load)
+            if (lower.ends_with("_id") || lower.ends_with("_name") || lower.ends_with("_path") ||
+                lower.ends_with("_file") || lower.ends_with("_class") || lower.ends_with("_label")) {
+                likely_header = true;
+                break;
             }
 
             // Substring matches
@@ -193,17 +199,33 @@ void ImageCSVDataset::LoadFromCSV() {
             }
         }
 
+        // Columns the user named are looked up in the first row, which is
+        // then the header whatever its words.
+        for (const auto& cell : first_row) {
+            if ((!filename_col_.empty() && cell == filename_col_) || (!label_col_.empty() && cell == label_col_))
+                likely_header = true;
+        }
+        if (!likely_header && (!filename_col_.empty() || !label_col_.empty())) {
+            throw std::runtime_error("Labels CSV '" + csv_path_ + "': columns were named (" + filename_col_ +
+                                     (filename_col_.empty() || label_col_.empty() ? "" : ", ") + label_col_ +
+                                     ") but the first row is not a header with those names");
+        }
+
         if (likely_header) {
             headers = first_row;
 
-            // Find column indices
+            // Find column indices. A column the user named must be there:
+            // falling back to column 0 or 1 would read another column.
+            const auto require_column = [&](const std::string& wanted, const char* what) {
+                for (size_t i = 0; i < headers.size(); i++)
+                    if (headers[i] == wanted) return static_cast<int>(i);
+                std::string have;
+                for (const auto& h : headers) have += (have.empty() ? "" : ", ") + h;
+                throw std::runtime_error("Labels CSV '" + csv_path_ + "': the " + what + " column '" + wanted +
+                                         "' is not in the header (" + have + ")");
+            };
             if (!filename_col_.empty()) {
-                for (size_t i = 0; i < headers.size(); i++) {
-                    if (headers[i] == filename_col_) {
-                        filename_idx = static_cast<int>(i);
-                        break;
-                    }
-                }
+                filename_idx = require_column(filename_col_, "file name");
             } else {
                 // Auto-detect filename column
                 std::vector<std::string> filename_priorities = {
@@ -227,12 +249,7 @@ void ImageCSVDataset::LoadFromCSV() {
             }
 
             if (!label_col_.empty()) {
-                for (size_t i = 0; i < headers.size(); i++) {
-                    if (headers[i] == label_col_) {
-                        label_idx = static_cast<int>(i);
-                        break;
-                    }
-                }
+                label_idx = require_column(label_col_, "label");
             } else {
                 // Auto-detect label column
                 std::vector<std::string> label_priorities = {
@@ -297,50 +314,61 @@ void ImageCSVDataset::LoadFromCSV() {
     SortClassNames(class_names_);
     for (size_t i = 0; i < class_names_.size(); ++i) label_map[class_names_[i]] = static_cast<int>(i);
 
-    // Build filename -> full path map by scanning folder
-    std::map<std::string, std::string> filename_to_path;
+    // Every image file in the folder tree under its file name and its stem,
+    // for rows that give a bare name. A name can belong to several files
+    // (train/0001.jpg and test/0001.jpg; a.jpg and a.png share the stem "a").
+    std::map<std::string, std::vector<std::string>> paths_by_name;
+    size_t scanned = 0;
     auto scan_dir = [&](const fs::path& dir, auto& self) -> void {
         for (const auto& entry : fs::directory_iterator(dir)) {
             if (entry.is_directory()) {
                 self(entry.path(), self);
             } else if (entry.is_regular_file()) {
                 if (image_formats::IsImageExtension(entry.path().extension().string())) {
-                    std::string full_path = entry.path().string();
-                    std::string stem = entry.path().stem().string();
-                    std::string name_with_ext = entry.path().filename().string();
-
-                    filename_to_path[stem] = full_path;
-                    filename_to_path[name_with_ext] = full_path;
+                    const std::string full_path = entry.path().string();
+                    paths_by_name[entry.path().stem().string()].push_back(full_path);
+                    paths_by_name[entry.path().filename().string()].push_back(full_path);
+                    ++scanned;
                 }
             }
         }
     };
     scan_dir(image_folder_, scan_dir);
 
-    spdlog::info("ImageDataset: Scanned {} image files in folder tree", filename_to_path.size() / 2);
+    spdlog::info("ImageDataset: Scanned {} image files in folder tree", scanned);
 
-    // Process each row
+    // A row is resolved as a path relative to the image folder first (with
+    // or without its extension), then by its bare name when exactly one file
+    // has that name. A bare name that fits several files is an error: picking
+    // one would attach the label to another picture (TOFIX223 0.11: the
+    // name map once kept whichever file the folder listing gave last).
+    std::vector<std::string> ambiguous;
     for (const auto& [filename, label_str] : raw_data) {
         std::string resolved_path;
 
-        // Try direct lookup
-        auto it = filename_to_path.find(filename);
-        if (it != filename_to_path.end()) {
-            resolved_path = it->second;
+        const fs::path image_path = fs::path(image_folder_) / filename;
+        if (fs::is_regular_file(image_path)) {
+            resolved_path = image_path.string();
         } else {
-            // Try direct path
-            fs::path image_path = fs::path(image_folder_) / filename;
-            if (fs::exists(image_path)) {
-                resolved_path = image_path.string();
-            } else {
-                // Try adding extensions
-                for (const auto ext : image_formats::kExtensions) {
-                    fs::path test_path = fs::path(image_folder_) / (filename + std::string(ext));
-                    if (fs::exists(test_path)) {
-                        resolved_path = test_path.string();
-                        break;
-                    }
+            for (const auto ext : image_formats::kExtensions) {
+                const fs::path test_path = fs::path(image_folder_) / (filename + std::string(ext));
+                if (fs::is_regular_file(test_path)) {
+                    resolved_path = test_path.string();
+                    break;
                 }
+            }
+        }
+        if (resolved_path.empty()) {
+            const auto it = paths_by_name.find(filename);
+            if (it != paths_by_name.end() && it->second.size() == 1) {
+                resolved_path = it->second.front();
+            } else if (it != paths_by_name.end()) {
+                std::string where;
+                for (size_t i = 0; i < it->second.size() && i < 3; ++i)
+                    where += (i ? ", " : "") + fs::relative(it->second[i], image_folder_).generic_string();
+                if (it->second.size() > 3) where += ", ...";
+                ambiguous.push_back("'" + filename + "' (" + where + ")");
+                continue;
             }
         }
 
@@ -351,6 +379,13 @@ void ImageCSVDataset::LoadFromCSV() {
 
         image_paths_.push_back(resolved_path);
         labels_.push_back(label_map[label_str]);
+    }
+    if (!ambiguous.empty()) {
+        std::string examples;
+        for (size_t i = 0; i < ambiguous.size() && i < 3; ++i) examples += (i ? "; " : "") + ambiguous[i];
+        throw std::runtime_error("Labels CSV '" + csv_path_ + "': " + std::to_string(ambiguous.size()) +
+                                 " row(s) name a file that exists in more than one place, e.g. " + examples +
+                                 ". Write each file's path relative to the image folder in the CSV.");
     }
 }
 

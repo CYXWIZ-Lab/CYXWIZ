@@ -489,6 +489,64 @@ void CheckClassOrder(const fs::path& root) {
           "numbered class folders sort as numbers");
 }
 
+// How a labels CSV row finds its file (TOFIX223 0.11): a path relative to the
+// image folder first, a bare name only when one file has it; a bare name that
+// fits two files is refused, never resolved to either. A headerless CSV whose
+// first row names an image or has a 4-character cell loads all its rows.
+void CheckLabelsCsvRows(const fs::path& root) {
+    const fs::path dir = root / "csv_rows";
+    fs::remove_all(dir);
+    Write(dir / "train" / "0001.png", Gradient(8, 8, CV_8UC3, 1));
+    Write(dir / "test" / "0001.png", Gradient(8, 8, CV_8UC3, 2));
+    Write(dir / "image_002.png", Gradient(8, 8, CV_8UC3, 3));
+    Write(dir / "image_003.png", Gradient(8, 8, CV_8UC3, 4));
+    Write(dir / "unique" / "0009.png", Gradient(8, 8, CV_8UC3, 5));
+    const auto list = [&](const std::string& name, const std::string& text) {
+        {
+            std::ofstream csv(dir / name, std::ios::binary);
+            csv << text;
+        }
+        DataRegistry::ImageDatasetEntry entry;
+        entry.folder_path = dir.string();
+        entry.labels_csv = (dir / name).string();
+        entry.layout = 1;
+        return ListImageSet(entry);
+    };
+    const auto same_file = [](const std::string& a, const fs::path& b) {
+        std::error_code ec;
+        return fs::equivalent(a, b, ec);
+    };
+
+    // Two files named 0001.png: a bare name is refused with both places.
+    bool refused = false;
+    try {
+        (void)list("bare.csv", "file,label\n0001.png,cat\n");
+    } catch (const std::runtime_error& e) {
+        const std::string what = e.what();
+        refused = what.find("more than one place") != std::string::npos &&
+                  what.find("train/0001.png") != std::string::npos && what.find("test/0001.png") != std::string::npos;
+    }
+    Check(refused, "a bare name that two files have is refused, naming both");
+
+    // Paths relative to the folder pick each file (headerless: the first row names an image).
+    const auto relative = list("relative.csv", "train/0001.png,cat\ntest/0001.png,dog\n");
+    Check(relative.files.size() == 2 && same_file(relative.files[0], dir / "train" / "0001.png") &&
+              same_file(relative.files[1], dir / "test" / "0001.png"),
+          "relative paths resolve to their own files");
+    Check(relative.labels == std::vector<int>({0, 1}), "relative paths keep their labels (cat 0, dog 1)");
+
+    // A headerless first row with "image" in it is data, not a header.
+    const auto imagey = list("imagey.csv", "image_002.png,cat\nimage_003.png,dog\n");
+    Check(imagey.files.size() == 2, "a headerless first row naming an image is a data row (got " +
+                                        std::to_string(imagey.files.size()) + " rows)");
+
+    // A 4-character first cell (no extension, unique name in a sub-folder) loads.
+    const auto short_cell = list("short.csv", "0009,cat\n");
+    Check(short_cell.files.size() == 1 && same_file(short_cell.files[0], dir / "unique" / "0009.png"),
+          "a headerless CSV with a 4-character first cell loads and finds the unique file");
+    fs::remove_all(dir);
+}
+
 }  // namespace
 
 int main() {
@@ -543,6 +601,7 @@ int main() {
     csv.labels_csv = (root / "labels.csv").string();
     csv.layout = 1;
     CheckSet(csv, "labels CSV");
+    CheckLabelsCsvRows(root);
 
     CheckClassOrder(root);
     CheckChannelStats(folders);
