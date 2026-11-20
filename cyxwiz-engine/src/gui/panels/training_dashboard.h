@@ -105,6 +105,9 @@ private:
     void RenderWatch();  // Watch progress (a PPO run)
     void RenderCharts();
     void RenderMetric(const std::string& name, float height);
+    // A chart's options, the same on the dashboard and in its own window:
+    // its series colour and, for the return of a run with a target, the target line
+    plot::PlotView::Options MetricOptions(const std::string& name) const;
     void RunPendingExport();
     void Push(const std::string& name, double value, double steps);
 

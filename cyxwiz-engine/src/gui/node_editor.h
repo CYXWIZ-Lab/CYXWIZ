@@ -1582,6 +1582,7 @@ private:
     // .cyxmodel (rl_policy_file_: its file name; empty for the run's)
     std::shared_ptr<cyxwiz::rl::TrainedPolicy> rl_policy_;
     std::string rl_policy_file_;
+    bool rl_policy_from_run_ = false;  // the policy is the last run's (not an earlier run's or a file's)
     std::string rl_policy_message_;  // the last Save / Load outcome, for Properties
     std::unique_ptr<cyxwiz::PolicyPlaybackPanel> rl_playback_;
 

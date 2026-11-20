@@ -1534,7 +1534,7 @@ void PlotView::DrawPlot(ImVec2 size) {
         const ImU32 colour = ui::ToU32(ui::WithAlpha(t.text_dim, 0.9f));
         ImPlot::PushPlotClipRect();
         for (const auto& line : y_lines_) {
-            if (!std::isfinite(line.value) || (p.spec.log_y && line.value <= 0.0)) continue;
+            if (!std::isfinite(line.value) || (log_y_ && line.value <= 0.0)) continue;
             const double fx = p.series.front().x.front(), fy = line.value;
             ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 0.0f, ImVec4(0, 0, 0, 0), 0.0f, ImVec4(0, 0, 0, 0));
             ImPlot::PlotScatter(("##yline_" + line.label).c_str(), &fx, &fy, 1, ImPlotItemFlags_NoLegend);

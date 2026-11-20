@@ -1,7 +1,7 @@
 #pragma once
 
 // What the RL surfaces say about the device a PPO run trains on (TOFIX206,
-// mockup W1-W4): the dashboard's device chip and note, the toolbar's word,
+// mockup W1-W4): the device's route and the dashboard's note, the toolbar's word,
 // the playback line, and Compile's advice for small networks on a GPU.
 // Pure data in and out (no ImGui, no ArrayFire).
 
@@ -26,12 +26,9 @@ struct RunDevice {
 // "arrayfire_cuda" -> "CUDA"; CPU, OpenCL, oneAPI; unknown names as given
 std::string BackendWord(const std::string& backend);
 
-struct Chip {
-    std::string text;     // "CUDA · GeForce GTX 1050 Ti", "CPU · fallback"
-    std::string tooltip;  // the full route and policy, or the fallback's reason
-    bool fallback = false;
-};
-Chip DeviceChip(const RunDevice& device);
+// The full route and policy ("arrayfire_cpu device 0 · Intel · policy
+// Compatibility"), or the fallback's reason; empty before preflight
+std::string DeviceRoute(const RunDevice& device);
 
 // The toolbar line's end: " · CPU", " · CPU (fallback)"; empty before preflight
 std::string ToolbarSuffix(const RunDevice& device);

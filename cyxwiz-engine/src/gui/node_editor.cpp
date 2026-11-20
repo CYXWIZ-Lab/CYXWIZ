@@ -4330,6 +4330,7 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     const auto& c = *config;
     if (!rl_run_->Start(config, GetGraphJson(), error)) return false;
     rl_run_reported_ = false;
+    rl_policy_from_run_ = false;
     rl_status_ = "PPO starting";
     rl_device_suffix_.clear();
     rl_device_tooltip_.clear();
@@ -4352,7 +4353,8 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
     controls.stop = [run]() { run->Stop(); };
     controls.paused = [run]() { return run->Paused(); };
     controls.waiting = [run]() { return !run->Waiting().empty(); };
-    controls.has_policy = [this]() { return rl_policy_ != nullptr && rl_policy_file_.empty(); };
+    // Only a policy this run trained: one kept from an earlier run or a file is not offered as its own
+    controls.has_policy = [this]() { return rl_policy_ != nullptr && rl_policy_file_.empty() && rl_policy_from_run_; };
     controls.play = [this]() {
         std::string why;
         if (!PlayRLPolicy(why)) spdlog::error("Play policy: {}", why);
@@ -4434,13 +4436,12 @@ void NodeEditor::PollRLTraining() {
             device.fallback = context.selection_fallback_applied;
             device.error = context.error;
             const auto& c = *rl_run_->Config();
-            const auto chip = cyxwiz::rl_device::DeviceChip(device);
             rl_dashboard_->SetPpoDevice(device, cyxwiz::rl_device::DashboardNote(device, cyxwiz::HiddenUnits(c.policy_layers),
                                                                                 cyxwiz::HiddenUnits(c.value_layers),
                                                                                 rl_compute_path_));
             rl_run_device_ = device;
             rl_device_suffix_ = cyxwiz::rl_device::ToolbarSuffix(device);
-            rl_device_tooltip_ = chip.tooltip;
+            rl_device_tooltip_ = cyxwiz::rl_device::DeviceRoute(device);
             if (rl_status_ == "PPO starting" || rl_status_ == "PPO waiting for the GPU")
                 rl_status_ = "PPO starting" + rl_device_suffix_;
         }
@@ -4478,6 +4479,7 @@ void NodeEditor::PollRLTraining() {
     // The run's policy replaces the one kept (TOFIX195 S5)
     if (auto trained = rl_run_->Trained()) {
         rl_policy_ = std::move(trained);
+        rl_policy_from_run_ = true;
         rl_policy_file_.clear();
         rl_policy_message_.clear();
         if (cyxwiz::core::EngineConfig::Instance().PlayPolicyAfterTraining()) {

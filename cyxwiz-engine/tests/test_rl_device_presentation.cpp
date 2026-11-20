@@ -1,5 +1,5 @@
 // What the RL surfaces say about a PPO run's device (TOFIX206): the
-// dashboard chip and note, the toolbar word, Compile's small-network advice.
+// device route and dashboard note, the toolbar word, Compile's small-network advice.
 #include "../src/core/rl_device_presentation.h"
 
 #include <cstdio>
@@ -36,11 +36,11 @@ RunDevice Cuda() {
     return d;
 }
 
-void CheckChipAndToolbar() {
-    const Chip cpu = DeviceChip(Cpu());
-    Check(cpu.text == "CPU \xC2\xB7 Intel" && !cpu.fallback, "CPU chip: " + cpu.text);
-    Check(cpu.tooltip == "arrayfire_cpu device 0 \xC2\xB7 Intel \xC2\xB7 policy Strict", "CPU route: " + cpu.tooltip);
-    Check(DeviceChip(Cuda()).text == "CUDA \xC2\xB7 GeForce GTX 1050 Ti", "CUDA chip");
+void CheckRouteAndToolbar() {
+    const std::string cpu = DeviceRoute(Cpu());
+    Check(cpu == "arrayfire_cpu device 0 \xC2\xB7 Intel \xC2\xB7 policy Strict", "CPU route: " + cpu);
+    Check(DeviceRoute(Cuda()) == "arrayfire_cuda device 0 \xC2\xB7 GeForce GTX 1050 Ti \xC2\xB7 policy Compatibility",
+          "CUDA route");
     Check(ToolbarSuffix(Cuda()) == " \xC2\xB7 CUDA", "toolbar word");
 
     RunDevice fb = Cpu();
@@ -48,15 +48,14 @@ void CheckChipAndToolbar() {
     fb.policy = "compatibility";
     fb.fallback = true;
     fb.error = "not in the current inventory";
-    const Chip chip = DeviceChip(fb);
-    Check(chip.fallback && chip.text == "CPU \xC2\xB7 fallback", "fallback chip: " + chip.text);
-    Check(chip.tooltip.find("The chosen CUDA device 0 failed its check (not in the current inventory)") == 0,
-          "the fallback's reason: " + chip.tooltip);
+    const std::string route = DeviceRoute(fb);
+    Check(route.find("The chosen CUDA device 0 failed its check (not in the current inventory)") == 0,
+          "the fallback's reason: " + route);
     Check(ToolbarSuffix(fb) == " \xC2\xB7 CPU (fallback)", "toolbar fallback word");
     Check(DashboardNote(fb, {64, 64}, {64, 64}, "").find("Strict would have refused") != std::string::npos,
           "the dashboard explains the fallback (at once)");
 
-    Check(DeviceChip(RunDevice{}).text.empty() && ToolbarSuffix(RunDevice{}).empty(), "nothing before preflight");
+    Check(DeviceRoute(RunDevice{}).empty() && ToolbarSuffix(RunDevice{}).empty(), "nothing before preflight");
     Check(BackendWord("arrayfire_opencl") == "OpenCL" && BackendWord("arrayfire_oneapi") == "oneAPI", "backend words");
 }
 
@@ -85,7 +84,7 @@ void CheckAdvice() {
 }  // namespace
 
 int main() {
-    CheckChipAndToolbar();
+    CheckRouteAndToolbar();
     CheckAdvice();
     if (failures == 0) std::printf("test_rl_device_presentation: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

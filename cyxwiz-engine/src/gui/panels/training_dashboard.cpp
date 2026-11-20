@@ -235,7 +235,7 @@ rd::RunFacts TrainingDashboardPanel::Facts() const {
     }
     const auto history = [this](const char* name) {
         const auto it = metrics_.find(name);
-        return it == metrics_.end() ? std::vector<double>{} : it->second.history;
+        return it == metrics_.end() ? std::span<const double>{} : std::span<const double>(it->second.history);
     };
     f.script_rewards = history("episode_reward");
     f.script_lengths = history("episode_length");
@@ -264,12 +264,7 @@ void TrainingDashboardPanel::Render() {
     ImGui::End();
 
     // Charts opened in their own windows keep the wheel zoom.
-    for (const auto& name : order_) {
-        auto& m = metrics_[name];
-        plot::PlotView::Options o;
-        o.export_name = name;
-        m.view->DrawOwnWindow(o);
-    }
+    for (const auto& name : order_) metrics_[name].view->DrawOwnWindow(MetricOptions(name));
     RunPendingExport();
 }
 
@@ -545,15 +540,23 @@ void TrainingDashboardPanel::RenderMetric(const std::string& name, float height)
         ui::FontScope medium(ui::Font::Medium);
         ImGui::TextUnformatted(label.c_str());
     }
+    plot::PlotView::Options o = MetricOptions(name);
+    // The wheel scrolls the dashboard; Ctrl + wheel zooms the chart (B4-10)
+    o.zoom_with_ctrl = true;
+    m.view->Draw(ImVec2(0, height), o);
+}
+
+plot::PlotView::Options TrainingDashboardPanel::MetricOptions(const std::string& name) const {
     plot::PlotView::Options o;
     o.export_name = name;
     // The series colour by registration order (return violet, length sky...).
     o.colour_offset = static_cast<size_t>(std::find(order_.begin(), order_.end(), name) - order_.begin());
-    // The wheel scrolls the dashboard; Ctrl + wheel zooms the chart (B4-10)
-    o.zoom_with_ctrl = true;
+    const auto it = metrics_.find(name);
+    const bool by_steps = it != metrics_.end() && !it->second.steps.empty() &&
+                          it->second.steps.size() == it->second.history.size();
     if (name == "episode_reward" && run_ && by_steps && std::isfinite(run_->target_return))
         o.y_lines.push_back({static_cast<double>(run_->target_return), TargetLabel(run_->target_return)});
-    m.view->Draw(ImVec2(0, height), o);
+    return o;
 }
 
 void TrainingDashboardPanel::RunPendingExport() {

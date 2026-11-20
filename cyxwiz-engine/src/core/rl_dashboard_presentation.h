@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -70,10 +71,11 @@ struct RunFacts {
     std::string device_note;   // rl_device::DashboardNote
     std::string reference_label;  // "SB3 2.7.1, 3 seeds"; empty: none for these settings
     std::optional<double> reference_now;  // the reference's return at the last update's step
-    std::vector<Update> updates;
+    // Views of the panel's own lists (read every frame, never copied)
+    std::span<const Update> updates;
 
     // A script's values (no PPO run)
-    std::vector<double> script_rewards, script_lengths, script_policy_losses;
+    std::span<const double> script_rewards, script_lengths, script_policy_losses;
     bool script_recent = false;  // a value arrived in the last few seconds
 };
 
@@ -116,12 +118,12 @@ std::vector<Card> BuildCards(const RunFacts& facts);
 
 // The time the updates took (each update's steps at its own speed), which
 // leaves out the time a run was paused or waited
-double TrainingSeconds(const std::vector<Update>& updates);
+double TrainingSeconds(std::span<const Update> updates);
 // "46.5 s", "23 s" (tenths under a minute, without ".0"), "1 m 55 s", "2 h 5 m"
 std::string Duration(double seconds);
 
 // Every update, one row each: steps, the returns, the losses, speed. Empty
 // cells where an update has no value.
-std::string UpdatesCsv(const std::vector<Update>& updates);
+std::string UpdatesCsv(std::span<const Update> updates);
 
 }  // namespace cyxwiz::rl_dashboard

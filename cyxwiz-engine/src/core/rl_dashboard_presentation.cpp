@@ -86,14 +86,14 @@ std::string WhereLine(const rl_device::RunDevice& d, bool ended) {
 }
 
 // The best finite value
-std::optional<double> Best(const std::vector<double>& v) {
+std::optional<double> Best(std::span<const double> v) {
     std::optional<double> best;
     for (double x : v)
         if (std::isfinite(x) && (!best || x > *best)) best = x;
     return best;
 }
 
-double Mean(const std::vector<double>& v) {
+double Mean(std::span<const double> v) {
     double s = 0;
     size_t n = 0;
     for (double x : v)
@@ -106,7 +106,7 @@ double Mean(const std::vector<double>& v) {
 
 }  // namespace
 
-double TrainingSeconds(const std::vector<Update>& updates) {
+double TrainingSeconds(std::span<const Update> updates) {
     double seconds = 0;
     double before = 0;
     for (const Update& u : updates) {
@@ -221,10 +221,7 @@ Header BuildHeader(const RunFacts& f) {
     if (ended && f.has_policy) h.policy_line = "Its policy: Play policy shows it, Save policy... keeps it as a .cyxmodel.";
 
     // Run details: the codes behind the lines above
-    if (f.device.valid) {
-        const auto chip = rl_device::DeviceChip(f.device);
-        h.details.push_back({"Device", chip.tooltip});
-    }
+    if (f.device.valid) h.details.push_back({"Device", rl_device::DeviceRoute(f.device)});
     if (!f.compute_path.empty()) h.details.push_back({"Computes as", f.compute_path});
     if (last && last->steps > 0) {
         const long long per_update = std::llround(f.updates.front().steps);
@@ -248,20 +245,19 @@ std::vector<Card> BuildCards(const RunFacts& f) {
     if (!f.ppo) {  // a script's values, as reported
         Card reward{"##kpi_reward", "Episode reward", kDash};
         reward.series = 0;
-        if (!f.script_rewards.empty()) {
+        if (!f.script_rewards.empty() && std::isfinite(f.script_rewards.back()))
             reward.value = Fixed(f.script_rewards.back(), 2);
-            reward.line2 = "best " + Fixed(*Best(f.script_rewards), 2) + kDot + "mean " + Fixed(Mean(f.script_rewards), 2);
-        }
+        if (const auto best = Best(f.script_rewards))
+            reward.line2 = "best " + Fixed(*best, 2) + kDot + "mean " + Fixed(Mean(f.script_rewards), 2);
         Card length{"##kpi_length", "Episode length", kDash};
         length.series = 1;
-        if (!f.script_lengths.empty()) {
+        if (!f.script_lengths.empty() && std::isfinite(f.script_lengths.back()))
             length.value = Fixed(f.script_lengths.back(), 0);
-            length.line2 = "mean " + Fixed(Mean(f.script_lengths), 0);
-        }
+        if (std::isfinite(Mean(f.script_lengths))) length.line2 = "mean " + Fixed(Mean(f.script_lengths), 0);
         Card policy{"##kpi_policy", "Policy loss", kDash};
         policy.series = 2;
         if (!f.script_policy_losses.empty()) {
-            policy.value = Fixed(f.script_policy_losses.back(), 4);
+            if (std::isfinite(f.script_policy_losses.back())) policy.value = Fixed(f.script_policy_losses.back(), 4);
             policy.line2 = Thousands(static_cast<double>(f.script_policy_losses.size())) + " reported";
         }
         cards = {reward, length, policy};
@@ -276,8 +272,9 @@ std::vector<Card> BuildCards(const RunFacts& f) {
     Card ret{"##kpi_return", "Mean return", kDash};
     ret.series = 0;
     ret.tooltip = "The mean return of the last 100 episodes, at the last update.";
-    std::vector<double> returns;
-    for (const Update& u : f.updates) returns.push_back(u.mean_return);
+    std::optional<double> best;
+    for (const Update& u : f.updates)
+        if (std::isfinite(u.mean_return) && (!best || u.mean_return > *best)) best = u.mean_return;
     if (last && std::isfinite(last->mean_return)) {
         ret.value = Fixed(last->mean_return, 1);
         const size_t i = f.updates.size() - 1;
@@ -288,7 +285,7 @@ std::vector<Card> BuildCards(const RunFacts& f) {
             ret.direction = change > 0 ? 1 : change < 0 ? -1 : 0;
             ret.change_tone = change >= 0 ? Tone::Good : Tone::Caution;
         }
-        ret.line2 = "best " + Fixed(*Best(returns), 1);
+        ret.line2 = "best " + Fixed(best.value_or(last->mean_return), 1);
         if (HasTarget(f))
             ret.line2 += kDot + std::string("target ") + Short(f.target) + (state == State::ReachedTarget ? " reached" : "");
         if (f.reference_now && std::isfinite(*f.reference_now))
@@ -343,7 +340,7 @@ std::vector<Card> BuildCards(const RunFacts& f) {
     return cards;
 }
 
-std::string UpdatesCsv(const std::vector<Update>& updates) {
+std::string UpdatesCsv(std::span<const Update> updates) {
     std::string out =
         "update,steps,mean_return,mean_episode_length,policy_loss,value_loss,entropy,approx_kl,clip_fraction,"
         "explained_variance,action_std,steps_per_second,reached_target\n";

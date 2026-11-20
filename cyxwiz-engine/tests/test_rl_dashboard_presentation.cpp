@@ -38,18 +38,8 @@ cyxwiz::rl_device::RunDevice Cpu() {
 }
 
 // Twelve updates of 256 steps (8 copies x 32 steps) at 1,280 steps/s
-RunFacts Training() {
-    RunFacts f;
-    f.ppo = true;
-    f.environment = "CartPole-v1";
-    f.copies = 8;
-    f.total_steps = 30720;
-    f.target = 100;
-    f.running = true;
-    f.device = Cpu();
-    f.compute_path = "ArrayFire operations (policy: no neural provider runs this network on cpu), optimizers per tensor";
-    f.reference_label = "SB3 2.7.1, 3 seeds";
-    f.reference_now = 118.31;
+std::vector<Update> Updates() {
+    std::vector<Update> updates;
     const double returns[] = {15.25, 23.83, 30, 40, 50, 60, 70, 80, 90, 95, 99, 120.5};
     for (int i = 0; i < 12; ++i) {
         Update u;
@@ -63,13 +53,30 @@ RunFacts Training() {
         u.clip_fraction = 0.06015624850988388;
         u.explained_variance = -0.6523266434669495;
         u.steps_per_second = 1280;
-        f.updates.push_back(u);
+        updates.push_back(u);
     }
+    return updates;
+}
+
+// The facts read the updates where they are (the panel's own list)
+RunFacts Training(const std::vector<Update>& updates) {
+    RunFacts f;
+    f.ppo = true;
+    f.environment = "CartPole-v1";
+    f.copies = 8;
+    f.total_steps = 30720;
+    f.target = 100;
+    f.running = true;
+    f.device = Cpu();
+    f.compute_path = "ArrayFire operations (policy: no neural provider runs this network on cpu), optimizers per tensor";
+    f.reference_label = "SB3 2.7.1, 3 seeds";
+    f.reference_now = 118.31;
+    f.updates = updates;
     return f;
 }
 
-RunFacts Ended(End end) {
-    RunFacts f = Training();
+RunFacts Ended(End end, const std::vector<Update>& updates) {
+    RunFacts f = Training(updates);
     f.running = false;
     f.end = end;
     f.has_policy = true;
@@ -89,7 +96,8 @@ std::string Detail(const Header& h, const std::string& key) {
 }
 
 void CheckTraining() {
-    const RunFacts f = Training();
+    const std::vector<Update> u = Updates();
+    const RunFacts f = Training(u);
     const Header h = BuildHeader(f);
     Check(h.state == State::Training, "training: state");
     Same(h.pill, "Training", "training: pill");
@@ -140,8 +148,9 @@ void CheckTraining() {
 
 void CheckEnds() {
     {  // reached its target
-        RunFacts f = Ended(End::Finished);
-        f.updates.back().reached_target = true;
+        std::vector<Update> u = Updates();
+        RunFacts f = Ended(End::Finished, u);
+        u.back().reached_target = true;
         const Header h = BuildHeader(f);
         Check(h.state == State::ReachedTarget, "target: state");
         Same(h.pill, "Reached its target", "target: pill");
@@ -164,7 +173,8 @@ void CheckEnds() {
         }
     }
     {  // ran all its steps, no target
-        RunFacts f = Ended(End::Finished);
+        std::vector<Update> u = Updates();
+        RunFacts f = Ended(End::Finished, u);
         f.total_steps = 3072;
         f.target = NAN;
         const Header h = BuildHeader(f);
@@ -174,8 +184,10 @@ void CheckEnds() {
         Same(h.result, "Ran all its 3,072 steps: mean return 120.5 over the last 100 episodes.", "all steps: result");
     }
     {  // stopped part way
-        RunFacts f = Ended(End::Stopped);
-        f.updates.resize(5);
+        std::vector<Update> u = Updates();
+        RunFacts f = Ended(End::Stopped, u);
+        u.resize(5);
+        f.updates = u;
         const Header h = BuildHeader(f);
         Same(h.pill, "Stopped", "stopped: pill");
         Check(h.pill_tone == Tone::Caution && h.progress_tone == Tone::Caution, "stopped: caution");
@@ -183,8 +195,10 @@ void CheckEnds() {
         Check(h.progress > 0.0416 && h.progress < 0.0417, "stopped: the bar stays where it stopped");
     }
     {  // stopped while it waited for the GPU: no update, no device
-        RunFacts f = Ended(End::Stopped);
-        f.updates.clear();
+        std::vector<Update> u = Updates();
+        RunFacts f = Ended(End::Stopped, u);
+        u.clear();
+        f.updates = u;
         f.device = {};
         f.has_policy = false;
         f.end_message = "Stopped while waiting for the GPU";
@@ -197,7 +211,8 @@ void CheckEnds() {
         Check(time && time->line2 == "no update yet", "stopped waiting: no time yet");
     }
     {  // failed
-        RunFacts f = Ended(End::Failed);
+        std::vector<Update> u = Updates();
+        RunFacts f = Ended(End::Failed, u);
         f.end_message = "PPO training failed: out of memory";
         const Header h = BuildHeader(f);
         Same(h.pill, "Failed", "failed: pill");
@@ -208,7 +223,8 @@ void CheckEnds() {
 
 void CheckWhileRunning() {
     {
-        RunFacts f = Training();
+        std::vector<Update> u = Updates();
+        RunFacts f = Training(u);
         f.waiting = "Waiting for the GPU: another training run is using NVIDIA GeForce GTX 1050 Ti";
         const Header h = BuildHeader(f);
         Same(h.pill, "Waiting for the GPU", "waiting: pill");
@@ -216,13 +232,16 @@ void CheckWhileRunning() {
         Check(h.where_tone == Tone::Caution, "waiting: caution");
     }
     {
-        RunFacts f = Training();
+        std::vector<Update> u = Updates();
+        RunFacts f = Training(u);
         f.paused = true;
         Same(BuildHeader(f).pill, "Paused", "paused: pill");
     }
     {
-        RunFacts f = Training();
-        f.updates.clear();
+        std::vector<Update> u = Updates();
+        RunFacts f = Training(u);
+        u.clear();
+        f.updates = u;
         f.device = {};
         const Header h = BuildHeader(f);
         Same(h.pill, "Starting", "starting: pill");
@@ -232,7 +251,8 @@ void CheckWhileRunning() {
         Check(ret && ret->value == "\xE2\x80\x94" && ret->line2 == "no episode finished yet", "starting: no return yet");
     }
     {  // the chosen GPU failed its check and the run fell back to the CPU
-        RunFacts f = Training();
+        std::vector<Update> u = Updates();
+        RunFacts f = Training(u);
         f.device.requested_backend = "arrayfire_cuda";
         f.device.fallback = true;
         f.device.error = "kernel launch failed";
@@ -246,15 +266,17 @@ void CheckWhileRunning() {
         Same(Detail(h, "Device note"), f.device_note, "fallback: note in the details");
     }
     {  // a falling return
-        RunFacts f = Training();
-        f.updates.back().mean_return = 10;
+        std::vector<Update> u = Updates();
+        RunFacts f = Training(u);
+        u.back().mean_return = 10;
         const auto cards = BuildCards(f);
         const Card* ret = FindCard(cards, "##kpi_return");
         Check(ret && ret->direction == -1 && ret->change_tone == Tone::Caution && ret->change == "13.8 since update 2",
               "falling return: down and caution");
     }
     {  // no reference for these settings
-        RunFacts f = Training();
+        std::vector<Update> u = Updates();
+        RunFacts f = Training(u);
         f.reference_label.clear();
         f.reference_now.reset();
         Same(Detail(BuildHeader(f), "Reference"), "none recorded for these settings", "no reference: details");
@@ -270,10 +292,11 @@ void CheckScriptAndEmpty() {
     Same(h.pill, "No run yet", "no run: pill");
     Check(!h.hint.empty() && BuildCards(none).empty(), "no run: a hint, no cards");
 
+    const std::vector<double> rewards{10, 20, 15}, lengths{100, 200, 150}, losses{0.5, 0.25};
     RunFacts s;
-    s.script_rewards = {10, 20, 15};
-    s.script_lengths = {100, 200, 150};
-    s.script_policy_losses = {0.5, 0.25};
+    s.script_rewards = rewards;
+    s.script_lengths = lengths;
+    s.script_policy_losses = losses;
     const Header sh = BuildHeader(s);
     Same(sh.pill, "From a script", "script: pill");
     Same(sh.beside, "3 episodes reported", "script: beside");
@@ -288,6 +311,14 @@ void CheckScriptAndEmpty() {
         Same(cards[1].line2, "mean 150", "script: mean length");
         Same(cards[2].line2, "2 reported", "script: policy losses");
     }
+
+    // A script that reported only NaN: no figure, nothing made up
+    const std::vector<double> nan_rewards{NAN, NAN};
+    RunFacts n;
+    n.script_rewards = nan_rewards;
+    const auto nan_cards = BuildCards(n);
+    Check(nan_cards.size() == 3 && nan_cards[0].value == "\xE2\x80\x94" && nan_cards[0].line2.empty(),
+          "script: NaN rewards show a dash, no best");
 }
 
 void CheckTimeAndCsv() {
