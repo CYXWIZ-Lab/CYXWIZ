@@ -72,8 +72,22 @@ void PinValues(const char* name, const std::vector<double>& got, const std::vect
 
 }  // namespace
 
+int RunChecks();
+
+// An exception that escapes is a failure with its message, not an abort
+// without output.
 int main(int argc, char** argv) {
     print_pins = argc > 1 && std::strcmp(argv[1], "--print") == 0;
+    try {
+        return RunChecks();
+    } catch (const std::exception& e) {
+        std::cout << std::flush;
+        std::cerr << "FAIL: uncaught exception: " << e.what() << '\n';
+        return 1;
+    }
+}
+
+int RunChecks() {
     Check(cyxwiz::test::SelectTestDeviceFromEnvironment(), "requested test device");
 
     // Philox uniforms: the same bits on every device.
@@ -99,8 +113,21 @@ int main(int argc, char** argv) {
         Check(std::abs(mean) < 5.0 / std::sqrt(double(1 << 20)), "normal mean " + std::to_string(mean));
         Check(std::abs(var - 1.0) < 0.01, "normal variance " + std::to_string(var));
         Check(af::allTrue<bool>(!af::isNaN(many)) && af::allTrue<bool>(!af::isInf(many)), "no NaN or infinity");
-        const af::array halves = cyxwiz::DeviceNormal(af::dim4(4), f16, engine);
-        Check(halves.type() == f16, "the asked type comes back");
+        // Half precision where the device has it; a device without it (NVIDIA's
+        // OpenCL) refuses f16 with an exception, which this test once let
+        // escape: the process aborted with no output (TOFIX223 0.23, ORA-05).
+        if (af::isHalfAvailable(af::getDevice())) {
+            const af::array halves = cyxwiz::DeviceNormal(af::dim4(4), f16, engine);
+            Check(halves.type() == f16, "the asked type comes back");
+        } else {
+            bool refused = false;
+            try {
+                cyxwiz::DeviceNormal(af::dim4(4), f16, engine).eval();
+            } catch (const af::exception&) {
+                refused = true;
+            }
+            Check(refused, "a device without half precision refuses f16 with an exception");
+        }
         // randu returns exact 0 and 1 now and then (about once in 2e7 values):
         // neither may become an infinity.
         for (const af::dtype type : {f32, f64}) {
