@@ -21,6 +21,10 @@ runtime state. Hardware drivers remain host prerequisites.
 Known problems in the GPU runtimes CyxWiz uses, and what to do about them, are listed in
 `KNOWN_ISSUES.md` in this package.
 
+The `examples/` folder holds the start page's starter graphs with their small
+sample datasets (`examples/cyxgraph`, `examples/datasets`), the RL graphs
+(`examples/cyxgraph/rl`) and example scripts; see `examples/README.md`.
+
 The `sdk/` folder is the CyxWiz plugin SDK for C++ plugins with trainable
 nodes: headers, the backend's import library, `find_package(CyxWizSDK)` and a
 template plugin, under the Apache License 2.0 (`sdk/LICENSE`, `sdk/NOTICE`).

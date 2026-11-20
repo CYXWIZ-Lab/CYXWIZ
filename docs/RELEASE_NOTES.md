@@ -7,6 +7,19 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Release packages carry the examples.** The start page's starter graphs
+  (and their sample datasets), the RL graphs and the example scripts ship in
+  `examples/` beside the Engine; the start page said "No starter graphs
+  found" in an installed Engine. Only the files the repository tracks ship.
+- **A chart's legend no longer hides a rising curve.** On line and scatter
+  charts the legend goes to the corner the data leaves free (an accuracy
+  curve gets it at the bottom right, a falling loss keeps it top right).
+- **A chart's toolbar fits a narrow place.** Fit, Log Y, Legend, Export and
+  the window button move under the data label when they do not fit beside
+  it, and wrap when the place is narrower than all of them; they ran past
+  the edge.
+- **Figure cards break lines between words.** "0.09s each" split after the
+  full stop in a narrow card (ImGui's wrap also breaks after punctuation).
 - **The RL Training Dashboard says what happened, on the Training
   Dashboard's parts.** The pill reads Training, Paused, Waiting for the GPU,
   Reached its target, Ran all its steps, Stopped or Failed (a run that
