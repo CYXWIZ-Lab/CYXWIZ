@@ -37,6 +37,7 @@ add_executable(cyxwiz-tests
     unit/test_arrayfire_backend_utils.cpp
     unit/test_arrayfire_backend_smoke.cpp
     unit/test_loss.cpp
+    unit/test_audio_fftw_threads.cpp
     unit/test_model_evaluation.cpp
     unit/test_device.cpp
     unit/test_loaded_library.cpp
