@@ -347,6 +347,8 @@ public:
     void OpenNodeConfiguration(int node_id) { ConfigureNode(node_id); }
     // "Edit roles in Data Studio" in a Dashboard window (MainWindow opens the Profile tab).
     void SetOpenDataStudioProfileCallback(std::function<void(const std::string&)> cb) { open_data_studio_profile_ = std::move(cb); }
+    // Shows a pattern in the Pattern Browser (the link after Save selection as pattern).
+    void SetOpenPatternCallback(std::function<void(const std::string&)> cb) { open_pattern_ = std::move(cb); }
     // Add to Dashboard from Data Studio (TOFIX134 P3.11): the Dashboard nodes and
     // whether each shows `dataset`; the Data Input a new one would read; the add
     // itself is applied in the editor's next frame (node 0: a new Dashboard node).
@@ -914,6 +916,11 @@ private:
     void CarryDockFromOldName();
     bool dock_carried_ = false;
     void DrawStudioDialogs();
+    // Actions > Save selection as pattern... (TOFIX178 4e): the dialog, and the
+    // notice on the canvas after a save.
+    void OpenSavePatternDialog();
+    void DrawSavePatternDialog();
+    void RenderSavedPatternNotice();
     // An empty canvas says how to start (TOFIX129 A3-3).
     void RenderEmptyCanvas();
     std::function<void()> open_nodes_panel_callback_;
@@ -1549,6 +1556,18 @@ private:
     std::map<int, std::shared_ptr<cyxwiz::dashboard::DashboardWindow>> dashboard_windows_;
     std::map<int, uint64_t> dashboard_data_versions_;
     std::function<void(const std::string&)> open_data_studio_profile_;
+    std::function<void(const std::string&)> open_pattern_;
+    struct SavePatternState {
+        bool open_request = false;
+        std::vector<int> selected;     // the nodes chosen when the dialog opened
+        char name[128] = "";
+        char description[1024] = "";
+        int category = 0;              // index into the dialog's category list
+        std::string error;             // why the last Save failed
+        std::string saved_id;          // the notice after a save
+        std::string saved_text;
+        double saved_until = 0.0;      // ImGui time the notice goes away
+    } save_pattern_;
     std::function<void(const std::string&, const std::string&)> open_data_studio_query_;
     void OpenDashboardNode(int node_id);
     // The Data Input node whose dataset this is (its ds_datainput_<id> or dataset_name), or -1.

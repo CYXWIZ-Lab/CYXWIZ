@@ -776,6 +776,7 @@ void NodeEditor::Render() {
         if (show_minimap_) {
             RenderMinimap();
         }
+        RenderSavedPatternNotice();
 
         // Process any pending node additions (deferred to avoid modifying nodes_ during ImNodes rendering)
         if (!pending_nodes_.empty()) {
@@ -1090,6 +1091,7 @@ void NodeEditor::DrawStudioDialogs() {
         save_refusal_pending_ = false;
     }
     ui::MessageDialog("Nothing to save yet##SaveRefusal", cyxwiz::studio_toolbar::SaveRefusal(0).c_str());
+    DrawSavePatternDialog();
 
     // A 4-D output wired into a layer that takes (batch, features): offer a
     // Flatten between them. Cancel leaves the graph as it was.

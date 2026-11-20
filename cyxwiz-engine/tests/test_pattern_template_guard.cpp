@@ -515,6 +515,103 @@ void CheckDataBoundaryVersionGuard() {
 
 } // namespace
 
+// Save selection as pattern: a Dense -> ReLU -> Dropout row fed by a Flatten
+// outside the selection saves as a block with a Block input, keeps its
+// settings, places and pins, and inserts again as it was saved.
+void CheckSaveSelectionRoundTrip() {
+    auto& library = gui::patterns::PatternLibrary::Instance();
+    const auto dir = std::filesystem::temp_directory_path() / "cyxwiz_pattern_guard_user";
+    std::filesystem::remove_all(dir);
+    const std::string kept_dir = library.GetUserPatternsDirectory();
+    library.SetUserPatternsDirectory(dir.string());
+
+    int pin = 1;
+    const auto make = [&pin](int id, gui::NodeType type, const std::string& name) {
+        gui::MLNode node = MinimalNode(type, name);
+        node.id = id;
+        node.inputs[0].id = pin++;
+        node.outputs[0].id = pin++;
+        return node;
+    };
+    std::vector<gui::MLNode> nodes = {make(1, gui::NodeType::Flatten, "Flatten"),
+                                      make(2, gui::NodeType::Dense, "Dense 512"),
+                                      make(3, gui::NodeType::ReLU, "ReLU 1"),
+                                      make(4, gui::NodeType::Dropout, "Dropout 0.4")};
+    nodes[1].parameters["units"] = "512";
+    nodes[3].parameters["rate"] = "0.4";
+    const auto wire = [&nodes](int id, int from, int to) {
+        gui::NodeLink link;
+        link.id = id;
+        link.from_node = from;
+        link.to_node = to;
+        link.from_pin = nodes[from - 1].outputs[0].id;
+        link.to_pin = nodes[to - 1].inputs[0].id;
+        return link;
+    };
+    const std::vector<gui::NodeLink> links = {wire(1, 1, 2), wire(2, 2, 3), wire(3, 3, 4)};
+    const std::map<int, ImVec2> positions = {
+        {1, ImVec2(0, 100)}, {2, ImVec2(300, 100)}, {3, ImVec2(500, 120)}, {4, ImVec2(700, 100)}};
+    using gui::patterns::PatternCategory;
+
+    std::string error;
+    const std::string id = library.SavePatternFromSelection(nodes, links, positions, {2, 3, 4}, "Dense-ReLU-Dropout",
+                                                            "Saved by the guard", PatternCategory::BuildingBlocks,
+                                                            &error);
+    Check(id == "user:dense-relu-dropout", "the saved pattern is known by its file name: " + id + " " + error);
+    Check(std::filesystem::exists(dir / "dense-relu-dropout.cyxgraph"), "the file is in the user's patterns folder");
+    const auto* saved = library.GetPattern(id);
+    Check(saved != nullptr && saved->user, "the saved pattern is one of My patterns");
+    if (saved) {
+        Check(saved->kind == gui::patterns::PatternKind::Block, "a selection without Data Input and Output is a block");
+        Check(saved->category == PatternCategory::BuildingBlocks, "the category is kept");
+        Check(saved->template_data.nodes.size() == 4, "three nodes and a Block input");
+        Check(saved->template_data.links.size() == 3, "the Block input link and the two inside links");
+        bool input_first = false;
+        for (const auto& node : saved->template_data.nodes) {
+            if (node.name == "Block input") input_first = node.type == "Identity" && node.pos_x == 0.0f;
+            if (node.name == "Dense 512")
+                Check(node.type == "Dense" && node.params.at("units") == "512" && node.pos_x == 220.0f &&
+                          node.pos_y == 0.0f,
+                      "Dense keeps its file type name, settings and place after the Block input");
+            if (node.name == "ReLU 1") Check(node.pos_x == 420.0f && node.pos_y == 20.0f, "places are relative");
+        }
+        Check(input_first, "the Block input is an Identity at the left");
+    }
+
+    std::vector<gui::MLNode> out_nodes;
+    std::vector<gui::NodeLink> out_links;
+    int next_node = 1, next_link = 1;
+    const auto creator = [](gui::NodeType type, const std::string& name) { return MinimalNode(type, name); };
+    Check(library.InstantiatePatternWithCreator(id, {}, out_nodes, out_links, next_node, next_link, ImVec2(0, 0),
+                                                creator, &error),
+          "the saved pattern inserts: " + error);
+    Check(out_nodes.size() == 4 && out_links.size() == 3, "it inserts as it was saved");
+
+    // The same name again replaces it; an empty selection or a blank name is refused.
+    Check(library.SavePatternFromSelection(nodes, links, positions, {2, 3}, "Dense-ReLU-Dropout", "",
+                                           PatternCategory::BuildingBlocks, &error) == id,
+          "saving under the same name replaces the pattern");
+    Check(library.GetPattern(id) && library.GetPattern(id)->template_data.nodes.size() == 3,
+          "the replaced one is read");
+    Check(library.SavePatternFromSelection(nodes, links, positions, {}, "Empty", "", PatternCategory::Basic, &error)
+                  .empty() &&
+              error == "no nodes are selected",
+          "an empty selection is refused: " + error);
+    Check(library.SavePatternFromSelection(nodes, links, positions, {2}, "   ", "", PatternCategory::Basic, &error)
+                  .empty() &&
+              error == "it needs a name",
+          "a blank name is refused: " + error);
+
+    // Delete takes it out of the folder and the library; a shipped pattern is not deleted.
+    Check(library.DeleteUserPattern(id, &error), "one of My patterns is deleted: " + error);
+    Check(library.GetPattern(id) == nullptr && !std::filesystem::exists(dir / "dense-relu-dropout.cyxgraph"),
+          "the deleted pattern is gone from the library and the folder");
+    Check(!library.DeleteUserPattern("guard_dense", &error), "a shipped pattern is not deleted");
+
+    library.SetUserPatternsDirectory(kept_dir);
+    std::filesystem::remove_all(dir);
+}
+
 int main() {
     const auto training_graph = [](std::initializer_list<gui::NodeType> types) {
         std::vector<gui::MLNode> nodes;
@@ -723,6 +820,7 @@ int main() {
     CheckModernPinConnectivityFixtures();
     CheckSerializedPinIndexGuard();
     CheckDataBoundaryVersionGuard();
+    CheckSaveSelectionRoundTrip();
 
     std::cout << "Pattern template guard passed\n";
     return 0;

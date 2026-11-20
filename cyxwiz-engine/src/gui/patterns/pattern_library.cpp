@@ -3,6 +3,7 @@
 #include "../node_import_guardrails.h"
 #include "../node_type_import_registry.h"
 #include "../../core/node_metadata_registry.h"
+#include "../../core/pattern_browser_presentation.h"
 #include "../../core/recycle_bin.h"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -504,106 +505,136 @@ bool PatternLibrary::InstantiatePatternWithCreator(
     return true;
 }
 
-bool PatternLibrary::SavePatternFromSelection(
+std::filesystem::path PatternLibrary::UserPatternFile(const std::string& name) const {
+    return fs::path(user_patterns_dir_) / (cyxwiz::pattern_browser::FileStem(name) + ".cyxgraph");
+}
+
+std::string PatternLibrary::SavePatternFromSelection(
     const std::vector<MLNode>& nodes,
     const std::vector<NodeLink>& links,
+    const std::map<int, ImVec2>& positions,
     const std::vector<int>& selected_ids,
     const std::string& name,
     const std::string& description,
     PatternCategory category,
-    const std::string& save_path
+    std::string* error
 ) {
-    if (selected_ids.empty()) {
-        spdlog::warn("No nodes selected for pattern creation");
-        return false;
+    namespace pb = cyxwiz::pattern_browser;
+    const auto fail = [error](std::string reason) {
+        spdlog::error("Pattern not saved: {}", reason);
+        if (error) *error = std::move(reason);
+        return std::string();
+    };
+    if (error) error->clear();
+    if (user_patterns_dir_.empty()) return fail("there is no folder for My patterns");
+    if (name.find_first_not_of(" \t") == std::string::npos) return fail("it needs a name");
+    const std::set<int> chosen(selected_ids.begin(), selected_ids.end());
+
+    // The same summary the dialog showed: Block or Full graph, where Block input goes.
+    std::vector<pb::SelectionNode> summary_nodes;
+    std::vector<pb::SelectionLink> summary_links;
+    for (const auto& node : nodes)
+        summary_nodes.push_back({node.id, node.name, node.type == NodeType::DataInput, node.type == NodeType::Output});
+    for (const auto& link : links) summary_links.push_back({link.from_node, link.to_node});
+    const auto summary = pb::SummarizeSelection(summary_nodes, summary_links, selected_ids, "");
+    if (summary.nodes == 0) return fail("no nodes are selected");
+
+    // The selection's top-left is the pattern's origin.
+    bool placed = false;
+    ImVec2 origin(0.0f, 0.0f);
+    for (int id : selected_ids) {
+        const auto at = positions.find(id);
+        if (at == positions.end()) continue;
+        origin.x = placed ? std::min(origin.x, at->second.x) : at->second.x;
+        origin.y = placed ? std::min(origin.y, at->second.y) : at->second.y;
+        placed = true;
     }
+    const auto place_of = [&](int id) {
+        const auto at = positions.find(id);
+        return at == positions.end() ? ImVec2(0.0f, 0.0f) : ImVec2(at->second.x - origin.x, at->second.y - origin.y);
+    };
+    const auto type_name = [](NodeType type) -> std::string {
+        for (const auto& entry : GetNodeTypeImportNames())
+            if (entry.node_type == type && !entry.legacy_import_compatibility_only) return std::string(entry.name);
+        return {};
+    };
+    const auto pin_index = [](const std::vector<NodePin>& pins, int pin_id) {
+        for (size_t i = 0; i < pins.size(); ++i)
+            if (pins[i].id == pin_id) return static_cast<int>(i);
+        return -1;
+    };
 
-    // Build pattern template from selected nodes
-    json pattern_json;
-    pattern_json["id"] = name;  // Use name as ID (sanitized)
-    pattern_json["name"] = name;
-    pattern_json["description"] = description;
-    pattern_json["category"] = PatternCategoryToString(category);
-    pattern_json["tags"] = json::array();
-    pattern_json["parameters"] = json::array();
-
-    json template_json;
+    constexpr float kGap = 220.0f;
+    const float shift = summary.entries.empty() ? 0.0f : kGap;  // room for Block input at the left
+    std::map<int, std::string> ids;
+    std::map<int, const MLNode*> by_id;
     json nodes_json = json::array();
+    for (const auto& node : nodes) {
+        if (!chosen.count(node.id)) continue;
+        const std::string type = type_name(node.type);
+        if (type.empty()) return fail("\"" + node.name + "\" is a node a pattern cannot hold yet");
+        const std::string id = "n" + std::to_string(ids.size() + 1);
+        ids[node.id] = id;
+        by_id[node.id] = &node;
+        const ImVec2 at = place_of(node.id);
+        json entry = {{"id", id}, {"type", type}, {"name", node.name}, {"pos", {at.x + shift, at.y}}};
+        if (!node.parameters.empty()) entry["params"] = node.parameters;
+        nodes_json.push_back(std::move(entry));
+    }
+
     json links_json = json::array();
-
-    std::set<int> selected_set(selected_ids.begin(), selected_ids.end());
-    std::map<int, std::string> node_to_id_map;
-
-    // First pass: create ID map
-    int node_counter = 1;
-    for (const auto& node : nodes) {
-        if (selected_set.count(node.id)) {
-            node_to_id_map[node.id] = "node_" + std::to_string(node_counter++);
-            // Note: We'd need position info from ImNodes, which isn't stored in MLNode
-            // For now, use default positions
-        }
-    }
-
-    // Create node entries
-    for (const auto& node : nodes) {
-        if (!selected_set.count(node.id)) continue;
-
-        json node_json;
-        node_json["id"] = node_to_id_map[node.id];
-        // Convert NodeType to string (would need reverse mapping)
-        node_json["type"] = node.name;  // Simplified
-        node_json["name"] = node.name;
-        node_json["pos_x"] = 0.0f;  // Would need actual position
-        node_json["pos_y"] = 0.0f;
-
-        if (!node.parameters.empty()) {
-            node_json["params"] = node.parameters;
-        }
-
-        nodes_json.push_back(node_json);
-    }
-
-    // Create link entries (only internal links)
+    int inputs = 0;
+    std::map<std::pair<int, int>, std::string> block_inputs;  // (node, input pin) -> its Block input
     for (const auto& link : links) {
-        if (selected_set.count(link.from_node) && selected_set.count(link.to_node)) {
-            json link_json;
-            link_json["from"] = node_to_id_map[link.from_node];
-            link_json["to"] = node_to_id_map[link.to_node];
-            links_json.push_back(link_json);
+        const bool from_in = chosen.count(link.from_node) > 0, to_in = chosen.count(link.to_node) > 0;
+        if (!to_in) continue;  // a link out of the selection is not kept
+        const MLNode& to = *by_id.at(link.to_node);
+        const int to_pin = pin_index(to.inputs, link.to_pin);
+        if (to_pin < 0) return fail("a link into \"" + to.name + "\" names a pin it does not have");
+        if (from_in) {
+            const MLNode& from = *by_id.at(link.from_node);
+            const int from_pin = pin_index(from.outputs, link.from_pin);
+            if (from_pin < 0) return fail("a link from \"" + from.name + "\" names a pin it does not have");
+            links_json.push_back(
+                {{"from", ids[from.id]}, {"to", ids[to.id]}, {"from_pin", from_pin}, {"to_pin", to_pin}});
+            continue;
         }
+        // A link from outside: a full graph drops it; a block gets a Block input there.
+        if (summary.kind == pb::Kind::Graph) continue;
+        auto& input = block_inputs[{to.id, to_pin}];
+        if (input.empty()) {
+            input = "block_input_" + std::to_string(++inputs);
+            const ImVec2 at = place_of(to.id);
+            const std::string input_name = inputs == 1 ? "Block input" : "Block input " + std::to_string(inputs);
+            nodes_json.push_back(
+                {{"id", input}, {"type", "Identity"}, {"name", input_name}, {"pos", {at.x + shift - kGap, at.y}}});
+        }
+        links_json.push_back({{"from", input}, {"to", ids[to.id]}, {"from_pin", 0}, {"to_pin", to_pin}});
     }
 
-    template_json["nodes"] = nodes_json;
-    template_json["links"] = links_json;
-    pattern_json["template"] = template_json;
+    const json pattern_json = {
+        {"name", name},
+        {"kind", summary.kind == pb::Kind::Graph ? "graph" : "block"},
+        {"description", description},
+        {"category", PatternCategoryToString(category)},
+        {"tags", json::array()},
+        {"parameters", json::array()},
+        {"template", {{"nodes", nodes_json}, {"links", links_json}}},
+    };
 
-    // Determine save path
-    std::string filepath = save_path;
-    if (filepath.empty()) {
-        filepath = user_patterns_dir_ + "/" + name + ".cyxgraph";
+    const fs::path file = UserPatternFile(name);
+    std::error_code ec;
+    fs::create_directories(file.parent_path(), ec);
+    if (ec) return fail("the folder " + file.parent_path().string() + " could not be made: " + ec.message());
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        if (!out) return fail("the file " + file.string() + " could not be written");
+        out << pattern_json.dump(2) << "\n";
+        if (!out) return fail("the file " + file.string() + " could not be written");
     }
-
-    // Ensure directory exists
-    fs::path dir = fs::path(filepath).parent_path();
-    if (!dir.empty() && !fs::exists(dir)) {
-        fs::create_directories(dir);
-    }
-
-    // Write to file
-    std::ofstream file(filepath);
-    if (!file.is_open()) {
-        spdlog::error("Failed to create pattern file: {}", filepath);
-        return false;
-    }
-
-    file << pattern_json.dump(2);
-    file.close();
-
-    // Reload the pattern into memory
-    LoadPatternFromFile(filepath);
-
-    spdlog::info("Saved pattern '{}' to {}", name, filepath);
-    return true;
+    if (!LoadPatternFile(file.string(), true)) return fail("the saved file could not be read back");
+    spdlog::info("Saved pattern '{}' ({} nodes) to {}", name, nodes_json.size(), file.string());
+    return "user:" + file.stem().string();
 }
 
 } // namespace gui::patterns

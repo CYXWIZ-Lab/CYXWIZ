@@ -469,6 +469,7 @@ set(ENGINE_SOURCES
     src/gui/node_editor_freeze.cpp
     src/gui/node_editor_io.cpp
     src/gui/node_editor_subgraph.cpp
+    src/gui/node_editor_save_pattern.cpp
     src/gui/subgraph_document.cpp
     src/gui/subgraph_presentation.cpp
     src/gui/node_type_import_registry.cpp
@@ -3666,6 +3667,7 @@ add_executable(test_pattern_template_guard
     tests/test_pattern_template_guard.cpp
     src/gui/patterns/pattern_library.cpp
     src/core/recycle_bin.cpp
+    src/core/pattern_browser_presentation.cpp
     src/gui/node_type_import_registry.cpp
 )
 target_link_libraries(test_pattern_template_guard PRIVATE cyxwiz-training-core)
@@ -5816,6 +5818,7 @@ add_executable(test_shipped_patterns
     tests/test_shipped_patterns.cpp
     src/gui/patterns/pattern_library.cpp
     src/core/recycle_bin.cpp
+    src/core/pattern_browser_presentation.cpp
     src/gui/node_type_import_registry.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp

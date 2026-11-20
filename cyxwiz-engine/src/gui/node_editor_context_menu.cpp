@@ -412,6 +412,13 @@ void NodeEditor::ShowContextMenu() {
             ImGui::CloseCurrentPopup();
         }
 
+        if (ImGui::MenuItem(ICON_FA_CUBES " Save selection as pattern...", nullptr, false, !selected_node_ids_.empty())) {
+            OpenSavePatternDialog();
+            ImGui::CloseCurrentPopup();
+        }
+        if (selected_node_ids_.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Select the nodes to save first");
+
         if (selected_node_ids_.size() == 1 && IsSubgraphNode(selected_node_ids_[0])) {
             SubgraphData* data = GetSubgraphData(selected_node_ids_[0]);
             if (data) {

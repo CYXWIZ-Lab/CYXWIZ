@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <filesystem>
 
 namespace gui::patterns {
 
@@ -62,16 +63,25 @@ public:
         std::string* error = nullptr
     );
 
-    // Save a selection of nodes as a custom pattern
-    bool SavePatternFromSelection(
+    // Writes the selected nodes as one of My patterns (<user folder>/<file
+    // name from `name`>.cyxgraph, replacing one of the same name) and reads it
+    // in: node types by their file names, places relative to the selection
+    // (`positions` in canvas grid space), links with their pins. A selection
+    // with a Data Input and an Output is a full graph; otherwise each node an
+    // outside link fed gets a Block input. Returns the new pattern's id, or
+    // empty with the reason in `error`.
+    std::string SavePatternFromSelection(
         const std::vector<MLNode>& nodes,
         const std::vector<NodeLink>& links,
+        const std::map<int, ImVec2>& positions,
         const std::vector<int>& selected_ids,
         const std::string& name,
         const std::string& description,
         PatternCategory category,
-        const std::string& save_path = ""
+        std::string* error = nullptr
     );
+    // The file one of My patterns named `name` is saved in.
+    std::filesystem::path UserPatternFile(const std::string& name) const;
 
     // Moves one of My patterns' files to the Recycle Bin (Trash) and drops
     // it from the library. False, with the reason, when it could not.

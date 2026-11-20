@@ -759,6 +759,9 @@ MainWindow::MainWindow()
     });
     // A dashboard's "Edit roles in Data Studio" (TOFIX134 P3.8).
     if (node_editor_) {
+        node_editor_->SetOpenPatternCallback([this](const std::string& pattern_id) {
+            if (pattern_browser_) pattern_browser_->OpenWithPattern(pattern_id);
+        });
         node_editor_->SetOpenDataStudioProfileCallback([this](const std::string& dataset) {
             if (data_studio_panel_) data_studio_panel_->ShowProfile(dataset);
         });
