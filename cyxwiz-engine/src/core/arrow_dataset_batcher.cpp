@@ -2,6 +2,7 @@
 #include "label_vocabulary.h"
 #include "label_column_resolver.h"
 #include "split_partitioning.h"
+#include "class_label_range.h"
 #include "class_balance.h"
 #include "data_budget.h"
 #include "device_data_budget.h"
@@ -561,42 +562,23 @@ void ArrowDatasetBatcher::SetRegressionTargetWidth(
         label_col_indices_.size(), num_features_);
 }
 
+// An empty batch means the epoch is over and nothing else: a failure while
+// building a batch throws, so the run fails with the reason instead of ending
+// the epoch early (TOFIX223 0.2).
 Batch ArrowDatasetBatcher::GetNextBatch() {
-    Batch batch;
-
-    try {
-        if (!dataset_ || indices_.empty()) {
-            spdlog::warn("ArrowDatasetBatcher::GetNextBatch: No dataset or empty indices");
-            return batch;
-        }
-
-        // Validate indices to catch potential memory corruption
-        int64_t num_total_rows = dataset_->GetNumRows();
-        for (size_t i = 0; i < std::min(indices_.size(), size_t(10)); ++i) {
-            if (indices_[i] < 0 || indices_[i] >= num_total_rows) {
-                spdlog::error("ArrowDatasetBatcher: Invalid index[{}]={} (max={})",
-                              i, indices_[i], num_total_rows);
-            }
-        }
-
-        if (IsEpochComplete()) {
-            return batch;
-        }
-
-        const size_t batch_start = current_index_;
-        const size_t batch_end = std::min(current_index_ + batch_size_, indices_.size());
-        bool assembled = false;
-        batch = AssembleBatch(indices_.data() + batch_start, batch_end - batch_start, assembled);
-        if (assembled) current_index_ = batch_end;
-        return batch;
-
-    } catch (const std::exception& e) {
-        spdlog::error("ArrowDatasetBatcher::GetNextBatch exception: {}", e.what());
-        return batch;
-    } catch (...) {
-        spdlog::error("ArrowDatasetBatcher::GetNextBatch unknown exception");
-        return batch;
+    if (!dataset_ || indices_.empty()) {
+        spdlog::warn("ArrowDatasetBatcher::GetNextBatch: No dataset or empty indices");
+        return Batch();
     }
+    if (IsEpochComplete()) {
+        return Batch();
+    }
+
+    const size_t batch_start = current_index_;
+    const size_t batch_end = std::min(current_index_ + batch_size_, indices_.size());
+    Batch batch = AssembleBatch(indices_.data() + batch_start, batch_end - batch_start);
+    current_index_ = batch_end;
+    return batch;
 }
 
 size_t ArrowDatasetBatcher::SourceSampleCount() const {
@@ -613,10 +595,7 @@ std::optional<Batch> ArrowDatasetBatcher::GetSourceSamples(const std::vector<siz
                                     std::to_string(dataset_->GetNumRows()) + " rows");
         rows.push_back(static_cast<int64_t>(index));
     }
-    bool assembled = false;
-    Batch batch = AssembleBatch(rows.data(), rows.size(), assembled);
-    if (!assembled) throw std::runtime_error("the rows could not be read as a batch");
-    return batch;
+    return AssembleBatch(rows.data(), rows.size());
 }
 
 std::optional<BatcherPhase> ArrowDatasetBatcher::SourceSamplePart(size_t index) const {
@@ -627,16 +606,13 @@ std::optional<BatcherPhase> ArrowDatasetBatcher::SourceSamplePart(size_t index) 
 }
 
 // These rows as one batch: features (device-resident when they fit),
-// Normalize, the label form and the inspection. `assembled` false: nothing
-// usable (logged).
-Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actual_batch_size, bool& assembled) {
+// Normalize, the label form and the inspection. Throws when the rows cannot
+// be read as a batch.
+Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actual_batch_size) {
     Batch batch;
-    assembled = false;
     {
-        // Validate we have features
         if (num_features_ == 0) {
-            spdlog::error("ArrowDatasetBatcher::GetNextBatch: No feature columns found");
-            return batch;
+            throw std::runtime_error("ArrowDatasetBatcher: the table has no numeric feature columns");
         }
 
         batch.size = actual_batch_size;
@@ -645,8 +621,7 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
         // Get Arrow table
         auto table = dataset_->GetArrowTable();
         if (!table) {
-            spdlog::error("ArrowDatasetBatcher: No Arrow table");
-            return batch;
+            throw std::runtime_error("ArrowDatasetBatcher: the dataset holds no table");
         }
 
         int64_t num_rows = table->num_rows();
@@ -846,9 +821,9 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
 
         // Validate data before creating tensor
         if ((!resident && batch_data.empty()) || actual_batch_size == 0 || num_features_ == 0) {
-            spdlog::error("ArrowDatasetBatcher: Empty batch data - size={}, features={}",
-                          actual_batch_size, num_features_);
-            return batch;
+            throw std::runtime_error("ArrowDatasetBatcher: empty batch data (rows " +
+                                     std::to_string(actual_batch_size) + ", features " +
+                                     std::to_string(num_features_) + ")");
         }
 
         // Create data tensor [batch_size, num_features]
@@ -869,10 +844,9 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
             // One-hot encoding
             std::vector<float> onehot_data(actual_batch_size * num_classes_, 0.0f);
             for (size_t i = 0; i < batch_labels.size(); ++i) {
-                int label = batch_labels[i];
-                if (label >= 0 && static_cast<size_t>(label) < num_classes_) {
-                    onehot_data[i * num_classes_ + label] = 1.0f;
-                }
+                const int label = batch_labels[i];
+                CheckClassLabelInWidth("ArrowDatasetBatcher", label, num_classes_);
+                onehot_data[i * num_classes_ + static_cast<size_t>(label)] = 1.0f;
             }
             std::vector<size_t> label_shape = {actual_batch_size, num_classes_};
             batch.labels = Tensor(label_shape, onehot_data.data());
@@ -887,7 +861,6 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
             batch.labels = Tensor(label_shape, label_data.data());
         }
 
-        assembled = true;
         return batch;
     }
 }

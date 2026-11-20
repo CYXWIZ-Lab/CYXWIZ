@@ -1,5 +1,6 @@
 #include "image_dataset_batcher.h"
 #include "device_data_budget.h"
+#include "class_label_range.h"
 #include "cyxwiz/portable_random.h"
 #include <arrayfire.h>
 #include <spdlog/spdlog.h>
@@ -197,8 +198,8 @@ Batch ImageDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_si
     for (size_t i = 0; i < actual_size; ++i) {
         const int label = images_->Labels()[indices[i]];
         if (onehot) {
-            if (label >= 0 && static_cast<size_t>(label) < num_classes_)
-                batch_labels[i * num_classes_ + static_cast<size_t>(label)] = 1.0f;
+            CheckClassLabelInWidth("ImageDatasetBatcher", label, num_classes_);
+            batch_labels[i * num_classes_ + static_cast<size_t>(label)] = 1.0f;
         } else {
             batch_labels[i] = static_cast<float>(label);
         }

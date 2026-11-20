@@ -1,6 +1,7 @@
 #include "parquet_arrow_batcher.h"
 
 #include "label_column_resolver.h"
+#include "class_label_range.h"
 #include "class_balance.h"
 #include "split_partitioning.h"
 #include "cyxwiz/portable_random.h"
@@ -1147,10 +1148,9 @@ void ParquetArrowBatcher::FinishBatch(Batch& batch, size_t rows_filled, std::vec
     } else if (one_hot_ && label_col_idx_ >= 0) {
         std::vector<float> onehot(rows_filled * num_classes_, 0.0f);
         for (size_t i = 0; i < rows_filled; ++i) {
-            int lbl = batch_labels[i];
-            if (lbl >= 0 && static_cast<size_t>(lbl) < num_classes_) {
-                onehot[i * num_classes_ + lbl] = 1.0f;
-            }
+            const int lbl = batch_labels[i];
+            CheckClassLabelInWidth("ParquetArrowBatcher", lbl, num_classes_);
+            onehot[i * num_classes_ + static_cast<size_t>(lbl)] = 1.0f;
         }
         std::vector<size_t> label_shape = {rows_filled, num_classes_};
         batch.labels = Tensor(label_shape, onehot.data());

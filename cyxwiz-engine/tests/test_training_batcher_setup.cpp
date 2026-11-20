@@ -289,11 +289,18 @@ std::shared_ptr<cyxwiz::SparseFeatureDataset> MakeSparseDataset(
     return dataset.ValueOrDie();
 }
 
+// As the compiler makes it for a Time Series Window graph: a continuous target
+// (graph_compiler.cpp TimeSeriesWindow -> TargetValueKind::Continuous). The
+// config once left the target unspecified with the default cross-entropy loss,
+// so the targets (1.5, 2.5, ...) were one-hot encoded at width 1 into all-zero
+// rows; the batchers now refuse a class label outside the width (TOFIX223 0.4).
 cyxwiz::TrainingConfiguration MakeTimeSeriesConfig() {
     auto config = MakeConfig();
     config.is_time_series = true;
     config.input_size = 2;
     config.output_size = 1;
+    config.loss_type = gui::NodeType::MSELoss;
+    config.target.value_kind = cyxwiz::TargetValueKind::Continuous;
     return config;
 }
 

@@ -585,7 +585,7 @@ public:
         size_t width, const std::string& target_base = {});
 
 private:
-    Batch AssembleBatch(const int64_t* rows, size_t n, bool& assembled);
+    Batch AssembleBatch(const int64_t* rows, size_t n);
 
     std::shared_ptr<class ArrowDataset> dataset_;
     std::string label_column_;

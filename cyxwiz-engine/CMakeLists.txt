@@ -4848,6 +4848,18 @@ endif()
 set_target_properties(test_arrow_batcher_chunking PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME arrow_batcher_chunking COMMAND test_arrow_batcher_chunking)
 
+# A batcher refuses what it cannot train on: no empty batch for an error, no
+# all-zero target row for a label outside the width (TOFIX223 0.2, 0.4).
+add_executable(test_batcher_refusals tests/test_batcher_refusals.cpp)
+target_include_directories(test_batcher_refusals PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_batcher_refusals PRIVATE
+    cyxwiz-training-core cyxwiz-backend Arrow::arrow_shared spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_batcher_refusals PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_batcher_refusals PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME batcher_refusals COMMAND test_batcher_refusals)
 
 # Training data-path benchmark (TOFIX178 S0-a): batch preparation vs the model step.
 add_executable(cyxwiz-bench-training-data tests/tool_bench_training_data.cpp)
