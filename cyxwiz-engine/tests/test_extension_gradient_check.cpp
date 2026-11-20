@@ -5,8 +5,10 @@
 
 #include <cyxwiz/sequential.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -117,6 +119,20 @@ public:
     std::string GetName() const override { return "SnakeLike"; }
 };
 
+// A backward that gives NaN: the check must fail it (TOFIX223 0.21: NaN
+// compares false, so its error was never recorded and the check passed).
+class NanGradient : public cyxwiz::Module {
+public:
+    cyxwiz::Tensor Forward(const cyxwiz::Tensor& x) override {
+        input_cache_ = x;
+        return x * 2.0f;
+    }
+    cyxwiz::Tensor Backward(const cyxwiz::Tensor& grad) override {
+        return grad * std::numeric_limits<float>::quiet_NaN();
+    }
+    std::string GetName() const override { return "NanGradient"; }
+};
+
 class Throws : public cyxwiz::Module {
 public:
     cyxwiz::Tensor Forward(const cyxwiz::Tensor&) override { throw std::runtime_error("boom in forward"); }
@@ -182,6 +198,12 @@ int main() {
             [](const std::vector<size_t>&) { return std::make_unique<Scale>(true); });
         Check(!r.passed && r.worst == "parameter a",
               "a wrong parameter gradient fails and is named: " + cyxwiz::DescribeGradientCheck(r));
+    }
+    {
+        const auto r = cyxwiz::CheckModuleGradients(
+            [](const std::vector<size_t>&) { return std::make_unique<NanGradient>(); });
+        Check(!r.passed && r.worst == "input" && !std::isfinite(r.max_relative_error),
+              "a NaN input gradient fails: " + cyxwiz::DescribeGradientCheck(r));
     }
     std::cout << "a module that throws is reported, not crashed on\n";
     {
