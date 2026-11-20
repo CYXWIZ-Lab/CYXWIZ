@@ -475,6 +475,23 @@ bool BuildSequential(
             current_input_size = layer_cfg.input_shape.back();
         }
 
+        // Rows that hold an [L, C] sequence channel-major (time-series windows,
+        // audio features: torch [N, C, L]) reach a first recurrent layer as
+        // [N, L, C] time steps, as torch's x.view(N, C, L).transpose(1, 2)
+        // (TOFIX223 0.20, audit SEQ-01: they reached LSTM / GRU / RNN as
+        // [N, L*C] rows and the layer threw on the first batch).
+        const bool recurrent = layer_cfg.type == gui::NodeType::LSTM || layer_cfg.type == gui::NodeType::GRU ||
+                               layer_cfg.type == gui::NodeType::RNN;
+        if (i == 0 && recurrent && config.sequence_input_shape.size() == 2 &&
+            config.sequence_input_shape[0] * config.sequence_input_shape[1] == current_input_size) {
+            const size_t steps = config.sequence_input_shape[0];
+            const size_t channels = config.sequence_input_shape[1];
+            model.Add<ReshapeModule>(std::vector<size_t>{channels, steps});
+            model.Add<PermuteModule>(std::vector<int>{1, 0});
+            current_input_size = channels;
+            CYXWIZ_BUILDER_INFO("  [{}] rows -> [{} steps, {} features]", i, steps, channels);
+        }
+
         switch (layer_cfg.type) {
             case gui::NodeType::Dense: {
                 const size_t out_features =

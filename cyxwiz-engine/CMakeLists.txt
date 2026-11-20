@@ -7974,6 +7974,13 @@ add_test(NAME metric_graph_pytorch_parity COMMAND test_metric_graph_training)
 # ===== Test: Conv1D graphs vs PyTorch (TOFIX140) =====
 set(CYXWIZ_CONV1D_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/conv1d_graph_pytorch.json")
+# A recurrent layer first on time-series window rows (TOFIX223 0.20).
+add_executable(test_time_series_recurrent_rows tests/test_time_series_recurrent_rows.cpp)
+configure_training_executor_harness(test_time_series_recurrent_rows)
+target_include_directories(test_time_series_recurrent_rows PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+add_test(NAME time_series_recurrent_rows COMMAND test_time_series_recurrent_rows)
+
 add_executable(test_conv1d_graph_training
     tests/test_conv1d_graph_training.cpp
 )
