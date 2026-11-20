@@ -785,6 +785,8 @@ private Data Studio tickets (`tofix*/track*`).
 - **Canvas menus read at the normal size at any zoom.** The right-click
   menus (canvas, node, note, group, frame) and the rename, description and
   freeze dialogs were drawn at the canvas zoom: zoomed out, too small to read.
+- A text link beside a button (Cancel beside Replace, Show in folder beside
+  Insert) sits on the button's line; it was 4 px higher.
 - The node icon pack you choose is kept: View > Node Icon Pack and the new
   Node icons row of Preferences > Appearance set it, the next launch starts
   with it, and Reset appearance goes back to Font Awesome.

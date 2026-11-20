@@ -134,7 +134,9 @@ bool LinkButton(const char* label, bool enabled) {
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_Text, kLink);
     if (!enabled) ImGui::BeginDisabled();
-    const bool clicked = ImGui::Button(label);
+    // Its padding is smaller than a filled button's: beside one on the same
+    // line, the text sits on that button's baseline, not 4 px above it.
+    const bool clicked = ImGui::ButtonEx(label, ImVec2(0.0f, 0.0f), ImGuiButtonFlags_AlignTextBaseLine);
     if (!enabled) ImGui::EndDisabled();
     const bool hovered = ImGui::IsItemHovered();
     ImGui::PopStyleColor(4);
