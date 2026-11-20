@@ -7980,6 +7980,7 @@ add_executable(test_conv1d_graph_training
 configure_training_executor_harness(test_conv1d_graph_training)
 target_compile_definitions(test_conv1d_graph_training PRIVATE
     CYXWIZ_CONV1D_GRAPH_FIXTURE="${CYXWIZ_CONV1D_GRAPH_PYTORCH_FIXTURE}"
+    CYXWIZ_WEIGHT_FILE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/weight_files"
 )
 add_custom_target(copy_test_conv1d_graph_training_fixture
     COMMAND ${CMAKE_COMMAND} -E make_directory
