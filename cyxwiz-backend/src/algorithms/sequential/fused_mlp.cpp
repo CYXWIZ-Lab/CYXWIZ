@@ -222,13 +222,15 @@ std::pair<Tensor, Tensor> FusedMlp::ForwardPair(FusedMlp& first, FusedMlp& secon
     return {std::move(outputs[0]), std::move(outputs[1])};
 }
 
-std::map<std::string, Tensor> FusedMlp::Backward(const Tensor& dy) {
+std::vector<Tensor> FusedMlp::RunBackward(const Tensor& dy, bool parameters) {
     Impl& m = *impl_;
     if (!m.kept) throw std::runtime_error("FusedMlp: Backward needs a Forward with keep");
     NeuralOpRequest r = m.request;
     r.op = NeuralOp::MlpBackward;
     r.batch = m.x.Shape()[0];
     r.training = true;
+    r.mlp_parameter_gradients = parameters;
+    r.mlp_input_gradient = !parameters;
     if (dy.Shape() != std::vector<size_t>{r.batch, r.mlp_widths[r.mlp_layers]})
         throw std::runtime_error("FusedMlp: dY must be [rows, outputs] of the kept Forward");
     const auto params = m.model->GetParameters();
@@ -237,23 +239,35 @@ std::map<std::string, Tensor> FusedMlp::Backward(const Tensor& dy) {
     inputs.push_back(&m.z);
     inputs.push_back(&dy);
     std::vector<std::vector<size_t>> shapes;
-    for (size_t l = 0; l < r.mlp_layers; ++l) {
-        shapes.push_back(m.weight_shapes[l]);
-        shapes.push_back(m.bias_shapes[l]);
+    if (parameters) {
+        for (size_t l = 0; l < r.mlp_layers; ++l) {
+            shapes.push_back(m.weight_shapes[l]);
+            shapes.push_back(m.bias_shapes[l]);
+        }
+    } else {
+        shapes.push_back({r.batch, r.mlp_widths[0]});
     }
     std::vector<Tensor> outputs;
     const NeuralOpStatus status = ExecuteNeuralOpOnDevice(*m.provider, r, inputs, shapes, outputs);
     if (!status.ok) throw std::runtime_error("FusedMlp backward: " + status.detail);
+    return outputs;
+}
+
+std::map<std::string, Tensor> FusedMlp::Backward(const Tensor& dy) {
+    auto outputs = RunBackward(dy, true);
+    const Impl& m = *impl_;
     std::map<std::string, Tensor> grads;
-    for (size_t l = 0; l < r.mlp_layers; ++l) {
+    for (size_t l = 0; l < m.request.mlp_layers; ++l) {
         grads[m.weight_names[l]] = std::move(outputs[2 * l]);
         grads[m.bias_names[l]] = std::move(outputs[2 * l + 1]);
     }
     return grads;
 }
 
-std::pair<FusedMlp::Gradients, FusedMlp::Gradients> FusedMlp::BackwardPair(FusedMlp& first, const Tensor& dy_first,
-                                                                            FusedMlp& second, const Tensor& dy_second) {
+Tensor FusedMlp::InputGradient(const Tensor& dy) { return std::move(RunBackward(dy, false).front()); }
+
+std::vector<Tensor> FusedMlp::RunBackwardPair(FusedMlp& first, const Tensor& dy_first, FusedMlp& second,
+                                              const Tensor& dy_second, bool parameters) {
     Impl& a = *first.impl_;
     Impl& b = *second.impl_;
     if (!a.kept || !b.kept || a.kept_with != &b || b.kept_with != &a)
@@ -262,6 +276,8 @@ std::pair<FusedMlp::Gradients, FusedMlp::Gradients> FusedMlp::BackwardPair(Fused
     r.op = NeuralOp::MlpBackward;
     r.batch = a.x.Shape()[0];
     r.training = true;
+    r.mlp_parameter_gradients = parameters;
+    r.mlp_input_gradient = !parameters;
     AddSecondNetwork(r, b.request);
     if (dy_first.Shape() != std::vector<size_t>{r.batch, a.request.mlp_widths[a.request.mlp_layers]} ||
         dy_second.Shape() != std::vector<size_t>{r.batch, b.request.mlp_widths[b.request.mlp_layers]})
@@ -276,14 +292,26 @@ std::pair<FusedMlp::Gradients, FusedMlp::Gradients> FusedMlp::BackwardPair(Fused
     inputs.push_back(&b.z);
     inputs.push_back(&dy_second);
     std::vector<std::vector<size_t>> shapes;
-    for (const Impl* m : {&a, &b})
-        for (size_t l = 0; l < m->request.mlp_layers; ++l) {
-            shapes.push_back(m->weight_shapes[l]);
-            shapes.push_back(m->bias_shapes[l]);
-        }
+    if (parameters) {
+        for (const Impl* m : {&a, &b})
+            for (size_t l = 0; l < m->request.mlp_layers; ++l) {
+                shapes.push_back(m->weight_shapes[l]);
+                shapes.push_back(m->bias_shapes[l]);
+            }
+    } else {
+        shapes.assign(2, {r.batch, r.mlp_widths[0]});
+    }
     std::vector<Tensor> outputs;
     const NeuralOpStatus status = ExecuteNeuralOpOnDevice(*a.provider, r, inputs, shapes, outputs);
     if (!status.ok) throw std::runtime_error("FusedMlp backward (two networks): " + status.detail);
+    return outputs;
+}
+
+std::pair<FusedMlp::Gradients, FusedMlp::Gradients> FusedMlp::BackwardPair(FusedMlp& first, const Tensor& dy_first,
+                                                                            FusedMlp& second, const Tensor& dy_second) {
+    auto outputs = RunBackwardPair(first, dy_first, second, dy_second, true);
+    const Impl& a = *first.impl_;
+    const Impl& b = *second.impl_;
     std::pair<Gradients, Gradients> grads;
     size_t o = 0;
     for (size_t l = 0; l < a.request.mlp_layers; ++l, o += 2) {
@@ -295,6 +323,12 @@ std::pair<FusedMlp::Gradients, FusedMlp::Gradients> FusedMlp::BackwardPair(Fused
         grads.second[b.bias_names[l]] = std::move(outputs[o + 1]);
     }
     return grads;
+}
+
+std::pair<Tensor, Tensor> FusedMlp::InputGradientPair(FusedMlp& first, const Tensor& dy_first, FusedMlp& second,
+                                                      const Tensor& dy_second) {
+    auto outputs = RunBackwardPair(first, dy_first, second, dy_second, false);
+    return {std::move(outputs[0]), std::move(outputs[1])};
 }
 
 std::string FusedMlp::ProviderId() const { return impl_->provider->ProviderId(); }

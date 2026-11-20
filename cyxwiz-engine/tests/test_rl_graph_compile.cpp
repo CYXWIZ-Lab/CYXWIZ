@@ -15,8 +15,10 @@
 #include "../src/core/pipeline_runtime_capabilities.h"
 #include "../src/core/rl_graph_compile.h"
 #include "../src/core/rl_graph_presentation.h"
-#include "../src/core/rl/ppo_reference.h"
+#include "../src/core/rl/rl_reference.h"
 #include "rl_graph_test_support.h"
+
+#include <cyxwiz/neural_provider.h>
 
 #include <fstream>
 #include <sstream>
@@ -293,6 +295,62 @@ void CheckReference() {
           "a run normalising only the observations has none");
 }
 
+// The SAC reference matches SB3's SAC defaults for the keys a recorded task
+// leaves out (generate_sac_sb3_curves.py's layout)
+void CheckSacReference() {
+    const std::string text = R"({"versions": {"stable_baselines3": "2.7.1"},
+        "columns": ["time/total_timesteps", "rollout/ep_rew_mean", "train/critic_loss", "train/actor_loss",
+                    "train/ent_coef"],
+        "tasks": [
+          {"id": "InvertedPendulum-v5", "copies": 1, "sac": {},
+           "runs": [{"seed": 1, "updates": [[1000, 10.0, 0.5, -5.0, 0.8], [2000, 30.0, 0.4, -9.0, 0.6]]},
+                    {"seed": 2, "updates": [[1000, 20.0, 0.5, -5.0, 0.8], [2000, null, 0.4, -9.0, 0.6]]}]},
+          {"id": "HalfCheetah-v5", "copies": 1, "sac": {"learning_starts": 10000},
+           "runs": [{"seed": 1, "updates": [[11000, -280.0, 1.0, -20.0, 0.5]]}]}]})";
+    cyxwiz::rl::SacConfig defaults;  // the SAC node's: SB3's
+    const auto pendulum = cyxwiz::rl::FindSacReference(text, "InvertedPendulum-v5", 1, defaults);
+    Check(pendulum && pendulum->seeds.size() == 2 && pendulum->label == "SB3 2.7.1, 2 seeds",
+          "SAC: the pendulum's reference at SB3's defaults, 2 seeds");
+    if (pendulum) {
+        Check(pendulum->At(1000.0) == 15.0, "SAC: the seeds' mean at 1,000 steps");
+        Check(!pendulum->At(2000.0).has_value(), "SAC: a seed without a return there leaves no mean");
+    }
+    Check(!cyxwiz::rl::FindSacReference(text, "HalfCheetah-v5", 1, defaults).has_value(),
+          "SAC: HalfCheetah's reference starts learning at 10,000, not the default 100");
+    auto cheetah = defaults;
+    cheetah.learning_starts = 10000;
+    Check(cyxwiz::rl::FindSacReference(text, "HalfCheetah-v5", 1, cheetah).has_value(),
+          "SAC: RL Zoo's HalfCheetah settings have its reference");
+    auto other = defaults;
+    other.ent_coef_auto = false;
+    Check(!cyxwiz::rl::FindSacReference(text, "InvertedPendulum-v5", 1, other).has_value(),
+          "SAC: a fixed entropy weight has no reference");
+    other = defaults;
+    other.buffer_size = 50000;
+    Check(!cyxwiz::rl::FindSacReference(text, "InvertedPendulum-v5", 1, other).has_value(),
+          "SAC: another replay buffer size has no reference");
+    Check(!cyxwiz::rl::FindSacReference(text, "InvertedPendulum-v5", 2, defaults).has_value(),
+          "SAC: other copies have no reference");
+
+    // The recorded file: the pendulum at the SAC node's defaults, HalfCheetah at RL Zoo's settings
+    std::ifstream in(CYXWIZ_SAC_REFERENCE_FILE, std::ios::binary);
+    std::ostringstream recorded;
+    recorded << in.rdbuf();
+    Check(!recorded.str().empty(), "SAC: the recorded SB3 curves are readable");
+    const auto pendulum_file = cyxwiz::rl::FindSacReference(recorded.str(), "InvertedPendulum-v5", 1, defaults);
+    Check(pendulum_file && pendulum_file->seeds.size() == 3, "SAC: the pendulum's recorded reference, 3 seeds");
+    if (pendulum_file) {
+        const auto at = pendulum_file->At(120000.0);
+        Check(at && *at > 900.0 && *at <= 1000.0, "SAC: the pendulum's seeds' mean near 120,000 steps is above 900");
+    }
+    const auto cheetah_file = cyxwiz::rl::FindSacReference(recorded.str(), "HalfCheetah-v5", 1, cheetah);
+    Check(cheetah_file && cheetah_file->seeds.size() == 3, "SAC: HalfCheetah's recorded reference, 3 seeds");
+    if (cheetah_file) {
+        const auto at = cheetah_file->At(1000000.0);
+        Check(at && *at > 5000.0, "SAC: HalfCheetah's seeds' mean at 1,000,000 steps is above 5,000");
+    }
+}
+
 void CheckSac() {
     using namespace cyxwiz::rl_graph;
     const std::string pendulum_key = "test.continuous:InvertedPendulum-v5";
@@ -321,7 +379,18 @@ void CheckSac() {
                   c.ent_coef == 1.0f && c.target_entropy_auto && c.target_entropy == -1.0f &&
                   !c.normalize_observations && std::isnan(c.target_return),
               "SAC's defaults are Stable-Baselines3's, the target entropy minus the actions");
-        Check(!cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CUDA, 0), "no fused prediction for SAC");
+        // The actor and the Q chain on [observation | action], at SAC's batch
+        Check(!cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CPU, 0), "SAC: no fused kernels on the CPU");
+        const bool cuda_provider =
+            !cyxwiz::NeuralProviderRegistry::Instance().ListServing({cyxwiz::DeviceType::CUDA, 0}).empty();
+        Check(cyxwiz::FusedNetworksExpected(rl, cyxwiz::DeviceType::CUDA, 0) == cuda_provider,
+              "SAC's actor and Q networks are expected fused on CUDA exactly when a provider serves CUDA");
+        if (cuda_provider) {
+            auto huge = rl;  // a batch past the backward's rows
+            huge.sac.batch_size = 70000;
+            Check(!cyxwiz::FusedNetworksExpected(huge, cyxwiz::DeviceType::CUDA, 0),
+                  "a SAC batch past the backward's 65,536 rows is not expected fused");
+        }
 
         g.At(id.ppo).parameters["ent_coef_mode"] = "fixed";
         g.At(id.ppo).parameters["ent_coef"] = "0.2";
@@ -456,6 +525,7 @@ int main() {
     CheckErrors();
     CheckPresentation();
     CheckReference();
+    CheckSacReference();
     CheckSac();
     if (failures == 0) std::printf("test_rl_graph_compile: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

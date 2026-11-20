@@ -7861,7 +7861,8 @@ add_test(NAME sac_trainer COMMAND test_sac_trainer)
 add_executable(test_rl_graph_compile tests/test_rl_graph_compile.cpp)
 target_link_libraries(test_rl_graph_compile PRIVATE cyxwiz-training-core)
 target_compile_definitions(test_rl_graph_compile PRIVATE
-    CYXWIZ_PPO_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/ppo_sb3_curves.json")
+    CYXWIZ_PPO_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/ppo_sb3_curves.json"
+    CYXWIZ_SAC_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/sac_sb3_curves.json")
 if(MSVC)
     target_link_options(test_rl_graph_compile PRIVATE /STACK:4194304)
 endif()

@@ -64,7 +64,8 @@ void SetRLEnvironmentLookup(RLEnvironmentLookup lookup);
 // True for the node types of an RL graph
 bool IsRLGraphNode(gui::NodeType type);
 
-// Whether the device's neural provider would run both networks as fused
+// Whether the device's neural provider would run both networks (PPO's policy
+// and value; SAC's actor and Q, the twin and targets alike) as fused
 // small-network kernels (Dense layers of at most 256 units with the fused
 // activations, one LeakyReLU slope and one ELU alpha per network, the
 // minibatch within the backward's rows): asked of the provider registry's

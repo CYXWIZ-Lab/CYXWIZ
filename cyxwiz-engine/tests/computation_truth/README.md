@@ -495,6 +495,18 @@ Training Dashboard draws under a run of the same environment and settings. On 20
 64,256 / 72,192 steps and InvertedPendulum's 950 at 120,832 / 135,168 /
 161,792; the Engine's trainer reached them at 69,376 and 122,880.
 
+generate_sac_sb3_curves.py does the same for SAC (SB3's SAC on the Engine's
+environments, a row every 1,000 steps: mean return of the last 100, critic and
+actor loss, entropy weight; null before SB3 logs a value) into
+cyxwiz-engine/resources/rl_reference/sac_sb3_curves.json: InvertedPendulum at
+the SAC node's defaults (SB3's), HalfCheetah at RL Zoo's settings (learning
+starts at 10,000). Both generators share sb3_curve_files.py (read, merge,
+write). On 2026-11-18/19 SB3 reached InvertedPendulum's 950 at 105,625 /
+107,585 / 108,679 steps and ended HalfCheetah's 1,000,000 steps at 9,779 /
+10,747 / 7,845; the Engine's SAC (cyxwiz-rl-stability-gate --sac, CUDA)
+reached 950 at 105,000 / 105,000 / 102,000 and ended HalfCheetah at 9,663 /
+8,348 / 11,099.
+
 Each `LRScheduler` also exports/imports a typed, transactional state envelope.
 The scheduler tests resume every PyTorch LR sequence from a midpoint and reject
 schema, type, configuration, and non-finite state drift without mutating the

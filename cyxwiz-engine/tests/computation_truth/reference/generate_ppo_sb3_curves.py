@@ -23,11 +23,13 @@ always uses it.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sb3_curve_files import Merge, Read, Short, WriteReport  # noqa: E402
 
 # The Engine reads it to draw the reference on the RL Training Dashboard
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[3] / "resources" / "rl_reference" / "ppo_sb3_curves.json"
@@ -35,46 +37,6 @@ DEFAULT_OUTPUT = Path(__file__).resolve().parents[3] / "resources" / "rl_referen
 COLUMNS = ["time/total_timesteps", "rollout/ep_rew_mean", "train/policy_gradient_loss", "train/value_loss",
            "train/approx_kl", "train/clip_fraction", "train/explained_variance"]
 
-
-def Short(value):
-    return float(f"{float(value):.5g}")
-
-
-def Read(path):
-    """A report written by WriteReport, or None when there is none."""
-    if not Path(path).is_file():
-        return None
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def Merge(old, new):
-    """`new` over `old`: its tasks replace the same seeds of the same task, the rest stays."""
-    if old is None:
-        return new
-    tasks = {t["id"]: t for t in old["tasks"]}
-    for task in new["tasks"]:
-        if task["id"] in tasks:
-            kept = [r for r in tasks[task["id"]]["runs"] if r["seed"] not in {n["seed"] for n in task["runs"]}]
-            task = dict(task, runs=sorted(kept + task["runs"], key=lambda r: r["seed"]))
-        tasks[task["id"]] = task
-    order = [t["id"] for t in TASKS]
-    merged = dict(new, tasks=sorted(tasks.values(), key=lambda t: order.index(t["id"]) if t["id"] in order else 99))
-    return merged
-
-
-def WriteReport(path, report):
-    """JSON with one update per line."""
-    rows = {}
-    for task in report["tasks"]:
-        for run in task["runs"]:
-            token = f"@rows{len(rows)}@"
-            rows[token] = run["updates"]
-            run["updates"] = token
-    text = json.dumps(report, indent=1)
-    for token, updates in rows.items():
-        text = text.replace(json.dumps(token), "[\n" + ",\n".join(json.dumps(r) for r in updates) + "]")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text + "\n", encoding="utf-8")
 
 # test_ppo_trainer's tasks: RL Zoo settings, the copy count, the target and the step budget
 TASKS = [
@@ -158,7 +120,7 @@ def main():
     if args.merge:
         report = Read(args.output)
         for part in args.merge:
-            report = Merge(report, Read(part))
+            report = Merge(report, Read(part), [t["id"] for t in TASKS])
         WriteReport(args.output, report)
         print(f"merged {len(args.merge)} part(s) into {args.output}")
         return
@@ -201,7 +163,7 @@ def main():
         "columns": COLUMNS,
         "tasks": results,
     }
-    WriteReport(args.output, Merge(Read(args.output), report))
+    WriteReport(args.output, Merge(Read(args.output), report, [t["id"] for t in TASKS]))
     print(f"wrote {args.output}")
 
 

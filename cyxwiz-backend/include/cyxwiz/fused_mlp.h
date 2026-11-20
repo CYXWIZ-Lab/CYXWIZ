@@ -16,6 +16,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace cyxwiz {
 
@@ -40,6 +41,10 @@ public:
     // The parameters' gradients for dY [rows, outputs] after a kept
     // Forward, each summed over the rows. Throws as Forward does.
     std::map<std::string, Tensor> Backward(const Tensor& dy);
+    // The input's gradient dX [rows, inputs] for dY after a kept Forward,
+    // without the parameters' (SAC's actor loss reaches the action through
+    // the critics' input). Throws as Forward does.
+    Tensor InputGradient(const Tensor& dy);
 
     // Two networks over the same X in one launch forward and two backward
     // for both (PPO's policy and value networks): the same results as each
@@ -49,6 +54,9 @@ public:
     // After a kept ForwardPair of the same two
     static std::pair<Gradients, Gradients> BackwardPair(FusedMlp& first, const Tensor& dy_first, FusedMlp& second,
                                                         const Tensor& dy_second);
+    // Each one's InputGradient, in one launch (SAC's twin critics)
+    static std::pair<Tensor, Tensor> InputGradientPair(FusedMlp& first, const Tensor& dy_first, FusedMlp& second,
+                                                       const Tensor& dy_second);
 
     // The provider that runs it ("cyxwiz.nvidia-cublas-cell")
     std::string ProviderId() const;
@@ -56,6 +64,10 @@ public:
 private:
     struct Impl;
     explicit FusedMlp(std::unique_ptr<Impl> impl);
+    // The backward's outputs: the parameters' gradients or the input's
+    std::vector<Tensor> RunBackward(const Tensor& dy, bool parameters);
+    static std::vector<Tensor> RunBackwardPair(FusedMlp& first, const Tensor& dy_first, FusedMlp& second,
+                                               const Tensor& dy_second, bool parameters);
     std::unique_ptr<Impl> impl_;
 };
 

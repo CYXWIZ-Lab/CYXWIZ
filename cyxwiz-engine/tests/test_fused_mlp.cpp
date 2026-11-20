@@ -103,7 +103,7 @@ void Compare(cyxwiz::SequentialModel& model, const std::string& what, size_t row
     const auto x = Random({rows, inputs}, 11);
     const auto dy = Random({rows, outputs}, 12);
     const cyxwiz::Tensor want = model.Forward(x);
-    model.Backward(dy);
+    const cyxwiz::Tensor want_dx = model.Backward(dy);
     const auto want_grads = model.GetGradients();
     const cyxwiz::Tensor got = fused->Forward(x, true);
     const auto got_grads = fused->Backward(dy);
@@ -120,6 +120,9 @@ void Compare(cyxwiz::SequentialModel& model, const std::string& what, size_t row
         gd = std::max(gd, Difference(it->second, g));
     }
     Check(gd < 1e-4, what + ": gradients differ by " + std::to_string(gd));
+    // The input's gradient (SAC's critics), after the same kept forward
+    const double xd = Difference(fused->InputGradient(dy), want_dx);
+    Check(xd < 1e-4, what + ": the input's gradient differs by " + std::to_string(xd));
     // Without keep: the same forward
     Check(Difference(fused->Forward(x, false), want) < 1e-5, what + ": forward without keep");
 }
@@ -215,6 +218,7 @@ void CheckPairs() {
         {"CartPole policy + value x64", 4, 64, {64, 64}, {64, 64}, 2, 1, 0, 0},
         {"HalfCheetah policy + value x64", 17, 64, {256, 256}, {256, 256}, 6, 1, 1, 1},
         {"LeakyReLU 7-33-3 + ELU 7-1-129-1 x13", 7, 13, {33}, {1, 129}, 3, 1, 2, 4},
+        {"HalfCheetah SAC critics x256", 23, 256, {256, 256}, {256, 256}, 1, 1, 1, 1},
     };
     for (const auto& p : pairs) {
         auto a = Chain(p.inputs, p.hidden_a, p.out_a, Activations()[p.act_a].add);
@@ -231,8 +235,10 @@ void CheckPairs() {
         const auto dyb = Random({p.rows, p.out_b}, 43);
         const auto ya = fa->Forward(x, true);
         const auto ga = fa->Backward(dya);
+        const auto xa = fa->InputGradient(dya);
         const auto yb = fb->Forward(x, true);
         const auto gb = fb->Backward(dyb);
+        const auto xb = fb->InputGradient(dyb);
         try {
             const auto [pa, pb] = cyxwiz::FusedMlp::ForwardPair(*fa, *fb, x, true);
             const auto [qa, qb] = cyxwiz::FusedMlp::BackwardPair(*fa, dya, *fb, dyb);
@@ -244,6 +250,9 @@ void CheckPairs() {
                     gd = it == got->end() ? 1.0 : std::max(gd, Difference(it->second, g));
                 }
             Check(gd == 0.0, std::string(p.what) + ": the pair's gradients (differ by " + std::to_string(gd) + ")");
+            const auto [ia, ib] = cyxwiz::FusedMlp::InputGradientPair(*fa, dya, *fb, dyb);
+            Check(Difference(ia, xa) == 0.0 && Difference(ib, xb) == 0.0,
+                  std::string(p.what) + ": the pair's input gradients");
             // Without keep: the same forward, and no backward from it
             const auto [ka, kb] = cyxwiz::FusedMlp::ForwardPair(*fa, *fb, x, false);
             Check(Difference(ka, ya) == 0.0 && Difference(kb, yb) == 0.0, std::string(p.what) + ": forward without keep");

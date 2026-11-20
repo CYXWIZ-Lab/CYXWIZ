@@ -12,7 +12,7 @@
 
 #include "../panel.h"
 #include "../plot/plot_view.h"
-#include "../../core/rl/ppo_reference.h"
+#include "../../core/rl/rl_reference.h"
 #include "../../core/rl/sac_trainer.h"
 
 #include <imgui.h>
@@ -47,7 +47,7 @@ public:
         long long total_timesteps = 0;
         float target_return = 0.0f;  // NaN: no target
         bool continuous = false;
-        std::optional<rl::PpoReference> reference;
+        std::optional<rl::RLReference> reference;
         // A SAC run: its own cards and progress
         bool sac = false;
         long long learning_starts = 0;  // random actions before

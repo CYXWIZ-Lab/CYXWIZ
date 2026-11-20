@@ -6,7 +6,8 @@
 // the twin critics and the actor from minibatches of a replay buffer on the
 // training device, with Polyak-averaged target critics (cyxwiz/rl/sac.h has
 // the math). The networks are ordinary built models (IExecutableModel);
-// updates go through ApplyOptimizerStep. GUI-free.
+// updates go through ApplyOptimizerStep, or AdamOptimizer::StepTogether on a
+// device whose provider steps Adam (S5). GUI-free.
 
 #include "../executable_model.h"
 #include "replay_buffer.h"
@@ -24,6 +25,10 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+namespace cyxwiz {
+class FusedMlp;
+}
 
 namespace cyxwiz::rl {
 
@@ -60,6 +65,11 @@ struct SacStepLosses {
 
 // The networks, their optimizers and the entropy weight, and SB3's
 // SAC.train for one gradient step. Works on the current ArrayFire device.
+// Small Dense/activation networks run whole on the device's provider (the
+// fused kernels: the twin critics and their targets in one launch each way,
+// the critics' input gradient for the actor) and the optimizers step
+// together (AdamOptimizer::StepTogether); otherwise, or once a fused call
+// fails, the layers run as ArrayFire operations.
 class SacLearner {
 public:
     // target_entropy: the config's, already resolved (auto = -actions)
@@ -80,8 +90,43 @@ public:
     const Tensor& LogEntCoef() const { return log_ent_coef_; }
     // "actor", "q1", "q2" and, when the weight is learned, "ent_coef"
     bool ExportOptimizers(std::map<std::string, OptimizerState>& out, std::string& error) const;
+    // How the networks run: "fused small-network kernels (<provider>)" or
+    // "ArrayFire operations" (with the reason a fused call failed)
+    const std::string& NetworkPath() const { return network_path_; }
 
 private:
+    // A step's critic gradients and the actor's draw on the batch (nothing
+    // changed yet)
+    struct CriticPass {
+        Tensor critic_loss;
+        std::map<std::string, Tensor> q1_grads, q2_grads;
+        Tensor mean, log_std;    // the actor's outputs on the batch's observations
+        Tensor actions, log_prob;  // its draw with noise_pi
+        bool actor_cached = false;  // the actor's layers hold that forward (ArrayFire operations)
+    };
+    // The actor's loss and gradients against the updated critics
+    struct ActorPass {
+        Tensor loss, mean_q;
+        std::map<std::string, Tensor> grads;
+    };
+    void DropFused(const std::exception& e);
+    CriticPass CriticsFused(const ReplayBuffer::Batch& batch, const Tensor& noise_pi, const Tensor& noise_next,
+                            const Tensor& alpha);
+    CriticPass CriticsLayers(const ReplayBuffer::Batch& batch, const Tensor& noise_pi, const Tensor& noise_next,
+                             const Tensor& alpha);
+    ActorPass ActorFused(const ReplayBuffer::Batch& batch, const CriticPass& c, const Tensor& noise_pi,
+                         const Tensor& alpha);
+    ActorPass ActorLayers(const ReplayBuffer::Batch& batch, const CriticPass& c, const Tensor& noise_pi,
+                          const Tensor& alpha);
+    // One Adam step of each optimizer's parameters, in one launch when they
+    // step together (else each through ApplyOptimizerStep)
+    struct Update {
+        Optimizer* optimizer;
+        IExecutableModel* model;  // null: the entropy weight
+        std::map<std::string, Tensor>* gradients;
+    };
+    void StepOptimizers(const std::vector<Update>& updates);
+
     SacNetworks networks_;
     size_t observation_size_;
     size_t action_size_;
@@ -92,6 +137,10 @@ private:
     std::unique_ptr<Optimizer> q1_optimizer_;
     std::unique_ptr<Optimizer> q2_optimizer_;
     std::unique_ptr<Optimizer> ent_coef_optimizer_;
+    // All five fused, or none
+    std::unique_ptr<FusedMlp> actor_fused_, q1_fused_, q2_fused_, q1_target_fused_, q2_target_fused_;
+    bool adam_together_ = true;
+    std::string network_path_ = "ArrayFire operations";
 };
 
 // Reported every report_every environment steps (and at the end, or at a

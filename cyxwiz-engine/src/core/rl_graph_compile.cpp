@@ -99,8 +99,22 @@ bool MlpChain(const std::vector<CompiledLayer>& layers, size_t inputs, size_t ou
 
 bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType platform, int device_id) {
     if (platform == DeviceType::CPU) return false;
-    if (config.algorithm != RLAlgorithm::PPO) return false;  // SAC's networks are not predicted yet
-    for (const auto* layers : {&config.policy_layers, &config.value_layers}) {
+    const bool sac = config.algorithm == RLAlgorithm::SAC;
+    const size_t observations = std::max<size_t>(config.observation_size, 1);
+    const size_t actions = std::max<size_t>(config.policy_outputs, 1);
+    // PPO: the policy (logits or means) and the value network. SAC: the actor
+    // (mean and log std per action) and the Q network on [observation | action]
+    // (its twin and the targets are the same chain).
+    struct Network {
+        const std::vector<CompiledLayer>* layers;
+        size_t inputs, outputs;
+    };
+    const Network networks[] = {
+        {&config.policy_layers, observations, sac ? 2 * actions : actions},
+        sac ? Network{&config.q_layers, observations + actions, 1} : Network{&config.value_layers, observations, 1},
+    };
+    const int batch = sac ? config.sac.batch_size : config.ppo.batch_size;
+    for (const auto& n : networks) {
         NeuralOpRequest r;
         r.op = NeuralOp::MlpForward;
         r.target.platform = platform;
@@ -108,13 +122,12 @@ bool FusedNetworksExpected(const RLTrainingConfiguration& config, DeviceType pla
         r.device_resident = true;
         r.dtype = DataType::Float32;
         r.batch = 1;
-        const size_t outputs = layers == &config.policy_layers ? std::max<size_t>(config.policy_outputs, 1) : 1;
-        if (!MlpChain(*layers, std::max<size_t>(config.observation_size, 1), outputs, r.mlp_layers, r.mlp_widths,
-                      r.mlp_activations, r.mlp_negative_slope, r.mlp_elu_alpha))
+        if (!MlpChain(*n.layers, n.inputs, n.outputs, r.mlp_layers, r.mlp_widths, r.mlp_activations,
+                      r.mlp_negative_slope, r.mlp_elu_alpha))
             return false;
         if (!NeuralProviderRegistry::Instance().FindSupporting(r)) return false;
         r.op = NeuralOp::MlpBackward;  // the minibatch's backward, with its row limit
-        r.batch = static_cast<size_t>(std::max(config.ppo.batch_size, 1));
+        r.batch = static_cast<size_t>(std::max(batch, 1));
         if (!NeuralProviderRegistry::Instance().FindSupporting(r)) return false;
     }
     return true;

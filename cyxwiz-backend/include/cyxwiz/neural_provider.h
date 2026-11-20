@@ -201,7 +201,11 @@ struct NeuralOpRequest {
     //                w1 + ... + wL]: every layer's pre-activation, in order
     //   MlpBackward  inputs  X, W_1 ... W_L, Z, dY [rows, wL]
     //                outputs dW_1, db_1, ... dW_L, db_L, each summed over the
-    //                rows (as the Linear layer's gradients)
+    //                rows (as the Linear layer's gradients); with
+    //                mlp_input_gradient, then dX [rows, w0] (SAC's actor
+    //                loss reaches the action through the critics' input).
+    //                Without mlp_parameter_gradients only dX (both off is
+    //                refused).
     static constexpr size_t kMaxMlpLayers = 8;
     size_t mlp_layers = 0;
     size_t mlp_widths[kMaxMlpLayers + 1] = {};
@@ -215,13 +219,16 @@ struct NeuralOpRequest {
     //   MlpForward   inputs  X, W_1, b_1 ... of the first, W_1, b_1 ... of the second
     //                outputs Y_1, Y_2; when `training`, also Z_1, Z_2
     //   MlpBackward  inputs  X, W_1 ... Z_1, dY_1 of the first, W_1 ... Z_2, dY_2 of the second
-    //                outputs dW_1, db_1 ... of the first, then of the second
+    //                outputs dW_1, db_1 ... of the first, then of the second;
+    //                with mlp_input_gradient, then dX_1, dX_2
     size_t mlp_networks = 1;
     size_t mlp2_layers = 0;
     size_t mlp2_widths[kMaxMlpLayers + 1] = {};
     NeuralActivation mlp2_activations[kMaxMlpLayers] = {};
     float mlp2_negative_slope = 0.01f;
     float mlp2_elu_alpha = 1.0f;
+    bool mlp_input_gradient = false;     // MlpBackward also gives each network's dX
+    bool mlp_parameter_gradients = true; // MlpBackward gives dW, db (off: dX only)
     // Adam over adam_tensors tensors (device-resident), TOFIX206 3.2 C.
     //   inputs  for each tensor t: param_t, grad_t, m_t, v_t (any shape, the
     //           four of a tensor the same size)
@@ -390,7 +397,10 @@ CYXWIZ_API bool NeuralProvidersDisabledForTesting();
 // (TOFIX206 3.2).
 // 3: one or two networks per MLP launch (mlp_networks, mlp2_*: the request's
 // later fields moved).
-#define CYXWIZ_NEURAL_PROVIDER_MODULE_ABI 3
+// 4: MlpBackward's input gradient, with or without the parameters'
+// (mlp_input_gradient, mlp_parameter_gradients: the request's later fields
+// moved).
+#define CYXWIZ_NEURAL_PROVIDER_MODULE_ABI 4
 
 #ifdef CYXWIZ_HAS_NVIDIA_DNN_PROVIDER
 // Test-only: synchronizes the device and reports free/total device memory

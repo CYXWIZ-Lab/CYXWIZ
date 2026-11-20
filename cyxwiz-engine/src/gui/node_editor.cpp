@@ -4265,11 +4265,14 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
         info.ent_coef_auto = c.sac.ent_coef_auto;
         info.ent_coef_start = c.sac.ent_coef;
         info.target_entropy = c.sac.target_entropy;
+        info.reference = cyxwiz::rl::FindSacReference(cyxwiz::rl::ReadReferenceFile("sac_sb3_curves.json"),
+                                                      c.environment.id, c.copies, c.sac);
     } else {
         info.total_timesteps = static_cast<long long>(c.ppo.total_timesteps);
         info.target_return = c.ppo.target_return;
         info.reference =
-            cyxwiz::rl::FindPpoReference(cyxwiz::rl::ReadPpoReferenceFile(), c.environment.id, c.copies, c.ppo);
+            cyxwiz::rl::FindPpoReference(cyxwiz::rl::ReadReferenceFile("ppo_sb3_curves.json"), c.environment.id,
+                                         c.copies, c.ppo);
     }
     auto* run = rl_run_.get();
     cyxwiz::TrainingDashboardPanel::RunControls controls;

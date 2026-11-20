@@ -731,7 +731,7 @@ struct MlpWeights { const float* w[MLP_MAXL]; const float* b[MLP_MAXL]; };
 struct MlpGrads { float* dw[MLP_MAXL]; float* db[MLP_MAXL]; };
 // One or two networks per launch (blockIdx.y picks one; PPO's policy and
 // value networks run together). y, z: forward outputs (z also the backward's
-// input); dy, delta: the backward's.
+// input); dy, delta: the backward's; dx: the input's gradient, or null.
 struct MlpNets {
   MlpShape s[2];
   MlpWeights p[2];
@@ -740,7 +740,8 @@ struct MlpNets {
   float* z[2];
   const float* dy[2];
   float* delta[2];
-  long long total0;  // the first network's weights and biases (the gradient kernel's split)
+  float* dx[2];
+  int tiles0;  // the first network's gradient tiles (the gradient kernel's split)
 };
 
 __device__ __forceinline__ float mlp_sigmoid(float z) { return 1.0f / (1.0f + expf(-z)); }
@@ -821,9 +822,10 @@ extern "C" __global__ void cyxwiz_mlp_forward(MlpNets P, const float* __restrict
   }
 }
 
-// Every layer's delta (dLoss/dZ) from dY, for MLP_RB rows per block. The
-// deltas are written unit-fastest, delta[(zoff + u) + r * zwidth], so the
-// gradient kernel's reads coalesce. W^T * delta reads the weights through a
+// Every layer's delta (dLoss/dZ) from dY, for MLP_RB rows per block, and the
+// input's gradient W_1^T * delta_1 when dx is given. The deltas are written
+// unit-fastest, delta[(zoff + u) + r * zwidth], so the gradient kernel's reads
+// coalesce. W^T * delta reads the weights through a
 // shared tile of MLP_TU units x win inputs (coalesced loads; the +1 pad keeps
 // the column reads off one bank). Shared memory: 2 * MLP_RB * maxw +
 // MLP_TU_PAD * maxw floats, maxw = the widest layer (not the input).
@@ -890,50 +892,88 @@ extern "C" __global__ void cyxwiz_mlp_backward_deltas(MlpNets P, int rows, int m
     __syncthreads();
     float* t = cur; cur = nxt; nxt = t;
   }
+  // cur holds the first layer's deltas: dX = delta_1 * W_1 (no activation
+  // before the input), in unit order (deterministic)
+  float* __restrict__ dx = P.dx[blockIdx.y];
+  if (dx) {
+    const int w0 = s.widths[0], w1 = s.widths[1];
+    const float* __restrict__ W = p.w[0];
+    for (int i = threadIdx.x; i < w0; i += blockDim.x) {
+      float acc[MLP_RB];
+      for (int rb = 0; rb < MLP_RB; ++rb) acc[rb] = 0.0f;
+      for (int u = 0; u < w1; ++u) {
+        const float wv = W[u + (size_t)i * w1];
+        for (int rb = 0; rb < MLP_RB; ++rb) acc[rb] += cur[rb * maxw + u] * wv;
+      }
+      for (int rb = 0; rb < nr; ++rb) dx[(r0 + rb) + (size_t)i * rows] = acc[rb];
+    }
+  }
 }
 
-// One thread per weight and bias of every layer of every network: the sum
-// over the rows, in row order (deterministic: no atomics).
-extern "C" __global__ void cyxwiz_mlp_param_grads(MlpNets P, const float* __restrict__ x, int rows, long long total) {
-  long long k = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-  if (k >= total) return;
-  const int n = k < P.total0 ? 0 : 1;
-  if (n == 1) k -= P.total0;
+// Every layer's weight and bias gradients, the sums over the rows: one block
+// per MLP_GT x MLP_GT tile of a layer's [units x (inputs + 1)] (the bias as
+// the input that is always 1), the rows read MLP_GR at a time into shared
+// memory so that every delta and activation is read once per tile, not once
+// per weight. Each thread sums its weight's rows in row order (deterministic:
+// no atomics). blockDim.x = MLP_GT * MLP_GT.
+#define MLP_GT 16
+#define MLP_GR 32
+extern "C" __global__ void cyxwiz_mlp_param_grads(MlpNets P, const float* __restrict__ x, int rows) {
+  int b = blockIdx.x;
+  const int n = b < P.tiles0 ? 0 : 1;
+  if (n == 1) b -= P.tiles0;
   const MlpShape& s = P.s[n];
-  const MlpGrads& g = P.g[n];
-  const float* __restrict__ z = P.z[n];
-  const float* __restrict__ delta = P.delta[n];
-  for (int l = 0; l < s.layers; ++l) {
-    const int win = s.widths[l], wout = s.widths[l + 1];
-    const long long weights = (long long)wout * win;
-    if (k >= weights + wout) { k -= weights + wout; continue; }
-    const int u = (int)(k < weights ? k % wout : k - weights);
-    const int zw = s.zoff[s.layers];
-    const float* __restrict__ d = delta + (s.zoff[l] + u);  // unit-fastest: row r at d[r * zw]
-    float acc = 0.0f;
-    if (k >= weights) {
-      for (int r = 0; r < rows; ++r) acc += d[(size_t)r * zw];
-      g.db[l][u] = acc;
-      return;
-    }
-    const int i = (int)(k / wout);
-    if (l == 0) {
-      const float* __restrict__ a = x + (size_t)i * rows;
-      for (int r = 0; r < rows; ++r) acc += d[(size_t)r * zw] * a[r];
-    } else {
-      const float* __restrict__ zp = z + (size_t)(s.zoff[l - 1] + i) * rows;
-      const int act = s.acts[l - 1];
-      for (int r = 0; r < rows; ++r) acc += d[(size_t)r * zw] * mlp_act(act, zp[r], s.slope, s.alpha);
-    }
-    g.dw[l][u + (size_t)i * wout] = acc;
-    return;
+  int l = 0, win = 0, wout = 0, tiles_i = 0;
+  for (; l < s.layers; ++l) {
+    win = s.widths[l];
+    wout = s.widths[l + 1];
+    tiles_i = (win + MLP_GT) / MLP_GT;  // win + 1 columns
+    const int tiles = (wout + MLP_GT - 1) / MLP_GT * tiles_i;
+    if (b < tiles) break;
+    b -= tiles;
   }
+  if (l == s.layers) return;
+  const int u0 = b / tiles_i * MLP_GT, i0 = b % tiles_i * MLP_GT;
+  const int zw = s.zoff[s.layers];
+  const float* __restrict__ delta = P.delta[n] + s.zoff[l];  // unit-fastest: row r, unit u at delta[u + r * zw]
+  const float* __restrict__ z = P.z[n];
+  const int act = l > 0 ? s.acts[l - 1] : 0;
+  __shared__ float dt[MLP_GR][MLP_GT + 1];
+  __shared__ float at[MLP_GR][MLP_GT + 1];
+  const int tu = threadIdx.x % MLP_GT, ti = threadIdx.x / MLP_GT;
+  float acc = 0.0f;
+  for (int r0 = 0; r0 < rows; r0 += MLP_GR) {
+    const int nr = min(MLP_GR, rows - r0);
+    for (int k = threadIdx.x; k < MLP_GR * MLP_GT; k += blockDim.x) {
+      const int rr = k / MLP_GT, uu = k % MLP_GT;  // units fastest: the deltas' order
+      const int u = u0 + uu;
+      dt[rr][uu] = rr < nr && u < wout ? delta[u + (size_t)(r0 + rr) * zw] : 0.0f;
+    }
+    for (int k = threadIdx.x; k < MLP_GR * MLP_GT; k += blockDim.x) {
+      const int rr = k % MLP_GR, ii = k / MLP_GR;  // rows fastest: X's and Z's order
+      const int i = i0 + ii;
+      float a = 0.0f;
+      if (rr < nr && i == win) a = 1.0f;
+      else if (rr < nr && i < win)
+        a = l == 0 ? x[(r0 + rr) + (size_t)i * rows]
+                   : mlp_act(act, z[(r0 + rr) + (size_t)(s.zoff[l - 1] + i) * rows], s.slope, s.alpha);
+      at[rr][ii] = a;
+    }
+    __syncthreads();
+    for (int rr = 0; rr < nr; ++rr) acc += dt[rr][tu] * at[rr][ti];
+    __syncthreads();
+  }
+  const int u = u0 + tu, i = i0 + ti;
+  if (u >= wout) return;
+  if (i < win) P.g[n].dw[l][u + (size_t)i * wout] = acc;
+  else if (i == win) P.g[n].db[l][u] = acc;
 }
 )";
 
 // Host mirrors of the kernels' argument structs (same order and types).
 constexpr int kMlpMaxLayers = 8;
 constexpr int kMlpRowsPerBlock = 4;
+constexpr unsigned kMlpGradTile = 16;  // the gradient kernel's MLP_GT
 struct MlpShapeArg {
     int layers = 0;
     int widths[kMlpMaxLayers + 1] = {};
@@ -958,7 +998,8 @@ struct MlpNetsArg {
     float* z[2] = {};
     const float* dy[2] = {};
     float* delta[2] = {};
-    long long total0 = 0;
+    float* dx[2] = {};
+    int tiles0 = 0;
 };
 
 // Network n's chain of a request (0: mlp_*, 1: mlp2_*)
@@ -984,6 +1025,8 @@ std::string MlpContractError(const NeuralOpRequest& r) {
     // The backward's gradient threads each sum every row: past 65,536 rows a
     // launch could outlast the display driver's watchdog
     if (r.op == NeuralOp::MlpBackward && r.batch > (1u << 16)) return "mlp_backward takes up to 65,536 rows";
+    if (r.op == NeuralOp::MlpBackward && !r.mlp_parameter_gradients && !r.mlp_input_gradient)
+        return "mlp_backward gives the parameters' gradients, the input's, or both";
     if (r.mlp_networks == 2 && r.mlp2_widths[0] != r.mlp_widths[0]) return "two mlp networks need the same input width";
     for (size_t n = 0; n < r.mlp_networks; ++n) {
         const MlpChain c = MlpChainOf(r, n);
@@ -2895,7 +2938,7 @@ private:
         const auto& out = buffers.outputs;
         MlpNetsArg P;
         size_t z_width[2] = {};
-        long long totals[2] = {};
+        int tiles[2] = {};  // the gradient kernel's blocks per network
         int max_hidden = 1;
         unsigned threads = 32;
         size_t inputs = 1, outputs = 0;
@@ -2906,37 +2949,47 @@ private:
             const MlpChain c = MlpChainOf(r, n);
             for (size_t l = 1; l <= c.layers; ++l) max_hidden = std::max(max_hidden, static_cast<int>(c.widths[l]));
             inputs += c.layers + 2;
-            outputs += 2 * c.layers;
+            if (r.mlp_parameter_gradients) outputs += 2 * c.layers;
         }
+        const size_t gradients = outputs;  // the dX outputs follow the parameters' gradients
+        if (r.mlp_input_gradient) outputs += nets;
         bool ok = in.size() == inputs && out.size() == outputs && in[0].elements == rows * r.mlp_widths[0];
         for (size_t n = 0, i = 1, o = 0; ok && n < nets; ++n) {
             const MlpChain c = MlpChainOf(r, n);
-            for (size_t l = 0; ok && l < c.layers; ++l, ++i, o += 2) {
+            for (size_t l = 0; ok && l < c.layers; ++l, ++i) {
                 const size_t weights = c.widths[l + 1] * c.widths[l];
-                ok = in[i].elements == weights && out[o].elements == weights && out[o + 1].elements == c.widths[l + 1];
+                ok = in[i].elements == weights;
                 P.p[n].w[l] = static_cast<const float*>(in[i].handle);
+                if (!r.mlp_parameter_gradients) continue;
+                ok = ok && out[o].elements == weights && out[o + 1].elements == c.widths[l + 1];
                 P.g[n].dw[l] = static_cast<float*>(out[o].handle);
                 P.g[n].db[l] = static_cast<float*>(out[o + 1].handle);
-                totals[n] += static_cast<long long>(weights + c.widths[l + 1]);
+                o += 2;
+                // MLP_GT x MLP_GT tiles of [units x (inputs + 1)]
+                tiles[n] += static_cast<int>((c.widths[l + 1] + kMlpGradTile - 1) / kMlpGradTile *
+                                             ((c.widths[l] + kMlpGradTile) / kMlpGradTile));
             }
             ok = ok && in[i].elements == rows * z_width[n] && in[i + 1].elements == rows * c.widths[c.layers];
             if (!ok) break;
             P.z[n] = static_cast<float*>(in[i].handle);  // read only
             P.dy[n] = static_cast<const float*>(in[i + 1].handle);
             i += 2;
+            if (r.mlp_input_gradient) {
+                ok = out[gradients + n].elements == rows * r.mlp_widths[0];
+                P.dx[n] = static_cast<float*>(out[gradients + n].handle);
+            }
         }
         if (!ok) {
             return Fail(BackendFallbackReason::NvidiaProviderUnsupportedContract,
                         "mlp_backward buffers do not match the request (X, each network's W_1 ... W_L, Z, dY -> "
-                        "each network's dW_1, db_1 ...)");
+                        "each network's dW_1, db_1 ...[, each dX])");
         }
         const auto stream = static_cast<CUstream>(buffers.queue.cuda_stream);
         float* delta = device_state_.Workspace(rows * (z_width[0] + z_width[1]), stream);
         if (!delta) return Fail(BackendFallbackReason::NvidiaProviderWorkspaceExhausted, "mlp delta workspace");
         P.delta[0] = delta;
         P.delta[1] = delta + rows * z_width[0];
-        P.total0 = totals[0];
-        long long total = totals[0] + totals[1];
+        P.tiles0 = tiles[0];
         const float* x = static_cast<const float*>(in[0].handle);
         int rows_arg = static_cast<int>(rows);
         void* delta_args[] = {&P, &rows_arg, &max_hidden};
@@ -2947,10 +3000,10 @@ private:
                            stream, delta_args, nullptr) != CUDA_SUCCESS) {
             return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "mlp_backward deltas launch failed");
         }
-        constexpr unsigned kThreads = 256;
-        void* grad_args[] = {&P, const_cast<float**>(&x), &rows_arg, &total};
-        if (cuLaunchKernel(device_state_.MlpGrads(), Blocks(total, kThreads), 1, 1, kThreads, 1, 1, 0, stream,
-                           grad_args, nullptr) != CUDA_SUCCESS) {
+        if (!r.mlp_parameter_gradients) return Ok();
+        void* grad_args[] = {&P, const_cast<float**>(&x), &rows_arg};
+        if (cuLaunchKernel(device_state_.MlpGrads(), static_cast<unsigned>(tiles[0] + tiles[1]), 1, 1,
+                           kMlpGradTile * kMlpGradTile, 1, 1, 0, stream, grad_args, nullptr) != CUDA_SUCCESS) {
             return Fail(BackendFallbackReason::NvidiaProviderExecutionFailed, "mlp_backward gradients launch failed");
         }
         return Ok();
