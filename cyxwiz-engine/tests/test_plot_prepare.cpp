@@ -810,6 +810,14 @@ int main() {
         }
         Check(QuietestCorner({rising}) == Corner::NorthWest, "legend: rising curve, top left");
         Check(QuietestCorner({falling}) == Corner::NorthEast, "legend: falling curve, top right");
+        const unsigned no_top_left = 1u << static_cast<int>(Corner::NorthWest);
+        Check(QuietestCorner({rising}, no_top_left) == Corner::SouthEast, "legend: a label at the top left moves it");
+        // The corner in use stays while it is about as quiet as the best
+        Series nearly = rising;
+        nearly.x.push_back(1);
+        nearly.y.push_back(99);  // one point in the top left
+        Check(QuietestCorner({nearly}) == Corner::SouthEast, "legend: the quieter corner without one in use");
+        Check(QuietestCorner({nearly}, 0, Corner::NorthWest) == Corner::NorthWest, "legend: no jump for one point");
         Check(QuietestCorner({rising, falling}) == Corner::NorthEast || QuietestCorner({rising, falling}) == Corner::NorthWest ||
                   QuietestCorner({rising, falling}) == Corner::SouthEast || QuietestCorner({rising, falling}) == Corner::SouthWest,
               "legend: a cross picks a corner");

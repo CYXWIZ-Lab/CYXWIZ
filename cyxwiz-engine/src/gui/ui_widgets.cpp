@@ -366,14 +366,16 @@ bool SearchField(const char* id, char* buffer, size_t size, const char* hint, fl
 // Flow row
 
 FlowRow::FlowRow(float right_edge)
-    : right(right_edge > 0.0f ? right_edge : ImGui::GetWindowContentRegionMax().x) {}
+    : right(right_edge > 0.0f ? right_edge : ImGui::GetWindowContentRegionMax().x + ImGui::GetScrollX()) {}
 
 bool FlowRow::Next(float item_width) {
     if (first) {
         first = false;
         return false;
     }
-    const float x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetStyle().ItemSpacing.x;
+    // Content coordinates, as GetCursorPosX (a window scrolled sideways)
+    const float x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX() +
+                    ImGui::GetStyle().ItemSpacing.x;
     if (x + item_width <= right) {
         ImGui::SameLine();
         return false;

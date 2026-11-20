@@ -6,8 +6,7 @@ or the folder it was started from, so an example trains right after it opens,
 offline. When a starter opens, its Data Input is pointed at the sample it
 found, so a copy saved anywhere keeps its data.
 
-These files are in a source checkout; release packages do not ship
-`examples/` yet.
+These files ship in release packages too (`examples/` beside the Engine).
 
 ## Starter samples
 

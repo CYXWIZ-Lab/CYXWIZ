@@ -127,7 +127,7 @@ std::vector<TreeRect> TreemapLayout(const Prepared& p, const std::vector<std::st
     return out;
 }
 
-Corner QuietestCorner(const std::vector<Series>& series) {
+Corner QuietestCorner(const std::vector<Series>& series, unsigned blocked, std::optional<Corner> current) {
     double x0 = INFINITY, x1 = -INFINITY, y0 = INFINITY, y1 = -INFINITY;
     for (const auto& s : series)
         for (size_t i = 0; i < std::min(s.x.size(), s.y.size()); ++i) {
@@ -137,23 +137,38 @@ Corner QuietestCorner(const std::vector<Series>& series) {
             y0 = std::min(y0, s.y[i]);
             y1 = std::max(y1, s.y[i]);
         }
-    if (!(x1 > x0) || !(y1 > y0)) return Corner::NorthEast;
+    const auto open = [blocked](int c) { return (blocked & (1u << c)) == 0; };
+    const auto first_open = [&open]() {
+        for (int c = 0; c < 4; ++c)
+            if (open(c)) return static_cast<Corner>(c);
+        return Corner::NorthEast;
+    };
+    if (!(x1 > x0) || !(y1 > y0)) return first_open();
     const double part = 0.35;
     const double left = x0 + (x1 - x0) * part, right = x1 - (x1 - x0) * part;
     const double low = y0 + (y1 - y0) * part, high = y1 - (y1 - y0) * part;
     size_t count[4] = {0, 0, 0, 0};  // Corner order
+    size_t points = 0;
     for (const auto& s : series)
         for (size_t i = 0; i < std::min(s.x.size(), s.y.size()); ++i) {
             const double x = s.x[i], y = s.y[i];
             if (!std::isfinite(x) || !std::isfinite(y)) continue;
+            ++points;
             if (y >= high && x >= right) ++count[0];
             if (y >= high && x <= left) ++count[1];
             if (y <= low && x >= right) ++count[2];
             if (y <= low && x <= left) ++count[3];
         }
-    int best = 0;
-    for (int c = 1; c < 4; ++c)
-        if (count[c] < count[best]) best = c;
+    int best = -1;
+    for (int c = 0; c < 4; ++c)
+        if (open(c) && (best < 0 || count[c] < count[best])) best = c;
+    if (best < 0) return Corner::NorthEast;
+    // Keep the corner in use while it is about as quiet (2% of the points)
+    if (current) {
+        const int now = static_cast<int>(*current);
+        const size_t margin = std::max<size_t>(1, points / 50);
+        if (open(now) && count[now] <= count[best] + margin) return *current;
+    }
     return static_cast<Corner>(best);
 }
 

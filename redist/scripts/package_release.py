@@ -553,29 +553,42 @@ def copy_build_payload(
     copy_examples(paths.root, stage)
 
 
+# What users get under examples/: the starter graphs and their data, the
+# scripts and guides. The repository's test folders stay out.
+SHIPPED_EXAMPLES = ("README.md", "c_api", "cyx", "cyxgraph", "data", "datasets", "guides", "python",
+                    "python_nodes", "training", "utilities")
+
+
 def example_files(root: Path) -> list[Path]:
     """The files under examples/ to ship, relative to the source root.
 
     In a git checkout only the tracked files ship, so a model, a run's output
     or anything else saved into the examples on the packaging machine stays
-    out. Without git (a source archive) every file ships, except caches.
+    out; a checkout git cannot read fails rather than shipping them. Without
+    git (a source archive) every file ships, except caches.
     """
     examples = require_directory(root / "examples", "examples (starter graphs and their sample data)")
     require_directory(examples / "cyxgraph", "examples/cyxgraph (the start page's starter graphs)")
-    try:
-        listed = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z", "--", "examples"],
-            check=True, capture_output=True,
-        ).stdout.decode("utf-8")
+    wanted = [Path("examples") / name for name in SHIPPED_EXAMPLES]
+
+    def shipped(relative: Path) -> bool:
+        return (any(relative == w or w in relative.parents for w in wanted) and relative.name != ".gitignore"
+                and "__pycache__" not in relative.parts and relative.suffix != ".pyc")
+
+    if (root / ".git").exists():
+        try:
+            listed = subprocess.run(
+                ["git", "-C", str(root), "ls-files", "-z", "--", "examples"],
+                check=True, capture_output=True,
+            ).stdout.decode("utf-8")
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise PackageError(f"git could not list the tracked examples in {root}: {error}") from error
         tracked = [Path(item) for item in listed.split("\0") if item]
-    except (OSError, subprocess.CalledProcessError):
-        tracked = []
-    if tracked:
-        return [item for item in tracked if (root / item).is_file()]
+        return [item for item in tracked if shipped(item) and (root / item).is_file()]
     found = []
     for path in sorted(examples.rglob("*")):
         relative = path.relative_to(root)
-        if path.is_file() and "__pycache__" not in relative.parts and path.suffix != ".pyc":
+        if path.is_file() and shipped(relative):
             found.append(relative)
     return found
 

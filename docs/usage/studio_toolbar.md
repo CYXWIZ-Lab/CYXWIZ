@@ -196,8 +196,9 @@ it opens as *Untitled graph*, so Save asks for a name). Each starter reads a
 small sample in `examples/datasets` (photos of cats and dogs, 8x8 handwritten
 digits, review sentences, spoken digits, airline passengers), so **Train**
 works at once, offline; the samples and their sources are listed in
-`examples/datasets/README.md`. The starters and samples are in a source
-checkout; release packages do not ship them yet. A starter's Data Input is
+`examples/datasets/README.md`. The starters and samples ship in release
+packages (`examples/` beside the Engine) and are in a source checkout. A
+starter's Data Input is
 pointed at the sample it found when it opens, so Save As anywhere keeps the
 data. Point the Data Input at your own data to go
 further.

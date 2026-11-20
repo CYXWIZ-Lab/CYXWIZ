@@ -10,10 +10,12 @@ private Data Studio tickets (`tofix*/track*`).
 - **Release packages carry the examples.** The start page's starter graphs
   (and their sample datasets), the RL graphs and the example scripts ship in
   `examples/` beside the Engine; the start page said "No starter graphs
-  found" in an installed Engine. Only the files the repository tracks ship.
+  found" in an installed Engine. Only the files the repository tracks ship,
+  without its test folders.
 - **A chart's legend no longer hides a rising curve.** On line and scatter
-  charts the legend goes to the corner the data leaves free (an accuracy
-  curve gets it at the bottom right, a falling loss keeps it top right).
+  charts the legend goes to the corner the data leaves free (a falling loss
+  keeps it top right; a rising accuracy curve moves it out of the way) and
+  keeps off a target line's label.
 - **A chart's toolbar fits a narrow place.** Fit, Log Y, Legend, Export and
   the window button move under the data label when they do not fit beside
   it, and wrap when the place is narrower than all of them; they ran past
@@ -111,7 +113,6 @@ private Data Studio tickets (`tofix*/track*`).
   in `examples/datasets` (60 photos of cats and dogs, 1,797 8x8 handwritten
   digits, 3,000 review sentences, 400 spoken digits, the airline passengers
   series): press Train, offline. A starter saved with Save As keeps its data.
-  (A source checkout: release packages do not ship the examples yet.)
   Before, four had no data and the text one pointed at a file on one PC. The text starter is now a
   positive / negative review classifier; the audio starter classifies spoken
   digits and has a BatchNorm after Flatten (without it, it barely learned).

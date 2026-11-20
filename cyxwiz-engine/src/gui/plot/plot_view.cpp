@@ -249,8 +249,7 @@ void PlotView::SetData(Prepared data) {
     if (kind_changed || log_changed) log_y_ = data_.spec.log_y;
     if (kind_changed) legend_ = data_.spec.legend;
     if (kind_changed) fit_ = true;
-    legend_corner_ = data_.spec.kind == Kind::Line || data_.spec.kind == Kind::Scatter ? QuietestCorner(data_.series)
-                                                                                     : Corner::NorthEast;
+    legend_corner_dirty_ = true;
 }
 
 ImVec4 PlotView::ColourOf(size_t i) const {
@@ -765,6 +764,18 @@ void PlotView::DrawPlot(ImVec2 size) {
         }
     }
     // Curves that rise to the top right keep their legend out of the way.
+    if (legend_corner_dirty_) {
+        // A reference line's label sits at the left end of the line: the
+        // legend keeps off the top left then (the line runs along the top
+        // when the fit stops at it).
+        bool labelled = false;
+        for (const auto& line : y_lines_) labelled = labelled || !line.label.empty();
+        const unsigned blocked = labelled ? 1u << static_cast<int>(Corner::NorthWest) : 0u;
+        legend_corner_ = kind == Kind::Line || kind == Kind::Scatter
+                             ? QuietestCorner(data_.series, blocked, legend_corner_)
+                             : Corner::NorthEast;
+        legend_corner_dirty_ = false;
+    }
     ImPlotLocation legend_at = ImPlotLocation_NorthEast;
     if (kind == Kind::Roc || kind == Kind::Calibration || kind == Kind::Importance) {
         legend_at = ImPlotLocation_SouthEast;
