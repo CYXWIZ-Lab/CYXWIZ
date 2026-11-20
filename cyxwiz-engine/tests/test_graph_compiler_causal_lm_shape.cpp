@@ -169,6 +169,27 @@ int main() {
     Check(!HasErrorText(config, "TimeDistributed requires sequence input shape"),
           "causal LM graph should not report TimeDistributed shape error");
 
+    // One ignore index for the targets, the loss and the metrics (TOFIX223
+    // 0.19): the loss's ignore_index is what the batcher fills the
+    // positions that are no target with.
+    auto lm_nodes = nodes;
+    auto lm_links = links;
+    auto lm_loader = Node(91, gui::NodeType::DataLoader, "Next-token loader",
+                          {Pin(911, gui::PinType::Tensor, "Input", true)},
+                          {Pin(912, gui::PinType::Tensor, "Data", false)});
+    lm_loader.parameters["create_causal_lm_targets"] = "true";
+    lm_nodes.push_back(lm_loader);
+    lm_links[0] = Link(1, 1, 101, 91, 911);
+    lm_links.push_back(Link(91, 91, 912, 2, 201));
+    const auto lm_default = compiler.Compile(lm_nodes, lm_links, true);
+    Check(lm_default.sequence_batch.create_causal_lm_targets && lm_default.sequence_batch.target_ignore_index == -100,
+          "causal LM targets default to ignore index -100");
+    lm_nodes[4].parameters["ignore_index"] = "0";
+    const auto skip_pad = compiler.Compile(lm_nodes, lm_links, true);
+    Check(skip_pad.sequence_batch.target_ignore_index == 0,
+          "a Cross Entropy ignore_index of 0 is the language-model targets' ignore index (got " +
+              std::to_string(skip_pad.sequence_batch.target_ignore_index) + ")");
+
     Check(config.model_seed == -1, "old graph without model seed must remain unset");
     auto seeded_nodes = nodes;
     auto seeded_links = links;

@@ -5181,6 +5181,27 @@ TrainingConfiguration GraphCompiler::Compile(
     if (loss_node && config.sequence_batch.enabled) {
         ExtractSequenceBatchContractFromNode(*loss_node, config.sequence_batch);
     }
+    // One ignore index for language-model targets (TOFIX223 0.19, audit
+    // TXT-02): the loss skips its Cross Entropy ignore_index, so the batcher
+    // fills the positions that are no target with that id and the metrics skip
+    // it too. A separate target_ignore_index left the two apart: with
+    // ignore_index 0 every padded position became a target of class -100.
+    if (loss_node && loss_node->type == gui::NodeType::CrossEntropyLoss &&
+        config.sequence_batch.create_causal_lm_targets) {
+        const auto it = loss_node->parameters.find("ignore_index");
+        if (it != loss_node->parameters.end() && !it->second.empty()) {
+            try {
+                const int loss_ignore = std::stoi(it->second);
+                if (loss_ignore != config.sequence_batch.target_ignore_index) {
+                    spdlog::info("GraphCompiler: language-model targets use the loss's ignore_index {} (not {})",
+                                 loss_ignore, config.sequence_batch.target_ignore_index);
+                }
+                config.sequence_batch.target_ignore_index = loss_ignore;
+            } catch (...) {
+                // An invalid ignore_index: the loss reports it and uses its default.
+            }
+        }
+    }
     if (config.sequence_batch.enabled) {
         for (const auto& node : nodes) {
             if (node.type == gui::NodeType::TextPadding) {
