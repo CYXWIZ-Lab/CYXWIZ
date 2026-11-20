@@ -575,6 +575,9 @@ MainWindow::MainWindow()
     p2p_training_panel_ = std::make_unique<cyxwiz::P2PTrainingPanel>();
     wallet_panel_ = std::make_unique<gui::WalletPanel>();
     task_progress_panel_ = std::make_unique<cyxwiz::TaskProgressPanel>();
+    // My patterns live with the user's settings, whatever folder the Engine starts in.
+    ::gui::patterns::PatternLibrary::Instance().SetUserPatternsDirectory(
+        (cyxwiz::core::EngineConfig::Instance().GetUserConfigDir() / "patterns").string());
     pattern_browser_ = std::make_unique<cyxwiz::PatternBrowserPanel>();
     query_console_ = std::make_unique<cyxwiz::QueryConsolePanel>();
     custom_node_editor_ = std::make_unique<gui::CustomNodeEditorPanel>();

@@ -68,9 +68,6 @@ public:
     bool SaveDefinition();
     bool SaveDefinitionAs(const std::string& path);
 
-    // Delete a custom node definition
-    bool DeleteDefinition(const std::string& pattern_id);
-
     // Get/set current definition
     CustomNodeDefinition& GetCurrentDefinition() { return current_def_; }
     const CustomNodeDefinition& GetCurrentDefinition() const { return current_def_; }

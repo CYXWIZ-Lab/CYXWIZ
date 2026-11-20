@@ -9,15 +9,6 @@
 
 namespace gui::patterns {
 
-// Forward declaration for instantiation callback
-class PatternLibrary;
-
-// Callback type for pattern instantiation (legacy)
-using PatternInstantiateCallback = std::function<void(
-    const std::vector<MLNode>& nodes,
-    const std::vector<NodeLink>& links
-)>;
-
 // Callback type for node creation - creates a node with proper pins based on type
 // This allows PatternLibrary to delegate node creation to NodeEditor
 using NodeCreatorCallback = std::function<MLNode(NodeType type, const std::string& name)>;
@@ -52,21 +43,11 @@ public:
     // Get all categories that have patterns
     std::vector<PatternCategory> GetAvailableCategories() const;
 
-    // Instantiate a pattern into nodes and links
-    // Legacy version - creates simplified nodes with only 1 input/1 output pin
-    bool InstantiatePattern(
-        const std::string& pattern_id,
-        const std::map<std::string, std::string>& params,
-        std::vector<MLNode>& out_nodes,
-        std::vector<NodeLink>& out_links,
-        int& next_node_id,
-        int& next_pin_id,
-        int& next_link_id,
-        ImVec2 base_position = ImVec2(0, 0)
-    );
-
-    // New version with node creator callback - creates nodes with proper pins
-    // The callback should use NodeEditor::CreateNode() to create nodes
+    // Instantiate a pattern into nodes and links. The callback creates each
+    // node with its real pins (NodeEditor::CreateNode). All or nothing: on a
+    // refusal the outputs are empty and `error` (when given) says why in
+    // plain words (not ready, an unknown or template node type, a link to a
+    // pin the node does not have).
     bool InstantiatePatternWithCreator(
         const std::string& pattern_id,
         const std::map<std::string, std::string>& params,
@@ -75,7 +56,8 @@ public:
         int& next_node_id,
         int& next_link_id,
         ImVec2 base_position,
-        NodeCreatorCallback node_creator
+        NodeCreatorCallback node_creator,
+        std::string* error = nullptr
     );
 
     // Save a selection of nodes as a custom pattern
@@ -89,7 +71,8 @@ public:
         const std::string& save_path = ""
     );
 
-    // Get/set user patterns directory
+    // The user's own patterns (My patterns): the Engine sets it to
+    // <user settings folder>/patterns before Initialize. Empty: none are read.
     const std::string& GetUserPatternsDirectory() const { return user_patterns_dir_; }
     void SetUserPatternsDirectory(const std::string& dir) { user_patterns_dir_ = dir; }
 
@@ -99,6 +82,8 @@ public:
 private:
     PatternLibrary();
     ~PatternLibrary() = default;
+
+    bool LoadPatternFile(const std::string& filepath, bool user);
 
     // Parse pattern JSON
     bool ParsePatternJson(const std::string& json_content, Pattern& out_pattern);
@@ -111,14 +96,6 @@ private:
 
     // Convert node type string to NodeType enum
     NodeType StringToNodeType(const std::string& type_str) const;
-
-    // Create an MLNode from a PatternNode with parameter substitution
-    MLNode CreateNodeFromPattern(
-        const PatternNode& pattern_node,
-        const std::map<std::string, std::string>& params,
-        int& node_id,
-        int& pin_id
-    ) const;
 
     // Storage
     std::map<std::string, Pattern> patterns_;

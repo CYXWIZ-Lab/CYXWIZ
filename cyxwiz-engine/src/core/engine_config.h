@@ -207,6 +207,10 @@ public:
     // Get config file path
     std::filesystem::path GetConfigPath() const;
 
+    // The user's settings folder (%APPDATA%\CyxWiz on Windows), where files the
+    // user makes in the Engine live (My patterns in its patterns folder).
+    std::filesystem::path GetUserConfigDir() const;
+
     // ===== Server Addresses =====
 
     // The one server address (TOFIX168, `servers.cyxwiz`): https://HOST is a
@@ -416,9 +420,6 @@ private:
 
     // Find config file in search paths
     std::filesystem::path FindConfigFile() const;
-
-    // Get user config directory
-    std::filesystem::path GetUserConfigDir() const;
 
     // Set default values
     void SetDefaults();

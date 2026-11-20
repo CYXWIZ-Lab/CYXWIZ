@@ -25,44 +25,21 @@ namespace fs = std::filesystem;
 
 namespace {
 
-bool IsInstantiablePatternNode(NodeType type, const std::string& resolved_type) {
-    if (type == NodeType::Unknown) {
-        spdlog::error("Pattern node type '{}' is not registered", resolved_type);
-        return false;
-    }
+// Why a pattern node of this type cannot be created; empty when it can.
+std::string NotInstantiableReason(NodeType type, const std::string& resolved_type, const std::string& node_name) {
+    if (type == NodeType::Unknown)
+        return "node \"" + node_name + "\" has the type \"" + resolved_type + "\", which the Engine does not know";
 
     auto& registry = cyxwiz::NodeMetadataRegistry::Instance();
     if (!registry.IsInitialized()) {
         registry.Initialize();
     }
-
     const auto* metadata = registry.GetMetadata(type);
-    if (metadata == nullptr) {
-        spdlog::error("Pattern node type '{}' has no metadata contract", resolved_type);
-        return false;
-    }
-    if (metadata->IsTemplate()) {
-        spdlog::error("Pattern node type '{}' is a template node and cannot be instantiated", resolved_type);
-        return false;
-    }
-
-    return true;
-}
-
-bool RejectDenseEncodedSequencePlaceholder(const MLNode& node,
-                                           const std::string& pattern_name) {
-    std::string matched_marker;
-    if (!detail::IsDenseEncodedSequencePlaceholder(node, matched_marker)) {
-        return false;
-    }
-
-    spdlog::error("Pattern '{}' node '{}' is encoded as Dense but matches "
-                  "sequence/NER placeholder marker '{}'; instantiate a "
-                  "first-class supported node type instead",
-                  pattern_name,
-                  node.name,
-                  matched_marker);
-    return true;
+    if (metadata == nullptr)
+        return "node \"" + node_name + "\" has the type \"" + resolved_type + "\", which has no node contract";
+    if (metadata->IsTemplate())
+        return "node \"" + node_name + "\" is a " + resolved_type + " node, a template that cannot be inserted";
+    return {};
 }
 
 } // namespace
@@ -76,7 +53,6 @@ PatternLibrary& PatternLibrary::Instance() {
 PatternLibrary::PatternLibrary() {
     // Default directories
     builtin_patterns_dir_ = "resources/patterns";
-    user_patterns_dir_ = "user_patterns";
 }
 
 void PatternLibrary::Initialize() {
@@ -85,7 +61,7 @@ void PatternLibrary::Initialize() {
     spdlog::debug("Initializing Pattern Library...");
 
     LoadBuiltinPatterns();
-    LoadUserPatterns(user_patterns_dir_);
+    if (!user_patterns_dir_.empty()) LoadUserPatterns(user_patterns_dir_);
 
     initialized_ = true;
     spdlog::debug("Pattern Library initialized with {} patterns", patterns_.size());
@@ -143,12 +119,20 @@ void PatternLibrary::LoadUserPatterns(const std::string& directory) {
     spdlog::info("Loading user patterns from: {}", directory);
     for (const auto& entry : fs::directory_iterator(directory)) {
         if (entry.path().extension() == ".cyxgraph") {
-            LoadPatternFromFile(entry.path().string());
+            LoadPatternFile(entry.path().string(), true);
         }
     }
 }
 
 bool PatternLibrary::LoadPatternFromFile(const std::string& filepath) {
+    // A file in the user's patterns folder is one of My patterns, however it is read.
+    std::error_code ec;
+    const bool user = !user_patterns_dir_.empty() &&
+                      fs::equivalent(fs::path(filepath).parent_path(), user_patterns_dir_, ec);
+    return LoadPatternFile(filepath, user);
+}
+
+bool PatternLibrary::LoadPatternFile(const std::string& filepath, bool user) {
     std::ifstream file(filepath);
     if (!file.is_open()) {
         spdlog::error("Failed to open pattern file: {}", filepath);
@@ -165,6 +149,10 @@ bool PatternLibrary::LoadPatternFromFile(const std::string& filepath) {
             if (pattern.id.empty()) {
                 pattern.id = fs::path(filepath).stem().string();
             }
+            // A user pattern is known by its file, so it never replaces a shipped one of the same id.
+            if (user) pattern.id = "user:" + fs::path(filepath).stem().string();
+            pattern.file_path = filepath;
+            pattern.user = user;
 
             patterns_[pattern.id] = pattern;
             spdlog::debug("Loaded pattern: {} ({})", pattern.name, pattern.id);
@@ -388,186 +376,6 @@ NodeType PatternLibrary::StringToNodeType(const std::string& type_str) const {
     return NodeType::Unknown;
 }
 
-bool PatternLibrary::InstantiatePattern(
-    const std::string& pattern_id,
-    const std::map<std::string, std::string>& params,
-    std::vector<MLNode>& out_nodes,
-    std::vector<NodeLink>& out_links,
-    int& next_node_id,
-    int& next_pin_id,
-    int& next_link_id,
-    ImVec2 base_position
-) {
-    const Pattern* pattern = GetPattern(pattern_id);
-    if (!pattern) {
-        spdlog::error("Pattern not found: {}", pattern_id);
-        return false;
-    }
-    if (!pattern->needs.empty()) {
-        spdlog::error("Pattern '{}' cannot be inserted yet: {}", pattern->name, pattern->needs);
-        return false;
-    }
-
-    // Merge default parameters with provided parameters
-    std::map<std::string, std::string> merged_params;
-    for (const auto& param : pattern->parameters) {
-        merged_params[param.name] = param.default_value;
-    }
-    for (const auto& [key, value] : params) {
-        merged_params[key] = value;
-    }
-
-    // Map from pattern node ID to actual node ID
-    std::map<std::string, int> node_id_map;
-
-    // Create nodes
-    for (const auto& pattern_node : pattern->template_data.nodes) {
-        // Substitute parameters in type (for dynamic types like $activation)
-        std::string resolved_type = SubstituteParams(pattern_node.type, merged_params);
-        NodeType node_type = StringToNodeType(resolved_type);
-        if (!IsInstantiablePatternNode(node_type, resolved_type)) {
-            out_nodes.clear();
-            out_links.clear();
-            return false;
-        }
-
-        // Create the node using NodeEditor's CreateNode logic
-        MLNode node;
-        node.id = next_node_id++;
-        node.type = node_type;
-        node.name = SubstituteParams(pattern_node.name, merged_params);
-
-        // Store mapping
-        node_id_map[pattern_node.id] = node.id;
-
-        // Store position in node for later application by NodeEditor
-        node.initial_pos_x = base_position.x + pattern_node.pos_x;
-        node.initial_pos_y = base_position.y + pattern_node.pos_y;
-        node.has_initial_position = true;
-
-        // Create fallback pins for legacy/no-editor pattern insertion. The
-        // normal UI path uses NodeEditor::CreateNode via
-        // InstantiatePatternWithCreator; keep this fallback small but truthful
-        // for the Data Studio role-aware data boundary.
-        auto add_input = [&](PinType type, const std::string& pin_name,
-                             bool required = true) {
-            NodePin pin;
-            pin.id = next_pin_id++;
-            pin.type = type;
-            pin.name = pin_name;
-            pin.is_input = true;
-            pin.is_required = required;
-            node.inputs.push_back(pin);
-        };
-        auto add_output = [&](PinType type, const std::string& pin_name,
-                              bool required = true) {
-            NodePin pin;
-            pin.id = next_pin_id++;
-            pin.type = type;
-            pin.name = pin_name;
-            pin.is_input = false;
-            pin.is_required = required;
-            node.outputs.push_back(pin);
-        };
-
-        switch (node_type) {
-        case NodeType::DataInput:
-            add_output(PinType::Dataset, "Dataset");
-            break;
-        case NodeType::DataSplit:
-            add_input(PinType::Dataset, "Training Dataset");
-            add_input(PinType::Dataset, "Validation Dataset", false);
-            add_input(PinType::Dataset, "Test Dataset", false);
-            add_output(PinType::Dataset, "Partitions");
-            break;
-        case NodeType::DataLoader:
-            add_input(PinType::Dataset, "Partitions");
-            add_output(PinType::Tensor, "Data");
-            add_output(PinType::Labels, "Labels", false);
-            break;
-        default:
-            add_input(PinType::Tensor, "Input");
-            add_output(PinType::Tensor, "Output");
-            break;
-        }
-        // Copy parameters with substitution
-        for (const auto& [key, value] : pattern_node.params) {
-            node.parameters[key] = SubstituteParams(value, merged_params);
-        }
-        if (RejectDenseEncodedSequencePlaceholder(node, pattern->name)) {
-            out_nodes.clear();
-            out_links.clear();
-            return false;
-        }
-
-        out_nodes.push_back(node);
-    }
-
-    // Create links
-    for (const auto& pattern_link : pattern->template_data.links) {
-        auto from_it = node_id_map.find(pattern_link.from_node);
-        auto to_it = node_id_map.find(pattern_link.to_node);
-
-        if (from_it == node_id_map.end() || to_it == node_id_map.end()) {
-            spdlog::warn("Invalid link in pattern: {} -> {}", pattern_link.from_node, pattern_link.to_node);
-            continue;
-        }
-
-        int from_node_id = from_it->second;
-        int to_node_id = to_it->second;
-
-        // Find the actual pin IDs
-        int from_pin_id = -1;
-        int to_pin_id = -1;
-
-        for (const auto& node : out_nodes) {
-            if (node.id == from_node_id) {
-                if (pattern_link.from_pin >= 0 &&
-                    pattern_link.from_pin < static_cast<int>(node.outputs.size())) {
-                    from_pin_id = node.outputs[pattern_link.from_pin].id;
-                } else {
-                    spdlog::warn(
-                        "Skipping pattern link {} -> {}: source pin index {} is out of range for node '{}' ({} outputs)",
-                        pattern_link.from_node,
-                        pattern_link.to_node,
-                        pattern_link.from_pin,
-                        node.name,
-                        node.outputs.size());
-                }
-            }
-            if (node.id == to_node_id) {
-                if (pattern_link.to_pin >= 0 &&
-                    pattern_link.to_pin < static_cast<int>(node.inputs.size())) {
-                    to_pin_id = node.inputs[pattern_link.to_pin].id;
-                } else {
-                    spdlog::warn(
-                        "Skipping pattern link {} -> {}: target pin index {} is out of range for node '{}' ({} inputs)",
-                        pattern_link.from_node,
-                        pattern_link.to_node,
-                        pattern_link.to_pin,
-                        node.name,
-                        node.inputs.size());
-                }
-            }
-        }
-
-        if (from_pin_id != -1 && to_pin_id != -1) {
-            NodeLink link;
-            link.id = next_link_id++;
-            link.from_node = from_node_id;
-            link.from_pin = from_pin_id;
-            link.to_node = to_node_id;
-            link.to_pin = to_pin_id;
-            out_links.push_back(link);
-        }
-    }
-
-    spdlog::info("Instantiated pattern '{}' with {} nodes and {} links",
-                 pattern->name, out_nodes.size(), out_links.size());
-
-    return true;
-}
-
 bool PatternLibrary::InstantiatePatternWithCreator(
     const std::string& pattern_id,
     const std::map<std::string, std::string>& params,
@@ -576,22 +384,25 @@ bool PatternLibrary::InstantiatePatternWithCreator(
     int& next_node_id,
     int& next_link_id,
     ImVec2 base_position,
-    NodeCreatorCallback node_creator
+    NodeCreatorCallback node_creator,
+    std::string* error
 ) {
-    const Pattern* pattern = GetPattern(pattern_id);
-    if (!pattern) {
-        spdlog::error("Pattern not found: {}", pattern_id);
+    // Nothing goes out unless the whole pattern goes out.
+    const auto refuse = [&](std::string reason) {
+        out_nodes.clear();
+        out_links.clear();
+        spdlog::error("Pattern '{}' was not inserted: {}", pattern_id, reason);
+        if (error) *error = std::move(reason);
         return false;
-    }
-    if (!pattern->needs.empty()) {
-        spdlog::error("Pattern '{}' cannot be inserted yet: {}", pattern->name, pattern->needs);
-        return false;
-    }
+    };
+    out_nodes.clear();
+    out_links.clear();
+    if (error) error->clear();
 
-    if (!node_creator) {
-        spdlog::error("Node creator callback is null");
-        return false;
-    }
+    const Pattern* pattern = GetPattern(pattern_id);
+    if (!pattern) return refuse("the pattern is not in the library");
+    if (!pattern->needs.empty()) return refuse("it is not ready yet: " + pattern->needs);
+    if (!node_creator) return refuse("there is no canvas to create its nodes on");
 
     // Merge default parameters with provided parameters
     std::map<std::string, std::string> merged_params;
@@ -602,120 +413,79 @@ bool PatternLibrary::InstantiatePatternWithCreator(
         merged_params[key] = value;
     }
 
-    // Map from pattern node ID to actual node ID
-    std::map<std::string, int> node_id_map;
-
-    // Create nodes using the callback (which creates proper pins)
+    // Every node type is checked before the first node is created.
+    std::vector<std::pair<NodeType, std::string>> resolved;
     for (const auto& pattern_node : pattern->template_data.nodes) {
         // Substitute parameters in type (for dynamic types like $activation)
-        std::string resolved_type = SubstituteParams(pattern_node.type, merged_params);
-        NodeType node_type = StringToNodeType(resolved_type);
-        std::string resolved_name = SubstituteParams(pattern_node.name, merged_params);
-        if (!IsInstantiablePatternNode(node_type, resolved_type)) {
-            out_nodes.clear();
-            out_links.clear();
-            return false;
-        }
-        if (detail::IsDenseEncodedSequencePlaceholder(node_type, resolved_name)) {
-            MLNode rejected_node;
-            rejected_node.type = node_type;
-            rejected_node.name = resolved_name;
-            RejectDenseEncodedSequencePlaceholder(rejected_node, pattern->name);
-            out_nodes.clear();
-            out_links.clear();
-            return false;
-        }
+        const std::string resolved_type = SubstituteParams(pattern_node.type, merged_params);
+        const std::string resolved_name = SubstituteParams(pattern_node.name, merged_params);
+        const NodeType node_type = StringToNodeType(resolved_type);
+        if (auto reason = NotInstantiableReason(node_type, resolved_type, resolved_name); !reason.empty())
+            return refuse(reason);
+        std::string marker;
+        MLNode probe;
+        probe.type = node_type;
+        probe.name = resolved_name;
+        for (const auto& [key, value] : pattern_node.params) probe.parameters[key] = SubstituteParams(value, merged_params);
+        if (detail::IsDenseEncodedSequencePlaceholder(probe, marker))
+            return refuse("node \"" + resolved_name + "\" is a Dense node standing in for a sequence step (" + marker +
+                          "); the pattern needs that step's own node");
+        resolved.emplace_back(node_type, resolved_name);
+    }
 
-        // Use the callback to create the node with proper pins
-        MLNode node = node_creator(node_type, resolved_name);
-
-        // Override the ID with our tracked ID
+    // Map from pattern node ID to actual node ID
+    std::map<std::string, int> node_id_map;
+    std::map<int, size_t> node_index;
+    for (size_t i = 0; i < pattern->template_data.nodes.size(); ++i) {
+        const auto& pattern_node = pattern->template_data.nodes[i];
+        // The callback creates the node with its real pins.
+        MLNode node = node_creator(resolved[i].first, resolved[i].second);
         node.id = next_node_id++;
-
-        // Store mapping
         node_id_map[pattern_node.id] = node.id;
+        node_index[node.id] = out_nodes.size();
 
         // Store position for later application by NodeEditor
         node.initial_pos_x = base_position.x + pattern_node.pos_x;
         node.initial_pos_y = base_position.y + pattern_node.pos_y;
         node.has_initial_position = true;
 
-        // Copy parameters with substitution
         for (const auto& [key, value] : pattern_node.params) {
             node.parameters[key] = SubstituteParams(value, merged_params);
         }
-        if (RejectDenseEncodedSequencePlaceholder(node, pattern->name)) {
-            out_nodes.clear();
-            out_links.clear();
-            return false;
-        }
-
-        out_nodes.push_back(node);
+        out_nodes.push_back(std::move(node));
     }
 
-    // Create links
     for (const auto& pattern_link : pattern->template_data.links) {
-        auto from_it = node_id_map.find(pattern_link.from_node);
-        auto to_it = node_id_map.find(pattern_link.to_node);
+        const auto from_it = node_id_map.find(pattern_link.from_node);
+        const auto to_it = node_id_map.find(pattern_link.to_node);
+        if (from_it == node_id_map.end())
+            return refuse("a link names node \"" + pattern_link.from_node + "\", which the pattern does not have");
+        if (to_it == node_id_map.end())
+            return refuse("a link names node \"" + pattern_link.to_node + "\", which the pattern does not have");
 
-        if (from_it == node_id_map.end() || to_it == node_id_map.end()) {
-            spdlog::warn("Invalid link in pattern: {} -> {}", pattern_link.from_node, pattern_link.to_node);
-            continue;
-        }
+        const MLNode& from = out_nodes[node_index.at(from_it->second)];
+        const MLNode& to = out_nodes[node_index.at(to_it->second)];
+        if (pattern_link.from_pin < 0 || pattern_link.from_pin >= static_cast<int>(from.outputs.size()))
+            return refuse("a link comes from output " + std::to_string(pattern_link.from_pin + 1) + " of \"" +
+                          from.name + "\", which has " + std::to_string(from.outputs.size()) + " output" +
+                          (from.outputs.size() == 1 ? "" : "s"));
+        if (pattern_link.to_pin < 0 || pattern_link.to_pin >= static_cast<int>(to.inputs.size()))
+            return refuse("a link goes to input " + std::to_string(pattern_link.to_pin + 1) + " of \"" + to.name +
+                          "\", which has " + std::to_string(to.inputs.size()) + " input" +
+                          (to.inputs.size() == 1 ? "" : "s"));
 
-        int from_node_id = from_it->second;
-        int to_node_id = to_it->second;
-
-        // Find the actual pin IDs from the properly created nodes
-        int from_pin_id = -1;
-        int to_pin_id = -1;
-
-        for (const auto& node : out_nodes) {
-            if (node.id == from_node_id) {
-                if (pattern_link.from_pin >= 0 &&
-                    pattern_link.from_pin < static_cast<int>(node.outputs.size())) {
-                    from_pin_id = node.outputs[pattern_link.from_pin].id;
-                } else {
-                    spdlog::warn(
-                        "Skipping pattern link {} -> {}: source pin index {} is out of range for node '{}' ({} outputs)",
-                        pattern_link.from_node,
-                        pattern_link.to_node,
-                        pattern_link.from_pin,
-                        node.name,
-                        node.outputs.size());
-                }
-            }
-            if (node.id == to_node_id) {
-                if (pattern_link.to_pin >= 0 &&
-                    pattern_link.to_pin < static_cast<int>(node.inputs.size())) {
-                    to_pin_id = node.inputs[pattern_link.to_pin].id;
-                } else {
-                    spdlog::warn(
-                        "Skipping pattern link {} -> {}: target pin index {} is out of range for node '{}' ({} inputs)",
-                        pattern_link.from_node,
-                        pattern_link.to_node,
-                        pattern_link.to_pin,
-                        node.name,
-                        node.inputs.size());
-                }
-            }
-        }
-
-        if (from_pin_id != -1 && to_pin_id != -1) {
-            NodeLink link;
-            link.id = next_link_id++;
-            link.from_node = from_node_id;
-            link.from_pin = from_pin_id;
-            link.to_node = to_node_id;
-            link.to_pin = to_pin_id;
-            link.type = LinkType::TensorFlow;  // Default type
-            out_links.push_back(link);
-        }
+        NodeLink link;
+        link.id = next_link_id++;
+        link.from_node = from.id;
+        link.from_pin = from.outputs[pattern_link.from_pin].id;
+        link.to_node = to.id;
+        link.to_pin = to.inputs[pattern_link.to_pin].id;
+        link.type = LinkType::TensorFlow;
+        out_links.push_back(link);
     }
 
-    spdlog::info("Instantiated pattern '{}' with {} nodes and {} links (using node creator)",
-                 pattern->name, out_nodes.size(), out_links.size());
-
+    spdlog::info("Instantiated pattern '{}' with {} nodes and {} links", pattern->name, out_nodes.size(),
+                 out_links.size());
     return true;
 }
 

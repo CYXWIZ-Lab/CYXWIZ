@@ -226,18 +226,6 @@ bool CustomNodeEditorPanel::SaveDefinitionAs(const std::string& path) {
     return true;
 }
 
-bool CustomNodeEditorPanel::DeleteDefinition(const std::string& pattern_id) {
-    auto& library = patterns::PatternLibrary::Instance();
-    std::string path = (fs::path(library.GetUserPatternsDirectory()) / (pattern_id + ".cyxgraph")).string();
-
-    if (fs::exists(path)) {
-        fs::remove(path);
-        spdlog::info("Deleted custom node: {}", pattern_id);
-        return true;
-    }
-    return false;
-}
-
 void CustomNodeEditorPanel::Render() {
     if (!visible_) return;
 
@@ -1044,7 +1032,8 @@ patterns::Pattern CustomNodeEditorPanel::ConvertToPattern() const {
 }
 
 void CustomNodeEditorPanel::LoadFromPattern(const patterns::Pattern& pattern) {
-    current_def_.id = pattern.id;
+    // A user pattern is known as "user:<file name>": the definition keeps the file name.
+    current_def_.id = pattern.user ? fs::path(pattern.file_path).stem().string() : pattern.id;
     current_def_.name = pattern.name;
     current_def_.description = pattern.description;
 

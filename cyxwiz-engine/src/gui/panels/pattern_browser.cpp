@@ -398,72 +398,23 @@ void PatternBrowserPanel::RenderParameterInputs(const ::gui::patterns::Pattern& 
 
 void PatternBrowserPanel::InsertPattern(const std::string& pattern_id,
                                         const std::map<std::string, std::string>& params) {
+    if (!node_editor_) return;
     auto& library = ::gui::patterns::PatternLibrary::Instance();
-
-    // Prepare output containers
     std::vector<::gui::MLNode> nodes;
     std::vector<::gui::NodeLink> links;
-
-    // Get next IDs from node editor (we'll need to coordinate this)
-    // For now, use a starting ID that's likely to be unique
-    static int base_id = 10000;
-    int next_node_id = base_id;
-    int next_link_id = base_id * 100;
-
-    // Default position (center of canvas area)
-    ImVec2 base_pos(200.0f, 200.0f);
-
-    bool success = false;
-
-    // Use the new InstantiatePatternWithCreator if we have a node editor reference
-    // This creates nodes with proper pins (Q/K/V for attention, variadic for merge, etc.)
-    if (node_editor_) {
-        // Create a node creator callback that uses NodeEditor::CreateNode
-        ::gui::patterns::NodeCreatorCallback creator = [this](::gui::NodeType type, const std::string& name) {
-            ::gui::MLNode node = node_editor_->CreateNode(type, name);
-            node_editor_->ApplyUserNodeDefaults(node);
-            return node;
-        };
-
-        success = library.InstantiatePatternWithCreator(
-            pattern_id,
-            params,
-            nodes,
-            links,
-            next_node_id,
-            next_link_id,
-            base_pos,
-            creator
-        );
-    } else {
-        // Fallback to legacy method (creates simplified nodes with 1 input/1 output)
-        int next_pin_id = base_id * 10;
-        success = library.InstantiatePattern(
-            pattern_id,
-            params,
-            nodes,
-            links,
-            next_node_id,
-            next_pin_id,
-            next_link_id,
-            base_pos
-        );
-        spdlog::warn("Pattern inserted without NodeEditor reference - nodes may have incorrect pins");
-    }
-
-    if (success) {
-        // Use callback if set
-        if (insert_callback_) {
-            insert_callback_(nodes, links);
-        }
-
-        // Update base ID for next insertion
-        base_id = next_node_id + 100;
-
-        spdlog::info("Inserted pattern '{}' with {} nodes", pattern_id, nodes.size());
-    } else {
-        spdlog::error("Failed to instantiate pattern: {}", pattern_id);
-    }
+    // Ids only need to be unique within the pattern: the canvas gives fresh ones.
+    int next_node_id = 1;
+    int next_link_id = 1;
+    ::gui::patterns::NodeCreatorCallback creator = [this](::gui::NodeType type, const std::string& name) {
+        ::gui::MLNode node = node_editor_->CreateNode(type, name);
+        node_editor_->ApplyUserNodeDefaults(node);
+        return node;
+    };
+    std::string error;
+    if (!library.InstantiatePatternWithCreator(pattern_id, params, nodes, links, next_node_id, next_link_id,
+                                               ImVec2(0.0f, 0.0f), creator, &error))
+        return;  // the library logged the reason
+    if (insert_callback_) insert_callback_(nodes, links);
 }
 
 void PatternBrowserPanel::OpenWithPattern(const std::string& pattern_id) {

@@ -652,55 +652,35 @@ int main() {
     Check(nodes.empty() && links.empty(), "unknown rejection should leave no partial graph");
     Check(creator_calls == 6, "unknown rejection should not call node creator");
 
+    // Its second link leaves output 2 of Data Input, which has one output: the whole
+    // pattern is refused with that reason, not inserted without the link.
     nodes.clear();
     links.clear();
-    Check(library.InstantiatePatternWithCreator(
+    std::string error;
+    Check(!library.InstantiatePatternWithCreator(
               "guard_data_boundary", {}, nodes, links, next_node_id,
-              next_link_id, ImVec2(0, 0), creator),
-          "creator data-boundary pattern should instantiate");
-    Check(creator_calls == 9,
-          "data-boundary pattern should call node creator for each node");
-    Check(nodes.size() == 3 && links.size() == 2,
-          "creator data-boundary pattern should skip stale legacy pin links");
-
-    int next_pin_id = 2000;
+              next_link_id, ImVec2(0, 0), creator, &error),
+          "a pattern with a link to a pin its node lacks is refused");
+    Check(nodes.empty() && links.empty(), "a refused pattern leaves no partial graph");
+    Check(error == "a link comes from output 2 of \"Data Input\", which has 1 output",
+          "the refusal names the pin and the node: " + error);
 
     nodes.clear();
     links.clear();
-    Check(library.InstantiatePattern(
-              "guard_data_boundary", {}, nodes, links, next_node_id,
-              next_pin_id, next_link_id, ImVec2(0, 0)),
-          "legacy/no-editor data-boundary pattern should instantiate");
-    Check(nodes.size() == 3 && links.size() == 2,
-          "data-boundary fallback should create three nodes and two links");
-    const gui::MLNode* data_input = nullptr;
-    const gui::MLNode* data_split = nullptr;
-    const gui::MLNode* data_loader = nullptr;
-    for (const auto& node : nodes) {
-        if (node.type == gui::NodeType::DataInput) data_input = &node;
-        if (node.type == gui::NodeType::DataSplit) data_split = &node;
-        if (node.type == gui::NodeType::DataLoader) data_loader = &node;
-    }
-    Check(data_input != nullptr && data_split != nullptr && data_loader != nullptr,
-          "data-boundary fallback should create DataInput/DataSplit/DataLoader");
-    Check(data_input->outputs.size() == 1 &&
-              data_input->outputs[0].name == "Dataset" &&
-              data_input->outputs[0].type == gui::PinType::Dataset,
-          "fallback DataInput should expose one Dataset output");
-    Check(data_split->inputs.size() == 3 && data_split->outputs.size() == 1 &&
-              data_split->inputs[0].name == "Training Dataset" &&
-              data_split->inputs[0].type == gui::PinType::Dataset &&
-              data_split->outputs[0].name == "Partitions" &&
-              data_split->outputs[0].type == gui::PinType::Dataset,
-          "fallback DataSplit should expose Dataset role inputs and Partitions output");
-    Check(data_loader->inputs.size() == 1 && data_loader->outputs.size() == 2 &&
-              data_loader->inputs[0].name == "Partitions" &&
-              data_loader->inputs[0].type == gui::PinType::Dataset &&
-              data_loader->outputs[0].name == "Data" &&
-              data_loader->outputs[0].type == gui::PinType::Tensor &&
-              data_loader->outputs[1].name == "Labels" &&
-              data_loader->outputs[1].type == gui::PinType::Labels,
-          "fallback DataLoader should consume Partitions and emit Data/Labels");
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_typo", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator, &error),
+          "unknown node pattern is refused again");
+    Check(error.find("DefinitelyNotANode") != std::string::npos && error.find("does not know") != std::string::npos,
+          "an unknown type is named in the reason: " + error);
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_lambda", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator, &error),
+          "template pattern is refused again");
+    Check(error.find("template") != std::string::npos, "a template node is named in the reason: " + error);
+    Check(!library.InstantiatePatternWithCreator(
+              "no_such_pattern", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator, &error),
+          "a pattern the library lacks is refused");
+    Check(error == "the pattern is not in the library", "a missing pattern says so: " + error);
+    const int calls_before_refusals = creator_calls;
 
     nodes.clear();
     links.clear();
@@ -708,21 +688,12 @@ int main() {
               "guard_ner_name", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator),
           "Dense-encoded NER placeholder-name pattern should be rejected");
     Check(nodes.empty() && links.empty(), "Dense-encoded NER name rejection should leave no partial graph");
-    Check(creator_calls == 9, "Dense-encoded NER name rejection should not call node creator");
-
-    Check(!library.InstantiatePattern(
-              "guard_ner_name", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
-          "legacy instantiation should reject Dense-encoded NER placeholder names");
-    Check(nodes.empty() && links.empty(), "legacy Dense-encoded NER name rejection should leave no partial graph");
-
-    Check(!library.InstantiatePattern(
-              "guard_ner_param", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
-          "legacy instantiation should reject Dense-encoded NER parameter markers");
-    Check(nodes.empty() && links.empty(), "legacy Dense-encoded NER parameter rejection should leave no partial graph");
-
-    Check(!library.InstantiatePattern(
-              "guard_lambda", {}, nodes, links, next_node_id, next_pin_id, next_link_id, ImVec2(0, 0)),
-          "legacy instantiation should also reject template nodes");
+    Check(creator_calls == calls_before_refusals, "Dense-encoded NER name rejection should not call node creator");
+    Check(!library.InstantiatePatternWithCreator(
+              "guard_ner_param", {}, nodes, links, next_node_id, next_link_id, ImVec2(0, 0), creator, &error),
+          "Dense-encoded NER parameter-marker pattern should be rejected");
+    Check(nodes.empty() && links.empty(), "Dense-encoded NER parameter rejection should leave no partial graph");
+    Check(creator_calls == calls_before_refusals, "a refused pattern calls the node creator for none of its nodes");
 
     Check(gui::detail::IsDenseEncodedSequencePlaceholder(gui::NodeType::Dense, "NERSequenceBuilder"),
           "Dense-encoded NERSequenceBuilder placeholder should be rejected");

@@ -87,6 +87,8 @@ struct Pattern {
     PatternTemplate template_data;  // Parsed template
     std::string template_json;      // Raw JSON template (for saving)
     std::vector<std::string> tags;  // Search tags
+    std::string file_path;          // The file it was read from
+    bool user = false;              // Read from the user's patterns folder (My patterns)
 };
 
 // Helper functions
