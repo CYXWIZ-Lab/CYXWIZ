@@ -138,8 +138,9 @@ std::string PlacementQuestion(size_t canvas_nodes, const std::string& graph) {
 }
 
 std::string ReplaceNote(const std::string& graph) {
-    if (graph.empty()) return "Replace keeps nothing of the canvas; Edit > Undo brings it back.";
-    return "Replace keeps nothing of " + graph + " on the canvas; Edit > Undo brings it back. Its saved file is "
+    if (graph.empty()) return "Replace keeps nothing of the canvas; Undo on the canvas (Ctrl+Z) brings it back.";
+    return "Replace keeps nothing of " + graph + " on the canvas; Undo on the canvas (Ctrl+Z) brings it back. "
+           "Its saved file is "
            "not touched until you save.";
 }
 

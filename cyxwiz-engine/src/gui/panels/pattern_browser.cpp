@@ -3,6 +3,7 @@
 #include "../icons.h"
 #include "../node_editor.h"
 #include "../patterns/pattern_library.h"
+#include "../separate_windows.h"
 #include "../ui_buttons.h"
 #include "../ui_widgets.h"
 #include "../../core/recycle_bin.h"
@@ -209,8 +210,11 @@ void PatternBrowserPanel::RenderCard(const Pattern& pattern, const pb::Entry& en
     }
 
     if (open) {
-        ImGui::Spacing();
-        WrappedText(pattern.description, t.text);
+        // A pattern of yours may have no description: no empty line for it.
+        if (!pattern.description.empty()) {
+            ImGui::Spacing();
+            WrappedText(pattern.description, t.text);
+        }
         if (!ready) {
             ImGui::Spacing();
             StatusLine(ICON_FA_CIRCLE_EXCLAMATION, pb::NotReadyText(entry.needs), t.warning);
@@ -315,6 +319,8 @@ void PatternBrowserPanel::RenderInsertLine(const Pattern& pattern, const pb::Ent
 }
 
 void PatternBrowserPanel::RenderStage(const Pattern& pattern, const pb::Entry& entry) {
+    if (stage_ == Stage::Done && node_editor_ && node_editor_->GetNodes().size() != done_canvas_nodes_)
+        SetStage({}, Stage::None);
     if (stage_id_ != pattern.id || stage_ == Stage::None) return;
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::Spacing();
@@ -432,11 +438,12 @@ void PatternBrowserPanel::Insert(const Pattern& pattern, const pb::Entry& entry,
                                : where == Where::Beside  ? pb::Placement::Beside
                                                          : pb::Placement::Below;
     SetStage(pattern.id, Stage::Done, pb::DoneText(entry, said, graph));
+    done_canvas_nodes_ = node_editor_->GetNodes().size();
 }
 
 void PatternBrowserPanel::OpenWithPattern(const std::string& pattern_id) {
     Show();
-    ImGui::SetWindowFocus(GetName());
+    ::gui::BringToFront(GetName());
     RebuildEntries();
     const Pattern* pattern = PatternLibrary::Instance().GetPattern(pattern_id);
     if (!pattern) return;

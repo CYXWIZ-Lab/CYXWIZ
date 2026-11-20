@@ -18,7 +18,7 @@ the Nodes panel.
   the whole description, its **Settings** (type a number, or use - and +),
   and **Insert full graph** or **Insert block**.
 - **After Insert**, a green line under the button says what was added and
-  what to do next. When nothing could be added, an orange line says why (a
+  what to do next, until the canvas changes (Undo, a delete). When nothing could be added, an orange line says why (a
   link in the pattern to a pin its node does not have, a node type the
   Engine does not know, a run using the graph) and the canvas is unchanged.
 
@@ -27,9 +27,10 @@ own Data Input, loss and optimizer, so on a canvas that already has nodes the
 browser asks first:
 
 - **Replace the canvas**: the graph on the canvas is removed and the pattern
-  takes its place. **Edit > Undo** brings the graph back (double-click its
-  Data Input and click Apply again to reload its data). The graph's saved
-  file is not touched until you save.
+  takes its place. Undo on the canvas brings the graph back: click the
+  canvas, then Ctrl+Z or **Edit > Undo** (double-click its Data Input and
+  click Apply again to reload its data). The graph's saved file is not
+  touched until you save.
 - **Add beside it**: the pattern goes to the right of the graph. The canvas
   then holds two graphs; delete the one you do not want before you train.
 - **Cancel**: nothing changes.

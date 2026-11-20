@@ -69,6 +69,9 @@ private:
     std::string stage_id_;
     Stage stage_ = Stage::None;
     std::string stage_text_;
+    // The nodes on the canvas when Done was said: the line goes when they
+    // change (Undo, a delete), so it never describes a canvas that is gone.
+    size_t done_canvas_nodes_ = 0;
 };
 
 }  // namespace cyxwiz

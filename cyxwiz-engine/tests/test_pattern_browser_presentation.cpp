@@ -160,7 +160,10 @@ int main() {
     Check(pb::PlacementQuestion(20, "mlp_v2") ==
               "The canvas already holds 20 nodes (mlp_v2). A full graph brings its own Data Input, loss and optimizer.",
           "the question");
-    Check(Contains(pb::ReplaceNote("mlp_v2"), "Edit > Undo brings it back"), "replace says Undo brings it back");
+    Check(Contains(pb::ReplaceNote("mlp_v2"), "Undo on the canvas (Ctrl+Z) brings it back"),
+          "replace says Undo brings it back");
+    Check(Contains(pb::ReplaceNote(""), "Undo on the canvas (Ctrl+Z) brings it back"),
+          "replace says Undo brings it back for an unsaved graph");
 
     // Result lines.
     Check(pb::DoneText(*resnet, pb::Placement::Replace, "mlp_v2") ==
