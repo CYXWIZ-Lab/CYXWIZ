@@ -7,6 +7,20 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **The Pattern Browser, redesigned.** Category chips that wrap (they ran off
+  the panel's edge), with counts and a new Reinforcement learning category
+  (PPO was filed under Custom); search across every category; a card per
+  pattern with Full graph or Block, its node count and two lines of
+  description; patterns that cannot be used yet greyed at the end with the
+  reason; settings typed or stepped with - / + instead of dragged. Insert
+  says what it added, or why nothing was added (it was a log line). A full
+  graph inserted onto a canvas that has nodes asks first: Replace the canvas
+  (Undo brings it back), Add beside it, or Cancel; it used to land on top of
+  the graph. A double-click on a Nodes panel example opens it in the
+  browser. See [Patterns](usage/patterns.md).
+- **A pattern with a link to a missing pin is refused.** The link was
+  skipped and the rest inserted, leaving a hole in the graph; now nothing is
+  added and the browser names the pin and the node.
 - **Patterns insert and train again.** 26 of the 28 shipped patterns still
   used the retired Dataset Input node and failed to insert (with only a log
   line); the others were model pieces with no loss or optimizer, so Train
@@ -513,6 +527,16 @@ private Data Studio tickets (`tofix*/track*`).
   native neural provider.
 
 ### Added
+
+- **Save selection as pattern, and My patterns.** Select nodes, right-click
+  the canvas and choose Actions > Save selection as pattern...: the dialog
+  says which links are kept and which leave the selection, and saves a block
+  (with a Block input where an outside link fed it) or, with a Data Input
+  and an Output, a full graph. Your patterns are listed under My patterns,
+  saved in `%APPDATA%\CyxWiz\patterns` (`~/.cyxwiz/patterns` on Linux and
+  macOS) whatever folder the Engine starts in, with Show in folder and
+  Delete (to the Recycle Bin or Trash). See
+  [Patterns](usage/patterns.md#my-patterns-saving-your-own).
 
 - **ResNet-18, MobileNetV2 and MobileNetV3 Small patterns.** Full graphs of
   torchvision's networks, every layer named as torchvision names it, so

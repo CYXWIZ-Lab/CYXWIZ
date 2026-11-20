@@ -1,9 +1,38 @@
 # Patterns
 
 A pattern is a ready-made graph or part of a graph that you insert into the
-canvas. Open the **Patterns** panel with **View > Panels > Patterns panel**
-(Ctrl+Shift+P), pick a pattern, change its settings if you want, and click
-**Insert Pattern**.
+canvas. Open the **Pattern Browser** with **View > Panels > Patterns panel**
+(Ctrl+Shift+P), or double-click a pattern under **Examples** at the end of
+the Nodes panel.
+
+## Finding and inserting a pattern
+
+- **Chips** under the search field pick a category: Basic, CNN, RNN,
+  Transformer, Generative, Reinforcement learning, Blocks and My patterns,
+  each with how many patterns it holds. The chips wrap onto a second line in
+  a narrow panel.
+- **Search** looks in every category at once: names, descriptions, tags.
+  Esc clears it.
+- **Each card** shows the pattern's name, **Full graph** or **Block**, its
+  number of nodes and two lines of its description. Click a card to open it:
+  the whole description, its **Settings** (type a number, or use - and +),
+  and **Insert full graph** or **Insert block**.
+- **After Insert**, a green line under the button says what was added and
+  what to do next. When nothing could be added, an orange line says why (a
+  link in the pattern to a pin its node does not have, a node type the
+  Engine does not know, a run using the graph) and the canvas is unchanged.
+
+A **block** goes below the graph on the canvas. A **full graph** brings its
+own Data Input, loss and optimizer, so on a canvas that already has nodes the
+browser asks first:
+
+- **Replace the canvas**: the graph on the canvas is removed and the pattern
+  takes its place. **Edit > Undo** brings the graph back (double-click its
+  Data Input and click Apply again to reload its data). The graph's saved
+  file is not touched until you save.
+- **Add beside it**: the pattern goes to the right of the graph. The canvas
+  then holds two graphs; delete the one you do not want before you train.
+- **Cancel**: nothing changes.
 
 ## Full graphs and blocks
 
@@ -66,9 +95,9 @@ are matched and what the match report says.
 
 ## Patterns that cannot be used yet
 
-Some patterns need a kind of training the Engine does not have yet. They stay
-in the list so you can see them, and inserting one is refused with the
-reason:
+Some patterns need a kind of training the Engine does not have yet. They are
+listed greyed under **Not ready yet** at the end of their category, with
+the reason on hover and in the open card; their Insert button stays off:
 
 | Pattern | Needs |
 | --- | --- |
@@ -80,13 +109,36 @@ reason:
 
 Each becomes a full graph when that training is built.
 
+## My patterns: saving your own
+
+1. Select the nodes on the canvas (drag a box, or Ctrl+click).
+2. Right-click the canvas and choose **Actions > Save selection as
+   pattern...**.
+3. The dialog says what is kept: the nodes, the links between them, and
+   which links leave the selection and are not kept. A selection that holds
+   a Data Input and an Output saves as a **full graph**. Any other selection
+   saves as a **block**, with a **Block input** in front of each node that
+   an outside link fed.
+4. Give it a **Name** (and, if you like, a description and a category), then
+   click **Save**. Node settings are kept as they are on the canvas. Saving
+   under a name you already used replaces that pattern; the dialog warns you
+   first.
+
+A notice on the canvas confirms the save, with **Show in Pattern Browser**.
+Saved patterns are listed under **My patterns**, whatever category you
+picked, and search finds them too. They are files in your settings folder,
+`%APPDATA%\CyxWiz\patterns` on Windows (`~/.cyxwiz/patterns` on Linux and
+macOS); the line under My patterns shows the folder, with **Open folder**.
+An open card of yours has **Show in folder** and **Delete**: Delete asks
+first, then moves the file to the Recycle Bin (the Trash on Linux and
+macOS), so you can get it back.
+
 ## Limits
 
-- Inserting a pattern that cannot be used yet, or one that fails, is only
-  reported in the log for now. The Patterns panel will mark the full graphs,
-  the blocks and the patterns that cannot be used yet.
-- There is no command yet to save a selection of your own nodes as a
-  pattern.
+- A saved pattern keeps the settings it was saved with; it has no Settings
+  of its own to change before inserting.
+- Plugin nodes cannot be saved in a pattern yet: the dialog says which node
+  stopped the save.
 
 ## For developers: the pattern file
 
@@ -96,7 +148,18 @@ template format: `id` (the file name), `name`, `kind` (`graph` or `block`),
 `sample_shape` (one sample at the first layer, for example `[32, 32, 3]`),
 `category`, `tags`, `parameters` (each `$name` in the template takes the
 value the user sets), and `template` with `nodes` (registry type names) and
-`links` (by node id and pin index).
+`links` (by node id and pin index). A user's patterns are the same format in
+the settings folder's `patterns` folder; the library knows each as
+`user:<file name>`, so one never replaces a shipped pattern.
+
+Inserting is all or nothing: `PatternLibrary::InstantiatePatternWithCreator`
+refuses the whole pattern, with the reason, when a node type is unknown or a
+template, or a link names a node or pin that is not there. What the browser
+and the Save dialog show (chips, list, insert words, the selection summary)
+is `core/pattern_browser_presentation`, checked by
+`test_pattern_browser_presentation` against the shipped files;
+`test_pattern_template_guard` saves a selection, reads it back, inserts and
+deletes it.
 
 ResNet-18, MobileNetV2 and MobileNetV3 Small are written by
 `scripts/examples/torch_to_cyxgraph.py` (run it from the repository root;
