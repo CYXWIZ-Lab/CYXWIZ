@@ -3,6 +3,7 @@
 #include "../node_import_guardrails.h"
 #include "../node_type_import_registry.h"
 #include "../../core/node_metadata_registry.h"
+#include "../../core/recycle_bin.h"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <fstream>
@@ -155,6 +156,7 @@ bool PatternLibrary::LoadPatternFile(const std::string& filepath, bool user) {
             pattern.user = user;
 
             patterns_[pattern.id] = pattern;
+            ++revision_;
             spdlog::debug("Loaded pattern: {} ({})", pattern.name, pattern.id);
             return true;
         }
@@ -329,6 +331,19 @@ std::vector<Pattern> PatternLibrary::Search(const std::string& query) const {
     }
 
     return result;
+}
+
+bool PatternLibrary::DeleteUserPattern(const std::string& id, std::string* error) {
+    const auto it = patterns_.find(id);
+    if (it == patterns_.end() || !it->second.user) {
+        if (error) *error = "it is not one of My patterns";
+        return false;
+    }
+    if (!cyxwiz::MoveToRecycleBin(it->second.file_path, error)) return false;
+    spdlog::info("Moved pattern '{}' to the {}: {}", it->second.name, cyxwiz::RecycleBinName(), it->second.file_path);
+    patterns_.erase(it);
+    ++revision_;
+    return true;
 }
 
 const Pattern* PatternLibrary::GetPattern(const std::string& id) const {

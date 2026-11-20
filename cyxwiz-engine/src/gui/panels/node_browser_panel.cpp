@@ -619,14 +619,14 @@ void NodeBrowserPanel::RenderExamplesGroup() {
         for (const auto& pattern : library.GetByCategory(category)) {
             ImGui::PushID(pattern.id.c_str());
             ImGui::Selectable(pattern.name.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick);
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && on_example_insert_)
-                on_example_insert_(pattern.id);
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && on_example_open_)
+                on_example_open_(pattern.id);
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
                 ImGui::TextColored(t.text_bright, "%s", pattern.name.c_str());
                 if (!pattern.description.empty()) ImGui::TextUnformatted(pattern.description.c_str());
-                ImGui::TextColored(t.text_dim, "Double-click to add it to the canvas");
+                ImGui::TextColored(t.text_dim, "Double-click to open it in the Pattern Browser");
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }

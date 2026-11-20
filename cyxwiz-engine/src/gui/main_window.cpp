@@ -791,17 +791,11 @@ MainWindow::MainWindow()
         },
         [this]() { return marked_launch_.has_value(); });
 
-    // Set pattern browser callback to insert patterns into node editor
-    pattern_browser_->SetInsertCallback([this](const std::vector<MLNode>& nodes, const std::vector<NodeLink>& links) {
-        if (!node_editor_) return;
-        if (const auto error = node_editor_->InsertPattern(nodes, links); !error.empty())
-            spdlog::warn("Pattern not inserted: {}", error);
-    });
-    // The Nodes panel's Examples insert as the Pattern Browser does, with
-    // each pattern's default parameters.
+    // An example in the Nodes panel opens in the Pattern Browser, where its
+    // settings, the question before it replaces a graph and its result are.
     if (node_browser_panel_) {
-        node_browser_panel_->SetExampleInsertCallback([this](const std::string& pattern_id) {
-            if (pattern_browser_) pattern_browser_->InsertPattern(pattern_id, {});
+        node_browser_panel_->SetExampleOpenCallback([this](const std::string& pattern_id) {
+            if (pattern_browser_) pattern_browser_->OpenWithPattern(pattern_id);
         });
     }
 

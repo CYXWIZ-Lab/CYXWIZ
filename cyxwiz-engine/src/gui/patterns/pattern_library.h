@@ -39,6 +39,8 @@ public:
     std::vector<Pattern> Search(const std::string& query) const;
     const Pattern* GetPattern(const std::string& id) const;
     size_t GetPatternCount() const { return patterns_.size(); }
+    // Changes whenever a pattern is read, saved or deleted (views rebuild then).
+    size_t Revision() const { return revision_; }
 
     // Get all categories that have patterns
     std::vector<PatternCategory> GetAvailableCategories() const;
@@ -71,6 +73,10 @@ public:
         const std::string& save_path = ""
     );
 
+    // Moves one of My patterns' files to the Recycle Bin (Trash) and drops
+    // it from the library. False, with the reason, when it could not.
+    bool DeleteUserPattern(const std::string& id, std::string* error = nullptr);
+
     // The user's own patterns (My patterns): the Engine sets it to
     // <user settings folder>/patterns before Initialize. Empty: none are read.
     const std::string& GetUserPatternsDirectory() const { return user_patterns_dir_; }
@@ -102,6 +108,7 @@ private:
     std::string user_patterns_dir_;
     std::string builtin_patterns_dir_;
     bool initialized_ = false;
+    size_t revision_ = 0;
 };
 
 } // namespace gui::patterns

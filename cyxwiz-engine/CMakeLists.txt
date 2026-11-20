@@ -766,6 +766,7 @@ set(ENGINE_SOURCES
     src/gui/tutorial/tutorial_system.cpp
     src/gui/panels/query_console.cpp
     src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
     src/gui/query/cyxql_types.cpp
     src/gui/query/cyxql_lexer.cpp
     src/gui/query/cyxql_parser.cpp
@@ -3664,6 +3665,7 @@ add_test(NAME pipeline_run_release COMMAND test_pipeline_run_release)
 add_executable(test_pattern_template_guard
     tests/test_pattern_template_guard.cpp
     src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
     src/gui/node_type_import_registry.cpp
 )
 target_link_libraries(test_pattern_template_guard PRIVATE cyxwiz-training-core)
@@ -5813,6 +5815,7 @@ endfunction()
 add_executable(test_shipped_patterns
     tests/test_shipped_patterns.cpp
     src/gui/patterns/pattern_library.cpp
+    src/core/recycle_bin.cpp
     src/gui/node_type_import_registry.cpp
     src/core/data_registry_core.cpp
     src/core/data_registry_utils.cpp

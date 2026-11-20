@@ -40,10 +40,10 @@ public:
     void SetExtensionSelectCallback(std::function<void(const std::string&)> callback) {
         on_extension_select_ = std::move(callback);
     }
-    // An example double-clicked under Examples: inserted as the Pattern
-    // Browser inserts it.
-    void SetExampleInsertCallback(std::function<void(const std::string&)> callback) {
-        on_example_insert_ = std::move(callback);
+    // An example double-clicked under Examples: opened in the Pattern Browser
+    // (its settings, the question before it replaces a graph, its result).
+    void SetExampleOpenCallback(std::function<void(const std::string&)> callback) {
+        on_example_open_ = std::move(callback);
     }
 
     void Render();
@@ -120,7 +120,7 @@ private:
     std::function<void(cyxwiz::NodeType)> on_node_select_;
     std::function<void(const std::string&)> on_extension_hover_;
     std::function<void(const std::string&)> on_extension_select_;
-    std::function<void(const std::string&)> on_example_insert_;
+    std::function<void(const std::string&)> on_example_open_;
     cyxwiz::NodeType pinned_node_type_ = cyxwiz::NodeType::Unknown;
     std::string pinned_extension_id_;
 
