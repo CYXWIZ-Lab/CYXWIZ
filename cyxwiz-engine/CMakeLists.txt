@@ -282,6 +282,7 @@ set(ENGINE_SOURCES
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
     src/core/node_palette.cpp  # TOFIX157 palette curation
     src/core/nodes_panel_presentation.cpp  # TOFIX129 the Nodes panel's model
+    src/core/pattern_browser_presentation.cpp  # TOFIX178 4e the Pattern Browser's model
     src/core/prepared_data_cache.cpp
     src/core/training_input_preparation.cpp
     src/core/prepared_step_run.cpp
@@ -6286,6 +6287,19 @@ if(WIN32)
 endif()
 set_target_properties(test_nodes_panel_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME test_nodes_panel_presentation COMMAND test_nodes_panel_presentation)
+
+# ===== Test: the Pattern Browser's model (chips, list, insert words, Save selection; TOFIX178 4e) =====
+add_executable(test_pattern_browser_presentation
+    tests/test_pattern_browser_presentation.cpp
+    src/core/pattern_browser_presentation.cpp
+)
+target_include_directories(test_pattern_browser_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_pattern_browser_presentation PRIVATE nlohmann_json::nlohmann_json)
+if(WIN32)
+    target_compile_definitions(test_pattern_browser_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_pattern_browser_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_pattern_browser_presentation COMMAND test_pattern_browser_presentation)
 
 # ===== Test: Saved Text Smoke Graph Patterns =====
 add_executable(test_text_smoke_graph_patterns
