@@ -209,10 +209,11 @@ std::vector<float> ResolveCrossEntropyClassWeights(
     if (class_weight) {
         const std::string mode = ToLowerAscii(TrimAscii(*class_weight));
         if (mode == "balanced") {
-            spdlog::warn(
-                "TrainingExecutor: class_weight=balanced was not resolved "
-                "before loss construction; "
-                "using unweighted CrossEntropy loss");
+            // Weights need the Train part's class counts: TrainingExecutor
+            // sets them once its batchers are built and rebuilds the loss, or
+            // refuses the run (ResolveBalancedClassWeights, TOFIX223 0.16).
+            // Built here before that, the loss is unweighted.
+            spdlog::debug("class_weight=balanced: loss built unweighted until the Train class counts are known");
             return {};
         }
         if (mode == "manual") {

@@ -1078,6 +1078,21 @@ void TrainingExecutor::Train(
         return;
     }
 
+    // class_weight=balanced, for every kind of data: from the Train part's
+    // class counts, now that the batchers exist; the loss is rebuilt with the
+    // weights. When the counts cannot be had, the run stops with the reason
+    // instead of training unweighted (TOFIX223 0.16).
+    if (IsBalancedClassWeightRequest(config_)) {
+        try {
+            ResolveBalancedClassWeights(config_, active_train_ibatcher);
+            loss_ = BuildLossFromConfig(config_);
+        } catch (const std::exception& e) {
+            spdlog::error("TrainingExecutor: {}", e.what());
+            fail_run(std::string("class_weight_failed: ") + e.what());
+            return;
+        }
+    }
+
     // Layer snapshots on items by number (6.1c): from the batchers built
     // here, before any metric sampler wraps them.
     if (layer_snapshot_schedule_) snapshot_run_record_ = {};

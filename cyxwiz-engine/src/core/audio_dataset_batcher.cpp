@@ -167,6 +167,15 @@ std::string AudioDatasetBatcher::SourceSampleName(size_t index) const {
                                      : std::string();
 }
 
+std::optional<std::vector<size_t>> AudioDatasetBatcher::TrainClassCounts() const {
+    if (!dataset_) return std::nullopt;
+    const auto& labels = dataset_->Labels();
+    std::vector<size_t> counts;
+    for (const size_t index : Part(BatcherPhase::Train))
+        if (index < labels.size()) CountClass(counts, labels[index]);
+    return counts;
+}
+
 std::vector<std::string> AudioDatasetBatcher::ClassNames() const { return dataset_->GetClassNames(); }
 
 Batch AudioDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_size, bool augment) {

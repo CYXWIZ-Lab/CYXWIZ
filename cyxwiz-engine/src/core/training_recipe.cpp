@@ -76,8 +76,6 @@ TrainingRecipe ArrowTrainingRecipe(std::shared_ptr<ArrowDataset> dataset, std::s
                   [dataset, label_column](TrainingConfiguration config, int, std::string&) {
                       ResolveTableInputSize(config, dataset->GetSchema(), label_column, dataset->GetNumRows(),
                                             dataset->GetNumColumns(), "Arrow");
-                      TryApplyBalancedClassWeightsFromArrowTable(config, dataset->GetArrowTable(), label_column,
-                                                                 /*partition_column=*/"", "TrainingManager Arrow");
                       return std::make_unique<TrainingExecutor>(std::move(config), dataset, label_column);
                   });
 }

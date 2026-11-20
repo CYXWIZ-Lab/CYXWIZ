@@ -111,6 +111,7 @@ public:
     size_t SourceSampleCount() const override;
     // This batcher's part when the row is in it (it holds one part).
     std::optional<BatcherPhase> SourceSamplePart(size_t index) const override;
+    std::optional<std::vector<size_t>> TrainClassCounts() const override;
 
     // Preprocessing (IBatcher)
     void SetNormalization(float mean, float std_dev) override;

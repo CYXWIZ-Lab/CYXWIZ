@@ -365,6 +365,18 @@ std::optional<Batch> SparseFeatureDatasetBatcher::GetSourceSamples(const std::ve
     return AssembleBatch(rows.data(), rows.size());
 }
 
+std::optional<std::vector<size_t>> SparseFeatureDatasetBatcher::TrainClassCounts() const {
+    if (split_phase_ != BatcherPhase::Train || !is_training_ || !dataset_ || !dataset_->GetLabels())
+        return std::nullopt;
+    std::vector<size_t> counts;
+    try {
+        for (const int64_t row : base_indices_) CountClass(counts, ReadLabel(row, true).class_index);
+    } catch (const std::exception&) {
+        return std::nullopt;  // an empty or non-class label: batches refuse it with the reason
+    }
+    return counts;
+}
+
 std::optional<BatcherPhase> SparseFeatureDatasetBatcher::SourceSamplePart(size_t index) const {
     // This batcher holds one part of the split.
     return std::find(base_indices_.begin(), base_indices_.end(), static_cast<int64_t>(index)) != base_indices_.end()

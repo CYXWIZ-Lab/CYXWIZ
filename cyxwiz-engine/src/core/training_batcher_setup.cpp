@@ -79,17 +79,6 @@ std::string TrimAscii(const std::string& value) {
     return begin < end ? std::string(begin, end) : std::string{};
 }
 
-bool IsBalancedClassWeightRequest(const TrainingConfiguration& config) {
-    if (config.loss_type != gui::NodeType::CrossEntropyLoss) {
-        return false;
-    }
-    auto it = config.loss_params.find("class_weight");
-    if (it == config.loss_params.end()) {
-        return false;
-    }
-    return LowerAscii(TrimAscii(it->second)) == "balanced";
-}
-
 bool RequiresClassIndexTargets(const TrainingConfiguration& config) {
     // The Pair / Triplet Dataset Builder groups rows by their class id.
     if (config.metric_sampling != MetricSampling::None) return true;
@@ -132,56 +121,6 @@ void ApplyRoleTargetTransform(const TrainingConfiguration& config, const std::st
     } else {
         batcher.SetOneHotEncoding(config.output_size);
     }
-}
-
-std::vector<int64_t> TrainRowsFromPartition(
-    const std::shared_ptr<arrow::Table>& table,
-    const std::string& partition_column) {
-    std::vector<int64_t> rows;
-    if (!table || partition_column.empty()) {
-        return rows;
-    }
-
-    auto column = table->GetColumnByName(partition_column);
-    if (!column || column->num_chunks() == 0) {
-        return rows;
-    }
-    for (int c = 0; c < column->num_chunks(); ++c) {
-        if (column->chunk(c)->type_id() != arrow::Type::INT8) {
-            return {};
-        }
-    }
-
-    int64_t offset = 0;
-    for (int c = 0; c < column->num_chunks(); ++c) {
-        auto chunk = column->chunk(c);
-        const int64_t length = chunk->length();
-        auto arr = std::static_pointer_cast<arrow::Int8Array>(chunk);
-        const int8_t* data = arr->raw_values();
-        for (int64_t i = 0; i < length; ++i) {
-            if (data[i] == 0) {
-                rows.push_back(offset + i);
-            }
-        }
-        offset += length;
-    }
-    return rows;
-}
-
-std::vector<int64_t> TrainRowsFromRatio(const std::shared_ptr<arrow::Table>& table,
-                                        float train_ratio) {
-    std::vector<int64_t> rows;
-    if (!table) {
-        return rows;
-    }
-    const float safe_ratio = std::clamp(train_ratio, 0.0f, 1.0f);
-    const int64_t train_count =
-        static_cast<int64_t>(table->num_rows() * safe_ratio);
-    rows.reserve(static_cast<size_t>(std::max<int64_t>(0, train_count)));
-    for (int64_t i = 0; i < train_count && i < table->num_rows(); ++i) {
-        rows.push_back(i);
-    }
-    return rows;
 }
 
 std::string FormatFloatVector(const std::vector<float>& values) {
@@ -236,144 +175,51 @@ TrainingInputSizeResolution ResolveTabularTrainingInputSize(
     return {CountNumericBatchFeatureColumns(schema, -1, {}, config.excluded_feature_columns), false, false};
 }
 
-bool TryApplyBalancedClassWeightsFromArrowTable(
-    TrainingConfiguration& config,
-    const std::shared_ptr<arrow::Table>& table,
-    const std::string& label_column,
-    const std::string& partition_column,
-    const std::string& context) {
+bool IsBalancedClassWeightRequest(const TrainingConfiguration& config) {
+    if (config.loss_type != gui::NodeType::CrossEntropyLoss) return false;
+    const auto it = config.loss_params.find("class_weight");
+    return it != config.loss_params.end() && LowerAscii(TrimAscii(it->second)) == "balanced";
+}
 
-    if (!IsBalancedClassWeightRequest(config)) {
-        return false;
-    }
-    if (config.is_time_series) {
-        spdlog::warn("{}: class_weight=balanced is not available for "
-                     "time-series/regression training; using unweighted loss",
-                     context);
-        return false;
-    }
-    if (!table) {
-        spdlog::warn("{}: class_weight=balanced requested but Arrow table is "
-                     "null; using unweighted loss", context);
-        return false;
-    }
-    if (label_column.empty()) {
-        spdlog::warn("{}: class_weight=balanced requested but label column is "
-                     "empty; using unweighted loss", context);
-        return false;
-    }
+void ResolveBalancedClassWeights(TrainingConfiguration& config, const IBatcher* train) {
+    if (!IsBalancedClassWeightRequest(config)) return;
+    const auto refuse = [](const std::string& why) {
+        throw std::runtime_error("class_weight=balanced cannot be computed: " + why +
+                                 ". Set the loss's class weight to none, or give manual weights.");
+    };
+    if (config.is_time_series) refuse("time-series windows have no class counts");
+    const auto counts = train ? train->TrainClassCounts() : std::nullopt;
+    if (!counts) refuse("this training data cannot count the classes of its Train part");
 
-    std::shared_ptr<arrow::Table> effective_table = table;
-    std::string effective_partition = partition_column;
-    if (effective_partition.empty() && table && table->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0) {
-        effective_partition = kSplitPartitionColumn;  // marked by the pipeline run
-    }
-    if (effective_partition.empty() && UsesSharedSplitRule(config)) {
-        auto partitioned = AddSplitPartitionColumn(
-            table,
-            SplitPartitionOptions{
-                label_column,
-                config.train_ratio,
-                config.val_ratio,
-                config.test_ratio,
-                config.shuffle,
-                static_cast<uint32_t>(std::max(0, config.split_seed)),
-                config.stratified,
-                context + " class weights"});
-        if (partitioned.ok()) {
-            effective_table = partitioned.ValueOrDie();
-            effective_partition = kSplitPartitionColumn;
-        } else {
-            spdlog::warn("{}: stratified class-weight split could not be "
-                         "prepared ({}); using ratio-based train slice",
-                         context, partitioned.status().ToString());
-        }
-    }
-
-    auto labels_result = ReadNumericLabelColumn(effective_table, label_column);
-    if (!labels_result.ok()) {
-        spdlog::warn("{}: class_weight=balanced requested but labels could "
-                     "not be read ({}); using unweighted loss",
-                     context, labels_result.status().ToString());
-        return false;
-    }
-    const auto& labels = labels_result.ValueOrDie();
-
-    std::vector<int64_t> train_rows = !effective_partition.empty()
-        ? TrainRowsFromPartition(effective_table, effective_partition)
-        : TrainRowsFromRatio(effective_table, config.train_ratio);
-    if (train_rows.empty()) {
-        spdlog::warn("{}: class_weight=balanced requested but the train split "
-                     "has no rows; using unweighted loss", context);
-        return false;
-    }
-
-    std::map<int64_t, size_t> counts;
-    for (int64_t row : train_rows) {
-        if (row < 0 || static_cast<size_t>(row) >= labels.size()) {
-            continue;
-        }
-        const int64_t label = labels[static_cast<size_t>(row)];
-        if (label >= 0) {
-            ++counts[label];
-        }
-    }
-
-    if (counts.size() < 2) {
-        spdlog::warn("{}: class_weight=balanced requested but the train split "
-                     "has fewer than two non-negative classes; using "
-                     "unweighted loss", context);
-        return false;
-    }
-
-    size_t class_count = config.output_size > 0
-        ? static_cast<size_t>(config.output_size)
-        : config.preprocessing.num_classes;
-    if (class_count == 0) {
-        class_count = static_cast<size_t>(counts.rbegin()->first + 1);
-    }
-    if (class_count == 0) {
-        return false;
-    }
-
-    std::vector<float> weights(class_count, 0.0f);
+    size_t class_count = config.output_size > 0 ? static_cast<size_t>(config.output_size)
+                                                : config.preprocessing.num_classes;
+    if (class_count == 0) class_count = counts->size();
+    if (counts->size() > class_count)
+        refuse("the Train part has class " + std::to_string(counts->size() - 1) + ", outside the model's " +
+               std::to_string(class_count) + " outputs");
     size_t total = 0;
-    for (const auto& [label, count] : counts) {
-        if (label < 0 || static_cast<size_t>(label) >= class_count) {
-            spdlog::warn("{}: class_weight=balanced found label {} outside "
-                         "class range 0..{}; using unweighted loss",
-                         context, label, class_count - 1);
-            return false;
-        }
-        total += count;
-    }
-
+    std::string missing;
+    size_t missing_count = 0;
     for (size_t cls = 0; cls < class_count; ++cls) {
-        auto it = counts.find(static_cast<int64_t>(cls));
-        if (it == counts.end() || it->second == 0) {
-            spdlog::warn("{}: class_weight=balanced cannot compute a weight "
-                         "for missing train class {}; using unweighted loss",
-                         context, cls);
-            return false;
-        }
-        weights[cls] = static_cast<float>(total) /
-            static_cast<float>(class_count * it->second);
+        const size_t rows = cls < counts->size() ? (*counts)[cls] : 0;
+        total += rows;
+        if (rows == 0 && missing_count++ < 5) missing += (missing.empty() ? "" : ", ") + std::to_string(cls);
     }
+    if (missing_count > 0)
+        refuse("the Train part has no rows of class " + missing + (missing_count > 5 ? " and others" : "") +
+               ", so its weight would be infinite");
 
+    std::vector<float> weights(class_count);
+    std::string distribution;
+    for (size_t cls = 0; cls < class_count; ++cls) {
+        weights[cls] = static_cast<float>(static_cast<double>(total) /
+                                          (static_cast<double>(class_count) * static_cast<double>((*counts)[cls])));
+        distribution += (cls ? ", " : "") + std::to_string(cls) + ":" + std::to_string((*counts)[cls]);
+    }
     config.loss_params["class_weight"] = "manual";
     config.loss_params["class_weights"] = FormatFloatVector(weights);
-
-    std::ostringstream dist;
-    bool first = true;
-    for (const auto& [label, count] : counts) {
-        if (!first) dist << ", ";
-        dist << label << ":" << count;
-        first = false;
-    }
-    spdlog::info("{}: computed balanced CrossEntropy class weights from "
-                 "train split counts [{}] -> {}",
-                 context, dist.str(), config.loss_params["class_weights"]);
-    return true;
+    spdlog::info("TrainingExecutor: balanced CrossEntropy class weights from the Train part's counts [{}] -> {}",
+                 distribution, config.loss_params["class_weights"]);
 }
 
 std::shared_ptr<ArrowDataset> WithEncodedLabels(const std::shared_ptr<ArrowDataset>& dataset,

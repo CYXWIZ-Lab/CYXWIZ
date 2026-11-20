@@ -606,6 +606,19 @@ std::optional<BatcherPhase> ArrowDatasetBatcher::SourceSamplePart(size_t index) 
                : std::nullopt;
 }
 
+std::optional<std::vector<size_t>> ArrowDatasetBatcher::TrainClassCounts() const {
+    if (split_phase_ != BatcherPhase::Train || !is_training_ || !dataset_ || label_col_idx_ < 0 ||
+        (!partition_column_.empty() && partition_value_ != 0))
+        return std::nullopt;
+    auto labels = ReadNumericLabelColumn(dataset_->GetArrowTable(), label_column_);
+    if (!labels.ok()) return std::nullopt;
+    const auto& values = labels.ValueOrDie();
+    std::vector<size_t> counts;
+    for (const int64_t row : base_indices_)
+        if (row >= 0 && static_cast<size_t>(row) < values.size()) CountClass(counts, values[static_cast<size_t>(row)]);
+    return counts;
+}
+
 void ArrowDatasetBatcher::RefuseMissingValues(const std::shared_ptr<arrow::Table>& table) {
     if (missing_values_checked_) return;
     std::vector<MissingColumn> columns;

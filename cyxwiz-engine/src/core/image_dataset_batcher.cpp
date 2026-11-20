@@ -176,6 +176,15 @@ std::optional<Batch> ImageDatasetBatcher::GetSourceSamples(const std::vector<siz
     return AssembleBatch(indices.data(), indices.size(), /*train=*/false);
 }
 
+std::optional<std::vector<size_t>> ImageDatasetBatcher::TrainClassCounts() const {
+    if (!images_) return std::nullopt;
+    const auto& labels = images_->Labels();
+    std::vector<size_t> counts;
+    for (const size_t index : Part(BatcherPhase::Train))
+        if (index < labels.size()) CountClass(counts, labels[index]);
+    return counts;
+}
+
 std::optional<BatcherPhase> ImageDatasetBatcher::SourceSamplePart(size_t index) const {
     for (BatcherPhase phase : {BatcherPhase::Train, BatcherPhase::Val, BatcherPhase::Test}) {
         const auto& part = Part(phase);

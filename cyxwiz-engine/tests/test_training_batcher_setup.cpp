@@ -1251,15 +1251,10 @@ int main(int argc, char** argv) {
     balanced_loss_config.output_size = 2;
     balanced_loss_config.loss_type = gui::NodeType::CrossEntropyLoss;
     balanced_loss_config.loss_params["class_weight"] = "balanced";
-    const bool applied_balanced_weights =
-        cyxwiz::TryApplyBalancedClassWeightsFromArrowTable(
-            balanced_loss_config,
-            MakeStratifiedDataset()->GetArrowTable(),
-            "label",
-            "",
-            "test balanced loss weights");
-    Check(applied_balanced_weights,
-          "balanced CrossEntropy weights should be computed from Arrow train split");
+    // The run's Train batcher counts the classes (TOFIX223 0.16).
+    const auto balanced_loss_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        balanced_loss_config,MakeStratifiedDataset(), "label", /*batch_size=*/4);
+    cyxwiz::ResolveBalancedClassWeights(balanced_loss_config, balanced_loss_batchers.train);
     Check(balanced_loss_config.loss_params["class_weight"] == "manual",
           "balanced class_weight should be resolved to manual weights");
     Check(balanced_loss_config.loss_params["class_weights"] == "[0.5625, 4.5]",
@@ -1276,15 +1271,9 @@ int main(int argc, char** argv) {
     stratified_loss_config.output_size = 2;
     stratified_loss_config.loss_type = gui::NodeType::CrossEntropyLoss;
     stratified_loss_config.loss_params["class_weight"] = "balanced";
-    const bool applied_stratified_weights =
-        cyxwiz::TryApplyBalancedClassWeightsFromArrowTable(
-            stratified_loss_config,
-            MakeStratifiedDataset()->GetArrowTable(),
-            "label",
-            "",
-            "test stratified balanced loss weights");
-    Check(applied_stratified_weights,
-          "balanced CrossEntropy weights should support stratified train splits");
+    const auto stratified_loss_batchers = cyxwiz::BuildArrowTrainingBatchers(
+        stratified_loss_config, MakeStratifiedDataset(), "label", /*batch_size=*/4);
+    cyxwiz::ResolveBalancedClassWeights(stratified_loss_config, stratified_loss_batchers.train);
     Check(stratified_loss_config.loss_params["class_weights"] == "[0.75, 1.5]",
           "stratified balanced class_weights should use stratified train counts");
 

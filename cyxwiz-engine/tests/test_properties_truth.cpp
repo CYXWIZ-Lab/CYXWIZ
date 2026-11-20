@@ -980,9 +980,11 @@ int main() {
         const auto* class_weight = FindProperty(report, "class_weight");
         Check(class_weight != nullptr,
               "CrossEntropy should surface class_weight truth");
-        Check(HasStatus(*class_weight,
-                        gui::properties_truth::TruthStatus::Unsupported),
-              "unresolved CrossEntropy balanced class_weight should be visible");
+        // Computed from the Train counts on every path (TOFIX223 0.16).
+        Check(!HasStatus(*class_weight,
+                         gui::properties_truth::TruthStatus::Unsupported) &&
+                  class_weight->message.find("Train part's class counts") != std::string::npos,
+              "balanced CrossEntropy class_weight is supported and says where it comes from");
     }
 
     {

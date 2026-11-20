@@ -312,6 +312,48 @@ void AppendClassIds(const arrow::Array& chunk, std::unordered_map<std::string, u
     }
 }
 
+
+template <typename ArrayT>
+void AppendIntegerClasses(const arrow::Array& chunk, std::vector<int64_t>& out) {
+    const auto& values = static_cast<const ArrayT&>(chunk);
+    for (int64_t i = 0; i < values.length(); ++i)
+        out.push_back(values.IsNull(i) ? -1 : static_cast<int64_t>(values.Value(i)));
+}
+
+// The class of each label cell as FillRows reads it: a number is its class
+// (a float truncated), a text its vocabulary index; -1 for an empty cell or
+// an unknown text. False for a label type FillRows does not read.
+bool AppendLabelClasses(const arrow::Array& chunk, const LabelVocabulary* vocabulary, std::vector<int64_t>& out) {
+    switch (chunk.type_id()) {
+    case arrow::Type::INT8: AppendIntegerClasses<arrow::Int8Array>(chunk, out); return true;
+    case arrow::Type::INT16: AppendIntegerClasses<arrow::Int16Array>(chunk, out); return true;
+    case arrow::Type::INT32: AppendIntegerClasses<arrow::Int32Array>(chunk, out); return true;
+    case arrow::Type::INT64: AppendIntegerClasses<arrow::Int64Array>(chunk, out); return true;
+    case arrow::Type::UINT8: AppendIntegerClasses<arrow::UInt8Array>(chunk, out); return true;
+    case arrow::Type::UINT16: AppendIntegerClasses<arrow::UInt16Array>(chunk, out); return true;
+    case arrow::Type::UINT32: AppendIntegerClasses<arrow::UInt32Array>(chunk, out); return true;
+    case arrow::Type::UINT64: AppendIntegerClasses<arrow::UInt64Array>(chunk, out); return true;
+    case arrow::Type::FLOAT: AppendIntegerClasses<arrow::FloatArray>(chunk, out); return true;
+    case arrow::Type::DOUBLE: AppendIntegerClasses<arrow::DoubleArray>(chunk, out); return true;
+    case arrow::Type::STRING:
+    case arrow::Type::LARGE_STRING:
+        for (int64_t i = 0; i < chunk.length(); ++i) {
+            if (chunk.IsNull(i) || !vocabulary) {
+                out.push_back(-1);
+                continue;
+            }
+            const std::string value =
+                chunk.type_id() == arrow::Type::STRING
+                    ? std::string(static_cast<const arrow::StringArray&>(chunk).GetView(i))
+                    : std::string(static_cast<const arrow::LargeStringArray&>(chunk).GetView(i));
+            out.push_back(vocabulary->IndexOf(value));
+        }
+        return true;
+    default:
+        return false;
+    }
+}
+
 }  // namespace
 
 std::shared_ptr<const ParquetRowSplit> BuildParquetRowSplit(const ParquetBackedDataset& dataset,
@@ -1231,6 +1273,44 @@ std::optional<Batch> ParquetArrowBatcher::GetSourceSamples(const std::vector<siz
     }
     FinishBatch(batch, indices.size(), batch_data, batch_labels, batch_labels_float);
     return batch;
+}
+
+// The Train rows of the assigned row groups, as LoadNextRowGroup serves
+// them: the row split's Train bucket, or the partition column's 0. Only the
+// label (and partition) column is read.
+std::optional<std::vector<size_t>> ParquetArrowBatcher::TrainClassCounts() const {
+    if (split_phase_ != BatcherPhase::Train || !is_training_ || !dataset_ || label_col_idx_ < 0 ||
+        (!partition_column_.empty() && partition_value_ != 0))
+        return std::nullopt;
+    const std::string label_name = dataset_->GetSchema()->field(label_col_idx_)->name();
+    std::vector<size_t> counts;
+    std::vector<int64_t> classes;
+    std::vector<int8_t> parts;
+    for (const int g : assigned_row_groups_) {
+        const auto labels = dataset_->ReadRowGroupColumn(g, label_name);
+        if (!labels) return std::nullopt;
+        classes.clear();
+        for (const auto& chunk : labels->chunks())
+            if (!AppendLabelClasses(*chunk, label_vocabulary_.get(), classes)) return std::nullopt;
+        parts.clear();
+        if (!partition_column_.empty()) {
+            const auto column = dataset_->ReadRowGroupColumn(g, partition_column_);
+            if (!column) return std::nullopt;
+            for (const auto& chunk : column->chunks()) {
+                if (chunk->type_id() != arrow::Type::INT8) return std::nullopt;
+                const auto& values = static_cast<const arrow::Int8Array&>(*chunk);
+                for (int64_t i = 0; i < values.length(); ++i) parts.push_back(values.IsNull(i) ? -1 : values.Value(i));
+            }
+            if (parts.size() != classes.size()) return std::nullopt;
+        }
+        const size_t offset = row_split_ ? static_cast<size_t>(row_split_->group_offset[static_cast<size_t>(g)]) : 0;
+        for (size_t i = 0; i < classes.size(); ++i) {
+            if (row_split_ && (offset + i >= row_split_->bucket.size() || row_split_->bucket[offset + i] != 0)) continue;
+            if (!parts.empty() && parts[i] != 0) continue;
+            CountClass(counts, classes[i]);
+        }
+    }
+    return counts;
 }
 
 std::optional<BatcherPhase> ParquetArrowBatcher::SourceSamplePart(size_t index) const {
