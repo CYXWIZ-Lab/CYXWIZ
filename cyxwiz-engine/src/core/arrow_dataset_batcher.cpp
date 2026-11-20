@@ -3,6 +3,7 @@
 #include "label_column_resolver.h"
 #include "split_partitioning.h"
 #include "class_label_range.h"
+#include "missing_values.h"
 #include "class_balance.h"
 #include "data_budget.h"
 #include "device_data_budget.h"
@@ -605,6 +606,23 @@ std::optional<BatcherPhase> ArrowDatasetBatcher::SourceSamplePart(size_t index) 
                : std::nullopt;
 }
 
+void ArrowDatasetBatcher::RefuseMissingValues(const std::shared_ptr<arrow::Table>& table) {
+    if (missing_values_checked_) return;
+    std::vector<MissingColumn> columns;
+    for (const int col : feature_cols_) {
+        if (col < 0 || col >= table->num_columns()) continue;
+        columns.push_back({table->schema()->field(col)->name(), MissingCells(*table->column(col)), false});
+    }
+    std::vector<int> labels = label_col_indices_;
+    if (labels.empty() && label_col_idx_ >= 0) labels.push_back(label_col_idx_);
+    for (const int col : labels) {
+        if (col < 0 || col >= table->num_columns()) continue;
+        columns.push_back({table->schema()->field(col)->name(), MissingCells(*table->column(col)), true});
+    }
+    ThrowIfMissingValues("ArrowDatasetBatcher", columns);
+    missing_values_checked_ = true;
+}
+
 // These rows as one batch: features (device-resident when they fit),
 // Normalize, the label form and the inspection. Throws when the rows cannot
 // be read as a batch.
@@ -623,6 +641,7 @@ Batch ArrowDatasetBatcher::AssembleBatch(const int64_t* batch_rows, size_t actua
         if (!table) {
             throw std::runtime_error("ArrowDatasetBatcher: the dataset holds no table");
         }
+        RefuseMissingValues(table);
 
         int64_t num_rows = table->num_rows();
         int num_cols = table->num_columns();

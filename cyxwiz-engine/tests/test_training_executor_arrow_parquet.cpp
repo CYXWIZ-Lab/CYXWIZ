@@ -532,19 +532,20 @@ FullBatchMetricOracle EvaluateCurrentModelAsOneBatch(
 // A NaN or infinite loss fails the run with the reason, for a classification
 // graph (loss summed on the device, checked where it is read) and a regression
 // graph (loss read every batch); it does not finish "completed" with NaN
-// weights (TOFIX223 0.6). One feature value is NaN.
+// weights (TOFIX223 0.6). One feature value is infinite (a NaN cell is a
+// missing value, refused before the first batch: TOFIX223 0.3).
 void TestNonFiniteLossFailsTheRun(const std::filesystem::path& work_dir) {
     auto schema = arrow::schema({
         arrow::field("x0", arrow::float32()),
         arrow::field("x1", arrow::float32()),
         arrow::field("label", arrow::float32()),
     });
-    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
     auto table = arrow::Table::Make(
         schema,
         {
             FinishFloatArray({0.0f, 0.1f, 0.9f, 1.0f, 0.2f, 0.8f}),
-            FinishFloatArray({0.0f, 0.2f, nan, 1.0f, 0.1f, 0.9f}),
+            FinishFloatArray({0.0f, 0.2f, inf, 1.0f, 0.1f, 0.9f}),
             FinishFloatArray({0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f}),
         },
         6);
@@ -569,9 +570,9 @@ void TestNonFiniteLossFailsTheRun(const std::filesystem::path& work_dir) {
         } catch (const std::exception& e) {
             error = e.what();
         }
-        Check(error.find("loss became NaN") != std::string::npos,
+        Check(error.find("training loss became") != std::string::npos,
               std::string(regression ? "regression" : "classification") +
-                  ": a NaN loss fails the run with the reason (got: '" + error + "')");
+                  ": a non-finite loss fails the run with the reason (got: '" + error + "')");
     }
 }
 

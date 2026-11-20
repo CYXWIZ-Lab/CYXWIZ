@@ -2,6 +2,7 @@
 
 #include "label_column_resolver.h"
 #include "class_label_range.h"
+#include "missing_values.h"
 #include "class_balance.h"
 #include "split_partitioning.h"
 #include "cyxwiz/portable_random.h"
@@ -753,6 +754,31 @@ void ParquetArrowBatcher::SetOneHotEncoding(size_t num_classes) {
 // partial batch), materializes the Tensor and returns.
 // -----------------------------------------------------------------------------
 
+// Empty feature or label cells refuse the run, as on the in-memory path. The
+// counts come from the file's row-group statistics, so no data is read; NaN
+// in a float column is not in them and shows as a non-finite loss instead.
+void ParquetArrowBatcher::RefuseMissingValues() {
+    if (missing_values_checked_ || !dataset_) return;
+    const auto schema = dataset_->GetSchema();
+    if (!schema) return;
+    std::vector<MissingColumn> columns;
+    const auto add = [&](int col, bool label) {
+        if (col < 0 || col >= schema->num_fields()) return;
+        const std::string& name = schema->field(col)->name();
+        const int64_t nulls = dataset_->NullCount(name);
+        if (nulls < 0) {
+            spdlog::warn("ParquetArrowBatcher: the file has no null count for column '{}'; its empty cells "
+                         "are not checked before training", name);
+            return;
+        }
+        columns.push_back({name, nulls, label});
+    };
+    for (const int col : feature_cols_) add(col, false);
+    for (const int col : label_col_indices_) add(col, true);
+    ThrowIfMissingValues("ParquetArrowBatcher", columns);
+    missing_values_checked_ = true;
+}
+
 Batch ParquetArrowBatcher::GetNextBatch() {
     Batch batch;
     batch.size = 0;
@@ -760,6 +786,7 @@ Batch ParquetArrowBatcher::GetNextBatch() {
     if (IsEpochComplete()) {
         return batch;
     }
+    RefuseMissingValues();
 
     // We don't yet know the final batch size (the epoch might end mid-batch),
     // so allocate max capacity and truncate at the end if needed.

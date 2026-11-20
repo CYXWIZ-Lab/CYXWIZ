@@ -586,6 +586,11 @@ public:
 
 private:
     Batch AssembleBatch(const int64_t* rows, size_t n);
+    // Throws when a feature or label column holds missing values (null, or
+    // NaN in a float column): training refuses them unless a step resolved
+    // them first (TOFIX223 0.3, owner decision D4). Checked once per batcher.
+    void RefuseMissingValues(const std::shared_ptr<arrow::Table>& table);
+    bool missing_values_checked_ = false;
 
     std::shared_ptr<class ArrowDataset> dataset_;
     std::string label_column_;
