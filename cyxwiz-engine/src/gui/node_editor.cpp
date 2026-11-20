@@ -80,6 +80,20 @@ namespace gui {
 
 namespace ui = cyxwiz::ui;
 
+namespace {
+// ImGui 1.91 gives a popup the font scale of the window it opens from, and the
+// canvas draws at the zoom: a menu opened on the canvas was as small (or as
+// large) as the nodes. It begins at the normal size.
+bool BeginUnzoomedPopup(const char* id) {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const float keep = window->FontWindowScale;
+    if (window->FontWindowScaleParents > 0.0f) window->FontWindowScale = 1.0f / window->FontWindowScaleParents;
+    const bool open = ImGui::BeginPopup(id);
+    window->FontWindowScale = keep;
+    return open;
+}
+}  // namespace
+
 void NodeEditor::SetWorkflowDescription(const std::string& desc) {
     strncpy(workflow_description_, desc.c_str(), sizeof(workflow_description_) - 1);
     workflow_description_[sizeof(workflow_description_) - 1] = '\0';
@@ -548,6 +562,9 @@ void NodeEditor::Render() {
         }
 
         ImNodes::EndNodeEditor();
+        // What follows is menus, dialogs and tooltips: they read at the
+        // normal size at any zoom (a popup takes this window's font scale).
+        ImGui::SetWindowFontScale(1.0f);
 
         // Hover queries are only valid after EndNodeEditor. Query once and
         // reuse the result for tooltips and context-menu routing.
@@ -768,7 +785,6 @@ void NodeEditor::Render() {
 
         // Pop zoom style variables
         ImNodes::PopStyleVar(5);
-        ImGui::SetWindowFontScale(1.0f);
 
         RenderCanvasFooter();
         if (nodes_.empty() && pending_nodes_.empty()) RenderEmptyCanvas();
@@ -3596,7 +3612,7 @@ void NodeEditor::RenderNoteMenu() {
         ImGui::OpenPopup("##note_menu");
         open_note_menu_ = false;
     }
-    if (!ImGui::BeginPopup("##note_menu")) return;
+    if (!BeginUnzoomedPopup("##note_menu")) return;
     CanvasAnnotation* note = nullptr;
     for (auto& a : annotations_)
         if (a.id == note_menu_id_) note = &a;
@@ -3779,7 +3795,7 @@ void NodeEditor::RenderGroups() {
             group_right_clicked_ = true;
             ImGui::OpenPopup("GroupMenu");
         }
-        if (ImGui::BeginPopup("GroupMenu")) {
+        if (BeginUnzoomedPopup("GroupMenu")) {
             if (ImGui::MenuItem(ICON_FA_PEN " Rename...")) BeginRename(RenameTarget::Group, group.id, group.name);
             if (ImGui::MenuItem(ICON_FA_OBJECT_UNGROUP " Ungroup")) deleted_group = group.id;
             ImGui::EndPopup();
@@ -3936,7 +3952,7 @@ void NodeEditor::RenderFrames() {
             ImGui::OpenPopup(("FrameMenu_" + std::to_string(frame.id)).c_str());
         }
 
-        if (ImGui::BeginPopup(("FrameMenu_" + std::to_string(frame.id)).c_str())) {
+        if (BeginUnzoomedPopup(("FrameMenu_" + std::to_string(frame.id)).c_str())) {
             if (ImGui::MenuItem(ICON_FA_PEN " Edit Description")) {
                 editing_frame_ = true;
                 editing_frame_id_ = frame.id;

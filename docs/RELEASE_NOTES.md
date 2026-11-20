@@ -782,6 +782,9 @@ private Data Studio tickets (`tofix*/track*`).
   the Studio canvas.** The menu said "Editing: Studio canvas" but sent them
   to the Script Editor, so nothing happened on the canvas; only the keys
   (Ctrl+Z and the rest) worked there.
+- **Canvas menus read at the normal size at any zoom.** The right-click
+  menus (canvas, node, note, group, frame) and the rename, description and
+  freeze dialogs were drawn at the canvas zoom: zoomed out, too small to read.
 - The node icon pack you choose is kept: View > Node Icon Pack and the new
   Node icons row of Preferences > Appearance set it, the next launch starts
   with it, and Reset appearance goes back to Font Awesome.
