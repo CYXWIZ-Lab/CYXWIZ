@@ -335,6 +335,44 @@ void CheckExecutor() {
     Check(TrainRowMask(rescaled).size() == 30, "the new rows carry their partition");
     fs::remove_all(dir, ec);
 }
+// Remove Duplicates in a training graph compares the data, not the split's
+// partition column (TOFIX223 0.10): 40 distinct rows, each twice, shuffled
+// 80 / 10 / 10. A copy in Train and its twin in Test once both stayed.
+void CheckRemoveDuplicatesAcrossSplit() {
+    const fs::path dir = fs::temp_directory_path() / "cyxwiz_test_dedup_split";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const fs::path csv_path = dir / "twins.csv";
+    {
+        std::ofstream csv(csv_path, std::ios::binary);
+        csv << "a,y\n";
+        for (int copy = 0; copy < 2; ++copy)
+            for (int i = 1; i <= 40; ++i) csv << i * 7 << ',' << (i % 2 ? "odd" : "even") << '\n';
+    }
+    nlohmann::json j;
+    j["nodes"] = nlohmann::json::array(
+        {{{"id", 1}, {"type", "DataInput"}, {"name", "Rows"},
+          {"parameters", {{"source_type", "file"}, {"file_path", csv_path.string()}, {"type", "csv"},
+                          {"has_header", "true"}, {"delimiter", ","}, {"label_column", "y"},
+                          {"force_disk_backed", "false"}}}},
+         {{"id", 2}, {"type", "RemoveDuplicates"}, {"name", "Dedup"}, {"parameters", nlohmann::json::object()}}});
+    j["links"] = nlohmann::json::array({{{"start_node", 1}, {"end_node", 2}}});
+    j["training_split"] = {{"label_column", "y"}, {"train", 0.8}, {"val", 0.1}, {"test", 0.1},
+                           {"seed", 42}, {"stratified", false}, {"shuffle", true}};
+    PipelineExecutor executor;
+    Check(executor.ExecutePipeline(j.dump()), "the dedup run: " + executor.GetLastError());
+    const auto it = executor.NodeResults().find(2);
+    Check(it != executor.NodeResults().end(), "Remove Duplicates' result is named");
+    const auto dataset = DataRegistry::Instance().GetArrowDataset(it->second);
+    Check(dataset && dataset->GetArrowTable(), "Remove Duplicates' result is in memory");
+    const auto out = dataset->GetArrowTable();
+    Check(out->num_rows() == 40, "40 distinct rows stay, whatever partition each copy fell in (got " +
+                                     std::to_string(out->num_rows()) + ")");
+    Check(out->schema()->GetFieldIndex(kSplitPartitionColumn) >= 0, "the kept rows carry their partition");
+    fs::remove_all(dir, ec);
+}
+
 // Supplied Validation / Test inputs (S0-g4): their rows join the training
 // rows with partition 1 / 2; the scaler learns from the training rows only
 // and transforms them all.
@@ -622,6 +660,7 @@ int main() {
     CheckLinearSteps();
     CheckSolveAndProjection();
     CheckExecutor();
+    CheckRemoveDuplicatesAcrossSplit();
     CheckSuppliedInputs();
     std::cout << "fit on Train rows: scaler, target encoder, PCA, Truncated SVD, Whitening, Linear Solve, TF-IDF, count and tokenizer learn from the Train rows "
                  "(scikit-learn values); the run marks rows with the shared split rule; supplied Validation / Test rows join and are transformed; exports leave the partition out. OK\n";

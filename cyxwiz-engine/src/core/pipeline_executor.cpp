@@ -4749,17 +4749,31 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
         // DuckDB reads the input under this name
         std::string temp_table = "temp_" + std::to_string(node.id);
 
-        // Execute DISTINCT query
+        // Rows are compared on their data columns only. The internal "__"
+        // columns (the split's partition, a row's role) are not data: with
+        // them, a row in Train and its copy in Test were two distinct rows,
+        // and the copy the step exists to remove stayed (TOFIX223 0.10). Of
+        // the copies, the one with the lowest internal values is kept (the
+        // Train copy), so the result does not depend on scan order.
+        std::vector<std::string> internal_columns, data_columns;
+        for (const auto& field : input_table->schema()->fields()) {
+            (field->name().rfind("__", 0) == 0 ? internal_columns : data_columns).push_back(field->name());
+        }
         std::string sql = "SELECT DISTINCT * FROM " + temp_table;
         auto columns_it = node.parameters.find("columns");
-        if (columns_it != node.parameters.end() &&
-            !TrimString(columns_it->second).empty()) {
-            std::vector<std::string> dedupe_columns;
+        const bool named_columns = columns_it != node.parameters.end() && !TrimString(columns_it->second).empty();
+        if (named_columns || !internal_columns.empty()) {
+            std::vector<std::string> dedupe_columns = data_columns;
             std::string column_error;
-            if (!ResolveExistingColumns(input_table, diagnostic_name,
+            if (named_columns &&
+                !ResolveExistingColumns(input_table, diagnostic_name,
                                         columns_it->second, dedupe_columns,
                                         column_error)) {
                 ReportError(column_error);
+                return false;
+            }
+            if (dedupe_columns.empty()) {
+                ReportError(diagnostic_name + ": the table has no data columns to compare");
                 return false;
             }
 
@@ -4774,9 +4788,11 @@ bool PipelineExecutor::ExecuteRemoveDuplicates(const Node& node, ExecutionContex
                 rank_column += "_";
             }
 
+            const std::string keep_order =
+                internal_columns.empty() ? std::string() : " ORDER BY " + JoinQuotedColumns(internal_columns);
             sql = "SELECT " + JoinQuotedColumns(output_columns) +
                   " FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY " +
-                  JoinQuotedColumns(dedupe_columns) + ") AS " +
+                  JoinQuotedColumns(dedupe_columns) + keep_order + ") AS " +
                   QuoteSqlIdentifier(rank_column) + " FROM " + temp_table +
                   ") WHERE " + QuoteSqlIdentifier(rank_column) + " = 1";
         }
