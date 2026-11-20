@@ -1288,15 +1288,27 @@ TargetEncoderOperator::Apply(const std::shared_ptr<arrow::Table>& input) {
     // The category means come from the Train rows when the pipeline run
     // marked them (TOFIX178 S0-g3): the validation and test labels never
     // reach the encoding. Every row is encoded.
+    // A row whose target is missing (NaN) or infinite teaches nothing: it is
+    // left out of the fit, and still encoded. One such row once made every
+    // encoded value NaN through the global mean (TOFIX223 0.9).
     const std::vector<bool> fit_row = TrainRowMask(input);
-    const auto fits = [&fit_row](size_t row) { return fit_row.empty() || (row < fit_row.size() && fit_row[row]); };
+    const auto fits = [&](size_t row) {
+        return (fit_row.empty() || (row < fit_row.size() && fit_row[row])) && std::isfinite(target[row]);
+    };
     double global_mean = 0.0;
     {
         double total = 0.0;
-        size_t rows = 0;
-        for (size_t i = 0; i < target.size(); ++i)
+        size_t rows = 0, skipped = 0;
+        for (size_t i = 0; i < target.size(); ++i) {
             if (fits(i)) total += target[i], ++rows;
+            else if (!std::isfinite(target[i]) && (fit_row.empty() || (i < fit_row.size() && fit_row[i]))) ++skipped;
+        }
         global_mean = rows ? total / static_cast<double>(rows) : 0.0;
+        if (skipped > 0)
+            spdlog::warn("{}: {} row(s) with a missing or infinite target '{}' are left out of the fit",
+                         GetName(), skipped, target_col_);
+        if (rows == 0)
+            return arrow::Status::Invalid(GetName() + ": no row has a usable target '" + target_col_ + "' to learn from");
     }
 
     auto out = input;

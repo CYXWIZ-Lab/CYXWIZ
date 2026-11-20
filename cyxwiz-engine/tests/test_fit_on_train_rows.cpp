@@ -155,6 +155,23 @@ void CheckOperators() {
                                   0.5833333333333334},
                "Target encoder: category means from the Train rows; green (no Train row) gets the Train mean");
     }
+    {
+        // A missing target on a Train row is left out of the fit, not spread
+        // as NaN into every value (TOFIX223 0.9). Row 5 (blue, Train) has no
+        // target: Train rows 0, 1, 2 give mean 2/3, red (2 * 1 + 2/3) / 3,
+        // blue (0 + 2/3) / 2.
+        arrow::DoubleBuilder y;
+        (void)y.AppendValues({1, 0, 1, 1, 0});
+        (void)y.AppendNull();
+        std::shared_ptr<arrow::Array> yy;
+        (void)y.Finish(&yy);
+        auto missing = *table->SetColumn(table->schema()->GetFieldIndex("y"), arrow::field("y", arrow::float64()),
+                                         std::make_shared<arrow::ChunkedArray>(yy));
+        TargetEncoderOperator op;
+        auto out = Run(op, {{"columns", "c"}, {"target_col", "y"}, {"smoothing", "1"}}, missing);
+        Expect(Column(out, "c"), {8.0 / 9.0, 1.0 / 3.0, 8.0 / 9.0, 1.0 / 3.0, 2.0 / 3.0, 1.0 / 3.0},
+               "Target encoder: a row with a missing target is left out of the fit");
+    }
     const std::map<std::string, std::string> text_params = {
         {"text_col", "text"}, {"label_col", ""}, {"norm", "none"}, {"ngram_range", "1,1"}, {"stop_words", "none"},
         {"output_format", "dense"}};
