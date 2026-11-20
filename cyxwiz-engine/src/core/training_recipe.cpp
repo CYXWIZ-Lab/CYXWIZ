@@ -225,6 +225,7 @@ TrainingRecipe AudioTrainingRecipe(DataRegistry::AudioDatasetEntry audio_entry) 
             auto batcher = MakeAudioTrainingBatcher(audio_entry, config, batch_size, AudioTrainingSplit(config));
             if (batcher->GetNumSamples() == 0) {
                 error = "the audio dataset has 0 samples";
+                if (!batcher->LoadError().empty()) error += ": " + batcher->LoadError();
                 return nullptr;
             }
 

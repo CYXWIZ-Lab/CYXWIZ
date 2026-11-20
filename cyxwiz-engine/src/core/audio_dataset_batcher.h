@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <string>
 #include <vector>
 
 namespace cyxwiz {
@@ -73,6 +74,9 @@ public:
 
     // Audio-specific accessors
     int GetFeatureRows() const { return feature_rows_; }
+    // Why the clips could not be loaded (empty when they were), e.g. no
+    // audio decoder in this build; the refusal shows it (TOFIX223 0.12).
+    const std::string& LoadError() const { return load_error_; }
     int GetFeatureCols() const { return feature_cols_; }
     // The clips in a part (Train, Val or Test), whatever the current phase.
     size_t SamplesIn(BatcherPhase phase) const { return Part(phase).size(); }
@@ -84,6 +88,7 @@ private:
     Batch AssembleBatch(const size_t* indices, size_t n, bool augment);
 
     std::shared_ptr<AudioDataset> dataset_;
+    std::string load_error_;
 
     int batch_size_;
     bool shuffle_;

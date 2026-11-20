@@ -93,23 +93,6 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
         return;
     }
 
-    // Seed feature_rows_/feature_cols_ with the closed-form prediction in
-    // case the probe below fails. The probe is the source of truth when
-    // it succeeds — these values exist only as a graceful fallback so
-    // GetInfo() returns *something* sensible.
-    {
-        int max_samples = static_cast<int>(config_.target_sr * config_.max_duration);
-        feature_cols_ = (max_samples + config_.n_fft) / config_.hop_length;
-        switch (config_.feature_type) {
-            case AudioDatasetConfig::FeatureType::Spectrogram:
-                feature_rows_ = config_.n_fft / 2 + 1; break;
-            case AudioDatasetConfig::FeatureType::MelSpectrogram:
-                feature_rows_ = config_.n_mels; break;
-            case AudioDatasetConfig::FeatureType::MFCC:
-                feature_rows_ = config_.n_mfcc; break;
-        }
-    }
-
     // Probe samples until we find a non-silent one, to discover the
     // *actual* feature shape produced by ComputeMelSpectrogram / ComputeMFCC.
     // The closed-form prediction below is wrong by 1-3 frames depending on
@@ -124,6 +107,7 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
     int probed_rows = 0;
     int probed_cols = 0;
     size_t silent_probes = 0;
+    std::string last_probe_error;
     const size_t kMaxProbeAttempts = 32;
     for (size_t i = 0; i < file_paths_.size() && i < kMaxProbeAttempts; ++i) {
         AudioFeatures probe = ExtractFeatures(file_paths_[i], i, false);
@@ -155,6 +139,7 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
         } else {
             // Invalid probe (silent file, decode error, etc.) — try the next one.
             ++silent_probes;
+            last_probe_error = probe.error_message;
         }
     }
 
@@ -165,9 +150,15 @@ AudioDataset::AudioDataset(const std::string& directory, const AudioDatasetConfi
                      feature_rows_, feature_cols_,
                      feature_rows_ * feature_cols_);
     } else {
-        spdlog::warn("AudioDataset: probe failed, using predicted shape [{} x {}] — "
-                     "training may fail with size mismatch",
-                     feature_rows_, feature_cols_);
+        // Not one clip of the first ones decodes: a build without an audio
+        // decoder, or a folder of unreadable files. Training on a guessed
+        // shape would feed silence with real labels (TOFIX223 0.12).
+        const std::string reason = !last_probe_error.empty() ? last_probe_error
+                                   : file_paths_.empty()   ? std::string("no audio files to read")
+                                                           : std::string("the clips give no features");
+        throw std::runtime_error("AudioDataset: none of the first " +
+                                 std::to_string(std::min(file_paths_.size(), kMaxProbeAttempts)) +
+                                 " clips could be read (" + reason + ")");
     }
 
 }
@@ -529,10 +520,10 @@ std::pair<std::vector<float>, int> AudioDataset::GetItem(size_t index, bool augm
                          "(most recent: '{}' - {})",
                          n, file_paths_[index], features.error_message);
         }
-        // Return zeros as fallback so the batch still has uniform shape.
-        // Zero samples contribute nothing to gradient when normalized
-        // — effectively "ignored" but not removed from the batch count.
-        return {std::vector<float>(feature_rows_ * feature_cols_, 0.0f), labels_[index]};
+        // No features: the batcher leaves this clip out of its batch. A
+        // zero-filled sample with its real label would teach the model that
+        // silence is that class (TOFIX223 0.12).
+        return {{}, labels_[index]};
     }
 
     return {features.data, labels_[index]};

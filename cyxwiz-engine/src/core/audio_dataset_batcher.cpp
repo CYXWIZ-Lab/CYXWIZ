@@ -1,10 +1,13 @@
 #include "audio_dataset_batcher.h"
 #include "classification_decision.h"
+#include "class_label_range.h"
 #include "cyxwiz/portable_random.h"
 #include <cyxwiz/error_codes.h>
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
+#include <exception>
+#include <mutex>
 #include <numeric>
 #include <stdexcept>
 #include <filesystem>
@@ -76,6 +79,7 @@ AudioDatasetBatcher::AudioDatasetBatcher(
         dataset_ = std::make_shared<AudioDataset>(entry.folder_path, cfg);
     } catch (const std::exception& e) {
         spdlog::error("AudioDatasetBatcher: failed to construct AudioDataset: {}", e.what());
+        load_error_ = e.what();
         return;
     }
 
@@ -183,10 +187,20 @@ Batch AudioDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_si
 
     std::vector<std::pair<std::vector<float>, int>> samples(actual_size);
 
+    // A worker's exception is carried to this thread and rethrown after the
+    // join: thrown inside a std::thread it would end the process
+    // (TOFIX223 0.12).
+    std::mutex error_mutex;
+    std::exception_ptr worker_error;
     auto load_range = [&](size_t begin, size_t end) {
-        for (size_t i = begin; i < end; ++i) {
-            size_t idx = indices[i];
-            samples[i] = dataset_->GetItem(idx, augment);
+        try {
+            for (size_t i = begin; i < end; ++i) {
+                size_t idx = indices[i];
+                samples[i] = dataset_->GetItem(idx, augment);
+            }
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(error_mutex);
+            if (!worker_error) worker_error = std::current_exception();
         }
     };
 
@@ -209,16 +223,33 @@ Batch AudioDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_si
     } else {
         load_range(0, actual_size);
     }
+    if (worker_error) std::rethrow_exception(worker_error);
 
+    // A clip that gave no features of the expected size (decode failure,
+    // silence, a different length) is left out of the batch: a zero-filled
+    // sample with its label, or class 0, would be trained on (TOFIX223
+    // 0.12). AudioDataset logs each one.
+    std::vector<size_t> kept;
+    kept.reserve(actual_size);
     for (size_t i = 0; i < actual_size; ++i) {
-        auto& [features, label] = samples[i];
-
-        if (features.size() != sample_dim) {
-            // Bad sample (decode/extract failed): zero-fill so the batch
-            // still has uniform shape. AudioDataset already logs the warning.
-            features.assign(sample_dim, 0.0f);
-            label = 0;
+        if (samples[i].first.size() == sample_dim) {
+            kept.push_back(i);
+        } else if (!samples[i].first.empty()) {
+            spdlog::warn("AudioDatasetBatcher: leaving out '{}': {} feature values, the set's shape needs {}",
+                         dataset_->GetFilePath(indices[i]), samples[i].first.size(), sample_dim);
         }
+    }
+    if (kept.empty()) {
+        throw std::runtime_error("AudioDatasetBatcher: none of the " + std::to_string(actual_size) +
+                                 " clips of this batch could be read (see the log for each file)");
+    }
+    if (kept.size() < actual_size && !scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
+        batch_labels.assign(kept.size() * num_classes_, 0.0f);
+    }
+
+    for (size_t k = 0; k < kept.size(); ++k) {
+        const size_t i = kept[k];
+        auto& [features, label] = samples[i];
 
         // Always apply per-sample z-score normalization for audio.
         // Mel spectrogram values live in the dB range (-80 to ~0) and
@@ -251,38 +282,39 @@ Batch AudioDatasetBatcher::AssembleBatch(const size_t* indices, size_t actual_si
         batch_data.insert(batch_data.end(), features.begin(), features.end());
 
         if (!scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
-            if (label >= 0 && static_cast<size_t>(label) < num_classes_) {
-                batch_labels[i * num_classes_ + label] = 1.0f;
-            }
+            CheckClassLabelInWidth("AudioDatasetBatcher", label, num_classes_);
+            batch_labels[k * num_classes_ + static_cast<size_t>(label)] = 1.0f;
         } else {
             batch_labels.push_back(static_cast<float>(label));
         }
     }
 
+    const size_t used = kept.size();
     if (flatten_) {
-        batch.data = Tensor({actual_size, sample_dim},
+        batch.data = Tensor({used, sample_dim},
                             batch_data.data(), DataType::Float32);
     } else {
-        batch.data = Tensor({actual_size,
+        batch.data = Tensor({used,
                              static_cast<size_t>(feature_rows_),
                              static_cast<size_t>(feature_cols_)},
                             batch_data.data(), DataType::Float32);
     }
 
     if (!scalar_label_mode_ && do_onehot_ && num_classes_ > 0) {
-        batch.labels = Tensor({actual_size, num_classes_},
+        batch.labels = Tensor({used, num_classes_},
                               batch_labels.data(), DataType::Float32);
     } else if (scalar_label_mode_) {
-        batch.labels = Tensor({actual_size, 1},
+        batch.labels = Tensor({used, 1},
                               batch_labels.data(), DataType::Float32);
     } else {
-        batch.labels = Tensor({actual_size},
+        batch.labels = Tensor({used},
                               batch_labels.data(), DataType::Float32);
     }
 
     // Clip numbers in the dataset: test results name the clips with them.
-    batch.row_ids.assign(indices, indices + actual_size);
-    batch.size = actual_size;
+    batch.row_ids.clear();
+    for (const size_t i : kept) batch.row_ids.push_back(static_cast<int64_t>(indices[i]));
+    batch.size = used;
     return batch;
 }
 
