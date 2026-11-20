@@ -555,7 +555,7 @@ bool CyxWizApp::ShouldPreventClose() {
 }
 
 bool CyxWizApp::HasUnsavedWork() {
-    // Check for unsaved files in script editor
+    // Unsaved scripts or graph
     if (main_window_ && main_window_->HasUnsavedFiles()) {
         return true;
     }
@@ -604,7 +604,7 @@ void CyxWizApp::HandleCloseRequest() {
         EndCard();
     };
     if (!unsaved.empty()) {
-        section(("Unsaved scripts (" + std::to_string(unsaved.size()) + ")").c_str(), unsaved, nullptr);
+        section(("Unsaved work (" + std::to_string(unsaved.size()) + ")").c_str(), unsaved, nullptr);
     }
     if (script_running) {
         section("Running script", {"A Python script is running. Closing stops it."}, nullptr);
@@ -633,10 +633,11 @@ void CyxWizApp::HandleCloseRequest() {
     };
 
     if (!unsaved.empty()) {
-        if (PrimaryButton("Save scripts and close")) {
+        if (PrimaryButton("Save and close")) {
             main_window_->SaveAllFiles();
             if (main_window_->HasUnsavedFiles()) {
-                close_error_ = "Some scripts could not be saved; they are still listed above. Details are in the log.";
+                close_error_ = "Some work was not saved (a save failed or was cancelled); it is still listed above. "
+                               "Details are in the log.";
             } else {
                 close_now();
             }

@@ -2873,24 +2873,26 @@ void MainWindow::StopRunningScript() {
     }
 }
 
+// Unsaved work: the Script Editor's scripts and the canvas's graph (closing
+// the Engine asked about scripts only, so a changed graph closed silently)
 bool MainWindow::HasUnsavedFiles() const {
-    if (script_editor_) {
-        return script_editor_->HasUnsavedFiles();
-    }
-    return false;
+    if (node_editor_ && node_editor_->HasUnsavedGraph()) return true;
+    return script_editor_ && script_editor_->HasUnsavedFiles();
 }
 
 std::vector<std::string> MainWindow::GetUnsavedFileNames() const {
+    std::vector<std::string> names;
+    if (node_editor_ && node_editor_->HasUnsavedGraph()) names.push_back(node_editor_->GraphDisplayName() + " (graph)");
     if (script_editor_) {
-        return script_editor_->GetUnsavedFileNames();
+        for (auto& name : script_editor_->GetUnsavedFileNames()) names.push_back(std::move(name));
     }
-    return {};
+    return names;
 }
 
 void MainWindow::SaveAllFiles() {
-    if (script_editor_) {
-        script_editor_->SaveAllFiles();
-    }
+    // An untitled graph asks where to save it; cancelled, it stays unsaved
+    if (node_editor_ && node_editor_->HasUnsavedGraph()) node_editor_->SaveCurrentGraph();
+    if (script_editor_) script_editor_->SaveAllFiles();
 }
 
 void MainWindow::PrepareForShutdown() {

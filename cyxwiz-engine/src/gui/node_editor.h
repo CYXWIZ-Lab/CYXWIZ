@@ -386,6 +386,10 @@ public:
     // File > Save: writes the graph to its file, asking for one the first time.
     // An empty graph is nothing to save and returns true.
     bool SaveCurrentGraph();
+    // The canvas holds changes not written to its file (an empty canvas never does)
+    bool HasUnsavedGraph() const { return unsaved_ && !nodes_.empty(); }
+    // "mnist_mlp.cyxgraph", or "Untitled graph" before its first save
+    std::string GraphDisplayName() const;
     std::string GetNodeTypeDisplayName(NodeType type) const { return GetNodeTypeName(type); }
 
     // The graph simulation run: Properties reads Scope history and sends

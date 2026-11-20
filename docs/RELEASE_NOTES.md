@@ -7,6 +7,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Closing the Engine asks about an unsaved graph.** The close dialog
+  listed unsaved scripts only, so a changed graph on the canvas closed
+  without a word. It is listed under **Unsaved work** now, and **Save and
+  close** (and File > Save All) saves it too; an untitled graph asks where.
 - **Release packages carry the examples.** The start page's starter graphs
   (and their sample datasets), the RL graphs and the example scripts ship in
   `examples/` beside the Engine; the start page said "No starter graphs

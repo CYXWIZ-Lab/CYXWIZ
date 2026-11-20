@@ -848,6 +848,11 @@ void NodeEditor::SaveAsFromStudio() {
     ShowSaveDialog();
 }
 
+std::string NodeEditor::GraphDisplayName() const {
+    return current_file_path_.empty() ? std::string("Untitled graph")
+                                      : std::filesystem::path(current_file_path_).filename().string();
+}
+
 bool NodeEditor::SaveCurrentGraph() {
     if (nodes_.empty()) return true;
     if (current_file_path_.empty()) {
