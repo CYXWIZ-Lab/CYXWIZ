@@ -350,6 +350,23 @@ void CheckSacReference() {
     Check(!cyxwiz::rl::FindSacReference(text, "InvertedPendulum-v5", 2, defaults).has_value(),
           "SAC: other copies have no reference");
 
+    // The recorded runs are on the environment's defaults
+    cyxwiz::plugin::PluginEnvironmentInfo env;
+    cyxwiz::plugin::PluginEnvironmentSetting throws;
+    throws.key = "throw_every";
+    throws.default_value = "0";
+    cyxwiz::plugin::PluginEnvironmentSetting ground;
+    ground.key = "grounds";
+    ground.default_value = "";
+    env.settings = {throws, ground};
+    Check(cyxwiz::rl::DefaultEnvironmentSettings(env, {}) &&
+              cyxwiz::rl::DefaultEnvironmentSettings(env, {{"throw_every", "0.0"}, {"grounds", ""}}),
+          "no settings, or the defaults (0.0 as 0), are the recorded environment");
+    Check(!cyxwiz::rl::DefaultEnvironmentSettings(env, {{"throw_every", "1"}}) &&
+              !cyxwiz::rl::DefaultEnvironmentSettings(env, {{"grounds", "rough"}}) &&
+              !cyxwiz::rl::DefaultEnvironmentSettings(env, {{"unknown", "0"}}),
+          "throws, a ground or an undeclared key are not (the dashboard draws no reference)");
+
     // The recorded file: the pendulum at the SAC node's defaults, HalfCheetah at RL Zoo's settings
     std::ifstream in(CYXWIZ_SAC_REFERENCE_FILE, std::ios::binary);
     std::ostringstream recorded;

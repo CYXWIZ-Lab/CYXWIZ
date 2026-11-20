@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -120,6 +121,24 @@ std::optional<RLReference> FindSacReference(const std::string& json_text, const 
                Same(Setting(s, "target_update_interval", 1), c.target_update_interval) && c.ent_coef_auto &&
                Same(c.ent_coef, 1.0) && c.target_entropy_auto && !c.normalize_observations;
     });
+}
+
+bool DefaultEnvironmentSettings(const plugin::PluginEnvironmentInfo& environment,
+                                const std::map<std::string, std::string>& settings) {
+    const auto number = [](const std::string& text, double& out) {
+        char* end = nullptr;
+        out = std::strtod(text.c_str(), &end);
+        return !text.empty() && end && *end == '\0';
+    };
+    for (const auto& [key, value] : settings) {
+        const auto declared = std::find_if(environment.settings.begin(), environment.settings.end(),
+                                           [&key](const plugin::PluginEnvironmentSetting& s) { return s.key == key; });
+        if (declared == environment.settings.end()) return false;
+        double a = 0.0, b = 0.0;
+        const bool same = number(value, a) && number(declared->default_value, b) ? a == b : value == declared->default_value;
+        if (!same) return false;
+    }
+    return true;
 }
 
 std::string ReadReferenceFile(const std::string& name) {

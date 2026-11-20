@@ -5,11 +5,13 @@
 // ppo_sb3_curves.json, generate_sac_sb3_curves.py -> sac_sb3_curves.json) on
 // the same environment with the same copies and settings, as the mean episode
 // return by environment step. A run with other settings has no reference: a
-// curve of other settings would mislead.
+// curve of other settings would mislead. The recorded runs use each
+// environment's own defaults (no grounds, pushes or throws).
 
 #include "ppo_trainer.h"
 #include "sac_config.h"
 
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -33,6 +35,13 @@ std::optional<RLReference> FindPpoReference(const std::string& json_text, const 
 // The SAC reference likewise (sac_sb3_curves.json)
 std::optional<RLReference> FindSacReference(const std::string& json_text, const std::string& environment_id,
                                             int copies, const SacConfig& config);
+
+// Whether `settings` (the Environment node's) leave every setting the
+// environment declares at its default, as the recorded runs do: a value equal
+// to the default (as a number when both are numbers) or not given. A key the
+// environment does not declare counts as changed.
+bool DefaultEnvironmentSettings(const plugin::PluginEnvironmentInfo& environment,
+                                const std::map<std::string, std::string>& settings);
 
 // A recorded file ("ppo_sb3_curves.json", "sac_sb3_curves.json") in the
 // Engine's resources/rl_reference, empty if none
