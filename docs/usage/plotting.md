@@ -364,7 +364,10 @@ or press **Plot** under the column's statistics. The Plot window opens:
 - **The plot**: hover for values (the nearest x of every series, the
   scatter point, the histogram bin and its share, the category, the pie
   slice, the box statistics, the heatmap cell). Drag to pan, wheel to zoom,
-  double-click or **Fit** to fit. **Log Y**, **Legend**.
+  double-click or **Fit** to fit. **Log Y**, **Legend** (on a line or
+  scatter chart the legend sits in the corner the data leaves free, so a
+  rising curve is not hidden under it). In a narrow place the toolbar's
+  buttons move under the data label, and wrap when even that is too narrow.
 - The label next to the toolbar says what is drawn: *exact* (all values),
   *reduced* (long lines drawn with the lowest and highest value of each
   step; hover and exports use all points), *sampled* (an even sample of a

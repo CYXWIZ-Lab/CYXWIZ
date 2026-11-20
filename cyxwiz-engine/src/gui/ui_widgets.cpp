@@ -148,11 +148,11 @@ void KpiCard(const char* id, const char* label, const ImVec4& dot, const char* v
     ImGui::GetWindowDrawList()->AddText(font, size, ImGui::GetCursorScreenPos(), ImGui::GetColorU32(t.text), value);
     ImGui::Dummy(extent);
     if (tooltip && tooltip[0]) Tooltip(tooltip);
-    ImGui::PushTextWrapPos(0.0f);
-    if (line1 && line1[0]) ImGui::TextColored(line1_colour, "%s", line1);
-    if (line2 && line2[0]) ImGui::TextColored(line2_colour, "%s", line2);
-    if (line3 && line3[0]) ImGui::TextColored(line3_colour, "%s", line3);
-    ImGui::PopTextWrapPos();
+    // Wrapped at spaces: ImGui's own wrap also breaks after a full stop,
+    // which split "0.09s" in a narrow card.
+    if (line1 && line1[0]) TextWrapAnywhere(line1, line1_colour);
+    if (line2 && line2[0]) TextWrapAnywhere(line2, line2_colour);
+    if (line3 && line3[0]) TextWrapAnywhere(line3, line3_colour);
     EndCard();
 }
 

@@ -166,6 +166,8 @@ private:
     Options::Range x_range_, y_range_;
     bool zoom_with_ctrl_ = false;
     std::vector<Options::YLine> y_lines_;
+    // Line and scatter charts: the legend in the corner the data leaves free
+    Corner legend_corner_ = Corner::NorthEast;
     // The once-ranges last applied, so a changed one applies again.
     double once_x_lo_ = NAN, once_x_hi_ = NAN, once_y_lo_ = NAN, once_y_hi_ = NAN;
     int hovered_row_ = -1;      // parallel coordinates: the line under the mouse

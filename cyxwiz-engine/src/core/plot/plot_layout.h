@@ -30,4 +30,11 @@ std::vector<TreeRect> Squarify(const std::vector<double>& values, double x, doub
 // children, so drawing in order paints the leaves on top.
 std::vector<TreeRect> TreemapLayout(const Prepared& p, const std::vector<std::string>& zoom, double w, double h, double header);
 
+// Where a line or scatter chart's legend hides the least: the corner of the
+// data's box whose corner region (35% of each side) holds the fewest points.
+// Ties keep the earlier corner (top right first), so a falling loss curve
+// keeps its legend top right and a rising accuracy curve gets it top left.
+enum class Corner { NorthEast, NorthWest, SouthEast, SouthWest };
+Corner QuietestCorner(const std::vector<Series>& series);
+
 }  // namespace cyxwiz::plot

@@ -7,6 +7,7 @@
 #include "../ui_buttons.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 #include "../separate_windows.h"
 
 #include <implot.h>
@@ -248,6 +249,8 @@ void PlotView::SetData(Prepared data) {
     if (kind_changed || log_changed) log_y_ = data_.spec.log_y;
     if (kind_changed) legend_ = data_.spec.legend;
     if (kind_changed) fit_ = true;
+    legend_corner_ = data_.spec.kind == Kind::Line || data_.spec.kind == Kind::Scatter ? QuietestCorner(data_.series)
+                                                                                     : Corner::NorthEast;
 }
 
 ImVec4 PlotView::ColourOf(size_t i) const {
@@ -351,11 +354,20 @@ void PlotView::ExportMenu(const Options& o) {
 
 void PlotView::DrawToolbar(const Options& o) {
     const ui::Tokens& t = ui::CurrentTokens();
+    // The row's own bounds (window-local): a chart may sit in a table cell.
+    const float row_left = ImGui::GetCursorPosX();
+    const float row_right = row_left + ImGui::GetContentRegionAvail().x;
+    bool any_left = false;  // something drawn before the actions
+    const auto next_left = [&any_left]() {
+        if (any_left) ImGui::SameLine();
+        any_left = true;
+    };
     if (o.toolbar_left) {
+        next_left();
         o.toolbar_left();
-        ImGui::SameLine();
     }
     if (has_data_ && data_.problem.empty()) {
+        next_left();
         const std::string label = data_.label.Text();
         ui::StatusPill(("##label" + id_).c_str(), label.c_str(), LabelColour(data_.label.state));
         if (ImGui::IsItemHovered()) {
@@ -373,13 +385,13 @@ void PlotView::DrawToolbar(const Options& o) {
                 case DataLabel::State::Truncated: ImGui::SetTooltip("The table was read with a row limit."); break;
             }
         }
-        ImGui::SameLine();
     }
     if (ImGui::GetTime() < note_until_) {
+        next_left();
         ImGui::TextColored(t.text_dim, "%s", note_.c_str());
-        ImGui::SameLine();
     }
-    // Right-aligned actions.
+    // The actions at the right of the row; under the label when they do not
+    // fit beside it, wrapping when the place is narrower than all of them.
     const char* own = ICON_FA_WINDOW_RESTORE;
     const float gap = ImGui::GetStyle().ItemSpacing.x;
     const bool three_d = has_data_ && Info(data_.spec.kind).group == Group::ThreeD;
@@ -394,49 +406,59 @@ void PlotView::DrawToolbar(const Options& o) {
                     (o.tool_legend && !graph ? ui::ButtonWidth("Legend", ui::ButtonSize::Small) + gap : 0.0f) +
                     ui::ButtonWidth("Export", ui::ButtonSize::Small) +
                     (o.own_window_button ? ui::ButtonWidth(own, ui::ButtonSize::Small) + gap : 0.0f);
-    const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - w;
-    if (right > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(right);
+    bool beside = false;
+    if (any_left) {
+        const float last_end = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX();
+        if (last_end + gap + w <= row_right) {
+            ImGui::SameLine();
+            beside = true;
+        }
+    }
+    if (beside || w <= row_right - row_left) ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), row_right - w));
+    ui::FlowRow tools(row_right);
+    const auto next_tool = [&tools](const char* label) { tools.Next(ui::ButtonWidth(label, ui::ButtonSize::Small)); };
     const bool usable = has_data_ && data_.problem.empty();
     if (three_d) {
         // Turn: the default turned view; Top, Front and Side look along an axis.
         const double el[] = {NAN, 90.0, 0.0, 0.0}, az[] = {NAN, 0.0, 0.0, 90.0};
         for (int i = 0; i < 4; ++i) {
+            next_tool(views[i]);
             if (ui::GhostButton((std::string(views[i]) + "##view" + id_).c_str(), usable)) SetView(el[i], az[i]);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip(i == 0 ? "The default turned view (drag to turn, right-drag to move, wheel to zoom)" : "Look along an axis");
-            ImGui::SameLine();
         }
     }
     if (graph) {
+        next_tool("Re-layout");
         if (ui::GhostButton(("Re-layout##" + id_).c_str(), usable)) ResetGraphLayout();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to the computed layout: moved nodes and folded branches return");
-        ImGui::SameLine();
     }
     if (o.tool_fit) {
+        next_tool("Fit");
         if (ui::GhostButton(("Fit##" + id_).c_str(), usable)) fit_ = true;
-        ImGui::SameLine();
     }
     const bool can_log = usable && data_.spec.kind != Kind::Pie && data_.spec.kind != Kind::Polar && data_.spec.kind != Kind::Image &&
                          data_.spec.kind != Kind::PairPlot && data_.spec.kind != Kind::Parallel && !IsGridKind(data_.spec.kind) &&
                          !IsUnitKind(data_.spec.kind) && data_.spec.kind != Kind::Importance && data_.spec.kind != Kind::Residuals &&
                          !IsPixelKind(data_.spec.kind) && data_.spec.kind != Kind::MapPoints && !three_d;
     if (o.tool_log && !three_d && !graph) {  // 3D and graphs: no log axis
+        next_tool("Log Y");
         if (ui::GhostButton(("Log Y##" + id_).c_str(), can_log, "Not for this plot type", log_y_)) {
             log_y_ = !log_y_;
             fit_ = true;
         }
-        ImGui::SameLine();
     }
     if (o.tool_legend && !graph) {  // graphs: the groups are in the Colour section
+        next_tool("Legend");
         if (ui::GhostButton(("Legend##" + id_).c_str(), usable, nullptr, legend_)) legend_ = !legend_;
-        ImGui::SameLine();
     }
+    next_tool("Export");
     if (ui::GhostButton(("Export##" + id_).c_str(), usable)) ImGui::OpenPopup(("##export" + id_).c_str());
     if (ImGui::BeginPopup(("##export" + id_).c_str())) {
         ExportMenu(o);
         ImGui::EndPopup();
     }
     if (o.own_window_button) {
-        ImGui::SameLine();
+        next_tool(own);
         if (ui::GhostButton((std::string(own) + "##own" + id_).c_str(), true, nullptr, own_window)) own_window = !own_window;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(own_window ? "Back into this panel" : "Open in its own window");
     }
@@ -743,8 +765,18 @@ void PlotView::DrawPlot(ImVec2 size) {
         }
     }
     // Curves that rise to the top right keep their legend out of the way.
-    ImPlot::SetupLegend(kind == Kind::Roc || kind == Kind::Calibration || kind == Kind::Importance ? ImPlotLocation_SouthEast
-                                                                                                  : ImPlotLocation_NorthEast);
+    ImPlotLocation legend_at = ImPlotLocation_NorthEast;
+    if (kind == Kind::Roc || kind == Kind::Calibration || kind == Kind::Importance) {
+        legend_at = ImPlotLocation_SouthEast;
+    } else {
+        switch (legend_corner_) {
+        case Corner::NorthEast: legend_at = ImPlotLocation_NorthEast; break;
+        case Corner::NorthWest: legend_at = ImPlotLocation_NorthWest; break;
+        case Corner::SouthEast: legend_at = ImPlotLocation_SouthEast; break;
+        case Corner::SouthWest: legend_at = ImPlotLocation_SouthWest; break;
+        }
+    }
+    ImPlot::SetupLegend(legend_at);
     // A once-range applies when it changes: ImPlotCond_Once kept the first
     // frame's range for the plot's life (the Training Dashboard's Accuracy
     // chart stayed at 0..2 epochs, the range while epoch 1 ran).

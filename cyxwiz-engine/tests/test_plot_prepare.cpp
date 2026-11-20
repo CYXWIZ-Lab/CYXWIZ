@@ -799,6 +799,25 @@ int main() {
             if (r.leaf && r.path.back() == "a2") Check(std::fabs(r.w * r.h - 6000.0 * 30 / 100) < 1e-6, "treemap: area follows size");
         const auto zoomed = TreemapLayout(p, {"A"}, 100, 60, 0.0);
         Check(zoomed.size() == 2 && zoomed[0].path.back() == "a2", "treemap: zoom into A");
+        // The legend's corner: a rising curve leaves the top left free, a
+        // falling one the top right (kept on a tie), flat data keeps it.
+        Series rising, falling;
+        for (int i = 0; i <= 20; ++i) {
+            rising.x.push_back(i);
+            rising.y.push_back(i * 5.0);
+            falling.x.push_back(i);
+            falling.y.push_back(100.0 - i * 5.0);
+        }
+        Check(QuietestCorner({rising}) == Corner::NorthWest, "legend: rising curve, top left");
+        Check(QuietestCorner({falling}) == Corner::NorthEast, "legend: falling curve, top right");
+        Check(QuietestCorner({rising, falling}) == Corner::NorthEast || QuietestCorner({rising, falling}) == Corner::NorthWest ||
+                  QuietestCorner({rising, falling}) == Corner::SouthEast || QuietestCorner({rising, falling}) == Corner::SouthWest,
+              "legend: a cross picks a corner");
+        Series level;
+        level.x = {0, 1, 2};
+        level.y = {3, 3, 3};
+        Check(QuietestCorner({level}) == Corner::NorthEast && QuietestCorner({}) == Corner::NorthEast,
+              "legend: no spread keeps top right");
         const auto sq = Squarify({6, 6, 4, 3, 2, 2, 1}, 0, 0, 6, 4);
         Check(std::fabs(sq[0].w * sq[0].h - 6) < 1e-9 && std::fabs(sq[6].w * sq[6].h - 1) < 1e-9, "squarify: the classic example");
 
