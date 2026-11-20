@@ -899,6 +899,40 @@ void TestTextLabels(const std::filesystem::path& work_dir) {
 
 // Properties' "Dataset classes" for any label type: text counts its vocabulary,
 // whole numbers from 0 are class indices (max + 1), the rest is a regression target.
+// The split's totals are the requested shares rounded by largest remainder,
+// and each class is within one row of its exact shares (TOFIX223 0.18): 100
+// classes of 5 rows at 0.8 / 0.1 / 0.1 split 400 / 50 / 50, where flooring
+// each class gave 400 / 0 / 100.
+void TestSplitCountsAcrossClasses() {
+    const auto tally = [](const std::vector<int8_t>& parts) {
+        std::array<size_t, 3> totals{};
+        for (const int8_t p : parts) ++totals[static_cast<size_t>(p)];
+        return totals;
+    };
+    for (const bool shuffle : {false, true}) {
+        std::vector<uint32_t> classes;
+        for (uint32_t c = 0; c < 100; ++c)
+            for (int i = 0; i < 5; ++i) classes.push_back(c);
+        const auto parts = cyxwiz::AssignSplitPartitions(classes.size(), classes, 0.8f, 0.1f, 0.1f, shuffle, 7);
+        Check(tally(parts) == std::array<size_t, 3>{400, 50, 50},
+              "100 classes of 5 rows split 400 / 50 / 50 (got " + std::to_string(tally(parts)[0]) + " / " +
+                  std::to_string(tally(parts)[1]) + " / " + std::to_string(tally(parts)[2]) + ")");
+        std::vector<std::array<size_t, 3>> per_class(100, std::array<size_t, 3>{0, 0, 0});
+        for (size_t row = 0; row < parts.size(); ++row) ++per_class[classes[row]][static_cast<size_t>(parts[row])];
+        bool within_one = true;
+        for (const auto& c : per_class) within_one = within_one && c[0] == 4 && c[1] + c[2] == 1;
+        Check(within_one, "each class keeps 4 Train rows and gives its fifth to Validation or Test");
+    }
+    // Unstratified: 7 rows at 0.7 / 0.15 / 0.15 -> 5 / 1 / 1 (largest remainder).
+    Check(tally(cyxwiz::AssignSplitPartitions(7, {}, 0.7f, 0.15f, 0.15f, false, 1)) == std::array<size_t, 3>{5, 1, 1},
+          "7 rows at 0.7 / 0.15 / 0.15 split 5 / 1 / 1");
+    // A whole Test dataset keeps every row in Test; a tiny set still trains.
+    Check(tally(cyxwiz::AssignSplitPartitions(4, {}, 0.0f, 0.0f, 1.0f, false, 1)) == std::array<size_t, 3>{0, 0, 4},
+          "a 0 / 0 / 1 split keeps every row in Test");
+    Check(tally(cyxwiz::AssignSplitPartitions(2, {}, 0.1f, 0.45f, 0.45f, false, 1))[0] == 1,
+          "Train gets at least one row when it has a share");
+}
+
 void TestLabelClassCount() {
     arrow::Int32Builder ints;
     Check(ints.AppendValues({0, 3, 1, 3}).ok() && ints.AppendNull().ok(), "int append");
@@ -1971,6 +2005,7 @@ int main(int argc, char** argv) {
     fs::remove(multi_step_ts_parquet_path);
     TestTextLabels(fs::temp_directory_path());
     TestLabelClassCount();
+    TestSplitCountsAcrossClasses();
     TestParquetRowSplit(fs::temp_directory_path());
     TestParquetClassBalancing(fs::temp_directory_path());
     fs::remove_all(work_dir);
