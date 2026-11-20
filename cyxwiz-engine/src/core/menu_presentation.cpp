@@ -628,6 +628,8 @@ MenuModel BuildMenuModel(const MenuInputs& in) {
                                 "Trains the graph on shares of its rows: does more data help? (Data Studio > Results > Learning curve).")}));
         i.push_back(Sep());
         i.push_back(Action(f, "train.dashboard", "Training Dashboard", "Opens the Training panel."));
+        i.push_back(Action(f, "train.rl_dashboard", "RL Training Dashboard",
+                           "Opens the RL Training Dashboard: a PPO run's episodes, policy figures and policy."));
         i.push_back(Action(f, "train.optimizer_settings", "Optimizer Settings...", "Shows the graph's optimizer node in Properties."));
         i.push_back(Action(f, "train.hyperparam_search", "Hyperparameter Search",
                            "Opens the Hyperparameter Search panel."));

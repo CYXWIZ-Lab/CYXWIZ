@@ -449,6 +449,7 @@ void PlotView::Draw(ImVec2 size, const Options& o) {
     x_range_ = o.x_range;
     y_range_ = o.y_range;
     zoom_with_ctrl_ = o.zoom_with_ctrl;
+    y_lines_ = o.y_lines;
     ImGui::PushID(id_.c_str());
     if (o.toolbar) DrawToolbar(o);
     if (o.show_title && has_data_) {
@@ -1522,6 +1523,29 @@ void PlotView::DrawPlot(ImVec2 size) {
             ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.8f), 1.2f);
             ImPlot::PlotLine("y = x", xs, ys, 2);
         }
+    }
+
+    // Reference lines across the plot (a target): an invisible point puts the
+    // value into the fit, then dashes and the label over the data.
+    if (!y_lines_.empty() && (kind == Kind::Line || kind == Kind::Scatter) && !p.series.empty() &&
+        !p.series.front().x.empty()) {
+        const ImPlotRect limits = ImPlot::GetPlotLimits();
+        ImDrawList* dl = ImPlot::GetPlotDrawList();
+        const ImU32 colour = ui::ToU32(ui::WithAlpha(t.text_dim, 0.9f));
+        ImPlot::PushPlotClipRect();
+        for (const auto& line : y_lines_) {
+            if (!std::isfinite(line.value) || (p.spec.log_y && line.value <= 0.0)) continue;
+            const double fx = p.series.front().x.front(), fy = line.value;
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 0.0f, ImVec4(0, 0, 0, 0), 0.0f, ImVec4(0, 0, 0, 0));
+            ImPlot::PlotScatter(("##yline_" + line.label).c_str(), &fx, &fy, 1, ImPlotItemFlags_NoLegend);
+            const ImVec2 a = ImPlot::PlotToPixels(limits.X.Min, line.value);
+            const ImVec2 b = ImPlot::PlotToPixels(limits.X.Max, line.value);
+            for (float x = a.x; x < b.x; x += 9.0f)
+                dl->AddLine(ImVec2(x, a.y), ImVec2(std::min(x + 5.0f, b.x), a.y), colour, 1.0f);
+            if (!line.label.empty())
+                dl->AddText(ImVec2(a.x + 6.0f, a.y - ImGui::GetTextLineHeight() - 2.0f), colour, line.label.c_str());
+        }
+        ImPlot::PopPlotClipRect();
     }
 
     if (ImPlot::IsPlotHovered() && pending_->action == Pending::Action::None) DrawHover();

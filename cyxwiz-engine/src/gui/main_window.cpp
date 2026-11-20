@@ -1407,6 +1407,9 @@ MainWindow::MainWindow()
             spdlog::info("Opened Training Dashboard");
         }
     });
+    toolbar_->SetRLDashboardCallback([this]() {
+        if (node_editor_) node_editor_->ShowRLDashboard();
+    });
 
     // Optimizer Settings: training takes its optimizer from the graph, so the
     // item selects the graph's optimizer node (its settings show in

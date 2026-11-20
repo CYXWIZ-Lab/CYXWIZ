@@ -4339,7 +4339,8 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
 
     if (!rl_dashboard_) rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
     cyxwiz::TrainingDashboardPanel::PpoRunInfo info;
-    info.title = "PPO on " + c.environment.id + " x " + std::to_string(c.copies);
+    info.environment = c.environment.id;
+    info.copies = c.copies;
     info.total_timesteps = static_cast<long long>(c.ppo.total_timesteps);
     info.target_return = c.ppo.target_return;
     info.continuous = !c.environment.discrete_actions;
@@ -4396,6 +4397,11 @@ bool NodeEditor::StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfigu
 
 bool NodeEditor::IsRLTrainingActive() const { return rl_run_ && rl_run_->Active(); }
 
+void NodeEditor::ShowRLDashboard() {
+    if (!rl_dashboard_) rl_dashboard_ = std::make_shared<cyxwiz::TrainingDashboardPanel>();
+    rl_dashboard_->SetVisible(true);
+}
+
 void NodeEditor::StopRLTraining() {
     if (rl_run_) rl_run_->Stop();
 }
@@ -4409,7 +4415,7 @@ void NodeEditor::PollRLTraining() {
         if (!waiting.empty() && rl_device_tooltip_ != waiting) {
             rl_status_ = "PPO waiting for the GPU";
             rl_device_tooltip_ = waiting;
-            rl_dashboard_->SetPpoDevice("Waiting for the GPU", waiting, true, waiting);
+            rl_dashboard_->SetPpoWaiting(waiting);
         }
     }
     // The device the run trains on, once its preflight is done (TOFIX206)
@@ -4429,10 +4435,9 @@ void NodeEditor::PollRLTraining() {
             device.error = context.error;
             const auto& c = *rl_run_->Config();
             const auto chip = cyxwiz::rl_device::DeviceChip(device);
-            rl_dashboard_->SetPpoDevice(chip.text, chip.tooltip, chip.fallback,
-                                        cyxwiz::rl_device::DashboardNote(device, cyxwiz::HiddenUnits(c.policy_layers),
-                                                                         cyxwiz::HiddenUnits(c.value_layers),
-                                                                         rl_compute_path_));
+            rl_dashboard_->SetPpoDevice(device, cyxwiz::rl_device::DashboardNote(device, cyxwiz::HiddenUnits(c.policy_layers),
+                                                                                cyxwiz::HiddenUnits(c.value_layers),
+                                                                                rl_compute_path_));
             rl_run_device_ = device;
             rl_device_suffix_ = cyxwiz::rl_device::ToolbarSuffix(device);
             rl_device_tooltip_ = chip.tooltip;
@@ -4462,13 +4467,13 @@ void NodeEditor::PollRLTraining() {
     if (rl_run_->Active()) cyxwiz::plugin::EnginePluginContext::KeepFullFrameRate();  // the dashboard moves
     if (rl_run_reported_ || rl_run_->Active()) return;
     const auto state = rl_run_->GetState();
-    // A run that ended before it had a device (stopped while it waited for the GPU): the chip
-    // no longer says it waits
-    if (!rl_device_shown_ && !rl_device_tooltip_.empty()) {
-        rl_device_tooltip_.clear();
-        rl_dashboard_->SetPpoDevice("No device", rl_run_->Message(), false, {});
-    }
-    rl_dashboard_->EndPpoRun(rl_run_->Message(), state == cyxwiz::rl::RLTrainingRun::State::Failed);
+    // A run that ended before it had a device (stopped while it waited for the GPU) no longer waits
+    if (!rl_device_shown_) rl_device_tooltip_.clear();
+    using RunState = cyxwiz::rl::RLTrainingRun::State;
+    rl_dashboard_->EndPpoRun(state == RunState::Failed    ? cyxwiz::rl_dashboard::End::Failed
+                             : state == RunState::Stopped ? cyxwiz::rl_dashboard::End::Stopped
+                                                          : cyxwiz::rl_dashboard::End::Finished,
+                             rl_run_->Message());
     rl_run_reported_ = true;
     // The run's policy replaces the one kept (TOFIX195 S5)
     if (auto trained = rl_run_->Trained()) {

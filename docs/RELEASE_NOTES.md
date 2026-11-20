@@ -7,6 +7,21 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **The RL Training Dashboard says what happened, on the Training
+  Dashboard's parts.** The pill reads Training, Paused, Waiting for the GPU,
+  Reached its target, Ran all its steps, Stopped or Failed (a run that
+  stopped at its target read a grey "Finished", with the bar stuck part way);
+  a sentence says how the run ended, a line says where it runs, and Run
+  details holds the route and how the networks compute. New cards: Mean
+  return (change over 10 updates, best, target, the SB3 reference at this
+  step), Episode length, Time (the updates' own time, speed, at most what is
+  left) and Updates (losses, KL, clip fraction). The charts scroll with the
+  wheel (Ctrl + wheel zooms), sit side by side in a wide window, the return
+  chart draws the target as a dashed line, and its "all N values" counts the
+  run's own updates (it counted the reference too). More > **Export updates
+  (CSV)...** writes every update's figures; **Clear all...** asks first and
+  replaces Reset metrics, which cleared at once and took Play / Save policy
+  with it. **Train > RL Training Dashboard** opens it at any time.
 - **Any window can have a window of its own.** File > Preferences >
   General > Windows: with **Any window can have a window of its own** on,
   every panel (Properties, Nodes, Info, the tool panels, ...) can leave the

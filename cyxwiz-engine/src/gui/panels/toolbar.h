@@ -74,6 +74,7 @@ public:
     void SetSaveProjectCallback(std::function<void()> callback) { save_project_callback_ = callback; }
     void SetStopTrainingCallback(std::function<void()> callback) { stop_training_callback_ = callback; }
     void SetTrainingSettingsCallback(std::function<void()> callback) { training_settings_callback_ = callback; }
+    void SetRLDashboardCallback(std::function<void()> callback) { rl_dashboard_callback_ = std::move(callback); }
     void SetOptimizerSettingsCallback(std::function<void()> callback) { optimizer_settings_callback_ = callback; }
 
     // Node editor callbacks
@@ -430,6 +431,7 @@ private:
     std::function<void()> save_project_callback_;
     std::function<void()> stop_training_callback_;
     std::function<void()> training_settings_callback_;
+    std::function<void()> rl_dashboard_callback_;
     std::function<void()> optimizer_settings_callback_;
 
     // Node editor callbacks

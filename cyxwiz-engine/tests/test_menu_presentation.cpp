@@ -152,7 +152,7 @@ int main() {
         "nodes.freeze_selected", "nodes.unfreeze_selected", "nodes.freeze_loaded", "nodes.freeze_but_head",
         "nodes.freeze_but_last", "nodes.unfreeze_all",
         "train.compile", "train.local_debug", "train.start", "train.pause", "train.stop", "train.dashboard",
-        "train.optimizer_settings",
+        "train.rl_dashboard", "train.optimizer_settings",
         // The Simulation actions come from simulation plugins (plugin API 1.4)
         "plugin.command",
         "train.hyperparam_search", "deploy.serving", "deploy.convert_bin_to_dir", "deploy.convert_dir_to_bin",

@@ -67,6 +67,13 @@ public:
         // scroll that passed over the plot). The plot then draws without a
         // child window of its own.
         bool zoom_with_ctrl = false;
+        // Horizontal reference lines (an RL run's target return): dashed in
+        // the muted tone with their label at the left; the fit takes them in.
+        struct YLine {
+            double value = 0;
+            std::string label;
+        };
+        std::vector<YLine> y_lines;
         // Toolbar items a screen already has its own controls for.
         bool tool_fit = true;
         bool tool_log = true;
@@ -158,6 +165,7 @@ private:
     size_t colour_offset_ = 0;
     Options::Range x_range_, y_range_;
     bool zoom_with_ctrl_ = false;
+    std::vector<Options::YLine> y_lines_;
     // The once-ranges last applied, so a changed one applies again.
     double once_x_lo_ = NAN, once_x_hi_ = NAN, once_y_lo_ = NAN, once_y_hi_ = NAN;
     int hovered_row_ = -1;      // parallel coordinates: the line under the mouse

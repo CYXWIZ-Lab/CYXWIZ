@@ -74,6 +74,7 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"train.compile", ICON_FA_WRENCH}, {"train.local_debug", ICON_FA_BUG}, {"train.start", ICON_FA_PLAY},
         {"train.pause", ICON_FA_PAUSE}, {"train.resume", ICON_FA_PLAY}, {"train.stop", ICON_FA_STOP},
         {"train.test", ICON_FA_FLASK}, {"train.evaluate", ICON_FA_ROTATE}, {"train.dashboard", ICON_FA_CHART_LINE},
+        {"train.rl_dashboard", ICON_FA_CHART_AREA},
         {"train.optimizer_settings", ICON_FA_SLIDERS}, {"train.hyperparam_search", ICON_FA_MAGNIFYING_GLASS_CHART},
         {"data.import", ICON_FA_FILE_IMPORT}, {"data.create_custom", ICON_FA_FOLDER_PLUS},
         {"data.statistics", ICON_FA_CHART_SIMPLE}, {"data.explore", ICON_FA_MAGNIFYING_GLASS_CHART},
@@ -668,6 +669,7 @@ void ToolbarPanel::BuildActionHandlers() {
     call("train.export_test_report", export_test_report_callback_);
     call("train.load_checkpoint", load_checkpoint_callback_);
     call("train.dashboard", training_settings_callback_);
+    call("train.rl_dashboard", rl_dashboard_callback_);
     call("train.optimizer_settings", optimizer_settings_callback_);
     call("train.hyperparam_search", open_hyperparam_search_callback_);
     call("tools.nas", open_nas_callback_);

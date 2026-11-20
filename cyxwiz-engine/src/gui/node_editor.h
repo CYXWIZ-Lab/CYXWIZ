@@ -1635,6 +1635,8 @@ public:
     // Training Dashboard. False with the reason while one runs.
     bool StartRLTraining(std::shared_ptr<const cyxwiz::RLTrainingConfiguration> config, std::string& error);
     bool IsRLTrainingActive() const;
+    // Train > RL Training Dashboard: shows the dashboard (with no run it says how to start one)
+    void ShowRLDashboard();
     void StopRLTraining();
 
     // The trained RL policy (TOFIX195 S5): play it, save it, load one.
