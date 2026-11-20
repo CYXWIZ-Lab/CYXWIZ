@@ -194,6 +194,63 @@ int main() {
         std::filesystem::remove(path, ec);
     }
 
+    // From a Parquet file, the rest of TOFIX223 0.3b (TAB-18): a uint64 feature
+    // column is read (it was all zeros), and a text label the vocabulary does
+    // not hold is refused, naming it (it was trained as class 0).
+    const auto parquet_batcher_of = [](const std::shared_ptr<arrow::Table>& table, const std::string& file,
+                                       std::shared_ptr<const cyxwiz::LabelVocabulary> vocabulary,
+                                       std::shared_ptr<cyxwiz::ParquetBackedDataset>& dataset) {
+        const auto path = std::filesystem::temp_directory_path() / file;
+        cyxwiz::ArrowDataset source(table, file + "_source");
+        Check(source.ExportParquet(path.string()), file + ": the Parquet fixture is written");
+        dataset = cyxwiz::ParquetBackedDataset::Open(path.string(), file);
+        Check(dataset != nullptr, file + ": the Parquet fixture opens");
+        return dataset ? std::make_unique<cyxwiz::ParquetArrowBatcher>(dataset, "label", 4, false, 1.0f, true, "", 0,
+                                                                       0, cyxwiz::BatcherPhase::Train, 0.0f, 42,
+                                                                       std::move(vocabulary))
+                       : nullptr;
+    };
+    {
+        arrow::UInt64Builder wide;
+        (void)wide.AppendValues({3, 5, 7, 9});
+        std::shared_ptr<arrow::Array> wide_array;
+        (void)wide.Finish(&wide_array);
+        auto schema = arrow::schema({arrow::field("x", arrow::uint64()), arrow::field("label", arrow::int64())});
+        auto table = arrow::Table::Make(schema, {std::make_shared<arrow::ChunkedArray>(wide_array), Ints({0, 1, 0, 1})});
+        std::shared_ptr<cyxwiz::ParquetBackedDataset> dataset;
+        auto batcher = parquet_batcher_of(table, "cyxwiz_refusals_uint64.parquet", nullptr, dataset);
+        if (batcher) {
+            batcher->Reset();
+            const cyxwiz::Batch batch = batcher->GetNextBatch();
+            std::string got;
+            if (batch.size == 4 && batch.data.Shape() == std::vector<size_t>({4, 1})) {
+                const float* data = batch.data.ReadData<float>();
+                for (size_t b = 0; b < 4; ++b) got += (b ? "," : "") + std::to_string(static_cast<int>(data[b]));
+            }
+            Check(got == "3,5,7,9", "a uint64 feature column from Parquet is read (got '" + got + "')");
+        }
+    }
+    {
+        auto schema = arrow::schema({arrow::field("x", arrow::float64()), arrow::field("label", arrow::utf8())});
+        auto table = arrow::Table::Make(schema, {Doubles({1, 2, 3, 4}, true), Strings({"cat", "dog", "bird", "cat"})});
+        auto vocabulary = std::make_shared<cyxwiz::LabelVocabulary>(
+            cyxwiz::BuildLabelVocabulary(std::vector<std::string>{"cat", "dog"}));
+        std::shared_ptr<cyxwiz::ParquetBackedDataset> dataset;
+        auto batcher = parquet_batcher_of(table, "cyxwiz_refusals_unknown_label.parquet", vocabulary, dataset);
+        if (batcher) {
+            std::string error;
+            try {
+                batcher->Reset();
+                (void)batcher->GetNextBatch();
+            } catch (const std::exception& e) {
+                error = e.what();
+            }
+            Check(error.find("label 'bird'") != std::string::npos && error.find("not one of the training classes") !=
+                                                                         std::string::npos,
+                  "a text label outside the vocabulary is refused, naming it (got: '" + error + "')");
+        }
+    }
+
     if (failures == 0) std::cout << "test_batcher_refusals: all checks passed\n";
     return failures == 0 ? 0 : 1;
 }

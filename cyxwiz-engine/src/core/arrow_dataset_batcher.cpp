@@ -1,6 +1,7 @@
 #include "dataset_batcher.h"
 #include "label_vocabulary.h"
 #include "label_column_resolver.h"
+#include "feature_column_gather.h"
 #include "split_partitioning.h"
 #include "class_label_range.h"
 #include "missing_values.h"
@@ -195,68 +196,6 @@ float ReadNumericChunkedValue(
         }
     }
     return 0.0f;
-}
-
-
-
-// The column types the batcher takes as features. The constructor's filter and
-// the reader below both use this one list (TOFIX222 TAB-01: the multi-chunk
-// reader once lacked five of the types the filter accepted, and read them as 0).
-bool IsFeatureNumberType(arrow::Type::type id) {
-    switch (id) {
-        case arrow::Type::DOUBLE: case arrow::Type::FLOAT:
-        case arrow::Type::INT64: case arrow::Type::INT32: case arrow::Type::INT16: case arrow::Type::INT8:
-        case arrow::Type::UINT64: case arrow::Type::UINT32: case arrow::Type::UINT16: case arrow::Type::UINT8:
-            return true;
-        default:
-            return false;
-    }
-}
-
-// Reads `count` rows of one column into out[b * stride] as float, for any
-// chunking: the chunk of a row is found by binary search over chunk starts.
-template <typename ArrowArrayT>
-void GatherTypedColumn(const arrow::ChunkedArray& column, const int64_t* rows, size_t count,
-                       int64_t num_rows, float* out, size_t stride) {
-    using Value = typename ArrowArrayT::TypeClass::c_type;
-    const int num_chunks = column.num_chunks();
-    std::vector<const Value*> values(static_cast<size_t>(num_chunks));
-    std::vector<int64_t> starts(static_cast<size_t>(num_chunks));
-    int64_t start = 0;
-    for (int c = 0; c < num_chunks; ++c) {
-        const auto& chunk = column.chunk(c);
-        values[static_cast<size_t>(c)] = static_cast<const ArrowArrayT&>(*chunk).raw_values();
-        starts[static_cast<size_t>(c)] = start;
-        start += chunk->length();
-    }
-    for (size_t b = 0; b < count; ++b) {
-        const int64_t row = rows[b];
-        if (row < 0 || row >= num_rows) continue;
-        size_t c = 0;
-        if (num_chunks > 1) {
-            // The last chunk starting at or before `row` (empty chunks share
-            // their start with the next one, so they are never picked).
-            c = static_cast<size_t>(std::upper_bound(starts.begin(), starts.end(), row) - starts.begin()) - 1;
-        }
-        out[b * stride] = static_cast<float>(values[c][row - starts[c]]);
-    }
-}
-
-void GatherFeatureColumn(const arrow::ChunkedArray& column, const int64_t* rows, size_t count,
-                         int64_t num_rows, float* out, size_t stride) {
-    switch (column.type()->id()) {
-        case arrow::Type::DOUBLE: return GatherTypedColumn<arrow::DoubleArray>(column, rows, count, num_rows, out, stride);
-        case arrow::Type::FLOAT: return GatherTypedColumn<arrow::FloatArray>(column, rows, count, num_rows, out, stride);
-        case arrow::Type::INT64: return GatherTypedColumn<arrow::Int64Array>(column, rows, count, num_rows, out, stride);
-        case arrow::Type::INT32: return GatherTypedColumn<arrow::Int32Array>(column, rows, count, num_rows, out, stride);
-        case arrow::Type::INT16: return GatherTypedColumn<arrow::Int16Array>(column, rows, count, num_rows, out, stride);
-        case arrow::Type::INT8: return GatherTypedColumn<arrow::Int8Array>(column, rows, count, num_rows, out, stride);
-        case arrow::Type::UINT64: return GatherTypedColumn<arrow::UInt64Array>(column, rows, count, num_rows, out, stride);
-        case arrow::Type::UINT32: return GatherTypedColumn<arrow::UInt32Array>(column, rows, count, num_rows, out, stride);
-        case arrow::Type::UINT16: return GatherTypedColumn<arrow::UInt16Array>(column, rows, count, num_rows, out, stride);
-        case arrow::Type::UINT8: return GatherTypedColumn<arrow::UInt8Array>(column, rows, count, num_rows, out, stride);
-        default: return;  // GatherFeatures refuses these before any worker starts
-    }
 }
 
 }  // namespace
@@ -490,7 +429,7 @@ void ArrowDatasetBatcher::InitializeColumns() {
             continue;
         }
 
-        if (IsFeatureNumberType(field->type()->id())) {
+        if (IsNumericBatchFeatureType(field->type())) {
             feature_cols_.push_back(i);
         }
     }
@@ -957,21 +896,13 @@ void ArrowDatasetBatcher::GatherFeatures(const std::shared_ptr<arrow::Table>& ta
                 spdlog::warn("ArrowDatasetBatcher: Null or empty column at idx={}", col_idx);
                 continue;
             }
-            GatherFeatureColumn(*column, rows, count, num_rows, out + feat_idx, num_features_);
+            GatherNumberColumn(*column, rows, count, num_rows, out + feat_idx, num_features_);
         }
     };
 
     // Checked here, on the calling thread: a throw inside a worker thread would
     // end the process.
-    for (const int col_idx : feature_cols_) {
-        if (col_idx < 0 || col_idx >= num_cols) continue;
-        const auto& field = table->schema()->field(col_idx);
-        if (!IsFeatureNumberType(field->type()->id())) {
-            throw std::runtime_error("ArrowDatasetBatcher: feature column '" + field->name() +
-                                     "' has type " + field->type()->ToString() +
-                                     ", which the batcher cannot read as a number");
-        }
-    }
+    RequireNumberColumns("ArrowDatasetBatcher", *table, feature_cols_, "feature");
 
     if (num_workers_ > 1 && feature_cols_.size() > 1) {
         size_t worker_count = std::min(static_cast<size_t>(num_workers_), feature_cols_.size());
