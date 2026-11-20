@@ -4836,6 +4836,19 @@ endif()
 set_target_properties(test_arrow_batcher_resident PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME arrow_batcher_resident COMMAND test_arrow_batcher_resident)
 
+# Feature values do not depend on the table's chunking, for every numeric type (TOFIX223 0.1).
+add_executable(test_arrow_batcher_chunking tests/test_arrow_batcher_chunking.cpp)
+target_include_directories(test_arrow_batcher_chunking PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+target_link_libraries(test_arrow_batcher_chunking PRIVATE
+    cyxwiz-training-core cyxwiz-backend Arrow::arrow_shared spdlog::spdlog fmt::fmt)
+if(WIN32)
+    target_compile_definitions(test_arrow_batcher_chunking PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_arrow_batcher_chunking PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME arrow_batcher_chunking COMMAND test_arrow_batcher_chunking)
+
+
 # Training data-path benchmark (TOFIX178 S0-a): batch preparation vs the model step.
 add_executable(cyxwiz-bench-training-data tests/tool_bench_training_data.cpp)
 target_include_directories(cyxwiz-bench-training-data PRIVATE
