@@ -5627,12 +5627,44 @@ std::string PipelineExecutor::PartitionedSource(int input_node, const std::strin
                      name);
         return name;
     }
+    const auto& policy = *split_policy_;
+    // The tables this source's copy is made from: its own, then the supplied
+    // Validation / Test tables when it is the training input.
+    struct SuppliedInput {
+        int8_t part;
+        std::string role, label;
+        std::shared_ptr<arrow::Table> table;
+    };
+    std::vector<SuppliedInput> supplied_inputs;
+    if (input_node == policy.training_input) {
+        for (const auto& [supplied_node, part, role, supplied_label] :
+             {std::tuple{policy.validation_input, int8_t{1}, std::string("Validation"), policy.validation_label_column},
+              std::tuple{policy.test_input, int8_t{2}, std::string("Test"), policy.test_label_column}}) {
+            if (supplied_node < 0) continue;
+            const std::string* supplied_name = ResultForOutput(ctx, supplied_node, std::nullopt);
+            const auto supplied = supplied_name ? registry.GetArrowDataset(*supplied_name) : nullptr;
+            if (!supplied || !supplied->GetArrowTable()) {
+                spdlog::warn("[Pipeline] the {} input is not in memory: training reads its rows without the steps "
+                             "before the Data Split",
+                             role);
+                continue;
+            }
+            supplied_inputs.push_back({part, role, supplied_label, supplied->GetArrowTable()});
+        }
+    }
+    std::vector<std::shared_ptr<arrow::Table>> made_from = {dataset->GetArrowTable()};
+    for (const auto& supplied : supplied_inputs) made_from.push_back(supplied.table);
+
     const std::string key = name + "|" + split_policy_key_;
     std::lock_guard<std::mutex> lock(partitioned_mutex_);
     if (const auto it = partitioned_sources_.find(key);
-        it != partitioned_sources_.end() && registry.GetArrowDataset(it->second))
-        return it->second;
-    const auto& policy = *split_policy_;
+        it != partitioned_sources_.end() && registry.GetArrowDataset(it->second.name)) {
+        bool same_tables = it->second.made_from.size() == made_from.size();
+        for (size_t i = 0; same_tables && i < made_from.size(); ++i)
+            same_tables = it->second.made_from[i].lock() == made_from[i];
+        if (same_tables) return it->second.name;
+        spdlog::info("[Pipeline] '{}' changed since its split was marked: marking it again", name);
+    }
     const bool stratify =
         policy.stratified && dataset->GetArrowTable()->schema()->GetFieldIndex(policy.label_column) >= 0;
     if (policy.stratified && !stratify)
@@ -5650,34 +5682,21 @@ std::string PipelineExecutor::PartitionedSource(int input_node, const std::strin
     std::shared_ptr<arrow::Table> rows = partitioned.ValueOrDie();
     // The supplied Validation / Test rows (TOFIX178 S0-g4): the steps after
     // the training input transform them as they transform its rows.
-    if (input_node == policy.training_input) {
-        for (const auto& [supplied_node, part, role, supplied_label] :
-             {std::tuple{policy.validation_input, int8_t{1}, std::string("Validation"), policy.validation_label_column},
-              std::tuple{policy.test_input, int8_t{2}, std::string("Test"), policy.test_label_column}}) {
-            if (supplied_node < 0) continue;
-            const std::string* supplied_name = ResultForOutput(ctx, supplied_node, std::nullopt);
-            const auto supplied = supplied_name ? registry.GetArrowDataset(*supplied_name) : nullptr;
-            if (!supplied || !supplied->GetArrowTable()) {
-                spdlog::warn("[Pipeline] the {} input is not in memory: training reads its rows without the steps "
-                             "before the Data Split",
-                             role);
-                continue;
-            }
-            auto joined = AppendSuppliedRows(rows, supplied->GetArrowTable(), part, policy.label_column,
-                                             supplied_label, role);
-            if (!joined.ok()) {
-                ReportError(joined.status().message());
-                return {};  // the step fails with the reason
-            }
-            spdlog::info("[Pipeline] the {} input's {} rows join '{}': the steps transform them as they transform "
-                         "its rows, with what they learned from its Train rows",
-                         role, supplied->GetArrowTable()->num_rows(), name);
-            rows = joined.ValueOrDie();
+    for (const auto& supplied : supplied_inputs) {
+        auto joined = AppendSuppliedRows(rows, supplied.table, supplied.part, policy.label_column, supplied.label,
+                                         supplied.role);
+        if (!joined.ok()) {
+            ReportError(joined.status().message());
+            return {};  // the step fails with the reason
         }
+        spdlog::info("[Pipeline] the {} input's {} rows join '{}': the steps transform them as they transform "
+                     "its rows, with what they learned from its Train rows",
+                     supplied.role, supplied.table->num_rows(), name);
+        rows = joined.ValueOrDie();
     }
     const std::string partitioned_name = name + "__split";
     if (!registry.RegisterArrowTable(rows, partitioned_name)) return name;
-    partitioned_sources_[key] = partitioned_name;
+    partitioned_sources_[key] = PartitionedCopy{partitioned_name, {made_from.begin(), made_from.end()}};
     {
         std::lock_guard<std::mutex> owned(owned_mutex_);
         owned_names_[input_node].insert(partitioned_name);  // released with its Data Input

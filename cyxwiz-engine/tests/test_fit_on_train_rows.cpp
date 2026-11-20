@@ -300,6 +300,22 @@ void CheckExecutor() {
     std::getline(in, header);
     Check(header.find(kSplitPartitionColumn) == std::string::npos, "the export leaves out the partition: " + header);
     in.close();
+
+    // The file changes and the same executor runs again (TOFIX223 0.8): the
+    // steps read the new rows, not the partitioned copy of the old ones.
+    {
+        std::ofstream csv(csv_path, std::ios::binary | std::ios::trunc);
+        csv << "a,y\n";
+        for (int i = 1; i <= 30; ++i) csv << i * 3 << ',' << (i % 2 ? "odd" : "even") << '\n';
+    }
+    Check(split.ExecutePipeline(pipeline(true)), "the run after the file changed: " + split.GetLastError());
+    const auto reloaded = registry.GetArrowDataset(split.NodeResults().at(1));
+    Check(reloaded && reloaded->GetNumRows() == 30, "the Data Input re-read the changed file");
+    const auto rescaled = scaled(split);
+    Check(rescaled->num_rows() == 30,
+          "the scaler reads the changed file's 30 rows, not the 20 of the old split copy (got " +
+              std::to_string(rescaled->num_rows()) + ")");
+    Check(TrainRowMask(rescaled).size() == 30, "the new rows carry their partition");
     fs::remove_all(dir, ec);
 }
 // Supplied Validation / Test inputs (S0-g4): their rows join the training
