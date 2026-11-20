@@ -10,15 +10,15 @@ with the Engine:
 It covers training each one from Studio, watching the trained policy,
 saving it, and what it takes to use a policy outside the Engine (export, and
 real robots). For every setting and panel, see
-[Training a policy (PPO)](rl_training.md); for the environments themselves,
+[Training a policy (PPO and SAC)](rl_training.md); for the environments themselves,
 [Environments for reinforcement learning](rl_environments.md).
 
 ## Before you start
 
 - **A device.** Training runs on the device chosen in **Preferences >
-  Devices**. On an NVIDIA GPU with the **CUDA GPU pack**, PPO runs its small
-  networks as fused GPU kernels and trains several times faster than on the
-  CPU (see [What runs where on a GPU](gpu_providers.md)). On the CPU every
+  Devices**. On an NVIDIA GPU with the **CUDA GPU pack**, PPO and SAC run
+  their small networks as fused GPU kernels and train several times faster
+  than on the CPU (see [What runs where on a GPU](gpu_providers.md)). On the CPU every
   example still trains; it just takes longer.
 - **The MuJoCo Simulation plugin** (InvertedPendulum and HalfCheetah only).
   Open **Apps > Plugin Manager**:
@@ -87,6 +87,26 @@ cost for the effort, summed over 1,000 steps.
    of the scene shows the episode, step, return and action. **Record >
    Record video...** saves a GIF of the run in the project's exports folder
    ([The MuJoCo Viewport](mujoco_viewport.md)).
+
+### The same tasks with SAC
+
+SAC learns from a replay buffer of past steps instead of fresh rollouts:
+each step costs more, but it needs far fewer of them. Two examples use it
+(both one copy, actor and Q networks of two layers of 256 with ReLU):
+
+- `sac_inverted_pendulum.cyxgraph`: the SAC node's defaults, stops when the
+  last 100 episodes average 950. Measured on a GTX 1050 Ti: 950 at
+  102,000-105,000 steps, 12-16 minutes (Stable-Baselines3: 105,600-108,700
+  steps).
+- `sac_half_cheetah.cyxgraph`: RL Zoo's settings (the first 10,000 steps are
+  random actions, which fill the replay buffer), all 1,000,000 steps.
+  Measured: about 2-3 hours on that GPU, ending at a mean return of
+  8,300-11,100, about twice PPO's (Stable-Baselines3: 7,800-10,700). Train it
+  on the GPU: on the CPU it takes many times longer.
+
+The dashboard shows SAC's own cards: critic and actor loss, the entropy
+weight and the **Replay buffer** filling up; **Play policy** and the rest of
+this guide work the same.
 
 ## 4. Training for rough ground, pushes and obstacles (MuJoCo)
 

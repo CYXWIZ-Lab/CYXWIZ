@@ -9,6 +9,9 @@
 // same shape with a Q Head, its settings, its refusals (a choice of actions,
 // a batch larger than the buffer, a Q branch not starting with a Dense, two
 // learners) and its presentation (Q Head facts, replay memory, the preset).
+// The shipped examples (examples/cyxgraph/rl) open as File > Open opens a
+// pattern file and compile; the SAC ones to the stability gate's settings,
+// with their recorded SB3 reference.
 
 #include "../src/core/graph_compiler.h"
 #include "../src/core/graph_node_factory.h"
@@ -16,11 +19,14 @@
 #include "../src/core/rl_graph_compile.h"
 #include "../src/core/rl_graph_presentation.h"
 #include "../src/core/rl/rl_reference.h"
+#include "../src/gui/node_type_import_registry.h"
 #include "rl_graph_test_support.h"
 
 #include <cyxwiz/neural_provider.h>
 
+#include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 
 #include <cstdio>
@@ -77,6 +83,18 @@ cyxwiz::plugin::PluginEnvironmentInfo Pendulum() {
     info.action_high = {3.0f};
     info.max_episode_steps = 1000;
     info.step_seconds = 0.04;
+    return info;
+}
+
+cyxwiz::plugin::PluginEnvironmentInfo Cheetah() {
+    cyxwiz::plugin::PluginEnvironmentInfo info;
+    info.id = "HalfCheetah-v5";
+    info.observation_size = 17;
+    info.action_size = 6;
+    info.action_low.assign(6, -1.0f);
+    info.action_high.assign(6, 1.0f);
+    info.max_episode_steps = 1000;
+    info.step_seconds = 0.05;
     return info;
 }
 
@@ -351,6 +369,82 @@ void CheckSacReference() {
     }
 }
 
+// A pattern-format graph file (a "template" of nodes by string id and links
+// by pin index), built as the editor's LoadPatternAsGraph builds it
+bool LoadExample(const std::filesystem::path& path, Graph& g, std::string& error) {
+    std::ifstream in(path, std::ios::binary);
+    nlohmann::json doc;
+    try {
+        in >> doc;
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
+    std::map<std::string, int> ids;
+    for (const auto& n : doc.at("template").at("nodes")) {
+        const auto type = gui::ResolveNodeTypeImportName(n.at("type").get<std::string>());
+        if (!type) {
+            error = "unknown node type " + n.at("type").get<std::string>();
+            return false;
+        }
+        const int id = g.Add(*type, n.value("name", n.at("type").get<std::string>()));
+        ids[n.at("id").get<std::string>()] = id;
+        if (n.contains("params"))
+            for (const auto& [k, v] : n.at("params").items()) g.At(id).parameters[k] = v.get<std::string>();
+        // The MuJoCo plugin is not loaded here: its tasks resolve to the test's facts
+        const std::string mujoco = "com.cyxwiz.simulation.mujoco:";
+        const auto environment = g.At(id).parameters.find("environment");
+        if (*type == NodeType::RLEnvironment && environment != g.At(id).parameters.end() &&
+            environment->second.rfind(mujoco, 0) == 0)
+            environment->second = "test.continuous:" + environment->second.substr(mujoco.size());
+    }
+    for (const auto& l : doc.at("template").at("links")) {
+        const auto from = ids.find(l.at("from").get<std::string>());
+        const auto to = ids.find(l.at("to").get<std::string>());
+        if (from == ids.end() || to == ids.end()) {
+            error = "a link to a node the graph does not have";
+            return false;
+        }
+        g.Link(from->second, to->second, l.value("from_pin", 0), l.value("to_pin", 0));
+    }
+    return true;
+}
+
+void CheckExamples() {
+    int sac_examples = 0;
+    std::ifstream sac_file(CYXWIZ_SAC_REFERENCE_FILE, std::ios::binary);
+    std::ostringstream sac_reference;
+    sac_reference << sac_file.rdbuf();
+    for (const auto& entry : std::filesystem::directory_iterator(CYXWIZ_RL_EXAMPLES_DIR)) {
+        if (entry.path().extension() != ".cyxgraph") continue;
+        const std::string name = entry.path().filename().string();
+        Graph g;
+        std::string error;
+        Check(LoadExample(entry.path(), g, error), name + " loads: " + error);
+        const auto config = Compile(g);
+        Check(config.is_valid && config.rl, name + " compiles:" + Issues(config));
+        if (!config.rl || config.rl->algorithm != cyxwiz::RLAlgorithm::SAC) continue;
+        ++sac_examples;
+        const auto& rl = *config.rl;
+        const auto& c = rl.sac;
+        // The stability gate's runs: one copy, 256-256 ReLU, InvertedPendulum
+        // at the defaults to 950 within 150,000 steps, HalfCheetah at RL Zoo's
+        Check(rl.copies == 1 && rl.policy_layers.size() == 4 && rl.q_layers.size() == 4 &&
+                  rl.policy_layers[1].type == NodeType::ReLU,
+              name + ": one copy, two layers of 256 with ReLU");
+        if (rl.environment.id == "InvertedPendulum-v5")
+            Check(c.total_timesteps == 150000 && c.target_return == 950.0f && c.learning_starts == 100,
+                  name + ": the defaults, stopping at 950 within 150,000 steps");
+        else
+            Check(rl.environment.id == "HalfCheetah-v5" && c.total_timesteps == 1000000 &&
+                      c.learning_starts == 10000 && std::isnan(c.target_return),
+                  name + ": RL Zoo's HalfCheetah settings, all 1,000,000 steps");
+        const auto ref = cyxwiz::rl::FindSacReference(sac_reference.str(), rl.environment.id, rl.copies, c);
+        Check(ref && ref->seeds.size() == 3, name + " has the recorded SB3 reference on the dashboard");
+    }
+    Check(sac_examples == 2, "the two SAC examples are checked");
+}
+
 void CheckSac() {
     using namespace cyxwiz::rl_graph;
     const std::string pendulum_key = "test.continuous:InvertedPendulum-v5";
@@ -517,6 +611,10 @@ int main() {
             info = Pendulum();
             return true;
         }
+        if (key == "test.continuous:HalfCheetah-v5") {
+            info = Cheetah();
+            return true;
+        }
         if (key != "cyxwiz.builtin:CartPole-v1") return false;
         info = CartPole();
         return true;
@@ -527,6 +625,7 @@ int main() {
     CheckReference();
     CheckSacReference();
     CheckSac();
+    CheckExamples();
     if (failures == 0) std::printf("test_rl_graph_compile: all checks passed\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

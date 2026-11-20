@@ -7858,11 +7858,12 @@ add_dependencies(test_sac_trainer copy_test_sac_trainer_fixture)
 add_test(NAME sac_trainer COMMAND test_sac_trainer)
 
 # ===== Test: RL graphs compile (Environment, layers, heads, PPO) and say what is wrong (TOFIX195 S4.3) =====
-add_executable(test_rl_graph_compile tests/test_rl_graph_compile.cpp)
+add_executable(test_rl_graph_compile tests/test_rl_graph_compile.cpp src/gui/node_type_import_registry.cpp)
 target_link_libraries(test_rl_graph_compile PRIVATE cyxwiz-training-core)
 target_compile_definitions(test_rl_graph_compile PRIVATE
     CYXWIZ_PPO_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/ppo_sb3_curves.json"
-    CYXWIZ_SAC_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/sac_sb3_curves.json")
+    CYXWIZ_SAC_REFERENCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/rl_reference/sac_sb3_curves.json"
+    CYXWIZ_RL_EXAMPLES_DIR="${CMAKE_SOURCE_DIR}/examples/cyxgraph/rl")
 if(MSVC)
     target_link_options(test_rl_graph_compile PRIVATE /STACK:4194304)
 endif()

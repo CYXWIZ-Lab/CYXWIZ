@@ -341,6 +341,23 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **SAC (Soft Actor-Critic) trains policies from the canvas.** A second RL
+  learner beside PPO, for continuous actions: the **SAC (MLP 256-256)**
+  pattern (Environment, actor layers to a Policy Head, Q layers to the new
+  **Q Head**, the **SAC** node) trains with Stable-Baselines3's SAC from a
+  replay buffer on the training device, its settings SB3's with **Tuned
+  for HalfCheetah-v5** loading RL Zoo's. The dashboard shows critic and
+  actor loss, the entropy weight and the replay buffer, with SB3's
+  recorded curve under the reward; the trained policy plays, saves and
+  loads as PPO's does, and Code Gen writes it as an SB3 SAC script. On an
+  NVIDIA GPU with the CUDA GPU pack the actor, both Q networks and their
+  targets run as fused kernels. Checked against SB3 on three seeds:
+  InvertedPendulum reaches a mean return of 950 at about 105,000 steps
+  (SB3 105,600-108,700) and HalfCheetah ends 1,000,000 steps at
+  8,300-11,100 (SB3 7,800-10,700), about twice PPO's. Examples:
+  `examples/cyxgraph/rl/sac_inverted_pendulum.cyxgraph` and
+  `sac_half_cheetah.cyxgraph`. **Preferences > Simulation > Replay buffer
+  size** sets a new SAC node's buffer. See `docs/usage/rl_training.md`.
 - **Squeeze-Excitation node.** Scales each channel of a feature map by a
   learned gate (mean over the map, Dense - ReLU - Dense - Sigmoid), as
   torchvision's SqueezeExcitation. Settings: the hidden width (channels /
