@@ -118,6 +118,7 @@ struct StressLimits {
 struct ViewportDefaults {
     PlaybackCamera playback_camera = PlaybackCamera::ModelTrack;
     bool live_numbers = true;  // episode, step, return and action on the scene during playback
+    bool copy_models_into_project = false;  // a shared download is copied into the project when loaded
     MjRecorder::Format record_format = MjRecorder::Format::Gif;
     bool record_until_stop = false;  // false: until the episode ends
     SceneOptions scene;              // what View shows when the Viewport starts

@@ -75,6 +75,11 @@ float FilterChipWidth(const char* label, const char* count);
 bool JobTab(const char* id, const char* label, const char* caption, bool chosen);
 float JobTabWidth(const char* label, const char* caption);
 
+// A tab of a run switcher (the Training Dashboard's): a dot, the label and a
+// faint second part on one line; the shown run raised, with the accent line
+// under it. Returns true when clicked.
+bool RunTab(const char* id, const char* label, const char* sub, const ImVec4& dot, bool active);
+
 // Width a button will take, for sizing fixed table columns.
 float ButtonWidth(const char* label, ButtonSize size);
 // Height a button will take, for reserving room below a growing widget.

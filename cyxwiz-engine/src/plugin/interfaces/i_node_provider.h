@@ -56,7 +56,13 @@ struct PluginNodeTypeInfo {
 // Result from resolving dynamic pins for a node instance
 struct DynamicPinResult {
     std::vector<PluginNodeTypeInfo::PinInfo> pins;
-    std::map<std::string, std::string> metadata;  // e.g. "model_name" -> "UR5e"
+    // e.g. "model_name" -> "UR5e"; the Engine keeps each as the node parameter
+    // "_meta_<key>" (saved with the graph). One key is read by the Engine:
+    // "canonical_trigger", the value the trigger parameter should hold (a
+    // picked file path becomes a name that is the same on every machine); the
+    // Engine writes it into the trigger parameter. No pins with metadata: the
+    // node keeps its pins and shows why (a model not on this machine).
+    std::map<std::string, std::string> metadata;
 };
 
 // Callback for enumerating node types across DLL boundary without returning std::vector.

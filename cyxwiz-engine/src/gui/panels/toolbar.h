@@ -74,6 +74,7 @@ public:
     void SetSaveProjectCallback(std::function<void()> callback) { save_project_callback_ = callback; }
     void SetStopTrainingCallback(std::function<void()> callback) { stop_training_callback_ = callback; }
     void SetTrainingSettingsCallback(std::function<void()> callback) { training_settings_callback_ = callback; }
+    void SetRLDashboardCallback(std::function<void()> callback) { rl_dashboard_callback_ = std::move(callback); }
     void SetOptimizerSettingsCallback(std::function<void()> callback) { optimizer_settings_callback_ = callback; }
 
     // Node editor callbacks
@@ -89,10 +90,6 @@ public:
     void SetUngroupNodesCallback(std::function<void()> cb) { ungroup_nodes_callback_ = cb; }
     // Nodes > Freeze: the command is one of NodeEditor::RunFreezeCommand's.
     void SetFreezeNodesCallback(std::function<void(const std::string&)> cb) { freeze_nodes_callback_ = cb; }
-
-    // Icon pack selection callbacks
-    void SetSetIconPackCallback(std::function<void(int)> cb) { set_icon_pack_callback_ = cb; }
-    void SetGetIconPackCallback(std::function<int()> cb) { get_icon_pack_callback_ = cb; }
 
     void SetOpenCustomNodeEditorCallback(std::function<void()> callback) { open_custom_node_editor_callback_ = callback; }
     void SetOpenThemeEditorCallback(std::function<void()> callback) { open_theme_editor_callback_ = callback; }
@@ -348,6 +345,7 @@ private:
     void RenderSearchDialogs();
     void RenderAccountDialogs();
     void RenderPreferencesDialog();
+    bool CommitPreferences();  // OK: commit, save, close (false: stays open with the reason)
     // Preferences > Storage (TOFIX160 P7, toolbar_preferences_storage.cpp):
     // the prepared-data caches, measured off the UI thread, with Clear.
     void RenderStorageTab();
@@ -433,6 +431,7 @@ private:
     std::function<void()> save_project_callback_;
     std::function<void()> stop_training_callback_;
     std::function<void()> training_settings_callback_;
+    std::function<void()> rl_dashboard_callback_;
     std::function<void()> optimizer_settings_callback_;
 
     // Node editor callbacks
@@ -447,10 +446,6 @@ private:
     std::function<void()> group_nodes_callback_;
     std::function<void()> ungroup_nodes_callback_;
     std::function<void(const std::string&)> freeze_nodes_callback_;
-
-    // Icon pack selection callbacks
-    std::function<void(int)> set_icon_pack_callback_;
-    std::function<int()> get_icon_pack_callback_;
 
     std::function<void()> open_custom_node_editor_callback_;
     std::function<void()> open_theme_editor_callback_;

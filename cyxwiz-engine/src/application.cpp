@@ -280,10 +280,11 @@ void CyxWizApp::OpenStartupGraphIfRequested() {
 
     if (main_window_->OpenGraphInNodeEditor(startup_graph_path_)) {
         // A starter is a copy to work on: Save asks for a name instead of
-        // overwriting the example next to the Engine. A graph named on the
-        // command line is the user's own file.
+        // overwriting the example next to the Engine, and its data paths keep
+        // working wherever it is saved. A graph named on the command line is
+        // the user's own file.
         if (!startup_graph_from_command_line_) {
-            if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromFile();
+            if (auto* editor = main_window_->GetNodeEditor()) editor->DetachFromExample();
         }
         spdlog::info("Opened {} graph: {}", startup_graph_from_command_line_ ? "command-line" : "starter",
                      startup_graph_path_);
@@ -441,6 +442,7 @@ bool CyxWizApp::Initialize() {
     spdlog::set_level(cyxwiz::core::EngineConfig::Instance().RecordDebugLogs() ? spdlog::level::debug
                                                                               : spdlog::level::info);
     cyxwiz::SetDataBudgetBytes(cyxwiz::core::EngineConfig::Instance().DataBudgetBytes());
+    gui::SetEveryWindowMayLeave(cyxwiz::core::EngineConfig::Instance().EveryWindowMayLeave());
 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
@@ -778,6 +780,11 @@ void CyxWizApp::Render() {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+    // The keyboard cursor (the outline Alt, Tab or an arrow key turns on) hides
+    // on any mouse click: ImGui hides it on a left click only, so a menu opened
+    // by right-click after Alt showed its first item outlined.
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
+        ImGui::SetNavCursorVisible(false);
     // Every chart draws in the Engine's ImPlot context. A panel that swapped
     // it (the Data Studio Visualizer once made its own and left it current)
     // is put right here, once per frame, and named in the log once.

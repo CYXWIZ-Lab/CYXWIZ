@@ -123,7 +123,7 @@ read with the reason:
 ### *the code of Python node bundle ... is not approved yet; approve it in the Plugin Manager to run it*
 
 A bundle runs only after you approve its code. Use **Approve code...** on
-its card (Plugin Manager, Node Browser, or Properties of one of its nodes).
+its card (Plugin Manager, Nodes panel, or Properties of one of its nodes).
 An approval belongs to the bundle's id and the hash of its code: editing
 and bundling again asks again.
 

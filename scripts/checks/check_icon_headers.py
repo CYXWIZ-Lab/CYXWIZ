@@ -29,6 +29,7 @@ HEADERS = [  # header, font, macro prefix
     ('cyxwiz-engine/src/gui/IconsPhosphor.h', 'phosphor.ttf', 'ICON_PH_'),
 ]
 FONTS = 'cyxwiz-engine/resources/fonts'
+RAW_ICON_FOLDERS = ['cyxwiz-engine/src', 'plugins', 'cyxwiz-server-node/src']
 DEFINE = re.compile(r'#define\s+(ICON_[A-Z]+_\w+)\s+"([^"]*)"\s*(.*)')
 COMMENT = re.compile(r'//\s*U\+([0-9A-Fa-f]{4,6})\s+([a-z0-9][a-z0-9-]*)')
 
@@ -92,6 +93,22 @@ def main():
                 failures.append(where + ': %s has a glyph named %s, the macro draws %s' % (font, own, actual))
             if prefix == 'ICON_FA_' and cp >= 0x80 and not 0xE000 <= cp <= 0xF8FF:
                 failures.append(where + ': U+%04X is outside U+E000-U+F8FF, the range merged into the fonts' % cp)
+
+    # Icons are named through the headers above, never typed as bytes elsewhere:
+    # a typed byte string is checked by nothing (the Nodes panel's example
+    # categories drew five wrong icons that way).
+    headers = {str((root / h).resolve()) for h, _, _ in HEADERS}
+    raw_icon = re.compile(r'"(?:\\x(?:e[e-f]|ef)\\x[0-9a-fA-F]{2}\\x[0-9a-fA-F]{2})+"')
+    for folder in RAW_ICON_FOLDERS:
+        for path in sorted((root / folder).rglob('*')):
+            if path.suffix not in ('.cpp', '.h', '.hpp') or str(path.resolve()) in headers:
+                continue
+            if path.name.startswith('Icons') or path.name == 'icons.h':
+                continue  # icon headers: generated ones (IconsFontAwesome6.h), the server node's own
+            for number, line in enumerate(path.read_text(encoding='utf-8', errors='replace').splitlines(), 1):
+                if raw_icon.search(line):
+                    failures.append('%s:%d: an icon typed as bytes; use a macro from the icon headers'
+                                    % (path.relative_to(root).as_posix(), number))
 
     for f in failures:
         print(f)

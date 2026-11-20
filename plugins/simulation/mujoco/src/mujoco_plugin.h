@@ -27,6 +27,7 @@
 #include "mj_env_browser_panel.h"
 #include "env/mj_view_slot.h"
 #include "env/mj_history.h"
+#include "env/mj_model_ref.h"
 #include "rl/observation_filter.h"
 
 #include <optional>
@@ -161,6 +162,14 @@ private:
     std::shared_ptr<MjViewSlot> view_slot_ = std::make_shared<MjViewSlot>();
     uint64_t shown_version_ = 0;
     uint64_t ghost_version_ = 0;  // the ghost's state last taken from the view slot
+    // MuJoCo Plant models (TOFIX219): the roots they are found under now, the
+    // name a reference is shown by, and the references a graph names that this
+    // PC lacks (the Environment Library offers them)
+    MjModelRoots ModelRoots();
+    std::string ModelTitle(const MjModelRef& ref, const MjResolvedModel& resolved) const;
+    void NoteNeeded(const MjModelRef& ref, bool missing);
+    std::vector<MjModelRef> needed_refs_;
+    std::filesystem::path needed_project_;  // the project needed_refs_ belong to
     bool playback_ = false;
     // What the viewport showed before playback, given back when it ends
     std::string restore_path_;

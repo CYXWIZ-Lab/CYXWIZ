@@ -40,6 +40,10 @@ std::string TypeLabel(const std::string& path, bool is_directory);
 bool PeeksAsTable(const std::string& path);
 // Kinds whose first lines the preview shows as text.
 bool PeeksAsText(FileKind kind);
+// Files the Script Editor opens: Python, a notebook, text, config, and a
+// CSV / TSV as its text. The Asset Browser's double-click, Open and
+// "Open as text" use this one rule.
+bool OpensInScriptEditor(const std::string& path);
 
 struct FilePeek {
     bool ok = false;

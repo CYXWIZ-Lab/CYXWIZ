@@ -486,7 +486,7 @@ against the manifest before Python is needed, with the same messages as
 **In the Engine's windows** a Python node shows as one: Properties reads
 *Python node · com.example.acts 1.0.0 · Activation* and shows the check
 from bundling next to its own **Check gradient**; Info lists the bundle,
-its approval and code hash; the Node Browser counts *nodes from 2 plugins
+its approval and code hash; the Nodes panel counts *nodes from 2 plugins
 and 1 Python bundle*; **Apps > Python node bundles** opens a bundle's
 nodes.
 

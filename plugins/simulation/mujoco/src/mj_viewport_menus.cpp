@@ -472,6 +472,26 @@ void RenderViewportPreferences(PluginContext& ctx) {
         if (ImGui::Checkbox("Hold the typed actuator controls while the run steps", &d.inspect.hold_controls))
             changed = true;
 
+        // Downloaded MuJoCo Menagerie models: shared by every project, or copied
+        // into the project when loaded
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Downloaded models");
+        ImGui::TableNextColumn();
+        {
+            static const char* kModelPlaces[] = {"Keep in the shared folder", "Copy into the project when used"};
+            int place = d.copy_models_into_project ? 1 : 0;
+            if (ui->SegmentedControl("##model_place", kModelPlaces, 2, &place)) {
+                d.copy_models_into_project = place == 1;
+                changed = true;
+            }
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(ToImVec4(ui->Colors().text_dim),
+                               "Shared: one copy for every project; the project names the version. Copy: each "
+                               "project carries its models (bigger; works offline and as one folder).");
+            ImGui::PopTextWrapPos();
+        }
+
         // The plots under the scene
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();

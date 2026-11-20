@@ -21,6 +21,165 @@ private Data Studio tickets (`tofix*/track*`).
 - **An RNN layer reads its nonlinearity in any case.** "Tanh" passed the
   compile check but stopped the model build with "RNNLayer nonlinearity must
   be tanh or relu"; it now means tanh.
+- **The RL Training Dashboard says what happened, on the Training
+  Dashboard's parts.** The pill reads Training, Paused, Waiting for the GPU,
+  Reached its target, Ran all its steps, Stopped or Failed (a run that
+  stopped at its target read a grey "Finished", with the bar stuck part way);
+  a sentence says how the run ended, a line says where it runs, and Run
+  details holds the route and how the networks compute. New cards: Mean
+  return (change over 10 updates, best, target, the SB3 reference at this
+  step), Episode length, Time (the updates' own time, speed, at most what is
+  left) and Updates (losses, KL, clip fraction). The charts scroll with the
+  wheel (Ctrl + wheel zooms), sit side by side in a wide window, the return
+  chart draws the target as a dashed line, and its "all N values" counts the
+  run's own updates (it counted the reference too). More > **Export updates
+  (CSV)...** writes every update's figures; **Clear all...** asks first and
+  replaces Reset metrics, which cleared at once and took Play / Save policy
+  with it. **Train > RL Training Dashboard** opens it at any time.
+- **Any window can have a window of its own.** File > Preferences >
+  General > Windows: with **Any window can have a window of its own** on,
+  every panel (Properties, Nodes, Info, the tool panels, ...) can leave the
+  main window as the big windows do: drag its tab out, or right-click its tab:
+  **Move to its own window** / **Dock back into the main window**. Off by
+  default; the sidebar, status bar, menus and canvas overlays always stay.
+- **Dock back showed nothing** when the window had been alone in its place
+  (its place left with it): it docked into the dock space's root and was not
+  drawn. It comes back as a tab in the middle of the main window.
+- **The Training Dashboard uses the Engine's own buttons, chips and cards.**
+  Its cards, pills, toggles, progress bars and run tabs were copies with
+  their own sizes and colours; they are the shared ones now (the figure
+  card and the run tab joined them), so the dashboard follows the theme
+  like the rest of the Engine. In a narrow dashboard the Charts row wraps,
+  so View is no longer pushed past the edge by "smoothed (5)".
+- **The Training Dashboard scrolls with the mouse wheel over its charts.**
+  A wheel over a chart zoomed it, so a narrow dashboard could not be
+  scrolled past its charts; the wheel now scrolls and Ctrl + wheel zooms (a
+  chart in its own window still zooms with the wheel). The Epoch window and
+  Smooth window are typed numbers with - and + instead of sliders, in the
+  View menu and the chart windows.
+- **The Training Dashboard's Accuracy chart shows every epoch.** Its epoch
+  axis was set once from the first points drawn, so it stayed at 0..2 for
+  the rest of a run; it now covers the planned epochs, as the Loss chart.
+  A plot whose range is set once (the user may pan) takes a new range again
+  when it changes, for example a new run with more epochs.
+- **The Training Dashboard's Runs table shows the key columns.** Run (when
+  it ended and the dataset), Result, best validation loss and accuracy, test
+  accuracy, epochs ("7 of 10" when it ended early), time and the device it
+  ran on (new); **All columns** shows the other 20. It keeps its own height
+  (rows scroll inside), has no outlines, and the Run column stays while it
+  scrolls sideways. **Export** saves the metrics or the runs as CSV;
+  **Clear runs...** asks first. The runs CSV gains the finish time, epochs
+  run and device columns.
+- **The Training Dashboard's exports ask where to save and say where they
+  saved.** More > Export metrics wrote `training_metrics.csv` into the
+  Engine's working folder without a word; it now asks, like Export runs, and
+  the dashboard says where each file went. **Clear all...** asks first and
+  says that the Runs table and the trained model stay. The save dialog no
+  longer holds up a running training while it is open.
+- **The Training Dashboard's header says where the run ran and how it
+  ended.** "Ran on the CPU (ArrayFire CPU) · compatibility policy"; the
+  dataset with its training, validation and test rows and the batch size;
+  "Finished: every epoch ran." (or why it stopped); the active model with its
+  validation figures; and the held-out test ("accuracy 94.15%, loss 0.2220
+  (188 rows the model never saw)"). The stop code, checkpoint step and path,
+  Execution Truth's rows, the data preparation's file, cache key and memory
+  figures and the engine tasks moved under **Run details** (nothing was
+  dropped). The run's buttons wrap in a narrow dashboard instead of being cut
+  off, and read Pause / Resume, Stop and More. Long paths wrap.
+- **The Training Dashboard's cards show the finished epoch.** They showed the
+  last batch window (0.2322 while epoch 10 ended at 0.2223), and the
+  validation card's gap was measured against it. While an epoch runs, the
+  latest batches are a second figure. "How the run is going" says what the
+  curves did in plain words; a short run's time keeps a tenth of a second.
+- **The Nodes panel, redone.** The node groups fold, with their counts,
+  and the panel remembers which are open (no more three rows and a "Show
+  all" page). A grid or list switch (the list is one row per node; File >
+  Preferences > Nodes panel sets the view a session starts in). The filter
+  in plain words: All, Trains a model, Data steps, Views and panels, Can't
+  run yet, Favourites, with the number of nodes listed. Studio Tools in one
+  row (Group is off until nodes are selected); Favourites (in the order you
+  starred them) and Recent as chips; Plugins, Advanced operations, Can't run
+  yet and Examples fold at the end. A node's tooltip says what it does, its
+  pins and what each carries, and where it runs ("Runs in training") instead
+  of the support table that showed red "Fail closed" on a loss that trains.
+  The search has a clear button; **/** and **Esc** work while the panel has
+  focus. The panel is called Nodes in View > Panels too.
+- **The Nodes panel's training filter listed no loss or optimizer.** Its
+  rule wanted a fact those nodes do not carry; *Trains a model* lists them.
+- **The five starter examples train right after they open.** Binary and
+  multiclass image, text, audio and time-series starters (start page, and
+  **Open an example graph** on an empty canvas) each read a small sample now
+  in `examples/datasets` (60 photos of cats and dogs, 1,797 8x8 handwritten
+  digits, 3,000 review sentences, 400 spoken digits, the airline passengers
+  series): press Train, offline. A starter saved with Save As keeps its data.
+  (A source checkout: release packages do not ship the examples yet.)
+  Before, four had no data and the text one pointed at a file on one PC. The text starter is now a
+  positive / negative review classifier; the audio starter classifies spoken
+  digits and has a BatchNorm after Flatten (without it, it barely learned).
+- **Opening an example graph from the empty canvas crashed the Engine.** It
+  opens now (it was loaded while the canvas drew, and the minimap read nodes
+  the canvas had not placed yet).
+- **A windowed time series compiles.** A Data Input with only a date and the
+  value column, feeding a Time Series Window, was refused ("no numeric
+  feature columns"); the window builds the features from the value itself.
+- **Starring a node in the Nodes panel** no longer gives its two cards
+  (Favourites and its group) the same ID.
+- **Fields follow the theme.** Text fields, search boxes and drop-downs in a
+  dark theme were near black (the window mixed 28 % toward black), a colour
+  no theme has. They are now a step lighter than the window, in the theme's
+  own tone and quieter than a button; light themes keep their near-white
+  fields. The theme picker's swatches show the field colour you get.
+
+- **A data file opens in the Table Viewer.** Double-click a CSV (or TSV,
+  Parquet, JSON Lines, Feather, ...) in the Asset Browser to look at its
+  first rows in the Table Viewer, read in a task; nothing is loaded into
+  the graph. A file a Data Input loaded opens as that dataset. Before, a
+  double-click added a Data Input node; that is now **Create Data Input**
+  in the file's menu and preview. The menu's **Open** for data files is
+  **Open as text**.
+- **The Nodes panel fits its column.** Cards take as many columns as the
+  panel holds and names use two lines ("Depthwise Conv2D", "Instance
+  Norm") instead of being cut after ten letters; a narrow panel no longer
+  cuts a third column at its edge. The "Real" chip over every icon is
+  gone: a small dot marks only the nodes that run in part or are blocked.
+  The panel's search lists nodes named by the words first, and nodes that
+  only mention them under **Related**.
+- **New nodes and notes go to a free spot.** A node added from the Nodes
+  panel or the canvas search, a Data Input from the Asset Browser and a new
+  note no longer land on top of the nodes at the centre of the view; the
+  view moves to show them when they are outside it (the right-click menu
+  still adds where you clicked). The minimap fades while a node is under
+  it.
+- **Notes can be edited, deleted and undone.** Right-click a note for
+  Edit, Minimise and Delete; the Delete key removes a selected note; the
+  note dialog has a title, text, a colour and Save / Cancel / Delete
+  (its buttons fell below the window, so a note could not be deleted);
+  adding, moving, minimising, editing and deleting a note are each one
+  Undo step.
+- **The Console shows a terminal's output.** In the default layout the
+  Console is taller (the Viewport is a tab beside it instead of a strip
+  below), the Python REPL's empty input is two lines, and the REPL and
+  Commands inputs have no outline.
+- **The Info panel follows Undo.** It kept showing a node that Undo or
+  Delete had removed from the canvas.
+- **The Theme Editor shows every colour the Engine draws, and every row
+  changes the screen.** Engine colours: the accent, the 24 node families,
+  the data types (pins, links, plot series) and the status words, with a
+  warning when one is hard to read on the window. Surfaces: window, text,
+  fields, buttons, bars, tabs, tables. Canvas: the grid (the old Node Editor
+  tab had 19 rows of which 14 changed nothing). Colours are typed: a hex
+  field and R, G, B with - / + steps (no drag fields); the Shape tab uses
+  typed numbers instead of sliders.
+- **Colours follow the chosen theme.** Train, OK, Publish and every
+  primary button, selection, check marks, links, the selected tab's line
+  and the canvas box selector use the theme's one accent: purple in
+  CyxWiz Dark and Cream, blue in CyxWiz Light, orange in Unreal Engine,
+  each preset its own (before,
+  the purple was fixed on every theme while Unreal marked choices in
+  orange). Text on the accent picks black or white to stay readable.
+  Secondary buttons (Save, Edit, Cancel ...) are the theme's Button fill,
+  a step off the window, in every theme. A saved custom theme keeps the
+  accent, the node colours, the data-type colours and the status colours.
 - **Safetensors import reads each tensor's type.** Importing a
   `.safetensors` model took every tensor for float32. Float16 and float64
   tensors are now converted, integer tensors are skipped with a warning, and a
@@ -361,6 +520,10 @@ private Data Studio tickets (`tofix*/track*`).
   weights file**. **num_classes** sets the head (other than 1000, it starts
   fresh) and **freeze_backbone** trains only the head. See
   [Patterns](usage/patterns.md#starting-from-torchvisions-weights).
+- **CyxWiz Cream theme.** A warm light theme beside CyxWiz Light: a cream
+  window, ivory fields and menus, warm brown text, the CyxWiz purple accent
+  (View > Theme or Preferences > Appearance; the Theme Editor changes any
+  of it).
 - **Squeeze-Excitation node.** Scales each channel of a feature map by a
   learned gate (mean over the map, Dense - ReLU - Dense - Sigmoid), as
   torchvision's SqueezeExcitation. Settings: the hidden width (channels /
@@ -591,6 +754,9 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Fixed
 
+- The node icon pack you choose is kept: View > Node Icon Pack and the new
+  Node icons row of Preferences > Appearance set it, the next launch starts
+  with it, and Reset appearance goes back to Font Awesome.
 - The node icon packs (View > Node Icon Pack: Tabler, Remix, Lucide, Iconoir,
   Phosphor) drew the right icons only by chance: most nodes showed "?",
   nothing, or a Font Awesome icon. Each pack now draws the icons it names,

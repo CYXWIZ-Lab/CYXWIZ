@@ -1,5 +1,6 @@
-// Preferences > Nodes panel (TOFIX178 T4, approved Nodes mockup): whether the
-// Nodes panel shows Recent, how many, and Clear Recent. Engine-wide, applied
+// Preferences > Nodes panel (TOFIX178 T4, approved Nodes mockup; TOFIX129 NP-2):
+// the view a session starts in (grid or list), whether the Nodes panel shows
+// Recent, how many, and Clear Recent. Engine-wide, applied
 // and saved at once; the favourites and recent nodes themselves are kept by
 // the Nodes panel (EngineConfig nodes_panel).
 
@@ -20,13 +21,26 @@ void ToolbarPanel::RenderNodesPanelPreferences() {
     core::NodesPanelConfig settings = saved;
 
     ImGui::Spacing();
+    ImGui::Text("View");
+    ImGui::Separator();
+    ImGui::Spacing();
+    const char* views[] = {"Grid", "List"};
+    int view = settings.list_view ? 1 : 0;
+    if (ui::SegmentedControl("##nodes_view", views, 2, &view)) settings.list_view = view == 1;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("How the Nodes panel starts: cards with their icons, or one row per node (denser in a narrow "
+                        "panel). The panel's grid / list switch changes it for the session.");
+    ImGui::PopTextWrapPos();
+
+    ImGui::Spacing();
+    ImGui::Spacing();
     ImGui::Text("Recent");
     ImGui::Separator();
     ImGui::Spacing();
 
     ImGui::Checkbox("Show Recent", &settings.show_recent);
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("The last nodes you added, newest first, above Studio Tools.");
+    ImGui::TextDisabled("The last nodes you added, newest first, as chips at the top of the Nodes panel.");
     ImGui::PopTextWrapPos();
 
     ImGui::Spacing();

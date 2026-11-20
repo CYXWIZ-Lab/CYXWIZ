@@ -1,7 +1,7 @@
 {
   "id": "mnist_mlp",
-  "name": "MNIST MLP Classifier",
-  "description": "End-to-end MLP for a tabular MNIST CSV (785 columns: pixel1..pixel784, class). Loads CSV, normalizes pixel values by /255, splits 80/10/10, batches with shuffle, trains a 3-layer MLP with Adam. Double-click Data Input, point it at your mnist_784.csv, click Apply, then Compile (F7) and Train (F5).",
+  "name": "Handwritten Digits MLP Classifier",
+  "description": "A 3-layer MLP for handwritten digits, ten classes: normalizes the pixels, splits 80/10/10 (stratified), batches with shuffle and trains with Adam. The sample is examples/datasets/digits_8x8.csv: 1,797 digits of 8x8 grey levels 0..16 (64 pixel columns and class): press Train. For the full 28x28 MNIST (mnist_784.csv, 785 columns) point Data Input at it and set Normalize std to 255.",
   "category": "Training Pipeline",
   "tags": ["mnist", "digits", "classification", "training", "mlp", "csv"],
   "parameters": [
@@ -38,10 +38,12 @@
         "name": "Data Input",
         "pos": [0, 260],
         "params": {
+          "source_type": "file",
+          "file_path": "examples/datasets/digits_8x8.csv",
           "file_type": "csv",
           "has_header": "true",
           "label_column": "class",
-          "dataset_name": "mnist_784"
+          "dataset_name": "digits_8x8"
         }
       },
       {
@@ -77,7 +79,7 @@
         "pos": [780, 260],
         "params": {
           "mean": "0.0",
-          "std": "255.0"
+          "std": "16.0"
         }
       },
       {

@@ -8,6 +8,7 @@
 #include "toolbar.h"
 
 #include "../appearance_settings.h"
+#include "../../core/appearance_options.h"
 #include "../dock_style.h"
 #include "../icons.h"
 #include "../theme.h"
@@ -73,6 +74,7 @@ const char* ToolbarPanel::IconForAction(const std::string& id) {
         {"train.compile", ICON_FA_WRENCH}, {"train.local_debug", ICON_FA_BUG}, {"train.start", ICON_FA_PLAY},
         {"train.pause", ICON_FA_PAUSE}, {"train.resume", ICON_FA_PLAY}, {"train.stop", ICON_FA_STOP},
         {"train.test", ICON_FA_FLASK}, {"train.evaluate", ICON_FA_ROTATE}, {"train.dashboard", ICON_FA_CHART_LINE},
+        {"train.rl_dashboard", ICON_FA_CHART_AREA},
         {"train.optimizer_settings", ICON_FA_SLIDERS}, {"train.hyperparam_search", ICON_FA_MAGNIFYING_GLASS_CHART},
         {"data.import", ICON_FA_FILE_IMPORT}, {"data.create_custom", ICON_FA_FOLDER_PLUS},
         {"data.statistics", ICON_FA_CHART_SIMPLE}, {"data.explore", ICON_FA_MAGNIFYING_GLASS_CHART},
@@ -251,10 +253,10 @@ menu::MenuInputs ToolbarPanel::BuildMenuInputs() const {
         }
     }
     {
-        const int current = get_icon_pack_callback_ ? get_icon_pack_callback_() : 0;
-        const char* packs[] = {"FontAwesome (Default)", "Tabler Icons", "Remix Icon",
-                               "Lucide Icons", "Iconoir", "Phosphor Icons"};
-        for (int i = 0; i < 6; ++i) in.icon_packs.push_back({std::to_string(i), packs[i], current == i, ""});
+        const int current = gui::NodeIconPack();
+        const auto& packs = cyxwiz::appearance::kNodeIconPacks;
+        for (int i = 0; i < static_cast<int>(packs.size()); ++i)
+            in.icon_packs.push_back({std::to_string(i), packs[static_cast<size_t>(i)], current == i, ""});
     }
     {
         auto& tutorials = TutorialSystem::Instance();
@@ -616,8 +618,10 @@ void ToolbarPanel::BuildActionHandlers() {
         if (app_theme_changed_callback_) app_theme_changed_callback_(static_cast<int>(preset));
     };
     call("view.theme_editor", open_theme_editor_callback_);
-    h["view.icon_pack"] = [this](const std::string& pack) {
-        if (set_icon_pack_callback_) set_icon_pack_callback_(std::stoi(pack));
+    h["view.icon_pack"] = [](const std::string& pack) {
+        gui::SetNodeIconPack(std::stoi(pack));
+        spdlog::info("Node icon pack: {}",
+                     cyxwiz::appearance::kNodeIconPacks[static_cast<size_t>(gui::NodeIconPack())]);
     };
     h["view.studio_minimap"] = [this](const std::string&) {
         if (node_editor_minimap_ptr_) *node_editor_minimap_ptr_ = !*node_editor_minimap_ptr_;
@@ -665,6 +669,7 @@ void ToolbarPanel::BuildActionHandlers() {
     call("train.export_test_report", export_test_report_callback_);
     call("train.load_checkpoint", load_checkpoint_callback_);
     call("train.dashboard", training_settings_callback_);
+    call("train.rl_dashboard", rl_dashboard_callback_);
     call("train.optimizer_settings", optimizer_settings_callback_);
     call("train.hyperparam_search", open_hyperparam_search_callback_);
     call("tools.nas", open_nas_callback_);

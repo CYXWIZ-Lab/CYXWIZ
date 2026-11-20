@@ -113,18 +113,15 @@ std::vector<std::string> ModelKeyframes(const mjModel* m) {
     return names;
 }
 
-std::filesystem::path KeyframesFile(const std::filesystem::path& project, const std::string& model_path) {
-    // The model file within the project (it moves with it), else its full path;
-    // FNV-1a, the same on every machine
-    const std::filesystem::path model = std::filesystem::path(model_path).lexically_normal();
-    const std::filesystem::path inside = model.lexically_relative(project.lexically_normal());
-    const bool in_project = !inside.empty() && *inside.begin() != "..";
-    const std::string key = (in_project ? inside : model).generic_string();
+std::filesystem::path KeyframesFile(const std::filesystem::path& project, const MjModelRef& model) {
+    // The reference names the model on every machine; FNV-1a of it, the same everywhere
+    const std::string key = FormatModelRef(model);
     uint32_t hash = 2166136261u;
     for (const unsigned char c : key) hash = (hash ^ c) * 16777619u;
     char suffix[16];
     std::snprintf(suffix, sizeof(suffix), "-%08x", hash);
-    return project / "mujoco" / "keyframes" / (model.stem().string() + suffix + ".json");
+    const std::string file = model.kind == MjRefKind::Path ? model.path : model.file;
+    return project / "mujoco" / "keyframes" / (std::filesystem::path(file).stem().string() + suffix + ".json");
 }
 
 std::string EncodeKeyframes(const std::vector<MjKeyframe>& keyframes, const std::string& model_path) {

@@ -271,6 +271,12 @@ void NodeEditor::ClearGraph() {
     next_group_id_ = 1;
     annotations_.clear();
     next_annotation_id_ = 1;
+    // Note state names notes of the graph that is gone (ids restart at 1).
+    selected_annotation_id_ = -1;
+    dragging_annotation_id_ = -1;
+    editing_annotation_ = false;
+    note_press_snapshot_.reset();
+    note_menu_id_ = -1;
 
     // Clear pin lookup
     pin_lookup_.clear();

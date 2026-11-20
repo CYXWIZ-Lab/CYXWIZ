@@ -238,7 +238,7 @@ a setting can be missing or empty.
 |---|---|
 | `type_name` | Unique in the plugin; letters, digits, `_`. Saved in graphs as `<plugin id>:<type_name>` |
 | `display_name` | Shown on the node (empty: `type_name`) |
-| `category` | Your group in the add-node menu and the Node Browser (`"Activations"`) |
+| `category` | Your group in the add-node menu and the Nodes panel (`"Activations"`) |
 | `description` | One line, shown in tooltips and Properties |
 | `version` | The version of this node's pins and settings, saved with each node |
 | `color` | Header colour, `IM_COL32` layout (`0xAABBGGRR`); a colour with alpha 0 (such as `0`) uses the theme's plugin colour |

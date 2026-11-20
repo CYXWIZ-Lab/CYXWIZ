@@ -30,24 +30,15 @@ std::string BackendWord(const std::string& backend) {
     return backend;
 }
 
-Chip DeviceChip(const RunDevice& d) {
-    Chip chip;
-    if (!d.valid) return chip;
-    const std::string word = BackendWord(d.effective_backend);
+std::string DeviceRoute(const RunDevice& d) {
+    if (!d.valid) return {};
     const std::string route =
         d.effective_backend + " device " + std::to_string(d.effective_device_id) +
         (d.device_name.empty() ? "" : " \xC2\xB7 " + d.device_name) + " \xC2\xB7 policy " + PolicyWord(d.policy);
-    if (d.fallback) {
-        chip.fallback = true;
-        chip.text = word + " \xC2\xB7 fallback";
-        chip.tooltip = "The chosen " + BackendWord(d.requested_backend) + " device " +
-                       std::to_string(d.requested_device_id) + " failed its check" +
-                       (d.error.empty() ? "" : " (" + d.error + ")") + "; " + route + ".";
-        return chip;
-    }
-    chip.text = d.device_name.empty() ? word : word + " \xC2\xB7 " + d.device_name;
-    chip.tooltip = route;
-    return chip;
+    if (d.fallback)
+        return "The chosen " + BackendWord(d.requested_backend) + " device " + std::to_string(d.requested_device_id) +
+               " failed its check" + (d.error.empty() ? "" : " (" + d.error + ")") + "; " + route + ".";
+    return route;
 }
 
 std::string ToolbarSuffix(const RunDevice& d) {

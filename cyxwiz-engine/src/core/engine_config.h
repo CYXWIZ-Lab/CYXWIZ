@@ -28,6 +28,7 @@ struct AppearanceConfig {
     float code_font_scale = 1.3f;  // code text: 1.0/1.3/1.6/2.0 = 14/16/20/24 px
     bool sidebar_left = false;     // tool sidebar on the left
     std::string custom_theme_file; // saved Theme Editor theme applied over the preset
+    int node_icon_pack = 0;        // the canvas's node icons: gui::IconPack index (0 = Font Awesome)
 
     bool operator==(const AppearanceConfig&) const = default;
 };
@@ -39,6 +40,12 @@ struct NodesPanelConfig {
     std::vector<int> recent;  // newest first
     bool show_recent = true;
     int recent_count = 8;     // 1..kNodesPanelMaxRecent
+    // The groups open in the panel (their names), kept as you fold them; a
+    // first run opens these two.
+    std::vector<std::string> open_groups = {"I/O", "Training"};
+    // Preferences > Nodes panel: the view a session starts in (the panel's
+    // grid / list switch changes it for the session).
+    bool list_view = false;
 
     bool operator==(const NodesPanelConfig&) const = default;
 };
@@ -317,6 +324,12 @@ public:
     // default; Preferences > General turns it off (Info and above only).
     bool RecordDebugLogs() const;
     void SetRecordDebugLogs(bool record);
+    // Every window may have a window of its own on the desktop (owner
+    // 2026-11-18, TOFIX129 A8b). Off: only the big windows (Training
+    // Dashboard, Data Studio, Script Editor, Console, ...) may leave the main
+    // window. Preferences > General.
+    bool EveryWindowMayLeave() const;
+    void SetEveryWindowMayLeave(bool every);
 
     // ===== Data =====
 
@@ -448,6 +461,7 @@ private:
 
     std::vector<RuntimeLogSavedFilterConfig> runtime_log_saved_filters_;
     bool record_debug_logs_ = true;
+    bool every_window_may_leave_ = false;
     uint64_t data_budget_bytes_ = 0;
     int simulation_rate_hz_ = kDefaultSimulationRateHz;
     bool policy_playback_best_ = true;

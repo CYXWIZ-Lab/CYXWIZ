@@ -42,11 +42,13 @@ int main() {
     expected.recent = {static_cast<int>(NodeType::Conv2D), static_cast<int>(NodeType::Dense)};
     expected.show_recent = false;
     expected.recent_count = 5;
+    expected.open_groups = {"Examples", "ML Layers"};
+    expected.list_view = true;
     config.SetNodesPanel(expected);
     Check(config.Save(path), "the settings save");
     config.SetNodesPanel({});
     Check(config.Load(path), "the settings load");
-    Check(config.GetNodesPanel() == expected, "favourites, recent, show and count survive a save and load");
+    Check(config.GetNodesPanel() == expected, "favourites, recent, show, count, open groups and view survive a save and load");
 
     NodesPanelConfig too_many = expected;
     too_many.recent_count = 500;
@@ -80,6 +82,19 @@ int main() {
     registry.ToggleFavorite(NodeType::ReLU);
     registry.SetUserNodes(registry.FavoriteTypes(), {});
     Check(registry.RecentTypes().empty() && registry.FavoriteTypes().size() == 1, "Clear Recent keeps the favourites");
+
+    // Favourites keep the order they were starred in (they were sorted by
+    // node type), through a save and load too.
+    registry.SetUserNodes({}, {});
+    registry.ToggleFavorite(NodeType::ReLU);
+    registry.ToggleFavorite(NodeType::Dense);
+    Check(registry.FavoriteTypes() == std::vector<NodeType>{NodeType::ReLU, NodeType::Dense},
+          "favourites in the order starred");
+    Check(registry.GetFavorites().size() == 2 && registry.GetFavorites()[0]->type == NodeType::ReLU,
+          "the panel reads them in that order");
+    registry.SetUserNodes({NodeType::Dense, NodeType::ReLU, NodeType::Dense}, {});
+    Check(registry.FavoriteTypes() == std::vector<NodeType>{NodeType::Dense, NodeType::ReLU},
+          "a loaded order is kept, repeats dropped");
 
     if (g_failures) {
         std::printf("%d Nodes panel checks failed\n", g_failures);

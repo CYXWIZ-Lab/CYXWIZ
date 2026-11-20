@@ -448,6 +448,8 @@ void PlotView::Draw(ImVec2 size, const Options& o) {
     colour_offset_ = o.colour_offset;
     x_range_ = o.x_range;
     y_range_ = o.y_range;
+    zoom_with_ctrl_ = o.zoom_with_ctrl;
+    y_lines_ = o.y_lines;
     ImGui::PushID(id_.c_str());
     if (o.toolbar) DrawToolbar(o);
     if (o.show_title && has_data_) {
@@ -673,6 +675,10 @@ void PlotView::DrawPlot(ImVec2 size) {
 
     // No mouse-position text: the hover card shows the values.
     ImPlotFlags flags = ImPlotFlags_NoTitle | ImPlotFlags_NoMenus | ImPlotFlags_NoMouseText;
+    // In a scrolling screen the plot draws in that window, not in a child of
+    // its own: ImGui then scrolls the window with the wheel (a plot's child
+    // took the wheel and locked onto it), and Ctrl + wheel zooms the plot.
+    if (zoom_with_ctrl_) flags |= ImPlotFlags_NoChild;
     if (!legend_) flags |= ImPlotFlags_NoLegend;
     if (kind == Kind::Pie) flags |= ImPlotFlags_Equal | ImPlotFlags_NoMouseText;
     if (kind == Kind::MapPoints || kind == Kind::MapRegions) flags |= ImPlotFlags_Equal;
@@ -683,6 +689,20 @@ void PlotView::DrawPlot(ImVec2 size) {
     if (fit_ && !x_range_.on && !y_range_.on && kind != Kind::Pie && kind != Kind::Polar && kind != Kind::Box && kind != Kind::Violin &&
         kind != Kind::Parallel && !IsGridKind(kind) && !IsUnitKind(kind) && !IsPixelKind(kind) && kind != Kind::MapPoints)
         ImPlot::SetNextAxesToFit();
+
+    // Ctrl + wheel zooms when the screen scrolls with the wheel. ImPlot
+    // ignores all input while its override key is held (Ctrl by default), so
+    // that moves to a key ImPlot does not use otherwise (Alt is its x-only
+    // box zoom).
+    struct InputMapScope {
+        ImPlotInputMap saved = ImPlot::GetInputMap();
+        explicit InputMapScope(bool ctrl_zoom) {
+            if (!ctrl_zoom) return;
+            ImPlot::GetInputMap().ZoomMod = ImGuiMod_Ctrl;
+            ImPlot::GetInputMap().OverrideMod = ImGuiMod_Super;
+        }
+        ~InputMapScope() { ImPlot::GetInputMap() = saved; }
+    } input_map(zoom_with_ctrl_);
 
     const std::string plot_id = "##plot";
     if (!ImPlot::BeginPlot(plot_id.c_str(), plot_size, flags)) return;
@@ -725,8 +745,20 @@ void PlotView::DrawPlot(ImVec2 size) {
     // Curves that rise to the top right keep their legend out of the way.
     ImPlot::SetupLegend(kind == Kind::Roc || kind == Kind::Calibration || kind == Kind::Importance ? ImPlotLocation_SouthEast
                                                                                                   : ImPlotLocation_NorthEast);
-    if (x_range_.on) ImPlot::SetupAxisLimits(ImAxis_X1, x_range_.lo, x_range_.hi, x_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
-    if (y_range_.on) ImPlot::SetupAxisLimits(ImAxis_Y1, y_range_.lo, y_range_.hi, y_range_.once ? ImPlotCond_Once : ImPlotCond_Always);
+    // A once-range applies when it changes: ImPlotCond_Once kept the first
+    // frame's range for the plot's life (the Training Dashboard's Accuracy
+    // chart stayed at 0..2 epochs, the range while epoch 1 ran).
+    const auto apply = [](ImAxis axis, const Options::Range& r, double& lo, double& hi) {
+        if (!r.on) return;
+        if (r.once && r.lo == lo && r.hi == hi) return;
+        ImPlot::SetupAxisLimits(axis, r.lo, r.hi, ImPlotCond_Always);
+        if (r.once) {
+            lo = r.lo;
+            hi = r.hi;
+        }
+    };
+    apply(ImAxis_X1, x_range_, once_x_lo_, once_x_hi_);
+    apply(ImAxis_Y1, y_range_, once_y_lo_, once_y_hi_);
     // Log Y over counts: fit to the positive counts (the bars' base of 0
     // would pull a log axis down to 1e-300 and fill the plot).
     if (log_y_ && fit_ && !y_range_.on && (kind == Kind::Histogram || kind == Kind::Bar)) {
@@ -1491,6 +1523,34 @@ void PlotView::DrawPlot(ImVec2 size) {
             ImPlot::SetNextLineStyle(ui::WithAlpha(t.text_dim, 0.8f), 1.2f);
             ImPlot::PlotLine("y = x", xs, ys, 2);
         }
+    }
+
+    // Reference lines across the plot (a target): an invisible point puts the
+    // value into the fit, then dashes and the label over the data.
+    if (!y_lines_.empty() && (kind == Kind::Line || kind == Kind::Scatter) && !p.series.empty() &&
+        !p.series.front().x.empty()) {
+        const ImPlotRect limits = ImPlot::GetPlotLimits();
+        ImDrawList* dl = ImPlot::GetPlotDrawList();
+        const ImU32 colour = ui::ToU32(ui::WithAlpha(t.text_dim, 0.9f));
+        ImPlot::PushPlotClipRect();
+        for (const auto& line : y_lines_) {
+            if (!std::isfinite(line.value) || (log_y_ && line.value <= 0.0)) continue;
+            const double fx = p.series.front().x.front(), fy = line.value;
+            ImPlot::SetNextMarkerStyle(ImPlotMarker_Circle, 0.0f, ImVec4(0, 0, 0, 0), 0.0f, ImVec4(0, 0, 0, 0));
+            ImPlot::PlotScatter(("##yline_" + line.label).c_str(), &fx, &fy, 1, ImPlotItemFlags_NoLegend);
+            const ImVec2 a = ImPlot::PlotToPixels(limits.X.Min, line.value);
+            const ImVec2 b = ImPlot::PlotToPixels(limits.X.Max, line.value);
+            for (float x = a.x; x < b.x; x += 9.0f)
+                dl->AddLine(ImVec2(x, a.y), ImVec2(std::min(x + 5.0f, b.x), a.y), colour, 1.0f);
+            if (!line.label.empty()) {
+                // Above the line, or under it when the line runs along the plot's top
+                const float text_h = ImGui::GetTextLineHeight();
+                const float above = a.y - text_h - 2.0f;
+                const float y = above < ImPlot::GetPlotPos().y ? a.y + 2.0f : above;
+                dl->AddText(ImVec2(a.x + 6.0f, y), colour, line.label.c_str());
+            }
+        }
+        ImPlot::PopPlotClipRect();
     }
 
     if (ImPlot::IsPlotHovered() && pending_->action == Pending::Action::None) DrawHover();

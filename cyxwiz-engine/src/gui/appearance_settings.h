@@ -1,7 +1,7 @@
 #pragma once
 
 // Engine-wide appearance (tofix121): theme, interface text size, code text
-// size and sidebar side. One place applies and saves each setting, so View >
+// size, sidebar side and the canvas's node icon pack. One place applies and saves each setting, so View >
 // Theme, Preferences > Appearance, the Script Editor font menu and startup
 // always agree. Settings live in EngineConfig and apply to every project.
 
@@ -31,6 +31,11 @@ void SetCodeTextScale(float scale);
 
 bool SidebarOnLeft();
 void SetSidebarOnLeft(bool left);
+
+// The canvas's node icon pack as a gui::IconPack index (View > Node Icon Pack,
+// Preferences > Appearance); kept for the next launch.
+int NodeIconPack();
+void SetNodeIconPack(int pack);
 
 void ResetAppearance();
 

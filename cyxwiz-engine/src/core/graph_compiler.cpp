@@ -4958,8 +4958,15 @@ TrainingConfiguration GraphCompiler::Compile(
         // contract used by Arrow batchers. This prevents a silent
         // Linear(1, ...) fallback followed by a native dimension mismatch
         // when the first real batch contains many columns.
+        // A TimeSeriesWindow on the training path builds the features from
+        // the value column itself (input_width past values; its width is set
+        // below), so a series with only a date and its value has no other
+        // feature column to find (the airline starter was refused here).
+        const bool windowed_series = std::any_of(nodes.begin(), nodes.end(), [&](const gui::MLNode& node) {
+            return node.type == gui::NodeType::TimeSeriesWindow && ContainsWhenFiltered(training_path_ids, node.id);
+        });
         if (tabular_schema && config.input_shape.empty() &&
-            resolved_label_index >= 0) {
+            resolved_label_index >= 0 && !windowed_series) {
             const size_t feature_count = CountNumericBatchFeatureColumns(
                 tabular_schema, resolved_label_index, {}, config.excluded_feature_columns);
             if (feature_count == 0) {
@@ -5257,6 +5264,13 @@ TrainingConfiguration GraphCompiler::Compile(
                 // (time_series_window_operator.h): torch [N, C, L].
                 config.sequence_input_shape = {static_cast<size_t>(input_width),
                                                static_cast<size_t>(num_features)};
+            } else {
+                // The tabular width check is skipped for a windowed series, so
+                // a width that gives no features is reported here.
+                AddIssue(config, IssueLevel::Error,
+                         "Time Series Window '" + node.name + "' gives the model no inputs (input width " +
+                             std::to_string(input_width) + "); set an input width of at least 1",
+                         node.id, node.name, errors::Compiler::InvalidParameter);
             }
             CYXWIZ_BUILDER_INFO("GraphCompiler: TimeSeriesWindow found - regression mode, "
                          "input_size={} (input_width={} x num_features={}), "

@@ -696,6 +696,21 @@ enum class PinType {
 constexpr int PIN_UNLIMITED = -1;  // No limit on connections
 constexpr int PIN_SINGLE = 1;      // Standard single connection
 
+// What a pin carries, in words: the canvas pin tooltip, the Info panel and
+// the Nodes panel's tooltip say the same thing.
+inline const char* PinTypeName(PinType type) {
+    switch (type) {
+    case PinType::Tensor: return "Tensor";
+    case PinType::Labels: return "Labels";
+    case PinType::Parameters: return "Parameters";
+    case PinType::Loss: return "Loss";
+    case PinType::Optimizer: return "Optimizer";
+    case PinType::Dataset: return "Dataset";
+    case PinType::Environment: return "Environment";
+    }
+    return "Unknown";
+}
+
 // Node pin structure
 struct NodePin {
     int id;

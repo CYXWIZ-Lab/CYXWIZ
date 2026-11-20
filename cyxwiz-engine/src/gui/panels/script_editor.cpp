@@ -418,7 +418,7 @@ void ScriptEditorPanel::RenderMenuBar() {
             }
 
             ImGui::Separator();
-            ImGui::TextDisabled("Also in: Edit > Preferences > Editor");
+            ImGui::TextDisabled("Also in: File > Preferences > Editor");
 
             ImGui::EndMenu();
         }

@@ -481,8 +481,8 @@ A separate window for reinforcement learning (episode reward and length,
 policy loss, value loss, explained variance, entropy, approximate KL, clip
 fraction, action spread). It opens with **Train** on an RL graph (the
 Engine's PPO: progress, speed, Pause / Stop and the SB3 reference; see
-[Training a policy](rl_training.md#the-rl-training-dashboard)), or when a
-script reports RL metrics:
+[Training a policy](rl_training.md#the-rl-training-dashboard)), from **Train >
+RL Training Dashboard**, or when a script reports RL metrics:
 
 ```python
 import pycyxwiz

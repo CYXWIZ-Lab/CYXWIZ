@@ -26,8 +26,7 @@
       "implementation_notes": "Use REST API with libcurl",
       "target_phase": "Phase 2",
       "dependencies": ["libcurl", "nlohmann-json"],
-      "effort_estimate": "Low",
-      "user_votes": 0
+      "effort_estimate": "Low"
     },
     {
       "type": "HuggingFaceHub",
@@ -50,8 +49,7 @@
       "implementation_notes": "Use HuggingFace Hub API",
       "target_phase": "Phase 3",
       "dependencies": ["libcurl"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "MLflowTracker",
@@ -77,8 +75,7 @@
       "implementation_notes": "Use MLflow REST API",
       "target_phase": "Phase 2",
       "dependencies": ["libcurl"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "WandBTracker",
@@ -104,8 +101,7 @@
       "implementation_notes": "Use W&B REST API",
       "target_phase": "Phase 3",
       "dependencies": ["libcurl"],
-      "effort_estimate": "Medium",
-      "user_votes": 0
+      "effort_estimate": "Medium"
     },
     {
       "type": "SHAPExplainer",
@@ -131,8 +127,7 @@
       "implementation_notes": "Use Python bridge to SHAP library",
       "target_phase": "Phase 4",
       "dependencies": ["pybind11", "shap"],
-      "effort_estimate": "High",
-      "user_votes": 0
+      "effort_estimate": "High"
     },
     {
       "type": "AutoMLNode",
@@ -159,8 +154,7 @@
       "implementation_notes": "Implement grid/random search or use auto-sklearn",
       "target_phase": "Phase 4",
       "dependencies": [],
-      "effort_estimate": "High",
-      "user_votes": 0
+      "effort_estimate": "High"
     }
   ]
 }

@@ -709,11 +709,13 @@ MainWindow::MainWindow()
     }
     // A node clicked on the canvas is kept in the Info panel too.
     if (node_editor_ && node_info_panel_) {
-        node_editor_->SetNodeSelectedCallback([this](const gui::MLNode& node) {
-            if (node.type == gui::NodeType::PluginCustom && !node.extension_type_id.empty())
-                node_info_panel_->SetSelectedExtension(node.extension_type_id);
+        node_editor_->SetNodeSelectedCallback([this](const gui::MLNode* node) {
+            if (!node)
+                node_info_panel_->CanvasNodeRemoved();
+            else if (node->type == gui::NodeType::PluginCustom && !node->extension_type_id.empty())
+                node_info_panel_->ShowCanvasExtension(node->extension_type_id);
             else
-                node_info_panel_->SetSelectedNode(node.type);
+                node_info_panel_->ShowCanvasNode(node->type);
         });
     }
     cloud_dataset_manager_panel_ = std::make_unique<gui::CloudDatasetManagerPanel>();
@@ -792,6 +794,13 @@ MainWindow::MainWindow()
             node_editor_->InsertPattern(nodes, links);
         }
     });
+    // The Nodes panel's Examples insert as the Pattern Browser does, with
+    // each pattern's default parameters.
+    if (node_browser_panel_) {
+        node_browser_panel_->SetExampleInsertCallback([this](const std::string& pattern_id) {
+            if (pattern_browser_) pattern_browser_->InsertPattern(pattern_id, {});
+        });
+    }
 
     // Set scripting engine for the Script Editor. The Console-owned Python
     // REPL already received the same shared engine above.
@@ -1351,6 +1360,9 @@ MainWindow::MainWindow()
             spdlog::info("Opened Training Dashboard");
         }
     });
+    toolbar_->SetRLDashboardCallback([this]() {
+        if (node_editor_) node_editor_->ShowRLDashboard();
+    });
 
     // Optimizer Settings: training takes its optimizer from the graph, so the
     // item selects the graph's optimizer node (its settings show in
@@ -1771,18 +1783,6 @@ MainWindow::MainWindow()
         }
     });
 
-    // Set up Icon Pack selection callbacks
-    toolbar_->SetSetIconPackCallback([this](int pack) {
-        if (node_editor_) {
-            node_editor_->SetIconPack(static_cast<gui::IconPack>(pack));
-            const char* pack_names[] = {"FontAwesome", "Tabler", "Remix", "Lucide", "Iconoir", "Phosphor"};
-            spdlog::info("Changed icon pack to: {}", pack < 6 ? pack_names[pack] : "Unknown");
-        }
-    });
-    toolbar_->SetGetIconPackCallback([this]() -> int {
-        return node_editor_ ? static_cast<int>(node_editor_->GetIconPack()) : 0;
-    });
-
     // Set up Node Editor operation callbacks (Nodes menu)
     toolbar_->SetAddDenseNodeCallback([this]() {
         if (node_editor_) {
@@ -1842,6 +1842,8 @@ MainWindow::MainWindow()
     toolbar_->SetOpenThemeEditorCallback([this]() {
         if (theme_editor_) {
             theme_editor_->Show();
+            // In front also when it was already open behind another window.
+            ::gui::BringToFront(theme_editor_->GetName());
             spdlog::info("Opened Theme Editor panel");
         }
     });
@@ -2448,15 +2450,11 @@ MainWindow::MainWindow()
     // Set up asset browser double-click callback to open files in script editor
     asset_browser_->SetOnAssetDoubleClick([this](const cyxwiz::AssetBrowserPanel::AssetItem& item) {
         if (!item.is_directory && script_editor_) {
-            std::string ext = std::filesystem::path(item.absolute_path).extension().string();
-            for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-
             // Python sources and notebooks (.py, .pyw, .cyx, .ipynb) and other
-            // text files open in the Script Editor.
-            if (cyxwiz::scriptfile::IsPythonSource(item.absolute_path) || ext == ".txt" ||
-                ext == ".json" || ext == ".md" || ext == ".csv" || ext == ".tsv" ||
-                ext == ".yaml" || ext == ".yml" || ext == ".toml" ||
-                ext == ".ini" || ext == ".cfg" || ext == ".conf") {
+            // text files open in the Script Editor (the Asset Browser offers
+            // Open / Open as text by the same rule).
+            if (cyxwiz::scriptfile::IsPythonSource(item.absolute_path) ||
+                cyxwiz::assets::OpensInScriptEditor(item.absolute_path)) {
                 script_editor_->SetVisible(true);  // a closed Script Editor opens
                 script_editor_->OpenFile(item.absolute_path);
                 spdlog::info("Opened file in script editor: {}", item.name);
@@ -2466,6 +2464,19 @@ MainWindow::MainWindow()
 
     asset_browser_->SetOnCreateDataInput([this](const std::string& path) {
         if (node_editor_) node_editor_->AddDataInputFromAsset(path);
+    });
+
+    // A data file opens in the Table Viewer: the loaded dataset when a Data
+    // Input loaded it, else the file's first rows (nothing registered).
+    asset_browser_->SetOnOpenInTableViewer([this](const std::string& path) {
+        if (!table_viewer_) return;
+        constexpr int64_t kMaxRows = 200000;
+        if (auto name = cyxwiz::DataRegistry::Instance().FindTabularDatasetBySourcePath(path))
+            table_viewer_->OpenDataset(*name, kMaxRows);
+        else
+            table_viewer_->OpenFile(path, kMaxRows);
+        table_viewer_->SetVisible(true);
+        ::gui::BringToFront(table_viewer_->GetName());
     });
 
     // A loaded dataset opens in Data Studio's Query tab (TOFIX140).
@@ -3052,6 +3063,9 @@ void MainWindow::Render() {
     FrameMetrics::Instance().Render();
     FrameMetrics::Instance().EndFrame();
     RenderStatusBar();
+    // Any panel's tab menu (Move to its own window / Dock back) while
+    // Preferences let every window leave (TOFIX129 A8b).
+    ::gui::WindowMenus();
 }
 
 // Helper function to draw active tab indicator on a dock node
@@ -3305,7 +3319,6 @@ void MainWindow::BuildInitialDockLayout() {
     ImGuiID dock_id_bottom = 0;
     ImGuiID dock_id_bottom_left = 0;
     ImGuiID dock_id_bottom_right = 0;
-    ImGuiID dock_id_bottom_bottom = 0;
 
     // Split left side for Asset Browser (15% width)
     dock_id_left = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Left, 0.15f, nullptr, &dock_id_center);
@@ -3313,8 +3326,14 @@ void MainWindow::BuildInitialDockLayout() {
     // Split right side for Properties (20% width)
     dock_id_right = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Right, 0.25f, nullptr, &dock_id_center);
 
-    // Split bottom for Console area (25% height of remaining)
-    dock_id_bottom = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Down, 0.30f, nullptr, &dock_id_center);
+    // Split bottom for the Console area: 42 % of the height and at least
+    // 390 px, so a terminal shows some eight lines of output above its input
+    // box. The pixels matter: the layout is built at the window's first size
+    // (720 px tall before a maximize) and a later maximize goes to the
+    // central node only. The menu, toolbar and status bars take some 40 px.
+    const float layout_height = std::max(1.0f, ImGui::GetMainViewport()->Size.y - 40.0f);
+    const float bottom_ratio = std::clamp(390.0f / layout_height, 0.42f, 0.6f);
+    dock_id_bottom = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Down, bottom_ratio, nullptr, &dock_id_center);
 
     // Split center horizontally: CyxWiz Studio (left) and Data Studio (right) side by side
     dock_id_center_right = ImGui::DockBuilderSplitNode(dock_id_center, ImGuiDir_Right, 0.5f, nullptr, &dock_id_center_left);
@@ -3322,8 +3341,6 @@ void MainWindow::BuildInitialDockLayout() {
     // Split bottom section horizontally: left (Console) and right (Inspector)
     dock_id_bottom_right = ImGui::DockBuilderSplitNode(dock_id_bottom, ImGuiDir_Right, 0.25f, nullptr, &dock_id_bottom_left);
 
-    // Split bottom-left further for Profiler/Viewport
-    dock_id_bottom_bottom = ImGui::DockBuilderSplitNode(dock_id_bottom_left, ImGuiDir_Down, 0.40f, nullptr, &dock_id_bottom_left);
 
     // Dock windows to their designated areas
     // Window names must EXACTLY match the names in ImGui::Begin() calls in each panel
@@ -3334,7 +3351,9 @@ void MainWindow::BuildInitialDockLayout() {
     ImGui::DockBuilderDockWindow("Properties", dock_id_right);
     ImGui::DockBuilderDockWindow("Console", dock_id_bottom_left);
     ImGui::DockBuilderDockWindow("Training Dashboard", dock_id_bottom_right);
-    ImGui::DockBuilderDockWindow("Viewport", dock_id_bottom_bottom);
+    // A tab beside the Console (a split below it left the terminals too
+    // short to show their output; TOFIX129 A4).
+    ImGui::DockBuilderDockWindow("Viewport", dock_id_bottom_left);
 
     // Every other sidebar panel gets a home too, as a tab beside the panel
     // it belongs with, instead of opening as a small floating window
@@ -3382,7 +3401,7 @@ void MainWindow::RegisterPanelsWithSidebar() {
     // Workspace
     add("CyxWiz Studio", ICON_FA_DIAGRAM_PROJECT, node_editor_, "Workspace");
     add("Properties", ICON_FA_SLIDERS, properties_, "Workspace");
-    add("Node Browser", ICON_FA_CUBES, node_browser_panel_, "Workspace");
+    add("Nodes", ICON_FA_CUBES, node_browser_panel_, "Workspace");
     add("Node Info", ICON_FA_CIRCLE_INFO, node_info_panel_, "Workspace");
     add("Patterns", ICON_FA_LAYER_GROUP, pattern_browser_, "Workspace",
         cyxwiz::menu::ShortcutFor("view.patterns", cyxwiz::menu::Context::Any).c_str());

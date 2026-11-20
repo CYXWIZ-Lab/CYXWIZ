@@ -75,13 +75,14 @@ and the same policy as any other training run:
 
 - **Strict residency**: the chosen device must start, or the run stops with the reason.
 - **Compatibility**: if the chosen device fails its check, the run trains on
-  the CPU and says so (the chip turns to the caution colour and reads
-  "CPU · fallback"; the note under the progress bar gives the reason).
+  the CPU and says so (the dashboard's "Runs on" line turns to the caution
+  colour and names the device that failed; the note under it gives the reason).
 
 Where the run actually trains is shown on every surface:
 
-- the dashboard chip, for example **CPU · Intel** or **CUDA · GeForce GTX 1050 Ti**;
-  hover it for the full route (backend, device, policy);
+- the dashboard's line under the progress bar, for example
+  "Runs on the CPU (Intel, ArrayFire CPU) · compatibility policy"; **Run
+  details** gives the full route and how the networks compute;
 - the toolbar line, for example `PPO update 22 · 5,632 steps · CPU` (hover:
   the same route);
 - the Viewport's **Active Compute Runtime** (`ACTIVE RUN CPU`);
@@ -103,27 +104,67 @@ See [Why small networks are slow on a GPU](gpu_providers.md#why-small-networks-a
 run is active, the device choices in Preferences are disabled until it ends,
 and a second training run (Train on a model graph) is refused. A run on a GPU
 that another training run (another Engine, a tool) is using waits for it:
-the toolbar says "PPO waiting for the GPU" and the dashboard chip says why;
+the toolbar says "PPO waiting for the GPU" and the dashboard says why;
 Stop ends the wait. See [What runs where on a GPU](gpu_providers.md).
 
 ## The RL Training Dashboard
 
-- Status, the run (environment and copies), **Pause** / **Resume**, **Stop**.
-- Progress: steps of the total, the update, the target return if set.
-- Cards: episode reward and length (mean of the last 100 episodes), policy
-  loss, speed (environment steps per second).
-- **Episodes**: reward and length by environment step. Under the reward, the
-  **SB3 reference**: the mean of Stable-Baselines3's recorded runs on the
-  same environment with the same copies and settings
+It opens with **Train** on an RL graph, and from **Train > RL Training
+Dashboard** at any time (with no run it says how to start one). It uses the
+same parts and words as the [Training Dashboard](training_dashboard.md).
+
+**Header.** A pill says what is happening: **Starting**, **Training**,
+**Paused**, **Waiting for the GPU**, and after the run **Reached its target**
+(the mean return of the last 100 episodes reached the target return, so it
+stopped early), **Ran all its steps**, **Stopped** or **Failed**. Beside it
+the update and the steps ("Update 121 · 30,976 of 200,000 steps"), after the
+run the steps and the time it took. Then the progress bar, a line for the
+run and its target ("PPO on CartPole-v1 × 8 · stops early at a mean return of
+475 over the last 100 episodes"), a line for where it runs, and when it ends
+a sentence saying how ("Reached its target: mean return 477.4 ... at update
+254"). **Run details** folds out the device route, how the networks compute
+(fused kernels or ArrayFire operations), the steps per update and the
+reference.
+
+Buttons: **Pause** / **Resume** and **Stop** while it runs; **Play policy**
+and **Save policy...** after it; **More** has **Export updates (CSV)...**
+(every update's steps, mean return and length, losses, entropy, approximate
+KL, clip fraction, explained variance, action spread and speed; it asks where
+to save and says where it saved) and **Clear all...**, which asks first: the
+run's Play and Save buttons go with it, so save the policy before.
+
+**Cards.**
+- **Mean return**: of the last 100 episodes, its change over the last 10
+  updates, the best so far, the target, and the SB3 reference at this step.
+- **Episode length**: of the last 100 episodes.
+- **Time** (after the run **Total time**): the time the updates took (time
+  paused or waiting for the GPU is left out), the speed now and on average,
+  and at most how long the remaining steps take (less if the run reaches its
+  target).
+- **Updates**: how many, with the last policy and value loss, approximate KL
+  and clip fraction (hover for entropy, explained variance and action spread).
+- An environment's own figures (a curriculum's Difficulty) on a row of their own.
+
+**Charts.** **Episodes** and **Policy diagnostics**, side by side when the
+window is wide. Every update is drawn; each chart has Fit, Log Y, Legend,
+Export and its own window. The mouse wheel scrolls the dashboard; **Ctrl +
+wheel** zooms a chart (in a chart's own window the wheel zooms).
+- **Episodes**: mean return and episode length by environment step. The
+  target return is a dashed line. Under the return, the **SB3 reference**:
+  the mean of Stable-Baselines3's recorded runs on the same environment with
+  the same copies and settings
   (`cyxwiz-engine/resources/rl_reference/ppo_sb3_curves.json`, made by
   `generate_ppo_sb3_curves.py`). With other settings there is no reference:
-  a curve of other settings would mislead.
+  a curve of other settings would mislead. The chart's "exact · all N values"
+  counts the run's own updates.
 - **Policy diagnostics**: policy loss, value loss, explained variance,
   entropy, approximate KL, clip fraction, and the action standard deviation
   (continuous actions).
 
 A script can report to the same window with `pycyxwiz.rl_update_metric`
-(see [Plotting](plotting.md#rl-training-dashboard)).
+(see [Plotting](plotting.md#rl-training-dashboard)): the pill reads
+**Reporting** while values arrive, then **From a script**; the cards show the
+last episode reward (best, mean), episode length and policy loss.
 
 ## Play, save and load the trained policy
 

@@ -45,6 +45,24 @@ void NodeEditor::DetachFromFile() {
     unsaved_ = true;
 }
 
+void NodeEditor::DetachFromExample() {
+    const std::string& project_root = cyxwiz::ProjectManager::Instance().GetProjectRoot();
+    for (auto& node : nodes_) {
+        if (node.type != NodeType::DataInput) continue;
+        for (const char* key : {"file_path", "folder_path", "labels_csv", "audio_labels_csv"}) {
+            const auto it = node.parameters.find(key);
+            if (it == node.parameters.end() || it->second.empty() || std::filesystem::path(it->second).is_absolute())
+                continue;
+            const std::string resolved = cyxwiz::ResolveProjectDataPath(it->second, project_root);
+            std::error_code ec;
+            if (!std::filesystem::exists(resolved, ec)) continue;  // the Data Input says it is missing
+            it->second = cyxwiz::MakeProjectRelativePath(
+                std::filesystem::absolute(resolved, ec).lexically_normal().generic_string(), project_root);
+        }
+    }
+    DetachFromFile();
+}
+
 bool NodeEditor::LoadPatternAsGraph(const nlohmann::json& j) {
     if (!CanReplaceGraph("load a graph")) return false;
     // Clear existing graph
@@ -740,6 +758,9 @@ bool NodeEditor::LoadGraph(const std::string& filepath) {
             graph_json["template"].is_object() &&
             graph_json["template"].contains("nodes")) {
             spdlog::info("Detected pattern template format, converting to graph format");
+            // A template example names its data relative to its own folder
+            // (or a parent, e.g. examples/datasets/...), as a saved graph does.
+            cyxwiz::SetGraphDataSearchDirectoryFromGraphFile(filepath);
             return LoadPatternAsGraph(graph_json);
         }
 

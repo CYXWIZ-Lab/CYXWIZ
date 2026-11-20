@@ -281,6 +281,7 @@ set(ENGINE_SOURCES
     src/core/pipeline_execution_task.cpp  # Task-backed Data Studio execution
     src/core/preparation_recipe.cpp  # TOFIX101 package B recipe lowering
     src/core/node_palette.cpp  # TOFIX157 palette curation
+    src/core/nodes_panel_presentation.cpp  # TOFIX129 the Nodes panel's model
     src/core/prepared_data_cache.cpp
     src/core/training_input_preparation.cpp
     src/core/prepared_step_run.cpp
@@ -309,6 +310,7 @@ set(ENGINE_SOURCES
     src/core/rl/training_watch.cpp
     src/core/rl_playback_presentation.cpp
     src/core/rl_device_presentation.cpp
+    src/core/rl_dashboard_presentation.cpp
     src/gui/panels/policy_playback_panel.cpp
     src/core/dataset_batcher.cpp
     src/core/image_utils.cpp
@@ -640,7 +642,7 @@ set(ENGINE_SOURCES
     src/gui/panels/create_node_dialog.cpp
     src/gui/panels/training_dashboard.cpp
     src/gui/panels/training_plot_panel.cpp
-    src/gui/panels/training_dashboard_look.cpp
+    src/core/training_dashboard_presentation.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
     src/core/series_decimation.cpp
@@ -4207,9 +4209,10 @@ add_executable(test_graph_training_sequence_preflight
     tests/test_graph_training_sequence_preflight.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/training_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
-    src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
     src/gui/separate_windows.cpp
@@ -4353,9 +4356,10 @@ add_executable(test_text_gui_training_launch
     src/core/prepared_step_run.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/training_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
-    src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
     src/gui/separate_windows.cpp
@@ -5950,9 +5954,10 @@ add_executable(test_training_manager_session
     src/core/training_recipe.cpp
     src/core/async_task_manager.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/training_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
-    src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
     src/core/word_embeddings_presentation.cpp
@@ -6265,6 +6270,22 @@ if(WIN32)
 endif()
 set_target_properties(test_nodes_panel_user_nodes PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME test_nodes_panel_user_nodes COMMAND test_nodes_panel_user_nodes)
+
+# ===== Test: the Nodes panel's model (filters, groups, search, tooltip; TOFIX129) =====
+add_executable(test_nodes_panel_presentation
+    tests/test_nodes_panel_presentation.cpp
+    src/core/nodes_panel_presentation.cpp src/core/node_palette.cpp src/core/preparation_recipe.cpp
+    src/core/node_metadata_registry.cpp src/core/pipeline_runtime_capabilities.cpp
+    src/core/extension_node_registry.cpp
+)
+target_include_directories(test_nodes_panel_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_nodes_panel_presentation PRIVATE cyxwiz-protocol imgui::imgui nlohmann_json::nlohmann_json
+                      spdlog::spdlog fmt::fmt cyxwiz-backend)
+if(WIN32)
+    target_compile_definitions(test_nodes_panel_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+set_target_properties(test_nodes_panel_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_nodes_panel_presentation COMMAND test_nodes_panel_presentation)
 
 # ===== Test: Saved Text Smoke Graph Patterns =====
 add_executable(test_text_smoke_graph_patterns
@@ -7905,6 +7926,17 @@ if(WIN32)
 endif()
 add_test(NAME rl_playback_presentation COMMAND test_rl_playback_presentation)
 
+# ===== Test: what the RL Training Dashboard says (TOFIX129 B4-8) =====
+add_executable(test_rl_dashboard_presentation
+    tests/test_rl_dashboard_presentation.cpp
+    src/core/rl_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp
+)
+if(WIN32)
+    target_compile_definitions(test_rl_dashboard_presentation PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
+endif()
+add_test(NAME rl_dashboard_presentation COMMAND test_rl_dashboard_presentation)
+
 # ===== Test: metric learning (pairs, triplets) vs PyTorch (TOFIX140 A5) =====
 set(CYXWIZ_METRIC_GRAPH_PYTORCH_FIXTURE
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/computation_truth/fixtures/metric_graph_pytorch.json")
@@ -8755,6 +8787,14 @@ set_target_properties(test_async_task_lifecycle PROPERTIES RUNTIME_OUTPUT_DIRECT
 
 add_executable(test_training_progress_estimate tests/test_training_progress_estimate.cpp)
 
+# ===== Test: the Training Dashboard's words on a real run (TOFIX129 B4) =====
+add_executable(test_training_dashboard_presentation tests/test_training_dashboard_presentation.cpp
+    src/core/training_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp)
+target_include_directories(test_training_dashboard_presentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+set_target_properties(test_training_dashboard_presentation PROPERTIES CXX_STANDARD 20 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME test_training_dashboard_presentation COMMAND test_training_dashboard_presentation)
+
 # ===== Test: cyxwiz-training-core is self-contained (TOFIX118 P2) =====
 add_executable(test_training_core_link tests/test_training_core_link.cpp)
 target_link_libraries(test_training_core_link PRIVATE cyxwiz-training-core)
@@ -8970,9 +9010,10 @@ set(CYXWIZ_TRAIN_PATH_TEST_SOURCES
     src/core/training_recipe.cpp
     src/gui/graph_training_launcher.cpp
     src/gui/panels/training_plot_panel.cpp
+    src/core/training_dashboard_presentation.cpp
+    src/core/rl_device_presentation.cpp
     src/gui/generation_preview_view.cpp
     src/gui/ui_widgets.cpp
-    src/gui/panels/training_dashboard_look.cpp
     src/gui/panels/training_word_vector_runs.cpp
     src/core/word_vector_runs.cpp
     src/gui/separate_windows.cpp

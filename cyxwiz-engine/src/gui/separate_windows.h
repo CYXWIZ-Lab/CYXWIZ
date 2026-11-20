@@ -2,12 +2,13 @@
 
 #include <string>
 
-// Windows of their own (TOFIX129 piece A8). The big windows (Dashboard,
-// Plot, Data Studio, Script Editor, ...) may leave the Engine's main window
-// and become windows of the operating system, on any monitor, and come
-// back; every other window stays inside the main window. ImGui's
-// multi-viewport mode does the OS part; this file decides which window may
-// leave, keeps the rest inside and offers the two commands.
+// Windows of their own (TOFIX129 pieces A8, A8b). The big windows
+// (Dashboard, Plot, Data Studio, Script Editor, ...) may leave the Engine's
+// main window and become windows of the operating system, on any monitor,
+// and come back; with Preferences > General "Any window can have a window of
+// its own", every movable window may. The rest stays inside the main window.
+// ImGui's multi-viewport mode does the OS part; this file decides which
+// window may leave, keeps the rest inside and offers the two commands.
 
 namespace gui {
 
@@ -80,5 +81,15 @@ void MoveAllWindowsBack();
 // or title bar with the two commands and Close (`open` is the flag given to
 // Begin; may be null).
 void TabMenu(const char* name, bool* open);
+
+// Every movable window may leave (Preferences > General), not only the big
+// ones. Off by default.
+void SetEveryWindowMayLeave(bool every);
+bool EveryWindowMayLeave();
+
+// Once a frame, after every window has drawn (outside any Begin): the same
+// menu on the tab or title bar of a window that has no TabMenu of its own,
+// while every window may leave.
+void WindowMenus();
 
 }  // namespace gui

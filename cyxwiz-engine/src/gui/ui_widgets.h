@@ -62,6 +62,25 @@ void StatusLegend(std::initializer_list<Status> statuses);
 void Chip(const char* text, const ImVec4& colour);
 float ChipWidth(const char* text);
 
+// A card's title and a muted subtitle on one line; a pill or buttons may
+// follow on the same line (CardHeader draws a line under itself).
+void CardTitle(const char* title, const char* subtitle = nullptr);
+// A thin rounded bar: `fraction` of the width in `colour` over the raised
+// surface. `width` <= 0 fills the line.
+void ProgressLine(float fraction, const ImVec4& colour, float width = -1.0f, float height = 6.0f);
+// A figure card (the Training Dashboard's): a dot and the label, the value
+// large (`tooltip` on hover), then up to three lines that wrap in a narrow
+// card; null or empty lines are left out.
+void KpiCard(const char* id, const char* label, const ImVec4& dot, const char* value, const char* tooltip,
+             const char* line1, const ImVec4& line1_colour, const char* line2, const ImVec4& line2_colour,
+             const char* line3 = nullptr, const ImVec4& line3_colour = ImVec4(0, 0, 0, 0));
+
+// Text wrapped at the right edge of the area, also inside a word that is
+// wider than the line (a path, a cache key): there it breaks after a \ or /
+// when it can, else between characters. ImGui's wrap leaves such a word
+// running past the edge. One item (a group), so hover and click see all of it.
+void TextWrapAnywhere(const std::string& text, const ImVec4& colour);
+
 // Shown after the usual delay, also over disabled items, wrapped at 420 px.
 void Tooltip(const char* text);
 // A muted "(?)" that shows `text` on hover.
@@ -72,8 +91,10 @@ void HelpMarker(const char* text);
 // in a narrow window. Returns true when it stayed on this line.
 bool SameLineRight(float width, float gap = 12.0f);
 
-// Returns true when the text changed. `width` 0 = fill the line.
-bool SearchField(const char* id, char* buffer, size_t size, const char* hint = "Search", float width = 0.0f);
+// Returns true when the text changed. `width` 0 = fill the line; `flags`
+// are ImGui's InputText flags (e.g. Esc clears the text).
+bool SearchField(const char* id, char* buffer, size_t size, const char* hint = "Search", float width = 0.0f,
+                 ImGuiInputTextFlags flags = 0);
 
 // Toolbar items that wrap: call Next(item_width) before drawing each item;
 // the item stays on the current line when it fits, else starts a new one.
@@ -122,6 +143,12 @@ struct NumberFieldOptions {
 bool NumberField(const char* id, double* value, const NumberFieldOptions& options = {});
 bool NumberField(const char* id, float* value, const NumberFieldOptions& options = {});
 bool NumberField(const char* id, int* value, int min, int max, int step = 0, float width = 60.0f, const char* hint = nullptr);
+
+// A colour the user types: a swatch (a click opens a picker), a hex field
+// (#RRGGBB, or #RRGGBBAA with alpha) applied on Enter or when left, and R, G,
+// B (and A) as typed 0 .. 255 numbers with - / + steps (owner rule
+// 2026-10-21, no drag fields). True when the colour changed.
+bool ColourField(const char* id, ImVec4* colour, bool with_alpha = false);
 
 // Centred empty state: icon (may be empty), title, muted hint.
 void EmptyState(const char* icon, const char* title, const char* hint = nullptr);

@@ -45,11 +45,11 @@ std::vector<StarterGraph> FindStarterGraphs() {
         const char* filename;
     };
     static constexpr std::array<Def, 5> defs = {{
-        {"Binary image classification", "Cats-vs-dogs training graph for a two-class image dataset.", "Binary classification", ICON_FA_IMAGES, "cats_dogs_classifier.cyxgraph"},
-        {"Multiclass image classification", "MNIST MLP graph for a tabular digit dataset with ten classes.", "Multiclass classification", ICON_FA_IMAGE, "mnist_mlp.cyxgraph"},
-        {"Text classification", "Mental-health sentiment graph: a Text Tokenizer, an Embedding and a seven-class classifier.", "Text classification", ICON_FA_COMMENTS, "mental_health_sentiment_classifier_v2.cyxgraph"},
-        {"Audio classification", "Speech-command graph for labeled command utterances.", "Audio classification", ICON_FA_WAVE_SQUARE, "speech_command_classifier.cyxgraph"},
-        {"Time-series forecasting", "Airline-passengers dense forecaster using a real time-series training graph.", "Forecasting / regression", ICON_FA_CHART_LINE, "timeseries/airline_passengers_dense.cyxgraph"}}};
+        {"Binary image classification", "Cats or dogs in photos; trains on 60 sample photos (examples/datasets).", "Binary classification", ICON_FA_IMAGES, "cats_dogs_classifier.cyxgraph"},
+        {"Multiclass image classification", "Handwritten digits 0-9, an MLP; trains on 1,797 sample 8x8 digits (examples/datasets).", "Multiclass classification", ICON_FA_IMAGE, "mnist_mlp.cyxgraph"},
+        {"Text classification", "Positive or negative review sentences: a tokenizer, an embedding and a classifier; trains on 3,000 sample sentences (examples/datasets).", "Text classification", ICON_FA_COMMENTS, "review_sentiment_classifier.cyxgraph"},
+        {"Audio classification", "Spoken digits 0-9 from their mel spectrogram; trains on 400 sample clips (examples/datasets).", "Audio classification", ICON_FA_WAVE_SQUARE, "speech_command_classifier.cyxgraph"},
+        {"Time-series forecasting", "Next month's airline passengers from the past year; trains on the 144-month series (examples/datasets).", "Forecasting / regression", ICON_FA_CHART_LINE, "timeseries/airline_passengers_dense.cyxgraph"}}};
     std::vector<StarterGraph> found;
     for (const auto& d : defs) {
         const std::string path = ResolveStarterGraphPath(d.filename);

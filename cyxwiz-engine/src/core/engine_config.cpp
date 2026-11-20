@@ -497,6 +497,7 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.code_font_scale = look.value("code_font_scale", loaded.code_font_scale);
             loaded.sidebar_left = look.value("sidebar_left", loaded.sidebar_left);
             loaded.custom_theme_file = look.value("custom_theme_file", std::string());
+            loaded.node_icon_pack = look.value("node_icon_pack", loaded.node_icon_pack);
             appearance_ = loaded;
         }
 
@@ -515,6 +516,12 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             loaded.recent = types("recent");
             loaded.show_recent = panel.value("show_recent", loaded.show_recent);
             loaded.recent_count = std::clamp(panel.value("recent_count", loaded.recent_count), 1, kNodesPanelMaxRecent);
+            if (panel.contains("open_groups") && panel["open_groups"].is_array()) {
+                loaded.open_groups.clear();
+                for (const auto& v : panel["open_groups"])
+                    if (v.is_string()) loaded.open_groups.push_back(v.get<std::string>());
+            }
+            loaded.list_view = panel.value("list_view", loaded.list_view);
             if (loaded.recent.size() > static_cast<size_t>(kNodesPanelMaxRecent)) loaded.recent.resize(kNodesPanelMaxRecent);
             nodes_panel_ = loaded;
         }
@@ -619,6 +626,10 @@ bool EngineConfig::Load(const std::filesystem::path& config_path) {
             watch_training_mode_ = std::clamp(playback.value("watch_training", 0), 0, 2);
             watch_training_every_ = std::clamp(playback.value("watch_every_updates", 20), 1, 1000);
         }
+
+        every_window_may_leave_ = false;
+        if (config.contains("windows") && config["windows"].is_object())
+            every_window_may_leave_ = config["windows"].value("every_window_may_leave", false);
 
         runtime_log_saved_filters_.clear();
         if (config.contains("observability") &&
@@ -756,6 +767,7 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
                                      {"stress_episodes", policy_stress_defaults_.episodes},
                                      {"watch_training", watch_training_mode_},
                                      {"watch_every_updates", watch_training_every_}};
+        config["windows"] = {{"every_window_may_leave", every_window_may_leave_}};
         config["observability"] = {
             {"record_debug_logs", record_debug_logs_},
             {"saved_filters_version", 1},
@@ -804,7 +816,8 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"ui_text_px", appearance_.ui_text_px},
             {"code_font_scale", appearance_.code_font_scale},
             {"sidebar_left", appearance_.sidebar_left},
-            {"custom_theme_file", appearance_.custom_theme_file}
+            {"custom_theme_file", appearance_.custom_theme_file},
+            {"node_icon_pack", appearance_.node_icon_pack}
         };
         config["utilities"] = {
             {"tab", utilities_.tab},
@@ -829,7 +842,9 @@ bool EngineConfig::Save(const std::filesystem::path& config_path) {
             {"favourites", nodes_panel_.favourites},
             {"recent", nodes_panel_.recent},
             {"show_recent", nodes_panel_.show_recent},
-            {"recent_count", nodes_panel_.recent_count}
+            {"recent_count", nodes_panel_.recent_count},
+            {"open_groups", nodes_panel_.open_groups},
+            {"list_view", nodes_panel_.list_view}
         };
 
         config["hyperparam_search"] = {
@@ -1287,6 +1302,19 @@ void EngineConfig::SetMonitor(const MonitorConfig& monitor) {
 bool EngineConfig::RecordDebugLogs() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return record_debug_logs_;
+}
+
+bool EngineConfig::EveryWindowMayLeave() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return every_window_may_leave_;
+}
+
+void EngineConfig::SetEveryWindowMayLeave(bool every) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (every_window_may_leave_ != every) {
+        every_window_may_leave_ = every;
+        modified_ = true;
+    }
 }
 
 void EngineConfig::SetRecordDebugLogs(bool record) {

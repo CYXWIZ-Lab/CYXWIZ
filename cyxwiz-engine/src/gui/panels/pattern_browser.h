@@ -22,7 +22,7 @@ public:
     ~PatternBrowserPanel() override = default;
 
     void Render() override;
-    const char* GetIcon() const override { return "\xef\x86\xb3"; }  // cubes icon
+    const char* GetIcon() const override { return ICON_FA_CUBES; }
 
     // Set callback for pattern insertion
     using InsertPatternCallback = std::function<void(
@@ -37,13 +37,16 @@ public:
     // Open with specific pattern selected
     void OpenWithPattern(const std::string& pattern_id);
 
+    // Insert a pattern with these parameter values (missing ones take their
+    // defaults): the Insert button, and the Nodes panel's Examples.
+    void InsertPattern(const std::string& pattern_id, const std::map<std::string, std::string>& params);
+
 private:
     void RenderSearchBar();
     void RenderCategoryTabs();
     void RenderPatternList();
     void RenderPatternCard(const ::gui::patterns::Pattern& pattern);
     void RenderParameterInputs(const ::gui::patterns::Pattern& pattern);
-    void InsertPattern(const std::string& pattern_id);
 
     // UI State
     char search_buffer_[256] = "";

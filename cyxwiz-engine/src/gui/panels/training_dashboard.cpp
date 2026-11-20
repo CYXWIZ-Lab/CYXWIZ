@@ -1,60 +1,55 @@
 #include "training_dashboard.h"
 
 #include "../../core/engine_config.h"
+#include "../../core/file_dialogs.h"
 #include "../../core/plot/plot_prepare.h"
+#include "../../core/project_manager.h"
 #include "../../core/rl_playback_presentation.h"
 #include "../icons.h"
 #include "../ui_buttons.h"
-#include "../ui_widgets.h"
 #include "../ui_fonts.h"
 #include "../ui_tokens.h"
+#include "../ui_widgets.h"
 
 #include <imgui.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <numeric>
 
 namespace cyxwiz {
 
 namespace {
 
-std::string Format(double v, const char* fmt = "%.4g") {
-    char buf[48];
-    std::snprintf(buf, sizeof(buf), fmt, v);
-    return buf;
-}
-
-// One KPI card: label, value, a muted detail (it wraps: a narrow card hides nothing).
-void Card(const char* id, const char* label, const std::string& value, const std::string& detail, float width) {
-    const ui::Tokens& t = ui::CurrentTokens();
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_card);
-    ImGui::BeginChild(id, ImVec2(width, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-    ImGui::TextColored(t.text_dim, "%s", label);
-    {
-        ui::FontScope big(ui::Font::Heading);
-        ImGui::TextUnformatted(value.c_str());
-    }
-    // Room for three lines of detail: a note that grows by a line as its
-    // number gets longer ("best 810.3") does not move what is below the cards
-    const float detail_top = ImGui::GetCursorPosY();
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(t.text_dim, "%s", detail.c_str());
-    ImGui::PopTextWrapPos();
-    const float three_lines = 3.0f * ImGui::GetTextLineHeightWithSpacing();
-    const float used = ImGui::GetCursorPosY() - detail_top;
-    const float missing = three_lines - used - ImGui::GetStyle().ItemSpacing.y;
-    if (missing > 0.0f) ImGui::Dummy(ImVec2(0.0f, missing));
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
-}
+namespace rd = rl_dashboard;
 
 constexpr const char* kReferenceColumn = "SB3 reference";
+constexpr const char* kClearTitle = "Clear the dashboard?";
 
-// The preview card's label and value rows
+ImVec4 ToneColour(rd::Tone tone) {
+    const ui::Tokens& t = ui::CurrentTokens();
+    switch (tone) {
+    case rd::Tone::Good: return t.success;
+    case rd::Tone::Caution: return t.caution;
+    case rd::Tone::Error: return t.error;
+    case rd::Tone::Info: return t.info;
+    case rd::Tone::Plain: return t.text;
+    case rd::Tone::Faint: break;
+    }
+    return t.text_dim;
+}
+
+void Wrapped(const ImVec4& colour, const std::string& text) {
+    if (text.empty()) return;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(colour, "%s", text.c_str());
+    ImGui::PopTextWrapPos();
+}
+
+// The Watch progress card's label and value rows
 void FactRow(const char* label, const std::string& value) {
     const ui::Tokens& t = ui::CurrentTokens();
     ImGui::TableNextColumn();
@@ -63,6 +58,13 @@ void FactRow(const char* label, const std::string& value) {
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextUnformatted(value.c_str());
     ImGui::PopTextWrapPos();
+}
+
+// "target 475"
+std::string TargetLabel(float target) {
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "target %g", static_cast<double>(target));
+    return buf;
 }
 
 }  // namespace
@@ -118,12 +120,11 @@ void TrainingDashboardPanel::Push(const std::string& name, double value, double 
 }
 
 void TrainingDashboardPanel::UpdateCustomMetric(const std::string& name, float value) {
+    // A script's values: a PPO run's figures give way to them
+    if (run_ && !Running()) ResetRLMetrics();
     Push(name, static_cast<double>(value), std::nan(""));
+    last_script_value_ = std::chrono::steady_clock::now();
 }
-
-void TrainingDashboardPanel::SetTrainingState(bool is_training) { training_ = is_training; }
-
-void TrainingDashboardPanel::SetRLTrainingState(bool is_rl_training) { training_ = is_rl_training; }
 
 void TrainingDashboardPanel::ResetRLMetrics() {
     for (auto& [name, m] : metrics_) {
@@ -131,35 +132,34 @@ void TrainingDashboardPanel::ResetRLMetrics() {
         m.steps.clear();
         m.dirty = true;
     }
-    training_ = false;
     run_.reset();
     controls_ = {};
-    device_chip_.clear();
-    device_tooltip_.clear();
-    device_fallback_ = false;
+    device_ = {};
+    waiting_.clear();
     device_note_.clear();
-    device_compute_path_.clear();
+    compute_path_.clear();
+    updates_.clear();
     last_update_.reset();
-    outcome_.clear();
-    failed_ = false;
+    end_ = rd::End::None;
+    end_message_.clear();
+    export_note_.clear();
+    last_script_value_ = {};
 }
 
 void TrainingDashboardPanel::BeginPpoRun(PpoRunInfo info, PpoRunControls controls) {
     ResetRLMetrics();
     run_ = std::move(info);
     controls_ = std::move(controls);
-    training_ = true;
     visible_ = true;
     const auto& config = core::EngineConfig::Instance();
     watch_ = config.WatchTrainingMode();
     watch_every_ = config.WatchTrainingEvery();
 }
 
-void TrainingDashboardPanel::SetPpoDevice(std::string chip, std::string tooltip, bool fallback, std::string note) {
-    device_chip_ = std::move(chip);
-    device_tooltip_ = std::move(tooltip);
-    device_fallback_ = fallback;
+void TrainingDashboardPanel::SetPpoDevice(const rl_device::RunDevice& device, std::string note) {
+    device_ = device;
     device_note_ = std::move(note);
+    waiting_.clear();
 }
 
 void TrainingDashboardPanel::AddPpoUpdate(const rl::PpoUpdateMetrics& m) {
@@ -174,19 +174,75 @@ void TrainingDashboardPanel::AddPpoUpdate(const rl::PpoUpdateMetrics& m) {
     Push("entropy", -m.entropy_loss, steps);
     Push("approx_kl", m.approx_kl, steps);
     Push("clip_fraction", m.clip_fraction, steps);
-    if (run_ && run_->continuous) Push("action_std", m.std, steps);
+    const bool continuous = run_ && run_->continuous;
+    if (continuous) Push("action_std", m.std, steps);
+
+    rd::Update u;
+    u.update = m.update;
+    u.steps = steps;
+    u.mean_return = m.mean_episode_return;
+    u.mean_length = m.mean_episode_length;
+    u.policy_loss = m.policy_loss;
+    u.value_loss = m.value_loss;
+    u.entropy = -m.entropy_loss;
+    u.approx_kl = m.approx_kl;
+    u.clip_fraction = m.clip_fraction;
+    u.explained_variance = m.explained_variance;
+    u.action_std = continuous ? static_cast<double>(m.std) : std::nan("");
+    u.steps_per_second = m.steps_per_second;
+    u.reached_target = m.reached_target;
+    updates_.push_back(u);
     last_update_ = m;
 }
 
-void TrainingDashboardPanel::EndPpoRun(const std::string& outcome, bool failed) {
-    training_ = false;
-    outcome_ = outcome;
-    failed_ = failed;
+void TrainingDashboardPanel::EndPpoRun(rd::End end, const std::string& message) {
+    end_ = end;
+    end_message_ = message;
+    waiting_.clear();
     // The run's own controls go with it; Play and Save of its policy stay
     controls_.pause = nullptr;
     controls_.resume = nullptr;
     controls_.stop = nullptr;
     controls_.paused = nullptr;
+    controls_.waiting = nullptr;
+}
+
+rd::RunFacts TrainingDashboardPanel::Facts() const {
+    rd::RunFacts f;
+    if (run_) {
+        f.ppo = true;
+        f.environment = run_->environment;
+        f.copies = run_->copies;
+        f.total_steps = run_->total_timesteps;
+        f.target = static_cast<double>(run_->target_return);
+        f.continuous = run_->continuous;
+        f.running = Running();
+        f.paused = f.running && controls_.paused && controls_.paused();
+        if (f.running && controls_.waiting && controls_.waiting())
+            f.waiting = waiting_.empty() ? std::string("Waiting for the GPU: another training run is using it") : waiting_;
+        f.end = end_;
+        f.end_message = end_message_;
+        f.has_policy = !f.running && controls_.has_policy && controls_.has_policy();
+        f.device = device_;
+        f.compute_path = compute_path_;
+        f.device_note = device_note_;
+        if (run_->reference) {
+            f.reference_label = run_->reference->label;
+            if (!updates_.empty()) f.reference_now = run_->reference->At(updates_.back().steps);
+        }
+        f.updates = updates_;
+        return f;
+    }
+    const auto history = [this](const char* name) {
+        const auto it = metrics_.find(name);
+        return it == metrics_.end() ? std::span<const double>{} : std::span<const double>(it->second.history);
+    };
+    f.script_rewards = history("episode_reward");
+    f.script_lengths = history("episode_length");
+    f.script_policy_losses = history("policy_loss");
+    f.script_recent = last_script_value_ != std::chrono::steady_clock::time_point{} &&
+                      std::chrono::steady_clock::now() - last_script_value_ < std::chrono::seconds(5);
+    return f;
 }
 
 void TrainingDashboardPanel::Render() {
@@ -197,149 +253,172 @@ void TrainingDashboardPanel::Render() {
         ImGui::End();
         return;
     }
-    const ui::Tokens& t = ui::CurrentTokens();
-    const auto& rewards = metrics_["episode_reward"].history;
-    const bool running = training_.load();
-
-    if (run_) {
-        RenderRunHeader();
-    } else {
-        // Status, episodes, reset.
-        ui::StatusPill("##rl_status", running ? "Training" : "Stopped", running ? t.success : t.pending);
-        ImGui::SameLine();
-        if (rewards.empty()) ImGui::TextColored(t.text_dim, "No episodes reported yet");
-        else ImGui::Text("%s episodes reported", plot::Thousands(static_cast<long long>(rewards.size())).c_str());
-        ImGui::SameLine();
-        const char* reset = "Reset metrics";
-        const float w = ui::ButtonWidth(reset, ui::ButtonSize::Small);
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - w));
-        if (ui::SecondaryButton(reset)) ResetRLMetrics();
+    const rd::RunFacts facts = Facts();
+    const rd::Header header = rd::BuildHeader(facts);
+    RenderHeader(facts, header);
+    if (header.state != rd::State::NoRun) {
+        RenderCards(rd::BuildCards(facts));
+        if (Running()) RenderWatch();
+        RenderCharts();
     }
-
-    ImGui::Spacing();
-    RenderKpis();
-    ImGui::Spacing();
-    if (run_ && training_.load()) RenderWatch();
-
-    if (ImGui::BeginTabBar("##rl_tabs")) {
-        if (ImGui::BeginTabItem("Episodes")) {
-            const float h = std::max(160.0f, (ImGui::GetContentRegionAvail().y - 70.0f) / 2.0f);
-            RenderMetric("episode_reward", h);
-            RenderMetric("episode_length", h);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Policy diagnostics")) {
-            // Every diagnostic with values, in registration order
-            std::vector<std::string> shown;
-            for (const auto& name : order_)
-                if (name != "episode_reward" && name != "episode_length" &&
-                    (!metrics_[name].history.empty() || name == "policy_loss"))
-                    shown.push_back(name);
-            ImGui::BeginChild("##rl_diag", ImVec2(0, 0));
-            for (const auto& name : shown) RenderMetric(name, 150.0f);
-            ImGui::EndChild();
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
-    if (rewards.empty() && !running && !run_)
-        ImGui::TextColored(t.text_dim, "Train an RL graph (Environment, Policy Head, Value Head, PPO) on the canvas, "
-                                       "or report metrics from a script with pycyxwiz.rl_update_metric.");
     ImGui::End();
 
-    // Charts opened in their own windows.
-    for (const auto& name : order_) {
-        auto& m = metrics_[name];
-        plot::PlotView::Options o;
-        o.export_name = name;
-        m.view->DrawOwnWindow(o);
-    }
+    // Charts opened in their own windows keep the wheel zoom.
+    for (const auto& name : order_) metrics_[name].view->DrawOwnWindow(MetricOptions(name));
+    RunPendingExport();
 }
 
-void TrainingDashboardPanel::RenderRunHeader() {
+void TrainingDashboardPanel::RenderHeader(const rd::RunFacts& facts, const rd::Header& header) {
     const ui::Tokens& t = ui::CurrentTokens();
-    const bool running = training_.load();
-    const bool paused = running && controls_.paused && controls_.paused();
-    const bool waiting = running && controls_.waiting && controls_.waiting();
-    const char* state = running ? (waiting ? "Waiting" : paused ? "Paused" : "Training")
-                                : (failed_ ? "Failed" : outcome_.c_str());
-    const ImVec4 colour =
-        running ? (waiting ? t.caution : paused ? t.pending : t.success) : (failed_ ? t.error : t.pending);
-    ui::StatusPill("##rl_status", state, colour);
-    if (failed_ && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", outcome_.c_str());
-    ImGui::SameLine();
-    ImGui::TextColored(t.text_dim, "%s", run_->title.c_str());
-    if (!device_chip_.empty()) {  // where it trains; a fallback in the caution tone
-        ImGui::SameLine();
-        ui::StatusPill("##rl_device", device_chip_.c_str(), device_fallback_ ? t.caution : t.text_dim);
-        if (ImGui::IsItemHovered()) {
-            if (device_compute_path_.empty()) ImGui::SetTooltip("%s", device_tooltip_.c_str());
-            else ImGui::SetTooltip("%s\nRuns as %s", device_tooltip_.c_str(), device_compute_path_.c_str());
-        }
-    }
+    const bool running = facts.running;
+    const bool ended = header.state == rd::State::ReachedTarget || header.state == rd::State::RanAllSteps ||
+                       header.state == rd::State::Stopped || header.state == rd::State::Failed;
+    ui::BeginCard("##rl_header");
 
-    // Pause / Resume and Stop while it runs; after it, Play policy and Save
-    // policy... when it left one; Reset at the right
-    const char* pause = paused ? "Resume" : "Pause";
-    const char* stop = "Stop";
-    const char* play = ICON_FA_PLAY " Play policy";
-    const char* save = "Save policy...";
-    const char* reset = "Reset metrics";
-    const bool has_policy = !running && controls_.has_policy && controls_.has_policy();
-    const float gap = ImGui::GetStyle().ItemSpacing.x;
-    const float w = (running ? ui::ButtonWidth(pause, ui::ButtonSize::Small) + ui::ButtonWidth(stop, ui::ButtonSize::Small) +
-                                   2 * gap
-                             : 0.0f) +
-                    (has_policy ? ui::ButtonWidth(play, ui::ButtonSize::Small) +
-                                      ui::ButtonWidth(save, ui::ButtonSize::Small) + 2 * gap
-                                : 0.0f) +
-                    ui::ButtonWidth(reset, ui::ButtonSize::Small);
-    ImGui::SameLine();
-    if (ImGui::GetContentRegionAvail().x < w) ImGui::NewLine();  // narrow: the buttons on a line of their own
-    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - w));
-    if (has_policy) {
-        if (ui::PrimaryButton(play, true, nullptr, ui::ButtonSize::Small) && controls_.play) controls_.play();
-        ImGui::SameLine();
-        if (ui::SecondaryButton(save) && controls_.save) controls_.save();
-        ImGui::SameLine();
+    // Row 1: the state and the update, then the run's actions at the right;
+    // each part moves to the next line when the window is narrow.
+    ui::FlowRow row;
+    row.Next(0.0f);
+    ui::Chip(header.pill.c_str(), ToneColour(header.pill_tone));
+    if (!header.beside.empty()) {
+        row.Next(ImGui::CalcTextSize(header.beside.c_str()).x);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(t.text, "%s", header.beside.c_str());
     }
+    const char* pause_label = facts.paused ? ICON_FA_PLAY " Resume" : ICON_FA_PAUSE " Pause";
+    const char* stop_label = ICON_FA_STOP " Stop";
+    const char* play_label = ICON_FA_PLAY " Play policy";
+    const char* save_label = "Save policy...";
+    const char* more_label = "More " ICON_FA_CHEVRON_DOWN;
+    const bool policy = ended && facts.has_policy;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float actions_width = ui::ButtonWidth(more_label, ui::ButtonSize::Small);
+    if (running)
+        actions_width += ui::ButtonWidth(pause_label, ui::ButtonSize::Small) +
+                         ui::ButtonWidth(stop_label, ui::ButtonSize::Small) + spacing * 2.0f;
+    if (policy)
+        actions_width += ui::ButtonWidth(play_label, ui::ButtonSize::Small) +
+                         ui::ButtonWidth(save_label, ui::ButtonSize::Small) + spacing * 2.0f;
+    ui::SameLineRight(actions_width);
+    ui::FlowRow buttons;
     if (running) {
-        if (ui::SecondaryButton(pause)) {
-            if (paused && controls_.resume) controls_.resume();
-            else if (!paused && controls_.pause) controls_.pause();
+        buttons.Next(ui::ButtonWidth(pause_label, ui::ButtonSize::Small));
+        if (ui::SecondaryButton(pause_label)) {
+            if (facts.paused && controls_.resume) controls_.resume();
+            else if (!facts.paused && controls_.pause) controls_.pause();
         }
-        ImGui::SameLine();
-        if (ui::DangerButton(stop) && controls_.stop) controls_.stop();
-        ImGui::SameLine();
+        buttons.Next(ui::ButtonWidth(stop_label, ui::ButtonSize::Small));
+        if (ui::DangerButton(stop_label) && controls_.stop) controls_.stop();
+        ui::Tooltip("Stops after the update in progress; the policy so far stays to play or save.");
     }
-    if (ui::SecondaryButton(reset, !running, "Stop the run first")) ResetRLMetrics();
-    if (!run_) return;
+    if (policy) {
+        buttons.Next(ui::ButtonWidth(play_label, ui::ButtonSize::Small));
+        if (ui::PrimaryButton(play_label, true, nullptr, ui::ButtonSize::Small) && controls_.play) controls_.play();
+        buttons.Next(ui::ButtonWidth(save_label, ui::ButtonSize::Small));
+        if (ui::SecondaryButton(save_label) && controls_.save) controls_.save();
+    }
+    buttons.Next(ui::ButtonWidth(more_label, ui::ButtonSize::Small));
+    if (ui::SecondaryButton(more_label)) ImGui::OpenPopup("##rl_actions");
+    if (ImGui::BeginPopup("##rl_actions")) {
+        if (ImGui::MenuItem(ICON_FA_FILE_EXPORT " Export updates (CSV)...", nullptr, false, !updates_.empty()))
+            pending_export_ = true;
+        ui::Tooltip(updates_.empty() ? "No PPO update yet. A script's values are in each chart's Export."
+                                     : "Every update's figures: steps, returns, losses, entropy, KL, clip fraction, "
+                                       "speed. Asks where to save.");
+        ImGui::Separator();
+        const bool can_clear = !running && header.state != rd::State::NoRun;
+        ImGui::PushStyleColor(ImGuiCol_Text, can_clear ? t.error : t.text_dim);
+        if (ImGui::MenuItem(ICON_FA_TRASH " Clear all...", nullptr, false, can_clear)) open_clear_all_ = true;
+        ImGui::PopStyleColor();
+        ui::Tooltip(running ? "Stop the run first." : "Clears the figures and charts from the dashboard. Asks first.");
+        ImGui::EndPopup();
+    }
+    if (open_clear_all_) {
+        ImGui::OpenPopup(kClearTitle);
+        open_clear_all_ = false;
+    }
+    std::vector<std::string> bullets;
+    if (facts.has_policy)
+        bullets.push_back("Play policy and Save policy... of this run go with it: save the policy first to keep it.");
+    if (ui::ConfirmDialog(kClearTitle, "This clears the run's figures and charts from the dashboard.", "Clear all", true,
+                          bullets) == ui::DialogResult::Primary) {
+        ResetRLMetrics();
+    }
+    Wrapped(export_failed_ ? t.error : t.success, export_note_);
 
-    // Progress: steps of the total, the update, the target
-    const long long steps = last_update_ ? static_cast<long long>(last_update_->timesteps) : 0;
-    const int update = last_update_ ? last_update_->update : 0;
-    std::string progress = plot::Thousands(steps) + " of " + plot::Thousands(run_->total_timesteps) + " steps";
-    if (update > 0) progress += " \xC2\xB7 update " + std::to_string(update);
-    ImGui::TextUnformatted(progress.c_str());
-    if (!std::isnan(run_->target_return)) {
-        const std::string target = "stops at mean return " + Format(run_->target_return, "%g") + " (last 100 episodes)";
+    // Progress, the run and where it runs
+    if (header.show_progress) ui::ProgressLine(static_cast<float>(header.progress), ended ? ToneColour(header.progress_tone) : t.accent);
+    Wrapped(t.text_dim, header.run_line);
+    Wrapped(ToneColour(header.where_tone), header.where_line);
+    Wrapped(ToneColour(header.note_tone), header.note);
+    Wrapped(ToneColour(header.result_tone), header.result);
+    Wrapped(t.text, header.policy_line);
+    Wrapped(t.text_dim, header.hint);
+
+    // Run details: the route, how it computes, the reference
+    if (!header.details.empty()) {
+        ImGui::Spacing();
+        ImGui::SetNextItemOpen(run_details_open_);
+        run_details_open_ = ImGui::TreeNodeEx("Run details##rl_run_details",
+                                              ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanLabelWidth);
         ImGui::SameLine();
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
-                                      ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize(target.c_str()).x));
-        ImGui::TextColored(t.text_dim, "%s", target.c_str());
+        Wrapped(t.text_faint, "device route, how it computes, the reference");
+        if (run_details_open_) {
+            std::vector<ui::KeyValue> rows;
+            for (const auto& r : header.details) rows.push_back({r.key, r.value});
+            ui::FactsTable("##rl_details", rows);
+        }
     }
-    const float fraction = run_->total_timesteps > 0
-                               ? std::clamp(static_cast<float>(steps) / static_cast<float>(run_->total_timesteps), 0.0f, 1.0f)
-                               : 0.0f;
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, t.accent);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, t.bg_input);
-    ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 6.0f), "");
-    ImGui::PopStyleColor(2);
-    if (!device_note_.empty()) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(device_fallback_ ? t.caution : t.text_dim, "%s", device_note_.c_str());
-        ImGui::PopTextWrapPos();
+    ui::EndCard();
+}
+
+void TrainingDashboardPanel::RenderCards(const std::vector<rd::Card>& cards) {
+    if (cards.empty()) return;
+    const ui::Tokens& t = ui::CurrentTokens();
+    const auto dot = [&](int series) { return series < 0 ? t.info : ui::SeriesColour(t, static_cast<size_t>(series)); };
+    struct Shown {
+        std::string id, label, value, tooltip, change, line2, line3;
+        ImVec4 dot, change_colour, line2_colour, line3_colour;
+    };
+    std::vector<Shown> shown;
+    for (const auto& c : cards) {
+        std::string change = c.change;
+        if (c.direction != 0 && !change.empty())
+            change = std::string(c.direction < 0 ? ICON_FA_CARET_DOWN : ICON_FA_CARET_UP) + " " + change;
+        shown.push_back({c.id, c.label, c.value, c.tooltip, change, c.line2, c.line3, dot(c.series),
+                         ToneColour(c.change_tone), t.text_dim, t.text});
     }
+    // The environment's own figures (a curriculum's difficulty, falls) on a row of their own
+    std::vector<Shown> environment;
+    if (Running() || end_ != rd::End::None) {
+        if (last_update_) {
+            for (size_t i = 0; i < last_update_->environment_stats.size(); ++i) {
+                const auto& s = last_update_->environment_stats[i];
+                environment.push_back({"##rl_env_" + std::to_string(i), s.label, s.value, {}, {}, s.note, {}, t.info,
+                                       t.text_dim, t.text_dim, t.text});
+            }
+        }
+    }
+
+    // As many columns as cards of at least 150 px fit
+    const auto draw = [&](const char* id, const std::vector<Shown>& list) {
+        if (list.empty()) return;
+        const float available = ImGui::GetContentRegionAvail().x;
+        const int columns = std::clamp(static_cast<int>(available / 150.0f), 1, static_cast<int>(list.size()));
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4.0f, 4.0f));
+        if (ImGui::BeginTable(id, columns, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
+            for (const auto& c : list) {
+                ImGui::TableNextColumn();
+                ui::KpiCard(c.id.c_str(), c.label.c_str(), c.dot, c.value.c_str(), c.tooltip.c_str(), c.change.c_str(),
+                            c.change_colour, c.line2.c_str(), c.line2_colour, c.line3.empty() ? nullptr : c.line3.c_str(),
+                            c.line3_colour);
+            }
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleVar();
+    };
+    draw("##rl_kpis", shown);
+    draw("##rl_env_kpis", environment);
 }
 
 void TrainingDashboardPanel::RenderWatch() {
@@ -347,13 +426,12 @@ void TrainingDashboardPanel::RenderWatch() {
     const ui::Tokens& t = ui::CurrentTokens();
     namespace pb = rl_playback;
     const auto view = controls_.watch_view();
-    ImGui::TextColored(t.text_dim, "Watch progress");
+    ui::BeginCard("##rl_watch");
+    ui::CardTitle("Watch progress");
     if (!view.unavailable.empty()) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(t.text_dim, "%s", view.unavailable.c_str());
-        ImGui::PopTextWrapPos();
+        Wrapped(t.text_dim, view.unavailable);
         controls_.watch(0, watch_every_);
-        ImGui::Spacing();
+        ui::EndCard();
         return;
     }
     ui::SegmentedControl("##watch_progress", pb::kWatchChoices, pb::kWatchChoiceCount, &watch_);
@@ -366,11 +444,8 @@ void TrainingDashboardPanel::RenderWatch() {
         ImGui::TextColored(t.text_dim, "updates");
         ImGui::SameLine();
         if (ui::SecondaryButton("Now") && controls_.watch_now) controls_.watch_now();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Take the networks at the next update");
-        // The preview card: which networks it plays, its episodes, how it plays
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, t.plot_bg);
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, t.rounding_card);
-        ImGui::BeginChild("##watch_card", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+        ui::Tooltip("Take the networks at the next update");
+        // What the preview plays: which networks, its episodes, how it plays
         if (ImGui::BeginTable("##watch_facts", 2, ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("##l", ImGuiTableColumnFlags_WidthFixed);
             ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
@@ -379,83 +454,59 @@ void TrainingDashboardPanel::RenderWatch() {
             FactRow("Plays", "best actions, real time, the run's own ground and settings");
             ImGui::EndTable();
         }
-        if (!view.message.empty()) {
-            ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(t.error, "%s", view.message.c_str());
-            ImGui::PopTextWrapPos();
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
+        Wrapped(t.error, view.message);
     }
     controls_.watch(watch_, watch_every_);
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(t.text_dim, "%s Preferences > Simulation keeps the default.", pb::kWatchHint);
-    ImGui::PopTextWrapPos();
+    Wrapped(t.text_dim, std::string(pb::kWatchHint) + " Preferences > Simulation keeps the default.");
     if (watch_ != 0 && controls_.show_view && ui::SecondaryButton(view.view_label.c_str())) controls_.show_view();
-    ImGui::Spacing();
+    ui::EndCard();
 }
 
-void TrainingDashboardPanel::RenderKpis() {
-    const auto& reward = metrics_["episode_reward"].history;
-    const auto& length = metrics_["episode_length"].history;
-    const auto& policy = metrics_["policy_loss"].history;
-    const int cards = run_ ? 4 : 3;
-    const float gap = ImGui::GetStyle().ItemSpacing.x;
-    const float w = (ImGui::GetContentRegionAvail().x - static_cast<float>(cards - 1) * gap) / static_cast<float>(cards);
-    const auto mean = [](const std::vector<double>& v) {
-        return v.empty() ? 0.0 : std::accumulate(v.begin(), v.end(), 0.0) / static_cast<double>(v.size());
-    };
-    if (run_) {
-        // a PPO run reports the mean of the last 100 episodes each update
-        Card("##kpi_reward", "Episode reward", reward.empty() ? "-" : Format(reward.back(), "%.1f"),
-             reward.empty() ? "no episode finished yet"
-                            : "mean of last 100 \xC2\xB7 best " +
-                                  Format(*std::max_element(reward.begin(), reward.end()), "%.1f"),
-             w);
-        ImGui::SameLine();
-        Card("##kpi_length", "Episode length", length.empty() ? "-" : Format(length.back(), "%.1f"), "mean of last 100",
-             w);
-    } else {
-        Card("##kpi_reward", "Episode reward", reward.empty() ? "-" : Format(reward.back(), "%.2f"),
-             reward.empty() ? "" : "best " + Format(*std::max_element(reward.begin(), reward.end()), "%.2f") +
-                                       " \xC2\xB7 mean " + Format(mean(reward), "%.2f"),
-             w);
-        ImGui::SameLine();
-        Card("##kpi_length", "Episode length", length.empty() ? "-" : Format(length.back(), "%.0f"),
-             length.empty() ? "" : "mean " + Format(mean(length), "%.0f"), w);
-    }
+void TrainingDashboardPanel::RenderCharts() {
+    ui::BeginCard("##rl_charts");
+    ui::CardTitle("Charts");
     ImGui::SameLine();
-    Card("##kpi_policy", "Policy loss", policy.empty() ? "-" : Format(policy.back(), "%.4f"),
-         policy.empty() ? "" : plot::Thousands(static_cast<long long>(policy.size())) + " updates", w);
-    if (run_) {
-        ImGui::SameLine();
-        Card("##kpi_speed", "Speed", last_update_ ? Format(last_update_->steps_per_second, "%.0f") : "-",
-             "steps per second", w);
-        // The environment's own numbers (a curriculum's difficulty, falls) on a row of their own
-        if (last_update_ && !last_update_->environment_stats.empty()) {
-            const auto& stats = last_update_->environment_stats;
-            for (size_t i = 0; i < stats.size(); ++i) {
-                if (i % static_cast<size_t>(cards) != 0) ImGui::SameLine();
-                const std::string id = "##kpi_env_" + std::to_string(i);
-                Card(id.c_str(), stats[i].label.c_str(), stats[i].value, stats[i].note, w);
-            }
-        }
+    static const char* const kTabs[] = {"Episodes", "Policy diagnostics"};
+    ui::SegmentedControl("##rl_chart_tab", kTabs, 2, &chart_tab_);
+
+    std::vector<std::string> names;
+    if (chart_tab_ == 0) {
+        names = {"episode_reward", "episode_length"};
+    } else {
+        // Every diagnostic with values, in registration order
+        for (const auto& name : order_)
+            if (name != "episode_reward" && name != "episode_length" &&
+                (!metrics_[name].history.empty() || name == "policy_loss"))
+                names.push_back(name);
     }
+    const bool wide = ImGui::GetContentRegionAvail().x >= 900.0f;
+    const float height = chart_tab_ == 0 ? (wide ? 300.0f : 240.0f) : (wide ? 190.0f : 170.0f);
+    if (wide && ImGui::BeginTable("##rl_chart_grid", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
+        for (const auto& name : names) {
+            ImGui::TableNextColumn();
+            RenderMetric(name, height);
+        }
+        ImGui::EndTable();
+    } else {
+        for (const auto& name : names) RenderMetric(name, height);
+    }
+    ui::EndCard();
 }
 
 void TrainingDashboardPanel::RenderMetric(const std::string& name, float height) {
     auto& m = metrics_[name];
     const bool by_steps = !m.steps.empty() && m.steps.size() == m.history.size();
     const bool reference = by_steps && name == "episode_reward" && run_ && run_->reference;
+    // A PPO run reports the mean return of the last 100 episodes; a script, each episode's reward
+    const std::string label = name == "episode_reward" && run_ ? std::string("Mean return") : m.display_name;
     if (m.dirty) {
         // The value by report number, or by environment step for a PPO run
-        // (with the SB3 reference of the same settings under the reward).
+        // (with the SB3 reference of the same settings under the return).
         plot::PlotSpec spec;
         spec.kind = plot::Kind::Line;
         spec.x_column = "report";
-        spec.y_columns = {m.display_name};
-        spec.title = m.display_name;
+        spec.y_columns = {label};
+        spec.title = label;
         spec.x_label = by_steps ? "environment steps"
                                 : (name == "episode_reward" || name == "episode_length" ? "episode" : "update");
         spec.legend = reference;
@@ -468,7 +519,7 @@ void TrainingDashboardPanel::RenderMetric(const std::string& name, float height)
             x.numbers.resize(m.history.size());
             std::iota(x.numbers.begin(), x.numbers.end(), 1.0);
         }
-        y.name = m.display_name;
+        y.name = label;
         y.numbers = m.history;
         src.columns = {std::move(x), std::move(y)};
         if (reference) {
@@ -480,18 +531,48 @@ void TrainingDashboardPanel::RenderMetric(const std::string& name, float height)
         }
         plot::Prepared p = plot::Prepare(spec, src);
         if (m.history.empty()) p.problem = "No values yet.";
+        // The count is the run's own values, not the reference's beside them
+        if (reference && p.label.state == plot::DataLabel::State::Exact) p.label.shown = p.label.total = m.history.size();
         m.view->SetData(std::move(p));
         m.dirty = false;
     }
     {
         ui::FontScope medium(ui::Font::Medium);
-        ImGui::TextUnformatted(m.display_name.c_str());
+        ImGui::TextUnformatted(label.c_str());
     }
+    plot::PlotView::Options o = MetricOptions(name);
+    // The wheel scrolls the dashboard; Ctrl + wheel zooms the chart (B4-10)
+    o.zoom_with_ctrl = true;
+    m.view->Draw(ImVec2(0, height), o);
+}
+
+plot::PlotView::Options TrainingDashboardPanel::MetricOptions(const std::string& name) const {
     plot::PlotView::Options o;
     o.export_name = name;
-    // The series colour by registration order (reward violet, length sky...).
+    // The series colour by registration order (return violet, length sky...).
     o.colour_offset = static_cast<size_t>(std::find(order_.begin(), order_.end(), name) - order_.begin());
-    m.view->Draw(ImVec2(0, height), o);
+    const auto it = metrics_.find(name);
+    const bool by_steps = it != metrics_.end() && !it->second.steps.empty() &&
+                          it->second.steps.size() == it->second.history.size();
+    if (name == "episode_reward" && run_ && by_steps && std::isfinite(run_->target_return))
+        o.y_lines.push_back({static_cast<double>(run_->target_return), TargetLabel(run_->target_return)});
+    return o;
+}
+
+void TrainingDashboardPanel::RunPendingExport() {
+    if (!pending_export_) return;
+    pending_export_ = false;
+    if (updates_.empty()) return;
+    const std::string csv = rd::UpdatesCsv(updates_);
+    const std::string root = ProjectManager::Instance().GetProjectRoot();
+    const std::string folder = root.empty() ? std::string() : (std::filesystem::path(root) / "exports").string();
+    const auto path = FileDialogs::SaveFile("Export updates", {{"CSV Files", "csv"}, {"All Files", "*"}},
+                                            folder.empty() ? nullptr : folder.c_str(), "rl_updates.csv");
+    if (!path) return;  // cancelled
+    std::ofstream file(*path, std::ios::binary | std::ios::trunc);
+    const bool ok = file && (file << csv) && file.flush();
+    export_failed_ = !ok;
+    export_note_ = ok ? "Saved the updates to " + *path : "Could not save the updates: could not write " + *path;
 }
 
 }  // namespace cyxwiz

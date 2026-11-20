@@ -13,6 +13,7 @@ To write your own nodes in Python or C++, see
 | [The menu bar](menu_bar.md) | File to Help, the project and your account at the top right |
 | [The CyxWiz Studio bar](studio_toolbar.md) | The bar at the top of the canvas |
 | [Windows of their own](windows.md) | Moving the big windows out of the main window |
+| [Theme Editor](theme_editor.md) | Every colour the Engine draws, the accent, and saving your own theme |
 | [Asset Browser](asset_browser.md) | The project's folders and files, previews, new files |
 | [Properties](properties.md) | The Properties panel for the selected node |
 | [Console and logs](console_logs.md) | Logs, the Python REPL and commands |
@@ -31,6 +32,7 @@ To write your own nodes in Python or C++, see
 | [Environments for reinforcement learning](rl_environments.md) | Plugin environments (MuJoCo tasks), their settings, and `pycyxwiz.rl` for Gymnasium and Stable-Baselines3 |
 | [Training a policy (PPO)](rl_training.md) | The RL graph (Environment, layers, Policy / Value Head, PPO), its settings, Train and the RL Training Dashboard |
 | [The MuJoCo Viewport](mujoco_viewport.md) | The 3D view: run a model, cameras (follow a body, the model's cameras), View options, live numbers, screenshots and recordings, the Stress panel, Inspect (bodies, joints, controls, keyframes, physics), the timeline and plots |
+| [MuJoCo models](mujoco_models.md) | The Environment Library; downloads shared by every project and pinned to a version; a project names its models so another PC downloads the same one; Copy into the project; Import from URL |
 | [Train, play and export a policy](rl_walkthrough.md) | Step by step: CartPole, InvertedPendulum and HalfCheetah from Studio, playing and saving the policy, export, and what a real robot needs |
 
 ## Data
@@ -92,6 +94,7 @@ To write your own nodes in Python or C++, see
 
 | Page | What it covers |
 | --- | --- |
+| [The Training Dashboard](training_dashboard.md) | The run's state, where it ran and on what data, how it ended, the active model and held-out test, Run details, the cards |
 | [Testing a trained model](testing.md) | Running a test on the test split; Results > Test: errors, threshold, calibration, a decision kept with the model |
 | [Seeds and reproducibility](seeds_and_reproducibility.md) | What each seed draws; the same draws on every operating system and device |
 | [The Model window](model_tools.md) | Tools > Model: summary (parameters, multiply-adds, memory), learning-rate range test, Grad-CAM / saliency / Integrated Gradients, training health, projector |

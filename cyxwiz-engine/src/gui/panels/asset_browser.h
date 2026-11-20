@@ -90,6 +90,9 @@ public:
     // Enable/disable the file preview pane
     void SetShowDatasetPreview(bool show) { show_dataset_preview_ = show; }
 
+    // A data file's "Open in Table Viewer" (and its double-click): the path.
+    void SetOnOpenInTableViewer(DataInputSourceCallback callback) { on_open_in_table_viewer_ = std::move(callback); }
+
     // A loaded dataset's "Open in Data Studio" (its registry name).
     using DatasetNameCallback = std::function<void(const std::string& dataset_name)>;
     void SetOnOpenInDataStudio(DatasetNameCallback callback) { on_open_in_data_studio_ = std::move(callback); }
@@ -114,6 +117,7 @@ private:
 
     // Dataset helpers
     bool IsDatasetFile(const AssetItem& item) const;
+    bool OpensInTableViewer(const AssetItem& item) const;  // a table file the Table Viewer reads
     void CreateDataInputFromItem(const AssetItem& item);
 
     // Dialogs
@@ -191,6 +195,7 @@ private:
     AssetCallback on_double_click_;
     AssetCallback on_deleted_;
     DataInputSourceCallback on_create_data_input_;
+    DataInputSourceCallback on_open_in_table_viewer_;
 
     GraphCallback on_open_in_node_editor_;
 

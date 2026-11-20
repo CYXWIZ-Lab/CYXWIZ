@@ -57,9 +57,23 @@ public:
         struct Range {
             bool on = false;
             double lo = 0, hi = 1;
-            bool once = false;  // set the first time only (the user may pan after)
+            // Set when it changes only (the first time, a new run's epochs):
+            // the user may pan and zoom in between.
+            bool once = false;
         };
         Range x_range, y_range;
+        // A plot inside a scrolling screen: the mouse wheel scrolls the
+        // screen and Ctrl + wheel zooms (a plain wheel zoom caught every
+        // scroll that passed over the plot). The plot then draws without a
+        // child window of its own.
+        bool zoom_with_ctrl = false;
+        // Horizontal reference lines (an RL run's target return): dashed in
+        // the muted tone with their label at the left; the fit takes them in.
+        struct YLine {
+            double value = 0;
+            std::string label;
+        };
+        std::vector<YLine> y_lines;
         // Toolbar items a screen already has its own controls for.
         bool tool_fit = true;
         bool tool_log = true;
@@ -150,6 +164,10 @@ private:
     bool drawing_own_window_ = false;
     size_t colour_offset_ = 0;
     Options::Range x_range_, y_range_;
+    bool zoom_with_ctrl_ = false;
+    std::vector<Options::YLine> y_lines_;
+    // The once-ranges last applied, so a changed one applies again.
+    double once_x_lo_ = NAN, once_x_hi_ = NAN, once_y_lo_ = NAN, once_y_hi_ = NAN;
     int hovered_row_ = -1;      // parallel coordinates: the line under the mouse
     std::optional<Click> click_;
     std::shared_ptr<const Prepared> background_;

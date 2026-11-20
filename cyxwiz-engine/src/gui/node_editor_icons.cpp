@@ -3,6 +3,8 @@
 // Contains GetNodeIcon implementation for all icon packs
 
 #include "node_editor.h"
+#include "appearance_settings.h"
+#include "../core/appearance_options.h"
 #include "icons.h"
 #include "IconsTabler.h"
 #include "IconsRemix.h"
@@ -18,11 +20,15 @@ namespace gui {
 
 namespace {
 constexpr size_t kIconPackCount = static_cast<size_t>(IconPack::Phosphor) + 1;
+static_assert(kIconPackCount == cyxwiz::appearance::kNodeIconPacks.size(),
+              "the pack labels follow gui::IconPack");
 std::array<ImFont*, kIconPackCount> g_node_icon_fonts{};
 }  // namespace
 
 // ========== Icon Implementation ==========
-const char* NodeEditor::GetNodeIcon(NodeType type) { return NodeIconFor(icon_pack_, type); }
+const char* NodeEditor::GetNodeIcon(NodeType type) {
+    return NodeIconFor(static_cast<IconPack>(NodeIconPack()), type);
+}
 
 void RegisterNodeIconFont(IconPack pack, ImFont* font) {
     const auto index = static_cast<size_t>(pack);

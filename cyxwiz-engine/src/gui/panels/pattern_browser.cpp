@@ -22,20 +22,6 @@ static const char* GetCategoryName(::gui::patterns::PatternCategory category) {
     }
 }
 
-// Category icons
-static const char* GetCategoryIcon(::gui::patterns::PatternCategory category) {
-    switch (category) {
-        case ::gui::patterns::PatternCategory::Basic:         return ICON_FA_LAYER_GROUP;
-        case ::gui::patterns::PatternCategory::CNN:           return ICON_FA_IMAGE;
-        case ::gui::patterns::PatternCategory::RNN:           return ICON_FA_CHART_LINE;
-        case ::gui::patterns::PatternCategory::Transformer:   return ICON_FA_BRAIN;
-        case ::gui::patterns::PatternCategory::Generative:    return ICON_FA_WAND_MAGIC_SPARKLES;
-        case ::gui::patterns::PatternCategory::BuildingBlocks: return ICON_FA_CUBES;
-        case ::gui::patterns::PatternCategory::Custom:        return ICON_FA_USER;
-        default: return ICON_FA_CUBE;
-    }
-}
-
 PatternBrowserPanel::PatternBrowserPanel()
     : Panel("Pattern Browser", false)  // Hidden by default
 {
@@ -119,7 +105,7 @@ void PatternBrowserPanel::RenderCategoryTabs() {
         }
 
         // Create button with icon and name
-        std::string label = std::string(GetCategoryIcon(category)) + " " + GetCategoryName(category);
+        std::string label = std::string(::gui::patterns::GetPatternCategoryIcon(category)) + " " + GetCategoryName(category);
 
         if (i > 0) ImGui::SameLine();
 
@@ -213,7 +199,7 @@ void PatternBrowserPanel::RenderPatternCard(const ::gui::patterns::Pattern& patt
 
     // Collapsing header for pattern
     bool header_open = ImGui::CollapsingHeader(
-        (std::string(GetCategoryIcon(pattern.category)) + " " + pattern.name).c_str(),
+        (std::string(::gui::patterns::GetPatternCategoryIcon(pattern.category)) + " " + pattern.name).c_str(),
         is_expanded ? ImGuiTreeNodeFlags_DefaultOpen : 0
     );
 
@@ -279,7 +265,7 @@ void PatternBrowserPanel::RenderPatternCard(const ::gui::patterns::Pattern& patt
         float button_width = ImGui::GetContentRegionAvail().x;
         if (ImGui::Button((std::string(ICON_FA_PLUS) + " Insert Pattern").c_str(),
                           ImVec2(button_width, 0))) {
-            InsertPattern(pattern.id);
+            InsertPattern(pattern.id, param_values_);
         }
 
         if (ImGui::IsItemHovered()) {
@@ -408,7 +394,8 @@ void PatternBrowserPanel::RenderParameterInputs(const ::gui::patterns::Pattern& 
     ImGui::PopItemWidth();
 }
 
-void PatternBrowserPanel::InsertPattern(const std::string& pattern_id) {
+void PatternBrowserPanel::InsertPattern(const std::string& pattern_id,
+                                        const std::map<std::string, std::string>& params) {
     auto& library = ::gui::patterns::PatternLibrary::Instance();
 
     // Prepare output containers
@@ -438,7 +425,7 @@ void PatternBrowserPanel::InsertPattern(const std::string& pattern_id) {
 
         success = library.InstantiatePatternWithCreator(
             pattern_id,
-            param_values_,
+            params,
             nodes,
             links,
             next_node_id,
@@ -451,7 +438,7 @@ void PatternBrowserPanel::InsertPattern(const std::string& pattern_id) {
         int next_pin_id = base_id * 10;
         success = library.InstantiatePattern(
             pattern_id,
-            param_values_,
+            params,
             nodes,
             links,
             next_node_id,
