@@ -1542,8 +1542,13 @@ void PlotView::DrawPlot(ImVec2 size) {
             const ImVec2 b = ImPlot::PlotToPixels(limits.X.Max, line.value);
             for (float x = a.x; x < b.x; x += 9.0f)
                 dl->AddLine(ImVec2(x, a.y), ImVec2(std::min(x + 5.0f, b.x), a.y), colour, 1.0f);
-            if (!line.label.empty())
-                dl->AddText(ImVec2(a.x + 6.0f, a.y - ImGui::GetTextLineHeight() - 2.0f), colour, line.label.c_str());
+            if (!line.label.empty()) {
+                // Above the line, or under it when the line runs along the plot's top
+                const float text_h = ImGui::GetTextLineHeight();
+                const float above = a.y - text_h - 2.0f;
+                const float y = above < ImPlot::GetPlotPos().y ? a.y + 2.0f : above;
+                dl->AddText(ImVec2(a.x + 6.0f, y), colour, line.label.c_str());
+            }
         }
         ImPlot::PopPlotClipRect();
     }
