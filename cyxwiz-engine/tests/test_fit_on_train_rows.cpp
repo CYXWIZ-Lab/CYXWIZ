@@ -473,6 +473,44 @@ void CheckPCA() {
     Expect(Column(beside, "pc_0"), want, "PCA beside the input");
     Check(beside->GetColumnByName("text") != nullptr, "PCA beside the input: the other columns kept");
     {
+        // The label passes through unchanged (TOFIX223 0.7): a float target
+        // keeps its fractions, a missing target stays missing, a text label
+        // stays text. It once came out as int32: 2.75 -> 2, null -> class 0.
+        arrow::DoubleBuilder target_builder;
+        (void)target_builder.AppendValues({0.25, 2.75, -1.5});
+        (void)target_builder.AppendNull();
+        (void)target_builder.AppendValues({7.125, 3.5});
+        std::shared_ptr<arrow::Array> target;
+        (void)target_builder.Finish(&target);
+        auto with_target = *Table()->AddColumn(0, arrow::field("target", arrow::float64()),
+                                                 std::make_shared<arrow::ChunkedArray>(target));
+        PCAOperator labelled;
+        const auto out_target = Run(labelled, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"label_col", "target"}}, with_target);
+        const auto y = out_target->GetColumnByName("y");
+        Check(y != nullptr && y->type()->Equals(arrow::float64()), "PCA: the label keeps its float type");
+        Check(y && y->length() == 6 && y->null_count() == 1, "PCA: the missing label stays missing");
+        if (y && y->length() == 6 && y->type()->Equals(arrow::float64())) {
+            std::vector<double> values;
+            std::vector<bool> present;
+            for (const auto& chunk : y->chunks()) {
+                const auto& doubles = static_cast<const arrow::DoubleArray&>(*chunk);
+                for (int64_t i = 0; i < doubles.length(); ++i) {
+                    present.push_back(doubles.IsValid(i));
+                    values.push_back(doubles.IsValid(i) ? doubles.Value(i) : 0.0);
+                }
+            }
+            Check(!present[3], "PCA: row 3's label is the missing one");
+            Check(values[0] == 0.25 && values[1] == 2.75 && values[2] == -1.5 && values[4] == 7.125 && values[5] == 3.5,
+                  "PCA: the label values pass through unchanged");
+        }
+        PCAOperator text_labelled;
+        const auto out_text = Run(text_labelled, {{"feature_cols", "a,y"}, {"n_components", "1"}, {"label_col", "c"}}, Table());
+        const auto text_y = out_text->GetColumnByName("y");
+        Check(text_y && text_y->type()->Equals(arrow::utf8()) &&
+                  std::static_pointer_cast<arrow::StringScalar>(*text_y->GetScalar(1))->ToString() == "blue",
+              "PCA: a text label stays text");
+    }
+    {
         // A second PCA beside the first would add pc_0 twice: refused with the reason.
         PCAOperator twice;
         std::string error;

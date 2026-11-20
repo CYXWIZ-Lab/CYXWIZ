@@ -2742,17 +2742,28 @@ void CheckCustomerSegmentsDemoGraph() {
     const auto pca = run_plot(7);
     Check(pca->num_rows() == 248 && pca->GetColumnByName("pc_0") && pca->GetColumnByName("pc_1"),
           "demo graph: PCA gives pc_0, pc_1 for 248 rows");
-    const std::vector<int> segment = int_column(pca, "y");
-    std::map<int, int> segment_sizes;
-    for (int code : segment) ++segment_sizes[code];
-    int outlier_code = -1;
-    for (const auto& [code, size] : segment_sizes) if (size == 8) outlier_code = code;
-    Check(segment_sizes.size() == 5 && outlier_code >= 0, "demo graph: 4 segments of 60 and 8 outliers");
+    // The label passes through PCA as it is (TOFIX223 0.7): the segment names.
+    const auto segment_column = pca->GetColumnByName("y");
+    Check(segment_column && segment_column->type()->id() == arrow::Type::STRING,
+          "demo graph: PCA keeps the text segment label as text");
+    std::map<std::string, int> segment_sizes;
+    for (const auto& chunk : segment_column->chunks()) {
+        const auto& names = static_cast<const arrow::StringArray&>(*chunk);
+        for (int64_t i = 0; i < names.length(); ++i) ++segment_sizes[names.GetString(i)];
+    }
+    std::string outlier_name;
+    for (const auto& [name, size] : segment_sizes) if (size == 8) outlier_name = name;
+    Check(segment_sizes.size() == 5 && !outlier_name.empty(), "demo graph: 4 segments of 60 and 8 outliers");
+    std::vector<std::string> segment;
+    for (const auto& chunk : segment_column->chunks()) {
+        const auto& names = static_cast<const arrow::StringArray&>(*chunk);
+        for (int64_t i = 0; i < names.length(); ++i) segment.push_back(names.GetString(i));
+    }
 
     // K-Means: each cluster is (almost) one segment.
     const std::vector<int> kmeans = int_column(run_plot(8), "cluster_id");
-    std::map<int, std::map<int, int>> counts;
-    for (size_t i = 0; i < kmeans.size(); ++i) if (segment[i] != outlier_code) ++counts[kmeans[i]][segment[i]];
+    std::map<int, std::map<std::string, int>> counts;
+    for (size_t i = 0; i < kmeans.size(); ++i) if (segment[i] != outlier_name) ++counts[kmeans[i]][segment[i]];
     int agree = 0;
     for (const auto& [cluster, by_segment] : counts) {
         int best = 0;
@@ -2768,7 +2779,7 @@ void CheckCustomerSegmentsDemoGraph() {
     int noise_outliers = 0;
     for (size_t i = 0; i < dbscan.size(); ++i) {
         if (dbscan[i] >= 0) clusters.insert(dbscan[i]);
-        if (dbscan[i] == -1 && segment[i] == outlier_code) ++noise_outliers;
+        if (dbscan[i] == -1 && segment[i] == outlier_name) ++noise_outliers;
     }
     Check(clusters.size() == 4 && noise_outliers >= 5, "demo graph: DBSCAN finds 4 clusters and flags " +
                                                            std::to_string(noise_outliers) + " of 8 outliers");

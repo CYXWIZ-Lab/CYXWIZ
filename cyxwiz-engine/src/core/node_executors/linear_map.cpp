@@ -1,7 +1,6 @@
 #include "linear_map.h"
 
 #include "../split_partitioning.h"
-#include "text_column_utils.h"  // ReadLabelColumnAsInt
 
 #include <cyxwiz/linear_algebra.h>
 
@@ -211,7 +210,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_pt
         return out;
     }
     std::vector<std::shared_ptr<arrow::Field>> fields;
-    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    std::vector<std::shared_ptr<arrow::ChunkedArray>> arrays;
     for (size_t c = 0; c < k; ++c) {
         arrow::FloatBuilder b;
         ARROW_RETURN_NOT_OK(b.Reserve(n));
@@ -220,23 +219,22 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_pt
         std::shared_ptr<arrow::Array> a;
         ARROW_RETURN_NOT_OK(b.Finish(&a));
         fields.push_back(arrow::field(map.outputs[c], arrow::float32()));
-        arrays.push_back(a);
+        arrays.push_back(std::make_shared<arrow::ChunkedArray>(a));
     }
     if (!label_col.empty()) {
+        // The label of each kept row as it is - same type, same values, nulls
+        // kept - named y as the other projection steps name it. The step never
+        // changes a target (TOFIX223 0.7: it once read the label as int32, so a
+        // float target was truncated and a missing one became class 0).
         const auto column = input->GetColumnByName(label_col);
         if (!column) return arrow::Status::KeyError(op_name + ": label column '" + label_col + "' not found");
-        std::vector<int> labels;
-        std::vector<std::string> class_names;
-        std::string bad;
-        if (!ReadLabelColumnAsInt(column, labels, class_names, bad))
-            return arrow::Status::TypeError(op_name + ": label column '" + label_col + "' has unsupported type '" + bad + "'");
-        arrow::Int32Builder b;
-        ARROW_RETURN_NOT_OK(b.Reserve(n));
-        for (const int64_t row : rows.rows) b.UnsafeAppend(labels[static_cast<size_t>(row)]);
-        std::shared_ptr<arrow::Array> a;
-        ARROW_RETURN_NOT_OK(b.Finish(&a));
-        fields.push_back(arrow::field("y", arrow::int32()));
-        arrays.push_back(a);
+        arrow::Int64Builder index_builder;
+        ARROW_RETURN_NOT_OK(index_builder.AppendValues(rows.rows));
+        std::shared_ptr<arrow::Array> indices;
+        ARROW_RETURN_NOT_OK(index_builder.Finish(&indices));
+        ARROW_ASSIGN_OR_RAISE(const arrow::Datum kept, arrow::compute::Take(column, indices));
+        fields.push_back(arrow::field("y", column->type(), true, input->schema()->GetFieldByName(label_col)->metadata()));
+        arrays.push_back(kept.chunked_array());
     }
     // The split the step learned from, for the rows kept.
     const std::vector<int8_t> parts = PartitionValues(input);
@@ -247,7 +245,7 @@ arrow::Result<std::shared_ptr<arrow::Table>> LinearMapTable(const std::shared_pt
         std::shared_ptr<arrow::Array> a;
         ARROW_RETURN_NOT_OK(b.Finish(&a));
         fields.push_back(arrow::field(kSplitPartitionColumn, arrow::int8()));
-        arrays.push_back(a);
+        arrays.push_back(std::make_shared<arrow::ChunkedArray>(a));
     }
     return arrow::Table::Make(arrow::schema(fields), arrays, n);
 }
