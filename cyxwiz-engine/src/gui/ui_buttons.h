@@ -41,8 +41,10 @@ bool ChipButton(const char* label, unsigned int swatch = 0);
 float ChipButtonWidth(const char* label, bool swatch = false);
 
 // Segmented choice (one of several options side by side). Returns true when
-// the selection changed; `selected` is updated.
+// the selection changed; `selected` is updated. Options that do not fit the
+// space left flow onto another row rather than being cut off.
 bool SegmentedControl(const char* id, const char* const* labels, int count, int* selected);
+// Its width on one row
 float SegmentedControlWidth(const char* const* labels, int count);
 
 // A step of a run group (Compile, Local Debug; TOFIX178 UI-1): the label

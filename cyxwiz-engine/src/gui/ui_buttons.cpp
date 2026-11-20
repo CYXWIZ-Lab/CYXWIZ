@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <cfloat>
+#include <vector>
 #include <imgui_internal.h>
 
 namespace cyxwiz::ui {
@@ -289,40 +290,61 @@ bool SegmentedControl(const char* id, const char* const* labels, int count, int*
     const ImVec2 start = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     bool changed = false;
-    // One tinted track; the chosen segment is filled. No outlines or dividers.
-    float total = 0.0f;
-    for (int i = 0; i < count; ++i) total += ImGui::CalcTextSize(labels[i], nullptr, true).x + 24.0f;
-    dl->AddRectFilled(start, ImVec2(start.x + total, start.y + height), ImGui::GetColorU32(kSecondary), kRounding);
+    // One tinted track a row; the chosen segment is filled. No outlines or
+    // dividers. Segments that do not fit the space left flow onto another row,
+    // so nothing is cut off at a narrow cell's edge.
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const size_t n = static_cast<size_t>(std::max(count, 0));
+    std::vector<float> widths(n);
+    std::vector<int> row_of(n);
+    std::vector<float> row_width(1, 0.0f);
+    for (size_t i = 0; i < n; ++i) {
+        widths[i] = ImGui::CalcTextSize(labels[i], nullptr, true).x + 24.0f;
+        if (avail > 0.0f && row_width.back() > 0.0f && row_width.back() + widths[i] > avail) row_width.push_back(0.0f);
+        row_of[i] = static_cast<int>(row_width.size()) - 1;
+        row_width.back() += widths[i];
+    }
+    const float row_step = height + ImGui::GetStyle().ItemSpacing.y;
+    for (size_t r = 0; r < row_width.size(); ++r) {
+        const float y = start.y + row_step * static_cast<float>(r);
+        dl->AddRectFilled(ImVec2(start.x, y), ImVec2(start.x + row_width[r], y + height), ImGui::GetColorU32(kSecondary),
+                          kRounding);
+    }
     float x = start.x;
-    for (int i = 0; i < count; ++i) {
-        const float width = ImGui::CalcTextSize(labels[i], nullptr, true).x + 24.0f;
-        ImGui::SetCursorScreenPos(ImVec2(x, start.y));
-        ImGui::PushID(i);
-        if (ImGui::InvisibleButton("##segment", ImVec2(width, height)) && *selected != i) {
-            *selected = i;
+    for (size_t i = 0; i < n; ++i) {
+        const bool row_first = i == 0 || row_of[i] != row_of[i - 1];
+        const bool row_last = i + 1 == n || row_of[i + 1] != row_of[i];
+        if (row_first) x = start.x;
+        const float y = start.y + row_step * static_cast<float>(row_of[i]);
+        const float width = widths[i];
+        ImGui::SetCursorScreenPos(ImVec2(x, y));
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::InvisibleButton("##segment", ImVec2(width, height)) && *selected != static_cast<int>(i)) {
+            *selected = static_cast<int>(i);
             changed = true;
         }
         const bool hovered = ImGui::IsItemHovered();
         ImGui::PopID();
-        const bool on = *selected == i;
-        const ImVec2 min(x, start.y);
-        const ImVec2 max(x + width, start.y + height);
+        const bool on = *selected == static_cast<int>(i);
+        const ImVec2 min(x, y);
+        const ImVec2 max(x + width, y + height);
         ImDrawFlags corners = ImDrawFlags_RoundCornersNone;
-        if (i == 0) corners |= ImDrawFlags_RoundCornersLeft;
-        if (i == count - 1) corners |= ImDrawFlags_RoundCornersRight;
+        if (row_first) corners |= ImDrawFlags_RoundCornersLeft;
+        if (row_last) corners |= ImDrawFlags_RoundCornersRight;
         if (on || hovered) {
             const ImVec4 fill = on ? ImVec4(kPrimary.x, kPrimary.y, kPrimary.z, 0.85f) : kSecondaryHover;
             dl->AddRectFilled(min, max, ImGui::GetColorU32(fill), kRounding, corners);
         }
         const ImVec2 text = ImGui::CalcTextSize(labels[i], nullptr, true);
-        dl->AddText(ImVec2(x + (width - text.x) * 0.5f, start.y + (height - text.y) * 0.5f),
+        dl->AddText(ImVec2(x + (width - text.x) * 0.5f, y + (height - text.y) * 0.5f),
                     ImGui::GetColorU32(on ? ImVec4(1, 1, 1, 1) : kText), labels[i],
                     ImGui::FindRenderedTextEnd(labels[i]));
         if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         x += width;
     }
     ImGui::SetCursorScreenPos(start);
-    ImGui::Dummy(ImVec2(x - start.x, height));
+    const float widest = *std::max_element(row_width.begin(), row_width.end());
+    ImGui::Dummy(ImVec2(widest, row_step * static_cast<float>(row_width.size() - 1) + height));
     ImGui::PopID();
     return changed;
 }
