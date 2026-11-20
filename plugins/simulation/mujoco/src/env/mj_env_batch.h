@@ -50,6 +50,8 @@ public:
     const mjModel* ModelOf(int copy) const { return models_[static_cast<size_t>(copy)].get(); }
     const MjGroundProfile& ProfileOf(int copy) const { return profiles_[static_cast<size_t>(copy)]; }
     double RootX(int copy) const { return root_ >= 0 ? data_[static_cast<size_t>(copy)]->xpos[3 * root_] : 0.0; }
+    const mjData* DataOf(int copy) const { return data_[static_cast<size_t>(copy)]; }
+    const MjRobotSize& Robot() const { return builder_.Robot(); }
 
 private:
     MjEnvBatch() = default;
@@ -94,6 +96,8 @@ private:
     std::vector<int> steps_;
     std::vector<double> returns_;     // the episode's return so far
     std::vector<double> next_push_;   // simulated time of the copy's next push
+    std::vector<double> next_throw_;  // and of its next throw
+    std::vector<int> next_slot_;      // the object slot it throws next
     std::vector<double> ended_return_;// the return of the episode that ended this step
     std::vector<uint8_t> fell_;       // and whether it ended in a fall (ended early, or upside down)
     std::deque<bool> falls_;          // the last 100 episodes

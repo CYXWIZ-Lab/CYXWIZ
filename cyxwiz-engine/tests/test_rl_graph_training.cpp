@@ -400,6 +400,7 @@ void CheckWatchInView(const std::shared_ptr<const cyxwiz::RLTrainingConfiguratio
 void CheckStressRun(const std::shared_ptr<cyxwiz::rl::TrainedPolicy>& policy) {
     using namespace cyxwiz::rl;
     Check(SupportsStress(policy->config.environment), "a MuJoCo task takes the stress test's settings");
+    Check(SupportsStressKind(policy->config.environment, StressKind::Thrown), "and the thrown objects'");
     StressTestSpec spec;
     spec.kind = StressKind::Kicks;
     spec.levels = 2;
@@ -758,6 +759,20 @@ void CheckStressTestConditions() {
     Check(kicks["grounds"].empty() && kicks["push_every"] == "1.5" && kicks["push_speed"] == "2",
           "kicks: no ground, a push every 1.5 s of up to 4 m/s times the difficulty");
     Check(StressSettings(own, StressKind::Kicks, 0.0)["push_every"] == "0", "kicks at 0: none");
+    // Thrown objects (TOFIX216 T3): a throw every 1.5 s of up to 5 kg at up to 10 m/s times the difficulty
+    auto thrown = StressSettings(own, StressKind::Thrown, 0.5);
+    Check(thrown["grounds"].empty() && thrown["push_every"] == "0" && thrown["throw_every"] == "1.5" &&
+              thrown["throw_object"] == "any" && thrown["throw_mass_from"] == "2.5" && thrown["throw_mass_to"] == "2.5" &&
+              thrown["throw_speed_from"] == "5" && thrown["throw_speed_to"] == "5" && thrown["throw_size_to"] == "0.2",
+          "thrown objects: no ground, a throw every 1.5 s, 2.5 kg at 5 m/s at difficulty 0.5");
+    Check(StressSettings(own, StressKind::Thrown, 0.0)["throw_every"] == "0", "thrown objects at 0: none");
+    auto trained_with_throws = own;
+    trained_with_throws["throw_every"] = "2";
+    Check(StressSettings(trained_with_throws, StressKind::Steps, 0.5)["throw_every"] == "0" &&
+              !StressSettings(own, StressKind::Steps, 0.5).count("throw_every"),
+          "a policy trained with throws is tested on the disturbance only; one without keeps no throw key");
+    Check(std::string(StressKindName(StressKind::Thrown)) == "Thrown objects" && kStressKindCount == 6,
+          "six disturbances, the last Thrown objects");
     StressTestSpec spec;
     spec.levels = 5;
     Check(StressDifficulty(spec, 0) == 0.0 && StressDifficulty(spec, 4) == 1.0 && StressDifficulty(spec, 1) == 0.25,

@@ -15,7 +15,8 @@
 namespace cyxwiz::rl {
 
 const char* const* StressKindNames() {
-    static const char* const kNames[kStressKindCount] = {"Rough", "Slopes", "Steps", "Obstacles", "Kicks"};
+    static const char* const kNames[kStressKindCount] = {"Rough",     "Slopes", "Steps",
+                                                         "Obstacles", "Kicks",  "Thrown objects"};
     return kNames;
 }
 
@@ -31,6 +32,14 @@ bool SupportsStress(const plugin::PluginEnvironmentInfo& info) {
         pushes = pushes || s.key == "push_every";
     }
     return grounds && pushes;
+}
+
+bool SupportsStressKind(const plugin::PluginEnvironmentInfo& info, StressKind kind) {
+    if (!SupportsStress(info)) return false;
+    if (kind != StressKind::Thrown) return true;
+    for (const auto& s : info.settings)
+        if (s.key == "throw_every") return true;
+    return false;
 }
 
 double StressDifficulty(const StressTestSpec& spec, int level) {
@@ -51,6 +60,7 @@ std::map<std::string, std::string> StressSettings(const std::map<std::string, st
     settings["mass_percent"] = "0";
     settings["motor_percent"] = "0";
     settings["push_every"] = "0";
+    if (own.count("throw_every")) settings["throw_every"] = "0";  // a policy trained with throws
     settings["grounds"] = "";
     settings["difficulty_from"] = level;
     settings["difficulty_to"] = level;
@@ -65,6 +75,19 @@ std::map<std::string, std::string> StressSettings(const std::map<std::string, st
             std::snprintf(speed, sizeof(speed), "%.6g", 4.0 * difficulty);
             settings["push_every"] = difficulty > 0.0 ? "1.5" : "0";
             settings["push_speed"] = speed;
+            break;
+        }
+        case StressKind::Thrown: {
+            // A throw every 1.5 s; the difficulty scales the mass (up to 5 kg) and
+            // the speed (up to 10 m/s); none at 0. Any shape, 0.2 m.
+            char mass[32], speed[32];
+            std::snprintf(mass, sizeof(mass), "%.6g", std::max(0.01, 5.0 * difficulty));
+            std::snprintf(speed, sizeof(speed), "%.6g", 10.0 * difficulty);
+            settings["throw_every"] = difficulty > 0.0 ? "1.5" : "0";
+            settings["throw_object"] = "any";
+            settings["throw_size_from"] = settings["throw_size_to"] = "0.2";
+            settings["throw_mass_from"] = settings["throw_mass_to"] = mass;
+            settings["throw_speed_from"] = settings["throw_speed_to"] = speed;
             break;
         }
     }
@@ -97,6 +120,10 @@ bool PolicyStressTest::Start(std::vector<std::pair<std::string, std::shared_ptr<
         }
         if (!SupportsStress(env.info)) {
             error = env.info.name + " has no grounds or pushes to test with.";
+            return false;
+        }
+        if (!SupportsStressKind(env.info, spec.kind)) {
+            error = env.info.name + " has no throws to test with: update its plugin.";
             return false;
         }
     }

@@ -430,7 +430,7 @@ void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPoli
     ImGui::TextColored(t.text_dim,
                        "Plays N episodes at each difficulty of one disturbance, with the policy's best actions, and "
                        "compares it with a second saved policy. Each level has its own seed, so both policies meet the "
-                       "same grounds and the same pushes.");
+                       "same grounds, pushes and throws.");
     ImGui::PopTextWrapPos();
     ImGui::Spacing();
 
@@ -449,7 +449,8 @@ void PolicyPlaybackPanel::RenderStressTest(const std::shared_ptr<rl::TrainedPoli
     label("Disturbance");
     ui::SegmentedControl("##stress_kind", rl::StressKindNames(), rl::kStressKindCount, &stress_kind_);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("A ground at the level's difficulty, or pushes every 1.5 s of up to 4 m/s times the difficulty");
+        ImGui::SetTooltip("A ground at the level's difficulty; pushes every 1.5 s of up to 4 m/s; or a throw every "
+                          "1.5 s of up to 5 kg at up to 10 m/s (Thrown objects), times the difficulty");
     label("Levels");
     ui::NumberField("##stress_levels", &stress_levels_, 2, 21, 1, 60.0f, "Difficulty 0 to 1 in this many levels");
     ImGui::SameLine();

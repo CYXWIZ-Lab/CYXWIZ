@@ -4,7 +4,7 @@
 // difficulty of one disturbance, for one or two saved policies, so they can be
 // compared on the same grounds. Each level's episodes run as copies of one
 // batch reset with the level's own seed, so both policies meet the same
-// grounds and the same pushes. The disturbance reaches the environment as its
+// grounds, the same pushes and the same throws. The disturbance reaches the environment as its
 // robustness settings (the MuJoCo plugin's "Robustness (training)" section);
 // each policy keeps its own other settings (Look ahead among them). Runs on a
 // worker; the UI thread reads the progress. Engine side: it links the plugin
@@ -22,8 +22,8 @@
 
 namespace cyxwiz::rl {
 
-enum class StressKind { Rough = 0, Slopes, Steps, Obstacles, Kicks };
-constexpr int kStressKindCount = 5;
+enum class StressKind { Rough = 0, Slopes, Steps, Obstacles, Kicks, Thrown };
+constexpr int kStressKindCount = 6;
 const char* StressKindName(StressKind kind);  // "Rough"
 // Every name, in StressKind order (the choices of a segmented control)
 const char* const* StressKindNames();
@@ -38,9 +38,12 @@ struct StressTestSpec {
 // The environment takes the robustness settings a stress test sets (the
 // MuJoCo plugin's tasks; not the built-in CartPole)
 bool SupportsStress(const plugin::PluginEnvironmentInfo& info);
+// ... and those of this disturbance (Thrown objects needs the throw settings)
+bool SupportsStressKind(const plugin::PluginEnvironmentInfo& info, StressKind kind);
 // The environment settings a policy is tested with at `difficulty`: its own,
 // with the robustness keys set for the test (no random physics, no
-// curriculum; the ground or the pushes of the disturbance)
+// curriculum, no training throws; the ground, the pushes or the throws of the
+// disturbance)
 std::map<std::string, std::string> StressSettings(const std::map<std::string, std::string>& own, StressKind kind,
                                                   double difficulty);
 // The level's difficulty (levels >= 2: evenly from 0 to 1)

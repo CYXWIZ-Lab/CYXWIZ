@@ -124,6 +124,9 @@ by default, so the plain task stays Gymnasium's.
 | **Push every / up to** | A push in a random direction every so many simulated seconds (varied by half), up to the speed given |
 | **Friction / Mass / Motor strength ±** | Each episode scales them by a factor drawn within the percentage |
 | **Look ahead** | The ground's height 0.2 to 2.0 m ahead (10 values) joins what the robot observes |
+| **Throw every** | An object thrown at the robot every so many simulated seconds (each copy at its own times, varied by half), from any side, level to 60 degrees up, aimed where the robot will be. 0: no throws |
+| **Object** | Ball, Box, Capsule, Cylinder or Any. Each episode draws four objects, thrown in turn |
+| **Size / Mass / Speed from, to** | The ranges each episode's objects (each size, the mass) and each throw's speed are drawn from |
 
 The draws come from the run's seed, so a run repeats exactly. While it
 trains, the RL Training Dashboard shows **Difficulty** (the curriculum's
@@ -225,13 +228,14 @@ task; the built-in CartPole has no grounds or pushes).
    (optional). It must play the same environment. The Play tab shares it
    (Show as a ghost).
 2. **Disturbance**: Rough, Slopes, Steps, Obstacles (that ground at each
-   level's difficulty) or Kicks (a push every 1.5 s of up to 4 m/s times the
-   difficulty).
+   level's difficulty), Kicks (a push every 1.5 s of up to 4 m/s times the
+   difficulty) or Thrown objects (a throw every 1.5 s of up to 5 kg at up to
+   10 m/s times the difficulty).
 3. **Levels** (difficulty 0 to 1) and **episodes a level**, then **Run test**.
 
 Each level's episodes run side by side with the policy's best actions. A
-level has its own seed, so both policies meet the same grounds and the same
-pushes. The policies' own random physics and curriculum are off for the test;
+level has its own seed, so both policies meet the same grounds, pushes and
+throws. The policies' own random physics, throws and curriculum are off for the test;
 each keeps its own Look ahead. The chart shows the mean return by difficulty,
 the table each level's mean return and falls (an episode that ended early or
 upside down). **Watch** plays that level's first episode again in the Play

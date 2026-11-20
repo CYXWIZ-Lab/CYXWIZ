@@ -140,7 +140,7 @@ ArchitectureSearchDefaults ClampedArchitectureSearchDefaults(ArchitectureSearchD
 
 // The Stress test's defaults within the panel's ranges
 PolicyStressDefaults ClampStressDefaults(PolicyStressDefaults d) {
-    d.kind = std::clamp(d.kind, 0, 4);  // the five disturbances of rl::StressKind
+    d.kind = std::clamp(d.kind, 0, 5);  // the six disturbances of rl::StressKind
     d.levels = std::clamp(d.levels, 2, 21);
     d.episodes = std::clamp(d.episodes, 1, 100);
     return d;

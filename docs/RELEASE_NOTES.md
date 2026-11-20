@@ -341,6 +341,15 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Added
 
+- **Thrown objects in training and the Stress test.** A MuJoCo task's
+  Environment node gains **Throw every**, **Object** (Ball, Box, Capsule,
+  Cylinder or Any) and Size, Mass and Speed ranges under Robustness
+  (training): each copy throws objects at the robot at its own random times,
+  from any side, aimed where the robot will be, so a policy learns to stay
+  up under them. Policy Playback's Stress test has **Thrown objects** again
+  (a throw every 1.5 s of up to 5 kg at up to 10 m/s times the difficulty).
+  A choice row that does not fit a narrow panel now wraps instead of
+  cutting off its last options.
 - **SAC (Soft Actor-Critic) trains policies from the canvas.** A second RL
   learner beside PPO, for continuous actions: the **SAC (MLP 256-256)**
   pattern (Environment, actor layers to a Policy Head, Q layers to the new

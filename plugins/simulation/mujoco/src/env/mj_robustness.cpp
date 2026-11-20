@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cmath>
 #include <numeric>
+#include <utility>
 
 namespace cyxwiz::plugin::mujoco {
 
@@ -20,6 +21,16 @@ constexpr GroundOption kGroundOptions[] = {{"flat", MjGroundKind::Flat},
                                            {"slopes", MjGroundKind::Slopes},
                                            {"steps", MjGroundKind::Steps},
                                            {"obstacles", MjGroundKind::Obstacles}};
+
+struct ShapeOption {
+    const char* value;
+    MjShape shape;
+};
+constexpr ShapeOption kShapeOptions[] = {{"ball", MjShape::Ball},
+                                         {"box", MjShape::Box},
+                                         {"capsule", MjShape::Capsule},
+                                         {"cylinder", MjShape::Cylinder}};
+constexpr double kThrowUpMax = 60.0;  // degrees above level
 
 PluginEnvironmentSetting Number(const char* key, const char* label, const char* value, double min, double max,
                                 const char* unit, const char* description) {
@@ -83,6 +94,27 @@ const std::vector<PluginEnvironmentSetting>& RobustnessSettings() {
         look.kind = PluginSettingKind::Flag;
         look.section = kSection;
         list.push_back(look);
+        list.push_back(Number("throw_every", "Throw every", "0", 0.0, 60.0, "s",
+                              "An object thrown at the robot this often (simulated seconds, each copy at its own "
+                              "random times, varied by half); 0: no throws"));
+        PluginEnvironmentSetting object;
+        object.key = "throw_object";
+        object.label = "Object";
+        object.default_value = "any";
+        object.description = "What is thrown: one shape, or any of them (each episode draws its objects)";
+        object.kind = PluginSettingKind::Choice;
+        for (const auto& option : kShapeOptions) object.options.push_back({option.value, ShapeName(option.shape)});
+        object.options.push_back({"any", "Any"});
+        object.section = kSection;
+        list.push_back(object);
+        list.push_back(Number("throw_size_from", "Size from", "0.1", 0.02, 2.0, "m",
+                              "The smallest size of a thrown object (a ball's diameter; each side of a box)"));
+        list.push_back(Number("throw_size_to", "Size to", "0.3", 0.02, 2.0, "m", "The largest size of a thrown object"));
+        list.push_back(Number("throw_mass_from", "Mass from", "0.5", 0.01, 50.0, "kg", "The lightest thrown object"));
+        list.push_back(Number("throw_mass_to", "Mass to", "3", 0.01, 50.0, "kg", "The heaviest thrown object"));
+        list.push_back(Number("throw_speed_from", "Speed from", "3", 0.0, 30.0, "m/s",
+                              "The slowest throw (from any side, level to 60 degrees up, aimed where the robot will be)"));
+        list.push_back(Number("throw_speed_to", "Speed to", "8", 0.0, 30.0, "m/s", "The fastest throw"));
         return list;
     }();
     return settings;
@@ -131,6 +163,24 @@ bool ReadMjRobustness(const std::map<std::string, std::string>& given, MjRobustn
             }
             continue;
         }
+        if (setting.kind == PluginSettingKind::Choice) {  // throw_object
+            bool known = false;
+            for (const auto& option : kShapeOptions) {
+                if (text == option.value) {
+                    out.throw_shape = option.shape;
+                    known = true;
+                }
+            }
+            if (text == "any") {
+                out.throw_shape.reset();
+                known = true;
+            }
+            if (!known) {
+                error = setting.label + ": '" + text + "' is not one of ball, box, capsule, cylinder, any.";
+                return false;
+            }
+            continue;
+        }
         if (setting.kind == PluginSettingKind::Flag) {
             if (text != "0" && text != "1") {
                 error = setting.label + " must be 1 (on) or 0 (off) (got '" + text + "').";
@@ -158,9 +208,21 @@ bool ReadMjRobustness(const std::map<std::string, std::string>& given, MjRobustn
         else if (setting.key == "friction_percent") out.friction_percent = value;
         else if (setting.key == "mass_percent") out.mass_percent = value;
         else if (setting.key == "motor_percent") out.motor_percent = value;
+        else if (setting.key == "throw_every") out.throw_every = value;
+        else if (setting.key == "throw_size_from") out.throw_size_from = value;
+        else if (setting.key == "throw_size_to") out.throw_size_to = value;
+        else if (setting.key == "throw_mass_from") out.throw_mass_from = value;
+        else if (setting.key == "throw_mass_to") out.throw_mass_to = value;
+        else if (setting.key == "throw_speed_from") out.throw_speed_from = value;
+        else if (setting.key == "throw_speed_to") out.throw_speed_to = value;
     }
     if (out.difficulty_from > out.difficulty_to) {
         error = "Difficulty from must not be above Difficulty to.";
+        return false;
+    }
+    if (out.throw_size_from > out.throw_size_to || out.throw_mass_from > out.throw_mass_to ||
+        out.throw_speed_from > out.throw_speed_to) {
+        error = "A throw's Size, Mass and Speed from must not be above their to.";
         return false;
     }
     return true;
@@ -180,7 +242,27 @@ MjEpisodeDraw DrawEpisode(const MjRobustness& r, double level, MjRandom& random)
     draw.friction = factor(r.friction_percent);
     draw.mass = factor(r.mass_percent);
     draw.motor = factor(r.motor_percent);
+    if (r.throw_every > 0.0) {
+        for (int i = 0; i < kTrainingThrowSlots; ++i) {
+            MjThrownObject object;
+            object.shape = r.throw_shape ? *r.throw_shape : kShapeOptions[random.Next() % kShapeCount].shape;
+            for (int k = 0; k < ShapeSizes(object.shape); ++k)
+                object.size[k] = random.Uniform(r.throw_size_from, r.throw_size_to);
+            // A capsule's or cylinder's length is end to end: at least its diameter
+            if (ShapeSizes(object.shape) == 2 && object.size[0] < object.size[1]) std::swap(object.size[0], object.size[1]);
+            object.mass = random.Uniform(r.throw_mass_from, r.throw_mass_to);
+            draw.objects.push_back(object);
+        }
+    }
     return draw;
+}
+
+MjThrow DrawThrow(const MjRobustness& r, MjRandom& random) {
+    MjThrow how;
+    how.around = random.Uniform(0.0, 360.0);
+    how.up = random.Uniform(0.0, kThrowUpMax);
+    how.speed = random.Uniform(r.throw_speed_from, r.throw_speed_to);
+    return how;
 }
 
 void ApplyFactors(const MjEpisodeDraw& draw, const MjRobotSize& robot, mjModel* m) {

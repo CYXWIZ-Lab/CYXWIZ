@@ -80,6 +80,8 @@ MjEnvBatch* MjEnvBatch::Create(const MjTaskSpec& spec, const std::string& model_
     batch->steps_.assign(count, 0);
     batch->returns_.assign(count, 0.0);
     batch->next_push_.assign(count, 0.0);
+    batch->next_throw_.assign(count, 0.0);
+    batch->next_slot_.assign(count, 0);
     batch->ended_return_.assign(count, 0.0);
     batch->fell_.assign(count, 0);
     batch->curriculum_.Start(batch->robust_, count);
@@ -327,6 +329,7 @@ bool MjEnvBatch::NewEpisode(int copy) {
     if (robust_.PerCopyModels()) {
         draws_[c] = DrawEpisode(robust_, curriculum_.Level(), random_[c]);
         if (!robust_.grounds.empty()) scene.ground = draws_[c].ground;
+        if (robust_.throw_every > 0.0) scene.objects = draws_[c].objects;  // the episode's objects in its slots
     }
     std::string error;
     if (stress_ground) {  // the Stress panel's ground wins for the shown copy
@@ -352,6 +355,8 @@ void MjEnvBatch::StartCopy(int copy, float* observation) {
     steps_[c] = 0;
     returns_[c] = 0.0;
     if (robust_.push_every > 0.0) next_push_[c] = robust_.push_every * random_[c].Uniform(0.5, 1.5);
+    if (robust_.throw_every > 0.0) next_throw_[c] = robust_.throw_every * random_[c].Uniform(0.5, 1.5);
+    next_slot_[c] = 0;
     ObserveCopy(copy, observation);
 }
 
@@ -412,6 +417,14 @@ bool MjEnvBatch::Step(const float* actions, const PluginEnvironmentStepBuffers& 
             const double speed = robust_.push_speed * random.Uniform(0.5, 1.0);
             KickRobot(m, d, robot, {way[0] * speed, way[1] * speed, way[2] * speed});
             next_push_[c] = d->time + robust_.push_every * random.Uniform(0.5, 1.5);
+        }
+        // A training throw: the copy's objects in turn, at its own times
+        const int slots = static_cast<int>(scenes_[c].objects.size());
+        if (robust_.throw_every > 0.0 && slots > 0 && d->time >= next_throw_[c]) {
+            MjRandom& random = random_[c];
+            ThrowObject(m, d, robot, next_slot_[c] % slots, DrawThrow(robust_, random));
+            next_slot_[c] = (next_slot_[c] + 1) % slots;
+            next_throw_[c] = d->time + robust_.throw_every * random.Uniform(0.5, 1.5);
         }
         const float* action = actions + c * action_size_;
         for (int a = 0; a < action_size_; ++a) d->ctrl[a] = action[a];

@@ -562,6 +562,21 @@ void CheckRobustnessSettings() {
     Check(!ReadMjRobustness({{"difficulty_from", "0.8"}, {"difficulty_to", "0.2"}}, r, error), "from above to is refused");
     Check(!ReadMjRobustness({{"mass_percent", "95"}}, r, error), "a factor beyond 90 % is refused");
     Check(!ReadMjRobustness({{"look_ahead", "yes"}}, r, error), "a flag is 1 or 0");
+    // Throws (TOFIX216 T1)
+    Check(ReadMjRobustness({{"throw_every", "2"}, {"throw_object", "capsule"}, {"throw_size_from", "0.2"},
+                            {"throw_size_to", "0.4"}, {"throw_mass_from", "1"}, {"throw_mass_to", "2"},
+                            {"throw_speed_from", "4"}, {"throw_speed_to", "6"}},
+                           r, error) &&
+              r.throw_every == 2.0 && r.throw_shape == MjShape::Capsule && r.throw_size_from == 0.2 &&
+              r.throw_size_to == 0.4 && r.throw_mass_from == 1.0 && r.throw_mass_to == 2.0 &&
+              r.throw_speed_from == 4.0 && r.throw_speed_to == 6.0 && r.PerCopyModels(),
+          "the throw settings read, and throws give each copy its own model: " + error);
+    Check(ReadMjRobustness({{"throw_object", "any"}}, r, error) && !r.throw_shape && !r.Any(),
+          "Any is no one shape; throws off by default");
+    Check(!ReadMjRobustness({{"throw_object", "rock"}}, r, error) && error.find("rock") != std::string::npos,
+          "an unknown object is refused");
+    Check(!ReadMjRobustness({{"throw_mass_from", "4"}, {"throw_mass_to", "2"}}, r, error),
+          "a throw's from above its to is refused");
 
     const MjTaskSpec& spec = *FindMjTask("HalfCheetah-v5");
     PluginEnvironmentInfo listed, described;
@@ -659,6 +674,58 @@ void CheckRobustBatches() {
             for (int k = 8; k < 11; ++k) apart = std::max(apart, static_cast<double>(std::abs(po[k] - lo[k])));
         }
         Check(apart > 0.3, "pushes change the robot's motion");
+    }
+
+    // Throws (TOFIX216 T2): each copy's episode objects in its slots, thrown at its own times
+    const std::map<std::string, std::string> throws{{"throw_every", "0.3"}, {"throw_object", "box"},
+                                                    {"throw_size_from", "0.1"}, {"throw_size_to", "0.3"},
+                                                    {"throw_mass_from", "1"}, {"throw_mass_to", "3"},
+                                                    {"throw_speed_from", "5"}, {"throw_speed_to", "8"}};
+    std::unique_ptr<MjEnvBatch, void (*)(MjEnvBatch*)> t1(CheetahBatch(throws, 2, error), [](MjEnvBatch* b) { b->Release(); });
+    std::unique_ptr<MjEnvBatch, void (*)(MjEnvBatch*)> t2(CheetahBatch(throws, 2, error), [](MjEnvBatch* b) { b->Release(); });
+    Check(t1 && t2 && t1->ObservationSize() == 17, "batches with throws observe what the task does: " + error);
+    if (t1 && t2) {
+        std::vector<float> o1(2 * 17), o2(2 * 17), f1(2 * 17), r1(2);
+        std::vector<uint8_t> e1(2), c1(2);
+        t1->Reset(5, o1.data());
+        t2->Reset(5, o2.data());
+        bool drawn = true, alike = true;
+        for (int i = 0; i < 2; ++i) {
+            const auto& objects = t1->SceneOf(i).objects;
+            drawn = drawn && objects.size() == static_cast<size_t>(kTrainingThrowSlots);
+            for (const auto& o : objects) {
+                drawn = drawn && o.shape == MjShape::Box && o.mass >= 1.0 && o.mass <= 3.0;
+                for (int k = 0; k < 3; ++k) drawn = drawn && o.size[k] >= 0.1 && o.size[k] <= 0.3;
+            }
+            alike = alike && objects == t2->SceneOf(i).objects;
+        }
+        Check(drawn, "each copy draws 4 boxes of 0.1 to 0.3 m and 1 to 3 kg for its episode");
+        Check(alike && t1->SceneOf(0).objects != t1->SceneOf(1).objects, "the same seed draws the same objects, copies their own");
+        // Something flies: an object's velocity after the first throw (at 0.15 to 0.45 s)
+        const PluginEnvironmentStepBuffers thrown_out{o1.data(), r1.data(), e1.data(), c1.data(), f1.data()};
+        const std::vector<float> zero(2 * 6, 0.0f);
+        const int robot_nv = t1->Robot().nv;
+        double fastest = 0.0;
+        for (int s = 0; s < 20; ++s) {
+            t1->Step(zero.data(), thrown_out);
+            const mjData* d = t1->DataOf(0);
+            for (int v = robot_nv; v < t1->ModelOf(0)->nv; ++v) fastest = std::max(fastest, std::abs(d->qvel[v]));
+        }
+        Check(fastest > 3.0, "a thrown object flies (" + std::to_string(fastest) + " m/s)");
+    }
+    {
+        const auto& spec = *FindMjTask("HalfCheetah-v5");
+        const auto info = Describe(spec);
+        auto threaded = throws;
+        threaded["threads"] = "1";
+        const auto one = Run(spec, info, threaded, 4, 42, 120);
+        threaded["threads"] = "4";
+        const auto four = Run(spec, info, threaded, 4, 42, 120);
+        auto plain_settings = throws;
+        plain_settings["throw_every"] = "0";
+        const auto plain = Run(spec, info, plain_settings, 4, 42, 120);
+        Check(Same(one, four), "throws: seed 42 gives the same runs on one thread and on four");
+        Check(!Same(one, plain), "throws change the runs");
     }
 
     // Look ahead: 10 more values, the ground's height ahead of the root
