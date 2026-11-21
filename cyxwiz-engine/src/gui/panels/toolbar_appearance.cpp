@@ -293,12 +293,6 @@ void ToolbarPanel::RenderAppearancePreferences() {
         ImGui::EndTable();
     }
 
-    ImGui::Spacing();
-    if (ui::LinkButton("Reset appearance to defaults"))
-        ::gui::ResetAppearance();
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("CyxWiz Dark, 15 px interface text, 16 px code text, sidebar on the right, "
-                          "Font Awesome node icons");
     ImGui::EndChild();
 
     if (side_by_side)

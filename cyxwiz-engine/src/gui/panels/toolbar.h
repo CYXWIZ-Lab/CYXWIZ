@@ -364,6 +364,8 @@ private:
     void RenderTrainingPreferences();
     void RenderStudioPreferences();  // Preferences > Studio
     void RenderToolsPreferences();   // Preferences > Tools
+    void RenderRestoreDefaults(const std::string& page);  // "Restore this page's defaults"
+    void RestorePageDefaults(const std::string& page);
     // Preferences > Search (toolbar_preferences_search.cpp)
     void RenderSearchPreferences();
     void RenderShortcutsPreferences();   // Preferences > Shortcuts (toolbar_shortcuts_tab.cpp)
@@ -564,6 +566,7 @@ private:
     std::string server_probed_;  // what the last probe asked about
     std::string preferences_page_ = "General";  // the page shown (rail)
     std::string preferences_search_;            // the rail's search
+    std::string restore_confirm_page_;          // the page asking "Restore ...?"
 
     // Preferences > Python
     gui::PythonSettingsPanel python_settings_panel_;

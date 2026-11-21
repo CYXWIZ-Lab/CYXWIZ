@@ -619,6 +619,7 @@ set(ENGINE_SOURCES
     src/gui/panels/toolbar_preferences_training.cpp
     src/gui/panels/toolbar_preferences_studio.cpp
     src/gui/panels/toolbar_preferences_tools.cpp
+    src/gui/panels/toolbar_preferences_restore.cpp
     src/gui/panels/toolbar_preferences_nodes_panel.cpp
     src/gui/panels/toolbar_preferences_search.cpp
     src/gui/panels/toolbar_preferences_servers.cpp

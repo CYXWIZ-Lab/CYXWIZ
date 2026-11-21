@@ -12,6 +12,13 @@ Simulation, Devices) and **Tools**. **Search settings** at the top of the
 rail keeps the pages whose settings match every word typed (for example
 `minimap` leaves Studio and Script Editor).
 
+Every page with settings ends with **Restore this page's defaults**; it asks
+first (**Restore defaults** / **Keep my settings**). What is yours is kept:
+the Python interpreter, the Nodes panel's Favourites and Recent, and plugin
+sections on the Simulation page. Appearance's restore is the old "Reset
+appearance": CyxWiz Dark, 15 px interface text, 16 px code text, sidebar on
+the right, Font Awesome node icons.
+
 ## General
 
 ### Starting

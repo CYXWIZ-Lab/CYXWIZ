@@ -7,6 +7,10 @@ private Data Studio tickets (`tofix*/track*`).
 
 ### Changed
 
+- **Preferences: "Restore this page's defaults" on every page with
+  settings** (only Appearance and Search could go back before). It asks
+  first and keeps what is yours (the Python interpreter, Favourite and Recent
+  nodes, plugin settings).
 - **Preferences: pages in a rail, with a search, and Close.** The 14 tabs
   scrolled (Storage and Servers were hidden behind arrows); the pages are
   now in a rail in four groups with **Search settings**. Settings were

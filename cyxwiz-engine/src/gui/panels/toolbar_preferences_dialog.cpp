@@ -1533,6 +1533,7 @@ void ToolbarPanel::RenderPreferencesDialog() {
                     servers_loaded_ = false;  // read from the config again when it opens
                 }
 
+                RenderRestoreDefaults(page);
             }
             ImGui::EndChild();
 

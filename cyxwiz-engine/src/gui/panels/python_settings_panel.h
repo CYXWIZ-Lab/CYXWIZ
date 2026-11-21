@@ -17,6 +17,8 @@ class PythonSettingsPanel {
 public:
     // `runtime_details` gives the running Python's details (Runtime details)
     void Render(const std::function<std::string()>& runtime_details);
+    // Read the settings again (after Restore this page's defaults)
+    void Reload() { loaded_ = false; }
 
 private:
     struct Check {
